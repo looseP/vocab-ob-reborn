@@ -1,0 +1,30 @@
+{
+  "name": "vocab-observatory-v2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "test:integration": "cross-env TEST_DATABASE_URL=postgresql://vocab:vocab@localhost:5434/vocab vitest run tests/review-concurrency.test.ts --reporter=verbose",
+    "verify": "npm run typecheck && npm run test",
+    "verify:check": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.20.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/pg": "^8.20.0",
+    "@vitest/coverage-v8": "^4.1.5",
+    "cross-env": "^7.0.3",
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.21.0",
+    "typescript": "^5",
+    "vitest": "^4.1.5"
+  }
+}
