@@ -67,6 +67,7 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
     setError(null);
     setValidation(null);
     setConfirmResult(null);
+    setReviewNote("");
     try {
       const response = await client.getProposal(proposalId);
       setDetail(response);
@@ -114,6 +115,7 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
       applyProposalConfirmSuccess(response);
       setConfirmResult(response);
       setValidation(null);
+      setReviewNote("");
       setDetail({ proposal: response.proposal, items: response.items });
       onConfirmed(response);
       await loadProposals();
@@ -135,6 +137,7 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
       setDetail(response);
       setValidation(null);
       setConfirmResult(null);
+      setReviewNote("");
       await loadProposals();
     } catch (caught) {
       setError(normalizeUnknownError(caught));

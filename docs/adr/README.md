@@ -69,6 +69,13 @@ L1 vocabulary review package.
   `client.getGraph`, stats, nodes, edges, empty/error states, and proposal
   confirm stale-signal consumption. It remains frontend only, with no backend,
   migration, graph visualization library/editor, or L1/L2/FSRS expansion.
+- Phase 4D.3 hardens the existing frontend closed loop with smoke coverage for
+  Import -> Proposal Review -> confirm -> Graph stale, Recommendation
+  `link_gap` -> Proposal Review -> confirm -> Graph edge readback, shared
+  409/422 error semantics, cache/stale signal matrix behavior, and API
+  boundary checks. It remains frontend/test/doc only with no backend,
+  migration, graph visualization, context/word/source full page, or L1/L2/FSRS
+  expansion.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

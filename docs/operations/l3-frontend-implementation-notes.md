@@ -227,6 +227,30 @@ Phase 4D.2 remains intentionally small:
 - no backend endpoint, service, repository, schema, migration, L1/L2/FSRS,
   dictionary, LLM, MCP, or recommendation algorithm changes
 
+## Phase 4D.3 Closed-Loop Smoke Hardening
+
+Phase 4D.3 reviews and hardens the existing Import, Proposal, Recommendation,
+and Graph surfaces without adding new runtime features:
+
+- Import success handoff to Proposal Review is locked as pending proposal
+  navigation.
+- Recommendation `link_gap` accept handoff to Proposal Review is locked as a
+  proposal bridge, not an active link.
+- Proposal confirm remains the only UI action that sets graph/read stale state.
+- Graph read success clears the stale signal and keeps graph/read invalidation
+  read-only.
+- Graph edge rows are proven to come from `getGraph` read responses after a
+  confirmed proposal, not from frontend-local accept/confirm payloads.
+- Shared 409/422 normalized error shapes and API boundary checks now cover the
+  current closed loop.
+
+Phase 4D.3 remains intentionally narrow:
+
+- no graph visualization, graph editor, context/word/source full pages, backend
+  endpoint, repository/service/schema, migration, global state library, UI
+  framework, recommendation algorithm, L1/L2/FSRS, LLM, MCP, dictionary, or
+  import parser changes
+
 ## Remaining Frontend Surface
 
 Context, word, and source space browsing remain deferred read-only surfaces.

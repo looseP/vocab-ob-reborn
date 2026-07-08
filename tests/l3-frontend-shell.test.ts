@@ -1,6 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
+import {
+  frontendCacheSignalMatrix,
+  graphEdgeRowsFromRead,
+  graphStaleBannerText,
+  importProposalReviewHandoff,
+  recommendationProposalReviewHandoff,
+  shouldClearGraphStaleAfterRead,
+} from "@/frontend/viewModels/l3ClosedLoopViewModel";
 import { formatL3ErrorDetails } from "@/frontend/viewModels/l3ErrorViewModel";
 import {
   applyGraphReadUiResult,
@@ -21,13 +29,14 @@ import {
   recommendationAcceptMessage,
   recommendationActionsForStatus,
 } from "@/frontend/viewModels/l3RecommendationViewModel";
-import { normalizeL3Error } from "@/l3/frontend/contract";
+import { normalizeL3Error, type L3ImportProposalResponse } from "@/l3/frontend/contract";
 import { markGraphStaleAfterProposalConfirm } from "@/frontend/state/l3CacheSignals";
 import type {
   L3GraphReadModel,
   L3ProposalBundle,
   L3ProposalConfirmResult,
   L3ProposalItemRow,
+  L3ProposalValidationResult,
   L3RecommendationBundle,
   L3RecommendationItemRow,
 } from "@/domain";
@@ -72,8 +81,10 @@ describe("Phase 4B L3 frontend shell", () => {
     }
   });
 
-  it("keeps implemented L3 pages on the shared frontend client instead of local fetch calls", () => {
+  it("keeps implemented L3 pages and shared components away from local network calls", () => {
     const files = [
+      "src/frontend/components/L3ErrorMessage.tsx",
+      "src/frontend/components/L3Shell.tsx",
       "src/frontend/pages/L3ImportPage.tsx",
       "src/frontend/pages/L3ProposalPage.tsx",
       "src/frontend/pages/L3RecommendationPage.tsx",
@@ -85,7 +96,7 @@ describe("Phase 4B L3 frontend shell", () => {
       expect(source).not.toMatch(/\bfetch\s*\(/);
       expect(source).not.toMatch(/XMLHttpRequest/);
       expect(source).not.toContain("/api/l3/");
-      expect(source).toMatch(/L3FrontendClient|client\./);
+      if (file.includes("/pages/")) expect(source).toMatch(/L3FrontendClient|client\./);
     }
   });
 
@@ -167,6 +178,33 @@ describe("Phase 4B L3 frontend shell", () => {
     expect(formatL3ErrorDetails(error)).not.toBe("[object Object]");
     expect(formatL3ErrorDetails(validation)).toBeNull();
     expect(validation.itemErrors).toEqual([{ itemId: "item-1", field: "surface", message: "surface mismatch" }]);
+  });
+
+  it("keeps 409 and 422 feedback shapes consistent across L3 surfaces", () => {
+    const conflict = normalizeL3Error(409, {
+      code: "CONFLICT",
+      message: "State changed. Refresh and retry.",
+      details: { currentStatus: "accepted" },
+    });
+    const graphValidation = normalizeL3Error(422, {
+      code: "VALIDATION_ERROR",
+      message: "Graph cursor is invalid.",
+      details: { fieldErrors: { cursor: ["Invalid cursor."] } },
+    });
+
+    expect(conflict).toMatchObject({
+      status: 409,
+      kind: "conflict",
+      retryHint: "refresh",
+    });
+    expect(formatL3ErrorDetails(conflict)).toBe("{\"currentStatus\":\"accepted\"}");
+    expect(graphValidation).toMatchObject({
+      status: 422,
+      kind: "validation",
+      retryHint: "review-items",
+      fieldErrors: { cursor: ["Invalid cursor."] },
+    });
+    expect(formatL3ErrorDetails(graphValidation)).toBeNull();
   });
 
   it("builds recommendation generate payloads with local numeric validation", () => {
@@ -441,6 +479,93 @@ describe("Phase 4B L3 frontend shell", () => {
     });
     expect(applyGraphReadUiResult(graphModel()).cache.activeReadInvalidation).toBe(false);
   });
+
+  it("models import proposal handoff through proposal confirm and graph stale refresh", () => {
+    const importResult = importProposalResponse("prop-import");
+    const handoff = importProposalReviewHandoff(importResult);
+    const confirm = proposalConfirmResult("prop-import", "link-1");
+    const stale = markGraphStaleAfterProposalConfirm(confirm);
+
+    expect(handoff).toEqual({ proposalId: "prop-import", canOpenProposalReview: true });
+    expect(importProposalReviewHandoff(null)).toEqual({ proposalId: null, canOpenProposalReview: false });
+    expect(graphStaleBannerText(stale)).toBe("Graph may be stale after proposal confirmation: proposal_confirmed_active_l3_created");
+    expect(shouldClearGraphStaleAfterRead(graphModel({
+      nodes: [{ id: "word:w1", type: "word", label: "vivid", ref: { wordId: "w1" } }],
+    }))).toBe(true);
+  });
+
+  it("models recommendation link_gap handoff through proposal confirm and graph edge readback", () => {
+    const accepted = recommendationItem({
+      id: "rec-link",
+      recommendation_type: "link_gap",
+      status: "accepted",
+      accepted_proposal_id: "prop-link",
+    });
+    const proposal = proposalBundle({ id: "prop-link" });
+    const handoff = recommendationProposalReviewHandoff({ item: accepted, proposal });
+    const confirm = proposalConfirmResult("prop-link", "confirmed-link-id");
+    const readGraph = graphModel({
+      nodes: [
+        { id: "context:ctx-1", type: "context", label: "Context", ref: { contextId: "ctx-1" } },
+        { id: "word:w1", type: "word", label: "vivid", ref: { wordId: "w1" } },
+      ],
+      edges: [{
+        id: "edge-from-graph-read",
+        type: "collocates_with",
+        sourceNodeId: "context:ctx-1",
+        targetNodeId: "word:w1",
+        confidence: 0.8,
+        evidence: { activeLinkId: "confirmed-link-id" },
+      }],
+      stats: {
+        sourceCount: 0,
+        contextCount: 1,
+        occurrenceCount: 1,
+        linkCount: 1,
+        nodeCount: 2,
+        edgeCount: 1,
+      },
+    });
+
+    expect(handoff).toEqual({ proposalId: "prop-link", canOpenProposalReview: true });
+    expect(markGraphStaleAfterProposalConfirm(confirm).activeEntities[0].activeEntityId).toBe("confirmed-link-id");
+    expect(graphEdgeRowsFromRead(readGraph)).toEqual([{
+      id: "edge-from-graph-read",
+      type: "collocates_with",
+      sourceNodeId: "context:ctx-1",
+      targetNodeId: "word:w1",
+    }]);
+  });
+
+  it("locks the frontend cache and stale signal matrix across closed-loop actions", () => {
+    const proposal = proposalBundle({ id: "prop-1" });
+    const recommendation = recommendationItem({ status: "accepted", accepted_proposal_id: "prop-1" });
+    const matrix = frontendCacheSignalMatrix({
+      importResult: importProposalResponse("prop-1"),
+      proposalValidation: proposalValidationResult("prop-1"),
+      proposalConfirm: proposalConfirmResult("prop-1", "link-1"),
+      proposalReject: proposalBundle({ id: "prop-reject", status: "rejected" }),
+      recommendationGenerate: recommendationBundle({ items: [recommendationItem()] }),
+      recommendationAccept: { item: recommendation, proposal },
+      recommendationReject: recommendationItem({ id: "rec-reject", status: "rejected" }),
+      graphRead: graphModel(),
+    });
+
+    expect(matrix.importSuccess).toMatchObject({ proposalInvalidation: true, activeReadInvalidation: false, recommendationInvalidation: false });
+    expect(matrix.proposalValidation).toMatchObject({ proposalInvalidation: true, activeReadInvalidation: false });
+    expect(matrix.proposalConfirm).toMatchObject({ proposalInvalidation: true, activeReadInvalidation: true, reason: "proposal_confirmed_active_l3_created" });
+    expect(matrix.proposalReject).toMatchObject({ proposalInvalidation: true, activeReadInvalidation: false });
+    expect(matrix.recommendationGenerate).toMatchObject({ recommendationInvalidation: true, activeReadInvalidation: false });
+    expect(matrix.recommendationAccept).toMatchObject({ recommendationInvalidation: true, proposalInvalidation: true, activeReadInvalidation: false });
+    expect(matrix.recommendationReject).toMatchObject({ recommendationInvalidation: true, activeReadInvalidation: false });
+    expect(matrix.graphRead).toMatchObject({
+      keys: [],
+      proposalInvalidation: false,
+      recommendationInvalidation: false,
+      activeReadInvalidation: false,
+      reason: "graph_read_no_invalidation",
+    });
+  });
 });
 
 function proposalItem(overrides: Partial<L3ProposalItemRow>): L3ProposalItemRow {
@@ -482,6 +607,38 @@ function proposalBundle(overrides: Partial<L3ProposalBundle["proposal"]> = {}): 
       ...overrides,
     },
     items: [],
+  };
+}
+
+function proposalValidationResult(proposalId = "prop-1"): L3ProposalValidationResult {
+  return {
+    ...proposalBundle({ id: proposalId }),
+    valid: true,
+    errors: [],
+  };
+}
+
+function proposalConfirmResult(proposalId = "prop-1", activeEntityId = "link-1"): L3ProposalConfirmResult {
+  return {
+    ...proposalBundle({ id: proposalId, status: "confirmed", confirmed_at: "now" }),
+    activeEntities: [
+      { itemId: "item-1", itemType: "context_link", activeEntityType: "context_link", activeEntityId },
+    ],
+  };
+}
+
+function importProposalResponse(proposalId = "prop-1"): L3ImportProposalResponse {
+  return {
+    importJob: { id: "job-1", status: "completed" },
+    proposal: { id: proposalId, status: "pending", title: "Imported proposal" },
+    items: [{ id: "item-1", item_type: "context", ordinal: 1, payload: { text: "A vivid context." } }],
+    parseStats: {
+      contextCount: 1,
+      occurrenceCount: 1,
+      linkCount: 0,
+      skippedContextCount: 0,
+      warnings: [],
+    },
   };
 }
 

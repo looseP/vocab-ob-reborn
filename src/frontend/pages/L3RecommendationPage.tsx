@@ -70,6 +70,8 @@ export function L3RecommendationPage({ client, onOpenProposal }: L3Recommendatio
   const loadRecommendations = async (requestedCursor: string | null = null) => {
     setStatus("loading");
     setError(null);
+    setAcceptResult(null);
+    setReviewNote("");
     try {
       const response = await client.listRecommendations({
         ...(statusFilter === "all" ? {} : { status: statusFilter }),
@@ -116,6 +118,7 @@ export function L3RecommendationPage({ client, onOpenProposal }: L3Recommendatio
       setGenerateResult(response);
       setItems(response.items);
       setSelectedItem(response.items[0] ?? null);
+      setReviewNote("");
       setCursor(null);
       setNextCursor(null);
     } catch (caught) {
@@ -133,6 +136,7 @@ export function L3RecommendationPage({ client, onOpenProposal }: L3Recommendatio
       const response = await client.getRecommendation(selectedItem.id);
       setSelectedItem(response);
       setItems((current) => updateItem(current, response));
+      setReviewNote("");
     } catch (caught) {
       setError(normalizeUnknownError(caught));
     } finally {
@@ -168,6 +172,7 @@ export function L3RecommendationPage({ client, onOpenProposal }: L3Recommendatio
       applyRecommendationRejectUiResult(response);
       setSelectedItem(response);
       setItems((current) => updateItem(current, response));
+      setReviewNote("");
     } catch (caught) {
       setError(normalizeUnknownError(caught));
     } finally {
@@ -279,6 +284,7 @@ export function L3RecommendationPage({ client, onOpenProposal }: L3Recommendatio
                   setSelectedItem(item);
                   setAcceptResult(null);
                   setError(null);
+                  setReviewNote("");
                 }}
                 type="button"
               >

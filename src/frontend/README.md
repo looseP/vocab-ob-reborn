@@ -61,6 +61,19 @@ proposal review, recommendation queue, and graph read contracts.
 - Graph reads are displayed as read-only operations with no mutation or cache
   invalidation side effects.
 
+## Phase 4D.3 Closed-Loop Hardening
+
+- Import success handoff to Proposal Review is covered as a pending-proposal
+  transition, not an active L3 write.
+- Recommendation `link_gap` accept handoff to Proposal Review is covered as a
+  proposal bridge, not an active link write.
+- Proposal confirm remains the only UI path that marks graph/read state stale.
+- Graph refresh consumes the stale signal only after a successful read.
+- Graph edge rows are displayed from `client.getGraph` response data, not from
+  local accept/confirm payloads.
+- Import, Proposal, Recommendation, Graph, and shared UI components remain free
+  of raw `fetch`, direct `/api/l3/`, and server-only imports.
+
 ## Phase 4C.1 Hardening
 
 - Required import fields are checked locally before the shared client is called.

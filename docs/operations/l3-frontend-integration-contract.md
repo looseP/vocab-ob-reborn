@@ -489,6 +489,23 @@ Still deferred to later phases:
 - context/word/source space browsing pages
 - backend route/service/repository/schema changes
 
+## Phase 4D.3 Closed-Loop Smoke Notes
+
+Phase 4D.3 validates the current frontend loop across surfaces:
+
+- Import success can open the created pending proposal in Proposal Review.
+- Proposal confirm creates active entities, marks graph/read stale, and keeps
+  reject/validate flows from marking graph stale.
+- Graph refresh consumes the stale signal only after `client.getGraph` succeeds.
+- Recommendation `link_gap` accept can open the created proposal bridge in
+  Proposal Review without implying an active link.
+- Active graph edges are rendered only from graph read responses after proposal
+  confirmation.
+- 409 conflicts and 422 validation/business errors continue to use normalized
+  shared error shapes across Import, Proposal, Recommendation, and Graph.
+- All implemented L3 pages and shared components continue to avoid raw
+  networking and direct route construction.
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:
