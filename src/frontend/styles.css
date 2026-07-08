@@ -1,0 +1,184 @@
+:root {
+  color: #172033;
+  background: #f5f7fb;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.l3-shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.l3-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 32px 24px;
+  background: #172033;
+  color: #f8fbff;
+}
+
+.l3-sidebar h1 {
+  margin: 8px 0 0;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #6d7a8f;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.l3-sidebar .eyebrow {
+  color: #9fb4d1;
+}
+
+.l3-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.l3-nav button {
+  min-height: 42px;
+  border: 1px solid #34435e;
+  border-radius: 6px;
+  background: transparent;
+  color: #dbe6f6;
+  cursor: pointer;
+  text-align: left;
+  padding: 0 12px;
+}
+
+.l3-nav button.active,
+.l3-nav button:hover {
+  background: #e7eefb;
+  color: #172033;
+}
+
+.l3-main {
+  padding: 48px;
+}
+
+.l3-page {
+  max-width: 960px;
+}
+
+.l3-page h2 {
+  margin: 10px 0 12px;
+  font-size: 34px;
+  line-height: 1.15;
+}
+
+.lede {
+  max-width: 720px;
+  color: #46546b;
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.l3-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.l3-status-grid div,
+.placeholder-panel,
+.form-skeleton {
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 18px;
+}
+
+.l3-status-grid span,
+.placeholder-panel span,
+.contract-note {
+  display: block;
+  color: #5b687c;
+  font-size: 14px;
+}
+
+.l3-status-grid strong,
+.placeholder-panel strong {
+  display: block;
+  margin-top: 6px;
+}
+
+.form-skeleton {
+  display: grid;
+  gap: 14px;
+  max-width: 620px;
+  margin-top: 24px;
+}
+
+.form-skeleton label {
+  display: grid;
+  gap: 6px;
+  color: #334057;
+  font-weight: 700;
+}
+
+.form-skeleton input,
+.form-skeleton textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #344052;
+  padding: 10px 12px;
+}
+
+.form-skeleton textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.form-skeleton button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  background: #cfd8e6;
+  color: #526071;
+}
+
+.contract-note {
+  margin-top: 14px;
+}
+
+@media (max-width: 760px) {
+  .l3-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .l3-sidebar {
+    padding: 24px 18px;
+  }
+
+  .l3-main {
+    padding: 28px 18px;
+  }
+
+  .l3-status-grid {
+    grid-template-columns: 1fr;
+  }
+}

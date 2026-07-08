@@ -9,6 +9,7 @@
 | [0009](./0009-l3-import-proposal-builder.md) | L3 deterministic import-to-proposal builder | Phase 3C |
 | [0010](./0010-l3-read-model-graph-api.md) | L3 read model and graph API | Phase 3D |
 | [0011](./0011-l3-recommendation-proposal-builder.md) | L3 recommendation proposal builder | Phase 3E |
+| [0012](./0012-frontend-host-decision.md) | Frontend host decision and minimal L3 shell | Phase 4B |
 
 ## Current Closed Baseline
 
@@ -44,6 +45,11 @@ L1 vocabulary review package.
   cache invalidation signals, state helpers, frontend validation guards, and
   dependency-purity tests. It remains backend-only and adds no routes,
   migrations, UI host, or framework dependencies.
+- Phase 4B creates the first frontend host: a minimal Vite + React +
+  TypeScript shell under `src/frontend`. It reuses `src/l3/frontend/contract.ts`
+  through a browser adapter, adds placeholder Import/Proposal/Recommendation/
+  Graph surfaces, and does not add backend endpoints, migrations, active L3
+  semantics, graph algorithms, or server-side static serving.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

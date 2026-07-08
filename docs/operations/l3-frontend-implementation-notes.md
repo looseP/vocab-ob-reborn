@@ -5,7 +5,7 @@
 
 ## Frontend Host Decision
 
-The current repository is backend-only:
+Phase 4A confirmed the repository was backend-only:
 
 - no `src/client`, `src/frontend`, `src/app`, `app`, `pages`, `components`,
   `web`, `frontend`, or `client` host directory
@@ -13,9 +13,16 @@ The current repository is backend-only:
 - no frontend build script in `package.json`
 - the HTTP server exposes API routes only and does not mount static assets
 
-Because there is no frontend host to extend, Phase 4A does not introduce a UI
-framework or backend endpoint. The implementation is a frontend consumption
-scaffold that future UI work can import or port directly.
+Phase 4B decides to create a minimal same-repository frontend shell:
+
+- host directory: `src/frontend`
+- runtime: React + TypeScript
+- build tool: Vite
+- build output: `dist/frontend`
+- scripts: `npm run frontend:dev`, `npm run frontend:build`
+
+The backend server remains API-only in Phase 4B; no static serving contract is
+introduced.
 
 ## Implemented Scaffold
 
@@ -57,31 +64,37 @@ scaffold that future UI work can import or port directly.
 - invalid graph, space, raw import, structured import, and recommendation inputs
   are blocked before route request
 
-## Non-Implemented UI Host
+## Minimal UI Host
 
-Phase 4A.0/4A.1 intentionally does not add:
+Phase 4B adds:
 
-- a frontend app shell
-- frontend routing
-- React/Vue/Svelte/Next/Vite dependencies
-- browser E2E tests
-- static asset serving
-- backend endpoints or migrations
+- `src/frontend/main.tsx`
+- `src/frontend/App.tsx`
+- `src/frontend/api/l3Client.ts`
+- `src/frontend/state/l3CacheSignals.ts`
+- `src/frontend/components/L3Shell.tsx`
+- placeholder pages for L3 Home, Import, Proposals, Recommendations, and Graph
+- `index.html`, `vite.config.ts`, and `tsconfig.frontend.json`
 
-A future Phase 4B implementation can add a real UI host and wire the scaffold
-into the actual app structure once the repository location and frontend
-framework are decided.
+The shell is intentionally not a complete L3 UI. It anchors navigation,
+placeholder copy, and a browser adapter over `src/l3/frontend/contract.ts`.
 
-## Phase 4B Host Decision Checklist
+## Phase 4B Host Decision Result
 
-Before adding a real frontend host, decide:
+Decided:
 
-- host location (`web`, `client`, `app`, or another explicit directory)
-- framework and build tool
-- API base URL and auth/session wiring
-- cache library or local query store that can consume `L3CacheSignal`
-- routing for proposal/recommendation detail and graph/read surfaces
-- test strategy for browser flows without changing backend contract semantics
+- host location is `src/frontend`
+- framework/build is Vite + React + TypeScript
+- API wiring goes through `src/frontend/api/l3Client.ts`
+- cache semantics continue to use framework-agnostic `L3CacheSignal`
+- Phase 4B uses TypeScript/build smoke plus unit smoke tests, not browser E2E
+
+Deferred:
+
+- auth/session integration
+- full data fetching and mutation flows
+- graph visualization
+- component-level DOM test framework beyond current Vitest node smoke
 
 ## Future UI Wiring Checklist
 
