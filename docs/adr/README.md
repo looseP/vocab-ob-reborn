@@ -20,6 +20,11 @@ L1 vocabulary review package.
 - `main@403438c` records Phase 3E as closed.
 - `main@ab68e3c` adds and merges the L1 review package, closing the separate
   L1 document/package delivery.
+- `main@167785a` records the closed baseline governance state used as the
+  Phase 3F cross-contract regression starting point.
+- Phase 3F adds regression-only coverage for the import -> proposal -> confirm,
+  recommendation -> proposal -> confirm, recommendation generation, and L3
+  read graph boundaries. It must not expand L3 runtime features.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they
