@@ -10,6 +10,33 @@
 | [0010](./0010-l3-read-model-graph-api.md) | L3 read model and graph API | Phase 3D |
 | [0011](./0011-l3-recommendation-proposal-builder.md) | L3 recommendation proposal builder | Phase 3E |
 
+## Current Closed Baseline
+
+`main@ab68e3c` is the current closed baseline for Phase 3E plus the standalone
+L1 vocabulary review package.
+
+- `main@9f9702c` remains the Phase 3E code and CI Node 24 green runtime
+  baseline.
+- `main@403438c` records Phase 3E as closed.
+- `main@ab68e3c` adds and merges the L1 review package, closing the separate
+  L1 document/package delivery.
+
+Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
+closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they
+are superseded by the Node 24 workflow fix in `main@9f9702c`.
+
+## Repository Governance
+
+- Protect `main` so pull requests require the CI workflow to pass before merge.
+- Keep the Phase 3E migration order intact:
+  `drizzle/0009_magenta_captain_flint.sql` ->
+  `drizzle/0010_hesitant_mojo.sql`. Do not squash these migrations into
+  earlier files.
+- The current `l1-vocab-review-package.zip` is accepted in Git history for this
+  delivery. If future review packages keep growing or need repeated updates,
+  publish them through GitHub Releases, CI artifacts, or Git LFS instead of
+  repeatedly committing large zip binaries.
+
 本目录记录 vocab-observatory-v2 的架构决策。每个 ADR 描述一个决策的 Context / Decision / Consequences。
 
 > 同步策略：本目录是 ADR 的**唯一权威源**。codebase-memory 的 `manage_adr` 存一份
