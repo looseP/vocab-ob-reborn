@@ -25,6 +25,11 @@ L1 vocabulary review package.
 - Phase 3F adds regression-only coverage for the import -> proposal -> confirm,
   recommendation -> proposal -> confirm, recommendation generation, and L3
   read graph boundaries. It must not expand L3 runtime features.
+- Phase 3G seals route-level HTTP/API contracts for `/api/l3/imports/*`,
+  `/api/l3/proposals*`, `/api/l3/recommendations*`, and `/api/l3/graph`.
+  It is regression-only: routes stay thin service callers, request bodies stay
+  camelCase, and 400/404/409/422 error semantics are covered without adding
+  runtime features or migrations.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

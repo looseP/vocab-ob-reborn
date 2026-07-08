@@ -12,6 +12,11 @@ Phase 3E recommendations may read this sealed graph/read contract as evidence,
 but they are exposed through separate `/api/l3/recommendations*` endpoints.
 Graph routes remain read-only and never create recommendation rows.
 
+Phase 3G seals this at the HTTP layer: `/api/l3/graph` parses camelCase query
+parameters, calls only `L3ReadService.getGraph`, returns `400` for route schema
+errors, maps service `ValidationError` to `422`, maps missing/out-of-scope rows
+to `404`, and maps unexpected failures to `500`.
+
 ## Endpoints
 
 ### GET `/api/l3/contexts/:id`
