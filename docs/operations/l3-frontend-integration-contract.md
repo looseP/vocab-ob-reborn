@@ -402,3 +402,11 @@ Explicit non-goals:
 - Refresh proposal/recommendation detail after `409`.
 - Show item-level validation feedback for proposal validation and confirm
   failures.
+
+## Phase 4A.0 Scaffold Notes
+
+The current repository has no frontend host directory or browser build script.
+Phase 4A.0 therefore provides a backend-safe frontend consumption scaffold
+instead of introducing a UI framework. See
+`docs/operations/l3-frontend-implementation-notes.md` for the host decision,
+implemented client/error/state helpers, and future UI wiring checklist.

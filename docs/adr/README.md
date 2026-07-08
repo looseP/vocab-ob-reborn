@@ -34,6 +34,11 @@ L1 vocabulary review package.
   It defines UI surfaces, API consumption, UI state machines, error UX,
   view-model guidance, command rules, cache invalidation, and Phase 4A
   acceptance criteria without changing backend runtime behavior.
+- Phase 4A.0 records that this repository currently has no frontend host and
+  adds a backend-safe L3 frontend consumption scaffold: typed API client,
+  error normalization, state/cache helpers, and contract tests. It does not add
+  backend endpoints, migrations, UI framework dependencies, or L1/L2/FSRS
+  behavior changes.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they
