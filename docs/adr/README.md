@@ -39,6 +39,11 @@ L1 vocabulary review package.
   error normalization, state/cache helpers, and contract tests. It does not add
   backend endpoints, migrations, UI framework dependencies, or L1/L2/FSRS
   behavior changes.
+- Phase 4A.1 hardens the frontend contract scaffold as a framework-agnostic
+  consumption layer: complete L3 endpoint wrappers, robust error normalization,
+  cache invalidation signals, state helpers, frontend validation guards, and
+  dependency-purity tests. It remains backend-only and adds no routes,
+  migrations, UI host, or framework dependencies.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

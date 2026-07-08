@@ -169,6 +169,48 @@ Special cases:
 - `link_gap` accept success should say:
   "Proposal created, review required."
 
+## Phase 4A.1 Scaffold Hardening
+
+`src/l3/frontend/contract.ts` is the framework-agnostic consumption layer for
+future UI hosts. It must remain portable to any later React/Vite/Next/Vue/Svelte
+decision and must not import DB, repository, service, HTTP route, Node runtime,
+or browser-global state. All command request payloads stay camelCase.
+
+The client covers the frozen Phase 3H endpoint surface:
+
+- imports: raw text and structured import
+- proposals: create/list/detail/validate/confirm/reject
+- recommendations: generate/list/detail/accept/reject
+- active reads: context detail, word space, source space, graph
+
+Frontend errors normalize into:
+
+- `status`, `code`, `message`, `kind`, `retryHint`
+- optional `fieldErrors`, `itemErrors`, `details`, and `raw`
+- kinds: `bad_request`, `not_found`, `conflict`, `validation`,
+  `unexpected`, `network`, `aborted`
+
+Cache signals are framework-neutral objects:
+
+- `keys`
+- `activeReadInvalidation`
+- `proposalInvalidation`
+- `recommendationInvalidation`
+- `reason`
+- optional `nextSuggestedAction`
+
+Invalidation rules are sealed for Phase 4A.1:
+
+- import success invalidates proposal list/detail only, never graph/read spaces
+- proposal validation invalidates proposal detail only
+- proposal confirm invalidates proposal list/detail plus graph/read spaces
+- proposal reject invalidates proposal list/detail only
+- recommendation generation invalidates recommendation list only unless dry-run
+- recommendation accept invalidates recommendation list/detail and proposal
+  list/detail when a bridge proposal exists, never graph/read spaces
+- recommendation reject invalidates recommendation list/detail only
+- graph reads have no invalidation side effects
+
 ## Frontend View Models
 
 These are frontend view-model contracts, not backend TypeScript interfaces.

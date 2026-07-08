@@ -13,8 +13,16 @@ import type {
 } from "@/domain";
 
 export type L3HttpMethod = "GET" | "POST";
-export type L3ErrorStatus = 400 | 404 | 409 | 422 | 500;
-export type L3RetryHint = "fix-input" | "refresh" | "review-items" | "retry";
+export type L3ErrorStatus = 0 | 400 | 404 | 409 | 422 | 500;
+export type L3ErrorKind =
+  | "bad_request"
+  | "not_found"
+  | "conflict"
+  | "validation"
+  | "unexpected"
+  | "network"
+  | "aborted";
+export type L3RetryHint = "fix-input" | "refresh" | "review-items" | "retry" | "none";
 export type L3ImportFlowState =
   | "idle"
   | "editing"
@@ -25,6 +33,7 @@ export type L3ImportFlowState =
   | "confirmed"
   | "rejected";
 export type L3ProposalReviewState =
+  | "pending"
   | "needsValidation"
   | "valid"
   | "invalid"
@@ -38,6 +47,8 @@ export type L3RecommendationReviewState =
   | "pending"
   | "accepting"
   | "accepted"
+  | "proposalBridgeCreated"
+  | "futureAction"
   | "rejecting"
   | "rejected"
   | "dismissed"
@@ -49,17 +60,22 @@ export interface NormalizedL3Error {
   status: L3ErrorStatus;
   code: string;
   message: string;
+  kind: L3ErrorKind;
   fieldErrors?: Record<string, string[]>;
   itemErrors?: Array<{ itemId?: string; ordinal?: number; field?: string; message: string }>;
   retryHint: L3RetryHint;
+  details?: unknown;
   raw?: unknown;
 }
 
 export interface L3ApiErrorBody {
-  error?: string;
+  error?: string | { code?: string; message?: string; details?: unknown; errors?: unknown; fieldErrors?: unknown; itemErrors?: unknown };
   code?: string;
   message?: string;
   details?: unknown;
+  errors?: unknown;
+  fieldErrors?: unknown;
+  itemErrors?: unknown;
 }
 
 export interface L3ParseStats {
@@ -174,35 +190,35 @@ export interface L3RecommendationGenerateInput {
 
 export interface L3ListProposalsParams {
   status?: "pending" | "confirmed" | "rejected" | "canceled";
-  limit?: number;
-  cursor?: string;
+  limit?: number | null;
+  cursor?: string | null;
 }
 
 export interface L3ListRecommendationsParams {
   status?: "pending" | "accepted" | "rejected" | "dismissed" | "expired";
   recommendationType?: "review_pack" | "learn_next" | "link_gap" | "context_gap" | "l2_gap" | "weak_word" | "related_word";
-  limit?: number;
-  cursor?: string;
+  limit?: number | null;
+  cursor?: string | null;
 }
 
 export interface L3GraphParams {
-  wordbookId?: string;
-  slug?: string;
-  sourceId?: string;
-  depth?: number;
-  limit?: number;
-  cursor?: string;
+  wordbookId?: string | null;
+  slug?: string | null;
+  sourceId?: string | null;
+  depth?: number | null;
+  limit?: number | null;
+  cursor?: string | null;
 }
 
 export interface L3SpaceParams {
-  wordbookId?: string;
-  limit?: number;
-  cursor?: string;
+  wordbookId?: string | null;
+  limit?: number | null;
+  cursor?: string | null;
 }
 
 export interface L3SourceSpaceParams {
-  limit?: number;
-  cursor?: string;
+  limit?: number | null;
+  cursor?: string | null;
 }
 
 export interface L3ClientTransport {
@@ -233,6 +249,15 @@ export interface L3FrontendClient {
   getGraph(params?: L3GraphParams): Promise<L3GraphReadModel>;
 }
 
+export interface L3CacheSignal {
+  keys: string[];
+  activeReadInvalidation: boolean;
+  proposalInvalidation: boolean;
+  recommendationInvalidation: boolean;
+  reason: string;
+  nextSuggestedAction?: string;
+}
+
 export interface L3CommandResult<T> {
   data: T;
   nextState: string;
@@ -240,18 +265,25 @@ export interface L3CommandResult<T> {
   invalidate: string[];
   refreshGraph: boolean;
   createsActiveL3: boolean;
+  cache: L3CacheSignal;
 }
 
 export const L3_UI_COPY = {
-  importCreatedProposal: "已生成待审核 proposal，确认后才会写入 L3",
-  recommendationAcceptedProposal: "已生成待确认 proposal，确认后才会创建 active link",
-  stateChanged: "状态已变化，请刷新后重试",
-  proposalValidationFailed: "候选内容未通过校验，请查看具体条目",
-  notFound: "资源不存在、已删除或无权限访问",
-  unexpected: "操作失败，请稍后重试",
+  importCreatedProposal: "Import created a proposal. Confirm it before active L3 changes.",
+  recommendationAcceptedProposal: "Recommendation created a proposal. Confirm it before creating the active link.",
+  stateChanged: "State changed. Refresh and retry.",
+  proposalValidationFailed: "Proposal validation failed. Review item-level feedback.",
+  notFound: "Resource is missing, deleted, or outside your scope.",
+  unexpected: "Operation failed. Retry later.",
+  network: "Network request failed. Check connectivity and retry.",
+  aborted: "Request was cancelled.",
 } as const;
 
 const DEFAULT_HEADERS = { "Content-Type": "application/json" };
+const SPACE_LIMIT_MAX = 100;
+const GRAPH_LIMIT_MAX = 300;
+const RECOMMENDATION_LIMIT_MAX = 100;
+const RECOMMENDATION_HORIZON_MAX = 90;
 
 function appendQuery(path: string, params?: object): string {
   if (!params) return path;
@@ -263,25 +295,119 @@ function appendQuery(path: string, params?: object): string {
   return queryString ? `${path}?${queryString}` : path;
 }
 
-function extractFieldErrors(details: unknown): Record<string, string[]> | undefined {
-  if (!details || typeof details !== "object") return undefined;
-  const fieldErrors = (details as { fieldErrors?: unknown }).fieldErrors;
-  if (!fieldErrors || typeof fieldErrors !== "object") return undefined;
+function compactKeys(keys: string[]): string[] {
+  return [...new Set(keys)];
+}
+
+function cacheSignal(input: {
+  keys: string[];
+  activeReadInvalidation?: boolean;
+  proposalInvalidation?: boolean;
+  recommendationInvalidation?: boolean;
+  reason: string;
+  nextSuggestedAction?: string;
+}): L3CacheSignal {
+  return {
+    keys: compactKeys(input.keys),
+    activeReadInvalidation: input.activeReadInvalidation ?? false,
+    proposalInvalidation: input.proposalInvalidation ?? false,
+    recommendationInvalidation: input.recommendationInvalidation ?? false,
+    reason: input.reason,
+    ...(input.nextSuggestedAction ? { nextSuggestedAction: input.nextSuggestedAction } : {}),
+  };
+}
+
+function frontendValidationError(field: string, message: string): NormalizedL3Error {
+  return normalizeL3Error(400, {
+    code: "FRONTEND_VALIDATION_ERROR",
+    message: "Request validation failed.",
+    details: { fieldErrors: { [field]: [message] } },
+  });
+}
+
+function requireNonEmptyText(value: string | null | undefined, field: string): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw frontendValidationError(field, `${field} cannot be empty.`);
+  }
+}
+
+function validateLimit(value: number | null | undefined, max: number, field = "limit"): void {
+  if (value === undefined || value === null) return;
+  if (!Number.isInteger(value) || value < 1 || value > max) {
+    throw frontendValidationError(field, `${field} must be between 1 and ${max}.`);
+  }
+}
+
+function normalizeErrorBody(body: unknown): {
+  code?: string;
+  message?: string;
+  details?: unknown;
+  errors?: unknown;
+  fieldErrors?: unknown;
+  itemErrors?: unknown;
+  raw: unknown;
+} {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return typeof body === "string" && body.trim().length > 0
+      ? { message: body, raw: body }
+      : { raw: body };
+  }
+  const record = body as L3ApiErrorBody;
+  if (record.error && typeof record.error === "object" && !Array.isArray(record.error)) {
+    const error = record.error;
+    return {
+      code: error.code ?? record.code,
+      message: error.message ?? record.message,
+      details: error.details ?? record.details,
+      errors: error.errors ?? record.errors,
+      fieldErrors: error.fieldErrors ?? record.fieldErrors,
+      itemErrors: error.itemErrors ?? record.itemErrors,
+      raw: body,
+    };
+  }
+  return {
+    code: record.code,
+    message: typeof record.error === "string" ? record.error : record.message,
+    details: record.details,
+    errors: record.errors,
+    fieldErrors: record.fieldErrors,
+    itemErrors: record.itemErrors,
+    raw: body,
+  };
+}
+
+function extractFieldErrors(details: unknown, bodyFieldErrors?: unknown): Record<string, string[]> | undefined {
+  const fieldErrors =
+    (details && typeof details === "object" && !Array.isArray(details)
+      ? (details as { fieldErrors?: unknown }).fieldErrors
+      : undefined) ?? bodyFieldErrors;
+  if (!fieldErrors || typeof fieldErrors !== "object" || Array.isArray(fieldErrors)) return undefined;
 
   const result: Record<string, string[]> = {};
   for (const [field, messages] of Object.entries(fieldErrors as Record<string, unknown>)) {
-    if (Array.isArray(messages)) result[field] = messages.filter((message): message is string => typeof message === "string");
+    if (Array.isArray(messages)) {
+      const filtered = messages.filter((message): message is string => typeof message === "string");
+      if (filtered.length > 0) result[field] = filtered;
+    } else if (typeof messages === "string") {
+      result[field] = [messages];
+    }
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function extractItemErrors(body: L3ApiErrorBody): NormalizedL3Error["itemErrors"] {
-  const errors = (body.details as { errors?: unknown } | undefined)?.errors ?? (body as { errors?: unknown }).errors;
+function extractItemErrors(normalized: ReturnType<typeof normalizeErrorBody>): NormalizedL3Error["itemErrors"] {
+  const errors =
+    (normalized.details && typeof normalized.details === "object" && !Array.isArray(normalized.details)
+      ? (normalized.details as { errors?: unknown; itemErrors?: unknown }).itemErrors ??
+        (normalized.details as { errors?: unknown; itemErrors?: unknown }).errors
+      : undefined) ??
+    normalized.itemErrors ??
+    normalized.errors;
   if (!Array.isArray(errors)) return undefined;
-  return errors
+  const result = errors
     .map((item) => {
       if (typeof item === "string") return { message: item };
-      if (!item || typeof item !== "object") return null;
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
       const issue = item as Record<string, unknown>;
       const message = typeof issue.message === "string" ? issue.message : undefined;
       if (!message) return null;
@@ -293,58 +419,64 @@ function extractItemErrors(body: L3ApiErrorBody): NormalizedL3Error["itemErrors"
       };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null);
+  return result.length > 0 ? result : undefined;
 }
 
-export function normalizeL3Error(status: number, body: L3ApiErrorBody = {}): NormalizedL3Error {
-  const safeStatus = (status === 400 || status === 404 || status === 409 || status === 422 || status === 500 ? status : 500) as L3ErrorStatus;
-  const code = body.code ?? body.error ?? "INTERNAL";
-  const rawMessage = body.message ?? body.error;
+function kindForStatus(status: L3ErrorStatus): L3ErrorKind {
+  if (status === 400) return "bad_request";
+  if (status === 404) return "not_found";
+  if (status === 409) return "conflict";
+  if (status === 422) return "validation";
+  return "unexpected";
+}
 
-  if (safeStatus === 400) {
-    return {
-      status: safeStatus,
-      code,
-      message: rawMessage || "Request validation failed.",
-      fieldErrors: extractFieldErrors(body.details),
-      retryHint: "fix-input",
-      raw: body,
-    };
-  }
-  if (safeStatus === 404) {
-    return {
-      status: safeStatus,
-      code,
-      message: L3_UI_COPY.notFound,
-      retryHint: "refresh",
-      raw: body,
-    };
-  }
-  if (safeStatus === 409) {
-    return {
-      status: safeStatus,
-      code,
-      message: L3_UI_COPY.stateChanged,
-      retryHint: "refresh",
-      raw: body,
-    };
-  }
-  if (safeStatus === 422) {
-    return {
-      status: safeStatus,
-      code,
-      message: rawMessage || L3_UI_COPY.proposalValidationFailed,
-      fieldErrors: extractFieldErrors(body.details),
-      itemErrors: extractItemErrors(body),
-      retryHint: "review-items",
-      raw: body,
-    };
-  }
+function retryHintForKind(kind: L3ErrorKind): L3RetryHint {
+  if (kind === "bad_request") return "fix-input";
+  if (kind === "not_found" || kind === "conflict") return "refresh";
+  if (kind === "validation") return "review-items";
+  if (kind === "aborted") return "none";
+  return "retry";
+}
+
+function messageForKind(kind: L3ErrorKind, fallback?: string): string {
+  if (kind === "not_found") return fallback || L3_UI_COPY.notFound;
+  if (kind === "conflict") return fallback || L3_UI_COPY.stateChanged;
+  if (kind === "validation") return fallback || L3_UI_COPY.proposalValidationFailed;
+  if (kind === "network") return fallback || L3_UI_COPY.network;
+  if (kind === "aborted") return fallback || L3_UI_COPY.aborted;
+  if (kind === "bad_request") return fallback || "Request validation failed.";
+  return fallback || L3_UI_COPY.unexpected;
+}
+
+export function normalizeL3Error(status: number, body: L3ApiErrorBody | string | null | undefined = {}): NormalizedL3Error {
+  const safeStatus = (status === 400 || status === 404 || status === 409 || status === 422 || status === 500 ? status : 500) as L3ErrorStatus;
+  const normalized = normalizeErrorBody(body ?? {});
+  const kind = kindForStatus(safeStatus);
+  const code = normalized.code ?? (kind === "unexpected" ? "INTERNAL" : kind.toUpperCase());
   return {
     status: safeStatus,
     code,
-    message: L3_UI_COPY.unexpected,
-    retryHint: "retry",
-    raw: body,
+    message: messageForKind(kind, normalized.message),
+    kind,
+    fieldErrors: extractFieldErrors(normalized.details, normalized.fieldErrors),
+    itemErrors: extractItemErrors(normalized),
+    retryHint: retryHintForKind(kind),
+    details: normalized.details,
+    raw: normalized.raw,
+  };
+}
+
+export function normalizeL3TransportError(error: unknown): NormalizedL3Error {
+  const maybeError = error as { name?: unknown; message?: unknown };
+  const aborted = maybeError?.name === "AbortError";
+  const kind: L3ErrorKind = aborted ? "aborted" : "network";
+  return {
+    status: 0,
+    code: aborted ? "ABORTED" : "NETWORK_ERROR",
+    message: messageForKind(kind, typeof maybeError?.message === "string" ? maybeError.message : undefined),
+    kind,
+    retryHint: retryHintForKind(kind),
+    raw: error,
   };
 }
 
@@ -354,118 +486,285 @@ async function requestJson<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const response = await transport.fetch(path, {
-    method,
-    headers: DEFAULT_HEADERS,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw normalizeL3Error(response.status, payload as L3ApiErrorBody);
-  return payload as T;
+  try {
+    const response = await transport.fetch(path, {
+      method,
+      headers: DEFAULT_HEADERS,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const payload = await response.json().catch(() => undefined);
+    if (!response.ok) throw normalizeL3Error(response.status, payload as L3ApiErrorBody);
+    return payload as T;
+  } catch (error) {
+    if (isNormalizedL3Error(error)) throw error;
+    throw normalizeL3TransportError(error);
+  }
 }
 
 export function createL3FrontendClient(transport: L3ClientTransport): L3FrontendClient {
   return {
-    createRawTextImport: (input) => requestJson(transport, "POST", "/api/l3/imports/raw-text", input),
-    createStructuredImport: (input) => requestJson(transport, "POST", "/api/l3/imports/structured", input),
-    createProposal: (input) => requestJson(transport, "POST", "/api/l3/proposals", input),
-    listProposals: (params) => requestJson(transport, "GET", appendQuery("/api/l3/proposals", params)),
+    createRawTextImport: (input) => requestJson(transport, "POST", "/api/l3/imports/raw-text", validateRawTextImportInput(input)),
+    createStructuredImport: (input) => requestJson(transport, "POST", "/api/l3/imports/structured", validateStructuredImportInput(input)),
+    createProposal: (input) => requestJson(transport, "POST", "/api/l3/proposals", validateProposalCreateInput(input)),
+    listProposals: (params) => requestJson(transport, "GET", appendQuery("/api/l3/proposals", validateListParams(params))),
     getProposal: (id) => requestJson(transport, "GET", `/api/l3/proposals/${encodeURIComponent(id)}`),
     validateProposal: (id) => requestJson(transport, "POST", `/api/l3/proposals/${encodeURIComponent(id)}/validate`),
     confirmProposal: (id) => requestJson(transport, "POST", `/api/l3/proposals/${encodeURIComponent(id)}/confirm`),
     rejectProposal: (id, reviewNote) => requestJson(transport, "POST", `/api/l3/proposals/${encodeURIComponent(id)}/reject`, { reviewNote: reviewNote ?? null }),
-    generateRecommendations: (input) => requestJson(transport, "POST", "/api/l3/recommendations/generate", input),
-    listRecommendations: (params) => requestJson(transport, "GET", appendQuery("/api/l3/recommendations", params)),
+    generateRecommendations: (input) => requestJson(transport, "POST", "/api/l3/recommendations/generate", validateRecommendationGenerateInput(input)),
+    listRecommendations: (params) => requestJson(transport, "GET", appendQuery("/api/l3/recommendations", validateListParams(params))),
     getRecommendation: (id) => requestJson(transport, "GET", `/api/l3/recommendations/${encodeURIComponent(id)}`),
     acceptRecommendation: (id) => requestJson(transport, "POST", `/api/l3/recommendations/${encodeURIComponent(id)}/accept`),
     rejectRecommendation: (id, reviewNote) => requestJson(transport, "POST", `/api/l3/recommendations/${encodeURIComponent(id)}/reject`, { reviewNote: reviewNote ?? null }),
     getContextDetail: (id) => requestJson(transport, "GET", `/api/l3/contexts/${encodeURIComponent(id)}`),
-    getWordSpace: (slug, params) => requestJson(transport, "GET", appendQuery(`/api/l3/words/${encodeURIComponent(slug)}/space`, params)),
-    getSourceSpace: (sourceId, params) => requestJson(transport, "GET", appendQuery(`/api/l3/sources/${encodeURIComponent(sourceId)}/space`, params)),
+    getWordSpace: (slug, params) => requestJson(transport, "GET", appendQuery(`/api/l3/words/${encodeURIComponent(slug)}/space`, validateSpaceParams(params))),
+    getSourceSpace: (sourceId, params) => requestJson(transport, "GET", appendQuery(`/api/l3/sources/${encodeURIComponent(sourceId)}/space`, validateSourceSpaceParams(params))),
     getGraph: (params) => requestJson(transport, "GET", appendQuery("/api/l3/graph", validateGraphParams(params))),
   };
 }
 
 export function parseTargetWordInput(value: string): Array<{ slug: string }> {
-  return value
-    .split(/[\n,]+/g)
-    .map((slug) => slug.trim())
-    .filter((slug, index, slugs) => slug.length > 0 && slugs.indexOf(slug) === index)
-    .map((slug) => ({ slug }));
+  const seen = new Set<string>();
+  const result: Array<{ slug: string }> = [];
+  for (const raw of value.split(/[\n,]+/g)) {
+    const slug = raw.trim();
+    if (!slug) continue;
+    const key = slug.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ slug });
+  }
+  return result;
+}
+
+export function validateRawTextImportInput(input: L3RawTextImportInput): L3RawTextImportInput {
+  requireNonEmptyText(input.source.title, "source.title");
+  requireNonEmptyText(input.text, "text");
+  for (const targetWord of input.targetWords ?? []) {
+    if (!targetWord.wordId && (!targetWord.slug || targetWord.slug.trim().length === 0)) {
+      throw frontendValidationError("targetWords", "targetWords entries require wordId or non-empty slug.");
+    }
+  }
+  return input;
+}
+
+export function validateStructuredImportInput(input: L3StructuredImportInput): L3StructuredImportInput {
+  requireNonEmptyText(input.source.title, "source.title");
+  if (input.contexts.length === 0) throw frontendValidationError("contexts", "contexts cannot be empty.");
+  for (const [index, context] of input.contexts.entries()) {
+    requireNonEmptyText(context.text, `contexts.${index}.text`);
+    for (const [occurrenceIndex, occurrence] of (context.occurrences ?? []).entries()) {
+      requireNonEmptyText(occurrence.surface, `contexts.${index}.occurrences.${occurrenceIndex}.surface`);
+      if (!occurrence.wordId && (!occurrence.slug || occurrence.slug.trim().length === 0)) {
+        throw frontendValidationError(`contexts.${index}.occurrences.${occurrenceIndex}`, "occurrence requires wordId or non-empty slug.");
+      }
+    }
+  }
+  return input;
+}
+
+export function validateProposalCreateInput(input: L3ProposalCreateInput): L3ProposalCreateInput {
+  if (input.items.length === 0) throw frontendValidationError("items", "Proposal requires at least one item.");
+  return input;
+}
+
+export function validateRecommendationGenerateInput(input: L3RecommendationGenerateInput): L3RecommendationGenerateInput {
+  validateLimit(input.limit, RECOMMENDATION_LIMIT_MAX);
+  if (input.horizonDays !== undefined && input.horizonDays !== null) {
+    if (!Number.isInteger(input.horizonDays) || input.horizonDays < 1 || input.horizonDays > RECOMMENDATION_HORIZON_MAX) {
+      throw frontendValidationError("horizonDays", `horizonDays must be between 1 and ${RECOMMENDATION_HORIZON_MAX}.`);
+    }
+  }
+  return input;
+}
+
+export function validateListParams<T extends { limit?: number | null } | undefined>(params: T): T {
+  validateLimit(params?.limit, SPACE_LIMIT_MAX);
+  return params;
+}
+
+export function validateSpaceParams(params: L3SpaceParams = {}): L3SpaceParams {
+  validateLimit(params.limit, SPACE_LIMIT_MAX);
+  return params;
+}
+
+export function validateSourceSpaceParams(params: L3SourceSpaceParams = {}): L3SourceSpaceParams {
+  validateLimit(params.limit, SPACE_LIMIT_MAX);
+  return params;
 }
 
 export function validateGraphParams(params: L3GraphParams = {}): L3GraphParams {
-  if (params.depth !== undefined && (!Number.isInteger(params.depth) || params.depth < 1 || params.depth > 2)) {
-    throw normalizeL3Error(400, { error: "VALIDATION_ERROR", details: { fieldErrors: { depth: ["Depth must be 1 or 2."] } } });
+  if (params.depth !== undefined && params.depth !== null && (!Number.isInteger(params.depth) || params.depth < 1 || params.depth > 2)) {
+    throw frontendValidationError("depth", "Depth must be 1 or 2.");
   }
-  if (params.limit !== undefined && (!Number.isInteger(params.limit) || params.limit < 1 || params.limit > 300)) {
-    throw normalizeL3Error(400, { error: "VALIDATION_ERROR", details: { fieldErrors: { limit: ["Limit must be between 1 and 300."] } } });
-  }
+  validateLimit(params.limit, GRAPH_LIMIT_MAX);
   return params;
 }
 
 export function applyImportSuccess<T extends L3ImportProposalResponse>(data: T): L3CommandResult<T> {
+  const proposalId = typeof data.proposal.id === "string" ? data.proposal.id : undefined;
+  const keys = ["l3.proposals.list", ...(proposalId ? [`l3.proposals.detail:${proposalId}`] : [])];
   return {
     data,
     nextState: "proposalCreated" satisfies L3ImportFlowState,
     message: L3_UI_COPY.importCreatedProposal,
-    invalidate: ["l3.proposals.list"],
+    invalidate: keys,
     refreshGraph: false,
     createsActiveL3: false,
+    cache: cacheSignal({
+      keys,
+      proposalInvalidation: true,
+      reason: "import_created_pending_proposal",
+      nextSuggestedAction: proposalId ? "review_proposal" : "refresh_proposals",
+    }),
   };
 }
 
 export function applyProposalValidationResult<T extends L3ProposalValidationResult>(data: T): L3CommandResult<T> {
+  const keys = [`l3.proposals.detail:${data.proposal.id}`];
   return {
     data,
     nextState: (data.valid ? "valid" : "invalid") satisfies L3ProposalReviewState,
-    invalidate: ["l3.proposals.detail"],
+    invalidate: keys,
     refreshGraph: false,
     createsActiveL3: false,
+    cache: cacheSignal({
+      keys,
+      proposalInvalidation: true,
+      reason: data.valid ? "proposal_validation_passed" : "proposal_validation_feedback",
+      nextSuggestedAction: data.valid ? "confirm_or_reject" : "review_items",
+    }),
   };
 }
 
 export function applyProposalConfirmSuccess<T extends L3ProposalConfirmResult>(data: T): L3CommandResult<T> {
+  const activeTypes = new Set(data.activeEntities.map((entity) => entity.activeEntityType));
+  const keys = [
+    "l3.proposals.list",
+    `l3.proposals.detail:${data.proposal.id}`,
+    "l3.graph",
+    ...(activeTypes.has("context") ? ["l3.context.detail"] : []),
+    ...(activeTypes.has("source") || activeTypes.has("context") || activeTypes.has("occurrence") || activeTypes.has("context_link")
+      ? ["l3.word.space", "l3.source.space"]
+      : []),
+  ];
   return {
     data,
     nextState: "confirmed" satisfies L3ProposalReviewState,
-    invalidate: ["l3.proposals.detail", "l3.proposals.list", "l3.graph", "l3.context.detail", "l3.word.space", "l3.source.space"],
+    invalidate: compactKeys(keys),
     refreshGraph: true,
     createsActiveL3: true,
+    cache: cacheSignal({
+      keys,
+      activeReadInvalidation: true,
+      proposalInvalidation: true,
+      reason: "proposal_confirmed_active_l3_created",
+      nextSuggestedAction: "refresh_active_reads",
+    }),
   };
 }
 
 export function applyProposalRejectSuccess<T extends L3ProposalBundle>(data: T): L3CommandResult<T> {
+  const keys = ["l3.proposals.list", `l3.proposals.detail:${data.proposal.id}`];
   return {
     data,
     nextState: "rejected" satisfies L3ProposalReviewState,
-    invalidate: ["l3.proposals.detail", "l3.proposals.list"],
+    invalidate: keys,
     refreshGraph: false,
     createsActiveL3: false,
+    cache: cacheSignal({
+      keys,
+      proposalInvalidation: true,
+      reason: "proposal_rejected_no_active_l3_change",
+    }),
+  };
+}
+
+export function applyRecommendationGenerateSuccess<T extends L3RecommendationBundle>(data: T): L3CommandResult<T> {
+  const keys = data.run.id === "dry-run" ? [] : ["l3.recommendations.list"];
+  return {
+    data,
+    nextState: "pending" satisfies L3RecommendationReviewState,
+    invalidate: keys,
+    refreshGraph: false,
+    createsActiveL3: false,
+    cache: cacheSignal({
+      keys,
+      recommendationInvalidation: keys.length > 0,
+      reason: data.run.id === "dry-run" ? "recommendation_dry_run_no_cache_change" : "recommendations_generated",
+    }),
   };
 }
 
 export function applyRecommendationAcceptSuccess<T extends L3RecommendationAcceptResult>(data: T): L3CommandResult<T> {
+  const proposalId = data.proposal?.proposal.id;
+  const keys = [
+    "l3.recommendations.detail",
+    "l3.recommendations.list",
+    ...(proposalId ? ["l3.proposals.list", `l3.proposals.detail:${proposalId}`] : []),
+  ];
   return {
     data,
-    nextState: "accepted" satisfies L3RecommendationReviewState,
+    nextState: (data.proposal ? "proposalBridgeCreated" : "futureAction") satisfies L3RecommendationReviewState,
     message: data.proposal ? L3_UI_COPY.recommendationAcceptedProposal : undefined,
-    invalidate: data.proposal
-      ? ["l3.recommendations.detail", "l3.recommendations.list", "l3.proposals.list"]
-      : ["l3.recommendations.detail", "l3.recommendations.list"],
+    invalidate: keys,
     refreshGraph: false,
     createsActiveL3: false,
+    cache: cacheSignal({
+      keys,
+      proposalInvalidation: Boolean(data.proposal),
+      recommendationInvalidation: true,
+      reason: data.proposal ? "recommendation_accept_created_pending_proposal" : "recommendation_accept_future_action",
+      nextSuggestedAction: data.proposal ? "review_proposal" : "handle_future_action",
+    }),
   };
 }
 
 export function applyRecommendationRejectSuccess<T extends L3RecommendationItemRow>(data: T): L3CommandResult<T> {
+  const keys = ["l3.recommendations.detail", "l3.recommendations.list"];
   return {
     data,
     nextState: "rejected" satisfies L3RecommendationReviewState,
-    invalidate: ["l3.recommendations.detail", "l3.recommendations.list"],
+    invalidate: keys,
     refreshGraph: false,
     createsActiveL3: false,
+    cache: cacheSignal({
+      keys,
+      recommendationInvalidation: true,
+      reason: "recommendation_rejected_no_active_l3_change",
+    }),
   };
+}
+
+export function applyGraphReadSuccess<T extends L3GraphReadModel>(data: T): L3CommandResult<T> {
+  return {
+    data,
+    nextState: graphStateFromRead(data),
+    invalidate: [],
+    refreshGraph: false,
+    createsActiveL3: false,
+    cache: cacheSignal({ keys: [], reason: "graph_read_no_invalidation" }),
+  };
+}
+
+export function proposalActionsForStatus(status: string): {
+  state: L3ProposalReviewState;
+  canValidate: boolean;
+  canConfirm: boolean;
+  canReject: boolean;
+} {
+  if (status === "confirmed") return { state: "confirmed", canValidate: false, canConfirm: false, canReject: false };
+  if (status === "rejected") return { state: "rejected", canValidate: false, canConfirm: false, canReject: false };
+  if (status === "pending") return { state: "needsValidation", canValidate: true, canConfirm: true, canReject: true };
+  return { state: "conflict", canValidate: false, canConfirm: false, canReject: false };
+}
+
+export function recommendationActionForAcceptResult(result: L3RecommendationAcceptResult): "proposalBridgeCreated" | "futureAction" {
+  return result.proposal ? "proposalBridgeCreated" : "futureAction";
+}
+
+export function graphStateAfterConfirm(): L3GraphReadState {
+  return "staleAfterConfirm";
 }
 
 export function graphStateFromRead(data: L3GraphReadModel): L3GraphReadState {
@@ -474,4 +773,8 @@ export function graphStateFromRead(data: L3GraphReadModel): L3GraphReadState {
 
 export function isRecord(value: Json): value is Record<string, Json> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isNormalizedL3Error(value: unknown): value is NormalizedL3Error {
+  return value !== null && typeof value === "object" && "kind" in value && "retryHint" in value && "status" in value;
 }
