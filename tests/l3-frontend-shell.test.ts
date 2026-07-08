@@ -213,7 +213,7 @@ describe("Phase 4B L3 frontend shell", () => {
       startOffset: 2,
       endOffset: 7,
       confidence: 0.75,
-      evidence: { method: "manual", note: "manual pick", slug: "vivid" },
+      evidence: { method: "manual", source: "manual", note: "manual pick", slug: "vivid" },
     });
 
     expect(buildManualContextLinkCreateInput({
@@ -231,6 +231,64 @@ describe("Phase 4B L3 frontend shell", () => {
       targetType: "l2_item",
       targetRef: { field: "corpus", contentId: "l2-1" },
       provenance: { source: "manual" },
+    });
+  });
+
+  it("forces Manual Editor audit markers even when advanced JSON tries to override them", () => {
+    expect(buildManualSourceCreateInput({
+      sourceType: "manual",
+      title: "Manual source",
+      wordbookId: "",
+      author: "",
+      url: "",
+      language: "en",
+      metadataJson: "{\"provenance\":{\"source\":\"external_tool\",\"note\":\"kept\"}}",
+    }).metadata).toEqual({
+      provenance: { source: "manual", note: "kept" },
+    });
+
+    expect(buildManualContextCreateInput({
+      sourceId: "src-1",
+      contextType: "sentence",
+      text: "A vivid sentence.",
+      normalizedText: "",
+      language: "en",
+      positionJson: "{}",
+      metadataJson: "{\"provenance\":{\"source\":\"agent\",\"batch\":\"b1\"}}",
+    }).metadata).toEqual({
+      provenance: { source: "manual", batch: "b1" },
+    });
+
+    expect(buildManualOccurrenceCreateInput({
+      contextId: "ctx-1",
+      wordId: "",
+      slug: "vivid",
+      surface: "vivid",
+      contextText: "",
+      lemma: "",
+      startOffset: "",
+      endOffset: "",
+      confidence: "",
+      evidenceJson: "{\"method\":\"llm\",\"source\":\"agent\",\"note\":\"kept\"}",
+    }).evidence).toEqual({
+      method: "manual",
+      source: "manual",
+      note: "kept",
+      slug: "vivid",
+    });
+
+    expect(buildManualContextLinkCreateInput({
+      contextId: "ctx-1",
+      wordId: "",
+      linkType: "manual_link",
+      targetType: "context",
+      targetId: "ctx-2",
+      targetRefJson: "{}",
+      confidence: "",
+      provenanceJson: "{\"source\":\"import\",\"note\":\"kept\"}",
+    }).provenance).toEqual({
+      source: "manual",
+      note: "kept",
     });
   });
 
@@ -266,6 +324,7 @@ describe("Phase 4B L3 frontend shell", () => {
   it("models manual create stale semantics without touching proposal, import, or recommendation state", () => {
     expect(canSubmitManualCreate("editing")).toBe(true);
     expect(canSubmitManualCreate("submitting")).toBe(false);
+    expect(canSubmitManualCreate("created")).toBe(false);
     expect(markActiveReadStaleAfterManualCreate("manual_context_created_active_l3")).toEqual({
       state: "staleAfterConfirm",
       reason: "manual_context_created_active_l3",
@@ -280,6 +339,32 @@ describe("Phase 4B L3 frontend shell", () => {
       { target: "source", sourceId: "src-1" },
       { target: "context", contextId: "ctx-1" },
       { target: "word", slug: "vivid", wordbookId: "wb-1" },
+      { target: "graph", query: { sourceId: "src-1" } },
+    ]);
+    expect(manualCreateSuccessActions({
+      sourceId: "src-1",
+      contextId: "ctx-1",
+      slug: null,
+      wordbookId: "wb-1",
+      linkTarget: { targetType: "context", targetId: "ctx-2" },
+    }).map((action) => action.intent)).toEqual([
+      { target: "source", sourceId: "src-1" },
+      { target: "context", contextId: "ctx-1" },
+      { target: "context", contextId: "ctx-2" },
+      null,
+      { target: "graph", query: { sourceId: "src-1" } },
+    ]);
+    expect(manualCreateSuccessActions({
+      sourceId: "src-1",
+      contextId: "ctx-1",
+      slug: null,
+      wordbookId: "wb-1",
+      linkTarget: { targetType: "word", targetId: "word-2", targetRef: { slug: "lucid", wordbookId: "wb-1" } },
+    }).map((action) => action.intent)).toEqual([
+      { target: "source", sourceId: "src-1" },
+      { target: "context", contextId: "ctx-1" },
+      { target: "word", slug: "lucid", wordbookId: "wb-1" },
+      null,
       { target: "graph", query: { sourceId: "src-1" } },
     ]);
   });

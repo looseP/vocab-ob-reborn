@@ -66,6 +66,15 @@ export function L3ManualEditorPage({ client, onManualCreated, onNavigate }: L3Ma
     contextId: createdId(context) ?? occurrence?.context_id ?? link?.context_id ?? null,
     slug: occurrenceForm.slug.trim() || null,
     wordbookId: sourceForm.wordbookId.trim() || source?.wordbook_id || null,
+    linkTarget: link
+      ? {
+        targetType: link.target_type,
+        targetId: link.target_id,
+        targetRef: link.target_ref && typeof link.target_ref === "object" && !Array.isArray(link.target_ref)
+          ? link.target_ref as Record<string, unknown>
+          : {},
+      }
+      : null,
   });
   const surfaceMatches = findExactSurfaceMatches(occurrenceForm.contextText, occurrenceForm.surface);
 
