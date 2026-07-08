@@ -197,6 +197,14 @@ mutation scope.
   extraction, import/recommendation expansion, proposal confirm changes, graph
   editing, MCP, LLM, dictionary, or L1/L2/FSRS behavior.
 
+## Phase 5C Edit/Delete Contract
+
+- Phase 5C is design-only and adds no frontend implementation.
+- The recommended next slice is a Manual Editor delete-by-id panel for
+  occurrence and context link rows only.
+- Source/context edit/delete, context text edit, graph inline editing, bulk
+  edit/delete, and automated edit/delete remain deferred.
+
 ## Continue After Phase 4I
 
 - Phase 5B adds the centralized additive-create Manual Editor page after the

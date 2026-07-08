@@ -3,6 +3,19 @@
 > Scope: Phase 5A design contract for a future Phase 5B frontend Manual Editor.
 > This document does not implement UI or add dependencies.
 
+## Phase 5C Edit/Delete Note
+
+Phase 5C defines future edit/delete behavior without implementing UI. The
+recommended Phase 5C.1 frontend slice is a centralized Manual Editor
+delete-by-id panel for occurrence and context link rows only.
+
+The frontend must keep Graph, Context Detail, Word Space, and Source Space
+read-only. Delete must require an explicit id and confirmation, preserve input
+on failure, disable duplicate submit while pending, and mark active read
+surfaces stale only after success. Source/context delete, source/context edit,
+context text edit, graph canvas editing, bulk edit/delete, and automated
+agent/import/recommendation edit/delete are deferred.
+
 The Manual Editor is the first planned active L3 create surface in the
 frontend. It must be visually and behaviorally distinct from the read-only
 Context, Word Space, Source Space, and Graph pages sealed in Phase 4I.

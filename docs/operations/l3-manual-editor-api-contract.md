@@ -3,6 +3,21 @@
 > Scope: Phase 5A design contract for future Phase 5B manual active create
 > commands. This document does not introduce new endpoints or migrations.
 
+## Phase 5C Edit/Delete Note
+
+Phase 5C defines the future active edit/delete contract in
+`docs/operations/l3-manual-editor-edit-delete-contract.md`. It is design-only:
+no PATCH/DELETE endpoint is implemented in Phase 5C.
+
+The recommended Phase 5C.1 implementation slice is delete-only:
+
+- `DELETE /api/l3/context-links/:id`
+- `DELETE /api/l3/occurrences/:id`
+
+Source edit/delete, context edit/delete, context text edit, occurrence semantic
+edit, context-link target edit, graph inline editing, bulk edit/delete, and
+agent/MCP/LLM/import/recommendation direct edit/delete remain deferred.
+
 Manual editor commands are confirmed owner/manual active writes. They reuse the
 existing Phase 3A active create routes:
 

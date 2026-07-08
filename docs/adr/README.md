@@ -11,6 +11,7 @@
 | [0011](./0011-l3-recommendation-proposal-builder.md) | L3 recommendation proposal builder | Phase 3E |
 | [0012](./0012-frontend-host-decision.md) | Frontend host decision and minimal L3 shell | Phase 4B |
 | [0013](./0013-l3-manual-editor-contract.md) | L3 manual editor design contract | Phase 5A |
+| [0014](./0014-l3-active-edit-delete-contract.md) | L3 active edit/delete design contract | Phase 5C |
 
 ## Current Closed Baseline
 
@@ -122,6 +123,12 @@ L1 vocabulary review package.
   Phase 5A is documentation-only: no production code, endpoint, schema,
   migration, dependency, graph editing, edit/delete behavior, or L1/L2/FSRS
   behavior changes.
+- Phase 5C defines the active L3 edit/delete contract before implementation.
+  It recommends a narrow Phase 5C.1 delete-only MVP for occurrence and context
+  link rows, defers source/context edit/delete and all risky semantic edits,
+  keeps proposal/import/recommendation semantics unchanged, and adds no
+  production code, endpoint, schema, migration, dependency, graph editing,
+  frontend UI, or L1/L2/FSRS behavior changes.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they
