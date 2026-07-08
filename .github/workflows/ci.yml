@@ -8,7 +8,7 @@ on:
 
 jobs:
   verify:
-    name: Typecheck + Test
+    name: Typecheck + Architecture + Test
     runs-on: ubuntu-latest
 
     env:
@@ -42,6 +42,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Architecture check
+        run: npm run arch:check
 
       - name: Unit tests
         run: npm run test

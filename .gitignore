@@ -5,8 +5,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Drizzle generated artifacts (regenerated via drizzle-kit pull)
-drizzle/
+# Drizzle generated artifacts
+# Note: migration SQL files ARE tracked (schema evolution history).
+# Only the meta/ snapshots and journal are ignored if they cause churn,
+# but for now we track the whole drizzle/ directory.
+# (was: drizzle/ — changed to track migrations for team collaboration)
 
 # Test coverage
 coverage/

@@ -12,30 +12,13 @@
  */
 
 import type { PoolClient } from "pg";
-import { BaseRepository } from "./repositories/base";
-import { WordRepository } from "./repositories/word.repository";
-import { ReviewRepository } from "./repositories/review.repository";
-import { NoteRepository } from "./repositories/note.repository";
-import { WordbookRepository } from "./repositories/wordbook.repository";
-import { HighlightRepository } from "./repositories/highlight.repository";
-import { AnnotationRepository } from "./repositories/annotation.repository";
-import { SessionRepository } from "./repositories/session.repository";
-import { StatsRepository } from "./repositories/stats.repository";
 
-export function createRepositories(tx?: PoolClient) {
-  return {
-    words: new WordRepository(tx),
-    reviews: new ReviewRepository(tx),
-    notes: new NoteRepository(tx),
-    wordbooks: new WordbookRepository(tx),
-    highlights: new HighlightRepository(tx),
-    annotations: new AnnotationRepository(tx),
-    sessions: new SessionRepository(tx),
-    stats: new StatsRepository(tx),
-  };
-}
-
-export type Repositories = ReturnType<typeof createRepositories>;
+// M-NEW-3 fix: createRepositories lives in repositories/factory.ts to avoid
+// circular dependency (index.ts → services → index.ts). Re-export here for
+// public API convenience.
+export { createRepositories } from "./repositories/factory";
+export type { Repositories } from "./repositories/factory";
+export type { IRepositories } from "./repositories/interfaces";
 
 // ── Repository exports ──────────────────────────────────────────────────
 export { BaseRepository } from "./repositories/base";
@@ -47,6 +30,8 @@ export { HighlightRepository } from "./repositories/highlight.repository";
 export { AnnotationRepository } from "./repositories/annotation.repository";
 export { SessionRepository } from "./repositories/session.repository";
 export { StatsRepository } from "./repositories/stats.repository";
+export { L3ContextRepository } from "./repositories/l3-context.repository";
+export { L3ProposalRepository } from "./repositories/l3-proposal.repository";
 
 // ── DB layer exports ────────────────────────────────────────────────────
 export { withTransaction } from "./db/transaction";
@@ -88,3 +73,6 @@ export { ReviewService, type FsrsAdapterFn } from "./services/review.service";
 export { NoteService } from "./services/note.service";
 export { WordbookService } from "./services/wordbook.service";
 export { StatsService } from "./services/stats.service";
+export { L3ContextService } from "./services/l3-context.service";
+export { L3ProposalService } from "./services/l3-proposal.service";
+export { L3ReadService } from "./services/l3-read.service";

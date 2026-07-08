@@ -8,13 +8,26 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "test:integration": "cross-env TEST_DATABASE_URL=postgresql://vocab:vocab@localhost:5434/vocab vitest run tests/review-concurrency.test.ts --reporter=verbose",
-    "verify": "npm run typecheck && npm run test",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:push": "drizzle-kit push --config drizzle.config.ts",
+    "db:studio": "drizzle-kit studio --config drizzle.config.ts",
+    "db:script:backfill-hashes": "tsx scripts/backfill-content-hash.ts",
+    "dev": "tsx watch src/server.ts",
+    "arch:check": "depcruise src --config .dependency-cruiser.cjs",
+    "arch:graph": "depcruise src --config .dependency-cruiser.cjs --output-type dot | dot -T svg > arch.svg",
+    "verify": "npm run typecheck && npm run arch:check && npm run test",
     "verify:check": "npm run typecheck && npm run test",
     "prepare": "husky"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@hono/node-server": "^2.0.8",
     "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.28",
+    "openai": "^6.45.0",
     "pg": "^8.20.0",
+    "ts-fsrs": "^5.4.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -22,6 +35,7 @@
     "@types/pg": "^8.20.0",
     "@vitest/coverage-v8": "^4.1.5",
     "cross-env": "^7.0.3",
+    "dependency-cruiser": "^18.0.0",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "husky": "^9.1.7",
@@ -32,7 +46,7 @@
   },
   "lint-staged": {
     "*.{ts,tsx}": [
-      "tsc --noEmit"
+      "bash -c 'tsc --noEmit -p tsconfig.json'"
     ]
   }
 }

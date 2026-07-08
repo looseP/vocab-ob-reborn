@@ -61,6 +61,8 @@ export const words = pgTable("words", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: text().notNull(),
 	contentHash: text("content_hash").notNull(),
+	l1ContentHash: text("l1_content_hash"),
+	l2ContentHash: text("l2_content_hash"),
 	sourcePath: text("source_path").notNull(),
 	title: text().notNull(),
 	lemma: text().notNull(),
@@ -133,6 +135,9 @@ export const userWordProgress = pgTable("user_word_progress", {
 	goodCount: integer("good_count").default(0).notNull(),
 	easyCount: integer("easy_count").default(0).notNull(),
 	contentHashSnapshot: text("content_hash_snapshot"),
+	l1ContentHashSnapshot: text("l1_content_hash_snapshot"),
+	recentRatings: jsonb("recent_ratings").default([]).notNull(),
+	l1WeakSignal: boolean("l1_weak_signal").default(false).notNull(),
 	schedulerPayload: jsonb("scheduler_payload").default({}).notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
@@ -345,6 +350,7 @@ export const wordbooks = pgTable("wordbooks", {
 }, (table) => [
 	uniqueIndex("idx_wordbooks_user_default").using("btree", table.userId.asc().nullsLast().op("bool_ops"), table.isDefault.asc().nullsLast().op("bool_ops")).where(sql`(is_default = true)`),
 	index("idx_wordbooks_user_id").using("btree", table.userId.asc().nullsLast().op("uuid_ops")),
+	unique("wordbooks_id_user_id_unique").on(table.id, table.userId),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [profiles.id],
@@ -401,11 +407,13 @@ export const reviewLogs = pgTable("review_logs", {
 	progressId: uuid("progress_id"),
 	wordbookId: uuid("wordbook_id").notNull(),
 	idempotencyKey: text("idempotency_key"),
+	track: text("track").default('l1').notNull(),
 }, (table) => [
 	uniqueIndex("idx_review_logs_idempotency").using("btree", table.idempotencyKey.asc().nullsLast().op("text_ops")).where(sql`(idempotency_key IS NOT NULL)`),
 	index("idx_review_logs_progress_undone").using("btree", table.progressId.asc().nullsLast().op("timestamptz_ops"), table.reviewedAt.desc().nullsFirst().op("uuid_ops")).where(sql`(undone = false)`),
 	index("idx_review_logs_progress_undone_count").using("btree", table.progressId.asc().nullsLast().op("uuid_ops")).where(sql`((undone = false) AND (progress_id IS NOT NULL))`),
 	index("idx_review_logs_user_reviewed").using("btree", table.userId.asc().nullsLast().op("timestamptz_ops"), table.reviewedAt.desc().nullsFirst().op("uuid_ops")),
+	index("idx_review_logs_user_track_reviewed").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.track.asc().nullsLast().op("text_ops"), table.reviewedAt.desc().nullsFirst().op("timestamptz_ops")),
 	index("idx_review_logs_user_undone_reviewed").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.undone.asc().nullsLast().op("timestamptz_ops"), table.reviewedAt.desc().nullsFirst().op("timestamptz_ops")),
 	index("idx_review_logs_word").using("btree", table.wordId.asc().nullsLast().op("uuid_ops")),
 	index("idx_review_logs_wordbook").using("btree", table.wordbookId.asc().nullsLast().op("uuid_ops"), table.reviewedAt.desc().nullsFirst().op("timestamptz_ops")),
@@ -563,4 +571,329 @@ export const dailyForecastSnapshots = pgTable("daily_forecast_snapshots", {
 	primaryKey({ columns: [table.userId, table.date], name: "daily_forecast_snapshots_pkey"}),
 	pgPolicy("daily_forecast_snapshots_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)`  }),
 	check("daily_forecast_snapshots_forecast_count_check", sql`forecast_count >= 0`),
+]);
+
+export const userWordL2Progress = pgTable("user_word_l2_progress", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	wordId: uuid("word_id").notNull().references(() => words.id, { onDelete: "cascade" }),
+	// L2 progress is wordbook-scoped: a user reviewing the same word in two
+	// different wordbooks must get independent L2 progress rows, matching the
+	// (user_id, wordbook_id, word_id) scoping used across the rest of the V2
+	// review track. Without this column, L2 progress was incorrectly shared
+	// across wordbooks for the same user+word.
+	wordbookId: uuid("wordbook_id").notNull().references(() => wordbooks.id, { onDelete: "cascade" }),
+	l2Stability: numeric("l2_stability", { precision: 10, scale: 4 }),
+	l2Difficulty: numeric("l2_difficulty", { precision: 10, scale: 4 }),
+	l2Retrievability: numeric("l2_retrievability", { precision: 8, scale: 6 }),
+	l2State: text("l2_state").default('review').notNull(),
+	l2DesiredRetention: numeric("l2_desired_retention", { precision: 4, scale: 3 }).default('0.900').notNull(),
+	l2DueAt: timestamp("l2_due_at", { withTimezone: true, mode: 'string' }),
+	l2LastReviewedAt: timestamp("l2_last_reviewed_at", { withTimezone: true, mode: 'string' }),
+	l2LastRating: text("l2_last_rating"),
+	l2ReviewCount: integer("l2_review_count").default(0).notNull(),
+	l2LapseCount: integer("l2_lapse_count").default(0).notNull(),
+	l2IntervalDays: integer("l2_interval_days"),
+	l2SchedulerPayload: jsonb("l2_scheduler_payload").default({}).notNull(),
+	l2AgainCount: integer("l2_again_count").default(0).notNull(),
+	l2HardCount: integer("l2_hard_count").default(0).notNull(),
+	l2GoodCount: integer("l2_good_count").default(0).notNull(),
+	l2EasyCount: integer("l2_easy_count").default(0).notNull(),
+	l2ContentHashSnapshot: text("l2_content_hash_snapshot"),
+	recentRatings: jsonb("recent_ratings").default([]).notNull(),
+	l2Paused: boolean("l2_paused").default(false).notNull(),
+	l2PausedAt: timestamp("l2_paused_at", { withTimezone: true, mode: 'string' }),
+	l2PausedReason: text("l2_paused_reason"),
+	l2InheritedFromL1: boolean("l2_inherited_from_l1").default(false),
+	l2WeightsSource: text("l2_weights_source").default('inherited'),
+	l2PredictedRetrievability: numeric("l2_predicted_retrievability", { precision: 8, scale: 6 }),
+	// ⚠️ L3 BOUNDARY — these columns are NOT the L3 context-space main model.
+	// They are lightweight flags carried over from the Phase-0 self-growing draft and are
+	// currently UNUSED by any business code (no service/repo/route reads or writes them).
+	// The real L3 (agent self-growing knowledge chain) will live in an INDEPENDENT table
+	// family (l3_sources / l3_contexts / l3_proposals) built in Phase 3 — see ADR-0005.
+	// L3 does NOT participate in FSRS scheduling (ADR-0004 §6.2). Do not treat these
+	// fields as the L3 source of truth; do not couple L3 logic to this L2 progress table.
+	// Kept (not dropped) only to avoid migration churn; will be reconsidered when L3 lands.
+	l3Pending: boolean("l3_pending").default(false),
+	l3SelfAssessments: jsonb("l3_self_assessments").default([]).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	uniqueIndex("idx_l2_progress_user_wordbook_word").on(table.userId, table.wordbookId, table.wordId),
+	index("idx_l2_progress_wordbook_due").on(table.wordbookId, table.userId, table.l2DueAt).where(sql`(l2_paused = false)`),
+	index("idx_l2_progress_word").on(table.wordId),
+	check("l2_state_check", sql`l2_state = ANY (ARRAY['new'::text, 'learning'::text, 'review'::text, 'relearning'::text, 'suspended'::text])`),
+	check("l2_retention_check", sql`l2_desired_retention >= 0.900 AND l2_desired_retention <= 0.990`),
+	check("l2_paused_reason_check", sql`l2_paused_reason IS NULL OR l2_paused_reason = ANY (ARRAY['l1_cascade_failure'::text, 'wordbook_focus'::text, 'manual'::text])`),
+]);
+
+export const llmUsage = pgTable("llm_usage", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	provider: text("provider").notNull(),
+	model: text("model").notNull(),
+	promptTokens: integer("prompt_tokens").notNull(),
+	completionTokens: integer("completion_tokens").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_llm_usage_created").on(table.createdAt),
+]);
+
+export const wordL2Content = pgTable("word_l2_content", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	wordId: uuid("word_id").notNull().references(() => words.id, { onDelete: "cascade" }),
+	field: text("field").notNull(),
+	content: jsonb("content").notNull(),
+	source: text("source").notNull(),
+	sourceRef: uuid("source_ref"),
+	approvedBy: text("approved_by").default("user"),
+	approvedAt: timestamp("approved_at", { withTimezone: true, mode: 'string' }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	isActive: boolean("is_active").default(true).notNull(),
+}, (table) => [
+	index("idx_l2_content_word_field").on(table.wordId, table.field),
+	index("idx_l2_content_source").on(table.source),
+]);
+
+export const l3Sources = pgTable("l3_sources", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	wordbookId: uuid("wordbook_id"),
+	sourceType: text("source_type").notNull(),
+	title: text("title").notNull(),
+	author: text("author"),
+	url: text("url"),
+	language: text("language"),
+	metadata: jsonb("metadata").default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_sources_user_created").on(table.userId, table.createdAt),
+	unique("l3_sources_id_user_id_unique").on(table.id, table.userId),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "l3_sources_wordbook_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_sources_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_sources_source_type_check", sql`source_type = ANY (ARRAY['article'::text, 'book'::text, 'video'::text, 'audio'::text, 'chat'::text, 'manual'::text, 'web'::text, 'other'::text])`),
+]);
+
+// L3 owner isolation: composite foreign keys below ensure scoped rows cannot
+// point at parent rows owned by a different user, even outside service code.
+export const l3Contexts = pgTable("l3_contexts", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	sourceId: uuid("source_id").notNull().references(() => l3Sources.id, { onDelete: "cascade" }),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	contextType: text("context_type").notNull(),
+	text: text("text").notNull(),
+	normalizedText: text("normalized_text"),
+	language: text("language"),
+	position: jsonb("position").default({}).notNull(),
+	metadata: jsonb("metadata").default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_contexts_source_created").on(table.sourceId, table.createdAt),
+	unique("l3_contexts_id_user_id_unique").on(table.id, table.userId),
+	foreignKey({
+			columns: [table.sourceId, table.userId],
+			foreignColumns: [l3Sources.id, l3Sources.userId],
+			name: "l3_contexts_source_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_contexts_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_contexts_context_type_check", sql`context_type = ANY (ARRAY['sentence'::text, 'paragraph'::text, 'excerpt'::text, 'dialogue'::text, 'note'::text])`),
+]);
+
+export const l3Occurrences = pgTable("l3_occurrences", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	contextId: uuid("context_id").notNull().references(() => l3Contexts.id, { onDelete: "cascade" }),
+	wordId: uuid("word_id").notNull().references(() => words.id, { onDelete: "cascade" }),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	surface: text("surface").notNull(),
+	lemma: text("lemma"),
+	startOffset: integer("start_offset"),
+	endOffset: integer("end_offset"),
+	confidence: numeric("confidence", { precision: 5, scale: 4 }),
+	evidence: jsonb("evidence").default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_occurrences_word_created").on(table.wordId, table.createdAt),
+	index("idx_l3_occurrences_context").on(table.contextId),
+	foreignKey({
+			columns: [table.contextId, table.userId],
+			foreignColumns: [l3Contexts.id, l3Contexts.userId],
+			name: "l3_occurrences_context_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_occurrences_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_occurrences_offset_check", sql`(start_offset IS NULL AND end_offset IS NULL) OR (start_offset IS NOT NULL AND end_offset IS NOT NULL AND start_offset >= 0 AND end_offset >= start_offset)`),
+	check("l3_occurrences_confidence_check", sql`confidence IS NULL OR (confidence >= 0 AND confidence <= 1)`),
+]);
+
+export const l3ContextLinks = pgTable("l3_context_links", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	contextId: uuid("context_id").references(() => l3Contexts.id, { onDelete: "cascade" }),
+	wordId: uuid("word_id").references(() => words.id, { onDelete: "cascade" }),
+	linkType: text("link_type").notNull(),
+	targetType: text("target_type").notNull(),
+	targetId: text("target_id"),
+	targetRef: jsonb("target_ref").default({}).notNull(),
+	confidence: numeric("confidence", { precision: 5, scale: 4 }),
+	provenance: jsonb("provenance").default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_context_links_word_type").on(table.wordId, table.linkType),
+	index("idx_l3_context_links_context_type").on(table.contextId, table.linkType),
+	foreignKey({
+			columns: [table.contextId, table.userId],
+			foreignColumns: [l3Contexts.id, l3Contexts.userId],
+			name: "l3_context_links_context_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_context_links_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_context_links_link_type_check", sql`link_type = ANY (ARRAY['supports'::text, 'illustrates'::text, 'contrasts'::text, 'collocates_with'::text, 'synonym_of'::text, 'antonym_of'::text, 'derived_from'::text, 'topic_related'::text, 'manual_link'::text])`),
+	check("l3_context_links_target_type_check", sql`target_type = ANY (ARRAY['word'::text, 'l2_item'::text, 'context'::text, 'source'::text, 'topic'::text, 'external'::text])`),
+	check("l3_context_links_confidence_check", sql`confidence IS NULL OR (confidence >= 0 AND confidence <= 1)`),
+]);
+
+export const l3ImportJobs = pgTable("l3_import_jobs", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	sourceId: uuid("source_id").references(() => l3Sources.id, { onDelete: "set null" }),
+	status: text("status").notNull(),
+	inputHash: text("input_hash").notNull(),
+	inputSummary: text("input_summary"),
+	stats: jsonb("stats").default({}).notNull(),
+	error: text("error"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_import_jobs_user_status").on(table.userId, table.status),
+	pgPolicy("l3_import_jobs_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_import_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'completed'::text, 'failed'::text])`),
+]);
+
+export const l3Proposals = pgTable("l3_proposals", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	wordbookId: uuid("wordbook_id"),
+	sourceType: text("source_type").notNull(),
+	status: text("status").default("pending").notNull(),
+	title: text("title"),
+	summary: text("summary"),
+	inputHash: text("input_hash"),
+	proposedBy: text("proposed_by"),
+	provenance: jsonb("provenance").default({}).notNull(),
+	reviewNote: text("review_note"),
+	confirmedAt: timestamp("confirmed_at", { withTimezone: true, mode: "string" }),
+	rejectedAt: timestamp("rejected_at", { withTimezone: true, mode: "string" }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_proposals_user_status_created").on(table.userId, table.status, table.createdAt),
+	unique("l3_proposals_id_user_id_unique").on(table.id, table.userId),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "l3_proposals_wordbook_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_proposals_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_proposals_source_type_check", sql`source_type = ANY (ARRAY['agent'::text, 'import'::text, 'external_tool'::text, 'manual_draft'::text, 'mcp_future'::text, 'other'::text])`),
+	check("l3_proposals_status_check", sql`status = ANY (ARRAY['pending'::text, 'confirmed'::text, 'rejected'::text, 'canceled'::text])`),
+]);
+
+export const l3ProposalItems = pgTable("l3_proposal_items", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	proposalId: uuid("proposal_id").notNull().references(() => l3Proposals.id, { onDelete: "cascade" }),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	itemType: text("item_type").notNull(),
+	ordinal: integer("ordinal").notNull(),
+	payload: jsonb("payload").notNull(),
+	status: text("status").default("pending").notNull(),
+	validationErrors: jsonb("validation_errors").default([]).notNull(),
+	activeEntityType: text("active_entity_type"),
+	activeEntityId: uuid("active_entity_id"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_proposal_items_proposal_ordinal").on(table.proposalId, table.ordinal),
+	index("idx_l3_proposal_items_user_status").on(table.userId, table.status),
+	unique("l3_proposal_items_proposal_ordinal_unique").on(table.proposalId, table.ordinal),
+	foreignKey({
+			columns: [table.proposalId, table.userId],
+			foreignColumns: [l3Proposals.id, l3Proposals.userId],
+			name: "l3_proposal_items_proposal_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_proposal_items_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_proposal_items_item_type_check", sql`item_type = ANY (ARRAY['source'::text, 'context'::text, 'occurrence'::text, 'context_link'::text])`),
+	check("l3_proposal_items_status_check", sql`status = ANY (ARRAY['pending'::text, 'confirmed'::text, 'rejected'::text])`),
+	check("l3_proposal_items_active_entity_type_check", sql`active_entity_type IS NULL OR active_entity_type = ANY (ARRAY['source'::text, 'context'::text, 'occurrence'::text, 'context_link'::text])`),
+]);
+
+export const l3RecommendationRuns = pgTable("l3_recommendation_runs", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	wordbookId: uuid("wordbook_id"),
+	mode: text("mode").notNull(),
+	status: text("status").default("completed").notNull(),
+	inputHash: text("input_hash"),
+	stats: jsonb("stats").default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	completedAt: timestamp("completed_at", { withTimezone: true, mode: "string" }).defaultNow(),
+}, (table) => [
+	index("idx_l3_recommendation_runs_user_created").on(table.userId, table.createdAt),
+	unique("l3_recommendation_runs_id_user_id_unique").on(table.id, table.userId),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "l3_recommendation_runs_wordbook_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_recommendation_runs_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_recommendation_runs_mode_check", sql`mode = ANY (ARRAY['review_pack'::text, 'learn_next'::text, 'gap_scan'::text, 'link_suggestions'::text])`),
+	check("l3_recommendation_runs_status_check", sql`status = ANY (ARRAY['completed'::text, 'failed'::text])`),
+]);
+
+export const l3RecommendationItems = pgTable("l3_recommendation_items", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	runId: uuid("run_id").notNull().references(() => l3RecommendationRuns.id, { onDelete: "cascade" }),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	wordbookId: uuid("wordbook_id"),
+	recommendationType: text("recommendation_type").notNull(),
+	status: text("status").default("pending").notNull(),
+	title: text("title").notNull(),
+	summary: text("summary").notNull(),
+	priorityScore: numeric("priority_score", { precision: 8, scale: 4 }).notNull(),
+	confidence: numeric("confidence", { precision: 5, scale: 4 }).notNull(),
+	reasonCodes: jsonb("reason_codes").default([]).notNull(),
+	evidence: jsonb("evidence").default([]).notNull(),
+	payload: jsonb("payload").default({}).notNull(),
+	acceptedProposalId: uuid("accepted_proposal_id"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	expiresAt: timestamp("expires_at", { withTimezone: true, mode: "string" }),
+	acceptedAt: timestamp("accepted_at", { withTimezone: true, mode: "string" }),
+	rejectedAt: timestamp("rejected_at", { withTimezone: true, mode: "string" }),
+	dismissedAt: timestamp("dismissed_at", { withTimezone: true, mode: "string" }),
+}, (table) => [
+	index("idx_l3_recommendation_items_user_status_created").on(table.userId, table.status, table.createdAt),
+	index("idx_l3_recommendation_items_run").on(table.runId),
+	foreignKey({
+			columns: [table.runId, table.userId],
+			foreignColumns: [l3RecommendationRuns.id, l3RecommendationRuns.userId],
+			name: "l3_recommendation_items_run_owner_fk"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "l3_recommendation_items_wordbook_owner_fk"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.acceptedProposalId, table.userId],
+			foreignColumns: [l3Proposals.id, l3Proposals.userId],
+			name: "l3_recommendation_items_proposal_owner_fk"
+		}).onDelete("no action"),
+	pgPolicy("l3_recommendation_items_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_recommendation_items_type_check", sql`recommendation_type = ANY (ARRAY['review_pack'::text, 'learn_next'::text, 'link_gap'::text, 'context_gap'::text, 'l2_gap'::text, 'weak_word'::text, 'related_word'::text])`),
+	check("l3_recommendation_items_status_check", sql`status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'dismissed'::text, 'expired'::text])`),
+	check("l3_recommendation_items_priority_check", sql`priority_score >= 0`),
+	check("l3_recommendation_items_confidence_check", sql`confidence >= 0 AND confidence <= 1`),
 ]);

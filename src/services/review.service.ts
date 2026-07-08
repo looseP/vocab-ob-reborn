@@ -15,8 +15,8 @@
 
 import type { PoolClient } from "pg";
 import { withTransaction } from "../db/transaction";
-import { createRepositories } from "../index";
-import type { Repositories } from "../index";
+import { createRepositories } from "../repositories/factory";
+import type { Repositories } from "../repositories/factory";
 import { ReviewCard as ReviewCardEntity } from "../domain/review.entity";
 import type { SubmitAnswerInput, SubmitAnswerResult, SkipReviewInput, SuspendReviewInput, UndoReviewInput } from "../schemas/service";
 import {
@@ -24,6 +24,36 @@ import {
   BusinessRuleError,
 } from "../errors";
 import type { Json, ReviewRating, ReviewState, UserWordProgressRow } from "../domain";
+import type { ProgressWithContentHash } from "../repositories/interfaces";
+import { logger } from "../observability/logger";
+
+/**
+ * Snapshot of L1 progress handed to the L2 transition check.
+ * Matches L2TransitionService.checkAndTransition's L1ProgressSnapshot.
+ * wordbook_id is mandatory: L2 progress is wordbook-scoped in V2.
+ */
+export interface ReviewL1Snapshot {
+  user_id: string;
+  wordbook_id: string;
+  word_id: string;
+  stability: number | string;
+  difficulty: number | string | null;
+  review_count: number;
+  last_rating: string | null;
+}
+
+/**
+ * Post-save L1 snapshot handed to the L1→L2 cross-track cascade (Phase 2C).
+ * `recent_ratings` is the array AFTER the just-submitted rating was appended
+ * and sliced to the last 5 — i.e. exactly what saveAnswer persists. The
+ * cascade reads the trailing window to decide pause vs. resume.
+ */
+export interface ReviewL1CascadeSnapshot {
+  user_id: string;
+  wordbook_id: string;
+  word_id: string;
+  recent_ratings: ReviewRating[];
+}
 
 export interface FsrsScheduling {
   difficulty: number | null;
@@ -54,6 +84,21 @@ export interface ReviewServiceDeps {
   fsrsAdapter: FsrsAdapterFn;
   /** Load wordbook-level FSRS weights (returns null if not configured) */
   loadWeights: (wordbookId: string) => Promise<number[] | null>;
+  /**
+   * Optional L2 transition hook. When provided, submitAnswer calls it after
+   * persisting the L1 answer so an L2 progress row can be promoted.
+   * Failures are logged but never roll back the L1 transaction — L2 is a
+   * best-effort second-pass loop and must not endanger L1 durability.
+   */
+  checkAndTransition?: (progress: ReviewL1Snapshot) => Promise<void>;
+  /**
+   * Optional L1→L2 cross-track cascade hook (Phase 2C). When provided,
+   * submitAnswer calls it after the L2 transition check with the post-save
+   * recent_ratings so L2 progress can be paused (L1 collapsing: last 2
+   * again) or resumed (L1 recovering: last 2 good/easy, cascade reason only).
+   * Best-effort: failures are logged and never roll back L1.
+   */
+  checkL1Cascade?: (snapshot: ReviewL1CascadeSnapshot) => Promise<void>;
 }
 
 export class ReviewService {
@@ -114,25 +159,7 @@ export class ReviewService {
       );
 
       // 6. Build previous snapshot for undo
-      const previousSnapshot: Json = {
-        scheduler_payload: progress.scheduler_payload,
-        difficulty: progress.difficulty,
-        due_at: progress.due_at,
-        interval_days: progress.interval_days,
-        lapse_count: progress.lapse_count,
-        last_rating: progress.last_rating,
-        last_reviewed_at: progress.last_reviewed_at,
-        retrievability: progress.retrievability,
-        review_count: progress.review_count,
-        stability: progress.stability,
-        state: progress.state,
-        again_count: progress.again_count,
-        hard_count: progress.hard_count,
-        good_count: progress.good_count,
-        easy_count: progress.easy_count,
-        content_hash_snapshot: progress.content_hash_snapshot,
-      } as Json;
-
+      const previousSnapshot = this.buildPreviousSnapshot(progress);
       const logMetadata: Record<string, unknown> = {
         desired_retention: progress.desired_retention,
         progress_id: progress.id,
@@ -147,18 +174,23 @@ export class ReviewService {
         wordbookId: progress.wordbook_id,
         sessionId: input.sessionId,
         rating: input.rating,
+        contentHash: progress.content_hash,  // M-NEW-4: refresh snapshot
         scheduling,
         idempotencyKey: input.idempotencyKey ?? null,
         previousSnapshot,
         logMetadata,
       });
 
+      // 7.5: L2 transition check (best-effort; failure must NOT roll back L1).
+      await this.tryL2Transition(progress, scheduling, input.rating);
+
+      // 7.6: L1→L2 cross-track cascade (Phase 2C, best-effort; failure must NOT
+      // roll back L1). Pauses L2 when L1 collapses (last 2 again), resumes the
+      // cascade-failure pause when L1 recovers (last 2 good/easy).
+      await this.tryL1Cascade(progress, input.rating);
+
       // 8. Session counter (non-critical, best-effort)
-      try {
-        await repos.sessions.incrementCardsSeen(input.sessionId);
-      } catch {
-        // Best-effort: don't fail the review if session counter fails
-      }
+      await this.tryIncrementSession(repos, input.sessionId);
 
       return {
         ok: true,
@@ -167,6 +199,109 @@ export class ReviewService {
         state: scheduling.state,
       };
     });
+  }
+
+  /**
+   * Build the previous-state snapshot for undo support.
+   * Captures all FSRS-relevant fields before they're overwritten by saveAnswer.
+   */
+  private buildPreviousSnapshot(progress: ProgressWithContentHash): Json {
+    return {
+      scheduler_payload: progress.scheduler_payload,
+      difficulty: progress.difficulty,
+      due_at: progress.due_at,
+      interval_days: progress.interval_days,
+      lapse_count: progress.lapse_count,
+      last_rating: progress.last_rating,
+      last_reviewed_at: progress.last_reviewed_at,
+      retrievability: progress.retrievability,
+      review_count: progress.review_count,
+      stability: progress.stability,
+      state: progress.state,
+      again_count: progress.again_count,
+      hard_count: progress.hard_count,
+      good_count: progress.good_count,
+      easy_count: progress.easy_count,
+      content_hash_snapshot: progress.content_hash_snapshot,
+    } as Json;
+  }
+
+  /**
+   * Best-effort L2 transition check. Fire-and-forget — failures are logged
+   * but never roll back the L1 transaction. The snapshot reflects
+   * post-saveAnswer state: stability/difficulty from FSRS scheduling,
+   * review_count +1, last_rating is the rating just submitted.
+   */
+  private async tryL2Transition(
+    progress: ProgressWithContentHash,
+    scheduling: FsrsScheduling,
+    rating: ReviewRating,
+  ): Promise<void> {
+    if (!this.deps.checkAndTransition) return;
+    try {
+      await this.deps.checkAndTransition({
+        user_id: progress.user_id,
+        wordbook_id: progress.wordbook_id,
+        word_id: progress.word_id,
+        // scheduling.stability/difficulty may be null (e.g. for a card that
+        // has no FSRS history yet). Coerce to 0 / null — L2TransitionService
+        // requires stability ≥ 21, so 0 simply means "no transition".
+        stability: scheduling.stability ?? 0,
+        difficulty: scheduling.difficulty,
+        review_count: progress.review_count + 1,
+        last_rating: rating,
+      });
+    } catch (err) {
+      logger.warn("review", "L2 transition failed", {
+        userId: progress.user_id,
+        wordId: progress.word_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Best-effort L1→L2 cross-track cascade (Phase 2C). Computes the post-save
+   * recent_ratings (pre-save array + the rating just submitted, sliced to the
+   * last 5 — exactly mirroring saveAnswer's SQL) and hands it to the injected
+   * checkL1Cascade hook. Failures are logged but never roll back L1.
+   *
+   * The array is computed in-app rather than re-queried so the cascade runs
+   * outside the L1 transaction without a second round-trip and stays
+   * decoupled from the saveAnswer SQL internals.
+   */
+  private async tryL1Cascade(
+    progress: ProgressWithContentHash,
+    rating: ReviewRating,
+  ): Promise<void> {
+    if (!this.deps.checkL1Cascade) return;
+    try {
+      const postSaveRatings = [...(progress.recent_ratings ?? []), rating].slice(-5);
+      await this.deps.checkL1Cascade({
+        user_id: progress.user_id,
+        wordbook_id: progress.wordbook_id,
+        word_id: progress.word_id,
+        recent_ratings: postSaveRatings,
+      });
+    } catch (err) {
+      logger.warn("review", "L1→L2 cascade failed", {
+        userId: progress.user_id,
+        wordId: progress.word_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Best-effort session counter increment. Failures are silently ignored —
+   * session count is non-critical and should not fail the review.
+   */
+  private async tryIncrementSession(repos: Repositories, sessionId: string): Promise<void> {
+    try {
+      await repos.sessions.incrementCardsSeen(sessionId);
+    } catch {
+      // Best-effort: don't fail the review if session counter fails
+    }
   }
 
   /**
