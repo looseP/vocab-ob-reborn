@@ -31,6 +31,18 @@ proposal review contracts.
   request failure.
 - Confirm success marks graph/read surfaces stale; reject success does not.
 
+## Phase 4C.1 Hardening
+
+- Required import fields are checked locally before the shared client is called.
+- Import preview shows import job status, proposal id/status, parse stats, and
+  compact proposal item summaries.
+- Proposal detail sorts items by ordinal, disables actions while busy, and keeps
+  confirmed/rejected proposals non-actionable.
+- Error feedback renders normalized retry hints, field errors, item errors, and
+  safe details text.
+- Page components still do not contain raw `fetch` calls or direct `/api/l3/`
+  paths.
+
 ## Continue In Phase 4D
 
 - Wire recommendation queue and graph read surfaces.

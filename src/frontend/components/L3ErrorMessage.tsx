@@ -1,4 +1,5 @@
 import type { NormalizedL3Error } from "@/l3/frontend/contract";
+import { formatL3ErrorDetails } from "../viewModels/l3ErrorViewModel";
 
 interface L3ErrorMessageProps {
   error: NormalizedL3Error | null;
@@ -6,6 +7,7 @@ interface L3ErrorMessageProps {
 
 export function L3ErrorMessage({ error }: L3ErrorMessageProps) {
   if (!error) return null;
+  const details = formatL3ErrorDetails(error);
 
   return (
     <div className={`l3-error l3-error-${error.kind}`} role="alert">
@@ -34,6 +36,7 @@ export function L3ErrorMessage({ error }: L3ErrorMessageProps) {
           ))}
         </ul>
       ) : null}
+      {details ? <code>{details}</code> : null}
     </div>
   );
 }

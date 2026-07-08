@@ -431,6 +431,20 @@ Still deferred to later phases:
 - graph read fetching and visualization
 - context/word/source space browsing UI
 
+## Phase 4C.1 Hardening Notes
+
+- Import pages must perform explicit local required-field checks before calling
+  the shared L3 client, even though the browser also has `required` controls.
+- Import preview should show job/proposal status and item summaries, not raw
+  active-L3 success wording.
+- Proposal detail should render items in ordinal order and keep confirm/reject
+  disabled for non-pending proposals or while another action is running.
+- Error UI should surface normalized retry hints, field errors, item errors, and
+  safe details fallback for `409`/`422` cases.
+- Frontend pages must continue to avoid raw `fetch` and direct `/api/l3/`
+  endpoint construction; `src/frontend/api/l3Client.ts` remains the route
+  adapter.
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:

@@ -55,6 +55,11 @@ L1 vocabulary review package.
   existing frontend client and contract helpers, keeps confirm as the only
   active L3 upgrade trigger, and does not add backend endpoints, migrations,
   recommendation UI, graph visualization, or L1/L2/FSRS behavior changes.
+- Phase 4C.1 hardens that loop with explicit import form validation, safer
+  import/proposal item summaries, ordinal item rendering, busy-action disabling,
+  normalized error details fallback, and static API-boundary tests. It remains a
+  frontend-only hardening pass with no backend, migration, recommendation,
+  graph visualization, or L1/L2/FSRS expansion.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

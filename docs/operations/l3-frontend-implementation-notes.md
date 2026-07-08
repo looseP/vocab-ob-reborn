@@ -109,6 +109,25 @@ Phase 4C remains intentionally small:
 - no backend endpoint, service, repository, migration, L1/L2/FSRS, dictionary,
   LLM, MCP, or import parser changes
 
+## Phase 4C.1 Hardening
+
+Phase 4C.1 tightens the first real UI loop without expanding scope:
+
+- raw import form performs explicit local required-field validation before
+  calling the shared client
+- import preview shows import job status plus proposal id/status/title and
+  compact item summaries
+- proposal detail renders items sorted by ordinal and keeps unknown payloads on
+  safe compact previews
+- proposal refresh, selection, validate, confirm, and reject actions are
+  disabled while a command is in flight
+- confirm clears stale validation feedback before showing active entities;
+  reject clears stale active-success output and does not mark graph stale
+- normalized error rendering includes safe details output without leaking
+  `[object Object]`
+- static tests continue to prove frontend pages do not call raw `fetch` or
+  hard-code `/api/l3/` routes
+
 ## Phase 4B Host Decision Result
 
 Decided:

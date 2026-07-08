@@ -11,6 +11,7 @@ import {
   type L3FrontendClient,
   type NormalizedL3Error,
 } from "@/l3/frontend/contract";
+import { hasValidationErrors, sortProposalItems, summarizeProposalItem } from "../viewModels/l3ProposalViewModel";
 
 interface L3ProposalPageProps {
   client: L3FrontendClient;
@@ -30,22 +31,6 @@ function proposalTitle(proposal: L3ProposalRow): string {
   return proposal.title || proposal.summary || proposal.id;
 }
 
-function payloadPreview(item: L3ProposalItemRow): string {
-  if (!item.payload || typeof item.payload !== "object" || Array.isArray(item.payload)) return JSON.stringify(item.payload);
-  const payload = item.payload as Record<string, unknown>;
-  if (item.item_type === "source") return String(payload.title ?? payload.sourceType ?? "source");
-  if (item.item_type === "context") return String(payload.text ?? "context");
-  if (item.item_type === "occurrence") return String(payload.surface ?? payload.slug ?? payload.wordId ?? "occurrence");
-  if (item.item_type === "context_link") return `${String(payload.linkType ?? "link")} -> ${String(payload.targetType ?? "target")}`;
-  return JSON.stringify(payload);
-}
-
-function hasValidationErrors(item: L3ProposalItemRow): boolean {
-  if (!item.validation_errors) return false;
-  if (Array.isArray(item.validation_errors)) return item.validation_errors.length > 0;
-  return typeof item.validation_errors === "object" && Object.keys(item.validation_errors).length > 0;
-}
-
 function formatValidationErrors(item: L3ProposalItemRow): string {
   return JSON.stringify(item.validation_errors);
 }
@@ -61,6 +46,8 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
   const [error, setError] = useState<NormalizedL3Error | null>(null);
 
   const actions = useMemo(() => proposalActionsForStatus(detail?.proposal.status ?? "pending"), [detail?.proposal.status]);
+  const orderedItems = useMemo(() => sortProposalItems(detail?.items ?? []), [detail?.items]);
+  const isBusy = status !== "idle";
 
   const loadProposals = async () => {
     setStatus("loading");
@@ -104,6 +91,7 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
     if (!detail) return;
     setStatus("validating");
     setError(null);
+    setConfirmResult(null);
     try {
       const response = await client.validateProposal(detail.proposal.id);
       applyProposalValidationResult(response);
@@ -120,10 +108,12 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
     if (!detail) return;
     setStatus("confirming");
     setError(null);
+    setConfirmResult(null);
     try {
       const response = await client.confirmProposal(detail.proposal.id);
       applyProposalConfirmSuccess(response);
       setConfirmResult(response);
+      setValidation(null);
       setDetail({ proposal: response.proposal, items: response.items });
       onConfirmed(response);
       await loadProposals();
@@ -138,6 +128,7 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
     if (!detail) return;
     setStatus("rejecting");
     setError(null);
+    setConfirmResult(null);
     try {
       const response = await client.rejectProposal(detail.proposal.id, reviewNote.trim() || null);
       applyProposalRejectSuccess(response);
@@ -165,7 +156,7 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
           <div className="toolbar">
             <label>
               Status
-              <select onChange={(event) => setFilter(event.target.value as ProposalFilter)} value={filter}>
+              <select disabled={isBusy} onChange={(event) => setFilter(event.target.value as ProposalFilter)} value={filter}>
                 <option value="pending">pending</option>
                 <option value="confirmed">confirmed</option>
                 <option value="rejected">rejected</option>
@@ -173,13 +164,14 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
                 <option value="all">all</option>
               </select>
             </label>
-            <button onClick={() => void loadProposals()} type="button">Refresh</button>
+            <button disabled={isBusy} onClick={() => void loadProposals()} type="button">{status === "loading" ? "Refreshing..." : "Refresh"}</button>
           </div>
           <div className="proposal-list">
             {proposals.length === 0 ? <p className="empty-state">No proposals for this filter.</p> : null}
             {proposals.map((proposal) => (
               <button
                 className={proposal.id === detail?.proposal.id ? "proposal-row active" : "proposal-row"}
+                disabled={isBusy}
                 key={proposal.id}
                 onClick={() => void loadDetail(proposal.id)}
                 type="button"
@@ -206,13 +198,13 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
                   <span>{detail.items.length} item(s) / {detail.proposal.source_type}</span>
                 </div>
                 <div className="action-row">
-                  <button disabled={!actions.canValidate || status !== "idle"} onClick={() => void validate()} type="button">
+                  <button disabled={!actions.canValidate || isBusy} onClick={() => void validate()} type="button">
                     {status === "validating" ? "Validating..." : "Validate"}
                   </button>
-                  <button disabled={!actions.canConfirm || status !== "idle"} onClick={() => void confirm()} type="button">
+                  <button disabled={!actions.canConfirm || isBusy} onClick={() => void confirm()} type="button">
                     {status === "confirming" ? "Confirming..." : "Confirm"}
                   </button>
-                  <button disabled={!actions.canReject || status !== "idle"} onClick={() => void reject()} type="button">
+                  <button className="danger-button" disabled={!actions.canReject || isBusy} onClick={() => void reject()} type="button">
                     {status === "rejecting" ? "Rejecting..." : "Reject"}
                   </button>
                 </div>
@@ -253,13 +245,13 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
               ) : null}
 
               <div className="proposal-items">
-                {detail.items.map((item) => (
+                {orderedItems.map((item) => (
                   <article className="proposal-item" key={item.id}>
                     <div>
                       <strong>#{item.ordinal} {item.item_type}</strong>
                       <span>{item.status}{item.active_entity_id ? ` / active ${item.active_entity_type}: ${item.active_entity_id}` : ""}</span>
                     </div>
-                    <p>{payloadPreview(item)}</p>
+                    <p>{summarizeProposalItem(item)}</p>
                     {hasValidationErrors(item) ? <code>{formatValidationErrors(item)}</code> : null}
                   </article>
                 ))}

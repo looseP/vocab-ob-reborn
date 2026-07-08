@@ -4,17 +4,18 @@ import {
   applyImportSuccess,
   isNormalizedL3Error,
   normalizeL3TransportError,
-  parseTargetWordInput,
   type L3FrontendClient,
   type L3ImportFlowState,
   type L3ImportProposalResponse,
   type L3RawTextImportInput,
   type NormalizedL3Error,
 } from "@/l3/frontend/contract";
+import { buildRawTextImportPayload, summarizeImportProposalItem } from "../viewModels/l3ImportViewModel";
 
 interface L3ImportPageProps {
   client: L3FrontendClient;
   onOpenProposal(proposalId: string): void;
+  onOpenProposalQueue(): void;
 }
 
 const sourceTypes: L3RawTextImportInput["source"]["sourceType"][] = ["manual", "article", "book", "video", "audio", "chat", "web", "other"];
@@ -27,7 +28,7 @@ function normalizeUnknownError(error: unknown): NormalizedL3Error {
   return isNormalizedL3Error(error) ? error : normalizeL3TransportError(error);
 }
 
-export function L3ImportPage({ client, onOpenProposal }: L3ImportPageProps) {
+export function L3ImportPage({ client, onOpenProposal, onOpenProposalQueue }: L3ImportPageProps) {
   const [sourceTitle, setSourceTitle] = useState("Manual note");
   const [sourceType, setSourceType] = useState<L3RawTextImportInput["source"]["sourceType"]>("manual");
   const [sourceLanguage, setSourceLanguage] = useState("en");
@@ -44,23 +45,29 @@ export function L3ImportPage({ client, onOpenProposal }: L3ImportPageProps) {
 
   const submitImport = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setFlowState("submitting");
     setError(null);
     setResult(null);
 
+    let payload: L3RawTextImportInput;
     try {
-      const data = await client.createRawTextImport({
-        ...(wordbookId.trim() ? { wordbookId: wordbookId.trim() } : {}),
-        source: {
-          sourceType,
-          title: sourceTitle.trim(),
-          language: sourceLanguage.trim() || null,
-        },
+      payload = buildRawTextImportPayload({
+        sourceTitle,
+        sourceType,
+        sourceLanguage,
+        wordbookId,
         text,
-        targetWords: parseTargetWordInput(targetWords),
-        options: { contextType },
-        provenance: { frontendSurface: "phase_4c_raw_import" },
+        targetWords,
+        contextType,
       });
+    } catch (caught) {
+      setError(normalizeUnknownError(caught));
+      setFlowState("submitFailed");
+      return;
+    }
+
+    setFlowState("submitting");
+    try {
+      const data = await client.createRawTextImport(payload);
       const transition = applyImportSuccess(data);
       setResult(transition.data);
       setFlowState(transition.nextState as L3ImportFlowState);
@@ -134,6 +141,16 @@ export function L3ImportPage({ client, onOpenProposal }: L3ImportPageProps) {
             <h3>{result.proposal.title ?? result.proposal.id ?? "Untitled proposal"}</h3>
             <span>No active L3 source, context, occurrence, or link has been written.</span>
           </div>
+          <dl className="result-meta">
+            <div>
+              <dt>Import job</dt>
+              <dd>{result.importJob.id ?? "unknown"} / {result.importJob.status ?? "unknown"}</dd>
+            </div>
+            <div>
+              <dt>Proposal</dt>
+              <dd>{result.proposal.id ?? "unknown"} / {result.proposal.status ?? "unknown"}</dd>
+            </div>
+          </dl>
           <dl className="stats-grid">
             <div>
               <dt>Contexts</dt>
@@ -161,12 +178,15 @@ export function L3ImportPage({ client, onOpenProposal }: L3ImportPageProps) {
           ) : null}
           <div className="proposal-preview-list">
             {result.items.slice(0, 5).map((item, index) => (
-              <code key={index}>{JSON.stringify(item)}</code>
+              <code key={index}>{summarizeImportProposalItem(item, index)}</code>
             ))}
           </div>
           <div className="action-row">
             <button disabled={!proposalId} onClick={() => proposalId && onOpenProposal(proposalId)} type="button">
               Open proposal review
+            </button>
+            <button onClick={onOpenProposalQueue} type="button">
+              Back to proposal queue
             </button>
           </div>
         </div>

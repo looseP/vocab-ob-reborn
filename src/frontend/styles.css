@@ -218,6 +218,28 @@ select {
   margin: 0;
 }
 
+.result-meta {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.result-meta div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.result-meta dt {
+  color: #5b687c;
+  font-size: 13px;
+}
+
+.result-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .stats-grid div {
   border-radius: 6px;
   background: #eef3fb;
@@ -281,10 +303,20 @@ select {
   text-align: left;
 }
 
+.proposal-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .proposal-row.active,
 .proposal-row:hover {
   border-color: #45638d;
   background: #eef3fb;
+}
+
+.danger-button {
+  border-color: #9c2f2f !important;
+  background: #9c2f2f !important;
 }
 
 .detail-header {

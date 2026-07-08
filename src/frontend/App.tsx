@@ -19,9 +19,14 @@ export function App() {
     setSection("proposals");
   };
 
+  const openProposalQueue = () => {
+    setSelectedProposalId(null);
+    setSection("proposals");
+  };
+
   const page = {
     home: <L3HomePage cachePolicy={PHASE_4C_CACHE_POLICY} />,
-    import: <L3ImportPage client={l3Client} onOpenProposal={openProposal} />,
+    import: <L3ImportPage client={l3Client} onOpenProposal={openProposal} onOpenProposalQueue={openProposalQueue} />,
     proposals: (
       <L3ProposalPage
         client={l3Client}
