@@ -76,6 +76,12 @@ L1 vocabulary review package.
   boundary checks. It remains frontend/test/doc only with no backend,
   migration, graph visualization, context/word/source full page, or L1/L2/FSRS
   expansion.
+- Phase 4E adds read-only Context Detail, Word Space, and Source Space pages.
+  They use `L3FrontendClient`, local required-field validation,
+  `L3ErrorMessage`, and the proposal-confirm active-read stale signal. A
+  successful read clears read stale only. The phase adds no backend endpoints,
+  migrations, graph visualization library, L3 editor, MCP agent UI,
+  recommendation/import semantic changes, or L1/L2/FSRS expansion.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

@@ -486,8 +486,40 @@ Phase 4D.2 implements the minimum readable graph surface:
 Still deferred to later phases:
 
 - graph visualization or editing
-- context/word/source space browsing pages
 - backend route/service/repository/schema changes
+
+## Phase 4E Implemented Space Read Loop
+
+Phase 4E adds the three missing active read surfaces:
+
+- Context Detail: user enters `contextId`; the UI calls
+  `client.getContextDetail(contextId)` and renders source metadata, context
+  text, occurrences, links, created/updated metadata, normalized errors, and
+  empty occurrence/link states.
+- Word Space: user enters required `slug` plus optional `wordbookId`, `limit`,
+  and `cursor`; the UI calls `client.getWordSpace(slug, params)` and renders
+  word identifiers, related contexts, occurrences, links, source summaries,
+  stats, pagination metadata, normalized errors, and empty states.
+- Source Space: user enters required `sourceId` plus optional `limit` and
+  `cursor`; the UI calls `client.getSourceSpace(sourceId, params)` and renders
+  source metadata, contexts, occurrences grouped by context id, links, stats,
+  pagination metadata, normalized errors, and empty context states.
+
+Phase 4E rules:
+
+- Empty required fields are rejected locally before `L3FrontendClient` is
+  called.
+- `wordbookId` trims to optional omission when blank.
+- A backend `404` for slug/wordbook mismatch remains normalized not-found
+  feedback and is not rewritten to an empty state.
+- The pages never infer or fabricate graph edges, occurrences, context links,
+  or active rows on the frontend.
+- Proposal confirm read stale state is visible on Graph, Context, Word, and
+  Source read pages. Successful read refresh clears read stale only; proposal,
+  recommendation, and import invalidation semantics remain untouched.
+- The pages do not create proposals, accept recommendations, run imports, write
+  active L3, refresh graph edges except through explicit `client.getGraph`, add
+  backend endpoints, or add migrations.
 
 ## Phase 4D.3 Closed-Loop Smoke Notes
 

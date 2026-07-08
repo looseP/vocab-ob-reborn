@@ -29,16 +29,38 @@ import {
   recommendationAcceptMessage,
   recommendationActionsForStatus,
 } from "@/frontend/viewModels/l3RecommendationViewModel";
+import {
+  applySpaceReadUiResult,
+  buildContextLookupPayload,
+  buildSourceSpaceQueryPayload,
+  buildWordSpaceQueryPayload,
+  contextEmptyMessages,
+  contextPreview,
+  linkSummary,
+  occurrenceSummary,
+  readStaleBannerText,
+  shouldClearReadStaleAfterSpaceRead,
+  sourceSpaceEmptyMessage,
+  wordSpaceEmptyMessage,
+} from "@/frontend/viewModels/l3SpaceViewModel";
 import { normalizeL3Error, type L3ImportProposalResponse } from "@/l3/frontend/contract";
-import { markGraphStaleAfterProposalConfirm } from "@/frontend/state/l3CacheSignals";
+import { markActiveReadStaleAfterProposalConfirm, markGraphStaleAfterProposalConfirm } from "@/frontend/state/l3CacheSignals";
 import type {
+  L3ContextDetail,
+  L3ContextLinkRow,
+  L3ContextRow,
   L3GraphReadModel,
+  L3OccurrenceRow,
   L3ProposalBundle,
   L3ProposalConfirmResult,
   L3ProposalItemRow,
   L3ProposalValidationResult,
   L3RecommendationBundle,
   L3RecommendationItemRow,
+  L3SourceRow,
+  L3SourceSpace,
+  L3WordSpace,
+  WordRow,
 } from "@/domain";
 
 describe("Phase 4B L3 frontend shell", () => {
@@ -71,6 +93,10 @@ describe("Phase 4B L3 frontend shell", () => {
       "src/frontend/pages/L3ProposalPage.tsx",
       "src/frontend/pages/L3RecommendationPage.tsx",
       "src/frontend/pages/L3GraphPage.tsx",
+      "src/frontend/pages/L3ContextPage.tsx",
+      "src/frontend/pages/L3WordSpacePage.tsx",
+      "src/frontend/pages/L3SourceSpacePage.tsx",
+      "src/frontend/viewModels/l3SpaceViewModel.ts",
     ];
 
     for (const file of files) {
@@ -89,6 +115,9 @@ describe("Phase 4B L3 frontend shell", () => {
       "src/frontend/pages/L3ProposalPage.tsx",
       "src/frontend/pages/L3RecommendationPage.tsx",
       "src/frontend/pages/L3GraphPage.tsx",
+      "src/frontend/pages/L3ContextPage.tsx",
+      "src/frontend/pages/L3WordSpacePage.tsx",
+      "src/frontend/pages/L3SourceSpacePage.tsx",
     ];
 
     for (const file of files) {
@@ -402,6 +431,77 @@ describe("Phase 4B L3 frontend shell", () => {
     }
   });
 
+  it("builds context, word, and source space read payloads with local validation", () => {
+    expect(buildContextLookupPayload({ contextId: " ctx-1 " })).toEqual({ contextId: "ctx-1" });
+    expect(buildWordSpaceQueryPayload({
+      slug: " vivid ",
+      wordbookId: " wb-1 ",
+      limit: " 25 ",
+      cursor: " next ",
+    })).toEqual({
+      slug: "vivid",
+      params: { wordbookId: "wb-1", limit: 25, cursor: "next" },
+    });
+    expect(buildWordSpaceQueryPayload({
+      slug: "lucid",
+      wordbookId: " ",
+      limit: "",
+      cursor: "",
+    })).toEqual({ slug: "lucid", params: {} });
+    expect(buildSourceSpaceQueryPayload({
+      sourceId: " src-1 ",
+      limit: "50",
+      cursor: " c1 ",
+    })).toEqual({
+      sourceId: "src-1",
+      params: { limit: 50, cursor: "c1" },
+    });
+
+    for (const build of [
+      () => buildContextLookupPayload({ contextId: " " }),
+      () => buildWordSpaceQueryPayload({ slug: "", wordbookId: "", limit: "", cursor: "" }),
+      () => buildSourceSpaceQueryPayload({ sourceId: "", limit: "", cursor: "" }),
+      () => buildWordSpaceQueryPayload({ slug: "vivid", wordbookId: "", limit: "101", cursor: "" }),
+      () => buildSourceSpaceQueryPayload({ sourceId: "src-1", limit: "0", cursor: "" }),
+    ]) {
+      let caught: unknown;
+      try {
+        build();
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({ status: 400, kind: "bad_request" });
+    }
+  });
+
+  it("derives context, word, and source space summaries without backend inference", () => {
+    const detail = contextDetail({ occurrences: [], links: [] });
+    const word = wordSpace({
+      contexts: [],
+      occurrences: [],
+      links: [],
+      stats: { sourceCount: 1, contextCount: 0, occurrenceCount: 0, linkCount: 0 },
+    });
+    const source = sourceSpace({
+      contexts: [],
+      occurrences: [],
+      links: [],
+      stats: { sourceCount: 1, contextCount: 0, occurrenceCount: 0, linkCount: 0 },
+    });
+    const occurrence = occurrenceRow({ surface: "vivid", lemma: "vivid", start_offset: 2, end_offset: 7 });
+    const link = linkRow({ link_type: "illustrates", target_type: "word", target_id: "word-1" });
+
+    expect(contextPreview(detail.context)).toBe("A vivid context sentence.");
+    expect(contextEmptyMessages(detail)).toEqual([
+      "No occurrences are attached to this context.",
+      "No context links are attached to this context.",
+    ]);
+    expect(wordSpaceEmptyMessage(word)).toBe("No active L3 space rows for this word.");
+    expect(sourceSpaceEmptyMessage(source)).toBe("No contexts are attached to this source.");
+    expect(occurrenceSummary(occurrence)).toBe("vivid / vivid [2-7]");
+    expect(linkSummary(link)).toBe("illustrates: ctx-1 -> word:word-1");
+  });
+
   it("derives graph stats, rows, empty messages, and read-only cache behavior", () => {
     const emptyGraph = graphModel();
     const graph = graphModel({
@@ -477,7 +577,32 @@ describe("Phase 4B L3 frontend shell", () => {
       reason: "proposal_confirmed_active_l3_created",
       activeEntities: confirm.activeEntities,
     });
+    expect(markActiveReadStaleAfterProposalConfirm(confirm)).toEqual(markGraphStaleAfterProposalConfirm(confirm));
     expect(applyGraphReadUiResult(graphModel()).cache.activeReadInvalidation).toBe(false);
+  });
+
+  it("lets Context, Word, and Source reads consume read stale without clearing proposal or recommendation flags", () => {
+    const confirm = proposalConfirmResult("prop-space", "ctx-1");
+    const stale = markActiveReadStaleAfterProposalConfirm(confirm);
+    const contextTransition = applySpaceReadUiResult(contextDetail(), false);
+    const wordTransition = applySpaceReadUiResult(wordSpace(), false);
+    const sourceTransition = applySpaceReadUiResult(sourceSpace(), false);
+
+    expect(readStaleBannerText(stale)).toBe("L3 read data may be stale after proposal confirmation: proposal_confirmed_active_l3_created");
+    for (const transition of [contextTransition, wordTransition, sourceTransition]) {
+      expect(transition).toMatchObject({
+        invalidate: [],
+        refreshGraph: false,
+        createsActiveL3: false,
+        cache: {
+          activeReadInvalidation: false,
+          proposalInvalidation: false,
+          recommendationInvalidation: false,
+          reason: "space_read_no_invalidation",
+        },
+      });
+      expect(shouldClearReadStaleAfterSpaceRead(transition)).toBe(true);
+    }
   });
 
   it("models import proposal handoff through proposal confirm and graph stale refresh", () => {
@@ -704,6 +829,139 @@ function graphModel(overrides: Partial<L3GraphReadModel> = {}): L3GraphReadModel
       edgeCount: 0,
     },
     limit: 100,
+    cursor: null,
+    nextCursor: null,
+    ...overrides,
+  };
+}
+
+function wordRow(overrides: Partial<WordRow> = {}): WordRow {
+  return {
+    id: "word-1",
+    slug: "vivid",
+    title: "Vivid",
+    lemma: "vivid",
+    pos: "adj",
+    cefr: "B2",
+    ipa: null,
+    aliases: [],
+    short_definition: "bright and clear",
+    definition_md: "Bright and clear.",
+    body_md: "",
+    examples: [],
+    metadata: {},
+    source_path: "words/vivid.md",
+    source_updated_at: null,
+    content_hash: "hash",
+    is_published: true,
+    is_deleted: false,
+    created_at: "now",
+    updated_at: "now",
+    ...overrides,
+  };
+}
+
+function sourceRow(overrides: Partial<L3SourceRow> = {}): L3SourceRow {
+  return {
+    id: "src-1",
+    user_id: "u1",
+    wordbook_id: "wb-1",
+    source_type: "manual",
+    title: "Manual source",
+    author: null,
+    url: null,
+    language: "en",
+    metadata: {},
+    created_at: "now",
+    updated_at: "now",
+    ...overrides,
+  };
+}
+
+function contextRow(overrides: Partial<L3ContextRow> = {}): L3ContextRow {
+  return {
+    id: "ctx-1",
+    source_id: "src-1",
+    user_id: "u1",
+    context_type: "sentence",
+    text: "A vivid context sentence.",
+    normalized_text: "a vivid context sentence.",
+    language: "en",
+    position: {},
+    metadata: {},
+    created_at: "now",
+    updated_at: "now",
+    ...overrides,
+  };
+}
+
+function occurrenceRow(overrides: Partial<L3OccurrenceRow> = {}): L3OccurrenceRow {
+  return {
+    id: "occ-1",
+    context_id: "ctx-1",
+    word_id: "word-1",
+    user_id: "u1",
+    surface: "vivid",
+    lemma: null,
+    start_offset: null,
+    end_offset: null,
+    confidence: null,
+    evidence: {},
+    created_at: "now",
+    ...overrides,
+  };
+}
+
+function linkRow(overrides: Partial<L3ContextLinkRow> = {}): L3ContextLinkRow {
+  return {
+    id: "link-1",
+    user_id: "u1",
+    context_id: "ctx-1",
+    word_id: "word-1",
+    link_type: "illustrates",
+    target_type: "word",
+    target_id: "word-1",
+    target_ref: {},
+    confidence: null,
+    provenance: {},
+    created_at: "now",
+    ...overrides,
+  };
+}
+
+function contextDetail(overrides: Partial<L3ContextDetail> = {}): L3ContextDetail {
+  return {
+    context: contextRow(),
+    source: sourceRow(),
+    occurrences: [occurrenceRow()],
+    links: [linkRow()],
+    ...overrides,
+  };
+}
+
+function wordSpace(overrides: Partial<L3WordSpace> = {}): L3WordSpace {
+  return {
+    word: wordRow(),
+    contexts: [contextRow()],
+    sources: [sourceRow()],
+    occurrences: [occurrenceRow()],
+    links: [linkRow()],
+    stats: { sourceCount: 1, contextCount: 1, occurrenceCount: 1, linkCount: 1 },
+    limit: 50,
+    cursor: null,
+    nextCursor: null,
+    ...overrides,
+  };
+}
+
+function sourceSpace(overrides: Partial<L3SourceSpace> = {}): L3SourceSpace {
+  return {
+    source: sourceRow(),
+    contexts: [contextRow()],
+    occurrences: [occurrenceRow()],
+    links: [linkRow()],
+    stats: { sourceCount: 1, contextCount: 1, occurrenceCount: 1, linkCount: 1 },
+    limit: 50,
     cursor: null,
     nextCursor: null,
     ...overrides,

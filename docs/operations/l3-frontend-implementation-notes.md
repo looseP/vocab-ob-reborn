@@ -254,3 +254,49 @@ Phase 4D.3 remains intentionally narrow:
 ## Remaining Frontend Surface
 
 Context, word, and source space browsing remain deferred read-only surfaces.
+
+## Phase 4E Space Read UI
+
+Phase 4E implements the remaining active L3 read surfaces without adding
+backend endpoints, migrations, graph visualization libraries, UI frameworks, or
+state/router libraries:
+
+- `src/frontend/pages/L3ContextPage.tsx` calls `client.getContextDetail` after
+  local `contextId` trim/required validation. It displays context id/type,
+  source metadata, context text, occurrences, links, timestamps, metadata, and
+  clear empty states when occurrences or links are empty.
+- `src/frontend/pages/L3WordSpacePage.tsx` calls `client.getWordSpace` after
+  local `slug` required validation plus optional `wordbookId`, `limit`, and
+  `cursor` trimming. Empty slug never reaches the client, and `404` remains a
+  normalized not-found error rather than a fabricated empty state.
+- `src/frontend/pages/L3SourceSpacePage.tsx` calls `client.getSourceSpace`
+  after local `sourceId` required validation plus optional `limit` and
+  `cursor` trimming. Empty source id never reaches the client.
+- `src/frontend/viewModels/l3SpaceViewModel.ts` contains pure presentation
+  helpers for lookup payloads, previews, occurrence/link summaries, empty
+  states, stats rows, and read-stale banner text. It does not call the client
+  and does not infer graph edges, context links, or active L3 data.
+- `src/frontend/state/l3CacheSignals.ts` now names the proposal-confirm signal
+  as an active-read stale signal shared by Graph, Context, Word, and Source
+  read pages.
+
+Phase 4E read semantics:
+
+- The three new pages are read-only. They do not create proposals, accept
+  recommendations, run imports, write active L3 rows, write graph edges, or
+  expose source/context/occurrence/link editing controls.
+- Proposal confirm remains the only UI action that marks active read surfaces
+  stale after active L3 creation.
+- Successful Context, Word, Source, or Graph refresh clears the read stale
+  signal only after the relevant shared-client read succeeds.
+- Read success does not clear proposal, recommendation, or import invalidation
+  flags and does not refresh graph edges unless the user explicitly reads the
+  Graph endpoint.
+
+Phase 4E still defers:
+
+- graph visualization libraries, graph editors, and layout engines
+- L3 editor, MCP agent UI, and context/link manual creation UI
+- backend route/service/repository/schema changes and DB migrations
+- recommendation algorithm, import parser, L1/L2/FSRS, LLM, dictionary, and MCP
+  behavior changes

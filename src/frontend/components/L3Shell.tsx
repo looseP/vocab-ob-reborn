@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type L3ShellSection = "home" | "import" | "proposals" | "recommendations" | "graph";
+export type L3ShellSection = "home" | "import" | "proposals" | "recommendations" | "graph" | "context" | "word" | "source";
 
 const sections: Array<{ id: L3ShellSection; label: string }> = [
   { id: "home", label: "L3 Home" },
@@ -8,6 +8,9 @@ const sections: Array<{ id: L3ShellSection; label: string }> = [
   { id: "proposals", label: "Proposals" },
   { id: "recommendations", label: "Recommendations" },
   { id: "graph", label: "Graph" },
+  { id: "context", label: "Context" },
+  { id: "word", label: "Word Space" },
+  { id: "source", label: "Source Space" },
 ];
 
 interface L3ShellProps {

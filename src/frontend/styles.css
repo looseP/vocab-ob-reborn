@@ -357,6 +357,10 @@ select {
   max-width: 1120px;
 }
 
+.space-page {
+  max-width: 1120px;
+}
+
 .graph-query-form {
   max-width: 100%;
 }
@@ -365,9 +369,44 @@ select {
   gap: 22px;
 }
 
-.graph-section {
+.graph-section,
+.space-section {
   display: grid;
   gap: 12px;
+}
+
+.space-result-panel {
+  gap: 22px;
+}
+
+.space-card,
+.space-row {
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.space-card p {
+  margin: 8px 0 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.space-list {
+  display: grid;
+  gap: 8px;
+}
+
+.space-row {
+  display: grid;
+  gap: 6px;
+}
+
+.space-row code,
+.space-card code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .graph-table {

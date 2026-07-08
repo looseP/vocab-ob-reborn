@@ -15,13 +15,14 @@ same-repository shell instead of creating a parallel app elsewhere.
 ## Directory Structure
 
 - `src/frontend/main.tsx`: Vite entry point
-- `src/frontend/App.tsx`: local route state for placeholder sections
+- `src/frontend/App.tsx`: local tab state for L3 surfaces
 - `src/frontend/api/l3Client.ts`: thin browser adapter over
   `src/l3/frontend/contract.ts`
-- `src/frontend/state/l3CacheSignals.ts`: shell cache signal placeholder
+- `src/frontend/state/l3CacheSignals.ts`: proposal-confirm active-read stale
+  signal shared by Graph, Context, Word, and Source read pages
 - `src/frontend/components/L3Shell.tsx`: navigation shell
-- `src/frontend/pages/*`: L3 Home, Import, Proposal, Recommendation, Graph
-  placeholder surfaces
+- `src/frontend/pages/*`: L3 Home, Import, Proposal, Recommendation, Graph,
+  Context, Word Space, and Source Space surfaces
 - `src/frontend/styles.css`: shell-only styles
 
 ## Placeholder Surfaces
@@ -32,6 +33,9 @@ same-repository shell instead of creating a parallel app elsewhere.
 - Recommendations: confirms `link_gap` accept creates a proposal bridge
 - Graph: read-only graph stats, nodes, and edges surface that refreshes after
   proposal confirm
+- Context: read-only context detail lookup by context id
+- Word Space: read-only word space lookup by slug and optional wordbook id
+- Source Space: read-only source space lookup by source id
 
 ## Contract Wiring
 
@@ -39,8 +43,18 @@ same-repository shell instead of creating a parallel app elsewhere.
 `src/l3/frontend/contract.ts` and injects browser `fetch`. Future UI work must
 reuse this path instead of writing a second L3 client.
 
-## Phase 4C/4D Continuation
+## Phase 4C/4D/4E Continuation
 
 - Phase 4C should implement Import and Proposal closed-loop UI.
 - Phase 4D implements Recommendation and Graph read UI.
+- Phase 4E implements Context Detail, Word Space, and Source Space read UI.
 - Component tests should be added when the UI moves beyond placeholders.
+
+## Phase 4E Boundary
+
+The Context, Word Space, and Source Space tabs are read-only consumers of
+`L3FrontendClient`. They show normalized errors through `L3ErrorMessage`, honor
+proposal-confirm read stale state, and clear that stale state only after a
+successful read. They do not write active L3 data, create proposals, trigger
+recommendations, trigger imports, refresh graph edges, add backend endpoints,
+add migrations, or introduce routing/state/UI libraries.

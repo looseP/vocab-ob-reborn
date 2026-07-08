@@ -15,10 +15,16 @@ export interface L3GraphStaleState {
   activeEntities: L3ProposalConfirmResult["activeEntities"];
 }
 
+export type L3ActiveReadStaleState = L3GraphStaleState;
+
 export function markGraphStaleAfterProposalConfirm(result: L3ProposalConfirmResult): L3GraphStaleState {
   return {
     state: graphStateAfterConfirm(),
     reason: applyProposalConfirmSuccess(result).cache.reason,
     activeEntities: result.activeEntities,
   };
+}
+
+export function markActiveReadStaleAfterProposalConfirm(result: L3ProposalConfirmResult): L3ActiveReadStaleState {
+  return markGraphStaleAfterProposalConfirm(result);
 }

@@ -21,6 +21,7 @@ import {
   validateGraphParams,
   validateRawTextImportInput,
   validateRecommendationGenerateInput,
+  validateSourceSpaceParams,
   validateSpaceParams,
   validateStructuredImportInput,
   type L3ClientTransport,
@@ -482,6 +483,9 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       fieldErrors: { limit: ["limit must be between 1 and 300."] },
     });
     expectNormalizedThrow(() => validateSpaceParams({ limit: 101 }), {
+      fieldErrors: { limit: ["limit must be between 1 and 100."] },
+    });
+    expectNormalizedThrow(() => validateSourceSpaceParams({ limit: 101 }), {
       fieldErrors: { limit: ["limit must be between 1 and 100."] },
     });
     expectNormalizedThrow(() => validateRecommendationGenerateInput({ mode: "gap_scan", limit: 101 }), {
