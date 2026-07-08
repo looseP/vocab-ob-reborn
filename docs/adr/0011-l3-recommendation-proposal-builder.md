@@ -4,6 +4,29 @@
 
 Accepted for Phase 3E.
 
+## Delivery Baseline
+
+Phase 3E's merged, green baseline is `main@9f9702c`, which includes the
+Phase 3E merge plus the CI Node 24 fix required by `dependency-cruiser@18`.
+Older branch-local history such as `c974b8e` is not the final delivery entry
+because the GitHub `main` branch used a different ancestry before the PR was
+rebuilt and merged.
+
+Failed CI runs on `19906f3` and the temporary
+`codex/phase-3e-recommendation-contract-pr` branch were caused by the workflow
+pinning Node 20 while `dependency-cruiser@18` requires Node `^22 || ^24 ||
+>=26`. The green baseline is therefore `main@9f9702c`.
+
+The Phase 3E migration order is part of the delivery contract and must be
+preserved without squashing:
+
+1. `drizzle/0009_magenta_captain_flint.sql`
+2. `drizzle/0010_hesitant_mojo.sql`
+
+The local L1 files `docs/operations/l1-vocabulary-md-format.md` and
+`l1-vocab-review-package.zip` are intentionally outside this backend Phase 3E
+delivery and should be handled separately.
+
 ## Context
 
 Phase 3A established confirmed active L3 sources, contexts, occurrences, and context links. Phase 3B added the proposal review pipeline. Phase 3C/3C.1 made import routes proposal producers only. Phase 3D/3D.1 sealed read and graph projections with stable identity, deterministic ordering, bounded reads, and owner/wordbook scope.
