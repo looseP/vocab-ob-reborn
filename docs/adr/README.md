@@ -30,6 +30,10 @@ L1 vocabulary review package.
   It is regression-only: routes stay thin service callers, request bodies stay
   camelCase, and 400/404/409/422 error semantics are covered without adding
   runtime features or migrations.
+- Phase 3H adds the frontend integration consumption contract for Phase 4A.
+  It defines UI surfaces, API consumption, UI state machines, error UX,
+  view-model guidance, command rules, cache invalidation, and Phase 4A
+  acceptance criteria without changing backend runtime behavior.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they
