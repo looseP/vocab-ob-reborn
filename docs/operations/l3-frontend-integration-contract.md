@@ -408,6 +408,29 @@ Invalidation rules:
 - Depth and limit controls should prevent invalid values before request.
 - `404` displays not found/out-of-scope.
 
+## Phase 4C Implemented Loop
+
+Phase 4C implements the minimum real UI loop for raw import and proposal
+review:
+
+- User can submit raw text import from the frontend host.
+- Import success displays the pending proposal and parse stats, and does not
+  display active L3 creation.
+- User can list proposals, open a proposal detail, validate it, confirm it, or
+  reject it.
+- `validateProposal valid=false` renders item-level feedback as review output.
+- Confirm success marks graph/read state as stale after active L3 creation.
+- Reject success keeps graph/read state unchanged.
+- `400`, `404`, `409`, and `422` are displayed through normalized feedback with
+  retry guidance.
+
+Still deferred to later phases:
+
+- structured import authoring UI
+- recommendation queue/review UI
+- graph read fetching and visualization
+- context/word/source space browsing UI
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:

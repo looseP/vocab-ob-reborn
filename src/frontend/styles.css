@@ -14,7 +14,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -104,7 +105,12 @@ textarea {
 
 .l3-status-grid div,
 .placeholder-panel,
-.form-skeleton {
+.l3-form,
+.l3-result-panel,
+.proposal-list-panel,
+.proposal-detail-panel,
+.validation-panel,
+.l3-error {
   border: 1px solid #d7deea;
   border-radius: 8px;
   background: #ffffff;
@@ -125,40 +131,222 @@ textarea {
   margin-top: 6px;
 }
 
-.form-skeleton {
+.l3-form {
   display: grid;
   gap: 14px;
   max-width: 620px;
   margin-top: 24px;
 }
 
-.form-skeleton label {
+.l3-form label,
+.toolbar label,
+.review-note {
   display: grid;
   gap: 6px;
   color: #334057;
   font-weight: 700;
 }
 
-.form-skeleton input,
-.form-skeleton textarea {
+.l3-form input,
+.l3-form textarea,
+.l3-form select,
+.toolbar select,
+.review-note textarea {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
   color: #344052;
   padding: 10px 12px;
+  background: #ffffff;
 }
 
-.form-skeleton textarea {
+.l3-form textarea {
   min-height: 120px;
   resize: vertical;
 }
 
-.form-skeleton button {
+.compact-textarea {
+  min-height: 70px !important;
+}
+
+.l3-form button,
+.action-row button,
+.toolbar button {
   min-height: 42px;
-  border: 0;
+  border: 1px solid #172033;
   border-radius: 6px;
+  background: #172033;
+  color: #ffffff;
+  cursor: pointer;
+  padding: 0 14px;
+}
+
+.l3-form button:disabled,
+.action-row button:disabled {
+  border-color: #cfd8e6;
   background: #cfd8e6;
   color: #526071;
+  cursor: not-allowed;
+}
+
+.form-row,
+.action-row,
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+.form-row label,
+.toolbar label {
+  flex: 1 1 180px;
+}
+
+.l3-result-panel,
+.proposal-workspace,
+.proposal-items {
+  display: grid;
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.stats-grid div {
+  border-radius: 6px;
+  background: #eef3fb;
+  padding: 12px;
+}
+
+.stats-grid dt,
+.proposal-row span,
+.detail-header span,
+.proposal-item span,
+.l3-result-panel span,
+.validation-panel span {
+  color: #5b687c;
+  font-size: 13px;
+}
+
+.stats-grid dd {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.warning-list,
+.validation-panel ul,
+.l3-error ul {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.proposal-preview-list {
+  display: grid;
+  gap: 8px;
+}
+
+.proposal-preview-list code,
+.proposal-item code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.proposal-workspace {
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+}
+
+.proposal-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.proposal-row {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  border: 1px solid #d7deea;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  cursor: pointer;
+  padding: 12px;
+  text-align: left;
+}
+
+.proposal-row.active,
+.proposal-row:hover {
+  border-color: #45638d;
+  background: #eef3fb;
+}
+
+.detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.detail-header h3 {
+  margin: 4px 0;
+  font-size: 24px;
+}
+
+.review-note {
+  margin-top: 16px;
+}
+
+.review-note textarea {
+  min-height: 76px;
+}
+
+.proposal-item {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.proposal-item p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.validation-panel.valid {
+  border-color: #95c6a0;
+  background: #f0fbf2;
+}
+
+.validation-panel.invalid,
+.l3-error {
+  border-color: #e1b0a9;
+  background: #fff5f3;
+}
+
+.l3-error {
+  display: grid;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.l3-error div {
+  display: grid;
+  gap: 4px;
+}
+
+.l3-error p,
+.empty-state {
+  margin: 0;
+  color: #5b687c;
 }
 
 .contract-note {
@@ -179,6 +367,11 @@ textarea {
   }
 
   .l3-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .proposal-workspace,
+  .stats-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -1,29 +1,176 @@
-import type { L3FrontendClient } from "@/l3/frontend/contract";
+import { useState, type FormEvent } from "react";
+import { L3ErrorMessage } from "../components/L3ErrorMessage";
+import {
+  applyImportSuccess,
+  isNormalizedL3Error,
+  normalizeL3TransportError,
+  parseTargetWordInput,
+  type L3FrontendClient,
+  type L3ImportFlowState,
+  type L3ImportProposalResponse,
+  type L3RawTextImportInput,
+  type NormalizedL3Error,
+} from "@/l3/frontend/contract";
 
 interface L3ImportPageProps {
   client: L3FrontendClient;
+  onOpenProposal(proposalId: string): void;
 }
 
-export function L3ImportPage({ client }: L3ImportPageProps) {
+const sourceTypes: L3RawTextImportInput["source"]["sourceType"][] = ["manual", "article", "book", "video", "audio", "chat", "web", "other"];
+
+function proposalIdFromResult(result: L3ImportProposalResponse | null): string | null {
+  return typeof result?.proposal.id === "string" ? result.proposal.id : null;
+}
+
+function normalizeUnknownError(error: unknown): NormalizedL3Error {
+  return isNormalizedL3Error(error) ? error : normalizeL3TransportError(error);
+}
+
+export function L3ImportPage({ client, onOpenProposal }: L3ImportPageProps) {
+  const [sourceTitle, setSourceTitle] = useState("Manual note");
+  const [sourceType, setSourceType] = useState<L3RawTextImportInput["source"]["sourceType"]>("manual");
+  const [sourceLanguage, setSourceLanguage] = useState("en");
+  const [wordbookId, setWordbookId] = useState("");
+  const [text, setText] = useState("");
+  const [targetWords, setTargetWords] = useState("");
+  const [contextType, setContextType] = useState<"sentence" | "paragraph">("sentence");
+  const [flowState, setFlowState] = useState<L3ImportFlowState>("editing");
+  const [result, setResult] = useState<L3ImportProposalResponse | null>(null);
+  const [error, setError] = useState<NormalizedL3Error | null>(null);
+
+  const proposalId = proposalIdFromResult(result);
+  const canSubmit = flowState !== "submitting";
+
+  const submitImport = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setFlowState("submitting");
+    setError(null);
+    setResult(null);
+
+    try {
+      const data = await client.createRawTextImport({
+        ...(wordbookId.trim() ? { wordbookId: wordbookId.trim() } : {}),
+        source: {
+          sourceType,
+          title: sourceTitle.trim(),
+          language: sourceLanguage.trim() || null,
+        },
+        text,
+        targetWords: parseTargetWordInput(targetWords),
+        options: { contextType },
+        provenance: { frontendSurface: "phase_4c_raw_import" },
+      });
+      const transition = applyImportSuccess(data);
+      setResult(transition.data);
+      setFlowState(transition.nextState as L3ImportFlowState);
+    } catch (caught) {
+      setError(normalizeUnknownError(caught));
+      setFlowState("submitFailed");
+    }
+  };
+
   return (
     <section className="l3-page">
-      <p className="eyebrow">Import Placeholder</p>
-      <h2>Raw and structured imports create proposals, not active L3.</h2>
-      <p className="lede">
-        Phase 4C can wire this skeleton to <code>client.createRawTextImport</code> and <code>client.createStructuredImport</code>.
-      </p>
-      <div className="form-skeleton" aria-label="Raw import skeleton">
+      <p className="eyebrow">Raw Import</p>
+      <h2>Submit raw context text into a pending proposal.</h2>
+      <p className="lede">Import creates an import job and proposal preview only. Active L3 changes wait for proposal confirmation.</p>
+      <form className="l3-form" onSubmit={submitImport}>
         <label>
           Source title
-          <input readOnly value="Manual note" />
+          <input onChange={(event) => setSourceTitle(event.target.value)} required value={sourceTitle} />
+        </label>
+        <div className="form-row">
+          <label>
+            Source type
+            <select onChange={(event) => setSourceType(event.target.value as L3RawTextImportInput["source"]["sourceType"])} value={sourceType}>
+              {sourceTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Language
+            <input onChange={(event) => setSourceLanguage(event.target.value)} value={sourceLanguage} />
+          </label>
+        </div>
+        <label>
+          Wordbook id (optional)
+          <input onChange={(event) => setWordbookId(event.target.value)} placeholder="wordbook id" value={wordbookId} />
         </label>
         <label>
           Raw text
-          <textarea readOnly value="Paste context text here in Phase 4C." />
+          <textarea onChange={(event) => setText(event.target.value)} placeholder="Paste sentence or paragraph context text." required value={text} />
         </label>
-        <button disabled type="button">Submit import in Phase 4C</button>
-      </div>
-      <p className="contract-note">Client methods available: {typeof client.createRawTextImport === "function" ? "contract wired" : "missing"}</p>
+        <label>
+          Target words
+          <textarea
+            className="compact-textarea"
+            onChange={(event) => setTargetWords(event.target.value)}
+            placeholder="comma or newline separated slugs"
+            value={targetWords}
+          />
+        </label>
+        <label>
+          Context parsing
+          <select onChange={(event) => setContextType(event.target.value as "sentence" | "paragraph")} value={contextType}>
+            <option value="sentence">sentence</option>
+            <option value="paragraph">paragraph</option>
+          </select>
+        </label>
+        <button disabled={!canSubmit} type="submit">
+          {flowState === "submitting" ? "Submitting..." : "Create proposal"}
+        </button>
+      </form>
+
+      <L3ErrorMessage error={error} />
+
+      {result ? (
+        <div className="l3-result-panel">
+          <div>
+            <p className="eyebrow">Pending Proposal Created</p>
+            <h3>{result.proposal.title ?? result.proposal.id ?? "Untitled proposal"}</h3>
+            <span>No active L3 source, context, occurrence, or link has been written.</span>
+          </div>
+          <dl className="stats-grid">
+            <div>
+              <dt>Contexts</dt>
+              <dd>{result.parseStats.contextCount}</dd>
+            </div>
+            <div>
+              <dt>Occurrences</dt>
+              <dd>{result.parseStats.occurrenceCount}</dd>
+            </div>
+            <div>
+              <dt>Links</dt>
+              <dd>{result.parseStats.linkCount}</dd>
+            </div>
+            <div>
+              <dt>Skipped</dt>
+              <dd>{result.parseStats.skippedContextCount}</dd>
+            </div>
+          </dl>
+          {result.parseStats.warnings.length > 0 ? (
+            <ul className="warning-list">
+              {result.parseStats.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="proposal-preview-list">
+            {result.items.slice(0, 5).map((item, index) => (
+              <code key={index}>{JSON.stringify(item)}</code>
+            ))}
+          </div>
+          <div className="action-row">
+            <button disabled={!proposalId} onClick={() => proposalId && onOpenProposal(proposalId)} type="button">
+              Open proposal review
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

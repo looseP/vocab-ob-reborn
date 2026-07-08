@@ -50,6 +50,11 @@ L1 vocabulary review package.
   through a browser adapter, adds placeholder Import/Proposal/Recommendation/
   Graph surfaces, and does not add backend endpoints, migrations, active L3
   semantics, graph algorithms, or server-side static serving.
+- Phase 4C wires the first real L3 frontend loop: raw import -> pending proposal
+  preview -> proposal queue/detail -> validate/confirm/reject. It reuses the
+  existing frontend client and contract helpers, keeps confirm as the only
+  active L3 upgrade trigger, and does not add backend endpoints, migrations,
+  recommendation UI, graph visualization, or L1/L2/FSRS behavior changes.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

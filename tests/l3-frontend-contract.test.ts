@@ -26,6 +26,7 @@ import {
   type L3ClientTransport,
   type L3ImportProposalResponse,
 } from "@/l3/frontend/contract";
+import { markGraphStaleAfterProposalConfirm } from "@/frontend/state/l3CacheSignals";
 import type {
   L3GraphReadModel,
   L3ProposalBundle,
@@ -381,6 +382,22 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
 
     expect(rejectTransition.refreshGraph).toBe(false);
     expect(rejectTransition.cache.activeReadInvalidation).toBe(false);
+  });
+
+  it("maps proposal confirm into the Phase 4C graph stale state", () => {
+    const confirm: L3ProposalConfirmResult = {
+      proposal: proposalRow("confirmed"),
+      items: [],
+      activeEntities: [
+        { itemId: "item-1", itemType: "source", activeEntityType: "source", activeEntityId: "src-1" },
+      ],
+    };
+
+    expect(markGraphStaleAfterProposalConfirm(confirm)).toEqual({
+      state: "staleAfterConfirm",
+      reason: "proposal_confirmed_active_l3_created",
+      activeEntities: confirm.activeEntities,
+    });
   });
 
   it("separates recommendation generation, link_gap acceptance, future actions, and rejection cache signals", () => {

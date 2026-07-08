@@ -6,18 +6,32 @@ import { L3ImportPage } from "./pages/L3ImportPage";
 import { L3ProposalPage } from "./pages/L3ProposalPage";
 import { L3RecommendationPage } from "./pages/L3RecommendationPage";
 import { createBrowserL3Client } from "./api/l3Client";
-import { PHASE_4B_CACHE_POLICY } from "./state/l3CacheSignals";
+import { PHASE_4C_CACHE_POLICY, markGraphStaleAfterProposalConfirm, type L3GraphStaleState } from "./state/l3CacheSignals";
 
 export function App() {
   const [section, setSection] = useState<L3ShellSection>("home");
+  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
+  const [graphStale, setGraphStale] = useState<L3GraphStaleState | null>(null);
   const l3Client = useMemo(() => createBrowserL3Client(), []);
 
+  const openProposal = (proposalId: string) => {
+    setSelectedProposalId(proposalId);
+    setSection("proposals");
+  };
+
   const page = {
-    home: <L3HomePage cachePolicy={PHASE_4B_CACHE_POLICY} />,
-    import: <L3ImportPage client={l3Client} />,
-    proposals: <L3ProposalPage />,
+    home: <L3HomePage cachePolicy={PHASE_4C_CACHE_POLICY} />,
+    import: <L3ImportPage client={l3Client} onOpenProposal={openProposal} />,
+    proposals: (
+      <L3ProposalPage
+        client={l3Client}
+        selectedProposalId={selectedProposalId}
+        onSelectProposal={setSelectedProposalId}
+        onConfirmed={(result) => setGraphStale(markGraphStaleAfterProposalConfirm(result))}
+      />
+    ),
     recommendations: <L3RecommendationPage />,
-    graph: <L3GraphPage />,
+    graph: <L3GraphPage staleState={graphStale} />,
   }[section];
 
   return (

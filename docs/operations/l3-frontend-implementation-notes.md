@@ -79,6 +79,36 @@ Phase 4B adds:
 The shell is intentionally not a complete L3 UI. It anchors navigation,
 placeholder copy, and a browser adapter over `src/l3/frontend/contract.ts`.
 
+## Phase 4C Import and Proposal Loop
+
+Phase 4C wires the first real UI loop without changing backend runtime
+behavior:
+
+- `src/frontend/pages/L3ImportPage.tsx` submits raw text imports through
+  `client.createRawTextImport`.
+- Import success renders import job/proposal identifiers, parse stats, warnings,
+  and a proposal item preview. It explicitly states that active L3 was not
+  written.
+- `src/frontend/pages/L3ProposalPage.tsx` provides a local-state proposal
+  queue/detail view using `listProposals`, `getProposal`, `validateProposal`,
+  `confirmProposal`, and `rejectProposal`.
+- `validateProposal` responses with `valid=false` render item-level review
+  feedback as successful validation output.
+- `confirmProposal` is the only UI action that marks graph/read surfaces stale
+  through the shared cache-signal helper.
+- `rejectProposal` updates proposal review state only and does not mark graph
+  stale.
+- `src/frontend/components/L3ErrorMessage.tsx` renders normalized
+  `400/404/409/422/500/network/abort` feedback from the shared contract shape.
+
+Phase 4C remains intentionally small:
+
+- no structured import editor
+- no recommendation queue
+- no graph visualization or graph fetch
+- no backend endpoint, service, repository, migration, L1/L2/FSRS, dictionary,
+  LLM, MCP, or import parser changes
+
 ## Phase 4B Host Decision Result
 
 Decided:

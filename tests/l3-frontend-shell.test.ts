@@ -25,6 +25,7 @@ describe("Phase 4B L3 frontend shell", () => {
     const files = [
       "src/frontend/App.tsx",
       "src/frontend/api/l3Client.ts",
+      "src/frontend/components/L3ErrorMessage.tsx",
       "src/frontend/components/L3Shell.tsx",
       "src/frontend/pages/L3HomePage.tsx",
       "src/frontend/pages/L3ImportPage.tsx",
@@ -38,6 +39,20 @@ describe("Phase 4B L3 frontend shell", () => {
       expect(source).not.toMatch(/@\/(?:db|repositories|services|http)\//);
       expect(source).not.toMatch(/@\/server/);
       expect(source).not.toMatch(/from ["'](?:node:)?(?:fs|path|crypto|process)["']/);
+    }
+  });
+
+  it("keeps Phase 4C pages on the shared frontend client instead of local fetch calls", () => {
+    const files = [
+      "src/frontend/pages/L3ImportPage.tsx",
+      "src/frontend/pages/L3ProposalPage.tsx",
+    ];
+
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      expect(source).not.toMatch(/\bfetch\s*\(/);
+      expect(source).not.toMatch(/XMLHttpRequest/);
+      expect(source).toMatch(/L3FrontendClient|client\./);
     }
   });
 });
