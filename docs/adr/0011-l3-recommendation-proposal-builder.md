@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted for Phase 3E.
+Closed for Phase 3E.
+
+GitHub Actions for `main@859035b` completed successfully, so Phase 3E is
+fully closed. Historical red CI runs on `19906f3` and the temporary PR branch
+are superseded by the Node 24 workflow fix in `main@9f9702c`.
 
 ## Delivery Baseline
 
