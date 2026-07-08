@@ -20,7 +20,7 @@ const mockRepos: Partial<IRepositories> = {};
 vi.mock("@/db/transaction", () => ({
   withTransaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
 }));
-vi.mock("@/index", () => ({
+vi.mock("@/repositories/factory", () => ({
   createRepositories: vi.fn(() => mockRepos),
 }));
 
@@ -118,6 +118,11 @@ describe("WordService", () => {
 });
 
 describe("NoteService", () => {
+  beforeEach(() => {
+    // Reset mock repos between tests to avoid cross-test state leakage
+    Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
+  });
+
   it("getNote returns empty when not found", async () => {
     const service = new NoteService(makeMockNoteRepo(), makeMockWordbookRepo());
     const result = await service.getNote("u1", "w1", "wb1");
@@ -136,8 +141,10 @@ describe("NoteService", () => {
       getOrCreateDefault: vi.fn(async () => ({ id: "wb-default" } as WordbookRow)),
     });
     // M4 fix: upsertNote uses createRepositories(tx) inside withTransaction,
-    // so we inject the mock noteRepo into the mocked createRepositories return.
+    // so we inject mock repos into the mocked createRepositories return.
+    // H-NEW-2 fix: getOrCreateDefault is now called inside tx via repos.wordbooks
     mockRepos.notes = noteRepo;
+    mockRepos.wordbooks = wbRepo;
     const service = new NoteService(noteRepo, wbRepo);
     const result = await service.upsertNote({
       userId: "u1", wordId: "w1", contentMd: "test",

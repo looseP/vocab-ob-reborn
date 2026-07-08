@@ -8,7 +8,7 @@
 import type { INoteRepository, IWordbookRepository } from "../repositories/interfaces";
 import type { NoteRevisionRow } from "../domain";
 import { withTransaction } from "../db/transaction";
-import { createRepositories } from "../index";
+import { createRepositories } from "../repositories/factory";
 import { NotFoundError } from "../errors";
 
 export interface UpsertNoteParams {
@@ -45,15 +45,18 @@ export class NoteService {
 
   /**
    * M4 fix: wrap in transaction so upsert + revision are atomic.
+   * H-NEW-2 fix: getOrCreateDefault moved inside transaction callback.
    */
   async upsertNote(params: UpsertNoteParams): Promise<UpsertNoteResult> {
     const { userId, wordId, contentMd } = params;
-    const wordbookId = params.wordbookId
-      ?? (await this.wordbooks.getOrCreateDefault(userId)).id;
 
     return withTransaction(async (tx) => {
-      // M4 fix: use tx-bound repos so upsert + revision share the same connection
+      // H-NEW-2 fix: getOrCreateDefault inside tx — if it creates a new
+      // wordbook, that creation is atomic with the upsert
       const repos = createRepositories(tx);
+      const wordbookId = params.wordbookId
+        ?? (await repos.wordbooks.getOrCreateDefault(userId)).id;
+
       const result = await repos.notes.upsert(userId, wordbookId, wordId, contentMd);
       return {
         ok: true,

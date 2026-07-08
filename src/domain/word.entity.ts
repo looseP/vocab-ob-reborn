@@ -14,6 +14,9 @@ export class Word {
   get slug(): string { return this.row.slug; }
   get lemma(): string { return this.row.lemma; }
   get title(): string { return this.row.title; }
+  get pos(): string { return this.row.pos ?? ""; }
+  get shortDefinition(): string { return this.row.short_definition ?? ""; }
+  get cefr(): string { return this.row.cefr ?? ""; }
   get contentHash(): string { return this.row.content_hash; }
 
   get isPublished(): boolean {

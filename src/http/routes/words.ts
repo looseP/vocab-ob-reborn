@@ -1,0 +1,45 @@
+/**
+ * Words HTTP routes.
+ *
+ * Architecture constraint (dependency-cruiser enforced):
+ * - http layer must NOT import @/db or @/repositories directly.
+ * - All data access goes through the injected `services.words` service.
+ *
+ * Routes:
+ *   GET  /              list words (validated via wordsQuerySchema)
+ *   GET  /:slug         fetch a single word by slug
+ */
+import { Hono } from "hono";
+import type { Services } from "@/services";
+import type { AuthRole } from "@/http/middleware/auth";
+import { wordsQuerySchema } from "@/schemas/http";
+
+export type AppEnv = {
+  Variables: {
+    role: AuthRole;
+    userId: string;
+  };
+};
+
+export function wordRoutes(services: Services) {
+  const app = new Hono<AppEnv>();
+
+  // GET / — paginated/filtered word list
+  app.get("/", async (c) => {
+    const parsed = wordsQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) {
+      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+    }
+    const result = await services.words.getPublicWords(parsed.data);
+    return c.json(result);
+  });
+
+  // GET /:slug — single word lookup; NotFoundError thrown by the service
+  // is mapped to 404 by the global handleError middleware.
+  app.get("/:slug", async (c) => {
+    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
+    return c.json(word);
+  });
+
+  return app;
+}

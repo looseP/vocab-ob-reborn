@@ -11,6 +11,25 @@ import type {
   PaginatedResult,
   GetPublicWordsOptions,
   UserWordProgressRow,
+  UserWordL2ProgressRow,
+  L2ContentRow,
+  L3ContextLinkRow,
+  L3ContextRow,
+  L3ContextDetail,
+  L3GraphReadModel,
+  L3ImportJobRow,
+  L3OccurrenceRow,
+  L3PaginatedList,
+  L3ProposalBundle,
+  L3ProposalItemRow,
+  L3ProposalRow,
+  L3RecommendationItemRow,
+  L3RecommendationRunRow,
+  L3SourceContextListItem,
+  L3SourceRow,
+  L3SourceSpace,
+  L3WordSpace,
+  L3WordContextListItem,
   NoteRow,
   NoteRevisionRow,
   WordbookRow,
@@ -56,6 +75,8 @@ export interface SaveAnswerInput {
   wordbookId: string;
   sessionId: string | null;
   rating: ReviewRating;
+  /** M-NEW-4 fix: current word content_hash to refresh snapshot */
+  contentHash: string;
   scheduling: {
     difficulty: number | null;
     dueAt: string;
@@ -110,7 +131,28 @@ export interface IReviewRepository {
   undoReviewLog(reviewLogId: string, userId: string, sessionId: string, idempotencyKey: string | null): Promise<UndoRpcResult>;
 
   findStaleCards(wordId: string): Promise<UserWordProgressRow[]>;
+
+  /** @deprecated Use {@link markL1StaleForRecheck} — tracks the L1 hash
+   *  snapshot separately. Kept for backward compatibility. */
   markStaleForRecheck(wordId: string, newHash: string): Promise<number>;
+
+  /** Mark stale cards for recheck using the L1 content hash snapshot. */
+  markL1StaleForRecheck(wordId: string, newL1Hash: string): Promise<number>;
+
+  /**
+   * Set the L1 weak-signal flag for a single progress row, scoped to
+   * (user, wordbook, word). Phase 2C decision-2: L2→L1 only *marks* — it
+   * never re-cards or touches due_at/needs_recheck. The user decides whether
+   * to re-grind L1 after seeing the flag in the UI.
+   *
+   * Returns the number of rows updated (0 if no progress row exists).
+   */
+  markL1WeakSignal(
+    userId: string,
+    wordbookId: string,
+    wordId: string,
+    value: boolean,
+  ): Promise<number>;
 }
 
 // ── Note ────────────────────────────────────────────────────────────────
@@ -167,6 +209,352 @@ export interface ISessionRepository {
   endSession(sessionId: string): Promise<void>;
 }
 
+// ── L2 Progress ─────────────────────────────────────────────────────────
+/** Input for creating a new L2 progress row (inherited from L1 FSRS state). */
+export interface NewL2Progress {
+  user_id: string;
+  wordbook_id: string;
+  word_id: string;
+  l2_stability: number;
+  l2_difficulty: number;
+  l2_state: string;
+  l2_desired_retention: number;
+  l2_due_at: string;
+  l2_inherited_from_l1: boolean;
+  l2_weights_source: string;
+}
+
+export interface IL2ProgressRepository {
+  /**
+   * Find a single L2 progress row scoped to (user, wordbook, word).
+   * Wordbook scoping is mandatory: the same user reviewing the same word in
+   * two different wordbooks must have independent L2 progress rows.
+   */
+  findByWordbookWordAndUser(
+    userId: string,
+    wordbookId: string,
+    wordId: string,
+  ): Promise<UserWordL2ProgressRow | null>;
+  insert(data: NewL2Progress): Promise<UserWordL2ProgressRow>;
+  /**
+   * Mark L2 rows stale when a word's content hash changed. This is content-
+   * driven (the L2 content is global per word), so it intentionally affects
+   * ALL users/wordbooks for that word — every scoped L2 progress row whose
+   * snapshot changed must be re-evaluated. It does NOT cross-contaminate
+   * wordbooks in the user/operation-driven sense (pause/unpause/find).
+   */
+  markL2StaleForRecheck(wordId: string, newL2Hash: string): Promise<number>;
+  /** Pause L2 progress scoped to (user, wordbook, word). */
+  pause(userId: string, wordbookId: string, wordId: string, reason: string): Promise<void>;
+  /** Unpause L2 progress scoped to (user, wordbook, word) by reason. */
+  unpauseByReason(userId: string, wordbookId: string, wordId: string, reason: string): Promise<void>;
+}
+
+// ── L2 Content ─────────────────────────────────────────────────────────
+/** Input for inserting a new L2 content row (multi-source enrichment). */
+export interface NewL2Content {
+  word_id: string;
+  field: string;
+  content: Json;
+  source: string;
+  source_ref?: string | null;
+  approved_by?: string | null;
+}
+
+export interface IL2ContentRepository {
+  insert(data: NewL2Content): Promise<L2ContentRow>;
+  findByWord(wordId: string, field?: string): Promise<L2ContentRow[]>;
+  softDelete(id: string): Promise<void>;
+  /** Aggregate active L2 content rows into the words JSONB cache columns. */
+  refreshL2Cache(wordId: string): Promise<void>;
+}
+
+// ── L3 Context Space ───────────────────────────────────────────────────
+export interface NewL3Source {
+  user_id: string;
+  wordbook_id?: string | null;
+  source_type: string;
+  title: string;
+  author?: string | null;
+  url?: string | null;
+  language?: string | null;
+  metadata?: Json;
+}
+
+export interface NewL3Context {
+  user_id: string;
+  source_id: string;
+  context_type: string;
+  text: string;
+  normalized_text?: string | null;
+  language?: string | null;
+  position?: Json;
+  metadata?: Json;
+}
+
+export interface NewL3Occurrence {
+  user_id: string;
+  context_id: string;
+  word_id: string;
+  surface: string;
+  lemma?: string | null;
+  start_offset?: number | null;
+  end_offset?: number | null;
+  confidence?: number | null;
+  evidence?: Json;
+}
+
+export interface NewL3ContextLink {
+  user_id: string;
+  context_id?: string | null;
+  word_id?: string | null;
+  link_type: string;
+  target_type: string;
+  target_id?: string | null;
+  target_ref?: Json;
+  confidence?: number | null;
+  provenance?: Json;
+}
+
+export interface NewL3ImportJob {
+  user_id: string;
+  source_id?: string | null;
+  status: string;
+  input_hash: string;
+  input_summary?: string | null;
+  stats?: Json;
+  error?: string | null;
+}
+
+export interface L3WordLookup {
+  userId: string;
+  wordId?: string;
+  slug?: string;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface L3SourceLookup {
+  userId: string;
+  sourceId: string;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface L3WordSpaceLookup {
+  userId: string;
+  slug: string;
+  wordbookId?: string | null;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface L3SourceSpaceLookup {
+  userId: string;
+  sourceId: string;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface L3GraphLookup {
+  userId: string;
+  wordbookId?: string | null;
+  slug?: string | null;
+  sourceId?: string | null;
+  depth: number;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface IL3ContextRepository {
+  createSource(input: NewL3Source): Promise<L3SourceRow>;
+  createContext(input: NewL3Context): Promise<L3ContextRow>;
+  createOccurrence(input: NewL3Occurrence): Promise<L3OccurrenceRow>;
+  createContextLink(input: NewL3ContextLink): Promise<L3ContextLinkRow>;
+  createImportJob(input: NewL3ImportJob): Promise<L3ImportJobRow>;
+  updateImportJobStatus(
+    importJobId: string,
+    userId: string,
+    status: string,
+    stats?: Json,
+    error?: string | null,
+  ): Promise<L3ImportJobRow>;
+  findWordbookByIdForUser(userId: string, wordbookId: string): Promise<WordbookRow | null>;
+  findSourceById(userId: string, sourceId: string): Promise<L3SourceRow | null>;
+  findContextById(userId: string, contextId: string): Promise<L3ContextRow | null>;
+  findContextWithSourceById(
+    userId: string,
+    contextId: string,
+  ): Promise<{ context: L3ContextRow; source: L3SourceRow } | null>;
+  findWordById(wordId: string): Promise<WordRow | null>;
+  findWordBySlug(slug: string): Promise<WordRow | null>;
+  findWordInWordbookById(wordbookId: string, wordId: string): Promise<WordRow | null>;
+  findWordInWordbookBySlug(wordbookId: string, slug: string): Promise<WordRow | null>;
+  listContextsForWord(input: L3WordLookup): Promise<L3PaginatedList<L3WordContextListItem>>;
+  listContextsForSource(input: L3SourceLookup): Promise<L3PaginatedList<L3SourceContextListItem>>;
+  getContextDetail(userId: string, contextId: string): Promise<L3ContextDetail | null>;
+  getWordSpace(input: L3WordSpaceLookup): Promise<L3WordSpace | null>;
+  getSourceSpace(input: L3SourceSpaceLookup): Promise<L3SourceSpace | null>;
+  getGraph(input: L3GraphLookup): Promise<L3GraphReadModel>;
+}
+
+export interface NewL3Proposal {
+  user_id: string;
+  wordbook_id?: string | null;
+  source_type: string;
+  status?: string;
+  title?: string | null;
+  summary?: string | null;
+  input_hash?: string | null;
+  proposed_by?: string | null;
+  provenance?: Json;
+  review_note?: string | null;
+}
+
+export interface NewL3ProposalItem {
+  proposal_id: string;
+  user_id: string;
+  item_type: string;
+  ordinal: number;
+  payload: Json;
+  status?: string;
+  validation_errors?: Json;
+}
+
+export interface L3ProposalLookup {
+  userId: string;
+  status?: string | null;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface IL3ProposalRepository {
+  createProposal(input: NewL3Proposal): Promise<L3ProposalRow>;
+  createProposalItem(input: NewL3ProposalItem): Promise<L3ProposalItemRow>;
+  findProposalByIdForUser(userId: string, proposalId: string): Promise<L3ProposalRow | null>;
+  lockProposalByIdForUser(userId: string, proposalId: string): Promise<L3ProposalRow | null>;
+  findProposalItems(userId: string, proposalId: string): Promise<L3ProposalItemRow[]>;
+  getProposalBundle(userId: string, proposalId: string): Promise<L3ProposalBundle | null>;
+  listProposals(input: L3ProposalLookup): Promise<L3PaginatedList<L3ProposalRow>>;
+  updateProposalItemValidation(itemId: string, userId: string, validationErrors: Json): Promise<L3ProposalItemRow>;
+  markProposalItemConfirmed(
+    itemId: string,
+    userId: string,
+    activeEntityType: string,
+    activeEntityId: string,
+  ): Promise<L3ProposalItemRow>;
+  markProposalItemsRejected(proposalId: string, userId: string): Promise<void>;
+  markProposalConfirmed(proposalId: string, userId: string, reviewNote?: string | null): Promise<L3ProposalRow>;
+  markProposalRejected(proposalId: string, userId: string, reviewNote?: string | null): Promise<L3ProposalRow>;
+}
+
+export interface NewL3RecommendationRun {
+  user_id: string;
+  wordbook_id?: string | null;
+  mode: string;
+  status?: string;
+  input_hash?: string | null;
+  stats?: Json;
+}
+
+export interface NewL3RecommendationItem {
+  run_id: string;
+  user_id: string;
+  wordbook_id?: string | null;
+  recommendation_type: string;
+  status?: string;
+  title: string;
+  summary: string;
+  priority_score: number;
+  confidence: number;
+  reason_codes: Json;
+  evidence: Json;
+  payload: Json;
+  expires_at?: string | null;
+}
+
+export interface L3RecommendationLookup {
+  userId: string;
+  status?: string | null;
+  recommendationType?: string | null;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface L3RecommendationSignalLookup {
+  userId: string;
+  wordbookId?: string | null;
+  seedSlug?: string | null;
+  horizonDays: number;
+  limit: number;
+}
+
+export interface L3RecommendationSignal {
+  word_id: string;
+  slug: string;
+  title: string;
+  due_at: string | null;
+  state: string | null;
+  retrievability: number | string | null;
+  l1_weak_signal: boolean | null;
+  review_count: number | null;
+  l2_retrievability: number | string | null;
+  l2_due_at: string | null;
+  l2_review_count: number | null;
+  l2_paused: boolean | null;
+  l2_fields: string[] | null;
+  l3_context_count: number | string | null;
+  l3_occurrence_count: number | string | null;
+  l3_link_count: number | string | null;
+  graph_neighbor_count: number | string | null;
+}
+
+export interface L3RecommendationLinkGapCandidate {
+  context_id: string;
+  source_id: string;
+  word_id: string;
+  word_slug: string;
+  target_word_id: string;
+  target_word_slug: string;
+  cooccurrence_count: number | string;
+}
+
+export interface IL3RecommendationRepository {
+  createRun(input: NewL3RecommendationRun): Promise<L3RecommendationRunRow>;
+  createItem(input: NewL3RecommendationItem): Promise<L3RecommendationItemRow>;
+  listItems(input: L3RecommendationLookup): Promise<L3PaginatedList<L3RecommendationItemRow>>;
+  findItemByIdForUser(userId: string, itemId: string): Promise<L3RecommendationItemRow | null>;
+  lockItemByIdForUser(userId: string, itemId: string): Promise<L3RecommendationItemRow | null>;
+  markItemStatus(
+    itemId: string,
+    userId: string,
+    status: string,
+    acceptedProposalId?: string | null,
+  ): Promise<L3RecommendationItemRow>;
+  findSignals(input: L3RecommendationSignalLookup): Promise<L3RecommendationSignal[]>;
+  findLinkGapCandidates(input: L3RecommendationSignalLookup): Promise<L3RecommendationLinkGapCandidate[]>;
+}
+
+// ── LLM Usage ──────────────────────────────────────────────────────────
+/**
+ * LLM token usage persistence — backs the UsageTracker budget enforcement.
+ *
+ * Lives at the repository boundary so src/llm never touches the DB directly
+ * (Phase 2B architecture cleanup). `dayKey` is an ISO date string (YYYY-MM-DD);
+ * when omitted, the repository sums usage for the current UTC day.
+ */
+export interface ILlmUsageRepository {
+  /** Total tokens (prompt + completion) consumed for the given day (UTC). */
+  getDailyUsage(dayKey?: string): Promise<number>;
+  /** Persist a single LLM call's token usage. */
+  record(
+    provider: string,
+    model: string,
+    promptTokens: number,
+    completionTokens: number,
+  ): Promise<void>;
+}
+
 // ── Stats ───────────────────────────────────────────────────────────────
 export interface DashboardSummary {
   totalWords: number;
@@ -201,4 +589,10 @@ export interface IRepositories {
   annotations: IAnnotationRepository;
   sessions: ISessionRepository;
   stats: IStatsRepository;
+  l2Progress: IL2ProgressRepository;
+  l2Content: IL2ContentRepository;
+  l3Context: IL3ContextRepository;
+  l3Proposal: IL3ProposalRepository;
+  l3Recommendation: IL3RecommendationRepository;
+  llmUsage: ILlmUsageRepository;
 }

@@ -1,9 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, expectTypeOf } from "vitest";
 import { Word } from "@/domain/word.entity";
 import { ReviewCard } from "@/domain/review.entity";
 import { Note } from "@/domain/note.entity";
 import { Wordbook } from "@/domain/wordbook.entity";
-import type { WordRow, UserWordProgressRow, NoteRow, WordbookRow } from "@/domain";
+import type { WordRow, UserWordProgressRow, NoteRow, WordbookRow, UserWordL2ProgressRow } from "@/domain";
 
 function makeWordRow(overrides: Partial<WordRow> = {}): WordRow {
   return {
@@ -147,5 +147,23 @@ describe("Wordbook entity", () => {
       settings: null, created_at: "", updated_at: "",
     } as WordbookRow);
     expect(wb.reviewSettings).toEqual({});
+  });
+});
+
+describe("UserWordL2ProgressRow", () => {
+  it("has required FSRS fields", () => {
+    expectTypeOf<UserWordL2ProgressRow>().toMatchTypeOf<{
+      id: string;
+      user_id: string;
+      word_id: string;
+      l2_stability: number | null;
+      l2_difficulty: number | null;
+      l2_state: string;
+      l2_desired_retention: number;
+      l2_due_at: string | null;
+      l2_review_count: number;
+      l2_paused: boolean;
+      l2_inherited_from_l1: boolean;
+    }>();
   });
 });

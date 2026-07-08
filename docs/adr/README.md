@@ -1,0 +1,40 @@
+# Architecture Decision Records (ADR)
+
+## Phase 3 ADR Index
+
+| ADR | Topic | Phase |
+| --- | --- | --- |
+| [0007](./0007-l3-context-space-foundation.md) | L3 confirmed owner/manual context-space foundation | Phase 3A |
+| [0008](./0008-l3-proposal-review-pipeline.md) | L3 proposal review and confirm pipeline | Phase 3B |
+| [0009](./0009-l3-import-proposal-builder.md) | L3 deterministic import-to-proposal builder | Phase 3C |
+| [0010](./0010-l3-read-model-graph-api.md) | L3 read model and graph API | Phase 3D |
+| [0011](./0011-l3-recommendation-proposal-builder.md) | L3 recommendation proposal builder | Phase 3E |
+
+本目录记录 vocab-observatory-v2 的架构决策。每个 ADR 描述一个决策的 Context / Decision / Consequences。
+
+> 同步策略：本目录是 ADR 的**唯一权威源**。codebase-memory 的 `manage_adr` 存一份
+> 合并镜像（供多 agent 检索），但本地文件为最终真相。修改 ADR 后须同步到 codebase-memory。
+
+## 索引
+
+| ADR | 主题 | 阶段 |
+|-----|------|------|
+| [0001](./0001-layered-architecture.md) | 分层架构与领域边界（dependency-cruiser 强制） | Phase 0/1 |
+| [0002](./0002-dual-track-fsrs-isolation.md) | 双轨 FSRS 隔离（L1 速刷 / L2 持久化） | Phase 2A |
+| [0003](./0003-llm-provider-and-l2-extension.md) | LLM Provider + L2 扩展两阶段闭环 | Phase 2B |
+| [0004](./0004-purpose-stack-patterns-philosophy.md) | 目的 / 技术栈 / 工程模式 / Tradeoff / 设计哲学（含 L3 前瞻） | Phase 0→2B |
+| [0005](./0005-l3-context-space-boundary.md) | L3 语境空间边界——不属于 user_word_l2_progress / 不参与 FSRS / 独立 l3_ 表族 | Phase 2C→3 |
+| [0006](./0006-l2-composer-contract-freeze.md) | L2 Composer 合同冻结（not chat / collocation 必词典落地 / external-prompt 非持久 / Phase 2E 不引入 L3） | Phase 2E |
+
+## 并行 agent 必读
+
+若你是被派到本项目的并行 agent，**至少**读 ADR-0004 的 §6 PHILOSOPHY：
+- L1/L2/L3 调度隔离
+- L3 不参与 FSRS
+- Agent 写入必须 pending review
+
+这三条是不可妥协的架构红线。
+
+此外，**写 L3 相关代码前必读 ADR-0005**：`user_word_l2_progress` 上的
+`l3_pending` / `l3_self_assessments` 列**不是** L3 语境空间主模型，L3 必须用独立
+`l3_` 表族实现。

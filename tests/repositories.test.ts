@@ -10,7 +10,7 @@ vi.mock("@/db/connection", () => ({
 }));
 
 import { createRepositories } from "@/index";
-import type { AnnotationRow, HighlightRow, NoteRow, WordRow, WordSummary } from "@/domain";
+import type { AnnotationRow, HighlightRow, NoteRow, ReviewRating, WordRow, WordSummary } from "@/domain";
 
 beforeEach(() => mock.reset());
 
@@ -319,6 +319,7 @@ describe("ReviewRepository", () => {
       wordbookId: "wb1",
       sessionId: "s1",
       rating: "good",
+      contentHash: "hash123",
       scheduling: {
         difficulty: 0.3, dueAt: "2026-01-08", logDueAt: "2026-01-08",
         elapsedDays: 7, scheduledDays: 7, retrievability: 0.9,
@@ -650,10 +651,11 @@ describe("ReviewRepository — skip/suspend/undo (H5 fix)", () => {
     }]);
     await txRepos.reviews.undoReviewLog("log-1", "u1", "s1", "undo-key");
 
-    // 2 queries: RPC + idempotency log insert
-    expect(mock.calls.length).toBe(2);
-    expect(mock.calls[1].text).toContain("INSERT INTO review_logs");
-    expect(mock.calls[1].text).toContain("idempotency_key");
+    // 3 queries: RPC + SELECT progress (H-NEW-1 fix: fetch wordbook_id) + INSERT log
+    expect(mock.calls.length).toBe(3);
+    expect(mock.calls[1].text).toContain("SELECT wordbook_id");
+    expect(mock.calls[2].text).toContain("INSERT INTO review_logs");
+    expect(mock.calls[2].text).toContain("idempotency_key");
   });
 
   it("undoReviewLog throws without tx (H4)", async () => {
@@ -673,6 +675,7 @@ describe("ReviewRepository — counterField whitelist (H2 fix)", () => {
     await repos.reviews.saveAnswer({
       progressId: "p1", userId: "u1", wordId: "w1", wordbookId: "wb1",
       sessionId: "s1", rating: "again",
+      contentHash: "hash123",
       scheduling: {
         difficulty: 0.5, dueAt: "2026-01-01", logDueAt: "2026-01-01",
         elapsedDays: 0, scheduledDays: 0, retrievability: 0.5,
@@ -689,6 +692,7 @@ describe("ReviewRepository — counterField whitelist (H2 fix)", () => {
     await expect(repos.reviews.saveAnswer({
       progressId: "p1", userId: "u1", wordId: "w1", wordbookId: "wb1",
       sessionId: "s1",
+      contentHash: "hash123",
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       rating: "malicious; DROP TABLE" as any,
       scheduling: {
@@ -714,5 +718,192 @@ describe("ReviewRepository — findDueCards column prefix (H3 fix)", () => {
     expect(mock.lastQuery!.text).toContain("uwp.word_id");
     // w.id should be aliased as w_id
     expect(mock.lastQuery!.text).toContain("w.id AS w_id");
+  });
+});
+
+// ── Task 5: markL1StaleForRecheck ──────────────────────────────────────
+describe("markL1StaleForRecheck", () => {
+  const mockTx = { query: mock.pool.query } as never;
+  const txRepos = createRepositories(mockTx);
+
+  it("updates l1_content_hash_snapshot and needs_recheck, returns count", async () => {
+    mock.setRows([{ id: "p1" }]);
+    const count = await txRepos.reviews.markL1StaleForRecheck("w1", "newl1hash");
+
+    expect(count).toBe(1);
+    expect(mock.lastQuery!.text).toContain("l1_content_hash_snapshot = $1");
+    expect(mock.lastQuery!.text).toContain("needs_recheck = true");
+    expect(mock.lastQuery!.text).toContain("due_at = now()");
+    // state demotion: review -> relearning
+    expect(mock.lastQuery!.text).toContain("WHEN state = 'review' THEN 'relearning'");
+    expect(mock.lastQuery!.params).toEqual(["newl1hash", "w1"]);
+  });
+
+  it("returns 0 when no rows match", async () => {
+    mock.setRows([]);
+    const count = await txRepos.reviews.markL1StaleForRecheck("w1", "samehash");
+    expect(count).toBe(0);
+  });
+
+  it("does NOT reference l2 tables or the full content_hash_snapshot", async () => {
+    mock.setRows([]);
+    await txRepos.reviews.markL1StaleForRecheck("w1", "newl1hash");
+
+    expect(mock.lastQuery!.text).not.toContain("user_word_l2_progress");
+    // The WHERE filter must key off the L1 snapshot, not the full one.
+    // Use a word-boundary regex so "l1_content_hash_snapshot" is not a false
+    // positive match for bare "content_hash_snapshot".
+    expect(mock.lastQuery!.text).not.toMatch(/\bcontent_hash_snapshot\b/);
+    expect(mock.lastQuery!.text).toMatch(/\bl1_content_hash_snapshot\b/);
+  });
+
+  it("keeps legacy markStaleForRecheck working (backward compat)", async () => {
+    mock.setRows([{ id: "p1" }, { id: "p2" }]);
+    const count = await txRepos.reviews.markStaleForRecheck("w1", "newhash");
+
+    expect(count).toBe(2);
+    // Legacy uses the full content_hash_snapshot column
+    expect(mock.lastQuery!.text).toContain("content_hash_snapshot = $1");
+    expect(mock.lastQuery!.text).not.toContain("l1_content_hash_snapshot");
+  });
+});
+
+// ── Task 6: saveAnswer dual-track changes ──────────────────────────────
+describe("saveAnswer dual-track changes", () => {
+  const mockTx = { query: mock.pool.query } as never;
+  const txRepos = createRepositories(mockTx);
+
+  async function runSaveAnswer(rating: ReviewRating = "good") {
+    mock.setRows([{ id: "log-1" }]);
+    return txRepos.reviews.saveAnswer({
+      progressId: "p1",
+      userId: "u1",
+      wordId: "w1",
+      wordbookId: "wb1",
+      sessionId: "s1",
+      rating,
+      contentHash: "hash123",
+      scheduling: {
+        difficulty: 0.3, dueAt: "2026-01-08", logDueAt: "2026-01-08",
+        elapsedDays: 7, scheduledDays: 7, retrievability: 0.9,
+        stability: 1.5, state: "review", nextPayload: { test: true },
+      },
+      idempotencyKey: "key-1",
+      previousSnapshot: { old: true },
+      logMetadata: { progress_id: "p1" },
+    });
+  }
+
+  it("writes l1_content_hash_snapshot alongside content_hash_snapshot", async () => {
+    await runSaveAnswer();
+    const updateSql = mock.calls[0].text;
+
+    expect(updateSql).toContain("content_hash_snapshot = $11");
+    expect(updateSql).toContain("l1_content_hash_snapshot = $11");
+  });
+
+  it("updates recent_ratings (append + slice 5)", async () => {
+    await runSaveAnswer();
+    const updateSql = mock.calls[0].text;
+
+    expect(updateSql).toContain("recent_ratings =");
+    // append via || to_jsonb($5::text)
+    expect(updateSql).toContain("recent_ratings || to_jsonb($5::text)");
+    // cap at 5 most recent
+    expect(updateSql).toContain("LIMIT 5");
+    // re-aggregate in ascending order
+    expect(updateSql).toContain("ORDER BY ord ASC");
+  });
+
+  it("writes track='l1' to review_logs INSERT", async () => {
+    await runSaveAnswer();
+    const insertSql = mock.calls[1].text;
+
+    expect(insertSql).toContain("track");
+    expect(insertSql).toContain("'l1'");
+  });
+
+  it("keeps INSERT review_logs parameters at $1-$16 (track is a literal)", async () => {
+    await runSaveAnswer();
+    const insertSql = mock.calls[1].text;
+
+    // Highest placeholder should still be $16 — track is a literal, not a param
+    expect(insertSql).toContain("$16, 'l1'");
+    expect(insertSql).not.toContain("$17");
+  });
+
+  it("keeps UPDATE parameters at $1-$13 (l1 hash + recent_ratings reuse existing params)", async () => {
+    await runSaveAnswer();
+    const updateSql = mock.calls[0].text;
+
+    // No new placeholders introduced — l1_content_hash_snapshot reuses $11,
+    // recent_ratings subquery reuses $5 (rating)
+    expect(updateSql).toContain("WHERE id = $13::uuid");
+    expect(updateSql).not.toContain("$14");
+    expect(updateSql).not.toContain("$15");
+  });
+
+  it("does not change the number of executed queries (UPDATE + INSERT)", async () => {
+    await runSaveAnswer();
+    expect(mock.calls.length).toBe(2);
+  });
+
+  it("does not break for 'again' rating", async () => {
+    const result = await runSaveAnswer("again");
+    expect(result.reviewLogId).toBe("log-1");
+    expect(mock.calls[0].text).toContain("again_count = again_count + 1");
+    expect(mock.calls[0].text).toContain("recent_ratings || to_jsonb($5::text)");
+  });
+});
+
+// ── Task 7: markL1WeakSignal (Phase 2C L2→L1 weak-signal flag) ─────────
+describe("markL1WeakSignal", () => {
+  const mockTx = { query: mock.pool.query } as never;
+  const txRepos = createRepositories(mockTx);
+
+  it("sets l1_weak_signal=true scoped by (user, wordbook, word) and returns count", async () => {
+    mock.setRows([{ id: "p1" }]);
+    const count = await txRepos.reviews.markL1WeakSignal("u1", "wb1", "w1", true);
+
+    expect(count).toBe(1);
+    const q = mock.lastQuery!;
+    expect(q.text).toContain("l1_weak_signal = $4");
+    expect(q.text).toContain("user_id = $1");
+    expect(q.text).toContain("wordbook_id = $2::uuid");
+    expect(q.text).toContain("word_id = $3::uuid");
+    expect(q.params).toEqual(["u1", "wb1", "w1", true]);
+  });
+
+  it("sets l1_weak_signal=false (clear flag)", async () => {
+    mock.setRows([{ id: "p1" }]);
+    await txRepos.reviews.markL1WeakSignal("u1", "wb1", "w1", false);
+
+    expect(mock.lastQuery!.params).toEqual(["u1", "wb1", "w1", false]);
+  });
+
+  it("returns 0 when no progress row matches", async () => {
+    mock.setRows([]);
+    const count = await txRepos.reviews.markL1WeakSignal("u1", "wb1", "missing", true);
+    expect(count).toBe(0);
+  });
+
+  // ── Decision-2: ONLY flips the flag — never re-cards ─────────────────
+  it("does NOT touch due_at / needs_recheck / state (decision-2: mark only)", async () => {
+    mock.setRows([{ id: "p1" }]);
+    await txRepos.reviews.markL1WeakSignal("u1", "wb1", "w1", true);
+
+    const sql = mock.lastQuery!.text;
+    // Must NOT reference any re-card columns — L2 failure only marks.
+    expect(sql).not.toContain("due_at");
+    expect(sql).not.toContain("needs_recheck");
+    expect(sql).not.toContain("state");
+    expect(sql).not.toContain("relearning");
+  });
+
+  it("does NOT reference l2 tables (cross-track isolation)", async () => {
+    mock.setRows([{ id: "p1" }]);
+    await txRepos.reviews.markL1WeakSignal("u1", "wb1", "w1", true);
+
+    expect(mock.lastQuery!.text).not.toContain("user_word_l2_progress");
   });
 });

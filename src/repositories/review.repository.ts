@@ -39,7 +39,8 @@ const PROGRESS_COLUMNS_PREFIXED = `
   uwp.due_at, uwp.last_reviewed_at, uwp.last_rating, uwp.review_count,
   uwp.lapse_count, uwp.again_count, uwp.hard_count, uwp.good_count,
   uwp.easy_count, uwp.interval_days, uwp.scheduler_payload,
-  uwp.content_hash_snapshot, uwp.skip_count, uwp.created_at, uwp.updated_at
+  uwp.content_hash_snapshot, uwp.skip_count, uwp.created_at, uwp.updated_at,
+  uwp.recent_ratings, uwp.l1_weak_signal
 `;
 
 // Bare columns for single-table queries (no JOIN ambiguity)
@@ -157,6 +158,16 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     const nowIso = new Date().toISOString();
 
     // 1. UPDATE user_word_progress
+    // M-NEW-4 fix: include content_hash_snapshot refresh (matches v1)
+    // Dual-track: also refresh l1_content_hash_snapshot (L1-specific hash)
+    // and append the latest rating to recent_ratings (capped at 5).
+    //
+    // recent_ratings SQL breakdown:
+    //   recent_ratings || to_jsonb($5::text)  — append new rating to existing array
+    //   jsonb_array_elements(...) WITH ORDINALITY  — explode to (elem, ord) pairs
+    //   ORDER BY ord DESC LIMIT 5  — take 5 most recent
+    //   jsonb_agg(elem ORDER BY ord ASC)  — re-aggregate in chronological order
+    // Result: [oldest_kept, ..., newest] (max 5 elements)
     await this.query(
       `UPDATE user_word_progress
        SET difficulty = $1, due_at = $2, interval_days = $3,
@@ -165,8 +176,22 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
            retrievability = $7, review_count = review_count + 1,
            scheduler_payload = $8, stability = $9, state = $10,
            ${counterField} = ${counterField} + 1,
-           updated_at = $11
-       WHERE id = $12::uuid`,
+           content_hash_snapshot = $11,
+           l1_content_hash_snapshot = $11,
+           recent_ratings = (
+             SELECT jsonb_agg(elem ORDER BY ord)
+             FROM (
+               SELECT elem, ord
+               FROM jsonb_array_elements(
+                 recent_ratings || to_jsonb($5::text)
+               ) WITH ORDINALITY t(elem, ord)
+               ORDER BY ord DESC
+               LIMIT 5
+             ) sub
+             ORDER BY ord ASC
+           ),
+           updated_at = $12
+       WHERE id = $13::uuid`,
       [
         input.scheduling.difficulty,
         input.scheduling.dueAt,
@@ -178,23 +203,24 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         JSON.stringify(input.scheduling.nextPayload),
         input.scheduling.stability,
         input.scheduling.state,
+        input.contentHash,        // M-NEW-4: refresh snapshot to current word hash
         nowIso,
         input.progressId,
       ],
     );
 
-    // 2. INSERT review_logs
+    // 2. INSERT review_logs (track='l1' marks this as an L1 review)
     const logRow = await this.queryOne<{ id: string }>(
       `INSERT INTO review_logs (
          user_id, word_id, wordbook_id, progress_id, session_id,
          rating, state, stability, difficulty, due_at,
          reviewed_at, elapsed_days, scheduled_days,
-         metadata, previous_progress_snapshot, idempotency_key
+         metadata, previous_progress_snapshot, idempotency_key, track
        ) VALUES (
          $1, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
          $6, $7, $8, $9, $10,
          $11, $12, $13,
-         $14, $15, $16
+         $14, $15, $16, 'l1'
        )
        RETURNING id`,
       [
@@ -347,22 +373,28 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
 
     // 2. Insert idempotency log after RPC success
     if (idempotencyKey) {
+      // H-NEW-1 fix: query progress row for real wordbook_id + state
+      const progressRow = await this.queryOne<{ wordbook_id: string; state: string }>(
+        `SELECT wordbook_id, state FROM user_word_progress WHERE id = $1::uuid`,
+        [rpcRow.out_progress_id],
+      );
+
       const nowIso = new Date().toISOString();
       await this.query(
         `INSERT INTO review_logs (
            user_id, word_id, wordbook_id, progress_id, session_id,
            rating, state, metadata, reviewed_at, idempotency_key
          ) VALUES (
-           $1, $2, $3::uuid, $4::uuid, $5::uuid,
+           $1, $2::uuid, $3::uuid, $4::uuid, $5::uuid,
            NULL, $6, $7, $8, $9
          )`,
         [
           userId,
           rpcRow.out_word_id,
-          rpcRow.out_progress_id ?? null, // wordbook_id — we don't have it from RPC; will need progress lookup
+          progressRow?.wordbook_id ?? null,  // H-NEW-1 fix: real wordbook_id
           rpcRow.out_progress_id,
           sessionId,
-          "review", // restored state — simplified
+          progressRow?.state ?? "review",    // M-NEW-1 fix: real restored state
           JSON.stringify({ action: "undo", undone_log_id: reviewLogId }),
           nowIso,
           idempotencyKey,
@@ -398,6 +430,11 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   /**
    * Mark stale cards for recheck. Also sets needs_recheck=true (B fix).
    * Returns the number of affected rows.
+   *
+   * @deprecated Use {@link markL1StaleForRecheck} instead — it tracks the L1
+   * content hash snapshot separately via `l1_content_hash_snapshot`. This
+   * method remains for backward compatibility using the full
+   * `content_hash_snapshot` column.
    */
   async markStaleForRecheck(wordId: string, newHash: string): Promise<number> {
     const rows = await this.query<{ id: string }>(
@@ -415,6 +452,55 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
          AND content_hash_snapshot != $1
        RETURNING id`,
       [newHash, wordId],
+    );
+    return rows.length;
+  }
+
+  /**
+   * Mark stale cards for recheck using the L1 content hash snapshot.
+   * Updates `l1_content_hash_snapshot` (not the full `content_hash_snapshot`),
+   * sets `needs_recheck = true`, demotes `review` → `relearning`, and resets
+   * `due_at` to now. Returns the number of affected rows.
+   */
+  async markL1StaleForRecheck(wordId: string, newL1Hash: string): Promise<number> {
+    const rows = await this.query<{ id: string }>(
+      `UPDATE user_word_progress
+       SET l1_content_hash_snapshot = $1,
+           needs_recheck = true,
+           state = CASE
+             WHEN state = 'review' THEN 'relearning'
+             WHEN state = 'new' THEN 'new'
+             ELSE state
+           END,
+           due_at = now()
+       WHERE word_id = $2::uuid
+         AND l1_content_hash_snapshot IS NOT NULL
+         AND l1_content_hash_snapshot != $1
+       RETURNING id`,
+      [newL1Hash, wordId],
+    );
+    return rows.length;
+  }
+
+  /**
+   * Set the L1 weak-signal flag for one progress row, scoped to
+   * (user, wordbook, word). Phase 2C decision-2: this ONLY flips the flag —
+   * it deliberately does NOT touch due_at, needs_recheck, or state, because
+   * L2辨析 failure ≠ L1 recognition weakness; the user decides whether to
+   * re-grind L1 after seeing the flag in the UI. Returns the updated row count.
+   */
+  async markL1WeakSignal(
+    userId: string,
+    wordbookId: string,
+    wordId: string,
+    value: boolean,
+  ): Promise<number> {
+    const rows = await this.query<{ id: string }>(
+      `UPDATE user_word_progress
+       SET l1_weak_signal = $4, updated_at = now()
+       WHERE user_id = $1 AND wordbook_id = $2::uuid AND word_id = $3::uuid
+       RETURNING id`,
+      [userId, wordbookId, wordId, value],
     );
     return rows.length;
   }
