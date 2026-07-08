@@ -3,13 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
 import {
   frontendCacheSignalMatrix,
+  frontendRuntimeSmokeMatrix,
   graphEdgeRowsFromRead,
   graphStaleBannerText,
   importProposalReviewHandoff,
   recommendationProposalReviewHandoff,
   shouldClearGraphStaleAfterRead,
 } from "@/frontend/viewModels/l3ClosedLoopViewModel";
-import { formatL3ErrorDetails } from "@/frontend/viewModels/l3ErrorViewModel";
+import { formatL3ErrorDetails, l3ErrorUxContract } from "@/frontend/viewModels/l3ErrorViewModel";
 import {
   applyGraphReadUiResult,
   buildGraphQueryPayload,
@@ -43,7 +44,7 @@ import {
   sourceSpaceEmptyMessage,
   wordSpaceEmptyMessage,
 } from "@/frontend/viewModels/l3SpaceViewModel";
-import { normalizeL3Error, type L3ImportProposalResponse } from "@/l3/frontend/contract";
+import { normalizeL3Error, normalizeL3TransportError, type L3ImportProposalResponse } from "@/l3/frontend/contract";
 import { markActiveReadStaleAfterProposalConfirm, markGraphStaleAfterProposalConfirm } from "@/frontend/state/l3CacheSignals";
 import type {
   L3ContextDetail,
@@ -96,6 +97,13 @@ describe("Phase 4B L3 frontend shell", () => {
       "src/frontend/pages/L3ContextPage.tsx",
       "src/frontend/pages/L3WordSpacePage.tsx",
       "src/frontend/pages/L3SourceSpacePage.tsx",
+      "src/frontend/state/l3CacheSignals.ts",
+      "src/frontend/viewModels/l3ClosedLoopViewModel.ts",
+      "src/frontend/viewModels/l3ErrorViewModel.ts",
+      "src/frontend/viewModels/l3GraphViewModel.ts",
+      "src/frontend/viewModels/l3ImportViewModel.ts",
+      "src/frontend/viewModels/l3ProposalViewModel.ts",
+      "src/frontend/viewModels/l3RecommendationViewModel.ts",
       "src/frontend/viewModels/l3SpaceViewModel.ts",
     ];
 
@@ -107,7 +115,7 @@ describe("Phase 4B L3 frontend shell", () => {
     }
   });
 
-  it("keeps implemented L3 pages and shared components away from local network calls", () => {
+  it("keeps implemented L3 frontend files away from local network calls", () => {
     const files = [
       "src/frontend/components/L3ErrorMessage.tsx",
       "src/frontend/components/L3Shell.tsx",
@@ -118,6 +126,14 @@ describe("Phase 4B L3 frontend shell", () => {
       "src/frontend/pages/L3ContextPage.tsx",
       "src/frontend/pages/L3WordSpacePage.tsx",
       "src/frontend/pages/L3SourceSpacePage.tsx",
+      "src/frontend/state/l3CacheSignals.ts",
+      "src/frontend/viewModels/l3ClosedLoopViewModel.ts",
+      "src/frontend/viewModels/l3ErrorViewModel.ts",
+      "src/frontend/viewModels/l3GraphViewModel.ts",
+      "src/frontend/viewModels/l3ImportViewModel.ts",
+      "src/frontend/viewModels/l3ProposalViewModel.ts",
+      "src/frontend/viewModels/l3RecommendationViewModel.ts",
+      "src/frontend/viewModels/l3SpaceViewModel.ts",
     ];
 
     for (const file of files) {
@@ -234,6 +250,32 @@ describe("Phase 4B L3 frontend shell", () => {
       fieldErrors: { cursor: ["Invalid cursor."] },
     });
     expect(formatL3ErrorDetails(graphValidation)).toBeNull();
+  });
+
+  it("keeps 400/404/409/422/500/network/aborted error UX out of empty-state handling", () => {
+    const errors = [
+      normalizeL3Error(400, { message: "Bad form", details: { fieldErrors: { text: ["Required"] } } }),
+      normalizeL3Error(404, { message: "Missing context" }),
+      normalizeL3Error(409, { message: "Already confirmed", details: { currentStatus: "confirmed" } }),
+      normalizeL3Error(422, { message: "Validation failed", details: { errors: [{ field: "surface", message: "mismatch" }] } }),
+      normalizeL3Error(500, { message: "Unexpected" }),
+      normalizeL3TransportError(new Error("Network failed")),
+      normalizeL3TransportError({ name: "AbortError", message: "Request was cancelled" }),
+    ];
+
+    expect(errors.map((error) => l3ErrorUxContract(error))).toEqual([
+      { title: "Request needs local input changes.", retryHint: "fix-input", preservesInput: true, isEmptyState: false },
+      { title: "Requested L3 record was not found.", retryHint: "refresh", preservesInput: true, isEmptyState: false },
+      { title: "L3 state changed; refresh before retrying.", retryHint: "refresh", preservesInput: true, isEmptyState: false },
+      { title: "L3 business validation failed.", retryHint: "review-items", preservesInput: true, isEmptyState: false },
+      { title: "Unexpected L3 service error.", retryHint: "retry", preservesInput: true, isEmptyState: false },
+      { title: "Network request failed.", retryHint: "retry", preservesInput: true, isEmptyState: false },
+      { title: "Request was cancelled.", retryHint: "none", preservesInput: true, isEmptyState: false },
+    ]);
+    for (const error of errors) {
+      expect(formatL3ErrorDetails(error)).not.toBe("[object Object]");
+      expect(l3ErrorUxContract(error).isEmptyState).toBe(false);
+    }
   });
 
   it("builds recommendation generate payloads with local numeric validation", () => {
@@ -690,6 +732,60 @@ describe("Phase 4B L3 frontend shell", () => {
       activeReadInvalidation: false,
       reason: "graph_read_no_invalidation",
     });
+  });
+
+  it("locks the Phase 4F runtime smoke surface matrix without adding feature scope", () => {
+    expect(frontendRuntimeSmokeMatrix()).toEqual([
+      {
+        surface: "import",
+        clientMethods: ["createRawTextImport"],
+        readOnly: false,
+        clearsActiveReadStale: false,
+        marksActiveReadStale: false,
+      },
+      {
+        surface: "proposals",
+        clientMethods: ["listProposals", "getProposal", "validateProposal", "confirmProposal", "rejectProposal"],
+        readOnly: false,
+        clearsActiveReadStale: false,
+        marksActiveReadStale: true,
+      },
+      {
+        surface: "recommendations",
+        clientMethods: ["generateRecommendations", "listRecommendations", "getRecommendation", "acceptRecommendation", "rejectRecommendation"],
+        readOnly: false,
+        clearsActiveReadStale: false,
+        marksActiveReadStale: false,
+      },
+      {
+        surface: "graph",
+        clientMethods: ["getGraph"],
+        readOnly: true,
+        clearsActiveReadStale: true,
+        marksActiveReadStale: false,
+      },
+      {
+        surface: "context",
+        clientMethods: ["getContextDetail"],
+        readOnly: true,
+        clearsActiveReadStale: true,
+        marksActiveReadStale: false,
+      },
+      {
+        surface: "word",
+        clientMethods: ["getWordSpace"],
+        readOnly: true,
+        clearsActiveReadStale: true,
+        marksActiveReadStale: false,
+      },
+      {
+        surface: "source",
+        clientMethods: ["getSourceSpace"],
+        readOnly: true,
+        clearsActiveReadStale: true,
+        marksActiveReadStale: false,
+      },
+    ]);
   });
 });
 

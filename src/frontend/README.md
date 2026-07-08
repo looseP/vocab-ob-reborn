@@ -1,8 +1,9 @@
 # L3 Frontend
 
-Phase 4E wires the minimal frontend host into the real L3 raw import,
+Phase 4F wires the minimal frontend host into the real L3 raw import,
 proposal review, recommendation queue, graph read, context detail, word space,
-and source space read contracts.
+and source space read contracts, then hardens runtime smoke and UX contract
+semantics without expanding feature scope.
 
 ## Decision
 
@@ -97,6 +98,25 @@ and source space read contracts.
   frontend view-model helpers; page code still has no raw `fetch`, direct
   `/api/l3/`, or server-only imports.
 
+## Phase 4F Runtime UX Hardening
+
+- `npm run frontend:build` is the automated runtime smoke gate for the Vite
+  shell. A real Vite HTTP smoke can load the root page and verify that Home,
+  Import, Proposals, Recommendations, Graph, Context, Word Space, and Source
+  Space are registered in shell navigation.
+- The repository still has no DOM/browser test dependency, so manual browser
+  smoke remains a checklist instead of adding Playwright, jsdom, or a component
+  test framework.
+- Error UX now has a shared contract for `400`, `404`, `409`, `422`, `500`,
+  network, and aborted failures: they preserve user input, are not empty
+  states, and avoid `[object Object]` display.
+- Runtime smoke coverage locks the surface matrix: only Proposal confirm marks
+  active read surfaces stale, while Graph, Context, Word, and Source reads
+  clear stale state only after successful reads.
+- Static API-boundary tests cover pages, components, state helpers, and
+  view-model helpers. The only route adapter remains `src/frontend/api/l3Client.ts`
+  backed by `src/l3/frontend/contract.ts`.
+
 ## Phase 4C.1 Hardening
 
 - Required import fields are checked locally before the shared client is called.
@@ -109,7 +129,7 @@ and source space read contracts.
 - Page components still do not contain raw `fetch` calls or direct `/api/l3/`
   paths.
 
-## Continue After Phase 4E
+## Continue After Phase 4F
 
 - Keep graph visualization/editing out of scope until a separate product phase.
 - L3 editor, MCP agent UI, context/link manual creation UI, and full graph

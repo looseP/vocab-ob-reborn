@@ -82,6 +82,14 @@ L1 vocabulary review package.
   successful read clears read stale only. The phase adds no backend endpoints,
   migrations, graph visualization library, L3 editor, MCP agent UI,
   recommendation/import semantic changes, or L1/L2/FSRS expansion.
+- Phase 4F hardens the existing L3 frontend runtime UX contract. It records
+  Vite frontend build as the automated runtime smoke gate, keeps browser smoke
+  as a manual checklist because no DOM/browser test dependency exists, expands
+  static API-boundary coverage to all L3 frontend pages/components/state/view
+  models, and locks error, loading, empty-state, handoff, and stale/cache
+  semantics without backend, migration, graph visualization, UI framework,
+  router, global state, recommendation, import parser, MCP, LLM, dictionary, or
+  L1/L2/FSRS changes.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

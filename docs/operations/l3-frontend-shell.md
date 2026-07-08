@@ -58,3 +58,28 @@ proposal-confirm read stale state, and clear that stale state only after a
 successful read. They do not write active L3 data, create proposals, trigger
 recommendations, trigger imports, refresh graph edges, add backend endpoints,
 add migrations, or introduce routing/state/UI libraries.
+
+## Phase 4F Runtime Smoke Checklist
+
+Phase 4F keeps the lightweight shell and hardens runtime UX contracts without
+adding a router, global state library, graph visualization library, UI
+framework, backend endpoint, or migration.
+
+Automated smoke:
+
+- `npm run frontend:build` type-checks the frontend host and builds the Vite
+  bundle.
+- Vitest covers page/view-model navigation handoffs, stale/cache semantics,
+  error UX, empty-state rules, busy-state command guards, and static API
+  boundaries.
+
+Manual browser smoke, when needed:
+
+1. Run `npm run frontend:dev`.
+2. Open the Vite URL.
+3. Navigate to Import, Proposals, Recommendations, Graph, Context, Word Space,
+   and Source Space.
+4. Confirm each tab renders without console runtime errors.
+5. Confirm long ids, JSON previews, errors, and empty states wrap within the
+   lightweight shell.
+6. Stop the dev server after the check.

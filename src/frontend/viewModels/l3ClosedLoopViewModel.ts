@@ -20,6 +20,14 @@ import {
 } from "@/l3/frontend/contract";
 import type { L3GraphStaleState } from "../state/l3CacheSignals";
 
+export interface L3RuntimeSurfaceSmokeRow {
+  surface: "import" | "proposals" | "recommendations" | "graph" | "context" | "word" | "source";
+  clientMethods: string[];
+  readOnly: boolean;
+  clearsActiveReadStale: boolean;
+  marksActiveReadStale: boolean;
+}
+
 export interface ProposalReviewHandoff {
   proposalId: string | null;
   canOpenProposalReview: boolean;
@@ -80,4 +88,58 @@ export function frontendCacheSignalMatrix(input: {
     recommendationReject: applyRecommendationRejectSuccess(input.recommendationReject).cache,
     graphRead: applyGraphReadSuccess(input.graphRead).cache,
   };
+}
+
+export function frontendRuntimeSmokeMatrix(): L3RuntimeSurfaceSmokeRow[] {
+  return [
+    {
+      surface: "import",
+      clientMethods: ["createRawTextImport"],
+      readOnly: false,
+      clearsActiveReadStale: false,
+      marksActiveReadStale: false,
+    },
+    {
+      surface: "proposals",
+      clientMethods: ["listProposals", "getProposal", "validateProposal", "confirmProposal", "rejectProposal"],
+      readOnly: false,
+      clearsActiveReadStale: false,
+      marksActiveReadStale: true,
+    },
+    {
+      surface: "recommendations",
+      clientMethods: ["generateRecommendations", "listRecommendations", "getRecommendation", "acceptRecommendation", "rejectRecommendation"],
+      readOnly: false,
+      clearsActiveReadStale: false,
+      marksActiveReadStale: false,
+    },
+    {
+      surface: "graph",
+      clientMethods: ["getGraph"],
+      readOnly: true,
+      clearsActiveReadStale: true,
+      marksActiveReadStale: false,
+    },
+    {
+      surface: "context",
+      clientMethods: ["getContextDetail"],
+      readOnly: true,
+      clearsActiveReadStale: true,
+      marksActiveReadStale: false,
+    },
+    {
+      surface: "word",
+      clientMethods: ["getWordSpace"],
+      readOnly: true,
+      clearsActiveReadStale: true,
+      marksActiveReadStale: false,
+    },
+    {
+      surface: "source",
+      clientMethods: ["getSourceSpace"],
+      readOnly: true,
+      clearsActiveReadStale: true,
+      marksActiveReadStale: false,
+    },
+  ];
 }

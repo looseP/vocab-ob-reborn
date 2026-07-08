@@ -538,6 +538,31 @@ Phase 4D.3 validates the current frontend loop across surfaces:
 - All implemented L3 pages and shared components continue to avoid raw
   networking and direct route construction.
 
+## Phase 4F Runtime UX Contract Notes
+
+Phase 4F hardens the existing runtime and UX contract without expanding feature
+scope:
+
+- Automated runtime smoke is `npm run frontend:build`; browser smoke remains a
+  manual Vite-host check because the project does not carry a DOM/browser test
+  dependency.
+- Import, Proposal, Recommendation, Graph, Context, Word Space, and Source
+  Space remain the only implemented L3 frontend surfaces.
+- Import success invalidates proposal review only and never marks active read
+  surfaces stale.
+- Recommendation generation, accept, and reject invalidate recommendation or
+  proposal review state as appropriate, but never mark active read surfaces
+  stale.
+- Proposal confirm is the only command that marks active read surfaces stale.
+- Graph, Context, Word Space, and Source Space refreshes are read-only and clear
+  active-read stale only after successful `L3FrontendClient` reads.
+- `400`, `404`, `409`, `422`, `500`, network, and aborted errors must render
+  through the shared normalized error path. They are not empty states, do not
+  clear user inputs, and must not display `[object Object]`.
+- Static API boundary coverage applies to `src/frontend/pages`,
+  `src/frontend/components`, `src/frontend/viewModels`, and
+  `src/frontend/state`.
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:

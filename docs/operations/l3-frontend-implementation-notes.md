@@ -300,3 +300,37 @@ Phase 4E still defers:
 - backend route/service/repository/schema changes and DB migrations
 - recommendation algorithm, import parser, L1/L2/FSRS, LLM, dictionary, and MCP
   behavior changes
+
+## Phase 4F Runtime Smoke and UX Contract Hardening
+
+Phase 4F seals the runtime UX contract around the existing L3 frontend surfaces.
+It does not add new L3 runtime features.
+
+Runtime smoke scope:
+
+- `npm run frontend:build` is the automated runtime smoke gate for the Vite
+  bundle.
+- The repository still has no DOM/browser test framework dependency, so Phase
+  4F keeps browser smoke as a documented manual checklist instead of adding
+  Playwright, jsdom, or a component test library.
+- Manual smoke should start the existing Vite host, open the shell, and verify
+  that Import, Proposals, Recommendations, Graph, Context, Word Space, and
+  Source Space tabs load without console runtime errors.
+
+UX contract hardening:
+
+- Import success remains a pending-proposal handoff only.
+- Recommendation `link_gap` accept remains a proposal bridge only.
+- Proposal confirm remains the only UI command that marks Graph, Context, Word,
+  and Source read surfaces stale.
+- Graph, Context, Word, and Source refreshes clear active-read stale only after
+  a successful read.
+- `400`, `404`, `409`, `422`, `500`, network, and aborted errors are treated as
+  errors, not empty states, and preserve user input for retry.
+- Static boundary tests now cover pages, shared components, state helpers, and
+  view-model helpers for server-only imports, raw network calls, and hard-coded
+  L3 routes.
+
+Phase 4F still defers graph visualization, context/word/source editors, MCP
+agent UI, manual L3 active editors, backend changes, migrations, new UI
+frameworks, global state libraries, and recommendation/import semantic changes.
