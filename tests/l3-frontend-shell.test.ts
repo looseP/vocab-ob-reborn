@@ -29,6 +29,17 @@ import {
 } from "@/frontend/viewModels/l3GraphViewModel";
 import { buildRawTextImportPayload, summarizeImportProposalItem } from "@/frontend/viewModels/l3ImportViewModel";
 import {
+  buildManualContextCreateInput,
+  buildManualContextLinkCreateInput,
+  buildManualOccurrenceCreateInput,
+  buildManualSourceCreateInput,
+  canSubmitManualCreate,
+  findExactSurfaceMatches,
+  manualCreateSuccessActions,
+  parseJsonObjectField,
+  validateL2ItemTargetRef,
+} from "@/frontend/viewModels/l3ManualEditorViewModel";
+import {
   canNavigate,
   contextNavigationAction,
   contextSourceNavigationAction,
@@ -67,7 +78,7 @@ import {
   wordSpaceEmptyMessage,
 } from "@/frontend/viewModels/l3SpaceViewModel";
 import { normalizeL3Error, normalizeL3TransportError, type L3ImportProposalResponse } from "@/l3/frontend/contract";
-import { markActiveReadStaleAfterProposalConfirm, markGraphStaleAfterProposalConfirm } from "@/frontend/state/l3CacheSignals";
+import { markActiveReadStaleAfterManualCreate, markActiveReadStaleAfterProposalConfirm, markGraphStaleAfterProposalConfirm } from "@/frontend/state/l3CacheSignals";
 import type {
   L3ContextDetail,
   L3ContextLinkRow,
@@ -129,6 +140,7 @@ describe("Phase 4B L3 frontend shell", () => {
   it("locks the Phase 4I shell navigation matrix to every read/review surface", () => {
     expect(L3_SHELL_SECTIONS).toEqual([
       { id: "home", label: "L3 Home" },
+      { id: "manual", label: "Manual Editor" },
       { id: "import", label: "Import" },
       { id: "proposals", label: "Proposals" },
       { id: "recommendations", label: "Recommendations" },
@@ -138,6 +150,7 @@ describe("Phase 4B L3 frontend shell", () => {
       { id: "source", label: "Source Space" },
     ]);
     expect(frontendRuntimeSmokeMatrix().map((row) => row.surface)).toEqual([
+      "manual",
       "import",
       "proposals",
       "recommendations",
@@ -145,6 +158,129 @@ describe("Phase 4B L3 frontend shell", () => {
       "context",
       "word",
       "source",
+    ]);
+  });
+
+  it("builds Manual Editor additive-create inputs without guessing ids or slugs", () => {
+    expect(buildManualSourceCreateInput({
+      sourceType: "manual",
+      title: "  Notebook source  ",
+      wordbookId: " wb-1 ",
+      author: "",
+      url: "",
+      language: " en ",
+      metadataJson: "{\"topic\":\"writing\"}",
+    })).toEqual({
+      sourceType: "manual",
+      title: "Notebook source",
+      wordbookId: "wb-1",
+      language: "en",
+      metadata: { provenance: { source: "manual" }, topic: "writing" },
+    });
+
+    expect(buildManualContextCreateInput({
+      sourceId: " src-1 ",
+      contextType: "sentence",
+      text: "  A vivid sentence. ",
+      normalizedText: "",
+      language: "en",
+      positionJson: "{\"index\":1}",
+      metadataJson: "{}",
+    })).toMatchObject({
+      sourceId: "src-1",
+      contextType: "sentence",
+      text: "A vivid sentence.",
+      language: "en",
+      position: { index: 1 },
+      metadata: { provenance: { source: "manual" } },
+    });
+
+    expect(buildManualOccurrenceCreateInput({
+      contextId: " ctx-1 ",
+      wordId: "",
+      slug: " vivid ",
+      surface: " vivid ",
+      contextText: "",
+      lemma: "",
+      startOffset: "2",
+      endOffset: "7",
+      confidence: "0.75",
+      evidenceJson: "{\"note\":\"manual pick\"}",
+    })).toEqual({
+      contextId: "ctx-1",
+      slug: "vivid",
+      surface: "vivid",
+      startOffset: 2,
+      endOffset: 7,
+      confidence: 0.75,
+      evidence: { method: "manual", note: "manual pick", slug: "vivid" },
+    });
+
+    expect(buildManualContextLinkCreateInput({
+      contextId: " ctx-1 ",
+      wordId: "",
+      linkType: "manual_link",
+      targetType: "l2_item",
+      targetId: "",
+      targetRefJson: "{\"field\":\"corpus\",\"contentId\":\"l2-1\"}",
+      confidence: "",
+      provenanceJson: "{}",
+    })).toEqual({
+      contextId: "ctx-1",
+      linkType: "manual_link",
+      targetType: "l2_item",
+      targetRef: { field: "corpus", contentId: "l2-1" },
+      provenance: { source: "manual" },
+    });
+  });
+
+  it("validates Manual Editor JSON, l2_item refs, and exact surface matches", () => {
+    expect(parseJsonObjectField("{\"ok\":true}", "metadata")).toEqual({ ok: true });
+    expect(() => parseJsonObjectField("[1]", "metadata")).toThrow(expect.objectContaining({
+      fieldErrors: { metadata: ["metadata must be valid JSON object."] },
+    }));
+
+    expect(findExactSurfaceMatches("vivid but not Vivid", "vivid")).toEqual({
+      status: "one",
+      candidates: [{ startOffset: 0, endOffset: 5, preview: "vivid but not Vivid" }],
+    });
+    expect(findExactSurfaceMatches("vivid and vivid", "vivid").status).toBe("multiple");
+    expect(findExactSurfaceMatches("Vivid only", "vivid")).toEqual({ status: "zero", candidates: [] });
+
+    expect(validateL2ItemTargetRef({ field: "corpus", hash: "hash-1" })).toBe(true);
+    expect(validateL2ItemTargetRef({ field: "corpus" })).toBe(false);
+    expect(() => buildManualContextLinkCreateInput({
+      contextId: "ctx-1",
+      wordId: "",
+      linkType: "manual_link",
+      targetType: "l2_item",
+      targetId: "",
+      targetRefJson: "{\"field\":\"corpus\"}",
+      confidence: "",
+      provenanceJson: "{}",
+    })).toThrow(expect.objectContaining({
+      fieldErrors: { targetRef: ["l2_item targetRef requires field plus contentId, hash, or sourceRef."] },
+    }));
+  });
+
+  it("models manual create stale semantics without touching proposal, import, or recommendation state", () => {
+    expect(canSubmitManualCreate("editing")).toBe(true);
+    expect(canSubmitManualCreate("submitting")).toBe(false);
+    expect(markActiveReadStaleAfterManualCreate("manual_context_created_active_l3")).toEqual({
+      state: "staleAfterConfirm",
+      reason: "manual_context_created_active_l3",
+      activeEntities: [],
+    });
+    expect(manualCreateSuccessActions({
+      sourceId: "src-1",
+      contextId: "ctx-1",
+      slug: "vivid",
+      wordbookId: "wb-1",
+    }).map((action) => action.intent)).toEqual([
+      { target: "source", sourceId: "src-1" },
+      { target: "context", contextId: "ctx-1" },
+      { target: "word", slug: "vivid", wordbookId: "wb-1" },
+      { target: "graph", query: { sourceId: "src-1" } },
     ]);
   });
 
@@ -1001,6 +1137,13 @@ describe("Phase 4B L3 frontend shell", () => {
 
   it("locks the Phase 4F runtime smoke surface matrix without adding feature scope", () => {
     expect(frontendRuntimeSmokeMatrix()).toEqual([
+      {
+        surface: "manual",
+        clientMethods: ["createSource", "createContext", "createOccurrence", "createContextLink"],
+        readOnly: false,
+        clearsActiveReadStale: false,
+        marksActiveReadStale: true,
+      },
       {
         surface: "import",
         clientMethods: ["createRawTextImport"],

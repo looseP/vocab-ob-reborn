@@ -182,11 +182,25 @@ mutation scope.
   dictionary, recommendation algorithm, import parser, or L1/L2/FSRS behavior
   changed for Phase 4I.
 
+## Phase 5B Manual Editor MVP
+
+- `Manual Editor` is now a shell section backed by
+  `src/frontend/pages/L3ManualEditorPage.tsx`.
+- The page supports additive active creates only: source, context, occurrence,
+  and context link.
+- The page calls the shared `L3FrontendClient` active-create methods and keeps
+  raw HTTP paths out of page code.
+- Manual create success marks active read surfaces stale and offers local
+  handoff actions to Source Space, Context Detail, Word Space when an explicit
+  slug is available, and Graph.
+- It does not implement edit/delete, bulk paste direct-to-active, auto
+  extraction, import/recommendation expansion, proposal confirm changes, graph
+  editing, MCP, LLM, dictionary, or L1/L2/FSRS behavior.
+
 ## Continue After Phase 4I
 
-- Phase 5A defines the Manual Editor contract before implementation. Phase 5B
-  should add a centralized additive-create page only after that contract is
-  accepted.
+- Phase 5B adds the centralized additive-create Manual Editor page after the
+  Phase 5A contract.
 - Graph editing, node drag persistence, MCP agent UI, backend graph expansion,
   edit/delete active L3, and router/deep-link URL sync remain intentionally
   deferred.

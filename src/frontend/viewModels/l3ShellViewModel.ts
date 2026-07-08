@@ -1,7 +1,8 @@
-export type L3ShellSection = "home" | "import" | "proposals" | "recommendations" | "graph" | "context" | "word" | "source";
+export type L3ShellSection = "home" | "manual" | "import" | "proposals" | "recommendations" | "graph" | "context" | "word" | "source";
 
 export const L3_SHELL_SECTIONS: Array<{ id: L3ShellSection; label: string }> = [
   { id: "home", label: "L3 Home" },
+  { id: "manual", label: "Manual Editor" },
   { id: "import", label: "Import" },
   { id: "proposals", label: "Proposals" },
   { id: "recommendations", label: "Recommendations" },

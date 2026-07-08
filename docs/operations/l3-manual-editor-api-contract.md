@@ -15,6 +15,22 @@ Do not add `/api/l3/manual/*` duplicates for Phase 5B unless the existing
 routes are removed or changed. The frontend product surface may be named Manual
 Editor, but the HTTP contract remains the active L3 create contract.
 
+## Phase 5B Client Contract
+
+Phase 5B exposes the existing active create routes through the shared frontend
+client contract instead of adding new HTTP endpoints:
+
+- `L3FrontendClient.createSource(input)` -> `POST /api/l3/sources`
+- `L3FrontendClient.createContext(input)` -> `POST /api/l3/contexts`
+- `L3FrontendClient.createOccurrence(input)` -> `POST /api/l3/occurrences`
+- `L3FrontendClient.createContextLink(input)` -> `POST /api/l3/context-links`
+
+These methods preserve camelCase request payloads and normalized L3 error
+handling. They are intended for trusted, user-triggered, single-record manual
+commands only. Import, recommendation, agent, MCP, LLM, external-tool, and bulk
+flows continue to use proposal review and do not call these methods as an
+unreviewed bypass.
+
 ## Write Path Policy
 
 | Source | Direct active create | Proposal path | Notes |

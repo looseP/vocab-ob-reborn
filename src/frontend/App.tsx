@@ -4,6 +4,7 @@ import { L3ContextPage } from "./pages/L3ContextPage";
 import { L3GraphPage } from "./pages/L3GraphPage";
 import { L3HomePage } from "./pages/L3HomePage";
 import { L3ImportPage } from "./pages/L3ImportPage";
+import { L3ManualEditorPage } from "./pages/L3ManualEditorPage";
 import { L3ProposalPage } from "./pages/L3ProposalPage";
 import { L3RecommendationPage } from "./pages/L3RecommendationPage";
 import { L3SourceSpacePage } from "./pages/L3SourceSpacePage";
@@ -11,6 +12,7 @@ import { L3WordSpacePage } from "./pages/L3WordSpacePage";
 import { createBrowserL3Client } from "./api/l3Client";
 import {
   PHASE_4C_CACHE_POLICY,
+  markActiveReadStaleAfterManualCreate,
   markActiveReadStaleAfterProposalConfirm,
   type L3ActiveReadStaleState,
 } from "./state/l3CacheSignals";
@@ -74,6 +76,7 @@ export function App() {
 
   const page = {
     home: <L3HomePage cachePolicy={PHASE_4C_CACHE_POLICY} />,
+    manual: <L3ManualEditorPage client={l3Client} onManualCreated={(reason) => setActiveReadStale(markActiveReadStaleAfterManualCreate(reason))} onNavigate={navigateL3} />,
     import: <L3ImportPage client={l3Client} onOpenProposal={openProposal} onOpenProposalQueue={openProposalQueue} />,
     proposals: (
       <L3ProposalPage

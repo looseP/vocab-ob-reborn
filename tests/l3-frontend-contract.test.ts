@@ -19,6 +19,10 @@ import {
   proposalActionsForStatus,
   recommendationActionForAcceptResult,
   validateGraphParams,
+  validateManualContextCreateInput,
+  validateManualContextLinkCreateInput,
+  validateManualOccurrenceCreateInput,
+  validateManualSourceCreateInput,
   validateRawTextImportInput,
   validateRecommendationGenerateInput,
   validateSourceSpaceParams,
@@ -74,8 +78,8 @@ function rejectingTransport(error: unknown): L3ClientTransport & { fetch: Return
   };
 }
 
-function parsedBody(transport: { calls: CapturedRequest[] }): Record<string, unknown> {
-  const body = transport.calls[0]?.init?.body;
+function parsedBody(transport: { calls: CapturedRequest[] }, index = 0): Record<string, unknown> {
+  const body = transport.calls[index]?.init?.body;
   return body ? JSON.parse(body) as Record<string, unknown> : {};
 }
 
@@ -174,6 +178,10 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
     const transport = makeTransport({ ok: true, status: 200, body: { items: [], limit: 20, cursor: null, nextCursor: null } });
     const client = createL3FrontendClient(transport);
 
+    await client.createSource({ sourceType: "manual", title: "Manual source", language: "en", metadata: { provenance: { source: "manual" } } });
+    await client.createContext({ sourceId: "src-1", contextType: "sentence", text: "A vivid sentence.", metadata: { provenance: { source: "manual" } } });
+    await client.createOccurrence({ contextId: "ctx-1", slug: "vivid", surface: "vivid", startOffset: 2, endOffset: 7, evidence: { method: "manual", slug: "vivid" } });
+    await client.createContextLink({ contextId: "ctx-1", linkType: "manual_link", targetType: "l2_item", targetRef: { field: "corpus", contentId: "l2-1" }, provenance: { source: "manual" } });
     await client.createRawTextImport({
       source: { sourceType: "manual", title: "Paste" },
       text: "A vivid account.",
@@ -207,6 +215,10 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
     await client.getGraph({ slug: "vivid", depth: 2, limit: 50, wordbookId: null });
 
     expect(transport.calls.map((call) => [call.init?.method, call.url])).toEqual([
+      ["POST", "/api/l3/sources"],
+      ["POST", "/api/l3/contexts"],
+      ["POST", "/api/l3/occurrences"],
+      ["POST", "/api/l3/context-links"],
       ["POST", "/api/l3/imports/raw-text"],
       ["POST", "/api/l3/imports/structured"],
       ["POST", "/api/l3/proposals"],
@@ -226,14 +238,38 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       ["GET", "/api/l3/graph?slug=vivid&depth=2&limit=50"],
     ]);
 
-    expect(parsedBody(transport)).toEqual({
+    expect(parsedBody(transport, 0)).toEqual({
+      sourceType: "manual",
+      title: "Manual source",
+      language: "en",
+      metadata: { provenance: { source: "manual" } },
+    });
+    expect(parsedBody(transport, 1)).toMatchObject({
+      sourceId: "src-1",
+      contextType: "sentence",
+      text: "A vivid sentence.",
+    });
+    expect(parsedBody(transport, 2)).toMatchObject({
+      contextId: "ctx-1",
+      slug: "vivid",
+      surface: "vivid",
+      startOffset: 2,
+      endOffset: 7,
+    });
+    expect(parsedBody(transport, 3)).toMatchObject({
+      contextId: "ctx-1",
+      linkType: "manual_link",
+      targetType: "l2_item",
+      targetRef: { field: "corpus", contentId: "l2-1" },
+    });
+    expect(parsedBody(transport, 4)).toEqual({
       source: { sourceType: "manual", title: "Paste" },
       text: "A vivid account.",
       targetWords: [{ slug: "vivid" }, { slug: "lucid" }],
       options: { contextType: "sentence" },
     });
-    expect(parsedBody(transport)).not.toHaveProperty("source_type");
-    expect(JSON.parse(transport.calls[1].init?.body ?? "{}")).toMatchObject({
+    expect(parsedBody(transport, 4)).not.toHaveProperty("source_type");
+    expect(JSON.parse(transport.calls[5].init?.body ?? "{}")).toMatchObject({
       source: { sourceType: "manual" },
       contexts: [{
         clientRef: "ctx-1",
@@ -512,6 +548,27 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       contexts: [],
     }), {
       fieldErrors: { contexts: ["contexts cannot be empty."] },
+    });
+    expectNormalizedThrow(() => validateManualSourceCreateInput({ sourceType: "manual", title: " " }), {
+      fieldErrors: { title: ["title cannot be empty."] },
+    });
+    expectNormalizedThrow(() => validateManualContextCreateInput({ sourceId: "", contextType: "sentence", text: "context" }), {
+      fieldErrors: { sourceId: ["sourceId cannot be empty."] },
+    });
+    expectNormalizedThrow(() => validateManualOccurrenceCreateInput({ contextId: "ctx-1", surface: "vivid" }), {
+      fieldErrors: { wordId: ["wordId or slug is required."] },
+    });
+    expectNormalizedThrow(() => validateManualOccurrenceCreateInput({ contextId: "ctx-1", slug: "vivid", surface: "vivid", startOffset: 1 }), {
+      fieldErrors: { startOffset: ["startOffset and endOffset must be supplied together."] },
+    });
+    expectNormalizedThrow(() => validateManualContextLinkCreateInput({ linkType: "manual_link", targetType: "context", targetId: "ctx-target" }), {
+      fieldErrors: { contextId: ["contextId or wordId is required."] },
+    });
+    expectNormalizedThrow(() => validateManualContextLinkCreateInput({ contextId: "ctx-1", linkType: "manual_link", targetType: "context", targetId: " " }), {
+      fieldErrors: { targetId: ["targetId is required for context targets."] },
+    });
+    expectNormalizedThrow(() => validateManualContextLinkCreateInput({ contextId: "ctx-1", linkType: "manual_link", targetType: "l2_item", targetRef: { field: "corpus" } }), {
+      fieldErrors: { targetRef: ["l2_item targetRef requires field plus contentId, hash, or sourceRef."] },
     });
 
     const transport = makeTransport({ ok: true, status: 200, body: graph() });

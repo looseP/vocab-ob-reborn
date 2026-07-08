@@ -1,14 +1,22 @@
 import type {
   Json,
   L3ContextDetail,
+  L3ContextLinkRow,
+  L3ContextLinkTargetType,
+  L3ContextLinkType,
+  L3ContextRow,
+  L3ContextType,
   L3GraphReadModel,
+  L3OccurrenceRow,
   L3ProposalBundle,
   L3ProposalConfirmResult,
   L3ProposalValidationResult,
   L3RecommendationAcceptResult,
   L3RecommendationBundle,
   L3RecommendationItemRow,
+  L3SourceRow,
   L3SourceSpace,
+  L3SourceType,
   L3WordSpace,
 } from "@/domain";
 
@@ -221,6 +229,65 @@ export interface L3SourceSpaceParams {
   cursor?: string | null;
 }
 
+export interface L3ManualSourceCreateInput {
+  wordbookId?: string | null;
+  sourceType: L3SourceType;
+  title: string;
+  author?: string | null;
+  url?: string | null;
+  language?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface L3ManualContextCreateInput {
+  sourceId: string;
+  contextType: L3ContextType;
+  text: string;
+  normalizedText?: string | null;
+  language?: string | null;
+  position?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface L3ManualOccurrenceCreateInput {
+  contextId: string;
+  wordId?: string;
+  slug?: string;
+  surface: string;
+  lemma?: string | null;
+  startOffset?: number | null;
+  endOffset?: number | null;
+  confidence?: number | null;
+  evidence?: Record<string, unknown>;
+}
+
+export interface L3ManualContextLinkCreateInput {
+  contextId?: string | null;
+  wordId?: string | null;
+  linkType: L3ContextLinkType;
+  targetType: L3ContextLinkTargetType;
+  targetId?: string | null;
+  targetRef?: Record<string, unknown>;
+  confidence?: number | null;
+  provenance?: Record<string, unknown>;
+}
+
+export interface L3ManualSourceCreateResponse {
+  source: L3SourceRow;
+}
+
+export interface L3ManualContextCreateResponse {
+  context: L3ContextRow;
+}
+
+export interface L3ManualOccurrenceCreateResponse {
+  occurrence: L3OccurrenceRow;
+}
+
+export interface L3ManualContextLinkCreateResponse {
+  link: L3ContextLinkRow;
+}
+
 export interface L3ClientTransport {
   fetch(input: string, init?: { method?: L3HttpMethod; headers?: Record<string, string>; body?: string }): Promise<{
     ok: boolean;
@@ -230,6 +297,10 @@ export interface L3ClientTransport {
 }
 
 export interface L3FrontendClient {
+  createSource(input: L3ManualSourceCreateInput): Promise<L3ManualSourceCreateResponse>;
+  createContext(input: L3ManualContextCreateInput): Promise<L3ManualContextCreateResponse>;
+  createOccurrence(input: L3ManualOccurrenceCreateInput): Promise<L3ManualOccurrenceCreateResponse>;
+  createContextLink(input: L3ManualContextLinkCreateInput): Promise<L3ManualContextLinkCreateResponse>;
   createRawTextImport(input: L3RawTextImportInput): Promise<L3ImportProposalResponse>;
   createStructuredImport(input: L3StructuredImportInput): Promise<L3ImportProposalResponse>;
   createProposal(input: L3ProposalCreateInput): Promise<L3ProposalBundle>;
@@ -503,6 +574,10 @@ async function requestJson<T>(
 
 export function createL3FrontendClient(transport: L3ClientTransport): L3FrontendClient {
   return {
+    createSource: (input) => requestJson(transport, "POST", "/api/l3/sources", validateManualSourceCreateInput(input)),
+    createContext: (input) => requestJson(transport, "POST", "/api/l3/contexts", validateManualContextCreateInput(input)),
+    createOccurrence: (input) => requestJson(transport, "POST", "/api/l3/occurrences", validateManualOccurrenceCreateInput(input)),
+    createContextLink: (input) => requestJson(transport, "POST", "/api/l3/context-links", validateManualContextLinkCreateInput(input)),
     createRawTextImport: (input) => requestJson(transport, "POST", "/api/l3/imports/raw-text", validateRawTextImportInput(input)),
     createStructuredImport: (input) => requestJson(transport, "POST", "/api/l3/imports/structured", validateStructuredImportInput(input)),
     createProposal: (input) => requestJson(transport, "POST", "/api/l3/proposals", validateProposalCreateInput(input)),
@@ -565,6 +640,50 @@ export function validateStructuredImportInput(input: L3StructuredImportInput): L
 
 export function validateProposalCreateInput(input: L3ProposalCreateInput): L3ProposalCreateInput {
   if (input.items.length === 0) throw frontendValidationError("items", "Proposal requires at least one item.");
+  return input;
+}
+
+export function validateManualSourceCreateInput(input: L3ManualSourceCreateInput): L3ManualSourceCreateInput {
+  requireNonEmptyText(input.title, "title");
+  return input;
+}
+
+export function validateManualContextCreateInput(input: L3ManualContextCreateInput): L3ManualContextCreateInput {
+  requireNonEmptyText(input.sourceId, "sourceId");
+  requireNonEmptyText(input.text, "text");
+  return input;
+}
+
+export function validateManualOccurrenceCreateInput(input: L3ManualOccurrenceCreateInput): L3ManualOccurrenceCreateInput {
+  requireNonEmptyText(input.contextId, "contextId");
+  requireNonEmptyText(input.surface, "surface");
+  if (!input.wordId && (!input.slug || input.slug.trim().length === 0)) {
+    throw frontendValidationError("wordId", "wordId or slug is required.");
+  }
+  if ((input.startOffset === undefined || input.startOffset === null) !== (input.endOffset === undefined || input.endOffset === null)) {
+    throw frontendValidationError("startOffset", "startOffset and endOffset must be supplied together.");
+  }
+  return input;
+}
+
+export function validateManualContextLinkCreateInput(input: L3ManualContextLinkCreateInput): L3ManualContextLinkCreateInput {
+  if ((!input.contextId || input.contextId.trim().length === 0) && (!input.wordId || input.wordId.trim().length === 0)) {
+    throw frontendValidationError("contextId", "contextId or wordId is required.");
+  }
+  if (
+    (input.targetType === "word" || input.targetType === "context" || input.targetType === "source") &&
+    (!input.targetId || input.targetId.trim().length === 0)
+  ) {
+    throw frontendValidationError("targetId", `targetId is required for ${input.targetType} targets.`);
+  }
+  if (input.targetType === "l2_item") {
+    const ref = input.targetRef ?? {};
+    const hasField = typeof ref.field === "string" && ref.field.trim().length > 0;
+    const hasStableRef = ["contentId", "hash", "sourceRef"].some((key) => typeof ref[key] === "string" && String(ref[key]).trim().length > 0);
+    if (!hasField || !hasStableRef) {
+      throw frontendValidationError("targetRef", "l2_item targetRef requires field plus contentId, hash, or sourceRef.");
+    }
+  }
   return input;
 }
 

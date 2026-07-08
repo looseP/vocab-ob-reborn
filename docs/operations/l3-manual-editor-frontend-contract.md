@@ -7,6 +7,27 @@ The Manual Editor is the first planned active L3 create surface in the
 frontend. It must be visually and behaviorally distinct from the read-only
 Context, Word Space, Source Space, and Graph pages sealed in Phase 4I.
 
+## Phase 5B Implementation Status
+
+Phase 5B implements the centralized `L3ManualEditorPage` as the frontend MVP
+for additive active L3 creates. The page exposes four explicit single-record
+commands only:
+
+- create source through `L3FrontendClient.createSource`
+- create context through `L3FrontendClient.createContext`
+- create occurrence through `L3FrontendClient.createOccurrence`
+- create context link through `L3FrontendClient.createContextLink`
+
+The page is not an inline editor for Graph, Context Detail, Word Space, or
+Source Space. It keeps the Phase 5A boundary intact: no edit, delete, bulk
+paste direct-to-active, auto extraction, agent/MCP/LLM, import parser,
+recommendation builder, or proposal-confirm semantic expansion.
+
+Successful manual creates mark active read surfaces stale and offer local
+handoff actions to Source Space, Context Detail, Word Space when an explicit
+slug is available, and Graph. The manual create stale signal does not mark
+proposal, import, or recommendation state as authoritative.
+
 ## Product Scope
 
 Phase 5B MVP should provide one centralized page:
@@ -41,8 +62,8 @@ Phase 5B frontend should not implement:
 
 ## Command Model
 
-Manual editor commands call the existing `L3FrontendClient` once those methods
-are exposed:
+Manual editor commands call the existing `L3FrontendClient` active-create
+methods:
 
 | UI command | Endpoint | Active write? | Proposal write? | Stale effect |
 | --- | --- | ---: | ---: | --- |
@@ -197,7 +218,7 @@ be treated as empty states.
 
 ## Static Boundary
 
-Future Manual Editor files remain under `src/frontend`. They must:
+Manual Editor files remain under `src/frontend`. They must:
 
 - use `L3FrontendClient`
 - avoid raw `fetch`
@@ -208,11 +229,12 @@ Future Manual Editor files remain under `src/frontend`. They must:
 
 ## Phase 5B Frontend Test Plan
 
-- shell navigation includes Manual Editor only when Phase 5B adds the page
+- shell navigation includes Manual Editor
 - static API boundary includes the new page and view model
 - create source success marks active read stale and offers Source/Graph handoff
 - create context success marks active read stale and offers Context handoff
-- occurrence surface helper handles zero, one, and multiple matches
+- occurrence surface helper handles zero, one, and multiple exact
+  case-sensitive matches
 - offset/surface mismatch displays `422` and preserves input
 - invalid link target displays `404` or `422` and preserves input
 - busy state prevents duplicate source/context/occurrence/link creates

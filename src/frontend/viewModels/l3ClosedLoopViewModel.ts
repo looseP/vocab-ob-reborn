@@ -21,7 +21,7 @@ import {
 import type { L3GraphStaleState } from "../state/l3CacheSignals";
 
 export interface L3RuntimeSurfaceSmokeRow {
-  surface: "import" | "proposals" | "recommendations" | "graph" | "context" | "word" | "source";
+  surface: "manual" | "import" | "proposals" | "recommendations" | "graph" | "context" | "word" | "source";
   clientMethods: string[];
   readOnly: boolean;
   clearsActiveReadStale: boolean;
@@ -92,6 +92,13 @@ export function frontendCacheSignalMatrix(input: {
 
 export function frontendRuntimeSmokeMatrix(): L3RuntimeSurfaceSmokeRow[] {
   return [
+    {
+      surface: "manual",
+      clientMethods: ["createSource", "createContext", "createOccurrence", "createContextLink"],
+      readOnly: false,
+      clearsActiveReadStale: false,
+      marksActiveReadStale: true,
+    },
     {
       surface: "import",
       clientMethods: ["createRawTextImport"],
