@@ -134,6 +134,24 @@ Output ordering is stable and independent of database row order:
   `external`), then `label`, then `id`
 - edges sort by `type`, then `sourceNodeId`, then `targetNodeId`, then `id`
 
+## Frontend Visualization Contract
+
+Phase 4G visualizes this read model without changing it:
+
+- The visual canvas may reorder nodes for deterministic display layout, but it
+  must not add or remove graph response nodes.
+- The visual canvas may reorder edges for deterministic display layering, but it
+  must not add or remove graph response edges.
+- Node and edge details shown by the frontend must come from the selected
+  response node or edge object.
+- Unknown node or edge types must render with safe fallback labels/styles and
+  must not fail the read surface.
+- Empty graph responses should render a clear empty state rather than an empty
+  SVG that implies a rendering error.
+- The frontend must not persist layout positions, create graph edits, infer
+  missing context links, query extra backend routes, or treat visualization
+  selection as active L3 mutation state.
+
 ## Error Semantics
 
 - route schema errors return `400`

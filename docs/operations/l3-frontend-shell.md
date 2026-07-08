@@ -83,3 +83,19 @@ Manual browser smoke, when needed:
 5. Confirm long ids, JSON previews, errors, and empty states wrap within the
    lightweight shell.
 6. Stop the dev server after the check.
+
+## Phase 4G Graph Canvas Boundary
+
+The Graph tab includes a read-only SVG canvas beside the existing stats and
+table fallback. The canvas:
+
+- consumes only the `L3GraphReadModel` already loaded by `L3GraphPage`
+- uses deterministic frontend layout helpers
+- supports node and edge selection detail without issuing extra requests
+- keeps empty graph, unknown type, missing endpoint, and long label fallbacks
+  inside the lightweight shell
+- never writes active L3 rows, persists graph positions, edits links, or
+  constructs `/api/l3/` routes directly
+
+The shell still has no router, global state library, graph visualization
+library, UI framework, backend endpoint, or migration added for this surface.

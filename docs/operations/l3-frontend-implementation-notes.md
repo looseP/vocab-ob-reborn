@@ -334,3 +334,37 @@ UX contract hardening:
 Phase 4F still defers graph visualization, context/word/source editors, MCP
 agent UI, manual L3 active editors, backend changes, migrations, new UI
 frameworks, global state libraries, and recommendation/import semantic changes.
+
+## Phase 4G Graph Visualization MVP
+
+Phase 4G adds the first visual graph surface while keeping the existing L3 read
+contract sealed:
+
+- `src/frontend/components/L3GraphCanvas.tsx` renders a read-only SVG graph
+  from the current `L3GraphReadModel`.
+- `src/frontend/viewModels/l3GraphViewModel.ts` owns deterministic canvas
+  layout, display labels, legend rows, safe unknown-type fallbacks, selected
+  item summaries, and empty-canvas state.
+- `src/frontend/pages/L3GraphPage.tsx` keeps the existing query controls,
+  stats, node list, edge list, stale banner, and normalized error behavior,
+  then adds the visual canvas between stats/empty messaging and list fallback.
+- Selection is UI-only and local: clicking a node or edge highlights it and
+  displays detail from the latest graph response. A successful refresh clears a
+  stale selection if the selected id no longer exists.
+
+Phase 4G graph semantics:
+
+- Canvas data comes only from `client.getGraph(...)`.
+- The frontend does not create, infer, supplement, persist, or edit active
+  graph nodes, graph edges, occurrences, context links, or L3 rows.
+- Graph refresh remains a read-only action and still clears active-read stale
+  only after successful graph read.
+- Proposal confirm remains the only active L3 upgrade path.
+- Recommendation `link_gap` accept remains only a proposal bridge.
+- Import success remains only pending-proposal creation.
+
+Phase 4G still defers graph editing, node drag persistence, manual link
+creation, advanced force-directed layout, graph API expansion, backend changes,
+migrations, new dependencies, MCP agent UI, manual L3 editor, recommendation
+algorithm changes, import parser changes, and L1/L2/FSRS/LLM/dictionary
+behavior changes.

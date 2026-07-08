@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { L3GraphReadModel } from "@/domain";
 import { L3ErrorMessage } from "../components/L3ErrorMessage";
+import { L3GraphCanvas } from "../components/L3GraphCanvas";
 import {
   isNormalizedL3Error,
   normalizeL3TransportError,
@@ -17,6 +18,7 @@ import {
   graphStatsRows,
   summarizeGraphEdge,
   summarizeGraphNode,
+  type GraphCanvasSelection,
 } from "../viewModels/l3GraphViewModel";
 
 interface L3GraphPageProps {
@@ -39,6 +41,7 @@ export function L3GraphPage({ client, staleState, onGraphRefreshed }: L3GraphPag
   const [limit, setLimit] = useState("100");
   const [cursor, setCursor] = useState("");
   const [graph, setGraph] = useState<L3GraphReadModel | null>(null);
+  const [selection, setSelection] = useState<GraphCanvasSelection>(null);
   const [status, setStatus] = useState<WorkStatus>("idle");
   const [error, setError] = useState<NormalizedL3Error | null>(null);
 
@@ -68,6 +71,12 @@ export function L3GraphPage({ client, staleState, onGraphRefreshed }: L3GraphPag
       const response = await client.getGraph(payload);
       applyGraphReadUiResult(response);
       setGraph(response);
+      setSelection((current) => {
+        if (!current) return null;
+        if (current.kind === "node" && response.nodes.some((node) => node.id === current.id)) return current;
+        if (current.kind === "edge" && response.edges.some((edge) => edge.id === current.id)) return current;
+        return null;
+      });
       setCursor(response.cursor ?? "");
       onGraphRefreshed();
     } catch (caught) {
@@ -173,6 +182,8 @@ export function L3GraphPage({ client, staleState, onGraphRefreshed }: L3GraphPag
               <span>Try a different slug, source, wordbook, depth, limit, or cursor.</span>
             </div>
           ) : null}
+
+          <L3GraphCanvas graph={graph} selection={selection} onSelect={setSelection} />
 
           <div className="graph-section">
             <div className="detail-header">

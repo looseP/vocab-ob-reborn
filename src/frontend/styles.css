@@ -369,6 +369,100 @@ select {
   gap: 22px;
 }
 
+.graph-canvas-panel {
+  display: grid;
+  gap: 16px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.graph-canvas-scroll {
+  overflow-x: auto;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.graph-canvas {
+  display: block;
+  min-width: 720px;
+  width: 100%;
+  min-height: 360px;
+}
+
+.graph-canvas-edge {
+  cursor: pointer;
+  opacity: 0.78;
+  stroke-width: 2.5;
+}
+
+.graph-canvas-edge:hover,
+.graph-canvas-edge:focus,
+.graph-canvas-edge.selected {
+  opacity: 1;
+  stroke-width: 4;
+}
+
+.graph-canvas-node {
+  cursor: pointer;
+  outline: none;
+}
+
+.graph-canvas-node circle {
+  stroke: #ffffff;
+  stroke-width: 3;
+}
+
+.graph-canvas-node text {
+  fill: #172033;
+  font-size: 12px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.graph-canvas-node:hover circle,
+.graph-canvas-node:focus circle,
+.graph-canvas-node.selected circle {
+  stroke: #172033;
+  stroke-width: 4;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.graph-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid #d7deea;
+  border-radius: 999px;
+  background: #f8fbff;
+  color: #334057;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+}
+
+.graph-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.graph-selection-panel {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #d7deea;
+  padding-top: 14px;
+}
+
 .graph-section,
 .space-section {
   display: grid;

@@ -1,9 +1,9 @@
 # L3 Frontend
 
-Phase 4F wires the minimal frontend host into the real L3 raw import,
+Phase 4G wires the minimal frontend host into the real L3 raw import,
 proposal review, recommendation queue, graph read, context detail, word space,
-and source space read contracts, then hardens runtime smoke and UX contract
-semantics without expanding feature scope.
+source space read contracts, and a read-only graph visualization MVP without
+expanding backend or mutation scope.
 
 ## Decision
 
@@ -117,6 +117,21 @@ semantics without expanding feature scope.
   view-model helpers. The only route adapter remains `src/frontend/api/l3Client.ts`
   backed by `src/l3/frontend/contract.ts`.
 
+## Phase 4G Graph Visualization MVP
+
+- Graph page now includes a read-only SVG canvas rendered from the current
+  `client.getGraph` response.
+- Canvas nodes and edges preserve response cardinality: no frontend-created
+  active nodes, edges, occurrences, or context links are added.
+- The deterministic layout is implemented in pure view-model helpers, so equal
+  graph response data produces stable positions and edge ordering.
+- Node and edge selection shows detail from the latest graph response only; if a
+  refreshed graph no longer contains the selection, the selection is cleared.
+- Unknown node/edge types, long labels, empty graphs, and missing edge endpoints
+  render with safe fallbacks.
+- The nodes and edges tables remain as the accessible fallback and source of
+  inspectable response data.
+
 ## Phase 4C.1 Hardening
 
 - Required import fields are checked locally before the shared client is called.
@@ -129,7 +144,7 @@ semantics without expanding feature scope.
 - Page components still do not contain raw `fetch` calls or direct `/api/l3/`
   paths.
 
-## Continue After Phase 4F
+## Continue After Phase 4G
 
 - Keep graph visualization/editing out of scope until a separate product phase.
 - L3 editor, MCP agent UI, context/link manual creation UI, and full graph

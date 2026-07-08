@@ -90,6 +90,13 @@ L1 vocabulary review package.
   semantics without backend, migration, graph visualization, UI framework,
   router, global state, recommendation, import parser, MCP, LLM, dictionary, or
   L1/L2/FSRS changes.
+- Phase 4G adds a read-only SVG graph visualization MVP to the existing Graph
+  page. Nodes and edges come only from the `client.getGraph` response, the
+  existing stats/list fallback remains, node/edge selection is local display
+  state, deterministic layout is frontend-only, and the phase adds no backend
+  endpoint, migration, dependency, graph editing, persisted layout, active L3
+  mutation path, recommendation/import semantic change, MCP, LLM, dictionary,
+  or L1/L2/FSRS behavior change.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

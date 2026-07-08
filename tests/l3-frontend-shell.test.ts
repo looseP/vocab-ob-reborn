@@ -13,11 +13,18 @@ import {
 import { formatL3ErrorDetails, l3ErrorUxContract } from "@/frontend/viewModels/l3ErrorViewModel";
 import {
   applyGraphReadUiResult,
+  buildGraphCanvasModel,
   buildGraphQueryPayload,
+  compactGraphLabel,
+  getGraphEdgeDisplay,
+  getGraphLegendItems,
+  getGraphNodeDisplay,
   graphEmptyMessage,
   graphStatsRows,
+  layoutGraphNodes,
   summarizeGraphEdge,
   summarizeGraphNode,
+  summarizeSelectedGraphItem,
 } from "@/frontend/viewModels/l3GraphViewModel";
 import { buildRawTextImportPayload, summarizeImportProposalItem } from "@/frontend/viewModels/l3ImportViewModel";
 import { sortProposalItems, summarizeProposalItem } from "@/frontend/viewModels/l3ProposalViewModel";
@@ -88,6 +95,7 @@ describe("Phase 4B L3 frontend shell", () => {
       "src/frontend/App.tsx",
       "src/frontend/api/l3Client.ts",
       "src/frontend/components/L3ErrorMessage.tsx",
+      "src/frontend/components/L3GraphCanvas.tsx",
       "src/frontend/components/L3Shell.tsx",
       "src/frontend/pages/L3HomePage.tsx",
       "src/frontend/pages/L3ImportPage.tsx",
@@ -118,6 +126,7 @@ describe("Phase 4B L3 frontend shell", () => {
   it("keeps implemented L3 frontend files away from local network calls", () => {
     const files = [
       "src/frontend/components/L3ErrorMessage.tsx",
+      "src/frontend/components/L3GraphCanvas.tsx",
       "src/frontend/components/L3Shell.tsx",
       "src/frontend/pages/L3ImportPage.tsx",
       "src/frontend/pages/L3ProposalPage.tsx",
@@ -603,6 +612,129 @@ describe("Phase 4B L3 frontend shell", () => {
         reason: "graph_read_no_invalidation",
       },
     });
+  });
+
+  it("builds deterministic graph canvas models without fabricating response data", () => {
+    const graph = graphModel({
+      nodes: [
+        { id: "word:w1", type: "word", label: "vivid", ref: { wordId: "w1" }, metadata: { slug: "vivid" } },
+        { id: "source:src-1", type: "source", label: "Manual source", ref: { sourceId: "src-1" } },
+        { id: "context:ctx-1", type: "context", label: "A vivid sentence", ref: { contextId: "ctx-1" } },
+      ],
+      edges: [
+        { id: "edge-2", type: "occurs_in", sourceNodeId: "word:w1", targetNodeId: "context:ctx-1", confidence: 0.9 },
+        { id: "edge-1", type: "belongs_to", sourceNodeId: "context:ctx-1", targetNodeId: "source:src-1" },
+      ],
+      stats: { sourceCount: 1, contextCount: 1, occurrenceCount: 1, linkCount: 0, nodeCount: 3, edgeCount: 2 },
+    });
+
+    const first = buildGraphCanvasModel(graph);
+    const second = buildGraphCanvasModel(graphModel({
+      ...graph,
+      nodes: [...graph.nodes].reverse(),
+      edges: [...graph.edges].reverse(),
+    }));
+
+    expect(first).toEqual(second);
+    expect(first.state).toBe("ready");
+    expect(first.nodes).toHaveLength(graph.nodes.length);
+    expect(first.edges).toHaveLength(graph.edges.length);
+    expect(first.nodes.map((node) => node.id)).toEqual(["source:src-1", "context:ctx-1", "word:w1"]);
+    expect(first.edges.map((edge) => edge.id)).toEqual(["edge-1", "edge-2"]);
+    expect(first.summary).toBe("3 visual nodes / 2 visual edges from graph response.");
+  });
+
+  it("handles empty graph, unknown types, long labels, and missing edge endpoints safely", () => {
+    const empty = buildGraphCanvasModel(graphModel());
+    const unknownGraph = graphModel({
+      nodes: [{
+        id: "",
+        type: "mystery" as never,
+        label: "A very long graph node label that should be compacted for display",
+        ref: {},
+      }],
+      edges: [{
+        id: "",
+        type: "unexpected_edge" as never,
+        sourceNodeId: "missing-source",
+        targetNodeId: "missing-target",
+      }],
+      stats: { sourceCount: 0, contextCount: 0, occurrenceCount: 0, linkCount: 1, nodeCount: 1, edgeCount: 1 },
+    });
+    const model = buildGraphCanvasModel(unknownGraph);
+
+    expect(empty).toMatchObject({ state: "empty", nodes: [], edges: [], summary: "No visual graph data for current filters." });
+    expect(buildGraphCanvasModel(graphModel({
+      nodes: [],
+      edges: [{
+        id: "edge-without-response-nodes",
+        type: "illustrates",
+        sourceNodeId: "word:w1",
+        targetNodeId: "word:w2",
+      }],
+    }))).toMatchObject({
+      state: "ready",
+      nodes: [],
+      edges: [{ id: "edge-without-response-nodes", missingEndpoint: true }],
+      summary: "0 visual nodes / 1 visual edges from graph response.",
+    });
+    expect(getGraphNodeDisplay(unknownGraph.nodes[0])).toMatchObject({
+      id: "unknown-node",
+      type: "mystery",
+      typeLabel: "Unknown",
+      compactLabel: "A very long gra...",
+    });
+    expect(getGraphEdgeDisplay(unknownGraph.edges[0])).toMatchObject({
+      id: "missing-source:unexpected_edge:missing-target",
+      type: "unexpected_edge",
+      label: "unexpected edge",
+    });
+    expect(model.nodes).toHaveLength(1);
+    expect(model.edges).toHaveLength(1);
+    expect(model.edges[0].missingEndpoint).toBe(true);
+    expect(compactGraphLabel("abcdefghijklmnopqrstuvwxyz", 10)).toBe("abcdefg...");
+  });
+
+  it("summarizes graph canvas node and edge selection from latest read response", () => {
+    const graph = graphModel({
+      nodes: [
+        { id: "context:ctx-1", type: "context", label: "Context detail", ref: { contextId: "ctx-1" } },
+        { id: "word:w1", type: "word", label: "vivid", ref: { wordId: "w1" } },
+      ],
+      edges: [
+        { id: "edge-1", type: "illustrates", sourceNodeId: "context:ctx-1", targetNodeId: "word:w1", evidence: { linkId: "link-1" } },
+      ],
+      stats: { sourceCount: 0, contextCount: 1, occurrenceCount: 1, linkCount: 1, nodeCount: 2, edgeCount: 1 },
+    });
+
+    expect(summarizeSelectedGraphItem(graph, null)).toBe("Select a node or edge to inspect graph response details.");
+    expect(summarizeSelectedGraphItem(graph, { kind: "node", id: "word:w1" })).toBe("Word: vivid");
+    expect(summarizeSelectedGraphItem(graph, { kind: "edge", id: "edge-1" })).toBe("illustrates: context:ctx-1 -> word:w1");
+    expect(summarizeSelectedGraphItem(graph, { kind: "node", id: "missing" })).toBe("Selected node is no longer present in the latest graph response.");
+    expect(summarizeSelectedGraphItem(graph, { kind: "edge", id: "missing" })).toBe("Selected edge is no longer present in the latest graph response.");
+  });
+
+  it("derives graph canvas legend and layout with stable display guards", () => {
+    const graph = graphModel({
+      nodes: [
+        { id: "external:e1", type: "external", label: "External target", ref: { targetRef: "e1" } },
+        { id: "word:w1", type: "word", label: "vivid", ref: { wordId: "w1" } },
+        { id: "word:w2", type: "word", label: "lucid", ref: { wordId: "w2" } },
+      ],
+      edges: [
+        { id: "edge-1", type: "illustrates", sourceNodeId: "word:w1", targetNodeId: "word:w2" },
+      ],
+    });
+
+    expect(layoutGraphNodes(graph.nodes, graph.edges).map((node) => ({ id: node.id, x: node.x, y: node.y }))).toEqual([
+      { id: "word:w2", x: 320, y: 140 },
+      { id: "word:w1", x: 640, y: 160 },
+      { id: "external:e1", x: 320, y: 280 },
+    ]);
+    expect(getGraphLegendItems(graph)).toEqual([
+      { type: "word", label: "Word", color: "#2563eb", count: 2 },
+      { type: "external", label: "External", color: "#6b7280", count: 1 },
+    ]);
   });
 
   it("keeps graph stale signals exclusive to proposal confirm semantics", () => {

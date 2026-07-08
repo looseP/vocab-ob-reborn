@@ -563,6 +563,29 @@ scope:
   `src/frontend/components`, `src/frontend/viewModels`, and
   `src/frontend/state`.
 
+## Phase 4G Graph Visualization Contract Notes
+
+Phase 4G adds a visualization to the existing Graph Read Surface without
+changing graph API semantics:
+
+- The visual graph is an SVG read view over the `GET /api/l3/graph` response.
+- Canvas node count equals response `nodes.length`; canvas edge count equals
+  response `edges.length`.
+- The frontend does not synthesize active graph edges, infer context links,
+  create occurrences, or join extra data from other endpoints.
+- Layout is deterministic and local to the frontend. It is a display concern,
+  not persisted graph state.
+- Node and edge selection is also local display state; selected detail uses only
+  the latest response object.
+- Existing stats, node list, and edge list remain the accessible fallback and
+  contract audit surface.
+- Unknown node or edge types use safe fallback display labels and colors rather
+  than failing the graph read surface.
+- Empty graph responses render empty-state copy instead of an empty or
+  misleading SVG.
+- Graph refresh success still clears active-read stale; graph read still has no
+  proposal, recommendation, import, or active L3 mutation side effects.
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:
