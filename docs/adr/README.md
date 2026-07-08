@@ -97,6 +97,14 @@ L1 vocabulary review package.
   endpoint, migration, dependency, graph editing, persisted layout, active L3
   mutation path, recommendation/import semantic change, MCP, LLM, dictionary,
   or L1/L2/FSRS behavior change.
+- Phase 4H polishes local cross-navigation between existing frontend read
+  surfaces. Graph, Context, Word Space, Source Space, Recommendation, and
+  Proposal pages exchange typed local intents through `App` page state only.
+  Handoffs prefill target inputs but do not write DB state, do not infer ids or
+  slugs from labels/surface text, and add no backend endpoint, migration,
+  dependency, router, global state library, graph editor, manual L3 editor, MCP,
+  LLM, dictionary, recommendation/import semantic change, or L1/L2/FSRS
+  behavior change.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

@@ -1,9 +1,9 @@
 # L3 Frontend
 
-Phase 4G wires the minimal frontend host into the real L3 raw import,
+Phase 4H wires the minimal frontend host into the real L3 raw import,
 proposal review, recommendation queue, graph read, context detail, word space,
-source space read contracts, and a read-only graph visualization MVP without
-expanding backend or mutation scope.
+source space read contracts, read-only graph visualization, and local
+cross-navigation handoffs without expanding backend or mutation scope.
 
 ## Decision
 
@@ -12,7 +12,7 @@ expanding backend or mutation scope.
 - Scope: shell, navigation, raw import, proposal queue/detail, validation,
   confirm/reject, recommendation generate/list/detail, recommendation
   accept/reject, graph read stats/nodes/edges, context detail, word space, and
-  source space browsing
+  source space browsing with local cross-navigation handoffs
 - Contract: reuse `src/l3/frontend/contract.ts`
 
 ## Non-goals
@@ -132,6 +132,25 @@ expanding backend or mutation scope.
 - The nodes and edges tables remain as the accessible fallback and source of
   inspectable response data.
 
+## Phase 4H Cross-Navigation Polish
+
+- `src/frontend/viewModels/l3NavigationViewModel.ts` defines typed local
+  navigation intents for Graph, Context, Word Space, Source Space, Proposal
+  Review, and Recommendation surfaces.
+- `src/frontend/App.tsx` remains the single local navigation owner. It switches
+  the current shell section and pre-fills target page inputs; it does not add
+  React Router, URL deep-link sync, global state, or backend writes.
+- Graph selected node/edge actions use only explicit `ref` or `metadata`
+  fields from the latest graph response. The frontend does not infer slug/id
+  from labels or surface text.
+- Context Detail, Word Space, and Source Space rows expose supported read
+  handoffs to Context, Word, Source, and Graph surfaces while unsupported
+  `l2_item`, topic, external, unknown, or missing-target cases stay disabled
+  with explanatory copy.
+- Recommendation `link_gap` accept still opens Proposal Review as a proposal
+  bridge only. Proposal confirm still marks active read surfaces stale and
+  offers read-surface follow-up actions after active entities are created.
+
 ## Phase 4C.1 Hardening
 
 - Required import fields are checked locally before the shared client is called.
@@ -144,8 +163,9 @@ expanding backend or mutation scope.
 - Page components still do not contain raw `fetch` calls or direct `/api/l3/`
   paths.
 
-## Continue After Phase 4G
+## Continue After Phase 4H
 
-- Keep graph visualization/editing out of scope until a separate product phase.
-- L3 editor, MCP agent UI, context/link manual creation UI, and full graph
-  visualization remain intentionally deferred.
+- Keep frontend read UX QA/manual smoke as the next likely phase.
+- L3 manual editor, graph editing, node drag persistence, MCP agent UI,
+  backend graph expansion, and router/deep-link URL sync remain intentionally
+  deferred.

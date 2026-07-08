@@ -14,10 +14,21 @@ import {
   markActiveReadStaleAfterProposalConfirm,
   type L3ActiveReadStaleState,
 } from "./state/l3CacheSignals";
+import type {
+  L3ContextHandoff,
+  L3GraphHandoff,
+  L3NavigationIntent,
+  L3SourceHandoff,
+  L3WordHandoff,
+} from "./viewModels/l3NavigationViewModel";
 
 export function App() {
   const [section, setSection] = useState<L3ShellSection>("home");
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
+  const [graphHandoff, setGraphHandoff] = useState<L3GraphHandoff | null>(null);
+  const [contextHandoff, setContextHandoff] = useState<L3ContextHandoff | null>(null);
+  const [wordHandoff, setWordHandoff] = useState<L3WordHandoff | null>(null);
+  const [sourceHandoff, setSourceHandoff] = useState<L3SourceHandoff | null>(null);
   const [activeReadStale, setActiveReadStale] = useState<L3ActiveReadStaleState | null>(null);
   const l3Client = useMemo(() => createBrowserL3Client(), []);
 
@@ -31,6 +42,36 @@ export function App() {
     setSection("proposals");
   };
 
+  const navigateL3 = (intent: L3NavigationIntent) => {
+    if (intent.target === "graph") {
+      setGraphHandoff({ ...intent.query, nonce: Date.now() });
+      setSection("graph");
+      return;
+    }
+    if (intent.target === "context") {
+      setContextHandoff({ contextId: intent.contextId, nonce: Date.now() });
+      setSection("context");
+      return;
+    }
+    if (intent.target === "word") {
+      setWordHandoff({ slug: intent.slug, ...(intent.wordbookId ? { wordbookId: intent.wordbookId } : {}), nonce: Date.now() });
+      setSection("word");
+      return;
+    }
+    if (intent.target === "source") {
+      setSourceHandoff({ sourceId: intent.sourceId, nonce: Date.now() });
+      setSection("source");
+      return;
+    }
+    if (intent.target === "proposal") {
+      intent.proposalId ? openProposal(intent.proposalId) : openProposalQueue();
+      return;
+    }
+    if (intent.target === "recommendation") {
+      setSection("recommendations");
+    }
+  };
+
   const page = {
     home: <L3HomePage cachePolicy={PHASE_4C_CACHE_POLICY} />,
     import: <L3ImportPage client={l3Client} onOpenProposal={openProposal} onOpenProposalQueue={openProposalQueue} />,
@@ -40,13 +81,14 @@ export function App() {
         selectedProposalId={selectedProposalId}
         onSelectProposal={setSelectedProposalId}
         onConfirmed={(result) => setActiveReadStale(markActiveReadStaleAfterProposalConfirm(result))}
+        onNavigate={navigateL3}
       />
     ),
-    recommendations: <L3RecommendationPage client={l3Client} onOpenProposal={openProposal} />,
-    graph: <L3GraphPage client={l3Client} staleState={activeReadStale} onGraphRefreshed={() => setActiveReadStale(null)} />,
-    context: <L3ContextPage client={l3Client} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} />,
-    word: <L3WordSpacePage client={l3Client} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} />,
-    source: <L3SourceSpacePage client={l3Client} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} />,
+    recommendations: <L3RecommendationPage client={l3Client} onNavigate={navigateL3} />,
+    graph: <L3GraphPage client={l3Client} handoff={graphHandoff} staleState={activeReadStale} onGraphRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
+    context: <L3ContextPage client={l3Client} handoff={contextHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
+    word: <L3WordSpacePage client={l3Client} handoff={wordHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
+    source: <L3SourceSpacePage client={l3Client} handoff={sourceHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
   }[section];
 
   return (

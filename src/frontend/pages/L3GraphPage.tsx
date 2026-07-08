@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { L3GraphReadModel } from "@/domain";
 import { L3ErrorMessage } from "../components/L3ErrorMessage";
 import { L3GraphCanvas } from "../components/L3GraphCanvas";
@@ -20,11 +20,14 @@ import {
   summarizeGraphNode,
   type GraphCanvasSelection,
 } from "../viewModels/l3GraphViewModel";
+import type { L3GraphHandoff, L3NavigationIntent } from "../viewModels/l3NavigationViewModel";
 
 interface L3GraphPageProps {
   client: L3FrontendClient;
+  handoff: L3GraphHandoff | null;
   staleState: L3GraphStaleState | null;
   onGraphRefreshed(): void;
+  onNavigate(intent: L3NavigationIntent): void;
 }
 
 type WorkStatus = "idle" | "loading";
@@ -33,7 +36,7 @@ function normalizeUnknownError(error: unknown): NormalizedL3Error {
   return isNormalizedL3Error(error) ? error : normalizeL3TransportError(error);
 }
 
-export function L3GraphPage({ client, staleState, onGraphRefreshed }: L3GraphPageProps) {
+export function L3GraphPage({ client, handoff, staleState, onGraphRefreshed, onNavigate }: L3GraphPageProps) {
   const [wordbookId, setWordbookId] = useState("");
   const [slug, setSlug] = useState("");
   const [sourceId, setSourceId] = useState("");
@@ -47,6 +50,15 @@ export function L3GraphPage({ client, staleState, onGraphRefreshed }: L3GraphPag
 
   const isBusy = status !== "idle";
   const emptyMessage = graphEmptyMessage(graph);
+
+  useEffect(() => {
+    if (!handoff) return;
+    setWordbookId(handoff.wordbookId ?? "");
+    setSlug(handoff.slug ?? "");
+    setSourceId(handoff.sourceId ?? "");
+    setCursor("");
+    setSelection(null);
+  }, [handoff?.nonce]);
 
   const loadGraph = async (requestedCursor?: string | null) => {
     setError(null);
@@ -183,7 +195,7 @@ export function L3GraphPage({ client, staleState, onGraphRefreshed }: L3GraphPag
             </div>
           ) : null}
 
-          <L3GraphCanvas graph={graph} selection={selection} onSelect={setSelection} />
+          <L3GraphCanvas graph={graph} selection={selection} onNavigate={onNavigate} onSelect={setSelection} />
 
           <div className="graph-section">
             <div className="detail-header">

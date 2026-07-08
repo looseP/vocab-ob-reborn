@@ -586,6 +586,38 @@ changing graph API semantics:
 - Graph refresh success still clears active-read stale; graph read still has no
   proposal, recommendation, import, or active L3 mutation side effects.
 
+## Phase 4H Cross-Navigation Contract Notes
+
+Phase 4H adds local frontend handoffs between existing surfaces without
+changing API, cache, or active L3 semantics:
+
+- Navigation is represented by typed frontend intents and executed by
+  `src/frontend/App.tsx` page state. It is not persisted, not written to the DB,
+  and not mirrored to URL deep links.
+- Graph node and edge actions may open Context, Word Space, or Source Space only
+  when the graph response contains explicit target fields such as `contextId`,
+  `sourceId`, `slug`, and optional `wordbookId`.
+- The frontend must not infer word slugs, source ids, context ids, graph edges,
+  context links, or occurrences from labels, surface text, summaries, or row
+  order.
+- Context Detail may open Source Space from the loaded source, Word Space from
+  occurrences only when explicit slug evidence exists, and supported context
+  link targets when their stored target id or explicit slug exists.
+- Word Space may open Context Detail from context rows, Source Space from source
+  rows, and Graph using the loaded word slug plus the active wordbook filter.
+- Source Space may open Context Detail from context rows, Word Space from
+  occurrences only when explicit slug evidence exists, and Graph using the
+  loaded source id.
+- Unsupported soft targets (`l2_item`, topic, external, unknown, or missing
+  explicit targets) render disabled actions with explanatory copy instead of
+  guessing.
+- Recommendation `link_gap` accept still hands off to Proposal Review as a
+  proposal bridge only. Proposal confirm remains the only active L3 upgrade
+  path and the only action that marks active read surfaces stale.
+- Phase 4H adds no backend endpoint, migration, dependency, router, global
+  state library, graph editing, manual L3 editor, MCP agent UI, recommendation
+  algorithm change, import parser change, or L1/L2/FSRS behavior change.
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:

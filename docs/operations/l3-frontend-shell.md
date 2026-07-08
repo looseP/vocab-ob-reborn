@@ -99,3 +99,24 @@ table fallback. The canvas:
 
 The shell still has no router, global state library, graph visualization
 library, UI framework, backend endpoint, or migration added for this surface.
+
+## Phase 4H Cross-Navigation Boundary
+
+The shell now supports local handoffs between existing read surfaces:
+
+- Graph selected node/edge actions can prefill Context, Word Space, Source
+  Space, or Graph inputs when the current API response contains explicit
+  navigation targets.
+- Context, Word Space, and Source Space rows can expose read-surface actions for
+  supported active targets.
+- Recommendation proposal bridges and proposal-confirm follow-up actions use
+  the same typed local navigation helper.
+- Selection and row rendering do not issue requests. A request happens only
+  after the user opens a target page and triggers that page's existing load or
+  refresh action.
+- Disabled actions are expected for unsupported soft targets or missing
+  explicit ids/slugs.
+
+The shell still has no React Router, URL deep-link sync, global state library,
+backend endpoint, migration, graph editor, manual L3 editor, or new dependency
+for this phase.

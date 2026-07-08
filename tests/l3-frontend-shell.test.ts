@@ -27,6 +27,20 @@ import {
   summarizeSelectedGraphItem,
 } from "@/frontend/viewModels/l3GraphViewModel";
 import { buildRawTextImportPayload, summarizeImportProposalItem } from "@/frontend/viewModels/l3ImportViewModel";
+import {
+  canNavigate,
+  contextNavigationAction,
+  contextSourceNavigationAction,
+  graphForSourceNavigationAction,
+  graphForWordNavigationAction,
+  graphSelectionNavigation,
+  linkTargetNavigationAction,
+  occurrenceContextNavigationAction,
+  occurrenceWordNavigationAction,
+  proposalReviewNavigationAction,
+  sourceNavigationAction,
+  wordNavigationAction,
+} from "@/frontend/viewModels/l3NavigationViewModel";
 import { sortProposalItems, summarizeProposalItem } from "@/frontend/viewModels/l3ProposalViewModel";
 import {
   applyRecommendationAcceptUiResult,
@@ -96,6 +110,7 @@ describe("Phase 4B L3 frontend shell", () => {
       "src/frontend/api/l3Client.ts",
       "src/frontend/components/L3ErrorMessage.tsx",
       "src/frontend/components/L3GraphCanvas.tsx",
+      "src/frontend/components/L3NavigationActions.tsx",
       "src/frontend/components/L3Shell.tsx",
       "src/frontend/pages/L3HomePage.tsx",
       "src/frontend/pages/L3ImportPage.tsx",
@@ -110,6 +125,7 @@ describe("Phase 4B L3 frontend shell", () => {
       "src/frontend/viewModels/l3ErrorViewModel.ts",
       "src/frontend/viewModels/l3GraphViewModel.ts",
       "src/frontend/viewModels/l3ImportViewModel.ts",
+      "src/frontend/viewModels/l3NavigationViewModel.ts",
       "src/frontend/viewModels/l3ProposalViewModel.ts",
       "src/frontend/viewModels/l3RecommendationViewModel.ts",
       "src/frontend/viewModels/l3SpaceViewModel.ts",
@@ -127,6 +143,7 @@ describe("Phase 4B L3 frontend shell", () => {
     const files = [
       "src/frontend/components/L3ErrorMessage.tsx",
       "src/frontend/components/L3GraphCanvas.tsx",
+      "src/frontend/components/L3NavigationActions.tsx",
       "src/frontend/components/L3Shell.tsx",
       "src/frontend/pages/L3ImportPage.tsx",
       "src/frontend/pages/L3ProposalPage.tsx",
@@ -140,6 +157,7 @@ describe("Phase 4B L3 frontend shell", () => {
       "src/frontend/viewModels/l3ErrorViewModel.ts",
       "src/frontend/viewModels/l3GraphViewModel.ts",
       "src/frontend/viewModels/l3ImportViewModel.ts",
+      "src/frontend/viewModels/l3NavigationViewModel.ts",
       "src/frontend/viewModels/l3ProposalViewModel.ts",
       "src/frontend/viewModels/l3RecommendationViewModel.ts",
       "src/frontend/viewModels/l3SpaceViewModel.ts",
@@ -735,6 +753,145 @@ describe("Phase 4B L3 frontend shell", () => {
       { type: "word", label: "Word", color: "#2563eb", count: 2 },
       { type: "external", label: "External", color: "#6b7280", count: 1 },
     ]);
+  });
+
+  it("builds graph node and edge navigation intents only from explicit response targets", () => {
+    const graph = graphModel({
+      nodes: [
+        { id: "context:ctx-1", type: "context", label: "Context detail", ref: { contextId: "ctx-1" } },
+        { id: "word:w1", type: "word", label: "vivid", ref: { wordId: "w1" }, metadata: { slug: "vivid", wordbookId: "wb-1" } },
+        { id: "source:src-1", type: "source", label: "Manual source", ref: { sourceId: "src-1", wordbookId: "wb-1" } },
+        { id: "topic:t1", type: "topic", label: "Weather", ref: { label: "weather" } },
+        { id: "word:w2", type: "word", label: "No slug word", ref: { wordId: "w2" } },
+      ],
+      edges: [
+        { id: "edge-1", type: "occurs_in", sourceNodeId: "word:w1", targetNodeId: "context:ctx-1" },
+        { id: "edge-2", type: "illustrates", sourceNodeId: "topic:t1", targetNodeId: "word:w2" },
+      ],
+    });
+
+    expect(graphSelectionNavigation(graph, { kind: "node", id: "context:ctx-1" }).selected).toEqual([
+      { label: "Open Context", intent: { target: "context", contextId: "ctx-1" }, reason: null },
+    ]);
+    expect(graphSelectionNavigation(graph, { kind: "node", id: "word:w1" }).selected).toEqual([
+      { label: "Open Word Space", intent: { target: "word", slug: "vivid", wordbookId: "wb-1" }, reason: null },
+    ]);
+    expect(graphSelectionNavigation(graph, { kind: "node", id: "source:src-1" }).selected).toEqual([
+      { label: "Open Source Space", intent: { target: "source", sourceId: "src-1" }, reason: null },
+    ]);
+
+    const edgeNavigation = graphSelectionNavigation(graph, { kind: "edge", id: "edge-1" });
+    expect(edgeNavigation.endpoints).toEqual([
+      { label: "Open Source Node", intent: { target: "word", slug: "vivid", wordbookId: "wb-1" }, reason: null },
+      { label: "Open Target Node", intent: { target: "context", contextId: "ctx-1" }, reason: null },
+    ]);
+
+    const disabled = graphSelectionNavigation(graph, { kind: "edge", id: "edge-2" }).endpoints;
+    expect(disabled.map((action) => canNavigate(action))).toEqual([false, false]);
+    expect(disabled.map((action) => action.reason)).toEqual([
+      "topic nodes are metadata-only in this phase.",
+      "Missing explicit slug in graph response.",
+    ]);
+  });
+
+  it("builds context, word, source, and proposal navigation intents without guessing slugs from labels", () => {
+    const context = contextRow({ id: "ctx-99", source_id: "src-99" });
+    const source = sourceRow({ id: "src-99", wordbook_id: "wb-99" });
+    const occurrenceWithSlug = occurrenceRow({ context_id: "ctx-99", evidence: { slug: "vivid" } });
+    const occurrenceWithoutSlug = occurrenceRow({ context_id: "ctx-99", surface: "guessable" });
+
+    expect(contextNavigationAction(context)).toEqual({
+      label: "Open Context",
+      intent: { target: "context", contextId: "ctx-99" },
+      reason: null,
+    });
+    expect(sourceNavigationAction(source)).toEqual({
+      label: "Open Source Space",
+      intent: { target: "source", sourceId: "src-99" },
+      reason: null,
+    });
+    expect(contextSourceNavigationAction(contextDetail({ source }))).toEqual(sourceNavigationAction(source));
+    expect(occurrenceContextNavigationAction(occurrenceWithSlug)).toEqual({
+      label: "Open Context",
+      intent: { target: "context", contextId: "ctx-99" },
+      reason: null,
+    });
+    expect(occurrenceWordNavigationAction(occurrenceWithSlug, "wb-99")).toEqual({
+      label: "Open Word Space",
+      intent: { target: "word", slug: "vivid", wordbookId: "wb-99" },
+      reason: null,
+    });
+    expect(occurrenceWordNavigationAction(occurrenceWithoutSlug, "wb-99")).toEqual({
+      label: "Open Word Space",
+      intent: null,
+      reason: "Missing explicit slug; word id alone is not enough.",
+    });
+    expect(wordNavigationAction({ slug: " lucid ", wordbookId: " wb-99 " })).toEqual({
+      label: "Open Word Space",
+      intent: { target: "word", slug: "lucid", wordbookId: "wb-99" },
+      reason: null,
+    });
+    expect(graphForWordNavigationAction(wordSpace({ word: wordRow({ slug: "vivid" }) }), "wb-99")).toEqual({
+      label: "Open Graph for this word",
+      intent: { target: "graph", query: { slug: "vivid", wordbookId: "wb-99" } },
+      reason: null,
+    });
+    expect(graphForSourceNavigationAction(sourceSpace({ source }))).toEqual({
+      label: "Open Graph for this source",
+      intent: { target: "graph", query: { sourceId: "src-99" } },
+      reason: null,
+    });
+    expect(proposalReviewNavigationAction("prop-99")).toEqual({
+      label: "Open Proposal Review",
+      intent: { target: "proposal", proposalId: "prop-99" },
+      reason: null,
+    });
+  });
+
+  it("builds context link target navigation only for supported active read surfaces", () => {
+    expect(linkTargetNavigationAction(linkRow({
+      target_type: "context",
+      target_id: "ctx-target",
+    }))).toEqual({
+      label: "Open Target Context",
+      intent: { target: "context", contextId: "ctx-target" },
+      reason: null,
+    });
+    expect(linkTargetNavigationAction(linkRow({
+      target_type: "source",
+      target_id: "src-target",
+    }))).toEqual({
+      label: "Open Target Source",
+      intent: { target: "source", sourceId: "src-target" },
+      reason: null,
+    });
+    expect(linkTargetNavigationAction(linkRow({
+      target_type: "word",
+      target_id: "word-target",
+      target_ref: { slug: "lucid", wordbookId: "wb-1" },
+    }))).toEqual({
+      label: "Open Target Word",
+      intent: { target: "word", slug: "lucid", wordbookId: "wb-1" },
+      reason: null,
+    });
+    expect(linkTargetNavigationAction(linkRow({
+      target_type: "word",
+      target_id: "word-target",
+      target_ref: {},
+    }))).toEqual({
+      label: "Open Target Word",
+      intent: null,
+      reason: "Missing explicit slug; word id alone is not enough.",
+    });
+    expect(linkTargetNavigationAction(linkRow({
+      target_type: "l2_item",
+      target_id: null,
+      target_ref: { field: "definition", contentId: "l2-1" },
+    }))).toEqual({
+      label: "Open Link Target",
+      intent: null,
+      reason: "l2_item targets are metadata-only in this phase.",
+    });
   });
 
   it("keeps graph stale signals exclusive to proposal confirm semantics", () => {

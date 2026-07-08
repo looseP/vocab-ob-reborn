@@ -152,6 +152,25 @@ Phase 4G visualizes this read model without changing it:
   missing context links, query extra backend routes, or treat visualization
   selection as active L3 mutation state.
 
+## Frontend Cross-Navigation Contract
+
+Phase 4H may use graph response data for local navigation handoffs, but it does
+not expand the graph API:
+
+- `context` nodes may open Context Detail only from explicit `contextId`.
+- `source` nodes may open Source Space only from explicit `sourceId`.
+- `word` nodes may open Word Space only from explicit `slug`; `wordId` alone is
+  not enough because the frontend word read surface is slug-based.
+- Optional `wordbookId` must be preserved when present in graph `ref` or
+  `metadata`.
+- Edge actions may open source/target node read surfaces only by resolving those
+  endpoint nodes from the same graph response.
+- The frontend must not infer slug/id from graph label, context surface text, or
+  row order.
+- `l2_item`, topic, external, unknown, and missing-target nodes are displayed as
+  metadata-only targets unless a future read surface defines a stable frontend
+  target.
+
 ## Error Semantics
 
 - route schema errors return `400`

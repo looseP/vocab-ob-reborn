@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { L3SourceSpace } from "@/domain";
 import { L3ErrorMessage } from "../components/L3ErrorMessage";
+import { L3NavigationActions } from "../components/L3NavigationActions";
 import {
   isNormalizedL3Error,
   normalizeL3TransportError,
@@ -21,11 +22,22 @@ import {
   sourceSpaceEmptyMessage,
   sourceSpaceStatsRows,
 } from "../viewModels/l3SpaceViewModel";
+import {
+  contextNavigationAction,
+  graphForSourceNavigationAction,
+  linkTargetNavigationAction,
+  type L3SourceHandoff,
+  occurrenceContextNavigationAction,
+  occurrenceWordNavigationAction,
+  type L3NavigationIntent,
+} from "../viewModels/l3NavigationViewModel";
 
 interface L3SourceSpacePageProps {
   client: L3FrontendClient;
+  handoff: L3SourceHandoff | null;
   staleState: L3ActiveReadStaleState | null;
   onReadRefreshed(): void;
+  onNavigate(intent: L3NavigationIntent): void;
 }
 
 type WorkStatus = "idle" | "loading";
@@ -34,7 +46,7 @@ function normalizeUnknownError(error: unknown): NormalizedL3Error {
   return isNormalizedL3Error(error) ? error : normalizeL3TransportError(error);
 }
 
-export function L3SourceSpacePage({ client, staleState, onReadRefreshed }: L3SourceSpacePageProps) {
+export function L3SourceSpacePage({ client, handoff, staleState, onReadRefreshed, onNavigate }: L3SourceSpacePageProps) {
   const [sourceId, setSourceId] = useState("");
   const [limit, setLimit] = useState("50");
   const [cursor, setCursor] = useState("");
@@ -44,6 +56,12 @@ export function L3SourceSpacePage({ client, staleState, onReadRefreshed }: L3Sou
   const isBusy = status !== "idle";
   const staleText = readStaleBannerText(staleState);
   const emptyMessage = sourceSpaceEmptyMessage(space);
+
+  useEffect(() => {
+    if (!handoff) return;
+    setSourceId(handoff.sourceId);
+    setCursor("");
+  }, [handoff?.nonce]);
 
   const loadSourceSpace = async (event?: FormEvent<HTMLFormElement>, requestedCursor?: string | null) => {
     event?.preventDefault();
@@ -120,6 +138,7 @@ export function L3SourceSpacePage({ client, staleState, onReadRefreshed }: L3Sou
             <h3>{sourceLabel(space.source)}</h3>
             <span>{space.source.id} / wordbook {space.source.wordbook_id ?? "none"} / language {space.source.language ?? "unknown"}</span>
           </div>
+          <L3NavigationActions actions={[graphForSourceNavigationAction(space)]} onNavigate={onNavigate} />
           <dl className="stats-grid">
             {sourceSpaceStatsRows(space).map((row) => (
               <div key={row.label}>
@@ -151,6 +170,7 @@ export function L3SourceSpacePage({ client, staleState, onReadRefreshed }: L3Sou
                   <div className="space-row" key={context.id}>
                     <strong>{contextPreview(context)}</strong>
                     <span>{context.context_type} / language {context.language ?? "unknown"} / updated {context.updated_at}</span>
+                    <L3NavigationActions actions={[contextNavigationAction(context)]} onNavigate={onNavigate} />
                     <code>{compactSpaceJson(context.metadata) || "no metadata"}</code>
                   </div>
                 ))}
@@ -166,6 +186,10 @@ export function L3SourceSpacePage({ client, staleState, onReadRefreshed }: L3Sou
                   <div className="space-row" key={occurrence.id}>
                     <strong>{occurrence.context_id}: {occurrenceSummary(occurrence)}</strong>
                     <span>word {occurrence.word_id} / confidence {occurrence.confidence ?? "none"}</span>
+                    <L3NavigationActions actions={[
+                      occurrenceContextNavigationAction(occurrence),
+                      occurrenceWordNavigationAction(occurrence, space.source.wordbook_id),
+                    ]} onNavigate={onNavigate} />
                     <code>{compactSpaceJson(occurrence.evidence) || "no evidence"}</code>
                   </div>
                 ))}
@@ -181,6 +205,7 @@ export function L3SourceSpacePage({ client, staleState, onReadRefreshed }: L3Sou
                   <div className="space-row" key={link.id}>
                     <strong>{linkSummary(link)}</strong>
                     <span>confidence {link.confidence ?? "none"} / created {link.created_at}</span>
+                    <L3NavigationActions actions={[linkTargetNavigationAction(link)]} onNavigate={onNavigate} />
                     <code>{compactSpaceJson(link.provenance) || "no provenance"}</code>
                   </div>
                 ))}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { L3RecommendationAcceptResult, L3RecommendationBundle, L3RecommendationItemRow, L3RecommendationStatus, L3RecommendationType } from "@/domain";
 import { L3ErrorMessage } from "../components/L3ErrorMessage";
+import { L3NavigationActions } from "../components/L3NavigationActions";
 import {
   isNormalizedL3Error,
   normalizeL3TransportError,
@@ -25,10 +26,14 @@ import {
   recommendationTypes,
   summarizeRecommendationItem,
 } from "../viewModels/l3RecommendationViewModel";
+import {
+  proposalReviewNavigationAction,
+  type L3NavigationIntent,
+} from "../viewModels/l3NavigationViewModel";
 
 interface L3RecommendationPageProps {
   client: L3FrontendClient;
-  onOpenProposal(proposalId: string): void;
+  onNavigate(intent: L3NavigationIntent): void;
 }
 
 type RecommendationFilter = L3RecommendationStatus | "all";
@@ -43,7 +48,7 @@ function updateItem(items: L3RecommendationItemRow[], updated: L3RecommendationI
   return items.map((item) => (item.id === updated.id ? updated : item));
 }
 
-export function L3RecommendationPage({ client, onOpenProposal }: L3RecommendationPageProps) {
+export function L3RecommendationPage({ client, onNavigate }: L3RecommendationPageProps) {
   const [mode, setMode] = useState<L3RecommendationGenerateInput["mode"]>("gap_scan");
   const [wordbookId, setWordbookId] = useState("");
   const [seedSlug, setSeedSlug] = useState("");
@@ -372,11 +377,7 @@ export function L3RecommendationPage({ client, onOpenProposal }: L3Recommendatio
                   {acceptResult.proposal ? (
                     <>
                       <span>{acceptResult.proposal.proposal.id} / {acceptResult.proposal.proposal.status}</span>
-                      <div className="action-row">
-                        <button disabled={!proposalId} onClick={() => proposalId && onOpenProposal(proposalId)} type="button">
-                          Open proposal review
-                        </button>
-                      </div>
+                      <L3NavigationActions actions={[proposalReviewNavigationAction(proposalId)]} onNavigate={onNavigate} />
                     </>
                   ) : (
                     <code>{compactJson(acceptResult.actionPayload ?? acceptResult.item, 300)}</code>

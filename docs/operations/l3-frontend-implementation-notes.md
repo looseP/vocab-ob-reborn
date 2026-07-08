@@ -368,3 +368,34 @@ creation, advanced force-directed layout, graph API expansion, backend changes,
 migrations, new dependencies, MCP agent UI, manual L3 editor, recommendation
 algorithm changes, import parser changes, and L1/L2/FSRS/LLM/dictionary
 behavior changes.
+
+## Phase 4H Cross-Navigation Polish
+
+Phase 4H connects the existing read surfaces with local UI handoffs while
+keeping the frontend read-only:
+
+- `src/frontend/viewModels/l3NavigationViewModel.ts` owns pure typed navigation
+  intents and guards for Graph, Context, Word, Source, Proposal, and
+  Recommendation surfaces.
+- `src/frontend/components/L3NavigationActions.tsx` renders enabled or disabled
+  navigation actions. Disabled actions explain missing or unsupported targets.
+- `src/frontend/App.tsx` remains the shell navigation coordinator. It updates
+  local page state and input handoff values; it does not write DB state, create
+  URLs, add a router, or call backend routes directly.
+- `L3GraphCanvas` selection remains display-only. Clicking a node or edge does
+  not fetch data; only an explicit Open action switches pages.
+- Graph node/edge handoffs only use explicit ids, slugs, and wordbook ids
+  present in graph `ref` or `metadata`. Labels and surface strings are never
+  used to guess navigation targets.
+- Context, Word, and Source read pages expose row-level actions for supported
+  active read targets. `l2_item`, topic, external, unknown, and missing slug/id
+  targets remain metadata-only.
+- Recommendation accept remains a proposal bridge. Proposal confirm remains the
+  only active L3 upgrade path and the only UI action that marks read surfaces
+  stale.
+
+Phase 4H still defers manual L3 editing, graph editing, node drag persistence,
+manual link creation, MCP agent UI, backend graph expansion, URL deep links,
+React Router, global state libraries, backend changes, migrations, dependency
+changes, recommendation/import semantic changes, and L1/L2/FSRS/LLM/dictionary
+behavior changes.

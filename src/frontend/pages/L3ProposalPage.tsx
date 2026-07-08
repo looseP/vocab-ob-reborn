@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { L3ProposalBundle, L3ProposalConfirmResult, L3ProposalItemRow, L3ProposalRow, L3ProposalStatus, L3ProposalValidationResult } from "@/domain";
 import { L3ErrorMessage } from "../components/L3ErrorMessage";
+import { L3NavigationActions } from "../components/L3NavigationActions";
 import {
   applyProposalConfirmSuccess,
   applyProposalRejectSuccess,
@@ -12,12 +13,18 @@ import {
   type NormalizedL3Error,
 } from "@/l3/frontend/contract";
 import { hasValidationErrors, sortProposalItems, summarizeProposalItem } from "../viewModels/l3ProposalViewModel";
+import {
+  navigationAction,
+  type L3NavigationAction,
+  type L3NavigationIntent,
+} from "../viewModels/l3NavigationViewModel";
 
 interface L3ProposalPageProps {
   client: L3FrontendClient;
   selectedProposalId: string | null;
   onSelectProposal(proposalId: string | null): void;
   onConfirmed(result: L3ProposalConfirmResult): void;
+  onNavigate(intent: L3NavigationIntent): void;
 }
 
 type ProposalFilter = L3ProposalStatus | "all";
@@ -35,7 +42,20 @@ function formatValidationErrors(item: L3ProposalItemRow): string {
   return JSON.stringify(item.validation_errors);
 }
 
-export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, onConfirmed }: L3ProposalPageProps) {
+function activeEntityNavigationActions(result: L3ProposalConfirmResult | null): L3NavigationAction[] {
+  if (!result) return [];
+  const actions: L3NavigationAction[] = [navigationAction("Open Graph", { target: "graph", query: {} })];
+  for (const entity of result.activeEntities) {
+    if (entity.activeEntityType === "context") {
+      actions.push(navigationAction("Open Context", { target: "context", contextId: entity.activeEntityId }));
+    } else if (entity.activeEntityType === "source") {
+      actions.push(navigationAction("Open Source Space", { target: "source", sourceId: entity.activeEntityId }));
+    }
+  }
+  return actions;
+}
+
+export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, onConfirmed, onNavigate }: L3ProposalPageProps) {
   const [filter, setFilter] = useState<ProposalFilter>("pending");
   const [proposals, setProposals] = useState<L3ProposalRow[]>([]);
   const [detail, setDetail] = useState<L3ProposalBundle | null>(null);
@@ -244,6 +264,7 @@ export function L3ProposalPage({ client, selectedProposalId, onSelectProposal, o
                       </li>
                     ))}
                   </ul>
+                  <L3NavigationActions actions={activeEntityNavigationActions(confirmResult)} onNavigate={onNavigate} />
                 </div>
               ) : null}
 

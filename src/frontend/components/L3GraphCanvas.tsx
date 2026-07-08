@@ -1,4 +1,5 @@
 import type { L3GraphReadModel } from "@/domain";
+import { L3NavigationActions } from "./L3NavigationActions";
 import {
   buildGraphCanvasModel,
   compactGraphJson,
@@ -7,17 +8,23 @@ import {
   summarizeSelectedGraphItem,
   type GraphCanvasSelection,
 } from "../viewModels/l3GraphViewModel";
+import {
+  graphSelectionNavigation,
+  type L3NavigationIntent,
+} from "../viewModels/l3NavigationViewModel";
 
 interface L3GraphCanvasProps {
   graph: L3GraphReadModel | null;
   selection: GraphCanvasSelection;
   onSelect(selection: GraphCanvasSelection): void;
+  onNavigate(intent: L3NavigationIntent): void;
 }
 
-export function L3GraphCanvas({ graph, selection, onSelect }: L3GraphCanvasProps) {
+export function L3GraphCanvas({ graph, selection, onSelect, onNavigate }: L3GraphCanvasProps) {
   const model = buildGraphCanvasModel(graph);
   const selectedNode = selection?.kind === "node" ? graph?.nodes.find((node) => node.id === selection.id) ?? null : null;
   const selectedEdge = selection?.kind === "edge" ? graph?.edges.find((edge) => edge.id === selection.id) ?? null : null;
+  const navigation = graphSelectionNavigation(graph, selection);
 
   if (model.state === "empty") {
     return (
@@ -97,6 +104,7 @@ export function L3GraphCanvas({ graph, selection, onSelect }: L3GraphCanvasProps
 
       <div className="graph-selection-panel">
         <strong>{summarizeSelectedGraphItem(graph, selection)}</strong>
+        <L3NavigationActions actions={[...navigation.selected, ...navigation.endpoints]} onNavigate={onNavigate} />
         {selectedNode ? (
           <dl className="result-meta">
             <div><dt>Node</dt><dd>{selectedNode.id}</dd></div>

@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { L3ContextDetail } from "@/domain";
 import { L3ErrorMessage } from "../components/L3ErrorMessage";
+import { L3NavigationActions } from "../components/L3NavigationActions";
 import {
   isNormalizedL3Error,
   normalizeL3TransportError,
@@ -21,11 +22,20 @@ import {
   shouldClearReadStaleAfterSpaceRead,
   sourceLabel,
 } from "../viewModels/l3SpaceViewModel";
+import {
+  contextSourceNavigationAction,
+  linkTargetNavigationAction,
+  type L3ContextHandoff,
+  occurrenceWordNavigationAction,
+  type L3NavigationIntent,
+} from "../viewModels/l3NavigationViewModel";
 
 interface L3ContextPageProps {
   client: L3FrontendClient;
+  handoff: L3ContextHandoff | null;
   staleState: L3ActiveReadStaleState | null;
   onReadRefreshed(): void;
+  onNavigate(intent: L3NavigationIntent): void;
 }
 
 type WorkStatus = "idle" | "loading";
@@ -34,13 +44,18 @@ function normalizeUnknownError(error: unknown): NormalizedL3Error {
   return isNormalizedL3Error(error) ? error : normalizeL3TransportError(error);
 }
 
-export function L3ContextPage({ client, staleState, onReadRefreshed }: L3ContextPageProps) {
+export function L3ContextPage({ client, handoff, staleState, onReadRefreshed, onNavigate }: L3ContextPageProps) {
   const [contextId, setContextId] = useState("");
   const [detail, setDetail] = useState<L3ContextDetail | null>(null);
   const [status, setStatus] = useState<WorkStatus>("idle");
   const [error, setError] = useState<NormalizedL3Error | null>(null);
   const isBusy = status !== "idle";
   const staleText = readStaleBannerText(staleState);
+
+  useEffect(() => {
+    if (!handoff) return;
+    setContextId(handoff.contextId);
+  }, [handoff?.nonce]);
 
   const loadContext = async (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
@@ -105,6 +120,7 @@ export function L3ContextPage({ client, staleState, onReadRefreshed }: L3Context
             <h3>{detail.context.id}</h3>
             <span>{sourceLabel(detail.source)}</span>
           </div>
+          <L3NavigationActions actions={[contextSourceNavigationAction(detail)]} onNavigate={onNavigate} />
           <dl className="stats-grid">
             {contextStatsRows(detail).map((row) => (
               <div key={row.label}>
@@ -141,6 +157,7 @@ export function L3ContextPage({ client, staleState, onReadRefreshed }: L3Context
                   <div className="space-row" key={occurrence.id}>
                     <strong>{occurrenceSummary(occurrence)}</strong>
                     <span>word {occurrence.word_id} / confidence {occurrence.confidence ?? "none"}</span>
+                    <L3NavigationActions actions={[occurrenceWordNavigationAction(occurrence, detail.source.wordbook_id)]} onNavigate={onNavigate} />
                     <code>{compactSpaceJson(occurrence.evidence) || "no evidence"}</code>
                   </div>
                 ))}
@@ -156,6 +173,7 @@ export function L3ContextPage({ client, staleState, onReadRefreshed }: L3Context
                   <div className="space-row" key={link.id}>
                     <strong>{linkSummary(link)}</strong>
                     <span>confidence {link.confidence ?? "none"} / created {link.created_at}</span>
+                    <L3NavigationActions actions={[linkTargetNavigationAction(link)]} onNavigate={onNavigate} />
                     <code>{compactSpaceJson(link.provenance) || "no provenance"}</code>
                   </div>
                 ))}
