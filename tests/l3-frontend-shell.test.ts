@@ -4,8 +4,17 @@ import { createBrowserL3Client } from "@/frontend/api/l3Client";
 import { formatL3ErrorDetails } from "@/frontend/viewModels/l3ErrorViewModel";
 import { buildRawTextImportPayload, summarizeImportProposalItem } from "@/frontend/viewModels/l3ImportViewModel";
 import { sortProposalItems, summarizeProposalItem } from "@/frontend/viewModels/l3ProposalViewModel";
+import {
+  applyRecommendationAcceptUiResult,
+  applyRecommendationGenerateUiResult,
+  applyRecommendationRejectUiResult,
+  buildRecommendationGeneratePayload,
+  proposalIdFromRecommendationAccept,
+  recommendationAcceptMessage,
+  recommendationActionsForStatus,
+} from "@/frontend/viewModels/l3RecommendationViewModel";
 import { normalizeL3Error } from "@/l3/frontend/contract";
-import type { L3ProposalItemRow } from "@/domain";
+import type { L3ProposalBundle, L3ProposalItemRow, L3RecommendationBundle, L3RecommendationItemRow } from "@/domain";
 
 describe("Phase 4B L3 frontend shell", () => {
   it("creates the browser L3 client through the shared contract adapter", async () => {
@@ -47,10 +56,11 @@ describe("Phase 4B L3 frontend shell", () => {
     }
   });
 
-  it("keeps Phase 4C pages on the shared frontend client instead of local fetch calls", () => {
+  it("keeps implemented L3 pages on the shared frontend client instead of local fetch calls", () => {
     const files = [
       "src/frontend/pages/L3ImportPage.tsx",
       "src/frontend/pages/L3ProposalPage.tsx",
+      "src/frontend/pages/L3RecommendationPage.tsx",
     ];
 
     for (const file of files) {
@@ -141,6 +151,146 @@ describe("Phase 4B L3 frontend shell", () => {
     expect(formatL3ErrorDetails(validation)).toBeNull();
     expect(validation.itemErrors).toEqual([{ itemId: "item-1", field: "surface", message: "surface mismatch" }]);
   });
+
+  it("builds recommendation generate payloads with local numeric validation", () => {
+    const payload = buildRecommendationGeneratePayload({
+      mode: "gap_scan",
+      wordbookId: " wb-1 ",
+      seedSlug: " vivid ",
+      limit: " 12 ",
+      horizonDays: " 30 ",
+      dryRun: true,
+    });
+
+    expect(payload).toEqual({
+      mode: "gap_scan",
+      wordbookId: "wb-1",
+      seedSlug: "vivid",
+      limit: 12,
+      horizonDays: 30,
+      dryRun: true,
+    });
+
+    let caught: unknown;
+    try {
+      buildRecommendationGeneratePayload({
+        mode: "gap_scan",
+        wordbookId: "",
+        seedSlug: "",
+        limit: "101",
+        horizonDays: "0",
+        dryRun: false,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({
+      status: 400,
+      fieldErrors: {
+        limit: ["limit must be between 1 and 100."],
+        horizonDays: ["horizonDays must be between 1 and 90."],
+      },
+    });
+  });
+
+  it("keeps recommendation generation scoped to recommendation cache only", () => {
+    const result = applyRecommendationGenerateUiResult(recommendationBundle({
+      run: { id: "run-1", mode: "gap_scan" },
+      items: [recommendationItem({ id: "rec-1" })],
+      stats: { generated: 1 },
+    }));
+
+    expect(result.nextState).toBe("pending");
+    expect(result.refreshGraph).toBe(false);
+    expect(result.createsActiveL3).toBe(false);
+    expect(result.cache).toMatchObject({
+      activeReadInvalidation: false,
+      proposalInvalidation: false,
+      recommendationInvalidation: true,
+      reason: "recommendations_generated",
+    });
+
+    const dryRun = applyRecommendationGenerateUiResult(recommendationBundle({
+      run: { id: "dry-run", mode: "gap_scan" },
+      items: [recommendationItem({ id: "dry-rec" })],
+      stats: { generated: 1 },
+    }));
+
+    expect(dryRun.invalidate).toEqual([]);
+    expect(dryRun.cache.recommendationInvalidation).toBe(false);
+  });
+
+  it("models link_gap acceptance as a proposal bridge without active graph invalidation", () => {
+    const accepted = recommendationItem({
+      id: "rec-link",
+      recommendation_type: "link_gap",
+      status: "accepted",
+      accepted_proposal_id: "prop-link",
+    });
+    const proposal = proposalBundle({ id: "prop-link" });
+    const result = applyRecommendationAcceptUiResult({ item: accepted, proposal });
+
+    expect(result.nextState).toBe("proposalBridgeCreated");
+    expect(result.message).toContain("Confirm it before creating the active link");
+    expect(result.refreshGraph).toBe(false);
+    expect(result.createsActiveL3).toBe(false);
+    expect(result.cache).toMatchObject({
+      activeReadInvalidation: false,
+      proposalInvalidation: true,
+      recommendationInvalidation: true,
+      reason: "recommendation_accept_created_pending_proposal",
+      nextSuggestedAction: "review_proposal",
+    });
+    expect(proposalIdFromRecommendationAccept({ item: accepted, proposal })).toBe("prop-link");
+    expect(recommendationAcceptMessage({ item: accepted, proposal })).toBe("Proposal created; review required before active L3 link exists.");
+  });
+
+  it("keeps future recommendation acceptance and rejection away from active graph invalidation", () => {
+    const accepted = recommendationItem({
+      id: "rec-future",
+      recommendation_type: "learn_next",
+      status: "accepted",
+    });
+    const acceptResult = applyRecommendationAcceptUiResult({ item: accepted, actionPayload: { next: "learn" } });
+
+    expect(acceptResult.nextState).toBe("futureAction");
+    expect(acceptResult.refreshGraph).toBe(false);
+    expect(acceptResult.createsActiveL3).toBe(false);
+    expect(acceptResult.cache).toMatchObject({
+      activeReadInvalidation: false,
+      proposalInvalidation: false,
+      recommendationInvalidation: true,
+      reason: "recommendation_accept_future_action",
+    });
+    expect(recommendationAcceptMessage({ item: accepted, actionPayload: { next: "learn" } })).toBe(
+      "This acceptance records a future action; it does not create active L3 rows.",
+    );
+
+    const rejected = applyRecommendationRejectUiResult(recommendationItem({
+      id: "rec-rejected",
+      status: "rejected",
+      recommendation_type: "context_gap",
+    }));
+
+    expect(rejected.nextState).toBe("rejected");
+    expect(rejected.refreshGraph).toBe(false);
+    expect(rejected.createsActiveL3).toBe(false);
+    expect(rejected.cache).toMatchObject({
+      activeReadInvalidation: false,
+      proposalInvalidation: false,
+      recommendationInvalidation: true,
+      reason: "recommendation_rejected_no_active_l3_change",
+    });
+  });
+
+  it("derives recommendation actions only for pending items", () => {
+    expect(recommendationActionsForStatus("pending")).toEqual({ state: "pending", canAccept: true, canReject: true });
+    expect(recommendationActionsForStatus("accepted")).toEqual({ state: "accepted", canAccept: false, canReject: false });
+    expect(recommendationActionsForStatus("rejected")).toEqual({ state: "rejected", canAccept: false, canReject: false });
+    expect(recommendationActionsForStatus("dismissed")).toEqual({ state: "dismissed", canAccept: false, canReject: false });
+    expect(recommendationActionsForStatus("expired")).toEqual({ state: "expired", canAccept: false, canReject: false });
+  });
 });
 
 function proposalItem(overrides: Partial<L3ProposalItemRow>): L3ProposalItemRow {
@@ -157,6 +307,79 @@ function proposalItem(overrides: Partial<L3ProposalItemRow>): L3ProposalItemRow 
     active_entity_id: null,
     created_at: "now",
     updated_at: "now",
+    ...overrides,
+  };
+}
+
+function proposalBundle(overrides: Partial<L3ProposalBundle["proposal"]> = {}): L3ProposalBundle {
+  return {
+    proposal: {
+      id: "prop-1",
+      user_id: "u1",
+      wordbook_id: null,
+      source_type: "agent",
+      status: "pending",
+      title: "Recommendation bridge",
+      summary: null,
+      input_hash: null,
+      proposed_by: null,
+      provenance: {},
+      review_note: null,
+      confirmed_at: null,
+      rejected_at: null,
+      created_at: "now",
+      updated_at: "now",
+      ...overrides,
+    },
+    items: [],
+  };
+}
+
+function recommendationBundle(overrides: {
+  run?: Partial<L3RecommendationBundle["run"]>;
+  items?: L3RecommendationItemRow[];
+  stats?: L3RecommendationBundle["stats"];
+} = {}): L3RecommendationBundle {
+  return {
+    run: {
+      id: "run-1",
+      user_id: "u1",
+      wordbook_id: null,
+      mode: "gap_scan",
+      status: "completed",
+      input_hash: null,
+      stats: {},
+      created_at: "now",
+      completed_at: "now",
+      ...overrides.run,
+    },
+    items: overrides.items ?? [],
+    stats: overrides.stats ?? {},
+  };
+}
+
+function recommendationItem(overrides: Partial<L3RecommendationItemRow> = {}): L3RecommendationItemRow {
+  return {
+    id: "rec-1",
+    run_id: "run-1",
+    user_id: "u1",
+    wordbook_id: null,
+    recommendation_type: "link_gap",
+    status: "pending",
+    title: "Link gap",
+    summary: "Candidate link gap.",
+    priority_score: 80,
+    confidence: 0.7,
+    reason_codes: ["link_gap"],
+    evidence: [{ type: "graph_edge", ref: { sourceWordId: "w1" } }],
+    payload: { sourceWordId: "w1", targetWordId: "w2" },
+    accepted_proposal_id: null,
+    created_at: "now",
+    updated_at: "now",
+    expires_at: null,
+    accepted_at: null,
+    rejected_at: null,
+    dismissed_at: null,
     ...overrides,
   };
 }

@@ -128,6 +128,34 @@ Phase 4C.1 tightens the first real UI loop without expanding scope:
 - static tests continue to prove frontend pages do not call raw `fetch` or
   hard-code `/api/l3/` routes
 
+## Phase 4D.1 Recommendation Queue UI
+
+Phase 4D.1 wires the recommendation review surface without changing backend
+runtime behavior:
+
+- `src/frontend/pages/L3RecommendationPage.tsx` lists recommendation items by
+  status/type filters through `client.listRecommendations`.
+- Recommendation generation uses `client.generateRecommendations` with local
+  numeric validation for `limit` and `horizonDays`.
+- Recommendation detail loads and refreshes through `client.getRecommendation`
+  and renders score, confidence, reason codes, evidence, payload, and accepted
+  proposal id.
+- Accept/reject commands use `client.acceptRecommendation` and
+  `client.rejectRecommendation` only.
+- `link_gap` acceptance renders the proposal bridge and an "Open proposal
+  review" action; it never labels acceptance as an active link.
+- Future-action accept results and rejected recommendations do not mark
+  graph/read surfaces stale.
+- Recommendation page components continue to avoid raw `fetch` calls and direct
+  `/api/l3/` endpoint construction.
+
+Phase 4D.1 remains intentionally small:
+
+- no graph visualization or graph fetch UI
+- no context, word, or source space pages
+- no backend endpoint, service, repository, migration, L1/L2/FSRS, dictionary,
+  LLM, MCP, or recommendation algorithm changes
+
 ## Phase 4B Host Decision Result
 
 Decided:
@@ -142,7 +170,7 @@ Deferred:
 
 - auth/session integration
 - full data fetching and mutation flows
-- graph visualization
+- graph visualization/read surface
 - component-level DOM test framework beyond current Vitest node smoke
 
 ## Future UI Wiring Checklist
@@ -174,3 +202,9 @@ Phase 4A.0/4A.1 must keep the backend contract untouched:
 - no L1/L2/FSRS behavior changes
 - no recommendation algorithm changes
 - no graph API expansion
+
+## Phase 4D.2 Next Surface
+
+The remaining Phase 4D frontend scope is a bounded read-only graph surface. It
+should consume the existing `client.getGraph` contract, render empty/loading/
+error states, and keep graph/read APIs strictly read-only.

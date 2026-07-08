@@ -60,6 +60,11 @@ L1 vocabulary review package.
   normalized error details fallback, and static API-boundary tests. It remains a
   frontend-only hardening pass with no backend, migration, recommendation,
   graph visualization, or L1/L2/FSRS expansion.
+- Phase 4D.1 wires the minimum recommendation queue UI: generate/list/filter/
+  detail plus accept/reject. `link_gap` acceptance shows the proposal bridge and
+  opens proposal review without implying an active link. It remains frontend
+  only, with no backend, migration, graph visualization, recommendation
+  algorithm, or L1/L2/FSRS expansion.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

@@ -445,6 +445,29 @@ Still deferred to later phases:
   endpoint construction; `src/frontend/api/l3Client.ts` remains the route
   adapter.
 
+## Phase 4D.1 Implemented Recommendation Loop
+
+Phase 4D.1 implements the minimum recommendation queue surface:
+
+- User can generate recommendation candidates through the shared frontend
+  client.
+- User can list and filter recommendation items by status and recommendation
+  type.
+- User can open one recommendation detail and inspect reason codes, evidence,
+  payload, accepted proposal id, score, and confidence.
+- User can accept a recommendation. For `link_gap`, the UI shows a proposal
+  bridge and opens proposal review; it does not imply an active link exists.
+- User can reject a recommendation with an optional review note.
+- Generate, accept, and reject cache helpers preserve the contract that
+  recommendation actions do not refresh active graph/read surfaces.
+
+Still deferred to later phases:
+
+- graph read fetching and visualization
+- context/word/source space browsing UI
+- structured import authoring UI
+- any backend route/service/repository/schema changes
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:

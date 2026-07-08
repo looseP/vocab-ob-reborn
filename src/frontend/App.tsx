@@ -35,7 +35,7 @@ export function App() {
         onConfirmed={(result) => setGraphStale(markGraphStaleAfterProposalConfirm(result))}
       />
     ),
-    recommendations: <L3RecommendationPage />,
+    recommendations: <L3RecommendationPage client={l3Client} onOpenProposal={openProposal} />,
     graph: <L3GraphPage staleState={graphStale} />,
   }[section];
 
