@@ -1,9 +1,10 @@
 # L3 Frontend
 
-Phase 4H wires the minimal frontend host into the real L3 raw import,
+Phase 4I seals the minimal frontend host around the real L3 raw import,
 proposal review, recommendation queue, graph read, context detail, word space,
 source space read contracts, read-only graph visualization, and local
-cross-navigation handoffs without expanding backend or mutation scope.
+cross-navigation handoffs with release-smoke QA, without expanding backend or
+mutation scope.
 
 ## Decision
 
@@ -163,9 +164,26 @@ cross-navigation handoffs without expanding backend or mutation scope.
 - Page components still do not contain raw `fetch` calls or direct `/api/l3/`
   paths.
 
-## Continue After Phase 4H
+## Phase 4I Release Smoke Seal
 
-- Keep frontend read UX QA/manual smoke as the next likely phase.
+- `docs/operations/l3-frontend-smoke-checklist.md` is the release-smoke
+  checklist for the existing L3 frontend surfaces.
+- Shell navigation is now a tested contract through `L3_SHELL_SECTIONS`: L3
+  Home, Import, Proposals, Recommendations, Graph, Context, Word Space, and
+  Source Space must remain registered.
+- Static API-boundary tests discover `pages`, `components`, `viewModels`, and
+  `state` files by directory, so new frontend files cannot silently bypass the
+  no-server-import and no-raw-networking rules.
+- The smoke seal keeps Phase 4H semantics intact: Import and Recommendation
+  acceptance hand off to Proposal Review, Proposal confirm is the only active
+  L3 upgrade signal, Graph selection is local, and read pages remain read-only.
+- No backend endpoint, service, repository, schema, migration, dependency,
+  router, global state library, graph editor, manual L3 editor, MCP, LLM,
+  dictionary, recommendation algorithm, import parser, or L1/L2/FSRS behavior
+  changed for Phase 4I.
+
+## Continue After Phase 4I
+
 - L3 manual editor, graph editing, node drag persistence, MCP agent UI,
   backend graph expansion, and router/deep-link URL sync remain intentionally
   deferred.

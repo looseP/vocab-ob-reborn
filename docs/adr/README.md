@@ -105,6 +105,14 @@ L1 vocabulary review package.
   dependency, router, global state library, graph editor, manual L3 editor, MCP,
   LLM, dictionary, recommendation/import semantic change, or L1/L2/FSRS
   behavior change.
+- Phase 4I seals L3 frontend read UX release smoke. It exports the shell
+  navigation matrix as `L3_SHELL_SECTIONS`, adds directory-discovered static
+  API-boundary coverage for frontend pages/components/viewModels/state, and
+  records the browser smoke checklist in
+  `docs/operations/l3-frontend-smoke-checklist.md`. It keeps Phase 4H
+  semantics intact and adds no backend endpoint, migration, dependency, router,
+  global state library, graph editor, manual L3 editor, MCP, LLM, dictionary,
+  recommendation/import semantic change, or L1/L2/FSRS behavior change.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

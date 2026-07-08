@@ -618,6 +618,32 @@ changing API, cache, or active L3 semantics:
   state library, graph editing, manual L3 editor, MCP agent UI, recommendation
   algorithm change, import parser change, or L1/L2/FSRS behavior change.
 
+## Phase 4I Release Smoke Contract Notes
+
+Phase 4I seals release-smoke behavior for the existing read/review/recommend
+frontend without adding feature scope:
+
+- Browser smoke must verify that the Vite shell renders and that L3 Home,
+  Import, Proposals, Recommendations, Graph, Context, Word Space, and Source
+  Space are all reachable.
+- The shell navigation list is a testable contract through
+  `L3_SHELL_SECTIONS`.
+- Import success remains a pending-proposal handoff and must not be displayed
+  as active L3 creation.
+- Recommendation `link_gap` accept remains a proposal bridge handoff and must
+  not be displayed as an active link.
+- Proposal confirm remains the only frontend command that marks Graph, Context,
+  Word Space, and Source Space stale.
+- Graph selection and cross-navigation actions use only the current response
+  object and typed local intents; selection itself must not fetch or write.
+- Read refresh success may clear active-read stale state. Failed reads must
+  preserve user input and render normalized errors, not empty states.
+- Static API-boundary tests cover all current and future files in
+  `pages`, `components`, `viewModels`, and `state`.
+
+The Phase 4I checklist lives in
+`docs/operations/l3-frontend-smoke-checklist.md`.
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:

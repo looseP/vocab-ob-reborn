@@ -399,3 +399,39 @@ manual link creation, MCP agent UI, backend graph expansion, URL deep links,
 React Router, global state libraries, backend changes, migrations, dependency
 changes, recommendation/import semantic changes, and L1/L2/FSRS/LLM/dictionary
 behavior changes.
+
+## Phase 4I Release Smoke and Read UX Seal
+
+Phase 4I is a release-smoke and QA sealing pass over the existing Phase 4H
+frontend. It does not expand the runtime feature set.
+
+Implemented seal:
+
+- `src/frontend/viewModels/l3ShellViewModel.ts` exports `L3_SHELL_SECTIONS` so
+  shell navigation is a testable contract instead of private component data.
+- `tests/l3-frontend-shell.test.ts` locks that shell matrix to L3 Home, Import,
+  Proposals, Recommendations, Graph, Context, Word Space, and Source Space.
+- Static API-boundary coverage now discovers `src/frontend/pages`,
+  `src/frontend/components`, `src/frontend/viewModels`, and
+  `src/frontend/state` files from disk, plus `App.tsx` and the browser client
+  adapter. New frontend files must obey the same no-server-import and
+  no-raw-networking rules.
+- `docs/operations/l3-frontend-smoke-checklist.md` records the browser smoke
+  flow, UX regression matrix, static boundary, and deferred items.
+
+Phase 4I preserves existing semantics:
+
+- Import success creates a pending proposal handoff only.
+- Recommendation `link_gap` accept creates a proposal bridge handoff only.
+- Proposal confirm remains the only frontend action that marks active read
+  surfaces stale.
+- Proposal reject, proposal validation, recommendation generation, Graph reads,
+  and Context/Word/Source reads do not imply active L3 writes.
+- Graph selection remains local display state and does not issue extra API
+  requests.
+
+Phase 4I still defers backend endpoint changes, service/repository/schema
+changes, migrations, package dependency changes, React Router, global state
+libraries, graph editing, manual L3 editing, MCP agent UI, recommendation
+algorithm changes, import parser changes, and L1/L2/FSRS/LLM/dictionary
+behavior changes.

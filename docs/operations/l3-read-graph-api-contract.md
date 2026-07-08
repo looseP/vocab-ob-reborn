@@ -171,6 +171,13 @@ not expand the graph API:
   metadata-only targets unless a future read surface defines a stable frontend
   target.
 
+Phase 4I release smoke does not change this contract. Graph selection and
+selection navigation remain local display behavior over the latest
+`GET /api/l3/graph` response. Browser smoke and Vitest coverage may assert that
+selection exposes enabled or disabled actions, but they must not add a graph
+edit path, issue extra API requests from selection alone, infer missing ids or
+slugs, or expand the backend graph response.
+
 ## Error Semantics
 
 - route schema errors return `400`

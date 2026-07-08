@@ -1,17 +1,7 @@
 import type { ReactNode } from "react";
+import { L3_SHELL_SECTIONS, type L3ShellSection } from "../viewModels/l3ShellViewModel";
 
-export type L3ShellSection = "home" | "import" | "proposals" | "recommendations" | "graph" | "context" | "word" | "source";
-
-const sections: Array<{ id: L3ShellSection; label: string }> = [
-  { id: "home", label: "L3 Home" },
-  { id: "import", label: "Import" },
-  { id: "proposals", label: "Proposals" },
-  { id: "recommendations", label: "Recommendations" },
-  { id: "graph", label: "Graph" },
-  { id: "context", label: "Context" },
-  { id: "word", label: "Word Space" },
-  { id: "source", label: "Source Space" },
-];
+export type { L3ShellSection };
 
 interface L3ShellProps {
   activeSection: L3ShellSection;
@@ -28,7 +18,7 @@ export function L3Shell({ activeSection, onNavigate, children }: L3ShellProps) {
           <h1>L3 Context Space</h1>
         </div>
         <nav className="l3-nav">
-          {sections.map((section) => (
+          {L3_SHELL_SECTIONS.map((section) => (
             <button
               className={section.id === activeSection ? "active" : ""}
               key={section.id}

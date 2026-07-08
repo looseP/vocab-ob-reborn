@@ -120,3 +120,22 @@ The shell now supports local handoffs between existing read surfaces:
 The shell still has no React Router, URL deep-link sync, global state library,
 backend endpoint, migration, graph editor, manual L3 editor, or new dependency
 for this phase.
+
+## Phase 4I Release Smoke Boundary
+
+Phase 4I keeps the Phase 4H shell intact and seals release-smoke coverage:
+
+- `L3_SHELL_SECTIONS` is exported from
+  `src/frontend/viewModels/l3ShellViewModel.ts` so tests can lock the
+  navigation matrix.
+- The required shell tabs are L3 Home, Import, Proposals, Recommendations,
+  Graph, Context, Word Space, and Source Space.
+- Static API-boundary tests discover frontend pages, components, view models,
+  and state helpers by directory rather than by a hand-maintained list.
+- Browser smoke uses the existing Vite host and follows
+  `docs/operations/l3-frontend-smoke-checklist.md`.
+
+The shell remains local-state only. Phase 4I adds no router, URL deep-link
+sync, global state library, backend endpoint, migration, dependency, graph
+editor, manual L3 editor, recommendation/import semantic change, MCP, LLM,
+dictionary, or L1/L2/FSRS behavior change.

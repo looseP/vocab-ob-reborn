@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
+import { L3_SHELL_SECTIONS } from "@/frontend/viewModels/l3ShellViewModel";
 import {
   frontendCacheSignalMatrix,
   frontendRuntimeSmokeMatrix,
@@ -105,33 +106,7 @@ describe("Phase 4B L3 frontend shell", () => {
   });
 
   it("keeps frontend shell imports away from server-only layers", () => {
-    const files = [
-      "src/frontend/App.tsx",
-      "src/frontend/api/l3Client.ts",
-      "src/frontend/components/L3ErrorMessage.tsx",
-      "src/frontend/components/L3GraphCanvas.tsx",
-      "src/frontend/components/L3NavigationActions.tsx",
-      "src/frontend/components/L3Shell.tsx",
-      "src/frontend/pages/L3HomePage.tsx",
-      "src/frontend/pages/L3ImportPage.tsx",
-      "src/frontend/pages/L3ProposalPage.tsx",
-      "src/frontend/pages/L3RecommendationPage.tsx",
-      "src/frontend/pages/L3GraphPage.tsx",
-      "src/frontend/pages/L3ContextPage.tsx",
-      "src/frontend/pages/L3WordSpacePage.tsx",
-      "src/frontend/pages/L3SourceSpacePage.tsx",
-      "src/frontend/state/l3CacheSignals.ts",
-      "src/frontend/viewModels/l3ClosedLoopViewModel.ts",
-      "src/frontend/viewModels/l3ErrorViewModel.ts",
-      "src/frontend/viewModels/l3GraphViewModel.ts",
-      "src/frontend/viewModels/l3ImportViewModel.ts",
-      "src/frontend/viewModels/l3NavigationViewModel.ts",
-      "src/frontend/viewModels/l3ProposalViewModel.ts",
-      "src/frontend/viewModels/l3RecommendationViewModel.ts",
-      "src/frontend/viewModels/l3SpaceViewModel.ts",
-    ];
-
-    for (const file of files) {
+    for (const file of l3FrontendBoundaryFiles()) {
       const source = readFileSync(file, "utf8");
       expect(source).not.toMatch(/@\/(?:db|repositories|services|http)\//);
       expect(source).not.toMatch(/@\/server/);
@@ -140,36 +115,37 @@ describe("Phase 4B L3 frontend shell", () => {
   });
 
   it("keeps implemented L3 frontend files away from local network calls", () => {
-    const files = [
-      "src/frontend/components/L3ErrorMessage.tsx",
-      "src/frontend/components/L3GraphCanvas.tsx",
-      "src/frontend/components/L3NavigationActions.tsx",
-      "src/frontend/components/L3Shell.tsx",
-      "src/frontend/pages/L3ImportPage.tsx",
-      "src/frontend/pages/L3ProposalPage.tsx",
-      "src/frontend/pages/L3RecommendationPage.tsx",
-      "src/frontend/pages/L3GraphPage.tsx",
-      "src/frontend/pages/L3ContextPage.tsx",
-      "src/frontend/pages/L3WordSpacePage.tsx",
-      "src/frontend/pages/L3SourceSpacePage.tsx",
-      "src/frontend/state/l3CacheSignals.ts",
-      "src/frontend/viewModels/l3ClosedLoopViewModel.ts",
-      "src/frontend/viewModels/l3ErrorViewModel.ts",
-      "src/frontend/viewModels/l3GraphViewModel.ts",
-      "src/frontend/viewModels/l3ImportViewModel.ts",
-      "src/frontend/viewModels/l3NavigationViewModel.ts",
-      "src/frontend/viewModels/l3ProposalViewModel.ts",
-      "src/frontend/viewModels/l3RecommendationViewModel.ts",
-      "src/frontend/viewModels/l3SpaceViewModel.ts",
-    ];
-
-    for (const file of files) {
+    for (const file of l3FrontendBoundaryFiles().filter((candidate) => !candidate.endsWith("src/frontend/api/l3Client.ts"))) {
       const source = readFileSync(file, "utf8");
       expect(source).not.toMatch(/\bfetch\s*\(/);
       expect(source).not.toMatch(/XMLHttpRequest/);
       expect(source).not.toContain("/api/l3/");
-      if (file.includes("/pages/")) expect(source).toMatch(/L3FrontendClient|client\./);
+      if (file.includes("/pages/") && !file.endsWith("src/frontend/pages/L3HomePage.tsx")) {
+        expect(source).toMatch(/L3FrontendClient|client\./);
+      }
     }
+  });
+
+  it("locks the Phase 4I shell navigation matrix to every read/review surface", () => {
+    expect(L3_SHELL_SECTIONS).toEqual([
+      { id: "home", label: "L3 Home" },
+      { id: "import", label: "Import" },
+      { id: "proposals", label: "Proposals" },
+      { id: "recommendations", label: "Recommendations" },
+      { id: "graph", label: "Graph" },
+      { id: "context", label: "Context" },
+      { id: "word", label: "Word Space" },
+      { id: "source", label: "Source Space" },
+    ]);
+    expect(frontendRuntimeSmokeMatrix().map((row) => row.surface)).toEqual([
+      "import",
+      "proposals",
+      "recommendations",
+      "graph",
+      "context",
+      "word",
+      "source",
+    ]);
   });
 
   it("builds raw import payloads only after explicit local field validation", () => {
@@ -1351,4 +1327,23 @@ function sourceSpace(overrides: Partial<L3SourceSpace> = {}): L3SourceSpace {
     nextCursor: null,
     ...overrides,
   };
+}
+
+function l3FrontendBoundaryFiles(): string[] {
+  const explicitFiles = [
+    "src/frontend/App.tsx",
+    "src/frontend/api/l3Client.ts",
+  ];
+  const directories = [
+    "src/frontend/components",
+    "src/frontend/pages",
+    "src/frontend/state",
+    "src/frontend/viewModels",
+  ];
+  const discoveredFiles = directories.flatMap((directory) => (
+    readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && /\.(ts|tsx)$/.test(entry.name))
+      .map((entry) => `${directory}/${entry.name}`)
+  ));
+  return [...explicitFiles, ...discoveredFiles].sort();
 }
