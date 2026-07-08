@@ -36,7 +36,7 @@ export function App() {
       />
     ),
     recommendations: <L3RecommendationPage client={l3Client} onOpenProposal={openProposal} />,
-    graph: <L3GraphPage staleState={graphStale} />,
+    graph: <L3GraphPage client={l3Client} staleState={graphStale} onGraphRefreshed={() => setGraphStale(null)} />,
   }[section];
 
   return (

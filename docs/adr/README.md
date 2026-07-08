@@ -65,6 +65,10 @@ L1 vocabulary review package.
   opens proposal review without implying an active link. It remains frontend
   only, with no backend, migration, graph visualization, recommendation
   algorithm, or L1/L2/FSRS expansion.
+- Phase 4D.2 wires the minimum graph read surface UI: local query controls,
+  `client.getGraph`, stats, nodes, edges, empty/error states, and proposal
+  confirm stale-signal consumption. It remains frontend only, with no backend,
+  migration, graph visualization library/editor, or L1/L2/FSRS expansion.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

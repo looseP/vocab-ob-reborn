@@ -203,8 +203,30 @@ Phase 4A.0/4A.1 must keep the backend contract untouched:
 - no recommendation algorithm changes
 - no graph API expansion
 
-## Phase 4D.2 Next Surface
+## Phase 4D.2 Graph Read Surface UI
 
-The remaining Phase 4D frontend scope is a bounded read-only graph surface. It
-should consume the existing `client.getGraph` contract, render empty/loading/
-error states, and keep graph/read APIs strictly read-only.
+Phase 4D.2 implements a bounded read-only graph surface without introducing a
+graph visualization library:
+
+- `src/frontend/pages/L3GraphPage.tsx` calls `client.getGraph` through the
+  existing shared frontend client.
+- `src/frontend/viewModels/l3GraphViewModel.ts` performs local query
+  normalization and numeric validation for `depth` and `limit`.
+- The Graph page renders stats, nodes, edges, cursor metadata, empty states,
+  and normalized errors through `L3ErrorMessage`.
+- The Graph page consumes the proposal-confirm stale signal from
+  `src/frontend/state/l3CacheSignals.ts` and clears it only after a successful
+  graph read.
+- Graph read success uses the existing read-only cache helper and does not
+  invalidate proposal, recommendation, import, or active graph/read caches.
+
+Phase 4D.2 remains intentionally small:
+
+- no graph visualization, drag/edit/layout algorithm, or graph library
+- no context, word, or source space pages
+- no backend endpoint, service, repository, schema, migration, L1/L2/FSRS,
+  dictionary, LLM, MCP, or recommendation algorithm changes
+
+## Remaining Frontend Surface
+
+Context, word, and source space browsing remain deferred read-only surfaces.

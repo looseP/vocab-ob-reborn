@@ -1,20 +1,20 @@
 # L3 Frontend
 
-Phase 4D.1 wires the minimal frontend host into the real L3 raw import,
-proposal review, and recommendation queue contracts.
+Phase 4D.2 wires the minimal frontend host into the real L3 raw import,
+proposal review, recommendation queue, and graph read contracts.
 
 ## Decision
 
 - Host: `src/frontend`
 - Build: Vite + React + TypeScript
 - Scope: shell, navigation, raw import, proposal queue/detail, validation,
-  confirm/reject, recommendation generate/list/detail, and recommendation
-  accept/reject
+  confirm/reject, recommendation generate/list/detail, recommendation
+  accept/reject, and graph read stats/nodes/edges
 - Contract: reuse `src/l3/frontend/contract.ts`
 
 ## Non-goals
 
-- No graph visualization workflow
+- No graph visualization library or graph editing workflow
 - No context, word, or source space detail pages
 - No backend route/service/repository/db changes
 - No UI component framework
@@ -49,6 +49,18 @@ proposal review, and recommendation queue contracts.
 - Reject success updates recommendation review state only and does not mark
   graph/read surfaces stale.
 
+## Supported Phase 4D.2 Surfaces
+
+- Graph page calls `client.getGraph` through the shared frontend client.
+- Query controls support optional `wordbookId`, `slug`, `sourceId`, `cursor`,
+  plus validated `depth` and `limit`.
+- Graph success displays stats, nodes, edges, cursor metadata, and explicit
+  empty states.
+- Proposal confirm stale state is shown on the Graph page and cleared after a
+  successful graph load.
+- Graph reads are displayed as read-only operations with no mutation or cache
+  invalidation side effects.
+
 ## Phase 4C.1 Hardening
 
 - Required import fields are checked locally before the shared client is called.
@@ -61,8 +73,8 @@ proposal review, and recommendation queue contracts.
 - Page components still do not contain raw `fetch` calls or direct `/api/l3/`
   paths.
 
-## Continue In Phase 4D
+## Continue After Phase 4D
 
-- Wire graph read surfaces.
-- Keep accepted recommendation proposal bridges distinct from active L3 until
-  proposal confirmation.
+- Context, word, and source space browsing can be added later as read-only
+  surfaces.
+- Keep graph visualization/editing out of scope until a separate product phase.

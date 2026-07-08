@@ -353,6 +353,62 @@ select {
   overflow-wrap: anywhere;
 }
 
+.graph-page {
+  max-width: 1120px;
+}
+
+.graph-query-form {
+  max-width: 100%;
+}
+
+.graph-result-panel {
+  gap: 22px;
+}
+
+.graph-section {
+  display: grid;
+  gap: 12px;
+}
+
+.graph-table {
+  display: grid;
+  gap: 8px;
+}
+
+.graph-table-row {
+  display: grid;
+  grid-template-columns: 110px minmax(120px, 1fr) minmax(140px, 1fr) minmax(120px, 1fr) minmax(150px, 1.2fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid #d7deea;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.graph-table-row code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.graph-table-head {
+  background: #eef3fb;
+  color: #334057;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.type-badge {
+  display: inline-block;
+  width: fit-content;
+  border-radius: 999px;
+  background: #e7eefb;
+  color: #23314a;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 8px;
+}
+
 .validation-panel.valid {
   border-color: #95c6a0;
   background: #f0fbf2;
@@ -403,7 +459,8 @@ select {
   }
 
   .proposal-workspace,
-  .stats-grid {
+  .stats-grid,
+  .graph-table-row {
     grid-template-columns: 1fr;
   }
 }

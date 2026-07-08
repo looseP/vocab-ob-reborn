@@ -468,6 +468,27 @@ Still deferred to later phases:
 - structured import authoring UI
 - any backend route/service/repository/schema changes
 
+## Phase 4D.2 Implemented Graph Read Loop
+
+Phase 4D.2 implements the minimum readable graph surface:
+
+- User can load graph data through `client.getGraph`.
+- Query controls support optional `wordbookId`, `slug`, `sourceId`, `cursor`,
+  and locally validated `depth`/`limit`.
+- Success displays graph stats, node rows, edge rows, cursor metadata, and
+  explicit empty states.
+- Proposal confirm stale state is visible on the Graph page and is cleared only
+  after a successful graph refresh.
+- Graph reads preserve the read-only contract: no proposal, recommendation,
+  import, active L3, L1/L2, FSRS, `word_l2_content`, or `words` writes are
+  implied or triggered by the UI.
+
+Still deferred to later phases:
+
+- graph visualization or editing
+- context/word/source space browsing pages
+- backend route/service/repository/schema changes
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:

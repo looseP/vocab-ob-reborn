@@ -30,7 +30,8 @@ same-repository shell instead of creating a parallel app elsewhere.
 - Import: skeleton form and "proposal, not active L3" semantic reminder
 - Proposals: confirms proposal-confirm as the only active L3 upgrade path
 - Recommendations: confirms `link_gap` accept creates a proposal bridge
-- Graph: read-only graph placeholder that refreshes after confirm
+- Graph: read-only graph stats, nodes, and edges surface that refreshes after
+  proposal confirm
 
 ## Contract Wiring
 
@@ -41,5 +42,5 @@ reuse this path instead of writing a second L3 client.
 ## Phase 4C/4D Continuation
 
 - Phase 4C should implement Import and Proposal closed-loop UI.
-- Phase 4D should implement Recommendation and Graph read UI.
+- Phase 4D implements Recommendation and Graph read UI.
 - Component tests should be added when the UI moves beyond placeholders.

@@ -2,6 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
 import { formatL3ErrorDetails } from "@/frontend/viewModels/l3ErrorViewModel";
+import {
+  applyGraphReadUiResult,
+  buildGraphQueryPayload,
+  graphEmptyMessage,
+  graphStatsRows,
+  summarizeGraphEdge,
+  summarizeGraphNode,
+} from "@/frontend/viewModels/l3GraphViewModel";
 import { buildRawTextImportPayload, summarizeImportProposalItem } from "@/frontend/viewModels/l3ImportViewModel";
 import { sortProposalItems, summarizeProposalItem } from "@/frontend/viewModels/l3ProposalViewModel";
 import {
@@ -14,7 +22,15 @@ import {
   recommendationActionsForStatus,
 } from "@/frontend/viewModels/l3RecommendationViewModel";
 import { normalizeL3Error } from "@/l3/frontend/contract";
-import type { L3ProposalBundle, L3ProposalItemRow, L3RecommendationBundle, L3RecommendationItemRow } from "@/domain";
+import { markGraphStaleAfterProposalConfirm } from "@/frontend/state/l3CacheSignals";
+import type {
+  L3GraphReadModel,
+  L3ProposalBundle,
+  L3ProposalConfirmResult,
+  L3ProposalItemRow,
+  L3RecommendationBundle,
+  L3RecommendationItemRow,
+} from "@/domain";
 
 describe("Phase 4B L3 frontend shell", () => {
   it("creates the browser L3 client through the shared contract adapter", async () => {
@@ -61,6 +77,7 @@ describe("Phase 4B L3 frontend shell", () => {
       "src/frontend/pages/L3ImportPage.tsx",
       "src/frontend/pages/L3ProposalPage.tsx",
       "src/frontend/pages/L3RecommendationPage.tsx",
+      "src/frontend/pages/L3GraphPage.tsx",
     ];
 
     for (const file of files) {
@@ -291,6 +308,139 @@ describe("Phase 4B L3 frontend shell", () => {
     expect(recommendationActionsForStatus("dismissed")).toEqual({ state: "dismissed", canAccept: false, canReject: false });
     expect(recommendationActionsForStatus("expired")).toEqual({ state: "expired", canAccept: false, canReject: false });
   });
+
+  it("builds graph query payloads with local trim and bounds validation", () => {
+    const payload = buildGraphQueryPayload({
+      wordbookId: " wb-1 ",
+      slug: " vivid ",
+      sourceId: " src-1 ",
+      depth: "2",
+      limit: " 150 ",
+      cursor: " cur-1 ",
+    });
+
+    expect(payload).toEqual({
+      wordbookId: "wb-1",
+      slug: "vivid",
+      sourceId: "src-1",
+      depth: 2,
+      limit: 150,
+      cursor: "cur-1",
+    });
+
+    expect(buildGraphQueryPayload({
+      wordbookId: " ",
+      slug: "",
+      sourceId: " ",
+      depth: "",
+      limit: "",
+      cursor: " ",
+    })).toEqual({});
+
+    for (const badDepth of ["0", "3", "abc"]) {
+      let caught: unknown;
+      try {
+        buildGraphQueryPayload({ wordbookId: "", slug: "", sourceId: "", depth: badDepth, limit: "100", cursor: "" });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({
+        status: 400,
+        fieldErrors: { depth: ["depth must be between 1 and 2."] },
+      });
+    }
+
+    for (const badLimit of ["0", "301", "abc"]) {
+      let caught: unknown;
+      try {
+        buildGraphQueryPayload({ wordbookId: "", slug: "", sourceId: "", depth: "1", limit: badLimit, cursor: "" });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({
+        status: 400,
+        fieldErrors: { limit: ["limit must be between 1 and 300."] },
+      });
+    }
+  });
+
+  it("derives graph stats, rows, empty messages, and read-only cache behavior", () => {
+    const emptyGraph = graphModel();
+    const graph = graphModel({
+      nodes: [{
+        id: "word:w1",
+        type: "word",
+        label: "vivid",
+        ref: { wordId: "w1" },
+        metadata: { slug: "vivid" },
+      }],
+      edges: [{
+        id: "edge-1",
+        type: "illustrates",
+        sourceNodeId: "context:ctx-1",
+        targetNodeId: "word:w1",
+        confidence: 0.9,
+        evidence: { linkId: "link-1" },
+      }],
+      stats: {
+        sourceCount: 1,
+        contextCount: 1,
+        occurrenceCount: 1,
+        linkCount: 1,
+        nodeCount: 1,
+        edgeCount: 1,
+      },
+      limit: 25,
+      nextCursor: "next-1",
+    });
+
+    expect(graphEmptyMessage(emptyGraph)).toBe("No L3 graph data for current filters.");
+    expect(graphEmptyMessage(graphModel({ nodes: graph.nodes, edges: [] }))).toBe("No graph edges for current filters.");
+    expect(graphEmptyMessage(graph)).toBeNull();
+    expect(graphStatsRows(graph)).toEqual([
+      { label: "Sources", value: 1 },
+      { label: "Contexts", value: 1 },
+      { label: "Occurrences", value: 1 },
+      { label: "Links", value: 1 },
+      { label: "Nodes", value: 1 },
+      { label: "Edges", value: 1 },
+      { label: "Limit", value: 25 },
+      { label: "Next Cursor", value: "next-1" },
+    ]);
+    expect(summarizeGraphNode(graph.nodes[0])).toBe("word: vivid");
+    expect(summarizeGraphEdge(graph.edges[0])).toBe("illustrates: context:ctx-1 -> word:w1");
+
+    const transition = applyGraphReadUiResult(graph);
+    expect(transition).toMatchObject({
+      nextState: "loaded",
+      invalidate: [],
+      refreshGraph: false,
+      createsActiveL3: false,
+      cache: {
+        activeReadInvalidation: false,
+        proposalInvalidation: false,
+        recommendationInvalidation: false,
+        reason: "graph_read_no_invalidation",
+      },
+    });
+  });
+
+  it("keeps graph stale signals exclusive to proposal confirm semantics", () => {
+    const confirm: L3ProposalConfirmResult = {
+      proposal: proposalBundle({ status: "confirmed" }).proposal,
+      items: [],
+      activeEntities: [
+        { itemId: "item-1", itemType: "context_link", activeEntityType: "context_link", activeEntityId: "link-1" },
+      ],
+    };
+
+    expect(markGraphStaleAfterProposalConfirm(confirm)).toEqual({
+      state: "staleAfterConfirm",
+      reason: "proposal_confirmed_active_l3_created",
+      activeEntities: confirm.activeEntities,
+    });
+    expect(applyGraphReadUiResult(graphModel()).cache.activeReadInvalidation).toBe(false);
+  });
 });
 
 function proposalItem(overrides: Partial<L3ProposalItemRow>): L3ProposalItemRow {
@@ -380,6 +530,25 @@ function recommendationItem(overrides: Partial<L3RecommendationItemRow> = {}): L
     accepted_at: null,
     rejected_at: null,
     dismissed_at: null,
+    ...overrides,
+  };
+}
+
+function graphModel(overrides: Partial<L3GraphReadModel> = {}): L3GraphReadModel {
+  return {
+    nodes: [],
+    edges: [],
+    stats: {
+      sourceCount: 0,
+      contextCount: 0,
+      occurrenceCount: 0,
+      linkCount: 0,
+      nodeCount: 0,
+      edgeCount: 0,
+    },
+    limit: 100,
+    cursor: null,
+    nextCursor: null,
     ...overrides,
   };
 }
