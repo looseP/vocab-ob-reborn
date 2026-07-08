@@ -644,6 +644,35 @@ frontend without adding feature scope:
 The Phase 4I checklist lives in
 `docs/operations/l3-frontend-smoke-checklist.md`.
 
+## Phase 5A Manual Editor Contract Notes
+
+Phase 5A defines the future Manual Editor as a distinct active-create surface,
+not an extension of read pages:
+
+- The future UI surface should be a centralized `L3ManualEditorPage`.
+- Phase 5B MVP should be additive-create only: source, context, occurrence,
+  and context link.
+- Edit and delete remain deferred because they require separate graph
+  consistency, dependent-link, proposal-reference, and audit decisions.
+- Manual single-record creates may directly write active L3 through the
+  existing Phase 3A active endpoints:
+  `POST /api/l3/sources`, `POST /api/l3/contexts`,
+  `POST /api/l3/occurrences`, and `POST /api/l3/context-links`.
+- Bulk paste, auto extraction, agent, MCP, LLM, external-tool, import, and
+  recommendation output must still use proposal review before becoming active.
+- Manual create success should mark active read surfaces stale: Graph, Context
+  Detail, Word Space, and Source Space.
+- Manual create success should not mark proposal, import, or recommendation
+  state as authoritative.
+- The frontend must not infer source/context/word ids or slugs from labels,
+  surface text, graph labels, summaries, or row order.
+
+Detailed contracts live in:
+
+- `docs/adr/0013-l3-manual-editor-contract.md`
+- `docs/operations/l3-manual-editor-api-contract.md`
+- `docs/operations/l3-manual-editor-frontend-contract.md`
+
 ## Phase 4A Acceptance Criteria
 
 Minimum frontend loop:

@@ -435,3 +435,30 @@ changes, migrations, package dependency changes, React Router, global state
 libraries, graph editing, manual L3 editing, MCP agent UI, recommendation
 algorithm changes, import parser changes, and L1/L2/FSRS/LLM/dictionary
 behavior changes.
+
+## Phase 5A Manual Editor Design Contract
+
+Phase 5A defines the future Manual Editor before implementation. It is a
+documentation-only phase and intentionally makes no production code, endpoint,
+schema, migration, dependency, or runtime UI changes.
+
+Design outcome:
+
+- Manual single-record owner actions may directly create active L3 rows through
+  the existing active endpoints.
+- Bulk paste, auto extraction, agent, MCP, LLM, import, recommendation, parser,
+  and external-tool output still must enter proposal review before authority.
+- Phase 5B MVP should create only sources, contexts, occurrences, and context
+  links.
+- Edit and delete are deferred to a future contract.
+- The UI should add one centralized Manual Editor page rather than inline edit
+  controls on read surfaces.
+- Manual create success should mark Graph, Context Detail, Word Space, and
+  Source Space stale, while leaving proposal/import/recommendation authority
+  semantics unchanged.
+
+Contract files:
+
+- `docs/adr/0013-l3-manual-editor-contract.md`
+- `docs/operations/l3-manual-editor-api-contract.md`
+- `docs/operations/l3-manual-editor-frontend-contract.md`

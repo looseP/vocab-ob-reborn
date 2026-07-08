@@ -184,6 +184,9 @@ mutation scope.
 
 ## Continue After Phase 4I
 
-- L3 manual editor, graph editing, node drag persistence, MCP agent UI,
-  backend graph expansion, and router/deep-link URL sync remain intentionally
+- Phase 5A defines the Manual Editor contract before implementation. Phase 5B
+  should add a centralized additive-create page only after that contract is
+  accepted.
+- Graph editing, node drag persistence, MCP agent UI, backend graph expansion,
+  edit/delete active L3, and router/deep-link URL sync remain intentionally
   deferred.

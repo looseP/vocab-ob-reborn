@@ -10,6 +10,7 @@
 | [0010](./0010-l3-read-model-graph-api.md) | L3 read model and graph API | Phase 3D |
 | [0011](./0011-l3-recommendation-proposal-builder.md) | L3 recommendation proposal builder | Phase 3E |
 | [0012](./0012-frontend-host-decision.md) | Frontend host decision and minimal L3 shell | Phase 4B |
+| [0013](./0013-l3-manual-editor-contract.md) | L3 manual editor design contract | Phase 5A |
 
 ## Current Closed Baseline
 
@@ -113,6 +114,14 @@ L1 vocabulary review package.
   semantics intact and adds no backend endpoint, migration, dependency, router,
   global state library, graph editor, manual L3 editor, MCP, LLM, dictionary,
   recommendation/import semantic change, or L1/L2/FSRS behavior change.
+- Phase 5A defines the L3 Manual Editor design contract before implementation.
+  Manual single-record owner commands may directly create active L3
+  source/context/occurrence/context_link rows through the existing Phase 3A
+  active create endpoints. Bulk, agent, MCP, import, recommendation, parser,
+  LLM, or external-tool content must still enter proposals before authority.
+  Phase 5A is documentation-only: no production code, endpoint, schema,
+  migration, dependency, graph editing, edit/delete behavior, or L1/L2/FSRS
+  behavior changes.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they
