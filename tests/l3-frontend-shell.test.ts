@@ -31,10 +31,13 @@ import { buildRawTextImportPayload, summarizeImportProposalItem } from "@/fronte
 import {
   buildManualContextCreateInput,
   buildManualContextLinkCreateInput,
+  buildManualDeleteCommand,
   buildManualOccurrenceCreateInput,
   buildManualSourceCreateInput,
+  canSubmitManualDelete,
   canSubmitManualCreate,
   findExactSurfaceMatches,
+  initialManualDeleteFormState,
   manualCreateSuccessActions,
   parseJsonObjectField,
   validateL2ItemTargetRef,
@@ -78,7 +81,12 @@ import {
   wordSpaceEmptyMessage,
 } from "@/frontend/viewModels/l3SpaceViewModel";
 import { normalizeL3Error, normalizeL3TransportError, type L3ImportProposalResponse } from "@/l3/frontend/contract";
-import { markActiveReadStaleAfterManualCreate, markActiveReadStaleAfterProposalConfirm, markGraphStaleAfterProposalConfirm } from "@/frontend/state/l3CacheSignals";
+import {
+  markActiveReadStaleAfterManualCommand,
+  markActiveReadStaleAfterManualCreate,
+  markActiveReadStaleAfterProposalConfirm,
+  markGraphStaleAfterProposalConfirm,
+} from "@/frontend/state/l3CacheSignals";
 import type {
   L3ContextDetail,
   L3ContextLinkRow,
@@ -234,6 +242,74 @@ describe("Phase 4B L3 frontend shell", () => {
     });
   });
 
+  it("builds Manual Editor delete commands only from explicit id and confirmation", () => {
+    expect(initialManualDeleteFormState()).toEqual({
+      entityType: "occurrence",
+      id: "",
+      confirmed: false,
+    });
+
+    expect(buildManualDeleteCommand({
+      entityType: "context_link",
+      id: " link-1 ",
+      confirmed: true,
+    })).toEqual({
+      entityType: "context_link",
+      id: "link-1",
+    });
+
+    expect(() => buildManualDeleteCommand({
+      entityType: "occurrence",
+      id: " ",
+      confirmed: true,
+    })).toThrow(expect.objectContaining({
+      fieldErrors: { id: ["id cannot be empty."] },
+    }));
+
+    expect(() => buildManualDeleteCommand({
+      entityType: "occurrence",
+      id: "occ-1",
+      confirmed: false,
+    })).toThrow(expect.objectContaining({
+      fieldErrors: { confirmed: ["Confirm this delete before submitting."] },
+    }));
+
+    expect(canSubmitManualDelete("editing")).toBe(true);
+    expect(canSubmitManualDelete("failed")).toBe(true);
+    expect(canSubmitManualDelete("submitting")).toBe(false);
+    expect(canSubmitManualDelete("deleted")).toBe(false);
+  });
+
+  it("wires Manual Editor delete UI through shared client commands and change callback", () => {
+    const source = readFileSync("src/frontend/pages/L3ManualEditorPage.tsx", "utf8");
+
+    expect(source).toContain("onManualChanged");
+    expect(source).not.toContain("onManualCreated");
+    expect(source).toContain("applyManualDeleteSuccess");
+    expect(source).toContain("client.deleteOccurrence(command.id)");
+    expect(source).toContain("client.deleteContextLink(command.id)");
+    expect(source).toContain("Delete active row");
+    expect(source).toContain("Confirm delete for this explicit id.");
+    expect(source).toContain('deleteStatus === "submitting" ? "Deleting..." : "Delete row"');
+  });
+
+  it("keeps Manual Editor delete success out of create-status semantics", () => {
+    const pageSource = readFileSync("src/frontend/pages/L3ManualEditorPage.tsx", "utf8");
+    const viewModelSource = readFileSync("src/frontend/viewModels/l3ManualEditorViewModel.ts", "utf8");
+
+    expect(pageSource).toContain('setDeleteStatus("deleted")');
+    expect(pageSource).not.toContain('setDeleteStatus("created")');
+    expect(viewModelSource).toContain('export type ManualDeleteStatus = "editing" | "submitting" | "deleted" | "failed"');
+  });
+
+  it("wires Manual Editor stale updates through the generic manual command helper", () => {
+    const source = readFileSync("src/frontend/App.tsx", "utf8");
+
+    expect(source).toContain("markActiveReadStaleAfterManualCommand");
+    expect(source).toContain("onManualChanged");
+    expect(source).not.toContain("onManualCreated");
+  });
+
   it("forces Manual Editor audit markers even when advanced JSON tries to override them", () => {
     expect(buildManualSourceCreateInput({
       sourceType: "manual",
@@ -328,6 +404,11 @@ describe("Phase 4B L3 frontend shell", () => {
     expect(markActiveReadStaleAfterManualCreate("manual_context_created_active_l3")).toEqual({
       state: "staleAfterConfirm",
       reason: "manual_context_created_active_l3",
+      activeEntities: [],
+    });
+    expect(markActiveReadStaleAfterManualCommand("manual_occurrence_deleted_active_l3")).toEqual({
+      state: "staleAfterConfirm",
+      reason: "manual_occurrence_deleted_active_l3",
       activeEntities: [],
     });
     expect(manualCreateSuccessActions({

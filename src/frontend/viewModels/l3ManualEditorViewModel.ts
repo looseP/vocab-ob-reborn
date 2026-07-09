@@ -30,6 +30,7 @@ export const manualLinkTypes: L3ContextLinkType[] = [
 export const manualTargetTypes: L3ContextLinkTargetType[] = ["word", "context", "source", "l2_item", "topic", "external"];
 
 export type ManualCreateStatus = "editing" | "submitting" | "created" | "failed";
+export type ManualDeleteStatus = "editing" | "submitting" | "deleted" | "failed";
 
 export interface SurfaceMatchCandidate {
   startOffset: number;
@@ -86,6 +87,14 @@ export interface ManualContextLinkFormState {
   provenanceJson: string;
 }
 
+export type ManualDeleteEntityType = "occurrence" | "context_link";
+
+export interface ManualDeleteFormState {
+  entityType: ManualDeleteEntityType;
+  id: string;
+  confirmed: boolean;
+}
+
 export function initialManualSourceFormState(): ManualSourceFormState {
   return {
     sourceType: "manual",
@@ -138,6 +147,10 @@ export function initialManualContextLinkFormState(contextId = ""): ManualContext
   };
 }
 
+export function initialManualDeleteFormState(): ManualDeleteFormState {
+  return { entityType: "occurrence", id: "", confirmed: false };
+}
+
 function manualFormError(fieldErrors: Record<string, string[]>): NormalizedL3Error {
   return normalizeL3Error(400, {
     code: "FRONTEND_VALIDATION_ERROR",
@@ -150,6 +163,17 @@ function requireTrimmed(value: string, field: string, fieldErrors: Record<string
   const trimmed = value.trim();
   if (!trimmed) fieldErrors[field] = [`${field} cannot be empty.`];
   return trimmed;
+}
+
+export function buildManualDeleteCommand(form: ManualDeleteFormState): {
+  entityType: ManualDeleteEntityType;
+  id: string;
+} {
+  const fieldErrors: Record<string, string[]> = {};
+  const id = requireTrimmed(form.id, "id", fieldErrors);
+  if (!form.confirmed) fieldErrors.confirmed = ["Confirm this delete before submitting."];
+  if (Object.keys(fieldErrors).length > 0) throw manualFormError(fieldErrors);
+  return { entityType: form.entityType, id };
 }
 
 function optionalTrimmed(value: string): string | null {
@@ -406,5 +430,9 @@ export function manualCreateSuccessActions(input: {
 }
 
 export function canSubmitManualCreate(status: ManualCreateStatus): boolean {
+  return status === "editing" || status === "failed";
+}
+
+export function canSubmitManualDelete(status: ManualDeleteStatus): boolean {
   return status === "editing" || status === "failed";
 }

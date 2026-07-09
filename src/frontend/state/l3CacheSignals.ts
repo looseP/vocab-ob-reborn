@@ -29,10 +29,14 @@ export function markActiveReadStaleAfterProposalConfirm(result: L3ProposalConfir
   return markGraphStaleAfterProposalConfirm(result);
 }
 
-export function markActiveReadStaleAfterManualCreate(reason = "manual_active_l3_created"): L3ActiveReadStaleState {
+export function markActiveReadStaleAfterManualCommand(reason = "manual_active_l3_changed"): L3ActiveReadStaleState {
   return {
     state: "staleAfterConfirm",
     reason,
     activeEntities: [],
   };
+}
+
+export function markActiveReadStaleAfterManualCreate(reason = "manual_active_l3_created"): L3ActiveReadStaleState {
+  return markActiveReadStaleAfterManualCommand(reason);
 }

@@ -53,7 +53,7 @@ type WritableTable =
 
 interface WriteEvent {
   table: WritableTable;
-  operation: "insert" | "update";
+  operation: "delete" | "insert" | "update";
 }
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
@@ -382,6 +382,20 @@ class L3CrossContractHarness {
           created_at: "2026-07-08T00:00:00Z",
         };
         this.links.set(link.id, link);
+        return link;
+      }),
+      deleteOccurrence: vi.fn(async (userId, occurrenceId) => {
+        const occurrence = this.occurrences.get(occurrenceId);
+        if (!occurrence || occurrence.user_id !== userId) return null;
+        this.record("l3_occurrences", "delete");
+        this.occurrences.delete(occurrenceId);
+        return occurrence;
+      }),
+      deleteContextLink: vi.fn(async (userId, contextLinkId) => {
+        const link = this.links.get(contextLinkId);
+        if (!link || link.user_id !== userId) return null;
+        this.record("l3_context_links", "delete");
+        this.links.delete(contextLinkId);
         return link;
       }),
       createImportJob: vi.fn(async (input: NewL3ImportJob) => {

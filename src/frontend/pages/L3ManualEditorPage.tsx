@@ -3,20 +3,25 @@ import { L3ErrorMessage } from "../components/L3ErrorMessage";
 import { L3NavigationActions } from "../components/L3NavigationActions";
 import type { L3SourceRow, L3ContextRow, L3OccurrenceRow, L3ContextLinkRow } from "@/domain";
 import {
+  applyManualDeleteSuccess,
   isNormalizedL3Error,
   normalizeL3TransportError,
   type L3FrontendClient,
+  type L3ManualDeleteResponse,
   type NormalizedL3Error,
 } from "@/l3/frontend/contract";
 import {
   buildManualContextCreateInput,
   buildManualContextLinkCreateInput,
+  buildManualDeleteCommand,
   buildManualOccurrenceCreateInput,
   buildManualSourceCreateInput,
+  canSubmitManualDelete,
   canSubmitManualCreate,
   findExactSurfaceMatches,
   initialManualContextFormState,
   initialManualContextLinkFormState,
+  initialManualDeleteFormState,
   initialManualOccurrenceFormState,
   initialManualSourceFormState,
   manualContextTypes,
@@ -26,6 +31,8 @@ import {
   manualTargetTypes,
   type ManualContextFormState,
   type ManualContextLinkFormState,
+  type ManualDeleteStatus,
+  type ManualDeleteFormState,
   type ManualCreateStatus,
   type ManualOccurrenceFormState,
   type ManualSourceFormState,
@@ -34,7 +41,7 @@ import type { L3NavigationIntent } from "../viewModels/l3NavigationViewModel";
 
 interface L3ManualEditorPageProps {
   client: L3FrontendClient;
-  onManualCreated(reason?: string): void;
+  onManualChanged(reason?: string): void;
   onNavigate(intent: L3NavigationIntent): void;
 }
 
@@ -46,19 +53,22 @@ function createdId(value: { id?: string } | null): string | null {
   return value?.id ?? null;
 }
 
-export function L3ManualEditorPage({ client, onManualCreated, onNavigate }: L3ManualEditorPageProps) {
+export function L3ManualEditorPage({ client, onManualChanged, onNavigate }: L3ManualEditorPageProps) {
   const [sourceForm, setSourceForm] = useState<ManualSourceFormState>(() => initialManualSourceFormState());
   const [contextForm, setContextForm] = useState<ManualContextFormState>(() => initialManualContextFormState());
   const [occurrenceForm, setOccurrenceForm] = useState<ManualOccurrenceFormState>(() => initialManualOccurrenceFormState());
   const [linkForm, setLinkForm] = useState<ManualContextLinkFormState>(() => initialManualContextLinkFormState());
+  const [deleteForm, setDeleteForm] = useState<ManualDeleteFormState>(() => initialManualDeleteFormState());
   const [sourceStatus, setSourceStatus] = useState<ManualCreateStatus>("editing");
   const [contextStatus, setContextStatus] = useState<ManualCreateStatus>("editing");
   const [occurrenceStatus, setOccurrenceStatus] = useState<ManualCreateStatus>("editing");
   const [linkStatus, setLinkStatus] = useState<ManualCreateStatus>("editing");
+  const [deleteStatus, setDeleteStatus] = useState<ManualDeleteStatus>("editing");
   const [source, setSource] = useState<L3SourceRow | null>(null);
   const [context, setContext] = useState<L3ContextRow | null>(null);
   const [occurrence, setOccurrence] = useState<L3OccurrenceRow | null>(null);
   const [link, setLink] = useState<L3ContextLinkRow | null>(null);
+  const [deleteResult, setDeleteResult] = useState<L3ManualDeleteResponse | null>(null);
   const [error, setError] = useState<NormalizedL3Error | null>(null);
 
   const successActions = manualCreateSuccessActions({
@@ -87,7 +97,7 @@ export function L3ManualEditorPage({ client, onManualCreated, onNavigate }: L3Ma
       const result = await client.createSource(buildManualSourceCreateInput(sourceForm));
       setSource(result.source);
       setContextForm((current) => ({ ...current, sourceId: result.source.id || current.sourceId }));
-      onManualCreated("manual_source_created_active_l3");
+      onManualChanged("manual_source_created_active_l3");
       setSourceStatus("created");
     } catch (caught) {
       setError(normalizeUnknownError(caught));
@@ -105,7 +115,7 @@ export function L3ManualEditorPage({ client, onManualCreated, onNavigate }: L3Ma
       setContext(result.context);
       setOccurrenceForm((current) => ({ ...current, contextId: result.context.id || current.contextId, contextText: result.context.text || current.contextText }));
       setLinkForm((current) => ({ ...current, contextId: result.context.id || current.contextId }));
-      onManualCreated("manual_context_created_active_l3");
+      onManualChanged("manual_context_created_active_l3");
       setContextStatus("created");
     } catch (caught) {
       setError(normalizeUnknownError(caught));
@@ -121,7 +131,7 @@ export function L3ManualEditorPage({ client, onManualCreated, onNavigate }: L3Ma
     try {
       const result = await client.createOccurrence(buildManualOccurrenceCreateInput(occurrenceForm));
       setOccurrence(result.occurrence);
-      onManualCreated("manual_occurrence_created_active_l3");
+      onManualChanged("manual_occurrence_created_active_l3");
       setOccurrenceStatus("created");
     } catch (caught) {
       setError(normalizeUnknownError(caught));
@@ -137,11 +147,31 @@ export function L3ManualEditorPage({ client, onManualCreated, onNavigate }: L3Ma
     try {
       const result = await client.createContextLink(buildManualContextLinkCreateInput(linkForm));
       setLink(result.link);
-      onManualCreated("manual_context_link_created_active_l3");
+      onManualChanged("manual_context_link_created_active_l3");
       setLinkStatus("created");
     } catch (caught) {
       setError(normalizeUnknownError(caught));
       setLinkStatus("failed");
+    }
+  };
+
+  const submitDelete = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmitManualDelete(deleteStatus)) return;
+    setError(null);
+    setDeleteStatus("submitting");
+    try {
+      const command = buildManualDeleteCommand(deleteForm);
+      const result = command.entityType === "occurrence"
+        ? await client.deleteOccurrence(command.id)
+        : await client.deleteContextLink(command.id);
+      setDeleteResult(result);
+      applyManualDeleteSuccess(result);
+      onManualChanged(`manual_${command.entityType}_deleted_active_l3`);
+      setDeleteStatus("deleted");
+    } catch (caught) {
+      setError(normalizeUnknownError(caught));
+      setDeleteStatus("failed");
     }
   };
 
@@ -368,13 +398,47 @@ export function L3ManualEditorPage({ client, onManualCreated, onNavigate }: L3Ma
           <button disabled={!canSubmitManualCreate(linkStatus)} type="submit">{linkStatus === "submitting" ? "Creating..." : "Create link"}</button>
           {link ? <code>Created link: {link.id}</code> : null}
         </form>
+
+        <form className="l3-form manual-card" onSubmit={submitDelete}>
+          <header>
+            <p className="eyebrow">Delete</p>
+            <h3>Delete active row</h3>
+            <span>Status: {deleteStatus}</span>
+          </header>
+          <label>
+            Entity type
+            <select
+              onChange={(event) => setDeleteForm({ ...deleteForm, entityType: event.target.value as ManualDeleteFormState["entityType"] })}
+              value={deleteForm.entityType}
+            >
+              <option value="occurrence">occurrence</option>
+              <option value="context_link">context_link</option>
+            </select>
+          </label>
+          <label>
+            Explicit id
+            <input onChange={(event) => setDeleteForm({ ...deleteForm, id: event.target.value })} value={deleteForm.id} />
+          </label>
+          <label className="checkbox-row">
+            <input
+              checked={deleteForm.confirmed}
+              onChange={(event) => setDeleteForm({ ...deleteForm, confirmed: event.target.checked })}
+              type="checkbox"
+            />
+            Confirm delete for this explicit id.
+          </label>
+          <button disabled={!canSubmitManualDelete(deleteStatus)} type="submit">
+            {deleteStatus === "submitting" ? "Deleting..." : "Delete row"}
+          </button>
+          {deleteResult ? <code>Deleted {deleteResult.deleted.entityType}: {deleteResult.deleted.id}</code> : null}
+        </form>
       </div>
 
       <div className="l3-result-panel">
         <div>
           <p className="eyebrow">Follow-up</p>
           <h3>Open updated read surfaces</h3>
-          <span>Manual create success marks active read data stale; refresh the relevant read page to consume it.</span>
+          <span>Manual create or delete success marks active read data stale; refresh the relevant read page to consume it.</span>
         </div>
         <L3NavigationActions actions={successActions} onNavigate={onNavigate} />
       </div>

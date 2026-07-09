@@ -20,7 +20,7 @@ import type {
   L3WordSpace,
 } from "@/domain";
 
-export type L3HttpMethod = "GET" | "POST";
+export type L3HttpMethod = "GET" | "POST" | "DELETE";
 export type L3ErrorStatus = 0 | 400 | 404 | 409 | 422 | 500;
 export type L3ErrorKind =
   | "bad_request"
@@ -288,6 +288,14 @@ export interface L3ManualContextLinkCreateResponse {
   link: L3ContextLinkRow;
 }
 
+export interface L3ManualDeleteResponse {
+  deleted: {
+    entityType: "occurrence" | "context_link";
+    id: string;
+  };
+  activeReadInvalidation: true;
+}
+
 export interface L3ClientTransport {
   fetch(input: string, init?: { method?: L3HttpMethod; headers?: Record<string, string>; body?: string }): Promise<{
     ok: boolean;
@@ -301,6 +309,8 @@ export interface L3FrontendClient {
   createContext(input: L3ManualContextCreateInput): Promise<L3ManualContextCreateResponse>;
   createOccurrence(input: L3ManualOccurrenceCreateInput): Promise<L3ManualOccurrenceCreateResponse>;
   createContextLink(input: L3ManualContextLinkCreateInput): Promise<L3ManualContextLinkCreateResponse>;
+  deleteOccurrence(id: string): Promise<L3ManualDeleteResponse>;
+  deleteContextLink(id: string): Promise<L3ManualDeleteResponse>;
   createRawTextImport(input: L3RawTextImportInput): Promise<L3ImportProposalResponse>;
   createStructuredImport(input: L3StructuredImportInput): Promise<L3ImportProposalResponse>;
   createProposal(input: L3ProposalCreateInput): Promise<L3ProposalBundle>;
@@ -400,6 +410,11 @@ function requireNonEmptyText(value: string | null | undefined, field: string): v
   if (typeof value !== "string" || value.trim().length === 0) {
     throw frontendValidationError(field, `${field} cannot be empty.`);
   }
+}
+
+function validateExplicitId(id: string): string {
+  requireNonEmptyText(id, "id");
+  return id.trim();
 }
 
 function validateLimit(value: number | null | undefined, max: number, field = "limit"): void {
@@ -578,6 +593,8 @@ export function createL3FrontendClient(transport: L3ClientTransport): L3Frontend
     createContext: (input) => requestJson(transport, "POST", "/api/l3/contexts", validateManualContextCreateInput(input)),
     createOccurrence: (input) => requestJson(transport, "POST", "/api/l3/occurrences", validateManualOccurrenceCreateInput(input)),
     createContextLink: (input) => requestJson(transport, "POST", "/api/l3/context-links", validateManualContextLinkCreateInput(input)),
+    deleteOccurrence: (id) => requestJson(transport, "DELETE", `/api/l3/occurrences/${encodeURIComponent(validateExplicitId(id))}`),
+    deleteContextLink: (id) => requestJson(transport, "DELETE", `/api/l3/context-links/${encodeURIComponent(validateExplicitId(id))}`),
     createRawTextImport: (input) => requestJson(transport, "POST", "/api/l3/imports/raw-text", validateRawTextImportInput(input)),
     createStructuredImport: (input) => requestJson(transport, "POST", "/api/l3/imports/structured", validateStructuredImportInput(input)),
     createProposal: (input) => requestJson(transport, "POST", "/api/l3/proposals", validateProposalCreateInput(input)),
@@ -778,6 +795,26 @@ export function applyProposalConfirmSuccess<T extends L3ProposalConfirmResult>(d
       activeReadInvalidation: true,
       proposalInvalidation: true,
       reason: "proposal_confirmed_active_l3_created",
+      nextSuggestedAction: "refresh_active_reads",
+    }),
+  };
+}
+
+export function applyManualDeleteSuccess<T extends L3ManualDeleteResponse>(data: T): L3CommandResult<T> {
+  const keys = ["l3.graph", "l3.context.detail", "l3.word.space", "l3.source.space"];
+  return {
+    data,
+    nextState: "deleted",
+    message: `${data.deleted.entityType} deleted.`,
+    invalidate: keys,
+    refreshGraph: true,
+    createsActiveL3: false,
+    cache: cacheSignal({
+      keys,
+      activeReadInvalidation: true,
+      proposalInvalidation: false,
+      recommendationInvalidation: false,
+      reason: "manual_active_l3_deleted",
       nextSuggestedAction: "refresh_active_reads",
     }),
   };

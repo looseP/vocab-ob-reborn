@@ -24,6 +24,8 @@ const AUTH_HEADERS = {
 const SOURCE_ID = "00000000-0000-4000-8000-000000000001";
 const CONTEXT_ID = "00000000-0000-4000-8000-000000000002";
 const WORD_ID = "00000000-0000-4000-8000-000000000003";
+const OCCURRENCE_ID = "00000000-0000-4000-8000-000000000011";
+const CONTEXT_LINK_ID = "00000000-0000-4000-8000-000000000012";
 const L3_SERVICE_GROUPS = ["l3Context", "l3Import", "l3Proposal", "l3Read", "l3Recommendation"] as const;
 
 type L3ServiceGroupName = typeof L3_SERVICE_GROUPS[number];
@@ -60,8 +62,12 @@ function firstCallArg<T>(method: unknown): T {
 
 async function expectRouteValidationError(response: Response) {
   expect(response.status).toBe(400);
-  const body = await response.json() as { error: string };
+  const body = await response.json() as {
+    error: string;
+    details?: { fieldErrors?: Record<string, string[]> };
+  };
   expect(body.error).toBe("VALIDATION_ERROR");
+  return body;
 }
 
 async function expectServiceError(response: Response, status: number, code: string) {
@@ -95,6 +101,14 @@ function makeServices(
     createContext: vi.fn(async () => ({ context: { id: "ctx-1", source_id: "src-1", user_id: "user-123" } })),
     createOccurrence: vi.fn(async () => ({ occurrence: { id: "occ-1", context_id: "ctx-1", word_id: "w1" } })),
     createContextLink: vi.fn(async () => ({ link: { id: "link-1", context_id: "ctx-1" } })),
+    deleteOccurrence: vi.fn(async () => ({
+      deleted: { entityType: "occurrence", id: OCCURRENCE_ID },
+      activeReadInvalidation: true,
+    })),
+    deleteContextLink: vi.fn(async () => ({
+      deleted: { entityType: "context_link", id: CONTEXT_LINK_ID },
+      activeReadInvalidation: true,
+    })),
     createImportJob: vi.fn(),
     listContextsForWord: vi.fn(async () => ({
       items: [
@@ -376,6 +390,92 @@ describe("L3 HTTP routes", () => {
       userId: "user-123",
       surface: "vivid",
     }));
+  });
+
+  it("DELETE /api/l3/occurrences/:id succeeds with the frozen command shape", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request(`/api/l3/occurrences/${OCCURRENCE_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      deleted: { entityType: "occurrence", id: OCCURRENCE_ID },
+      activeReadInvalidation: true,
+    });
+    expect(services.l3Context.deleteOccurrence).toHaveBeenCalledWith({
+      userId: "user-123",
+      occurrenceId: OCCURRENCE_ID,
+    });
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
+  });
+
+  it("DELETE /api/l3/context-links/:id succeeds with the frozen command shape", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request(`/api/l3/context-links/${CONTEXT_LINK_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      deleted: { entityType: "context_link", id: CONTEXT_LINK_ID },
+      activeReadInvalidation: true,
+    });
+    expect(services.l3Context.deleteContextLink).toHaveBeenCalledWith({
+      userId: "user-123",
+      contextLinkId: CONTEXT_LINK_ID,
+    });
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
+  });
+
+  it("maps delete invalid id shape to 400 before any service call", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const badOccurrence = await app.request("/api/l3/occurrences/not-a-uuid", {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+    const badLink = await app.request("/api/l3/context-links/not-a-uuid", {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+
+    const badOccurrenceBody = await expectRouteValidationError(badOccurrence);
+    const badLinkBody = await expectRouteValidationError(badLink);
+    expect(badOccurrenceBody.details?.fieldErrors?.id).toEqual(["Invalid uuid"]);
+    expect(badLinkBody.details?.fieldErrors?.id).toEqual(["Invalid uuid"]);
+    expectNoL3ServiceGroupCalled(services);
+  });
+
+  it("maps repeated or out-of-scope delete to 404", async () => {
+    const services = makeServices({
+      deleteOccurrence: vi.fn(async () => {
+        throw new NotFoundError("L3Occurrence", OCCURRENCE_ID);
+      }),
+      deleteContextLink: vi.fn(async () => {
+        throw new NotFoundError("L3ContextLink", CONTEXT_LINK_ID);
+      }),
+    });
+    const app = createApp(services);
+
+    const occurrenceRes = await app.request(`/api/l3/occurrences/${OCCURRENCE_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+    const linkRes = await app.request(`/api/l3/context-links/${CONTEXT_LINK_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+
+    await expectServiceError(occurrenceRes, 404, "NOT_FOUND");
+    await expectServiceError(linkRes, 404, "NOT_FOUND");
   });
 
   it("GET /api/l3/words/:slug/contexts succeeds", async () => {

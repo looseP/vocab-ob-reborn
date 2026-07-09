@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyGraphReadSuccess,
   applyImportSuccess,
+  applyManualDeleteSuccess,
   applyProposalConfirmSuccess,
   applyProposalRejectSuccess,
   applyProposalValidationResult,
@@ -182,6 +183,8 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
     await client.createContext({ sourceId: "src-1", contextType: "sentence", text: "A vivid sentence.", metadata: { provenance: { source: "manual" } } });
     await client.createOccurrence({ contextId: "ctx-1", slug: "vivid", surface: "vivid", startOffset: 2, endOffset: 7, evidence: { method: "manual", slug: "vivid" } });
     await client.createContextLink({ contextId: "ctx-1", linkType: "manual_link", targetType: "l2_item", targetRef: { field: "corpus", contentId: "l2-1" }, provenance: { source: "manual" } });
+    await client.deleteOccurrence("occ 1");
+    await client.deleteContextLink("link 1");
     await client.createRawTextImport({
       source: { sourceType: "manual", title: "Paste" },
       text: "A vivid account.",
@@ -219,6 +222,8 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       ["POST", "/api/l3/contexts"],
       ["POST", "/api/l3/occurrences"],
       ["POST", "/api/l3/context-links"],
+      ["DELETE", "/api/l3/occurrences/occ%201"],
+      ["DELETE", "/api/l3/context-links/link%201"],
       ["POST", "/api/l3/imports/raw-text"],
       ["POST", "/api/l3/imports/structured"],
       ["POST", "/api/l3/proposals"],
@@ -237,6 +242,7 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       ["GET", "/api/l3/sources/src-1/space?limit=50"],
       ["GET", "/api/l3/graph?slug=vivid&depth=2&limit=50"],
     ]);
+    expect(transport.calls.map((call) => call.url).filter((url) => url.includes("/api/l3/manual/"))).toEqual([]);
 
     expect(parsedBody(transport, 0)).toEqual({
       sourceType: "manual",
@@ -262,14 +268,14 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       targetType: "l2_item",
       targetRef: { field: "corpus", contentId: "l2-1" },
     });
-    expect(parsedBody(transport, 4)).toEqual({
+    expect(parsedBody(transport, 6)).toEqual({
       source: { sourceType: "manual", title: "Paste" },
       text: "A vivid account.",
       targetWords: [{ slug: "vivid" }, { slug: "lucid" }],
       options: { contextType: "sentence" },
     });
-    expect(parsedBody(transport, 4)).not.toHaveProperty("source_type");
-    expect(JSON.parse(transport.calls[5].init?.body ?? "{}")).toMatchObject({
+    expect(parsedBody(transport, 6)).not.toHaveProperty("source_type");
+    expect(JSON.parse(transport.calls[7].init?.body ?? "{}")).toMatchObject({
       source: { sourceType: "manual" },
       contexts: [{
         clientRef: "ctx-1",
@@ -278,6 +284,24 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
         links: [{ targetType: "external", targetRef: { url: "https://example.test" } }],
       }],
     });
+  });
+
+  it("preserves manual delete response shapes", async () => {
+    const occurrenceResponse = {
+      deleted: { entityType: "occurrence" as const, id: "occ-1" },
+      activeReadInvalidation: true as const,
+    };
+    const occurrenceTransport = makeTransport({ ok: true, status: 200, body: occurrenceResponse });
+
+    await expect(createL3FrontendClient(occurrenceTransport).deleteOccurrence("occ-1")).resolves.toEqual(occurrenceResponse);
+
+    const linkResponse = {
+      deleted: { entityType: "context_link" as const, id: "link-1" },
+      activeReadInvalidation: true as const,
+    };
+    const linkTransport = makeTransport({ ok: true, status: 200, body: linkResponse });
+
+    await expect(createL3FrontendClient(linkTransport).deleteContextLink("link-1")).resolves.toEqual(linkResponse);
   });
 
   it("treats raw and structured import success as proposal-only cache invalidation", () => {
@@ -360,6 +384,30 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
     });
   });
 
+  it("normalizes manual delete HTTP errors through the shared request path", async () => {
+    const missingTransport = makeTransport({ ok: false, status: 404, body: { code: "NOT_FOUND", message: "Missing" } });
+
+    await expect(createL3FrontendClient(missingTransport).deleteOccurrence("occ-1")).rejects.toMatchObject({
+      status: 404,
+      kind: "not_found",
+      code: "NOT_FOUND",
+      retryHint: "refresh",
+    });
+
+    const validationTransport = makeTransport({
+      ok: false,
+      status: 400,
+      body: { error: "VALIDATION_ERROR", details: { fieldErrors: { id: ["Invalid uuid"] } } },
+    });
+
+    await expect(createL3FrontendClient(validationTransport).deleteContextLink("bad-id")).rejects.toMatchObject({
+      status: 400,
+      kind: "bad_request",
+      fieldErrors: { id: ["Invalid uuid"] },
+      retryHint: "fix-input",
+    });
+  });
+
   it("derives proposal states without treating valid=false as a fatal error", () => {
     const validation: L3ProposalValidationResult = {
       proposal: proposalRow("pending"),
@@ -393,7 +441,7 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
     expect(proposalActionsForStatus("rejected").canConfirm).toBe(false);
   });
 
-  it("makes proposal confirm the only active-read invalidating command", () => {
+  it("makes proposal confirm the only proposal-review active-read invalidating command", () => {
     const confirm: L3ProposalConfirmResult = {
       proposal: proposalRow("confirmed"),
       items: [],
@@ -419,6 +467,34 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
 
     expect(rejectTransition.refreshGraph).toBe(false);
     expect(rejectTransition.cache.activeReadInvalidation).toBe(false);
+  });
+
+  it("treats manual delete as active-read invalidation only", () => {
+    const response = {
+      deleted: { entityType: "occurrence" as const, id: "occ-1" },
+      activeReadInvalidation: true as const,
+    };
+
+    const transition = applyManualDeleteSuccess(response);
+
+    expect(transition.data).toBe(response);
+    expect(transition.nextState).toBe("deleted");
+    expect(transition.createsActiveL3).toBe(false);
+    expect(transition.refreshGraph).toBe(true);
+    expect(transition.invalidate).toEqual(expect.arrayContaining([
+      "l3.graph",
+      "l3.context.detail",
+      "l3.word.space",
+      "l3.source.space",
+    ]));
+    expect(transition.cache).toMatchObject({
+      keys: ["l3.graph", "l3.context.detail", "l3.word.space", "l3.source.space"],
+      activeReadInvalidation: true,
+      proposalInvalidation: false,
+      recommendationInvalidation: false,
+      reason: "manual_active_l3_deleted",
+      nextSuggestedAction: "refresh_active_reads",
+    });
   });
 
   it("maps proposal confirm into the Phase 4C graph stale state", () => {
@@ -574,5 +650,19 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
     const transport = makeTransport({ ok: true, status: 200, body: graph() });
     expectNormalizedThrow(() => createL3FrontendClient(transport).getGraph({ limit: 0 }), { status: 400 });
     expect(transport.fetch).not.toHaveBeenCalled();
+
+    const deleteTransport = makeTransport({ ok: true, status: 200, body: graph() });
+    const deleteClient = createL3FrontendClient(deleteTransport);
+    expectNormalizedThrow(() => deleteClient.deleteOccurrence(""), {
+      status: 400,
+      code: "FRONTEND_VALIDATION_ERROR",
+      fieldErrors: { id: ["id cannot be empty."] },
+    });
+    expectNormalizedThrow(() => deleteClient.deleteContextLink("   "), {
+      status: 400,
+      code: "FRONTEND_VALIDATION_ERROR",
+      fieldErrors: { id: ["id cannot be empty."] },
+    });
+    expect(deleteTransport.fetch).not.toHaveBeenCalled();
   });
 });

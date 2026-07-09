@@ -12,7 +12,7 @@ import { L3WordSpacePage } from "./pages/L3WordSpacePage";
 import { createBrowserL3Client } from "./api/l3Client";
 import {
   PHASE_4C_CACHE_POLICY,
-  markActiveReadStaleAfterManualCreate,
+  markActiveReadStaleAfterManualCommand,
   markActiveReadStaleAfterProposalConfirm,
   type L3ActiveReadStaleState,
 } from "./state/l3CacheSignals";
@@ -76,7 +76,7 @@ export function App() {
 
   const page = {
     home: <L3HomePage cachePolicy={PHASE_4C_CACHE_POLICY} />,
-    manual: <L3ManualEditorPage client={l3Client} onManualCreated={(reason) => setActiveReadStale(markActiveReadStaleAfterManualCreate(reason))} onNavigate={navigateL3} />,
+    manual: <L3ManualEditorPage client={l3Client} onManualChanged={(reason) => setActiveReadStale(markActiveReadStaleAfterManualCommand(reason))} onNavigate={navigateL3} />,
     import: <L3ImportPage client={l3Client} onOpenProposal={openProposal} onOpenProposalQueue={openProposalQueue} />,
     proposals: (
       <L3ProposalPage

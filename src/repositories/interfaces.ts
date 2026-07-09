@@ -371,6 +371,8 @@ export interface IL3ContextRepository {
   createContext(input: NewL3Context): Promise<L3ContextRow>;
   createOccurrence(input: NewL3Occurrence): Promise<L3OccurrenceRow>;
   createContextLink(input: NewL3ContextLink): Promise<L3ContextLinkRow>;
+  deleteOccurrence(userId: string, occurrenceId: string): Promise<L3OccurrenceRow | null>;
+  deleteContextLink(userId: string, contextLinkId: string): Promise<L3ContextLinkRow | null>;
   createImportJob(input: NewL3ImportJob): Promise<L3ImportJobRow>;
   updateImportJobStatus(
     importJobId: string,

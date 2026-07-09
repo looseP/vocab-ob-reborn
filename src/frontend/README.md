@@ -105,9 +105,9 @@ mutation scope.
   shell. A real Vite HTTP smoke can load the root page and verify that Home,
   Import, Proposals, Recommendations, Graph, Context, Word Space, and Source
   Space are registered in shell navigation.
-- The repository still has no DOM/browser test dependency, so manual browser
-  smoke remains a checklist instead of adding Playwright, jsdom, or a component
-  test framework.
+- The repository still avoids a broad DOM/browser test stack, but the Manual
+  Editor delete regression uses a narrow jsdom-based component test; manual
+  browser smoke remains the checklist for the rest of the shell.
 - Error UX now has a shared contract for `400`, `404`, `409`, `422`, `500`,
   network, and aborted failures: they preserve user input, are not empty
   states, and avoid `[object Object]` display.
