@@ -109,6 +109,14 @@ function makeServices(
       deleted: { entityType: "context_link", id: CONTEXT_LINK_ID },
       activeReadInvalidation: true,
     })),
+    deleteSource: vi.fn(async () => ({
+      deleted: { entityType: "source" as const, id: SOURCE_ID },
+      activeReadInvalidation: true as const,
+    })),
+    deleteContext: vi.fn(async () => ({
+      deleted: { entityType: "context" as const, id: CONTEXT_ID },
+      activeReadInvalidation: true as const,
+    })),
     createImportJob: vi.fn(),
     listContextsForWord: vi.fn(async () => ({
       items: [
@@ -434,6 +442,48 @@ describe("L3 HTTP routes", () => {
     expectOnlyL3ServiceGroupCalled(services, "l3Context");
   });
 
+  it("DELETE /api/l3/sources/:id succeeds with the frozen command shape", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request(`/api/l3/sources/${SOURCE_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      deleted: { entityType: "source", id: SOURCE_ID },
+      activeReadInvalidation: true,
+    });
+    expect(services.l3Context.deleteSource).toHaveBeenCalledWith({
+      userId: "user-123",
+      sourceId: SOURCE_ID,
+    });
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
+  });
+
+  it("DELETE /api/l3/contexts/:id succeeds with the frozen command shape", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request(`/api/l3/contexts/${CONTEXT_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      deleted: { entityType: "context", id: CONTEXT_ID },
+      activeReadInvalidation: true,
+    });
+    expect(services.l3Context.deleteContext).toHaveBeenCalledWith({
+      userId: "user-123",
+      contextId: CONTEXT_ID,
+    });
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
+  });
+
   it("maps delete invalid id shape to 400 before any service call", async () => {
     const services = makeServices();
     const app = createApp(services);
@@ -446,11 +496,23 @@ describe("L3 HTTP routes", () => {
       method: "DELETE",
       headers: AUTH_HEADERS,
     });
+    const badSource = await app.request("/api/l3/sources/not-a-uuid", {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+    const badContext = await app.request("/api/l3/contexts/not-a-uuid", {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
 
     const badOccurrenceBody = await expectRouteValidationError(badOccurrence);
     const badLinkBody = await expectRouteValidationError(badLink);
+    const badSourceBody = await expectRouteValidationError(badSource);
+    const badContextBody = await expectRouteValidationError(badContext);
     expect(badOccurrenceBody.details?.fieldErrors?.id).toEqual(["Invalid uuid"]);
     expect(badLinkBody.details?.fieldErrors?.id).toEqual(["Invalid uuid"]);
+    expect(badSourceBody.details?.fieldErrors?.id).toEqual(["Invalid uuid"]);
+    expect(badContextBody.details?.fieldErrors?.id).toEqual(["Invalid uuid"]);
     expectNoL3ServiceGroupCalled(services);
   });
 
@@ -461,6 +523,12 @@ describe("L3 HTTP routes", () => {
       }),
       deleteContextLink: vi.fn(async () => {
         throw new NotFoundError("L3ContextLink", CONTEXT_LINK_ID);
+      }),
+      deleteSource: vi.fn(async () => {
+        throw new NotFoundError("L3Source", SOURCE_ID);
+      }),
+      deleteContext: vi.fn(async () => {
+        throw new NotFoundError("L3Context", CONTEXT_ID);
       }),
     });
     const app = createApp(services);
@@ -473,9 +541,78 @@ describe("L3 HTTP routes", () => {
       method: "DELETE",
       headers: AUTH_HEADERS,
     });
+    const sourceRes = await app.request(`/api/l3/sources/${SOURCE_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+    const contextRes = await app.request(`/api/l3/contexts/${CONTEXT_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
 
     await expectServiceError(occurrenceRes, 404, "NOT_FOUND");
     await expectServiceError(linkRes, 404, "NOT_FOUND");
+    await expectServiceError(sourceRes, 404, "NOT_FOUND");
+    await expectServiceError(contextRes, 404, "NOT_FOUND");
+  });
+
+  it("maps source and context delete blockers to 409 with full details", async () => {
+    const sourceBlockers = {
+      contextCount: 1,
+      inboundContextLinkCount: 2,
+      importJobCount: 3,
+    };
+    const contextBlockers = {
+      occurrenceCount: 4,
+      contextLinkCount: 5,
+      inboundContextLinkCount: 6,
+    };
+    const services = makeServices({
+      deleteSource: vi.fn(async () => {
+        throw new ConflictError("Cannot delete L3 source with active dependencies", undefined, {
+          entityType: "source",
+          id: SOURCE_ID,
+          blockers: sourceBlockers,
+        });
+      }),
+      deleteContext: vi.fn(async () => {
+        throw new ConflictError("Cannot delete L3 context with active dependencies", undefined, {
+          entityType: "context",
+          id: CONTEXT_ID,
+          blockers: contextBlockers,
+        });
+      }),
+    });
+    const app = createApp(services);
+
+    const sourceRes = await app.request(`/api/l3/sources/${SOURCE_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+    const contextRes = await app.request(`/api/l3/contexts/${CONTEXT_ID}`, {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(sourceRes.status).toBe(409);
+    expect(contextRes.status).toBe(409);
+    await expect(sourceRes.json()).resolves.toMatchObject({
+      code: "CONFLICT",
+      details: {
+        entityType: "source",
+        id: SOURCE_ID,
+        blockers: sourceBlockers,
+      },
+    });
+    await expect(contextRes.json()).resolves.toMatchObject({
+      code: "CONFLICT",
+      details: {
+        entityType: "context",
+        id: CONTEXT_ID,
+        blockers: contextBlockers,
+      },
+    });
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
   });
 
   it("GET /api/l3/words/:slug/contexts succeeds", async () => {

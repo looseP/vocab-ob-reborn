@@ -136,6 +136,30 @@ export function l3Routes(services: Services) {
     return c.json(result);
   });
 
+  app.delete("/sources/:id", async (c) => {
+    const sourceId = parseRouteUuid(c.req.param("id"));
+    if (!sourceId) {
+      return c.json({ error: "VALIDATION_ERROR", details: { fieldErrors: { id: ["Invalid uuid"] } } }, 400);
+    }
+    const result = await services.l3Context.deleteSource({
+      userId: c.get("userId"),
+      sourceId,
+    });
+    return c.json(result);
+  });
+
+  app.delete("/contexts/:id", async (c) => {
+    const contextId = parseRouteUuid(c.req.param("id"));
+    if (!contextId) {
+      return c.json({ error: "VALIDATION_ERROR", details: { fieldErrors: { id: ["Invalid uuid"] } } }, 400);
+    }
+    const result = await services.l3Context.deleteContext({
+      userId: c.get("userId"),
+      contextId,
+    });
+    return c.json(result);
+  });
+
   app.get("/contexts/:id", async (c) => {
     const result = await services.l3Read.getContextDetail({
       userId: c.get("userId"),
