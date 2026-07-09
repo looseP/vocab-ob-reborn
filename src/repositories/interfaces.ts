@@ -366,6 +366,18 @@ export interface L3GraphLookup {
   cursor?: string | null;
 }
 
+export interface L3SourceDeleteBlockers {
+  contextCount: number;
+  inboundContextLinkCount: number;
+  importJobCount: number;
+}
+
+export interface L3ContextDeleteBlockers {
+  occurrenceCount: number;
+  contextLinkCount: number;
+  inboundContextLinkCount: number;
+}
+
 export interface IL3ContextRepository {
   createSource(input: NewL3Source): Promise<L3SourceRow>;
   createContext(input: NewL3Context): Promise<L3ContextRow>;
@@ -373,6 +385,13 @@ export interface IL3ContextRepository {
   createContextLink(input: NewL3ContextLink): Promise<L3ContextLinkRow>;
   deleteOccurrence(userId: string, occurrenceId: string): Promise<L3OccurrenceRow | null>;
   deleteContextLink(userId: string, contextLinkId: string): Promise<L3ContextLinkRow | null>;
+  lockSourceByIdForUser(userId: string, sourceId: string): Promise<L3SourceRow | null>;
+  lockContextByIdForUser(userId: string, contextId: string): Promise<L3ContextRow | null>;
+  lockActiveL3TargetReference(userId: string, targetType: "source" | "context", targetId: string): Promise<void>;
+  getSourceDeleteBlockers(userId: string, sourceId: string): Promise<L3SourceDeleteBlockers>;
+  getContextDeleteBlockers(userId: string, contextId: string): Promise<L3ContextDeleteBlockers>;
+  deleteSource(userId: string, sourceId: string): Promise<L3SourceRow | null>;
+  deleteContext(userId: string, contextId: string): Promise<L3ContextRow | null>;
   createImportJob(input: NewL3ImportJob): Promise<L3ImportJobRow>;
   updateImportJobStatus(
     importJobId: string,

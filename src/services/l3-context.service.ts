@@ -5,7 +5,10 @@
  * does not import LLM, dictionary, FSRS, L2 content, or review progress code.
  */
 
-import { NotFoundError, ValidationError } from "../errors";
+import type { PoolClient } from "pg";
+import { ConflictError, NotFoundError, ValidationError } from "../errors";
+import { withTransaction } from "../db/transaction";
+import { createRepositories } from "../repositories/factory";
 import type {
   Json,
   L3ContextLinkRow,
@@ -19,6 +22,9 @@ import type {
 } from "../domain";
 import type {
   IL3ContextRepository,
+  IRepositories,
+  L3ContextDeleteBlockers,
+  L3SourceDeleteBlockers,
   NewL3Context,
   NewL3ContextLink,
   NewL3ImportJob,
@@ -36,10 +42,15 @@ import {
   type CreateL3ImportJobInput,
   type CreateL3OccurrenceInput,
   type CreateL3SourceInput,
+  type DeleteL3ContextInput,
   type DeleteL3ContextLinkInput,
   type DeleteL3OccurrenceInput,
+  type DeleteL3SourceInput,
   type L3DeleteResult,
 } from "../schemas/service";
+
+type TxRunner = <T>(callback: (tx: PoolClient) => Promise<T>) => Promise<T>;
+type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 function requireEnum(value: string, allowed: readonly string[], field: string): void {
   if (!allowed.includes(value)) {
@@ -69,7 +80,7 @@ function requireUuidTargetId(targetId: string | null | undefined, targetType: st
   if (!UUID_RE.test(targetId)) {
     throw new ValidationError(`targetId must be a UUID when targetType is ${targetType}`, "targetId");
   }
-  return targetId;
+  return targetId.toLowerCase();
 }
 
 function validateOffset(input: CreateL3OccurrenceInput, context: L3ContextRow): void {
@@ -111,8 +122,36 @@ function requireL2SoftTargetRef(targetRef: Json | undefined): void {
   }
 }
 
+function hasSourceDeleteBlockers(blockers: L3SourceDeleteBlockers): boolean {
+  return blockers.contextCount > 0 ||
+    blockers.inboundContextLinkCount > 0 ||
+    blockers.importJobCount > 0;
+}
+
+function hasContextDeleteBlockers(blockers: L3ContextDeleteBlockers): boolean {
+  return blockers.occurrenceCount > 0 ||
+    blockers.contextLinkCount > 0 ||
+    blockers.inboundContextLinkCount > 0;
+}
+
+function deleteConflict(
+  entityType: "source" | "context",
+  id: string,
+  blockers: L3SourceDeleteBlockers | L3ContextDeleteBlockers,
+): ConflictError {
+  return new ConflictError(`Cannot delete L3 ${entityType} with active dependencies`, undefined, {
+    entityType,
+    id,
+    blockers,
+  });
+}
+
 export class L3ContextService {
-  constructor(private readonly l3Context: IL3ContextRepository) {}
+  constructor(
+    private readonly l3Context: IL3ContextRepository,
+    private readonly txRunner: TxRunner = withTransaction,
+    private readonly repositoryFactory: RepositoryFactory = createRepositories,
+  ) {}
 
   async createSource(input: CreateL3SourceInput): Promise<{ source: L3SourceRow }> {
     requireNonEmpty(input.userId, "userId");
@@ -210,43 +249,69 @@ export class L3ContextService {
     requireEnum(input.targetType, L3_CONTEXT_LINK_TARGET_TYPES, "targetType");
     validateConfidence(input.confidence);
 
+    const needsSoftTargetLock = input.targetType === "source" || input.targetType === "context";
+    if (needsSoftTargetLock) {
+      return this.txRunner(async (tx) => {
+        const repos = this.repositoryFactory(tx);
+        return this.createContextLinkWithRepository(input, repos.l3Context, true);
+      });
+    }
+
+    return this.createContextLinkWithRepository(input, this.l3Context, false);
+  }
+
+  private async createContextLinkWithRepository(
+    input: CreateL3ContextLinkInput,
+    repository: IL3ContextRepository,
+    lockSoftTarget: boolean,
+  ): Promise<{ link: L3ContextLinkRow }> {
     if (!input.contextId && !input.wordId) {
       throw new ValidationError("contextId or wordId is required", "contextId");
     }
+    let targetIdForInsert = input.targetId ?? null;
     let contextWithSource: Awaited<ReturnType<IL3ContextRepository["findContextWithSourceById"]>> = null;
     if (input.contextId) {
-      contextWithSource = await this.l3Context.findContextWithSourceById(input.userId, input.contextId);
+      contextWithSource = await repository.findContextWithSourceById(input.userId, input.contextId);
       if (!contextWithSource) {
         throw new NotFoundError("L3Context", input.contextId);
       }
     }
     if (input.wordId) {
       const word = contextWithSource?.source.wordbook_id
-        ? await this.l3Context.findWordInWordbookById(contextWithSource.source.wordbook_id, input.wordId)
-        : await this.l3Context.findWordById(input.wordId);
+        ? await repository.findWordInWordbookById(contextWithSource.source.wordbook_id, input.wordId)
+        : await repository.findWordById(input.wordId);
       if (!word) {
         throw new NotFoundError("Word", input.wordId);
       }
     }
     if (input.targetType === "word") {
       const targetId = requireUuidTargetId(input.targetId, "word");
+      targetIdForInsert = targetId;
       const word = contextWithSource?.source.wordbook_id
-        ? await this.l3Context.findWordInWordbookById(contextWithSource.source.wordbook_id, targetId)
-        : await this.l3Context.findWordById(targetId);
+        ? await repository.findWordInWordbookById(contextWithSource.source.wordbook_id, targetId)
+        : await repository.findWordById(targetId);
       if (!word) {
         throw new NotFoundError("Word", targetId);
       }
     }
     if (input.targetType === "context") {
       const targetId = requireUuidTargetId(input.targetId, "context");
-      const context = await this.l3Context.findContextById(input.userId, targetId);
+      targetIdForInsert = targetId;
+      if (lockSoftTarget) {
+        await repository.lockActiveL3TargetReference(input.userId, "context", targetId);
+      }
+      const context = await repository.findContextById(input.userId, targetId);
       if (!context) {
         throw new NotFoundError("L3Context", targetId);
       }
     }
     if (input.targetType === "source") {
       const targetId = requireUuidTargetId(input.targetId, "source");
-      const source = await this.l3Context.findSourceById(input.userId, targetId);
+      targetIdForInsert = targetId;
+      if (lockSoftTarget) {
+        await repository.lockActiveL3TargetReference(input.userId, "source", targetId);
+      }
+      const source = await repository.findSourceById(input.userId, targetId);
       if (!source) {
         throw new NotFoundError("L3Source", targetId);
       }
@@ -255,13 +320,13 @@ export class L3ContextService {
       requireL2SoftTargetRef(input.targetRef);
     }
 
-    const link = await this.l3Context.createContextLink({
+    const link = await repository.createContextLink({
       user_id: input.userId,
       context_id: input.contextId ?? null,
       word_id: input.wordId ?? null,
       link_type: input.linkType,
       target_type: input.targetType,
-      target_id: input.targetId ?? null,
+      target_id: targetIdForInsert,
       target_ref: input.targetRef ?? {},
       confidence: input.confidence ?? null,
       provenance: input.provenance ?? {},
@@ -297,6 +362,74 @@ export class L3ContextService {
       deleted: { entityType: "context_link", id: deleted.id },
       activeReadInvalidation: true,
     };
+  }
+
+  async deleteSource(input: DeleteL3SourceInput): Promise<L3DeleteResult> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.sourceId, "sourceId");
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const source = await repos.l3Context.lockSourceByIdForUser(input.userId, input.sourceId);
+      if (!source) {
+        throw new NotFoundError("L3Source", input.sourceId);
+      }
+
+      await repos.l3Context.lockActiveL3TargetReference(input.userId, "source", input.sourceId);
+      const blockers = await repos.l3Context.getSourceDeleteBlockers(input.userId, input.sourceId);
+      if (hasSourceDeleteBlockers(blockers)) {
+        throw deleteConflict("source", input.sourceId, blockers);
+      }
+
+      const deleted = await repos.l3Context.deleteSource(input.userId, input.sourceId);
+      if (!deleted) {
+        const current = await repos.l3Context.findSourceById(input.userId, input.sourceId);
+        if (!current) {
+          throw new NotFoundError("L3Source", input.sourceId);
+        }
+        const latestBlockers = await repos.l3Context.getSourceDeleteBlockers(input.userId, input.sourceId);
+        throw deleteConflict("source", input.sourceId, latestBlockers);
+      }
+
+      return {
+        deleted: { entityType: "source", id: deleted.id },
+        activeReadInvalidation: true,
+      };
+    });
+  }
+
+  async deleteContext(input: DeleteL3ContextInput): Promise<L3DeleteResult> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.contextId, "contextId");
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const context = await repos.l3Context.lockContextByIdForUser(input.userId, input.contextId);
+      if (!context) {
+        throw new NotFoundError("L3Context", input.contextId);
+      }
+
+      await repos.l3Context.lockActiveL3TargetReference(input.userId, "context", input.contextId);
+      const blockers = await repos.l3Context.getContextDeleteBlockers(input.userId, input.contextId);
+      if (hasContextDeleteBlockers(blockers)) {
+        throw deleteConflict("context", input.contextId, blockers);
+      }
+
+      const deleted = await repos.l3Context.deleteContext(input.userId, input.contextId);
+      if (!deleted) {
+        const current = await repos.l3Context.findContextById(input.userId, input.contextId);
+        if (!current) {
+          throw new NotFoundError("L3Context", input.contextId);
+        }
+        const latestBlockers = await repos.l3Context.getContextDeleteBlockers(input.userId, input.contextId);
+        throw deleteConflict("context", input.contextId, latestBlockers);
+      }
+
+      return {
+        deleted: { entityType: "context", id: deleted.id },
+        activeReadInvalidation: true,
+      };
+    });
   }
 
   async createImportJob(input: CreateL3ImportJobInput): Promise<{ importJob: L3ImportJobRow }> {

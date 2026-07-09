@@ -183,6 +183,177 @@ describe("L3ContextRepository", () => {
     await expect(repos.l3Context.deleteContextLink("u1", "missing-link")).resolves.toBeNull();
   });
 
+  it("summarizes source and context delete blockers by owner scope", async () => {
+    mock.setRowMap({
+      "AS context_count": [{
+        context_count: "2",
+        inbound_context_link_count: "1",
+        import_job_count: "3",
+      }],
+      "AS occurrence_count": [{
+        occurrence_count: "4",
+        context_link_count: "5",
+        inbound_context_link_count: "6",
+      }],
+    });
+    const repos = createRepositories();
+
+    await expect(repos.l3Context.getSourceDeleteBlockers("u1", "src-1")).resolves.toEqual({
+      contextCount: 2,
+      inboundContextLinkCount: 1,
+      importJobCount: 3,
+    });
+    await expect(repos.l3Context.getContextDeleteBlockers("u1", "ctx-1")).resolves.toEqual({
+      occurrenceCount: 4,
+      contextLinkCount: 5,
+      inboundContextLinkCount: 6,
+    });
+
+    expect(mock.calls[0].text).toContain("FROM l3_contexts");
+    expect(mock.calls[0].text).toContain("source_id = $1::uuid");
+    expect(mock.calls[0].text).toContain("user_id = $2::uuid");
+    expect(mock.calls[0].text).toContain("target_type = 'source'");
+    expect(mock.calls[0].text).toContain("lower(target_id) = lower($1::text)");
+    expect(mock.calls[0].text).toContain("FROM l3_import_jobs");
+    expect(mock.calls[0].params).toEqual(["src-1", "u1"]);
+
+    expect(mock.calls[1].text).toContain("FROM l3_occurrences");
+    expect(mock.calls[1].text).toContain("context_id = $1::uuid");
+    expect(mock.calls[1].text).toContain("user_id = $2::uuid");
+    expect(mock.calls[1].text).toContain("target_type = 'context'");
+    expect(mock.calls[1].text).toContain("lower(target_id) = lower($1::text)");
+    expect(mock.calls[1].params).toEqual(["ctx-1", "u1"]);
+  });
+
+  it("deletes source and context by explicit owner-scoped id", async () => {
+    mock.setRowMap({
+      "DELETE FROM l3_sources": [{
+        id: "src-1",
+        user_id: "u1",
+        source_type: "manual",
+        title: "Manual note",
+      }],
+      "DELETE FROM l3_contexts": [{
+        id: "ctx-1",
+        source_id: "src-1",
+        user_id: "u1",
+        context_type: "sentence",
+        text: "A vivid context.",
+      }],
+    });
+    const repos = createRepositories();
+
+    await expect(repos.l3Context.deleteSource("u1", "src-1")).resolves.toMatchObject({
+      id: "src-1",
+      user_id: "u1",
+    });
+    await expect(repos.l3Context.deleteContext("u1", "ctx-1")).resolves.toMatchObject({
+      id: "ctx-1",
+      user_id: "u1",
+    });
+
+    const sql = mock.calls.map((call) => call.text).join("\n");
+    expect(sql).toContain("DELETE FROM l3_sources");
+    expect(sql).toContain("DELETE FROM l3_contexts");
+    expect(sql).toContain("WHERE id = $1::uuid AND user_id = $2::uuid");
+    expect(sql).toContain("NOT EXISTS");
+    expect(sql).toContain("FROM l3_contexts");
+    expect(sql).toContain("FROM l3_occurrences");
+    expect(sql).toContain("FROM l3_context_links");
+    expect(sql).toContain("FROM l3_import_jobs");
+    expect(sql).toContain("target_type = 'source'");
+    expect(sql).toContain("target_type = 'context'");
+    expect(sql).toContain("lower(l.target_id) = l3_sources.id::text");
+    expect(sql).toContain("lower(inbound.target_id) = l3_contexts.id::text");
+    expect(sql).toContain("RETURNING *");
+    expect(mock.calls[0].params).toEqual(["src-1", "u1"]);
+    expect(mock.calls[1].params).toEqual(["ctx-1", "u1"]);
+  });
+
+  it("locks source and context parent rows before guarded service deletes", async () => {
+    mock.setRowMap({
+      "FROM l3_sources": [{
+        id: "src-1",
+        user_id: "u1",
+        source_type: "manual",
+        title: "Manual note",
+      }],
+      "FROM l3_contexts": [{
+        id: "ctx-1",
+        source_id: "src-1",
+        user_id: "u1",
+        context_type: "sentence",
+        text: "A vivid context.",
+      }],
+    });
+    const repos = createRepositories();
+    const txRepos = createRepositories({ query: mock.pool.query } as never);
+
+    await expect(repos.l3Context.lockSourceByIdForUser("u1", "src-1"))
+      .rejects.toMatchObject({ code: "BUSINESS_RULE" });
+    await expect(repos.l3Context.lockContextByIdForUser("u1", "ctx-1"))
+      .rejects.toMatchObject({ code: "BUSINESS_RULE" });
+
+    mock.reset();
+    mock.setRowMap({
+      "FROM l3_sources": [{
+        id: "src-1",
+        user_id: "u1",
+        source_type: "manual",
+        title: "Manual note",
+      }],
+      "FROM l3_contexts": [{
+        id: "ctx-1",
+        source_id: "src-1",
+        user_id: "u1",
+        context_type: "sentence",
+        text: "A vivid context.",
+      }],
+    });
+
+    await expect(txRepos.l3Context.lockSourceByIdForUser("u1", "src-1")).resolves.toMatchObject({
+      id: "src-1",
+      user_id: "u1",
+    });
+    await expect(txRepos.l3Context.lockContextByIdForUser("u1", "ctx-1")).resolves.toMatchObject({
+      id: "ctx-1",
+      user_id: "u1",
+    });
+
+    expect(mock.calls[0].text).toContain("SELECT * FROM l3_sources");
+    expect(mock.calls[0].text).toContain("WHERE id = $1::uuid AND user_id = $2::uuid");
+    expect(mock.calls[0].text).toContain("FOR UPDATE");
+    expect(mock.calls[0].params).toEqual(["src-1", "u1"]);
+    expect(mock.calls[1].text).toContain("SELECT * FROM l3_contexts");
+    expect(mock.calls[1].text).toContain("WHERE id = $1::uuid AND user_id = $2::uuid");
+    expect(mock.calls[1].text).toContain("FOR UPDATE");
+    expect(mock.calls[1].params).toEqual(["ctx-1", "u1"]);
+  });
+
+  it("uses a transaction-scoped advisory lock for active source/context soft references", async () => {
+    const repos = createRepositories();
+    const txRepos = createRepositories({ query: mock.pool.query } as never);
+
+    await expect(repos.l3Context.lockActiveL3TargetReference("u1", "source", "src-1"))
+      .rejects.toMatchObject({ code: "BUSINESS_RULE" });
+
+    await txRepos.l3Context.lockActiveL3TargetReference("u1", "source", "src-1");
+    await txRepos.l3Context.lockActiveL3TargetReference("u1", "context", "ctx-1");
+
+    expect(mock.calls[0].text).toContain("SELECT pg_advisory_xact_lock(hashtext($1))");
+    expect(mock.calls[0].params).toEqual(["l3:active-target:u1:source:src-1"]);
+    expect(mock.calls[1].text).toContain("SELECT pg_advisory_xact_lock(hashtext($1))");
+    expect(mock.calls[1].params).toEqual(["l3:active-target:u1:context:ctx-1"]);
+  });
+
+  it("returns null when deleting a missing or out-of-scope source or context", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    await expect(repos.l3Context.deleteSource("u1", "missing-src")).resolves.toBeNull();
+    await expect(repos.l3Context.deleteContext("u1", "missing-ctx")).resolves.toBeNull();
+  });
+
   it("lists word contexts as source, context, occurrence, and links summary", async () => {
     mock.setRows([
       {

@@ -490,9 +490,19 @@ export interface DeleteL3ContextLinkInput {
   contextLinkId: string;
 }
 
+export interface DeleteL3SourceInput {
+  userId: string;
+  sourceId: string;
+}
+
+export interface DeleteL3ContextInput {
+  userId: string;
+  contextId: string;
+}
+
 export interface L3DeleteResult {
   deleted: {
-    entityType: "occurrence" | "context_link";
+    entityType: "source" | "context" | "occurrence" | "context_link";
     id: string;
   };
   activeReadInvalidation: true;
