@@ -286,6 +286,9 @@ describe("Phase 4B L3 frontend shell", () => {
     expect(source).toContain("onManualChanged");
     expect(source).not.toContain("onManualCreated");
     expect(source).toContain("applyManualDeleteSuccess");
+    expect(source).toContain("const transition = applyManualDeleteSuccess(result)");
+    expect(source).toContain("onManualChanged(transition.cache.reason)");
+    expect(source).not.toContain("manual_${command.entityType}_deleted_active_l3");
     expect(source).toContain("client.deleteOccurrence(command.id)");
     expect(source).toContain("client.deleteContextLink(command.id)");
     expect(source).toContain("Delete active row");
@@ -406,9 +409,9 @@ describe("Phase 4B L3 frontend shell", () => {
       reason: "manual_context_created_active_l3",
       activeEntities: [],
     });
-    expect(markActiveReadStaleAfterManualCommand("manual_occurrence_deleted_active_l3")).toEqual({
+    expect(markActiveReadStaleAfterManualCommand("manual_active_l3_deleted")).toEqual({
       state: "staleAfterConfirm",
-      reason: "manual_occurrence_deleted_active_l3",
+      reason: "manual_active_l3_deleted",
       activeEntities: [],
     });
     expect(manualCreateSuccessActions({
