@@ -17,8 +17,9 @@ creates.
 The remaining manual mutation question is edit/delete. Edit/delete can be useful
 for owner correction, but it can also invalidate occurrence offsets, graph
 semantics, recommendation evidence, and audit history. This ADR defines the
-contract before implementation. Phase 5C is design-only: no production code,
-endpoint, schema, migration, or frontend UI is added in this phase.
+contract boundaries for the delete-first implementation. Phase 5C was
+design-only; later implementation tasks added the backend delete subset without
+adding schema, migration, or source/context frontend UI.
 
 ## Decision
 
@@ -34,12 +35,12 @@ manual creates. This does not relax the proposal rule:
 - Manual Editor remains a trusted owner command surface, not an automated
   content authority
 
-Phase 5C.1 should use a conservative delete-only MVP:
+Phase 5C.1/Task 4C uses a conservative delete-only MVP:
 
 - implement context link delete
 - implement occurrence delete
-- defer source delete
-- defer context delete
+- expose source parent delete as backend HTTP-only guarded delete
+- expose context parent delete as backend HTTP-only guarded delete
 - defer context text edit
 - defer graph inline editing
 - defer broad edit operations until an audit/event strategy exists
@@ -52,23 +53,25 @@ but the HTTP contract remains the active L3 owner/manual route family.
 
 | Object | Create | Safe edit | Risky edit | Delete | MVP recommendation | Deferred reason | Stale surfaces | Audit/provenance requirement | Required validation | Forbidden side effects |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `l3_sources` | Done in Phase 5B | `title`, `author`, `url`, `language`, selected `metadata` | `source_type`, `wordbook_id` | Deferred | No Phase 5C.1 source edit/delete | Source changes affect every child context, occurrence, link, source space, and graph path | Source Space, Word Space, Graph, child Context Detail | Edit needs manual actor and before/after audit; delete needs dedicated policy | Owner source, immutable `wordbook_id`, metadata schema if edited | No L1/L2/FSRS writes, no proposal/import/recommendation writes, no `words` JSONB/hash updates |
-| `l3_contexts` | Done in Phase 5B | `normalized_text`, `language`, `position`, selected `metadata` | `text`, `source_id`, `context_type` | Deferred | No Phase 5C.1 context edit/delete | Text edit can invalidate all occurrence offsets and evidence; delete needs cascade/soft-delete policy | Context Detail, Source Space, Word Space, Graph | Text edit requires before/after audit and occurrence revalidation or explicit invalidation | Owner context, source ownership, offset/evidence policy for any text change | No silent occurrence retention after text drift; no proposal/import/recommendation/L1/L2/FSRS writes |
+| `l3_sources` | Done in Phase 5B | `title`, `author`, `url`, `language`, selected `metadata` | `source_type`, `wordbook_id` | Backend HTTP-only guarded parent delete | Delete only when no active blockers; source delete UI remains deferred | Source changes affect every child context, occurrence, link, source space, and graph path | Source Space, Word Space, Graph, child Context Detail | Edit needs manual actor and before/after audit; delete uses blocker summary and active-read invalidation | Owner source, immutable `wordbook_id`, metadata schema if edited; delete blockers: child contexts, inbound context links, import jobs | No L1/L2/FSRS writes, no proposal/import/recommendation writes, no `words` JSONB/hash updates |
+| `l3_contexts` | Done in Phase 5B | `normalized_text`, `language`, `position`, selected `metadata` | `text`, `source_id`, `context_type` | Backend HTTP-only guarded parent delete | Delete only when no active blockers; context delete UI remains deferred | Text edit can invalidate all occurrence offsets and evidence; guarded delete forbids active children | Context Detail, Source Space, Word Space, Graph | Text edit requires before/after audit and occurrence revalidation or explicit invalidation; delete uses blocker summary and active-read invalidation | Owner context, source ownership, offset/evidence policy for any text change; delete blockers: occurrences, anchored context links, inbound context links | No silent occurrence retention after text drift; no proposal/import/recommendation/L1/L2/FSRS writes |
 | `l3_occurrences` | Done in Phase 5B | `confidence`, selected `evidence` only after audit contract | `word_id`, `slug`, `surface`, `start_offset`, `end_offset`, `lemma` | Candidate | Phase 5C.1 delete by explicit id | Edit can rewrite word evidence and graph edges; delete is simpler and reversible only with new create | Context Detail, Word Space, Source Space, Graph | Delete can initially rely on service validation and active read stale; edit needs before/after audit | Owner occurrence, owner context, wordbook scope, exact offset/surface if edited | No `user_word_progress`, `user_word_l2_progress`, `word_l2_content`, `words` JSONB/hash, proposal/import/recommendation writes |
 | `l3_context_links` | Done in Phase 5B | `confidence`, selected `provenance` only after audit contract | `link_type`, `target_type`, `target_id`, `target_ref`, anchor changes | Candidate | Phase 5C.1 delete by explicit id | Target edit changes graph semantics; model as delete old + create new | Context Detail, Word Space, Source Space, Graph | Delete can initially rely on service validation and active read stale; edit needs before/after audit | Owner link, owner context/anchor, active target validation, wordbook target scope | No proposal/import/recommendation writes, no L1/L2/FSRS writes, no graph read writes |
 
 ## MVP Recommendation
 
-Phase 5C.1 should implement delete-only active owner commands:
+Phase 5C.1/Task 4C implements delete-only active owner commands:
 
 - `DELETE /api/l3/context-links/:id`
 - `DELETE /api/l3/occurrences/:id`
+- `DELETE /api/l3/sources/:id`
+- `DELETE /api/l3/contexts/:id`
 
 The operation must require an explicit id. The frontend must not infer ids from
 labels, surface text, graph labels, row order, or display text. A second delete
-of the same id should return either `404` or `409`; Phase 5C.1 must choose one
-and freeze it in the HTTP contract. The conservative recommendation is `404`
-because the owner-scoped active row no longer exists.
+of the same id returns `404` because the owner-scoped active row no longer
+exists. Source/context parent delete with active blockers returns `409` and does
+not delete the parent row.
 
 The response should be small and command-oriented:
 
@@ -92,16 +95,24 @@ The response should be small and command-oriented:
 }
 ```
 
+Source/context parent delete uses the same shape with `entityType` set to
+`source` or `context`.
+
 ## Deferred Operations
 
-Source edit/delete is deferred. Safe metadata edit may be useful later, but
-`wordbook_id` must remain immutable after create because it defines the owner
-wordbook scope for child evidence. Source delete needs a soft-delete/archive or
-cascade policy before implementation.
+Source edit and source delete UI are deferred. Safe metadata edit may be useful
+later, but `wordbook_id` must remain immutable after create because it defines
+the owner wordbook scope for child evidence. Source parent delete is implemented
+only as a backend HTTP guarded hard delete when there are no child contexts,
+inbound context links, or import jobs. Source delete UI, soft-delete/archive
+behavior, and cascade policy for blocked sources remain deferred.
 
-Context edit/delete is deferred. Editing `text` is especially risky: every
-occurrence offset and surface proof must be revalidated, invalidated, or
-explicitly remapped. Silent retention of stale offsets is forbidden.
+Context edit and context delete UI are deferred. Editing `text` is especially
+risky: every occurrence offset and surface proof must be revalidated,
+invalidated, or explicitly remapped. Silent retention of stale offsets is
+forbidden. Context parent delete is implemented only as a backend HTTP guarded
+hard delete when there are no occurrences, anchored context links, or inbound
+context links.
 
 Occurrence edit is deferred except for a possible future evidence/confidence
 safe-edit contract. Changing word, surface, or offsets is semantically closer to
@@ -140,9 +151,10 @@ Manual Editor may add an explicit edit/delete panel in a later phase. Phase
 - context link id
 - occurrence id
 
-It should not add source/context delete UI, source/context text edit UI, graph
-canvas delete, or inline editors on Graph, Context Detail, Word Space, or Source
-Space pages.
+Even though backend HTTP exposes guarded source/context parent delete, Manual
+Editor should not add source/context delete UI, source/context text edit UI,
+graph canvas delete, or inline editors on Graph, Context Detail, Word Space, or
+Source Space pages.
 
 Successful delete marks active read surfaces stale:
 
@@ -181,20 +193,25 @@ write:
 - `l3_recommendation_runs`
 - `l3_recommendation_items`
 
-Phase 5C.1 delete-only SQL isolation should allow only:
+Delete-only SQL isolation should allow explicit owner-scoped writes only to:
 
 - `DELETE FROM l3_context_links`
 - `DELETE FROM l3_occurrences`
+- guarded `DELETE FROM l3_sources`
+- guarded `DELETE FROM l3_contexts`
 
-and continue to forbid L1/L2/FSRS/proposal/import/recommendation writes.
+The source/context parent deletes must be guarded by blocker checks and
+`NOT EXISTS` predicates so the application path does not intentionally rely on
+database cascade or set-null side effects. The contract continues to forbid
+L1/L2/FSRS/proposal/import/recommendation writes.
 
 ## Consequences
 
-- The next implementation phase has a narrow, testable delete-only slice.
+- The implemented route surface remains a narrow, testable delete-only slice.
 - Risky edit operations are not accidentally bundled with simple cleanup
   commands.
 - Proposal/import/recommendation semantics remain unchanged.
 - Active read stale semantics stay consistent with Phase 5B Manual Editor.
 - Audit requirements are made explicit before introducing mutable evidence.
-- No production code, endpoint, schema, migration, dependency, or UI behavior
-  changes in Phase 5C.
+- No schema, migration, dependency, PATCH, `/api/l3/manual/*`, or source/context
+  UI behavior changes are required for the guarded parent delete contract.
