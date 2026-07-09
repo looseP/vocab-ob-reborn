@@ -200,7 +200,7 @@ describe("L3ManualEditorPage delete panel", () => {
     expect(submit.disabled).toBe(true);
     expect(expectedDeleteMock).toHaveBeenCalledTimes(1);
     expect(expectedDeleteMock).toHaveBeenCalledWith(expectedId);
-    expect(onManualChanged).toHaveBeenCalledWith(`manual_${entityType}_deleted_active_l3`);
+    expect(onManualChanged).toHaveBeenCalledWith("manual_active_l3_deleted");
     expect(getDeleteResult(form)?.textContent).toBe(`Deleted ${entityType}: ${expectedId}`);
 
     await submitForm(form);

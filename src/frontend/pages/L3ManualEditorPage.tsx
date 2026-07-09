@@ -166,8 +166,8 @@ export function L3ManualEditorPage({ client, onManualChanged, onNavigate }: L3Ma
         ? await client.deleteOccurrence(command.id)
         : await client.deleteContextLink(command.id);
       setDeleteResult(result);
-      applyManualDeleteSuccess(result);
-      onManualChanged(`manual_${command.entityType}_deleted_active_l3`);
+      const transition = applyManualDeleteSuccess(result);
+      onManualChanged(transition.cache.reason);
       setDeleteStatus("deleted");
     } catch (caught) {
       setError(normalizeUnknownError(caught));
