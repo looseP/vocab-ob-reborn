@@ -16,6 +16,12 @@ import type {
 } from "@/domain";
 import { L3ProposalService } from "@/services/l3-proposal.service";
 
+vi.mock("@/db/transaction", () => ({
+  withTransaction: vi.fn(async () => {
+    throw new Error("default L3 transaction should not be used by proposal confirm");
+  }),
+}));
+
 const PROPOSAL_ROW: L3ProposalRow = {
   id: "prop-1",
   user_id: "u1",
@@ -95,6 +101,9 @@ const WORDBOOK_ROW: WordbookRow = {
   updated_at: "2026-07-08T00:00:00Z",
 };
 
+const TARGET_SOURCE_ID = "00000000-0000-4000-8000-000000000201";
+const TARGET_CONTEXT_ID = "00000000-0000-4000-8000-000000000202";
+
 function makeItem(
   ordinal: number,
   itemType: L3ProposalItemRow["item_type"],
@@ -155,6 +164,7 @@ function makeContextRepo(overrides: Partial<IL3ContextRepository> = {}): IL3Cont
       provenance: {},
       created_at: "2026-07-08T00:00:00Z",
     })),
+    lockActiveL3TargetReference: vi.fn(async () => undefined),
     createImportJob: vi.fn(),
     updateImportJobStatus: vi.fn(),
     findWordbookByIdForUser: vi.fn(async () => WORDBOOK_ROW),
@@ -292,6 +302,152 @@ describe("L3ProposalService", () => {
     expect(txContextRepo.createContextLink).toHaveBeenCalledWith(expect.objectContaining({ context_id: "ctx-1" }));
     expect(txProposalRepo.markProposalConfirmed).toHaveBeenCalledWith("prop-1", "u1");
     expect(result.activeEntities).toHaveLength(4);
+  });
+
+  it("confirmProposal keeps source/context-target context links inside the proposal transaction", async () => {
+    const items = proposalItems();
+    items[3] = makeItem(4, "context_link", {
+      contextRef: "ctx-a",
+      linkType: "illustrates",
+      targetType: "source",
+      targetId: TARGET_SOURCE_ID,
+    });
+    items.push(makeItem(5, "context_link", {
+      contextRef: "ctx-a",
+      linkType: "illustrates",
+      targetType: "context",
+      targetId: TARGET_CONTEXT_ID,
+    }));
+    proposalRepo = makeProposalRepo(items);
+    txProposalRepo = makeProposalRepo(items);
+    contextRepo = makeContextRepo({
+      lockActiveL3TargetReference: vi.fn(async () => {
+        throw new Error("outer context repo should not lock context-link soft targets");
+      }),
+      createContextLink: vi.fn(async () => {
+        throw new Error("outer context repo should not create active context links");
+      }),
+    });
+    txContextRepo = makeContextRepo({
+      findSourceById: vi.fn(async (userId, sourceId) => ({
+        ...SOURCE_ROW,
+        id: sourceId,
+        user_id: userId,
+      })),
+      findContextById: vi.fn(async (userId, contextId) => ({
+        ...CONTEXT_ROW,
+        id: contextId,
+        user_id: userId,
+      })),
+      createContextLink: vi.fn(async (input) => ({
+        id: `link-${input.target_type}`,
+        user_id: input.user_id,
+        context_id: input.context_id ?? null,
+        word_id: input.word_id ?? null,
+        link_type: input.link_type as never,
+        target_type: input.target_type as never,
+        target_id: input.target_id ?? null,
+        target_ref: input.target_ref ?? {},
+        confidence: input.confidence ?? null,
+        provenance: input.provenance ?? {},
+        created_at: "2026-07-08T00:00:00Z",
+      })),
+    });
+    service = new L3ProposalService(
+      proposalRepo,
+      contextRepo,
+      async (cb) => cb({} as never),
+      () => ({
+        l3Context: txContextRepo,
+        l3Proposal: txProposalRepo,
+      } as unknown as IRepositories),
+    );
+
+    await service.confirmProposal({ userId: "u1", proposalId: "prop-1" });
+
+    expect(txContextRepo.lockActiveL3TargetReference).toHaveBeenNthCalledWith(1, "u1", "source", TARGET_SOURCE_ID);
+    expect(txContextRepo.lockActiveL3TargetReference).toHaveBeenNthCalledWith(2, "u1", "context", TARGET_CONTEXT_ID);
+    expect(txContextRepo.createContextLink).toHaveBeenCalledWith(expect.objectContaining({
+      context_id: "ctx-1",
+      target_type: "source",
+      target_id: TARGET_SOURCE_ID,
+    }));
+    expect(txContextRepo.createContextLink).toHaveBeenCalledWith(expect.objectContaining({
+      context_id: "ctx-1",
+      target_type: "context",
+      target_id: TARGET_CONTEXT_ID,
+    }));
+    expect(contextRepo.lockActiveL3TargetReference).not.toHaveBeenCalled();
+    expect(contextRepo.createContextLink).not.toHaveBeenCalled();
+  });
+
+  it("confirmProposal rolls back source-target context links with later proposal failures", async () => {
+    let rolledBack = false;
+    const items = proposalItems();
+    items[3] = makeItem(4, "context_link", {
+      contextRef: "ctx-a",
+      linkType: "illustrates",
+      targetType: "source",
+      targetId: TARGET_SOURCE_ID,
+    });
+    proposalRepo = makeProposalRepo(items);
+    txProposalRepo = {
+      ...makeProposalRepo(items),
+      markProposalConfirmed: vi.fn(async () => {
+        throw new ValidationError("boom", "proposal");
+      }),
+    };
+    contextRepo = makeContextRepo({
+      createContextLink: vi.fn(async () => {
+        throw new Error("outer context repo should not create active context links");
+      }),
+    });
+    txContextRepo = makeContextRepo({
+      findSourceById: vi.fn(async (userId, sourceId) => ({
+        ...SOURCE_ROW,
+        id: sourceId,
+        user_id: userId,
+      })),
+      createContextLink: vi.fn(async (input) => ({
+        id: "link-source",
+        user_id: input.user_id,
+        context_id: input.context_id ?? null,
+        word_id: input.word_id ?? null,
+        link_type: input.link_type as never,
+        target_type: input.target_type as never,
+        target_id: input.target_id ?? null,
+        target_ref: input.target_ref ?? {},
+        confidence: input.confidence ?? null,
+        provenance: input.provenance ?? {},
+        created_at: "2026-07-08T00:00:00Z",
+      })),
+    });
+    service = new L3ProposalService(
+      proposalRepo,
+      contextRepo,
+      async (cb) => {
+        try {
+          return await cb({} as never);
+        } catch (error) {
+          rolledBack = true;
+          throw error;
+        }
+      },
+      () => ({
+        l3Context: txContextRepo,
+        l3Proposal: txProposalRepo,
+      } as unknown as IRepositories),
+    );
+
+    await expect(service.confirmProposal({ userId: "u1", proposalId: "prop-1" })).rejects.toBeInstanceOf(ValidationError);
+
+    expect(rolledBack).toBe(true);
+    expect(txContextRepo.lockActiveL3TargetReference).toHaveBeenCalledWith("u1", "source", TARGET_SOURCE_ID);
+    expect(txContextRepo.createContextLink).toHaveBeenCalledWith(expect.objectContaining({
+      target_type: "source",
+      target_id: TARGET_SOURCE_ID,
+    }));
+    expect(contextRepo.createContextLink).not.toHaveBeenCalled();
   });
 
   it("confirmProposal rejects non-pending proposals", async () => {

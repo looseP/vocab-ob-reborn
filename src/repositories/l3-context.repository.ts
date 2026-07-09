@@ -25,7 +25,9 @@ import type {
 import { ValidationError } from "../errors";
 import type {
   IL3ContextRepository,
+  L3ContextDeleteBlockers,
   L3GraphLookup,
+  L3SourceDeleteBlockers,
   L3SourceLookup,
   L3SourceSpaceLookup,
   L3WordLookup,
@@ -224,6 +226,22 @@ interface GraphContextRow extends JoinedContextWithSourceRow {
   links: L3ContextLinkRow[] | null;
 }
 
+interface SourceDeleteBlockerRow {
+  context_count: number | string | null;
+  inbound_context_link_count: number | string | null;
+  import_job_count: number | string | null;
+}
+
+interface ContextDeleteBlockerRow {
+  occurrence_count: number | string | null;
+  context_link_count: number | string | null;
+  inbound_context_link_count: number | string | null;
+}
+
+function countValue(value: number | string | null | undefined): number {
+  return Number(value ?? 0);
+}
+
 function mapSourceContextRow(row: SourceContextRow): L3SourceContextListItem {
   return {
     context: mapContext(row),
@@ -414,6 +432,142 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
        WHERE id = $1::uuid AND user_id = $2::uuid
        RETURNING *`,
       [contextLinkId, userId],
+    );
+  }
+
+  async getSourceDeleteBlockers(userId: string, sourceId: string): Promise<L3SourceDeleteBlockers> {
+    const row = await this.queryOne<SourceDeleteBlockerRow>(
+      `SELECT
+         (
+           SELECT COUNT(*)::int
+           FROM l3_contexts
+           WHERE source_id = $1::uuid AND user_id = $2::uuid
+         ) AS context_count,
+         (
+           SELECT COUNT(*)::int
+           FROM l3_context_links
+           WHERE target_type = 'source'
+             AND lower(target_id) = lower($1::text)
+             AND user_id = $2::uuid
+         ) AS inbound_context_link_count,
+         (
+           SELECT COUNT(*)::int
+           FROM l3_import_jobs
+           WHERE source_id = $1::uuid AND user_id = $2::uuid
+         ) AS import_job_count`,
+      [sourceId, userId],
+    );
+    return {
+      contextCount: countValue(row?.context_count),
+      inboundContextLinkCount: countValue(row?.inbound_context_link_count),
+      importJobCount: countValue(row?.import_job_count),
+    };
+  }
+
+  async lockSourceByIdForUser(userId: string, sourceId: string): Promise<L3SourceRow | null> {
+    this.requireTx();
+    return this.queryOne<L3SourceRow>(
+      `SELECT * FROM l3_sources
+       WHERE id = $1::uuid AND user_id = $2::uuid
+       FOR UPDATE`,
+      [sourceId, userId],
+    );
+  }
+
+  async lockContextByIdForUser(userId: string, contextId: string): Promise<L3ContextRow | null> {
+    this.requireTx();
+    return this.queryOne<L3ContextRow>(
+      `SELECT * FROM l3_contexts
+       WHERE id = $1::uuid AND user_id = $2::uuid
+       FOR UPDATE`,
+      [contextId, userId],
+    );
+  }
+
+  async lockActiveL3TargetReference(
+    userId: string,
+    targetType: "source" | "context",
+    targetId: string,
+  ): Promise<void> {
+    this.requireTx();
+    await this.query(
+      `SELECT pg_advisory_xact_lock(hashtext($1))`,
+      [`l3:active-target:${userId.toLowerCase()}:${targetType}:${targetId.toLowerCase()}`],
+    );
+  }
+
+  async getContextDeleteBlockers(userId: string, contextId: string): Promise<L3ContextDeleteBlockers> {
+    const row = await this.queryOne<ContextDeleteBlockerRow>(
+      `SELECT
+         (
+           SELECT COUNT(*)::int
+           FROM l3_occurrences
+           WHERE context_id = $1::uuid AND user_id = $2::uuid
+         ) AS occurrence_count,
+         (
+           SELECT COUNT(*)::int
+           FROM l3_context_links
+           WHERE context_id = $1::uuid AND user_id = $2::uuid
+         ) AS context_link_count,
+         (
+           SELECT COUNT(*)::int
+           FROM l3_context_links
+           WHERE target_type = 'context'
+             AND lower(target_id) = lower($1::text)
+             AND user_id = $2::uuid
+         ) AS inbound_context_link_count`,
+      [contextId, userId],
+    );
+    return {
+      occurrenceCount: countValue(row?.occurrence_count),
+      contextLinkCount: countValue(row?.context_link_count),
+      inboundContextLinkCount: countValue(row?.inbound_context_link_count),
+    };
+  }
+
+  async deleteSource(userId: string, sourceId: string): Promise<L3SourceRow | null> {
+    return this.queryOne<L3SourceRow>(
+      `DELETE FROM l3_sources
+       WHERE id = $1::uuid AND user_id = $2::uuid
+         AND NOT EXISTS (
+           SELECT 1 FROM l3_contexts c
+           WHERE c.source_id = l3_sources.id AND c.user_id = l3_sources.user_id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM l3_context_links l
+           WHERE l.target_type = 'source'
+             AND lower(l.target_id) = l3_sources.id::text
+             AND l.user_id = l3_sources.user_id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM l3_import_jobs j
+           WHERE j.source_id = l3_sources.id AND j.user_id = l3_sources.user_id
+         )
+       RETURNING *`,
+      [sourceId, userId],
+    );
+  }
+
+  async deleteContext(userId: string, contextId: string): Promise<L3ContextRow | null> {
+    return this.queryOne<L3ContextRow>(
+      `DELETE FROM l3_contexts
+       WHERE id = $1::uuid AND user_id = $2::uuid
+         AND NOT EXISTS (
+           SELECT 1 FROM l3_occurrences o
+           WHERE o.context_id = l3_contexts.id AND o.user_id = l3_contexts.user_id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM l3_context_links l
+           WHERE l.context_id = l3_contexts.id AND l.user_id = l3_contexts.user_id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM l3_context_links inbound
+           WHERE inbound.target_type = 'context'
+             AND lower(inbound.target_id) = l3_contexts.id::text
+             AND inbound.user_id = l3_contexts.user_id
+         )
+       RETURNING *`,
+      [contextId, userId],
     );
   }
 

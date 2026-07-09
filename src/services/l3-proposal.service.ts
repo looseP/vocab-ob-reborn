@@ -235,7 +235,11 @@ export class L3ProposalService {
         throw new ValidationError("Proposal validation failed", "proposal", recheckErrors);
       }
 
-      const l3Service = new L3ContextService(repos.l3Context);
+      const l3Service = new L3ContextService(
+        repos.l3Context,
+        async (callback) => callback(tx),
+        () => repos,
+      );
       const sourceIds = new Map<string, string>();
       const contextIds = new Map<string, string>();
       const activeEntities: L3ProposalConfirmResult["activeEntities"] = [];

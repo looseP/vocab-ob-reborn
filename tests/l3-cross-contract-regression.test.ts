@@ -398,6 +398,45 @@ class L3CrossContractHarness {
         this.links.delete(contextLinkId);
         return link;
       }),
+      lockSourceByIdForUser: vi.fn(async (userId: string, sourceId: string) => {
+        const source = this.sources.get(sourceId);
+        return source?.user_id === userId ? source : null;
+      }),
+      lockContextByIdForUser: vi.fn(async (userId: string, contextId: string) => {
+        const context = this.contexts.get(contextId);
+        return context?.user_id === userId ? context : null;
+      }),
+      lockActiveL3TargetReference: vi.fn(async () => undefined),
+      getSourceDeleteBlockers: vi.fn(async (userId: string, sourceId: string) => ({
+        contextCount: [...this.contexts.values()]
+          .filter((context) => context.user_id === userId && context.source_id === sourceId).length,
+        inboundContextLinkCount: [...this.links.values()]
+          .filter((link) => link.user_id === userId && link.target_type === "source" && link.target_id === sourceId).length,
+        importJobCount: [...this.importJobs.values()]
+          .filter((job) => job.user_id === userId && job.source_id === sourceId).length,
+      })),
+      getContextDeleteBlockers: vi.fn(async (userId: string, contextId: string) => ({
+        occurrenceCount: [...this.occurrences.values()]
+          .filter((occurrence) => occurrence.user_id === userId && occurrence.context_id === contextId).length,
+        contextLinkCount: [...this.links.values()]
+          .filter((link) => link.user_id === userId && link.context_id === contextId).length,
+        inboundContextLinkCount: [...this.links.values()]
+          .filter((link) => link.user_id === userId && link.target_type === "context" && link.target_id === contextId).length,
+      })),
+      deleteSource: vi.fn(async (userId: string, sourceId: string) => {
+        const source = this.sources.get(sourceId);
+        if (!source || source.user_id !== userId) return null;
+        this.record("l3_sources", "delete");
+        this.sources.delete(sourceId);
+        return source;
+      }),
+      deleteContext: vi.fn(async (userId: string, contextId: string) => {
+        const context = this.contexts.get(contextId);
+        if (!context || context.user_id !== userId) return null;
+        this.record("l3_contexts", "delete");
+        this.contexts.delete(contextId);
+        return context;
+      }),
       createImportJob: vi.fn(async (input: NewL3ImportJob) => {
         this.record("l3_import_jobs", "insert");
         const importJob: L3ImportJobRow = {

@@ -79,6 +79,51 @@ describe("L3 isolation", () => {
     expect(sql).not.toContain("UPDATE words");
   });
 
+  it("repository issues only guarded parent DELETE statements for source/context parent deletes", async () => {
+    mock.setRowMap({
+      "AS context_count": [{
+        context_count: 0,
+        inbound_context_link_count: 0,
+        import_job_count: 0,
+      }],
+      "AS occurrence_count": [{
+        occurrence_count: 0,
+        context_link_count: 0,
+        inbound_context_link_count: 0,
+      }],
+      "DELETE FROM l3_sources": [{ id: "src-1", user_id: "u1" }],
+      "DELETE FROM l3_contexts": [{ id: "ctx-1", user_id: "u1" }],
+    });
+    const repos = createRepositories();
+
+    await repos.l3Context.getSourceDeleteBlockers("u1", "src-1");
+    await repos.l3Context.deleteSource("u1", "src-1");
+    await repos.l3Context.getContextDeleteBlockers("u1", "ctx-1");
+    await repos.l3Context.deleteContext("u1", "ctx-1");
+
+    const writeSql = mock.calls
+      .map((call) => call.text)
+      .filter((sql) => /^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql));
+    expect(writeSql).toHaveLength(2);
+    expect(writeSql[0]).toContain("DELETE FROM l3_sources");
+    expect(writeSql[1]).toContain("DELETE FROM l3_contexts");
+
+    const sql = mock.calls.map((call) => call.text).join("\n");
+    expect(sql).toContain("DELETE FROM l3_sources");
+    expect(sql).toContain("DELETE FROM l3_contexts");
+    expect(sql).toContain("NOT EXISTS");
+    expect(sql).not.toContain("INSERT INTO l3_proposals");
+    expect(sql).not.toContain("UPDATE l3_proposals");
+    expect(sql).not.toContain("INSERT INTO l3_import_jobs");
+    expect(sql).not.toContain("UPDATE l3_import_jobs");
+    expect(sql).not.toContain("INSERT INTO l3_recommendation_runs");
+    expect(sql).not.toContain("UPDATE l3_recommendation_items");
+    expect(sql).not.toContain("word_l2_content");
+    expect(sql).not.toContain("user_word_progress");
+    expect(sql).not.toContain("user_word_l2_progress");
+    expect(sql).not.toContain("UPDATE words");
+  });
+
   it("proposal create and reject do not write active L3 or L1/L2 tables", async () => {
     mock.setRowMap({
       "INSERT INTO l3_proposals": [{ id: "prop-1", user_id: "u1", source_type: "agent", status: "pending" }],

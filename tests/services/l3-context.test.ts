@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NotFoundError, ValidationError } from "@/errors";
+import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import type { L3ContextRow, L3SourceRow, WordbookRow, WordRow } from "@/domain";
-import type { IL3ContextRepository } from "@/repositories/interfaces";
+import type { IL3ContextRepository, IRepositories } from "@/repositories/interfaces";
 import { L3ContextService } from "@/services/l3-context.service";
 
 const SOURCE_ROW: L3SourceRow = {
@@ -149,6 +149,37 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
       provenance: {},
       created_at: "2026-07-08T00:00:00Z",
     })),
+    lockActiveL3TargetReference: vi.fn(async () => undefined),
+    lockSourceByIdForUser: vi.fn(async (userId, sourceId) => ({
+      ...SOURCE_ROW,
+      id: sourceId,
+      user_id: userId,
+    })),
+    lockContextByIdForUser: vi.fn(async (userId, contextId) => ({
+      ...CONTEXT_ROW,
+      id: contextId,
+      user_id: userId,
+    })),
+    getSourceDeleteBlockers: vi.fn(async () => ({
+      contextCount: 0,
+      inboundContextLinkCount: 0,
+      importJobCount: 0,
+    })),
+    getContextDeleteBlockers: vi.fn(async () => ({
+      occurrenceCount: 0,
+      contextLinkCount: 0,
+      inboundContextLinkCount: 0,
+    })),
+    deleteSource: vi.fn(async (userId, sourceId) => ({
+      ...SOURCE_ROW,
+      id: sourceId,
+      user_id: userId,
+    })),
+    deleteContext: vi.fn(async (userId, contextId) => ({
+      ...CONTEXT_ROW,
+      id: contextId,
+      user_id: userId,
+    })),
     createImportJob: vi.fn(async (input) => ({
       id: "job-1",
       user_id: input.user_id,
@@ -191,12 +222,20 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
   };
 }
 
+function makeService(repository: IL3ContextRepository, txRepository = repository): L3ContextService {
+  return new L3ContextService(
+    repository,
+    async (callback) => callback({} as never),
+    () => ({ l3Context: txRepository } as unknown as IRepositories),
+  );
+}
+
 let repo: IL3ContextRepository;
 let service: L3ContextService;
 
 beforeEach(() => {
   repo = makeRepo();
-  service = new L3ContextService(repo);
+  service = makeService(repo);
 });
 
 describe("L3ContextService", () => {
@@ -412,7 +451,7 @@ describe("L3ContextService", () => {
       findContextWithSourceById: vi.fn(async (userId, contextId) => contextId === "ctx-1" ? { context: CONTEXT_ROW, source: SOURCE_ROW } : null),
       findSourceById: vi.fn(async () => null),
     });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.createContextLink({
       userId: "u1",
@@ -421,7 +460,79 @@ describe("L3ContextService", () => {
       targetType: "source",
       targetId: MISSING_SOURCE_ID,
     })).rejects.toBeInstanceOf(NotFoundError);
+    expect(repo.lockActiveL3TargetReference).toHaveBeenCalledWith("u1", "source", MISSING_SOURCE_ID);
     expect(repo.createContextLink).not.toHaveBeenCalled();
+  });
+
+  it("serializes source and context soft-target link creation with parent deletes", async () => {
+    const outerRepo = makeRepo({
+      findSourceById: vi.fn(async () => {
+        throw new Error("outer repo should not validate source soft target");
+      }),
+      findContextById: vi.fn(async () => {
+        throw new Error("outer repo should not validate context soft target");
+      }),
+      createContextLink: vi.fn(async () => {
+        throw new Error("outer repo should not create source/context soft target links");
+      }),
+    });
+    const txRepo = makeRepo();
+    service = makeService(outerRepo, txRepo);
+
+    await service.createContextLink({
+      userId: "u1",
+      contextId: "ctx-1",
+      linkType: "illustrates",
+      targetType: "source",
+      targetId: MISSING_SOURCE_ID,
+    });
+    await service.createContextLink({
+      userId: "u1",
+      contextId: "ctx-1",
+      linkType: "illustrates",
+      targetType: "context",
+      targetId: MISSING_WORD_ID,
+    });
+
+    expect(txRepo.lockActiveL3TargetReference).toHaveBeenNthCalledWith(1, "u1", "source", MISSING_SOURCE_ID);
+    expect(txRepo.lockActiveL3TargetReference).toHaveBeenNthCalledWith(2, "u1", "context", MISSING_WORD_ID);
+    expect(txRepo.findSourceById).toHaveBeenCalledWith("u1", MISSING_SOURCE_ID);
+    expect(txRepo.findContextById).toHaveBeenCalledWith("u1", MISSING_WORD_ID);
+    expect(txRepo.createContextLink).toHaveBeenCalledTimes(2);
+    expect(outerRepo.findSourceById).not.toHaveBeenCalled();
+    expect(outerRepo.findContextById).not.toHaveBeenCalled();
+    expect(outerRepo.createContextLink).not.toHaveBeenCalled();
+  });
+
+  it("canonicalizes source and context soft-target UUIDs before locking and writing", async () => {
+    const uppercaseSourceId = "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF";
+    const uppercaseContextId = "FEDCBAFE-DCBA-4FED-8CBA-FEDCBAFEDCBA";
+    const sourceId = uppercaseSourceId.toLowerCase();
+    const contextId = uppercaseContextId.toLowerCase();
+    const txRepo = makeRepo();
+    service = makeService(makeRepo(), txRepo);
+
+    await service.createContextLink({
+      userId: "u1",
+      contextId: "ctx-1",
+      linkType: "illustrates",
+      targetType: "source",
+      targetId: uppercaseSourceId,
+    });
+    await service.createContextLink({
+      userId: "u1",
+      contextId: "ctx-1",
+      linkType: "illustrates",
+      targetType: "context",
+      targetId: uppercaseContextId,
+    });
+
+    expect(txRepo.lockActiveL3TargetReference).toHaveBeenNthCalledWith(1, "u1", "source", sourceId);
+    expect(txRepo.lockActiveL3TargetReference).toHaveBeenNthCalledWith(2, "u1", "context", contextId);
+    expect(txRepo.findSourceById).toHaveBeenCalledWith("u1", sourceId);
+    expect(txRepo.findContextById).toHaveBeenCalledWith("u1", contextId);
+    expect(txRepo.createContextLink).toHaveBeenNthCalledWith(1, expect.objectContaining({ target_id: sourceId }));
+    expect(txRepo.createContextLink).toHaveBeenNthCalledWith(2, expect.objectContaining({ target_id: contextId }));
   });
 
   it("requires l2_item soft references to include field and stable locator", async () => {
@@ -458,7 +569,7 @@ describe("L3ContextService", () => {
       deleteOccurrence: vi.fn(async () => null),
       deleteContextLink: vi.fn(async () => null),
     });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.deleteOccurrence({ userId: "u1", occurrenceId: "missing-occ" }))
       .rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -467,6 +578,145 @@ describe("L3ContextService", () => {
 
     expect(repo.deleteOccurrence).toHaveBeenCalledWith("u1", "missing-occ");
     expect(repo.deleteContextLink).toHaveBeenCalledWith("u1", "missing-link");
+  });
+
+  it("deletes empty source and context parents with active-read invalidation", async () => {
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" })).resolves.toEqual({
+      deleted: { entityType: "source", id: "src-1" },
+      activeReadInvalidation: true,
+    });
+    await expect(service.deleteContext({ userId: "u1", contextId: "ctx-1" })).resolves.toEqual({
+      deleted: { entityType: "context", id: "ctx-1" },
+      activeReadInvalidation: true,
+    });
+
+    expect(repo.lockSourceByIdForUser).toHaveBeenCalledWith("u1", "src-1");
+    expect(repo.lockActiveL3TargetReference).toHaveBeenCalledWith("u1", "source", "src-1");
+    expect(repo.findSourceById).not.toHaveBeenCalledWith("u1", "src-1");
+    expect(repo.getSourceDeleteBlockers).toHaveBeenCalledWith("u1", "src-1");
+    expect(repo.deleteSource).toHaveBeenCalledWith("u1", "src-1");
+    expect(repo.lockContextByIdForUser).toHaveBeenCalledWith("u1", "ctx-1");
+    expect(repo.lockActiveL3TargetReference).toHaveBeenCalledWith("u1", "context", "ctx-1");
+    expect(repo.findContextById).not.toHaveBeenCalledWith("u1", "ctx-1");
+    expect(repo.getContextDeleteBlockers).toHaveBeenCalledWith("u1", "ctx-1");
+    expect(repo.deleteContext).toHaveBeenCalledWith("u1", "ctx-1");
+  });
+
+  it("maps missing or out-of-scope source and context parent deletes to NotFoundError", async () => {
+    repo = makeRepo({
+      lockSourceByIdForUser: vi.fn(async () => null),
+      lockContextByIdForUser: vi.fn(async () => null),
+    });
+    service = makeService(repo);
+
+    await expect(service.deleteSource({ userId: "u1", sourceId: "missing-src" }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.deleteContext({ userId: "u1", contextId: "missing-ctx" }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    expect(repo.getSourceDeleteBlockers).not.toHaveBeenCalled();
+    expect(repo.getContextDeleteBlockers).not.toHaveBeenCalled();
+    expect(repo.deleteSource).not.toHaveBeenCalled();
+    expect(repo.deleteContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects source and context parent deletes when active blockers remain", async () => {
+    repo = makeRepo({
+      getSourceDeleteBlockers: vi.fn(async () => ({
+        contextCount: 1,
+        inboundContextLinkCount: 2,
+        importJobCount: 3,
+      })),
+      getContextDeleteBlockers: vi.fn(async () => ({
+        occurrenceCount: 4,
+        contextLinkCount: 5,
+        inboundContextLinkCount: 6,
+      })),
+    });
+    service = makeService(repo);
+
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" }))
+      .rejects.toMatchObject({
+        code: "CONFLICT",
+        meta: {
+          entityType: "source",
+          id: "src-1",
+          blockers: {
+            contextCount: 1,
+            inboundContextLinkCount: 2,
+            importJobCount: 3,
+          },
+        },
+      });
+    await expect(service.deleteContext({ userId: "u1", contextId: "ctx-1" }))
+      .rejects.toMatchObject({
+        code: "CONFLICT",
+        meta: {
+          entityType: "context",
+          id: "ctx-1",
+          blockers: {
+            occurrenceCount: 4,
+            contextLinkCount: 5,
+            inboundContextLinkCount: 6,
+          },
+        },
+      });
+
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" }))
+      .rejects.toBeInstanceOf(ConflictError);
+    await expect(service.deleteContext({ userId: "u1", contextId: "ctx-1" }))
+      .rejects.toBeInstanceOf(ConflictError);
+    expect(repo.deleteSource).not.toHaveBeenCalled();
+    expect(repo.deleteContext).not.toHaveBeenCalled();
+  });
+
+  it("maps concurrent parent delete misses to NotFoundError after blocker checks pass", async () => {
+    repo = makeRepo({
+      deleteSource: vi.fn(async () => null),
+      deleteContext: vi.fn(async () => null),
+      findSourceById: vi.fn(async () => null),
+      findContextById: vi.fn(async () => null),
+    });
+    service = makeService(repo);
+
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.deleteContext({ userId: "u1", contextId: "ctx-1" }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    expect(repo.deleteSource).toHaveBeenCalledWith("u1", "src-1");
+    expect(repo.deleteContext).toHaveBeenCalledWith("u1", "ctx-1");
+  });
+
+  it("maps atomic guarded parent delete misses with surviving parents to ConflictError", async () => {
+    repo = makeRepo({
+      deleteSource: vi.fn(async () => null),
+      deleteContext: vi.fn(async () => null),
+      getSourceDeleteBlockers: vi.fn()
+        .mockResolvedValueOnce({ contextCount: 0, inboundContextLinkCount: 0, importJobCount: 0 })
+        .mockResolvedValueOnce({ contextCount: 1, inboundContextLinkCount: 0, importJobCount: 0 }),
+      getContextDeleteBlockers: vi.fn()
+        .mockResolvedValueOnce({ occurrenceCount: 0, contextLinkCount: 0, inboundContextLinkCount: 0 })
+        .mockResolvedValueOnce({ occurrenceCount: 1, contextLinkCount: 0, inboundContextLinkCount: 0 }),
+    });
+    service = makeService(repo);
+
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" }))
+      .rejects.toMatchObject({
+        code: "CONFLICT",
+        meta: {
+          entityType: "source",
+          blockers: { contextCount: 1 },
+        },
+      });
+    await expect(service.deleteContext({ userId: "u1", contextId: "ctx-1" }))
+      .rejects.toMatchObject({
+        code: "CONFLICT",
+        meta: {
+          entityType: "context",
+          blockers: { occurrenceCount: 1 },
+        },
+      });
   });
 
   it("lists contexts by slug through repository lookup", async () => {
