@@ -1,0 +1,141 @@
+# L3 Frontend Shell
+
+## Host Decision
+
+Phase 4B creates the first frontend host in this repository:
+
+- directory: `src/frontend`
+- build tool: Vite
+- UI runtime: React + TypeScript
+- output: `dist/frontend`
+
+The repository had no existing frontend host, so Phase 4B adds a minimal
+same-repository shell instead of creating a parallel app elsewhere.
+
+## Directory Structure
+
+- `src/frontend/main.tsx`: Vite entry point
+- `src/frontend/App.tsx`: local tab state for L3 surfaces
+- `src/frontend/api/l3Client.ts`: thin browser adapter over
+  `src/l3/frontend/contract.ts`
+- `src/frontend/state/l3CacheSignals.ts`: proposal-confirm active-read stale
+  signal shared by Graph, Context, Word, and Source read pages
+- `src/frontend/components/L3Shell.tsx`: navigation shell
+- `src/frontend/pages/*`: L3 Home, Import, Proposal, Recommendation, Graph,
+  Context, Word Space, and Source Space surfaces
+- `src/frontend/styles.css`: shell-only styles
+
+## Placeholder Surfaces
+
+- L3 Home: records host and contract wiring
+- Import: skeleton form and "proposal, not active L3" semantic reminder
+- Proposals: confirms proposal-confirm as the only active L3 upgrade path
+- Recommendations: confirms `link_gap` accept creates a proposal bridge
+- Graph: read-only graph stats, nodes, and edges surface that refreshes after
+  proposal confirm
+- Context: read-only context detail lookup by context id
+- Word Space: read-only word space lookup by slug and optional wordbook id
+- Source Space: read-only source space lookup by source id
+
+## Contract Wiring
+
+`src/frontend/api/l3Client.ts` calls `createL3FrontendClient` from
+`src/l3/frontend/contract.ts` and injects browser `fetch`. Future UI work must
+reuse this path instead of writing a second L3 client.
+
+## Phase 4C/4D/4E Continuation
+
+- Phase 4C should implement Import and Proposal closed-loop UI.
+- Phase 4D implements Recommendation and Graph read UI.
+- Phase 4E implements Context Detail, Word Space, and Source Space read UI.
+- Component tests should be added when the UI moves beyond placeholders.
+
+## Phase 4E Boundary
+
+The Context, Word Space, and Source Space tabs are read-only consumers of
+`L3FrontendClient`. They show normalized errors through `L3ErrorMessage`, honor
+proposal-confirm read stale state, and clear that stale state only after a
+successful read. They do not write active L3 data, create proposals, trigger
+recommendations, trigger imports, refresh graph edges, add backend endpoints,
+add migrations, or introduce routing/state/UI libraries.
+
+## Phase 4F Runtime Smoke Checklist
+
+Phase 4F keeps the lightweight shell and hardens runtime UX contracts without
+adding a router, global state library, graph visualization library, UI
+framework, backend endpoint, or migration.
+
+Automated smoke:
+
+- `npm run frontend:build` type-checks the frontend host and builds the Vite
+  bundle.
+- Vitest covers page/view-model navigation handoffs, stale/cache semantics,
+  error UX, empty-state rules, busy-state command guards, and static API
+  boundaries.
+
+Manual browser smoke, when needed:
+
+1. Run `npm run frontend:dev`.
+2. Open the Vite URL.
+3. Navigate to Import, Proposals, Recommendations, Graph, Context, Word Space,
+   and Source Space.
+4. Confirm each tab renders without console runtime errors.
+5. Confirm long ids, JSON previews, errors, and empty states wrap within the
+   lightweight shell.
+6. Stop the dev server after the check.
+
+## Phase 4G Graph Canvas Boundary
+
+The Graph tab includes a read-only SVG canvas beside the existing stats and
+table fallback. The canvas:
+
+- consumes only the `L3GraphReadModel` already loaded by `L3GraphPage`
+- uses deterministic frontend layout helpers
+- supports node and edge selection detail without issuing extra requests
+- keeps empty graph, unknown type, missing endpoint, and long label fallbacks
+  inside the lightweight shell
+- never writes active L3 rows, persists graph positions, edits links, or
+  constructs `/api/l3/` routes directly
+
+The shell still has no router, global state library, graph visualization
+library, UI framework, backend endpoint, or migration added for this surface.
+
+## Phase 4H Cross-Navigation Boundary
+
+The shell now supports local handoffs between existing read surfaces:
+
+- Graph selected node/edge actions can prefill Context, Word Space, Source
+  Space, or Graph inputs when the current API response contains explicit
+  navigation targets.
+- Context, Word Space, and Source Space rows can expose read-surface actions for
+  supported active targets.
+- Recommendation proposal bridges and proposal-confirm follow-up actions use
+  the same typed local navigation helper.
+- Selection and row rendering do not issue requests. A request happens only
+  after the user opens a target page and triggers that page's existing load or
+  refresh action.
+- Disabled actions are expected for unsupported soft targets or missing
+  explicit ids/slugs.
+
+The shell still has no React Router, URL deep-link sync, global state library,
+backend endpoint, migration, graph editor, manual L3 editor, or new dependency
+for this phase.
+
+## Phase 4I Release Smoke Boundary
+
+Phase 4I keeps the Phase 4H shell intact and seals release-smoke coverage:
+
+- `L3_SHELL_SECTIONS` is exported from
+  `src/frontend/viewModels/l3ShellViewModel.ts` so tests can lock the
+  navigation matrix.
+- The required shell tabs are L3 Home, Import, Proposals, Recommendations,
+  Graph, Context, Word Space, and Source Space.
+- Static API-boundary tests discover frontend pages, components, view models,
+  and state helpers by directory rather than by a hand-maintained list.
+- Browser smoke uses the existing Vite host and follows
+  `docs/operations/l3-frontend-smoke-checklist.md`.
+
+The shell remains local-state only. Phase 4I adds no router, URL deep-link
+sync, global state library, backend endpoint, migration, dependency, graph
+editor, manual L3 editor, recommendation/import semantic change, MCP, LLM,
+dictionary, or L1/L2/FSRS behavior change.

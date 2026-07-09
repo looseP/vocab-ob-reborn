@@ -36,6 +36,9 @@ import {
   type CreateL3ImportJobInput,
   type CreateL3OccurrenceInput,
   type CreateL3SourceInput,
+  type DeleteL3ContextLinkInput,
+  type DeleteL3OccurrenceInput,
+  type L3DeleteResult,
 } from "../schemas/service";
 
 function requireEnum(value: string, allowed: readonly string[], field: string): void {
@@ -264,6 +267,36 @@ export class L3ContextService {
       provenance: input.provenance ?? {},
     } satisfies NewL3ContextLink);
     return { link };
+  }
+
+  async deleteOccurrence(input: DeleteL3OccurrenceInput): Promise<L3DeleteResult> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.occurrenceId, "occurrenceId");
+
+    const deleted = await this.l3Context.deleteOccurrence(input.userId, input.occurrenceId);
+    if (!deleted) {
+      throw new NotFoundError("L3Occurrence", input.occurrenceId);
+    }
+
+    return {
+      deleted: { entityType: "occurrence", id: deleted.id },
+      activeReadInvalidation: true,
+    };
+  }
+
+  async deleteContextLink(input: DeleteL3ContextLinkInput): Promise<L3DeleteResult> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.contextLinkId, "contextLinkId");
+
+    const deleted = await this.l3Context.deleteContextLink(input.userId, input.contextLinkId);
+    if (!deleted) {
+      throw new NotFoundError("L3ContextLink", input.contextLinkId);
+    }
+
+    return {
+      deleted: { entityType: "context_link", id: deleted.id },
+      activeReadInvalidation: true,
+    };
   }
 
   async createImportJob(input: CreateL3ImportJobInput): Promise<{ importJob: L3ImportJobRow }> {

@@ -9,6 +9,9 @@
 | [0009](./0009-l3-import-proposal-builder.md) | L3 deterministic import-to-proposal builder | Phase 3C |
 | [0010](./0010-l3-read-model-graph-api.md) | L3 read model and graph API | Phase 3D |
 | [0011](./0011-l3-recommendation-proposal-builder.md) | L3 recommendation proposal builder | Phase 3E |
+| [0012](./0012-frontend-host-decision.md) | Frontend host decision and minimal L3 shell | Phase 4B |
+| [0013](./0013-l3-manual-editor-contract.md) | L3 manual editor design contract | Phase 5A |
+| [0014](./0014-l3-active-edit-delete-contract.md) | L3 active edit/delete design contract | Phase 5C |
 
 ## Current Closed Baseline
 
@@ -20,6 +23,112 @@ L1 vocabulary review package.
 - `main@403438c` records Phase 3E as closed.
 - `main@ab68e3c` adds and merges the L1 review package, closing the separate
   L1 document/package delivery.
+- `main@167785a` records the closed baseline governance state used as the
+  Phase 3F cross-contract regression starting point.
+- Phase 3F adds regression-only coverage for the import -> proposal -> confirm,
+  recommendation -> proposal -> confirm, recommendation generation, and L3
+  read graph boundaries. It must not expand L3 runtime features.
+- Phase 3G seals route-level HTTP/API contracts for `/api/l3/imports/*`,
+  `/api/l3/proposals*`, `/api/l3/recommendations*`, and `/api/l3/graph`.
+  It is regression-only: routes stay thin service callers, request bodies stay
+  camelCase, and 400/404/409/422 error semantics are covered without adding
+  runtime features or migrations.
+- Phase 3H adds the frontend integration consumption contract for Phase 4A.
+  It defines UI surfaces, API consumption, UI state machines, error UX,
+  view-model guidance, command rules, cache invalidation, and Phase 4A
+  acceptance criteria without changing backend runtime behavior.
+- Phase 4A.0 records that this repository currently has no frontend host and
+  adds a backend-safe L3 frontend consumption scaffold: typed API client,
+  error normalization, state/cache helpers, and contract tests. It does not add
+  backend endpoints, migrations, UI framework dependencies, or L1/L2/FSRS
+  behavior changes.
+- Phase 4A.1 hardens the frontend contract scaffold as a framework-agnostic
+  consumption layer: complete L3 endpoint wrappers, robust error normalization,
+  cache invalidation signals, state helpers, frontend validation guards, and
+  dependency-purity tests. It remains backend-only and adds no routes,
+  migrations, UI host, or framework dependencies.
+- Phase 4B creates the first frontend host: a minimal Vite + React +
+  TypeScript shell under `src/frontend`. It reuses `src/l3/frontend/contract.ts`
+  through a browser adapter, adds placeholder Import/Proposal/Recommendation/
+  Graph surfaces, and does not add backend endpoints, migrations, active L3
+  semantics, graph algorithms, or server-side static serving.
+- Phase 4C wires the first real L3 frontend loop: raw import -> pending proposal
+  preview -> proposal queue/detail -> validate/confirm/reject. It reuses the
+  existing frontend client and contract helpers, keeps confirm as the only
+  active L3 upgrade trigger, and does not add backend endpoints, migrations,
+  recommendation UI, graph visualization, or L1/L2/FSRS behavior changes.
+- Phase 4C.1 hardens that loop with explicit import form validation, safer
+  import/proposal item summaries, ordinal item rendering, busy-action disabling,
+  normalized error details fallback, and static API-boundary tests. It remains a
+  frontend-only hardening pass with no backend, migration, recommendation,
+  graph visualization, or L1/L2/FSRS expansion.
+- Phase 4D.1 wires the minimum recommendation queue UI: generate/list/filter/
+  detail plus accept/reject. `link_gap` acceptance shows the proposal bridge and
+  opens proposal review without implying an active link. It remains frontend
+  only, with no backend, migration, graph visualization, recommendation
+  algorithm, or L1/L2/FSRS expansion.
+- Phase 4D.2 wires the minimum graph read surface UI: local query controls,
+  `client.getGraph`, stats, nodes, edges, empty/error states, and proposal
+  confirm stale-signal consumption. It remains frontend only, with no backend,
+  migration, graph visualization library/editor, or L1/L2/FSRS expansion.
+- Phase 4D.3 hardens the existing frontend closed loop with smoke coverage for
+  Import -> Proposal Review -> confirm -> Graph stale, Recommendation
+  `link_gap` -> Proposal Review -> confirm -> Graph edge readback, shared
+  409/422 error semantics, cache/stale signal matrix behavior, and API
+  boundary checks. It remains frontend/test/doc only with no backend,
+  migration, graph visualization, context/word/source full page, or L1/L2/FSRS
+  expansion.
+- Phase 4E adds read-only Context Detail, Word Space, and Source Space pages.
+  They use `L3FrontendClient`, local required-field validation,
+  `L3ErrorMessage`, and the proposal-confirm active-read stale signal. A
+  successful read clears read stale only. The phase adds no backend endpoints,
+  migrations, graph visualization library, L3 editor, MCP agent UI,
+  recommendation/import semantic changes, or L1/L2/FSRS expansion.
+- Phase 4F hardens the existing L3 frontend runtime UX contract. It records
+  Vite frontend build as the automated runtime smoke gate, keeps browser smoke
+  as a manual checklist because no DOM/browser test dependency exists, expands
+  static API-boundary coverage to all L3 frontend pages/components/state/view
+  models, and locks error, loading, empty-state, handoff, and stale/cache
+  semantics without backend, migration, graph visualization, UI framework,
+  router, global state, recommendation, import parser, MCP, LLM, dictionary, or
+  L1/L2/FSRS changes.
+- Phase 4G adds a read-only SVG graph visualization MVP to the existing Graph
+  page. Nodes and edges come only from the `client.getGraph` response, the
+  existing stats/list fallback remains, node/edge selection is local display
+  state, deterministic layout is frontend-only, and the phase adds no backend
+  endpoint, migration, dependency, graph editing, persisted layout, active L3
+  mutation path, recommendation/import semantic change, MCP, LLM, dictionary,
+  or L1/L2/FSRS behavior change.
+- Phase 4H polishes local cross-navigation between existing frontend read
+  surfaces. Graph, Context, Word Space, Source Space, Recommendation, and
+  Proposal pages exchange typed local intents through `App` page state only.
+  Handoffs prefill target inputs but do not write DB state, do not infer ids or
+  slugs from labels/surface text, and add no backend endpoint, migration,
+  dependency, router, global state library, graph editor, manual L3 editor, MCP,
+  LLM, dictionary, recommendation/import semantic change, or L1/L2/FSRS
+  behavior change.
+- Phase 4I seals L3 frontend read UX release smoke. It exports the shell
+  navigation matrix as `L3_SHELL_SECTIONS`, adds directory-discovered static
+  API-boundary coverage for frontend pages/components/viewModels/state, and
+  records the browser smoke checklist in
+  `docs/operations/l3-frontend-smoke-checklist.md`. It keeps Phase 4H
+  semantics intact and adds no backend endpoint, migration, dependency, router,
+  global state library, graph editor, manual L3 editor, MCP, LLM, dictionary,
+  recommendation/import semantic change, or L1/L2/FSRS behavior change.
+- Phase 5A defines the L3 Manual Editor design contract before implementation.
+  Manual single-record owner commands may directly create active L3
+  source/context/occurrence/context_link rows through the existing Phase 3A
+  active create endpoints. Bulk, agent, MCP, import, recommendation, parser,
+  LLM, or external-tool content must still enter proposals before authority.
+  Phase 5A is documentation-only: no production code, endpoint, schema,
+  migration, dependency, graph editing, edit/delete behavior, or L1/L2/FSRS
+  behavior changes.
+- Phase 5C defines the active L3 edit/delete contract before implementation.
+  It recommends a narrow Phase 5C.1 delete-only MVP for occurrence and context
+  link rows, defers source/context edit/delete and all risky semantic edits,
+  keeps proposal/import/recommendation semantics unchanged, and adds no
+  production code, endpoint, schema, migration, dependency, graph editing,
+  frontend UI, or L1/L2/FSRS behavior changes.
 
 Historical red CI runs on `19906f3` and the temporary Phase 3E PR branch are
 closed as Node 20 workflow incompatibilities with `dependency-cruiser@18`; they

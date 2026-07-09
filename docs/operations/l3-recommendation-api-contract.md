@@ -4,6 +4,12 @@
 
 Recommendation is a suggestion layer, not an execution layer. It reads owner-scoped L1/L2/L3/FSRS signals and writes auditable recommendation runs/items. It does not directly write active L3 rows, learning progress, `words` JSONB, `word_l2_content`, LLM output, dictionary output, MCP state, or frontend state.
 
+Phase 3G seals this at the HTTP layer: recommendation request bodies and query
+parameters use camelCase contract names, route schema failures return `400`
+before the recommendation service is called, business validation returns `422`,
+missing or out-of-scope rows return `404`, and non-pending accept/reject state
+transitions return `409`.
+
 ## Tables
 
 | Table | Purpose |

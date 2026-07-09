@@ -138,6 +138,51 @@ describe("L3ContextRepository", () => {
     expect(allSql).not.toContain("UPDATE words");
   });
 
+  it("deletes occurrence and context link by explicit owner-scoped id", async () => {
+    mock.setRowMap({
+      "DELETE FROM l3_occurrences": [{
+        id: "occ-1",
+        user_id: "u1",
+        context_id: "ctx-1",
+        word_id: "w1",
+        surface: "vivid",
+      }],
+      "DELETE FROM l3_context_links": [{
+        id: "link-1",
+        user_id: "u1",
+        context_id: "ctx-1",
+        link_type: "manual_link",
+        target_type: "external",
+      }],
+    });
+    const repos = createRepositories();
+
+    await expect(repos.l3Context.deleteOccurrence("u1", "occ-1")).resolves.toMatchObject({
+      id: "occ-1",
+      user_id: "u1",
+    });
+    await expect(repos.l3Context.deleteContextLink("u1", "link-1")).resolves.toMatchObject({
+      id: "link-1",
+      user_id: "u1",
+    });
+
+    const sql = mock.calls.map((call) => call.text).join("\n");
+    expect(sql).toContain("DELETE FROM l3_occurrences");
+    expect(sql).toContain("WHERE id = $1::uuid AND user_id = $2::uuid");
+    expect(sql).toContain("DELETE FROM l3_context_links");
+    expect(sql).toContain("RETURNING *");
+    expect(mock.calls[0].params).toEqual(["occ-1", "u1"]);
+    expect(mock.calls[1].params).toEqual(["link-1", "u1"]);
+  });
+
+  it("returns null when deleting a missing or out-of-scope active L3 row", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    await expect(repos.l3Context.deleteOccurrence("u1", "missing-occ")).resolves.toBeNull();
+    await expect(repos.l3Context.deleteContextLink("u1", "missing-link")).resolves.toBeNull();
+  });
+
   it("lists word contexts as source, context, occurrence, and links summary", async () => {
     mock.setRows([
       {

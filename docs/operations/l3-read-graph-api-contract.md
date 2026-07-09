@@ -12,6 +12,11 @@ Phase 3E recommendations may read this sealed graph/read contract as evidence,
 but they are exposed through separate `/api/l3/recommendations*` endpoints.
 Graph routes remain read-only and never create recommendation rows.
 
+Phase 3G seals this at the HTTP layer: `/api/l3/graph` parses camelCase query
+parameters, calls only `L3ReadService.getGraph`, returns `400` for route schema
+errors, maps service `ValidationError` to `422`, maps missing/out-of-scope rows
+to `404`, and maps unexpected failures to `500`.
+
 ## Endpoints
 
 ### GET `/api/l3/contexts/:id`
@@ -128,6 +133,50 @@ Output ordering is stable and independent of database row order:
 - nodes sort by type priority (`word`, `context`, `source`, `l2_item`, `topic`,
   `external`), then `label`, then `id`
 - edges sort by `type`, then `sourceNodeId`, then `targetNodeId`, then `id`
+
+## Frontend Visualization Contract
+
+Phase 4G visualizes this read model without changing it:
+
+- The visual canvas may reorder nodes for deterministic display layout, but it
+  must not add or remove graph response nodes.
+- The visual canvas may reorder edges for deterministic display layering, but it
+  must not add or remove graph response edges.
+- Node and edge details shown by the frontend must come from the selected
+  response node or edge object.
+- Unknown node or edge types must render with safe fallback labels/styles and
+  must not fail the read surface.
+- Empty graph responses should render a clear empty state rather than an empty
+  SVG that implies a rendering error.
+- The frontend must not persist layout positions, create graph edits, infer
+  missing context links, query extra backend routes, or treat visualization
+  selection as active L3 mutation state.
+
+## Frontend Cross-Navigation Contract
+
+Phase 4H may use graph response data for local navigation handoffs, but it does
+not expand the graph API:
+
+- `context` nodes may open Context Detail only from explicit `contextId`.
+- `source` nodes may open Source Space only from explicit `sourceId`.
+- `word` nodes may open Word Space only from explicit `slug`; `wordId` alone is
+  not enough because the frontend word read surface is slug-based.
+- Optional `wordbookId` must be preserved when present in graph `ref` or
+  `metadata`.
+- Edge actions may open source/target node read surfaces only by resolving those
+  endpoint nodes from the same graph response.
+- The frontend must not infer slug/id from graph label, context surface text, or
+  row order.
+- `l2_item`, topic, external, unknown, and missing-target nodes are displayed as
+  metadata-only targets unless a future read surface defines a stable frontend
+  target.
+
+Phase 4I release smoke does not change this contract. Graph selection and
+selection navigation remain local display behavior over the latest
+`GET /api/l3/graph` response. Browser smoke and Vitest coverage may assert that
+selection exposes enabled or disabled actions, but they must not add a graph
+edit path, issue extra API requests from selection alone, infer missing ids or
+slugs, or expand the backend graph response.
 
 ## Error Semantics
 

@@ -7,6 +7,11 @@ All `/api/l3/imports/*` routes require owner auth. Routes call
 `L3ImportService` only. They do not import repositories, DB, dictionary, LLM,
 MCP, recommendation, parser internals, or frontend code.
 
+Phase 3G seals this at the HTTP layer: import request bodies use camelCase
+fields, route schema failures return `400 VALIDATION_ERROR` before the import
+service is called, service `ValidationError` returns `422`, and service
+`NotFoundError` returns `404`.
+
 ## Relationship to Proposals
 
 Import routes are proposal producers. They create `l3_import_jobs` as

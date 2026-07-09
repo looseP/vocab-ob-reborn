@@ -47,6 +47,38 @@ describe("L3 isolation", () => {
     expect(sql).not.toContain("UPDATE words");
   });
 
+  it("Phase 5C.1 manual delete SQL only deletes occurrence and context link rows", async () => {
+    mock.setRowMap({
+      "DELETE FROM l3_occurrences": [{ id: "occ-1", user_id: "u1" }],
+      "DELETE FROM l3_context_links": [{ id: "link-1", user_id: "u1" }],
+    });
+    const repos = createRepositories();
+
+    await repos.l3Context.deleteOccurrence("u1", "occ-1");
+    await repos.l3Context.deleteContextLink("u1", "link-1");
+
+    const writeSql = mock.calls
+      .map((call) => call.text)
+      .filter((sql) => /^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql));
+    expect(writeSql).toHaveLength(2);
+    expect(writeSql[0]).toContain("DELETE FROM l3_occurrences");
+    expect(writeSql[1]).toContain("DELETE FROM l3_context_links");
+
+    const sql = mock.calls.map((call) => call.text).join("\n");
+    expect(sql).toContain("DELETE FROM l3_occurrences");
+    expect(sql).toContain("DELETE FROM l3_context_links");
+    expect(sql).not.toContain("INSERT INTO l3_proposals");
+    expect(sql).not.toContain("UPDATE l3_proposals");
+    expect(sql).not.toContain("INSERT INTO l3_import_jobs");
+    expect(sql).not.toContain("UPDATE l3_import_jobs");
+    expect(sql).not.toContain("INSERT INTO l3_recommendation_runs");
+    expect(sql).not.toContain("UPDATE l3_recommendation_items");
+    expect(sql).not.toContain("word_l2_content");
+    expect(sql).not.toContain("user_word_progress");
+    expect(sql).not.toContain("user_word_l2_progress");
+    expect(sql).not.toContain("UPDATE words");
+  });
+
   it("proposal create and reject do not write active L3 or L1/L2 tables", async () => {
     mock.setRowMap({
       "INSERT INTO l3_proposals": [{ id: "prop-1", user_id: "u1", source_type: "agent", status: "pending" }],

@@ -480,6 +480,24 @@ export interface CreateL3ContextLinkInput {
   provenance?: Json;
 }
 
+export interface DeleteL3OccurrenceInput {
+  userId: string;
+  occurrenceId: string;
+}
+
+export interface DeleteL3ContextLinkInput {
+  userId: string;
+  contextLinkId: string;
+}
+
+export interface L3DeleteResult {
+  deleted: {
+    entityType: "occurrence" | "context_link";
+    id: string;
+  };
+  activeReadInvalidation: true;
+}
+
 export interface CreateL3ImportJobInput {
   userId: string;
   sourceId?: string | null;

@@ -25,10 +25,16 @@ import {
   l3SourceCreateSchema,
   l3StructuredImportCreateSchema,
   l3WordSpaceQuerySchema,
+  uuidSchema,
 } from "@/schemas/http";
 
 function asJson(value: unknown): Json {
   return value as Json;
+}
+
+function parseRouteUuid(value: string): string | null {
+  const parsed = uuidSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 export function l3Routes(services: Services) {
@@ -104,6 +110,30 @@ export function l3Routes(services: Services) {
       provenance: asJson(parsed.data.provenance ?? {}),
     });
     return c.json(result, 201);
+  });
+
+  app.delete("/occurrences/:id", async (c) => {
+    const occurrenceId = parseRouteUuid(c.req.param("id"));
+    if (!occurrenceId) {
+      return c.json({ error: "VALIDATION_ERROR", details: { fieldErrors: { id: ["Invalid uuid"] } } }, 400);
+    }
+    const result = await services.l3Context.deleteOccurrence({
+      userId: c.get("userId"),
+      occurrenceId,
+    });
+    return c.json(result);
+  });
+
+  app.delete("/context-links/:id", async (c) => {
+    const contextLinkId = parseRouteUuid(c.req.param("id"));
+    if (!contextLinkId) {
+      return c.json({ error: "VALIDATION_ERROR", details: { fieldErrors: { id: ["Invalid uuid"] } } }, 400);
+    }
+    const result = await services.l3Context.deleteContextLink({
+      userId: c.get("userId"),
+      contextLinkId,
+    });
+    return c.json(result);
   });
 
   app.get("/contexts/:id", async (c) => {

@@ -399,6 +399,24 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     return row;
   }
 
+  async deleteOccurrence(userId: string, occurrenceId: string): Promise<L3OccurrenceRow | null> {
+    return this.queryOne<L3OccurrenceRow>(
+      `DELETE FROM l3_occurrences
+       WHERE id = $1::uuid AND user_id = $2::uuid
+       RETURNING *`,
+      [occurrenceId, userId],
+    );
+  }
+
+  async deleteContextLink(userId: string, contextLinkId: string): Promise<L3ContextLinkRow | null> {
+    return this.queryOne<L3ContextLinkRow>(
+      `DELETE FROM l3_context_links
+       WHERE id = $1::uuid AND user_id = $2::uuid
+       RETURNING *`,
+      [contextLinkId, userId],
+    );
+  }
+
   async createImportJob(input: NewL3ImportJob): Promise<L3ImportJobRow> {
     const row = await this.queryOne<L3ImportJobRow>(
       `INSERT INTO l3_import_jobs

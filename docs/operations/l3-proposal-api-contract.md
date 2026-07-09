@@ -7,6 +7,12 @@ All `/api/l3/proposals*` routes require owner auth. HTTP routes only call
 `L3ProposalService`; they do not import repositories, DB, dictionary, LLM, MCP,
 or parser code.
 
+Phase 3G seals this at the HTTP layer: proposal request bodies and query
+parameters use camelCase contract names, route schema failures return `400`
+before the proposal service is called, validation results with `valid=false`
+still return `200`, illegal state transitions return `409`, and business
+validation failures return `422`.
+
 ## Relationship to Active L3
 
 Phase 3A active L3 routes are confirmed owner/manual writes. Phase 3B proposal

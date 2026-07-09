@@ -123,6 +123,32 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
       provenance: input.provenance ?? {},
       created_at: "2026-07-08T00:00:00Z",
     })),
+    deleteOccurrence: vi.fn(async (userId, occurrenceId) => ({
+      id: occurrenceId,
+      context_id: "ctx-1",
+      word_id: "w1",
+      user_id: userId,
+      surface: "vivid",
+      lemma: null,
+      start_offset: null,
+      end_offset: null,
+      confidence: null,
+      evidence: {},
+      created_at: "2026-07-08T00:00:00Z",
+    })),
+    deleteContextLink: vi.fn(async (userId, contextLinkId) => ({
+      id: contextLinkId,
+      user_id: userId,
+      context_id: "ctx-1",
+      word_id: null,
+      link_type: "manual_link" as never,
+      target_type: "external" as never,
+      target_id: null,
+      target_ref: {},
+      confidence: null,
+      provenance: {},
+      created_at: "2026-07-08T00:00:00Z",
+    })),
     createImportJob: vi.fn(async (input) => ({
       id: "job-1",
       user_id: input.user_id,
@@ -407,6 +433,40 @@ describe("L3ContextService", () => {
       targetRef: { field: "corpus" },
     })).rejects.toBeInstanceOf(ValidationError);
     expect(repo.createContextLink).not.toHaveBeenCalled();
+  });
+
+  it("deletes occurrence by explicit owner-scoped id", async () => {
+    await expect(service.deleteOccurrence({ userId: "u1", occurrenceId: "occ-1" })).resolves.toEqual({
+      deleted: { entityType: "occurrence", id: "occ-1" },
+      activeReadInvalidation: true,
+    });
+
+    expect(repo.deleteOccurrence).toHaveBeenCalledWith("u1", "occ-1");
+  });
+
+  it("deletes context link by explicit owner-scoped id", async () => {
+    await expect(service.deleteContextLink({ userId: "u1", contextLinkId: "link-1" })).resolves.toEqual({
+      deleted: { entityType: "context_link", id: "link-1" },
+      activeReadInvalidation: true,
+    });
+
+    expect(repo.deleteContextLink).toHaveBeenCalledWith("u1", "link-1");
+  });
+
+  it("maps missing or out-of-scope delete rows to NotFoundError", async () => {
+    repo = makeRepo({
+      deleteOccurrence: vi.fn(async () => null),
+      deleteContextLink: vi.fn(async () => null),
+    });
+    service = new L3ContextService(repo);
+
+    await expect(service.deleteOccurrence({ userId: "u1", occurrenceId: "missing-occ" }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.deleteContextLink({ userId: "u1", contextLinkId: "missing-link" }))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    expect(repo.deleteOccurrence).toHaveBeenCalledWith("u1", "missing-occ");
+    expect(repo.deleteContextLink).toHaveBeenCalledWith("u1", "missing-link");
   });
 
   it("lists contexts by slug through repository lookup", async () => {
