@@ -184,35 +184,42 @@ export class L3ProposalService {
       if (!wordbook) throw new NotFoundError("Wordbook", input.wordbookId);
     }
 
-    return this.txRunner(async (tx) => {
-      const repos = this.repositoryFactory(tx);
-      const proposal = await repos.l3Proposal.createProposal({
-        user_id: input.userId,
-        wordbook_id: input.wordbookId ?? null,
-        source_type: input.sourceType,
-        title: input.title ?? null,
-        summary: input.summary ?? null,
-        input_hash: input.inputHash ?? null,
-        proposed_by: input.proposedBy ?? null,
-        provenance: input.provenance ?? {},
-      });
+    return this.txRunner((tx) => this.createProposalInTx(tx, input));
+  }
 
-      const items: L3ProposalItemRow[] = [];
-      for (const [index, item] of input.items.entries()) {
-        const payload = {
-          ...(item.payload as Record<string, unknown>),
-          ...(item.clientRef ? { clientRef: item.clientRef } : {}),
-        } as Json;
-        items.push(await repos.l3Proposal.createProposalItem({
-          proposal_id: proposal.id,
-          user_id: input.userId,
-          item_type: item.itemType,
-          ordinal: index + 1,
-          payload,
-        }));
-      }
-      return { proposal, items };
+  /**
+   * Create a proposal + items within an existing transaction. The caller is
+   * responsible for committing or rolling back the transaction, and for
+   * validating the input before calling this method.
+   */
+  async createProposalInTx(tx: PoolClient, input: CreateL3ProposalInput): Promise<L3ProposalBundle> {
+    const repos = this.repositoryFactory(tx);
+    const proposal = await repos.l3Proposal.createProposal({
+      user_id: input.userId,
+      wordbook_id: input.wordbookId ?? null,
+      source_type: input.sourceType,
+      title: input.title ?? null,
+      summary: input.summary ?? null,
+      input_hash: input.inputHash ?? null,
+      proposed_by: input.proposedBy ?? null,
+      provenance: input.provenance ?? {},
     });
+
+    const items: L3ProposalItemRow[] = [];
+    for (const [index, item] of input.items.entries()) {
+      const payload = {
+        ...(item.payload as Record<string, unknown>),
+        ...(item.clientRef ? { clientRef: item.clientRef } : {}),
+      } as Json;
+      items.push(await repos.l3Proposal.createProposalItem({
+        proposal_id: proposal.id,
+        user_id: input.userId,
+        item_type: item.itemType,
+        ordinal: index + 1,
+        payload,
+      }));
+    }
+    return { proposal, items };
   }
 
   async listProposals(input: ListL3ProposalsInput): Promise<L3PaginatedList<L3ProposalRow>> {
@@ -226,6 +233,11 @@ export class L3ProposalService {
     const bundle = await this.proposals.getProposalBundle(input.userId, input.proposalId);
     if (!bundle) throw new NotFoundError("L3Proposal", input.proposalId);
     return bundle;
+  }
+
+  /** Find a proposal by (userId, inputHash) — used by L3ImportService for dedup. */
+  async findProposalByInputHash(userId: string, inputHash: string): Promise<L3ProposalRow | null> {
+    return this.proposals.findProposalByInputHash(userId, inputHash);
   }
 
   async validateProposal(input: L3ProposalIdInput): Promise<L3ProposalValidationResult> {

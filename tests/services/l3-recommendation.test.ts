@@ -207,6 +207,7 @@ function makeProposalRepo(): IL3ProposalRepository {
       updated_at: "2026-07-08T00:00:00Z",
     })),
     findProposalByIdForUser: vi.fn(),
+    findProposalByInputHash: vi.fn(async () => null),
     lockProposalByIdForUser: vi.fn(),
     findProposalItems: vi.fn(),
     getProposalBundle: vi.fn(),

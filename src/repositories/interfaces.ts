@@ -465,6 +465,8 @@ export interface IL3ContextRepository {
   deleteSource(userId: string, sourceId: string): Promise<L3SourceRow | null>;
   deleteContext(userId: string, contextId: string): Promise<L3ContextRow | null>;
   createImportJob(input: NewL3ImportJob): Promise<L3ImportJobRow>;
+  /** Find a completed import job by (userId, inputHash) for idempotent re-submission. */
+  findImportJobByInputHash(userId: string, inputHash: string): Promise<L3ImportJobRow | null>;
   updateImportJobStatus(
     importJobId: string,
     userId: string,
@@ -525,6 +527,8 @@ export interface IL3ProposalRepository {
   createProposal(input: NewL3Proposal): Promise<L3ProposalRow>;
   createProposalItem(input: NewL3ProposalItem): Promise<L3ProposalItemRow>;
   findProposalByIdForUser(userId: string, proposalId: string): Promise<L3ProposalRow | null>;
+  /** Find a proposal by (userId, inputHash) for idempotent import dedup. */
+  findProposalByInputHash(userId: string, inputHash: string): Promise<L3ProposalRow | null>;
   lockProposalByIdForUser(userId: string, proposalId: string): Promise<L3ProposalRow | null>;
   findProposalItems(userId: string, proposalId: string): Promise<L3ProposalItemRow[]>;
   getProposalBundle(userId: string, proposalId: string): Promise<L3ProposalBundle | null>;
