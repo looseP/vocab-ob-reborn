@@ -54,16 +54,16 @@ export function createServices(deps: ServiceDeps) {
 
   const loadWeights = deps.loadWeights ?? (async () => null);
 
-  // L2TransitionService is constructed once and its checkAndTransition is
-  // injected into ReviewService as an optional dep, keeping ReviewService
-  // decoupled from the L2 promotion logic.
+  // L2TransitionService and CrossTrackService are consumed by the outbox
+  // worker. ReviewService only persists the authoritative answer and event.
   const l2Transition = new L2TransitionService(repos.l2Progress);
 
   // CrossTrackService (Phase 2C) owns the L1↔L2 cascade rules: L1 collapsing
   // pauses L2, L1 recovering resumes the cascade pause, L2 sustained failure
-  // marks L1 weak-signal. Its checkL1Cascade is injected into ReviewService
-  // (best-effort, like checkAndTransition); checkL2FailureCascade is exposed
-  // on the returned services for the forthcoming L2ReviewService to call.
+  // marks L1 weak-signal. Both l2Transition and crossTrack are consumed by the
+  // ReviewOutboxWorker (which constructs its own instances from a tx-scoped
+  // repository set). They are also exposed on the returned services for the
+  // forthcoming L2ReviewService to call checkL2FailureCascade.
   const crossTrack = new CrossTrackService(repos.l2Progress, repos.reviews);
 
   // L2ContentService is always constructed so the confirm flow (a pure DB
@@ -89,10 +89,6 @@ export function createServices(deps: ServiceDeps) {
     reviews: new ReviewService({
       fsrsAdapter: deps.fsrsAdapter,
       loadWeights,
-      incrementSessionCardsSeen: (sessionId, userId, wordbookId) =>
-        repos.sessions.incrementCardsSeen(sessionId, userId, wordbookId),
-      checkAndTransition: (progress) => l2Transition.checkAndTransition(progress),
-      checkL1Cascade: (snapshot) => crossTrack.checkL1Cascade(snapshot),
     }),
     notes: new NoteService(repos.notes, repos.wordbooks),
     wordbooks: new WordbookService(repos.wordbooks),

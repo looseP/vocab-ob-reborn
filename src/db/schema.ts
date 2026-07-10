@@ -67,6 +67,46 @@ export const authSessions = pgTable("auth_sessions", {
 	check("auth_sessions_role_check", sql`role = ANY (ARRAY['owner'::text, 'agent'::text])`),
 ]);
 
+export const outboxEvents = pgTable("outbox_events", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	aggregateType: text("aggregate_type").notNull(),
+	aggregateId: uuid("aggregate_id").notNull(),
+	eventType: text("event_type").notNull(),
+	payload: jsonb().notNull(),
+	dedupeKey: text("dedupe_key").notNull(),
+	status: text().default('pending').notNull(),
+	attempts: integer().default(0).notNull(),
+	maxAttempts: integer("max_attempts").default(8).notNull(),
+	availableAt: timestamp("available_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lockedAt: timestamp("locked_at", { withTimezone: true, mode: 'string' }),
+	lockedUntil: timestamp("locked_until", { withTimezone: true, mode: 'string' }),
+	lockedBy: text("locked_by"),
+	lastError: text("last_error"),
+	processedAt: timestamp("processed_at", { withTimezone: true, mode: 'string' }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("outbox_events_dedupe_key_key").on(table.dedupeKey),
+	index("idx_outbox_events_claim").using("btree", table.availableAt, table.createdAt).where(sql`status IN ('pending', 'retry')`),
+	index("idx_outbox_events_lease").using("btree", table.lockedUntil).where(sql`status = 'processing'`),
+	index("idx_outbox_events_dead_letter").using("btree", table.updatedAt).where(sql`status = 'dead_letter'`),
+	check("outbox_events_status_check", sql`status = ANY (ARRAY['pending'::text, 'retry'::text, 'processing'::text, 'processed'::text, 'dead_letter'::text])`),
+	check("outbox_events_attempts_check", sql`attempts >= 0 AND max_attempts > 0 AND attempts <= max_attempts`),
+]);
+
+export const outboxEffectReceipts = pgTable("outbox_effect_receipts", {
+	eventId: uuid("event_id").notNull(),
+	effectName: text("effect_name").notNull(),
+	completedAt: timestamp("completed_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	primaryKey({ columns: [table.eventId, table.effectName], name: "outbox_effect_receipts_pkey" }),
+	foreignKey({
+		columns: [table.eventId],
+		foreignColumns: [outboxEvents.id],
+		name: "outbox_effect_receipts_event_id_fkey"
+	}).onDelete("cascade"),
+]);
+
 export const tags = pgTable("tags", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: text().notNull(),

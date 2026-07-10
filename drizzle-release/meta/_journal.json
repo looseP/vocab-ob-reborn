@@ -36,6 +36,13 @@
       "when": 1783661563937,
       "tag": "0004_browser_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783679263775,
+      "tag": "0005_review_outbox",
+      "breakpoints": true
     }
   ]
 }

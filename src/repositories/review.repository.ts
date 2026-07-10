@@ -145,6 +145,23 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     );
   }
 
+  async findProgressForOutbox(
+    progressId: string,
+    userId: string,
+    wordbookId: string,
+  ): Promise<UserWordProgressRow | null> {
+    this.requireTx();
+    return this.queryOne<UserWordProgressRow>(
+      `SELECT ${PROGRESS_COLUMNS_PREFIXED}
+       FROM user_word_progress uwp
+       WHERE uwp.id = $1::uuid
+         AND uwp.user_id = $2::uuid
+         AND uwp.wordbook_id = $3::uuid
+       FOR UPDATE`,
+      [progressId, userId, wordbookId],
+    );
+  }
+
   /**
    * UPDATE progress + INSERT review_log. MUST be in a transaction.
    * H2 fix: counterField via whitelist, not interpolation.

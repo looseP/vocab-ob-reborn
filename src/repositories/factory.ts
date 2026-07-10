@@ -23,6 +23,7 @@ import { LlmUsageRepository } from "./llm-usage.repository";
 import { L3ContextRepository } from "./l3-context.repository";
 import { L3ProposalRepository } from "./l3-proposal.repository";
 import { L3RecommendationRepository } from "./l3-recommendation.repository";
+import { OutboxRepository } from "./outbox.repository";
 
 export function createRepositories(tx?: PoolClient): IRepositories {
   return {
@@ -40,6 +41,7 @@ export function createRepositories(tx?: PoolClient): IRepositories {
     l3Proposal: new L3ProposalRepository(tx),
     l3Recommendation: new L3RecommendationRepository(tx),
     llmUsage: new LlmUsageRepository(tx),
+    outbox: new OutboxRepository(tx),
   };
 }
 

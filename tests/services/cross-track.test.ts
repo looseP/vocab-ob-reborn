@@ -23,6 +23,7 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     findProgressForUpdate: vi.fn(async () => null),
     findProgressForSkip: vi.fn(async () => null),
     findProgressForSuspend: vi.fn(async () => null),
+    findProgressForOutbox: vi.fn(async () => null),
     saveAnswer: vi.fn(async () => ({ reviewLogId: "log-1" })),
     skipCard: vi.fn(async () => ({ reviewLogId: "log-skip" })),
     suspendCard: vi.fn(async () => ({ reviewLogId: "log-suspend" })),
