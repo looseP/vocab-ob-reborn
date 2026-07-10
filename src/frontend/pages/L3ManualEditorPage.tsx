@@ -26,6 +26,7 @@ import {
   initialManualSourceFormState,
   manualContextTypes,
   manualCreateSuccessActions,
+  manualDeleteTypes,
   manualLinkTypes,
   manualSourceTypes,
   manualTargetTypes,
@@ -37,6 +38,7 @@ import {
   type ManualOccurrenceFormState,
   type ManualSourceFormState,
 } from "../viewModels/l3ManualEditorViewModel";
+import { summarizeL3ParentDeleteConflict } from "../viewModels/l3ParentDeleteBlockersViewModel";
 import type { L3NavigationIntent } from "../viewModels/l3NavigationViewModel";
 
 interface L3ManualEditorPageProps {
@@ -51,6 +53,16 @@ function normalizeUnknownError(error: unknown): NormalizedL3Error {
 
 function createdId(value: { id?: string } | null): string | null {
   return value?.id ?? null;
+}
+
+async function runManualDelete(
+  client: L3FrontendClient,
+  command: ReturnType<typeof buildManualDeleteCommand>,
+): Promise<L3ManualDeleteResponse> {
+  if (command.entityType === "occurrence") return client.deleteOccurrence(command.id);
+  if (command.entityType === "context_link") return client.deleteContextLink(command.id);
+  if (command.entityType === "source") return client.deleteSource(command.id);
+  return client.deleteContext(command.id);
 }
 
 export function L3ManualEditorPage({ client, onManualChanged, onNavigate }: L3ManualEditorPageProps) {
@@ -87,6 +99,7 @@ export function L3ManualEditorPage({ client, onManualChanged, onNavigate }: L3Ma
       : null,
   });
   const surfaceMatches = findExactSurfaceMatches(occurrenceForm.contextText, occurrenceForm.surface);
+  const deleteConflict = error ? summarizeL3ParentDeleteConflict(error) : null;
 
   const submitSource = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -159,12 +172,11 @@ export function L3ManualEditorPage({ client, onManualChanged, onNavigate }: L3Ma
     event.preventDefault();
     if (!canSubmitManualDelete(deleteStatus)) return;
     setError(null);
+    setDeleteResult(null);
     setDeleteStatus("submitting");
     try {
       const command = buildManualDeleteCommand(deleteForm);
-      const result = command.entityType === "occurrence"
-        ? await client.deleteOccurrence(command.id)
-        : await client.deleteContextLink(command.id);
+      const result = await runManualDelete(client, command);
       setDeleteResult(result);
       const transition = applyManualDeleteSuccess(result);
       onManualChanged(transition.cache.reason);
@@ -411,8 +423,7 @@ export function L3ManualEditorPage({ client, onManualChanged, onNavigate }: L3Ma
               onChange={(event) => setDeleteForm({ ...deleteForm, entityType: event.target.value as ManualDeleteFormState["entityType"] })}
               value={deleteForm.entityType}
             >
-              <option value="occurrence">occurrence</option>
-              <option value="context_link">context_link</option>
+              {manualDeleteTypes.map((type) => <option key={type} value={type}>{type}</option>)}
             </select>
           </label>
           <label>
@@ -430,6 +441,16 @@ export function L3ManualEditorPage({ client, onManualChanged, onNavigate }: L3Ma
           <button disabled={!canSubmitManualDelete(deleteStatus)} type="submit">
             {deleteStatus === "submitting" ? "Deleting..." : "Delete row"}
           </button>
+          {deleteConflict ? (
+            <div className="delete-blocker-summary">
+              <strong>Active dependencies must be removed before retrying {deleteConflict.entityType} {deleteConflict.id}.</strong>
+              <ul className="warning-list">
+                {deleteConflict.blockers.map((blocker) => (
+                  <li key={blocker.key}>{blocker.label}: {blocker.count}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {deleteResult ? <code>Deleted {deleteResult.deleted.entityType}: {deleteResult.deleted.id}</code> : null}
         </form>
       </div>
