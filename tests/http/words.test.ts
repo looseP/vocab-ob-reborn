@@ -62,11 +62,12 @@ describe("GET /api/words", () => {
     expect(callArg.userId).toBe("user-123");
   });
 
-  it("rejects without auth (403)", async () => {
+  it("rejects missing credentials with 401 and a Bearer challenge", async () => {
     const services = makeMockServices();
     const app = createApp(services);
     const res = await app.request("/api/words");
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toBe('Bearer realm="vocab-observatory"');
   });
 
   it("rejects invalid query with 400 (limit out of range)", async () => {

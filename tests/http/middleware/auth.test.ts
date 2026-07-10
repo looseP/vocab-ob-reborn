@@ -22,7 +22,7 @@ afterAll(() => {
 
 function makeApp(requireRole: "owner" | "agent" | "public" = "owner") {
   const app = new Hono<AppEnv>();
-  app.use("/*", authMiddleware(requireRole));
+  app.use("/*", authMiddleware(undefined, requireRole));
   app.get("/*", (c) => c.json({ role: c.get("role"), userId: c.get("userId") }));
   return app;
 }
@@ -41,7 +41,8 @@ describe("authMiddleware", () => {
   it("rejects missing token for owner-required route", async () => {
     const app = makeApp("owner");
     const res = await app.request("/test");
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toContain("Bearer");
   });
 
   it("allows agent token for agent-required route", async () => {

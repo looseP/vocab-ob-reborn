@@ -7,6 +7,7 @@
  * 跑法：npm run dev（tsx watch src/server.ts）
  */
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { createApp } from "./http/server";
 import { createServices, type FsrsAdapterFn, type FsrsScheduling } from "./services";
 import { applyReviewAnswer } from "./fsrs/adapter";
@@ -20,6 +21,25 @@ import { DatamuseProvider } from "./dictionary";
 import type { DictionaryProvider } from "./dictionary/provider";
 import { logger } from "./observability/logger";
 
+function requireRuntimeConfiguration(): void {
+  const missing = ["DATABASE_URL", "OWNER_API_TOKEN", "LOCAL_OWNER_ID", "APP_ORIGIN"]
+    .filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    throw new Error(`Missing required runtime configuration: ${missing.join(", ")}`);
+  }
+  if ((process.env.OWNER_API_TOKEN?.length ?? 0) < 24) {
+    throw new Error("OWNER_API_TOKEN must contain at least 24 characters");
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(process.env.LOCAL_OWNER_ID ?? "")) {
+    throw new Error("LOCAL_OWNER_ID must be a UUID");
+  }
+  const origin = new URL(process.env.APP_ORIGIN as string);
+  if (process.env.NODE_ENV === "production" && origin.protocol !== "https:") {
+    throw new Error("APP_ORIGIN must use https in production");
+  }
+}
+
+requireRuntimeConfiguration();
 const port = parseInt(process.env.PORT ?? "3001", 10);
 
 /**
@@ -102,6 +122,10 @@ const services = createServices({
 });
 
 const app = createApp(services);
+if (process.env.SERVE_FRONTEND === "true") {
+  app.use("/*", serveStatic({ root: "./dist/frontend" }));
+  app.get("/*", serveStatic({ root: "./dist/frontend", path: "index.html" }));
+}
 
 serve({ fetch: app.fetch, port }, (info) => {
   logger.info("server", `v2-http listening on :${info.port}`);

@@ -11,13 +11,14 @@
  */
 import { Hono } from "hono";
 import type { Services } from "@/services";
-import type { AuthRole } from "@/http/middleware/auth";
+import type { AuthRole, Principal } from "@/http/middleware/auth";
 import { wordsQuerySchema } from "@/schemas/http";
 
 export type AppEnv = {
   Variables: {
     role: AuthRole;
     userId: string;
+    principal: Principal;
   };
 };
 

@@ -30,7 +30,8 @@
     "verify:engineering": "npm run typecheck && npm run arch:check && npm run test:unit && npm run frontend:build",
     "verify:unit": "npm run verify:engineering",
     "verify:db": "npm run db:migrate && npm run test:db-release && npm run test:integration",
-    "verify:e2e": "node -e \"console.error('Browser E2E gate is not implemented yet'); process.exit(1)\"",
+    "test:e2e:auth": "tsx scripts/verify-browser-auth-e2e.ts",
+    "verify:e2e": "npm run test:e2e:auth",
     "verify:release": "npm run verify:engineering && npm run verify:db && npm run verify:e2e",
     "verify:check": "npm run typecheck && npm run test:unit",
     "prepare": "husky"

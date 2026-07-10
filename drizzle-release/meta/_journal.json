@@ -29,6 +29,13 @@
       "when": 1783660078620,
       "tag": "0003_progress_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783661563937,
+      "tag": "0004_browser_sessions",
+      "breakpoints": true
     }
   ]
 }

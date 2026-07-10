@@ -22,6 +22,7 @@ async function scalar<T>(sql: string, params: unknown[] = []): Promise<T> {
 async function main() {
   const requiredTables = [
     "profiles",
+    "auth_sessions",
     "words",
     "wordbooks",
     "user_word_progress",

@@ -10,6 +10,7 @@
  */
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { secureHeaders } from "hono/secure-headers";
 import type { Services } from "../services";
 import { API_JSON_BODY_MAX_BYTES } from "../schemas/resource-budget";
 import { handleError } from "./middleware/error";
@@ -18,12 +19,18 @@ import { wordRoutes, type AppEnv } from "./routes/words";
 import { reviewRoutes } from "./routes/review";
 import { l2Routes } from "./routes/l2";
 import { l3Routes } from "./routes/l3";
+import { authRoutes } from "./routes/auth";
 
 export function createApp(services: Services): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
   // 全局错误处理：AppError 子类映射到对应 HTTP 状态码
   app.onError(handleError);
+  app.use("*", secureHeaders({
+    xFrameOptions: "DENY",
+    xContentTypeOptions: "nosniff",
+    referrerPolicy: "no-referrer",
+  }));
 
   // 健康检查（公开，无需鉴权）
   app.get("/health", (c) => {
@@ -43,8 +50,11 @@ export function createApp(services: Services): Hono<AppEnv> {
     ),
   }));
 
-  // /api/* 需 owner 角色；authMiddleware 注入 role / userId 到 context
-  app.use("/api/*", authMiddleware("owner"));
+  // Browser sessions are exchanged here before the protected /api middleware.
+  app.route("/api/auth", authRoutes(services));
+
+  // /api/* 需 owner 角色；支持服务端 Bearer 或浏览器 HttpOnly Session。
+  app.use("/api/*", authMiddleware(services.authSessions, "owner"));
 
   // 路由模块挂载
   app.route("/api/words", wordRoutes(services));
