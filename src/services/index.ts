@@ -23,10 +23,12 @@ import { L3ImportService } from "./l3-import.service";
 import { L3ReadService } from "./l3-read.service";
 import { L3RecommendationService } from "./l3-recommendation.service";
 import { CrossTrackService } from "./cross-track.service";
+import { AuthSessionService } from "./auth-session.service";
 import type { LlmProvider } from "../llm/provider";
 import type { UsageTracker } from "../llm/usage-tracker";
 import type { DictionaryProvider } from "../dictionary/provider";
 import { createRepositories } from "../repositories/factory";
+import { AuthSessionRepository } from "../repositories/auth-session.repository";
 
 export type { FsrsAdapterFn, FsrsScheduling };
 
@@ -82,6 +84,7 @@ export function createServices(deps: ServiceDeps) {
   const l3Recommendation = new L3RecommendationService(repos.l3Recommendation, repos.l3Context);
 
   return {
+    authSessions: new AuthSessionService(new AuthSessionRepository()),
     words: new WordService(repos.words),
     reviews: new ReviewService({
       fsrsAdapter: deps.fsrsAdapter,

@@ -58,6 +58,7 @@ describe("release database contract", () => {
   });
 
   afterAll(async () => {
+    await pool.query("DELETE FROM public.auth_sessions WHERE user_id = ANY($1::uuid[])", [[userId, otherUserId]]);
     await pool.query("DELETE FROM public.sessions WHERE user_id = ANY($1::uuid[])", [[userId, otherUserId]]);
     await pool.query("DELETE FROM public.wordbooks WHERE id = ANY($1::uuid[])", [[wordbookId, otherWordbookId]]);
     await pool.query("DELETE FROM public.profiles WHERE id = ANY($1::uuid[])", [[userId, otherUserId]]);
@@ -82,6 +83,23 @@ describe("release database contract", () => {
       "increment_session_cards_seen(uuid,uuid,uuid)",
       "undo_review_log(uuid,uuid,uuid,uuid)",
     ]);
+  });
+
+  it("stores only opaque browser-session digests and enforces token uniqueness", async () => {
+    const tokenHash = "a".repeat(64);
+    const csrfHash = "b".repeat(64);
+    const inserted = await pool.query<{ token_hash: string; csrf_hash: string }>(
+      `INSERT INTO public.auth_sessions (user_id, role, token_hash, csrf_hash, expires_at)
+       VALUES ($1::uuid, 'owner', $2, $3, now() + interval '1 hour')
+       RETURNING token_hash, csrf_hash`,
+      [userId, tokenHash, csrfHash],
+    );
+    expect(inserted.rows[0]).toEqual({ token_hash: tokenHash, csrf_hash: csrfHash });
+    await expect(pool.query(
+      `INSERT INTO public.auth_sessions (user_id, role, token_hash, csrf_hash, expires_at)
+       VALUES ($1::uuid, 'owner', $2, $3, now() + interval '1 hour')`,
+      [userId, tokenHash, "c".repeat(64)],
+    )).rejects.toMatchObject({ code: "23505" });
   });
 
   it("creates exactly one active daily session under concurrency", async () => {

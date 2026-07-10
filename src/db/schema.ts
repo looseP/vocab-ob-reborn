@@ -45,6 +45,28 @@ export const profiles = pgTable("profiles", {
 	check("profiles_role_check", sql`role = ANY (ARRAY['user'::text, 'editor'::text, 'admin'::text])`),
 ]);
 
+export const authSessions = pgTable("auth_sessions", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull(),
+	role: text().notNull(),
+	tokenHash: text("token_hash").notNull(),
+	csrfHash: text("csrf_hash").notNull(),
+	expiresAt: timestamp("expires_at", { withTimezone: true, mode: 'string' }).notNull(),
+	revokedAt: timestamp("revoked_at", { withTimezone: true, mode: 'string' }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("auth_sessions_token_hash_key").on(table.tokenHash),
+	index("idx_auth_sessions_active").using("btree", table.tokenHash, table.expiresAt).where(sql`revoked_at IS NULL`),
+	index("idx_auth_sessions_user").using("btree", table.userId, table.expiresAt.desc()),
+	foreignKey({
+		columns: [table.userId],
+		foreignColumns: [profiles.id],
+		name: "auth_sessions_user_id_fkey"
+	}).onDelete("cascade"),
+	check("auth_sessions_role_check", sql`role = ANY (ARRAY['owner'::text, 'agent'::text])`),
+]);
+
 export const tags = pgTable("tags", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	slug: text().notNull(),

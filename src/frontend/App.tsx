@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { L3Shell, type L3ShellSection } from "./components/L3Shell";
+import { BrowserSessionGate } from "./components/BrowserSessionGate";
 import { L3ContextPage } from "./pages/L3ContextPage";
 import { L3GraphPage } from "./pages/L3GraphPage";
 import { L3HomePage } from "./pages/L3HomePage";
@@ -95,8 +96,10 @@ export function App() {
   }[section];
 
   return (
-    <L3Shell activeSection={section} onNavigate={setSection}>
-      {page}
-    </L3Shell>
+    <BrowserSessionGate>
+      <L3Shell activeSection={section} onNavigate={setSection}>
+        {page}
+      </L3Shell>
+    </BrowserSessionGate>
   );
 }
