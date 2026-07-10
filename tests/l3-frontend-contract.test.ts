@@ -185,6 +185,8 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
     await client.createContextLink({ contextId: "ctx-1", linkType: "manual_link", targetType: "l2_item", targetRef: { field: "corpus", contentId: "l2-1" }, provenance: { source: "manual" } });
     await client.deleteOccurrence("occ 1");
     await client.deleteContextLink("link 1");
+    await client.deleteSource("source id");
+    await client.deleteContext("context id");
     await client.createRawTextImport({
       source: { sourceType: "manual", title: "Paste" },
       text: "A vivid account.",
@@ -224,6 +226,8 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       ["POST", "/api/l3/context-links"],
       ["DELETE", "/api/l3/occurrences/occ%201"],
       ["DELETE", "/api/l3/context-links/link%201"],
+      ["DELETE", "/api/l3/sources/source%20id"],
+      ["DELETE", "/api/l3/contexts/context%20id"],
       ["POST", "/api/l3/imports/raw-text"],
       ["POST", "/api/l3/imports/structured"],
       ["POST", "/api/l3/proposals"],
@@ -268,14 +272,14 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       targetType: "l2_item",
       targetRef: { field: "corpus", contentId: "l2-1" },
     });
-    expect(parsedBody(transport, 6)).toEqual({
+    expect(parsedBody(transport, 8)).toEqual({
       source: { sourceType: "manual", title: "Paste" },
       text: "A vivid account.",
       targetWords: [{ slug: "vivid" }, { slug: "lucid" }],
       options: { contextType: "sentence" },
     });
-    expect(parsedBody(transport, 6)).not.toHaveProperty("source_type");
-    expect(JSON.parse(transport.calls[7].init?.body ?? "{}")).toMatchObject({
+    expect(parsedBody(transport, 8)).not.toHaveProperty("source_type");
+    expect(JSON.parse(transport.calls[9].init?.body ?? "{}")).toMatchObject({
       source: { sourceType: "manual" },
       contexts: [{
         clientRef: "ctx-1",
@@ -302,6 +306,22 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
     const linkTransport = makeTransport({ ok: true, status: 200, body: linkResponse });
 
     await expect(createL3FrontendClient(linkTransport).deleteContextLink("link-1")).resolves.toEqual(linkResponse);
+
+    const sourceResponse = {
+      deleted: { entityType: "source" as const, id: "src-1" },
+      activeReadInvalidation: true as const,
+    };
+    const sourceTransport = makeTransport({ ok: true, status: 200, body: sourceResponse });
+
+    await expect(createL3FrontendClient(sourceTransport).deleteSource("src-1")).resolves.toEqual(sourceResponse);
+
+    const contextResponse = {
+      deleted: { entityType: "context" as const, id: "ctx-1" },
+      activeReadInvalidation: true as const,
+    };
+    const contextTransport = makeTransport({ ok: true, status: 200, body: contextResponse });
+
+    await expect(createL3FrontendClient(contextTransport).deleteContext("ctx-1")).resolves.toEqual(contextResponse);
   });
 
   it("treats raw and structured import success as proposal-only cache invalidation", () => {
@@ -394,6 +414,13 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       retryHint: "refresh",
     });
 
+    await expect(createL3FrontendClient(missingTransport).deleteSource("src-1")).rejects.toMatchObject({
+      status: 404,
+      kind: "not_found",
+      code: "NOT_FOUND",
+      retryHint: "refresh",
+    });
+
     const validationTransport = makeTransport({
       ok: false,
       status: 400,
@@ -405,6 +432,25 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       kind: "bad_request",
       fieldErrors: { id: ["Invalid uuid"] },
       retryHint: "fix-input",
+    });
+
+    const blockers = { contextCount: 0, occurrenceCount: 1, contextLinkCount: 0, inboundContextLinkCount: 2 };
+    const conflictTransport = makeTransport({
+      ok: false,
+      status: 409,
+      body: {
+        code: "CONFLICT",
+        message: "Cannot delete L3 context with active dependencies",
+        details: { entityType: "context", id: "ctx-1", blockers },
+      },
+    });
+
+    await expect(createL3FrontendClient(conflictTransport).deleteContext("ctx-1")).rejects.toMatchObject({
+      status: 409,
+      kind: "conflict",
+      code: "CONFLICT",
+      retryHint: "refresh",
+      details: { entityType: "context", id: "ctx-1", blockers },
     });
   });
 
@@ -659,6 +705,16 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       fieldErrors: { id: ["id cannot be empty."] },
     });
     expectNormalizedThrow(() => deleteClient.deleteContextLink("   "), {
+      status: 400,
+      code: "FRONTEND_VALIDATION_ERROR",
+      fieldErrors: { id: ["id cannot be empty."] },
+    });
+    expectNormalizedThrow(() => deleteClient.deleteSource(""), {
+      status: 400,
+      code: "FRONTEND_VALIDATION_ERROR",
+      fieldErrors: { id: ["id cannot be empty."] },
+    });
+    expectNormalizedThrow(() => deleteClient.deleteContext("   "), {
       status: 400,
       code: "FRONTEND_VALIDATION_ERROR",
       fieldErrors: { id: ["id cannot be empty."] },
