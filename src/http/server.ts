@@ -20,7 +20,6 @@ import { reviewRoutes } from "./routes/review";
 import { l2Routes } from "./routes/l2";
 import { l3Routes } from "./routes/l3";
 import { authRoutes } from "./routes/auth";
-import { problemDetails } from "../errors";
 
 export function createApp(services: Services): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -46,7 +45,7 @@ export function createApp(services: Services): Hono<AppEnv> {
   app.use("/api/*", bodyLimit({
     maxSize: API_JSON_BODY_MAX_BYTES,
     onError: (c) => c.json(
-      problemDetails(413, "PAYLOAD_TOO_LARGE", "Request body exceeds 1 MiB limit", { instance: c.req.path }),
+      { error: "PAYLOAD_TOO_LARGE", message: "Request body exceeds 1 MiB limit" },
       413,
     ),
   }));

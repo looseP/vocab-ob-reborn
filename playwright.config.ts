@@ -25,7 +25,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `cross-env NODE_ENV=test PORT=${PORT} SERVE_FRONTEND=true DATABASE_URL=postgresql://vocab:vocab@127.0.0.1:5432/vocab OWNER_API_TOKEN=test-owner-token-for-e2e-0123456789 LOCAL_OWNER_ID=00000000-0000-0000-0000-000000000001 APP_ORIGIN=${BASE_URL} npx tsx src/server.ts`,
+    command: `cross-env NODE_ENV=test PORT=${PORT} SERVE_FRONTEND=true DATABASE_URL=postgresql://vocab:vocab@127.0.0.1:5432/vocab OWNER_API_TOKEN=test-owner-token-for-e2e-0123456789 LOCAL_OWNER_ID=00000000-0000-1000-8000-000000000001 APP_ORIGIN=${BASE_URL} npx tsx src/server.ts`,
     url: `${BASE_URL}/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
