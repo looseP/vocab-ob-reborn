@@ -6,7 +6,7 @@
  * - All data access goes through the injected `services.reviews` service.
  *
  * Service method signatures (from ReviewService):
- *   submitAnswer(input)           — 1 arg (no userId; progress carries ownership)
+ *   submitAnswer(input, userId)   — userId from auth context
  *   skip(input, userId)           — userId from auth context
  *   suspend(input, userId)        — userId from auth context
  *   undo(input, userId)           — userId from auth context
@@ -36,7 +36,8 @@ export function reviewRoutes(services: Services) {
     if (!parsed.success) {
       return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
     }
-    const result = await services.reviews.submitAnswer(parsed.data);
+    const userId = c.get("userId");
+    const result = await services.reviews.submitAnswer(parsed.data, userId);
     return c.json(result);
   });
 

@@ -9,9 +9,17 @@ import type { UserWordProgressRow, Json } from "@/domain";
 // Mock withTransaction to directly call the callback with a fake tx,
 // and mock createRepositories to return our mock repos.
 const mockRepos: Partial<IRepositories> = {};
+let transactionCallbackActive = false;
 
 vi.mock("@/db/transaction", () => ({
-  withTransaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+  withTransaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
+    transactionCallbackActive = true;
+    try {
+      return await cb({});
+    } finally {
+      transactionCallbackActive = false;
+    }
+  }),
 }));
 vi.mock("@/repositories/factory", () => ({
   createRepositories: vi.fn(() => mockRepos),
@@ -83,6 +91,7 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     saveAnswer: vi.fn(async () => ({ reviewLogId: "log-1" })),
     skipCard: vi.fn(async () => ({ reviewLogId: "log-skip" })),
     suspendCard: vi.fn(async () => ({ reviewLogId: "log-suspend" })),
+    findReviewLogWordbookForUndo: vi.fn(async () => "wb1"),
     undoReviewLog: vi.fn(async () => ({
       success: true, progressId: "p1", wordId: "w1", errorMessage: null,
     } as UndoRpcResult)),
@@ -99,6 +108,7 @@ function makeMockSessionRepo(overrides: Partial<ISessionRepository> = {}): ISess
     findActiveByUser: vi.fn(async () => null),
     getOrCreateToday: vi.fn(async () => ({ id: "s1" } as never)),
     create: vi.fn(async () => ({ id: "s1" } as never)),
+    assertActiveOwned: vi.fn(async () => undefined),
     incrementCardsSeen: vi.fn(async () => undefined),
     endSession: vi.fn(async () => undefined),
     ...overrides,
@@ -124,7 +134,7 @@ describe("ReviewService.submitAnswer", () => {
     const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
     const result = await service.submitAnswer({
       progressId: "p1", rating: "good", sessionId: "s1", idempotencyKey: "key-1",
-    });
+    }, "u1");
 
     expect(result.ok).toBe(true);
     expect(result.idempotent).toBe(true);
@@ -145,7 +155,7 @@ describe("ReviewService.submitAnswer", () => {
     const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
     await expect(service.submitAnswer({
       progressId: "missing", rating: "good", sessionId: "s1",
-    })).rejects.toBeInstanceOf(NotFoundError);
+    }, "u1")).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it("throws BusinessRuleError when card is suspended", async () => {
@@ -159,7 +169,7 @@ describe("ReviewService.submitAnswer", () => {
     const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
     await expect(service.submitAnswer({
       progressId: "p1", rating: "good", sessionId: "s1",
-    })).rejects.toBeInstanceOf(BusinessRuleError);
+    }, "u1")).rejects.toBeInstanceOf(BusinessRuleError);
   });
 
   it("calls fsrsAdapter with correct params and persists", async () => {
@@ -172,10 +182,14 @@ describe("ReviewService.submitAnswer", () => {
     mockRepos.reviews = reviewRepo;
     mockRepos.sessions = sessionRepo;
 
-    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => [1, 2, 3] });
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => [1, 2, 3],
+      incrementSessionCardsSeen: (sessionId, userId, wordbookId) => sessionRepo.incrementCardsSeen(sessionId, userId, wordbookId),
+    });
     const result = await service.submitAnswer({
       progressId: "p1", rating: "good", sessionId: "s1", idempotencyKey: "key-1",
-    });
+    }, "u1");
 
     expect(result.ok).toBe(true);
     expect(result.reviewLogId).toBe("log-1");
@@ -194,7 +208,7 @@ describe("ReviewService.submitAnswer", () => {
     expect(saveInput.wordbookId).toBe("wb1");
 
     // Session counter incremented
-    expect(sessionRepo.incrementCardsSeen).toHaveBeenCalledWith("s1");
+    expect(sessionRepo.incrementCardsSeen).toHaveBeenCalledWith("s1", "u1", "wb1");
   });
 
   it("continues when session increment fails (best-effort)", async () => {
@@ -206,14 +220,40 @@ describe("ReviewService.submitAnswer", () => {
     mockRepos.reviews = reviewRepo;
     mockRepos.sessions = sessionRepo;
 
-    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      incrementSessionCardsSeen: (sessionId, userId, wordbookId) => sessionRepo.incrementCardsSeen(sessionId, userId, wordbookId),
+    });
     const result = await service.submitAnswer({
       progressId: "p1", rating: "good", sessionId: "s1",
-    });
+    }, "u1");
 
-    // Should NOT throw — session increment is best-effort
+    // Should NOT throw — session increment is best-effort and runs post-commit.
     expect(result.ok).toBe(true);
     expect(result.reviewLogId).toBe("log-1");
+    expect(sessionRepo.incrementCardsSeen).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs hooks and session increment only after the transaction callback returns", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const sideEffectPhases: boolean[] = [];
+    const checkAndTransition = vi.fn(async () => { sideEffectPhases.push(transactionCallbackActive); });
+    const checkL1Cascade = vi.fn(async () => { sideEffectPhases.push(transactionCallbackActive); });
+    const incrementSessionCardsSeen = vi.fn(async () => { sideEffectPhases.push(transactionCallbackActive); });
+    mockRepos.reviews = makeMockReviewRepo();
+    mockRepos.sessions = makeMockSessionRepo();
+
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      checkAndTransition,
+      checkL1Cascade,
+      incrementSessionCardsSeen,
+    });
+    await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1");
+
+    expect(sideEffectPhases).toEqual([false, false, false]);
   });
 });
 
@@ -262,6 +302,7 @@ describe("ReviewService.skip", () => {
       skipCard: vi.fn(async () => ({ reviewLogId: "log-skip" })),
     });
     mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = makeMockSessionRepo();
 
     const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
     const result = await service.skip(
@@ -271,6 +312,28 @@ describe("ReviewService.skip", () => {
 
     expect(result.ok).toBe(true);
     expect(reviewRepo.skipCard).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a Session outside the progress owner/wordbook scope", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const reviewRepo = makeMockReviewRepo({
+      findProgressForSkip: vi.fn(async () => ({
+        id: "p1", word_id: "w1", wordbook_id: "wb1", state: "review" as const, skip_count: 3,
+      })),
+    });
+    const sessionRepo = makeMockSessionRepo({
+      assertActiveOwned: vi.fn(async () => { throw new NotFoundError("Session", "foreign-session"); }),
+    });
+    mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = sessionRepo;
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    await expect(service.skip(
+      { progressId: "p1", sessionId: "foreign-session" },
+      "u1",
+    )).rejects.toBeInstanceOf(NotFoundError);
+    expect(sessionRepo.assertActiveOwned).toHaveBeenCalledWith("foreign-session", "u1", "wb1");
+    expect(reviewRepo.skipCard).not.toHaveBeenCalled();
   });
 });
 
@@ -288,6 +351,7 @@ describe("ReviewService.suspend", () => {
       suspendCard: vi.fn(async () => ({ reviewLogId: "log-suspend" })),
     });
     mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = makeMockSessionRepo();
 
     const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
     const result = await service.suspend(
@@ -327,6 +391,7 @@ describe("ReviewService.undo", () => {
     const { adapter } = makeMockFsrsAdapter();
     const reviewRepo = makeMockReviewRepo();
     mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = makeMockSessionRepo();
 
     const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
     const result = await service.undo(
@@ -335,7 +400,26 @@ describe("ReviewService.undo", () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(reviewRepo.undoReviewLog).toHaveBeenCalledWith("log-1", "u1", "s1", "key");
+    expect(reviewRepo.findReviewLogWordbookForUndo).toHaveBeenCalledWith("log-1", "u1");
+    expect(mockRepos.sessions?.assertActiveOwned).toHaveBeenCalledWith("s1", "u1", "wb1");
+    expect(reviewRepo.undoReviewLog).toHaveBeenCalledWith("log-1", "u1", "wb1", "s1", "key");
+  });
+
+  it("does not reveal or mutate another user's review log", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const reviewRepo = makeMockReviewRepo({
+      findReviewLogWordbookForUndo: vi.fn(async () => null),
+    });
+    mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = makeMockSessionRepo();
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    await expect(service.undo(
+      { reviewLogId: "foreign-log", sessionId: "foreign-session" },
+      "u1",
+    )).rejects.toBeInstanceOf(NotFoundError);
+    expect(mockRepos.sessions?.assertActiveOwned).not.toHaveBeenCalled();
+    expect(reviewRepo.undoReviewLog).not.toHaveBeenCalled();
   });
 
   it("throws BusinessRuleError when undo fails", async () => {
@@ -346,6 +430,7 @@ describe("ReviewService.undo", () => {
       } as UndoRpcResult)),
     });
     mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = makeMockSessionRepo();
 
     const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
     await expect(service.undo(
@@ -381,7 +466,7 @@ describe("submitAnswer L2 transition", () => {
     });
     const result = await service.submitAnswer({
       progressId: "p1", rating: "good", sessionId: "s1",
-    });
+    }, "u1");
 
     // L1 result still normal
     expect(result.ok).toBe(true);
@@ -418,7 +503,7 @@ describe("submitAnswer L2 transition", () => {
     });
     const result = await service.submitAnswer({
       progressId: "p1", rating: "good", sessionId: "s1",
-    });
+    }, "u1");
 
     // L1 still succeeds — transition failure must NOT roll back L1
     expect(result.ok).toBe(true);
@@ -439,7 +524,7 @@ describe("submitAnswer L2 transition", () => {
     });
     const result = await service.submitAnswer({
       progressId: "p1", rating: "good", sessionId: "s1",
-    });
+    }, "u1");
 
     expect(result.ok).toBe(true);
   });
@@ -469,7 +554,7 @@ describe("submitAnswer L1→L2 cascade (Phase 2C)", () => {
       loadWeights: async () => null,
       checkL1Cascade,
     });
-    await service.submitAnswer({ progressId: "p1", rating: "again", sessionId: "s1" });
+    await service.submitAnswer({ progressId: "p1", rating: "again", sessionId: "s1" }, "u1");
 
     expect(checkL1Cascade).toHaveBeenCalledTimes(1);
     const arg = checkL1Cascade.mock.calls[0][0];
@@ -497,7 +582,7 @@ describe("submitAnswer L1→L2 cascade (Phase 2C)", () => {
       loadWeights: async () => null,
       checkL1Cascade,
     });
-    await service.submitAnswer({ progressId: "p1", rating: "again", sessionId: "s1" });
+    await service.submitAnswer({ progressId: "p1", rating: "again", sessionId: "s1" }, "u1");
 
     const arg = checkL1Cascade.mock.calls[0][0];
     expect(arg.recent_ratings).toEqual(["hard", "good", "easy", "good", "again"]);
@@ -519,7 +604,7 @@ describe("submitAnswer L1→L2 cascade (Phase 2C)", () => {
     });
     const result = await service.submitAnswer({
       progressId: "p1", rating: "again", sessionId: "s1",
-    });
+    }, "u1");
 
     // L1 still succeeds — cascade failure must NOT roll back L1
     expect(result.ok).toBe(true);
@@ -539,7 +624,7 @@ describe("submitAnswer L1→L2 cascade (Phase 2C)", () => {
     });
     const result = await service.submitAnswer({
       progressId: "p1", rating: "again", sessionId: "s1",
-    });
+    }, "u1");
 
     expect(result.ok).toBe(true);
   });
@@ -558,7 +643,7 @@ describe("submitAnswer L1→L2 cascade (Phase 2C)", () => {
       checkAndTransition,
       checkL1Cascade,
     });
-    await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" });
+    await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1");
 
     expect(checkAndTransition).toHaveBeenCalledTimes(1);
     expect(checkL1Cascade).toHaveBeenCalledTimes(1);

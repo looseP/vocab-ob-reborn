@@ -188,7 +188,7 @@ describe("POST /api/l2/:slug/draft", () => {
     expect(res.status).toBe(500);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.error).toBe("PARSE_FAILED");
-    expect(body.raw).toBe("not json");
+    expect(body.raw).toBeUndefined();
   });
 
   it("returns 400 for an invalid field", async () => {

@@ -101,7 +101,8 @@ describe("OpenAICompatibleProvider", () => {
     const mockResults = vi.mocked(OpenAI).mock.results;
     const mockInstance = mockResults[mockResults.length - 1]?.value;
     expect(mockInstance.chat.completions.create).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "gpt-4o-mini" }),
+      expect.objectContaining({ model: "gpt-4o-mini", max_tokens: 2048 }),
+      expect.objectContaining({ timeout: 30000 }),
     );
   });
 

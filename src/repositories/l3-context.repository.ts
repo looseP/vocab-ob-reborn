@@ -710,7 +710,25 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     }
 
     const rows = await this.query<JoinedContextRow>(
-      `SELECT
+      `WITH selected_contexts AS (
+         SELECT c.id, c.created_at
+         FROM l3_contexts c
+         JOIN l3_sources s ON s.id = c.source_id AND s.user_id = c.user_id
+         WHERE c.user_id = $1::uuid
+           AND s.user_id = $1::uuid
+           AND EXISTS (
+             SELECT 1
+             FROM l3_occurrences o
+             JOIN words w ON w.id = o.word_id
+             WHERE o.context_id = c.id
+               AND o.user_id = $1::uuid
+               ${wordFilter}
+           )
+           ${cursorFilter}
+         ORDER BY c.created_at DESC, c.id DESC
+         LIMIT $2
+       )
+       SELECT
          c.id AS context_id, c.source_id, c.user_id, c.context_type, c.text,
          c.normalized_text, c.language AS context_language, c.position,
          c.metadata AS context_metadata, c.created_at AS context_created_at,
@@ -722,24 +740,28 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
          o.user_id AS occurrence_user_id, o.surface, o.lemma, o.start_offset,
          o.end_offset, o.confidence, o.evidence, o.created_at AS occurrence_created_at,
          COALESCE(
-           jsonb_agg(to_jsonb(l) ORDER BY l.created_at) FILTER (WHERE l.id IS NOT NULL),
+           (
+             SELECT jsonb_agg(to_jsonb(l) ORDER BY l.created_at)
+             FROM l3_context_links l
+             WHERE l.user_id = $1::uuid
+               AND (l.context_id = c.id OR l.word_id = o.word_id)
+           ),
            '[]'::jsonb
          ) AS links
-       FROM l3_occurrences o
-       JOIN l3_contexts c ON c.id = o.context_id
-       JOIN l3_sources s ON s.id = c.source_id
-       JOIN words w ON w.id = o.word_id
-       LEFT JOIN l3_context_links l
-         ON l.user_id = o.user_id
-        AND (l.context_id = c.id OR l.word_id = o.word_id)
-       WHERE o.user_id = $1::uuid
-         AND c.user_id = $1::uuid
-         AND s.user_id = $1::uuid
-         ${wordFilter}
-         ${cursorFilter}
-       GROUP BY c.id, s.id, o.id
-       ORDER BY c.created_at DESC, c.id DESC
-       LIMIT $2`,
+       FROM selected_contexts selected
+       JOIN l3_contexts c ON c.id = selected.id
+       JOIN l3_sources s ON s.id = c.source_id AND s.user_id = c.user_id
+       JOIN LATERAL (
+         SELECT o.*
+         FROM l3_occurrences o
+         JOIN words w ON w.id = o.word_id
+         WHERE o.context_id = c.id
+           AND o.user_id = $1::uuid
+           ${wordFilter}
+         ORDER BY o.created_at ASC, o.id ASC
+         LIMIT 1
+       ) o ON true
+       ORDER BY c.created_at DESC, c.id DESC`,
       params,
     );
 

@@ -59,6 +59,7 @@ describe("GET /api/words", () => {
     const callArg = (services.words.getPublicWords as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(callArg.limit).toBe(5);
     expect(callArg.offset).toBe(0);
+    expect(callArg.userId).toBe("user-123");
   });
 
   it("rejects without auth (403)", async () => {

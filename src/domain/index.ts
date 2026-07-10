@@ -65,6 +65,7 @@ export interface WordFilters {
 export interface GetPublicWordsOptions {
   filters?: WordFilters;
   pagination: { limit: number; offset: number };
+  userId: string;
   wordbookId?: string;
 }
 
@@ -93,6 +94,7 @@ export interface UserWordProgressRow {
   interval_days: number | null;
   scheduler_payload: Json;
   content_hash_snapshot: string | null;
+  l1_content_hash_snapshot: string | null;
   skip_count: number;
   created_at: string;
   updated_at: string;
@@ -164,6 +166,7 @@ export interface WordbookRow {
   id: string;
   user_id: string;
   name: string;
+  description: string | null;
   is_default: boolean;
   settings: Json;
   created_at: string;

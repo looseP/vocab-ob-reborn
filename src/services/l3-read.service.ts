@@ -30,7 +30,7 @@ const MAX_SPACE_LIMIT = 100;
 const DEFAULT_GRAPH_LIMIT = 100;
 const MAX_GRAPH_LIMIT = 300;
 const DEFAULT_GRAPH_DEPTH = 1;
-const MAX_GRAPH_DEPTH = 2;
+const MAX_GRAPH_DEPTH = 1;
 const GRAPH_NODE_TYPE_ORDER: Record<L3GraphNode["type"], number> = {
   word: 1,
   context: 2,
@@ -57,7 +57,7 @@ function normalizeLimit(limit: number | null | undefined, defaultValue: number, 
 function normalizeDepth(depth: number | null | undefined): number {
   if (depth === undefined || depth === null) return DEFAULT_GRAPH_DEPTH;
   if (!Number.isInteger(depth) || depth < 1 || depth > MAX_GRAPH_DEPTH) {
-    throw new ValidationError("depth must be between 1 and 2", "depth");
+    throw new ValidationError("depth must be 1", "depth");
   }
   return depth;
 }

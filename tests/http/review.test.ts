@@ -64,13 +64,12 @@ describe("POST /api/review/answer", () => {
     const body = (await res.json()) as { ok: boolean; reviewLogId: string };
     expect(body.ok).toBe(true);
     expect(body.reviewLogId).toBe("log-1");
-    // submitAnswer receives a single parsed input arg (no userId)
     expect(services.reviews.submitAnswer).toHaveBeenCalledTimes(1);
     expect(services.reviews.submitAnswer).toHaveBeenCalledWith({
       progressId: PROGRESS_ID,
       rating: "good",
       sessionId: SESSION_ID,
-    });
+    }, "user-123");
   });
 
   it("rejects invalid body with 400", async () => {
@@ -119,7 +118,7 @@ describe("POST /api/review/answer", () => {
       rating: "easy",
       sessionId: SESSION_ID,
       idempotencyKey: "client-key-1",
-    });
+    }, "user-123");
   });
 });
 
@@ -155,6 +154,22 @@ describe("POST /api/review/suspend", () => {
     expect(services.reviews.suspend).toHaveBeenCalledTimes(1);
     const callArgs = (services.reviews.suspend as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(callArgs[1]).toBe("user-123");
+  });
+});
+
+describe("API request body limit", () => {
+  it("rejects payloads over 1 MiB before invoking the route handler", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/review/answer", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ padding: "x".repeat(1024 * 1024) }),
+    });
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: "PAYLOAD_TOO_LARGE" });
+    expect(services.reviews.submitAnswer).not.toHaveBeenCalled();
   });
 });
 

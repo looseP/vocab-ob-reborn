@@ -862,7 +862,7 @@ describe("Phase 4B L3 frontend shell", () => {
       wordbookId: " wb-1 ",
       slug: " vivid ",
       sourceId: " src-1 ",
-      depth: "2",
+      depth: "1",
       limit: " 150 ",
       cursor: " cur-1 ",
     });
@@ -871,7 +871,7 @@ describe("Phase 4B L3 frontend shell", () => {
       wordbookId: "wb-1",
       slug: "vivid",
       sourceId: "src-1",
-      depth: 2,
+      depth: 1,
       limit: 150,
       cursor: "cur-1",
     });
@@ -885,7 +885,7 @@ describe("Phase 4B L3 frontend shell", () => {
       cursor: " ",
     })).toEqual({});
 
-    for (const badDepth of ["0", "3", "abc"]) {
+    for (const badDepth of ["0", "2", "3", "abc"]) {
       let caught: unknown;
       try {
         buildGraphQueryPayload({ wordbookId: "", slug: "", sourceId: "", depth: badDepth, limit: "100", cursor: "" });
@@ -894,7 +894,7 @@ describe("Phase 4B L3 frontend shell", () => {
       }
       expect(caught).toMatchObject({
         status: 400,
-        fieldErrors: { depth: ["depth must be between 1 and 2."] },
+        fieldErrors: { depth: ["depth must be between 1 and 1."] },
       });
     }
 

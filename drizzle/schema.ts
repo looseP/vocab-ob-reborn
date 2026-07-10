@@ -190,6 +190,7 @@ export const sessions = pgTable("sessions", {
 	wordbookId: uuid("wordbook_id").notNull(),
 }, (table) => [
 	index("idx_sessions_user_mode_active").using("btree", table.userId.asc().nullsLast().op("text_ops"), table.mode.asc().nullsLast().op("uuid_ops"), table.endedAt.asc().nullsLast().op("timestamptz_ops"), table.startedAt.desc().nullsFirst().op("timestamptz_ops")),
+	uniqueIndex("idx_sessions_one_active").using("btree", table.userId, table.wordbookId, table.mode).where(sql`ended_at IS NULL`),
 	index("idx_sessions_wordbook").using("btree", table.wordbookId.asc().nullsLast().op("timestamptz_ops"), table.startedAt.desc().nullsFirst().op("uuid_ops")),
 	foreignKey({
 			columns: [table.userId],
@@ -215,7 +216,8 @@ export const noteRevisions = pgTable("note_revisions", {
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	wordbookId: uuid("wordbook_id").notNull(),
 }, (table) => [
-	index("idx_note_revisions_note_id").using("btree", table.noteId.asc().nullsLast().op("int4_ops"), table.version.desc().nullsFirst().op("int4_ops")),
+	uniqueIndex("idx_note_revisions_note_version").using("btree", table.noteId.asc().nullsLast().op("uuid_ops"), table.version.asc().nullsLast().op("int4_ops")),
+	index("idx_note_revisions_note_id").using("btree", table.noteId.asc().nullsLast().op("uuid_ops"), table.version.desc().nullsFirst().op("int4_ops")),
 	index("idx_note_revisions_user_word").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.wordId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.desc().nullsFirst().op("uuid_ops")),
 	foreignKey({
 			columns: [table.noteId],
@@ -382,7 +384,7 @@ export const reviewLogs = pgTable("review_logs", {
 	wordbookId: uuid("wordbook_id").notNull(),
 	idempotencyKey: text("idempotency_key"),
 }, (table) => [
-	uniqueIndex("idx_review_logs_idempotency").using("btree", table.idempotencyKey.asc().nullsLast().op("text_ops")).where(sql`(idempotency_key IS NOT NULL)`),
+	uniqueIndex("idx_review_logs_idempotency").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.idempotencyKey.asc().nullsLast().op("text_ops")).where(sql`(idempotency_key IS NOT NULL)`),
 	index("idx_review_logs_progress_undone").using("btree", table.progressId.asc().nullsLast().op("timestamptz_ops"), table.reviewedAt.desc().nullsFirst().op("uuid_ops")).where(sql`(undone = false)`),
 	index("idx_review_logs_progress_undone_count").using("btree", table.progressId.asc().nullsLast().op("uuid_ops")).where(sql`((undone = false) AND (progress_id IS NOT NULL))`),
 	index("idx_review_logs_user_reviewed").using("btree", table.userId.asc().nullsLast().op("timestamptz_ops"), table.reviewedAt.desc().nullsFirst().op("uuid_ops")),

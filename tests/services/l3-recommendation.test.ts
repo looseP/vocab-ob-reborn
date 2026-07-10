@@ -22,6 +22,7 @@ const WORDBOOK_ROW: WordbookRow = {
   id: "wb-1",
   user_id: "u1",
   name: "Default",
+  description: null,
   is_default: true,
   settings: {},
   created_at: "2026-07-08T00:00:00Z",

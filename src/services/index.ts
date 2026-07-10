@@ -7,7 +7,7 @@
  * Usage:
  *   const services = createServices({ fsrsAdapter, loadWeights });
  *   const words = await services.words.getPublicWords({...});
- *   await services.reviews.submitAnswer(input);  // creates tx internally
+ *   await services.reviews.submitAnswer(input, userId);  // creates tx internally
  */
 
 import { WordService } from "./word.service";
@@ -86,6 +86,8 @@ export function createServices(deps: ServiceDeps) {
     reviews: new ReviewService({
       fsrsAdapter: deps.fsrsAdapter,
       loadWeights,
+      incrementSessionCardsSeen: (sessionId, userId, wordbookId) =>
+        repos.sessions.incrementCardsSeen(sessionId, userId, wordbookId),
       checkAndTransition: (progress) => l2Transition.checkAndTransition(progress),
       checkL1Cascade: (snapshot) => crossTrack.checkL1Cascade(snapshot),
     }),

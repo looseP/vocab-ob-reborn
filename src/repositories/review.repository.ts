@@ -39,7 +39,7 @@ const PROGRESS_COLUMNS_PREFIXED = `
   uwp.due_at, uwp.last_reviewed_at, uwp.last_rating, uwp.review_count,
   uwp.lapse_count, uwp.again_count, uwp.hard_count, uwp.good_count,
   uwp.easy_count, uwp.interval_days, uwp.scheduler_payload,
-  uwp.content_hash_snapshot, uwp.skip_count, uwp.created_at, uwp.updated_at,
+  uwp.content_hash_snapshot, uwp.l1_content_hash_snapshot, uwp.skip_count, uwp.created_at, uwp.updated_at,
   uwp.recent_ratings, uwp.l1_weak_signal
 `;
 
@@ -81,36 +81,39 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   }
 
   /**
-   * Advisory lock + idempotency check. MUST be in a transaction.
+   * User-scoped advisory lock + idempotency check. MUST be in a transaction.
+   * The lock identity exactly matches the lookup/unique-index scope.
    * H4 fix: requireTx() enforces transaction context.
    */
-  async checkIdempotency(idempotencyKey: string): Promise<string | null> {
+  async checkIdempotency(userId: string, idempotencyKey: string): Promise<string | null> {
     this.requireTx();
     await this.query(
-      `SELECT pg_advisory_xact_lock(hashtext($1))`,
-      [idempotencyKey],
+      `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`,
+      [userId, idempotencyKey],
     );
     const rows = await this.query<{ id: string }>(
-      `SELECT id FROM review_logs WHERE idempotency_key = $1 LIMIT 1`,
-      [idempotencyKey],
+      `SELECT id FROM review_logs
+       WHERE user_id = $1 AND idempotency_key = $2
+       LIMIT 1`,
+      [userId, idempotencyKey],
     );
     return rows[0]?.id ?? null;
   }
 
   /**
-   * SELECT FOR UPDATE with word join for slug/title/lemma.
+   * Owner-scoped SELECT FOR UPDATE with word join for slug/title/lemma.
    * MUST be in a transaction. M7 fix: include word fields.
    */
-  async findProgressForUpdate(progressId: string): Promise<ProgressWithContentHash | null> {
+  async findProgressForUpdate(progressId: string, userId: string): Promise<ProgressWithContentHash | null> {
     this.requireTx();
     return this.queryOne<ProgressWithContentHash>(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
               w.content_hash, w.slug AS word_slug, w.title AS word_title, w.lemma AS word_lemma
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
-       WHERE uwp.id = $1::uuid
+       WHERE uwp.id = $1::uuid AND uwp.user_id = $2
        FOR UPDATE`,
-      [progressId],
+      [progressId, userId],
     );
   }
 
@@ -191,7 +194,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
              ORDER BY ord ASC
            ),
            updated_at = $12
-       WHERE id = $13::uuid`,
+       WHERE id = $13::uuid AND user_id = $14::uuid AND wordbook_id = $15::uuid`,
       [
         input.scheduling.difficulty,
         input.scheduling.dueAt,
@@ -206,6 +209,8 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         input.contentHash,        // M-NEW-4: refresh snapshot to current word hash
         nowIso,
         input.progressId,
+        input.userId,
+        input.wordbookId,
       ],
     );
 
@@ -262,8 +267,8 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     await this.query(
       `UPDATE user_word_progress
        SET skip_count = skip_count + 1, updated_at = $1
-       WHERE id = $2::uuid`,
-      [nowIso, progress.id],
+       WHERE id = $2::uuid AND user_id = $3::uuid AND wordbook_id = $4::uuid`,
+      [nowIso, progress.id, userId, progress.wordbook_id],
     );
 
     const logRow = await this.queryOne<{ id: string }>(
@@ -307,8 +312,8 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     await this.query(
       `UPDATE user_word_progress
        SET state = 'suspended', updated_at = $1
-       WHERE id = $2::uuid`,
-      [nowIso, progress.id],
+       WHERE id = $2::uuid AND user_id = $3::uuid AND wordbook_id = $4::uuid`,
+      [nowIso, progress.id, userId, progress.wordbook_id],
     );
 
     const logRow = await this.queryOne<{ id: string }>(
@@ -336,12 +341,25 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     return { reviewLogId: logRow.id };
   }
 
+  async findReviewLogWordbookForUndo(reviewLogId: string, userId: string): Promise<string | null> {
+    this.requireTx();
+    const row = await this.queryOne<{ wordbook_id: string }>(
+      `SELECT wordbook_id
+       FROM review_logs
+       WHERE id = $1::uuid AND user_id = $2::uuid
+       FOR UPDATE`,
+      [reviewLogId, userId],
+    );
+    return row?.wordbook_id ?? null;
+  }
+
   /**
-   * Call undo_review_log RPC + insert idempotency log. MUST be in a transaction.
+   * Call owner/wordbook-scoped undo_review_log RPC + insert idempotency log. MUST be in a transaction.
    */
   async undoReviewLog(
     reviewLogId: string,
     userId: string,
+    wordbookId: string,
     sessionId: string,
     idempotencyKey: string | null,
   ): Promise<UndoRpcResult> {
@@ -354,8 +372,8 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       out_word_id: string | null;
       out_error_message: string | null;
     }>(
-      `SELECT * FROM undo_review_log($1::uuid, $2::uuid, $3::uuid)`,
-      [reviewLogId, userId, sessionId],
+      `SELECT * FROM undo_review_log($1::uuid, $2::uuid, $3::uuid, $4::uuid)`,
+      [reviewLogId, userId, wordbookId, sessionId],
     );
 
     if (!rpcRow) {
@@ -375,8 +393,10 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     if (idempotencyKey) {
       // H-NEW-1 fix: query progress row for real wordbook_id + state
       const progressRow = await this.queryOne<{ wordbook_id: string; state: string }>(
-        `SELECT wordbook_id, state FROM user_word_progress WHERE id = $1::uuid`,
-        [rpcRow.out_progress_id],
+        `SELECT wordbook_id, state
+         FROM user_word_progress
+         WHERE id = $1::uuid AND user_id = $2::uuid AND wordbook_id = $3::uuid`,
+        [rpcRow.out_progress_id, userId, wordbookId],
       );
 
       const nowIso = new Date().toISOString();
@@ -391,7 +411,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         [
           userId,
           rpcRow.out_word_id,
-          progressRow?.wordbook_id ?? null,  // H-NEW-1 fix: real wordbook_id
+          progressRow?.wordbook_id ?? wordbookId,
           rpcRow.out_progress_id,
           sessionId,
           progressRow?.state ?? "review",    // M-NEW-1 fix: real restored state

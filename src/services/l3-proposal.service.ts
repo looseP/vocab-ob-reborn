@@ -38,6 +38,13 @@ import {
   type RejectL3ProposalInput,
 } from "../schemas/service";
 import { L3ContextService } from "./l3-context.service";
+import {
+  assertJsonResourceBudget,
+  JSON_MAX_DEPTH,
+  L3_PROPOSAL_MAX_ITEMS,
+  L3_PROPOSAL_PAYLOAD_MAX_BYTES,
+  L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES,
+} from "../schemas/resource-budget";
 
 type TxRunner = <T>(callback: (tx: PoolClient) => Promise<T>) => Promise<T>;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
@@ -142,10 +149,34 @@ export class L3ProposalService {
     if (input.items.length === 0) {
       throw new ValidationError("Proposal requires at least one item", "items");
     }
+    if (input.items.length > L3_PROPOSAL_MAX_ITEMS) {
+      throw new ValidationError(
+        `Proposal exceeds maximum of ${L3_PROPOSAL_MAX_ITEMS} items`,
+        "items",
+      );
+    }
+    let totalPayloadBytes = 0;
     for (const item of input.items) {
       requireEnum(item.itemType, L3_PROPOSAL_ITEM_TYPES, "itemType");
       if (!isRecord(item.payload)) {
         throw new ValidationError("Proposal item payload must be an object", "payload");
+      }
+      try {
+        totalPayloadBytes += assertJsonResourceBudget(item.payload, {
+          maxBytes: L3_PROPOSAL_PAYLOAD_MAX_BYTES,
+          maxDepth: JSON_MAX_DEPTH,
+        });
+      } catch (error) {
+        throw new ValidationError(
+          error instanceof Error ? error.message : "Proposal payload exceeds resource budget",
+          "payload",
+        );
+      }
+      if (totalPayloadBytes > L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES) {
+        throw new ValidationError(
+          `Proposal payloads exceed ${L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES} total bytes`,
+          "items",
+        );
       }
     }
     if (input.wordbookId) {

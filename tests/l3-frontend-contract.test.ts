@@ -217,7 +217,7 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
     await client.getContextDetail("ctx-1");
     await client.getWordSpace("vivid word", { wordbookId: "wb-1", limit: 50, cursor: undefined });
     await client.getSourceSpace("src-1", { limit: 50, cursor: null });
-    await client.getGraph({ slug: "vivid", depth: 2, limit: 50, wordbookId: null });
+    await client.getGraph({ slug: "vivid", depth: 1, limit: 50, wordbookId: null });
 
     expect(transport.calls.map((call) => [call.init?.method, call.url])).toEqual([
       ["POST", "/api/l3/sources"],
@@ -244,7 +244,7 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
       ["GET", "/api/l3/contexts/ctx-1"],
       ["GET", "/api/l3/words/vivid%20word/space?wordbookId=wb-1&limit=50"],
       ["GET", "/api/l3/sources/src-1/space?limit=50"],
-      ["GET", "/api/l3/graph?slug=vivid&depth=2&limit=50"],
+      ["GET", "/api/l3/graph?slug=vivid&depth=1&limit=50"],
     ]);
     expect(transport.calls.map((call) => call.url).filter((url) => url.includes("/api/l3/manual/"))).toEqual([]);
 
@@ -634,7 +634,7 @@ describe("Phase 4A.1 L3 frontend contract scaffold", () => {
   it("blocks invalid frontend inputs before transport fetch", async () => {
     expectNormalizedThrow(() => validateGraphParams({ depth: 3 }), {
       status: 400,
-      fieldErrors: { depth: ["Depth must be 1 or 2."] },
+      fieldErrors: { depth: ["Depth must be 1."] },
     });
     expectNormalizedThrow(() => validateGraphParams({ limit: 301 }), {
       status: 400,

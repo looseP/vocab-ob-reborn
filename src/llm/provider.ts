@@ -39,4 +39,10 @@ export interface LlmProviderConfig {
   baseURL?: string;
   /** 默认模型 */
   model: string;
+  /** 单次 SDK 请求超时（毫秒）。 */
+  timeoutMs?: number;
+  /** 未显式传 maxTokens 时使用的输出 token 上限。 */
+  maxTokens?: number;
+  /** 当前进程允许同时进行的 provider 请求数。 */
+  maxConcurrency?: number;
 }

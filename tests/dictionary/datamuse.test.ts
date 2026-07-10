@@ -39,7 +39,8 @@ describe("DatamuseProvider", () => {
   it("returns normalized candidates for adjective", async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
-      json: async () => [{ word: "rainfall", score: 100 }],
+      headers: new Headers(),
+      text: async () => JSON.stringify([{ word: "rainfall", score: 100 }]),
     } as Response);
     const provider = new DatamuseProvider();
     const result = await provider.lookupCollocations({
@@ -55,7 +56,8 @@ describe("DatamuseProvider", () => {
   it("returns normalized candidates for noun", async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
-      json: async () => [{ word: "heavy", score: 200 }],
+      headers: new Headers(),
+      text: async () => JSON.stringify([{ word: "heavy", score: 200 }]),
     } as Response);
     const provider = new DatamuseProvider();
     const result = await provider.lookupCollocations({
@@ -99,6 +101,48 @@ describe("DatamuseProvider", () => {
       limit: 5,
     });
     expect(result.candidates).toHaveLength(0);
-    expect(result.warning).toContain("Network error");
+    expect(result.warning).toContain("Datamuse lookup failed");
+  });
+
+  it("passes an AbortSignal timeout to fetch", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      headers: new Headers(),
+      text: async () => "[]",
+    } as Response);
+    const provider = new DatamuseProvider({ timeoutMs: 1234 });
+    await provider.lookupCollocations({ lemma: "abundant", pos: "adj." });
+    expect(fetch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("rejects a response whose declared content length exceeds the limit", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-length": "1000" }),
+      text: vi.fn(),
+    } as unknown as Response);
+    const provider = new DatamuseProvider({ maxResponseBytes: 100 });
+    const result = await provider.lookupCollocations({ lemma: "abundant", pos: "adj." });
+    expect(result.candidates).toEqual([]);
+    expect(result.warning).toContain("size limit");
+  });
+
+  it("filters malformed items and caps parsed candidates to the requested limit", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      headers: new Headers(),
+      text: async () => JSON.stringify([
+        { word: "rainfall", score: 100 },
+        { word: 42, score: 99 },
+        { word: "evidence", score: 90 },
+      ]),
+    } as Response);
+    const provider = new DatamuseProvider();
+    const result = await provider.lookupCollocations({ lemma: "abundant", pos: "adj.", limit: 1 });
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].headword).toBe("rainfall");
   });
 });

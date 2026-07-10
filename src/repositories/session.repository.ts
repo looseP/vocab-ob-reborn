@@ -9,6 +9,7 @@ import type { SessionRow } from "../domain";
 import type { ISessionRepository } from "./interfaces";
 import { BaseRepository } from "./base";
 import { startOfTodayIsoInDisplayTz } from "../db/timezone";
+import { NotFoundError } from "../errors";
 
 export class SessionRepository extends BaseRepository implements ISessionRepository {
   async findActiveByUser(
@@ -30,26 +31,14 @@ export class SessionRepository extends BaseRepository implements ISessionReposit
     wordbookId: string,
     mode = "review",
   ): Promise<SessionRow> {
-    // M5 fix: use display timezone for "today" boundary (matches v1)
     const todayIso = startOfTodayIsoInDisplayTz();
-    const existing = await this.findActiveByUser(userId, wordbookId, mode);
-
-    if (existing && existing.started_at >= todayIso) {
-      return existing;
-    }
-
-    // Create new session first (so failure leaves old one active)
-    const created = await this.create(userId, wordbookId, mode);
-
-    // Best-effort: end the previous session
-    if (existing) {
-      await this.query(
-        `UPDATE sessions SET ended_at = now() WHERE id = $1`,
-        [existing.id],
-      );
-    }
-
-    return created;
+    const row = await this.queryOne<SessionRow>(
+      `SELECT id, user_id, wordbook_id, mode, cards_seen, started_at, ended_at
+       FROM get_or_create_today_session($1::uuid, $2::uuid, $3, $4::timestamptz)`,
+      [userId, wordbookId, mode, todayIso],
+    );
+    if (!row) throw new Error("session get-or-create returned no row");
+    return row;
   }
 
   async create(
@@ -67,18 +56,40 @@ export class SessionRepository extends BaseRepository implements ISessionReposit
     return row;
   }
 
-  async incrementCardsSeen(sessionId: string): Promise<void> {
-    // FIX-001: Use atomic RPC to prevent lost increments under concurrency.
-    await this.query(
-      `SELECT increment_session_cards_seen($1::uuid)`,
-      [sessionId],
+  async assertActiveOwned(sessionId: string, userId: string, wordbookId: string): Promise<void> {
+    this.requireTx();
+    const row = await this.queryOne<{ id: string }>(
+      `SELECT id
+       FROM sessions
+       WHERE id = $1::uuid
+         AND user_id = $2::uuid
+         AND wordbook_id = $3::uuid
+         AND ended_at IS NULL
+       FOR UPDATE`,
+      [sessionId, userId, wordbookId],
     );
+    if (!row) throw new NotFoundError("Session", sessionId);
   }
 
-  async endSession(sessionId: string): Promise<void> {
-    await this.query(
-      `UPDATE sessions SET ended_at = now() WHERE id = $1::uuid`,
-      [sessionId],
+  async incrementCardsSeen(sessionId: string, userId: string, wordbookId: string): Promise<void> {
+    const row = await this.queryOne<{ updated: boolean }>(
+      `SELECT increment_session_cards_seen($1::uuid, $2::uuid, $3::uuid) AS updated`,
+      [sessionId, userId, wordbookId],
     );
+    if (row?.updated !== true) throw new NotFoundError("Session", sessionId);
+  }
+
+  async endSession(sessionId: string, userId: string, wordbookId: string): Promise<void> {
+    const row = await this.queryOne<{ id: string }>(
+      `UPDATE sessions
+       SET ended_at = now(), updated_at = now()
+       WHERE id = $1::uuid
+         AND user_id = $2::uuid
+         AND wordbook_id = $3::uuid
+         AND ended_at IS NULL
+       RETURNING id`,
+      [sessionId, userId, wordbookId],
+    );
+    if (!row) throw new NotFoundError("Session", sessionId);
   }
 }

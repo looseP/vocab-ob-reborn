@@ -21,6 +21,7 @@ import {
 } from "../schemas/service";
 import { parseRawTextImport } from "../l3/import/parser";
 import type { L3ProposalService } from "./l3-proposal.service";
+import { L3_PROPOSAL_MAX_ITEMS } from "../schemas/resource-budget";
 
 export interface L3ImportParseStats {
   contextCount: number;
@@ -94,6 +95,16 @@ export class L3ImportService {
     const targetWords = await this.resolveTargetWords(input.userId, input.wordbookId ?? null, input.targetWords ?? []);
 
     const parsed = parseRawTextImport(input.text, targetWords, input.options);
+    const proposalItemCount = 1 + parsed.contexts.reduce(
+      (total, context) => total + 1 + context.occurrences.length,
+      0,
+    );
+    if (proposalItemCount > L3_PROPOSAL_MAX_ITEMS) {
+      throw new ValidationError(
+        `Raw import creates more than ${L3_PROPOSAL_MAX_ITEMS} proposal items`,
+        "text",
+      );
+    }
     const parseStats: L3ImportParseStats = {
       contextCount: parsed.contexts.length,
       occurrenceCount: parsed.contexts.reduce((sum, context) => sum + context.occurrences.length, 0),
@@ -164,6 +175,16 @@ export class L3ImportService {
         requireEnum(link.targetType, L3_CONTEXT_LINK_TARGET_TYPES, "targetType");
         this.validateStructuredLinkTargetPolicy(link);
       }
+    }
+    const proposalItemCount = 1 + input.contexts.reduce(
+      (total, context) => total + 1 + (context.occurrences?.length ?? 0) + (context.links?.length ?? 0),
+      0,
+    );
+    if (proposalItemCount > L3_PROPOSAL_MAX_ITEMS) {
+      throw new ValidationError(
+        `Structured import creates more than ${L3_PROPOSAL_MAX_ITEMS} proposal items`,
+        "contexts",
+      );
     }
 
     const parseStats: L3ImportParseStats = {

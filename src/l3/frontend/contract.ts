@@ -734,8 +734,8 @@ export function validateSourceSpaceParams(params: L3SourceSpaceParams = {}): L3S
 }
 
 export function validateGraphParams(params: L3GraphParams = {}): L3GraphParams {
-  if (params.depth !== undefined && params.depth !== null && (!Number.isInteger(params.depth) || params.depth < 1 || params.depth > 2)) {
-    throw frontendValidationError("depth", "Depth must be 1 or 2.");
+  if (params.depth !== undefined && params.depth !== null && params.depth !== 1) {
+    throw frontendValidationError("depth", "Depth must be 1.");
   }
   validateLimit(params.limit, GRAPH_LIMIT_MAX);
   return params;

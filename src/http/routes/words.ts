@@ -30,7 +30,10 @@ export function wordRoutes(services: Services) {
     if (!parsed.success) {
       return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
     }
-    const result = await services.words.getPublicWords(parsed.data);
+    const result = await services.words.getPublicWords({
+      ...parsed.data,
+      userId: c.get("userId"),
+    });
     return c.json(result);
   });
 

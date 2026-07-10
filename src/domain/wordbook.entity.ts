@@ -11,6 +11,7 @@ export class Wordbook {
 
   get id(): string { return this.row.id; }
   get name(): string { return this.row.name; }
+  get description(): string | null { return this.row.description; }
   get isDefault(): boolean { return this.row.is_default; }
   get userId(): string { return this.row.user_id; }
 

@@ -54,6 +54,9 @@ function buildLlmDeps():
     apiKey: process.env.LLM_API_KEY,
     baseURL: process.env.LLM_BASE_URL,
     model,
+    timeoutMs: parseInt(process.env.LLM_TIMEOUT_MS ?? "30000", 10),
+    maxTokens: parseInt(process.env.LLM_MAX_TOKENS ?? "2048", 10),
+    maxConcurrency: parseInt(process.env.LLM_MAX_CONCURRENCY ?? "4", 10),
   };
 
   return {

@@ -21,6 +21,43 @@ import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AppEnv } from "./words";
 import { isValidL2Content, mapToStorageField } from "@/schemas/service";
+import {
+  assertJsonResourceBudget,
+  JSON_MAX_DEPTH,
+  L2_CONTENT_MAX_BYTES,
+  L2_DRAFT_MAX_COUNT,
+  L2_OPTION_STRING_MAX_LENGTH,
+  L2_USER_INSTRUCTION_MAX_LENGTH,
+} from "@/schemas/resource-budget";
+
+function parseDraftOptions(body: Record<string, unknown>, includeSource: boolean): Record<string, unknown> | null {
+  const options: Record<string, unknown> = includeSource
+    ? { source: body.source ?? "manual" }
+    : {};
+
+  if (body.source !== undefined && (typeof body.source !== "string" || body.source.length > L2_OPTION_STRING_MAX_LENGTH)) {
+    return null;
+  }
+  if (body.styleProfileId !== undefined) {
+    if (typeof body.styleProfileId !== "string" || body.styleProfileId.length === 0 || body.styleProfileId.length > L2_OPTION_STRING_MAX_LENGTH) {
+      return null;
+    }
+    options.styleProfileId = body.styleProfileId;
+  }
+  if (body.count !== undefined) {
+    if (!Number.isInteger(body.count) || (body.count as number) < 1 || (body.count as number) > L2_DRAFT_MAX_COUNT) {
+      return null;
+    }
+    options.count = body.count;
+  }
+  if (body.userInstruction !== undefined) {
+    if (typeof body.userInstruction !== "string" || body.userInstruction.length > L2_USER_INSTRUCTION_MAX_LENGTH) {
+      return null;
+    }
+    options.userInstruction = body.userInstruction;
+  }
+  return options;
+}
 
 export function l2Routes(services: Services) {
   const app = new Hono<AppEnv>();
@@ -39,17 +76,9 @@ export function l2Routes(services: Services) {
       return c.json({ error: "VALIDATION_ERROR", message: "Invalid field" }, 400);
     }
 
-    // Assemble draft options. `source` stays as the legacy default; only
-    // well-known option keys are forwarded so unknown body fields are ignored.
-    const draftOptions: Record<string, unknown> = { source: body.source ?? "manual" };
-    if (typeof body.styleProfileId === "string" && body.styleProfileId.length > 0) {
-      draftOptions.styleProfileId = body.styleProfileId;
-    }
-    if (typeof body.count === "number" && Number.isFinite(body.count) && body.count > 0) {
-      draftOptions.count = Math.floor(body.count);
-    }
-    if (typeof body.userInstruction === "string") {
-      draftOptions.userInstruction = body.userInstruction;
+    const draftOptions = parseDraftOptions(body, true);
+    if (!draftOptions) {
+      return c.json({ error: "VALIDATION_ERROR", message: "Invalid draft options" }, 400);
     }
 
     let result;
@@ -75,10 +104,7 @@ export function l2Routes(services: Services) {
           400,
         );
       }
-      return c.json(
-        { error: "INTERNAL_ERROR", message: (err as Error).message },
-        500,
-      );
+      throw err;
     }
 
     if (result.error === "OVER_BUDGET") {
@@ -100,15 +126,11 @@ export function l2Routes(services: Services) {
       );
     }
     if (result.error) {
-      return c.json(
-        { error: result.error, message: result.message, raw: result.raw },
-        500,
-      );
+      return c.json({ error: result.error }, 500);
     }
 
     return c.json({
       draft: result.draft,
-      raw: result.raw,
       ...(result.sourceMode ? { sourceMode: result.sourceMode } : {}),
     });
   });
@@ -133,15 +155,9 @@ export function l2Routes(services: Services) {
       return c.json({ error: "VALIDATION_ERROR", message: "Invalid field" }, 400);
     }
 
-    const options: Record<string, unknown> = {};
-    if (typeof body.styleProfileId === "string" && body.styleProfileId.length > 0) {
-      options.styleProfileId = body.styleProfileId;
-    }
-    if (typeof body.count === "number" && Number.isFinite(body.count) && body.count > 0) {
-      options.count = Math.floor(body.count);
-    }
-    if (typeof body.userInstruction === "string") {
-      options.userInstruction = body.userInstruction;
+    const options = parseDraftOptions(body, false);
+    if (!options) {
+      return c.json({ error: "VALIDATION_ERROR", message: "Invalid prompt options" }, 400);
     }
 
     try {
@@ -186,10 +202,7 @@ export function l2Routes(services: Services) {
           400,
         );
       }
-      return c.json(
-        { error: "INTERNAL_ERROR", message: (err as Error).message },
-        500,
-      );
+      throw err;
     }
   });
 

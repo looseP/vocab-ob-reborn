@@ -32,40 +32,39 @@ export class NoteRepository extends BaseRepository implements INoteRepository {
     wordId: string,
     contentMd: string,
   ): Promise<{ note: NoteRow; created: boolean }> {
-    const existing = await this.findByWord(userId, wordbookId, wordId);
-    const hasChanged = existing?.content_md !== contentMd;
-
-    // A fix: version increment is atomic on DB side via ON CONFLICT DO UPDATE
-    // to prevent race condition when two concurrent upserts read the same version.
-    const row = await this.queryOne<NoteRow>(
-      `INSERT INTO notes (user_id, word_id, wordbook_id, content_md, version)
-       VALUES ($1, $2::uuid, $3, $4, 1)
-       ON CONFLICT (user_id, wordbook_id, word_id)
-       DO UPDATE SET
-         content_md = EXCLUDED.content_md,
-         version = CASE
-           WHEN notes.content_md != EXCLUDED.content_md
-           THEN notes.version + 1
-           ELSE notes.version
-         END,
-         updated_at = now()
-       RETURNING id, user_id, word_id, wordbook_id, content_md, version, created_at, updated_at`,
+    const row = await this.queryOne<NoteRow & { created: boolean }>(
+      `WITH upserted_note AS (
+         INSERT INTO notes (user_id, word_id, wordbook_id, content_md, version)
+         VALUES ($1, $2::uuid, $3::uuid, $4, 1)
+         ON CONFLICT (user_id, wordbook_id, word_id)
+         DO UPDATE SET
+           content_md = EXCLUDED.content_md,
+           version = CASE
+             WHEN notes.content_md IS DISTINCT FROM EXCLUDED.content_md
+             THEN notes.version + 1
+             ELSE notes.version
+           END,
+           updated_at = CASE
+             WHEN notes.content_md IS DISTINCT FROM EXCLUDED.content_md
+             THEN now()
+             ELSE notes.updated_at
+           END
+         RETURNING notes.*, (xmax = 0) AS created
+       ), inserted_revision AS (
+         INSERT INTO note_revisions
+           (note_id, user_id, word_id, wordbook_id, content_md, version)
+         SELECT id, user_id, word_id, wordbook_id, content_md, version
+         FROM upserted_note
+         ON CONFLICT (note_id, version) DO NOTHING
+       )
+       SELECT id, user_id, word_id, wordbook_id, content_md, version,
+              created_at, updated_at, created
+       FROM upserted_note`,
       [userId, wordId, wordbookId, contentMd],
     );
     if (!row) throw new Error("note upsert returned no row");
 
-    const created = !existing;
-
-    // Insert a revision when content actually changed (or first note creation)
-    if (hasChanged || !existing) {
-      await this.query(
-        `INSERT INTO note_revisions (note_id, user_id, word_id, wordbook_id, content_md, version)
-         VALUES ($1, $2, $3::uuid, $4, $5, $6)`,
-        [row.id, userId, wordId, wordbookId, contentMd, row.version],
-      );
-    }
-
-    return { note: row, created };
+    return { note: row, created: row.created };
   }
 
   async findRevisions(

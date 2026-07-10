@@ -133,7 +133,7 @@ describe("Note entity", () => {
 describe("Wordbook entity", () => {
   it("reviewSettings extracts from JSONB", () => {
     const wb = new Wordbook({
-      id: "wb1", user_id: "u1", name: "Global", is_default: true,
+      id: "wb1", user_id: "u1", name: "Global", description: null, is_default: true,
       settings: { review: { desired_retention: 0.85, fsrs_weights: [1, 2, 3] } },
       created_at: "", updated_at: "",
     } as WordbookRow);
@@ -143,7 +143,7 @@ describe("Wordbook entity", () => {
 
   it("reviewSettings returns empty when no settings", () => {
     const wb = new Wordbook({
-      id: "wb1", user_id: "u1", name: "Global", is_default: true,
+      id: "wb1", user_id: "u1", name: "Global", description: null, is_default: true,
       settings: null, created_at: "", updated_at: "",
     } as WordbookRow);
     expect(wb.reviewSettings).toEqual({});

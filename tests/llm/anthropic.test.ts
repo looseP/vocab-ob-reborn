@@ -65,10 +65,12 @@ describe("AnthropicProvider", () => {
     expect(mockInstance.messages.create).toHaveBeenCalledWith(
       expect.objectContaining({
         system: "System prompt here",
+        max_tokens: 2048,
         messages: expect.not.arrayContaining([
           expect.objectContaining({ role: "system" }),
         ]),
       }),
+      expect.objectContaining({ timeout: 30000 }),
     );
   });
 });
