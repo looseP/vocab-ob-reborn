@@ -494,7 +494,9 @@ export class L2ContentService {
       });
 
       let result;
+      let reservationHeartbeat: ReturnType<typeof setInterval> | undefined;
       try {
+        reservationHeartbeat = this.startReservationHeartbeat(usageTracker, reservationId);
         result = await llmProvider.generate(messages, { temperature: 0.7 });
       } catch {
         await usageTracker.release(reservationId).catch((releaseError) => {
@@ -507,6 +509,8 @@ export class L2ContentService {
           message: "LLM provider request failed",
           storageField: field,
         };
+      } finally {
+        if (reservationHeartbeat) clearInterval(reservationHeartbeat);
       }
 
       try {
@@ -630,7 +634,9 @@ export class L2ContentService {
 
     // 5. Call the provider — catch provider/transport errors.
     let result;
+    let reservationHeartbeat: ReturnType<typeof setInterval> | undefined;
     try {
+      reservationHeartbeat = this.startReservationHeartbeat(usageTracker!, reservationId);
       result = await llmProvider!.generate(messages, { temperature: 0.7 });
     } catch {
       await usageTracker!.release(reservationId).catch((releaseError) => {
@@ -643,6 +649,8 @@ export class L2ContentService {
         message: "LLM provider request failed",
         storageField: field,
       };
+    } finally {
+      if (reservationHeartbeat) clearInterval(reservationHeartbeat);
     }
 
     // 6. Replace the reservation with actual provider usage.
@@ -841,6 +849,30 @@ ${provenanceSourceHint}`;
         ...(c.example ? { rawExample: c.example } : {}),
       },
     }));
+  }
+
+  private startReservationHeartbeat(
+    tracker: UsageTracker,
+    reservationId: string,
+  ): ReturnType<typeof setInterval> {
+    const intervalMs = Math.max(
+      5_000,
+      Math.floor(Number.parseInt(process.env.LLM_RESERVATION_TTL_SECONDS ?? "300", 10) * 500),
+    );
+    const timer = setInterval(() => {
+      void tracker.renew(reservationId).then((renewed) => {
+        if (!renewed) {
+          logger.warn("l2-content", "usage reservation heartbeat lost lease", { reservationId });
+        }
+      }).catch((error) => {
+        logger.warn("l2-content", "usage reservation heartbeat failed", {
+          reservationId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }, intervalMs);
+    timer.unref?.();
+    return timer;
   }
 
   /**

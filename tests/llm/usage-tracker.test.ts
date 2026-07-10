@@ -6,8 +6,15 @@ function makeRepo(overrides: Partial<ILlmUsageRepository> = {}): ILlmUsageReposi
   return {
     getDailyUsage: vi.fn(async () => 0),
     reserveDailyTokens: vi.fn(async () => "reservation-1"),
+    renewDailyTokens: vi.fn(async () => true),
     settleDailyTokens: vi.fn(async () => {}),
     releaseDailyTokens: vi.fn(async () => {}),
+    expireReservations: vi.fn(async () => 0),
+    getReservationMetrics: vi.fn(async () => ({
+      pendingCount: 0,
+      expiredPendingCount: 0,
+      oldestPendingAgeSeconds: 0,
+    })),
     record: vi.fn(async () => {}),
     ...overrides,
   };
@@ -40,20 +47,27 @@ describe("UsageTracker", () => {
 
   it("reserve atomically delegates the UTC day, estimate, and budget", async () => {
     const repo = makeRepo();
-    const tracker = new UsageTracker(repo, 1000, 250);
+    const tracker = new UsageTracker(repo, 1000, 250, 120);
     await expect(tracker.reserve()).resolves.toBe("reservation-1");
     expect(repo.reserveDailyTokens).toHaveBeenCalledWith(
       new Date().toISOString().slice(0, 10),
       250,
       1000,
+      120,
     );
   });
 
-  it("settle and release delegate reservation lifecycle", async () => {
+  it("rejects a reservation TTL shorter than twice the provider timeout", () => {
+    expect(() => new UsageTracker(makeRepo(), 1000, 250, 30, 20)).toThrow(/twice/);
+  });
+
+  it("renew, settle and release delegate reservation lifecycle", async () => {
     const repo = makeRepo();
-    const tracker = new UsageTracker(repo, 1000, 250);
+    const tracker = new UsageTracker(repo, 1000, 250, 120);
+    await expect(tracker.renew("reservation-0")).resolves.toBe(true);
     await tracker.settle("reservation-1", "openai", "gpt-4o", 120, 80);
     await tracker.release("reservation-2");
+    expect(repo.renewDailyTokens).toHaveBeenCalledWith("reservation-0", 120);
     expect(repo.settleDailyTokens).toHaveBeenCalledWith(
       "reservation-1",
       "openai",
