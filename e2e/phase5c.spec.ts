@@ -1,45 +1,65 @@
 import { test, expect } from "./fixtures";
 
-test.describe("Phase 5C parent-delete UI", () => {
-  test("cancel does not send a delete request", async ({ authedPage: page }) => {
-    await page.locator('[data-section="manual"]').click();
+const DELETE_ID = "00000000-0000-4000-8000-000000000050";
 
-    let deleteRequestSeen = false;
-    page.on("request", (req) => {
-      if (req.method() === "DELETE" && req.url().includes("/api/l3/")) {
-        deleteRequestSeen = true;
+async function openDeleteForm(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Manual Editor", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Delete active row", exact: true })).toBeVisible();
+
+  const form = page.locator("form").filter({ has: page.getByRole("heading", { name: "Delete active row", exact: true }) });
+  await form.getByLabel("Entity type").selectOption("source");
+  await form.getByLabel("Explicit id").fill(DELETE_ID);
+  return form;
+}
+
+test.describe("Phase 5C parent-delete UI", () => {
+  test("unconfirmed delete does not send a request", async ({ authedPage: page }) => {
+    const form = await openDeleteForm(page);
+    let deleteCount = 0;
+    page.on("request", (request) => {
+      if (request.method() === "DELETE" && request.url().includes("/api/l3/sources/")) {
+        deleteCount += 1;
       }
     });
 
-    const deleteButton = page.locator('[data-testid="parent-delete-trigger"]').first();
-    if (await deleteButton.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      await deleteButton.click();
-      await expect(page.locator('[data-testid="parent-delete-confirm"]')).toBeVisible({ timeout: 3_000 });
-      await page.locator('[data-testid="parent-delete-cancel"]').click();
-      await expect(page.locator('[data-testid="parent-delete-confirm"]')).not.toBeVisible({ timeout: 3_000 });
-      await page.waitForTimeout(500);
-      expect(deleteRequestSeen).toBe(false);
-    }
+    const confirmation = form.getByRole("checkbox", { name: "Confirm delete for this explicit id." });
+    const deleteButton = form.getByRole("button", { name: "Delete row", exact: true });
+    await confirmation.check();
+    await expect(deleteButton).toBeEnabled();
+    await confirmation.uncheck();
+    await expect(deleteButton).toBeDisabled();
+    await page.waitForTimeout(250);
+
+    expect(deleteCount).toBe(0);
+    await expect(form.getByText("Status: editing", { exact: true })).toBeVisible();
   });
 
-  test("confirm sends exactly one delete request", async ({ authedPage: page }) => {
-    await page.locator('[data-section="manual"]').click();
-
-    const deleteButton = page.locator('[data-testid="parent-delete-trigger"]').first();
-    if (await deleteButton.isVisible({ timeout: 3_000 }).catch(() => false)) {
-      let deleteCount = 0;
-      page.on("request", (req) => {
-        if (req.method() === "DELETE" && req.url().includes("/api/l3/")) {
-          deleteCount++;
-        }
+  test("confirmed delete sends exactly one request", async ({ authedPage: page }) => {
+    const form = await openDeleteForm(page);
+    let deleteCount = 0;
+    await page.route(`**/api/l3/sources/${DELETE_ID}`, async (route) => {
+      if (route.request().method() !== "DELETE") {
+        await route.continue();
+        return;
+      }
+      deleteCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          deleted: { entityType: "source", id: DELETE_ID },
+          activeReadInvalidation: true,
+        }),
       });
+    });
 
-      await deleteButton.click();
-      await expect(page.locator('[data-testid="parent-delete-confirm"]')).toBeVisible({ timeout: 3_000 });
-      await page.locator('[data-testid="parent-delete-confirm-action"]').click();
+    await form.getByRole("checkbox", { name: "Confirm delete for this explicit id." }).check();
+    const deleteButton = form.getByRole("button", { name: "Delete row", exact: true });
+    await expect(deleteButton).toBeEnabled();
+    await deleteButton.click();
 
-      await page.waitForTimeout(1_000);
-      expect(deleteCount).toBe(1);
-    }
+    await expect(form.getByText(`Deleted source: ${DELETE_ID}`, { exact: true })).toBeVisible();
+    expect(deleteCount).toBe(1);
+    await expect(deleteButton).toBeDisabled();
   });
 });
