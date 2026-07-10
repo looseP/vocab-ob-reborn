@@ -5,6 +5,9 @@ import type { ILlmUsageRepository } from "@/repositories/interfaces";
 function makeRepo(overrides: Partial<ILlmUsageRepository> = {}): ILlmUsageRepository {
   return {
     getDailyUsage: vi.fn(async () => 0),
+    reserveDailyTokens: vi.fn(async () => "reservation-1"),
+    settleDailyTokens: vi.fn(async () => {}),
+    releaseDailyTokens: vi.fn(async () => {}),
     record: vi.fn(async () => {}),
     ...overrides,
   };
@@ -33,6 +36,32 @@ describe("UsageTracker", () => {
     const tracker = new UsageTracker(repo, 1000);
     const over = await tracker.isOverBudget();
     expect(over).toBe(false);
+  });
+
+  it("reserve atomically delegates the UTC day, estimate, and budget", async () => {
+    const repo = makeRepo();
+    const tracker = new UsageTracker(repo, 1000, 250);
+    await expect(tracker.reserve()).resolves.toBe("reservation-1");
+    expect(repo.reserveDailyTokens).toHaveBeenCalledWith(
+      new Date().toISOString().slice(0, 10),
+      250,
+      1000,
+    );
+  });
+
+  it("settle and release delegate reservation lifecycle", async () => {
+    const repo = makeRepo();
+    const tracker = new UsageTracker(repo, 1000, 250);
+    await tracker.settle("reservation-1", "openai", "gpt-4o", 120, 80);
+    await tracker.release("reservation-2");
+    expect(repo.settleDailyTokens).toHaveBeenCalledWith(
+      "reservation-1",
+      "openai",
+      "gpt-4o",
+      120,
+      80,
+    );
+    expect(repo.releaseDailyTokens).toHaveBeenCalledWith("reservation-2");
   });
 
   it("record delegates to the repository with the given token counts", async () => {

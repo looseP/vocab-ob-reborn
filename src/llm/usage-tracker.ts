@@ -7,13 +7,11 @@
  * are wired up by the service/server composition root (createServices /
  * buildLlmDeps).
  *
- * Behavior preserved from the pre-refactor version:
- *  - getDailyUsage() sums prompt+completion tokens for the current UTC day.
- *  - isOverBudget() is true when today's usage has reached/exceeded the
- *    configured daily limit.
- *  - record() persists a single LLM call's usage (best-effort: callers may
- *    await or .catch() to avoid blocking the draft flow on observability
- *    failures).
+ * Budget admission uses a database-backed reservation. The repository takes
+ * a day-scoped advisory transaction lock, checks usage, and inserts the
+ * reservation atomically, so concurrent processes cannot all pass a separate
+ * check-before-call window. The reserved amount is a configurable conservative
+ * estimate; actual usage replaces it after the provider returns.
  */
 
 import type { ILlmUsageRepository } from "../repositories/interfaces";
@@ -31,6 +29,10 @@ export class UsageTracker {
       process.env.LLM_DAILY_TOKEN_LIMIT ?? "50000",
       10,
     ),
+    private readonly reservationTokens: number = parseInt(
+      process.env.LLM_TOKEN_RESERVATION ?? process.env.LLM_MAX_TOKENS ?? "2048",
+      10,
+    ),
   ) {}
 
   /** Total tokens consumed since the start of the current UTC day. */
@@ -41,6 +43,31 @@ export class UsageTracker {
   /** True when today's usage has reached (or exceeded) the daily limit. */
   async isOverBudget(): Promise<boolean> {
     return (await this.getDailyUsage()) >= this.dailyBudget;
+  }
+
+  async reserve(): Promise<string | null> {
+    const dayKey = new Date().toISOString().slice(0, 10);
+    return this.repo.reserveDailyTokens(dayKey, this.reservationTokens, this.dailyBudget);
+  }
+
+  async settle(
+    reservationId: string,
+    provider: string,
+    model: string,
+    promptTokens: number,
+    completionTokens: number,
+  ): Promise<void> {
+    await this.repo.settleDailyTokens(
+      reservationId,
+      provider,
+      model,
+      promptTokens,
+      completionTokens,
+    );
+  }
+
+  async release(reservationId: string): Promise<void> {
+    await this.repo.releaseDailyTokens(reservationId);
   }
 
   /**

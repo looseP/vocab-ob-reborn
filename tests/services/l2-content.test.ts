@@ -90,8 +90,12 @@ function makeProvider(overrides: Partial<LlmProvider> = {}): LlmProvider {
 }
 
 function makeUsageTracker(overrides: Partial<{ isOverBudget: boolean }> = {}) {
+  const overBudget = overrides.isOverBudget ?? false;
   return {
-    isOverBudget: vi.fn(async () => overrides.isOverBudget ?? false),
+    isOverBudget: vi.fn(async () => overBudget),
+    reserve: vi.fn(async () => (overBudget ? null : "reservation-1")),
+    settle: vi.fn(async () => {}),
+    release: vi.fn(async () => {}),
     record: vi.fn(async () => {}),
     getDailyUsage: vi.fn(async () => 0),
   };
@@ -174,10 +178,16 @@ describe("L2ContentService.generateDraft", () => {
     expect(dictionaryProvider.lookupCollocations).toHaveBeenCalledWith(
       expect.objectContaining({ lemma: "abundant", pos: "adj." }),
     );
-    // budget checked before the LLM call (only because candidates existed)
-    expect(tracker.isOverBudget).toHaveBeenCalledTimes(1);
-    // usage recorded with the result's token counts
-    expect(tracker.record).toHaveBeenCalledWith("test-model", "test-model", 100, 50);
+    // budget reserved before the LLM call (only because candidates existed)
+    expect(tracker.reserve).toHaveBeenCalledTimes(1);
+    // reservation settled with the result's token counts
+    expect(tracker.settle).toHaveBeenCalledWith(
+      "reservation-1",
+      "test-model",
+      "test-model",
+      100,
+      50,
+    );
   });
 
   it("returns OVER_BUDGET when over the daily token limit (no LLM call)", async () => {
@@ -204,10 +214,10 @@ describe("L2ContentService.generateDraft", () => {
     const result = await service.generateDraft(WORD, "synonym", "manual");
 
     expect(result.error).toBe("LLM_ERROR");
-    expect(result.message).toBe("network timeout");
+    expect(result.message).toBe("LLM provider request failed");
     expect(result.storageField).toBe("synonym");
-    // usage should NOT be recorded when the call failed
-    expect(tracker.record).not.toHaveBeenCalled();
+    expect(tracker.release).toHaveBeenCalledWith("reservation-1");
+    expect(tracker.settle).not.toHaveBeenCalled();
   });
 
   it("returns PARSE_FAILED when the LLM output is not valid JSON", async () => {
@@ -222,10 +232,10 @@ describe("L2ContentService.generateDraft", () => {
     const result = await service.generateDraft(WORD, "antonym", "manual");
 
     expect(result.error).toBe("PARSE_FAILED");
-    expect(result.raw).toBe("sorry, I cannot help with that");
+    expect(result.raw).toBeUndefined();
     expect(result.storageField).toBe("antonym");
-    // usage IS recorded (the call succeeded) even though parsing failed
-    expect(tracker.record).toHaveBeenCalledTimes(1);
+    // usage is settled (the call succeeded) even though parsing failed
+    expect(tracker.settle).toHaveBeenCalledTimes(1);
   });
 
   it("builds the correct prompt per field (collocation → grounded on dictionary candidates)", async () => {
@@ -578,8 +588,8 @@ describe("L2ContentService — always available without LLM deps", () => {
 
     expect(result.error).toBe("L2_CONTENT_UNAVAILABLE");
     expect(result.storageField).toBe("corpus");
-    // budget check must not run when the provider is missing
-    expect(tracker.isOverBudget).not.toHaveBeenCalled();
+    // budget reservation must not run when the provider is missing
+    expect(tracker.reserve).not.toHaveBeenCalled();
   });
 });
 
@@ -632,7 +642,7 @@ describe("L2ContentService — B3 dictionary-grounded collocation", () => {
     // LLM never called, usage never recorded
     expect(provider.generate).not.toHaveBeenCalled();
     expect(tracker.record).not.toHaveBeenCalled();
-    expect(tracker.isOverBudget).not.toHaveBeenCalled();
+    expect(tracker.reserve).not.toHaveBeenCalled();
   });
 
   it("returns NO_DICTIONARY_CANDIDATES when the dictionary lookup throws (LLM not called)", async () => {
@@ -709,7 +719,7 @@ describe("L2ContentService — B3 dictionary-grounded collocation", () => {
     await service.generateDraft(ADJ_WORD, "collocation", "manual");
 
     expect(tracker.record).not.toHaveBeenCalled();
-    expect(tracker.isOverBudget).not.toHaveBeenCalled();
+    expect(tracker.reserve).not.toHaveBeenCalled();
   });
 
   it("checks budget only when an LLM call is actually about to occur (not before dictionary lookup)", async () => {
@@ -726,12 +736,12 @@ describe("L2ContentService — B3 dictionary-grounded collocation", () => {
 
     // dictionary was still consulted (budget checked after, not before lookup)
     expect(dictionaryProvider.lookupCollocations).toHaveBeenCalledTimes(1);
-    // budget check ran (candidates existed → about to call LLM)
-    expect(tracker.isOverBudget).toHaveBeenCalledTimes(1);
+    // atomic reservation ran only after candidates existed and rejected the call.
+    expect(tracker.reserve).toHaveBeenCalledTimes(1);
     // over budget → no LLM call, no usage recorded
     expect(result.error).toBe("OVER_BUDGET");
     expect(provider.generate).not.toHaveBeenCalled();
-    expect(tracker.record).not.toHaveBeenCalled();
+    expect(tracker.settle).not.toHaveBeenCalled();
   });
 
   // ── Phase 2E: ungrounded collocation filtering (drop not reject) ────────
@@ -1063,7 +1073,7 @@ describe("L2ContentService.buildExternalPrompt — P1 dictionary-grounded colloc
     // buildExternalPrompt must never call the LLM or record usage.
     expect(provider.generate).not.toHaveBeenCalled();
     expect(tracker.record).not.toHaveBeenCalled();
-    expect(tracker.isOverBudget).not.toHaveBeenCalled();
+    expect(tracker.reserve).not.toHaveBeenCalled();
   });
 
   it("returns NO_DICTIONARY_CANDIDATES when the dictionary provider throws", async () => {
@@ -1124,7 +1134,7 @@ describe("L2ContentService.buildExternalPrompt — P1 dictionary-grounded colloc
     // buildExternalPrompt is a pure prompt-assembly path — never LLM/budget.
     expect(provider.generate).not.toHaveBeenCalled();
     expect(tracker.record).not.toHaveBeenCalled();
-    expect(tracker.isOverBudget).not.toHaveBeenCalled();
+    expect(tracker.reserve).not.toHaveBeenCalled();
   });
 
   it("example (corpus) field still works without a dictionary provider (regression)", async () => {
@@ -1332,9 +1342,9 @@ describe("L2ContentService.generateDraft — P2 LLM-refined collocation provenan
     expect(Array.isArray(draft)).toBe(true);
     expect(draft.length).toBeGreaterThan(0);
     expect(draft[0].provenance.source).toBe("dictionary");
-    // usage was still recorded (the LLM call happened) even though all items
-    // were dropped — the token spend is not silently swallowed.
-    expect(tracker.record).toHaveBeenCalledTimes(1);
+    // usage reservation was settled (the LLM call happened) even though all
+    // items were dropped — the token spend is not silently swallowed.
+    expect(tracker.settle).toHaveBeenCalledTimes(1);
   });
 });
 

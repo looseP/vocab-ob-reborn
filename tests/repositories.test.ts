@@ -95,12 +95,13 @@ describe("WordRepository", () => {
     // First query = count, second = data
     mock.setRowMap({
       "count(*)": [{ total: 42 }],
-      "ORDER BY lemma": [
+      "ORDER BY w.lemma": [
         { id: "1", slug: "aboard", lemma: "aboard" } as WordSummary,
       ],
     });
     const repos = createRepositories();
     const result = await repos.words.findPublic({
+      userId: "u1",
       filters: { q: "ab", freq: "基础词" },
       pagination: { limit: 10, offset: 0 },
     });
@@ -113,6 +114,28 @@ describe("WordRepository", () => {
     // Verify search filter applied
     expect(mock.calls[0].text).toContain("websearch_to_tsquery");
     expect(mock.calls[0].text).toContain("word_freq");
+  });
+
+  it("applies owner-scoped wordbook and review filters", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+    await repos.words.findPublic({
+      userId: "u1",
+      wordbookId: "11111111-1111-4111-8111-111111111111",
+      filters: { review: "due" },
+      pagination: { limit: 10, offset: 0 },
+    });
+
+    expect(mock.calls[0].text).toContain("wordbook_items");
+    expect(mock.calls[0].text).toContain("wb.user_id");
+    expect(mock.calls[0].text).toContain("user_word_progress");
+    expect(mock.calls[0].text).toContain("uwp.due_at <= now()");
+    expect(mock.calls[0].params).toEqual([
+      "11111111-1111-4111-8111-111111111111",
+      "u1",
+      "u1",
+      "11111111-1111-4111-8111-111111111111",
+    ]);
   });
 
   it("count returns number", async () => {
@@ -131,22 +154,16 @@ describe("NoteRepository", () => {
     expect(result).toBeNull();
   });
 
-  it("upsert inserts revision when content changed", async () => {
-    // First call: findByWord (existing note with different content)
-    // Second call: upsert
-    // Third call: revision insert
-    mock.setRowMap({
-      "FROM notes": [{ id: "n1", content_md: "old", version: 1 } as NoteRow],
-      "INSERT INTO notes": [{ id: "n1", content_md: "new", version: 2 } as NoteRow],
-      "INSERT INTO note_revisions": [],
-    });
+  it("upsert atomically writes the note and matching revision", async () => {
+    mock.setRows([{ id: "n1", content_md: "new", version: 2, created: false } as NoteRow & { created: boolean }]);
     const repos = createRepositories();
     const result = await repos.notes.upsert("u1", "w1", "wb1", "new");
 
     expect(result.note.version).toBe(2);
     expect(result.created).toBe(false);
-    // 3 queries: find + upsert + revision
-    expect(mock.calls.length).toBe(3);
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0].text).toContain("WITH upserted_note AS");
+    expect(mock.calls[0].text).toContain("ON CONFLICT (note_id, version) DO NOTHING");
   });
 });
 
@@ -183,10 +200,11 @@ describe("SessionRepository", () => {
   });
 
   it("incrementCardsSeen calls RPC", async () => {
-    mock.setRows([]);
+    mock.setRows([{ updated: true }]);
     const repos = createRepositories();
-    await repos.sessions.incrementCardsSeen("s1");
+    await repos.sessions.incrementCardsSeen("s1", "u1", "wb1");
     expect(mock.lastQuery!.text).toContain("increment_session_cards_seen");
+    expect(mock.lastQuery!.params).toEqual(["s1", "u1", "wb1"]);
   });
 });
 
@@ -225,36 +243,41 @@ describe("ReviewRepository", () => {
   const mockTx = { query: mock.pool.query } as never;
   const txRepos = createRepositories(mockTx);
 
-  it("checkIdempotency acquires advisory lock", async () => {
+  it("checkIdempotency acquires a user-scoped advisory lock", async () => {
     mock.setRows([]); // no existing log
-    const result = await txRepos.reviews.checkIdempotency("key-123");
+    const result = await txRepos.reviews.checkIdempotency("u1", "key-123");
 
     expect(result).toBeNull();
-    // First query = advisory lock, second = SELECT review_logs
+    // First query = advisory lock, second = owner-scoped SELECT review_logs
     expect(mock.calls.length).toBe(2);
     expect(mock.calls[0].text).toContain("pg_advisory_xact_lock");
-    expect(mock.calls[1].text).toContain("idempotency_key = $1");
+    expect(mock.calls[0].params).toEqual(["u1", "key-123"]);
+    expect(mock.calls[1].text).toContain("user_id = $1");
+    expect(mock.calls[1].text).toContain("idempotency_key = $2");
+    expect(mock.calls[1].params).toEqual(["u1", "key-123"]);
   });
 
   it("checkIdempotency returns existing log id", async () => {
     mock.setRows([{ id: "log-123" }]);
-    const result = await txRepos.reviews.checkIdempotency("key-123");
+    const result = await txRepos.reviews.checkIdempotency("u1", "key-123");
     expect(result).toBe("log-123");
   });
 
   it("checkIdempotency throws when not in transaction (H4 fix)", async () => {
     const repos = createRepositories(); // no tx
-    await expect(repos.reviews.checkIdempotency("key")).rejects.toMatchObject({
+    await expect(repos.reviews.checkIdempotency("u1", "key")).rejects.toMatchObject({
       code: "BUSINESS_RULE",
     });
   });
 
-  it("findProgressForUpdate uses FOR UPDATE and JOINs words", async () => {
+  it("findProgressForUpdate uses owner scope, FOR UPDATE and JOINs words", async () => {
     mock.setRows([]);
-    await txRepos.reviews.findProgressForUpdate("p1");
+    await txRepos.reviews.findProgressForUpdate("p1", "u1");
 
     expect(mock.lastQuery!.text).toContain("FOR UPDATE");
     expect(mock.lastQuery!.text).toContain("JOIN words w");
+    expect(mock.lastQuery!.text).toContain("uwp.user_id = $2");
+    expect(mock.lastQuery!.params).toEqual(["p1", "u1"]);
     // M7 fix: verify word slug/title/lemma are selected
     expect(mock.lastQuery!.text).toContain("word_slug");
     expect(mock.lastQuery!.text).toContain("word_title");
@@ -263,7 +286,7 @@ describe("ReviewRepository", () => {
 
   it("findProgressForUpdate throws when not in transaction (H4 fix)", async () => {
     const repos = createRepositories();
-    await expect(repos.reviews.findProgressForUpdate("p1")).rejects.toMatchObject({
+    await expect(repos.reviews.findProgressForUpdate("p1", "u1")).rejects.toMatchObject({
       code: "BUSINESS_RULE",
     });
   });
@@ -341,21 +364,26 @@ describe("ReviewRepository", () => {
 
 describe("StatsRepository (extended)", () => {
   // M5 fix: streak uses dayKeyInDisplayTz (Asia/Shanghai), not UTC.
-  // Helper: build reviewed_at timestamps that fall on consecutive display-tz days.
-  function buildConsecutiveReviewDates(count: number): { reviewed_at: string }[] {
-    const days: { reviewed_at: string }[] = [];
-    for (let i = 0; i < count; i++) {
-      // Use noon Shanghai time (= 04:00 UTC) to avoid midnight boundary issues
-      const d = new Date();
-      d.setHours(12, 0, 0, 0); // local ≈ Shanghai noon
-      d.setDate(d.getDate() - i);
-      days.push({ reviewed_at: d.toISOString() });
-    }
-    return days;
+  // Helper: the repository now computes the streak entirely in SQL.
+  function streakRow(count: number): { streak_days: number }[] {
+    return [{ streak_days: count }];
   }
 
+  it("calculateStreak groups by display-timezone day before applying LIMIT", async () => {
+    mock.setRows(streakRow(1));
+    const repos = createRepositories();
+    await repos.stats.getDashboardSummary("u1", "wb1");
+    const streakQuery = mock.calls.find((call) => call.text.includes("review_day"));
+    expect(streakQuery?.text).toContain("AT TIME ZONE 'Asia/Shanghai'");
+    expect(streakQuery?.text).toContain("SELECT DISTINCT");
+    expect(streakQuery?.text).toContain("LIMIT 365");
+  });
+
   it("calculateStreak counts consecutive days", async () => {
-    mock.setRows(buildConsecutiveReviewDates(5));
+    mock.setRowMap({
+      "count(*)": [{ count: "0" }],
+      "streak_days": streakRow(5),
+    });
     const repos = createRepositories();
     const summary = await repos.stats.getDashboardSummary("u1", "wb1");
     expect(summary.streakDays).toBe(5);
@@ -365,7 +393,7 @@ describe("StatsRepository (extended)", () => {
     // count queries return 0, streak query returns empty
     mock.setRowMap({
       "count(*)": [{ count: "0" }],
-      "reviewed_at": [],
+      "streak_days": [{ streak_days: 0 }],
     });
     const repos = createRepositories();
     const summary = await repos.stats.getDashboardSummary("u1", "wb1");
@@ -393,16 +421,10 @@ describe("StatsRepository (extended)", () => {
   });
 
   it("calculateStreak breaks on gap", async () => {
-    // Day 0 and day 2, but NOT day 1 — streak should break at 1
-    const day0 = new Date();
-    day0.setHours(12, 0, 0, 0); // today noon
-    const day2 = new Date();
-    day2.setHours(12, 0, 0, 0);
-    day2.setDate(day2.getDate() - 2);
-    mock.setRows([
-      { reviewed_at: day0.toISOString() },
-      { reviewed_at: day2.toISOString() },
-    ]);
+    mock.setRowMap({
+      "count(*)": [{ count: "0" }],
+      "streak_days": [{ streak_days: 1 }],
+    });
     const repos = createRepositories();
     const summary = await repos.stats.getDashboardSummary("u1", "wb1");
     expect(summary.streakDays).toBe(1);
@@ -426,12 +448,15 @@ describe("WordbookRepository (extended)", () => {
     expect(mock.lastQuery!.text).toContain("WHERE user_id = $1");
   });
 
-  it("create inserts and returns row", async () => {
-    mock.setRows([{ id: "wb1", name: "Test" }]);
+  it("create inserts and returns row including description", async () => {
+    mock.setRows([{ id: "wb1", name: "Test", description: "Exam list" }]);
     const repos = createRepositories();
-    const result = await repos.wordbooks.create("u1", "Test", false);
+    const result = await repos.wordbooks.create("u1", "Test", false, "Exam list");
     expect(result.id).toBe("wb1");
+    expect(result.description).toBe("Exam list");
     expect(mock.lastQuery!.text).toContain("INSERT INTO wordbooks");
+    expect(mock.lastQuery!.text).toContain("description");
+    expect(mock.lastQuery!.params).toEqual(["u1", "Test", false, "Exam list"]);
   });
 
   it("getOrCreateDefault creates when none exists", async () => {
@@ -486,26 +511,34 @@ describe("SessionRepository (extended)", () => {
   });
 
   it("endSession updates ended_at", async () => {
-    mock.setRows([]);
+    mock.setRows([{ id: "s1" }]);
     const repos = createRepositories();
-    await repos.sessions.endSession("s1");
+    await repos.sessions.endSession("s1", "u1", "wb1");
     expect(mock.lastQuery!.text).toContain("SET ended_at = now()");
+    expect(mock.lastQuery!.params).toEqual(["s1", "u1", "wb1"]);
   });
 
-  it("getOrCreateToday creates new when old session expired", async () => {
-    // Existing session started yesterday
-    const yesterday = new Date();
-    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-    yesterday.setUTCHours(0, 0, 0, 0);
-    mock.setRowMap({
-      "ORDER BY started_at": [{ id: "s-old", started_at: yesterday.toISOString(), ended_at: null }],
-      "INSERT INTO sessions": [{ id: "s-new", started_at: new Date().toISOString(), ended_at: null }],
-    });
+  it("endSession fails closed when the owner/wordbook tuple does not match", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+    await expect(repos.sessions.endSession("s1", "other-user", "wb1"))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("incrementCardsSeen fails closed when the scoped RPC updates nothing", async () => {
+    mock.setRows([{ updated: false }]);
+    const repos = createRepositories();
+    await expect(repos.sessions.incrementCardsSeen("s1", "other-user", "wb1"))
+      .rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("getOrCreateToday delegates atomic creation to the database function", async () => {
+    mock.setRows([{ id: "s-new", started_at: new Date().toISOString(), ended_at: null }]);
     const repos = createRepositories();
     const result = await repos.sessions.getOrCreateToday("u1", "wb1");
     expect(result.id).toBe("s-new");
-    // find + create + end old = 3 queries
-    expect(mock.calls.length).toBe(3);
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0].text).toContain("get_or_create_today_session");
   });
 });
 
@@ -519,16 +552,13 @@ describe("NoteRepository (extended)", () => {
     expect(mock.lastQuery!.text).toContain("ORDER BY nr.version DESC");
   });
 
-  it("upsert does not insert revision when content unchanged", async () => {
-    mock.setRowMap({
-      "FROM notes": [{ id: "n1", content_md: "same", version: 1 }],
-      "INSERT INTO notes": [{ id: "n1", content_md: "same", version: 1 }],
-    });
+  it("upsert keeps the existing version for unchanged content", async () => {
+    mock.setRows([{ id: "n1", content_md: "same", version: 1, created: false }]);
     const repos = createRepositories();
     const result = await repos.notes.upsert("u1", "w1", "wb1", "same");
     expect(result.note.version).toBe(1);
-    // find + upsert only, no revision insert
-    expect(mock.calls.length).toBe(2);
+    expect(result.created).toBe(false);
+    expect(mock.calls).toHaveLength(1);
   });
 });
 
@@ -621,7 +651,7 @@ describe("ReviewRepository — skip/suspend/undo (H5 fix)", () => {
       out_word_id: "w1",
       out_error_message: null,
     }]);
-    const result = await txRepos.reviews.undoReviewLog("log-1", "u1", "s1", null);
+    const result = await txRepos.reviews.undoReviewLog("log-1", "u1", "wb1", "s1", null);
 
     expect(result.success).toBe(true);
     expect(result.progressId).toBe("p1");
@@ -636,7 +666,7 @@ describe("ReviewRepository — skip/suspend/undo (H5 fix)", () => {
       out_word_id: null,
       out_error_message: "找不到日志",
     }]);
-    const result = await txRepos.reviews.undoReviewLog("bad-id", "u1", "s1", null);
+    const result = await txRepos.reviews.undoReviewLog("bad-id", "u1", "wb1", "s1", null);
 
     expect(result.success).toBe(false);
     expect(result.errorMessage).toBe("找不到日志");
@@ -649,7 +679,7 @@ describe("ReviewRepository — skip/suspend/undo (H5 fix)", () => {
       out_word_id: "w1",
       out_error_message: null,
     }]);
-    await txRepos.reviews.undoReviewLog("log-1", "u1", "s1", "undo-key");
+    await txRepos.reviews.undoReviewLog("log-1", "u1", "wb1", "s1", "undo-key");
 
     // 3 queries: RPC + SELECT progress (H-NEW-1 fix: fetch wordbook_id) + INSERT log
     expect(mock.calls.length).toBe(3);
@@ -660,7 +690,7 @@ describe("ReviewRepository — skip/suspend/undo (H5 fix)", () => {
 
   it("undoReviewLog throws without tx (H4)", async () => {
     const repos = createRepositories();
-    await expect(repos.reviews.undoReviewLog("log-1", "u1", "s1", null))
+    await expect(repos.reviews.undoReviewLog("log-1", "u1", "wb1", "s1", null))
       .rejects.toMatchObject({ code: "BUSINESS_RULE" });
   });
 });
@@ -832,15 +862,15 @@ describe("saveAnswer dual-track changes", () => {
     expect(insertSql).not.toContain("$17");
   });
 
-  it("keeps UPDATE parameters at $1-$13 (l1 hash + recent_ratings reuse existing params)", async () => {
+  it("uses owner and wordbook parameters for the progress UPDATE", async () => {
     await runSaveAnswer();
     const updateSql = mock.calls[0].text;
 
-    // No new placeholders introduced — l1_content_hash_snapshot reuses $11,
-    // recent_ratings subquery reuses $5 (rating)
-    expect(updateSql).toContain("WHERE id = $13::uuid");
-    expect(updateSql).not.toContain("$14");
-    expect(updateSql).not.toContain("$15");
+    // l1_content_hash_snapshot reuses $11 and recent_ratings reuses $5;
+    // $14/$15 form the authenticated owner+wordbook boundary.
+    expect(updateSql).toContain("WHERE id = $13::uuid AND user_id = $14::uuid AND wordbook_id = $15::uuid");
+    expect(mock.calls[0].params[13]).toBe("u1");
+    expect(mock.calls[0].params[14]).toBe("wb1");
   });
 
   it("does not change the number of executed queries (UPDATE + INSERT)", async () => {

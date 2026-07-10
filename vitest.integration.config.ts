@@ -12,7 +12,7 @@ export default defineConfig({
   test: {
     testTimeout: 30000,
     environment: "node",
-    include: ["tests/review-concurrency.test.ts"],
+    include: ["tests/**/*.integration.test.ts"],
     exclude: ["node_modules/**"],
     setupFiles: ["./tests/setup.ts"],
   },

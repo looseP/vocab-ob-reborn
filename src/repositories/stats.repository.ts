@@ -8,7 +8,7 @@
 import type { ReviewRating } from "../domain";
 import type { IStatsRepository, DashboardSummary, RatingDistribution } from "./interfaces";
 import { BaseRepository } from "./base";
-import { startOfTodayIsoInDisplayTz, dayKeyInDisplayTz } from "../db/timezone";
+import { startOfTodayIsoInDisplayTz, todayKeyInDisplayTz } from "../db/timezone";
 
 export class StatsRepository extends BaseRepository implements IStatsRepository {
   async getDashboardSummary(
@@ -106,33 +106,24 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     userId: string,
     wordbookId: string,
   ): Promise<number> {
-    const rows = await this.query<{ reviewed_at: string }>(
-      `SELECT DISTINCT reviewed_at
-       FROM review_logs
-       WHERE user_id = $1 AND wordbook_id = $2::uuid
-       ORDER BY reviewed_at DESC
-       LIMIT 365`,
-      [userId, wordbookId],
+    const row = await this.queryOne<{ streak_days: number | string }>(
+      `WITH review_days AS (
+         SELECT DISTINCT (reviewed_at AT TIME ZONE 'Asia/Shanghai')::date AS review_day
+         FROM review_logs
+         WHERE user_id = $1 AND wordbook_id = $2::uuid
+         ORDER BY review_day DESC
+         LIMIT 365
+       ), numbered_days AS (
+         SELECT review_day,
+                row_number() OVER (ORDER BY review_day DESC) - 1 AS day_offset
+         FROM review_days
+       )
+       SELECT count(review_day)::int AS streak_days
+       FROM numbered_days
+       WHERE review_day = $3::date - day_offset::int`,
+      [userId, wordbookId, todayKeyInDisplayTz()],
     );
 
-    if (rows.length === 0) return 0;
-
-    // Convert to display-timezone day keys
-    const reviewDays = new Set(rows.map((r) => dayKeyInDisplayTz(r.reviewed_at)));
-
-    let streak = 0;
-    const today = new Date();
-
-    for (let i = 0; i < 365; i++) {
-      const checkDate = new Date(today);
-      checkDate.setDate(checkDate.getDate() - i);
-      const dayKey = dayKeyInDisplayTz(checkDate);
-      if (reviewDays.has(dayKey)) {
-        streak++;
-      } else {
-        break;
-      }
-    }
-    return streak;
+    return row ? Number(row.streak_days) : 0;
   }
 }

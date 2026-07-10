@@ -12,7 +12,7 @@ import { BaseRepository } from "./base";
 export class WordbookRepository extends BaseRepository implements IWordbookRepository {
   async findById(id: string): Promise<WordbookRow | null> {
     return this.queryOne<WordbookRow>(
-      `SELECT id, user_id, name, is_default, settings, created_at, updated_at
+      `SELECT id, user_id, name, description, is_default, settings, created_at, updated_at
        FROM wordbooks WHERE id = $1::uuid`,
       [id],
     );
@@ -20,7 +20,7 @@ export class WordbookRepository extends BaseRepository implements IWordbookRepos
 
   async findDefaultByUser(userId: string): Promise<WordbookRow | null> {
     return this.queryOne<WordbookRow>(
-      `SELECT id, user_id, name, is_default, settings, created_at, updated_at
+      `SELECT id, user_id, name, description, is_default, settings, created_at, updated_at
        FROM wordbooks WHERE user_id = $1 AND is_default = true LIMIT 1`,
       [userId],
     );
@@ -28,18 +28,23 @@ export class WordbookRepository extends BaseRepository implements IWordbookRepos
 
   async findAllByUser(userId: string): Promise<WordbookRow[]> {
     return this.query<WordbookRow>(
-      `SELECT id, user_id, name, is_default, settings, created_at, updated_at
+      `SELECT id, user_id, name, description, is_default, settings, created_at, updated_at
        FROM wordbooks WHERE user_id = $1 ORDER BY name`,
       [userId],
     );
   }
 
-  async create(userId: string, name: string, isDefault = false): Promise<WordbookRow> {
+  async create(
+    userId: string,
+    name: string,
+    isDefault = false,
+    description: string | null = null,
+  ): Promise<WordbookRow> {
     const row = await this.queryOne<WordbookRow>(
-      `INSERT INTO wordbooks (user_id, name, is_default)
-       VALUES ($1, $2, $3)
-       RETURNING id, user_id, name, is_default, settings, created_at, updated_at`,
-      [userId, name, isDefault],
+      `INSERT INTO wordbooks (user_id, name, is_default, description)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, user_id, name, description, is_default, settings, created_at, updated_at`,
+      [userId, name, isDefault, description],
     );
     if (!row) throw new Error("wordbook create returned no row");
     return row;

@@ -403,7 +403,10 @@ describe("L3ContextRepository", () => {
     expect(result.items[0].context.text).toBe("A vivid context.");
     expect(result.items[0].occurrence?.surface).toBe("vivid");
     expect(result.items[0].links).toHaveLength(1);
+    expect(mock.lastQuery?.text).toContain("WITH selected_contexts AS");
     expect(mock.lastQuery?.text).toContain("JOIN words w ON w.id = o.word_id");
+    expect(mock.lastQuery?.text).toContain("EXISTS (");
+    expect(mock.lastQuery?.text).not.toContain("GROUP BY c.id, s.id, o.id");
     expect(mock.lastQuery?.text).toContain("w.slug = $3");
   });
 

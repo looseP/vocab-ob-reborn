@@ -10,6 +10,7 @@ const WORDBOOK_ROW: WordbookRow = {
   id: "wb-1",
   user_id: "u1",
   name: "Default",
+  description: null,
   is_default: true,
   settings: {},
   created_at: "2026-07-08T00:00:00Z",
@@ -335,6 +336,22 @@ describe("L3ImportService", () => {
       text: "x".repeat(500_001),
     })).rejects.toBeInstanceOf(ValidationError);
     expect(contextRepo.createImportJob).not.toHaveBeenCalled();
+  });
+
+  it("rejects structured proposal amplification when called outside HTTP", async () => {
+    const occurrences = Array.from({ length: 1_000 }, (_, index) => ({
+      slug: "vivid",
+      surface: `vivid-${index}`,
+    }));
+
+    await expect(service.createStructuredImportProposal({
+      userId: "u1",
+      source: { sourceType: "manual", title: "Examples" },
+      contexts: [{ contextType: "sentence", text: "A vivid account.", occurrences }],
+    })).rejects.toMatchObject({ field: "contexts" });
+
+    expect(contextRepo.createImportJob).not.toHaveBeenCalled();
+    expect(proposalService.createProposal).not.toHaveBeenCalled();
   });
 
   it("rejects structured context/source link proposal refs before creating import job", async () => {

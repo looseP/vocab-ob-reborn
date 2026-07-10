@@ -100,12 +100,12 @@ export const words = pgTable("words", {
 	index("idx_words_aliases_gin").using("gin", table.aliases.asc().nullsLast().op("array_ops")),
 	index("idx_words_lemma_trgm").using("gin", table.lemma.asc().nullsLast().op("gin_trgm_ops")),
 	index("idx_words_metadata_gin").using("gin", table.metadata.asc().nullsLast().op("jsonb_ops")),
-	index("idx_words_public_lemma_sort").using("btree", table.lemma.asc().nullsLast().op("text_ops")).where(sql`((is_published = true) AND (is_deleted = false))`),
+	index("idx_words_public_lemma_sort").using("btree", table.lemma.asc().nullsLast()).where(sql`((is_published = true) AND (is_deleted = false))`),
 	index("idx_words_public_metadata_filter").using("gin", table.metadata.asc().nullsLast().op("jsonb_path_ops")).where(sql`((is_published = true) AND (is_deleted = false))`),
-	index("idx_words_published").using("btree", table.isPublished.asc().nullsLast().op("bool_ops"), table.isDeleted.asc().nullsLast().op("bool_ops")),
-	index("idx_words_quality_status").using("btree", table.qualityStatus.asc().nullsLast().op("text_ops")).where(sql`(quality_status <> 'ok'::text)`),
+	index("idx_words_published").using("btree", table.isPublished.asc().nullsLast(), table.isDeleted.asc().nullsLast()),
+	index("idx_words_quality_status").using("btree", table.qualityStatus.asc().nullsLast()).where(sql`(quality_status <> 'ok'::text)`),
 	index("idx_words_search").using("gin", table.searchVector.asc().nullsLast().op("tsvector_ops")),
-	index("idx_words_source_path").using("btree", table.sourcePath.asc().nullsLast().op("text_ops")),
+	index("idx_words_source_path").using("btree", table.sourcePath.asc().nullsLast()),
 	index("idx_words_title_trgm").using("gin", table.title.asc().nullsLast().op("gin_trgm_ops")),
 	unique("words_slug_key").on(table.slug),
 	unique("words_content_hash_key").on(table.contentHash),
@@ -145,12 +145,12 @@ export const userWordProgress = pgTable("user_word_progress", {
 	wordbookId: uuid("wordbook_id").notNull(),
 	needsRecheck: boolean("needs_recheck").default(false).notNull(),
 }, (table) => [
-	index("idx_progress_due").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.dueAt.asc().nullsLast().op("timestamptz_ops")),
-	index("idx_progress_recheck").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.wordbookId.asc().nullsLast().op("uuid_ops")).where(sql`(needs_recheck = true)`),
-	index("idx_progress_word").using("btree", table.wordId.asc().nullsLast().op("uuid_ops")),
-	index("idx_user_word_progress_due").using("btree", table.userId.asc().nullsLast().op("timestamptz_ops"), table.wordbookId.asc().nullsLast().op("text_ops"), table.state.asc().nullsLast().op("text_ops"), table.dueAt.asc().nullsLast().op("timestamptz_ops")),
-	index("idx_uwp_has_hash_snapshot").using("btree", table.wordId.asc().nullsLast().op("uuid_ops")).where(sql`(content_hash_snapshot IS NOT NULL)`),
-	index("idx_uwp_wordbook_due").using("btree", table.wordbookId.asc().nullsLast().op("timestamptz_ops"), table.dueAt.asc().nullsLast().op("uuid_ops")),
+	index("idx_progress_due").using("btree", table.userId.asc().nullsLast(), table.dueAt.asc().nullsLast()),
+	index("idx_progress_recheck").using("btree", table.userId.asc().nullsLast(), table.wordbookId.asc().nullsLast()).where(sql`(needs_recheck = true)`),
+	index("idx_progress_word").using("btree", table.wordId.asc().nullsLast()),
+	index("idx_user_word_progress_due").using("btree", table.userId.asc().nullsLast(), table.wordbookId.asc().nullsLast(), table.state.asc().nullsLast(), table.dueAt.asc().nullsLast()),
+	index("idx_uwp_has_hash_snapshot").using("btree", table.wordId.asc().nullsLast()).where(sql`(content_hash_snapshot IS NOT NULL)`),
+	index("idx_uwp_wordbook_due").using("btree", table.wordbookId.asc().nullsLast(), table.dueAt.asc().nullsLast()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [profiles.id],
@@ -166,6 +166,12 @@ export const userWordProgress = pgTable("user_word_progress", {
 			foreignColumns: [wordbooks.id],
 			name: "fk_uwp_wordbook"
 		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "user_word_progress_wordbook_owner_fkey"
+		}).onDelete("cascade"),
+	unique("user_word_progress_id_user_wordbook_unique").on(table.id, table.userId, table.wordbookId),
 	unique("user_word_progress_user_wordbook_word_key").on(table.userId, table.wordId, table.wordbookId),
 	pgPolicy("progress_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)`  }),
 	check("user_word_progress_schedule_algo_check", sql`schedule_algo = ANY (ARRAY['leitner'::text, 'sm2'::text, 'fsrs'::text])`),
@@ -183,7 +189,7 @@ export const notes = pgTable("notes", {
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	wordbookId: uuid("wordbook_id").notNull(),
 }, (table) => [
-	index("idx_notes_wordbook").using("btree", table.wordbookId.asc().nullsLast().op("timestamptz_ops"), table.updatedAt.desc().nullsFirst().op("uuid_ops")),
+	index("idx_notes_wordbook").using("btree", table.wordbookId.asc().nullsLast(), table.updatedAt.desc().nullsFirst()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [profiles.id],
@@ -214,8 +220,9 @@ export const sessions = pgTable("sessions", {
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	wordbookId: uuid("wordbook_id").notNull(),
 }, (table) => [
-	index("idx_sessions_user_mode_active").using("btree", table.userId.asc().nullsLast().op("text_ops"), table.mode.asc().nullsLast().op("uuid_ops"), table.endedAt.asc().nullsLast().op("timestamptz_ops"), table.startedAt.desc().nullsFirst().op("timestamptz_ops")),
-	index("idx_sessions_wordbook").using("btree", table.wordbookId.asc().nullsLast().op("timestamptz_ops"), table.startedAt.desc().nullsFirst().op("uuid_ops")),
+	index("idx_sessions_user_mode_active").using("btree", table.userId.asc().nullsLast(), table.mode.asc().nullsLast(), table.endedAt.asc().nullsLast(), table.startedAt.desc().nullsFirst()),
+	uniqueIndex("idx_sessions_one_active").using("btree", table.userId, table.wordbookId, table.mode).where(sql`ended_at IS NULL`),
+	index("idx_sessions_wordbook").using("btree", table.wordbookId.asc().nullsLast(), table.startedAt.desc().nullsFirst()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [profiles.id],
@@ -226,6 +233,12 @@ export const sessions = pgTable("sessions", {
 			foreignColumns: [wordbooks.id],
 			name: "fk_sessions_wordbook"
 		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "sessions_wordbook_owner_fkey"
+		}).onDelete("cascade"),
+	unique("sessions_id_user_wordbook_unique").on(table.id, table.userId, table.wordbookId),
 	pgPolicy("sessions_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)`  }),
 	check("sessions_mode_check", sql`mode = ANY (ARRAY['review'::text, 'cram'::text, 'preview'::text])`),
 ]);
@@ -240,8 +253,9 @@ export const noteRevisions = pgTable("note_revisions", {
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	wordbookId: uuid("wordbook_id").notNull(),
 }, (table) => [
-	index("idx_note_revisions_note_id").using("btree", table.noteId.asc().nullsLast().op("int4_ops"), table.version.desc().nullsFirst().op("int4_ops")),
-	index("idx_note_revisions_user_word").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.wordId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.desc().nullsFirst().op("uuid_ops")),
+	uniqueIndex("idx_note_revisions_note_version").using("btree", table.noteId.asc().nullsLast(), table.version.asc().nullsLast()),
+	index("idx_note_revisions_note_id").using("btree", table.noteId.asc().nullsLast(), table.version.desc().nullsFirst()),
+	index("idx_note_revisions_user_word").using("btree", table.userId.asc().nullsLast(), table.wordId.asc().nullsLast(), table.createdAt.desc().nullsFirst()),
 	foreignKey({
 			columns: [table.noteId],
 			foreignColumns: [notes.id],
@@ -285,8 +299,8 @@ export const importRuns = pgTable("import_runs", {
 	summary: jsonb().default({}).notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_import_runs_started_at").using("btree", table.startedAt.desc().nullsFirst().op("timestamptz_ops")),
-	index("idx_import_runs_status").using("btree", table.status.asc().nullsLast().op("text_ops"), table.startedAt.desc().nullsFirst().op("text_ops")),
+	index("idx_import_runs_started_at").using("btree", table.startedAt.desc().nullsFirst()),
+	index("idx_import_runs_status").using("btree", table.status.asc().nullsLast(), table.startedAt.desc().nullsFirst()),
 	pgPolicy("import_runs_no_public_access", { as: "permissive", for: "all", to: ["public"], using: sql`false`, withCheck: sql`false`  }),
 	check("import_runs_status_check", sql`status = ANY (ARRAY['running'::text, 'completed'::text, 'completed_with_errors'::text, 'failed'::text])`),
 ]);
@@ -300,7 +314,7 @@ export const importErrors = pgTable("import_errors", {
 	rawExcerpt: text("raw_excerpt"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_import_errors_run_id").using("btree", table.runId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
+	index("idx_import_errors_run_id").using("btree", table.runId.asc().nullsLast(), table.createdAt.desc().nullsFirst()),
 	foreignKey({
 			columns: [table.runId],
 			foreignColumns: [importRuns.id],
@@ -328,8 +342,8 @@ export const collectionNotes = pgTable("collection_notes", {
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_collection_notes_kind_published").using("btree", table.kind.asc().nullsLast().op("bool_ops"), table.isPublished.asc().nullsLast().op("text_ops"), table.isDeleted.asc().nullsLast().op("text_ops")),
-	index("idx_collection_notes_source_path").using("btree", table.sourcePath.asc().nullsLast().op("text_ops")),
+	index("idx_collection_notes_kind_published").using("btree", table.kind.asc().nullsLast(), table.isPublished.asc().nullsLast(), table.isDeleted.asc().nullsLast()),
+	index("idx_collection_notes_source_path").using("btree", table.sourcePath.asc().nullsLast()),
 	unique("collection_notes_slug_key").on(table.slug),
 	unique("collection_notes_content_hash_key").on(table.contentHash),
 	unique("collection_notes_source_path_key").on(table.sourcePath),
@@ -348,8 +362,8 @@ export const wordbooks = pgTable("wordbooks", {
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	settings: jsonb(),
 }, (table) => [
-	uniqueIndex("idx_wordbooks_user_default").using("btree", table.userId.asc().nullsLast().op("bool_ops"), table.isDefault.asc().nullsLast().op("bool_ops")).where(sql`(is_default = true)`),
-	index("idx_wordbooks_user_id").using("btree", table.userId.asc().nullsLast().op("uuid_ops")),
+	uniqueIndex("idx_wordbooks_user_default").using("btree", table.userId.asc().nullsLast(), table.isDefault.asc().nullsLast()).where(sql`(is_default = true)`),
+	index("idx_wordbooks_user_id").using("btree", table.userId.asc().nullsLast()),
 	unique("wordbooks_id_user_id_unique").on(table.id, table.userId),
 	foreignKey({
 			columns: [table.userId],
@@ -377,8 +391,8 @@ export const reviewLogsArchive = pgTable("review_logs_archive", {
 	archivedAt: timestamp("archived_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	wordbookId: uuid("wordbook_id").notNull(),
 }, (table) => [
-	index("idx_review_logs_archive_user_reviewed").using("btree", table.userId.asc().nullsLast().op("timestamptz_ops"), table.reviewedAt.desc().nullsFirst().op("timestamptz_ops")),
-	index("idx_review_logs_archive_wordbook").using("btree", table.wordbookId.asc().nullsLast().op("uuid_ops"), table.reviewedAt.desc().nullsFirst().op("uuid_ops")),
+	index("idx_review_logs_archive_user_reviewed").using("btree", table.userId.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
+	index("idx_review_logs_archive_wordbook").using("btree", table.wordbookId.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
 	foreignKey({
 			columns: [table.wordbookId],
 			foreignColumns: [wordbooks.id],
@@ -409,14 +423,14 @@ export const reviewLogs = pgTable("review_logs", {
 	idempotencyKey: text("idempotency_key"),
 	track: text("track").default('l1').notNull(),
 }, (table) => [
-	uniqueIndex("idx_review_logs_idempotency").using("btree", table.idempotencyKey.asc().nullsLast().op("text_ops")).where(sql`(idempotency_key IS NOT NULL)`),
-	index("idx_review_logs_progress_undone").using("btree", table.progressId.asc().nullsLast().op("timestamptz_ops"), table.reviewedAt.desc().nullsFirst().op("uuid_ops")).where(sql`(undone = false)`),
-	index("idx_review_logs_progress_undone_count").using("btree", table.progressId.asc().nullsLast().op("uuid_ops")).where(sql`((undone = false) AND (progress_id IS NOT NULL))`),
-	index("idx_review_logs_user_reviewed").using("btree", table.userId.asc().nullsLast().op("timestamptz_ops"), table.reviewedAt.desc().nullsFirst().op("uuid_ops")),
-	index("idx_review_logs_user_track_reviewed").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.track.asc().nullsLast().op("text_ops"), table.reviewedAt.desc().nullsFirst().op("timestamptz_ops")),
-	index("idx_review_logs_user_undone_reviewed").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.undone.asc().nullsLast().op("timestamptz_ops"), table.reviewedAt.desc().nullsFirst().op("timestamptz_ops")),
-	index("idx_review_logs_word").using("btree", table.wordId.asc().nullsLast().op("uuid_ops")),
-	index("idx_review_logs_wordbook").using("btree", table.wordbookId.asc().nullsLast().op("uuid_ops"), table.reviewedAt.desc().nullsFirst().op("timestamptz_ops")),
+	uniqueIndex("idx_review_logs_idempotency").using("btree", table.userId.asc().nullsLast(), table.idempotencyKey.asc().nullsLast()).where(sql`(idempotency_key IS NOT NULL)`),
+	index("idx_review_logs_progress_undone").using("btree", table.progressId.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()).where(sql`(undone = false)`),
+	index("idx_review_logs_progress_undone_count").using("btree", table.progressId.asc().nullsLast()).where(sql`((undone = false) AND (progress_id IS NOT NULL))`),
+	index("idx_review_logs_user_reviewed").using("btree", table.userId.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
+	index("idx_review_logs_user_track_reviewed").using("btree", table.userId.asc().nullsLast(), table.track.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
+	index("idx_review_logs_user_undone_reviewed").using("btree", table.userId.asc().nullsLast(), table.undone.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
+	index("idx_review_logs_word").using("btree", table.wordId.asc().nullsLast()),
+	index("idx_review_logs_wordbook").using("btree", table.wordbookId.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [profiles.id],
@@ -433,10 +447,25 @@ export const reviewLogs = pgTable("review_logs", {
 			name: "review_logs_session_id_fkey"
 		}).onDelete("set null"),
 	foreignKey({
+			columns: [table.sessionId, table.userId, table.wordbookId],
+			foreignColumns: [sessions.id, sessions.userId, sessions.wordbookId],
+			name: "review_logs_session_scope_fkey"
+		}),
+	foreignKey({
 			columns: [table.progressId],
 			foreignColumns: [userWordProgress.id],
 			name: "review_logs_progress_id_fkey"
 		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.progressId, table.userId, table.wordbookId],
+			foreignColumns: [userWordProgress.id, userWordProgress.userId, userWordProgress.wordbookId],
+			name: "review_logs_progress_scope_fkey"
+		}),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "review_logs_wordbook_owner_fkey"
+		}).onDelete("cascade"),
 	foreignKey({
 			columns: [table.wordbookId],
 			foreignColumns: [wordbooks.id],
@@ -455,8 +484,8 @@ export const wordHighlights = pgTable("word_highlights", {
 	color: text().default('#eab308').notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_word_highlights_lookup").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.wordbookId.asc().nullsLast().op("uuid_ops"), table.wordId.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("idx_word_highlights_unique_snippet").using("btree", table.userId.asc().nullsLast().op("text_ops"), table.wordbookId.asc().nullsLast().op("uuid_ops"), table.wordId.asc().nullsLast().op("text_ops"), table.sourceField.asc().nullsLast().op("text_ops"), table.textSnippet.asc().nullsLast().op("uuid_ops")),
+	index("idx_word_highlights_lookup").using("btree", table.userId.asc().nullsLast(), table.wordbookId.asc().nullsLast(), table.wordId.asc().nullsLast()),
+	uniqueIndex("idx_word_highlights_unique_snippet").using("btree", table.userId.asc().nullsLast(), table.wordbookId.asc().nullsLast(), table.wordId.asc().nullsLast(), table.sourceField.asc().nullsLast(), table.textSnippet.asc().nullsLast()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [profiles.id],
@@ -482,8 +511,8 @@ export const wordAnnotations = pgTable("word_annotations", {
 	content: text().default('').notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_word_annotations_lookup").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.wordbookId.asc().nullsLast().op("uuid_ops"), table.wordId.asc().nullsLast().op("uuid_ops")),
-	uniqueIndex("idx_word_annotations_unique").using("btree", table.userId.asc().nullsLast().op("uuid_ops"), table.wordbookId.asc().nullsLast().op("uuid_ops"), table.wordId.asc().nullsLast().op("uuid_ops")),
+	index("idx_word_annotations_lookup").using("btree", table.userId.asc().nullsLast(), table.wordbookId.asc().nullsLast(), table.wordId.asc().nullsLast()),
+	uniqueIndex("idx_word_annotations_unique").using("btree", table.userId.asc().nullsLast(), table.wordbookId.asc().nullsLast(), table.wordId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [profiles.id],
@@ -524,7 +553,7 @@ export const wordbookItems = pgTable("wordbook_items", {
 	wordId: uuid("word_id").notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_wordbook_items_word_id").using("btree", table.wordId.asc().nullsLast().op("uuid_ops")),
+	index("idx_wordbook_items_word_id").using("btree", table.wordId.asc().nullsLast()),
 	foreignKey({
 			columns: [table.wordbookId],
 			foreignColumns: [wordbooks.id],
@@ -562,7 +591,7 @@ export const dailyForecastSnapshots = pgTable("daily_forecast_snapshots", {
 	desiredRetention: numeric("desired_retention").notNull(),
 	capturedAt: timestamp("captured_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_daily_forecast_snapshots_user_date").using("btree", table.userId.asc().nullsLast().op("date_ops"), table.date.desc().nullsFirst().op("date_ops")),
+	index("idx_daily_forecast_snapshots_user_date").using("btree", table.userId.asc().nullsLast(), table.date.desc().nullsFirst()),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [users.id],

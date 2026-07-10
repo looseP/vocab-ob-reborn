@@ -11,6 +11,12 @@ dist/
 # but for now we track the whole drizzle/ directory.
 # (was: drizzle/ — changed to track migrations for team collaboration)
 
+# Local agent analysis artifacts (never commit to product PRs)
+.codebase-memory/
+.learnings/
+docs/superpowers/plans/
+vite.review.config.ts
+
 # Test coverage
 coverage/
 

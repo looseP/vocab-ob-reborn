@@ -31,6 +31,14 @@ import {
   type L2StyleProfile,
 } from "../domain/l2-style-profile";
 import { ValidationError } from "../errors";
+import {
+  assertJsonResourceBudget,
+  JSON_MAX_DEPTH,
+  L2_CONTENT_MAX_BYTES,
+  L2_DRAFT_MAX_COUNT,
+  L2_OPTION_STRING_MAX_LENGTH,
+  L2_USER_INSTRUCTION_MAX_LENGTH,
+} from "../schemas/resource-budget";
 import { createHash } from "node:crypto";
 
 /**
@@ -204,8 +212,37 @@ function resolveStyleProfile(
 function normalizeDraftOptions(
   sourceOrOptions?: string | GenerateDraftOptions,
 ): GenerateDraftOptions {
-  if (typeof sourceOrOptions === "string") return { source: sourceOrOptions };
-  return sourceOrOptions ?? {};
+  const options = typeof sourceOrOptions === "string"
+    ? { source: sourceOrOptions }
+    : sourceOrOptions ?? {};
+
+  if (options.count !== undefined && (
+    !Number.isInteger(options.count) ||
+    options.count < 1 ||
+    options.count > L2_DRAFT_MAX_COUNT
+  )) {
+    throw new ValidationError(`count must be an integer between 1 and ${L2_DRAFT_MAX_COUNT}`, "count");
+  }
+  if (options.userInstruction !== undefined && options.userInstruction.length > L2_USER_INSTRUCTION_MAX_LENGTH) {
+    throw new ValidationError(
+      `userInstruction exceeds maximum length of ${L2_USER_INSTRUCTION_MAX_LENGTH}`,
+      "userInstruction",
+    );
+  }
+  if (options.styleProfileId !== undefined && options.styleProfileId.length > L2_OPTION_STRING_MAX_LENGTH) {
+    throw new ValidationError(`styleProfileId exceeds maximum length of ${L2_OPTION_STRING_MAX_LENGTH}`, "styleProfileId");
+  }
+  if (options.source !== undefined && options.source.length > L2_OPTION_STRING_MAX_LENGTH) {
+    throw new ValidationError(`source exceeds maximum length of ${L2_OPTION_STRING_MAX_LENGTH}`, "source");
+  }
+  return options;
+}
+
+function normalizeExternalPromptOptions(
+  options: BuildExternalPromptOptions = {},
+): BuildExternalPromptOptions {
+  normalizeDraftOptions(options);
+  return options;
 }
 
 /**
@@ -442,9 +479,10 @@ export class L2ContentService {
         };
       }
 
-      // Candidates + LLM → refine. Budget check happens here, only when an LLM
-      // call is actually about to occur (not before the dictionary lookup).
-      if (await usageTracker.isOverBudget()) {
+      // Reserve budget atomically immediately before the external call. The
+      // repository lock + reservation closes the cross-process TOCTOU window.
+      const reservationId = await usageTracker.reserve();
+      if (!reservationId) {
         return { error: "OVER_BUDGET", storageField: field };
       }
 
@@ -458,16 +496,22 @@ export class L2ContentService {
       let result;
       try {
         result = await llmProvider.generate(messages, { temperature: 0.7 });
-      } catch (err) {
+      } catch {
+        await usageTracker.release(reservationId).catch((releaseError) => {
+          logger.warn("l2-content", "usage reservation release failed", {
+            message: (releaseError as Error).message,
+          });
+        });
         return {
           error: "LLM_ERROR",
-          message: (err as Error).message,
+          message: "LLM provider request failed",
           storageField: field,
         };
       }
 
       try {
-        await usageTracker.record(
+        await usageTracker.settle(
+          reservationId,
           result.model,
           result.model,
           result.promptTokens,
@@ -481,7 +525,7 @@ export class L2ContentService {
 
       const parsed = parseLlmJson(result.content);
       if (!parsed.success) {
-        return { error: "PARSE_FAILED", raw: result.content, storageField: field };
+        return { error: "PARSE_FAILED", storageField: field };
       }
 
       // Defensive grounding (Phase 2E): LLMs sometimes ignore the "do not
@@ -570,8 +614,9 @@ export class L2ContentService {
       };
     }
 
-    // 3. Budget guard — cheap reject before spending tokens.
-    if (await usageTracker!.isOverBudget()) {
+    // 3. Atomically reserve budget before spending tokens.
+    const reservationId = await usageTracker!.reserve();
+    if (!reservationId) {
       return { error: "OVER_BUDGET", storageField: field };
     }
 
@@ -587,17 +632,23 @@ export class L2ContentService {
     let result;
     try {
       result = await llmProvider!.generate(messages, { temperature: 0.7 });
-    } catch (err) {
+    } catch {
+      await usageTracker!.release(reservationId).catch((releaseError) => {
+        logger.warn("l2-content", "usage reservation release failed", {
+          message: (releaseError as Error).message,
+        });
+      });
       return {
         error: "LLM_ERROR",
-        message: (err as Error).message,
+        message: "LLM provider request failed",
         storageField: field,
       };
     }
 
-    // 6. Record usage (best-effort observability; do not let it mask the draft).
+    // 6. Replace the reservation with actual provider usage.
     try {
-      await usageTracker!.record(
+      await usageTracker!.settle(
+        reservationId,
         result.model,
         result.model,
         result.promptTokens,
@@ -612,7 +663,7 @@ export class L2ContentService {
     // 7. Parse the LLM's JSON output (tolerant of markdown / prose wrappers).
     const parsed = parseLlmJson(result.content);
     if (!parsed.success) {
-      return { error: "PARSE_FAILED", raw: result.content, storageField: field };
+      return { error: "PARSE_FAILED", storageField: field };
     }
 
     return {
@@ -645,8 +696,10 @@ export class L2ContentService {
   async buildExternalPrompt(
     word: WordContext,
     field: L2Field,
-    options: BuildExternalPromptOptions = {},
+    inputOptions: BuildExternalPromptOptions = {},
   ): Promise<BuildExternalPromptResult> {
+    const options = normalizeExternalPromptOptions(inputOptions);
+
     // Style profile resolution (B4). For corpus/example + collocation, resolve
     // and validate the profile's field scope so a mismatched profile fails fast.
     // `corpus` is the storage name for the `example` composer field.
@@ -816,6 +869,19 @@ ${provenanceSourceHint}`;
     //    touching the DB. This is a defense-in-depth check (the HTTP layer also
     //    validates) so callers that bypass HTTP can't write bad rows. Throws a
     //    structured ValidationError (→ 422 via errorToResponse) on mismatch.
+    try {
+      assertJsonResourceBudget(content, {
+        maxBytes: L2_CONTENT_MAX_BYTES,
+        maxDepth: JSON_MAX_DEPTH,
+      });
+    } catch (err) {
+      throw new ValidationError(
+        `L2 content exceeds serialized size or depth budget`,
+        field,
+        err,
+      );
+    }
+
     let parsed: unknown;
     try {
       parsed = parseL2Content(field, content);

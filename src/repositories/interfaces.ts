@@ -106,11 +106,11 @@ export interface IReviewRepository {
     Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string } }>
   >;
 
-  /** Advisory lock + idempotency check. MUST be in a transaction. */
-  checkIdempotency(idempotencyKey: string): Promise<string | null>;
+  /** User-scoped advisory lock + idempotency check. MUST be in a transaction. */
+  checkIdempotency(userId: string, idempotencyKey: string): Promise<string | null>;
 
-  /** SELECT FOR UPDATE with word join. MUST be in a transaction. */
-  findProgressForUpdate(progressId: string): Promise<ProgressWithContentHash | null>;
+  /** Owner-scoped SELECT FOR UPDATE with word join. MUST be in a transaction. */
+  findProgressForUpdate(progressId: string, userId: string): Promise<ProgressWithContentHash | null>;
 
   /** SELECT FOR UPDATE minimal fields for skip. MUST be in a transaction. */
   findProgressForSkip(progressId: string, userId: string): Promise<ProgressForAction | null>;
@@ -127,8 +127,17 @@ export interface IReviewRepository {
   /** UPDATE state=suspended + INSERT review_log (action=suspend). MUST be in a transaction. */
   suspendCard(progress: ProgressForAction, userId: string, sessionId: string | null, idempotencyKey: string | null): Promise<{ reviewLogId: string }>;
 
-  /** Call undo_review_log RPC + insert idempotency log. MUST be in a transaction. */
-  undoReviewLog(reviewLogId: string, userId: string, sessionId: string, idempotencyKey: string | null): Promise<UndoRpcResult>;
+  /** Resolve the owner-scoped wordbook for an undoable review log. MUST be in a transaction. */
+  findReviewLogWordbookForUndo(reviewLogId: string, userId: string): Promise<string | null>;
+
+  /** Call owner/wordbook-scoped undo_review_log RPC + insert idempotency log. MUST be in a transaction. */
+  undoReviewLog(
+    reviewLogId: string,
+    userId: string,
+    wordbookId: string,
+    sessionId: string,
+    idempotencyKey: string | null,
+  ): Promise<UndoRpcResult>;
 
   findStaleCards(wordId: string): Promise<UserWordProgressRow[]>;
 
@@ -172,7 +181,7 @@ export interface IWordbookRepository {
   findById(id: string): Promise<WordbookRow | null>;
   findDefaultByUser(userId: string): Promise<WordbookRow | null>;
   findAllByUser(userId: string): Promise<WordbookRow[]>;
-  create(userId: string, name: string, isDefault?: boolean): Promise<WordbookRow>;
+  create(userId: string, name: string, isDefault?: boolean, description?: string | null): Promise<WordbookRow>;
   getOrCreateDefault(userId: string): Promise<WordbookRow>;
   countWords(wordbookId: string): Promise<number>;
   getWordIds(wordbookId: string): Promise<string[]>;
@@ -205,8 +214,10 @@ export interface ISessionRepository {
   findActiveByUser(userId: string, wordbookId: string, mode?: string): Promise<SessionRow | null>;
   getOrCreateToday(userId: string, wordbookId: string, mode?: string): Promise<SessionRow>;
   create(userId: string, wordbookId: string, mode?: string): Promise<SessionRow>;
-  incrementCardsSeen(sessionId: string): Promise<void>;
-  endSession(sessionId: string): Promise<void>;
+  /** Lock and verify an active Session belongs to the actor and wordbook. MUST be in a transaction. */
+  assertActiveOwned(sessionId: string, userId: string, wordbookId: string): Promise<void>;
+  incrementCardsSeen(sessionId: string, userId: string, wordbookId: string): Promise<void>;
+  endSession(sessionId: string, userId: string, wordbookId: string): Promise<void>;
 }
 
 // ── L2 Progress ─────────────────────────────────────────────────────────
@@ -567,6 +578,18 @@ export interface IL3RecommendationRepository {
 export interface ILlmUsageRepository {
   /** Total tokens (prompt + completion) consumed for the given day (UTC). */
   getDailyUsage(dayKey?: string): Promise<number>;
+  /** Atomically reserve tokens against the shared daily counter. */
+  reserveDailyTokens(dayKey: string, tokens: number, dailyBudget: number): Promise<string | null>;
+  /** Atomically replace a reservation with actual persisted usage. */
+  settleDailyTokens(
+    reservationId: string,
+    provider: string,
+    model: string,
+    promptTokens: number,
+    completionTokens: number,
+  ): Promise<void>;
+  /** Release a reservation when the provider call fails before usage is returned. */
+  releaseDailyTokens(reservationId: string): Promise<void>;
   /** Persist a single LLM call's token usage. */
   record(
     provider: string,

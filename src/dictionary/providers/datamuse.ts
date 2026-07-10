@@ -5,6 +5,14 @@ import type {
 } from "../provider";
 import { buildPhrase, selectRelation } from "../normalizer";
 
+const DEFAULT_TIMEOUT_MS = 5_000;
+const MAX_RESPONSE_BYTES = 256 * 1024;
+
+interface DatamuseProviderOptions {
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+}
+
 /**
  * Datamuse API provider — https://api.datamuse.com
  *
@@ -15,7 +23,14 @@ import { buildPhrase, selectRelation } from "../normalizer";
  * degrade gracefully.
  */
 export class DatamuseProvider implements DictionaryProvider {
-  private baseURL = "https://api.datamuse.com";
+  private readonly baseURL = "https://api.datamuse.com";
+  private readonly timeoutMs: number;
+  private readonly maxResponseBytes: number;
+
+  constructor(options: DatamuseProviderOptions = {}) {
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
+  }
 
   async lookupCollocations(params: {
     lemma: string;
@@ -34,19 +49,44 @@ export class DatamuseProvider implements DictionaryProvider {
 
     try {
       const url = `${this.baseURL}/words?${relation.rel}=${encodeURIComponent(params.lemma)}&max=${limit}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(this.timeoutMs) });
       if (!res.ok) {
         return {
           candidates: [],
           warning: `Datamuse API returned ${res.status}`,
         };
       }
-      const data = (await res.json()) as Array<{
-        word: string;
-        score: number;
-        tags?: string[];
-      }>;
-      const candidates: DictionaryCandidate[] = data.map((d) => ({
+
+      const declaredLength = Number(res.headers?.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > this.maxResponseBytes) {
+        return { candidates: [], warning: "Datamuse response exceeded size limit" };
+      }
+
+      let parsed: unknown;
+      if (typeof res.text === "function") {
+        const body = await res.text();
+        if (Buffer.byteLength(body, "utf8") > this.maxResponseBytes) {
+          return { candidates: [], warning: "Datamuse response exceeded size limit" };
+        }
+        parsed = JSON.parse(body);
+      } else {
+        // Compatibility for fetch adapters/test doubles that only expose json().
+        parsed = await res.json();
+        if (Buffer.byteLength(JSON.stringify(parsed), "utf8") > this.maxResponseBytes) {
+          return { candidates: [], warning: "Datamuse response exceeded size limit" };
+        }
+      }
+      if (!Array.isArray(parsed)) {
+        return { candidates: [], warning: "Datamuse API returned an invalid response" };
+      }
+      const data = parsed.filter(
+        (item): item is { word: string; score: number; tags?: string[] } =>
+          item !== null &&
+          typeof item === "object" &&
+          typeof (item as { word?: unknown }).word === "string" &&
+          typeof (item as { score?: unknown }).score === "number",
+      );
+      const candidates: DictionaryCandidate[] = data.slice(0, limit).map((d) => ({
         phrase: buildPhrase(params.lemma, d.word, params.pos),
         headword: d.word,
         sourceName: "Datamuse",
@@ -56,10 +96,12 @@ export class DatamuseProvider implements DictionaryProvider {
         raw: d,
       }));
       return { candidates };
-    } catch (err) {
+    } catch {
+      // Provider/network details stay server-side; callers receive a stable,
+      // non-sensitive warning suitable for HTTP responses and logs.
       return {
         candidates: [],
-        warning: `Datamuse lookup failed: ${(err as Error).message}`,
+        warning: "Datamuse lookup failed",
       };
     }
   }

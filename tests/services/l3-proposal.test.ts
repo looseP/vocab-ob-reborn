@@ -95,6 +95,7 @@ const WORDBOOK_ROW: WordbookRow = {
   id: "wb-1",
   user_id: "u1",
   name: "Default",
+  description: null,
   is_default: true,
   settings: {},
   created_at: "2026-07-08T00:00:00Z",
@@ -245,6 +246,29 @@ describe("L3ProposalService", () => {
     expect(txProposalRepo.createProposalItem).toHaveBeenCalled();
     expect(txContextRepo.createSource).not.toHaveBeenCalled();
     expect(txContextRepo.createContext).not.toHaveBeenCalled();
+  });
+
+  it("rejects proposal resource amplification at the service boundary", async () => {
+    await expect(service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      items: Array.from({ length: 1_001 }, (_, index) => ({
+        itemType: "source" as const,
+        clientRef: `source-${index}`,
+        payload: { sourceType: "article", title: "Essay" },
+      })),
+    })).rejects.toMatchObject({ field: "items" });
+
+    await expect(service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      items: [{
+        itemType: "source",
+        payload: { sourceType: "article", title: "x".repeat(300_000) },
+      }],
+    })).rejects.toMatchObject({ field: "payload" });
+
+    expect(txProposalRepo.createProposal).not.toHaveBeenCalled();
   });
 
   it("validateProposal catches offset/surface mismatches", async () => {

@@ -26,6 +26,7 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     saveAnswer: vi.fn(async () => ({ reviewLogId: "log-1" })),
     skipCard: vi.fn(async () => ({ reviewLogId: "log-skip" })),
     suspendCard: vi.fn(async () => ({ reviewLogId: "log-suspend" })),
+    findReviewLogWordbookForUndo: vi.fn(async () => "wb1"),
     undoReviewLog: vi.fn(async () => ({
       success: true, progressId: null, wordId: null, errorMessage: null,
     })),

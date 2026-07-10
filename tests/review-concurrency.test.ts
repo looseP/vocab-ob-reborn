@@ -37,6 +37,7 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
   it("findPublic returns paginated results", async () => {
     const repos = createRepositories();
     const result = await repos.words.findPublic({
+      userId: "00000000-0000-4000-8000-000000000001",
       pagination: { limit: 5, offset: 0 },
     });
     expect(result.items.length).toBe(5);
@@ -47,6 +48,7 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
   it("findPublic with search filter works", async () => {
     const repos = createRepositories();
     const result = await repos.words.findPublic({
+      userId: "00000000-0000-4000-8000-000000000001",
       filters: { q: "abandon" },
       pagination: { limit: 10, offset: 0 },
     });
@@ -173,7 +175,7 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
         rating: "good",
         sessionId: data.sessionId,
         idempotencyKey: `test-answer-${data.progressId}`,
-      });
+      }, data.userId);
 
       expect(result.ok).toBe(true);
       expect(result.reviewLogId).toBeTruthy();
@@ -214,10 +216,10 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       const key = `test-idempotent-${data.progressId}`;
       const r1 = await service.submitAnswer({
         progressId: data.progressId, rating: "good", sessionId: data.sessionId, idempotencyKey: key,
-      });
+      }, data.userId);
       const r2 = await service.submitAnswer({
         progressId: data.progressId, rating: "hard", sessionId: data.sessionId, idempotencyKey: key,
-      });
+      }, data.userId);
 
       expect(r1.ok).toBe(true);
       expect(r2.ok).toBe(true);

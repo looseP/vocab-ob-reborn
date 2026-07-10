@@ -7,6 +7,14 @@
  */
 
 import { z } from "zod";
+import {
+  assertJsonResourceBudget,
+  JSON_MAX_DEPTH,
+  JSON_RECORD_MAX_BYTES,
+  L3_PROPOSAL_MAX_ITEMS,
+  L3_PROPOSAL_PAYLOAD_MAX_BYTES,
+  L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES,
+} from "../resource-budget";
 
 // ── Primitives ──────────────────────────────────────────────────────────
 export const reviewRatingSchema = z.enum(["again", "hard", "good", "easy"]);
@@ -116,7 +124,25 @@ export const annotationUpsertSchema = z.object({
 export const qualityStrictnessSchema = z.enum(["lenient", "standard", "strict"]).default("standard");
 
 // ── L3 context space ───────────────────────────────────────────────────
-const jsonRecordSchema = z.record(z.string(), z.unknown()).default({});
+function withinJsonBudget(value: unknown, maxBytes: number): boolean {
+  try {
+    assertJsonResourceBudget(value, { maxBytes, maxDepth: JSON_MAX_DEPTH });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const jsonRecordSchema = z.record(z.string(), z.unknown())
+  .refine((value) => withinJsonBudget(value, JSON_RECORD_MAX_BYTES), {
+    message: `JSON object exceeds ${JSON_RECORD_MAX_BYTES} bytes or depth ${JSON_MAX_DEPTH}`,
+  })
+  .default({});
+
+const proposalPayloadSchema = z.record(z.string(), z.unknown())
+  .refine((value) => withinJsonBudget(value, L3_PROPOSAL_PAYLOAD_MAX_BYTES), {
+    message: `Proposal payload exceeds ${L3_PROPOSAL_PAYLOAD_MAX_BYTES} bytes or depth ${JSON_MAX_DEPTH}`,
+  });
 
 export const l3SourceCreateSchema = z.object({
   wordbookId: uuidSchema.nullish(),
@@ -197,7 +223,9 @@ export const l3GraphQuerySchema = z.object({
   wordbookId: uuidSchema.optional(),
   slug: z.string().trim().min(1).max(200).optional(),
   sourceId: uuidSchema.optional(),
-  depth: z.coerce.number().int().min(1).max(2).optional().default(1),
+  // Repository currently returns a bounded one-hop graph only. Reject depth=2
+  // instead of silently returning the same result as depth=1.
+  depth: z.coerce.number().int().min(1).max(1).optional().default(1),
   limit: z.coerce.number().int().min(1).max(300).optional().default(100),
   cursor: z.string().min(1).optional(),
 });
@@ -205,7 +233,7 @@ export const l3GraphQuerySchema = z.object({
 export const l3ProposalItemCreateSchema = z.object({
   itemType: z.enum(["source", "context", "occurrence", "context_link"]),
   clientRef: z.string().trim().min(1).max(200).nullish(),
-  payload: z.record(z.string(), z.unknown()),
+  payload: proposalPayloadSchema,
 });
 
 export const l3ProposalCreateSchema = z.object({
@@ -216,8 +244,17 @@ export const l3ProposalCreateSchema = z.object({
   inputHash: z.string().max(256).nullish(),
   proposedBy: z.string().max(300).nullish(),
   provenance: jsonRecordSchema.optional(),
-  items: z.array(l3ProposalItemCreateSchema).min(1).max(500),
-});
+  items: z.array(l3ProposalItemCreateSchema).min(1).max(L3_PROPOSAL_MAX_ITEMS),
+}).refine(
+  (value) => withinJsonBudget(
+    value.items.map((item) => item.payload),
+    L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES,
+  ),
+  {
+    message: `Proposal payloads exceed ${L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES} total bytes`,
+    path: ["items"],
+  },
+);
 
 export const l3ProposalListQuerySchema = z.object({
   status: z.enum(["pending", "confirmed", "rejected", "canceled"]).optional().default("pending"),
@@ -341,4 +378,13 @@ export const l3StructuredImportCreateSchema = z.object({
   source: l3ImportSourceSchema,
   contexts: z.array(l3StructuredImportContextSchema).min(1).max(200),
   provenance: jsonRecordSchema.optional(),
-});
+}).refine(
+  (value) => 1 + value.contexts.reduce(
+    (total, context) => total + 1 + context.occurrences.length + context.links.length,
+    0,
+  ) <= L3_PROPOSAL_MAX_ITEMS,
+  {
+    message: `Structured import creates more than ${L3_PROPOSAL_MAX_ITEMS} proposal items`,
+    path: ["contexts"],
+  },
+);

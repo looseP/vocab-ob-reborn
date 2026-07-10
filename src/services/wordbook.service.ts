@@ -40,6 +40,7 @@ export class WordbookService {
       params.userId,
       params.name,
       params.isDefault ?? false,
+      params.description?.trim() || null,
     );
     return new Wordbook(row);
   }

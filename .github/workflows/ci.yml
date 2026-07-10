@@ -8,7 +8,7 @@ on:
 
 jobs:
   verify:
-    name: Typecheck + Architecture + Test
+    name: Engineering Gate + Migration Rehearsal
     runs-on: ubuntu-latest
 
     env:
@@ -34,30 +34,22 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
+
+      - name: Pin npm version
+        run: npm install --global npm@10.9.7
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Engineering verification
+        run: npm run verify:engineering
 
-      - name: Architecture check
-        run: npm run arch:check
-
-      - name: Unit tests
-        run: npm run test
-
-      - name: Run migrations
-        run: |
-          # Apply v1 migrations to set up schema for integration tests
-          # Clone v1 migrations or use drizzle-kit push
-          npx drizzle-kit push --config drizzle.config.ts || true
-
-      - name: Integration tests
+      - name: Database release verification
         env:
           TEST_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
-        run: |
-          npx vitest run --config vitest.integration.config.ts || true
-        continue-on-error: true
+        run: npm run verify:db
+
+      - name: Migration replay is a no-op
+        run: npm run db:migrate

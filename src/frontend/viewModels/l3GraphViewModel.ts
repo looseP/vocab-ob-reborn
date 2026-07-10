@@ -117,7 +117,7 @@ export function buildGraphQueryPayload(input: {
   cursor: string;
 }): L3GraphParams {
   const fieldErrors: Record<string, string[]> = {};
-  const depth = parseOptionalInteger(input.depth, "depth", 2, fieldErrors);
+  const depth = parseOptionalInteger(input.depth, "depth", 1, fieldErrors);
   const limit = parseOptionalInteger(input.limit, "limit", 300, fieldErrors);
   if (Object.keys(fieldErrors).length > 0) throw graphFormError(fieldErrors);
 

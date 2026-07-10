@@ -85,13 +85,14 @@ describe("WordService", () => {
     });
     const service = new WordService(repo);
     const result = await service.getPublicWords({
-      q: "ab", limit: 10, offset: 0,
+      userId: "u1", q: "ab", limit: 10, offset: 0,
     });
 
     expect(result.items).toHaveLength(1);
     expect(repo.findPublic).toHaveBeenCalledWith(expect.objectContaining({
       filters: { q: "ab", freq: undefined, semantic: undefined, review: undefined },
       pagination: { limit: 10, offset: 0 },
+      userId: "u1",
     }));
   });
 
@@ -170,6 +171,30 @@ describe("WordbookService", () => {
     const service = new WordbookService(repo);
     await expect(service.create({ userId: "u1", name: "Test", isDefault: true }))
       .rejects.toMatchObject({ code: "BUSINESS_RULE" });
+  });
+
+  it("persists a normalized description when creating a wordbook", async () => {
+    const row = {
+      id: "wb1",
+      user_id: "u1",
+      name: "Test",
+      description: "Vocabulary for exams",
+      is_default: false,
+      settings: {},
+      created_at: "2026-07-10T00:00:00Z",
+      updated_at: "2026-07-10T00:00:00Z",
+    } satisfies WordbookRow;
+    const repo = makeMockWordbookRepo({ create: vi.fn(async () => row) });
+    const service = new WordbookService(repo);
+
+    const result = await service.create({
+      userId: "u1",
+      name: "Test",
+      description: "  Vocabulary for exams  ",
+    });
+
+    expect(repo.create).toHaveBeenCalledWith("u1", "Test", false, "Vocabulary for exams");
+    expect(result.description).toBe("Vocabulary for exams");
   });
 
   it("addWords skips empty array", async () => {

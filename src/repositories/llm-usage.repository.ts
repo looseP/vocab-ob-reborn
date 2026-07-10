@@ -33,6 +33,57 @@ export class LlmUsageRepository extends BaseRepository implements ILlmUsageRepos
     return Number(rows[0]?.total ?? 0);
   }
 
+  async reserveDailyTokens(
+    dayKey: string,
+    tokens: number,
+    dailyBudget: number,
+  ): Promise<string | null> {
+    const { rows } = await this.executor.query(
+      `WITH locked AS (
+         SELECT pg_advisory_xact_lock(hashtext('llm_daily_budget:' || $1))
+       ), current_usage AS (
+         SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0)::bigint AS total
+         FROM llm_usage, locked
+         WHERE created_at >= $1::date
+           AND created_at < ($1::date + interval '1 day')
+       ), inserted AS (
+         INSERT INTO llm_usage (provider, model, prompt_tokens, completion_tokens)
+         SELECT '__reservation__', $1, $2, 0
+         FROM current_usage
+         WHERE total + $2 <= $3
+         RETURNING id
+       )
+       SELECT id FROM inserted`,
+      [dayKey, tokens, dailyBudget],
+    );
+    return typeof rows[0]?.id === "string" ? rows[0].id : null;
+  }
+
+  async settleDailyTokens(
+    reservationId: string,
+    provider: string,
+    model: string,
+    promptTokens: number,
+    completionTokens: number,
+  ): Promise<void> {
+    const { rowCount } = await this.executor.query(
+      `UPDATE llm_usage
+       SET provider = $2, model = $3, prompt_tokens = $4, completion_tokens = $5
+       WHERE id = $1 AND provider = '__reservation__'`,
+      [reservationId, provider, model, promptTokens, completionTokens],
+    );
+    if (rowCount !== 1) {
+      throw new Error("LLM usage reservation not found");
+    }
+  }
+
+  async releaseDailyTokens(reservationId: string): Promise<void> {
+    await this.executor.query(
+      `DELETE FROM llm_usage WHERE id = $1 AND provider = '__reservation__'`,
+      [reservationId],
+    );
+  }
+
   /** Persist a single LLM call's token usage. */
   async record(
     provider: string,

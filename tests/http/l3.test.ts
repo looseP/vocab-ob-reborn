@@ -287,11 +287,11 @@ describe("L3 HTTP routes", () => {
     });
   });
 
-  it("GET /api/l3/graph succeeds", async () => {
+  it("GET /api/l3/graph succeeds for the supported one-hop depth", async () => {
     const services = makeServices();
     const app = createApp(services);
 
-    const res = await app.request(`/api/l3/graph?sourceId=${SOURCE_ID}&slug=vivid&depth=2&limit=200`, {
+    const res = await app.request(`/api/l3/graph?sourceId=${SOURCE_ID}&slug=vivid&depth=1&limit=200`, {
       method: "GET",
       headers: AUTH_HEADERS,
     });
@@ -302,10 +302,18 @@ describe("L3 HTTP routes", () => {
       wordbookId: null,
       slug: "vivid",
       sourceId: SOURCE_ID,
-      depth: 2,
+      depth: 1,
       limit: 200,
       cursor: null,
     });
+  });
+
+  it("rejects unsupported graph depth instead of silently returning one-hop data", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+    const res = await app.request(`/api/l3/graph?depth=2`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(400);
+    expect(services.l3Read.getGraph).not.toHaveBeenCalled();
   });
 
   it("maps read route validation to 400 and service errors to 404/422", async () => {
@@ -1326,7 +1334,7 @@ describe("L3 HTTP routes", () => {
     const services = makeServices();
     const app = createApp(services);
 
-    const res = await app.request(`/api/l3/graph?wordbookId=${SOURCE_ID}&sourceId=${SOURCE_ID}&slug=vivid&depth=2&limit=25&cursor=opaque`, {
+    const res = await app.request(`/api/l3/graph?wordbookId=${SOURCE_ID}&sourceId=${SOURCE_ID}&slug=vivid&depth=1&limit=25&cursor=opaque`, {
       method: "GET",
       headers: AUTH_HEADERS,
     });
@@ -1337,7 +1345,7 @@ describe("L3 HTTP routes", () => {
       wordbookId: SOURCE_ID,
       slug: "vivid",
       sourceId: SOURCE_ID,
-      depth: 2,
+      depth: 1,
       limit: 25,
       cursor: "opaque",
     });

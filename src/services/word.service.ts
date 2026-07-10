@@ -11,6 +11,7 @@ import { Word } from "../domain/word.entity";
 import { NotFoundError } from "../errors";
 
 export interface GetWordsParams {
+  userId: string;
   q?: string;
   freq?: string;
   semantic?: string;
@@ -32,6 +33,7 @@ export class WordService {
         review: params.review,
       },
       pagination: { limit: params.limit, offset: params.offset },
+      userId: params.userId,
       wordbookId: params.wordbookId,
     });
   }

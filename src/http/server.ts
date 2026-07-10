@@ -9,7 +9,9 @@
  * - http 层不得直接调 llm provider，必须通过 service
  */
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { Services } from "../services";
+import { API_JSON_BODY_MAX_BYTES } from "../schemas/resource-budget";
 import { handleError } from "./middleware/error";
 import { authMiddleware } from "./middleware/auth";
 import { wordRoutes, type AppEnv } from "./routes/words";
@@ -31,6 +33,15 @@ export function createApp(services: Services): Hono<AppEnv> {
       phase: "1-http",
     });
   });
+
+  // Reject oversized API bodies before auth or route handlers parse them.
+  app.use("/api/*", bodyLimit({
+    maxSize: API_JSON_BODY_MAX_BYTES,
+    onError: (c) => c.json(
+      { error: "PAYLOAD_TOO_LARGE", message: "Request body exceeds 1 MiB limit" },
+      413,
+    ),
+  }));
 
   // /api/* 需 owner 角色；authMiddleware 注入 role / userId 到 context
   app.use("/api/*", authMiddleware("owner"));

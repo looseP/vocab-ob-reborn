@@ -13,10 +13,8 @@
  * Transaction boundary: submitAnswer/skip/suspend/undo each run in one tx.
  */
 
-import type { PoolClient } from "pg";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
-import type { Repositories } from "../repositories/factory";
 import { ReviewCard as ReviewCardEntity } from "../domain/review.entity";
 import type { SubmitAnswerInput, SubmitAnswerResult, SkipReviewInput, SuspendReviewInput, UndoReviewInput } from "../schemas/service";
 import {
@@ -84,6 +82,8 @@ export interface ReviewServiceDeps {
   fsrsAdapter: FsrsAdapterFn;
   /** Load wordbook-level FSRS weights (returns null if not configured) */
   loadWeights: (wordbookId: string) => Promise<number[] | null>;
+  /** Increment the owner/wordbook-scoped session counter after L1 commit. */
+  incrementSessionCardsSeen?: (sessionId: string, userId: string, wordbookId: string) => Promise<void>;
   /**
    * Optional L2 transition hook. When provided, submitAnswer calls it after
    * persisting the L1 answer so an L2 progress row can be promoted.
@@ -108,26 +108,32 @@ export class ReviewService {
    * Submit a review answer. Runs in a single transaction.
    * H1 fix: uses createRepositories(tx) so all queries share the tx connection.
    */
-  async submitAnswer(input: SubmitAnswerInput): Promise<SubmitAnswerResult> {
-    return withTransaction(async (tx) => {
+  async submitAnswer(input: SubmitAnswerInput, userId: string): Promise<SubmitAnswerResult> {
+    const transactionResult = await withTransaction(async (tx) => {
       // H1 fix: create repos bound to this transaction connection
       const repos = createRepositories(tx);
 
       // 1. Idempotency check (advisory lock + duplicate detection)
       if (input.idempotencyKey) {
-        const existingLogId = await repos.reviews.checkIdempotency(input.idempotencyKey);
+        const existingLogId = await repos.reviews.checkIdempotency(userId, input.idempotencyKey);
         if (existingLogId) {
-          return { ok: true, idempotent: true, reviewLogId: existingLogId };
+          return {
+            result: { ok: true, idempotent: true, reviewLogId: existingLogId } as SubmitAnswerResult,
+            postCommit: null,
+          };
         }
       }
 
       // 2. Lock progress row (SELECT FOR UPDATE with word join)
-      const progress = await repos.reviews.findProgressForUpdate(input.progressId);
+      const progress = await repos.reviews.findProgressForUpdate(input.progressId, userId);
       if (!progress) {
         throw new NotFoundError("Progress", input.progressId);
       }
 
-      // 3. Domain validation using real word data (M7 fix)
+      // 3. Bind the untrusted sessionId to the authenticated actor and progress wordbook.
+      await repos.sessions.assertActiveOwned(input.sessionId, userId, progress.wordbook_id);
+
+      // 4. Domain validation using real word data (M7 fix)
       const card = new ReviewCardEntity(
         progress as unknown as UserWordProgressRow,
         {
@@ -169,7 +175,7 @@ export class ReviewService {
       // 7. Persist (UPDATE progress + INSERT review_log in same tx)
       const result = await repos.reviews.saveAnswer({
         progressId: input.progressId,
-        userId: progress.user_id,
+        userId,
         wordId: progress.word_id,
         wordbookId: progress.wordbook_id,
         sessionId: input.sessionId,
@@ -181,24 +187,28 @@ export class ReviewService {
         logMetadata,
       });
 
-      // 7.5: L2 transition check (best-effort; failure must NOT roll back L1).
-      await this.tryL2Transition(progress, scheduling, input.rating);
-
-      // 7.6: L1→L2 cross-track cascade (Phase 2C, best-effort; failure must NOT
-      // roll back L1). Pauses L2 when L1 collapses (last 2 again), resumes the
-      // cascade-failure pause when L1 recovers (last 2 good/easy).
-      await this.tryL1Cascade(progress, input.rating);
-
-      // 8. Session counter (non-critical, best-effort)
-      await this.tryIncrementSession(repos, input.sessionId);
-
       return {
-        ok: true,
-        reviewLogId: result.reviewLogId,
-        nextDueAt: scheduling.dueAt,
-        state: scheduling.state,
+        result: {
+          ok: true,
+          reviewLogId: result.reviewLogId,
+          nextDueAt: scheduling.dueAt,
+          state: scheduling.state,
+        } as SubmitAnswerResult,
+        postCommit: { progress, scheduling, rating: input.rating, sessionId: input.sessionId, userId },
       };
     });
+
+    // These writes intentionally start only after withTransaction has committed
+    // the authoritative L1 answer. Each is best-effort and uses dependencies
+    // backed by the global pool rather than the completed transaction client.
+    if (transactionResult.postCommit) {
+      const { progress, scheduling, rating, sessionId, userId: actorId } = transactionResult.postCommit;
+      await this.tryL2Transition(progress, scheduling, rating);
+      await this.tryL1Cascade(progress, rating);
+      await this.tryIncrementSession(sessionId, actorId, progress.wordbook_id);
+    }
+
+    return transactionResult.result;
   }
 
   /**
@@ -223,6 +233,9 @@ export class ReviewService {
       good_count: progress.good_count,
       easy_count: progress.easy_count,
       content_hash_snapshot: progress.content_hash_snapshot,
+      l1_content_hash_snapshot: progress.l1_content_hash_snapshot,
+      recent_ratings: progress.recent_ratings,
+      l1_weak_signal: progress.l1_weak_signal,
     } as Json;
   }
 
@@ -293,14 +306,21 @@ export class ReviewService {
   }
 
   /**
-   * Best-effort session counter increment. Failures are silently ignored —
-   * session count is non-critical and should not fail the review.
+   * Best-effort session counter increment on an independent connection.
+   * It runs only after the L1 transaction commits, so a SQL error cannot leave
+   * that transaction aborted or make the committed answer look unsuccessful.
    */
-  private async tryIncrementSession(repos: Repositories, sessionId: string): Promise<void> {
+  private async tryIncrementSession(sessionId: string, userId: string, wordbookId: string): Promise<void> {
+    if (!this.deps.incrementSessionCardsSeen) return;
     try {
-      await repos.sessions.incrementCardsSeen(sessionId);
-    } catch {
-      // Best-effort: don't fail the review if session counter fails
+      await this.deps.incrementSessionCardsSeen(sessionId, userId, wordbookId);
+    } catch (err) {
+      logger.warn("review", "Session counter increment failed", {
+        sessionId,
+        userId,
+        wordbookId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -312,7 +332,7 @@ export class ReviewService {
       const repos = createRepositories(tx);
 
       if (input.idempotencyKey) {
-        const existing = await repos.reviews.checkIdempotency(input.idempotencyKey);
+        const existing = await repos.reviews.checkIdempotency(userId, input.idempotencyKey);
         if (existing) {
           return { ok: true, idempotent: true };
         }
@@ -322,6 +342,8 @@ export class ReviewService {
       if (!progress) {
         throw new NotFoundError("Progress", input.progressId);
       }
+
+      await repos.sessions.assertActiveOwned(input.sessionId, userId, progress.wordbook_id);
 
       await repos.reviews.skipCard(
         progress,
@@ -342,7 +364,7 @@ export class ReviewService {
       const repos = createRepositories(tx);
 
       if (input.idempotencyKey) {
-        const existing = await repos.reviews.checkIdempotency(input.idempotencyKey);
+        const existing = await repos.reviews.checkIdempotency(userId, input.idempotencyKey);
         if (existing) {
           return { ok: true, idempotent: true };
         }
@@ -351,6 +373,10 @@ export class ReviewService {
       const progress = await repos.reviews.findProgressForSuspend(input.progressId, userId);
       if (!progress) {
         throw new NotFoundError("Progress", input.progressId);
+      }
+
+      if (input.sessionId) {
+        await repos.sessions.assertActiveOwned(input.sessionId, userId, progress.wordbook_id);
       }
 
       await repos.reviews.suspendCard(
@@ -372,15 +398,22 @@ export class ReviewService {
       const repos = createRepositories(tx);
 
       if (input.idempotencyKey) {
-        const existing = await repos.reviews.checkIdempotency(input.idempotencyKey);
+        const existing = await repos.reviews.checkIdempotency(userId, input.idempotencyKey);
         if (existing) {
           return { ok: true, idempotent: true };
         }
       }
 
+      const wordbookId = await repos.reviews.findReviewLogWordbookForUndo(input.reviewLogId, userId);
+      if (!wordbookId) {
+        throw new NotFoundError("ReviewLog", input.reviewLogId);
+      }
+      await repos.sessions.assertActiveOwned(input.sessionId, userId, wordbookId);
+
       const result = await repos.reviews.undoReviewLog(
         input.reviewLogId,
         userId,
+        wordbookId,
         input.sessionId,
         input.idempotencyKey ?? null,
       );
