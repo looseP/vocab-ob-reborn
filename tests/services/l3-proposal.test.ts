@@ -191,6 +191,7 @@ function makeProposalRepo(items = proposalItems(), proposal = PROPOSAL_ROW): IL3
     createProposal: vi.fn(async (input) => ({ ...proposal, user_id: input.user_id, wordbook_id: input.wordbook_id ?? null, source_type: input.source_type as never })),
     createProposalItem: vi.fn(async (input) => makeItem(input.ordinal, input.item_type as never, input.payload as never)),
     findProposalByIdForUser: vi.fn(async () => proposal),
+    findProposalByInputHash: vi.fn(async () => null),
     lockProposalByIdForUser: vi.fn(async () => proposal),
     findProposalItems: vi.fn(async () => items),
     getProposalBundle: vi.fn(async () => ({ proposal, items })),

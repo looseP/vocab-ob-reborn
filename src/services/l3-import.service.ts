@@ -10,11 +10,14 @@ import { createHash } from "node:crypto";
 import { NotFoundError, ValidationError } from "../errors";
 import type { Json, L3ImportJobRow, L3ProposalItemRow, L3ProposalRow, WordRow } from "../domain";
 import type { IL3ContextRepository } from "../repositories/interfaces";
+import { withTransaction } from "../db/transaction";
+import { createRepositories } from "../repositories/factory";
 import {
   L3_CONTEXT_LINK_TARGET_TYPES,
   L3_CONTEXT_LINK_TYPES,
   L3_CONTEXT_TYPES,
   L3_SOURCE_TYPES,
+  type CreateL3ProposalItemInput,
   type CreateL3RawTextImportProposalInput,
   type CreateL3StructuredImportProposalInput,
   type L3StructuredImportContextInput,
@@ -65,6 +68,15 @@ function stableJson(value: unknown): string {
 
 function hashInput(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("hex");
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    error != null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code: unknown }).code === "23505"
+  );
 }
 
 function mergeEvidence(base: Record<string, unknown>, extra: Json | undefined): Json {
@@ -121,45 +133,8 @@ export class L3ImportService {
       options: input.options ?? {},
     });
 
-    const importJob = await this.l3Context.createImportJob({
-      user_id: input.userId,
-      status: "processing",
-      input_hash: inputHash,
-      input_summary: `${input.source.title}: ${parseStats.contextCount} parsed contexts`,
-      stats: parseStats as unknown as Json,
-    });
-
-    try {
-      const items = this.buildRawTextProposalItems(input, importJob.id, parsed.contexts);
-      const bundle = await this.l3Proposal.createProposal({
-        userId: input.userId,
-        wordbookId: input.wordbookId ?? null,
-        sourceType: "import",
-        title: `Import: ${input.source.title}`,
-        summary: `${parseStats.contextCount} contexts, ${parseStats.occurrenceCount} occurrences`,
-        inputHash,
-        proposedBy: "l3_import_builder",
-        provenance: mergeEvidence({ importJobId: importJob.id, source: "raw_text_import" }, input.provenance),
-        items,
-      });
-      const completedImportJob = await this.l3Context.updateImportJobStatus(
-        importJob.id,
-        input.userId,
-        "completed",
-        parseStats as unknown as Json,
-        null,
-      );
-      return { importJob: completedImportJob, proposal: bundle.proposal, items: bundle.items, parseStats };
-    } catch (error) {
-      await this.l3Context.updateImportJobStatus(
-        importJob.id,
-        input.userId,
-        "failed",
-        parseStats as unknown as Json,
-        error instanceof Error ? error.message : "Unknown import proposal failure",
-      );
-      throw error;
-    }
+    return this.executeImport(input, inputHash, parseStats, "raw_text_import",
+      (importJobId) => this.buildRawTextProposalItems(input, importJobId, parsed.contexts));
   }
 
   async createStructuredImportProposal(input: CreateL3StructuredImportProposalInput): Promise<L3ImportProposalResult> {
@@ -200,45 +175,86 @@ export class L3ImportService {
       source: input.source,
       contexts: input.contexts,
     });
-    const importJob = await this.l3Context.createImportJob({
-      user_id: input.userId,
-      status: "processing",
-      input_hash: inputHash,
-      input_summary: `${input.source.title}: ${parseStats.contextCount} structured contexts`,
-      stats: parseStats as unknown as Json,
-    });
+
+    return this.executeImport(input, inputHash, parseStats, "structured_import",
+      (importJobId) => this.buildStructuredProposalItems(input, importJobId));
+  }
+
+  /**
+   * Shared import execution: dedup check → single transaction (import job +
+   * proposal + items) → race-condition fallback. The import job is created
+   * directly as "completed" — the "processing" intermediate state is
+   * eliminated because the entire flow is atomic.
+   */
+  private async executeImport(
+    input: { userId: string; wordbookId?: string | null; source: { title: string }; provenance?: Json },
+    inputHash: string,
+    parseStats: L3ImportParseStats,
+    sourceTag: string,
+    buildItems: (importJobId: string) => CreateL3ProposalItemInput[],
+  ): Promise<L3ImportProposalResult> {
+    // Idempotent re-submission: return existing result if input_hash matches.
+    const existing = await this.findExistingImport(input.userId, inputHash);
+    if (existing) return existing;
+
+    const summary = parseStats.linkCount > 0
+      ? `${parseStats.contextCount} contexts, ${parseStats.occurrenceCount} occurrences, ${parseStats.linkCount} links`
+      : `${parseStats.contextCount} contexts, ${parseStats.occurrenceCount} occurrences`;
 
     try {
-      const items = this.buildStructuredProposalItems(input, importJob.id);
-      const bundle = await this.l3Proposal.createProposal({
-        userId: input.userId,
-        wordbookId: input.wordbookId ?? null,
-        sourceType: "import",
-        title: `Import: ${input.source.title}`,
-        summary: `${parseStats.contextCount} contexts, ${parseStats.occurrenceCount} occurrences, ${parseStats.linkCount} links`,
-        inputHash,
-        proposedBy: "l3_import_builder",
-        provenance: mergeEvidence({ importJobId: importJob.id, source: "structured_import" }, input.provenance),
-        items,
+      return await withTransaction(async (tx) => {
+        const repos = createRepositories(tx);
+        const importJob = await repos.l3Context.createImportJob({
+          user_id: input.userId,
+          status: "completed",
+          input_hash: inputHash,
+          input_summary: `${input.source.title}: ${parseStats.contextCount} contexts`,
+          stats: parseStats as unknown as Json,
+        });
+        const items = buildItems(importJob.id);
+        const bundle = await this.l3Proposal.createProposalInTx(tx, {
+          userId: input.userId,
+          wordbookId: input.wordbookId ?? null,
+          sourceType: "import",
+          title: `Import: ${input.source.title}`,
+          summary,
+          inputHash,
+          proposedBy: "l3_import_builder",
+          provenance: mergeEvidence({ importJobId: importJob.id, source: sourceTag }, input.provenance),
+          items,
+        });
+        return { importJob, proposal: bundle.proposal, items: bundle.items, parseStats };
       });
-      const completedImportJob = await this.l3Context.updateImportJobStatus(
-        importJob.id,
-        input.userId,
-        "completed",
-        parseStats as unknown as Json,
-        null,
-      );
-      return { importJob: completedImportJob, proposal: bundle.proposal, items: bundle.items, parseStats };
     } catch (error) {
-      await this.l3Context.updateImportJobStatus(
-        importJob.id,
-        input.userId,
-        "failed",
-        parseStats as unknown as Json,
-        error instanceof Error ? error.message : "Unknown import proposal failure",
-      );
+      // Race: another concurrent request inserted the same (user_id, input_hash).
+      if (isUniqueViolation(error)) {
+        const existing = await this.findExistingImport(input.userId, inputHash);
+        if (existing) return existing;
+      }
       throw error;
     }
+  }
+
+  /**
+   * Find an existing completed import job + its proposal by input_hash.
+   * Returns null if no match exists, or if the existing job is in a
+   * non-completed state (the caller should retry or conflict).
+   */
+  private async findExistingImport(
+    userId: string,
+    inputHash: string,
+  ): Promise<L3ImportProposalResult | null> {
+    const importJob = await this.l3Context.findImportJobByInputHash(userId, inputHash);
+    if (!importJob || importJob.status !== "completed") return null;
+    const proposal = await this.l3Proposal.findProposalByInputHash(userId, inputHash);
+    if (!proposal) return null;
+    const bundle = await this.l3Proposal.getProposal({ userId, proposalId: proposal.id });
+    return {
+      importJob,
+      proposal: bundle.proposal,
+      items: bundle.items,
+      parseStats: importJob.stats as unknown as L3ImportParseStats,
+    };
   }
 
   private async validateEnvelope(

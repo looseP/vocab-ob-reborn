@@ -186,9 +186,11 @@ describe("L3 isolation", () => {
 
     const sql = mock.calls.map((call) => call.text).join("\n");
     expect(sql).toContain("INSERT INTO l3_import_jobs");
-    expect(sql).toContain("UPDATE l3_import_jobs");
     expect(sql).toContain("INSERT INTO l3_proposals");
     expect(sql).toContain("INSERT INTO l3_proposal_items");
+    // Import job is created directly as "completed" in a single transaction —
+    // no UPDATE l3_import_jobs is needed anymore.
+    expect(sql).not.toContain("UPDATE l3_import_jobs");
     expect(sql).not.toContain("INSERT INTO l3_sources");
     expect(sql).not.toContain("INSERT INTO l3_contexts");
     expect(sql).not.toContain("INSERT INTO l3_occurrences");

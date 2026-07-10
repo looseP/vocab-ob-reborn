@@ -455,6 +455,12 @@ class L3CrossContractHarness {
         this.importJobs.set(importJob.id, importJob);
         return importJob;
       }),
+      findImportJobByInputHash: vi.fn(async (userId: string, inputHash: string) => {
+        for (const job of this.importJobs.values()) {
+          if (job.user_id === userId && job.input_hash === inputHash) return job;
+        }
+        return null;
+      }),
       updateImportJobStatus: vi.fn(async (importJobId, userId, status, stats = {}, error = null) => {
         this.record("l3_import_jobs", "update");
         const existing = this.importJobs.get(importJobId);
@@ -579,6 +585,12 @@ class L3CrossContractHarness {
       findProposalByIdForUser: vi.fn(async (userId, proposalId) => {
         const proposal = this.proposals.get(proposalId);
         return proposal && proposal.user_id === userId ? proposal : null;
+      }),
+      findProposalByInputHash: vi.fn(async (userId: string, inputHash: string) => {
+        for (const p of this.proposals.values()) {
+          if (p.user_id === userId && p.input_hash === inputHash) return p;
+        }
+        return null;
       }),
       lockProposalByIdForUser: vi.fn(async (userId, proposalId) => {
         const proposal = this.proposals.get(proposalId);

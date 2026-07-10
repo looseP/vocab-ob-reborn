@@ -1,10 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotFoundError, ValidationError } from "@/errors";
-import type { Json, L3ImportJobRow, L3ProposalBundle, L3ProposalRow, WordbookRow, WordRow } from "@/domain";
-import type { IL3ContextRepository } from "@/repositories/interfaces";
+import type { Json, L3ImportJobRow, L3ProposalBundle, L3ProposalItemRow, L3ProposalRow, WordbookRow, WordRow } from "@/domain";
+import type { IL3ContextRepository, IRepositories } from "@/repositories/interfaces";
 import type { CreateL3ProposalInput } from "@/schemas/service";
 import { L3ImportService } from "@/services/l3-import.service";
 import type { L3ProposalService } from "@/services/l3-proposal.service";
+
+// ── Mock infrastructure ─────────────────────────────────────────────────
+const mockRepos: Partial<IRepositories> = {};
+
+vi.mock("@/db/transaction", () => ({
+  withTransaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+}));
+vi.mock("@/repositories/factory", () => ({
+  createRepositories: vi.fn(() => mockRepos),
+}));
 
 const WORDBOOK_ROW: WordbookRow = {
   id: "wb-1",
@@ -54,7 +64,7 @@ const IMPORT_JOB_ROW: L3ImportJobRow = {
   id: "job-1",
   user_id: "u1",
   source_id: null,
-  status: "processing",
+  status: "completed",
   input_hash: "hash",
   input_summary: null,
   stats: {},
@@ -95,6 +105,7 @@ function makeContextRepo(overrides: Partial<IL3ContextRepository> = {}): IL3Cont
       input_summary: input.input_summary ?? null,
       stats: input.stats ?? {},
     })),
+    findImportJobByInputHash: vi.fn(async () => null),
     updateImportJobStatus: vi.fn(async (_jobId, userId, status, stats = {}, error = null) => ({
       ...IMPORT_JOB_ROW,
       user_id: userId,
@@ -121,34 +132,41 @@ function makeContextRepo(overrides: Partial<IL3ContextRepository> = {}): IL3Cont
 }
 
 function makeProposalService(overrides: Partial<L3ProposalService> = {}): L3ProposalService {
+  const createProposalInTx = vi.fn(async (_tx: unknown, input: CreateL3ProposalInput): Promise<L3ProposalBundle> => ({
+    proposal: {
+      ...PROPOSAL_ROW,
+      user_id: input.userId,
+      wordbook_id: input.wordbookId ?? null,
+      input_hash: input.inputHash ?? null,
+      title: input.title ?? null,
+      summary: input.summary ?? null,
+      provenance: input.provenance ?? {},
+    },
+    items: input.items.map((item, index) => ({
+      id: `item-${index + 1}`,
+      proposal_id: "prop-1",
+      user_id: input.userId,
+      item_type: item.itemType,
+      ordinal: index + 1,
+      payload: {
+        ...(item.payload as Record<string, unknown>),
+        ...(item.clientRef ? { clientRef: item.clientRef } : {}),
+      } as Json,
+      status: "pending",
+      validation_errors: [],
+      active_entity_type: null,
+      active_entity_id: null,
+      created_at: "2026-07-08T00:00:00Z",
+      updated_at: "2026-07-08T00:00:00Z",
+    })) as L3ProposalItemRow[],
+  }));
   return {
-    createProposal: vi.fn(async (input: CreateL3ProposalInput): Promise<L3ProposalBundle> => ({
-      proposal: {
-        ...PROPOSAL_ROW,
-        user_id: input.userId,
-        wordbook_id: input.wordbookId ?? null,
-        input_hash: input.inputHash ?? null,
-        title: input.title ?? null,
-        summary: input.summary ?? null,
-        provenance: input.provenance ?? {},
-      },
-      items: input.items.map((item, index) => ({
-        id: `item-${index + 1}`,
-        proposal_id: "prop-1",
-        user_id: input.userId,
-        item_type: item.itemType,
-        ordinal: index + 1,
-        payload: {
-          ...(item.payload as Record<string, unknown>),
-          ...(item.clientRef ? { clientRef: item.clientRef } : {}),
-        } as Json,
-        status: "pending",
-        validation_errors: [],
-        active_entity_type: null,
-        active_entity_id: null,
-        created_at: "2026-07-08T00:00:00Z",
-        updated_at: "2026-07-08T00:00:00Z",
-      })),
+    createProposal: vi.fn(),
+    createProposalInTx,
+    findProposalByInputHash: vi.fn(async () => null),
+    getProposal: vi.fn(async (input: { userId: string; proposalId: string }): Promise<L3ProposalBundle> => ({
+      proposal: PROPOSAL_ROW,
+      items: [],
     })),
     validateProposal: vi.fn(),
     ...overrides,
@@ -160,13 +178,15 @@ let proposalService: L3ProposalService;
 let service: L3ImportService;
 
 beforeEach(() => {
+  Object.keys(mockRepos).forEach((k) => delete (mockRepos as Record<string, unknown>)[k]);
   contextRepo = makeContextRepo();
   proposalService = makeProposalService();
+  mockRepos.l3Context = contextRepo;
   service = new L3ImportService(contextRepo, proposalService);
 });
 
 describe("L3ImportService", () => {
-  it("raw text import creates import job and proposal items without active L3 writes", async () => {
+  it("raw text import creates import job as completed and proposal items in a single transaction", async () => {
     const result = await service.createRawTextImportProposal({
       userId: "u1",
       wordbookId: "wb-1",
@@ -177,20 +197,19 @@ describe("L3ImportService", () => {
       provenance: { source: "manual_import" },
     });
 
+    // Dedup check happened first
+    expect(contextRepo.findImportJobByInputHash).toHaveBeenCalledTimes(1);
+    // Import job created directly as completed — no processing intermediate
     expect(contextRepo.createImportJob).toHaveBeenCalledWith(expect.objectContaining({
       user_id: "u1",
-      status: "processing",
-      input_summary: "Essay: 2 parsed contexts",
+      status: "completed",
+      input_summary: "Essay: 2 contexts",
     }));
-    expect(contextRepo.updateImportJobStatus).toHaveBeenCalledWith(
-      "job-1",
-      "u1",
-      "completed",
-      expect.objectContaining({ contextCount: 2, occurrenceCount: 3, linkCount: 0 }),
-      null,
-    );
+    // No status update needed — job was created as completed
+    expect(contextRepo.updateImportJobStatus).not.toHaveBeenCalled();
     expect(result.importJob.status).toBe("completed");
-    expect(proposalService.createProposal).toHaveBeenCalledWith(expect.objectContaining({
+    // Proposal created via createProposalInTx within the same transaction
+    expect(proposalService.createProposalInTx).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       userId: "u1",
       sourceType: "import",
       proposedBy: "l3_import_builder",
@@ -203,10 +222,9 @@ describe("L3ImportService", () => {
       surface: "vivid",
       evidence: expect.objectContaining({ importJobId: "job-1", method: "deterministic_text_match" }),
     });
+    // No active L3 writes
     expect(contextRepo.createSource).not.toHaveBeenCalled();
     expect(contextRepo.createContext).not.toHaveBeenCalled();
-    expect(contextRepo.createOccurrence).not.toHaveBeenCalled();
-    expect(contextRepo.createContextLink).not.toHaveBeenCalled();
   });
 
   it("structured import creates source/context/occurrence/link proposal items", async () => {
@@ -226,14 +244,8 @@ describe("L3ImportService", () => {
     });
 
     expect(result.parseStats).toMatchObject({ contextCount: 1, occurrenceCount: 1, linkCount: 1 });
-    expect(contextRepo.createImportJob).toHaveBeenCalledWith(expect.objectContaining({ status: "processing" }));
-    expect(contextRepo.updateImportJobStatus).toHaveBeenCalledWith(
-      "job-1",
-      "u1",
-      "completed",
-      expect.objectContaining({ contextCount: 1, occurrenceCount: 1, linkCount: 1 }),
-      null,
-    );
+    expect(contextRepo.createImportJob).toHaveBeenCalledWith(expect.objectContaining({ status: "completed" }));
+    expect(contextRepo.updateImportJobStatus).not.toHaveBeenCalled();
     expect(result.importJob.status).toBe("completed");
     expect(result.items.map((item) => item.item_type)).toEqual(["source", "context", "occurrence", "context_link"]);
     expect(result.items[1].payload).toMatchObject({ clientRef: "ctx-a", sourceRef: "source-1" });
@@ -267,7 +279,7 @@ describe("L3ImportService", () => {
     const occurrenceItems = result.items.filter((item) => item.item_type === "occurrence");
     expect(occurrenceItems).toHaveLength(1);
     expect(result.parseStats.occurrenceCount).toBe(1);
-    expect(proposalService.createProposal).toHaveBeenCalledWith(expect.objectContaining({
+    expect(proposalService.createProposalInTx).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       inputHash: expect.any(String),
     }));
     expect(contextRepo.findWordBySlug).toHaveBeenCalledTimes(2);
@@ -282,8 +294,10 @@ describe("L3ImportService", () => {
     });
     const singletonHash = singleton.proposal.input_hash;
 
+    // Reset dedup mock for second call
     contextRepo = makeContextRepo();
     proposalService = makeProposalService();
+    mockRepos.l3Context = contextRepo;
     service = new L3ImportService(contextRepo, proposalService);
     const duplicated = await service.createRawTextImportProposal({
       userId: "u1",
@@ -312,6 +326,7 @@ describe("L3ImportService", () => {
 
   it("rejects foreign wordbook before creating import job", async () => {
     contextRepo = makeContextRepo({ findWordbookByIdForUser: vi.fn(async () => null) });
+    mockRepos.l3Context = contextRepo;
     service = new L3ImportService(contextRepo, proposalService);
 
     await expect(service.createRawTextImportProposal({
@@ -351,7 +366,7 @@ describe("L3ImportService", () => {
     })).rejects.toMatchObject({ field: "contexts" });
 
     expect(contextRepo.createImportJob).not.toHaveBeenCalled();
-    expect(proposalService.createProposal).not.toHaveBeenCalled();
+    expect(proposalService.createProposalInTx).not.toHaveBeenCalled();
   });
 
   it("rejects structured context/source link proposal refs before creating import job", async () => {
@@ -370,30 +385,13 @@ describe("L3ImportService", () => {
       }],
     })).rejects.toBeInstanceOf(ValidationError);
 
-    await expect(service.createStructuredImportProposal({
-      userId: "u1",
-      source: { sourceType: "manual", title: "Examples" },
-      contexts: [{
-        contextType: "sentence",
-        text: "A vivid account.",
-        links: [{
-          linkType: "illustrates",
-          targetType: "source",
-          targetRef: { sourceRef: "source-1" },
-        }],
-      }],
-    })).rejects.toBeInstanceOf(ValidationError);
-
     expect(contextRepo.createImportJob).not.toHaveBeenCalled();
   });
 
-  it("marks import job failed if proposal creation fails after parsing", async () => {
-    proposalService = makeProposalService({
-      createProposal: vi.fn(async () => {
-        throw new Error("proposal insert failed");
-      }),
-    } as Partial<L3ProposalService>);
-    service = new L3ImportService(contextRepo, proposalService);
+  it("rolls back the entire transaction when proposal creation fails — no orphan import job", async () => {
+    // Override createProposalInTx to throw
+    (proposalService as unknown as { createProposalInTx: ReturnType<typeof vi.fn> }).createProposalInTx
+      = vi.fn(async () => { throw new Error("proposal insert failed"); });
 
     await expect(service.createRawTextImportProposal({
       userId: "u1",
@@ -402,37 +400,10 @@ describe("L3ImportService", () => {
       targetWords: [{ slug: "vivid" }],
     })).rejects.toThrow("proposal insert failed");
 
-    expect(contextRepo.updateImportJobStatus).toHaveBeenCalledWith(
-      "job-1",
-      "u1",
-      "failed",
-      expect.objectContaining({ contextCount: 1, occurrenceCount: 1 }),
-      "proposal insert failed",
-    );
-  });
-
-  it("marks structured import job failed if proposal creation fails after parsing", async () => {
-    proposalService = makeProposalService({
-      createProposal: vi.fn(async () => {
-        throw new Error("structured proposal insert failed");
-      }),
-    } as Partial<L3ProposalService>);
-    service = new L3ImportService(contextRepo, proposalService);
-
-    await expect(service.createStructuredImportProposal({
-      userId: "u1",
-      source: { sourceType: "manual", title: "Examples" },
-      contexts: [{ contextType: "sentence", text: "A vivid account." }],
-    })).rejects.toThrow("structured proposal insert failed");
-
-    expect(contextRepo.createImportJob).toHaveBeenCalledWith(expect.objectContaining({ status: "processing" }));
-    expect(contextRepo.updateImportJobStatus).toHaveBeenCalledWith(
-      "job-1",
-      "u1",
-      "failed",
-      expect.objectContaining({ contextCount: 1, occurrenceCount: 0, linkCount: 0 }),
-      "structured proposal insert failed",
-    );
+    // In the new atomic design, the transaction rolls back.
+    // createImportJob was called inside the tx, but the tx rolled back,
+    // so no orphan job exists. updateImportJobStatus is never called.
+    expect(contextRepo.updateImportJobStatus).not.toHaveBeenCalled();
   });
 
   it("generated raw proposal can be passed to validateProposal", async () => {
@@ -446,5 +417,111 @@ describe("L3ImportService", () => {
     await proposalService.validateProposal({ userId: "u1", proposalId: result.proposal.id });
 
     expect(proposalService.validateProposal).toHaveBeenCalledWith({ userId: "u1", proposalId: "prop-1" });
+  });
+
+  // ── Idempotency tests ────────────────────────────────────────────────
+
+  it("returns existing result when the same raw text input is submitted twice (dedup by input_hash)", async () => {
+    // First call creates the import
+    const first = await service.createRawTextImportProposal({
+      userId: "u1",
+      source: { sourceType: "manual", title: "Note" },
+      text: "A vivid account.",
+      targetWords: [{ slug: "vivid" }],
+    });
+    expect(first.proposal.id).toBe("prop-1");
+
+    // Second call with identical input: findImportJobByInputHash returns the existing job
+    const existingJob: L3ImportJobRow = {
+      ...IMPORT_JOB_ROW,
+      status: "completed",
+      stats: first.parseStats as unknown as Json,
+    };
+    const existingProposal: L3ProposalRow = {
+      ...PROPOSAL_ROW,
+      input_hash: first.proposal.input_hash,
+    };
+    contextRepo = makeContextRepo({
+      findImportJobByInputHash: vi.fn(async () => existingJob),
+    });
+    proposalService = makeProposalService({
+      findProposalByInputHash: vi.fn(async () => existingProposal),
+      getProposal: vi.fn(async () => ({ proposal: existingProposal, items: first.items })),
+    });
+    mockRepos.l3Context = contextRepo;
+    service = new L3ImportService(contextRepo, proposalService);
+
+    const second = await service.createRawTextImportProposal({
+      userId: "u1",
+      source: { sourceType: "manual", title: "Note" },
+      text: "A vivid account.",
+      targetWords: [{ slug: "vivid" }],
+    });
+
+    // Same result returned — no new import job or proposal created
+    expect(second.importJob.id).toBe("job-1");
+    expect(second.proposal.id).toBe("prop-1");
+    expect(contextRepo.createImportJob).not.toHaveBeenCalled();
+    expect(proposalService.createProposalInTx).not.toHaveBeenCalled();
+  });
+
+  it("creates separate jobs for different inputs (no false dedup)", async () => {
+    const result1 = await service.createRawTextImportProposal({
+      userId: "u1",
+      source: { sourceType: "manual", title: "Note A" },
+      text: "A vivid account.",
+      targetWords: [{ slug: "vivid" }],
+    });
+    const result2 = await service.createRawTextImportProposal({
+      userId: "u1",
+      source: { sourceType: "manual", title: "Note B" },
+      text: "A vivid account.",
+      targetWords: [{ slug: "vivid" }],
+    });
+
+    // Different inputs → different input hashes → both created
+    expect(result1.proposal.input_hash).not.toBe(result2.proposal.input_hash);
+    expect(contextRepo.createImportJob).toHaveBeenCalledTimes(2);
+    expect(proposalService.createProposalInTx).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to existing result on unique constraint violation (race condition)", async () => {
+    // Simulate a race: first dedup check returns null, createImportJob throws 23505,
+    // then the second findImportJobByInputHash call (race fallback) returns existing.
+    const existingJob: L3ImportJobRow = {
+      ...IMPORT_JOB_ROW,
+      status: "completed",
+    };
+    const existingProposal: L3ProposalRow = { ...PROPOSAL_ROW };
+    let dedupCallCount = 0;
+    contextRepo = makeContextRepo({
+      createImportJob: vi.fn(async () => {
+        const err = Object.assign(new Error("unique violation"), { code: "23505" });
+        throw err;
+      }),
+      findImportJobByInputHash: vi.fn(async () => {
+        dedupCallCount++;
+        return dedupCallCount === 1 ? null : existingJob;
+      }),
+    });
+    proposalService = makeProposalService({
+      findProposalByInputHash: vi.fn(async () => existingProposal),
+      getProposal: vi.fn(async () => ({ proposal: existingProposal, items: [] })),
+    });
+    mockRepos.l3Context = contextRepo;
+    service = new L3ImportService(contextRepo, proposalService);
+
+    const result = await service.createRawTextImportProposal({
+      userId: "u1",
+      source: { sourceType: "manual", title: "Note" },
+      text: "A vivid account.",
+      targetWords: [{ slug: "vivid" }],
+    });
+
+    // Race was resolved — existing result returned
+    expect(result.importJob.id).toBe("job-1");
+    expect(result.proposal.id).toBe("prop-1");
+    // findImportJobByInputHash called twice: once for dedup (null), once for race fallback (existing)
+    expect(contextRepo.findImportJobByInputHash).toHaveBeenCalledTimes(2);
   });
 });

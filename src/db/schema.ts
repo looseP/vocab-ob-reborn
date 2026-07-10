@@ -859,6 +859,7 @@ export const l3ImportJobs = pgTable("l3_import_jobs", {
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 }, (table) => [
 	index("idx_l3_import_jobs_user_status").on(table.userId, table.status),
+	uniqueIndex("idx_l3_import_jobs_user_input_hash").on(table.userId, table.inputHash).where(sql`input_hash IS NOT NULL`),
 	pgPolicy("l3_import_jobs_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 	check("l3_import_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'completed'::text, 'failed'::text])`),
 ]);

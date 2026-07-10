@@ -113,6 +113,16 @@ export class L3ProposalRepository extends BaseRepository implements IL3ProposalR
     );
   }
 
+  async findProposalByInputHash(userId: string, inputHash: string): Promise<L3ProposalRow | null> {
+    return this.queryOne<L3ProposalRow>(
+      `SELECT * FROM l3_proposals
+       WHERE user_id = $1::uuid AND input_hash = $2
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId, inputHash],
+    );
+  }
+
   async lockProposalByIdForUser(userId: string, proposalId: string): Promise<L3ProposalRow | null> {
     this.requireTx();
     return this.queryOne<L3ProposalRow>(

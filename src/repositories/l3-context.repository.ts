@@ -591,6 +591,16 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     return row;
   }
 
+  async findImportJobByInputHash(userId: string, inputHash: string): Promise<L3ImportJobRow | null> {
+    return this.queryOne<L3ImportJobRow>(
+      `SELECT * FROM l3_import_jobs
+       WHERE user_id = $1::uuid AND input_hash = $2
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId, inputHash],
+    );
+  }
+
   async updateImportJobStatus(
     importJobId: string,
     userId: string,

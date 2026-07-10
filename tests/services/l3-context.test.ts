@@ -205,6 +205,7 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
       created_at: "2026-07-08T00:00:00Z",
       updated_at: "2026-07-08T00:00:01Z",
     })),
+    findImportJobByInputHash: vi.fn(async () => null),
     findWordbookByIdForUser: vi.fn(async () => WORDBOOK_ROW),
     findSourceById: vi.fn(async () => SOURCE_ROW),
     findContextById: vi.fn(async () => CONTEXT_ROW),
