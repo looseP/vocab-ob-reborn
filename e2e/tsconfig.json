@@ -11,7 +11,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["@playwright/test"]
+    "types": ["@playwright/test", "node"]
   },
-  "include": ["e2e/**/*.ts", "playwright.config.ts"]
+  "include": ["./**/*.ts", "../playwright.config.ts"]
 }

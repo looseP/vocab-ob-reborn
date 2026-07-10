@@ -1,4 +1,4 @@
-import { test, expect, OWNER_TOKEN } from "./fixtures";
+import { test, expect, loginAsOwner, OWNER_TOKEN } from "./fixtures";
 
 test.describe("Browser authentication E2E", () => {
   test("login page is shown to anonymous visitors", async ({ page }) => {
@@ -9,10 +9,7 @@ test.describe("Browser authentication E2E", () => {
   });
 
   test("HttpOnly session cookie is set after login", async ({ page }) => {
-    await page.goto("/");
-    await page.fill("#owner-token", OWNER_TOKEN);
-    await page.click('button[type="submit"]');
-    await expect(page.locator(".session-toolbar")).toBeVisible({ timeout: 5_000 });
+    await loginAsOwner(page);
 
     const cookies = await page.context().cookies();
     const sessionCookie = cookies.find((c) => c.name === "vocab_session");
@@ -22,10 +19,7 @@ test.describe("Browser authentication E2E", () => {
   });
 
   test("session persists across page refresh", async ({ page }) => {
-    await page.goto("/");
-    await page.fill("#owner-token", OWNER_TOKEN);
-    await page.click('button[type="submit"]');
-    await expect(page.locator(".session-toolbar")).toBeVisible({ timeout: 5_000 });
+    await loginAsOwner(page);
 
     await page.reload();
     await expect(page.locator(".session-toolbar")).toBeVisible({ timeout: 5_000 });
@@ -33,10 +27,7 @@ test.describe("Browser authentication E2E", () => {
   });
 
   test("CSRF token is required for state-changing requests", async ({ page }) => {
-    await page.goto("/");
-    await page.fill("#owner-token", OWNER_TOKEN);
-    await page.click('button[type="submit"]');
-    await expect(page.locator(".session-toolbar")).toBeVisible({ timeout: 5_000 });
+    await loginAsOwner(page);
 
     const cookies = await page.context().cookies();
     const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
@@ -53,10 +44,7 @@ test.describe("Browser authentication E2E", () => {
   });
 
   test("cross-site Origin is rejected for mutations", async ({ page }) => {
-    await page.goto("/");
-    await page.fill("#owner-token", OWNER_TOKEN);
-    await page.click('button[type="submit"]');
-    await expect(page.locator(".session-toolbar")).toBeVisible({ timeout: 5_000 });
+    await loginAsOwner(page);
 
     const cookies = await page.context().cookies();
     const csrfCookie = cookies.find((c) => c.name === "vocab_csrf");
@@ -77,10 +65,7 @@ test.describe("Browser authentication E2E", () => {
   });
 
   test("logout revokes session and clears cookies", async ({ page }) => {
-    await page.goto("/");
-    await page.fill("#owner-token", OWNER_TOKEN);
-    await page.click('button[type="submit"]');
-    await expect(page.locator(".session-toolbar")).toBeVisible({ timeout: 5_000 });
+    await loginAsOwner(page);
 
     await page.click(".session-toolbar button");
     await expect(page.locator("#owner-token")).toBeVisible({ timeout: 5_000 });
@@ -94,10 +79,7 @@ test.describe("Browser authentication E2E", () => {
   });
 
   test("owner token never appears in browser storage, DOM, or bundle", async ({ page }) => {
-    await page.goto("/");
-    await page.fill("#owner-token", OWNER_TOKEN);
-    await page.click('button[type="submit"]');
-    await expect(page.locator(".session-toolbar")).toBeVisible({ timeout: 5_000 });
+    await loginAsOwner(page);
 
     const localStorageKeys = await page.evaluate(() => Object.keys(localStorage));
     const sessionStorageKeys = await page.evaluate(() => Object.keys(sessionStorage));
