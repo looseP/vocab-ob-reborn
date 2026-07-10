@@ -150,3 +150,32 @@ export function isDbConnectionError(error: unknown): boolean {
 
   return false;
 }
+
+/**
+ * RFC 7807 Problem Details helper.
+ *
+ * Used by middleware to emit consistent application/problem+json responses.
+ */
+export type ProblemDetails = {
+  type: string;
+  title: string;
+  status: number;
+  detail: string;
+  instance?: string;
+  [key: string]: unknown;
+};
+
+export function problemDetails(
+  status: number,
+  title: string,
+  detail: string,
+  extensions?: Record<string, unknown>,
+): ProblemDetails {
+  return {
+    type: "about:blank",
+    title,
+    status,
+    detail,
+    ...extensions,
+  };
+}

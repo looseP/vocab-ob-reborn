@@ -30,8 +30,10 @@
     "verify:engineering": "npm run typecheck && npm run arch:check && npm run test:unit && npm run frontend:build",
     "verify:unit": "npm run verify:engineering",
     "verify:db": "npm run db:migrate && npm run test:db-release && npm run test:integration",
+    "test:integration:auth": "tsx scripts/verify-browser-auth-e2e.ts",
+    "test:e2e": "npx playwright test",
     "test:e2e:auth": "tsx scripts/verify-browser-auth-e2e.ts",
-    "verify:e2e": "npm run test:e2e:auth",
+    "verify:e2e": "npx playwright test",
     "verify:release": "npm run verify:engineering && npm run verify:db && npm run verify:e2e",
     "verify:check": "npm run typecheck && npm run test:unit",
     "prepare": "husky"
@@ -66,7 +68,8 @@
     "tsx": "^4.21.0",
     "typescript": "^5",
     "vite": "^8.1.3",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.5",
+    "@playwright/test": "^1.49.0"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
