@@ -12,7 +12,7 @@
  *   breaks downstream `.slice(0,10)` usage)
  */
 
-import { Pool, types } from "pg";
+import { Pool, types, type QueryConfig } from "pg";
 import { logger } from "./logger";
 import type { PoolHealth } from "./types";
 
@@ -86,10 +86,14 @@ function attachPoolListeners(pool: Pool): void {
   });
 }
 
-export async function checkPoolHealth(): Promise<PoolHealth> {
+export async function checkPoolHealth(queryTimeoutMs = 400): Promise<PoolHealth> {
   const pool = getPool();
   try {
-    await pool.query("SELECT 1");
+    const healthQuery = {
+      text: "SELECT 1",
+      query_timeout: queryTimeoutMs,
+    } as QueryConfig & { query_timeout: number };
+    await pool.query(healthQuery);
     return {
       ok: true,
       totalCount: pool.totalCount,
@@ -112,12 +116,8 @@ export async function resetPool(): Promise<void> {
   const oldPool = _pool;
   _pool = null;
   _listenersAttached = false;
-  try {
-    await oldPool.end();
-    logger.info("db", "Pool reset completed");
-  } catch (err) {
-    logger.error("db", "Error closing pool during reset", err);
-  }
+  await oldPool.end();
+  logger.info("db", "Pool reset completed");
 }
 
 export { getPool as pool };

@@ -1,7 +1,7 @@
 /**
  * HTTP 应用工厂 —— Phase 1
  *
- * /health 保持公开；/api/* 全部经 authMiddleware("owner") 鉴权后委派给路由模块。
+ * /healthz、/health、/readyz 保持公开；运行指标经 owner 鉴权；其余 /api/* 委派给业务路由。
  * 路由模块只依赖 @/services，绝不直连 @/db 或 @/repositories（dependency-cruiser 强制）。
  *
  * 架构约束（dependency-cruiser 强制）：
@@ -32,13 +32,28 @@ export function createApp(services: Services): Hono<AppEnv> {
     referrerPolicy: "no-referrer",
   }));
 
-  // 健康检查（公开，无需鉴权）
+  // Liveness is dependency-free: DB failures must not cause restart storms.
+  app.get("/healthz", (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json({ status: "ok" });
+  });
   app.get("/health", (c) => {
+    c.header("Cache-Control", "no-store");
     return c.json({
       ok: true,
       service: "vocab-observatory-v2",
       phase: "1-http",
     });
+  });
+
+  app.get("/readyz", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const readiness = await services.runtimeStatus.getReadiness();
+    if (readiness.status === "not_ready") {
+      c.header("Retry-After", "1");
+      return c.json(readiness, 503);
+    }
+    return c.json(readiness);
   });
 
   // Reject oversized API bodies before auth or route handlers parse them.
@@ -55,6 +70,11 @@ export function createApp(services: Services): Hono<AppEnv> {
 
   // /api/* 需 owner 角色；支持服务端 Bearer 或浏览器 HttpOnly Session。
   app.use("/api/*", authMiddleware(services.authSessions, "owner"));
+
+  app.get("/api/operations/metrics", async (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json(await services.runtimeStatus.getMetrics());
+  });
 
   // 路由模块挂载
   app.route("/api/words", wordRoutes(services));

@@ -7,12 +7,14 @@
  * 跑法：npm run dev（tsx watch src/server.ts）
  */
 import { serve } from "@hono/node-server";
+import type { Server as HttpServer } from "node:http";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createApp } from "./http/server";
 import { createServices, type FsrsAdapterFn, type FsrsScheduling } from "./services";
 import { applyReviewAnswer } from "./fsrs/adapter";
 import type { StoredSchedulerCard } from "./fsrs/types";
 import { loadWordbookWeights } from "./db/weights-loader";
+import { checkPoolHealth, resetPool } from "./db/connection";
 import { createLlmProvider } from "./llm";
 import { UsageTracker } from "./llm/usage-tracker";
 import type { LlmProviderConfig } from "./llm/provider";
@@ -41,6 +43,11 @@ function requireRuntimeConfiguration(): void {
 
 requireRuntimeConfiguration();
 const port = parseInt(process.env.PORT ?? "3001", 10);
+const readinessTimeoutMs = parseInt(process.env.READINESS_TIMEOUT_MS ?? "500", 10);
+const shutdownGraceMs = parseInt(process.env.SHUTDOWN_GRACE_MS ?? "25000", 10);
+if (!Number.isInteger(shutdownGraceMs) || shutdownGraceMs < 1_000 || shutdownGraceMs > 120_000) {
+  throw new Error("SHUTDOWN_GRACE_MS must be an integer between 1000 and 120000");
+}
 
 /**
  * Adapter bridge: ReviewService stores scheduler_payload as Json (jsonb),
@@ -116,6 +123,8 @@ const dictionaryProvider = buildDictionaryProvider();
 
 const services = createServices({
   fsrsAdapter,
+  checkDatabase: () => checkPoolHealth(Math.max(50, readinessTimeoutMs - 50)),
+  readinessTimeoutMs,
   loadWeights: loadWordbookWeights,
   ...(llmDeps ?? {}),
   ...(dictionaryProvider ? { dictionaryProvider } : {}),
@@ -127,7 +136,44 @@ if (process.env.SERVE_FRONTEND === "true") {
   app.get("/*", serveStatic({ root: "./dist/frontend", path: "index.html" }));
 }
 
-serve({ fetch: app.fetch, port }, (info) => {
+const server = serve({ fetch: app.fetch, port }, (info) => {
   logger.info("server", `v2-http listening on :${info.port}`);
-  logger.info("server", `Health check: http://localhost:${info.port}/health`);
+  logger.info("server", `Liveness: http://localhost:${info.port}/healthz`);
+  logger.info("server", `Readiness: http://localhost:${info.port}/readyz`);
 });
+const drainableServer = server as HttpServer;
+
+let shuttingDown = false;
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  services.runtimeStatus.setDraining();
+  logger.info("server", "Shutdown requested; readiness disabled", { signal });
+
+  const deadline = setTimeout(() => {
+    logger.error("server", "Graceful shutdown deadline exceeded", { signal, shutdownGraceMs });
+    process.exitCode = 1;
+    drainableServer.closeAllConnections?.();
+  }, shutdownGraceMs);
+  deadline.unref();
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      drainableServer.close((error) => error ? reject(error) : resolve());
+      drainableServer.closeIdleConnections?.();
+    });
+    await resetPool();
+    logger.info("server", "Graceful shutdown completed", { signal });
+  } catch (error) {
+    logger.error("server", "Graceful shutdown failed", {
+      signal,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    process.exitCode = 1;
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));

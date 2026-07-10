@@ -24,17 +24,23 @@ import { L3ReadService } from "./l3-read.service";
 import { L3RecommendationService } from "./l3-recommendation.service";
 import { CrossTrackService } from "./cross-track.service";
 import { AuthSessionService } from "./auth-session.service";
+import { RuntimeStatusService } from "./runtime-status.service";
 import type { LlmProvider } from "../llm/provider";
 import type { UsageTracker } from "../llm/usage-tracker";
 import type { DictionaryProvider } from "../dictionary/provider";
 import { createRepositories } from "../repositories/factory";
 import { AuthSessionRepository } from "../repositories/auth-session.repository";
+import type { RuntimeDatabaseStatus } from "./runtime-status.service";
 
 export type { FsrsAdapterFn, FsrsScheduling };
 
 export interface ServiceDeps {
   /** FSRS scheduling adapter — M6 fix: required */
   fsrsAdapter: FsrsAdapterFn;
+  /** Database probe injected by the composition root for readiness. */
+  checkDatabase?: () => Promise<RuntimeDatabaseStatus>;
+  /** Fail-closed readiness deadline. */
+  readinessTimeoutMs?: number;
   /** Load wordbook FSRS weights */
   loadWeights?: (wordbookId: string) => Promise<number[] | null>;
   /** LLM provider — optional; required to enable the L2 draft/confirm flow. */
@@ -84,6 +90,12 @@ export function createServices(deps: ServiceDeps) {
   const l3Recommendation = new L3RecommendationService(repos.l3Recommendation, repos.l3Context);
 
   return {
+    runtimeStatus: new RuntimeStatusService(
+      deps.checkDatabase ?? (async () => ({ ok: false, totalCount: 0, idleCount: 0, waitingCount: 0 })),
+      repos.outbox,
+      repos.llmUsage,
+      deps.readinessTimeoutMs,
+    ),
     authSessions: new AuthSessionService(new AuthSessionRepository()),
     words: new WordService(repos.words),
     reviews: new ReviewService({
