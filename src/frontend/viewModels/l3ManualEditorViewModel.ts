@@ -87,7 +87,8 @@ export interface ManualContextLinkFormState {
   provenanceJson: string;
 }
 
-export type ManualDeleteEntityType = "occurrence" | "context_link";
+export type ManualDeleteEntityType = "occurrence" | "context_link" | "source" | "context";
+export const manualDeleteTypes: ManualDeleteEntityType[] = ["occurrence", "context_link", "source", "context"];
 
 export interface ManualDeleteFormState {
   entityType: ManualDeleteEntityType;

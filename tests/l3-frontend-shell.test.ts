@@ -1439,7 +1439,16 @@ describe("Phase 4B L3 frontend shell", () => {
     expect(frontendRuntimeSmokeMatrix()).toEqual([
       {
         surface: "manual",
-        clientMethods: ["createSource", "createContext", "createOccurrence", "createContextLink"],
+        clientMethods: [
+          "createSource",
+          "createContext",
+          "createOccurrence",
+          "createContextLink",
+          "deleteOccurrence",
+          "deleteContextLink",
+          "deleteSource",
+          "deleteContext",
+        ],
         readOnly: false,
         clearsActiveReadStale: false,
         marksActiveReadStale: true,

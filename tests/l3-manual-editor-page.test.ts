@@ -8,9 +8,9 @@ import { fireEvent } from "@testing-library/dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 // @ts-expect-error -- importing the component under test from a tsx module in a ts test
 import { L3ManualEditorPage } from "@/frontend/pages/L3ManualEditorPage";
-import type { L3FrontendClient, L3ManualDeleteResponse } from "@/l3/frontend/contract";
+import { normalizeL3Error, type L3FrontendClient, type L3ManualDeleteResponse } from "@/l3/frontend/contract";
 
-type DeleteMethodName = "deleteOccurrence" | "deleteContextLink";
+type DeleteMethodName = "deleteOccurrence" | "deleteContextLink" | "deleteSource" | "deleteContext";
 
 interface RenderedPage {
   container: HTMLDivElement;
@@ -23,6 +23,8 @@ interface ManualDeleteClientStub {
   client: L3FrontendClient;
   deleteOccurrence: ReturnType<typeof vi.fn>;
   deleteContextLink: ReturnType<typeof vi.fn>;
+  deleteSource: ReturnType<typeof vi.fn>;
+  deleteContext: ReturnType<typeof vi.fn>;
 }
 
 const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -42,6 +44,8 @@ afterEach(() => {
 function makeManualDeleteClientStub(response: L3ManualDeleteResponse): ManualDeleteClientStub {
   const deleteOccurrence = vi.fn(async () => response);
   const deleteContextLink = vi.fn(async () => response);
+  const deleteSource = vi.fn(async () => response);
+  const deleteContext = vi.fn(async () => response);
 
   const client = {
     createSource: vi.fn(),
@@ -50,6 +54,8 @@ function makeManualDeleteClientStub(response: L3ManualDeleteResponse): ManualDel
     createContextLink: vi.fn(),
     deleteOccurrence,
     deleteContextLink,
+    deleteSource,
+    deleteContext,
     createRawTextImport: vi.fn(),
     createStructuredImport: vi.fn(),
     createProposal: vi.fn(),
@@ -69,7 +75,7 @@ function makeManualDeleteClientStub(response: L3ManualDeleteResponse): ManualDel
     getGraph: vi.fn(),
   } as unknown as L3FrontendClient;
 
-  return { client, deleteOccurrence, deleteContextLink };
+  return { client, deleteOccurrence, deleteContextLink, deleteSource, deleteContext };
 }
 
 function renderManualEditorPage(client: L3FrontendClient): RenderedPage {
@@ -151,6 +157,10 @@ async function submitForm(form: HTMLFormElement): Promise<void> {
   });
 }
 
+function deleteMockFor(stub: ManualDeleteClientStub, method: DeleteMethodName): ReturnType<typeof vi.fn> {
+  return stub[method];
+}
+
 describe("L3ManualEditorPage delete panel", () => {
   it.each([
     {
@@ -171,6 +181,24 @@ describe("L3ManualEditorPage delete panel", () => {
         activeReadInvalidation: true as const,
       },
     },
+    {
+      entityType: "source" as const,
+      id: " src-1 ",
+      method: "deleteSource" as const,
+      response: {
+        deleted: { entityType: "source" as const, id: "src-1" },
+        activeReadInvalidation: true as const,
+      },
+    },
+    {
+      entityType: "context" as const,
+      id: " ctx-1 ",
+      method: "deleteContext" as const,
+      response: {
+        deleted: { entityType: "context" as const, id: "ctx-1" },
+        activeReadInvalidation: true as const,
+      },
+    },
   ])("submits $entityType deletes only after explicit confirmation", async ({ entityType, id, method, response }) => {
     const stub = makeManualDeleteClientStub(response);
     const { container, onManualChanged } = renderManualEditorPage(stub.client);
@@ -187,6 +215,8 @@ describe("L3ManualEditorPage delete panel", () => {
     expect(getDeleteSpan(form).textContent).toBe("Status: failed");
     expect(stub.deleteOccurrence).not.toHaveBeenCalled();
     expect(stub.deleteContextLink).not.toHaveBeenCalled();
+    expect(stub.deleteSource).not.toHaveBeenCalled();
+    expect(stub.deleteContext).not.toHaveBeenCalled();
     expect(onManualChanged).not.toHaveBeenCalled();
 
     await setCheckboxValue(confirmed, true);
@@ -194,7 +224,7 @@ describe("L3ManualEditorPage delete panel", () => {
     await submitForm(form);
 
     const expectedId = id.trim();
-    const expectedDeleteMock: ReturnType<typeof vi.fn> = method === "deleteOccurrence" ? stub.deleteOccurrence : stub.deleteContextLink;
+    const expectedDeleteMock = deleteMockFor(stub, method);
 
     expect(getDeleteSpan(form).textContent).toBe("Status: deleted");
     expect(submit.disabled).toBe(true);
@@ -206,5 +236,44 @@ describe("L3ManualEditorPage delete panel", () => {
     await submitForm(form);
 
     expect(expectedDeleteMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows parent delete blocker rows for 409 conflicts without marking manual data changed", async () => {
+    const stub = makeManualDeleteClientStub({
+      deleted: { entityType: "context" as const, id: "ctx-1" },
+      activeReadInvalidation: true as const,
+    });
+    stub.deleteContext.mockRejectedValueOnce(normalizeL3Error(409, {
+      code: "CONFLICT",
+      message: "Cannot delete L3 context with active dependencies",
+      details: {
+        entityType: "context",
+        id: "ctx-1",
+        blockers: {
+          occurrenceCount: 4,
+          contextLinkCount: 2,
+          inboundContextLinkCount: 1,
+        },
+      },
+    }));
+
+    const { container, onManualChanged } = renderManualEditorPage(stub.client);
+    const form = getDeleteForm(container);
+    const { entityType, id, confirmed } = getDeleteInputs(form);
+
+    await setInputValue(entityType, "context");
+    await setInputValue(id, " ctx-1 ");
+    await setCheckboxValue(confirmed, true);
+
+    await submitForm(form);
+
+    expect(getDeleteSpan(form).textContent).toBe("Status: failed");
+    expect(stub.deleteContext).toHaveBeenCalledWith("ctx-1");
+    expect(onManualChanged).not.toHaveBeenCalled();
+    expect(form.textContent).toContain("Active dependencies must be removed before retrying context ctx-1.");
+    expect(form.textContent).toContain("Occurrences: 4");
+    expect(form.textContent).toContain("Context links: 2");
+    expect(form.textContent).toContain("Inbound context links: 1");
+    expect(getDeleteResult(form)).toBeNull();
   });
 });

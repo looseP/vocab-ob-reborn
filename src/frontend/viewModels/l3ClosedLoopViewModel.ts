@@ -94,7 +94,16 @@ export function frontendRuntimeSmokeMatrix(): L3RuntimeSurfaceSmokeRow[] {
   return [
     {
       surface: "manual",
-      clientMethods: ["createSource", "createContext", "createOccurrence", "createContextLink"],
+      clientMethods: [
+        "createSource",
+        "createContext",
+        "createOccurrence",
+        "createContextLink",
+        "deleteOccurrence",
+        "deleteContextLink",
+        "deleteSource",
+        "deleteContext",
+      ],
       readOnly: false,
       clearsActiveReadStale: false,
       marksActiveReadStale: true,
