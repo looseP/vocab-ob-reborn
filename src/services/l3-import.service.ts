@@ -7,9 +7,10 @@
  */
 
 import { createHash } from "node:crypto";
+import type { PoolClient } from "pg";
 import { NotFoundError, ValidationError } from "../errors";
 import type { Json, L3ImportJobRow, L3ProposalItemRow, L3ProposalRow, WordRow } from "../domain";
-import type { IL3ContextRepository } from "../repositories/interfaces";
+import type { IL3ContextRepository, IRepositories } from "../repositories/interfaces";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import {
@@ -40,6 +41,9 @@ export interface L3ImportProposalResult {
   items: L3ProposalItemRow[];
   parseStats: L3ImportParseStats;
 }
+
+type TxRunner = <T>(callback: (tx: PoolClient) => Promise<T>) => Promise<T>;
+type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 const MAX_RAW_TEXT_LENGTH = 500_000;
 
@@ -96,6 +100,8 @@ export class L3ImportService {
   constructor(
     private readonly l3Context: IL3ContextRepository,
     private readonly l3Proposal: L3ProposalService,
+    private readonly txRunner: TxRunner = withTransaction,
+    private readonly repositoryFactory: RepositoryFactory = createRepositories,
   ) {}
 
   async createRawTextImportProposal(input: CreateL3RawTextImportProposalInput): Promise<L3ImportProposalResult> {
@@ -202,8 +208,8 @@ export class L3ImportService {
       : `${parseStats.contextCount} contexts, ${parseStats.occurrenceCount} occurrences`;
 
     try {
-      return await withTransaction(async (tx) => {
-        const repos = createRepositories(tx);
+      return await this.txRunner(async (tx) => {
+        const repos = this.repositoryFactory(tx);
         const importJob = await repos.l3Context.createImportJob({
           user_id: input.userId,
           status: "completed",

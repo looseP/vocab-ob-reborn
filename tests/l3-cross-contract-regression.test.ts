@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Json,
@@ -204,13 +205,24 @@ class L3CrossContractHarness {
       l3Proposal: this.proposalRepo,
       l3Recommendation: this.recommendationRepo,
     } as unknown as IRepositories;
+    const transaction = {} as PoolClient;
+    const txRunner = async <T>(cb: (tx: PoolClient) => Promise<T>): Promise<T> => cb(transaction);
+    const repositoryFactory = (tx?: PoolClient): IRepositories => {
+      expect(tx).toBe(transaction);
+      return this.repositories;
+    };
     this.proposalService = new L3ProposalService(
       this.proposalRepo,
       this.contextRepo,
-      async (cb) => cb({} as never),
-      () => this.repositories,
+      txRunner,
+      repositoryFactory,
     );
-    this.importService = new L3ImportService(this.contextRepo, this.proposalService);
+    this.importService = new L3ImportService(
+      this.contextRepo,
+      this.proposalService,
+      txRunner,
+      repositoryFactory,
+    );
     this.recommendationService = new L3RecommendationService(
       this.recommendationRepo,
       this.contextRepo,
@@ -793,7 +805,7 @@ describe("L3 cross-contract regression suite", () => {
     const afterImport = harness.snapshot();
 
     expectOnlyTablesChanged(beforeImport, afterImport, {
-      l3_import_jobs: 2,
+      l3_import_jobs: 1,
       l3_proposals: 1,
       l3_proposal_items: 3,
     });
@@ -844,7 +856,7 @@ describe("L3 cross-contract regression suite", () => {
     const afterImport = harness.snapshot();
 
     expectOnlyTablesChanged(beforeImport, afterImport, {
-      l3_import_jobs: 2,
+      l3_import_jobs: 1,
       l3_proposals: 1,
       l3_proposal_items: 4,
     });
