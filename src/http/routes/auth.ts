@@ -81,7 +81,8 @@ export function authRoutes(services: Services) {
     if (!isSameOrigin(c.req.url, c.req.header("Origin")) || c.req.header("X-Requested-With") !== "VocabObservatory") {
       return c.json({ error: "Invalid request origin", code: "AUTH_ORIGIN_REJECTED" }, 403);
     }
-    const retryAfter = consumeLoginAttempt(loginRateLimitKey(c.req.raw.headers));
+    const rateLimitKey = loginRateLimitKey(c.req.raw.headers);
+    const retryAfter = consumeLoginAttempt(rateLimitKey);
     if (retryAfter !== null) {
       c.header("Retry-After", String(retryAfter));
       return c.json({ error: "Too many authentication attempts", code: "AUTH_RATE_LIMITED" }, 429);
@@ -97,6 +98,7 @@ export function authRoutes(services: Services) {
     const issued = await services.authSessions.exchangeOwnerToken(body.ownerToken);
     if (!issued) return c.json({ error: "Invalid credentials", code: "INVALID_CREDENTIALS" }, 401);
 
+    loginAttempts.delete(rateLimitKey);
     setSessionCookies(c, issued.sessionToken, issued.csrfToken);
     return c.json({
       authenticated: true,

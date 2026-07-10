@@ -17,8 +17,10 @@ dist/
 docs/superpowers/plans/
 vite.review.config.ts
 
-# Test coverage
+# Test output
 coverage/
+playwright-report/
+test-results/
 
 # Environment files
 .env

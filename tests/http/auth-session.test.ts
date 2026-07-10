@@ -105,6 +105,28 @@ describe("browser auth session", () => {
     expect(Number(response?.headers.get("Retry-After"))).toBeGreaterThan(0);
   });
 
+  it("clears the login attempt window after successful authentication", async () => {
+    const { services } = makeServices();
+    const app = new Hono();
+    app.route("/api/auth", authRoutes(services));
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const response = await app.request("http://localhost/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: "http://localhost", "X-Requested-With": "VocabObservatory" },
+        body: JSON.stringify({ ownerToken: attempt === 7 ? "owner-secret" : "wrong" }),
+      });
+      expect(response.status).toBe(attempt === 7 ? 201 : 401);
+    }
+
+    const nextLogin = await app.request("http://localhost/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "http://localhost", "X-Requested-With": "VocabObservatory" },
+      body: JSON.stringify({ ownerToken: "owner-secret" }),
+    });
+    expect(nextLogin.status).toBe(201);
+  });
+
   it("allows session GET but requires Origin and double-submit CSRF for mutations", async () => {
     const { services, authSessions } = makeServices();
     const app = new Hono<{ Variables: { principal: Principal; role: string; userId: string } }>();
