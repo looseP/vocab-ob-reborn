@@ -35,14 +35,15 @@ export class ReviewOutboxWorker {
     this.maxRetryDelaySeconds = options.maxRetryDelaySeconds ?? 900;
   }
 
-  async processBatch(): Promise<number> {
+  async processBatch(shouldContinue: () => boolean = () => true): Promise<number> {
+    if (!shouldContinue()) return 0;
     const recovered = await this.outbox.recoverExpiredLeases();
     if (recovered > 0) {
       logger.warn("review-outbox", "Recovered expired worker leases", { recovered });
     }
 
     let processed = 0;
-    while (processed < this.batchSize) {
+    while (processed < this.batchSize && shouldContinue()) {
       const [event] = await this.outbox.claimBatch(this.workerId, 1, this.leaseSeconds);
       if (!event) break;
       await this.processClaimedEvent(event);

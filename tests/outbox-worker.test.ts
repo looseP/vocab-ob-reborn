@@ -101,6 +101,32 @@ describe("ReviewOutboxWorker", () => {
     expect(outbox.markFailed).not.toHaveBeenCalled();
   });
 
+  it("stops claiming new events when shutdown is requested during a batch", async () => {
+    let continueProcessing = true;
+    const claimBatch = vi.fn<() => Promise<OutboxEventRow[]>>()
+      .mockResolvedValueOnce([event()])
+      .mockResolvedValueOnce([event({ id: "00000000-0000-4000-8000-000000000108" })])
+      .mockResolvedValue([]);
+    const outbox = makeOutbox({ claimBatch });
+    mockRepos.outbox = outbox;
+    mockRepos.sessions = {
+      incrementCardsSeenFromOutbox: vi.fn(async () => { continueProcessing = false; }),
+    } as never;
+    const worker = new ReviewOutboxWorker(outbox, { workerId: "worker-1", batchSize: 20 });
+
+    expect(await worker.processBatch(() => continueProcessing)).toBe(1);
+    expect(claimBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not recover or claim work when already stopping", async () => {
+    const outbox = makeOutbox();
+    const worker = new ReviewOutboxWorker(outbox, { workerId: "worker-1" });
+
+    expect(await worker.processBatch(() => false)).toBe(0);
+    expect(outbox.recoverExpiredLeases).not.toHaveBeenCalled();
+    expect(outbox.claimBatch).not.toHaveBeenCalled();
+  });
+
   it("uses current authoritative progress instead of stale event snapshots", async () => {
     const outbox = makeOutbox();
     mockRepos.outbox = outbox;
