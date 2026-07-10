@@ -290,7 +290,7 @@ export interface L3ManualContextLinkCreateResponse {
 
 export interface L3ManualDeleteResponse {
   deleted: {
-    entityType: "occurrence" | "context_link";
+    entityType: "source" | "context" | "occurrence" | "context_link";
     id: string;
   };
   activeReadInvalidation: true;
@@ -311,6 +311,8 @@ export interface L3FrontendClient {
   createContextLink(input: L3ManualContextLinkCreateInput): Promise<L3ManualContextLinkCreateResponse>;
   deleteOccurrence(id: string): Promise<L3ManualDeleteResponse>;
   deleteContextLink(id: string): Promise<L3ManualDeleteResponse>;
+  deleteSource(id: string): Promise<L3ManualDeleteResponse>;
+  deleteContext(id: string): Promise<L3ManualDeleteResponse>;
   createRawTextImport(input: L3RawTextImportInput): Promise<L3ImportProposalResponse>;
   createStructuredImport(input: L3StructuredImportInput): Promise<L3ImportProposalResponse>;
   createProposal(input: L3ProposalCreateInput): Promise<L3ProposalBundle>;
@@ -595,6 +597,8 @@ export function createL3FrontendClient(transport: L3ClientTransport): L3Frontend
     createContextLink: (input) => requestJson(transport, "POST", "/api/l3/context-links", validateManualContextLinkCreateInput(input)),
     deleteOccurrence: (id) => requestJson(transport, "DELETE", `/api/l3/occurrences/${encodeURIComponent(validateExplicitId(id))}`),
     deleteContextLink: (id) => requestJson(transport, "DELETE", `/api/l3/context-links/${encodeURIComponent(validateExplicitId(id))}`),
+    deleteSource: (id) => requestJson(transport, "DELETE", `/api/l3/sources/${encodeURIComponent(validateExplicitId(id))}`),
+    deleteContext: (id) => requestJson(transport, "DELETE", `/api/l3/contexts/${encodeURIComponent(validateExplicitId(id))}`),
     createRawTextImport: (input) => requestJson(transport, "POST", "/api/l3/imports/raw-text", validateRawTextImportInput(input)),
     createStructuredImport: (input) => requestJson(transport, "POST", "/api/l3/imports/structured", validateStructuredImportInput(input)),
     createProposal: (input) => requestJson(transport, "POST", "/api/l3/proposals", validateProposalCreateInput(input)),
