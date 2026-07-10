@@ -12,6 +12,7 @@ import {
   shouldClearGraphStaleAfterRead,
 } from "@/frontend/viewModels/l3ClosedLoopViewModel";
 import { formatL3ErrorDetails, l3ErrorUxContract } from "@/frontend/viewModels/l3ErrorViewModel";
+import { summarizeL3ParentDeleteConflict } from "@/frontend/viewModels/l3ParentDeleteBlockersViewModel";
 import {
   applyGraphReadUiResult,
   buildGraphCanvasModel,
@@ -558,6 +559,136 @@ describe("Phase 4B L3 frontend shell", () => {
       fieldErrors: { cursor: ["Invalid cursor."] },
     });
     expect(formatL3ErrorDetails(graphValidation)).toBeNull();
+  });
+
+  it("summarizes source parent delete 409 blockers for UI rows", () => {
+    const conflict = normalizeL3Error(409, {
+      code: "CONFLICT",
+      message: "Cannot delete source with active dependencies.",
+      details: {
+        entityType: "source",
+        id: "src-1",
+        blockers: {
+          contextCount: 2,
+          inboundContextLinkCount: 3,
+          importJobCount: 1,
+          occurrenceCount: 99,
+        },
+      },
+    });
+
+    expect(summarizeL3ParentDeleteConflict(conflict)).toEqual({
+      entityType: "source",
+      id: "src-1",
+      blockers: [
+        { key: "contexts", count: 2, label: "Contexts" },
+        { key: "inboundContextLinks", count: 3, label: "Inbound context links" },
+        { key: "importJobs", count: 1, label: "Import jobs" },
+      ],
+      canRetryAfterCleanup: true,
+    });
+  });
+
+  it("summarizes context parent delete 409 blockers for UI rows", () => {
+    const conflict = normalizeL3Error(409, {
+      code: "CONFLICT",
+      message: "Cannot delete context with active dependencies.",
+      details: {
+        entityType: "context",
+        id: "ctx-1",
+        blockers: {
+          occurrenceCount: 4,
+          contextLinkCount: 2,
+          inboundContextLinkCount: 1,
+          importJobCount: 99,
+        },
+      },
+    });
+
+    expect(summarizeL3ParentDeleteConflict(conflict)).toEqual({
+      entityType: "context",
+      id: "ctx-1",
+      blockers: [
+        { key: "occurrences", count: 4, label: "Occurrences" },
+        { key: "contextLinks", count: 2, label: "Context links" },
+        { key: "inboundContextLinks", count: 1, label: "Inbound context links" },
+      ],
+      canRetryAfterCleanup: true,
+    });
+  });
+
+  it("filters zero, missing, negative, and non-number parent delete blocker counts", () => {
+    const conflict = normalizeL3Error(409, {
+      code: "CONFLICT",
+      details: {
+        entityType: "source",
+        id: "src-1",
+        blockers: {
+          contextCount: 0,
+          inboundContextLinkCount: 2,
+          importJobCount: -1,
+          extraCount: 7,
+        },
+      },
+    });
+
+    expect(summarizeL3ParentDeleteConflict(conflict)?.blockers).toEqual([
+      { key: "inboundContextLinks", count: 2, label: "Inbound context links" },
+    ]);
+  });
+
+  it("returns null for missing or invalid parent delete blockers details", () => {
+    const invalidBlockers = [
+      undefined,
+      null,
+      "not an object",
+      [],
+    ];
+
+    for (const blockers of invalidBlockers) {
+      const conflict = normalizeL3Error(409, {
+        code: "CONFLICT",
+        details: { entityType: "context", id: "ctx-1", blockers },
+      });
+
+      expect(summarizeL3ParentDeleteConflict(conflict)).toBeNull();
+    }
+  });
+
+  it("returns null for non-parent-delete conflict errors", () => {
+    const notFound = normalizeL3Error(404, {
+      code: "NOT_FOUND",
+      details: { entityType: "source", id: "src-1", blockers: { contextCount: 2 } },
+    });
+    const notConflict = {
+      ...normalizeL3Error(409, {
+        code: "CONFLICT",
+        details: { entityType: "source", id: "src-1", blockers: { contextCount: 2 } },
+      }),
+      kind: "bad_request" as const,
+    };
+
+    expect(summarizeL3ParentDeleteConflict(notFound)).toBeNull();
+    expect(summarizeL3ParentDeleteConflict(notConflict)).toBeNull();
+  });
+
+  it("returns null without throwing for malformed parent delete conflict details", () => {
+    const malformedDetails = [
+      undefined,
+      null,
+      "not an object",
+      [],
+      { entityType: "occurrence", id: "occ-1", blockers: { contextCount: 1 } },
+      { entityType: "source", id: " ", blockers: { contextCount: 1 } },
+      { entityType: "context", blockers: { occurrenceCount: 1 } },
+    ];
+
+    for (const details of malformedDetails) {
+      const conflict = normalizeL3Error(409, { code: "CONFLICT", details });
+
+      expect(() => summarizeL3ParentDeleteConflict(conflict)).not.toThrow();
+      expect(summarizeL3ParentDeleteConflict(conflict)).toBeNull();
+    }
   });
 
   it("keeps 400/404/409/422/500/network/aborted error UX out of empty-state handling", () => {
