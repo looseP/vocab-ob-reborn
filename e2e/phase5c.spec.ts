@@ -7,8 +7,8 @@ async function openDeleteForm(page: import("@playwright/test").Page) {
   await expect(page.getByRole("heading", { name: "Delete active row", exact: true })).toBeVisible();
 
   const form = page.locator("form").filter({ has: page.getByRole("heading", { name: "Delete active row", exact: true }) });
-  await form.getByLabel("Entity type").selectOption("source");
-  await form.getByLabel("Explicit id").fill(DELETE_ID);
+  await form.getByRole("combobox", { name: "Entity type", exact: true }).selectOption("source");
+  await form.getByRole("textbox", { name: "Explicit id", exact: true }).fill(DELETE_ID);
   return form;
 }
 
@@ -22,16 +22,14 @@ test.describe("Phase 5C parent-delete UI", () => {
       }
     });
 
-    const confirmation = form.getByRole("checkbox", { name: "Confirm delete for this explicit id." });
+    const confirmation = form.getByRole("checkbox", { name: "Confirm delete for this explicit id.", exact: true });
     const deleteButton = form.getByRole("button", { name: "Delete row", exact: true });
-    await confirmation.check();
+    await expect(confirmation).not.toBeChecked();
     await expect(deleteButton).toBeEnabled();
-    await confirmation.uncheck();
-    await expect(deleteButton).toBeDisabled();
-    await page.waitForTimeout(250);
+    await deleteButton.click();
 
+    await expect(form.getByText("Status: failed", { exact: true })).toBeVisible();
     expect(deleteCount).toBe(0);
-    await expect(form.getByText("Status: editing", { exact: true })).toBeVisible();
   });
 
   test("confirmed delete sends exactly one request", async ({ authedPage: page }) => {
@@ -53,7 +51,7 @@ test.describe("Phase 5C parent-delete UI", () => {
       });
     });
 
-    await form.getByRole("checkbox", { name: "Confirm delete for this explicit id." }).check();
+    await form.getByRole("checkbox", { name: "Confirm delete for this explicit id.", exact: true }).check();
     const deleteButton = form.getByRole("button", { name: "Delete row", exact: true });
     await expect(deleteButton).toBeEnabled();
     await deleteButton.click();
