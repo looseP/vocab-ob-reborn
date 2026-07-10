@@ -640,12 +640,25 @@ export interface IL3RecommendationRepository {
  * (Phase 2B architecture cleanup). `dayKey` is an ISO date string (YYYY-MM-DD);
  * when omitted, the repository sums usage for the current UTC day.
  */
+export interface LlmReservationReaperMetrics {
+  pendingCount: number;
+  expiredPendingCount: number;
+  oldestPendingAgeSeconds: number;
+}
+
 export interface ILlmUsageRepository {
-  /** Total tokens (prompt + completion) consumed for the given day (UTC). */
+  /** Total active budget (settled usage + non-expired reservations) for a UTC day. */
   getDailyUsage(dayKey?: string): Promise<number>;
   /** Atomically reserve tokens against the shared daily counter. */
-  reserveDailyTokens(dayKey: string, tokens: number, dailyBudget: number): Promise<string | null>;
-  /** Atomically replace a reservation with actual persisted usage. */
+  reserveDailyTokens(
+    dayKey: string,
+    tokens: number,
+    dailyBudget: number,
+    ttlSeconds?: number,
+  ): Promise<string | null>;
+  /** Extend the lease of a live reservation while its provider call is still active. */
+  renewDailyTokens(reservationId: string, ttlSeconds: number): Promise<boolean>;
+  /** Replace a pending or reaped reservation with actual usage; supports late provider settlement. */
   settleDailyTokens(
     reservationId: string,
     provider: string,
@@ -653,9 +666,13 @@ export interface ILlmUsageRepository {
     promptTokens: number,
     completionTokens: number,
   ): Promise<void>;
-  /** Release a reservation when the provider call fails before usage is returned. */
+  /** Idempotently release a live reservation when the provider call fails. */
   releaseDailyTokens(reservationId: string): Promise<void>;
-  /** Persist a single LLM call's token usage. */
+  /** Atomically mark up to `limit` expired pending reservations as expired. */
+  expireReservations(limit: number): Promise<number>;
+  /** Reservation backlog metrics for dashboards and alerts. */
+  getReservationMetrics(): Promise<LlmReservationReaperMetrics>;
+  /** Persist a single settled LLM call's token usage. */
   record(
     provider: string,
     model: string,

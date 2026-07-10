@@ -52,6 +52,48 @@ describe("AnnotationRepository", () => {
   });
 });
 
+describe("LlmUsageRepository", () => {
+  it("reserves only against live budget and persists an expiry", async () => {
+    mock.setRows([{ id: "reservation-1" }]);
+    const repos = createRepositories();
+    await expect(repos.llmUsage.reserveDailyTokens("2026-07-10", 250, 1000, 120))
+      .resolves.toBe("reservation-1");
+
+    expect(mock.lastQuery!.text).toContain("status = 'pending'");
+    expect(mock.lastQuery!.text).toContain("expires_at > now()");
+    expect(mock.lastQuery!.text).toContain("make_interval(secs => $4)");
+    expect(mock.lastQuery!.params).toEqual(["2026-07-10", 250, 1000, 120]);
+  });
+
+  it("renews only a pending reservation lease", async () => {
+    mock.setRows([{}]);
+    const repos = createRepositories();
+    await expect(repos.llmUsage.renewDailyTokens("reservation-1", 120)).resolves.toBe(true);
+
+    expect(mock.lastQuery!.text).toContain("make_interval(secs => $2)");
+    expect(mock.lastQuery!.text).toContain("status = 'pending'");
+  });
+
+  it("settles pending or reaped reservations so late provider usage is not lost", async () => {
+    mock.setRows([{}]);
+    const repos = createRepositories();
+    await repos.llmUsage.settleDailyTokens("reservation-1", "openai", "gpt-4o", 120, 80);
+
+    expect(mock.lastQuery!.text).toContain("status = 'settled'");
+    expect(mock.lastQuery!.text).toContain("status IN ('pending', 'expired')");
+  });
+
+  it("expires a bounded SKIP LOCKED batch", async () => {
+    mock.setRows([{}, {}]);
+    const repos = createRepositories();
+    await expect(repos.llmUsage.expireReservations(25)).resolves.toBe(2);
+
+    expect(mock.lastQuery!.text).toContain("FOR UPDATE SKIP LOCKED");
+    expect(mock.lastQuery!.text).toContain("status = 'expired'");
+    expect(mock.lastQuery!.params).toEqual([25]);
+  });
+});
+
 describe("HighlightRepository", () => {
   it("findByWords uses ANY() array", async () => {
     mock.setRows([]);

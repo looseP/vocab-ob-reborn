@@ -5,6 +5,7 @@ import { withTransaction } from "@/db/transaction";
 import { createRepositories } from "@/repositories/factory";
 import { OutboxRepository } from "@/repositories/outbox.repository";
 import { ReviewOutboxWorker } from "@/outbox/review-outbox.worker";
+import { LlmUsageRepository } from "@/repositories/llm-usage.repository";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 if (!databaseUrl) {
@@ -64,6 +65,7 @@ describe("release database contract", () => {
   });
 
   afterAll(async () => {
+    await pool.query("DELETE FROM public.llm_usage WHERE model LIKE 'integration-reservation-%'");
     await pool.query("DELETE FROM public.outbox_events WHERE aggregate_id = ANY($1::uuid[])", [[
       "00000000-0000-4000-8000-000000000041",
       "00000000-0000-4000-8000-000000000042",
@@ -275,6 +277,72 @@ describe("release database contract", () => {
       [aggregateId, sessionId],
     );
     expect(state.rows[0]).toEqual({ status: "processed", receipts: 3, cards_seen: 1 });
+  });
+
+  it("expires stale LLM reservations exactly once under concurrent reapers", async () => {
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO public.llm_usage
+         (provider, model, prompt_tokens, completion_tokens, status, expires_at)
+       SELECT '__reservation__', 'integration-reservation-' || value, 100, 0,
+              'pending', now() - interval '1 minute'
+       FROM generate_series(1, 6) AS value
+       RETURNING id`,
+    );
+    expect(inserted.rowCount).toBe(6);
+
+    const firstRepository = new LlmUsageRepository();
+    const secondRepository = new LlmUsageRepository();
+    const [first, second] = await Promise.all([
+      firstRepository.expireReservations(3),
+      secondRepository.expireReservations(3),
+    ]);
+    expect(first + second).toBe(6);
+
+    const states = await pool.query<{ status: string; count: number }>(
+      `SELECT status, count(*)::int AS count
+       FROM public.llm_usage
+       WHERE model LIKE 'integration-reservation-%'
+       GROUP BY status`,
+    );
+    expect(states.rows).toEqual([{ status: "expired", count: 6 }]);
+  });
+
+  it("late settlement restores actual usage after a reservation was reaped", async () => {
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO public.llm_usage
+         (provider, model, prompt_tokens, completion_tokens, status, expires_at)
+       VALUES ('__reservation__', 'integration-reservation-race', 100, 0,
+               'pending', now() - interval '1 second')
+       RETURNING id`,
+    );
+    const id = inserted.rows[0]!.id;
+
+    const repository = new LlmUsageRepository();
+    await expect(repository.expireReservations(1)).resolves.toBe(1);
+    await expect(repository.settleDailyTokens(
+      id,
+      "openai",
+      "integration-reservation-race-settled",
+      60,
+      20,
+    )).resolves.toBeUndefined();
+
+    const state = await pool.query<{
+      status: string;
+      provider: string;
+      prompt_tokens: number;
+      completion_tokens: number;
+    }>(
+      `SELECT status, provider, prompt_tokens, completion_tokens
+       FROM public.llm_usage WHERE id = $1::uuid`,
+      [id],
+    );
+    expect(state.rows[0]).toEqual({
+      status: "settled",
+      provider: "openai",
+      prompt_tokens: 60,
+      completion_tokens: 20,
+    });
   });
 
   it("creates exactly one active daily session under concurrency", async () => {

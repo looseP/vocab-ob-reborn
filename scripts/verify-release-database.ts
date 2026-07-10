@@ -31,6 +31,7 @@ async function main() {
     "note_revisions",
     "l3_proposals",
     "l3_recommendation_runs",
+    "llm_usage",
     "outbox_events",
     "outbox_effect_receipts",
   ];

@@ -724,9 +724,15 @@ export const llmUsage = pgTable("llm_usage", {
 	model: text("model").notNull(),
 	promptTokens: integer("prompt_tokens").notNull(),
 	completionTokens: integer("completion_tokens").notNull(),
+	status: text("status").default("settled").notNull(),
+	expiresAt: timestamp("expires_at", { withTimezone: true, mode: 'string' }),
+	finalizedAt: timestamp("finalized_at", { withTimezone: true, mode: 'string' }),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	index("idx_llm_usage_created").on(table.createdAt),
+	index("idx_llm_usage_pending_expiry").on(table.expiresAt, table.id).where(sql`status = 'pending'`),
+	check("llm_usage_status_check", sql`status = ANY (ARRAY['pending'::text, 'settled'::text, 'released'::text, 'expired'::text])`),
+	check("llm_usage_reservation_lifecycle_check", sql`(status = 'settled' AND provider <> '__reservation__' AND expires_at IS NULL) OR (status = 'pending' AND provider = '__reservation__' AND expires_at IS NOT NULL AND finalized_at IS NULL) OR (status = ANY (ARRAY['released'::text, 'expired'::text]) AND provider = '__reservation__' AND expires_at IS NOT NULL AND finalized_at IS NOT NULL)`),
 ]);
 
 export const wordL2Content = pgTable("word_l2_content", {

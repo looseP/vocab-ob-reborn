@@ -94,6 +94,7 @@ function makeUsageTracker(overrides: Partial<{ isOverBudget: boolean }> = {}) {
   return {
     isOverBudget: vi.fn(async () => overBudget),
     reserve: vi.fn(async () => (overBudget ? null : "reservation-1")),
+    renew: vi.fn(async () => true),
     settle: vi.fn(async () => {}),
     release: vi.fn(async () => {}),
     record: vi.fn(async () => {}),
