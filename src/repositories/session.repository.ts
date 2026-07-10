@@ -79,6 +79,20 @@ export class SessionRepository extends BaseRepository implements ISessionReposit
     if (row?.updated !== true) throw new NotFoundError("Session", sessionId);
   }
 
+  async incrementCardsSeenFromOutbox(sessionId: string, userId: string, wordbookId: string): Promise<void> {
+    this.requireTx();
+    const row = await this.queryOne<{ id: string }>(
+      `UPDATE sessions
+       SET cards_seen = cards_seen + 1, updated_at = now()
+       WHERE id = $1::uuid
+         AND user_id = $2::uuid
+         AND wordbook_id = $3::uuid
+       RETURNING id`,
+      [sessionId, userId, wordbookId],
+    );
+    if (!row) throw new NotFoundError("Session", sessionId);
+  }
+
   async endSession(sessionId: string, userId: string, wordbookId: string): Promise<void> {
     const row = await this.queryOne<{ id: string }>(
       `UPDATE sessions

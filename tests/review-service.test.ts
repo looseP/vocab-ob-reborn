@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { IRepositories, IReviewRepository, ISessionRepository } from "@/repositories/interfaces";
+import type { IOutboxRepository, IRepositories, IReviewRepository, ISessionRepository } from "@/repositories/interfaces";
 import type { ProgressWithContentHash, SaveAnswerInput, UndoRpcResult } from "@/repositories/interfaces";
-import { ReviewService, type FsrsAdapterFn, type ReviewL1Snapshot, type ReviewL1CascadeSnapshot } from "@/services/review.service";
+import { ReviewService, type FsrsAdapterFn } from "@/services/review.service";
 import { NotFoundError, BusinessRuleError } from "@/errors";
 import type { UserWordProgressRow, Json } from "@/domain";
 
@@ -88,6 +88,7 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     findProgressForUpdate: vi.fn(async () => makeMockProgress()),
     findProgressForSkip: vi.fn(async () => null),
     findProgressForSuspend: vi.fn(async () => null),
+    findProgressForOutbox: vi.fn(async () => makeMockProgress()),
     saveAnswer: vi.fn(async () => ({ reviewLogId: "log-1" })),
     skipCard: vi.fn(async () => ({ reviewLogId: "log-skip" })),
     suspendCard: vi.fn(async () => ({ reviewLogId: "log-suspend" })),
@@ -103,6 +104,21 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
   };
 }
 
+function makeMockOutboxRepo(overrides: Partial<IOutboxRepository> = {}): IOutboxRepository {
+  return {
+    enqueue: vi.fn(async () => ({ id: "event-1", inserted: true })),
+    recoverExpiredLeases: vi.fn(async () => 0),
+    claimBatch: vi.fn(async () => []),
+    beginEffect: vi.fn(async () => true),
+    completeEffect: vi.fn(async () => undefined),
+    markProcessed: vi.fn(async () => undefined),
+    markFailed: vi.fn(async () => "retry" as const),
+    replayDeadLetter: vi.fn(async () => false),
+    getMetrics: vi.fn(async () => ({ pending: 0, processing: 0, deadLetter: 0, oldestPendingAgeSeconds: null })),
+    ...overrides,
+  };
+}
+
 function makeMockSessionRepo(overrides: Partial<ISessionRepository> = {}): ISessionRepository {
   return {
     findActiveByUser: vi.fn(async () => null),
@@ -110,6 +126,7 @@ function makeMockSessionRepo(overrides: Partial<ISessionRepository> = {}): ISess
     create: vi.fn(async () => ({ id: "s1" } as never)),
     assertActiveOwned: vi.fn(async () => undefined),
     incrementCardsSeen: vi.fn(async () => undefined),
+    incrementCardsSeenFromOutbox: vi.fn(async () => undefined),
     endSession: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -121,6 +138,7 @@ describe("ReviewService.submitAnswer", () => {
   beforeEach(() => {
     // Reset mockRepos between tests
     Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
+    mockRepos.outbox = makeMockOutboxRepo();
   });
 
   it("returns idempotent result when idempotencyKey already exists", async () => {
@@ -185,7 +203,6 @@ describe("ReviewService.submitAnswer", () => {
     const service = new ReviewService({
       fsrsAdapter: adapter,
       loadWeights: async () => [1, 2, 3],
-      incrementSessionCardsSeen: (sessionId, userId, wordbookId) => sessionRepo.incrementCardsSeen(sessionId, userId, wordbookId),
     });
     const result = await service.submitAnswer({
       progressId: "p1", rating: "good", sessionId: "s1", idempotencyKey: "key-1",
@@ -207,59 +224,52 @@ describe("ReviewService.submitAnswer", () => {
     expect(saveInput.wordId).toBe("w1");
     expect(saveInput.wordbookId).toBe("wb1");
 
-    // Session counter incremented
-    expect(sessionRepo.incrementCardsSeen).toHaveBeenCalledWith("s1", "u1", "wb1");
+    // Durable event is written inside the authoritative transaction.
+    expect(mockRepos.outbox?.enqueue).toHaveBeenCalledTimes(1);
+    expect(mockRepos.outbox?.enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      aggregateType: "review_log",
+      aggregateId: "log-1",
+      eventType: "review.answer.recorded.v1",
+      dedupeKey: "review.answer.recorded.v1:log-1",
+    }));
   });
 
-  it("continues when session increment fails (best-effort)", async () => {
+  it("writes the outbox event before the transaction callback returns", async () => {
     const { adapter } = makeMockFsrsAdapter();
-    const reviewRepo = makeMockReviewRepo();
-    const sessionRepo = makeMockSessionRepo({
-      incrementCardsSeen: vi.fn(async () => { throw new Error("session closed"); }),
-    });
-    mockRepos.reviews = reviewRepo;
-    mockRepos.sessions = sessionRepo;
-
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-      incrementSessionCardsSeen: (sessionId, userId, wordbookId) => sessionRepo.incrementCardsSeen(sessionId, userId, wordbookId),
-    });
-    const result = await service.submitAnswer({
-      progressId: "p1", rating: "good", sessionId: "s1",
-    }, "u1");
-
-    // Should NOT throw — session increment is best-effort and runs post-commit.
-    expect(result.ok).toBe(true);
-    expect(result.reviewLogId).toBe("log-1");
-    expect(sessionRepo.incrementCardsSeen).toHaveBeenCalledTimes(1);
-  });
-
-  it("runs hooks and session increment only after the transaction callback returns", async () => {
-    const { adapter } = makeMockFsrsAdapter();
-    const sideEffectPhases: boolean[] = [];
-    const checkAndTransition = vi.fn(async () => { sideEffectPhases.push(transactionCallbackActive); });
-    const checkL1Cascade = vi.fn(async () => { sideEffectPhases.push(transactionCallbackActive); });
-    const incrementSessionCardsSeen = vi.fn(async () => { sideEffectPhases.push(transactionCallbackActive); });
+    const enqueuePhases: boolean[] = [];
     mockRepos.reviews = makeMockReviewRepo();
     mockRepos.sessions = makeMockSessionRepo();
-
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-      checkAndTransition,
-      checkL1Cascade,
-      incrementSessionCardsSeen,
+    mockRepos.outbox = makeMockOutboxRepo({
+      enqueue: vi.fn(async () => {
+        enqueuePhases.push(transactionCallbackActive);
+        return { id: "event-1", inserted: true };
+      }),
     });
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
     await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1");
 
-    expect(sideEffectPhases).toEqual([false, false, false]);
+    expect(enqueuePhases).toEqual([true]);
+  });
+
+  it("fails the authoritative transaction when durable event enqueue fails", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    mockRepos.reviews = makeMockReviewRepo();
+    mockRepos.sessions = makeMockSessionRepo();
+    mockRepos.outbox = makeMockOutboxRepo({
+      enqueue: vi.fn(async () => { throw new Error("outbox unavailable"); }),
+    });
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    await expect(service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1"))
+      .rejects.toThrow("outbox unavailable");
   });
 });
 
 describe("ReviewService.skip", () => {
   beforeEach(() => {
     Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
+    mockRepos.outbox = makeMockOutboxRepo();
   });
 
   it("returns idempotent when key exists", async () => {
@@ -340,6 +350,7 @@ describe("ReviewService.skip", () => {
 describe("ReviewService.suspend", () => {
   beforeEach(() => {
     Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
+    mockRepos.outbox = makeMockOutboxRepo();
   });
 
   it("suspends card successfully", async () => {
@@ -385,6 +396,7 @@ describe("ReviewService.suspend", () => {
 describe("ReviewService.undo", () => {
   beforeEach(() => {
     Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
+    mockRepos.outbox = makeMockOutboxRepo();
   });
 
   it("undoes successfully", async () => {
@@ -437,217 +449,5 @@ describe("ReviewService.undo", () => {
       { reviewLogId: "bad", sessionId: "s1" },
       "u1",
     )).rejects.toBeInstanceOf(BusinessRuleError);
-  });
-});
-
-describe("submitAnswer L2 transition", () => {
-  beforeEach(() => {
-    Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
-  });
-
-  it("calls checkAndTransition after saveAnswer with updated progress", async () => {
-    const { adapter } = makeMockFsrsAdapter();
-    const checkAndTransition = vi.fn<(p: ReviewL1Snapshot) => Promise<void>>(async () => undefined);
-    const progress = makeMockProgress({
-      stability: 1.5,
-      difficulty: 0.3,
-      review_count: 3,
-    });
-    const reviewRepo = makeMockReviewRepo({
-      findProgressForUpdate: vi.fn(async () => progress),
-    });
-    mockRepos.reviews = reviewRepo;
-    mockRepos.sessions = makeMockSessionRepo();
-
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-      checkAndTransition,
-    });
-    const result = await service.submitAnswer({
-      progressId: "p1", rating: "good", sessionId: "s1",
-    }, "u1");
-
-    // L1 result still normal
-    expect(result.ok).toBe(true);
-    expect(result.reviewLogId).toBe("log-1");
-
-    // checkAndTransition was called once
-    expect(checkAndTransition).toHaveBeenCalledTimes(1);
-    const arg = checkAndTransition.mock.calls[0][0];
-    // snapshot carries L1 identifiers (wordbook-scoped in V2)
-    expect(arg.user_id).toBe("u1");
-    expect(arg.wordbook_id).toBe("wb1");
-    expect(arg.word_id).toBe("w1");
-    // stability comes from the FSRS scheduling result (2.0), NOT the pre-save progress (1.5)
-    expect(arg.stability).toBe(2.0);
-    expect(arg.difficulty).toBe(0.4);
-    // review_count incremented by 1 after saveAnswer
-    expect(arg.review_count).toBe(4);
-    expect(arg.last_rating).toBe("good");
-  });
-
-  it("does not fail L1 when transition throws", async () => {
-    const { adapter } = makeMockFsrsAdapter();
-    const checkAndTransition = vi.fn(async () => {
-      throw new Error("L2 insert failed");
-    });
-    const reviewRepo = makeMockReviewRepo();
-    mockRepos.reviews = reviewRepo;
-    mockRepos.sessions = makeMockSessionRepo();
-
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-      checkAndTransition,
-    });
-    const result = await service.submitAnswer({
-      progressId: "p1", rating: "good", sessionId: "s1",
-    }, "u1");
-
-    // L1 still succeeds — transition failure must NOT roll back L1
-    expect(result.ok).toBe(true);
-    expect(result.reviewLogId).toBe("log-1");
-    expect(checkAndTransition).toHaveBeenCalledTimes(1);
-  });
-
-  it("skips transition when checkAndTransition not provided", async () => {
-    const { adapter } = makeMockFsrsAdapter();
-    const reviewRepo = makeMockReviewRepo();
-    mockRepos.reviews = reviewRepo;
-    mockRepos.sessions = makeMockSessionRepo();
-
-    // No checkAndTransition — should still work (optional dep)
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-    });
-    const result = await service.submitAnswer({
-      progressId: "p1", rating: "good", sessionId: "s1",
-    }, "u1");
-
-    expect(result.ok).toBe(true);
-  });
-});
-
-// ── Phase 2C: L1→L2 cross-track cascade ────────────────────────────────
-// submitAnswer must invoke the injected checkL1Cascade hook with the
-// post-save recent_ratings (pre-save array + new rating, sliced to 5).
-// Cascade failures are best-effort: they never roll back L1.
-describe("submitAnswer L1→L2 cascade (Phase 2C)", () => {
-  beforeEach(() => {
-    Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
-  });
-
-  it("calls checkL1Cascade with post-save recent_ratings (append + slice 5)", async () => {
-    const { adapter } = makeMockFsrsAdapter();
-    const checkL1Cascade = vi.fn<(s: ReviewL1CascadeSnapshot) => Promise<void>>(async () => undefined);
-    // Pre-save recent_ratings has 2 entries; submitting 'again' → [good, good, again]
-    const progress = makeMockProgress({ recent_ratings: ["good", "good"] });
-    mockRepos.reviews = makeMockReviewRepo({
-      findProgressForUpdate: vi.fn(async () => progress),
-    });
-    mockRepos.sessions = makeMockSessionRepo();
-
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-      checkL1Cascade,
-    });
-    await service.submitAnswer({ progressId: "p1", rating: "again", sessionId: "s1" }, "u1");
-
-    expect(checkL1Cascade).toHaveBeenCalledTimes(1);
-    const arg = checkL1Cascade.mock.calls[0][0];
-    expect(arg.user_id).toBe("u1");
-    expect(arg.wordbook_id).toBe("wb1");
-    expect(arg.word_id).toBe("w1");
-    // post-save = [...pre, rating] then slice(-5)
-    expect(arg.recent_ratings).toEqual(["good", "good", "again"]);
-  });
-
-  it("slices recent_ratings to the last 5 when appending would exceed 5", async () => {
-    const { adapter } = makeMockFsrsAdapter();
-    const checkL1Cascade = vi.fn<(s: ReviewL1CascadeSnapshot) => Promise<void>>(async () => undefined);
-    // Pre-save already has 5 entries; submitting 'again' → drop oldest, keep last 5.
-    const progress = makeMockProgress({
-      recent_ratings: ["again", "hard", "good", "easy", "good"],
-    });
-    mockRepos.reviews = makeMockReviewRepo({
-      findProgressForUpdate: vi.fn(async () => progress),
-    });
-    mockRepos.sessions = makeMockSessionRepo();
-
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-      checkL1Cascade,
-    });
-    await service.submitAnswer({ progressId: "p1", rating: "again", sessionId: "s1" }, "u1");
-
-    const arg = checkL1Cascade.mock.calls[0][0];
-    expect(arg.recent_ratings).toEqual(["hard", "good", "easy", "good", "again"]);
-    expect(arg.recent_ratings.length).toBe(5);
-  });
-
-  it("does not fail L1 when checkL1Cascade throws (best-effort)", async () => {
-    const { adapter } = makeMockFsrsAdapter();
-    const checkL1Cascade = vi.fn(async () => {
-      throw new Error("L2 pause failed");
-    });
-    mockRepos.reviews = makeMockReviewRepo();
-    mockRepos.sessions = makeMockSessionRepo();
-
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-      checkL1Cascade,
-    });
-    const result = await service.submitAnswer({
-      progressId: "p1", rating: "again", sessionId: "s1",
-    }, "u1");
-
-    // L1 still succeeds — cascade failure must NOT roll back L1
-    expect(result.ok).toBe(true);
-    expect(result.reviewLogId).toBe("log-1");
-    expect(checkL1Cascade).toHaveBeenCalledTimes(1);
-  });
-
-  it("skips cascade when checkL1Cascade not provided", async () => {
-    const { adapter } = makeMockFsrsAdapter();
-    mockRepos.reviews = makeMockReviewRepo();
-    mockRepos.sessions = makeMockSessionRepo();
-
-    // No checkL1Cascade — should still work (optional dep)
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-    });
-    const result = await service.submitAnswer({
-      progressId: "p1", rating: "again", sessionId: "s1",
-    }, "u1");
-
-    expect(result.ok).toBe(true);
-  });
-
-  it("runs cascade AFTER L2 transition (both hooks fire, order matters)", async () => {
-    const { adapter } = makeMockFsrsAdapter();
-    const callOrder: string[] = [];
-    const checkAndTransition = vi.fn(async () => { callOrder.push("transition"); });
-    const checkL1Cascade = vi.fn(async () => { callOrder.push("cascade"); });
-    mockRepos.reviews = makeMockReviewRepo();
-    mockRepos.sessions = makeMockSessionRepo();
-
-    const service = new ReviewService({
-      fsrsAdapter: adapter,
-      loadWeights: async () => null,
-      checkAndTransition,
-      checkL1Cascade,
-    });
-    await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1");
-
-    expect(checkAndTransition).toHaveBeenCalledTimes(1);
-    expect(checkL1Cascade).toHaveBeenCalledTimes(1);
-    // Transition must run before cascade.
-    expect(callOrder).toEqual(["transition", "cascade"]);
   });
 });

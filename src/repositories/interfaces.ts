@@ -118,6 +118,9 @@ export interface IReviewRepository {
   /** SELECT FOR UPDATE minimal fields for suspend. MUST be in a transaction. */
   findProgressForSuspend(progressId: string, userId: string): Promise<ProgressForAction | null>;
 
+  /** Load the current authoritative progress for outbox convergence. MUST be in a transaction. */
+  findProgressForOutbox(progressId: string, userId: string, wordbookId: string): Promise<UserWordProgressRow | null>;
+
   /** UPDATE progress + INSERT review_log. MUST be in a transaction. */
   saveAnswer(input: SaveAnswerInput): Promise<{ reviewLogId: string }>;
 
@@ -162,6 +165,62 @@ export interface IReviewRepository {
     wordId: string,
     value: boolean,
   ): Promise<number>;
+}
+
+// ── Transactional Outbox ───────────────────────────────────────────────
+export type OutboxStatus = "pending" | "retry" | "processing" | "processed" | "dead_letter";
+
+export interface OutboxEventRow {
+  id: string;
+  aggregate_type: string;
+  aggregate_id: string;
+  event_type: string;
+  payload: Json;
+  dedupe_key: string;
+  status: OutboxStatus;
+  attempts: number;
+  max_attempts: number;
+  available_at: string;
+  locked_at: string | null;
+  locked_until: string | null;
+  locked_by: string | null;
+  last_error: string | null;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EnqueueOutboxEventInput {
+  aggregateType: string;
+  aggregateId: string;
+  eventType: string;
+  payload: Json;
+  dedupeKey: string;
+  maxAttempts?: number;
+}
+
+export interface OutboxMetrics {
+  pending: number;
+  processing: number;
+  deadLetter: number;
+  oldestPendingAgeSeconds: number | null;
+}
+
+export interface IOutboxRepository {
+  /** Insert an event in the caller's authoritative transaction. */
+  enqueue(input: EnqueueOutboxEventInput): Promise<{ id: string; inserted: boolean }>;
+  /** Requeue expired leases, or dead-letter them when attempts are exhausted. */
+  recoverExpiredLeases(): Promise<number>;
+  /** Atomically claim an ordered batch using FOR UPDATE SKIP LOCKED. */
+  claimBatch(workerId: string, limit: number, leaseSeconds: number): Promise<OutboxEventRow[]>;
+  /** Lock the claimed event and return false when this effect already has a receipt. */
+  beginEffect(eventId: string, effectName: string, workerId: string): Promise<boolean>;
+  /** Record a completed effect in the same transaction as the effect write. */
+  completeEffect(eventId: string, effectName: string): Promise<void>;
+  markProcessed(eventId: string, workerId: string): Promise<void>;
+  markFailed(eventId: string, workerId: string, errorMessage: string, retryDelaySeconds: number): Promise<OutboxStatus>;
+  replayDeadLetter(eventId: string): Promise<boolean>;
+  getMetrics(): Promise<OutboxMetrics>;
 }
 
 // ── Note ────────────────────────────────────────────────────────────────
@@ -217,6 +276,8 @@ export interface ISessionRepository {
   /** Lock and verify an active Session belongs to the actor and wordbook. MUST be in a transaction. */
   assertActiveOwned(sessionId: string, userId: string, wordbookId: string): Promise<void>;
   incrementCardsSeen(sessionId: string, userId: string, wordbookId: string): Promise<void>;
+  /** Apply a previously authorized review event even if the Session ended after commit. MUST be in a transaction. */
+  incrementCardsSeenFromOutbox(sessionId: string, userId: string, wordbookId: string): Promise<void>;
   endSession(sessionId: string, userId: string, wordbookId: string): Promise<void>;
 }
 
@@ -639,4 +700,5 @@ export interface IRepositories {
   l3Proposal: IL3ProposalRepository;
   l3Recommendation: IL3RecommendationRepository;
   llmUsage: ILlmUsageRepository;
+  outbox: IOutboxRepository;
 }
