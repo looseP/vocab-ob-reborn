@@ -2,6 +2,37 @@ name: Immutable release
 
 on:
   workflow_dispatch:
+    inputs:
+      migration_rehearsal:
+        description: "Result from the real migration rehearsal"
+        required: true
+        type: choice
+        options: [passed, failed]
+      database_roles:
+        description: "Result from the database role verification"
+        required: true
+        type: choice
+        options: [passed, failed]
+      backup_restore:
+        description: "Result from the real backup restore drill"
+        required: true
+        type: choice
+        options: [passed, failed]
+      rollback_compatibility:
+        description: "Result from the rollback compatibility exercise"
+        required: true
+        type: choice
+        options: [passed, failed]
+      alerting_drill:
+        description: "Result from the real alerting drill"
+        required: true
+        type: choice
+        options: [passed, failed]
+      smoke:
+        description: "Result from staging smoke"
+        required: true
+        type: choice
+        options: [passed, failed]
   push:
     tags:
       - "v*"
@@ -277,13 +308,110 @@ jobs:
           NODE_ENV: production
           RELEASE_DEPLOY_ENV_FILE: ${{ vars.RELEASE_DEPLOY_ENV_FILE }}
           RELEASE_DEPLOY_LOCK_FILE: ${{ vars.RELEASE_DEPLOY_LOCK_FILE }}
+          RELEASE_DEPLOY_EVIDENCE_PATH: ${{ runner.temp }}/staging-deployment-evidence.json
           SMOKE_BASE_URL: ${{ vars.SMOKE_BASE_URL }}
           SMOKE_METRICS_BEARER_TOKEN: ${{ secrets.SMOKE_METRICS_BEARER_TOKEN }}
         run: npm run release:deploy -- --environment staging --manifest release-manifest.json
 
+      - name: Upload staging deployment evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staging-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/staging-deployment-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+  production-acceptance:
+    name: Verify production release acceptance
+    needs: [publish, staging]
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Check out acceptance verifier
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Download immutable release evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.publish.outputs.artifact-name }}
+          path: .
+      - name: Download staging deployment evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: staging-evidence-${{ github.sha }}
+          path: release-evidence
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Create and verify fail-closed acceptance declaration
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.publish.outputs.manifest-sha256 }}
+          MIGRATION_REHEARSAL: ${{ inputs.migration_rehearsal || vars.MIGRATION_REHEARSAL }}
+          DATABASE_ROLES: ${{ inputs.database_roles || vars.DATABASE_ROLES }}
+          BACKUP_RESTORE: ${{ inputs.backup_restore || vars.BACKUP_RESTORE }}
+          ROLLBACK_COMPATIBILITY: ${{ inputs.rollback_compatibility || vars.ROLLBACK_COMPATIBILITY }}
+          ALERTING_DRILL: ${{ inputs.alerting_drill || vars.ALERTING_DRILL }}
+          SMOKE: ${{ inputs.smoke || vars.SMOKE }}
+          MIGRATION_REHEARSAL_EVIDENCE_SHA256: ${{ vars.MIGRATION_REHEARSAL_EVIDENCE_SHA256 }}
+          MIGRATION_REHEARSAL_OBSERVED_AT: ${{ vars.MIGRATION_REHEARSAL_OBSERVED_AT }}
+          DATABASE_ROLES_EVIDENCE_SHA256: ${{ vars.DATABASE_ROLES_EVIDENCE_SHA256 }}
+          DATABASE_ROLES_OBSERVED_AT: ${{ vars.DATABASE_ROLES_OBSERVED_AT }}
+          BACKUP_RESTORE_EVIDENCE_SHA256: ${{ vars.BACKUP_RESTORE_EVIDENCE_SHA256 }}
+          BACKUP_RESTORE_OBSERVED_AT: ${{ vars.BACKUP_RESTORE_OBSERVED_AT }}
+          ROLLBACK_COMPATIBILITY_EVIDENCE_SHA256: ${{ vars.ROLLBACK_COMPATIBILITY_EVIDENCE_SHA256 }}
+          ROLLBACK_COMPATIBILITY_OBSERVED_AT: ${{ vars.ROLLBACK_COMPATIBILITY_OBSERVED_AT }}
+          ALERTING_DRILL_EVIDENCE_SHA256: ${{ vars.ALERTING_DRILL_EVIDENCE_SHA256 }}
+          ALERTING_DRILL_OBSERVED_AT: ${{ vars.ALERTING_DRILL_OBSERVED_AT }}
+          RELEASE_ACCEPTANCE_EVIDENCE_PATH: ${{ runner.temp }}/production-acceptance-evidence.json
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const { createHash } = require("node:crypto");
+          const { readFileSync, writeFileSync } = require("node:fs");
+          const stagingBytes = readFileSync("release-evidence/staging-deployment-evidence.json");
+          const staging = JSON.parse(stagingBytes);
+          const external = (name) => ({
+            status: process.env[name],
+            source: "github-environment",
+            observedAt: process.env[`${name}_OBSERVED_AT`],
+            evidenceSha256: process.env[`${name}_EVIDENCE_SHA256`],
+          });
+          const checks = {
+            migrationRehearsal: external("MIGRATION_REHEARSAL"),
+            databaseRoles: external("DATABASE_ROLES"),
+            backupRestore: external("BACKUP_RESTORE"),
+            rollbackCompatibility: external("ROLLBACK_COMPATIBILITY"),
+            alertingDrill: external("ALERTING_DRILL"),
+            smoke: {
+              status: process.env.SMOKE,
+              source: "staging-deployment-evidence",
+              observedAt: staging.phases?.find(({ phase }) => phase === "smoke")?.timestamp,
+              evidenceSha256: createHash("sha256").update(stagingBytes).digest("hex"),
+            },
+          };
+          writeFileSync("release-evidence/production-acceptance.json", JSON.stringify({ schemaVersion: 1, releaseSha: process.env.RELEASE_SHA, manifestSha256: process.env.EXPECTED_MANIFEST_SHA256, checks, decision: Object.values(checks).every(value => value.status === "passed") ? "GO" : "NO_GO" }, null, 2), { mode: 0o600, flag: "wx" });
+          NODE
+          npm run release:acceptance:verify -- --manifest release-manifest.json --digest release-manifest.sha256 --deployment-evidence release-evidence/staging-deployment-evidence.json --acceptance release-evidence/production-acceptance.json
+      - name: Upload final acceptance evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-acceptance-${{ github.sha }}
+          path: ${{ runner.temp }}/production-acceptance-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
   production:
     name: Promote identical manifest to production
-    needs: [publish, staging]
+    needs: [publish, production-acceptance]
     runs-on: [self-hosted, linux, vocab-production]
     environment: production
     concurrency:
