@@ -11,15 +11,17 @@ import { logger } from "@/observability/logger";
  * generic 500 to avoid leaking internals.
  */
 export function handleError(err: Error, c: Context) {
+  const requestId = c.get("requestId") as string | undefined;
   if (err instanceof AppError) {
     const { status, body } = errorToResponse(err);
-    return c.json(body, status as ContentfulStatusCode);
+    return c.json({ ...body, requestId }, status as ContentfulStatusCode);
   }
 
   logger.error("http", "Unhandled error", {
+    requestId,
     message: err.message,
     stack: err.stack,
   });
   const { status, body } = errorToResponse(err);
-  return c.json(body, status as ContentfulStatusCode);
+  return c.json({ ...body, requestId }, status as ContentfulStatusCode);
 }

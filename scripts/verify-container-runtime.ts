@@ -27,6 +27,7 @@ requirePattern(compose, /target: migration/, "Migration image target");
 requirePattern(compose, /scripts\/run-review-outbox-worker\.ts/, "Outbox worker command");
 requirePattern(compose, /scripts\/run-llm-reservation-reaper\.ts/, "Reservation reaper command");
 requirePattern(compose, /stop_grace_period: \$\{OUTBOX_STOP_GRACE_PERIOD:-75s\}/, "Lease-aware stop grace");
+requirePattern(compose, /METRICS_BEARER_TOKEN: \$\{METRICS_BEARER_TOKEN:\?METRICS_BEARER_TOKEN is required\}/, "Metrics bearer token injection");
 
 if (!dockerignoreLines.includes(".env") || !dockerignoreLines.includes(".env.*")) {
   throw new Error("Docker build context must exclude .env and .env.*");
