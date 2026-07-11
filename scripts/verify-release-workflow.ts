@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const workflow = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
+const ciWorkflow = readFileSync(resolve(root, ".github/workflows/ci.yml"), "utf8");
 
 export function verifyReleaseWorkflow(source: string): void {
   const requirePattern = (pattern: RegExp, message: string): void => {
@@ -34,5 +35,19 @@ export function verifyReleaseWorkflow(source: string): void {
   requirePattern(/RELEASE_DEPLOY_ENV_FILE/, "Persistent deploy environment file is required");
 }
 
+export function verifyCiReleaseManifestContract(source: string): void {
+  const requirePattern = (pattern: RegExp, message: string): void => {
+    if (!pattern.test(source)) throw new Error(message);
+  };
+  requirePattern(/docker build --target backup-runtime --tag vocab-observatory-v2-backup:ci/, "CI must build the backup image");
+  for (const image of ["runtime", "migration", "backup"]) {
+    requirePattern(new RegExp(`sbom-${image}\\.cdx\\.json`), `CI must generate and retain the ${image} CycloneDX SBOM`);
+    requirePattern(new RegExp(`^\\s+${image.toUpperCase()}_IMAGE: [^\\s]+@sha256:[a-f0-9]{64}$`, "m"), `CI must provide an immutable ${image} image reference`);
+  }
+  requirePattern(/release-manifest\.sha256/, "CI must retain the release manifest digest");
+  requirePattern(/drizzle-release\/meta\/_journal\.json/, "CI must retain the migration journal evidence");
+}
+
 verifyReleaseWorkflow(workflow);
+verifyCiReleaseManifestContract(ciWorkflow);
 console.log("Release workflow contract passed.");

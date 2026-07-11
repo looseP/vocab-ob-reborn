@@ -73,20 +73,33 @@ jobs:
       - name: Build migration image
         run: docker build --target migration --tag vocab-observatory-v2-migration:ci .
 
-      - name: Generate runtime image CycloneDX SBOM
-        run: |
-          docker run --rm \
-            --volume /var/run/docker.sock:/var/run/docker.sock \
-            --volume "${PWD}:/out" \
-            anchore/syft@sha256:e86b0ba0b1d2fe8a2e9f96ed9b22033df9781f43b9a7eb27c57e6c89234946bc \
-            docker:vocab-observatory-v2:ci \
-            --output cyclonedx-json=/out/sbom-container.cdx.json
+      - name: Build backup image
+        run: docker build --target backup-runtime --tag vocab-observatory-v2-backup:ci .
 
-      - name: Upload runtime image SBOM
+      - name: Generate image CycloneDX SBOMs
+        run: |
+          for entry in \
+            "runtime vocab-observatory-v2:ci" \
+            "migration vocab-observatory-v2-migration:ci" \
+            "backup vocab-observatory-v2-backup:ci"
+          do
+            set -- ${entry}
+            docker run --rm \
+              --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume "${PWD}:/out" \
+              anchore/syft@sha256:844ed6a928ef9396fac26d1de374e71dcaf80df14f05841670ed41619c5a718f \
+              "docker:$2" \
+              --output "cyclonedx-json=/out/sbom-$1.cdx.json"
+          done
+
+      - name: Upload image SBOMs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sbom-container-cyclonedx
-          path: sbom-container.cdx.json
+          name: sbom-images-cyclonedx
+          path: |
+            sbom-runtime.cdx.json
+            sbom-migration.cdx.json
+            sbom-backup.cdx.json
           if-no-files-found: error
           retention-days: 30
 
@@ -123,8 +136,9 @@ jobs:
       - name: Generate release manifest
         env:
           RELEASE_CANDIDATE: pr-${{ github.event.pull_request.number || github.run_number }}-${{ github.sha }}
-          RUNTIME_IMAGE: vocab-observatory-v2:ci
-          MIGRATION_IMAGE: vocab-observatory-v2-migration:ci
+          RUNTIME_IMAGE: ghcr.io/loosep/vocab-observatory-runtime@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          MIGRATION_IMAGE: ghcr.io/loosep/vocab-observatory-migration@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          BACKUP_IMAGE: ghcr.io/loosep/vocab-observatory-backup@sha256:3333333333333333333333333333333333333333333333333333333333333333
           POSTGRES_VERSION: "17"
         run: npm run release:manifest
 
@@ -137,8 +151,12 @@ jobs:
           name: release-candidate-evidence
           path: |
             release-manifest.json
+            release-manifest.sha256
             sbom-npm.cdx.json
-            sbom-container.cdx.json
+            sbom-runtime.cdx.json
+            sbom-migration.cdx.json
+            sbom-backup.cdx.json
+            drizzle-release/meta/_journal.json
           if-no-files-found: error
           retention-days: 90
 
