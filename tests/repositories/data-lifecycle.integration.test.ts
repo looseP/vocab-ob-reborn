@@ -11,6 +11,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
   const databaseUrl = process.env.TEST_DATABASE_URL!;
   const pool = new Pool({ connectionString: databaseUrl });
   const repo = new DataLifecycleRepository(pool);
+  const cutoff = new Date("2026-07-11T00:00:00.000Z");
 
   beforeAll(async () => {
     await pool.query("TRUNCATE outbox_effect_receipts, outbox_events, llm_usage CASCADE");
@@ -35,7 +36,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
 
   it("dry-run reports without writing", async () => {
     await insertOutbox(1);
-    const result = await repo.run({ dryRun: true });
+    const result = await repo.run({ cutoff, dryRun: true });
     expect(result.eligible.outboxProcessed).toBe(1);
     expect(result.deleted.outboxProcessed).toBe(0);
     expect((await pool.query("SELECT count(*)::int count FROM outbox_events")).rows[0].count).toBe(1);
@@ -49,6 +50,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       DATA_LIFECYCLE_DATABASE_URL: databaseUrl,
       TEST_DATABASE_URL: "",
       DATABASE_URL: "postgresql://ignored:ignored@127.0.0.1:1/ignored",
+      DATA_LIFECYCLE_CUTOFF: cutoff.toISOString(),
     };
     const dryRun = await execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts"], {
       cwd: process.cwd(),
@@ -69,7 +71,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       VALUES ('__reservation__', 'test', 0, 0, 'pending', now() - interval '30 days', now() - interval '30 days')`);
     await pool.query(`INSERT INTO llm_usage (provider, model, prompt_tokens, completion_tokens, status, expires_at, finalized_at, created_at)
       VALUES ('__reservation__', 'test', 0, 0, 'released', now() - interval '30 days', now() - interval '30 days', now() - interval '30 days')`);
-    await repo.run({ allowWrite: true });
+    await repo.run({ cutoff, allowWrite: true });
     expect((await pool.query("SELECT status FROM llm_usage ORDER BY status")).rows).toEqual([{ status: "pending" }]);
   });
 
@@ -91,11 +93,12 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
         (id, user_id, word_id, rating, state, reviewed_at, wordbook_id)
         SELECT id, user_id, word_id, rating, state, reviewed_at, wordbook_id
         FROM review_logs WHERE id = $1`, [reviewId]);
-      const result = await repo.run({ allowWrite: true });
-      expect(result.archived.reviewLogs).toBe(0);
+      const result = await repo.run({ cutoff, allowWrite: true });
+      expect(result.archived.reviewLogs).toBe(1);
       expect(result.deleted.reviewLogs).toBe(1);
       expect((await pool.query("SELECT count(*)::int count FROM review_logs WHERE id = $1", [reviewId])).rows[0].count).toBe(0);
-      expect((await pool.query("SELECT count(*)::int count FROM review_logs_archive WHERE id = $1", [reviewId])).rows[0].count).toBe(1);
+      const archive = (await pool.query("SELECT metadata, track, undone FROM review_logs_archive WHERE id = $1", [reviewId])).rows[0];
+      expect(archive).toEqual({ metadata: {}, track: "l1", undone: false });
     } finally {
       await pool.query("DELETE FROM users WHERE id = $1", [userId]);
       await pool.query("DELETE FROM words WHERE id = $1", [wordId]);
@@ -107,8 +110,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
     const ids = await insertOutbox(220);
     await pool.query("INSERT INTO outbox_effect_receipts (event_id, effect_name) VALUES ($1, 'test')", [ids[0]]);
     const [first, second] = await Promise.all([
-      repo.run({ allowWrite: true, policy: { batchSize: 100 } }),
-      repo.run({ allowWrite: true, policy: { batchSize: 100 } }),
+      repo.run({ cutoff, allowWrite: true, policy: { batchSize: 100 } }),
+      repo.run({ cutoff, allowWrite: true, policy: { batchSize: 100 } }),
     ]);
     expect(first.deleted.outboxProcessed + second.deleted.outboxProcessed).toBe(220);
     expect((await pool.query("SELECT count(*)::int count FROM outbox_events")).rows[0].count).toBe(0);

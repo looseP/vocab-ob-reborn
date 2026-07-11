@@ -27,6 +27,16 @@ export function readDataLifecyclePolicy(): Partial<DataLifecyclePolicy> {
   } as Partial<DataLifecyclePolicy>;
 }
 
+function requiredCutoff(): Date {
+  const raw = process.env.DATA_LIFECYCLE_CUTOFF;
+  if (!raw) throw new Error("DATA_LIFECYCLE_CUTOFF is required");
+  const cutoff = new Date(raw);
+  if (!Number.isFinite(cutoff.getTime()) || cutoff.toISOString() !== raw) {
+    throw new Error("DATA_LIFECYCLE_CUTOFF must be a canonical UTC ISO timestamp");
+  }
+  return cutoff;
+}
+
 export async function runDataLifecycle(): Promise<void> {
   const databaseUrl = process.env.DATA_LIFECYCLE_DATABASE_URL ?? process.env.TEST_DATABASE_URL;
   if (!databaseUrl) throw new Error("DATA_LIFECYCLE_DATABASE_URL or TEST_DATABASE_URL is required");
@@ -50,6 +60,7 @@ export async function runDataLifecycle(): Promise<void> {
   });
   try {
     const result = await new DataLifecycleRepository(pool).run({
+      cutoff: requiredCutoff(),
       dryRun: !execute,
       allowWrite: execute,
       policy: Object.fromEntries(Object.entries(readDataLifecyclePolicy()).filter(([, value]) => value !== undefined)),
