@@ -61,5 +61,5 @@ const manifest = {
 const manifestContents = `${JSON.stringify(manifest, null, 2)}\n`;
 const manifestSha256 = createHash("sha256").update(manifestContents).digest("hex");
 writeFileSync(output, manifestContents, { flag: "wx" });
-writeFileSync(digestOutput, `${manifestSha256}\n`, { flag: "wx" });
+writeFileSync(digestOutput, `${manifestSha256}  release-manifest.json\n`, { flag: "wx" });
 console.log(JSON.stringify(releaseManifestSummary(manifestSha256, manifest.images)));
