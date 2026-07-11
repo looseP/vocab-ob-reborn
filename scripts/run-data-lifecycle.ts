@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { Pool } from "pg";
 import {
+  DATA_LIFECYCLE_POLICY_VERSION,
   DataLifecycleRepository,
   type DataLifecyclePolicy,
 } from "../src/repositories/data-lifecycle.repository";
@@ -20,7 +21,6 @@ export function readDataLifecyclePolicy(): Partial<DataLifecyclePolicy> {
     llmTerminalDays: integerEnv("DATA_LIFECYCLE_LLM_TERMINAL_DAYS"),
     llmSettledDays: integerEnv("DATA_LIFECYCLE_LLM_SETTLED_DAYS"),
     reviewLogDays: integerEnv("DATA_LIFECYCLE_REVIEW_LOG_DAYS"),
-    reviewArchiveDays: integerEnv("DATA_LIFECYCLE_REVIEW_ARCHIVE_DAYS"),
     batchSize: integerEnv("DATA_LIFECYCLE_BATCH_SIZE"),
     maxBatches: integerEnv("DATA_LIFECYCLE_MAX_BATCHES"),
     maxRows: integerEnv("DATA_LIFECYCLE_MAX_ROWS"),
@@ -48,13 +48,7 @@ export async function runDataLifecycle(): Promise<void> {
   if (args.some((arg) => arg !== "--execute") || args.filter((arg) => arg === "--execute").length > 1) {
     throw new Error("only a single --execute argument is supported");
   }
-  const parsed = new URL(databaseUrl);
-  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
-  if (!databaseName) throw new Error("database URL must include a database name");
-  if (execute && process.env.DATA_LIFECYCLE_CONFIRM !== databaseName) {
-    throw new Error(`DATA_LIFECYCLE_CONFIRM must exactly match database name ${databaseName}`);
-  }
-
+  const cutoff = requiredCutoff();
   const pool = new Pool({
     connectionString: databaseUrl,
     max: 4,
@@ -62,8 +56,32 @@ export async function runDataLifecycle(): Promise<void> {
     statement_timeout: integerEnv("DATA_LIFECYCLE_STATEMENT_TIMEOUT_MS") ?? 30_000,
   });
   try {
+    const identity = (await pool.query<{ current_database: string; current_user: string; server_version_num: string }>(
+      "SELECT current_database(), current_user, current_setting('server_version_num') AS server_version_num",
+    )).rows[0];
+    if (!identity) throw new Error("database identity query returned no row");
+    if (["postgres", "template0", "template1"].includes(identity.current_database)) {
+      throw new Error(`refusing lifecycle operation on system database ${identity.current_database}`);
+    }
+    if (execute) {
+      if (process.env.DATA_LIFECYCLE_ALLOW_WRITE !== "true") {
+        throw new Error("DATA_LIFECYCLE_ALLOW_WRITE must exactly equal true");
+      }
+      if (process.env.DATA_LIFECYCLE_CONFIRM !== identity.current_database) {
+        throw new Error(`DATA_LIFECYCLE_CONFIRM must exactly match current_database ${identity.current_database}`);
+      }
+      if (process.env.DATA_LIFECYCLE_CONFIRM_CUTOFF !== cutoff.toISOString()) {
+        throw new Error("DATA_LIFECYCLE_CONFIRM_CUTOFF must exactly match DATA_LIFECYCLE_CUTOFF");
+      }
+      if (process.env.NODE_ENV === "production") {
+        const expected = `PURGE:${identity.current_database}:${DATA_LIFECYCLE_POLICY_VERSION}`;
+        if (process.env.DATA_LIFECYCLE_PRODUCTION_CONFIRM !== expected) {
+          throw new Error(`DATA_LIFECYCLE_PRODUCTION_CONFIRM must exactly equal ${expected}`);
+        }
+      }
+    }
     const result = await new DataLifecycleRepository(pool).run({
-      cutoff: requiredCutoff(),
+      cutoff,
       dryRun: !execute,
       allowWrite: execute,
       policy: Object.fromEntries(Object.entries(readDataLifecyclePolicy()).filter(([, value]) => value !== undefined)),

@@ -1,15 +1,24 @@
 import type { Pool, PoolClient } from "pg";
 
+export const DATA_LIFECYCLE_POLICY_VERSION = "2026-07-11";
+
 export const DATA_LIFECYCLE_DEFAULTS = {
-  outboxProcessedDays: 14,
-  authSessionDays: 7,
-  llmTerminalDays: 7,
-  llmSettledDays: 395,
-  reviewLogDays: 90,
-  reviewArchiveDays: 730,
+  outboxProcessedDays: 30,
+  authSessionDays: 30,
+  llmTerminalDays: 30,
+  llmSettledDays: 400,
+  reviewLogDays: 365,
   batchSize: 250,
   maxBatches: 100,
   maxRows: 25_000,
+} as const;
+
+const DATA_LIFECYCLE_MINIMUMS = {
+  outboxProcessedDays: 14,
+  authSessionDays: 7,
+  llmTerminalDays: 7,
+  llmSettledDays: 197,
+  reviewLogDays: 180,
 } as const;
 
 export type DataLifecyclePolicy = {
@@ -18,7 +27,6 @@ export type DataLifecyclePolicy = {
   llmTerminalDays: number;
   llmSettledDays: number;
   reviewLogDays: number;
-  reviewArchiveDays: number;
   batchSize: number;
   maxBatches: number;
   maxRows: number;
@@ -29,12 +37,12 @@ export type LifecycleTarget =
   | "authSessions"
   | "llmTerminal"
   | "llmSettled"
-  | "reviewLogs"
-  | "reviewArchive";
+  | "reviewLogs";
 
 type LifecycleLimits = { batchSize: number; maxBatches: number; maxRows: number };
 
 export type DataLifecycleResult = {
+  policyVersion: string;
   eligible: Record<LifecycleTarget, number>;
   archived: Record<LifecycleTarget, number>;
   deleted: Record<LifecycleTarget, number>;
@@ -43,7 +51,7 @@ export type DataLifecycleResult = {
 };
 
 const TARGETS: LifecycleTarget[] = [
-  "outboxProcessed", "authSessions", "llmTerminal", "llmSettled", "reviewLogs", "reviewArchive",
+  "outboxProcessed", "authSessions", "llmTerminal", "llmSettled", "reviewLogs",
 ];
 
 function counters(): Record<LifecycleTarget, number> {
@@ -55,8 +63,8 @@ export function validateDataLifecyclePolicy(input: Partial<DataLifecyclePolicy> 
   for (const [name, value] of Object.entries(policy)) {
     if (!Number.isInteger(value)) throw new Error(`${name} must be an integer`);
   }
-  if (policy.batchSize < 100 || policy.batchSize > 500) {
-    throw new Error("batchSize must be between 100 and 500");
+  if (policy.batchSize < 1 || policy.batchSize > 1000) {
+    throw new Error("batchSize must be between 1 and 1000");
   }
   if (policy.maxBatches < 1 || policy.maxBatches > 10_000) {
     throw new Error("maxBatches must be between 1 and 10000");
@@ -64,11 +72,9 @@ export function validateDataLifecyclePolicy(input: Partial<DataLifecyclePolicy> 
   if (policy.maxRows < 1 || policy.maxRows > 5_000_000) {
     throw new Error("maxRows must be between 1 and 5000000");
   }
-  for (const name of [
-    "outboxProcessedDays", "authSessionDays", "llmTerminalDays", "llmSettledDays", "reviewLogDays", "reviewArchiveDays",
-  ] as const) {
-    if (policy[name] < Math.ceil(DATA_LIFECYCLE_DEFAULTS[name] / 2)) {
-      throw new Error(`${name} cannot be less than half its default`);
+  for (const name of Object.keys(DATA_LIFECYCLE_MINIMUMS) as Array<keyof typeof DATA_LIFECYCLE_MINIMUMS>) {
+    if (policy[name] < DATA_LIFECYCLE_MINIMUMS[name]) {
+      throw new Error(`${name} cannot be less than ${DATA_LIFECYCLE_MINIMUMS[name]}`);
     }
   }
   return policy;
@@ -94,7 +100,6 @@ export class DataLifecycleRepository {
       llmTerminal: new Date(cutoffTime - policy.llmTerminalDays * 86_400_000),
       llmSettled: new Date(cutoffTime - policy.llmSettledDays * 86_400_000),
       reviewLogs: new Date(cutoffTime - policy.reviewLogDays * 86_400_000),
-      reviewArchive: new Date(cutoffTime - policy.reviewArchiveDays * 86_400_000),
     };
     const eligible = await this.countEligible(cutoffs);
     const archived = counters();
@@ -110,10 +115,9 @@ export class DataLifecycleRepository {
       const review = await this.archiveReviewBatches(cutoffs.reviewLogs, limits);
       archived.reviewLogs = review.archived;
       deleted.reviewLogs = review.deleted;
-      deleted.reviewArchive = await this.deleteReviewArchiveBatches(cutoffs.reviewArchive, limits);
     }
 
-    return { eligible, archived, deleted, cutoff, durationMs: Date.now() - startedAt };
+    return { policyVersion: DATA_LIFECYCLE_POLICY_VERSION, eligible, archived, deleted, cutoff, durationMs: Date.now() - startedAt };
   }
 
   private async countEligible(cutoffs: Record<LifecycleTarget, Date>): Promise<Record<LifecycleTarget, number>> {
@@ -124,7 +128,6 @@ export class DataLifecycleRepository {
       ["llmTerminal", "SELECT count(*)::int AS count FROM llm_usage WHERE status IN ('released', 'expired') AND finalized_at < $1"],
       ["llmSettled", "SELECT count(*)::int AS count FROM llm_usage WHERE status = 'settled' AND created_at < $1"],
       ["reviewLogs", "SELECT count(*)::int AS count FROM review_logs WHERE reviewed_at < $1"],
-      ["reviewArchive", "SELECT count(*)::int AS count FROM review_logs_archive WHERE reviewed_at < $1"],
     ];
     const rows = await Promise.all(queries.map(async ([target, text]) => {
       const query = await this.pool.query<{ count: number }>(text, [cutoffs[target]]);
@@ -162,20 +165,26 @@ export class DataLifecycleRepository {
     ) DELETE FROM llm_usage target USING candidates WHERE target.id = candidates.id`, cutoff, limits);
   }
 
-  private deleteReviewArchiveBatches(cutoff: Date, limits: LifecycleLimits): Promise<number> {
-    return this.executeDeleteBatches(`WITH candidates AS (
-      SELECT id FROM review_logs_archive WHERE reviewed_at < $1
-      ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $2
-    ) DELETE FROM review_logs_archive target USING candidates WHERE target.id = candidates.id`, cutoff, limits);
-  }
-
   private async executeDeleteBatches(statement: string, cutoff: Date, limits: LifecycleLimits): Promise<number> {
     let total = 0;
     for (let batch = 0; batch < limits.maxBatches && total < limits.maxRows; batch += 1) {
       const limit = Math.min(limits.batchSize, limits.maxRows - total);
-      const result = await this.pool.query(statement, [cutoff, limit]);
-      total += result.rowCount ?? 0;
-      if ((result.rowCount ?? 0) < limit) return total;
+      const client = await this.pool.connect();
+      let rowCount = 0;
+      try {
+        await client.query("BEGIN");
+        await this.setBatchTimeouts(client);
+        const result = await client.query(statement, [cutoff, limit]);
+        rowCount = result.rowCount ?? 0;
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      total += rowCount;
+      if (rowCount < limit) return total;
     }
     return total;
   }
@@ -188,6 +197,7 @@ export class DataLifecycleRepository {
       const limit = Math.min(limits.batchSize, limits.maxRows - deleted);
       try {
         await client.query("BEGIN");
+        await this.setBatchTimeouts(client);
         const result = await this.archiveReviewBatch(client, cutoff, limit);
         await client.query("COMMIT");
         archived += result.archived;
@@ -201,6 +211,12 @@ export class DataLifecycleRepository {
       }
     }
     return { archived, deleted };
+  }
+
+  private async setBatchTimeouts(client: PoolClient): Promise<void> {
+    await client.query("SET LOCAL lock_timeout = '2s'");
+    await client.query("SET LOCAL statement_timeout = '30s'");
+    await client.query("SET LOCAL idle_in_transaction_session_timeout = '30s'");
   }
 
   private async archiveReviewBatch(client: PoolClient, cutoff: Date, batchSize: number): Promise<{ selected: number; archived: number; deleted: number }> {
@@ -226,10 +242,28 @@ export class DataLifecycleRepository {
            wordbook_id = EXCLUDED.wordbook_id, previous_progress_snapshot = EXCLUDED.previous_progress_snapshot,
            undone = EXCLUDED.undone, undone_at = EXCLUDED.undone_at,
            idempotency_key = EXCLUDED.idempotency_key, track = EXCLUDED.track
-         RETURNING id
+         RETURNING id, user_id, word_id, progress_id, session_id, rating, state, reviewed_at, due_at,
+                   elapsed_days, scheduled_days, stability, difficulty, metadata, created_at, wordbook_id,
+                   previous_progress_snapshot, undone, undone_at, idempotency_key, track
+       ), validated AS (
+         SELECT candidates.id
+         FROM candidates JOIN inserted USING (id)
+         WHERE ROW(candidates.user_id, candidates.word_id, candidates.progress_id, candidates.session_id,
+                   candidates.rating::text, candidates.state, candidates.reviewed_at, candidates.due_at,
+                   candidates.elapsed_days, candidates.scheduled_days, candidates.stability, candidates.difficulty,
+                   candidates.metadata, candidates.created_at, candidates.wordbook_id,
+                   candidates.previous_progress_snapshot, candidates.undone, candidates.undone_at,
+                   candidates.idempotency_key, candidates.track)
+           IS NOT DISTINCT FROM
+               ROW(inserted.user_id, inserted.word_id, inserted.progress_id, inserted.session_id,
+                   inserted.rating, inserted.state, inserted.reviewed_at, inserted.due_at,
+                   inserted.elapsed_days, inserted.scheduled_days, inserted.stability, inserted.difficulty,
+                   inserted.metadata, inserted.created_at, inserted.wordbook_id,
+                   inserted.previous_progress_snapshot, inserted.undone, inserted.undone_at,
+                   inserted.idempotency_key, inserted.track)
        ), removed AS (
-         DELETE FROM review_logs AS logs USING inserted
-         WHERE logs.id = inserted.id
+         DELETE FROM review_logs AS logs USING validated
+         WHERE logs.id = validated.id
          RETURNING logs.id
        )
        SELECT (SELECT count(*)::int FROM candidates) AS selected,

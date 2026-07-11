@@ -11,7 +11,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
   const databaseUrl = process.env.TEST_DATABASE_URL!;
   const pool = new Pool({ connectionString: databaseUrl });
   const repo = new DataLifecycleRepository(pool);
-  const cutoff = new Date("2026-07-11T00:00:00.000Z");
+  const cutoff = new Date();
 
   beforeAll(async () => {
     await pool.query("TRUNCATE outbox_effect_receipts, outbox_events, llm_usage CASCADE");
@@ -27,7 +27,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       await pool.query(
         `INSERT INTO outbox_events
            (id, aggregate_type, aggregate_id, event_type, payload, dedupe_key, status, processed_at, created_at, updated_at)
-         VALUES ($1, 'review', $2, 'test', '{}', $3, 'processed', now() - interval '20 days', now() - interval '20 days', now())`,
+         VALUES ($1, 'review', $2, 'test', '{}', $3, 'processed', now() - interval '40 days', now() - interval '40 days', now())`,
         [id, randomUUID(), randomUUID()],
       );
     }
@@ -51,6 +51,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       TEST_DATABASE_URL: "",
       DATABASE_URL: "postgresql://ignored:ignored@127.0.0.1:1/ignored",
       DATA_LIFECYCLE_CUTOFF: cutoff.toISOString(),
+      DATA_LIFECYCLE_ALLOW_WRITE: "true",
+      DATA_LIFECYCLE_CONFIRM_CUTOFF: cutoff.toISOString(),
     };
     const dryRun = await execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts"], {
       cwd: process.cwd(),
@@ -61,16 +63,40 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
     await expect(execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts", "--execute"], {
       cwd: process.cwd(),
       env: { ...baseEnv, DATA_LIFECYCLE_CONFIRM: "wrong_database" },
-    })).rejects.toMatchObject({ stderr: expect.stringContaining("must exactly match database name") });
+    })).rejects.toMatchObject({ stderr: expect.stringContaining("must exactly match current_database") });
     expect((await pool.query("SELECT count(*)::int count FROM outbox_events")).rows[0].count).toBe(1);
+  });
+
+  it("enforces maxRows across batches", async () => {
+    await pool.query("TRUNCATE outbox_effect_receipts, outbox_events CASCADE");
+    await insertOutbox(5);
+    const result = await repo.run({ cutoff, allowWrite: true, policy: { batchSize: 2, maxRows: 3 } });
+    expect(result.deleted.outboxProcessed).toBe(3);
+    expect((await pool.query("SELECT count(*)::int count FROM outbox_events")).rows[0].count).toBe(2);
+  });
+
+  it("skips a prelocked eligible row", async () => {
+    await pool.query("TRUNCATE outbox_effect_receipts, outbox_events CASCADE");
+    const [lockedId] = await insertOutbox(2);
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT id FROM outbox_events WHERE id = $1 FOR UPDATE", [lockedId]);
+      const result = await repo.run({ cutoff, allowWrite: true, policy: { batchSize: 2, maxBatches: 1 } });
+      expect(result.deleted.outboxProcessed).toBe(1);
+      expect((await pool.query("SELECT count(*)::int count FROM outbox_events WHERE id = $1", [lockedId])).rows[0].count).toBe(1);
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
   });
 
   it("keeps pending LLM reservations and deletes only eligible terminal states", async () => {
     await pool.query("TRUNCATE outbox_effect_receipts, outbox_events, llm_usage CASCADE");
     await pool.query(`INSERT INTO llm_usage (provider, model, prompt_tokens, completion_tokens, status, expires_at, created_at)
-      VALUES ('__reservation__', 'test', 0, 0, 'pending', now() - interval '30 days', now() - interval '30 days')`);
+      VALUES ('__reservation__', 'test', 0, 0, 'pending', now() - interval '40 days', now() - interval '40 days')`);
     await pool.query(`INSERT INTO llm_usage (provider, model, prompt_tokens, completion_tokens, status, expires_at, finalized_at, created_at)
-      VALUES ('__reservation__', 'test', 0, 0, 'released', now() - interval '30 days', now() - interval '30 days', now() - interval '30 days')`);
+      VALUES ('__reservation__', 'test', 0, 0, 'released', now() - interval '40 days', now() - interval '40 days', now() - interval '40 days')`);
     await repo.run({ cutoff, allowWrite: true });
     expect((await pool.query("SELECT status FROM llm_usage ORDER BY status")).rows).toEqual([{ status: "pending" }]);
   });
@@ -92,7 +118,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       await pool.query("INSERT INTO wordbooks (id, user_id, name) VALUES ($1, $2, 'test')", [wordbookId, userId]);
       await pool.query(`INSERT INTO review_logs
         (id, user_id, word_id, rating, state, reviewed_at, wordbook_id, metadata, previous_progress_snapshot, undone, track)
-        VALUES ($1, $2, $3, 'hard', 'review', now() - interval '100 days', $4, '{"source":"first"}', '{"stability":2}', false, 'l1')`, [reviewId, userId, wordId, wordbookId]);
+        VALUES ($1, $2, $3, 'hard', 'review', now() - interval '400 days', $4, '{"source":"first"}', '{"stability":2}', false, 'l1')`, [reviewId, userId, wordId, wordbookId]);
       const result = await repo.run({ cutoff, allowWrite: true });
       expect(result.archived.reviewLogs).toBe(1);
       expect(result.deleted.reviewLogs).toBe(1);
@@ -118,7 +144,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       await pool.query("INSERT INTO wordbooks (id, user_id, name) VALUES ($1, $2, 'test')", [wordbookId, userId]);
       await pool.query(`INSERT INTO review_logs
         (id, user_id, word_id, rating, state, reviewed_at, wordbook_id)
-        VALUES ($1, $2, $3, 'good', '{}', now() - interval '100 days', $4)`, [reviewId, userId, wordId, wordbookId]);
+        VALUES ($1, $2, $3, 'good', '{}', now() - interval '400 days', $4)`, [reviewId, userId, wordId, wordbookId]);
       await pool.query(`INSERT INTO review_logs_archive
         (id, user_id, word_id, rating, state, reviewed_at, wordbook_id)
         SELECT id, user_id, word_id, rating, state, reviewed_at, wordbook_id
