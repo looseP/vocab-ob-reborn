@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep, win32 } from "node:path";
 
 export const RELEASE_MANIFEST_SCHEMA_VERSION = 2;
 export const REQUIRED_IMAGES = ["runtime", "migration", "backup"] as const;
@@ -52,8 +52,12 @@ export function immutableImageFromEnvironment(value: string | undefined, name: s
   return parseImmutableImageReference({ reference: value, digest }, name);
 }
 
+function isCrossPlatformAbsolutePath(value: string): boolean {
+  return isAbsolute(value) || win32.isAbsolute(value);
+}
+
 export function safeRepositoryOutputPath(root: string, value: string, name: string): string {
-  if (value.length === 0 || !/^[A-Za-z0-9._/-]+$/.test(value) || value.includes("\\") || isAbsolute(value) || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
+  if (value.length === 0 || !/^[A-Za-z0-9._/-]+$/.test(value) || value.includes("\\") || isCrossPlatformAbsolutePath(value) || value.split("/").some((part) => part === "" || part === "." || part === "..")) {
     throw new Error(`Unsafe ${name} path`);
   }
   const output = resolve(root, value);
@@ -102,7 +106,7 @@ export function verifyReleaseManifest(value: unknown, root: string): { evidenceC
   for (const name of REQUIRED_EVIDENCE) {
     const item = record(evidence[name], `${name} evidence`);
     exactKeys(item, ["path", "sha256"], `${name} evidence`);
-    if (typeof item.path !== "string" || item.path.length === 0 || item.path.includes("\\") || isAbsolute(item.path)) {
+    if (typeof item.path !== "string" || item.path.length === 0 || item.path.includes("\\") || isCrossPlatformAbsolutePath(item.path)) {
       throw new Error(`Unsafe ${name} evidence path`);
     }
     if (item.path.split("/").some((part) => part === "" || part === "." || part === "..")) throw new Error(`Unsafe ${name} evidence path`);
