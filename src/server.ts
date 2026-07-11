@@ -24,16 +24,19 @@ import type { DictionaryProvider } from "./dictionary/provider";
 import { logger } from "./observability/logger";
 
 function requireRuntimeConfiguration(): void {
-  const missing = ["DATABASE_URL", "OWNER_API_TOKEN", "LOCAL_OWNER_ID", "APP_ORIGIN", "METRICS_BEARER_TOKEN"]
-    .filter((name) => !process.env[name]);
+  const isProduction = process.env.NODE_ENV === "production";
+  const required = isProduction
+    ? ["DATABASE_URL", "OWNER_API_TOKEN", "LOCAL_OWNER_ID", "APP_ORIGIN", "METRICS_BEARER_TOKEN"]
+    : ["DATABASE_URL", "OWNER_API_TOKEN", "LOCAL_OWNER_ID", "APP_ORIGIN"];
+  const missing = required.filter((name) => !process.env[name]);
   if (missing.length > 0) {
     throw new Error(`Missing required runtime configuration: ${missing.join(", ")}`);
   }
   if ((process.env.OWNER_API_TOKEN?.length ?? 0) < 24) {
     throw new Error("OWNER_API_TOKEN must contain at least 24 characters");
   }
-  if ((process.env.METRICS_BEARER_TOKEN?.length ?? 0) < 24) {
-    throw new Error("METRICS_BEARER_TOKEN must contain at least 24 characters");
+  if (isProduction && (process.env.METRICS_BEARER_TOKEN?.length ?? 0) < 24) {
+    throw new Error("METRICS_BEARER_TOKEN must contain at least 24 characters in production");
   }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(process.env.LOCAL_OWNER_ID ?? "")) {
     throw new Error("LOCAL_OWNER_ID must be a UUID");
