@@ -34,6 +34,9 @@ function requiredCutoff(): Date {
   if (!Number.isFinite(cutoff.getTime()) || cutoff.toISOString() !== raw) {
     throw new Error("DATA_LIFECYCLE_CUTOFF must be a canonical UTC ISO timestamp");
   }
+  if (cutoff.getTime() > Date.now()) {
+    throw new Error("DATA_LIFECYCLE_CUTOFF cannot be in the future");
+  }
   return cutoff;
 }
 

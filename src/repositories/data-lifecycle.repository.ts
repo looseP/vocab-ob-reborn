@@ -82,6 +82,9 @@ export class DataLifecycleRepository {
     if (!(options.cutoff instanceof Date) || !Number.isFinite(options.cutoff.getTime())) {
       throw new Error("cutoff must be a valid Date");
     }
+    if (options.cutoff.getTime() > startedAt) {
+      throw new Error("cutoff cannot be in the future");
+    }
     const cutoff = options.cutoff.toISOString();
     const cutoffTime = options.cutoff.getTime();
     const policy = validateDataLifecyclePolicy(options.policy);
@@ -225,9 +228,8 @@ export class DataLifecycleRepository {
            idempotency_key = EXCLUDED.idempotency_key, track = EXCLUDED.track
          RETURNING id
        ), removed AS (
-         DELETE FROM review_logs AS logs USING candidates
-         WHERE logs.id = candidates.id
-           AND EXISTS (SELECT 1 FROM review_logs_archive archive WHERE archive.id = candidates.id)
+         DELETE FROM review_logs AS logs USING inserted
+         WHERE logs.id = inserted.id
          RETURNING logs.id
        )
        SELECT (SELECT count(*)::int FROM candidates) AS selected,

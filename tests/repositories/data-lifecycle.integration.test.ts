@@ -75,6 +75,36 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
     expect((await pool.query("SELECT status FROM llm_usage ORDER BY status")).rows).toEqual([{ status: "pending" }]);
   });
 
+  it("rejects a future cutoff", async () => {
+    await expect(repo.run({ cutoff: new Date(Date.now() + 60_000), dryRun: true })).rejects.toThrow("cutoff cannot be in the future");
+  });
+
+  it("archives a new review log and deletes its source in the first run", async () => {
+    const userId = randomUUID();
+    const wordId = randomUUID();
+    const wordbookId = randomUUID();
+    const reviewId = randomUUID();
+    try {
+      await pool.query("INSERT INTO users (id, email) VALUES ($1, $2)", [userId, `${userId}@example.test`]);
+      await pool.query("INSERT INTO profiles (id, email) VALUES ($1, $2)", [userId, `${userId}@example.test`]);
+      await pool.query(`INSERT INTO words (id, slug, content_hash, source_path, title, lemma, definition_md, body_md)
+        VALUES ($1, $2, repeat('b', 64), $3, 'test', 'test', 'test', 'test')`, [wordId, wordId, `/test/${wordId}`]);
+      await pool.query("INSERT INTO wordbooks (id, user_id, name) VALUES ($1, $2, 'test')", [wordbookId, userId]);
+      await pool.query(`INSERT INTO review_logs
+        (id, user_id, word_id, rating, state, reviewed_at, wordbook_id, metadata, previous_progress_snapshot, undone, track)
+        VALUES ($1, $2, $3, 'hard', 'review', now() - interval '100 days', $4, '{"source":"first"}', '{"stability":2}', false, 'l1')`, [reviewId, userId, wordId, wordbookId]);
+      const result = await repo.run({ cutoff, allowWrite: true });
+      expect(result.archived.reviewLogs).toBe(1);
+      expect(result.deleted.reviewLogs).toBe(1);
+      expect((await pool.query("SELECT count(*)::int count FROM review_logs WHERE id = $1", [reviewId])).rows[0].count).toBe(0);
+      const archive = (await pool.query("SELECT rating, state, metadata, previous_progress_snapshot, undone, track FROM review_logs_archive WHERE id = $1", [reviewId])).rows[0];
+      expect(archive).toEqual({ rating: "hard", state: "review", metadata: { source: "first" }, previous_progress_snapshot: { stability: 2 }, undone: false, track: "l1" });
+    } finally {
+      await pool.query("DELETE FROM users WHERE id = $1", [userId]);
+      await pool.query("DELETE FROM words WHERE id = $1", [wordId]);
+    }
+  });
+
   it("archives review logs idempotently before deleting the source", async () => {
     const userId = randomUUID();
     const wordId = randomUUID();
