@@ -1,114 +1,221 @@
-# Vocab Observatory — Alerting Rules
-# Prometheus-compatible rules for the vocab_observatory service.
-# Scrape target: GET /metrics with Authorization: Bearer <METRICS_BEARER_TOKEN>.
+# Vocab Observatory core Prometheus rules.
+# Load this file for the application scrape job named "vocab-observatory".
+# Every metric below is emitted by src/observability/telemetry.ts, except Prometheus' built-in up.
 
 groups:
-  - name: vocab_observability_http
+  - name: vocab-observatory.availability
     interval: 30s
     rules:
-      - alert: VocabHighErrorRate
-        expr: |
-          (
-            sum(rate(vocab_observatory_http_requests_total{status_class="5xx"}[5m]))
-            /
-            clamp_min(sum(rate(vocab_observatory_http_requests_total[5m])), 1)
-          ) > 0.05
-        for: 5m
+      - alert: VocabTargetDown
+        expr: up{job="vocab-observatory"} == 0
+        for: 2m
         labels:
           severity: critical
           service: vocab_observatory
+          component: api
+          team: vocab-observatory
+          alert_family: service-availability
         annotations:
-          summary: "HTTP 5xx error rate above 5% for 5 minutes"
-          description: "5xx ratio is {{ $value | humanizePercentage }} of all requests."
+          summary: "Vocab Observatory scrape target is down"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for more than two minutes."
+          runbook_url: "docs/operations/slo-runbook.md#vocabtargetdown-critical"
+
+      - alert: VocabMetricsMissing
+        expr: absent_over_time(vocab_observatory_runtime{job="vocab-observatory",metric="process_uptime_seconds"}[5m])
+        for: 1m
+        labels:
+          severity: critical
+          service: vocab_observatory
+          component: telemetry
+          team: vocab-observatory
+          alert_family: metrics-availability
+        annotations:
+          summary: "Vocab Observatory application metrics are missing"
+          description: "The fixed runtime heartbeat series has been absent for five minutes while this rule is evaluated."
+          runbook_url: "docs/operations/slo-runbook.md#vocabmetricsmissing-critical"
+
+      - alert: VocabDatabaseUnhealthy
+        expr: vocab_observatory_runtime{job="vocab-observatory",metric="database_healthy"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: vocab_observatory
+          component: database
+          team: vocab-observatory
+          alert_family: database-health
+        annotations:
+          summary: "Vocab Observatory database health check is failing"
+          description: "The application database probe on {{ $labels.instance }} has reported unhealthy for two minutes."
+          runbook_url: "docs/operations/slo-runbook.md#vocabdatabaseunhealthy-critical"
+
+      - alert: VocabReadinessDraining
+        expr: vocab_observatory_runtime{job="vocab-observatory",metric="process_draining"} == 1
+        for: 2m
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: api
+          team: vocab-observatory
+          alert_family: service-readiness
+        annotations:
+          summary: "Vocab Observatory process remains in draining state"
+          description: "Instance {{ $labels.instance }} has rejected new readiness traffic for two minutes."
+          runbook_url: "docs/operations/slo-runbook.md#vocabreadinessdraining-warning"
+
+  - name: vocab-observatory.http-slo
+    interval: 30s
+    rules:
+      - alert: VocabHttpErrorBudgetBurnFast
+        expr: |
+          (
+            sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*",status_class="5xx"}[5m]))
+            /
+            sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*"}[5m]))
+          ) > (14.4 * 0.001)
+          and
+          sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*"}[5m])) > 0
+          and
+          sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*"}[1h])) > 0
+          and
+          (
+            sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*",status_class="5xx"}[1h]))
+            /
+            sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*"}[1h]))
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          service: vocab_observatory
+          component: api
+          team: vocab-observatory
+          slo: availability
+          alert_family: http-error-budget
+        annotations:
+          summary: "Vocab Observatory is rapidly burning its HTTP error budget"
+          description: "The API 5xx ratio exceeds the 14.4x burn-rate threshold in both 5m and 1h windows."
+          runbook_url: "docs/operations/slo-runbook.md#vocabhttperrorbudgetburnfast-critical"
+
+      - alert: VocabHttpErrorBudgetBurnSlow
+        expr: |
+          (
+            sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*",status_class="5xx"}[30m]))
+            /
+            sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*"}[30m]))
+          ) > (6 * 0.001)
+          and
+          sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*"}[30m])) > 0
+          and
+          sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*"}[6h])) > 0
+          and
+          (
+            sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*",status_class="5xx"}[6h]))
+            /
+            sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*"}[6h]))
+          ) > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: api
+          team: vocab-observatory
+          slo: availability
+          alert_family: http-error-budget
+        annotations:
+          summary: "Vocab Observatory is steadily burning its HTTP error budget"
+          description: "The API 5xx ratio exceeds the 6x burn-rate threshold in both 30m and 6h windows."
+          runbook_url: "docs/operations/slo-runbook.md#vocabhttperrorbudgetburnslow-warning"
 
       - alert: VocabHighLatencyP95
         expr: |
-          histogram_quantile(0.95,
-            sum(rate(vocab_observatory_http_request_duration_seconds_bucket[5m])) by (le, route)
+          histogram_quantile(
+            0.95,
+            sum(rate(vocab_observatory_http_request_duration_seconds_bucket{job="vocab-observatory",route=~"/api/.*"}[5m])) by (le)
           ) > 0.5
+          and
+          sum(rate(vocab_observatory_http_requests_total{job="vocab-observatory",route=~"/api/.*"}[5m])) > 0.1
         for: 10m
         labels:
           severity: warning
           service: vocab_observatory
+          component: api
+          team: vocab-observatory
+          slo: latency
+          alert_family: http-latency
         annotations:
-          summary: "API p95 latency above 500ms for route {{ $labels.route }}"
-          description: "Current p95: {{ $value }}s."
+          summary: "Vocab Observatory API p95 latency exceeds 500ms"
+          description: "Aggregate API p95 latency has exceeded 500ms for ten minutes; current value is {{ $value }} seconds."
+          runbook_url: "docs/operations/slo-runbook.md#vocabhighlatencyp95-warning"
 
-  - name: vocab_observability_readiness
+  - name: vocab-observatory.workers
     interval: 30s
     rules:
-      - alert: VocabReadinessDown
-        expr: vocab_observatory_runtime{metric="process_draining"} == 1
-        for: 2m
+      - alert: VocabOutboxBacklogHigh
+        expr: vocab_observatory_runtime{job="vocab-observatory",metric="outbox_pending"} > 50
+        for: 10m
         labels:
           severity: warning
           service: vocab_observatory
+          component: review-outbox-worker
+          team: vocab-observatory
+          alert_family: outbox-health
         annotations:
-          summary: "Process is in draining state"
-          description: "Readiness returns not_ready; new traffic is not accepted."
-
-      - alert: VocabDatabaseUnhealthy
-        expr: vocab_observatory_runtime{metric="database_healthy"} == 0
-        for: 1m
-        labels:
-          severity: critical
-          service: vocab_observatory
-        annotations:
-          summary: "Database health check failing"
-          description: "The pool probe reports unhealthy for over 1 minute."
-
-  - name: vocab_observability_outbox
-    interval: 30s
-    rules:
-      - alert: VocabOutboxBacklogGrowing
-        expr: vocab_observatory_runtime{metric="outbox_pending"} > 50
-        for: 5m
-        labels:
-          severity: warning
-          service: vocab_observatory
-        annotations:
-          summary: "Outbox pending backlog above 50 for 5 minutes"
-          description: "Current pending: {{ $value }}."
-
-      - alert: VocabOutboxDeadLetter
-        expr: vocab_observatory_runtime{metric="outbox_dead_letter"} > 0
-        for: 1m
-        labels:
-          severity: critical
-          service: vocab_observatory
-        annotations:
-          summary: "Outbox has dead-letter events"
-          description: "{{ $value }} dead-letter events require manual replay."
+          summary: "Vocab Observatory outbox backlog is high"
+          description: "More than 50 outbox events have remained pending for ten minutes; current value is {{ $value }}."
+          runbook_url: "docs/operations/slo-runbook.md#vocaboutboxbackloghigh-warning"
 
       - alert: VocabOutboxStuck
-        expr: vocab_observatory_runtime{metric="outbox_oldest_pending_age_seconds"} > 300
+        expr: vocab_observatory_runtime{job="vocab-observatory",metric="outbox_oldest_pending_age_seconds"} > 300
         for: 2m
         labels:
           severity: critical
           service: vocab_observatory
+          component: review-outbox-worker
+          team: vocab-observatory
+          slo: outbox-freshness
+          alert_family: outbox-health
         annotations:
-          summary: "Outbox oldest pending event exceeds 5 minutes"
-          description: "Oldest pending age: {{ $value }}s — worker may be stalled."
+          summary: "Vocab Observatory outbox processing is stuck"
+          description: "The oldest pending event has exceeded the five-minute freshness SLO for five minutes; age is {{ $value }} seconds."
+          runbook_url: "docs/operations/slo-runbook.md#vocaboutboxstuck-critical"
 
-  - name: vocab_observability_llm
-    interval: 30s
-    rules:
-      - alert: VocabLlmReservationsStuck
-        expr: vocab_observatory_runtime{metric="llm_reservations_oldest_pending_age_seconds"} > 600
+      - alert: VocabOutboxDeadLetter
+        expr: vocab_observatory_runtime{job="vocab-observatory",metric="outbox_dead_letter"} > 0
         for: 2m
         labels:
-          severity: warning
+          severity: critical
           service: vocab_observatory
+          component: review-outbox-worker
+          team: vocab-observatory
+          alert_family: outbox-health
         annotations:
-          summary: "LLM reservation pending over 10 minutes"
-          description: "Oldest pending reservation age: {{ $value }}s — reaper may be lagging."
+          summary: "Vocab Observatory has dead-letter outbox events"
+          description: "Dead-letter events require investigation and controlled replay; current count is {{ $value }}."
+          runbook_url: "docs/operations/slo-runbook.md#vocaboutboxdeadletter-critical"
 
-      - alert: VocabLlmExpiredReservationsAccumulating
-        expr: vocab_observatory_runtime{metric="llm_reservations_expired_pending"} > 10
+      - alert: VocabLlmReservationAgeHigh
+        expr: vocab_observatory_runtime{job="vocab-observatory",metric="llm_reservations_oldest_pending_age_seconds"} > 600
         for: 5m
         labels:
           severity: warning
           service: vocab_observatory
+          component: llm-reservation-reaper
+          team: vocab-observatory
+          alert_family: llm-reservation-reaper
         annotations:
-          summary: "Expired LLM reservations accumulating"
-          description: "{{ $value }} expired reservations still pending after 5 minutes."
+          summary: "Vocab Observatory has an old pending LLM reservation"
+          description: "The oldest pending LLM reservation has exceeded ten minutes; current age is {{ $value }} seconds."
+          runbook_url: "docs/operations/slo-runbook.md#vocabllmreservationagehigh-warning"
+
+      - alert: VocabLlmExpiredReservationsHigh
+        expr: vocab_observatory_runtime{job="vocab-observatory",metric="llm_reservations_expired_pending"} > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: llm-reservation-reaper
+          team: vocab-observatory
+          alert_family: llm-reservation-reaper
+        annotations:
+          summary: "Vocab Observatory has too many expired LLM reservations"
+          description: "More than ten expired reservations await reaping; current count is {{ $value }}."
+          runbook_url: "docs/operations/slo-runbook.md#vocabllmexpiredreservationshigh-warning"

@@ -44,6 +44,25 @@
 3. Check if LLM calls are blocking — review LLM semaphore and reservation metrics.
 4. Consider adding indexes or caching if a specific query pattern is hot.
 
+## Staging Alert Delivery Drill
+
+This drill is synthetic and reversible: it posts a scoped `VocabStagingSyntheticDrill` alert to a staging Alertmanager and then resolves it. It must not stop databases, remove containers, or alter application data.
+
+Offline contract check (does **not** prove notification delivery):
+
+```bash
+npm run alerting:drill -- --environment=staging --confirm-staging --confirm-reversible --dry-run
+npm run alerting:drill:contract
+```
+
+For a live staging drill, set `DRILL_ALERTMANAGER_URL` and `DRILL_RECEIPT_URL` to HTTPS endpoints and list both exact hostnames in comma-separated `DRILL_ALLOWED_HOSTS`. Set `DRILL_LOCK_FILE` to a dedicated absolute persistent path outside temporary directories; the process creates it atomically and holds it across firing, receipt confirmation, and resolution. A leftover lock must only be removed after an operator confirms no drill is running. URLs and allowlist entries containing `production`/`prod`, localhost/loopback targets, embedded credentials, or non-HTTPS schemes are rejected. DNS is re-resolved before every request and private, loopback, link-local, CGNAT, IPv6 ULA/link-local, and IPv4-mapped private addresses are rejected; redirects are disabled. Node fetch does not pin the resolved IP, so a runner-level egress allowlist remains a mandatory outer control against DNS rebinding. Do not put tokens in URLs or command arguments; endpoint authentication must be supplied by platform-side identity/proxy configuration.
+
+```bash
+npm run alerting:drill -- --environment=staging --confirm-staging --confirm-reversible --timeout-ms=120000
+```
+
+The receipt endpoint is queried with `requestId` and must return JSON flags `firingNotified: true` and later `resolvedNotified: true`. Success requires the complete `firing → notification_confirmed → resolved` sequence before timeout. The emitted JSON evidence contains only request ID, timestamps, phases, mode, and delivery result; it never contains endpoint URLs or tokens.
+
 ## Metrics Endpoint
 
 - **URL**: `GET /metrics`
@@ -82,4 +101,75 @@
 
 - HTTP metrics use a **bounded** set of route labels (`/api/words/*`, `/api/review/*`, etc.) — never raw paths.
 - The `metric` label on the runtime gauge is a fixed enum — no dynamic values.
-- No user IDs, slugs, or request IDs appear as labels.
+- Alerts aggregate HTTP latency across routes and never copy user IDs, slugs, request IDs, or raw paths into alert labels.
+
+## Core alert procedures
+
+### VocabTargetDown (critical)
+1. Confirm the Prometheus target configuration, bearer token, network path, and `/healthz` response.
+2. Check the web process and recent deployment logs before restarting it.
+
+### VocabMetricsMissing (critical)
+1. Check whether `up{job="vocab-observatory"}` is healthy; a healthy target with a missing counter usually means a scrape-path or application regression.
+2. Fetch authenticated `/metrics` and confirm `vocab_observatory_runtime{metric="process_uptime_seconds"}` is present; this fixed series avoids false alerts when a new instance has not served any HTTP request.
+
+### VocabReadinessDraining (warning)
+1. Check whether a deployment or controlled shutdown is in progress.
+2. If not, inspect lifecycle signal handling and instance logs before replacing the instance.
+
+### VocabHttpErrorBudgetBurnFast (critical)
+Follow the `VocabHighErrorRate` triage above. Pause rollout activity while both burn windows remain above threshold.
+
+### VocabHttpErrorBudgetBurnSlow (warning)
+Review recent releases and recurring 5xx codes. Schedule corrective work before the 30-day budget is exhausted.
+
+### VocabOutboxBacklogHigh (warning)
+Check worker health and throughput, then follow the `VocabOutboxStuck` procedure if event age also breaches five minutes.
+
+### VocabLlmReservationAgeHigh / VocabLlmExpiredReservationsHigh (warning)
+Check the `llm-reservation-reaper` process and logs, then run `npm run llm-reservation:metrics` before any manual reap. Separate alerts distinguish old pending work from an accumulation of already-expired reservations.
+
+## Optional platform rule boundary
+
+`optional-platform-alerting-rules.yaml` is not part of the default application rule set. Load it only after installing collectors that implement these bounded metric contracts:
+
+| Metric | Source contract |
+|--------|-----------------|
+| `vocab_platform_backup_last_success_timestamp_seconds{service="vocab_observatory"}` | External collector updates only after a signed backup completes and verifies successfully |
+| `vocab_platform_backup_last_attempt_timestamp_seconds{service="vocab_observatory"}` / `vocab_platform_backup_last_attempt_success{service="vocab_observatory"}` | Collector updates after every completed attempt; success is exactly 0 or 1 |
+| `vocab_platform_restore_drill_last_success_timestamp_seconds{service="vocab_observatory"}` | External drill automation updates only after schema-evidence validation succeeds |
+| `vocab_platform_restore_drill_last_attempt_timestamp_seconds{service="vocab_observatory"}` / `vocab_platform_restore_drill_last_attempt_success{service="vocab_observatory"}` | Drill automation updates after every completed attempt; success is exactly 0 or 1 |
+| `probe_ssl_earliest_cert_expiry{job="blackbox-vocab-observatory"}` | Prometheus blackbox exporter HTTPS probe |
+| `vocab_platform_runner_canary_last_success_timestamp_seconds{service="vocab_observatory"}` | CI exporter timestamp after a successful scheduled canary; it is not a runner-online signal |
+
+Do not synthesize these metrics from application telemetry. Relabel optional exporter targets with the bounded `environment="production"` label before loading the rules; the selectors exclude staging and drill targets. Each platform metric contract permits exactly one series per `service`/`environment` pair (and one TLS series per fixed `job`/`environment` target); duplicate series make vector matching ambiguous and must fail collector validation. Keep exporter labels bounded to `service`, `environment`, fixed `job`, and infrastructure identity.
+
+### VocabBackupStale (critical, optional)
+Check scheduler logs and the newest signed manifest, run `npm run db:backup:verify`, and investigate storage capacity or database connectivity before forcing another cycle.
+
+### VocabBackupFailed (critical, optional)
+Inspect the latest completed attempt and scheduler logs. Preserve its failed manifest/evidence before retrying, then verify the next signed backup.
+
+### VocabBackupCollectorMissing (warning, optional)
+Verify the collector process, textfile/remote-write destination, and collector permissions. This alert indicates monitoring loss, not proof that backups failed.
+
+### VocabRestoreDrillCollectorMissing (warning, optional)
+Verify the drill collector, its scrape target, and the required production labels. A missing metric is monitoring loss and must not silently resolve freshness alerts.
+
+### VocabRestoreDrillFailed (critical, optional)
+Preserve drill output and compare schema evidence. Fix the failure before retrying against an isolated drill database; never target production.
+
+### VocabRestoreDrillOverdue / VocabRestoreDrillCriticallyOverdue (warning / critical, optional)
+Schedule `npm run db:restore:drill -- <manifest>` against an isolated database whose name has an allowed drill suffix; never target production. The 35-day warning allows monthly scheduling jitter; the 40-day critical threshold pages after additional remediation grace. Both share `alert_family: restore-drill-freshness`, so the critical alert inhibits the warning. `VocabRestoreDrillFailed` deliberately uses the independent `restore-drill-attempt` family and remains visible because it diagnoses a completed failed attempt rather than missing freshness.
+
+### VocabTlsProbeMetricMissing (warning, optional)
+Verify the production blackbox target, TLS module, scrape health, and required labels. Treat absence as lost certificate monitoring rather than a healthy certificate.
+
+### VocabTlsCertificateExpiring / VocabTlsCertificateExpiringSoon (warning / critical, optional)
+Confirm the blackbox target and certificate chain, then renew through the platform's certificate owner and re-run the HTTPS probe. Alertmanager should inhibit the 14-day warning while the 7-day critical alert is active.
+
+### VocabRunnerCanaryCollectorMissing (warning, optional)
+Verify the CI canary exporter, scrape path, and production labels. This distinguishes exporter loss from a stale but present canary timestamp.
+
+### VocabRunnerCanaryStale (warning, optional)
+Check whether the canary workflow was scheduled and whether its job completed. This signal can also be stale because of workflow, provider, or code failures; use a GitHub API exporter with a bounded online gauge if direct runner-online monitoring is required.
