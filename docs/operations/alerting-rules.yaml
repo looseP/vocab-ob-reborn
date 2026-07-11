@@ -1,0 +1,114 @@
+# Vocab Observatory — Alerting Rules
+# Prometheus-compatible rules for the vocab_observatory service.
+# Scrape target: GET /metrics with Authorization: Bearer <METRICS_BEARER_TOKEN>.
+
+groups:
+  - name: vocab_observability_http
+    interval: 30s
+    rules:
+      - alert: VocabHighErrorRate
+        expr: |
+          (
+            sum(rate(vocab_observatory_http_requests_total{status_class="5xx"}[5m]))
+            /
+            clamp_min(sum(rate(vocab_observatory_http_requests_total[5m])), 1)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: vocab_observatory
+        annotations:
+          summary: "HTTP 5xx error rate above 5% for 5 minutes"
+          description: "5xx ratio is {{ $value | humanizePercentage }} of all requests."
+
+      - alert: VocabHighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(vocab_observatory_http_request_duration_seconds_bucket[5m])) by (le, route)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: vocab_observatory
+        annotations:
+          summary: "API p95 latency above 500ms for route {{ $labels.route }}"
+          description: "Current p95: {{ $value }}s."
+
+  - name: vocab_observability_readiness
+    interval: 30s
+    rules:
+      - alert: VocabReadinessDown
+        expr: vocab_observatory_runtime{metric="process_draining"} == 1
+        for: 2m
+        labels:
+          severity: warning
+          service: vocab_observatory
+        annotations:
+          summary: "Process is in draining state"
+          description: "Readiness returns not_ready; new traffic is not accepted."
+
+      - alert: VocabDatabaseUnhealthy
+        expr: vocab_observatory_runtime{metric="database_healthy"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: vocab_observatory
+        annotations:
+          summary: "Database health check failing"
+          description: "The pool probe reports unhealthy for over 1 minute."
+
+  - name: vocab_observability_outbox
+    interval: 30s
+    rules:
+      - alert: VocabOutboxBacklogGrowing
+        expr: vocab_observatory_runtime{metric="outbox_pending"} > 50
+        for: 5m
+        labels:
+          severity: warning
+          service: vocab_observatory
+        annotations:
+          summary: "Outbox pending backlog above 50 for 5 minutes"
+          description: "Current pending: {{ $value }}."
+
+      - alert: VocabOutboxDeadLetter
+        expr: vocab_observatory_runtime{metric="outbox_dead_letter"} > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: vocab_observatory
+        annotations:
+          summary: "Outbox has dead-letter events"
+          description: "{{ $value }} dead-letter events require manual replay."
+
+      - alert: VocabOutboxStuck
+        expr: vocab_observatory_runtime{metric="outbox_oldest_pending_age_seconds"} > 300
+        for: 2m
+        labels:
+          severity: critical
+          service: vocab_observatory
+        annotations:
+          summary: "Outbox oldest pending event exceeds 5 minutes"
+          description: "Oldest pending age: {{ $value }}s — worker may be stalled."
+
+  - name: vocab_observability_llm
+    interval: 30s
+    rules:
+      - alert: VocabLlmReservationsStuck
+        expr: vocab_observatory_runtime{metric="llm_reservations_oldest_pending_age_seconds"} > 600
+        for: 2m
+        labels:
+          severity: warning
+          service: vocab_observatory
+        annotations:
+          summary: "LLM reservation pending over 10 minutes"
+          description: "Oldest pending reservation age: {{ $value }}s — reaper may be lagging."
+
+      - alert: VocabLlmExpiredReservationsAccumulating
+        expr: vocab_observatory_runtime{metric="llm_reservations_expired_pending"} > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: vocab_observatory
+        annotations:
+          summary: "Expired LLM reservations accumulating"
+          description: "{{ $value }} expired reservations still pending after 5 minutes."

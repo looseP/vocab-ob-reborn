@@ -19,6 +19,7 @@ export type AppEnv = {
     role: AuthRole;
     userId: string;
     principal: Principal;
+    requestId: string;
   };
 };
 

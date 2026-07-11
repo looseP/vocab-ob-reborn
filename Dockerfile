@@ -22,6 +22,7 @@ COPY --from=build --chown=node:node /app/src ./src
 COPY --from=build --chown=node:node /app/scripts/run-review-outbox-worker.ts ./scripts/run-review-outbox-worker.ts
 COPY --from=build --chown=node:node /app/scripts/run-llm-reservation-reaper.ts ./scripts/run-llm-reservation-reaper.ts
 COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/docs/operations ./docs/operations
 USER node
 EXPOSE 3001
 CMD ["./node_modules/.bin/tsx", "src/server.ts"]

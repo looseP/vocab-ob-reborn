@@ -20,12 +20,15 @@ import { reviewRoutes } from "./routes/review";
 import { l2Routes } from "./routes/l2";
 import { l3Routes } from "./routes/l3";
 import { authRoutes } from "./routes/auth";
+import { requestTelemetry, isMetricsAuthorized } from "./middleware/telemetry";
+import { telemetry, type Telemetry } from "../observability/telemetry";
 
-export function createApp(services: Services): Hono<AppEnv> {
+export function createApp(services: Services, metrics: Telemetry = telemetry): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
   // 全局错误处理：AppError 子类映射到对应 HTTP 状态码
   app.onError(handleError);
+  app.use("*", requestTelemetry(metrics));
   app.use("*", secureHeaders({
     xFrameOptions: "DENY",
     xContentTypeOptions: "nosniff",
@@ -54,6 +57,21 @@ export function createApp(services: Services): Hono<AppEnv> {
       return c.json(readiness, 503);
     }
     return c.json(readiness);
+  });
+
+  app.get("/metrics", async (c) => {
+    c.header("Cache-Control", "no-store");
+    if (!isMetricsAuthorized(c.req.header("authorization"), process.env.METRICS_BEARER_TOKEN)) {
+      c.header("WWW-Authenticate", "Bearer");
+      return c.text("Unauthorized", 401);
+    }
+    try {
+      metrics.setRuntime(await services.runtimeStatus.getMetrics());
+      c.header("Content-Type", metrics.contentType);
+      return c.body(await metrics.render());
+    } catch {
+      return c.text("Metrics unavailable", 503);
+    }
   });
 
   // Reject oversized API bodies before auth or route handlers parse them.

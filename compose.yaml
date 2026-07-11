@@ -4,6 +4,7 @@ x-app-environment: &app-environment
   DATABASE_URL: ${DATABASE_URL:-postgresql://vocab:vocab@postgres:5432/vocab}
   DB_POOL_MAX: ${DB_POOL_MAX:-5}
   LOG_LEVEL: ${LOG_LEVEL:-info}
+  METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:?METRICS_BEARER_TOKEN is required}
 
 x-app-base: &app-base
   image: ${APP_IMAGE:-vocab-observatory-v2:local}
