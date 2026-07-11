@@ -40,6 +40,7 @@ requirePattern(lifecycleService, /DATA_LIFECYCLE_CUTOFF: \$\{DATA_LIFECYCLE_CUTO
 requirePattern(lifecycleService, /DATA_LIFECYCLE_CONFIRM_CUTOFF: \$\{DATA_LIFECYCLE_CONFIRM_CUTOFF:-\}/, "Lifecycle cutoff confirmation");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_CONFIRM: \$\{DATA_LIFECYCLE_CONFIRM:-\}/, "Lifecycle database confirmation");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_ALLOW_WRITE: \$\{DATA_LIFECYCLE_ALLOW_WRITE:-\}/, "Lifecycle write confirmation");
+requirePattern(lifecycleService, /DATA_LIFECYCLE_ENVIRONMENT: \$\{DATA_LIFECYCLE_ENVIRONMENT:-\}/, "Explicit lifecycle environment");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_PRODUCTION_CONFIRM: \$\{DATA_LIFECYCLE_PRODUCTION_CONFIRM:-\}/, "Lifecycle production confirmation");
 for (const variable of [
   "DATA_LIFECYCLE_OUTBOX_PROCESSED_DAYS", "DATA_LIFECYCLE_AUTH_SESSION_DAYS",
@@ -53,6 +54,9 @@ for (const variable of [
 requirePattern(lifecycleService, /command: \["\.\/node_modules\/\.bin\/tsx", "scripts\/run-data-lifecycle\.ts"\]/, "Lifecycle default dry-run command");
 if (/\bDATABASE_URL\s*:/.test(lifecycleService)) {
   throw new Error("Lifecycle service must not receive DATABASE_URL or fall back to it");
+}
+if (/\bNODE_ENV\s*:/.test(lifecycleService)) {
+  throw new Error("Lifecycle service must use DATA_LIFECYCLE_ENVIRONMENT, not NODE_ENV");
 }
 requirePattern(compose, /stop_grace_period: \$\{OUTBOX_STOP_GRACE_PERIOD:-75s\}/, "Lease-aware stop grace");
 requirePattern(compose, /METRICS_BEARER_TOKEN: \$\{METRICS_BEARER_TOKEN:\?METRICS_BEARER_TOKEN is required\}/, "Metrics bearer token injection");

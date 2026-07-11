@@ -152,7 +152,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
     }
   });
 
-  it("archives review logs idempotently before deleting the source", async () => {
+  it("refuses to delete when an existing archive conflicts with the source", async () => {
     const userId = randomUUID();
     const wordId = randomUUID();
     const wordbookId = randomUUID();
@@ -171,11 +171,11 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
         SELECT id, user_id, word_id, rating, state, reviewed_at, wordbook_id
         FROM review_logs WHERE id = $1`, [reviewId]);
       const result = await repo.run({ cutoff, allowWrite: true });
-      expect(result.archived.reviewLogs).toBe(1);
-      expect(result.deleted.reviewLogs).toBe(1);
-      expect((await pool.query("SELECT count(*)::int count FROM review_logs WHERE id = $1", [reviewId])).rows[0].count).toBe(0);
+      expect(result.archived.reviewLogs).toBe(0);
+      expect(result.deleted.reviewLogs).toBe(0);
+      expect((await pool.query("SELECT count(*)::int count FROM review_logs WHERE id = $1", [reviewId])).rows[0].count).toBe(1);
       const archive = (await pool.query("SELECT metadata, track, undone FROM review_logs_archive WHERE id = $1", [reviewId])).rows[0];
-      expect(archive).toEqual({ metadata: {}, track: "l1", undone: false });
+      expect(archive).toEqual({ metadata: null, track: "l1", undone: false });
     } finally {
       await pool.query("DELETE FROM users WHERE id = $1", [userId]);
       await pool.query("DELETE FROM words WHERE id = $1", [wordId]);

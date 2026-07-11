@@ -47,6 +47,7 @@ Backup retention is a separate control boundary:
      -e DATA_LIFECYCLE_CONFIRM_CUTOFF="2026-01-01T00:00:00.000Z" \
      -e DATA_LIFECYCLE_CONFIRM="<current_database>" \
      -e DATA_LIFECYCLE_ALLOW_WRITE="true" \
+     -e DATA_LIFECYCLE_ENVIRONMENT="production" \
      -e DATA_LIFECYCLE_PRODUCTION_CONFIRM="<production-confirmation>" \
      data-lifecycle \
      ./node_modules/.bin/tsx scripts/run-data-lifecycle.ts --execute

@@ -233,21 +233,16 @@ export class DataLifecycleRepository {
          SELECT id, user_id, word_id, progress_id, session_id, rating, state, reviewed_at, due_at, elapsed_days,
                 scheduled_days, stability, difficulty, metadata, created_at, wordbook_id,
                 previous_progress_snapshot, undone, undone_at, idempotency_key, track
-         FROM candidates ON CONFLICT (id) DO UPDATE SET
-           user_id = EXCLUDED.user_id, word_id = EXCLUDED.word_id, progress_id = EXCLUDED.progress_id,
-           session_id = EXCLUDED.session_id, rating = EXCLUDED.rating, state = EXCLUDED.state,
-           reviewed_at = EXCLUDED.reviewed_at, due_at = EXCLUDED.due_at, elapsed_days = EXCLUDED.elapsed_days,
-           scheduled_days = EXCLUDED.scheduled_days, stability = EXCLUDED.stability,
-           difficulty = EXCLUDED.difficulty, metadata = EXCLUDED.metadata, created_at = EXCLUDED.created_at,
-           wordbook_id = EXCLUDED.wordbook_id, previous_progress_snapshot = EXCLUDED.previous_progress_snapshot,
-           undone = EXCLUDED.undone, undone_at = EXCLUDED.undone_at,
-           idempotency_key = EXCLUDED.idempotency_key, track = EXCLUDED.track
-         RETURNING id, user_id, word_id, progress_id, session_id, rating, state, reviewed_at, due_at,
-                   elapsed_days, scheduled_days, stability, difficulty, metadata, created_at, wordbook_id,
-                   previous_progress_snapshot, undone, undone_at, idempotency_key, track
+         FROM candidates ON CONFLICT (id) DO NOTHING
+         RETURNING id
        ), validated AS (
          SELECT candidates.id
-         FROM candidates JOIN inserted USING (id)
+         FROM candidates
+         JOIN inserted USING (id)
+         UNION
+         SELECT candidates.id
+         FROM candidates
+         JOIN review_logs_archive AS archive USING (id)
          WHERE ROW(candidates.user_id, candidates.word_id, candidates.progress_id, candidates.session_id,
                    candidates.rating::text, candidates.state, candidates.reviewed_at, candidates.due_at,
                    candidates.elapsed_days, candidates.scheduled_days, candidates.stability, candidates.difficulty,
@@ -255,19 +250,19 @@ export class DataLifecycleRepository {
                    candidates.previous_progress_snapshot, candidates.undone, candidates.undone_at,
                    candidates.idempotency_key, candidates.track)
            IS NOT DISTINCT FROM
-               ROW(inserted.user_id, inserted.word_id, inserted.progress_id, inserted.session_id,
-                   inserted.rating, inserted.state, inserted.reviewed_at, inserted.due_at,
-                   inserted.elapsed_days, inserted.scheduled_days, inserted.stability, inserted.difficulty,
-                   inserted.metadata, inserted.created_at, inserted.wordbook_id,
-                   inserted.previous_progress_snapshot, inserted.undone, inserted.undone_at,
-                   inserted.idempotency_key, inserted.track)
+               ROW(archive.user_id, archive.word_id, archive.progress_id, archive.session_id,
+                   archive.rating, archive.state, archive.reviewed_at, archive.due_at,
+                   archive.elapsed_days, archive.scheduled_days, archive.stability, archive.difficulty,
+                   archive.metadata, archive.created_at, archive.wordbook_id,
+                   archive.previous_progress_snapshot, archive.undone, archive.undone_at,
+                   archive.idempotency_key, archive.track)
        ), removed AS (
          DELETE FROM review_logs AS logs USING validated
          WHERE logs.id = validated.id
          RETURNING logs.id
        )
        SELECT (SELECT count(*)::int FROM candidates) AS selected,
-              (SELECT count(*)::int FROM inserted) AS archived,
+              (SELECT count(*)::int FROM validated) AS archived,
               (SELECT count(*)::int FROM removed) AS deleted`,
       [cutoff, batchSize],
     );
