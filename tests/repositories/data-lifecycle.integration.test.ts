@@ -64,6 +64,27 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       cwd: process.cwd(),
       env: { ...baseEnv, DATA_LIFECYCLE_CONFIRM: "wrong_database" },
     })).rejects.toMatchObject({ stderr: expect.stringContaining("must exactly match current_database") });
+
+    const databaseName = (await pool.query<{ current_database: string }>("SELECT current_database()")) .rows[0]!.current_database;
+    const executeEnv = { ...baseEnv, DATA_LIFECYCLE_CONFIRM: databaseName };
+    await expect(execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts", "--execute"], {
+      cwd: process.cwd(), env: { ...executeEnv, DATA_LIFECYCLE_ALLOW_WRITE: "" },
+    })).rejects.toMatchObject({ stderr: expect.stringContaining("DATA_LIFECYCLE_ALLOW_WRITE") });
+    await expect(execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts", "--execute"], {
+      cwd: process.cwd(), env: { ...executeEnv, DATA_LIFECYCLE_CONFIRM_CUTOFF: "wrong" },
+    })).rejects.toMatchObject({ stderr: expect.stringContaining("DATA_LIFECYCLE_CONFIRM_CUTOFF") });
+    await expect(execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts", "--execute"], {
+      cwd: process.cwd(), env: executeEnv,
+    })).rejects.toMatchObject({ stderr: expect.stringContaining("DATA_LIFECYCLE_ENVIRONMENT") });
+    await expect(execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts", "--execute"], {
+      cwd: process.cwd(), env: { ...executeEnv, DATA_LIFECYCLE_ENVIRONMENT: "prod" },
+    })).rejects.toMatchObject({ stderr: expect.stringContaining("DATA_LIFECYCLE_ENVIRONMENT") });
+    await expect(execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts", "--execute"], {
+      cwd: process.cwd(), env: { ...executeEnv, DATA_LIFECYCLE_ENVIRONMENT: "production" },
+    })).rejects.toMatchObject({ stderr: expect.stringContaining("DATA_LIFECYCLE_PRODUCTION_CONFIRM") });
+    await expect(execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts", "--execute"], {
+      cwd: process.cwd(), env: { ...executeEnv, DATA_LIFECYCLE_ENVIRONMENT: "production", DATA_LIFECYCLE_PRODUCTION_CONFIRM: "wrong" },
+    })).rejects.toMatchObject({ stderr: expect.stringContaining("DATA_LIFECYCLE_PRODUCTION_CONFIRM") });
     expect((await pool.query("SELECT count(*)::int count FROM outbox_events")).rows[0].count).toBe(1);
   });
 

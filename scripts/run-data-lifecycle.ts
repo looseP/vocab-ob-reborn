@@ -73,7 +73,11 @@ export async function runDataLifecycle(): Promise<void> {
       if (process.env.DATA_LIFECYCLE_CONFIRM_CUTOFF !== cutoff.toISOString()) {
         throw new Error("DATA_LIFECYCLE_CONFIRM_CUTOFF must exactly match DATA_LIFECYCLE_CUTOFF");
       }
-      if (process.env.NODE_ENV === "production") {
+      const environment = process.env.DATA_LIFECYCLE_ENVIRONMENT;
+      if (!environment || !["development", "test", "staging", "production"].includes(environment)) {
+        throw new Error("DATA_LIFECYCLE_ENVIRONMENT must be one of development, test, staging, production");
+      }
+      if (environment === "production") {
         const expected = `PURGE:${identity.current_database}:${DATA_LIFECYCLE_POLICY_VERSION}`;
         if (process.env.DATA_LIFECYCLE_PRODUCTION_CONFIRM !== expected) {
           throw new Error(`DATA_LIFECYCLE_PRODUCTION_CONFIRM must exactly equal ${expected}`);
