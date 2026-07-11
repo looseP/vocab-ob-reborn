@@ -59,6 +59,8 @@ export const authSessions = pgTable("auth_sessions", {
 	unique("auth_sessions_token_hash_key").on(table.tokenHash),
 	index("idx_auth_sessions_active").using("btree", table.tokenHash, table.expiresAt).where(sql`revoked_at IS NULL`),
 	index("idx_auth_sessions_user").using("btree", table.userId, table.expiresAt.desc()),
+	index("idx_auth_sessions_expiry_cleanup").using("btree", table.expiresAt, table.id),
+	index("idx_auth_sessions_revoked_cleanup").using("btree", table.revokedAt, table.id).where(sql`revoked_at IS NOT NULL`),
 	foreignKey({
 		columns: [table.userId],
 		foreignColumns: [profiles.id],
@@ -102,6 +104,7 @@ export const outboxEvents = pgTable("outbox_events", {
 	index("idx_outbox_events_claim").using("btree", table.availableAt, table.createdAt).where(sql`status IN ('pending', 'retry')`),
 	index("idx_outbox_events_lease").using("btree", table.lockedUntil).where(sql`status = 'processing'`),
 	index("idx_outbox_events_dead_letter").using("btree", table.updatedAt).where(sql`status = 'dead_letter'`),
+	index("idx_outbox_events_processed_cleanup").using("btree", table.processedAt, table.id).where(sql`status = 'processed' AND processed_at IS NOT NULL`),
 	check("outbox_events_status_check", sql`status = ANY (ARRAY['pending'::text, 'retry'::text, 'processing'::text, 'processed'::text, 'dead_letter'::text])`),
 	check("outbox_events_attempts_check", sql`attempts >= 0 AND max_attempts > 0 AND attempts <= max_attempts`),
 ]);
@@ -467,6 +470,7 @@ export const reviewLogsArchive = pgTable("review_logs_archive", {
 }, (table) => [
 	index("idx_review_logs_archive_user_reviewed").using("btree", table.userId.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
 	index("idx_review_logs_archive_wordbook").using("btree", table.wordbookId.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
+	index("idx_review_logs_archive_cleanup").using("btree", table.reviewedAt, table.id),
 	foreignKey({
 			columns: [table.wordbookId],
 			foreignColumns: [wordbooks.id],
@@ -505,6 +509,7 @@ export const reviewLogs = pgTable("review_logs", {
 	index("idx_review_logs_user_undone_reviewed").using("btree", table.userId.asc().nullsLast(), table.undone.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
 	index("idx_review_logs_word").using("btree", table.wordId.asc().nullsLast()),
 	index("idx_review_logs_wordbook").using("btree", table.wordbookId.asc().nullsLast(), table.reviewedAt.desc().nullsFirst()),
+	index("idx_review_logs_cleanup").using("btree", table.reviewedAt, table.id),
 	foreignKey({
 			columns: [table.userId],
 			foreignColumns: [profiles.id],
@@ -743,6 +748,8 @@ export const llmUsage = pgTable("llm_usage", {
 }, (table) => [
 	index("idx_llm_usage_created").on(table.createdAt),
 	index("idx_llm_usage_pending_expiry").on(table.expiresAt, table.id).where(sql`status = 'pending'`),
+	index("idx_llm_usage_terminal_finalized_cleanup").on(table.finalizedAt, table.id).where(sql`status IN ('released', 'expired') AND finalized_at IS NOT NULL`),
+	index("idx_llm_usage_settled_created_cleanup").on(table.createdAt, table.id).where(sql`status = 'settled'`),
 	check("llm_usage_status_check", sql`status = ANY (ARRAY['pending'::text, 'settled'::text, 'released'::text, 'expired'::text])`),
 	check("llm_usage_reservation_lifecycle_check", sql`(status = 'settled' AND provider <> '__reservation__' AND expires_at IS NULL) OR (status = 'pending' AND provider = '__reservation__' AND expires_at IS NOT NULL AND finalized_at IS NULL) OR (status = ANY (ARRAY['released'::text, 'expired'::text]) AND provider = '__reservation__' AND expires_at IS NOT NULL AND finalized_at IS NOT NULL)`),
 ]);
