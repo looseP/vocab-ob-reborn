@@ -53,6 +53,7 @@ export function getPool(): Pool {
     if (!url) {
       throw new Error("DATABASE_URL is not configured.");
     }
+    const sslMode = process.env.DB_SSLMODE ?? "disable";
     _pool = new Pool({
       connectionString: url,
       max: boundedInteger("DB_POOL_MAX", 10, 1, 100),
@@ -61,6 +62,7 @@ export function getPool(): Pool {
       keepAlive: true,
       keepAliveInitialDelayMillis: boundedInteger("DB_KEEPALIVE_DELAY_MS", 10_000, 0, 600_000),
       allowExitOnIdle: true,
+      ...(sslMode !== "disable" ? { ssl: sslMode === "verify-full" || sslMode === "verify-ca" ? { rejectUnauthorized: true } : { rejectUnauthorized: false } } : {}),
     });
     _listenersAttached = false;
     attachPoolListeners(_pool);

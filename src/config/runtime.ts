@@ -7,6 +7,11 @@ const runtimeSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: integer(1, 65_535).default(3_001),
   DATABASE_URL: z.string().url().startsWith("postgresql://"),
+  APP_DATABASE_URL: z.string().url().startsWith("postgresql://").optional(),
+  WORKER_DATABASE_URL: z.string().url().startsWith("postgresql://").optional(),
+  BACKUP_DATABASE_URL: z.string().url().startsWith("postgresql://").optional(),
+  MIGRATION_DATABASE_URL: z.string().url().startsWith("postgresql://").optional(),
+  DB_SSLMODE: z.enum(["disable", "require", "verify-ca", "verify-full"]).default("disable"),
   OWNER_API_TOKEN: z.string().min(24),
   METRICS_BEARER_TOKEN: z.string().min(24).optional(),
   LOCAL_OWNER_ID: z.string().uuid(),
@@ -39,6 +44,12 @@ const runtimeSchema = z.object({
     }
     if (value.METRICS_BEARER_TOKEN === value.OWNER_API_TOKEN) {
       context.addIssue({ code: "custom", path: ["METRICS_BEARER_TOKEN"], message: "must differ from OWNER_API_TOKEN" });
+    }
+    if (value.DB_SSLMODE === "disable") {
+      context.addIssue({ code: "custom", path: ["DB_SSLMODE"], message: "must not be disable in production" });
+    }
+    if (!value.APP_DATABASE_URL) {
+      context.addIssue({ code: "custom", path: ["APP_DATABASE_URL"], message: "required in production for least-privilege separation" });
     }
   }
   if ((value.LLM_PROVIDER && !value.LLM_MODEL) || (!value.LLM_PROVIDER && value.LLM_MODEL)) {
