@@ -108,6 +108,11 @@ jobs:
       - name: Migration replay is a no-op
         run: npm run db:migrate
 
+      - name: Data lifecycle integration and contract gate
+        env:
+          DATA_LIFECYCLE_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
+        run: npm run test:integration -- tests/repositories/data-lifecycle.integration.test.ts
+
       - name: Verify rollback migration compatibility
         if: github.event_name == 'pull_request'
         env:

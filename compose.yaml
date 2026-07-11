@@ -120,6 +120,30 @@ services:
       - ${BACKUP_HOST_DIR:-backups}:/backups
     stop_grace_period: 30s
 
+  data-lifecycle:
+    image: ${APP_IMAGE:-vocab-observatory-v2:local}
+    build:
+      context: .
+      target: runtime
+    profiles: ["data-lifecycle"]
+    init: true
+    restart: "no"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    environment:
+      DATA_LIFECYCLE_DATABASE_URL: ${DATA_LIFECYCLE_DATABASE_URL:?DATA_LIFECYCLE_DATABASE_URL is required}
+      DATA_LIFECYCLE_CONFIRM: ${DATA_LIFECYCLE_CONFIRM:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["./node_modules/.bin/tsx", "scripts/run-data-lifecycle.ts"]
+
 volumes:
   postgres-data:
   backups:
