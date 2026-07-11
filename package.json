@@ -31,6 +31,7 @@
     "outbox:metrics": "tsx scripts/review-outbox-admin.ts metrics",
     "outbox:replay": "tsx scripts/review-outbox-admin.ts replay",
     "worker:llm-reservation-reaper": "tsx scripts/run-llm-reservation-reaper.ts",
+    "backup:scheduler": "tsx scripts/run-backup-scheduler.ts",
     "llm-reservation:metrics": "tsx scripts/llm-reservation-admin.ts metrics",
     "llm-reservation:reap": "tsx scripts/llm-reservation-admin.ts run-once",
     "db:script:backfill-hashes": "tsx scripts/backfill-content-hash.ts",

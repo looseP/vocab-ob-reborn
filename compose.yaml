@@ -96,5 +96,20 @@ services:
       LLM_REAPER_BATCH_SIZE: ${LLM_REAPER_BATCH_SIZE:-100}
     stop_grace_period: 30s
 
+  backup-scheduler:
+    <<: *app-base
+    command: ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
+    environment:
+      <<: *app-environment
+      BACKUP_DIR: ${BACKUP_DIR:-/backups}
+      BACKUP_INTERVAL_MS: ${BACKUP_INTERVAL_MS:-86400000}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-14}
+      BACKUP_SIGNING_KEY: ${BACKUP_SIGNING_KEY:-}
+      BACKUP_OBJECT_LOCK: ${BACKUP_OBJECT_LOCK:-true}
+    volumes:
+      - ${BACKUP_HOST_DIR:-backups}:/backups
+    stop_grace_period: 30s
+
 volumes:
   postgres-data:
+  backups:

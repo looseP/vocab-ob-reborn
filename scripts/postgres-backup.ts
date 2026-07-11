@@ -1,12 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createReadStream, chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { Client } from "pg";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 
 export interface BackupManifest {
-  version: 1;
+  version: 1 | 2;
   createdAt: string;
   database: string;
   format: "postgresql-custom";
@@ -19,6 +19,7 @@ export interface BackupManifest {
     tableCount: number;
     functionCount: number;
   };
+  hmac?: string;
 }
 
 export function databaseName(databaseUrl: string): string {
@@ -73,9 +74,28 @@ export async function sha256File(filePath: string): Promise<string> {
   });
 }
 
-export async function verifyManifest(manifestPath: string): Promise<BackupManifest> {
+export function signManifest(manifest: BackupManifest, key: string): string {
+  const payload = JSON.stringify({ ...manifest, hmac: undefined });
+  return createHmac("sha256", key).update(payload).digest("hex");
+}
+
+export function verifyManifestSignature(manifest: BackupManifest, key: string): boolean {
+  if (!manifest.hmac) return false;
+  const expected = signManifest({ ...manifest, hmac: undefined }, key);
+  const a = Buffer.from(manifest.hmac, "hex");
+  const b = Buffer.from(expected, "hex");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+export function lockBackup(dumpPath: string, manifestPath: string): void {
+  chmodSync(dumpPath, 0o400);
+  chmodSync(manifestPath, 0o400);
+}
+
+export async function verifyManifest(manifestPath: string, signingKey?: string): Promise<BackupManifest> {
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as BackupManifest;
-  if (manifest.version !== 1 || manifest.format !== "postgresql-custom") {
+  if ((manifest.version !== 1 && manifest.version !== 2) || manifest.format !== "postgresql-custom") {
     throw new Error("Unsupported backup manifest");
   }
   if (
@@ -103,6 +123,14 @@ export async function verifyManifest(manifestPath: string): Promise<BackupManife
   if (stat.size !== manifest.bytes) throw new Error("Backup size does not match manifest");
   const actualHash = await sha256File(dumpPath);
   if (actualHash !== manifest.sha256) throw new Error("Backup SHA-256 does not match manifest");
+  if (signingKey) {
+    if (manifest.version < 2 || !manifest.hmac) {
+      throw new Error("Manifest is not signed but a signing key was provided");
+    }
+    if (!verifyManifestSignature(manifest, signingKey)) {
+      throw new Error("Backup manifest HMAC signature is invalid");
+    }
+  }
   return manifest;
 }
 
@@ -183,7 +211,7 @@ async function assertEmptyDrillDatabase(targetUrl: string): Promise<void> {
   }
 }
 
-async function createBackup(): Promise<void> {
+export async function createBackup(): Promise<void> {
   const sourceUrl = process.env.DATABASE_URL;
   if (!sourceUrl) throw new Error("DATABASE_URL is required");
   const backupDir = resolve(process.env.BACKUP_DIR ?? "backups");
@@ -207,7 +235,7 @@ async function createBackup(): Promise<void> {
   renameSync(temporaryDumpPath, dumpPath);
 
   const manifest: BackupManifest = {
-    version: 1,
+    version: 2,
     createdAt: new Date().toISOString(),
     database: name,
     format: "postgresql-custom",
@@ -217,9 +245,21 @@ async function createBackup(): Promise<void> {
     pgDumpVersion,
     schemaEvidence: await schemaEvidence(sourceUrl),
   };
+
+  const signingKey = process.env.BACKUP_SIGNING_KEY;
+  if (signingKey) {
+    manifest.hmac = signManifest(manifest, signingKey);
+  }
+
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
-  await verifyManifest(manifestPath);
-  console.log(JSON.stringify({ ok: true, manifest: manifestPath, bytes: manifest.bytes, sha256: manifest.sha256 }));
+  await verifyManifest(manifestPath, signingKey);
+
+  // Object lock: make dump and manifest read-only after verification
+  if (process.env.BACKUP_OBJECT_LOCK !== "false") {
+    lockBackup(dumpPath, manifestPath);
+  }
+
+  console.log(JSON.stringify({ ok: true, manifest: manifestPath, bytes: manifest.bytes, sha256: manifest.sha256, signed: !!signingKey }));
 }
 
 async function restoreDrill(manifestPath: string): Promise<void> {
@@ -227,7 +267,7 @@ async function restoreDrill(manifestPath: string): Promise<void> {
   const targetUrl = process.env.DRILL_DATABASE_URL;
   if (!sourceUrl || !targetUrl) throw new Error("DATABASE_URL and DRILL_DATABASE_URL are required");
   assertSafeDrillTarget(sourceUrl, targetUrl);
-  const manifest = await verifyManifest(resolve(manifestPath));
+  const manifest = await verifyManifest(resolve(manifestPath), process.env.BACKUP_SIGNING_KEY);
   if (manifest.database !== databaseName(sourceUrl)) {
     throw new Error("Backup manifest database does not match DATABASE_URL");
   }
@@ -269,8 +309,8 @@ async function main(): Promise<void> {
   const manifest = process.argv[3];
   if (command === "create") return createBackup();
   if (command === "verify" && manifest) {
-    const verified = await verifyManifest(resolve(manifest));
-    console.log(JSON.stringify({ ok: true, manifest: resolve(manifest), bytes: verified.bytes, sha256: verified.sha256 }));
+    const verified = await verifyManifest(resolve(manifest), process.env.BACKUP_SIGNING_KEY);
+    console.log(JSON.stringify({ ok: true, manifest: resolve(manifest), bytes: verified.bytes, sha256: verified.sha256, signed: !!verified.hmac }));
     return;
   }
   if (command === "restore-drill" && manifest) return restoreDrill(resolve(manifest));

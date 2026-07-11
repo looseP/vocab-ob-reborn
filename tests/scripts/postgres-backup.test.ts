@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,7 +7,10 @@ import {
   assertSafeDrillTarget,
   databaseName,
   postgresEnvironment,
+  signManifest,
   verifyManifest,
+  verifyManifestSignature,
+  type BackupManifest,
 } from "../../scripts/postgres-backup";
 
 let roots: string[] = [];
@@ -17,6 +20,21 @@ afterEach(() => {
   roots = [];
   delete process.env.ALLOW_DESTRUCTIVE_RESTORE;
 });
+
+function makeManifest(overrides: Partial<BackupManifest> = {}): BackupManifest {
+  return {
+    version: 2,
+    createdAt: "2026-07-11T00:00:00.000Z",
+    database: "vocab",
+    format: "postgresql-custom",
+    dumpFile: "sample.dump",
+    bytes: 0,
+    sha256: "",
+    pgDumpVersion: "pg_dump (PostgreSQL) 17.10",
+    schemaEvidence: { migrationCount: 8, tableCount: 21, functionCount: 3 },
+    ...overrides,
+  };
+}
 
 describe("postgres backup safety", () => {
   it("extracts encoded database names without exposing credentials", () => {
@@ -49,23 +67,16 @@ describe("postgres backup safety", () => {
     const dumpPath = join(root, "sample.dump");
     const manifestPath = join(root, "sample.manifest.json");
     writeFileSync(dumpPath, dump);
-    writeFileSync(manifestPath, JSON.stringify({
-      version: 1,
-      createdAt: "2026-07-10T00:00:00.000Z",
-      database: "vocab",
-      format: "postgresql-custom",
-      dumpFile: "sample.dump",
+    writeFileSync(manifestPath, JSON.stringify(makeManifest({
       bytes: dump.length,
       sha256: createHash("sha256").update(dump).digest("hex"),
-      pgDumpVersion: "pg_dump (PostgreSQL) 17.10",
-      schemaEvidence: { migrationCount: 8, tableCount: 21, functionCount: 3 },
-    }));
+    })));
 
     await expect(verifyManifest(manifestPath)).resolves.toMatchObject({ database: "vocab", bytes: dump.length });
 
     const escapingManifest = join(root, "escaping.manifest.json");
     writeFileSync(escapingManifest, JSON.stringify({
-      version: 1,
+      version: 2,
       format: "postgresql-custom",
       dumpFile: "../sample.dump",
     }));
@@ -73,5 +84,65 @@ describe("postgres backup safety", () => {
 
     writeFileSync(dumpPath, "tampered");
     await expect(verifyManifest(manifestPath)).rejects.toThrow(/size|SHA-256/);
+  });
+
+  it("accepts v1 manifests for backwards compatibility", async () => {
+    const root = mkdtempSync(join(tmpdir(), "vocab-backup-v1-"));
+    roots.push(root);
+    const dump = Buffer.from("legacy dump");
+    const dumpPath = join(root, "legacy.dump");
+    const manifestPath = join(root, "legacy.manifest.json");
+    writeFileSync(dumpPath, dump);
+    writeFileSync(manifestPath, JSON.stringify({
+      version: 1,
+      createdAt: "2026-07-10T00:00:00.000Z",
+      database: "vocab",
+      format: "postgresql-custom",
+      dumpFile: "legacy.dump",
+      bytes: dump.length,
+      sha256: createHash("sha256").update(dump).digest("hex"),
+      pgDumpVersion: "pg_dump (PostgreSQL) 17.10",
+      schemaEvidence: { migrationCount: 8, tableCount: 21, functionCount: 3 },
+    }));
+    await expect(verifyManifest(manifestPath)).resolves.toMatchObject({ database: "vocab" });
+  });
+});
+
+describe("backup manifest signing", () => {
+  it("signs and verifies a manifest with HMAC-SHA256", () => {
+    const key = "test-signing-key-at-least-24-chars";
+    const manifest = makeManifest({
+      bytes: 100,
+      sha256: createHash("sha256").update("data").digest("hex"),
+    });
+    manifest.hmac = signManifest(manifest, key);
+    expect(verifyManifestSignature(manifest, key)).toBe(true);
+    expect(verifyManifestSignature(manifest, "wrong-key-at-least-24-chars!!")).toBe(false);
+  });
+
+  it("rejects unsigned manifest when signing key is provided", async () => {
+    const root = mkdtempSync(join(tmpdir(), "vocab-backup-sig-"));
+    roots.push(root);
+    const dump = Buffer.from("signed dump data");
+    writeFileSync(join(root, "sig.dump"), dump);
+    const manifestPath = join(root, "sig.manifest.json");
+    writeFileSync(manifestPath, JSON.stringify(makeManifest({
+      dumpFile: "sig.dump",
+      bytes: dump.length,
+      sha256: createHash("sha256").update(dump).digest("hex"),
+    })));
+    await expect(verifyManifest(manifestPath, "key-at-least-24-characters!!")).rejects.toThrow(/not signed/);
+  });
+
+  it("rejects tampered HMAC signature", () => {
+    const key = "test-signing-key-at-least-24-chars";
+    const manifest = makeManifest({
+      bytes: 100,
+      sha256: createHash("sha256").update("data").digest("hex"),
+    });
+    manifest.hmac = signManifest(manifest, key);
+    // Tamper with the signature
+    manifest.hmac = manifest.hmac.slice(0, -4) + "0000";
+    expect(verifyManifestSignature(manifest, key)).toBe(false);
   });
 });

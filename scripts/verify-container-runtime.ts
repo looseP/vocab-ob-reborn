@@ -19,15 +19,17 @@ requirePattern(dockerfile, /^RUN npm ci --omit=dev --ignore-scripts/m, "Producti
 requirePattern(dockerfile, /FROM node:22\.22\.2-bookworm-slim AS runtime[\s\S]*?^USER node$/m, "Non-root final runtime");
 requirePattern(dockerfile, /^RUN npm run frontend:build$/m, "Frontend build");
 
-for (const service of ["migrate", "web", "review-outbox-worker", "llm-reservation-reaper"]) {
+for (const service of ["migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"]) {
   requirePattern(compose, new RegExp(`^  ${service}:$`, "m"), `Compose service ${service}`);
 }
 requirePattern(compose, /condition: service_completed_successfully/, "Migration dependency");
 requirePattern(compose, /target: migration/, "Migration image target");
 requirePattern(compose, /scripts\/run-review-outbox-worker\.ts/, "Outbox worker command");
 requirePattern(compose, /scripts\/run-llm-reservation-reaper\.ts/, "Reservation reaper command");
+requirePattern(compose, /scripts\/run-backup-scheduler\.ts/, "Backup scheduler command");
 requirePattern(compose, /stop_grace_period: \$\{OUTBOX_STOP_GRACE_PERIOD:-75s\}/, "Lease-aware stop grace");
 requirePattern(compose, /METRICS_BEARER_TOKEN: \$\{METRICS_BEARER_TOKEN:\?METRICS_BEARER_TOKEN is required\}/, "Metrics bearer token injection");
+requirePattern(compose, /BACKUP_SIGNING_KEY: \$\{BACKUP_SIGNING_KEY/, "Backup signing key injection");
 
 if (!dockerignoreLines.includes(".env") || !dockerignoreLines.includes(".env.*")) {
   throw new Error("Docker build context must exclude .env and .env.*");
@@ -38,7 +40,7 @@ if (!dockerignoreLines.includes("node_modules")) {
 
 console.log(JSON.stringify({
   ok: true,
-  services: 4,
+  services: 5,
   productionDependenciesOnly: true,
   nonRoot: true,
   migrationGate: true,

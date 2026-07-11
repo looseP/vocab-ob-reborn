@@ -1,0 +1,85 @@
+name: Monthly Recovery Drill
+
+on:
+  schedule:
+    # First day of each month at 03:00 UTC
+    - cron: "0 3 1 * *"
+  workflow_dispatch:
+
+jobs:
+  drill:
+    name: Backup & Restore Drill
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
+      DRILL_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab_drill
+      ALLOW_DESTRUCTIVE_RESTORE: "localhost:5432/vocab_drill"
+      BACKUP_SIGNING_KEY: "ci-drill-signing-key-24-chars"
+      BACKUP_OBJECT_LOCK: "false"
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vocab
+          POSTGRES_PASSWORD: vocab
+          POSTGRES_DB: vocab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Pin npm version
+        run: npm install --global npm@10.9.7
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run database migrations
+        run: npm run db:migrate
+
+      - name: Create signed backup
+        run: npm run db:backup
+
+      - name: Verify backup manifest
+        run: |
+          MANIFEST=$(ls -t backups/*.manifest.json | head -1)
+          npm run db:backup:verify -- "$MANIFEST"
+          echo "Verified: $MANIFEST"
+
+      - name: Create drill database
+        run: |
+          psql "$DATABASE_URL" -c "CREATE DATABASE vocab_drill OWNER vocab;"
+
+      - name: Run isolated restore drill
+        run: |
+          MANIFEST=$(ls -t backups/*.manifest.json | head -1)
+          npm run db:restore:drill -- "$MANIFEST"
+
+      - name: Record drill evidence
+        if: always()
+        run: |
+          echo "## Monthly Recovery Drill Evidence" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backup manifest**: $(ls -t backups/*.manifest.json 2>/dev/null | head -1 || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Signing key**: provided (HMAC-SHA256)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if restore drill did not pass
+        if: ${{ job.status != 'success' }}
+        run: |
+          echo "Monthly recovery drill FAILED — investigate immediately"
+          exit 1
