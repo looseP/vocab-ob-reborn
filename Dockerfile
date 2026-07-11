@@ -21,6 +21,8 @@ COPY --from=build --chown=node:node /app/package.json /app/package-lock.json /ap
 COPY --from=build --chown=node:node /app/src ./src
 COPY --from=build --chown=node:node /app/scripts/run-review-outbox-worker.ts ./scripts/run-review-outbox-worker.ts
 COPY --from=build --chown=node:node /app/scripts/run-llm-reservation-reaper.ts ./scripts/run-llm-reservation-reaper.ts
+COPY --from=build --chown=node:node /app/scripts/run-backup-scheduler.ts ./scripts/run-backup-scheduler.ts
+COPY --from=build --chown=node:node /app/scripts/postgres-backup.ts ./scripts/postgres-backup.ts
 COPY --from=build --chown=node:node /app/dist ./dist
 USER node
 EXPOSE 3001

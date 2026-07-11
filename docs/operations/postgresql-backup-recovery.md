@@ -71,7 +71,17 @@ A database restore is a last resort because it rewinds all domains, not just the
 
 ## Scheduled drill and evidence
 
-Run at least monthly:
+An automated monthly recovery drill runs via GitHub Actions (`.github/workflows/monthly-drill.yml`) on the first day of each month. The workflow:
+
+1. Creates a signed backup with `BACKUP_SIGNING_KEY`.
+2. Verifies the manifest (SHA-256 + HMAC signature).
+3. Creates an isolated `vocab_drill` database.
+4. Runs `db:restore:drill` with the release database gate.
+5. Records evidence to the workflow summary.
+
+On failure, the workflow exits non-zero and should trigger an alert.
+
+For manual drills, run at least monthly:
 
 - Select the newest retained backup.
 - Restore to a fresh isolated database.
@@ -80,3 +90,40 @@ Run at least monthly:
 - Delete the drill database only after evidence is retained.
 
 Alert when no verified backup exists inside the RPO window, a scheduled backup fails, checksum verification fails, or the monthly restore drill is overdue.
+
+## Automated scheduled backup
+
+The `backup-scheduler` Compose service runs `scripts/run-backup-scheduler.ts` which:
+
+- Creates a backup every `BACKUP_INTERVAL_MS` (default: 24h).
+- Signs the manifest with `BACKUP_SIGNING_KEY` (HMAC-SHA256) when provided.
+- Locks the dump and manifest files to read-only (`chmod 400`) after verification.
+- Prunes backups beyond `BACKUP_RETENTION_COUNT` (default: 14).
+
+Configure via environment variables in `.env`:
+
+```
+BACKUP_INTERVAL_MS=86400000
+BACKUP_RETENTION_COUNT=14
+BACKUP_SIGNING_KEY=<strong-key>
+BACKUP_OBJECT_LOCK=true
+```
+
+## Object lock and immutability
+
+After backup creation and verification, the dump file and manifest are set to read-only (`chmod 0o400`). This prevents accidental modification or deletion on the filesystem level. For production-grade immutability:
+
+- Use object storage with WORM (Write Once Read Many) / object lock enabled (e.g., S3 Object Lock, GCP Bucket Hold).
+- Upload the dump and manifest to immutable storage immediately after creation.
+- The filesystem lock is a defense-in-depth measure; the authoritative immutability belongs to the object storage lifecycle policy.
+
+## Manifest signing
+
+Backups are optionally signed with HMAC-SHA256 using `BACKUP_SIGNING_KEY`. The signature:
+
+- Covers the entire manifest content (excluding the `hmac` field itself).
+- Is stored in the `hmac` field of the manifest (version 2).
+- Is verified during `db:backup:verify` and `db:restore:drill` when the key is provided.
+- Detects malicious modification, not just accidental corruption (SHA-256 alone only detects corruption).
+
+Version 1 manifests (without `hmac`) are still accepted for backwards compatibility when no signing key is provided.
