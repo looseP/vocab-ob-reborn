@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 
@@ -106,7 +106,7 @@ export function writeDeploymentEvidence(path: string, summary: DeploymentEvidenc
   writeFileSync(temporary, `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   chmodSync(temporary, 0o600);
   try {
-    writeFileSync(path, readFileSync(temporary), { mode: 0o600, flag: "w" });
+    renameSync(temporary, path);
     chmodSync(path, 0o600);
   } finally {
     rmSync(temporary, { force: true });

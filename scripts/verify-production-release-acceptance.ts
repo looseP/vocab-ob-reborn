@@ -28,7 +28,7 @@ function observedAt(value: unknown, name: string, now: Date): string {
   return value;
 }
 
-export function verifyProductionReleaseAcceptance(manifestBytes: Buffer, sidecar: string, deploymentValue: unknown, acceptanceValue: unknown, now = new Date()): { schemaVersion: 1; decision: "GO"; releaseSha: string; manifestSha256: string; environment: "production" } {
+export function verifyProductionReleaseAcceptance(manifestBytes: Buffer, sidecar: string, deploymentValue: unknown, acceptanceValue: unknown, now = new Date()): { schemaVersion: 1; decision: "GO"; releaseSha: string; manifestSha256: string; environment: "production"; checks: JsonRecord } {
   const manifestSha256 = createHash("sha256").update(manifestBytes).digest("hex");
   if (sidecar !== `${manifestSha256}  release-manifest.json\n`) throw new Error("Release manifest digest sidecar mismatch");
   const manifest = record(JSON.parse(manifestBytes.toString("utf8")), "release manifest");
@@ -54,13 +54,16 @@ export function verifyProductionReleaseAcceptance(manifestBytes: Buffer, sidecar
   exactKeys(checks, CHECKS, "production acceptance checks");
   for (const check of CHECKS) {
     const item = record(checks[check], `${check} check`);
-    exactKeys(item, ["status", "source", "observedAt", "evidenceSha256"], `${check} check`);
+    exactKeys(item, ["status", "source", "producer", "releaseSha", "manifestSha256", "observedAt", "evidenceSha256"], `${check} check`);
     if (item.status !== "passed") throw new Error(`${check} must be passed`);
     if (typeof item.source !== "string" || !/^(github-environment|staging-deployment-evidence)$/.test(item.source)) throw new Error(`Invalid ${check} evidence source`);
-    observedAt(item.observedAt, check, now);
+    if (typeof item.producer !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(item.producer)) throw new Error(`Invalid ${check} evidence producer`);
+    if (item.releaseSha !== releaseSha || item.manifestSha256 !== manifestSha256) throw new Error(`${check} evidence identity mismatch`);
+    const timestamp = observedAt(item.observedAt, check, now);
+    if (now.getTime() - Date.parse(timestamp) > 30 * 24 * 60 * 60_000) throw new Error(`${check} evidence is stale`);
     sha(item.evidenceSha256, `${check} evidence SHA-256`, 64);
   }
-  return { schemaVersion: 1, decision: "GO", releaseSha, manifestSha256, environment: "production" };
+  return { schemaVersion: 1, decision: "GO", releaseSha, manifestSha256, environment: "production", checks };
 }
 
 function requiredArgument(args: string[], name: string): string {

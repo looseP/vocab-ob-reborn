@@ -371,6 +371,11 @@ jobs:
           ROLLBACK_COMPATIBILITY_OBSERVED_AT: ${{ vars.ROLLBACK_COMPATIBILITY_OBSERVED_AT }}
           ALERTING_DRILL_EVIDENCE_SHA256: ${{ vars.ALERTING_DRILL_EVIDENCE_SHA256 }}
           ALERTING_DRILL_OBSERVED_AT: ${{ vars.ALERTING_DRILL_OBSERVED_AT }}
+          MIGRATION_REHEARSAL_PRODUCER: ${{ vars.MIGRATION_REHEARSAL_PRODUCER }}
+          DATABASE_ROLES_PRODUCER: ${{ vars.DATABASE_ROLES_PRODUCER }}
+          BACKUP_RESTORE_PRODUCER: ${{ vars.BACKUP_RESTORE_PRODUCER }}
+          ROLLBACK_COMPATIBILITY_PRODUCER: ${{ vars.ROLLBACK_COMPATIBILITY_PRODUCER }}
+          ALERTING_DRILL_PRODUCER: ${{ vars.ALERTING_DRILL_PRODUCER }}
           RELEASE_ACCEPTANCE_EVIDENCE_PATH: ${{ runner.temp }}/production-acceptance-evidence.json
         run: |
           set -euo pipefail
@@ -384,6 +389,9 @@ jobs:
             source: "github-environment",
             observedAt: process.env[`${name}_OBSERVED_AT`],
             evidenceSha256: process.env[`${name}_EVIDENCE_SHA256`],
+            producer: process.env[`${name}_PRODUCER`],
+            releaseSha: process.env.RELEASE_SHA,
+            manifestSha256: process.env.EXPECTED_MANIFEST_SHA256,
           });
           const checks = {
             migrationRehearsal: external("MIGRATION_REHEARSAL"),
@@ -396,6 +404,9 @@ jobs:
               source: "staging-deployment-evidence",
               observedAt: staging.phases?.find(({ phase }) => phase === "smoke")?.timestamp,
               evidenceSha256: createHash("sha256").update(stagingBytes).digest("hex"),
+              producer: "release-workflow/staging",
+              releaseSha: process.env.RELEASE_SHA,
+              manifestSha256: process.env.EXPECTED_MANIFEST_SHA256,
             },
           };
           writeFileSync("release-evidence/production-acceptance.json", JSON.stringify({ schemaVersion: 1, releaseSha: process.env.RELEASE_SHA, manifestSha256: process.env.EXPECTED_MANIFEST_SHA256, checks, decision: Object.values(checks).every(value => value.status === "passed") ? "GO" : "NO_GO" }, null, 2), { mode: 0o600, flag: "wx" });
