@@ -280,6 +280,7 @@ describe("release database contract", () => {
   });
 
   it("expires stale LLM reservations exactly once under concurrent reapers", async () => {
+    await pool.query("DELETE FROM public.llm_usage WHERE model LIKE 'integration-reservation-%'");
     const inserted = await pool.query<{ id: string }>(
       `INSERT INTO public.llm_usage
          (provider, model, prompt_tokens, completion_tokens, status, expires_at)

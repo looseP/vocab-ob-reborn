@@ -12,6 +12,11 @@ export default defineConfig({
   test: {
     testTimeout: 30000,
     environment: "node",
+    // Integration files share one PostgreSQL database and several suites
+    // intentionally TRUNCATE/seed the same contract tables. Serializing files
+    // prevents cross-suite fixture pollution while each suite still exercises
+    // database concurrency explicitly within its own tests.
+    fileParallelism: false,
     include: ["tests/**/*.integration.test.ts"],
     exclude: ["node_modules/**"],
     setupFiles: ["./tests/setup.ts"],
