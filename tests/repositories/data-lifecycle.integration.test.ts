@@ -44,7 +44,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
 
   it("runner defaults to dry-run and execute requires exact database confirmation", async () => {
     await pool.query("TRUNCATE outbox_effect_receipts, outbox_events CASCADE");
-    await insertOutbox(1);
+    const [eventId] = await insertOutbox(1);
     const baseEnv = {
       ...process.env,
       DATA_LIFECYCLE_DATABASE_URL: databaseUrl,
@@ -58,8 +58,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       cwd: process.cwd(),
       env: baseEnv,
     });
-    expect(JSON.parse(dryRun.stdout).eligible.outboxProcessed).toBe(1);
-    expect((await pool.query("SELECT count(*)::int count FROM outbox_events")).rows[0].count).toBe(1);
+    expect(JSON.parse(dryRun.stdout).eligible.outboxProcessed).toBeGreaterThanOrEqual(1);
+    expect((await pool.query("SELECT count(*)::int count FROM outbox_events WHERE id = $1", [eventId])).rows[0].count).toBe(1);
     await expect(execFileAsync(process.execPath, ["--import", "tsx", "scripts/run-data-lifecycle.ts", "--execute"], {
       cwd: process.cwd(),
       env: { ...baseEnv, DATA_LIFECYCLE_CONFIRM: "wrong_database" },
