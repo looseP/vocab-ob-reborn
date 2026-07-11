@@ -67,6 +67,18 @@ export const authSessions = pgTable("auth_sessions", {
 	check("auth_sessions_role_check", sql`role = ANY (ARRAY['owner'::text, 'agent'::text])`),
 ]);
 
+export const loginRateLimits = pgTable("login_rate_limits", {
+	keyHash: text("key_hash").primaryKey().notNull(),
+	windowStartedAt: timestamp("window_started_at", { withTimezone: true, mode: 'string' }).notNull(),
+	windowExpiresAt: timestamp("window_expires_at", { withTimezone: true, mode: 'string' }).notNull(),
+	attempts: integer().notNull(),
+}, (table) => [
+	index("idx_login_rate_limits_expiry").on(table.windowExpiresAt),
+	check("login_rate_limits_key_hash_check", sql`key_hash ~ '^[0-9a-f]{64}$'::text`),
+	check("login_rate_limits_attempts_check", sql`attempts > 0`),
+	check("login_rate_limits_window_check", sql`window_expires_at > window_started_at`),
+]);
+
 export const outboxEvents = pgTable("outbox_events", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	aggregateType: text("aggregate_type").notNull(),

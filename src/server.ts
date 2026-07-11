@@ -22,38 +22,12 @@ import { LlmUsageRepository } from "./repositories/llm-usage.repository";
 import { DatamuseProvider } from "./dictionary";
 import type { DictionaryProvider } from "./dictionary/provider";
 import { logger } from "./observability/logger";
+import { loadRuntimeConfig } from "./config/runtime";
 
-function requireRuntimeConfiguration(): void {
-  const isProduction = process.env.NODE_ENV === "production";
-  const required = isProduction
-    ? ["DATABASE_URL", "OWNER_API_TOKEN", "LOCAL_OWNER_ID", "APP_ORIGIN", "METRICS_BEARER_TOKEN"]
-    : ["DATABASE_URL", "OWNER_API_TOKEN", "LOCAL_OWNER_ID", "APP_ORIGIN"];
-  const missing = required.filter((name) => !process.env[name]);
-  if (missing.length > 0) {
-    throw new Error(`Missing required runtime configuration: ${missing.join(", ")}`);
-  }
-  if ((process.env.OWNER_API_TOKEN?.length ?? 0) < 24) {
-    throw new Error("OWNER_API_TOKEN must contain at least 24 characters");
-  }
-  if (isProduction && (process.env.METRICS_BEARER_TOKEN?.length ?? 0) < 24) {
-    throw new Error("METRICS_BEARER_TOKEN must contain at least 24 characters in production");
-  }
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(process.env.LOCAL_OWNER_ID ?? "")) {
-    throw new Error("LOCAL_OWNER_ID must be a UUID");
-  }
-  const origin = new URL(process.env.APP_ORIGIN as string);
-  if (process.env.NODE_ENV === "production" && origin.protocol !== "https:") {
-    throw new Error("APP_ORIGIN must use https in production");
-  }
-}
-
-requireRuntimeConfiguration();
-const port = parseInt(process.env.PORT ?? "3001", 10);
-const readinessTimeoutMs = parseInt(process.env.READINESS_TIMEOUT_MS ?? "500", 10);
-const shutdownGraceMs = parseInt(process.env.SHUTDOWN_GRACE_MS ?? "25000", 10);
-if (!Number.isInteger(shutdownGraceMs) || shutdownGraceMs < 1_000 || shutdownGraceMs > 120_000) {
-  throw new Error("SHUTDOWN_GRACE_MS must be an integer between 1000 and 120000");
-}
+const config = loadRuntimeConfig();
+const port = config.PORT;
+const readinessTimeoutMs = config.READINESS_TIMEOUT_MS;
+const shutdownGraceMs = config.SHUTDOWN_GRACE_MS;
 
 /**
  * Adapter bridge: ReviewService stores scheduler_payload as Json (jsonb),
@@ -78,22 +52,22 @@ const fsrsAdapter: FsrsAdapterFn = (schedulerPayload, rating, now, desiredRetent
 function buildLlmDeps():
   | { llmProvider: ReturnType<typeof createLlmProvider>; usageTracker: UsageTracker }
   | undefined {
-  const provider = process.env.LLM_PROVIDER;
-  const model = process.env.LLM_MODEL;
+  const provider = config.LLM_PROVIDER;
+  const model = config.LLM_MODEL;
   if (!provider || !model) return undefined;
 
-  const config: LlmProviderConfig = {
-    provider: provider as "openai" | "anthropic",
-    apiKey: process.env.LLM_API_KEY,
-    baseURL: process.env.LLM_BASE_URL,
+  const providerConfig: LlmProviderConfig = {
+    provider,
+    apiKey: config.LLM_API_KEY,
+    baseURL: config.LLM_BASE_URL,
     model,
-    timeoutMs: parseInt(process.env.LLM_TIMEOUT_MS ?? "30000", 10),
-    maxTokens: parseInt(process.env.LLM_MAX_TOKENS ?? "2048", 10),
-    maxConcurrency: parseInt(process.env.LLM_MAX_CONCURRENCY ?? "4", 10),
+    timeoutMs: config.LLM_TIMEOUT_MS,
+    maxTokens: config.LLM_MAX_TOKENS,
+    maxConcurrency: config.LLM_MAX_CONCURRENCY,
   };
 
   return {
-    llmProvider: createLlmProvider(config),
+    llmProvider: createLlmProvider(providerConfig),
     // Phase 2B: UsageTracker receives the repository (DB access stays at the
     // repository boundary). The daily budget is read from env inside the
     // tracker by default.
@@ -103,7 +77,7 @@ function buildLlmDeps():
 
 const llmDeps = buildLlmDeps();
 if (llmDeps) {
-  logger.info("server", `LLM provider configured: ${process.env.LLM_PROVIDER} / ${process.env.LLM_MODEL}`);
+  logger.info("server", `LLM provider configured: ${config.LLM_PROVIDER} / ${config.LLM_MODEL}`);
 } else {
   logger.info("server", "LLM provider not configured — L2 draft/confirm routes will 503");
 }
@@ -116,8 +90,7 @@ if (llmDeps) {
  * return NO_DICTIONARY_CANDIDATES.
  */
 function buildDictionaryProvider(): DictionaryProvider | undefined {
-  const enabled = process.env.DATAMUSE_ENABLED?.toLowerCase();
-  if (enabled === "1" || enabled === "true") {
+  if (config.DATAMUSE_ENABLED) {
     logger.info("server", "Dictionary provider configured: Datamuse");
     return new DatamuseProvider();
   }
@@ -131,13 +104,15 @@ const services = createServices({
   fsrsAdapter,
   checkDatabase: () => checkPoolHealth(Math.max(50, readinessTimeoutMs - 50)),
   readinessTimeoutMs,
+  loginRateLimitWindowMs: config.LOGIN_RATE_LIMIT_WINDOW_MS,
+  loginRateLimitAttempts: config.LOGIN_RATE_LIMIT_ATTEMPTS,
   loadWeights: loadWordbookWeights,
   ...(llmDeps ?? {}),
   ...(dictionaryProvider ? { dictionaryProvider } : {}),
 });
 
 const app = createApp(services);
-if (process.env.SERVE_FRONTEND === "true") {
+if (config.SERVE_FRONTEND) {
   app.use("/*", serveStatic({ root: "./dist/frontend" }));
   app.get("/*", serveStatic({ root: "./dist/frontend", path: "index.html" }));
 }

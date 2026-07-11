@@ -28,13 +28,13 @@ types.setTypeParser(types.builtins.DATE, (val) => val);
 let _pool: Pool | null = null;
 let _listenersAttached = false;
 
-const POOL_MAX = parseInt(process.env.DB_POOL_MAX ?? "10", 10);
-const POOL_IDLE_TIMEOUT_MS = parseInt(process.env.DB_IDLE_TIMEOUT_MS ?? "30000", 10);
-const POOL_CONNECT_TIMEOUT_MS = parseInt(process.env.DB_CONNECT_TIMEOUT_MS ?? "5000", 10);
-const POOL_KEEPALIVE_INITIAL_DELAY_MS = parseInt(
-  process.env.DB_KEEPALIVE_DELAY_MS ?? "10000",
-  10,
-);
+function boundedInteger(name: string, fallback: number, minimum: number, maximum: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
 
 export function getPool(): Pool {
   if (!_pool) {
@@ -55,11 +55,11 @@ export function getPool(): Pool {
     }
     _pool = new Pool({
       connectionString: url,
-      max: POOL_MAX,
-      idleTimeoutMillis: POOL_IDLE_TIMEOUT_MS,
-      connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS,
+      max: boundedInteger("DB_POOL_MAX", 10, 1, 100),
+      idleTimeoutMillis: boundedInteger("DB_IDLE_TIMEOUT_MS", 30_000, 1_000, 600_000),
+      connectionTimeoutMillis: boundedInteger("DB_CONNECT_TIMEOUT_MS", 5_000, 100, 60_000),
       keepAlive: true,
-      keepAliveInitialDelayMillis: POOL_KEEPALIVE_INITIAL_DELAY_MS,
+      keepAliveInitialDelayMillis: boundedInteger("DB_KEEPALIVE_DELAY_MS", 10_000, 0, 600_000),
       allowExitOnIdle: true,
     });
     _listenersAttached = false;

@@ -30,6 +30,10 @@ requirePattern(compose, /scripts\/run-backup-scheduler\.ts/, "Backup scheduler c
 requirePattern(compose, /stop_grace_period: \$\{OUTBOX_STOP_GRACE_PERIOD:-75s\}/, "Lease-aware stop grace");
 requirePattern(compose, /METRICS_BEARER_TOKEN: \$\{METRICS_BEARER_TOKEN:\?METRICS_BEARER_TOKEN is required\}/, "Metrics bearer token injection");
 requirePattern(compose, /BACKUP_SIGNING_KEY: \$\{BACKUP_SIGNING_KEY/, "Backup signing key injection");
+requirePattern(compose, /read_only: true/, "Read-only application filesystem");
+requirePattern(compose, /no-new-privileges:true/, "No-new-privileges security option");
+requirePattern(compose, /cap_drop:\s*\n\s*- ALL/, "All Linux capabilities dropped");
+requirePattern(compose, /tmpfs:\s*\n\s*- \/tmp:size=64m,mode=1777/, "Bounded writable tmpfs");
 
 if (!dockerignoreLines.includes(".env") || !dockerignoreLines.includes(".env.*")) {
   throw new Error("Docker build context must exclude .env and .env.*");
@@ -43,5 +47,7 @@ console.log(JSON.stringify({
   services: 5,
   productionDependenciesOnly: true,
   nonRoot: true,
+  readOnlyRootFilesystem: true,
+  capabilitiesDropped: true,
   migrationGate: true,
 }));

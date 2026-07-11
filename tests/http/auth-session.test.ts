@@ -1,13 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { authMiddleware, type Principal } from "@/http/middleware/auth";
-import { authRoutes, resetLoginRateLimitsForTests } from "@/http/routes/auth";
+import { authRoutes } from "@/http/routes/auth";
 import type { Services } from "@/services";
 
 const actorId = "00000000-0000-4000-8000-000000000001";
 const originalNodeEnv = process.env.NODE_ENV;
 
 function makeServices() {
+  const attempts = new Map<string, number>();
+  const loginRateLimit = {
+    consume: vi.fn(async (key: string) => {
+      const count = (attempts.get(key) ?? 0) + 1;
+      attempts.set(key, count);
+      return count > 8 ? 60 : null;
+    }),
+    clear: vi.fn(async (key: string) => {
+      attempts.delete(key);
+    }),
+  };
   const authSessions = {
     exchangeOwnerToken: vi.fn(async (token: string) => token === "owner-secret" ? {
       principal: { actorId, role: "owner", authMethod: "session", sessionId: "session-id" },
@@ -22,11 +33,10 @@ function makeServices() {
     verifyCsrf: vi.fn((token: string | undefined, hash: string) => token === "csrf-token" && hash === "csrf-hash"),
     revoke: vi.fn(async () => true),
   };
-  return { services: { authSessions } as unknown as Services, authSessions };
+  return { services: { authSessions, loginRateLimit } as unknown as Services, authSessions, loginRateLimit };
 }
 
 beforeEach(() => {
-  resetLoginRateLimitsForTests();
   process.env.NODE_ENV = "test";
   process.env.APP_ORIGIN = "http://localhost";
 });

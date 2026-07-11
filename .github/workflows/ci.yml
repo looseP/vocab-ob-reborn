@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     name: Engineering Gate + Migration Rehearsal
@@ -31,9 +34,11 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -41,8 +46,22 @@ jobs:
       - name: Pin npm version
         run: npm install --global npm@10.9.7
 
-      - name: Install dependencies
+      - name: Install dependencies and verify lockfile
         run: npm ci
+
+      - name: Supply-chain security gate
+        run: npm run security:verify
+
+      - name: Generate npm CycloneDX SBOM
+        run: npm run sbom:npm
+
+      - name: Upload npm SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-npm-cyclonedx
+          path: sbom-npm.cdx.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Engineering verification
         run: npm run verify:engineering
@@ -52,6 +71,23 @@ jobs:
 
       - name: Build migration image
         run: docker build --target migration --tag vocab-observatory-v2-migration:ci .
+
+      - name: Generate runtime image CycloneDX SBOM
+        run: |
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "${PWD}:/out" \
+            anchore/syft@sha256:e86b0ba0b1d2fe8a2e9f96ed9b22033df9781f43b9a7eb27c57e6c89234946bc \
+            docker:vocab-observatory-v2:ci \
+            --output cyclonedx-json=/out/sbom-container.cdx.json
+
+      - name: Upload runtime image SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom-container-cyclonedx
+          path: sbom-container.cdx.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Verify runtime image user and production dependencies
         run: |
@@ -94,9 +130,11 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -121,7 +159,7 @@ jobs:
 
       - name: Upload Playwright artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
           path: |

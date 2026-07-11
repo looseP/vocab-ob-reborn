@@ -21,6 +21,7 @@ vite.review.config.ts
 coverage/
 playwright-report/
 test-results/
+sbom-*.cdx.json
 
 # Environment files
 .env
