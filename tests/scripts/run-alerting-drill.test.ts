@@ -1,5 +1,6 @@
 import { rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runDrill, validateOptions, type DrillOptions } from "../../scripts/run-alerting-drill";
 
@@ -41,7 +42,7 @@ describe("alerting drill safety gates", () => {
     [{ ...base, alertmanagerUrl: "https://alerts.staging.example.test/?tenant=x" }, "query/hash"],
     [{ ...base, alertmanagerUrl: "https://alerts.staging.example.test/#fragment" }, "query/hash"],
     [{ ...base, lockFile: "relative.lock" }, "绝对 DRILL_LOCK_FILE"],
-    [{ ...base, lockFile: resolve(process.env.TEMP ?? "C:/Temp", "drill.lock") }, "临时目录"],
+    [{ ...base, lockFile: resolve(tmpdir(), "drill.lock") }, "临时目录"],
   ] satisfies Array<[DrillOptions, string]>)("拒绝不安全配置 %#", (options, message) => {
     expect(() => validateOptions(options)).toThrow(message);
   });
