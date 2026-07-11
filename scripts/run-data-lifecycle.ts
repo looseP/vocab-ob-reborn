@@ -22,6 +22,8 @@ export function readDataLifecyclePolicy(): Partial<DataLifecyclePolicy> {
     reviewLogDays: integerEnv("DATA_LIFECYCLE_REVIEW_LOG_DAYS"),
     reviewArchiveDays: integerEnv("DATA_LIFECYCLE_REVIEW_ARCHIVE_DAYS"),
     batchSize: integerEnv("DATA_LIFECYCLE_BATCH_SIZE"),
+    maxBatches: integerEnv("DATA_LIFECYCLE_MAX_BATCHES"),
+    maxRows: integerEnv("DATA_LIFECYCLE_MAX_ROWS"),
   } as Partial<DataLifecyclePolicy>;
 }
 
@@ -40,10 +42,16 @@ export async function runDataLifecycle(): Promise<void> {
     throw new Error(`DATA_LIFECYCLE_CONFIRM must exactly match database name ${databaseName}`);
   }
 
-  const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    max: 4,
+    lock_timeout: integerEnv("DATA_LIFECYCLE_LOCK_TIMEOUT_MS") ?? 2_000,
+    statement_timeout: integerEnv("DATA_LIFECYCLE_STATEMENT_TIMEOUT_MS") ?? 30_000,
+  });
   try {
     const result = await new DataLifecycleRepository(pool).run({
       dryRun: !execute,
+      allowWrite: execute,
       policy: Object.fromEntries(Object.entries(readDataLifecyclePolicy()).filter(([, value]) => value !== undefined)),
     });
     process.stdout.write(`${JSON.stringify(result)}\n`);

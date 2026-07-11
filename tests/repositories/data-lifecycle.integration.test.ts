@@ -69,7 +69,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       VALUES ('__reservation__', 'test', 0, 0, 'pending', now() - interval '30 days', now() - interval '30 days')`);
     await pool.query(`INSERT INTO llm_usage (provider, model, prompt_tokens, completion_tokens, status, expires_at, finalized_at, created_at)
       VALUES ('__reservation__', 'test', 0, 0, 'released', now() - interval '30 days', now() - interval '30 days', now() - interval '30 days')`);
-    await repo.run();
+    await repo.run({ allowWrite: true });
     expect((await pool.query("SELECT status FROM llm_usage ORDER BY status")).rows).toEqual([{ status: "pending" }]);
   });
 
@@ -91,7 +91,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
         (id, user_id, word_id, rating, state, reviewed_at, wordbook_id)
         SELECT id, user_id, word_id, rating, state, reviewed_at, wordbook_id
         FROM review_logs WHERE id = $1`, [reviewId]);
-      const result = await repo.run();
+      const result = await repo.run({ allowWrite: true });
       expect(result.archived.reviewLogs).toBe(0);
       expect(result.deleted.reviewLogs).toBe(1);
       expect((await pool.query("SELECT count(*)::int count FROM review_logs WHERE id = $1", [reviewId])).rows[0].count).toBe(0);
@@ -107,8 +107,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
     const ids = await insertOutbox(220);
     await pool.query("INSERT INTO outbox_effect_receipts (event_id, effect_name) VALUES ($1, 'test')", [ids[0]]);
     const [first, second] = await Promise.all([
-      repo.run({ policy: { batchSize: 100 } }),
-      repo.run({ policy: { batchSize: 100 } }),
+      repo.run({ allowWrite: true, policy: { batchSize: 100 } }),
+      repo.run({ allowWrite: true, policy: { batchSize: 100 } }),
     ]);
     expect(first.deleted.outboxProcessed + second.deleted.outboxProcessed).toBe(220);
     expect((await pool.query("SELECT count(*)::int count FROM outbox_events")).rows[0].count).toBe(0);
