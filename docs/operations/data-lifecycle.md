@@ -33,16 +33,20 @@ Backup retention is a separate control boundary:
 
    ```bash
    DATA_LIFECYCLE_DATABASE_URL="postgresql://lifecycle_role:***@db:5432/vocab" \
+   DATA_LIFECYCLE_CUTOFF="2026-01-01T00:00:00.000Z" \
    npm run data:lifecycle:dry-run
    ```
 
 3. Review eligible row counts, cutoff timestamps, batch limits, lock/statement timeout evidence, and any skipped domains. Compare unusual changes with recent ingestion and incident activity.
 4. Obtain approval from a named data owner/operator. Record the dry-run artifact digest, approved database identity, image digest, and approval ticket.
-5. Set `DATA_LIFECYCLE_CONFIRM` to the exact target database name (the decoded URL path without `/`), then override the default command for this single run:
+5. Reuse the exact canonical UTC `DATA_LIFECYCLE_CUTOFF` approved from dry-run; changing it invalidates approval. Execution is fail-closed unless all four confirmations are supplied: approved cutoff, the database name returned by `SELECT current_database()`, explicit write authorization, and the production confirmation required by the CLI for a production target.
 
    ```bash
    docker compose --profile data-lifecycle run --rm \
-     -e DATA_LIFECYCLE_CONFIRM="<approved-confirmation>" \
+     -e DATA_LIFECYCLE_CUTOFF="2026-01-01T00:00:00.000Z" \
+     -e DATA_LIFECYCLE_CONFIRM="<current_database>" \
+     -e DATA_LIFECYCLE_ALLOW_WRITE="true" \
+     -e DATA_LIFECYCLE_PRODUCTION_CONFIRM="<production-confirmation>" \
      data-lifecycle \
      ./node_modules/.bin/tsx scripts/run-data-lifecycle.ts --execute
    ```

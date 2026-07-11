@@ -36,7 +36,19 @@ requirePattern(lifecycleService, /read_only: true/, "Lifecycle read-only filesys
 requirePattern(lifecycleService, /no-new-privileges:true/, "Lifecycle no-new-privileges option");
 requirePattern(lifecycleService, /cap_drop:\s*\n\s*- ALL/, "Lifecycle capabilities dropped");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_DATABASE_URL: \$\{DATA_LIFECYCLE_DATABASE_URL:\?/, "Dedicated lifecycle database URL");
-requirePattern(lifecycleService, /DATA_LIFECYCLE_CONFIRM: \$\{DATA_LIFECYCLE_CONFIRM:-\}/, "Lifecycle execution confirmation");
+requirePattern(lifecycleService, /DATA_LIFECYCLE_CUTOFF: \$\{DATA_LIFECYCLE_CUTOFF:\?/, "Lifecycle approved cutoff");
+requirePattern(lifecycleService, /DATA_LIFECYCLE_CONFIRM: \$\{DATA_LIFECYCLE_CONFIRM:-\}/, "Lifecycle database confirmation");
+requirePattern(lifecycleService, /DATA_LIFECYCLE_ALLOW_WRITE: \$\{DATA_LIFECYCLE_ALLOW_WRITE:-\}/, "Lifecycle write confirmation");
+requirePattern(lifecycleService, /DATA_LIFECYCLE_PRODUCTION_CONFIRM: \$\{DATA_LIFECYCLE_PRODUCTION_CONFIRM:-\}/, "Lifecycle production confirmation");
+for (const variable of [
+  "DATA_LIFECYCLE_OUTBOX_PROCESSED_DAYS", "DATA_LIFECYCLE_AUTH_SESSION_DAYS",
+  "DATA_LIFECYCLE_LLM_TERMINAL_DAYS", "DATA_LIFECYCLE_LLM_SETTLED_DAYS",
+  "DATA_LIFECYCLE_REVIEW_LOG_DAYS",
+  "DATA_LIFECYCLE_BATCH_SIZE", "DATA_LIFECYCLE_MAX_BATCHES", "DATA_LIFECYCLE_MAX_ROWS",
+  "DATA_LIFECYCLE_LOCK_TIMEOUT_MS", "DATA_LIFECYCLE_STATEMENT_TIMEOUT_MS",
+]) {
+  requirePattern(lifecycleService, new RegExp(`${variable}: \\$\\{${variable}:-`), `Lifecycle setting ${variable}`);
+}
 requirePattern(lifecycleService, /command: \["\.\/node_modules\/\.bin\/tsx", "scripts\/run-data-lifecycle\.ts"\]/, "Lifecycle default dry-run command");
 if (/\bDATABASE_URL\s*:/.test(lifecycleService)) {
   throw new Error("Lifecycle service must not receive DATABASE_URL or fall back to it");

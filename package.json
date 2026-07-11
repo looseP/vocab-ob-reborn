@@ -40,6 +40,7 @@
     "backup:scheduler": "tsx scripts/run-backup-scheduler.ts",
     "data:lifecycle:dry-run": "tsx scripts/run-data-lifecycle.ts",
     "data:lifecycle:run": "tsx scripts/run-data-lifecycle.ts --execute",
+    "test:data-lifecycle": "vitest run --config vitest.integration.config.ts --reporter=verbose tests/repositories/data-lifecycle.integration.test.ts",
     "llm-reservation:metrics": "tsx scripts/llm-reservation-admin.ts metrics",
     "llm-reservation:reap": "tsx scripts/llm-reservation-admin.ts run-once",
     "db:script:backfill-hashes": "tsx scripts/backfill-content-hash.ts",

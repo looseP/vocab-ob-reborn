@@ -112,7 +112,7 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
           DATA_LIFECYCLE_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
-        run: npm run test:integration -- tests/repositories/data-lifecycle.integration.test.ts
+        run: npm run test:data-lifecycle
 
       - name: Verify rollback migration compatibility
         if: github.event_name == 'pull_request'
