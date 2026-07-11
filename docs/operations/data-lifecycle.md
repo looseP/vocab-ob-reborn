@@ -39,11 +39,12 @@ Backup retention is a separate control boundary:
 
 3. Review eligible row counts, cutoff timestamps, batch limits, lock/statement timeout evidence, and any skipped domains. Compare unusual changes with recent ingestion and incident activity.
 4. Obtain approval from a named data owner/operator. Record the dry-run artifact digest, approved database identity, image digest, and approval ticket.
-5. Reuse the exact canonical UTC `DATA_LIFECYCLE_CUTOFF` approved from dry-run; changing it invalidates approval. Execution is fail-closed unless all four confirmations are supplied: approved cutoff, the database name returned by `SELECT current_database()`, explicit write authorization, and the production confirmation required by the CLI for a production target.
+5. Reuse the exact canonical UTC `DATA_LIFECYCLE_CUTOFF` approved from dry-run; changing it invalidates approval. Keep `DATA_LIFECYCLE_CONFIRM_CUTOFF` empty during dry-run. For execution, set it to exactly the same byte-for-byte value as `DATA_LIFECYCLE_CUTOFF`. Execution is fail-closed unless the cutoff confirmation, database name returned by `SELECT current_database()`, explicit write authorization, and production confirmation required by the CLI are all valid.
 
    ```bash
    docker compose --profile data-lifecycle run --rm \
      -e DATA_LIFECYCLE_CUTOFF="2026-01-01T00:00:00.000Z" \
+     -e DATA_LIFECYCLE_CONFIRM_CUTOFF="2026-01-01T00:00:00.000Z" \
      -e DATA_LIFECYCLE_CONFIRM="<current_database>" \
      -e DATA_LIFECYCLE_ALLOW_WRITE="true" \
      -e DATA_LIFECYCLE_PRODUCTION_CONFIRM="<production-confirmation>" \

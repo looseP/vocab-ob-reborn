@@ -37,6 +37,7 @@ requirePattern(lifecycleService, /no-new-privileges:true/, "Lifecycle no-new-pri
 requirePattern(lifecycleService, /cap_drop:\s*\n\s*- ALL/, "Lifecycle capabilities dropped");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_DATABASE_URL: \$\{DATA_LIFECYCLE_DATABASE_URL:\?/, "Dedicated lifecycle database URL");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_CUTOFF: \$\{DATA_LIFECYCLE_CUTOFF:\?/, "Lifecycle approved cutoff");
+requirePattern(lifecycleService, /DATA_LIFECYCLE_CONFIRM_CUTOFF: \$\{DATA_LIFECYCLE_CONFIRM_CUTOFF:-\}/, "Lifecycle cutoff confirmation");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_CONFIRM: \$\{DATA_LIFECYCLE_CONFIRM:-\}/, "Lifecycle database confirmation");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_ALLOW_WRITE: \$\{DATA_LIFECYCLE_ALLOW_WRITE:-\}/, "Lifecycle write confirmation");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_PRODUCTION_CONFIRM: \$\{DATA_LIFECYCLE_PRODUCTION_CONFIRM:-\}/, "Lifecycle production confirmation");
