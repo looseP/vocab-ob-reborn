@@ -37,6 +37,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -107,6 +108,34 @@ jobs:
       - name: Migration replay is a no-op
         run: npm run db:migrate
 
+      - name: Verify rollback migration compatibility
+        if: github.event_name == 'pull_request'
+        env:
+          ROLLBACK_BASE_REF: ${{ github.event.pull_request.base.sha }}
+        run: npm run release:rollback-check
+
+      - name: Generate release manifest
+        env:
+          RELEASE_CANDIDATE: pr-${{ github.event.pull_request.number || github.run_number }}-${{ github.sha }}
+          RUNTIME_IMAGE: vocab-observatory-v2:ci
+          MIGRATION_IMAGE: vocab-observatory-v2-migration:ci
+          POSTGRES_VERSION: "17"
+        run: npm run release:manifest
+
+      - name: Verify release manifest
+        run: npm run release:manifest:verify
+
+      - name: Upload release candidate evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate-evidence
+          path: |
+            release-manifest.json
+            sbom-npm.cdx.json
+            sbom-container.cdx.json
+          if-no-files-found: error
+          retention-days: 90
+
   e2e:
     name: Browser E2E (Playwright)
     runs-on: ubuntu-latest
@@ -133,6 +162,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:

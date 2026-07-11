@@ -22,6 +22,7 @@ coverage/
 playwright-report/
 test-results/
 sbom-*.cdx.json
+release-manifest.json
 
 # Environment files
 .env

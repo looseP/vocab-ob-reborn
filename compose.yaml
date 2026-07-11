@@ -108,7 +108,6 @@ services:
 
   backup-scheduler:
     <<: *app-base
-    read_only: false
     command: ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
     environment:
       <<: *app-environment

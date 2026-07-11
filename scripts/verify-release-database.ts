@@ -23,6 +23,7 @@ async function main() {
   const requiredTables = [
     "profiles",
     "auth_sessions",
+    "login_rate_limits",
     "words",
     "wordbooks",
     "user_word_progress",
@@ -55,6 +56,16 @@ async function main() {
       throw new Error(`Missing required function: public.${signature}`);
     }
   }
+
+  const rateLimitConstraints = await scalar<number>(
+    `SELECT count(*)::int AS value
+     FROM pg_constraint
+     WHERE conrelid = 'public.login_rate_limits'::regclass
+       AND conname = ANY (ARRAY['login_rate_limits_key_hash_check', 'login_rate_limits_attempts_check', 'login_rate_limits_window_check'])`,
+  );
+  if (rateLimitConstraints !== 3) throw new Error(`Expected 3 login rate-limit constraints, received ${rateLimitConstraints}`);
+  const expiryIndex = await scalar<string | null>("SELECT to_regclass('public.idx_login_rate_limits_expiry')::text AS value");
+  if (expiryIndex !== "idx_login_rate_limits_expiry") throw new Error("Missing login rate-limit expiry index");
 
   const userId = "00000000-0000-4000-8000-000000000001";
   const wordbookId = "00000000-0000-4000-8000-000000000002";
@@ -128,6 +139,7 @@ async function main() {
   console.log("Release database verification passed");
   console.log(`Tables checked: ${requiredTables.length}`);
   console.log(`Functions checked: ${expectedFunctions.length}`);
+  console.log("Login rate limit: table + 3 constraints + expiry index");
   console.log("Concurrent daily session: 8 callers -> 1 session");
   console.log("Atomic counter: 25 increments -> 25");
 }
