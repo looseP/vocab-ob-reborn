@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { HTTP_REQUESTS_METRIC_NAME } from "../src/observability/telemetry";
 
 const baseUrl = process.env.SMOKE_BASE_URL;
 const metricsToken = process.env.SMOKE_METRICS_BEARER_TOKEN;
@@ -21,5 +22,5 @@ if (!ready.ok) throw new Error(`Readiness smoke failed: ${ready.status}`);
 const unauthorized = await request("/metrics");
 if (unauthorized.status !== 401) throw new Error("Metrics endpoint must fail closed without token");
 const metrics = await request("/metrics", { headers: { Authorization: `Bearer ${metricsToken}` } });
-if (!metrics.ok || !(await metrics.text()).includes("vocab_http_requests_total")) throw new Error("Authorized metrics smoke failed");
+if (!metrics.ok || !(await metrics.text()).includes(HTTP_REQUESTS_METRIC_NAME)) throw new Error("Authorized metrics smoke failed");
 console.log(JSON.stringify({ ok: true, origin, requestId, readiness: ready.status, metrics: metrics.status }));

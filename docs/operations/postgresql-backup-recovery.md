@@ -93,10 +93,12 @@ Alert when no verified backup exists inside the RPO window, a scheduled backup f
 
 ## Automated scheduled backup
 
-The `backup-scheduler` Compose service runs `scripts/run-backup-scheduler.ts` which:
+The `backup-scheduler` Compose service uses the dedicated `backup-runtime` Docker stage and runs `scripts/run-backup-scheduler.ts`. The stage installs PostgreSQL client major 17 by default (`POSTGRES_CLIENT_MAJOR=17`), matching the Compose PostgreSQL major, and includes both `pg_dump` and `pg_restore`. It:
 
 - Creates a backup every `BACKUP_INTERVAL_MS` (default: 24h).
-- Signs the manifest with `BACKUP_SIGNING_KEY` (HMAC-SHA256) when provided.
+- Requires `BACKUP_SIGNING_KEY` by default in Compose (`BACKUP_REQUIRE_SIGNING_KEY=true`) and fails closed before starting when it is absent. Local script and CI invocations remain compatible unless they explicitly enable this requirement.
+- Signs the manifest with `BACKUP_SIGNING_KEY` (HMAC-SHA256).
+- Exits non-zero after a failed backup cycle so the service cannot remain healthy after persistent failures.
 - Locks the dump and manifest files to read-only (`chmod 400`) after verification.
 - Prunes backups beyond `BACKUP_RETENTION_COUNT` (default: 14).
 
@@ -106,7 +108,9 @@ Configure via environment variables in `.env`:
 BACKUP_INTERVAL_MS=86400000
 BACKUP_RETENTION_COUNT=14
 BACKUP_SIGNING_KEY=<strong-key>
+BACKUP_REQUIRE_SIGNING_KEY=true
 BACKUP_OBJECT_LOCK=true
+POSTGRES_CLIENT_MAJOR=17
 ```
 
 ## Object lock and immutability

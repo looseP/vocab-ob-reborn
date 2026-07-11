@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "@/http/server";
-import { Telemetry } from "@/observability/telemetry";
+import { HTTP_REQUESTS_METRIC_NAME, Telemetry } from "@/observability/telemetry";
 import type { Services } from "@/services";
 
 const token = "metrics-token-at-least-24-characters";
@@ -61,7 +61,7 @@ describe("Prometheus endpoint", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toContain("text/plain");
     const body = await response.text();
-    expect(body).toContain("vocab_observatory_http_requests_total");
+    expect(body).toContain(HTTP_REQUESTS_METRIC_NAME);
     expect(body).toContain('metric="outbox_pending"');
     expect(services.runtimeStatus.getMetrics).toHaveBeenCalledTimes(1);
   });

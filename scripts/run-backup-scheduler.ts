@@ -41,6 +41,9 @@ async function pruneOldBackups(): Promise<void> {
 
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+  if (process.env.BACKUP_REQUIRE_SIGNING_KEY === "true" && !process.env.BACKUP_SIGNING_KEY) {
+    throw new Error("BACKUP_SIGNING_KEY is required when BACKUP_REQUIRE_SIGNING_KEY=true");
+  }
   logger.info("backup-scheduler", "Scheduler started", { intervalMs, maxBackups, backupDir });
 
   while (!stopping) {
@@ -51,6 +54,7 @@ async function main(): Promise<void> {
       logger.error("backup-scheduler", "Backup cycle failed", {
         error: error instanceof Error ? error.message : String(error),
       });
+      throw error;
     }
     await sleep(intervalMs);
   }
