@@ -23,9 +23,20 @@ Use separate credentials outside local development:
 
 - **migration role**: owns schema migrations; used only by the one-shot migration job;
 - **application role**: DML on application tables and execute access to approved routines; no schema creation, role management, or database ownership;
+- **worker role**: DML on outbox and reservation tables; no schema creation or database ownership;
 - **backup role**: read-only access required by `pg_dump`; no application writes.
 
-Provisioning roles is environment-specific and belongs in infrastructure-as-code or the managed database control plane. Never let the web or worker processes use the database owner credential.
+Production compose services receive their dedicated role URL via `APP_DATABASE_URL`, `WORKER_DATABASE_URL`, `BACKUP_DATABASE_URL`, and `MIGRATION_DATABASE_URL`. When unset, they fall back to `DATABASE_URL` for local development convenience only.
+
+Provisioning roles is environment-specific and belongs in infrastructure-as-code or the managed database control plane. Never let the web or worker processes use the database owner credential in production.
+
+## Database TLS
+
+Production must set `DB_SSLMODE` to `require` or `verify-full`. The application connection pool enables SSL based on this setting. Use `verify-full` with a mounted CA certificate for maximum security. The runtime configuration validator rejects `DB_SSLMODE=disable` in production.
+
+## Secret rotation
+
+See `docs/operations/secret-rotation.md` for the full secret inventory, rotation procedures, and verification steps.
 
 ## Distributed authentication limiting
 

@@ -1,7 +1,8 @@
 name: vocab-observatory
 
 x-app-environment: &app-environment
-  DATABASE_URL: ${DATABASE_URL:-postgresql://vocab:vocab@postgres:5432/vocab}
+  DATABASE_URL: ${APP_DATABASE_URL:-${DATABASE_URL:-postgresql://vocab:vocab@postgres:5432/vocab}}
+  DB_SSLMODE: ${DB_SSLMODE:-disable}
   DB_POOL_MAX: ${DB_POOL_MAX:-5}
   LOG_LEVEL: ${LOG_LEVEL:-info}
   METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:?METRICS_BEARER_TOKEN is required}
@@ -49,7 +50,9 @@ services:
       target: migration
     init: true
     restart: "no"
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:-${DATABASE_URL:-postgresql://vocab:vocab@postgres:5432/vocab}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -117,6 +120,7 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
     environment:
       <<: *app-environment
+      DATABASE_URL: ${BACKUP_DATABASE_URL:-${DATABASE_URL:-postgresql://vocab:vocab@postgres:5432/vocab}}
       BACKUP_DIR: ${BACKUP_DIR:-/backups}
       BACKUP_INTERVAL_MS: ${BACKUP_INTERVAL_MS:-86400000}
       BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-14}
