@@ -24,9 +24,14 @@ describe("LoginRateLimitRepository", () => {
   });
 
   it("atomically counts concurrent consumers in one database-defined window", async () => {
+    await pool.query(
+      `INSERT INTO login_rate_limits (key_hash, window_started_at, window_expires_at, attempts)
+       VALUES ($1, clock_timestamp(), clock_timestamp() + interval '2 minutes', 1)`,
+      [key("a1")],
+    );
     const results = await Promise.all(Array.from({ length: 24 }, () => repository.consume({ keyHash: key("a1"), windowMs: 60_000 })));
-    expect(results.map((result) => result.attempts).sort((a, b) => a - b)).toEqual(Array.from({ length: 24 }, (_, index) => index + 1));
-    expect(results.every((result) => result.retryAfterSeconds >= 1 && result.retryAfterSeconds <= 60)).toBe(true);
+    expect(results.map((result) => result.attempts).sort((a, b) => a - b)).toEqual(Array.from({ length: 24 }, (_, index) => index + 2));
+    expect(results.every((result) => result.retryAfterSeconds >= 1 && result.retryAfterSeconds <= 120)).toBe(true);
   });
 
   it("never moves an existing window backwards", async () => {
