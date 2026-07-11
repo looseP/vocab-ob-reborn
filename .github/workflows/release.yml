@@ -1,0 +1,339 @@
+name: Immutable release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_ROOT: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+  RELEASE_MANIFEST_PATH: release-manifest.json
+
+jobs:
+  verify:
+    name: Re-verify release commit
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vocab
+          POSTGRES_PASSWORD: vocab
+          POSTGRES_DB: vocab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vocab -d vocab"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://vocab:vocab@127.0.0.1:5432/vocab
+      TEST_DATABASE_URL: postgresql://vocab:vocab@127.0.0.1:5432/vocab
+      CAPACITY_TEST_CONFIRM: vocab
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release commit is reachable from main
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+            git fetch --no-tags --unshallow origin main
+          else
+            git fetch --no-tags origin main
+          fi
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
+            echo "Release commit must be reachable from origin/main" >&2
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify supply chain and dependency audit
+        run: npm run security:verify
+
+      - name: Verify engineering gates
+        run: npm run verify:engineering
+
+      - name: Verify database release gates
+        run: npm run verify:db
+
+  publish:
+    name: Build and publish immutable images
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      artifact-name: ${{ steps.release.outputs.artifact-name }}
+      manifest-sha256: ${{ steps.release.outputs.manifest-sha256 }}
+    steps:
+      - name: Validate release ref
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "push" && ! "$RELEASE_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tags must use a versioned vX.Y.Z form" >&2
+            exit 1
+          fi
+
+      - name: Check out release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build and push all release images once
+        id: images
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-evidence
+          node <<'NODE'
+          const { writeFileSync } = require("node:fs");
+          const root = process.env.IMAGE_ROOT.toLowerCase();
+          const sha = process.env.RELEASE_SHA;
+          const target = (name, stage) => ({
+            context: ".",
+            dockerfile: "Dockerfile",
+            target: stage,
+            tags: [`${root}-${name}:${sha}`],
+            attest: ["type=provenance,mode=max", "type=sbom"],
+          });
+          writeFileSync("release-evidence/docker-bake.json", JSON.stringify({
+            group: { default: { targets: ["runtime", "migration", "backup"] } },
+            target: {
+              runtime: target("runtime", "runtime"),
+              migration: target("migration", "migration"),
+              backup: target("backup", "backup-runtime"),
+            },
+          }, null, 2));
+          NODE
+          docker buildx bake \
+            --file release-evidence/docker-bake.json \
+            --push \
+            --metadata-file release-evidence/build-metadata.json
+
+          node <<'NODE'
+          const { readFileSync, writeFileSync, appendFileSync } = require("node:fs");
+          const metadata = JSON.parse(readFileSync("release-evidence/build-metadata.json", "utf8"));
+          const root = process.env.IMAGE_ROOT.toLowerCase();
+          const sha = process.env.RELEASE_SHA;
+          const output = process.env.GITHUB_OUTPUT;
+          for (const name of ["runtime", "migration", "backup"]) {
+            const digest = metadata[name]?.["containerimage.digest"];
+            if (!/^sha256:[a-f0-9]{64}$/.test(digest ?? "")) throw new Error(`Missing registry digest for ${name}`);
+            appendFileSync(output, `${name}=${root}-${name}@${digest}\n`);
+          }
+          NODE
+
+      - name: Generate release evidence and manifest
+        id: release
+        shell: bash
+        env:
+          RUNTIME_IMAGE: ${{ steps.images.outputs.runtime }}
+          MIGRATION_IMAGE: ${{ steps.images.outputs.migration }}
+          BACKUP_IMAGE: ${{ steps.images.outputs.backup }}
+          RELEASE_CANDIDATE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          npm run sbom:npm
+          for image in runtime migration backup; do
+            case "$image" in
+              runtime) ref="$RUNTIME_IMAGE" ;;
+              migration) ref="$MIGRATION_IMAGE" ;;
+              backup) ref="$BACKUP_IMAGE" ;;
+            esac
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$PWD:/workspace" \
+              anchore/syft@sha256:844ed6a928ef9396fac26d1de374e71dcaf80df14f05841670ed41619c5a718f \
+              "$ref" -o "cyclonedx-json=/workspace/sbom-${image}.cdx.json"
+          done
+          node -e 'const fs=require("fs"); for (const path of ["sbom-npm.cdx.json","sbom-runtime.cdx.json","sbom-migration.cdx.json","sbom-backup.cdx.json"]) { const value=JSON.parse(fs.readFileSync(path,"utf8")); if (value.bomFormat!=="CycloneDX" || !/^1\.[4-6]$/.test(value.specVersion)) throw new Error(`Invalid CycloneDX SBOM: ${path}`); }'
+          npm run release:manifest
+          npm run release:manifest:verify
+          sha256sum --check release-manifest.sha256
+          artifact="release-${GITHUB_SHA}"
+          manifest_sha256="$(cut -d ' ' -f 1 release-manifest.sha256)"
+          [[ "$manifest_sha256" =~ ^[a-f0-9]{64}$ ]]
+          echo "artifact-name=$artifact" >> "$GITHUB_OUTPUT"
+          echo "manifest-sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable release evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.release.outputs.artifact-name }}
+          path: |
+            release-manifest.json
+            release-manifest.sha256
+            sbom-npm.cdx.json
+            sbom-runtime.cdx.json
+            sbom-migration.cdx.json
+            sbom-backup.cdx.json
+            drizzle-release/meta/_journal.json
+            release-evidence/build-metadata.json
+          if-no-files-found: error
+          retention-days: 90
+
+  staging:
+    name: Deploy and smoke staging
+    needs: publish
+    runs-on: [self-hosted, linux, vocab-staging]
+    environment: staging
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out deploy adapter
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Log in to GHCR for deployment
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download immutable release evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.publish.outputs.artifact-name }}
+          path: .
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify release manifest and identity
+        env:
+          RELEASE_MANIFEST_PATH: release-manifest.json
+          EXPECTED_MANIFEST_SHA256: ${{ needs.publish.outputs.manifest-sha256 }}
+        run: |
+          sha256sum --check release-manifest.sha256
+          test "$(cut -d ' ' -f 1 release-manifest.sha256)" = "$EXPECTED_MANIFEST_SHA256"
+          npm run release:manifest:verify
+
+      - name: Deploy exact manifest to staging
+        env:
+          NODE_ENV: production
+          RELEASE_DEPLOY_ENV_FILE: ${{ vars.RELEASE_DEPLOY_ENV_FILE }}
+          RELEASE_DEPLOY_LOCK_FILE: ${{ vars.RELEASE_DEPLOY_LOCK_FILE }}
+          SMOKE_BASE_URL: ${{ vars.SMOKE_BASE_URL }}
+          SMOKE_METRICS_BEARER_TOKEN: ${{ secrets.SMOKE_METRICS_BEARER_TOKEN }}
+        run: npm run release:deploy -- --environment staging --manifest release-manifest.json
+
+  production:
+    name: Promote identical manifest to production
+    needs: [publish, staging]
+    runs-on: [self-hosted, linux, vocab-production]
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out deploy adapter
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Log in to GHCR for deployment
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download the same immutable release evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.publish.outputs.artifact-name }}
+          path: .
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify release manifest and identity
+        env:
+          RELEASE_MANIFEST_PATH: release-manifest.json
+          EXPECTED_MANIFEST_SHA256: ${{ needs.publish.outputs.manifest-sha256 }}
+        run: |
+          sha256sum --check release-manifest.sha256
+          test "$(cut -d ' ' -f 1 release-manifest.sha256)" = "$EXPECTED_MANIFEST_SHA256"
+          npm run release:manifest:verify
+
+      - name: Deploy exact manifest to production
+        env:
+          NODE_ENV: production
+          RELEASE_DEPLOY_ENV_FILE: ${{ vars.RELEASE_DEPLOY_ENV_FILE }}
+          RELEASE_DEPLOY_LOCK_FILE: ${{ vars.RELEASE_DEPLOY_LOCK_FILE }}
+          SMOKE_BASE_URL: ${{ vars.SMOKE_BASE_URL }}
+          SMOKE_METRICS_BEARER_TOKEN: ${{ secrets.SMOKE_METRICS_BEARER_TOKEN }}
+        run: npm run release:deploy -- --environment production --manifest release-manifest.json
