@@ -108,6 +108,12 @@ services:
 
   backup-scheduler:
     <<: *app-base
+    image: ${BACKUP_IMAGE:-vocab-observatory-v2-backup:local}
+    build:
+      context: .
+      target: backup-runtime
+      args:
+        POSTGRES_CLIENT_MAJOR: ${POSTGRES_CLIENT_MAJOR:-17}
     command: ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
     environment:
       <<: *app-environment
@@ -115,10 +121,16 @@ services:
       BACKUP_INTERVAL_MS: ${BACKUP_INTERVAL_MS:-86400000}
       BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-14}
       BACKUP_SIGNING_KEY: ${BACKUP_SIGNING_KEY:-}
+      BACKUP_REQUIRE_SIGNING_KEY: ${BACKUP_REQUIRE_SIGNING_KEY:-true}
       BACKUP_OBJECT_LOCK: ${BACKUP_OBJECT_LOCK:-true}
     volumes:
       - ${BACKUP_HOST_DIR:-backups}:/backups
     stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_dump --version >/dev/null && pg_restore --version >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   data-lifecycle:
     image: ${APP_IMAGE:-vocab-observatory-v2:local}

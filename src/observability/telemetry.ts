@@ -2,6 +2,7 @@ import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from "prom
 import type { RuntimeMetricsSnapshot } from "../services/runtime-status.service";
 
 const SERVICE_NAME = "vocab_observatory";
+export const HTTP_REQUESTS_METRIC_NAME = `${SERVICE_NAME}_http_requests_total`;
 
 export class Telemetry {
   readonly registry = new Registry();
@@ -14,7 +15,7 @@ export class Telemetry {
     if (collectProcessMetrics) collectDefaultMetrics({ register: this.registry, prefix: `${SERVICE_NAME}_` });
 
     this.httpRequests = new Counter({
-      name: `${SERVICE_NAME}_http_requests_total`,
+      name: HTTP_REQUESTS_METRIC_NAME,
       help: "Completed HTTP requests by stable route and status class.",
       labelNames: ["method", "route", "status_class"],
       registers: [this.registry],

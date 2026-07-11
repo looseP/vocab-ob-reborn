@@ -30,6 +30,23 @@ USER node
 EXPOSE 3001
 CMD ["./node_modules/.bin/tsx", "src/server.ts"]
 
+FROM runtime AS backup-runtime
+USER root
+ARG POSTGRES_CLIENT_MAJOR=17
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && install -d -m 0755 /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends "postgresql-client-${POSTGRES_CLIENT_MAJOR}" \
+    && apt-get purge -y --auto-remove curl gnupg \
+    && rm -rf /var/lib/apt/lists/*
+USER node
+CMD ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
+
 FROM build AS migration
 ENV NODE_ENV=production
 USER node

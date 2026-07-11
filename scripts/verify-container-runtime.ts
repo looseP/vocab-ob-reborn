@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const dockerfile = readFileSync(resolve(root, "Dockerfile"), "utf8");
 const compose = readFileSync(resolve(root, "compose.yaml"), "utf8");
+const envExample = readFileSync(resolve(root, ".env.example"), "utf8");
 const dockerignoreLines = readFileSync(resolve(root, ".dockerignore"), "utf8")
   .split(/\r?\n/)
   .map((line) => line.trim())
@@ -15,6 +16,10 @@ function requirePattern(source: string, pattern: RegExp, label: string): void {
 
 requirePattern(dockerfile, /^FROM node:22\.22\.2-bookworm-slim AS runtime$/m, "Pinned runtime stage");
 requirePattern(dockerfile, /^FROM build AS migration$/m, "Dedicated migration stage");
+requirePattern(dockerfile, /^FROM runtime AS backup-runtime$/m, "Dedicated backup runtime stage");
+requirePattern(dockerfile, /^ARG POSTGRES_CLIENT_MAJOR=17$/m, "Pinned PostgreSQL client major");
+requirePattern(dockerfile, /postgresql-client-\$\{POSTGRES_CLIENT_MAJOR\}/, "PostgreSQL backup client install");
+requirePattern(dockerfile, /FROM runtime AS backup-runtime[\s\S]*?^USER node$/m, "Non-root backup runtime");
 requirePattern(dockerfile, /^RUN npm ci --omit=dev --ignore-scripts/m, "Production-only dependency install");
 requirePattern(dockerfile, /FROM node:22\.22\.2-bookworm-slim AS runtime[\s\S]*?^USER node$/m, "Non-root final runtime");
 requirePattern(dockerfile, /^RUN npm run frontend:build$/m, "Frontend build");
@@ -27,6 +32,15 @@ requirePattern(compose, /target: migration/, "Migration image target");
 requirePattern(compose, /scripts\/run-review-outbox-worker\.ts/, "Outbox worker command");
 requirePattern(compose, /scripts\/run-llm-reservation-reaper\.ts/, "Reservation reaper command");
 requirePattern(compose, /scripts\/run-backup-scheduler\.ts/, "Backup scheduler command");
+const backupService = compose.match(/^  backup-scheduler:\r?\n([\s\S]*?)(?=^  [a-z][a-z0-9-]*:|^volumes:)/m)?.[1];
+if (!backupService) throw new Error("Compose backup scheduler service is missing or malformed");
+requirePattern(backupService, /target: backup-runtime/, "Backup runtime image target");
+requirePattern(backupService, /POSTGRES_CLIENT_MAJOR: \$\{POSTGRES_CLIENT_MAJOR:-17\}/, "PostgreSQL client major build argument");
+requirePattern(backupService, /BACKUP_REQUIRE_SIGNING_KEY: \$\{BACKUP_REQUIRE_SIGNING_KEY:-true\}/, "Production backup signing requirement");
+requirePattern(backupService, /pg_dump --version[^\n]*pg_restore --version/, "Backup client binary healthcheck");
+requirePattern(envExample, /^BACKUP_IMAGE=vocab-observatory-v2-backup:local$/m, "Backup image example");
+requirePattern(envExample, /^BACKUP_REQUIRE_SIGNING_KEY=true$/m, "Backup signing requirement example");
+requirePattern(envExample, /^POSTGRES_CLIENT_MAJOR=17$/m, "PostgreSQL client major example");
 requirePattern(dockerfile, /scripts\/run-data-lifecycle\.ts/, "Lifecycle script in runtime image");
 const lifecycleService = compose.match(/^  data-lifecycle:\r?\n([\s\S]*?)(?=^  [a-z][a-z0-9-]*:|^volumes:)/m)?.[1];
 if (!lifecycleService) throw new Error("Compose lifecycle service is missing or malformed");
