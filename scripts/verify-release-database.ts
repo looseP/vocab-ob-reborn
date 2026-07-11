@@ -67,6 +67,20 @@ async function main() {
   const expiryIndex = await scalar<string | null>("SELECT to_regclass('public.idx_login_rate_limits_expiry')::text AS value");
   if (expiryIndex !== "idx_login_rate_limits_expiry") throw new Error("Missing login rate-limit expiry index");
 
+  const lifecycleIndexes = [
+    "idx_auth_sessions_expiry_cleanup",
+    "idx_auth_sessions_revoked_cleanup",
+    "idx_llm_usage_terminal_finalized_cleanup",
+    "idx_llm_usage_settled_created_cleanup",
+    "idx_outbox_events_processed_cleanup",
+    "idx_review_logs_cleanup",
+    "idx_review_logs_archive_cleanup",
+  ];
+  for (const indexName of lifecycleIndexes) {
+    const exists = await scalar<string | null>("SELECT to_regclass($1)::text AS value", [`public.${indexName}`]);
+    if (exists !== indexName) throw new Error(`Missing lifecycle cleanup index: ${indexName}`);
+  }
+
   const userId = "00000000-0000-4000-8000-000000000001";
   const wordbookId = "00000000-0000-4000-8000-000000000002";
 
@@ -140,6 +154,7 @@ async function main() {
   console.log(`Tables checked: ${requiredTables.length}`);
   console.log(`Functions checked: ${expectedFunctions.length}`);
   console.log("Login rate limit: table + 3 constraints + expiry index");
+  console.log(`Lifecycle cleanup indexes checked: ${lifecycleIndexes.length}`);
   console.log("Concurrent daily session: 8 callers -> 1 session");
   console.log("Atomic counter: 25 increments -> 25");
 }
