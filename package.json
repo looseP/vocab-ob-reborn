@@ -51,6 +51,9 @@
     "verify:e2e": "npx playwright test",
     "verify:release": "npm run verify:engineering && npm run verify:db && npm run verify:e2e",
     "verify:check": "npm run typecheck && npm run test:unit",
+    "security:audit": "npm audit --omit=dev --audit-level=high",
+    "security:verify": "node scripts/verify-supply-chain.mjs && npm run security:audit",
+    "sbom:npm": "cyclonedx-npm --output-format JSON --spec-version 1.6 --output-file sbom-npm.cdx.json --validate",
     "prepare": "husky"
   },
   "dependencies": {
@@ -68,6 +71,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@cyclonedx/cyclonedx-npm": "6.0.0",
     "@playwright/test": "^1.49.0",
     "@testing-library/dom": "^10.4.1",
     "@types/node": "^20",

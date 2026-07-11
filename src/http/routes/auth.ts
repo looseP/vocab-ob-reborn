@@ -10,9 +10,6 @@ import {
 import type { AppEnv } from "./words";
 
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
-const LOGIN_WINDOW_MS = 60_000;
-const LOGIN_ATTEMPT_LIMIT = 8;
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
 function expectedOrigin(requestUrl: string): string {
   return new URL(process.env.APP_ORIGIN ?? requestUrl).origin;
@@ -34,22 +31,6 @@ function loginRateLimitKey(headers: Headers): string {
     if (forwarded || realIp) return forwarded ?? realIp ?? "proxy-unknown";
   }
   return "direct-client";
-}
-
-function consumeLoginAttempt(key: string): number | null {
-  const now = Date.now();
-  const current = loginAttempts.get(key);
-  if (!current || current.resetAt <= now) {
-    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
-    return null;
-  }
-  current.count += 1;
-  if (current.count <= LOGIN_ATTEMPT_LIMIT) return null;
-  return Math.max(1, Math.ceil((current.resetAt - now) / 1000));
-}
-
-export function resetLoginRateLimitsForTests(): void {
-  loginAttempts.clear();
 }
 
 function cookieSecure(): boolean {
@@ -82,7 +63,7 @@ export function authRoutes(services: Services) {
       return c.json({ error: "Invalid request origin", code: "AUTH_ORIGIN_REJECTED" }, 403);
     }
     const rateLimitKey = loginRateLimitKey(c.req.raw.headers);
-    const retryAfter = consumeLoginAttempt(rateLimitKey);
+    const retryAfter = await services.loginRateLimit.consume(rateLimitKey);
     if (retryAfter !== null) {
       c.header("Retry-After", String(retryAfter));
       return c.json({ error: "Too many authentication attempts", code: "AUTH_RATE_LIMITED" }, 429);
@@ -98,7 +79,7 @@ export function authRoutes(services: Services) {
     const issued = await services.authSessions.exchangeOwnerToken(body.ownerToken);
     if (!issued) return c.json({ error: "Invalid credentials", code: "INVALID_CREDENTIALS" }, 401);
 
-    loginAttempts.delete(rateLimitKey);
+    await services.loginRateLimit.clear(rateLimitKey);
     setSessionCookies(c, issued.sessionToken, issued.csrfToken);
     return c.json({
       authenticated: true,

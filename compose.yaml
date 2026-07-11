@@ -13,6 +13,13 @@ x-app-base: &app-base
     target: runtime
   init: true
   restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:size=64m,mode=1777
   environment: *app-environment
   depends_on:
     migrate:
@@ -60,6 +67,9 @@ services:
       LOCAL_OWNER_ID: ${LOCAL_OWNER_ID:?LOCAL_OWNER_ID is required}
       READINESS_TIMEOUT_MS: ${READINESS_TIMEOUT_MS:-500}
       SHUTDOWN_GRACE_MS: ${SHUTDOWN_GRACE_MS:-25000}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      LOGIN_RATE_LIMIT_WINDOW_MS: ${LOGIN_RATE_LIMIT_WINDOW_MS:-60000}
+      LOGIN_RATE_LIMIT_ATTEMPTS: ${LOGIN_RATE_LIMIT_ATTEMPTS:-8}
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
@@ -98,6 +108,7 @@ services:
 
   backup-scheduler:
     <<: *app-base
+    read_only: false
     command: ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
     environment:
       <<: *app-environment

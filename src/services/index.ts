@@ -24,12 +24,17 @@ import { L3ReadService } from "./l3-read.service";
 import { L3RecommendationService } from "./l3-recommendation.service";
 import { CrossTrackService } from "./cross-track.service";
 import { AuthSessionService } from "./auth-session.service";
+import { LoginRateLimitService } from "./login-rate-limit.service";
 import { RuntimeStatusService } from "./runtime-status.service";
 import type { LlmProvider } from "../llm/provider";
 import type { UsageTracker } from "../llm/usage-tracker";
 import type { DictionaryProvider } from "../dictionary/provider";
 import { createRepositories } from "../repositories/factory";
 import { AuthSessionRepository } from "../repositories/auth-session.repository";
+import {
+  LoginRateLimitRepository,
+  type LoginRateLimitRepositoryPort,
+} from "../repositories/login-rate-limit.repository";
 import type { RuntimeDatabaseStatus } from "./runtime-status.service";
 
 export type { FsrsAdapterFn, FsrsScheduling };
@@ -41,6 +46,10 @@ export interface ServiceDeps {
   checkDatabase?: () => Promise<RuntimeDatabaseStatus>;
   /** Fail-closed readiness deadline. */
   readinessTimeoutMs?: number;
+  /** Login limiter storage and bounded policy, injectable for tests. */
+  loginRateLimitRepository?: LoginRateLimitRepositoryPort;
+  loginRateLimitWindowMs?: number;
+  loginRateLimitAttempts?: number;
   /** Load wordbook FSRS weights */
   loadWeights?: (wordbookId: string) => Promise<number[] | null>;
   /** LLM provider — optional; required to enable the L2 draft/confirm flow. */
@@ -97,6 +106,13 @@ export function createServices(deps: ServiceDeps) {
       deps.readinessTimeoutMs,
     ),
     authSessions: new AuthSessionService(new AuthSessionRepository()),
+    loginRateLimit: new LoginRateLimitService(
+      deps.loginRateLimitRepository ?? new LoginRateLimitRepository(),
+      {
+        windowMs: deps.loginRateLimitWindowMs,
+        attemptLimit: deps.loginRateLimitAttempts,
+      },
+    ),
     words: new WordService(repos.words),
     reviews: new ReviewService({
       fsrsAdapter: deps.fsrsAdapter,
