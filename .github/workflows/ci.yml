@@ -13,6 +13,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
+      CAPACITY_TEST_CONFIRM: vocab
 
     services:
       postgres:
