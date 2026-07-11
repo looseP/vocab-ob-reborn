@@ -67,6 +67,20 @@ jobs:
       - name: Engineering verification
         run: npm run verify:engineering
 
+      - name: Official Prometheus rule syntax gate
+        run: |
+          docker run --rm --entrypoint /bin/promtool \
+            --volume "${PWD}/docs/operations:/rules:ro" \
+            prom/prometheus@sha256:3b1d5be5c3eef4f027665ddaa3b1a7de8a58d96a0a6de5dd45629afd267ecaf0 \
+            check rules /rules/alerting-rules.yaml /rules/optional-platform-alerting-rules.yaml
+
+      - name: Official Alertmanager config syntax gate
+        run: |
+          docker run --rm --entrypoint /bin/amtool \
+            --volume "${PWD}/docs/operations:/rules:ro" \
+            prom/alertmanager@sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba \
+            check-config /rules/alertmanager.yaml
+
       - name: Build production runtime image
         run: docker build --target runtime --tag vocab-observatory-v2:ci .
 

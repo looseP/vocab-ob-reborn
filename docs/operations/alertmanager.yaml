@@ -1,0 +1,64 @@
+# Safe template only. The deployment platform must mount receiver URLs as files.
+# Never replace *_file with an inline URL or token in this repository.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: routing-contract-violation
+  group_by: [alertname, service, environment]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: critical-primary
+      matchers:
+        - severity="critical"
+        - environment=~"production|staging"
+      group_wait: 10s
+      group_interval: 2m
+      repeat_interval: 30m
+      continue: true
+    - receiver: critical-escalation
+      matchers:
+        - severity="critical"
+        - environment=~"production|staging"
+      group_wait: 2m
+      group_interval: 5m
+      repeat_interval: 30m
+    - receiver: warning-triage
+      matchers:
+        - severity="warning"
+        - environment=~"production|staging"
+      group_wait: 1m
+      group_interval: 10m
+      repeat_interval: 4h
+
+# A critical alert may suppress only the warning form of the same alert family and
+# component in the same environment. Critical alerts are never targets, and distinct
+# components or environments cannot suppress one another.
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: [alert_family, service, environment, component]
+
+receivers:
+  # Dedicated signal for missing/invalid routing labels. It must not share the
+  # ordinary warning channel or be interpreted as a successfully routed alert.
+  - name: routing-contract-violation
+    webhook_configs:
+      - url_file: /run/secrets/alertmanager_routing_contract_violation_webhook_url
+        send_resolved: true
+  - name: critical-primary
+    webhook_configs:
+      - url_file: /run/secrets/alertmanager_critical_primary_webhook_url
+        send_resolved: true
+  - name: critical-escalation
+    webhook_configs:
+      - url_file: /run/secrets/alertmanager_critical_escalation_webhook_url
+        send_resolved: true
+  - name: warning-triage
+    webhook_configs:
+      - url_file: /run/secrets/alertmanager_warning_triage_webhook_url
+        send_resolved: true

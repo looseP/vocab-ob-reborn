@@ -17,6 +17,8 @@
     "test:db-release": "tsx scripts/verify-release-database.ts",
     "test:capacity": "tsx scripts/verify-capacity.ts",
     "test:db-roles": "tsx scripts/verify-database-roles.ts",
+    "alerting:verify": "tsx scripts/verify-alerting-contract.ts",
+    "alerting:contract": "vitest run tests/scripts/verify-alerting-contract.test.ts --coverage.enabled=false",
     "release:manifest": "tsx scripts/generate-release-manifest.ts",
     "release:manifest:verify": "tsx scripts/verify-release-manifest.ts",
     "release:smoke": "tsx scripts/verify-deployment-smoke.ts",
@@ -25,6 +27,8 @@
     "release:workflow:verify": "tsx scripts/verify-release-workflow.ts",
     "release:workflow:contract": "vitest run tests/scripts/verify-release-workflow.test.ts --coverage.enabled=false",
     "release:rollback-check": "tsx scripts/verify-rollback-compatibility.ts",
+    "alerting:drill": "tsx scripts/run-alerting-drill.ts",
+    "alerting:drill:contract": "vitest run tests/scripts/run-alerting-drill.test.ts --coverage.enabled=false",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:adopt-release-baseline": "tsx scripts/adopt-release-baseline.ts",
@@ -54,7 +58,7 @@
     "arch:check": "depcruise src --config .dependency-cruiser.cjs",
     "arch:graph": "depcruise src --config .dependency-cruiser.cjs --output-type dot | dot -T svg > arch.svg",
     "verify": "npm run verify:engineering",
-    "verify:engineering": "npm run typecheck && npm run arch:check && npm run test:unit && npm run frontend:build && npm run runtime:verify && npm run release:workflow:verify",
+    "verify:engineering": "npm run typecheck && npm run arch:check && npm run test:unit && npm run frontend:build && npm run runtime:verify && npm run alerting:verify && npm run release:workflow:verify",
     "verify:unit": "npm run verify:engineering",
     "verify:db": "npm run db:migrate && npm run test:db-release && npm run test:integration && npm run test:db-roles && npm run test:capacity",
     "test:integration:auth": "tsx scripts/verify-browser-auth-e2e.ts",
@@ -101,7 +105,8 @@
     "lint-staged": "^17.0.8",
     "typescript": "^5",
     "vite": "^8.1.3",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.5",
+    "yaml": "^2.9.0"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
