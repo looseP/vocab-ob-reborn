@@ -9,6 +9,14 @@ const tsvector = customType<{ data: string }>({
   },
 });
 
+/**
+ * Authoritative full-text search expression for the words table.
+ * Single source of truth for the generated `search_vector` column — both the
+ * Drizzle column and the schema-drift gate (scripts/verify-schema-drift.ts)
+ * derive from this expression, so editing it here updates the contract.
+ */
+export const SEARCH_VECTOR_EXPRESSION = sql`to_tsvector('english'::regconfig, ((((((((((COALESCE(lemma, ''::text) || ' '::text) || COALESCE(title, ''::text)) || ' '::text) || COALESCE(short_definition, ''::text)) || ' '::text) || COALESCE(definition_md, ''::text)) || ' '::text) || COALESCE((metadata ->> 'semantic_field'::text), ''::text)) || ' '::text) || COALESCE((metadata ->> 'word_freq'::text), ''::text))))`;
+
 export const reviewRating = pgEnum("review_rating", ['again', 'hard', 'good', 'easy'])
 
 // auth.users — local auth shim (schema: auth). Drizzle pull only introspects
@@ -171,8 +179,8 @@ export const words = pgTable("words", {
 	antonymHtml: text("antonym_html"),
 	qualityStatus: text("quality_status").default('ok').notNull(),
 	qualityIssues: jsonb("quality_issues").default([]).notNull(),
-	// TODO: failed to parse database type 'tsvector'
-	searchVector: tsvector("search_vector").generatedAlwaysAs(sql`to_tsvector('english'::regconfig, ((((((((((COALESCE(lemma, ''::text) || ' '::text) || COALESCE(title, ''::text)) || ' '::text) || COALESCE(short_definition, ''::text)) || ' '::text) || COALESCE(definition_md, ''::text)) || ' '::text) || COALESCE((metadata ->> 'semantic_field'::text), ''::text)) || ' '::text) || COALESCE((metadata ->> 'word_freq'::text), ''::text)))`),
+	// Full-text search vector — authoritative expression in SEARCH_VECTOR_EXPRESSION.
+	searchVector: tsvector("search_vector").generatedAlwaysAs(SEARCH_VECTOR_EXPRESSION),
 }, (table) => [
 	index("idx_words_aliases_gin").using("gin", table.aliases.asc().nullsLast().op("array_ops")),
 	index("idx_words_lemma_trgm").using("gin", table.lemma.asc().nullsLast().op("gin_trgm_ops")),
