@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const dockerfile = readFileSync(resolve(root, "Dockerfile"), "utf8");
 const compose = readFileSync(resolve(root, "compose.yaml"), "utf8");
+const productionCompose = readFileSync(resolve(root, "compose.production.yaml"), "utf8");
 const envExample = readFileSync(resolve(root, ".env.example"), "utf8");
 const dockerignoreLines = readFileSync(resolve(root, ".dockerignore"), "utf8")
   .split(/\r?\n/)
@@ -41,6 +42,18 @@ requirePattern(backupService, /pg_dump --version[^\n]*pg_restore --version/, "Ba
 requirePattern(envExample, /^BACKUP_IMAGE=vocab-observatory-v2-backup:local$/m, "Backup image example");
 requirePattern(envExample, /^BACKUP_REQUIRE_SIGNING_KEY=true$/m, "Backup signing requirement example");
 requirePattern(envExample, /^POSTGRES_CLIENT_MAJOR=17$/m, "PostgreSQL client major example");
+requirePattern(envExample, /^APP_NODE_ENV=development$/m, "Local development environment example");
+requirePattern(envExample, /^APP_ORIGIN=http:\/\/127\.0\.0\.1:3001$/m, "Local loopback origin example");
+requirePattern(productionCompose, /APP_IMAGE:\?APP_IMAGE is required for production/, "Production immutable app image fail-fast");
+requirePattern(productionCompose, /MIGRATION_IMAGE:\?MIGRATION_IMAGE is required for production/, "Production immutable migration image fail-fast");
+requirePattern(productionCompose, /BACKUP_IMAGE:\?BACKUP_IMAGE is required for production/, "Production immutable backup image fail-fast");
+requirePattern(productionCompose, /MIGRATION_DATABASE_URL:\?MIGRATION_DATABASE_URL is required for production/, "Production migration URL fail-fast");
+requirePattern(productionCompose, /APP_DATABASE_URL:\?APP_DATABASE_URL is required for production/, "Production app URL fail-fast");
+requirePattern(productionCompose, /WORKER_DATABASE_URL:\?WORKER_DATABASE_URL is required for production/, "Production worker URL fail-fast");
+requirePattern(productionCompose, /BACKUP_DATABASE_URL:\?BACKUP_DATABASE_URL is required for production/, "Production backup URL fail-fast");
+requirePattern(productionCompose, /APP_ORIGIN:\?APP_ORIGIN is required for production/, "Production origin fail-fast");
+requirePattern(productionCompose, /DB_SSLMODE: verify-full/, "Production TLS verification requirement");
+if (/^  postgres:/m.test(productionCompose)) throw new Error("Production Compose must not declare an embedded PostgreSQL service");
 requirePattern(dockerfile, /scripts\/run-data-lifecycle\.ts/, "Lifecycle script in runtime image");
 const lifecycleService = compose.match(/^  data-lifecycle:\r?\n([\s\S]*?)(?=^  [a-z][a-z0-9-]*:|^volumes:)/m)?.[1];
 if (!lifecycleService) throw new Error("Compose lifecycle service is missing or malformed");

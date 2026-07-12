@@ -45,9 +45,9 @@ describe("Compose release deployment contract", () => {
   it("orders pull, isolated migration, rollout readiness, and smoke without a shell", () => {
     const commands = buildDeploymentCommands("C:/safe/deploy.env", "C:/safe/images.env");
     expect(commands.map(({ binary, args }) => [binary, ...args])).toEqual([
-      ["docker", "compose", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "pull", "migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"],
-      ["docker", "compose", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "run", "--rm", "--no-deps", "--no-build", "migrate"],
-      ["docker", "compose", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "up", "-d", "--no-deps", "--no-build", "--wait", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"],
+      ["docker", "compose", "-f", "compose.production.yaml", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "pull", "migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"],
+      ["docker", "compose", "-f", "compose.production.yaml", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "run", "--rm", "--no-deps", "--no-build", "migrate"],
+      ["docker", "compose", "-f", "compose.production.yaml", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "up", "-d", "--no-deps", "--no-build", "--wait", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"],
       [process.platform === "win32" ? "npm.cmd" : "npm", "run", "release:smoke"],
     ]);
   });

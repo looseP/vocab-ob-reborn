@@ -2,10 +2,11 @@ import { z } from "zod";
 
 const booleanString = z.enum(["true", "false"]).transform((value) => value === "true");
 const integer = (minimum: number, maximum: number) => z.coerce.number().int().min(minimum).max(maximum);
-const optionalPostgresUrl = z.preprocess(
+const emptyStringAsUndefined = <T extends z.ZodType>(schema: T) => z.preprocess(
   (value) => value === "" ? undefined : value,
-  z.string().url().startsWith("postgresql://").optional(),
+  schema.optional(),
 );
+const optionalPostgresUrl = emptyStringAsUndefined(z.string().url().startsWith("postgresql://"));
 
 const runtimeSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -17,7 +18,7 @@ const runtimeSchema = z.object({
   MIGRATION_DATABASE_URL: optionalPostgresUrl,
   DB_SSLMODE: z.enum(["disable", "require", "verify-ca", "verify-full"]).default("disable"),
   OWNER_API_TOKEN: z.string().min(24),
-  METRICS_BEARER_TOKEN: z.string().min(24).optional(),
+  METRICS_BEARER_TOKEN: emptyStringAsUndefined(z.string().min(24)),
   LOCAL_OWNER_ID: z.string().uuid(),
   APP_ORIGIN: z.string().url(),
   TRUST_PROXY: booleanString.default(false),
@@ -30,10 +31,10 @@ const runtimeSchema = z.object({
   DB_KEEPALIVE_DELAY_MS: integer(0, 600_000).default(10_000),
   LOGIN_RATE_LIMIT_WINDOW_MS: integer(1_000, 3_600_000).default(60_000),
   LOGIN_RATE_LIMIT_ATTEMPTS: integer(1, 1_000).default(8),
-  LLM_PROVIDER: z.enum(["openai", "anthropic"]).optional(),
-  LLM_MODEL: z.string().min(1).optional(),
-  LLM_API_KEY: z.string().min(1).optional(),
-  LLM_BASE_URL: z.string().url().optional(),
+  LLM_PROVIDER: emptyStringAsUndefined(z.enum(["openai", "anthropic"])),
+  LLM_MODEL: emptyStringAsUndefined(z.string().min(1)),
+  LLM_API_KEY: emptyStringAsUndefined(z.string().min(1)),
+  LLM_BASE_URL: emptyStringAsUndefined(z.string().url()),
   LLM_TIMEOUT_MS: integer(1_000, 120_000).default(30_000),
   LLM_MAX_TOKENS: integer(1, 32_768).default(2_048),
   LLM_MAX_CONCURRENCY: integer(1, 100).default(4),

@@ -16,8 +16,7 @@ function parsePositiveInt(name: string, fallback: number, min: number, max: numb
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
+    setTimeout(resolve, ms);
   });
 }
 

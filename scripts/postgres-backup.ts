@@ -181,7 +181,7 @@ async function schemaEvidence(databaseUrl: string): Promise<BackupManifest["sche
       table_count: number;
       function_count: number;
     }>(`SELECT
-      (SELECT count(*)::int FROM drizzle.__drizzle_migrations) AS migration_count,
+      (SELECT count(*)::int FROM vocab_migrations.__v2_release_migrations) AS migration_count,
       (SELECT count(*)::int FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE') AS table_count,
       (SELECT count(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public') AS function_count`);
     const row = result.rows[0];
