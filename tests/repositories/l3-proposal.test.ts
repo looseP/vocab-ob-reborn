@@ -70,6 +70,44 @@ describe("L3ProposalRepository", () => {
     expect(mock.calls).toHaveLength(0);
   });
 
+  it("applies a valid cursor and returns an encoded next page cursor", async () => {
+    const first = { id: "00000000-0000-4000-8000-000000000001", user_id: "u1", created_at: "2026-07-08T00:00:00Z" };
+    const second = { id: "00000000-0000-4000-8000-000000000002", user_id: "u1", created_at: "2026-07-07T00:00:00Z" };
+    mock.setRows([first, second]);
+    const cursor = Buffer.from(JSON.stringify({ createdAt: "2026-07-09T00:00:00Z", id: "00000000-0000-4000-8000-000000000009" })).toString("base64url");
+
+    const page = await createRepositories().l3Proposal.listProposals({ userId: "u1", limit: 1, cursor });
+
+    expect(page.items).toEqual([first]);
+    expect(page.nextCursor).toBeTypeOf("string");
+    expect(mock.lastQuery?.text).toContain("(created_at, id) <");
+    expect(mock.lastQuery?.params).toEqual(["u1", 2, "2026-07-09T00:00:00Z", "00000000-0000-4000-8000-000000000009"]);
+  });
+
+  it("returns null or a proposal bundle through the public API", async () => {
+    const repos = createRepositories();
+    mock.setRows([]);
+    await expect(repos.l3Proposal.getProposalBundle("u1", "missing")).resolves.toBeNull();
+
+    mock.setRowMap({
+      "FROM l3_proposals WHERE id": [{ id: "prop-1", user_id: "u1" }],
+      "FROM l3_proposal_items": [{ id: "item-1", proposal_id: "prop-1", user_id: "u1" }],
+    });
+    await expect(repos.l3Proposal.getProposalBundle("u1", "prop-1")).resolves.toEqual({
+      proposal: { id: "prop-1", user_id: "u1" },
+      items: [{ id: "item-1", proposal_id: "prop-1", user_id: "u1" }],
+    });
+  });
+
+  it("queries idempotency input hashes and requires a transaction for row locking", async () => {
+    const repos = createRepositories();
+    mock.setRows([{ id: "prop-1", input_hash: "hash-1" }]);
+    await expect(repos.l3Proposal.findProposalByInputHash("u1", "hash-1")).resolves.toMatchObject({ id: "prop-1" });
+    expect(mock.lastQuery?.text).toContain("input_hash = $2");
+    await expect(repos.l3Proposal.lockProposalByIdForUser("u1", "prop-1"))
+      .rejects.toMatchObject({ code: "BUSINESS_RULE" });
+  });
+
   it("updates proposal lifecycle without active L3 writes", async () => {
     mock.setRowMap({
       "UPDATE l3_proposal_items": [{ id: "item-1", proposal_id: "prop-1", user_id: "u1", status: "rejected" }],

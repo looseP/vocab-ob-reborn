@@ -94,6 +94,9 @@ export class DataLifecycleRepository {
     const cutoff = options.cutoff.toISOString();
     const cutoffTime = options.cutoff.getTime();
     const policy = validateDataLifecyclePolicy(options.policy);
+    if (!options.dryRun && !options.allowWrite) {
+      throw new Error("allowWrite must be true for lifecycle mutations");
+    }
     const cutoffs = {
       outboxProcessed: new Date(cutoffTime - policy.outboxProcessedDays * 86_400_000),
       authSessions: new Date(cutoffTime - policy.authSessionDays * 86_400_000),
@@ -106,7 +109,6 @@ export class DataLifecycleRepository {
     const deleted = counters();
 
     if (!options.dryRun) {
-      if (!options.allowWrite) throw new Error("allowWrite must be true for lifecycle mutations");
       const limits = { batchSize: policy.batchSize, maxBatches: policy.maxBatches, maxRows: policy.maxRows };
       deleted.outboxProcessed = await this.deleteOutboxBatches(cutoffs.outboxProcessed, limits);
       deleted.authSessions = await this.deleteAuthSessionBatches(cutoffs.authSessions, limits);

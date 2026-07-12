@@ -15,11 +15,15 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     coverage: {
       provider: "v8",
-      reporter: ["text", "html", "json"],
-      // Only measure repository layer coverage — db/ is ported infrastructure
-      // (pool/sql/transaction) tested by integration tests, not unit tests.
+      reportsDirectory: "coverage",
+      reporter: ["text", "html", "json", "json-summary"],
+      // Govern each core business layer independently. HTTP, DB integration,
+      // scripts/workflows and E2E are represented by the functional evidence
+      // matrix produced by scripts/report-layered-coverage.ts.
       include: ["src/repositories/**/*.ts", "src/services/**/*.ts", "src/domain/**/*.ts", "src/errors/**/*.ts"],
-      exclude: ["src/db/**/*.ts", "src/**/types.ts", "src/domain/**"],
+      exclude: ["src/**/types.ts"],
+      // The layer-aware 85/85/75 gates run after Vitest. Keep only a low global
+      // floor here so a strong layer cannot hide a weak one in one aggregate.
       thresholds: {
         lines: 75,
         functions: 70,

@@ -65,7 +65,22 @@ jobs:
           retention-days: 30
 
       - name: Engineering verification
+        env:
+          COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: npm run verify:engineering
+
+      - name: Upload layered coverage evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: layered-coverage-report
+          path: |
+            coverage/layered-summary.json
+            coverage/layered-summary.md
+            coverage/coverage-summary.json
+            coverage/index.html
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Official Prometheus rule syntax gate
         run: |

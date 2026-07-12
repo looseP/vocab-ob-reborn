@@ -10,9 +10,68 @@ vi.mock("@/db/connection", () => ({
 }));
 
 import { createRepositories } from "@/index";
+import { AuthSessionRepository, type AuthSessionRecord } from "@/repositories/auth-session.repository";
 import type { AnnotationRow, HighlightRow, NoteRow, ReviewRating, WordRow, WordSummary } from "@/domain";
 
 beforeEach(() => mock.reset());
+
+function authSession(overrides: Partial<AuthSessionRecord> = {}): AuthSessionRecord {
+  return {
+    id: "session-1", user_id: "owner-1", role: "owner",
+    token_hash: "token-hash", csrf_hash: "csrf-hash",
+    expires_at: "2026-07-12T12:00:00.000Z", revoked_at: null,
+    ...overrides,
+  };
+}
+
+describe("AuthSessionRepository", () => {
+  it("creates a session with ordered typed parameters", async () => {
+    const expected = authSession();
+    mock.setRows([expected]);
+    const repository = new AuthSessionRepository();
+
+    await expect(repository.create({
+      userId: "owner-1", role: "owner", tokenHash: "token-hash",
+      csrfHash: "csrf-hash", expiresAt: "2026-07-12T12:00:00.000Z",
+    })).resolves.toEqual(expected);
+    expect(mock.lastQuery!.text).toContain("INSERT INTO auth_sessions");
+    expect(mock.lastQuery!.text).toContain("VALUES ($1::uuid, $2, $3, $4, $5::timestamptz)");
+    expect(mock.lastQuery!.params).toEqual([
+      "owner-1", "owner", "token-hash", "csrf-hash", "2026-07-12T12:00:00.000Z",
+    ]);
+  });
+
+  it("fails closed when create returns no session", async () => {
+    mock.setRows([]);
+    await expect(new AuthSessionRepository().create({
+      userId: "owner-1", role: "owner", tokenHash: "token-hash",
+      csrfHash: "csrf-hash", expiresAt: "2026-07-12T12:00:00.000Z",
+    })).rejects.toThrow("Failed to create auth session");
+  });
+
+  it("finds only active non-revoked sessions", async () => {
+    mock.setRows([authSession()]);
+    await expect(new AuthSessionRepository().findActiveByTokenHash("token-hash")).resolves.toEqual(authSession());
+    expect(mock.lastQuery!.text).toContain("revoked_at IS NULL");
+    expect(mock.lastQuery!.text).toContain("expires_at > now()");
+    expect(mock.lastQuery!.params).toEqual(["token-hash"]);
+  });
+
+  it.each([
+    [[{ id: "session-1" }], true],
+    [[], false],
+  ])("maps revoke results to %s", async (rows, expected) => {
+    mock.setRows(rows);
+    await expect(new AuthSessionRepository().revokeByTokenHash("token-hash")).resolves.toBe(expected);
+    expect(mock.lastQuery!.text).toContain("revoked_at IS NULL");
+  });
+
+  it("returns the number of expired or revoked sessions deleted", async () => {
+    mock.setRows([{ id: "session-1" }, { id: "session-2" }]);
+    await expect(new AuthSessionRepository().deleteExpiredOrRevoked()).resolves.toBe(2);
+    expect(mock.lastQuery!.text).toContain("expires_at <= now() OR revoked_at IS NOT NULL");
+  });
+});
 
 describe("AnnotationRepository", () => {
   it("findByWord queries by user+wordbook+word", async () => {
@@ -53,6 +112,50 @@ describe("AnnotationRepository", () => {
 });
 
 describe("LlmUsageRepository", () => {
+  it.each([
+    ["2026-07-10", ["2026-07-10"]],
+    [undefined, []],
+  ])("returns numeric daily usage for dayKey=%s", async (dayKey, params) => {
+    mock.setRows([{ total: "42" }]);
+    const result = await createRepositories().llmUsage.getDailyUsage(dayKey);
+    expect(result).toBe(42);
+    expect(mock.lastQuery!.params).toEqual(params);
+  });
+
+  it("returns zero daily usage and safe zero reservation metrics for empty results", async () => {
+    mock.setRows([]);
+    const repository = createRepositories().llmUsage;
+    await expect(repository.getDailyUsage()).resolves.toBe(0);
+    await expect(repository.getReservationMetrics()).resolves.toEqual({
+      pendingCount: 0, expiredPendingCount: 0, oldestPendingAgeSeconds: 0,
+    });
+  });
+
+  it("maps reservation metrics and records settled calls", async () => {
+    mock.setRows([{ pending_count: "3", expired_pending_count: "1", oldest_pending_age_seconds: "90" }]);
+    const repository = createRepositories().llmUsage;
+    await expect(repository.getReservationMetrics()).resolves.toEqual({
+      pendingCount: 3, expiredPendingCount: 1, oldestPendingAgeSeconds: 90,
+    });
+    await repository.record("openai", "gpt-4o", 10, 5);
+    expect(mock.lastQuery!.text).toContain("VALUES ($1, $2, $3, $4, 'settled', now())");
+  });
+
+  it("releases pending reservations and fails closed when settlement misses", async () => {
+    const repository = createRepositories().llmUsage;
+    mock.setRows([]);
+    await repository.releaseDailyTokens("reservation-1");
+    expect(mock.lastQuery!.text).toContain("status = 'released'");
+    await expect(repository.settleDailyTokens("missing", "openai", "gpt", 1, 1))
+      .rejects.toThrow("LLM usage reservation not found");
+  });
+
+  it("returns null when the budget reservation insert produces no id", async () => {
+    mock.setRows([]);
+    await expect(createRepositories().llmUsage.reserveDailyTokens("2026-07-10", 250, 1000, 120))
+      .resolves.toBeNull();
+  });
+
   it("reserves only against live budget and persists an expiry", async () => {
     mock.setRows([{ id: "reservation-1" }]);
     const repos = createRepositories();
