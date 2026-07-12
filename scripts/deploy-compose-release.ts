@@ -43,7 +43,7 @@ export function readDeploymentImages(manifestPath: string): Record<(typeof IMAGE
 }
 
 export function buildDeploymentCommands(deployEnvFile: string, imageEnvFile: string): Command[] {
-  const compose = ["compose", "--env-file", deployEnvFile, "--env-file", imageEnvFile];
+  const compose = ["compose", "-f", "compose.production.yaml", "--env-file", deployEnvFile, "--env-file", imageEnvFile];
   return [
     { binary: "docker", args: [...compose, "pull", "migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"], phase: "pull" },
     { binary: "docker", args: [...compose, "run", "--rm", "--no-deps", "--no-build", "migrate"], phase: "migration" },

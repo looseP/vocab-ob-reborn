@@ -19,8 +19,23 @@ describe("runtime configuration", () => {
     });
   });
 
-  it("normalizes empty optional role URLs without weakening production separation", () => {
-    expect(loadRuntimeConfig({ ...base, APP_DATABASE_URL: "" }).APP_DATABASE_URL).toBeUndefined();
+  it("normalizes empty optional values without weakening production separation", () => {
+    expect(loadRuntimeConfig({
+      ...base,
+      APP_DATABASE_URL: "",
+      METRICS_BEARER_TOKEN: "",
+      LLM_PROVIDER: "",
+      LLM_MODEL: "",
+      LLM_API_KEY: "",
+      LLM_BASE_URL: "",
+    })).toMatchObject({
+      APP_DATABASE_URL: undefined,
+      METRICS_BEARER_TOKEN: undefined,
+      LLM_PROVIDER: undefined,
+      LLM_MODEL: undefined,
+      LLM_API_KEY: undefined,
+      LLM_BASE_URL: undefined,
+    });
     expect(() => loadRuntimeConfig({
       ...base,
       NODE_ENV: "production",

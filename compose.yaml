@@ -1,7 +1,7 @@
 name: vocab-observatory
 
 x-app-environment: &app-environment
-  DATABASE_URL: ${APP_DATABASE_URL:-${DATABASE_URL:-postgresql://vocab:vocab@postgres:5432/vocab}}
+  DATABASE_URL: ${APP_DATABASE_URL:-${DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}}
   DB_SSLMODE: ${DB_SSLMODE:-disable}
   DB_POOL_MAX: ${DB_POOL_MAX:-5}
   LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -51,7 +51,7 @@ services:
     restart: "no"
     environment:
       <<: *app-environment
-      DATABASE_URL: ${MIGRATION_DATABASE_URL:-}
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,14 +61,15 @@ services:
     <<: *app-base
     environment:
       <<: *app-environment
-      NODE_ENV: ${APP_NODE_ENV:-production}
+      NODE_ENV: ${APP_NODE_ENV:-development}
       PORT: 3001
       SERVE_FRONTEND: "true"
       APP_DATABASE_URL: ${APP_DATABASE_URL:-}
-      APP_ORIGIN: ${APP_ORIGIN:-}
-      OWNER_API_TOKEN: ${OWNER_API_TOKEN:-}
+      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:${APP_PORT:-3001}}
+      # Local-only examples; production overrides must supply real secrets.
+      OWNER_API_TOKEN: ${OWNER_API_TOKEN:-local-owner-api-token-only-0001}
       METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
-      LOCAL_OWNER_ID: ${LOCAL_OWNER_ID:-}
+      LOCAL_OWNER_ID: ${LOCAL_OWNER_ID:-00000000-0000-4000-8000-000000000001}
       READINESS_TIMEOUT_MS: ${READINESS_TIMEOUT_MS:-500}
       SHUTDOWN_GRACE_MS: ${SHUTDOWN_GRACE_MS:-25000}
       TRUST_PROXY: ${TRUST_PROXY:-false}
@@ -81,7 +82,7 @@ services:
       DATAMUSE_ENABLED: ${DATAMUSE_ENABLED:-false}
     command: ["./node_modules/.bin/tsx", "src/server.ts"]
     ports:
-      - "${APP_PORT:-3001}:3001"
+      - "127.0.0.1:${APP_PORT:-3001}:3001"
     stop_grace_period: 35s
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
@@ -95,7 +96,7 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-review-outbox-worker.ts"]
     environment:
       <<: *app-environment
-      DATABASE_URL: ${WORKER_DATABASE_URL:-}
+      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}
       OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-20}
       OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-60}
@@ -107,7 +108,7 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-llm-reservation-reaper.ts"]
     environment:
       <<: *app-environment
-      DATABASE_URL: ${WORKER_DATABASE_URL:-}
+      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}
       LLM_REAPER_POLL_INTERVAL_MS: ${LLM_REAPER_POLL_INTERVAL_MS:-5000}
       LLM_REAPER_BATCH_SIZE: ${LLM_REAPER_BATCH_SIZE:-100}
     stop_grace_period: 30s
@@ -115,6 +116,8 @@ services:
   backup-scheduler:
     <<: *app-base
     image: ${BACKUP_IMAGE:-vocab-observatory-v2-backup:local}
+    # On POSIX hosts, set this to the host UID:GID when bind-mounting backups.
+    user: ${BACKUP_RUNTIME_USER:-node}
     build:
       context: .
       target: backup-runtime
@@ -123,15 +126,16 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
     environment:
       <<: *app-environment
-      DATABASE_URL: ${BACKUP_DATABASE_URL:-}
+      DATABASE_URL: ${BACKUP_DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}
       BACKUP_DIR: ${BACKUP_DIR:-/backups}
       BACKUP_INTERVAL_MS: ${BACKUP_INTERVAL_MS:-86400000}
       BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-14}
-      BACKUP_SIGNING_KEY: ${BACKUP_SIGNING_KEY:-}
+      # Local-only example; production overlay requires an external secret.
+      BACKUP_SIGNING_KEY: ${BACKUP_SIGNING_KEY:-local-backup-signing-key-only-0001}
       BACKUP_REQUIRE_SIGNING_KEY: ${BACKUP_REQUIRE_SIGNING_KEY:-true}
       BACKUP_OBJECT_LOCK: ${BACKUP_OBJECT_LOCK:-true}
     volumes:
-      - ${BACKUP_HOST_DIR:-backups}:/backups
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
     stop_grace_period: 30s
     healthcheck:
       test: ["CMD-SHELL", "pg_dump --version >/dev/null && pg_restore --version >/dev/null"]

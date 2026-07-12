@@ -72,7 +72,6 @@ jobs:
         run: npm run verify:engineering
 
       - name: Upload layered coverage evidence
-        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: layered-coverage-report
@@ -106,6 +105,24 @@ jobs:
 
       - name: Build backup image
         run: docker build --target backup-runtime --tag vocab-observatory-v2-backup:ci .
+
+      - name: Clean-volume local Compose smoke
+        timeout-minutes: 8
+        env:
+          APP_IMAGE: vocab-observatory-v2:ci
+          MIGRATION_IMAGE: vocab-observatory-v2-migration:ci
+          BACKUP_IMAGE: vocab-observatory-v2-backup:ci
+          LOCAL_COMPOSE_SMOKE_SKIP_BUILD: "true"
+        run: npm run runtime:smoke:local
+
+      - name: Upload local Compose smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: local-compose-smoke-diagnostics
+          path: .tmp/local-compose-smoke/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Generate image CycloneDX SBOMs
         run: |

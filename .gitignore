@@ -44,5 +44,7 @@ Thumbs.db
 npm-debug.log*
 
 # Temporary
+.tmp/
 tmp/
 temp/
+backups/
