@@ -19,8 +19,20 @@ describe("release workflow contract", () => {
     expect(() => verifyReleaseWorkflow(workflow.replace(/anchore\/syft@sha256:[a-f0-9]{64}/, "anchore/syft:latest"))).toThrow(/Syft/);
   });
 
-  it("rejects production that does not follow staging", () => {
-    expect(() => verifyReleaseWorkflow(workflow.replace("needs: [publish, staging]", "needs: publish"))).toThrow(/follow staging/);
+  it("rejects acceptance that does not follow staging", () => {
+    expect(() => verifyReleaseWorkflow(workflow.replace("needs: [publish, staging]", "needs: publish"))).toThrow(/acceptance must follow staging/i);
+  });
+
+  it("rejects production bypassing acceptance", () => {
+    expect(() => verifyReleaseWorkflow(workflow.replace("needs: [publish, production-acceptance]", "needs: [publish, staging]"))).toThrow(/depend on acceptance/);
+  });
+
+  it("rejects continue-on-error", () => {
+    expect(() => verifyReleaseWorkflow(`${workflow}\ncontinue-on-error: true\n`)).toThrow(/continue on error/);
+  });
+
+  it("rejects weakened evidence retention", () => {
+    expect(() => verifyReleaseWorkflow(workflow.replaceAll("retention-days: 90", "retention-days: 1"))).toThrow(/retained/);
   });
 
   it("keeps CI aligned with the release manifest v2 evidence contract", () => {

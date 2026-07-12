@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildDeploymentCommands, createDryRunPlan, createEvidence, executeDeploymentCommands, readDeploymentImages, withDeploymentLock } from "../../scripts/deploy-compose-release";
+import { buildDeploymentCommands, createDryRunPlan, createEvidence, executeDeploymentCommands, readDeploymentImages, summarizeDeploymentEvidence, validateSuccessfulDeploymentEvidence, withDeploymentLock } from "../../scripts/deploy-compose-release";
 
 const directories: string[] = [];
 const digest = (character: string) => `sha256:${character.repeat(64)}`;
@@ -92,6 +92,13 @@ describe("Compose release deployment contract", () => {
     const evidence = createEvidence("production", "a".repeat(64), "smoke", true, new Date("2026-07-11T00:00:00.000Z"));
     expect(evidence).toEqual({ environment: "production", manifestSha256: "a".repeat(64), phase: "smoke", success: true, timestamp: "2026-07-11T00:00:00.000Z" });
     expect(JSON.stringify(evidence)).not.toContain("ghcr.io");
+  });
+
+  it("requires exactly four ordered successful phases", () => {
+    const items = (["pull", "migration", "rollout", "smoke"] as const).map((phase) => createEvidence("staging", "c".repeat(64), phase, true));
+    expect(() => validateSuccessfulDeploymentEvidence(summarizeDeploymentEvidence("staging", "c".repeat(64), items))).not.toThrow();
+    expect(() => validateSuccessfulDeploymentEvidence(summarizeDeploymentEvidence("staging", "c".repeat(64), items.slice(0, 3)))).toThrow(/exactly/);
+    expect(() => summarizeDeploymentEvidence("staging", "c".repeat(64), [items[0], items[0]])).toThrow(/order/);
   });
 
   it("redacts absolute temporary and manifest paths from dry-run", () => {

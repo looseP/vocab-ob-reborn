@@ -50,6 +50,10 @@ Database migrations are forward-only. `npm run release:rollback-check` proves th
 
 Before increasing traffic, deploy the previous application image against the migrated staging database and execute browser/API smoke. A failure means the migration is not rollback compatible and the release must use roll-forward recovery.
 
+## Production acceptance
+
+The final Go/No-Go contract is documented in `docs/operations/production-release-acceptance.md`. Production requires the exact publish artifact, the ordered staging deployment evidence, six explicit passed checks, the protected `production` Environment required reviewers, and a `GO` decision. Real backup/restore and alerting drills require independent infrastructure and must never be represented as passed without execution.
+
 ## Evidence retention
 
 Retain the release manifest, both SBOMs, CI logs, database-role result, deployment smoke output, restore evidence, and rollback exercise with the same RC identifier. Rotate any credential that appears in logs or shell history.

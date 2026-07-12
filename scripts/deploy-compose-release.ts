@@ -1,12 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 
 export type DeployEnvironment = "staging" | "production";
 export type Command = { binary: string; args: string[]; phase: "pull" | "migration" | "rollout" | "smoke" };
 export type DeploymentEvidence = { environment: DeployEnvironment; manifestSha256: string; phase: Command["phase"]; success: boolean; timestamp: string };
+export type DeploymentEvidenceSummary = { schemaVersion: 1; environment: DeployEnvironment; manifestSha256: string; phases: Array<{ phase: Command["phase"]; success: boolean; timestamp: string }> };
+const DEPLOYMENT_PHASES = ["pull", "migration", "rollout", "smoke"] as const;
 
 type ReleaseManifest = {
   images?: Record<string, { reference?: unknown }>;
@@ -84,6 +86,33 @@ export function createEvidence(environment: DeployEnvironment, manifestSha256: s
   return { environment, manifestSha256, phase, success, timestamp: now.toISOString() };
 }
 
+export function summarizeDeploymentEvidence(environment: DeployEnvironment, manifestSha256: string, evidence: DeploymentEvidence[]): DeploymentEvidenceSummary {
+  if (!/^[a-f0-9]{64}$/.test(manifestSha256)) throw new Error("Invalid manifest SHA-256");
+  if (evidence.length > DEPLOYMENT_PHASES.length) throw new Error("Deployment evidence contains too many phases");
+  evidence.forEach((item, index) => {
+    if (item.environment !== environment || item.manifestSha256 !== manifestSha256 || item.phase !== DEPLOYMENT_PHASES[index]) throw new Error("Deployment evidence identity or phase order mismatch");
+  });
+  return { schemaVersion: 1, environment, manifestSha256, phases: evidence.map(({ phase, success, timestamp }) => ({ phase, success, timestamp })) };
+}
+
+export function validateSuccessfulDeploymentEvidence(summary: DeploymentEvidenceSummary): void {
+  if (summary.phases.length !== DEPLOYMENT_PHASES.length || summary.phases.some((item, index) => item.phase !== DEPLOYMENT_PHASES[index] || item.success !== true)) {
+    throw new Error("Successful deployment requires exactly pull, migration, rollout, and smoke success");
+  }
+}
+
+export function writeDeploymentEvidence(path: string, summary: DeploymentEvidenceSummary): void {
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  chmodSync(temporary, 0o600);
+  try {
+    renameSync(temporary, path);
+    chmodSync(path, 0o600);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
 export function createDryRunPlan(environment: DeployEnvironment, manifestSha256: string, commands: Command[], deployEnvFile: string, imageEnvFile: string): object {
   return {
     ok: true,
@@ -136,11 +165,31 @@ function main(args: string[]): void {
     const lockPath = process.env.RELEASE_DEPLOY_LOCK_FILE;
     if (!lockPath) throw new Error("RELEASE_DEPLOY_LOCK_FILE is required");
     if (!isAbsolute(lockPath)) throw new Error("RELEASE_DEPLOY_LOCK_FILE must be an absolute path");
+    const evidencePathValue = process.env.RELEASE_DEPLOY_EVIDENCE_PATH;
+    if (evidencePathValue && !isAbsolute(evidencePathValue)) throw new Error("RELEASE_DEPLOY_EVIDENCE_PATH must be an absolute path");
+    const evidencePath = evidencePathValue ? resolve(evidencePathValue) : undefined;
+    const evidence: DeploymentEvidence[] = [];
+    let evidenceWriteError: unknown;
     withDeploymentLock(resolve(lockPath), () => {
       executeDeploymentCommands(commands, (command) => {
         execFileSync(command.binary, command.args, { cwd: root, stdio: "inherit", env: process.env });
-      }, (phase, success) => console.log(JSON.stringify(createEvidence(environment, manifestSha256, phase, success))));
+      }, (phase, success) => {
+        const item = createEvidence(environment, manifestSha256, phase, success);
+        evidence.push(item);
+        console.log(JSON.stringify(item));
+        if (evidencePath) {
+          try {
+            writeDeploymentEvidence(evidencePath, summarizeDeploymentEvidence(environment, manifestSha256, evidence));
+          } catch (error) {
+            evidenceWriteError ??= error;
+            console.error("Unable to persist redacted deployment evidence");
+          }
+        }
+      });
     });
+    const summary = summarizeDeploymentEvidence(environment, manifestSha256, evidence);
+    validateSuccessfulDeploymentEvidence(summary);
+    if (evidenceWriteError) throw new Error("Deployment succeeded but evidence persistence failed", { cause: evidenceWriteError });
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
