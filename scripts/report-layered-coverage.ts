@@ -147,16 +147,19 @@ export function calculateDiffCoverage(
     executableLines += uniqueLines.size;
     if (!file) continue;
 
-    const ranges: Array<{ location: Location; hit: number }> = [
-      ...Object.entries(file.statementMap).map(([id, location]) => ({ location, hit: file.s[id] ?? 0 })),
-      ...Object.entries(file.fnMap).map(([id, fn]) => ({ location: fn.loc, hit: file.f[id] ?? 0 })),
-      ...Object.entries(file.branchMap).flatMap(([id, branch]) =>
-        branch.locations.map((location, index) => ({ location, hit: file.b[id]?.[index] ?? 0 })),
-      ),
-    ];
+    const statementRanges = Object.entries(file.statementMap).map(([id, location]) => ({ location, hit: file.s[id] ?? 0 }));
+    const branchRanges = Object.entries(file.branchMap).flatMap(([id, branch]) =>
+      branch.locations.map((location, index) => ({ location, hit: file.b[id]?.[index] ?? 0 })),
+    );
+    const functionRanges = Object.entries(file.fnMap).map(([id, fn]) => ({ location: fn.loc, hit: file.f[id] ?? 0 }));
     for (const line of uniqueLines) {
-      const mapped = ranges.filter(({ location }) => location.start.line <= line && line <= location.end.line);
-      if (mapped.some(({ hit }) => hit > 0)) coveredLines += 1;
+      const containsLine = ({ location }: { location: Location }): boolean =>
+        location.start.line <= line && line <= location.end.line;
+      const statements = statementRanges.filter(containsLine);
+      const branches = branchRanges.filter(containsLine);
+      const functions = functionRanges.filter(containsLine);
+      const mostSpecific = statements.length > 0 ? statements : branches.length > 0 ? branches : functions;
+      if (mostSpecific.some(({ hit }) => hit > 0)) coveredLines += 1;
     }
   }
   const percentage = executableLines === 0 ? null : Number(((coveredLines / executableLines) * 100).toFixed(2));
@@ -392,11 +395,15 @@ function run(): void {
   writeFileSync(path.join(coverageDir, "layered-summary.md"), toMarkdown(summary), "utf8");
   console.log(toMarkdown(summary));
   if (!summary.baselineOk) {
-    const detail = Object.entries(summary.baselineGates)
+    const failures = Object.entries(summary.baselineGates)
       .filter(([, gate]) => !gate.ok)
-      .map(([layer, gate]) => `${layer}: ${gate.failures.join(", ")}`)
-      .join("; ");
-    throw new Error(`Layered coverage baseline regressed: ${detail}`);
+      .map(([layer, gate]) => `${layer}: ${gate.failures.join(", ")}`);
+    if (!summary.diffCoverage.ok) {
+      failures.push(
+        `diff: ${summary.diffCoverage.coveredLines}/${summary.diffCoverage.executableLines} changed executable lines covered (${summary.diffCoverage.pct ?? 0}% < 85%)`,
+      );
+    }
+    throw new Error(`Layered coverage gate failed: ${failures.join("; ")}`);
   }
 }
 

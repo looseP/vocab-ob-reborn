@@ -123,6 +123,16 @@ describe("diff coverage", () => {
       pct: 0,
       ok: false,
     });
+
+    const nested = fileCoverage("src/services/nested.ts", [1, 1, 0]);
+    nested.fnMap["0"].loc.end.line = 3;
+    nested.f["0"] = 1;
+    expect(calculateDiffCoverage({ "src/services/nested.ts": [3] }, { nested }, "base")).toMatchObject({
+      executableLines: 1,
+      coveredLines: 0,
+      pct: 0,
+      ok: false,
+    });
     expect(calculateDiffCoverage({}, coverage, "base")).toMatchObject({ pct: null, ok: true });
   });
 });
