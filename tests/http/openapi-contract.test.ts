@@ -34,6 +34,56 @@ describe("API contract", () => {
     expect(new Set(operationIds).size).toBe(operationIds.length);
   });
 
+  it("requires explicit authentication and CSRF policies for every operation", () => {
+    expect(apiOperations.every((operation) => operation.auth !== undefined)).toBe(true);
+    expect(apiOperations.every((operation) => operation.csrf !== undefined)).toBe(true);
+    expect(apiOperations.filter((operation) => operation.csrf === "sessionMutation").every((operation) => !["get"].includes(operation.method))).toBe(true);
+  });
+
+  it("generates explicit security schemes and operation requirements", () => {
+    const document = JSON.parse(serializeOpenApiDocument()) as {
+      components?: { securitySchemes?: Record<string, unknown> };
+      paths: Record<string, Record<string, { security?: Array<Record<string, string[]>>; "x-auth-policy"?: string; "x-csrf-policy"?: string }>>;
+    };
+    expect(document.components?.securitySchemes).toEqual({
+      bearerAuth: { type: "http", scheme: "bearer" },
+      csrfToken: { type: "apiKey", in: "header", name: "X-CSRF-Token" },
+      metricsBearerAuth: { type: "http", scheme: "bearer" },
+      sessionCookie: { type: "apiKey", in: "cookie", name: "vocab_session" },
+    });
+    expect(document.paths["/healthz"].get.security).toEqual([]);
+    expect(document.paths["/metrics"].get.security).toEqual([{ metricsBearerAuth: [] }]);
+    expect(document.paths["/api/words"].get.security).toEqual([{ bearerAuth: [] }, { sessionCookie: [] }]);
+    expect(document.paths["/api/review/answer"].post.security).toEqual([
+      { bearerAuth: [] },
+      { sessionCookie: [], csrfToken: [] },
+    ]);
+    expect(document.paths["/api/auth/session"].delete.security).toEqual([
+      {},
+      { sessionCookie: [], csrfToken: [] },
+    ]);
+    expect(document.paths["/api/auth/session"].delete["x-auth-policy"]).toBe("optionalSession");
+    expect(document.paths["/api/auth/session"].delete["x-csrf-policy"]).toBe("sessionMutation");
+  });
+
+  it("publishes authentication request and response header contracts", () => {
+    const document = JSON.parse(serializeOpenApiDocument()) as {
+      paths: Record<string, Record<string, {
+        parameters?: Array<{ in: string; name: string; required: boolean }>;
+        responses: Record<string, { headers?: Record<string, unknown> }>;
+      }>>;
+    };
+    const login = document.paths["/api/auth/session"].post;
+    expect(login.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ in: "header", name: "Origin", required: true }),
+      expect.objectContaining({ in: "header", name: "X-Requested-With", required: true }),
+    ]));
+    expect(login.responses["201"].headers).toHaveProperty("Cache-Control");
+    expect(login.responses["201"].headers).toHaveProperty("Set-Cookie");
+    expect(login.responses["429"].headers).toHaveProperty("Retry-After");
+    expect(document.paths["/api/words"].get.responses["401"].headers).toHaveProperty("WWW-Authenticate");
+  });
+
   it("describes defaulted query parameters as optional request inputs", () => {
     const document = JSON.parse(serializeOpenApiDocument()) as {
       paths: Record<string, Record<string, { parameters?: Array<{ name: string; required: boolean }> }>>;

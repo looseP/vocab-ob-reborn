@@ -4,10 +4,35 @@
     "title": "Vocab Observatory API",
     "version": "0.1.0"
   },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "csrfToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-CSRF-Token"
+      },
+      "metricsBearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "vocab_session"
+      }
+    }
+  },
   "paths": {
     "/healthz": {
       "get": {
         "operationId": "getLiveness",
+        "security": [],
+        "x-auth-policy": "public",
+        "x-csrf-policy": "none",
         "responses": {
           "200": {
             "description": "Success",
@@ -36,6 +61,9 @@
     "/health": {
       "get": {
         "operationId": "getHealth",
+        "security": [],
+        "x-auth-policy": "public",
+        "x-csrf-policy": "none",
         "responses": {
           "200": {
             "description": "Success",
@@ -72,6 +100,9 @@
     "/readyz": {
       "get": {
         "operationId": "getReadiness",
+        "security": [],
+        "x-auth-policy": "public",
+        "x-csrf-policy": "none",
         "responses": {
           "200": {
             "description": "Success",
@@ -119,6 +150,13 @@
     "/metrics": {
       "get": {
         "operationId": "getPrometheusMetrics",
+        "security": [
+          {
+            "metricsBearerAuth": []
+          }
+        ],
+        "x-auth-policy": "metrics",
+        "x-csrf-policy": "none",
         "responses": {
           "200": {
             "description": "Success",
@@ -159,6 +197,31 @@
     "/api/auth/session": {
       "post": {
         "operationId": "createAuthSession",
+        "security": [],
+        "x-auth-policy": "public",
+        "x-csrf-policy": "none",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Origin",
+            "required": true,
+            "description": "Must match the configured application origin.",
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Requested-With",
+            "required": true,
+            "description": "Must equal VocabObservatory.",
+            "schema": {
+              "type": "string",
+              "const": "VocabObservatory"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -182,6 +245,22 @@
         "responses": {
           "201": {
             "description": "Success",
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents authentication state from being cached.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Set-Cookie": {
+                "description": "Sets or clears the session and CSRF cookies.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -483,6 +562,23 @@
           },
           "429": {
             "description": "Rate limited",
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents authentication state from being cached.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "Seconds before another authentication attempt.",
+                "x-required": true,
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -551,6 +647,16 @@
       },
       "get": {
         "operationId": "getAuthSession",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "responses": {
           "200": {
             "description": "Success",
@@ -620,6 +726,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -853,6 +968,15 @@
       },
       "delete": {
         "operationId": "deleteAuthSession",
+        "security": [
+          {},
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "optionalSession",
+        "x-csrf-policy": "sessionMutation",
         "responses": {
           "204": {
             "description": "No Content"
@@ -1127,6 +1251,16 @@
     "/api/operations/metrics": {
       "get": {
         "operationId": "getOperationMetrics",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "responses": {
           "200": {
             "description": "Success",
@@ -1173,6 +1307,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1408,6 +1551,16 @@
     "/api/words": {
       "get": {
         "operationId": "listWords",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "query",
@@ -1530,6 +1683,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1765,6 +1927,16 @@
     "/api/words/{slug}": {
       "get": {
         "operationId": "getWord",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "path",
@@ -1821,6 +1993,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2056,6 +2237,17 @@
     "/api/review/answer": {
       "post": {
         "operationId": "submitReviewAnswer",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -2144,6 +2336,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2379,6 +2580,17 @@
     "/api/review/skip": {
       "post": {
         "operationId": "skipReview",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -2457,6 +2669,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -2692,6 +2913,17 @@
     "/api/review/suspend": {
       "post": {
         "operationId": "suspendReview",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -2769,6 +3001,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3004,6 +3245,17 @@
     "/api/review/undo": {
       "post": {
         "operationId": "undoReview",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -3081,6 +3333,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3316,6 +3577,17 @@
     "/api/l2/{slug}/draft": {
       "post": {
         "operationId": "createL2Draft",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -3405,6 +3677,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -3673,6 +3954,17 @@
     "/api/l2/{slug}/external-prompt": {
       "post": {
         "operationId": "createL2ExternalPrompt",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -3762,6 +4054,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4030,6 +4331,17 @@
     "/api/l2/{slug}/confirm": {
       "post": {
         "operationId": "confirmL2Draft",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -4138,6 +4450,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4406,6 +4727,17 @@
     "/api/l3/sources": {
       "post": {
         "operationId": "createL3Source",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -4541,6 +4873,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -4776,6 +5117,17 @@
     "/api/l3/contexts": {
       "post": {
         "operationId": "createL3Context",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -4898,6 +5250,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5133,6 +5494,17 @@
     "/api/l3/occurrences": {
       "post": {
         "operationId": "createL3Occurrence",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -5271,6 +5643,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5506,6 +5887,17 @@
     "/api/l3/context-links": {
       "post": {
         "operationId": "createL3ContextLink",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -5657,6 +6049,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -5892,6 +6293,17 @@
     "/api/l3/occurrences/{id}": {
       "delete": {
         "operationId": "deleteL3Occurrence",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -5948,6 +6360,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6183,6 +6604,17 @@
     "/api/l3/context-links/{id}": {
       "delete": {
         "operationId": "deleteL3ContextLink",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -6239,6 +6671,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6474,6 +6915,17 @@
     "/api/l3/sources/{id}": {
       "delete": {
         "operationId": "deleteL3Source",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -6530,6 +6982,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -6765,6 +7226,17 @@
     "/api/l3/contexts/{id}": {
       "delete": {
         "operationId": "deleteL3Context",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -6821,6 +7293,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7054,6 +7535,16 @@
       },
       "get": {
         "operationId": "getL3Context",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "path",
@@ -7110,6 +7601,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7345,6 +7845,16 @@
     "/api/l3/words/{slug}/space": {
       "get": {
         "operationId": "getL3WordSpace",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "path",
@@ -7431,6 +7941,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7666,6 +8185,16 @@
     "/api/l3/sources/{id}/space": {
       "get": {
         "operationId": "getL3SourceSpace",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "path",
@@ -7742,6 +8271,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -7977,6 +8515,16 @@
     "/api/l3/graph": {
       "get": {
         "operationId": "getL3Graph",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "query",
@@ -8086,6 +8634,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8321,6 +8878,16 @@
     "/api/l3/words/{slug}/contexts": {
       "get": {
         "operationId": "listL3WordContexts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "path",
@@ -8397,6 +8964,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8632,6 +9208,16 @@
     "/api/l3/sources/{id}/contexts": {
       "get": {
         "operationId": "listL3SourceContexts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "path",
@@ -8708,6 +9294,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -8943,6 +9538,17 @@
     "/api/l3/imports/raw-text": {
       "post": {
         "operationId": "createL3RawTextImport",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -9148,6 +9754,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -9383,6 +9998,17 @@
     "/api/l3/imports/structured": {
       "post": {
         "operationId": "createL3StructuredImport",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -9787,6 +10413,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10022,6 +10657,17 @@
     "/api/l3/proposals": {
       "post": {
         "operationId": "createL3Proposal",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -10203,6 +10849,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10436,6 +11091,16 @@
       },
       "get": {
         "operationId": "listL3Proposals",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "query",
@@ -10519,6 +11184,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -10754,6 +11428,17 @@
     "/api/l3/recommendations/generate": {
       "post": {
         "operationId": "generateL3Recommendations",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "requestBody": {
           "required": true,
           "content": {
@@ -10883,6 +11568,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -11118,6 +11812,16 @@
     "/api/l3/recommendations": {
       "get": {
         "operationId": "listL3Recommendations",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "query",
@@ -11219,6 +11923,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -11454,6 +12167,16 @@
     "/api/l3/recommendations/{id}": {
       "get": {
         "operationId": "getL3Recommendation",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "path",
@@ -11510,6 +12233,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -11745,6 +12477,17 @@
     "/api/l3/recommendations/{id}/accept": {
       "post": {
         "operationId": "acceptL3Recommendation",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -11801,6 +12544,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -12036,6 +12788,17 @@
     "/api/l3/recommendations/{id}/reject": {
       "post": {
         "operationId": "rejectL3Recommendation",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -12116,6 +12879,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -12351,6 +13123,16 @@
     "/api/l3/proposals/{id}": {
       "get": {
         "operationId": "getL3Proposal",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
         "parameters": [
           {
             "in": "path",
@@ -12407,6 +13189,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -12642,6 +13433,17 @@
     "/api/l3/proposals/{id}/validate": {
       "post": {
         "operationId": "validateL3Proposal",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -12698,6 +13500,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -12933,6 +13744,17 @@
     "/api/l3/proposals/{id}/confirm": {
       "post": {
         "operationId": "confirmL3Proposal",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -12989,6 +13811,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -13224,6 +14055,17 @@
     "/api/l3/proposals/{id}/reject": {
       "post": {
         "operationId": "rejectL3Proposal",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": [],
+            "csrfToken": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "sessionMutation",
         "parameters": [
           {
             "in": "path",
@@ -13304,6 +14146,15 @@
           },
           "401": {
             "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

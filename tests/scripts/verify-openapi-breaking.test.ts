@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -39,6 +40,10 @@ function gitResult(status: number | null, stdout = "", stderr = "", error?: Erro
 function sequenceGit(...results: GitResult[]): GitRunner {
   let index = 0;
   return () => results[index++] ?? gitResult(1, "", "unexpected git call");
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 describe("compareOpenApiDocuments", () => {
@@ -160,6 +165,37 @@ describe("compareOpenApiDocuments", () => {
     const base = document({ oneOf: [{ type: "string" }, { type: "number" }] });
     expect(compareOpenApiDocuments(base, structuredClone(base))).toEqual([]);
   });
+
+  it("检测删除 required response header", () => {
+    const base = document();
+    base.paths["/words"].post.responses["200"].headers = {
+      "Cache-Control": { "x-required": true, schema: { type: "string" } },
+    };
+    const current = structuredClone(base);
+    delete current.paths["/words"].post.responses["200"].headers["Cache-Control"];
+    expect(messages(base, current)).toContain("required response header 被删除");
+  });
+
+  it("检测删除 security scheme 和放宽 operation security", () => {
+    const base = document();
+    Object.assign(base, {
+      components: {
+        securitySchemes: {
+          bearerAuth: { type: "http", scheme: "bearer" },
+          sessionCookie: { type: "apiKey", in: "cookie", name: "vocab_session" },
+        },
+      },
+    });
+    base.paths["/words"].post.security = [{ bearerAuth: [] }, { sessionCookie: [] }];
+
+    const withoutScheme = structuredClone(base);
+    delete withoutScheme.components.securitySchemes.sessionCookie;
+    expect(messages(base, withoutScheme)).toContain("security scheme 被删除");
+
+    const publicOperation = structuredClone(base);
+    publicOperation.paths["/words"].post.security = [];
+    expect(messages(base, publicOperation)).toContain("operation security requirement 被删除或放宽");
+  });
 });
 
 describe("loadBaseSnapshot", () => {
@@ -223,6 +259,76 @@ describe("runOpenApiBreakingGate", () => {
     mkdirSync(path.join(root, "docs", "api"), { recursive: true });
     writeFileSync(path.join(root, "docs", "api", "openapi.json"), JSON.stringify(document()));
     expect(runOpenApiBreakingGate(root, "base", () => null)).toEqual([]);
+  });
+
+  it("只接受与基线和当前快照精确绑定的 breaking approval", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "openapi-gate-"));
+    mkdirSync(path.join(root, "docs", "api"), { recursive: true });
+    const base = JSON.stringify(document());
+    const currentDocument = document();
+    currentDocument.paths["/words"].post.parameters = [{ in: "header", name: "Origin", required: true, schema: { type: "string" } }];
+    const current = JSON.stringify(currentDocument);
+    writeFileSync(path.join(root, "docs", "api", "openapi.json"), current);
+    writeFileSync(path.join(root, "docs", "api", "openapi-breaking-approval.json"), JSON.stringify({
+      version: 1,
+      baseSha256: sha256(base),
+      currentSha256: sha256(current),
+      issues: [{
+        kind: "breaking",
+        location: "paths./words.post.parameters.header:Origin",
+        message: "新增 required request parameter",
+      }],
+    }));
+    expect(runOpenApiBreakingGate(root, "base", (baseRef, snapshotPath) => snapshotPath.endsWith("openapi.json") ? base : null)).toEqual([]);
+  });
+
+  it("基线已有且未修改的 approval 不会继续豁免后续 breaking change", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "openapi-gate-"));
+    mkdirSync(path.join(root, "docs", "api"), { recursive: true });
+    const base = JSON.stringify(document());
+    const currentDocument = document();
+    currentDocument.paths["/words"].post.parameters = [{ in: "header", name: "Origin", required: true, schema: { type: "string" } }];
+    const current = JSON.stringify(currentDocument);
+    const approval = JSON.stringify({ version: 1, baseSha256: sha256(base), currentSha256: sha256(current), issues: [] });
+    writeFileSync(path.join(root, "docs", "api", "openapi.json"), current);
+    writeFileSync(path.join(root, "docs", "api", "openapi-breaking-approval.json"), approval);
+    expect(runOpenApiBreakingGate(root, "base", (baseRef, snapshotPath) => snapshotPath.endsWith("openapi.json") ? base : approval)).toEqual([
+      expect.objectContaining({ kind: "breaking", location: "paths./words.post.parameters.header:Origin" }),
+    ]);
+  });
+
+  it("拒绝缺失、多余或哈希不匹配的 approval", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "openapi-gate-"));
+    mkdirSync(path.join(root, "docs", "api"), { recursive: true });
+    const base = JSON.stringify(document());
+    const currentDocument = document();
+    currentDocument.paths["/words"].post.parameters = [{ in: "header", name: "Origin", required: true, schema: { type: "string" } }];
+    const current = JSON.stringify(currentDocument);
+    writeFileSync(path.join(root, "docs", "api", "openapi.json"), current);
+    writeFileSync(path.join(root, "docs", "api", "openapi-breaking-approval.json"), JSON.stringify({
+      version: 1,
+      baseSha256: "0".repeat(64),
+      currentSha256: sha256(current),
+      issues: [],
+    }));
+    expect(() => runOpenApiBreakingGate(root, "base", (baseRef, snapshotPath) => snapshotPath.endsWith("openapi.json") ? base : null)).toThrow(/approval/);
+  });
+
+  it("unknown 变化不可被 approval 豁免", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "openapi-gate-"));
+    mkdirSync(path.join(root, "docs", "api"), { recursive: true });
+    const baseDocument = document({ type: "string", pattern: "^a" });
+    const currentDocument = document({ type: "string", pattern: "^b" });
+    const base = JSON.stringify(baseDocument);
+    const current = JSON.stringify(currentDocument);
+    writeFileSync(path.join(root, "docs", "api", "openapi.json"), current);
+    writeFileSync(path.join(root, "docs", "api", "openapi-breaking-approval.json"), JSON.stringify({
+      version: 1,
+      baseSha256: sha256(base),
+      currentSha256: sha256(current),
+      issues: [{ kind: "unknown", location: "x", message: "y" }],
+    }));
+    expect(() => runOpenApiBreakingGate(root, "base", (baseRef, snapshotPath) => snapshotPath.endsWith("openapi.json") ? base : null)).toThrow(/只能包含明确的 breaking issue|unknown/);
   });
 
   it("传播 base loader 错误而不是 bootstrap", () => {

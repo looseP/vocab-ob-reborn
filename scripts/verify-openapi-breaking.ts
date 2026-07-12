@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -249,6 +250,13 @@ export function compareOpenApiDocuments(baseDocument: unknown, currentDocument: 
   if (typeof baseDocument.openapi !== "string" || typeof currentDocument.openapi !== "string") {
     return [{ kind: "unknown", location: "$.openapi", message: "缺少 OpenAPI 版本" }];
   }
+  const baseSecuritySchemes = asObject(asObject(baseDocument.components).securitySchemes);
+  const currentSecuritySchemes = asObject(asObject(currentDocument.components).securitySchemes);
+  for (const name of Object.keys(baseSecuritySchemes)) {
+    if (!(name in currentSecuritySchemes)) {
+      issue(issues, "breaking", `components.securitySchemes.${name}`, "security scheme 被删除");
+    }
+  }
   const basePaths = asObject(baseDocument.paths);
   const currentPaths = asObject(currentDocument.paths);
   const seen = new Set<string>();
@@ -269,6 +277,9 @@ export function compareOpenApiDocuments(baseDocument: unknown, currentDocument: 
       }
       const baseOperation = asObject(basePath[method]);
       const currentOperation = asObject(currentPath[method]);
+      if (baseOperation.security !== undefined && stable(baseOperation.security) !== stable(currentOperation.security)) {
+        issue(issues, "breaking", `${location}.${method}.security`, "operation security requirement 被删除或放宽");
+      }
       const baseParameters = [...(Array.isArray(basePath.parameters) ? basePath.parameters : []), ...(Array.isArray(baseOperation.parameters) ? baseOperation.parameters : [])];
       const currentParameters = [...(Array.isArray(currentPath.parameters) ? currentPath.parameters : []), ...(Array.isArray(currentOperation.parameters) ? currentOperation.parameters : [])];
       compareParameters(baseDocument, currentDocument, baseParameters, currentParameters, `${location}.${method}`, issues, seen);
@@ -295,7 +306,17 @@ export function compareOpenApiDocuments(baseDocument: unknown, currentDocument: 
         const baseResponse = resolveObject(baseDocument, baseResponseInput);
         const currentResponse = resolveObject(currentDocument, currentResponses[status]);
         if (!baseResponse || !currentResponse) issue(issues, "unknown", `${location}.${method}.responses.${status}`, "response 无法安全解析");
-        else compareContent(baseDocument, currentDocument, baseResponse.content, currentResponse.content, "response", `${location}.${method}.responses.${status}`, issues, seen);
+        else {
+          const baseHeaders = asObject(baseResponse.headers);
+          const currentHeaders = asObject(currentResponse.headers);
+          for (const [name, baseHeaderInput] of Object.entries(baseHeaders)) {
+            const baseHeader = resolveObject(baseDocument, baseHeaderInput);
+            if (baseHeader?.["x-required"] === true && !(name in currentHeaders)) {
+              issue(issues, "breaking", `${location}.${method}.responses.${status}.headers.${name}`, "required response header 被删除");
+            }
+          }
+          compareContent(baseDocument, currentDocument, baseResponse.content, currentResponse.content, "response", `${location}.${method}.responses.${status}`, issues, seen);
+        }
       }
     }
   }
@@ -346,19 +367,76 @@ export function loadBaseSnapshot(baseRef: string, snapshotPath: string, cwd = pr
 
 export type BaseSnapshotLoader = (baseRef: string, snapshotPath: string, cwd: string) => string | null;
 
+interface OpenApiBreakingApproval {
+  version: 1;
+  baseSha256: string;
+  currentSha256: string;
+  issues: OpenApiIssue[];
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function parseBreakingApproval(value: unknown): OpenApiBreakingApproval {
+  if (!isObject(value)) throw new Error("OpenAPI breaking approval 必须是对象");
+  const allowedKeys = new Set(["version", "baseSha256", "currentSha256", "issues"]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))) throw new Error("OpenAPI breaking approval 包含未知字段");
+  if (value.version !== 1 || typeof value.baseSha256 !== "string" || typeof value.currentSha256 !== "string" || !Array.isArray(value.issues)) {
+    throw new Error("OpenAPI breaking approval 格式无效");
+  }
+  const issues = value.issues.map((entry) => {
+    if (!isObject(entry) || entry.kind !== "breaking" || typeof entry.location !== "string" || typeof entry.message !== "string") {
+      throw new Error("OpenAPI breaking approval 只能包含明确的 breaking issue");
+    }
+    if (Object.keys(entry).some((key) => !new Set(["kind", "location", "message"]).has(key))) {
+      throw new Error("OpenAPI breaking approval issue 包含未知字段");
+    }
+    return { kind: "breaking" as const, location: entry.location, message: entry.message };
+  });
+  const keys = issues.map((entry) => stable(entry));
+  if (new Set(keys).size !== keys.length) throw new Error("OpenAPI breaking approval 包含重复 issue");
+  return { version: 1, baseSha256: value.baseSha256, currentSha256: value.currentSha256, issues };
+}
+
+function applyBreakingApproval(
+  cwd: string,
+  baseText: string,
+  currentText: string,
+  issues: OpenApiIssue[],
+  baseApprovalText: string | null,
+): OpenApiIssue[] {
+  const approvalPath = path.join(cwd, "docs/api/openapi-breaking-approval.json");
+  if (!existsSync(approvalPath)) return issues;
+  const currentApprovalText = readFileSync(approvalPath, "utf8");
+  if (baseApprovalText === currentApprovalText) return issues;
+  const approval = parseBreakingApproval(JSON.parse(currentApprovalText));
+  if (issues.some((entry) => entry.kind === "unknown")) throw new Error("OpenAPI unknown change 不可通过 approval 豁免");
+  if (approval.baseSha256 !== sha256(baseText) || approval.currentSha256 !== sha256(currentText)) {
+    throw new Error("OpenAPI breaking approval 与基线或当前快照哈希不匹配");
+  }
+  const actual = issues.map((entry) => stable(entry)).sort();
+  const approved = approval.issues.map((entry) => stable(entry)).sort();
+  if (stable(actual) !== stable(approved)) throw new Error("OpenAPI breaking approval 与实际 issue 集合不完全一致");
+  return [];
+}
+
 export function runOpenApiBreakingGate(
   cwd = process.cwd(),
   baseRef = process.env.API_CONTRACT_BASE_REF ?? "origin/main",
   loadBase: BaseSnapshotLoader = loadBaseSnapshot,
 ): OpenApiIssue[] {
   const snapshotPath = "docs/api/openapi.json";
+  const approvalPath = "docs/api/openapi-breaking-approval.json";
   const currentText = readFileSync(path.join(cwd, snapshotPath), "utf8");
   const baseText = loadBase(baseRef, snapshotPath, cwd);
   if (baseText === null) {
     console.log(`[openapi-breaking] BOOTSTRAP — ${baseRef} 不含 ${snapshotPath}`);
     return [];
   }
-  return compareOpenApiDocuments(JSON.parse(baseText), JSON.parse(currentText));
+  const issues = compareOpenApiDocuments(JSON.parse(baseText), JSON.parse(currentText));
+  const baseApprovalText = loadBase(baseRef, approvalPath, cwd);
+  return applyBreakingApproval(cwd, baseText, currentText, issues, baseApprovalText);
 }
 
 const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
