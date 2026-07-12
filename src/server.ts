@@ -12,7 +12,10 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { createApp } from "./http/server";
 import { createServices, type FsrsAdapterFn, type FsrsScheduling } from "./services";
 import { applyReviewAnswer } from "./fsrs/adapter";
+import { parseSchedulerPayload, SchedulerPayloadParseError } from "./fsrs/schema";
 import type { StoredSchedulerCard } from "./fsrs/types";
+import { ValidationError } from "./errors";
+import type { Json } from "./domain";
 import { loadWordbookWeights } from "./db/weights-loader";
 import { checkPoolHealth, resetPool } from "./db/connection";
 import { createLlmProvider } from "./llm";
@@ -30,20 +33,50 @@ const readinessTimeoutMs = config.READINESS_TIMEOUT_MS;
 const shutdownGraceMs = config.SHUTDOWN_GRACE_MS;
 
 /**
- * Adapter bridge: ReviewService stores scheduler_payload as Json (jsonb),
- * but applyReviewAnswer expects the structured StoredSchedulerCard shape.
- * The casts are safe — the payload is always written by this same adapter,
- * and SchedulerUpdate is structurally compatible with FsrsScheduling
- * (StoredSchedulerCard lacks only the Json index signature).
+ * Serialize a structured scheduler card into the Json type used by the
+ * persistence layer. The JSON round-trip guarantees a JSON-compatible value,
+ * so this is a safe single cast (not an `as unknown as` force-cast).
  */
-const fsrsAdapter: FsrsAdapterFn = (schedulerPayload, rating, now, desiredRetention, weights) =>
-  applyReviewAnswer(
-    (schedulerPayload ?? null) as StoredSchedulerCard | null,
-    rating,
-    now,
-    desiredRetention,
-    weights as readonly number[] | null,
-  ) as unknown as FsrsScheduling;
+function toJson(value: unknown): Json {
+  return JSON.parse(JSON.stringify(value)) as Json;
+}
+
+/**
+ * Adapter bridge: ReviewService stores scheduler_payload as Json (jsonb).
+ * We validate it against the StoredSchedulerCard schema at the boundary so a
+ * corrupted payload is rejected with a 422 instead of being silently coerced
+ * into a fresh card (which would wipe the learner's scheduling progress).
+ * No force-cast crosses the persistence boundary.
+ */
+const fsrsAdapter: FsrsAdapterFn = (schedulerPayload, rating, now, desiredRetention, weights) => {
+  let card: StoredSchedulerCard;
+  try {
+    card = parseSchedulerPayload(schedulerPayload);
+  } catch (err) {
+    if (err instanceof SchedulerPayloadParseError) {
+      throw new ValidationError(
+        "Corrupt scheduler_payload prevented review scheduling",
+        "scheduler_payload",
+        schedulerPayload,
+      );
+    }
+    throw err;
+  }
+
+  const update = applyReviewAnswer(card, rating, now, desiredRetention, weights);
+
+  return {
+    difficulty: update.difficulty,
+    dueAt: update.dueAt,
+    logDueAt: update.logDueAt,
+    elapsedDays: update.elapsedDays,
+    scheduledDays: update.scheduledDays,
+    retrievability: update.retrievability,
+    stability: update.stability,
+    state: update.state,
+    nextPayload: toJson(update.nextPayload),
+  };
+};
 
 /**
  * LLM provider assembly — optional. Reads provider/model/apiKey/baseURL from
