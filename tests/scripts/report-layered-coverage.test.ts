@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertBaselineNonRegression,
   buildLayeredSummary,
   calculateDiffCoverage,
   classifySourceFile,
@@ -111,11 +112,38 @@ describe("diff coverage", () => {
     expect(calculateDiffCoverage({ "src/services/a.ts": [1] }, coverage, "base").ok).toBe(true);
     expect(calculateDiffCoverage({ "src/services/a.ts": [1, 2] }, coverage, "base")).toMatchObject({ pct: 50, ok: false });
     expect(calculateDiffCoverage({ "src/services/a.ts": [1, 2, 99] }, coverage, "base")).toMatchObject({
-      executableLines: 2,
-      pct: 50,
+      executableLines: 3,
+      coveredLines: 1,
+      pct: 33.33,
+      ok: false,
+    });
+    expect(calculateDiffCoverage({ "src/services/missing.ts": [1] }, coverage, "base")).toMatchObject({
+      executableLines: 1,
+      coveredLines: 0,
+      pct: 0,
       ok: false,
     });
     expect(calculateDiffCoverage({}, coverage, "base")).toMatchObject({ pct: null, ok: true });
+  });
+});
+
+describe("baseline ratchet", () => {
+  const base = {
+    domain: { lines: 85, statements: 85, branches: 79 },
+    service: { lines: 87, statements: 85, branches: 75 },
+    repository: { lines: 90, statements: 86, branches: 75 },
+  };
+
+  it("accepts equal or higher thresholds and rejects any decrease", () => {
+    expect(() => assertBaselineNonRegression(base, base)).not.toThrow();
+    expect(() => assertBaselineNonRegression({
+      ...base,
+      repository: { ...base.repository, lines: 91 },
+    }, base)).not.toThrow();
+    expect(() => assertBaselineNonRegression({
+      ...base,
+      service: { ...base.service, branches: 74 },
+    }, base)).toThrow(/service\.branches 74 < 75/);
   });
 });
 

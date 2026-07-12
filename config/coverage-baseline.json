@@ -1,0 +1,17 @@
+{
+  "domain": {
+    "lines": 85,
+    "statements": 85,
+    "branches": 79
+  },
+  "service": {
+    "lines": 87,
+    "statements": 85,
+    "branches": 75
+  },
+  "repository": {
+    "lines": 90,
+    "statements": 86,
+    "branches": 75
+  }
+}

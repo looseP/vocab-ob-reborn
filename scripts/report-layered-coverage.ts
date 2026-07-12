@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 type CoreLayer = "domain" | "service" | "repository";
 type MetricName = "lines" | "statements" | "functions" | "branches";
+type CoverageThresholds = Record<CoreLayer, { lines: number; statements: number; branches: number }>;
 
 interface Location {
   start: { line: number; column: number };
@@ -65,7 +66,7 @@ export interface LayeredCoverageSummary {
 }
 
 const TARGET_THRESHOLDS = { lines: 85, statements: 85, branches: 75 } as const;
-const BASELINE_THRESHOLDS: Record<CoreLayer, { lines: number; statements: number; branches: number }> = {
+const BOOTSTRAP_BASELINE: CoverageThresholds = {
   domain: { lines: 85, statements: 85, branches: 79 },
   service: { lines: 87, statements: 85, branches: 75 },
   repository: { lines: 90, statements: 86, branches: 75 },
@@ -142,18 +143,20 @@ export function calculateDiffCoverage(
   let coveredLines = 0;
   for (const [fileName, lines] of Object.entries(changedLines)) {
     const file = coverageByFile.get(normalizePath(fileName));
+    const uniqueLines = new Set(lines);
+    executableLines += uniqueLines.size;
     if (!file) continue;
-    const changed = new Set(lines);
-    const statementsByLine = new Map<number, number[]>();
-    for (const [id, location] of Object.entries(file.statementMap)) {
-      if (!changed.has(location.start.line)) continue;
-      const hits = statementsByLine.get(location.start.line) ?? [];
-      hits.push(file.s[id] ?? 0);
-      statementsByLine.set(location.start.line, hits);
-    }
-    for (const hits of statementsByLine.values()) {
-      executableLines += 1;
-      if (hits.some((hit) => hit > 0)) coveredLines += 1;
+
+    const ranges: Array<{ location: Location; hit: number }> = [
+      ...Object.entries(file.statementMap).map(([id, location]) => ({ location, hit: file.s[id] ?? 0 })),
+      ...Object.entries(file.fnMap).map(([id, fn]) => ({ location: fn.loc, hit: file.f[id] ?? 0 })),
+      ...Object.entries(file.branchMap).flatMap(([id, branch]) =>
+        branch.locations.map((location, index) => ({ location, hit: file.b[id]?.[index] ?? 0 })),
+      ),
+    ];
+    for (const line of uniqueLines) {
+      const mapped = ranges.filter(({ location }) => location.start.line <= line && line <= location.end.line);
+      if (mapped.some(({ hit }) => hit > 0)) coveredLines += 1;
     }
   }
   const percentage = executableLines === 0 ? null : Number(((coveredLines / executableLines) * 100).toFixed(2));
@@ -199,10 +202,52 @@ function collectDiffCoverage(projectRoot: string, coverage: Record<string, Istan
   return calculateDiffCoverage(parseChangedSourceLines(result.stdout), coverage, baseRef);
 }
 
+function parseBaseline(raw: string, source: string): CoverageThresholds {
+  const parsed = JSON.parse(raw) as Partial<CoverageThresholds>;
+  for (const layer of ["domain", "service", "repository"] as const) {
+    for (const metric of ["lines", "statements", "branches"] as const) {
+      const value = parsed[layer]?.[metric];
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
+        throw new Error(`Invalid coverage baseline ${source}: ${layer}.${metric}`);
+      }
+    }
+  }
+  return parsed as CoverageThresholds;
+}
+
+export function assertBaselineNonRegression(current: CoverageThresholds, base: CoverageThresholds): void {
+  const regressions: string[] = [];
+  for (const layer of ["domain", "service", "repository"] as const) {
+    for (const metric of ["lines", "statements", "branches"] as const) {
+      if (current[layer][metric] < base[layer][metric]) {
+        regressions.push(`${layer}.${metric} ${current[layer][metric]} < ${base[layer][metric]}`);
+      }
+    }
+  }
+  if (regressions.length > 0) throw new Error(`Coverage baseline thresholds decreased: ${regressions.join(", ")}`);
+}
+
+function loadAndValidateBaseline(projectRoot: string): CoverageThresholds {
+  const relativePath = "config/coverage-baseline.json";
+  const current = parseBaseline(readFileSync(path.join(projectRoot, relativePath), "utf8"), relativePath);
+  assertBaselineNonRegression(current, BOOTSTRAP_BASELINE);
+
+  const baseRef = process.env.COVERAGE_BASE_REF;
+  if (!baseRef) return current;
+  const baseFile = spawnSync("git", ["show", `${baseRef}:${relativePath}`], { cwd: projectRoot, encoding: "utf8" });
+  if (baseFile.status === 0) {
+    assertBaselineNonRegression(current, parseBaseline(baseFile.stdout, `${baseRef}:${relativePath}`));
+  } else if (!/exists on disk, but not in|does not exist in|Path .* does not exist/.test(baseFile.stderr)) {
+    throw new Error(`Unable to read coverage baseline from ${baseRef}: ${baseFile.stderr.trim()}`);
+  }
+  return current;
+}
+
 export function buildLayeredSummary(
   coverage: Record<string, IstanbulFileCoverage>,
   evidence: TestEvidence[] = [],
   diffCoverage: DiffCoverage = { baseRef: "test", executableLines: 0, coveredLines: 0, pct: null, ok: true },
+  baselineThresholds: CoverageThresholds = BOOTSTRAP_BASELINE,
 ): LayeredCoverageSummary {
   const counters: Record<CoreLayer, ReturnType<typeof EMPTY_COUNTERS>> = {
     domain: EMPTY_COUNTERS(),
@@ -232,7 +277,7 @@ export function buildLayeredSummary(
   ) as Record<CoreLayer, LayerMetrics>;
 
   const baselineGates = Object.fromEntries(
-    (Object.keys(layers) as CoreLayer[]).map((layer) => [layer, evaluateLayerGate(layers[layer], BASELINE_THRESHOLDS[layer])]),
+    (Object.keys(layers) as CoreLayer[]).map((layer) => [layer, evaluateLayerGate(layers[layer], baselineThresholds[layer])]),
   ) as Record<CoreLayer, LayerGate>;
   const targetGates = Object.fromEntries(
     (Object.keys(layers) as CoreLayer[]).map((layer) => [layer, evaluateLayerGate(layers[layer], TARGET_THRESHOLDS)]),
@@ -241,7 +286,7 @@ export function buildLayeredSummary(
   return {
     generatedAt: new Date().toISOString(),
     targetThresholds: TARGET_THRESHOLDS,
-    baselineThresholds: BASELINE_THRESHOLDS,
+    baselineThresholds,
     layers,
     baselineGates,
     targetGates,
@@ -340,6 +385,7 @@ function run(): void {
     coverage,
     collectEvidence(projectRoot),
     collectDiffCoverage(projectRoot, coverage),
+    loadAndValidateBaseline(projectRoot),
   );
   mkdirSync(coverageDir, { recursive: true });
   writeFileSync(path.join(coverageDir, "layered-summary.json"), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
