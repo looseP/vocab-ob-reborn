@@ -19,6 +19,18 @@ describe("runtime configuration", () => {
     });
   });
 
+  it("normalizes empty optional role URLs without weakening production separation", () => {
+    expect(loadRuntimeConfig({ ...base, APP_DATABASE_URL: "" }).APP_DATABASE_URL).toBeUndefined();
+    expect(() => loadRuntimeConfig({
+      ...base,
+      NODE_ENV: "production",
+      APP_DATABASE_URL: "",
+      APP_ORIGIN: "https://vocab.example.com",
+      METRICS_BEARER_TOKEN: "metrics-token-at-least-24-characters",
+      DB_SSLMODE: "verify-full",
+    })).toThrow(/APP_DATABASE_URL/);
+  });
+
   it("requires distinct metrics credentials and HTTPS in production", () => {
     expect(() => loadRuntimeConfig({ ...base, NODE_ENV: "production" })).toThrow(/METRICS_BEARER_TOKEN|https/);
     expect(() => loadRuntimeConfig({

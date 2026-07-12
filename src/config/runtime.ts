@@ -2,15 +2,19 @@ import { z } from "zod";
 
 const booleanString = z.enum(["true", "false"]).transform((value) => value === "true");
 const integer = (minimum: number, maximum: number) => z.coerce.number().int().min(minimum).max(maximum);
+const optionalPostgresUrl = z.preprocess(
+  (value) => value === "" ? undefined : value,
+  z.string().url().startsWith("postgresql://").optional(),
+);
 
 const runtimeSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: integer(1, 65_535).default(3_001),
   DATABASE_URL: z.string().url().startsWith("postgresql://"),
-  APP_DATABASE_URL: z.string().url().startsWith("postgresql://").optional(),
-  WORKER_DATABASE_URL: z.string().url().startsWith("postgresql://").optional(),
-  BACKUP_DATABASE_URL: z.string().url().startsWith("postgresql://").optional(),
-  MIGRATION_DATABASE_URL: z.string().url().startsWith("postgresql://").optional(),
+  APP_DATABASE_URL: optionalPostgresUrl,
+  WORKER_DATABASE_URL: optionalPostgresUrl,
+  BACKUP_DATABASE_URL: optionalPostgresUrl,
+  MIGRATION_DATABASE_URL: optionalPostgresUrl,
   DB_SSLMODE: z.enum(["disable", "require", "verify-ca", "verify-full"]).default("disable"),
   OWNER_API_TOKEN: z.string().min(24),
   METRICS_BEARER_TOKEN: z.string().min(24).optional(),
