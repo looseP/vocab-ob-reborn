@@ -24,6 +24,7 @@
     "release:smoke": "tsx scripts/verify-deployment-smoke.ts",
     "release:deploy": "tsx scripts/deploy-compose-release.ts",
     "release:deploy:contract": "vitest run tests/scripts/deploy-compose-release.test.ts --coverage.enabled=false",
+    "release:check:evidence": "tsx scripts/release-check-evidence.ts",
     "release:acceptance:verify": "tsx scripts/verify-production-release-acceptance.ts",
     "release:acceptance:contract": "vitest run tests/scripts/verify-production-release-acceptance.test.ts --coverage.enabled=false",
     "release:workflow:verify": "tsx scripts/verify-release-workflow.ts",

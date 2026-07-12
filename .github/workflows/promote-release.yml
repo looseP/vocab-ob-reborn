@@ -1,0 +1,310 @@
+name: Promote immutable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      prepare_run_id:
+        description: "Same-repository prepare run ID producing the immutable release artifact"
+        required: true
+        type: string
+      migration_rehearsal_run_id:
+        description: "Run ID producing release-check-migration-rehearsal"
+        required: true
+        type: string
+      database_roles_run_id:
+        description: "Run ID producing release-check-database-roles"
+        required: true
+        type: string
+      backup_restore_run_id:
+        description: "Run ID producing release-check-backup-restore"
+        required: true
+        type: string
+      rollback_compatibility_run_id:
+        description: "Run ID producing release-check-rollback-compatibility"
+        required: true
+        type: string
+      alerting_drill_run_id:
+        description: "Run ID producing release-check-alerting-drill"
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  REGISTRY: ghcr.io
+  RELEASE_MANIFEST_PATH: release-manifest.json
+  PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+
+jobs:
+  resolve-release:
+    name: Resolve trusted prepare identity
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      release-sha: ${{ steps.resolve.outputs.release-sha }}
+      prepare-artifact-id: ${{ steps.resolve.outputs.prepare-artifact-id }}
+      migration-rehearsal-artifact-id: ${{ steps.resolve.outputs.migration-rehearsal-artifact-id }}
+      database-roles-artifact-id: ${{ steps.resolve.outputs.database-roles-artifact-id }}
+      backup-restore-artifact-id: ${{ steps.resolve.outputs.backup-restore-artifact-id }}
+      rollback-compatibility-artifact-id: ${{ steps.resolve.outputs.rollback-compatibility-artifact-id }}
+      alerting-drill-artifact-id: ${{ steps.resolve.outputs.alerting-drill-artifact-id }}
+    steps:
+      - name: Resolve successful prepare run and unique artifact
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          PREPARE_RUN_ID: ${{ inputs.prepare_run_id }}
+          MIGRATION_REHEARSAL_RUN_ID: ${{ inputs.migration_rehearsal_run_id }}
+          DATABASE_ROLES_RUN_ID: ${{ inputs.database_roles_run_id }}
+          BACKUP_RESTORE_RUN_ID: ${{ inputs.backup_restore_run_id }}
+          ROLLBACK_COMPATIBILITY_RUN_ID: ${{ inputs.rollback_compatibility_run_id }}
+          ALERTING_DRILL_RUN_ID: ${{ inputs.alerting_drill_run_id }}
+        run: |
+          set -euo pipefail
+          for value in "$PREPARE_RUN_ID" "$MIGRATION_REHEARSAL_RUN_ID" "$DATABASE_ROLES_RUN_ID" "$BACKUP_RESTORE_RUN_ID" "$ROLLBACK_COMPATIBILITY_RUN_ID" "$ALERTING_DRILL_RUN_ID"; do
+            [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "Every run ID must be a positive integer" >&2; exit 1; }
+          done
+          run="$(gh api "repos/$REPOSITORY/actions/runs/$PREPARE_RUN_ID")"
+          release_sha="$(jq -er --arg repo "$REPOSITORY" 'select(.status == "completed" and .conclusion == "success") | select(.path == ".github/workflows/release.yml") | select(.event == "workflow_dispatch" or .event == "push") | select(.head_repository.full_name == $repo) | .head_sha | select(test("^[a-f0-9]{40}$"))' <<<"$run")"
+          artifacts="$(gh api "repos/$REPOSITORY/actions/runs/$PREPARE_RUN_ID/artifacts?per_page=100")"
+          total="$(jq -er '.total_count' <<<"$artifacts")"
+          [[ "$total" -le 100 ]] || { echo "Prepare artifact list exceeds the audited page" >&2; exit 1; }
+          prepare_artifact_id="$(jq -er --arg name "release-$release_sha" '[.artifacts[] | select(.name == $name)] | select(length == 1 and .[0].expired == false) | .[0].id' <<<"$artifacts")"
+          echo "release-sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "prepare-artifact-id=$prepare_artifact_id" >> "$GITHUB_OUTPUT"
+          resolve_evidence() {
+            local run_id="$1" expected_path="$2" artifact_name="$3" output_name="$4" run artifacts total artifact_id
+            run="$(gh api "repos/$REPOSITORY/actions/runs/$run_id")"
+            jq -e --arg repo "$REPOSITORY" --arg sha "$release_sha" --arg path "$expected_path" 'select(.status == "completed" and .conclusion == "success") | select(.path == $path and .event == "workflow_dispatch") | select(.head_repository.full_name == $repo and .head_sha == $sha)' <<<"$run" >/dev/null
+            artifacts="$(gh api "repos/$REPOSITORY/actions/runs/$run_id/artifacts?per_page=100")"
+            total="$(jq -er '.total_count' <<<"$artifacts")"
+            [[ "$total" -le 100 ]] || { echo "Evidence artifact list exceeds the audited page" >&2; exit 1; }
+            artifact_id="$(jq -er --arg name "$artifact_name" '[.artifacts[] | select(.name == $name)] | select(length == 1 and .[0].expired == false) | .[0].id' <<<"$artifacts")"
+            echo "$output_name=$artifact_id" >> "$GITHUB_OUTPUT"
+          }
+          resolve_evidence "$MIGRATION_REHEARSAL_RUN_ID" ".github/workflows/release-check-migration-rehearsal.yml" "release-check-migration-rehearsal" "migration-rehearsal-artifact-id"
+          resolve_evidence "$DATABASE_ROLES_RUN_ID" ".github/workflows/release-check-database-roles.yml" "release-check-database-roles" "database-roles-artifact-id"
+          resolve_evidence "$BACKUP_RESTORE_RUN_ID" ".github/workflows/release-check-backup-restore.yml" "release-check-backup-restore" "backup-restore-artifact-id"
+          resolve_evidence "$ROLLBACK_COMPATIBILITY_RUN_ID" ".github/workflows/release-check-rollback-compatibility.yml" "release-check-rollback-compatibility" "rollback-compatibility-artifact-id"
+          resolve_evidence "$ALERTING_DRILL_RUN_ID" ".github/workflows/release-check-alerting-drill.yml" "release-check-alerting-drill" "alerting-drill-artifact-id"
+
+  staging:
+    name: Deploy and smoke staging
+    needs: resolve-release
+    runs-on: [self-hosted, linux, vocab-staging]
+    environment: staging
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - name: Check out deploy adapter
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.resolve-release.outputs.release-sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Log in to GHCR for deployment
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download immutable release evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.resolve-release.outputs.prepare-artifact-id }}
+          path: .
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify release manifest and identity
+        env:
+          RELEASE_MANIFEST_PATH: release-manifest.json
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release-sha }}
+        run: |
+          sha256sum --check release-manifest.sha256
+          node -e 'const manifest=require("./release-manifest.json"); if (manifest.git?.sha !== process.env.RELEASE_SHA) throw new Error("Release manifest Git SHA does not match resolved prepare identity");'
+          npm run release:manifest:verify
+
+      - name: Deploy exact manifest to staging
+        env:
+          NODE_ENV: production
+          RELEASE_DEPLOY_ENV_FILE: ${{ vars.RELEASE_DEPLOY_ENV_FILE }}
+          RELEASE_DEPLOY_LOCK_FILE: ${{ vars.RELEASE_DEPLOY_LOCK_FILE }}
+          RELEASE_DEPLOY_EVIDENCE_PATH: ${{ runner.temp }}/staging-deployment-evidence.json
+          SMOKE_BASE_URL: ${{ vars.SMOKE_BASE_URL }}
+          SMOKE_METRICS_BEARER_TOKEN: ${{ secrets.SMOKE_METRICS_BEARER_TOKEN }}
+        run: npm run release:deploy -- --environment staging --manifest release-manifest.json
+
+      - name: Upload staging deployment evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staging-evidence-${{ needs.resolve-release.outputs.release-sha }}
+          path: ${{ runner.temp }}/staging-deployment-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+  production-acceptance:
+    name: Verify production release acceptance
+    needs: [resolve-release, staging]
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+    env:
+      MIGRATION_REHEARSAL_RUN_ID: ${{ inputs.migration_rehearsal_run_id }}
+      DATABASE_ROLES_RUN_ID: ${{ inputs.database_roles_run_id }}
+      BACKUP_RESTORE_RUN_ID: ${{ inputs.backup_restore_run_id }}
+      ROLLBACK_COMPATIBILITY_RUN_ID: ${{ inputs.rollback_compatibility_run_id }}
+      ALERTING_DRILL_RUN_ID: ${{ inputs.alerting_drill_run_id }}
+    steps:
+      - name: Check out acceptance verifier
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.resolve-release.outputs.release-sha }}
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Download immutable release evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.resolve-release.outputs.prepare-artifact-id }}
+          path: .
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+      - name: Download staging deployment evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: staging-evidence-${{ needs.resolve-release.outputs.release-sha }}
+          path: release-evidence
+      - name: Download migration rehearsal evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { artifact-ids: "${{ needs.resolve-release.outputs.migration-rehearsal-artifact-id }}", path: release-evidence/migration-rehearsal, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
+      - name: Download database roles evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { artifact-ids: "${{ needs.resolve-release.outputs.database-roles-artifact-id }}", path: release-evidence/database-roles, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
+      - name: Download backup restore evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { artifact-ids: "${{ needs.resolve-release.outputs.backup-restore-artifact-id }}", path: release-evidence/backup-restore, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
+      - name: Download rollback compatibility evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { artifact-ids: "${{ needs.resolve-release.outputs.rollback-compatibility-artifact-id }}", path: release-evidence/rollback-compatibility, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
+      - name: Download alerting drill evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { artifact-ids: "${{ needs.resolve-release.outputs.alerting-drill-artifact-id }}", path: release-evidence/alerting-drill, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Create and verify fail-closed acceptance declaration
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release-sha }}
+          EXPECTED_MANIFEST_SHA256: ${{ hashFiles('release-manifest.json') }}
+          RELEASE_ACCEPTANCE_EVIDENCE_PATH: ${{ runner.temp }}/production-acceptance-evidence.json
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const { createHash } = require("node:crypto");
+          const { readFileSync, writeFileSync } = require("node:fs");
+          const paths = { migrationRehearsal: "migration-rehearsal", databaseRoles: "database-roles", backupRestore: "backup-restore", rollbackCompatibility: "rollback-compatibility", alertingDrill: "alerting-drill" };
+          const checks = {};
+          for (const [check, directory] of Object.entries(paths)) {
+            const bytes = readFileSync(`release-evidence/${directory}/evidence.json`);
+            const artifact = JSON.parse(bytes);
+            checks[check] = { status: artifact.status, source: "github-actions-artifact", producer: artifact.producer, releaseSha: artifact.releaseSha, manifestSha256: artifact.manifestSha256, observedAt: artifact.observedAt, evidenceSha256: createHash("sha256").update(bytes).digest("hex") };
+          }
+          const stagingBytes = readFileSync("release-evidence/staging-deployment-evidence.json");
+          const staging = JSON.parse(stagingBytes);
+          checks.smoke = { status: "passed", source: "staging-deployment-evidence", observedAt: staging.phases?.find(({ phase }) => phase === "smoke")?.timestamp, evidenceSha256: createHash("sha256").update(stagingBytes).digest("hex"), producer: "release-workflow/staging", releaseSha: process.env.RELEASE_SHA, manifestSha256: process.env.EXPECTED_MANIFEST_SHA256 };
+          writeFileSync("release-evidence/production-acceptance.json", JSON.stringify({ schemaVersion: 1, releaseSha: process.env.RELEASE_SHA, manifestSha256: process.env.EXPECTED_MANIFEST_SHA256, checks, decision: "GO" }, null, 2), { mode: 0o600, flag: "wx" });
+          NODE
+          npm run release:acceptance:verify -- --manifest release-manifest.json --digest release-manifest.sha256 --deployment-evidence release-evidence/staging-deployment-evidence.json --acceptance release-evidence/production-acceptance.json --migration-rehearsal-evidence release-evidence/migration-rehearsal/evidence.json --database-roles-evidence release-evidence/database-roles/evidence.json --backup-restore-evidence release-evidence/backup-restore/evidence.json --rollback-compatibility-evidence release-evidence/rollback-compatibility/evidence.json --alerting-drill-evidence release-evidence/alerting-drill/evidence.json
+      - name: Upload final acceptance evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-acceptance-${{ needs.resolve-release.outputs.release-sha }}
+          path: ${{ runner.temp }}/production-acceptance-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+  production:
+    name: Promote identical manifest to production
+    needs: [resolve-release, production-acceptance]
+    runs-on: [self-hosted, linux, vocab-production]
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - name: Check out deploy adapter
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.resolve-release.outputs.release-sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Log in to GHCR for deployment
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download the same immutable release evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.resolve-release.outputs.prepare-artifact-id }}
+          path: .
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify release manifest and identity
+        env:
+          RELEASE_MANIFEST_PATH: release-manifest.json
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release-sha }}
+        run: |
+          sha256sum --check release-manifest.sha256
+          node -e 'const manifest=require("./release-manifest.json"); if (manifest.git?.sha !== process.env.RELEASE_SHA) throw new Error("Release manifest Git SHA does not match resolved prepare identity");'
+          npm run release:manifest:verify
+
+      - name: Deploy exact manifest to production
+        env:
+          NODE_ENV: production
+          RELEASE_DEPLOY_ENV_FILE: ${{ vars.RELEASE_DEPLOY_ENV_FILE }}
+          RELEASE_DEPLOY_LOCK_FILE: ${{ vars.RELEASE_DEPLOY_LOCK_FILE }}
+          SMOKE_BASE_URL: ${{ vars.SMOKE_BASE_URL }}
+          SMOKE_METRICS_BEARER_TOKEN: ${{ secrets.SMOKE_METRICS_BEARER_TOKEN }}
+        run: npm run release:deploy -- --environment production --manifest release-manifest.json
