@@ -3,7 +3,6 @@
  *
  * HTTP stays thin: parse body/query, attach auth userId, call service only.
  */
-
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AppEnv } from "./words";
@@ -27,6 +26,7 @@ import {
   l3WordSpaceQuerySchema,
   uuidSchema,
 } from "@/schemas/http";
+import { validationError } from "../error-response";
 
 function asJson(value: unknown): Json {
   return value as Json;
@@ -44,7 +44,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3SourceCreateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Context.createSource({
       userId: c.get("userId"),
@@ -62,7 +62,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3ContextCreateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Context.createContext({
       userId: c.get("userId"),
@@ -79,7 +79,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3OccurrenceCreateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Context.createOccurrence({
       userId: c.get("userId"),
@@ -97,7 +97,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3ContextLinkCreateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Context.createContextLink({
       userId: c.get("userId"),
@@ -115,7 +115,7 @@ export function l3Routes(services: Services) {
   app.delete("/occurrences/:id", async (c) => {
     const occurrenceId = parseRouteUuid(c.req.param("id"));
     if (!occurrenceId) {
-      return c.json({ error: "VALIDATION_ERROR", details: { fieldErrors: { id: ["Invalid uuid"] } } }, 400);
+      return validationError(c, { fieldErrors: { id: ["Invalid uuid"] } });
     }
     const result = await services.l3Context.deleteOccurrence({
       userId: c.get("userId"),
@@ -127,7 +127,7 @@ export function l3Routes(services: Services) {
   app.delete("/context-links/:id", async (c) => {
     const contextLinkId = parseRouteUuid(c.req.param("id"));
     if (!contextLinkId) {
-      return c.json({ error: "VALIDATION_ERROR", details: { fieldErrors: { id: ["Invalid uuid"] } } }, 400);
+      return validationError(c, { fieldErrors: { id: ["Invalid uuid"] } });
     }
     const result = await services.l3Context.deleteContextLink({
       userId: c.get("userId"),
@@ -139,7 +139,7 @@ export function l3Routes(services: Services) {
   app.delete("/sources/:id", async (c) => {
     const sourceId = parseRouteUuid(c.req.param("id"));
     if (!sourceId) {
-      return c.json({ error: "VALIDATION_ERROR", details: { fieldErrors: { id: ["Invalid uuid"] } } }, 400);
+      return validationError(c, { fieldErrors: { id: ["Invalid uuid"] } });
     }
     const result = await services.l3Context.deleteSource({
       userId: c.get("userId"),
@@ -151,7 +151,7 @@ export function l3Routes(services: Services) {
   app.delete("/contexts/:id", async (c) => {
     const contextId = parseRouteUuid(c.req.param("id"));
     if (!contextId) {
-      return c.json({ error: "VALIDATION_ERROR", details: { fieldErrors: { id: ["Invalid uuid"] } } }, 400);
+      return validationError(c, { fieldErrors: { id: ["Invalid uuid"] } });
     }
     const result = await services.l3Context.deleteContext({
       userId: c.get("userId"),
@@ -171,7 +171,7 @@ export function l3Routes(services: Services) {
   app.get("/words/:slug/space", async (c) => {
     const parsed = l3WordSpaceQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Read.getWordSpace({
       userId: c.get("userId"),
@@ -186,7 +186,7 @@ export function l3Routes(services: Services) {
   app.get("/sources/:id/space", async (c) => {
     const parsed = l3SourceSpaceQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Read.getSourceSpace({
       userId: c.get("userId"),
@@ -200,7 +200,7 @@ export function l3Routes(services: Services) {
   app.get("/graph", async (c) => {
     const parsed = l3GraphQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Read.getGraph({
       userId: c.get("userId"),
@@ -217,7 +217,7 @@ export function l3Routes(services: Services) {
   app.get("/words/:slug/contexts", async (c) => {
     const parsed = l3LimitCursorQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Context.listContextsForWord({
       userId: c.get("userId"),
@@ -231,7 +231,7 @@ export function l3Routes(services: Services) {
   app.get("/sources/:id/contexts", async (c) => {
     const parsed = l3LimitCursorQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Context.listContextsForSource({
       userId: c.get("userId"),
@@ -246,7 +246,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3RawTextImportCreateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Import.createRawTextImportProposal({
       userId: c.get("userId"),
@@ -270,7 +270,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3StructuredImportCreateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Import.createStructuredImportProposal({
       userId: c.get("userId"),
@@ -316,7 +316,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3ProposalCreateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Proposal.createProposal({
       userId: c.get("userId"),
@@ -340,7 +340,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3RecommendationGenerateSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Recommendation.generateRecommendations({
       userId: c.get("userId"),
@@ -357,7 +357,7 @@ export function l3Routes(services: Services) {
   app.get("/recommendations", async (c) => {
     const parsed = l3RecommendationListQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Recommendation.listRecommendations({
       userId: c.get("userId"),
@@ -389,7 +389,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3RecommendationRejectSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Recommendation.rejectRecommendation({
       userId: c.get("userId"),
@@ -402,7 +402,7 @@ export function l3Routes(services: Services) {
   app.get("/proposals", async (c) => {
     const parsed = l3ProposalListQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Proposal.listProposals({
       userId: c.get("userId"),
@@ -441,7 +441,7 @@ export function l3Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const parsed = l3ProposalRejectSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.l3Proposal.rejectProposal({
       userId: c.get("userId"),

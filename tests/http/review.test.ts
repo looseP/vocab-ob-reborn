@@ -168,7 +168,10 @@ describe("API request body limit", () => {
     });
 
     expect(res.status).toBe(413);
-    expect(await res.json()).toMatchObject({ error: "PAYLOAD_TOO_LARGE" });
+    expect(await res.json()).toMatchObject({
+      error: "Request body exceeds 1 MiB limit",
+      code: "PAYLOAD_TOO_LARGE",
+    });
     expect(services.reviews.submitAnswer).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 import { getCookie } from "hono/cookie";
 import type { AuthSessionService } from "../../services/auth-session.service";
+import { jsonError } from "../error-response";
 
 export type AuthRole = "owner" | "agent" | "public";
 export type AuthMethod = "bearer" | "session" | "public";
@@ -80,22 +81,22 @@ export function authMiddleware(authSessions: AuthSessionService | undefined, req
 
     if (!principal) {
       c.header("WWW-Authenticate", 'Bearer realm="vocab-observatory"');
-      return c.json({ error: "Authentication required", code: "UNAUTHENTICATED" }, 401);
+      return jsonError(c, 401, "UNAUTHENTICATED", "Authentication required");
     }
 
     if (roleRank[principal.role] < roleRank[requireRole]) {
-      return c.json({ error: "Insufficient permissions", code: "FORBIDDEN" }, 403);
+      return jsonError(c, 403, "FORBIDDEN", "Insufficient permissions");
     }
 
     if (principal.authMethod === "session" && isStateChanging(c.req.method)) {
       const origin = requestOrigin(c);
       if (!origin || origin !== expectedOrigin(c)) {
-        return c.json({ error: "Invalid request origin", code: "CSRF_ORIGIN_REJECTED" }, 403);
+        return jsonError(c, 403, "CSRF_ORIGIN_REJECTED", "Invalid request origin");
       }
       const csrfHeader = c.req.header(CSRF_HEADER_NAME);
       const csrfCookie = getCookie(c, CSRF_COOKIE_NAME);
       if (!csrfHeader || csrfHeader !== csrfCookie || !expectedCsrfHash || !authSessions?.verifyCsrf(csrfHeader, expectedCsrfHash)) {
-        return c.json({ error: "Invalid CSRF token", code: "CSRF_TOKEN_REJECTED" }, 403);
+        return jsonError(c, 403, "CSRF_TOKEN_REJECTED", "Invalid CSRF token");
       }
     }
 

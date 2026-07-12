@@ -22,16 +22,18 @@ describe("handleError middleware", () => {
     const app = makeApp(new NotFoundError("Word", "slug"));
     const res = await app.request("/test");
     expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: string; code: string };
+    const body = (await res.json()) as { error: string; code: string; message: string; requestId: string };
     expect(body.code).toBe("NOT_FOUND");
     expect(body.error).toContain("Word");
+    expect(body).toMatchObject({ message: expect.stringContaining("Word"), requestId: expect.any(String) });
+    expect(res.headers.get("X-Request-ID")).toBe(body.requestId);
   });
 
   it("maps BusinessRuleError to 422", async () => {
     const app = makeApp(new BusinessRuleError("Cannot do this"));
     const res = await app.request("/test");
     expect(res.status).toBe(422);
-    const body = (await res.json()) as { error: string; code: string };
+    const body = (await res.json()) as { error: string; code: string; message: string; requestId: string };
     expect(body.code).toBe("BUSINESS_RULE");
     expect(body.error).toBe("Cannot do this");
   });
@@ -54,7 +56,7 @@ describe("handleError middleware", () => {
     const app = makeApp(new Error("Something broke"));
     const res = await app.request("/test");
     expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: string; code: string };
+    const body = (await res.json()) as { error: string; code: string; message: string; requestId: string };
     expect(body.code).toBe("INTERNAL");
     // Should not leak internals
     expect(body.error).toBe("Internal server error");

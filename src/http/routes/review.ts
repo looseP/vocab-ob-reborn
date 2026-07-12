@@ -26,6 +26,7 @@ import {
   reviewSuspendSchema,
   reviewUndoSchema,
 } from "@/schemas/http";
+import { validationError } from "../error-response";
 
 export function reviewRoutes(services: Services) {
   const app = new Hono<AppEnv>();
@@ -34,7 +35,7 @@ export function reviewRoutes(services: Services) {
     const body = await c.req.json();
     const parsed = reviewAnswerSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const userId = c.get("userId");
     const result = await services.reviews.submitAnswer(parsed.data, userId);
@@ -45,7 +46,7 @@ export function reviewRoutes(services: Services) {
     const body = await c.req.json();
     const parsed = reviewSkipSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const userId = c.get("userId");
     const result = await services.reviews.skip(parsed.data, userId);
@@ -56,7 +57,7 @@ export function reviewRoutes(services: Services) {
     const body = await c.req.json();
     const parsed = reviewSuspendSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const userId = c.get("userId");
     const result = await services.reviews.suspend(parsed.data, userId);
@@ -67,7 +68,7 @@ export function reviewRoutes(services: Services) {
     const body = await c.req.json();
     const parsed = reviewUndoSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const userId = c.get("userId");
     const result = await services.reviews.undo(parsed.data, userId);

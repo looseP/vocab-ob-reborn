@@ -29,6 +29,7 @@ import {
   L2_OPTION_STRING_MAX_LENGTH,
   L2_USER_INSTRUCTION_MAX_LENGTH,
 } from "@/schemas/resource-budget";
+import { jsonError } from "../error-response";
 
 function parseDraftOptions(body: Record<string, unknown>, includeSource: boolean): Record<string, unknown> | null {
   const options: Record<string, unknown> = includeSource
@@ -73,12 +74,12 @@ export function l2Routes(services: Services) {
     const body = await c.req.json().catch(() => ({}));
     const storageField = mapToStorageField(body.field);
     if (storageField === null) {
-      return c.json({ error: "VALIDATION_ERROR", message: "Invalid field" }, 400);
+      return jsonError(c, 400, "VALIDATION_ERROR", "Invalid field");
     }
 
     const draftOptions = parseDraftOptions(body, true);
     if (!draftOptions) {
-      return c.json({ error: "VALIDATION_ERROR", message: "Invalid draft options" }, 400);
+      return jsonError(c, 400, "VALIDATION_ERROR", "Invalid draft options");
     }
 
     let result;
@@ -99,34 +100,32 @@ export function l2Routes(services: Services) {
       // Style profile scope mismatch (B4) surfaces as a ValidationError from
       // the service → 400. Other thrown errors fall through to 500.
       if (err && typeof err === "object" && "name" in err && (err as { name: string }).name === "ValidationError") {
-        return c.json(
-          { error: "VALIDATION_ERROR", message: (err as Error).message },
-          400,
-        );
+        return jsonError(c, 400, "VALIDATION_ERROR", (err as Error).message);
       }
       throw err;
     }
 
     if (result.error === "OVER_BUDGET") {
-      return c.json({ error: "OVER_BUDGET" }, 503);
+      return jsonError(c, 503, "OVER_BUDGET", "LLM usage budget exceeded");
     }
     if (result.error === "L2_CONTENT_UNAVAILABLE") {
-      return c.json(
-        { error: "L2_CONTENT_UNAVAILABLE", message: result.message ?? "LLM provider not configured" },
-        503,
-      );
+      return jsonError(c, 503, "L2_CONTENT_UNAVAILABLE", result.message ?? "LLM provider not configured");
     }
     if (result.error === "NO_DICTIONARY_CANDIDATES") {
       // B3: dictionary had no candidates — the LLM was never called. This is a
       // recoverable "no data" state rather than a server error, so 422 fits
       // better than 503 (the service is available, it just has no source).
-      return c.json(
-        { error: "NO_DICTIONARY_CANDIDATES", warning: result.warning },
+      return jsonError(
+        c,
         422,
+        "NO_DICTIONARY_CANDIDATES",
+        result.warning ?? "No dictionary candidates available",
+        undefined,
+        { warning: result.warning },
       );
     }
     if (result.error) {
-      return c.json({ error: result.error }, 500);
+      return jsonError(c, 500, result.error, result.error);
     }
 
     return c.json({
@@ -152,12 +151,12 @@ export function l2Routes(services: Services) {
     const requestField = typeof body.field === "string" ? body.field : "";
     const storageField = mapToStorageField(requestField);
     if (storageField === null) {
-      return c.json({ error: "VALIDATION_ERROR", message: "Invalid field" }, 400);
+      return jsonError(c, 400, "VALIDATION_ERROR", "Invalid field");
     }
 
     const options = parseDraftOptions(body, false);
     if (!options) {
-      return c.json({ error: "VALIDATION_ERROR", message: "Invalid prompt options" }, 400);
+      return jsonError(c, 400, "VALIDATION_ERROR", "Invalid prompt options");
     }
 
     try {
@@ -177,10 +176,7 @@ export function l2Routes(services: Services) {
       // was never consulted. This is a recoverable "no data" state (the service
       // is available, it just has no source), so 422 fits better than 503.
       if (result.error === "NO_DICTIONARY_CANDIDATES") {
-        return c.json(
-          { error: "NO_DICTIONARY_CANDIDATES", warning: result.warning },
-          422,
-        );
+        return jsonError(c, 422, "NO_DICTIONARY_CANDIDATES", result.warning ?? "No dictionary candidates available", undefined, { warning: result.warning });
       }
       // Echo the composer-facing field name (e.g. `example`) so the caller can
       // correlate the response with their request, alongside the canonical
@@ -197,10 +193,7 @@ export function l2Routes(services: Services) {
     } catch (err) {
       // Style profile scope mismatch surfaces as a ValidationError → 400.
       if (err && typeof err === "object" && "name" in err && (err as { name: string }).name === "ValidationError") {
-        return c.json(
-          { error: "VALIDATION_ERROR", message: (err as Error).message },
-          400,
-        );
+        return jsonError(c, 400, "VALIDATION_ERROR", (err as Error).message);
       }
       throw err;
     }
@@ -225,7 +218,7 @@ export function l2Routes(services: Services) {
 
     const storageField = mapToStorageField(body.field);
     if (storageField === null) {
-      return c.json({ error: "VALIDATION_ERROR", message: "Invalid field" }, 400);
+      return jsonError(c, 400, "VALIDATION_ERROR", "Invalid field");
     }
 
     // Normalize the content payload into a single canonical value.
@@ -251,10 +244,7 @@ export function l2Routes(services: Services) {
     // they reach the service layer / DB. Validated against the canonical
     // storage field name (e.g. `corpus` even when the request sent `example`).
     if (!isValidL2Content(storageField, content)) {
-      return c.json(
-        { error: "VALIDATION_ERROR", message: `Invalid content for field "${storageField}"` },
-        400,
-      );
+      return jsonError(c, 400, "VALIDATION_ERROR", `Invalid content for field "${storageField}"`);
     }
 
     // Assemble confirm options (B6). `source` keeps the legacy default; only
