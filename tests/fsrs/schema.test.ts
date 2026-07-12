@@ -64,10 +64,14 @@ describe("parseSchedulerPayload", () => {
     expect(() => parseSchedulerPayload({ state: -1 })).toThrow(SchedulerPayloadParseError);
   });
 
-  it("rejects invalid date strings", () => {
-    expect(() => parseSchedulerPayload({ last_review: "not-a-date" })).toThrow(
-      SchedulerPayloadParseError,
-    );
-    expect(() => parseSchedulerPayload({ due: "2026-13-99" })).toThrow(SchedulerPayloadParseError);
+  it("rejects non-ISO, impossible, and timezone-less dates", () => {
+    for (const due of ["not-a-date", "01/02/2026", "2026-13-99", "2026-02-30T00:00:00Z", "2026-05-01T00:00:00"]) {
+      expect(() => parseSchedulerPayload({ due })).toThrow(SchedulerPayloadParseError);
+    }
+  });
+
+  it("accepts strict ISO datetimes with UTC or an explicit offset", () => {
+    expect(parseSchedulerPayload({ due: "2026-05-01T00:00:00Z" }).due).toBe("2026-05-01T00:00:00Z");
+    expect(parseSchedulerPayload({ due: "2026-05-01T08:00:00+08:00" }).due).toBe("2026-05-01T08:00:00+08:00");
   });
 });

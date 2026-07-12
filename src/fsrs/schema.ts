@@ -17,11 +17,7 @@
 import { z } from "zod";
 import type { StoredSchedulerCard } from "./types";
 
-const isoDateString = z
-  .string()
-  .refine((v) => !Number.isNaN(Date.parse(v)), {
-    message: "must be a valid ISO-8601 date string",
-  });
+const isoDateString = z.iso.datetime({ offset: true });
 
 const nonNegativeInt = z.number().int().nonnegative();
 
