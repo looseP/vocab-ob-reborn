@@ -49,8 +49,8 @@ requirePattern(lifecycleService, /restart: "no"/, "Lifecycle one-shot restart po
 requirePattern(lifecycleService, /read_only: true/, "Lifecycle read-only filesystem");
 requirePattern(lifecycleService, /no-new-privileges:true/, "Lifecycle no-new-privileges option");
 requirePattern(lifecycleService, /cap_drop:\s*\n\s*- ALL/, "Lifecycle capabilities dropped");
-requirePattern(lifecycleService, /DATA_LIFECYCLE_DATABASE_URL: \$\{DATA_LIFECYCLE_DATABASE_URL:\?/, "Dedicated lifecycle database URL");
-requirePattern(lifecycleService, /DATA_LIFECYCLE_CUTOFF: \$\{DATA_LIFECYCLE_CUTOFF:\?/, "Lifecycle approved cutoff");
+requirePattern(lifecycleService, /DATA_LIFECYCLE_DATABASE_URL: \$\{DATA_LIFECYCLE_DATABASE_URL:-\}/, "Dedicated lifecycle database URL without cross-service interpolation");
+requirePattern(lifecycleService, /DATA_LIFECYCLE_CUTOFF: \$\{DATA_LIFECYCLE_CUTOFF:-\}/, "Lifecycle approved cutoff without cross-service interpolation");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_CONFIRM_CUTOFF: \$\{DATA_LIFECYCLE_CONFIRM_CUTOFF:-\}/, "Lifecycle cutoff confirmation");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_CONFIRM: \$\{DATA_LIFECYCLE_CONFIRM:-\}/, "Lifecycle database confirmation");
 requirePattern(lifecycleService, /DATA_LIFECYCLE_ALLOW_WRITE: \$\{DATA_LIFECYCLE_ALLOW_WRITE:-\}/, "Lifecycle write confirmation");
@@ -73,7 +73,7 @@ if (/\bNODE_ENV\s*:/.test(lifecycleService)) {
   throw new Error("Lifecycle service must use DATA_LIFECYCLE_ENVIRONMENT, not NODE_ENV");
 }
 requirePattern(compose, /stop_grace_period: \$\{OUTBOX_STOP_GRACE_PERIOD:-75s\}/, "Lease-aware stop grace");
-requirePattern(compose, /METRICS_BEARER_TOKEN: \$\{METRICS_BEARER_TOKEN:\?METRICS_BEARER_TOKEN is required\}/, "Metrics bearer token injection");
+requirePattern(compose, /METRICS_BEARER_TOKEN: \$\{METRICS_BEARER_TOKEN:-\}/, "Web-scoped metrics bearer token injection");
 requirePattern(compose, /BACKUP_SIGNING_KEY: \$\{BACKUP_SIGNING_KEY/, "Backup signing key injection");
 requirePattern(compose, /read_only: true/, "Read-only application filesystem");
 requirePattern(compose, /no-new-privileges:true/, "No-new-privileges security option");
