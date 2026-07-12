@@ -116,6 +116,8 @@ services:
   backup-scheduler:
     <<: *app-base
     image: ${BACKUP_IMAGE:-vocab-observatory-v2-backup:local}
+    # On POSIX hosts, set this to the host UID:GID when bind-mounting backups.
+    user: ${BACKUP_RUNTIME_USER:-node}
     build:
       context: .
       target: backup-runtime

@@ -6,6 +6,7 @@ import {
   hasListedResources,
   parseComposePs,
   parsePublishedPort,
+  resolveSmokeBackupRuntimeUser,
   resolveSmokeImageEnvironment,
 } from "../../scripts/verify-local-compose-smoke";
 
@@ -57,6 +58,13 @@ describe("local Compose smoke helpers", () => {
       "--volumes",
       "--remove-orphans",
     ]);
+  });
+
+  it("uses the host POSIX identity for the backup bind mount", () => {
+    expect(resolveSmokeBackupRuntimeUser("linux", 1001, 121)).toBe("1001:121");
+    expect(resolveSmokeBackupRuntimeUser("darwin", 502, 20)).toBe("502:20");
+    expect(resolveSmokeBackupRuntimeUser("win32")).toBe("node");
+    expect(() => resolveSmokeBackupRuntimeUser("linux", undefined, undefined)).toThrow(/Cannot resolve host UID:GID/);
   });
 
   it("preserves prebuilt CI images only in skip-build mode", () => {

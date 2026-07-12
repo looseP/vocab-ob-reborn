@@ -12,6 +12,7 @@ interface ComposeConfig {
     depends_on?: Record<string, unknown>;
     environment?: Record<string, string>;
     ports?: Array<{ host_ip?: string; published?: string; target?: number }>;
+    user?: string;
   }>;
 }
 
@@ -31,6 +32,7 @@ const composeEnvironmentKeys = [
   "BACKUP_SIGNING_KEY",
   "BACKUP_DIR",
   "BACKUP_HOST_DIR",
+  "BACKUP_RUNTIME_USER",
   "COMPOSE_FILE",
   "COMPOSE_PROFILES",
 ] as const;
@@ -90,6 +92,12 @@ describeDocker("Compose rendered database role routing", () => {
       LOCAL_OWNER_ID: "00000000-0000-4000-8000-000000000001",
     });
     expect(config.services["backup-scheduler"]?.environment?.BACKUP_SIGNING_KEY).toBe("local-backup-signing-key-only-0001");
+    expect(config.services["backup-scheduler"]?.user).toBe("node");
+  });
+
+  it("allows smoke runs to align the backup process with a POSIX bind-mount owner", () => {
+    const config = parseConfig(composeConfig(["compose.yaml"], { BACKUP_RUNTIME_USER: "1001:121" }));
+    expect(config.services["backup-scheduler"]?.user).toBe("1001:121");
   });
 
   it("binds only web to loopback and never publishes postgres", () => {

@@ -84,6 +84,18 @@ export function hasListedResources(output: string): boolean {
   return output.trim().length > 0;
 }
 
+export function resolveSmokeBackupRuntimeUser(
+  platform: NodeJS.Platform = process.platform,
+  uid: number | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
+  gid: number | undefined = typeof process.getgid === "function" ? process.getgid() : undefined,
+): string {
+  if (platform === "win32") return "node";
+  if (uid === undefined || gid === undefined) {
+    throw new Error(`Cannot resolve host UID:GID for backup bind mount on ${platform}`);
+  }
+  return `${uid}:${gid}`;
+}
+
 export function resolveSmokeImageEnvironment(
   environment: NodeJS.ProcessEnv,
   skipBuild: boolean,
@@ -182,6 +194,7 @@ async function main(): Promise<void> {
     "BACKUP_SIGNING_KEY",
     "BACKUP_DIR",
     "BACKUP_HOST_DIR",
+    "BACKUP_RUNTIME_USER",
     "COMPOSE_FILE",
     "COMPOSE_PROFILES",
   ]) delete environment[key];
@@ -196,6 +209,7 @@ async function main(): Promise<void> {
     BACKUP_DATABASE_URL: "",
     MIGRATION_DATABASE_URL: "",
     BACKUP_HOST_DIR: backupDirectory,
+    BACKUP_RUNTIME_USER: resolveSmokeBackupRuntimeUser(),
   });
   let primaryError: unknown;
   try {
