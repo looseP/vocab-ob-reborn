@@ -76,7 +76,12 @@ describe("browser auth session", () => {
       body: JSON.stringify({ ownerToken: "wrong" }),
     });
     expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Invalid credentials", code: "INVALID_CREDENTIALS" });
+    expect(await response.json()).toMatchObject({
+      error: "Invalid credentials",
+      code: "INVALID_CREDENTIALS",
+      message: "Invalid credentials",
+      requestId: expect.any(String),
+    });
   });
 
   it("rejects cross-origin and script-like login requests", async () => {

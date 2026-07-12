@@ -13,6 +13,7 @@ import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AuthRole, Principal } from "@/http/middleware/auth";
 import { wordsQuerySchema } from "@/schemas/http";
+import { validationError } from "../error-response";
 
 export type AppEnv = {
   Variables: {
@@ -30,7 +31,7 @@ export function wordRoutes(services: Services) {
   app.get("/", async (c) => {
     const parsed = wordsQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-      return c.json({ error: "VALIDATION_ERROR", details: parsed.error.flatten() }, 400);
+      return validationError(c, parsed.error.flatten());
     }
     const result = await services.words.getPublicWords({
       ...parsed.data,

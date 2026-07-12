@@ -165,7 +165,7 @@ describe("POST /api/l2/:slug/draft", () => {
 
     expect(res.status).toBe(503);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("OVER_BUDGET");
+    expect(body.code).toBe("OVER_BUDGET");
   });
 
   it("returns 500 on LLM_ERROR / PARSE_FAILED", async () => {
@@ -231,7 +231,7 @@ describe("POST /api/l2/:slug/draft", () => {
 
     expect(res.status).toBe(503);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("L2_CONTENT_UNAVAILABLE");
+    expect(body.code).toBe("L2_CONTENT_UNAVAILABLE");
   });
 
   // ── Composer field mapping: field=example → service called with corpus ──
@@ -332,7 +332,7 @@ describe("POST /api/l2/:slug/draft", () => {
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("VALIDATION_ERROR");
+    expect(body.code).toBe("VALIDATION_ERROR");
   });
 
   it("returns 422 when generateDraft reports NO_DICTIONARY_CANDIDATES (no dictionary source)", async () => {
@@ -355,7 +355,7 @@ describe("POST /api/l2/:slug/draft", () => {
 
     expect(res.status).toBe(422);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("NO_DICTIONARY_CANDIDATES");
+    expect(body.code).toBe("NO_DICTIONARY_CANDIDATES");
     expect(body.warning).toBe("Dictionary provider not configured");
   });
 
@@ -534,7 +534,7 @@ describe("POST /api/l2/:slug/confirm", () => {
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("VALIDATION_ERROR");
+    expect(body.code).toBe("VALIDATION_ERROR");
     expect(l2content.confirmDraft).not.toHaveBeenCalled();
   });
 
@@ -712,7 +712,7 @@ describe("POST /api/l2/:slug/external-prompt", () => {
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("VALIDATION_ERROR");
+    expect(body.code).toBe("VALIDATION_ERROR");
   });
 
   it("maps field=example to corpus in the response", async () => {
@@ -755,7 +755,7 @@ describe("POST /api/l2/:slug/external-prompt", () => {
 
     expect(res.status).toBe(422);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("NO_DICTIONARY_CANDIDATES");
+    expect(body.code).toBe("NO_DICTIONARY_CANDIDATES");
     expect(body.warning).toBe("Dictionary provider not configured");
   });
 
@@ -1012,7 +1012,7 @@ describe("POST /api/l2/:slug/confirm — body compatibility (B6)", () => {
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("VALIDATION_ERROR");
+    expect(body.code).toBe("VALIDATION_ERROR");
     expect(l2content.confirmDraft).not.toHaveBeenCalled();
   });
 });
@@ -1054,7 +1054,7 @@ describe("POST /api/l2/:slug/confirm — P4 error semantics", () => {
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body.error).toBe("VALIDATION_ERROR");
+    expect(body.code).toBe("VALIDATION_ERROR");
     // No DB write path was entered.
     expect(l2content.confirmDraft).not.toHaveBeenCalled();
   });

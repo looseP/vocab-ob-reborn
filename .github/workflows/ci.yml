@@ -67,6 +67,8 @@ jobs:
       - name: Engineering verification
         env:
           COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ROUTE_COMPLEXITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: npm run verify:engineering
 
       - name: Upload layered coverage evidence

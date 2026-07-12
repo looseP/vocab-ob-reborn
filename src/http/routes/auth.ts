@@ -8,6 +8,7 @@ import {
   type Principal,
 } from "../middleware/auth";
 import type { AppEnv } from "./words";
+import { jsonError } from "../error-response";
 
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 
@@ -60,24 +61,24 @@ export function authRoutes(services: Services) {
   app.post("/session", async (c) => {
     c.header("Cache-Control", "no-store");
     if (!isSameOrigin(c.req.url, c.req.header("Origin")) || c.req.header("X-Requested-With") !== "VocabObservatory") {
-      return c.json({ error: "Invalid request origin", code: "AUTH_ORIGIN_REJECTED" }, 403);
+      return jsonError(c, 403, "AUTH_ORIGIN_REJECTED", "Invalid request origin");
     }
     const rateLimitKey = loginRateLimitKey(c.req.raw.headers);
     const retryAfter = await services.loginRateLimit.consume(rateLimitKey);
     if (retryAfter !== null) {
       c.header("Retry-After", String(retryAfter));
-      return c.json({ error: "Too many authentication attempts", code: "AUTH_RATE_LIMITED" }, 429);
+      return jsonError(c, 429, "AUTH_RATE_LIMITED", "Too many authentication attempts");
     }
     const contentType = c.req.header("Content-Type") ?? "";
     if (!contentType.toLowerCase().startsWith("application/json")) {
-      return c.json({ error: "Content-Type must be application/json", code: "UNSUPPORTED_MEDIA_TYPE" }, 415);
+      return jsonError(c, 415, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json");
     }
     const body = await c.req.json<{ ownerToken?: unknown }>().catch(() => null);
     if (!body || typeof body.ownerToken !== "string" || body.ownerToken.length === 0) {
-      return c.json({ error: "Invalid credentials", code: "INVALID_CREDENTIALS" }, 401);
+      return jsonError(c, 401, "INVALID_CREDENTIALS", "Invalid credentials");
     }
     const issued = await services.authSessions.exchangeOwnerToken(body.ownerToken);
-    if (!issued) return c.json({ error: "Invalid credentials", code: "INVALID_CREDENTIALS" }, 401);
+    if (!issued) return jsonError(c, 401, "INVALID_CREDENTIALS", "Invalid credentials");
 
     await services.loginRateLimit.clear(rateLimitKey);
     setSessionCookies(c, issued.sessionToken, issued.csrfToken);
@@ -103,7 +104,7 @@ export function authRoutes(services: Services) {
       const csrfHeader = c.req.header("X-CSRF-Token");
       const csrfCookie = getCookie(c, CSRF_COOKIE_NAME);
       if (!isSameOrigin(c.req.url, c.req.header("Origin")) || !csrfHeader || csrfHeader !== csrfCookie || !services.authSessions.verifyCsrf(csrfHeader, authenticated.csrfHash)) {
-        return c.json({ error: "Invalid CSRF proof", code: "CSRF_REJECTED" }, 403);
+        return jsonError(c, 403, "CSRF_REJECTED", "Invalid CSRF proof");
       }
       await services.authSessions.revoke(token);
     }

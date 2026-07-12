@@ -21,6 +21,7 @@ import { l2Routes } from "./routes/l2";
 import { l3Routes } from "./routes/l3";
 import { authRoutes } from "./routes/auth";
 import { requestTelemetry, isMetricsAuthorized } from "./middleware/telemetry";
+import { jsonError } from "./error-response";
 import { telemetry, type Telemetry } from "../observability/telemetry";
 
 export function createApp(services: Services, metrics: Telemetry = telemetry): Hono<AppEnv> {
@@ -77,10 +78,7 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   // Reject oversized API bodies before auth or route handlers parse them.
   app.use("/api/*", bodyLimit({
     maxSize: API_JSON_BODY_MAX_BYTES,
-    onError: (c) => c.json(
-      { error: "PAYLOAD_TOO_LARGE", message: "Request body exceeds 1 MiB limit" },
-      413,
-    ),
+    onError: (c) => jsonError(c, 413, "PAYLOAD_TOO_LARGE", "Request body exceeds 1 MiB limit"),
   }));
 
   // Browser sessions are exchanged here before the protected /api middleware.

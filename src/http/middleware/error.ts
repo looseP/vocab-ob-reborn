@@ -1,6 +1,6 @@
 import type { Context } from "hono";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { errorToResponse, AppError } from "@/errors";
+import { jsonError } from "../error-response";
 import { logger } from "@/observability/logger";
 
 /**
@@ -14,7 +14,7 @@ export function handleError(err: Error, c: Context) {
   const requestId = c.get("requestId") as string | undefined;
   if (err instanceof AppError) {
     const { status, body } = errorToResponse(err);
-    return c.json({ ...body, requestId }, status as ContentfulStatusCode);
+    return jsonError(c, status as Parameters<typeof jsonError>[1], body.code, body.error, body.details);
   }
 
   logger.error("http", "Unhandled error", {
@@ -23,5 +23,5 @@ export function handleError(err: Error, c: Context) {
     stack: err.stack,
   });
   const { status, body } = errorToResponse(err);
-  return c.json({ ...body, requestId }, status as ContentfulStatusCode);
+  return jsonError(c, status as Parameters<typeof jsonError>[1], body.code, body.error, body.details);
 }

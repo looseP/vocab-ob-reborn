@@ -64,9 +64,10 @@ async function expectRouteValidationError(response: Response) {
   expect(response.status).toBe(400);
   const body = await response.json() as {
     error: string;
+    code: string;
     details?: { fieldErrors?: Record<string, string[]> };
   };
-  expect(body.error).toBe("VALIDATION_ERROR");
+  expect(body.code).toBe("VALIDATION_ERROR");
   return body;
 }
 
