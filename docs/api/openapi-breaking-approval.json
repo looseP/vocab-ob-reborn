@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "baseSha256": "ba7cdb56ebb3b00043f35e54afc1a255435527617042a9a09701e5521e92443a",
+  "currentSha256": "d8cfb1c1488d4c775c9fb5152c00b85790a91f78c073968e5f62e043c71cadb3",
+  "issues": [
+    {
+      "kind": "breaking",
+      "location": "paths./api/auth/session.post.parameters.header:Origin",
+      "message": "新增 required request parameter"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/auth/session.post.parameters.header:X-Requested-With",
+      "message": "新增 required request parameter"
+    }
+  ]
+}
