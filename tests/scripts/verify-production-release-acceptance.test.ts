@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { buildReleaseCheckEvidence, EXTERNAL_RELEASE_CHECKS, RELEASE_CHECK_PRODUCERS, type ExternalReleaseCheck } from "../../scripts/release-check-evidence";
 import { verifyProductionReleaseAcceptance } from "../../scripts/verify-production-release-acceptance";
 
 const releaseSha = "a".repeat(40);
@@ -8,27 +9,64 @@ const manifestSha256 = createHash("sha256").update(manifest).digest("hex");
 const sidecar = `${manifestSha256}  release-manifest.json\n`;
 const observedAt = "2026-07-11T00:00:00.000Z";
 const phases = ["pull", "migration", "rollout", "smoke"].map((phase) => ({ phase, success: true, timestamp: observedAt }));
-const deployment = { schemaVersion: 1, environment: "staging", manifestSha256, phases };
-const check = { status: "passed", source: "github-environment", producer: "backup-drill/job-1", releaseSha, manifestSha256, observedAt, evidenceSha256: "c".repeat(64) };
-const checks = { migrationRehearsal: check, databaseRoles: check, backupRestore: check, rollbackCompatibility: check, alertingDrill: check, smoke: { ...check, source: "staging-deployment-evidence" } };
+const deploymentBytes = Buffer.from(JSON.stringify({ schemaVersion: 1, environment: "staging", manifestSha256, phases }));
+const evidence = Object.fromEntries(EXTERNAL_RELEASE_CHECKS.map((check) => [check, Buffer.from(JSON.stringify(buildReleaseCheckEvidence({ check, producer: RELEASE_CHECK_PRODUCERS[check], releaseSha, manifestSha256, observedAt })))])) as Record<ExternalReleaseCheck, Buffer>;
+type CheckDeclaration = {
+  status: string;
+  source: string;
+  producer: string;
+  releaseSha: string;
+  manifestSha256: string;
+  observedAt: string;
+  evidenceSha256: string;
+};
+
+const externalDeclaration = (check: ExternalReleaseCheck): CheckDeclaration => ({
+  status: "passed",
+  source: "github-actions-artifact",
+  producer: RELEASE_CHECK_PRODUCERS[check],
+  releaseSha,
+  manifestSha256,
+  observedAt,
+  evidenceSha256: createHash("sha256").update(evidence[check]).digest("hex"),
+});
+const smoke: CheckDeclaration = { status: "passed", source: "staging-deployment-evidence", producer: "release-workflow/staging", releaseSha, manifestSha256, observedAt, evidenceSha256: createHash("sha256").update(deploymentBytes).digest("hex") };
+const checks: Record<ExternalReleaseCheck | "smoke", CheckDeclaration> = {
+  migrationRehearsal: externalDeclaration("migrationRehearsal"),
+  databaseRoles: externalDeclaration("databaseRoles"),
+  backupRestore: externalDeclaration("backupRestore"),
+  rollbackCompatibility: externalDeclaration("rollbackCompatibility"),
+  alertingDrill: externalDeclaration("alertingDrill"),
+  smoke,
+};
 const acceptance = { schemaVersion: 1, releaseSha, manifestSha256, checks, decision: "GO" };
 const now = new Date("2026-07-11T01:00:00.000Z");
 
-const verify = (overrides: { digest?: string; deployment?: unknown; acceptance?: unknown } = {}) => verifyProductionReleaseAcceptance(manifest, overrides.digest ?? sidecar, overrides.deployment ?? deployment, overrides.acceptance ?? acceptance, now);
+type Overrides = { deploymentBytes?: Buffer; acceptance?: unknown; evidence?: Record<ExternalReleaseCheck, Buffer> };
+const verify = (overrides: Overrides = {}) => verifyProductionReleaseAcceptance(manifest, sidecar, overrides.deploymentBytes ?? deploymentBytes, overrides.acceptance ?? acceptance, overrides.evidence ?? evidence, now);
+const alter = (check: ExternalReleaseCheck, artifact: Record<string, unknown>, declaration: Record<string, unknown> = {}) => {
+  const bytes = Buffer.from(JSON.stringify(artifact));
+  return { evidence: { ...evidence, [check]: bytes }, acceptance: { ...acceptance, checks: { ...checks, [check]: { ...checks[check], evidenceSha256: createHash("sha256").update(bytes).digest("hex"), ...declaration } } } };
+};
+const artifact = (check: ExternalReleaseCheck) => JSON.parse(evidence[check].toString("utf8")) as Record<string, unknown>;
+
+describe("release check evidence", () => {
+  it("builds canonical artifact v1", () => expect(buildReleaseCheckEvidence({ check: "backupRestore", producer: RELEASE_CHECK_PRODUCERS.backupRestore, releaseSha, manifestSha256, observedAt })).toEqual(artifact("backupRestore")));
+  it("rejects wrong producer", () => expect(() => buildReleaseCheckEvidence({ check: "backupRestore", producer: "other", releaseSha, manifestSha256, observedAt })).toThrow(/producer/));
+});
 
 describe("production release acceptance", () => {
-  it("accepts bound GO evidence", () => expect(verify()).toEqual({ schemaVersion: 1, decision: "GO", releaseSha, manifestSha256, environment: "production", checks }));
-  it("rejects a tampered digest", () => expect(() => verify({ digest: `${"b".repeat(64)}  release-manifest.json\n` })).toThrow(/digest sidecar/));
-  it("rejects a missing phase", () => expect(() => verify({ deployment: { ...deployment, phases: phases.slice(1) } })).toThrow(/exactly four/));
-  it("rejects a duplicate phase", () => expect(() => verify({ deployment: { ...deployment, phases: [phases[0], phases[0], phases[2], phases[3]] } })).toThrow(/ordered/));
-  it("rejects a failed check", () => expect(() => verify({ acceptance: { ...acceptance, checks: { ...checks, backupRestore: { ...check, status: "failed" } } } })).toThrow(/backupRestore/));
-  it("rejects unknown fields", () => expect(() => verify({ acceptance: { ...acceptance, secret: "unexpected" } })).toThrow(/keys/));
-  it("rejects unknown check fields", () => expect(() => verify({ acceptance: { ...acceptance, checks: { ...checks, alertingDrill: { ...check, note: "untrusted" } } } })).toThrow(/keys/));
-  it("rejects invalid evidence digests", () => expect(() => verify({ acceptance: { ...acceptance, checks: { ...checks, migrationRehearsal: { ...check, evidenceSha256: "latest" } } } })).toThrow(/evidence SHA-256/));
-  it("rejects future evidence timestamps", () => expect(() => verify({ acceptance: { ...acceptance, checks: { ...checks, databaseRoles: { ...check, observedAt: "2026-07-12T00:00:00.000Z" } } } })).toThrow(/future/));
-  it("rejects replayed evidence identity", () => expect(() => verify({ acceptance: { ...acceptance, checks: { ...checks, backupRestore: { ...check, releaseSha: "b".repeat(40) } } } })).toThrow(/identity/));
-  it("rejects stale evidence", () => expect(() => verify({ acceptance: { ...acceptance, checks: { ...checks, alertingDrill: { ...check, observedAt: "2026-05-01T00:00:00.000Z" } } } })).toThrow(/stale/));
-  it("rejects the wrong release SHA", () => expect(() => verify({ acceptance: { ...acceptance, releaseSha: "b".repeat(40) } })).toThrow(/identity/));
-  it("rejects the wrong manifest SHA", () => expect(() => verify({ acceptance: { ...acceptance, manifestSha256: "b".repeat(64) } })).toThrow(/identity/));
-  it("rejects NO_GO", () => expect(() => verify({ acceptance: { ...acceptance, decision: "NO_GO" } })).toThrow(/must be GO/));
+  it("accepts verified source artifact bytes", () => expect(verify()).toEqual({ schemaVersion: 1, decision: "GO", releaseSha, manifestSha256, environment: "production", checks }));
+  it("rejects missing artifact", () => { const missing = { ...evidence }; delete (missing as Partial<typeof evidence>).backupRestore; expect(() => verify({ evidence: missing })).toThrow(/Missing backupRestore/); });
+  it("rejects tampered content", () => expect(() => verify({ evidence: { ...evidence, alertingDrill: Buffer.concat([evidence.alertingDrill, Buffer.from(" ")]) } })).toThrow(/digest mismatch/));
+  it("rejects declaration digest mismatch", () => expect(() => verify({ acceptance: { ...acceptance, checks: { ...checks, databaseRoles: { ...checks.databaseRoles, evidenceSha256: "b".repeat(64) } } } })).toThrow(/digest mismatch/));
+  it("rejects wrong check", () => expect(() => verify(alter("migrationRehearsal", { ...artifact("migrationRehearsal"), check: "databaseRoles", producer: RELEASE_CHECK_PRODUCERS.databaseRoles }))).toThrow(/check mismatch/));
+  it("rejects wrong producer", () => expect(() => verify(alter("backupRestore", { ...artifact("backupRestore"), producer: RELEASE_CHECK_PRODUCERS.alertingDrill }))).toThrow(/producer/));
+  it("rejects wrong release", () => expect(() => verify(alter("rollbackCompatibility", { ...artifact("rollbackCompatibility"), releaseSha: "b".repeat(40) }))).toThrow(/identity/));
+  it("rejects wrong manifest", () => expect(() => verify(alter("alertingDrill", { ...artifact("alertingDrill"), manifestSha256: "b".repeat(64) }))).toThrow(/identity/));
+  it("rejects stale evidence", () => expect(() => verify(alter("backupRestore", { ...artifact("backupRestore"), observedAt: "2026-05-01T00:00:00.000Z" }, { observedAt: "2026-05-01T00:00:00.000Z" }))).toThrow(/stale/));
+  it("rejects future evidence", () => expect(() => verify(alter("databaseRoles", { ...artifact("databaseRoles"), observedAt: "2026-07-12T00:00:00.000Z" }, { observedAt: "2026-07-12T00:00:00.000Z" }))).toThrow(/future/));
+  it("rejects unknown fields", () => expect(() => verify(alter("migrationRehearsal", { ...artifact("migrationRehearsal"), secret: "no" }))).toThrow(/keys/));
+  it("rejects malformed JSON", () => { const bytes = Buffer.from("{"); expect(() => verify({ evidence: { ...evidence, backupRestore: bytes }, acceptance: { ...acceptance, checks: { ...checks, backupRestore: { ...checks.backupRestore, evidenceSha256: createHash("sha256").update(bytes).digest("hex") } } } })).toThrow(/Malformed/); });
+  it("re-hashes smoke deployment bytes", () => expect(() => verify({ deploymentBytes: Buffer.concat([deploymentBytes, Buffer.from(" ")]) })).toThrow(/Smoke evidence mismatch/));
 });

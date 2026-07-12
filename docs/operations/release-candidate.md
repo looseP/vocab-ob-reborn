@@ -34,7 +34,7 @@ It verifies liveness, readiness, request-ID propagation, metrics fail-closed beh
 
 ## Deployment runners and lock operations
 
-The release workflow deploys on dedicated self-hosted Linux runners labelled `vocab-staging` and `vocab-production`. Each runner must execute in its corresponding target environment, have Docker Compose access to that environment, and must not be registered for untrusted pull-request workflows. GitHub Environment protection and job-level `deploy-staging` / `deploy-production` concurrency complement the host lock; production must configure required reviewers.
+The prepare `release.yml` workflow only verifies and publishes immutable artifacts. The separate `promote-release.yml` workflow consumes a positive same-repository `prepare_run_id` and deploys on dedicated self-hosted Linux runners labelled `vocab-staging` and `vocab-production`. Each runner must execute in its corresponding target environment, have Docker Compose access to that environment, and must not be registered for untrusted pull-request workflows. GitHub Environment protection and job-level `deploy-staging` / `deploy-production` concurrency complement the host lock; production must configure required reviewers.
 
 `npm run release:deploy` requires `RELEASE_DEPLOY_ENV_FILE` to point at a persistent, permission-controlled file on the target host containing the non-image Compose configuration (database connection, application origin, owner and metrics tokens, backup settings, and other required values). The adapter requires an absolute path to a regular file, rejects a missing file, the manifest itself, and files under the system temporary directory, and on Linux rejects any group/world permission bits (`mode & 077`). It supplies this persistent file first and a generated image-only file second, so only the three immutable manifest image references override host configuration; dry-run output redacts both paths.
 
@@ -52,7 +52,7 @@ Before increasing traffic, deploy the previous application image against the mig
 
 ## Production acceptance
 
-The final Go/No-Go contract is documented in `docs/operations/production-release-acceptance.md`. Production requires the exact publish artifact, the ordered staging deployment evidence, six explicit passed checks, the protected `production` Environment required reviewers, and a `GO` decision. Real backup/restore and alerting drills require independent infrastructure and must never be represented as passed without execution.
+The final Go/No-Go contract is documented in `docs/operations/production-release-acceptance.md`. Production requires the exact publish artifact, the ordered staging deployment evidence, five verified external source artifacts, smoke, the protected `production` Environment required reviewers, and a `GO` decision. Each real rehearsal producer uploads `evidence.json` under its fixed `release-check-<kebab>` artifact name in this repository. The release accepts only a positive source run ID from workflow-dispatch input or the corresponding protected production `<CHECK>_RUN_ID` variable; tag pushes with any missing run ID fail closed. The verifier downloads from `${{ github.repository }}`, re-hashes source bytes, and binds their exact artifact-v1 fields to the current release and manifest. Real backup/restore and alerting drills require independent infrastructure and must never be represented as passed without execution.
 
 ## Evidence retention
 
