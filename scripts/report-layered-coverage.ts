@@ -68,7 +68,7 @@ const TARGET_THRESHOLDS = { lines: 85, statements: 85, branches: 75 } as const;
 const BASELINE_THRESHOLDS: Record<CoreLayer, { lines: number; statements: number; branches: number }> = {
   domain: { lines: 85, statements: 85, branches: 79 },
   service: { lines: 87, statements: 85, branches: 75 },
-  repository: { lines: 67, statements: 64, branches: 58 },
+  repository: { lines: 90, statements: 86, branches: 75 },
 };
 const KNOWN_SOURCE_DIRECTORIES = new Set([
   "config", "db", "dictionary", "domain", "errors", "frontend", "fsrs", "http",
