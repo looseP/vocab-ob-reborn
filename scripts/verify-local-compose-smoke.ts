@@ -86,11 +86,11 @@ export function hasListedResources(output: string): boolean {
 
 export function resolveSmokeBackupRuntimeUser(
   platform: NodeJS.Platform = process.platform,
-  uid: number | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
-  gid: number | undefined = typeof process.getgid === "function" ? process.getgid() : undefined,
+  uid: number | null | undefined = typeof process.getuid === "function" ? process.getuid() : undefined,
+  gid: number | null | undefined = typeof process.getgid === "function" ? process.getgid() : undefined,
 ): string {
   if (platform === "win32") return "node";
-  if (uid === undefined || gid === undefined) {
+  if (uid == null || gid == null) {
     throw new Error(`Cannot resolve host UID:GID for backup bind mount on ${platform}`);
   }
   return `${uid}:${gid}`;

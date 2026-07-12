@@ -77,4 +77,10 @@ describe("release workflow structured contract", () => {
   it("rejects producer upload with weak retention", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "migration-rehearsal": producers["migration-rehearsal"].replace("retention-days: 90", "retention-days: 1") })).toThrow(/upload/));
   it("rejects producer sidecar outside artifact directory", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "rollback-compatibility": producers["rollback-compatibility"].replace("(cd prepare && sha256sum --check release-manifest.sha256)", "sha256sum --check prepare/release-manifest.sha256") })).toThrow(/sidecar/));
   it("keeps CI release evidence", () => expect(() => verifyCiReleaseManifestContract(ciWorkflow)).not.toThrow());
+  it("uploads layered coverage only after engineering verification succeeds", () => {
+    const value = parse(ciWorkflow);
+    const upload = value.jobs.verify.steps.find((step: { name?: string }) => step.name === "Upload layered coverage evidence");
+    expect(upload?.if).toBeUndefined();
+    expect(upload?.with?.["if-no-files-found"]).toBe("error");
+  });
 });
