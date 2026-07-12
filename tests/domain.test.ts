@@ -60,6 +60,29 @@ describe("Word entity", () => {
     expect(word.hasContentDrift("new")).toBe(false);
     expect(word.hasContentDrift(null)).toBe(false);
   });
+
+  it("exposes scalar fields and normalizes nullable summaries", () => {
+    const word = new Word(makeWordRow({ pos: null, short_definition: null, cefr: null }));
+    expect({
+      id: word.id,
+      slug: word.slug,
+      lemma: word.lemma,
+      title: word.title,
+      pos: word.pos,
+      shortDefinition: word.shortDefinition,
+      cefr: word.cefr,
+      contentHash: word.contentHash,
+    }).toEqual({
+      id: "w1",
+      slug: "aboard",
+      lemma: "aboard",
+      title: "aboard",
+      pos: "",
+      shortDefinition: "",
+      cefr: "",
+      contentHash: "abc123",
+    });
+  });
 });
 
 describe("ReviewCard entity", () => {

@@ -203,6 +203,30 @@ describe("WordbookService", () => {
     await service.addWords("wb1", []);
     expect(repo.addWords).not.toHaveBeenCalled();
   });
+
+  it("delegates reads, non-empty additions, and word counts", async () => {
+    const first = {
+      id: "wb1", user_id: "u1", name: "Default", description: null,
+      is_default: true, settings: {}, created_at: "2026-07-10T00:00:00Z",
+      updated_at: "2026-07-10T00:00:00Z",
+    } satisfies WordbookRow;
+    const second = { ...first, id: "wb2", name: "Extra", is_default: false } satisfies WordbookRow;
+    const repo = makeMockWordbookRepo({
+      getOrCreateDefault: vi.fn(async () => first),
+      findAllByUser: vi.fn(async () => [first, second]),
+      findById: vi.fn(async (id) => id === "wb1" ? first : null),
+      countWords: vi.fn(async () => 2),
+    });
+    const service = new WordbookService(repo);
+
+    expect((await service.getOrCreateDefault("u1")).id).toBe("wb1");
+    expect(await service.findAllByUser("u1")).toHaveLength(2);
+    expect((await service.findById("wb1"))?.name).toBe("Default");
+    expect(await service.findById("missing")).toBeNull();
+    await service.addWords("wb1", ["word-1", "word-2"]);
+    expect(repo.addWords).toHaveBeenCalledWith("wb1", ["word-1", "word-2"]);
+    expect(await service.getWordCount("wb1")).toBe(2);
+  });
 });
 
 describe("StatsService", () => {

@@ -11,7 +11,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "vitest run --coverage",
+    "test:unit": "vitest run --coverage && npm run coverage:layered",
+    "coverage:layered": "tsx scripts/report-layered-coverage.ts",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts --reporter=verbose",
     "test:db-release": "tsx scripts/verify-release-database.ts",
