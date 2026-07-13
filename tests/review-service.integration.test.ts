@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createRepositories, resetDb, withTransaction } from "@/index";
+import { createHash, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
@@ -39,18 +40,18 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
   it("findPublic returns paginated results", async () => {
     const repos = createRepositories();
     const result = await repos.words.findPublic({
-      userId: "00000000-0000-4000-8000-000000000001",
+      userId: randomUUID(),
       pagination: { limit: 5, offset: 0 },
     });
-    expect(result.items.length).toBe(5);
+    expect(result.items.length).toBe(Math.min(5, seededWordCount));
     expect(result.total).toBe(seededWordCount);
-    expect(result.hasMore).toBe(true);
+    expect(result.hasMore).toBe(seededWordCount > 5);
   });
 
   it("findPublic with search filter works", async () => {
     const repos = createRepositories();
     const result = await repos.words.findPublic({
-      userId: "00000000-0000-4000-8000-000000000001",
+      userId: randomUUID(),
       filters: { q: "abandon" },
       pagination: { limit: 10, offset: 0 },
     });
@@ -60,8 +61,9 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
 
   it("findSlugs returns ordered slugs", async () => {
     const repos = createRepositories();
-    const slugs = await repos.words.findSlugs(100);
-    expect(slugs.length).toBe(100);
+    const limit = Math.min(100, seededWordCount);
+    const slugs = await repos.words.findSlugs(limit);
+    expect(slugs.length).toBe(limit);
     expect(slugs).toEqual([...slugs].sort());
   });
 
@@ -77,8 +79,8 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
   it("dashboard summary returns valid data", async () => {
     const repos = createRepositories();
     const summary = await repos.stats.getDashboardSummary(
-      "00000000-0000-4000-8000-000000000001",
-      "00000000-0000-0000-0000-000000000002",
+      randomUUID(),
+      randomUUID(),
     );
     expect(summary.totalWords).toBe(seededWordCount);
     expect(summary.trackedWords).toBeGreaterThanOrEqual(0);
@@ -96,23 +98,33 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
     progressId: string;
     sessionId: string;
     userId: string;
+    contentHash: string;
     cleanup: () => Promise<void>;
   }> {
-    const userId = "00000000-0000-0000-0000-000000000001";
-    // Generate unique UUIDs per test run
-    const { randomUUID } = await import("crypto");
+    const userId = randomUUID();
     const wordId = randomUUID();
     const wordbookId = randomUUID();
     const progressId = randomUUID();
     const sessionId = randomUUID();
+    const contentHash = createHash("sha256").update(wordId).digest("hex");
 
     const pool = (await import("@/db/connection")).getPool();
+
+    // Create user + profile (required by wordbooks FK)
+    await pool.query(
+      "INSERT INTO users (id, email) VALUES ($1, $2)",
+      [userId, `test-${userId.slice(0, 8)}@example.test`],
+    );
+    await pool.query(
+      "INSERT INTO profiles (id, email) VALUES ($1, $2)",
+      [userId, `test-${userId.slice(0, 8)}@example.test`],
+    );
 
     // Create a test word (minimal fields)
     await pool.query(
       `INSERT INTO words (id, slug, content_hash, source_path, title, lemma, definition_md, body_md)
        VALUES ($1, $2, $3, 'test', 'testword', 'testword', 'def', 'body')`,
-      [wordId, `test-${wordId.slice(0, 8)}`, "a".repeat(64)],
+      [wordId, `test-${wordId.slice(0, 8)}`, contentHash],
     );
 
     // Create a wordbook
@@ -137,7 +149,7 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
     );
 
     return {
-      wordId, wordbookId, progressId, sessionId, userId,
+      wordId, wordbookId, progressId, sessionId, userId, contentHash,
       cleanup: async () => {
         // Reverse FK order
         await pool.query("DELETE FROM review_logs WHERE session_id = $1", [sessionId]);
@@ -146,6 +158,8 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
         await pool.query("DELETE FROM wordbook_items WHERE wordbook_id = $1", [wordbookId]);
         await pool.query("DELETE FROM wordbooks WHERE id = $1", [wordbookId]);
         await pool.query("DELETE FROM words WHERE id = $1", [wordId]);
+        await pool.query("DELETE FROM profiles WHERE id = $1", [userId]);
+        await pool.query("DELETE FROM users WHERE id = $1", [userId]);
       },
     };
   }
@@ -192,7 +206,7 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       expect(progress[0].review_count).toBe(1);
       expect(progress[0].good_count).toBe(1);
       // M-NEW-4: content_hash_snapshot should be refreshed
-      expect(progress[0].content_hash_snapshot).toBe("a".repeat(64));
+      expect(progress[0].content_hash_snapshot).toBe(data.contentHash);
 
       // Verify review_log was created
       const { rows: logs } = await pool.query(
