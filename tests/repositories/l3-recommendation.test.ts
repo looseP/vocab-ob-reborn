@@ -122,8 +122,7 @@ describe("L3RecommendationRepository", () => {
   });
 
   it("declares recommendation owner constraints in migration", () => {
-    const migration = readFileSync(join(process.cwd(), "drizzle/0009_magenta_captain_flint.sql"), "utf8");
-    const hardeningMigration = readFileSync(join(process.cwd(), "drizzle/0010_hesitant_mojo.sql"), "utf8");
+    const migration = readFileSync(join(process.cwd(), "drizzle-release/0000_baseline.sql"), "utf8");
 
     expect(migration).toContain('CREATE TABLE "l3_recommendation_runs"');
     expect(migration).toContain('CREATE TABLE "l3_recommendation_items"');
@@ -131,7 +130,6 @@ describe("L3RecommendationRepository", () => {
     expect(migration).toContain('CONSTRAINT "l3_recommendation_items_run_owner_fk" FOREIGN KEY ("run_id","user_id")');
     expect(migration).toContain('CONSTRAINT "l3_recommendation_items_proposal_owner_fk" FOREIGN KEY ("accepted_proposal_id","user_id")');
     expect(migration).toContain('CREATE POLICY "l3_recommendation_items_own_all"');
-    expect(hardeningMigration).toContain('DROP CONSTRAINT "l3_recommendation_items_proposal_owner_fk"');
-    expect(hardeningMigration).toContain('ON DELETE no action');
+    expect(migration).toContain('ON DELETE no action');
   });
 });

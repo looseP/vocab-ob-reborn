@@ -1,8 +1,9 @@
 import { defineConfig } from "vitest/config";
 import path from "node:path";
 
-// Separate config for integration tests — does NOT exclude
-// review-concurrency.test.ts like the default config does.
+// Separate config for integration tests — collects all *.integration.test.ts
+// files (including review-service.integration.test.ts) that need a real
+// PostgreSQL database via TEST_DATABASE_URL.
 export default defineConfig({
   resolve: {
     alias: {

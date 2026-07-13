@@ -143,7 +143,7 @@ describe("L3ProposalRepository", () => {
   });
 
   it("declares proposal owner composite constraints in migration", () => {
-    const migration = readFileSync(join(process.cwd(), "drizzle/0008_flashy_colonel_america.sql"), "utf8");
+    const migration = readFileSync(join(process.cwd(), "drizzle-release/0000_baseline.sql"), "utf8");
 
     expect(migration).toContain('CONSTRAINT "l3_proposals_id_user_id_unique" UNIQUE("id","user_id")');
     expect(migration).toContain('CONSTRAINT "l3_proposals_wordbook_owner_fk" FOREIGN KEY ("wordbook_id","user_id")');
