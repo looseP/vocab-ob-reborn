@@ -55,6 +55,14 @@ export interface WordSummary {
   metadata: Json;
 }
 
+/** Public wire-safe word detail. Internal ingestion and lifecycle fields are excluded. */
+export interface WordDetail extends WordSummary {
+  aliases: string[];
+  definition_md: string;
+  body_md: string;
+  examples: Json;
+}
+
 export interface WordFilters {
   q?: string;
   freq?: string;

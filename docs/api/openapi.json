@@ -2087,7 +2087,96 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema"
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "lemma": {
+                      "type": "string"
+                    },
+                    "pos": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "cefr": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "ipa": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "aliases": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "short_definition": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "definition_md": {
+                      "type": "string"
+                    },
+                    "body_md": {
+                      "type": "string"
+                    },
+                    "examples": {
+                      "$ref": "#/components/schemas/JsonValue"
+                    },
+                    "metadata": {
+                      "$ref": "#/components/schemas/JsonValue"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "slug",
+                    "title",
+                    "lemma",
+                    "pos",
+                    "cefr",
+                    "ipa",
+                    "aliases",
+                    "short_definition",
+                    "definition_md",
+                    "body_md",
+                    "examples",
+                    "metadata"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }

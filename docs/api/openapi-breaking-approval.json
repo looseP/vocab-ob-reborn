@@ -1,46 +1,11 @@
 {
   "version": 1,
-  "baseSha256": "c08bdea8f4578e675251b186a4c5a316ab213450f8c93a21beccf361565c35eb",
-  "currentSha256": "3aad31a1f86a3af4442106560fec88f01f3a331311034928fd6786194e311468",
+  "baseSha256": "3aad31a1f86a3af4442106560fec88f01f3a331311034928fd6786194e311468",
+  "currentSha256": "0e1e7d1f1db9bd4ee8e87864b5940c606085801b19d048bdfc96d251486ed15f",
   "issues": [
     {
       "kind": "breaking",
-      "location": "paths./api/words.get.responses.200.content.application/json.schema",
-      "message": "schema type 发生变化"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/review/answer.post.responses.200.content.application/json.schema",
-      "message": "schema type 发生变化"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/review/skip.post.responses.200.content.application/json.schema",
-      "message": "schema type 发生变化"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/review/suspend.post.responses.200.content.application/json.schema",
-      "message": "schema type 发生变化"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/review/undo.post.responses.200.content.application/json.schema",
-      "message": "schema type 发生变化"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l2/{slug}/draft.post.responses.200.content.application/json.schema",
-      "message": "schema type 发生变化"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l2/{slug}/external-prompt.post.responses.200.content.application/json.schema",
-      "message": "schema type 发生变化"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l2/{slug}/confirm.post.responses.200.content.application/json.schema",
+      "location": "paths./api/words/{slug}.get.responses.200.content.application/json.schema",
       "message": "schema type 发生变化"
     }
   ]

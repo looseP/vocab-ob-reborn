@@ -44,7 +44,7 @@ export function wordRoutes(services: Services) {
   // is mapped to 404 by the global handleError middleware.
   app.get("/:slug", async (c) => {
     const { word } = await services.words.getWordBySlug(c.req.param("slug"));
-    return c.json(word);
+    return c.json(word.toDetail());
   });
 
   return app;

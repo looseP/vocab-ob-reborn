@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  wordDetailResponseSchema,
   wordListResponseSchema,
   wordSummaryResponseSchema,
 } from "../../src/http/words-response-contract";
@@ -23,6 +24,23 @@ describe("Words response contracts", () => {
     expect(() => wordSummaryResponseSchema.parse({ ...summary, extra: true })).toThrow();
     const { id: _id, ...missing } = summary;
     expect(() => wordSummaryResponseSchema.parse(missing)).toThrow();
+  });
+
+  it("parses the exact WordDetail response without internal lifecycle fields", () => {
+    const detail = {
+      ...summary,
+      aliases: ["abounds", "abounded"],
+      definition_md: "To exist in large numbers.",
+      body_md: "# abound",
+      examples: [{ text: "Fish abound in the lake." }],
+    };
+
+    expect(wordDetailResponseSchema.parse(detail)).toEqual(detail);
+    expect(() => wordDetailResponseSchema.parse({ ...detail, aliases: [123] })).toThrow();
+    expect(() => wordDetailResponseSchema.parse({ ...detail, row: detail })).toThrow();
+    expect(() => wordDetailResponseSchema.parse({ ...detail, content_hash: "secret" })).toThrow();
+    const { examples: _examples, ...missing } = detail;
+    expect(() => wordDetailResponseSchema.parse(missing)).toThrow();
   });
 
   it("parses the exact listWords paginated response", () => {
