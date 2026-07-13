@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createApp } from "@/http/server";
 import type { Services } from "@/services";
+import {
+  reviewAnswerResponseSchema,
+  reviewSimpleResponseSchema,
+} from "@/http/review-response-contract";
 
 // ── Auth env setup ──────────────────────────────────────────────────────
 const ORIGINAL_OWNER_TOKEN = process.env.OWNER_API_TOKEN;
@@ -23,7 +27,7 @@ function makeMockServices(): Services {
     reviews: {
       submitAnswer: vi.fn().mockResolvedValue({
         ok: true,
-        reviewLogId: "log-1",
+        reviewLogId: "11111111-1111-4111-8111-111111111111",
         nextDueAt: "2026-01-16T12:00:00Z",
         state: "review",
       }),
@@ -61,9 +65,9 @@ describe("POST /api/review/answer", () => {
       }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; reviewLogId: string };
+    const body = reviewAnswerResponseSchema.parse(await res.json());
     expect(body.ok).toBe(true);
-    expect(body.reviewLogId).toBe("log-1");
+    expect(body.reviewLogId).toBe("11111111-1111-4111-8111-111111111111");
     expect(services.reviews.submitAnswer).toHaveBeenCalledTimes(1);
     expect(services.reviews.submitAnswer).toHaveBeenCalledWith({
       progressId: PROGRESS_ID,
@@ -132,6 +136,7 @@ describe("POST /api/review/skip", () => {
       body: JSON.stringify({ progressId: PROGRESS_ID, sessionId: SESSION_ID }),
     });
     expect(res.status).toBe(200);
+    expect(reviewSimpleResponseSchema.parse(await res.json())).toEqual({ ok: true });
     expect(services.reviews.skip).toHaveBeenCalledTimes(1);
     const callArgs = (services.reviews.skip as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(callArgs[0]).toEqual({ progressId: PROGRESS_ID, sessionId: SESSION_ID });
@@ -151,6 +156,7 @@ describe("POST /api/review/suspend", () => {
       body: JSON.stringify({ progressId: PROGRESS_ID }),
     });
     expect(res.status).toBe(200);
+    expect(reviewSimpleResponseSchema.parse(await res.json())).toEqual({ ok: true });
     expect(services.reviews.suspend).toHaveBeenCalledTimes(1);
     const callArgs = (services.reviews.suspend as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(callArgs[1]).toBe("user-123");
@@ -186,6 +192,7 @@ describe("POST /api/review/undo", () => {
       body: JSON.stringify({ reviewLogId: "log-1", sessionId: SESSION_ID }),
     });
     expect(res.status).toBe(200);
+    expect(reviewSimpleResponseSchema.parse(await res.json())).toEqual({ ok: true });
     expect(services.reviews.undo).toHaveBeenCalledTimes(1);
     const callArgs = (services.reviews.undo as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(callArgs[0]).toEqual({ reviewLogId: "log-1", sessionId: SESSION_ID });

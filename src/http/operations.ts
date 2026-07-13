@@ -6,6 +6,16 @@ import {
   l3RecommendationListResponseSchema,
 } from "./l3-response-contract";
 import {
+  reviewAnswerResponseSchema,
+  reviewSimpleResponseSchema,
+} from "./review-response-contract";
+import { wordListResponseSchema } from "./words-response-contract";
+import {
+  l2ConfirmResponseSchema,
+  l2DraftResponseSchema,
+  l2ExternalPromptResponseSchema,
+} from "./l2-response-contract";
+import {
   l3ContextCreateSchema,
   l3ContextLinkCreateSchema,
   l3GraphQuerySchema,
@@ -175,15 +185,15 @@ export const apiOperations = [
   operation("get", "/api/auth/session", "getAuthSession", "owner", "none", undefined, 200, authSessionSchema),
   operation("delete", "/api/auth/session", "deleteAuthSession", "optionalSession", "sessionMutation", undefined, 204, z.null()),
   operation("get", "/api/operations/metrics", "getOperationMetrics", "owner", "none"),
-  operation("get", "/api/words", "listWords", "owner", "none", { query: wordsQuerySchema }),
+  operation("get", "/api/words", "listWords", "owner", "none", { query: wordsQuerySchema }, 200, wordListResponseSchema),
   operation("get", "/api/words/:slug", "getWord", "owner", "none"),
-  operation("post", "/api/review/answer", "submitReviewAnswer", "owner", "sessionMutation", { body: reviewAnswerSchema }),
-  operation("post", "/api/review/skip", "skipReview", "owner", "sessionMutation", { body: reviewSkipSchema }),
-  operation("post", "/api/review/suspend", "suspendReview", "owner", "sessionMutation", { body: reviewSuspendSchema }),
-  operation("post", "/api/review/undo", "undoReview", "owner", "sessionMutation", { body: reviewUndoSchema }),
-  operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }),
-  operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "sessionMutation", { body: l2FieldRequestSchema }),
-  operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }),
+  operation("post", "/api/review/answer", "submitReviewAnswer", "owner", "sessionMutation", { body: reviewAnswerSchema }, 200, reviewAnswerResponseSchema),
+  operation("post", "/api/review/skip", "skipReview", "owner", "sessionMutation", { body: reviewSkipSchema }, 200, reviewSimpleResponseSchema),
+  operation("post", "/api/review/suspend", "suspendReview", "owner", "sessionMutation", { body: reviewSuspendSchema }, 200, reviewSimpleResponseSchema),
+  operation("post", "/api/review/undo", "undoReview", "owner", "sessionMutation", { body: reviewUndoSchema }, 200, reviewSimpleResponseSchema),
+  operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),
+  operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
+  operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }, 200, l2ConfirmResponseSchema),
   operation("post", "/api/l3/sources", "createL3Source", "owner", "sessionMutation", { body: l3SourceCreateSchema }, 201),
   operation("post", "/api/l3/contexts", "createL3Context", "owner", "sessionMutation", { body: l3ContextCreateSchema }, 201),
   operation("post", "/api/l3/occurrences", "createL3Occurrence", "owner", "sessionMutation", { body: l3OccurrenceCreateSchema }, 201),

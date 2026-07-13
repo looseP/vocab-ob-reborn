@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createApp } from "@/http/server";
 import { NotFoundError } from "@/errors";
 import type { Services } from "@/services";
+import { wordListResponseSchema } from "@/http/words-response-contract";
 
 // ── Auth env setup ──────────────────────────────────────────────────────
 // authMiddleware resolves the bearer token against OWNER_API_TOKEN.
@@ -25,7 +26,23 @@ function makeMockServices(): Services {
     words: {
       getPublicWords: vi
         .fn()
-        .mockResolvedValue({ items: [{ slug: "abound", lemma: "abound" }], total: 1 }),
+        .mockResolvedValue({
+          items: [{
+            id: "word-1",
+            slug: "abound",
+            title: "Abound",
+            lemma: "abound",
+            pos: "verb",
+            cefr: "C1",
+            ipa: null,
+            short_definition: "exist in large numbers",
+            metadata: {},
+          }],
+          total: 1,
+          limit: 5,
+          offset: 0,
+          hasMore: false,
+        }),
       getWordBySlug: vi.fn(),
       getWordCount: vi.fn().mockResolvedValue(1),
       getAllSlugs: vi.fn().mockResolvedValue(["abound"]),
@@ -51,7 +68,7 @@ describe("GET /api/words", () => {
     const app = createApp(services);
     const res = await app.request("/api/words?limit=5", { headers: AUTH_HEADERS });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { items: { slug: string }[]; total: number };
+    const body = wordListResponseSchema.parse(await res.json());
     expect(body.items).toHaveLength(1);
     expect(body.items[0].slug).toBe("abound");
     // service called with parsed query (limit coerced to number, defaults applied)
