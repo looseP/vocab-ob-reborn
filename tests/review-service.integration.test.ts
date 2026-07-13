@@ -227,12 +227,17 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       // Verify progress was updated
       const pool = (await import("@/db/connection")).getPool();
       const { rows: progress } = await pool.query(
-        "SELECT state, review_count, good_count, content_hash_snapshot FROM user_word_progress WHERE id = $1",
+        `SELECT state, review_count, good_count, last_rating, recent_ratings,
+                content_hash_snapshot
+         FROM user_word_progress
+         WHERE id = $1`,
         [data.progressId],
       );
       expect(progress[0].state).toBe("review");
       expect(progress[0].review_count).toBe(1);
       expect(progress[0].good_count).toBe(1);
+      expect(progress[0].last_rating).toBe("good");
+      expect(progress[0].recent_ratings).toEqual(["good"]);
       // M-NEW-4: content_hash_snapshot should be refreshed
       expect(progress[0].content_hash_snapshot).toBe(data.contentHash);
 

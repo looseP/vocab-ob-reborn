@@ -982,8 +982,12 @@ describe("saveAnswer dual-track changes", () => {
     const updateSql = mock.calls[0].text;
 
     expect(updateSql).toContain("recent_ratings =");
-    // append via || to_jsonb($5::text)
-    expect(updateSql).toContain("recent_ratings || to_jsonb($5::text)");
+    // Append through a dedicated text-typed parameter so PostgreSQL does not
+    // infer one placeholder as both review_rating and text (SQLSTATE 42P08).
+    expect(updateSql).toContain("recent_ratings || to_jsonb($16::text)");
+    expect(mock.calls[0].params).toHaveLength(16);
+    expect(mock.calls[0].params[4]).toBe("good");
+    expect(mock.calls[0].params[15]).toBe("good");
     // cap at 5 most recent
     expect(updateSql).toContain("LIMIT 5");
     // re-aggregate in ascending order (jsonb_agg ORDER BY handles this inside the aggregate)
@@ -1012,7 +1016,7 @@ describe("saveAnswer dual-track changes", () => {
     await runSaveAnswer();
     const updateSql = mock.calls[0].text;
 
-    // l1_content_hash_snapshot reuses $11 and recent_ratings reuses $5;
+    // l1_content_hash_snapshot reuses $11; $16 is the JSON text append value.
     // $14/$15 form the authenticated owner+wordbook boundary.
     expect(updateSql).toContain("WHERE id = $13::uuid AND user_id = $14::uuid AND wordbook_id = $15::uuid");
     expect(mock.calls[0].params[13]).toBe("u1");
@@ -1028,7 +1032,8 @@ describe("saveAnswer dual-track changes", () => {
     const result = await runSaveAnswer("again");
     expect(result.reviewLogId).toBe("log-1");
     expect(mock.calls[0].text).toContain("again_count = again_count + 1");
-    expect(mock.calls[0].text).toContain("recent_ratings || to_jsonb($5::text)");
+    expect(mock.calls[0].text).toContain("recent_ratings || to_jsonb($16::text)");
+    expect(mock.calls[0].params[15]).toBe("again");
   });
 });
 
