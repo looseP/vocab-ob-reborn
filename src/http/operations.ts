@@ -1,5 +1,11 @@
 import { z, type ZodType } from "zod";
 import {
+  l3ProposalBundleResponseSchema,
+  l3ProposalListResponseSchema,
+  l3RecommendationDetailResponseSchema,
+  l3RecommendationListResponseSchema,
+} from "./l3-response-contract";
+import {
   l3ContextCreateSchema,
   l3ContextLinkCreateSchema,
   l3GraphQuerySchema,
@@ -196,12 +202,12 @@ export const apiOperations = [
   operation("post", "/api/l3/imports/structured", "createL3StructuredImport", "owner", "sessionMutation", { body: l3StructuredImportCreateSchema }, 201),
   operation("post", "/api/l3/proposals", "createL3Proposal", "owner", "sessionMutation", { body: l3ProposalCreateSchema }, 201),
   operation("post", "/api/l3/recommendations/generate", "generateL3Recommendations", "owner", "sessionMutation", { body: l3RecommendationGenerateSchema }, 201),
-  operation("get", "/api/l3/recommendations", "listL3Recommendations", "owner", "none", { query: l3RecommendationListQuerySchema }),
-  operation("get", "/api/l3/recommendations/:id", "getL3Recommendation", "owner", "none"),
+  operation("get", "/api/l3/recommendations", "listL3Recommendations", "owner", "none", { query: l3RecommendationListQuerySchema }, 200, l3RecommendationListResponseSchema),
+  operation("get", "/api/l3/recommendations/:id", "getL3Recommendation", "owner", "none", undefined, 200, l3RecommendationDetailResponseSchema),
   operation("post", "/api/l3/recommendations/:id/accept", "acceptL3Recommendation", "owner", "sessionMutation"),
   operation("post", "/api/l3/recommendations/:id/reject", "rejectL3Recommendation", "owner", "sessionMutation", { body: l3RecommendationRejectSchema }),
-  operation("get", "/api/l3/proposals", "listL3Proposals", "owner", "none", { query: l3ProposalListQuerySchema }),
-  operation("get", "/api/l3/proposals/:id", "getL3Proposal", "owner", "none"),
+  operation("get", "/api/l3/proposals", "listL3Proposals", "owner", "none", { query: l3ProposalListQuerySchema }, 200, l3ProposalListResponseSchema),
+  operation("get", "/api/l3/proposals/:id", "getL3Proposal", "owner", "none", undefined, 200, l3ProposalBundleResponseSchema),
   operation("post", "/api/l3/proposals/:id/validate", "validateL3Proposal", "owner", "sessionMutation"),
   operation("post", "/api/l3/proposals/:id/confirm", "confirmL3Proposal", "owner", "sessionMutation"),
   operation("post", "/api/l3/proposals/:id/reject", "rejectL3Proposal", "owner", "sessionMutation", { body: l3ProposalRejectSchema }),

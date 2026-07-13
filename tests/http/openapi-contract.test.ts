@@ -93,6 +93,30 @@ describe("API contract", () => {
     expect(parameters.find((parameter) => parameter.name === "offset")?.required).toBe(false);
   });
 
+  it("publishes precise L3 proposal and recommendation read responses", () => {
+    const document = JSON.parse(serializeOpenApiDocument()) as {
+      components?: { schemas?: Record<string, unknown> };
+      paths: Record<string, Record<string, {
+        responses: Record<string, { content?: Record<string, { schema?: Record<string, unknown> }> }>;
+      }>>;
+    };
+    const operations = [
+      document.paths["/api/l3/proposals"].get,
+      document.paths["/api/l3/proposals/{id}"].get,
+      document.paths["/api/l3/recommendations"].get,
+      document.paths["/api/l3/recommendations/{id}"].get,
+    ];
+
+    expect(document.components?.schemas).toHaveProperty("JsonValue");
+    for (const operation of operations) {
+      const schema = operation.responses["200"].content?.["application/json"].schema;
+      expect(schema).toMatchObject({ type: "object" });
+      expect(schema).toHaveProperty("properties");
+      expect(JSON.stringify(schema)).not.toContain("#/$defs/");
+      expect(JSON.stringify(schema)).toContain("#/components/schemas/JsonValue");
+    }
+  });
+
   it("matches the deterministic OpenAPI 3.1 snapshot", async () => {
     const snapshot = await readFile(path.resolve("docs/api/openapi.json"), "utf8");
     expect(serializeOpenApiDocument()).toBe(snapshot);
