@@ -16,7 +16,7 @@
     "complexity:routes": "tsx scripts/verify-route-complexity.ts",
     "test:watch": "vitest",
     "api:openapi": "tsx scripts/generate-openapi.ts",
-    "api:client:generate": "openapi-typescript docs/api/openapi.json --output src/frontend/api/generated/openapi.ts",
+    "api:client:generate": "tsx scripts/generate-openapi-client.ts",
     "api:client:check": "tsx scripts/check-openapi-client.ts",
     "api:contract": "vitest run tests/http/openapi-contract.test.ts --coverage.enabled=false",
     "api:breaking": "tsx scripts/verify-openapi-breaking.ts",

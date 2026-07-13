@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const schema = resolve("docs/api/openapi.json");
 const committed = resolve("src/frontend/api/generated/openapi.ts");
 const temporaryDirectory = mkdtempSync(join(tmpdir(), "vocab-openapi-client-"));
 const generated = join(temporaryDirectory, "openapi.ts");
-const cli = resolve("node_modules/openapi-typescript/bin/cli.js");
+const cli = resolve("node_modules/tsx/dist/cli.mjs");
+const generator = resolve("scripts/generate-openapi-client.ts");
 
 try {
-  const result = spawnSync(process.execPath, [cli, schema, "--output", generated], {
+  const result = spawnSync(process.execPath, [cli, generator, generated], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });

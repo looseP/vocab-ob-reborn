@@ -17,7 +17,22 @@ function pathParameters(path: string): JsonObject[] {
 }
 
 function jsonSchema(schema: ZodType, io: "input" | "output"): JsonObject {
-  return z.toJSONSchema(schema, { target: "draft-2020-12", io });
+  const generated = z.toJSONSchema(schema, { target: "draft-2020-12", io });
+  return rewriteJsonValueReferences(generated) as JsonObject;
+}
+
+function rewriteJsonValueReferences(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(rewriteJsonValueReferences);
+  if (!value || typeof value !== "object") return value;
+  const entries = Object.entries(value as JsonObject)
+    .filter(([key]) => key !== "$defs")
+    .map(([key, entry]) => [
+      key,
+      key === "$ref" && entry === "#/$defs/__schema0"
+        ? "#/components/schemas/JsonValue"
+        : rewriteJsonValueReferences(entry),
+    ]);
+  return Object.fromEntries(entries);
 }
 
 function requestBody(operation: ApiOperation): JsonObject | undefined {
@@ -151,6 +166,18 @@ export function generateOpenApiDocument(): JsonObject {
     openapi: "3.1.0",
     info: { title: "Vocab Observatory API", version: "0.1.0" },
     components: {
+      schemas: {
+        JsonValue: {
+          anyOf: [
+            { type: "string" },
+            { type: "number" },
+            { type: "boolean" },
+            { type: "null" },
+            { type: "array", items: { $ref: "#/components/schemas/JsonValue" } },
+            { type: "object", additionalProperties: { $ref: "#/components/schemas/JsonValue" } },
+          ],
+        },
+      },
       securitySchemes: {
         bearerAuth: { type: "http", scheme: "bearer" },
         csrfToken: { type: "apiKey", in: "header", name: "X-CSRF-Token" },

@@ -1,17 +1,27 @@
 {
   "version": 1,
-  "baseSha256": "ba7cdb56ebb3b00043f35e54afc1a255435527617042a9a09701e5521e92443a",
-  "currentSha256": "d8cfb1c1488d4c775c9fb5152c00b85790a91f78c073968e5f62e043c71cadb3",
+  "baseSha256": "d8cfb1c1488d4c775c9fb5152c00b85790a91f78c073968e5f62e043c71cadb3",
+  "currentSha256": "c08bdea8f4578e675251b186a4c5a316ab213450f8c93a21beccf361565c35eb",
   "issues": [
     {
       "kind": "breaking",
-      "location": "paths./api/auth/session.post.parameters.header:Origin",
-      "message": "新增 required request parameter"
+      "location": "paths./api/l3/proposals.get.responses.200.content.application/json.schema",
+      "message": "schema type 发生变化"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/auth/session.post.parameters.header:X-Requested-With",
-      "message": "新增 required request parameter"
+      "location": "paths./api/l3/recommendations.get.responses.200.content.application/json.schema",
+      "message": "schema type 发生变化"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/recommendations/{id}.get.responses.200.content.application/json.schema",
+      "message": "schema type 发生变化"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/proposals/{id}.get.responses.200.content.application/json.schema",
+      "message": "schema type 发生变化"
     }
   ]
 }
