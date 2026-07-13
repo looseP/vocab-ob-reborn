@@ -9,7 +9,10 @@ import {
   reviewAnswerResponseSchema,
   reviewSimpleResponseSchema,
 } from "./review-response-contract";
-import { wordListResponseSchema } from "./words-response-contract";
+import {
+  wordDetailResponseSchema,
+  wordListResponseSchema,
+} from "./words-response-contract";
 import {
   l2ConfirmResponseSchema,
   l2DraftResponseSchema,
@@ -186,7 +189,7 @@ export const apiOperations = [
   operation("delete", "/api/auth/session", "deleteAuthSession", "optionalSession", "sessionMutation", undefined, 204, z.null()),
   operation("get", "/api/operations/metrics", "getOperationMetrics", "owner", "none"),
   operation("get", "/api/words", "listWords", "owner", "none", { query: wordsQuerySchema }, 200, wordListResponseSchema),
-  operation("get", "/api/words/:slug", "getWord", "owner", "none"),
+  operation("get", "/api/words/:slug", "getWord", "owner", "none", undefined, 200, wordDetailResponseSchema),
   operation("post", "/api/review/answer", "submitReviewAnswer", "owner", "sessionMutation", { body: reviewAnswerSchema }, 200, reviewAnswerResponseSchema),
   operation("post", "/api/review/skip", "skipReview", "owner", "sessionMutation", { body: reviewSkipSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/suspend", "suspendReview", "owner", "sessionMutation", { body: reviewSuspendSchema }, 200, reviewSimpleResponseSchema),

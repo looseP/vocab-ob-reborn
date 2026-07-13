@@ -1668,7 +1668,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        id: string;
+                        slug: string;
+                        title: string;
+                        lemma: string;
+                        pos: string | null;
+                        cefr: string | null;
+                        ipa: string | null;
+                        aliases: string[];
+                        short_definition: string | null;
+                        definition_md: string;
+                        body_md: string;
+                        examples: components["schemas"]["JsonValue"];
+                        metadata: components["schemas"]["JsonValue"];
+                    };
                 };
             };
             /** @description Invalid request */

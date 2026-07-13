@@ -170,10 +170,12 @@ export function parseChangedSourceLines(diff: string): Record<string, number[]> 
   const changed: Record<string, number[]> = {};
   let currentFile: string | null = null;
   let newLine = 0;
+  let inInterfaceBlock = false;
   for (const line of diff.split(/\r?\n/)) {
     if (line.startsWith("+++ b/")) {
       currentFile = line.slice(6).replaceAll("\\", "/");
       if (!/^src\/(domain|errors|services|repositories)\/.*\.ts$/.test(currentFile)) currentFile = null;
+      inInterfaceBlock = false;
       continue;
     }
     const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
@@ -184,7 +186,15 @@ export function parseChangedSourceLines(diff: string): Record<string, number[]> 
     if (!currentFile || line.startsWith("---")) continue;
     if (line.startsWith("+")) {
       const source = line.slice(1).trim();
-      if (source && !source.startsWith("//") && !source.startsWith("/*") && !source.startsWith("*") && !source.startsWith("import type ") && !source.startsWith("export type ") && !source.startsWith("type ") && !source.startsWith("interface ") && source !== "}" && source !== "{") {
+      if (source.startsWith("interface ") || source.startsWith("export interface ")) {
+        inInterfaceBlock = true;
+      }
+      if (inInterfaceBlock) {
+        if (source === "}") inInterfaceBlock = false;
+        newLine += 1;
+        continue;
+      }
+      if (source && !source.startsWith("//") && !source.startsWith("/*") && !source.startsWith("*") && !source.startsWith("import type ") && !source.startsWith("export type ") && !source.startsWith("type ") && !source.startsWith("interface ") && !source.startsWith("export interface ") && source !== "}" && source !== "{") {
         (changed[currentFile] ??= []).push(newLine);
       }
       newLine += 1;

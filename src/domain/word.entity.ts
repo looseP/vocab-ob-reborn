@@ -5,7 +5,7 @@
  * and content hash comparison. Zero DB/framework dependencies.
  */
 
-import type { WordRow } from "./index";
+import type { WordDetail, WordRow } from "./index";
 
 export class Word {
   constructor(private readonly row: WordRow) {}
@@ -18,6 +18,25 @@ export class Word {
   get shortDefinition(): string { return this.row.short_definition ?? ""; }
   get cefr(): string { return this.row.cefr ?? ""; }
   get contentHash(): string { return this.row.content_hash; }
+
+  /** Return the explicit public representation used by HTTP response contracts. */
+  toDetail(): WordDetail {
+    return {
+      id: this.row.id,
+      slug: this.row.slug,
+      title: this.row.title,
+      lemma: this.row.lemma,
+      pos: this.row.pos,
+      cefr: this.row.cefr,
+      ipa: this.row.ipa,
+      aliases: [...this.row.aliases],
+      short_definition: this.row.short_definition,
+      definition_md: this.row.definition_md,
+      body_md: this.row.body_md,
+      examples: this.row.examples,
+      metadata: this.row.metadata,
+    };
+  }
 
   get isPublished(): boolean {
     return this.row.is_published && !this.row.is_deleted;
