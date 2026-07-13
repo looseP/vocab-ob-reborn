@@ -4,6 +4,11 @@ import type { Services } from "@/services";
 import { L2ContentService } from "@/services/l2-content.service";
 import type { DictionaryCandidate, DictionaryProvider } from "@/dictionary/provider";
 import { NotFoundError, ValidationError } from "@/errors";
+import {
+  l2ConfirmResponseSchema,
+  l2DraftResponseSchema,
+  l2ExternalPromptResponseSchema,
+} from "@/http/l2-response-contract";
 
 // ── Auth env setup ──────────────────────────────────────────────────────
 const ORIGINAL_OWNER_TOKEN = process.env.OWNER_API_TOKEN;
@@ -132,7 +137,7 @@ describe("POST /api/l2/:slug/draft", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
+    const body = l2DraftResponseSchema.parse(await res.json());
     expect(body.draft).toEqual([{ phrase: "abandon ship" }]);
     // word context built from the looked-up word; route now passes an options
     // object (B3) whose source defaults to "manual"
@@ -378,7 +383,7 @@ describe("POST /api/l2/:slug/draft", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
+    const body = l2DraftResponseSchema.parse(await res.json());
     expect(body.sourceMode).toBe("dictionary_llm_refined");
   });
 });
@@ -404,7 +409,7 @@ describe("POST /api/l2/:slug/confirm", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
+    const body = l2ConfirmResponseSchema.parse(await res.json());
     expect(body.ok).toBe(true);
     expect(l2content.confirmDraft).toHaveBeenCalledWith(
       "word-1",
@@ -626,7 +631,7 @@ describe("POST /api/l2/:slug/external-prompt", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
+    const body = l2ExternalPromptResponseSchema.parse(await res.json());
     expect(body.field).toBe("example");
     expect(body.storageField).toBe("corpus");
     expect(body.styleProfileId).toBe("academic");

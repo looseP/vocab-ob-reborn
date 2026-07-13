@@ -1492,7 +1492,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        items: {
+                            id: string;
+                            slug: string;
+                            title: string;
+                            lemma: string;
+                            pos: string | null;
+                            cefr: string | null;
+                            ipa: string | null;
+                            short_definition: string | null;
+                            metadata: components["schemas"]["JsonValue"];
+                        }[];
+                        total: number;
+                        limit: number;
+                        offset: number;
+                        hasMore: boolean;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -1822,7 +1838,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        /** @constant */
+                        ok: true;
+                        /** @constant */
+                        idempotent?: true;
+                        /** Format: uuid */
+                        reviewLogId: string;
+                        /** Format: date-time */
+                        nextDueAt?: string;
+                        /** @enum {string} */
+                        state?: "new" | "learning" | "review" | "relearning";
+                    };
                 };
             };
             /** @description Invalid request */
@@ -1990,7 +2017,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        /** @constant */
+                        ok: true;
+                        /** @constant */
+                        idempotent?: true;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -2158,7 +2190,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        /** @constant */
+                        ok: true;
+                        /** @constant */
+                        idempotent?: true;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -2325,7 +2362,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        /** @constant */
+                        ok: true;
+                        /** @constant */
+                        idempotent?: true;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -2496,7 +2538,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        draft: components["schemas"]["JsonValue"];
+                        /** @enum {string} */
+                        sourceMode?: "internal_llm" | "dictionary" | "dictionary_llm_refined";
+                    };
                 };
             };
             /** @description Invalid request */
@@ -2684,7 +2730,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        /** @enum {string} */
+                        field: "collocation" | "corpus" | "example" | "synonym" | "antonym";
+                        /** @enum {string} */
+                        storageField: "collocation" | "corpus" | "synonym" | "antonym";
+                        styleProfileId: string;
+                        promptVersion: string;
+                        promptHash: string;
+                        prompt: string;
+                        expectedJsonSchema: components["schemas"]["JsonValue"];
+                    };
                 };
             };
             /** @description Invalid request */
@@ -2877,7 +2933,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        /** @constant */
+                        ok: true;
+                    };
                 };
             };
             /** @description Invalid request */

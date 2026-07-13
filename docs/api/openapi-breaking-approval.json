@@ -1,26 +1,46 @@
 {
   "version": 1,
-  "baseSha256": "d8cfb1c1488d4c775c9fb5152c00b85790a91f78c073968e5f62e043c71cadb3",
-  "currentSha256": "c08bdea8f4578e675251b186a4c5a316ab213450f8c93a21beccf361565c35eb",
+  "baseSha256": "c08bdea8f4578e675251b186a4c5a316ab213450f8c93a21beccf361565c35eb",
+  "currentSha256": "3aad31a1f86a3af4442106560fec88f01f3a331311034928fd6786194e311468",
   "issues": [
     {
       "kind": "breaking",
-      "location": "paths./api/l3/proposals.get.responses.200.content.application/json.schema",
+      "location": "paths./api/words.get.responses.200.content.application/json.schema",
       "message": "schema type 发生变化"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/recommendations.get.responses.200.content.application/json.schema",
+      "location": "paths./api/review/answer.post.responses.200.content.application/json.schema",
       "message": "schema type 发生变化"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/recommendations/{id}.get.responses.200.content.application/json.schema",
+      "location": "paths./api/review/skip.post.responses.200.content.application/json.schema",
       "message": "schema type 发生变化"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/proposals/{id}.get.responses.200.content.application/json.schema",
+      "location": "paths./api/review/suspend.post.responses.200.content.application/json.schema",
+      "message": "schema type 发生变化"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/review/undo.post.responses.200.content.application/json.schema",
+      "message": "schema type 发生变化"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l2/{slug}/draft.post.responses.200.content.application/json.schema",
+      "message": "schema type 发生变化"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l2/{slug}/external-prompt.post.responses.200.content.application/json.schema",
+      "message": "schema type 发生变化"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l2/{slug}/confirm.post.responses.200.content.application/json.schema",
       "message": "schema type 发生变化"
     }
   ]
