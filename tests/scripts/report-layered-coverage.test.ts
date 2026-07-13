@@ -107,6 +107,27 @@ describe("diff coverage", () => {
     expect(changed).toEqual({ "src/services/a.ts": [3, 5] });
   });
 
+  it("skips export interface and interface member declarations as non-executable", () => {
+    const changed = parseChangedSourceLines([
+      "diff --git a/src/domain/index.ts b/src/domain/index.ts",
+      "+++ b/src/domain/index.ts",
+      "@@ -55,0 +56,6 @@",
+      "+export interface WordDetail extends WordSummary {",
+      "+  aliases: string[];",
+      "+  definition_md: string;",
+      "+  body_md: string;",
+      "+  examples: Json;",
+      "+}",
+      "diff --git a/src/domain/word.entity.ts b/src/domain/word.entity.ts",
+      "+++ b/src/domain/word.entity.ts",
+      "@@ -19,0 +20,3 @@",
+      "+  toDetail(): WordDetail {",
+      "+    return { id: this.row.id };",
+      "+  }",
+    ].join("\n"));
+    expect(changed).toEqual({ "src/domain/word.entity.ts": [20, 21] });
+  });
+
   it("requires at least 85 percent of changed executable lines to be covered", () => {
     const coverage = { "src/services/a.ts": fileCoverage("src/services/a.ts", [1, 0]) };
     expect(calculateDiffCoverage({ "src/services/a.ts": [1] }, coverage, "base").ok).toBe(true);
