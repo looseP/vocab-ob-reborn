@@ -1,45 +1,36 @@
-export type BrowserSession = {
-  authenticated: true;
-  actorId: string;
+import { BrowserApiError, createBrowserRequest } from "./browserRequest";
+import type { operations } from "./generated/openapi";
+
+type OpenApiBrowserSession = operations["getAuthSession"]["responses"][200]["content"]["application/json"];
+
+export type BrowserSession = Omit<OpenApiBrowserSession, "role" | "authMethod"> & {
   role: "owner" | "agent";
   expiresAt?: string;
   authMethod?: "session" | "bearer";
 };
 
-function csrfTokenFromCookie(): string | undefined {
-  const prefix = "vocab_csrf=";
-  const entry = document.cookie.split("; ").find((item) => item.startsWith(prefix));
-  return entry ? decodeURIComponent(entry.slice(prefix.length)) : undefined;
-}
-
-export function browserCsrfHeaders(method = "GET"): Record<string, string> {
-  if (["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase())) return {};
-  const csrfToken = csrfTokenFromCookie();
-  return csrfToken ? { "X-CSRF-Token": csrfToken } : {};
-}
-
 export async function getBrowserSession(fetchImpl: typeof fetch = fetch): Promise<BrowserSession | null> {
-  const response = await fetchImpl("/api/auth/session", { credentials: "same-origin" });
-  return response.ok ? response.json() as Promise<BrowserSession> : null;
+  try {
+    return await createBrowserRequest({ fetch: fetchImpl })<BrowserSession>("/api/auth/session");
+  } catch (error) {
+    if (error instanceof BrowserApiError && error.status === 401) return null;
+    throw error;
+  }
 }
 
-export async function createBrowserSession(ownerToken: string, fetchImpl: typeof fetch = fetch): Promise<BrowserSession> {
-  const response = await fetchImpl("/api/auth/session", {
+export function createBrowserSession(ownerToken: string, fetchImpl: typeof fetch = fetch): Promise<BrowserSession> {
+  const body: operations["createAuthSession"]["requestBody"]["content"]["application/json"] = { ownerToken };
+  return createBrowserRequest({ fetch: fetchImpl })<BrowserSession>("/api/auth/session", {
     method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json", "X-Requested-With": "VocabObservatory" },
-    body: JSON.stringify({ ownerToken }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
-  const payload = await response.json().catch(() => ({})) as { error?: string } & Partial<BrowserSession>;
-  if (!response.ok) throw new Error(payload.error ?? "Login failed");
-  return payload as BrowserSession;
 }
 
 export async function deleteBrowserSession(fetchImpl: typeof fetch = fetch): Promise<void> {
-  const response = await fetchImpl("/api/auth/session", {
-    method: "DELETE",
-    credentials: "same-origin",
-    headers: browserCsrfHeaders("DELETE"),
-  });
-  if (!response.ok && response.status !== 401) throw new Error("Logout failed");
+  try {
+    await createBrowserRequest({ fetch: fetchImpl })<void>("/api/auth/session", { method: "DELETE" });
+  } catch (error) {
+    if (!(error instanceof BrowserApiError) || error.status !== 401) throw error;
+  }
 }
