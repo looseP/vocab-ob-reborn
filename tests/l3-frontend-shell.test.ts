@@ -111,7 +111,7 @@ describe("Phase 4B L3 frontend shell", () => {
     const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => ({
       ok: true,
       status: 200,
-      json: async () => ({ items: [], limit: 20, cursor: null, nextCursor: null }),
+      text: async () => JSON.stringify({ items: [], limit: 20, cursor: null, nextCursor: null }),
       input,
       init,
     })) as unknown as typeof fetch;
