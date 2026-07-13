@@ -986,8 +986,9 @@ describe("saveAnswer dual-track changes", () => {
     expect(updateSql).toContain("recent_ratings || to_jsonb($5::text)");
     // cap at 5 most recent
     expect(updateSql).toContain("LIMIT 5");
-    // re-aggregate in ascending order
-    expect(updateSql).toContain("ORDER BY ord ASC");
+    // re-aggregate in ascending order (jsonb_agg ORDER BY handles this inside the aggregate)
+    expect(updateSql).toContain("jsonb_agg(elem ORDER BY ord)");
+    expect(updateSql).not.toContain(") sub\n             ORDER BY ord ASC");
   });
 
   it("writes track='l1' to review_logs INSERT", async () => {

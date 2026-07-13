@@ -29,12 +29,26 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
     expect(seededWordCount).toBeGreaterThan(0);
   });
 
-  it("finds a word by slug (aboard)", async () => {
-    const repos = createRepositories();
-    const word = await repos.words.findBySlug("aboard");
-    expect(word).not.toBeNull();
-    expect(word!.lemma).toBe("aboard");
-    expect(word!.definition_md).toBeTruthy();
+  it("finds a word by slug", async () => {
+    const { createHash, randomUUID } = await import("node:crypto");
+    const pool = (await import("@/db/connection")).getPool();
+    const wordId = randomUUID();
+    const slug = `test-find-${wordId.slice(0, 8)}`;
+    const contentHash = createHash("sha256").update(wordId).digest("hex");
+    await pool.query(
+      `INSERT INTO words (id, slug, content_hash, source_path, title, lemma, definition_md, body_md)
+       VALUES ($1, $2, $3, 'test', 'testword', 'testword', 'def', 'body')`,
+      [wordId, slug, contentHash],
+    );
+    try {
+      const repos = createRepositories();
+      const word = await repos.words.findBySlug(slug);
+      expect(word).not.toBeNull();
+      expect(word!.lemma).toBe("testword");
+      expect(word!.definition_md).toBeTruthy();
+    } finally {
+      await pool.query("DELETE FROM words WHERE id = $1", [wordId]);
+    }
   });
 
   it("findPublic returns paginated results", async () => {
@@ -49,14 +63,28 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
   });
 
   it("findPublic with search filter works", async () => {
-    const repos = createRepositories();
-    const result = await repos.words.findPublic({
-      userId: randomUUID(),
-      filters: { q: "abandon" },
-      pagination: { limit: 10, offset: 0 },
-    });
-    expect(result.items.length).toBeGreaterThan(0);
-    expect(result.items.some((w) => w.lemma.includes("abandon"))).toBe(true);
+    const { createHash, randomUUID } = await import("node:crypto");
+    const pool = (await import("@/db/connection")).getPool();
+    const wordId = randomUUID();
+    const slug = `test-search-${wordId.slice(0, 8)}`;
+    const contentHash = createHash("sha256").update(wordId).digest("hex");
+    await pool.query(
+      `INSERT INTO words (id, slug, content_hash, source_path, title, lemma, definition_md, body_md)
+       VALUES ($1, $2, $3, 'test', 'searchableterm', 'searchableterm', 'def', 'body')`,
+      [wordId, slug, contentHash],
+    );
+    try {
+      const repos = createRepositories();
+      const result = await repos.words.findPublic({
+        userId: randomUUID(),
+        filters: { q: "searchableterm" },
+        pagination: { limit: 10, offset: 0 },
+      });
+      expect(result.items.length).toBeGreaterThan(0);
+      expect(result.items.some((w) => w.lemma.includes("searchableterm"))).toBe(true);
+    } finally {
+      await pool.query("DELETE FROM words WHERE id = $1", [wordId]);
+    }
   });
 
   it("findSlugs returns ordered slugs", async () => {

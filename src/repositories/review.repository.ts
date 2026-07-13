@@ -208,7 +208,6 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
                ORDER BY ord DESC
                LIMIT 5
              ) sub
-             ORDER BY ord ASC
            ),
            updated_at = $12
        WHERE id = $13::uuid AND user_id = $14::uuid AND wordbook_id = $15::uuid`,
