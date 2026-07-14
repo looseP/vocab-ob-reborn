@@ -7,7 +7,7 @@ import { verifyCiReleaseManifestContract, verifyReleaseWorkflow } from "../../sc
 const workflow = readFileSync(resolve(import.meta.dirname, "../../.github/workflows/release.yml"), "utf8");
 const promotionWorkflow = readFileSync(resolve(import.meta.dirname, "../../.github/workflows/promote-release.yml"), "utf8");
 const ciWorkflow = readFileSync(resolve(import.meta.dirname, "../../.github/workflows/ci.yml"), "utf8");
-const producerNames = ["migration-rehearsal", "database-roles", "backup-restore", "rollback-compatibility", "alerting-drill"] as const;
+const producerNames = ["migration-rehearsal", "database-roles", "backup-restore", "rollback-compatibility", "alerting-drill", "secret-rotation"] as const;
 const producers = Object.fromEntries(producerNames.map((name) => [name, readFileSync(resolve(import.meta.dirname, `../../.github/workflows/release-check-${name}.yml`), "utf8")])) as Record<(typeof producerNames)[number], string>;
 
 describe("release workflow structured contract", () => {
@@ -76,6 +76,10 @@ describe("release workflow structured contract", () => {
   it("rejects producer real check removed", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "alerting-drill": producers["alerting-drill"].replace("npm run alerting:drill -- --confirm-staging --confirm-reversible", "echo fake") })).toThrow(/real check/));
   it("rejects producer upload with weak retention", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "migration-rehearsal": producers["migration-rehearsal"].replace("retention-days: 90", "retention-days: 1") })).toThrow(/upload/));
   it("rejects producer sidecar outside artifact directory", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "rollback-compatibility": producers["rollback-compatibility"].replace("(cd prepare && sha256sum --check release-manifest.sha256)", "sha256sum --check prepare/release-manifest.sha256") })).toThrow(/sidecar/));
+  it("rejects alerting drill without a protected persistent lock path", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "alerting-drill": producers["alerting-drill"].replace("DRILL_LOCK_FILE: ${{ vars.DRILL_LOCK_FILE }}", "DRILL_LOCK_FILE: /tmp/drill.lock") })).toThrow(/DRILL_LOCK_FILE/));
+  it("rejects secret rotation without serialized protected staging execution", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "secret-rotation": producers["secret-rotation"].replace("group: release-secret-rotation-staging", "group: other") })).toThrow(/Secret rotation producer/));
+  it("rejects missing secret rotation acceptance input", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow.replace("      secret_rotation_run_id:\n        description: \"Run ID producing release-check-secret-rotation\"\n        required: true\n        type: string\n", ""), producers)).toThrow(/input schema/));
+  it("rejects acceptance evidence uploaded from a different path", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow.replace("path: release-evidence/production-acceptance-evidence.json", "path: ${{ runner.temp }}/other.json"), producers)).toThrow(/Acceptance evidence/));
   it("keeps CI release evidence", () => expect(() => verifyCiReleaseManifestContract(ciWorkflow)).not.toThrow());
   it("uploads layered coverage only after engineering verification succeeds", () => {
     const value = parse(ciWorkflow);

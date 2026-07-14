@@ -37,6 +37,7 @@ const checks: Record<ExternalReleaseCheck | "smoke", CheckDeclaration> = {
   backupRestore: externalDeclaration("backupRestore"),
   rollbackCompatibility: externalDeclaration("rollbackCompatibility"),
   alertingDrill: externalDeclaration("alertingDrill"),
+  secretRotation: externalDeclaration("secretRotation"),
   smoke,
 };
 const acceptance = { schemaVersion: 1, releaseSha, manifestSha256, checks, decision: "GO" };
@@ -58,6 +59,8 @@ describe("release check evidence", () => {
 describe("production release acceptance", () => {
   it("accepts verified source artifact bytes", () => expect(verify()).toEqual({ schemaVersion: 1, decision: "GO", releaseSha, manifestSha256, environment: "production", checks }));
   it("rejects missing artifact", () => { const missing = { ...evidence }; delete (missing as Partial<typeof evidence>).backupRestore; expect(() => verify({ evidence: missing })).toThrow(/Missing backupRestore/); });
+  it("rejects missing secret rotation proof", () => { const missing = { ...evidence }; delete (missing as Partial<typeof evidence>).secretRotation; expect(() => verify({ evidence: missing })).toThrow(/Missing secretRotation/); });
+  it("rejects an acceptance declaration without secret rotation", () => { const incomplete = { ...checks }; delete (incomplete as Partial<typeof checks>).secretRotation; expect(() => verify({ acceptance: { ...acceptance, checks: incomplete } })).toThrow(/keys/); });
   it("rejects tampered content", () => expect(() => verify({ evidence: { ...evidence, alertingDrill: Buffer.concat([evidence.alertingDrill, Buffer.from(" ")]) } })).toThrow(/digest mismatch/));
   it("rejects declaration digest mismatch", () => expect(() => verify({ acceptance: { ...acceptance, checks: { ...checks, databaseRoles: { ...checks.databaseRoles, evidenceSha256: "b".repeat(64) } } } })).toThrow(/digest mismatch/));
   it("rejects wrong check", () => expect(() => verify(alter("migrationRehearsal", { ...artifact("migrationRehearsal"), check: "databaseRoles", producer: RELEASE_CHECK_PRODUCERS.databaseRoles }))).toThrow(/check mismatch/));

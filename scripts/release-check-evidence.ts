@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const EXTERNAL_RELEASE_CHECKS = ["migrationRehearsal", "databaseRoles", "backupRestore", "rollbackCompatibility", "alertingDrill"] as const;
+export const EXTERNAL_RELEASE_CHECKS = ["migrationRehearsal", "databaseRoles", "backupRestore", "rollbackCompatibility", "alertingDrill", "secretRotation"] as const;
 export type ExternalReleaseCheck = (typeof EXTERNAL_RELEASE_CHECKS)[number];
 
 export const RELEASE_CHECK_PRODUCERS: Readonly<Record<ExternalReleaseCheck, string>> = {
@@ -10,6 +10,7 @@ export const RELEASE_CHECK_PRODUCERS: Readonly<Record<ExternalReleaseCheck, stri
   backupRestore: "release-check/backup-restore",
   rollbackCompatibility: "release-check/rollback-compatibility",
   alertingDrill: "release-check/alerting-drill",
+  secretRotation: "release-check/secret-rotation",
 };
 
 export type ReleaseCheckEvidence = {

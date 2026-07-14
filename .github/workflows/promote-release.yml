@@ -27,6 +27,10 @@ on:
         description: "Run ID producing release-check-alerting-drill"
         required: true
         type: string
+      secret_rotation_run_id:
+        description: "Run ID producing release-check-secret-rotation"
+        required: true
+        type: string
 
 permissions: {}
 
@@ -50,6 +54,7 @@ jobs:
       backup-restore-artifact-id: ${{ steps.resolve.outputs.backup-restore-artifact-id }}
       rollback-compatibility-artifact-id: ${{ steps.resolve.outputs.rollback-compatibility-artifact-id }}
       alerting-drill-artifact-id: ${{ steps.resolve.outputs.alerting-drill-artifact-id }}
+      secret-rotation-artifact-id: ${{ steps.resolve.outputs.secret-rotation-artifact-id }}
     steps:
       - name: Resolve successful prepare run and unique artifact
         id: resolve
@@ -63,9 +68,10 @@ jobs:
           BACKUP_RESTORE_RUN_ID: ${{ inputs.backup_restore_run_id }}
           ROLLBACK_COMPATIBILITY_RUN_ID: ${{ inputs.rollback_compatibility_run_id }}
           ALERTING_DRILL_RUN_ID: ${{ inputs.alerting_drill_run_id }}
+          SECRET_ROTATION_RUN_ID: ${{ inputs.secret_rotation_run_id }}
         run: |
           set -euo pipefail
-          for value in "$PREPARE_RUN_ID" "$MIGRATION_REHEARSAL_RUN_ID" "$DATABASE_ROLES_RUN_ID" "$BACKUP_RESTORE_RUN_ID" "$ROLLBACK_COMPATIBILITY_RUN_ID" "$ALERTING_DRILL_RUN_ID"; do
+          for value in "$PREPARE_RUN_ID" "$MIGRATION_REHEARSAL_RUN_ID" "$DATABASE_ROLES_RUN_ID" "$BACKUP_RESTORE_RUN_ID" "$ROLLBACK_COMPATIBILITY_RUN_ID" "$ALERTING_DRILL_RUN_ID" "$SECRET_ROTATION_RUN_ID"; do
             [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "Every run ID must be a positive integer" >&2; exit 1; }
           done
           run="$(gh api "repos/$REPOSITORY/actions/runs/$PREPARE_RUN_ID")"
@@ -91,6 +97,7 @@ jobs:
           resolve_evidence "$BACKUP_RESTORE_RUN_ID" ".github/workflows/release-check-backup-restore.yml" "release-check-backup-restore" "backup-restore-artifact-id"
           resolve_evidence "$ROLLBACK_COMPATIBILITY_RUN_ID" ".github/workflows/release-check-rollback-compatibility.yml" "release-check-rollback-compatibility" "rollback-compatibility-artifact-id"
           resolve_evidence "$ALERTING_DRILL_RUN_ID" ".github/workflows/release-check-alerting-drill.yml" "release-check-alerting-drill" "alerting-drill-artifact-id"
+          resolve_evidence "$SECRET_ROTATION_RUN_ID" ".github/workflows/release-check-secret-rotation.yml" "release-check-secret-rotation" "secret-rotation-artifact-id"
 
   staging:
     name: Deploy and smoke staging
@@ -176,6 +183,7 @@ jobs:
       BACKUP_RESTORE_RUN_ID: ${{ inputs.backup_restore_run_id }}
       ROLLBACK_COMPATIBILITY_RUN_ID: ${{ inputs.rollback_compatibility_run_id }}
       ALERTING_DRILL_RUN_ID: ${{ inputs.alerting_drill_run_id }}
+      SECRET_ROTATION_RUN_ID: ${{ inputs.secret_rotation_run_id }}
     steps:
       - name: Check out acceptance verifier
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -214,6 +222,9 @@ jobs:
       - name: Download alerting drill evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { artifact-ids: "${{ needs.resolve-release.outputs.alerting-drill-artifact-id }}", path: release-evidence/alerting-drill, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
+      - name: Download secret rotation evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { artifact-ids: "${{ needs.resolve-release.outputs.secret-rotation-artifact-id }}", path: release-evidence/secret-rotation, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
       - name: Create and verify fail-closed acceptance declaration
@@ -221,13 +232,13 @@ jobs:
         env:
           RELEASE_SHA: ${{ needs.resolve-release.outputs.release-sha }}
           EXPECTED_MANIFEST_SHA256: ${{ hashFiles('release-manifest.json') }}
-          RELEASE_ACCEPTANCE_EVIDENCE_PATH: ${{ runner.temp }}/production-acceptance-evidence.json
+          RELEASE_ACCEPTANCE_EVIDENCE_PATH: release-evidence/production-acceptance-evidence.json
         run: |
           set -euo pipefail
           node - <<'NODE'
           const { createHash } = require("node:crypto");
           const { readFileSync, writeFileSync } = require("node:fs");
-          const paths = { migrationRehearsal: "migration-rehearsal", databaseRoles: "database-roles", backupRestore: "backup-restore", rollbackCompatibility: "rollback-compatibility", alertingDrill: "alerting-drill" };
+          const paths = { migrationRehearsal: "migration-rehearsal", databaseRoles: "database-roles", backupRestore: "backup-restore", rollbackCompatibility: "rollback-compatibility", alertingDrill: "alerting-drill", secretRotation: "secret-rotation" };
           const checks = {};
           for (const [check, directory] of Object.entries(paths)) {
             const bytes = readFileSync(`release-evidence/${directory}/evidence.json`);
@@ -239,12 +250,12 @@ jobs:
           checks.smoke = { status: "passed", source: "staging-deployment-evidence", observedAt: staging.phases?.find(({ phase }) => phase === "smoke")?.timestamp, evidenceSha256: createHash("sha256").update(stagingBytes).digest("hex"), producer: "release-workflow/staging", releaseSha: process.env.RELEASE_SHA, manifestSha256: process.env.EXPECTED_MANIFEST_SHA256 };
           writeFileSync("release-evidence/production-acceptance.json", JSON.stringify({ schemaVersion: 1, releaseSha: process.env.RELEASE_SHA, manifestSha256: process.env.EXPECTED_MANIFEST_SHA256, checks, decision: "GO" }, null, 2), { mode: 0o600, flag: "wx" });
           NODE
-          npm run release:acceptance:verify -- --manifest release-manifest.json --digest release-manifest.sha256 --deployment-evidence release-evidence/staging-deployment-evidence.json --acceptance release-evidence/production-acceptance.json --migration-rehearsal-evidence release-evidence/migration-rehearsal/evidence.json --database-roles-evidence release-evidence/database-roles/evidence.json --backup-restore-evidence release-evidence/backup-restore/evidence.json --rollback-compatibility-evidence release-evidence/rollback-compatibility/evidence.json --alerting-drill-evidence release-evidence/alerting-drill/evidence.json
+          npm run release:acceptance:verify -- --manifest release-manifest.json --digest release-manifest.sha256 --deployment-evidence release-evidence/staging-deployment-evidence.json --acceptance release-evidence/production-acceptance.json --migration-rehearsal-evidence release-evidence/migration-rehearsal/evidence.json --database-roles-evidence release-evidence/database-roles/evidence.json --backup-restore-evidence release-evidence/backup-restore/evidence.json --rollback-compatibility-evidence release-evidence/rollback-compatibility/evidence.json --alerting-drill-evidence release-evidence/alerting-drill/evidence.json --secret-rotation-evidence release-evidence/secret-rotation/evidence.json
       - name: Upload final acceptance evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-acceptance-${{ needs.resolve-release.outputs.release-sha }}
-          path: ${{ runner.temp }}/production-acceptance-evidence.json
+          path: release-evidence/production-acceptance-evidence.json
           if-no-files-found: error
           retention-days: 90
 
