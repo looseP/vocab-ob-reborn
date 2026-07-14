@@ -52,6 +52,7 @@
     "db:restore:drill": "tsx scripts/postgres-backup.ts restore-drill",
     "runtime:verify": "tsx scripts/verify-container-runtime.ts",
     "single-host:verify": "tsx scripts/verify-single-host-compose.ts",
+    "cloudflare-tunnel:verify": "tsx scripts/verify-cloudflare-tunnel-compose.ts",
     "runtime:smoke:local": "tsx scripts/verify-local-compose-smoke.ts",
     "runtime:build": "docker compose build",
     "runtime:up": "docker compose up -d",

@@ -1,0 +1,30 @@
+services:
+  caddy:
+    ports: !reset []
+
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:?CLOUDFLARED_IMAGE is required}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN is required}
+    networks:
+      - public
+    depends_on:
+      caddy:
+        condition: service_healthy
+
+networks:
+  public:
+    external: false
