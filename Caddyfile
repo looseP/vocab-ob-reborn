@@ -1,0 +1,23 @@
+{
+  email {$CADDY_EMAIL}
+  admin off
+}
+
+{$CADDY_SITE_ADDRESS} {
+  encode zstd gzip
+
+  header {
+    -Server
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "geolocation=(), microphone=(), camera=()"
+  }
+
+  reverse_proxy web:3001 {
+    health_uri /readyz
+    health_interval 15s
+    health_timeout 3s
+  }
+}

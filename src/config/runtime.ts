@@ -17,6 +17,7 @@ const runtimeSchema = z.object({
   BACKUP_DATABASE_URL: optionalPostgresUrl,
   MIGRATION_DATABASE_URL: optionalPostgresUrl,
   DB_SSLMODE: z.enum(["disable", "require", "verify-ca", "verify-full"]).default("disable"),
+  SINGLE_HOST_DEPLOYMENT: booleanString.default(false),
   OWNER_API_TOKEN: z.string().min(24),
   METRICS_BEARER_TOKEN: emptyStringAsUndefined(z.string().min(24)),
   LOCAL_OWNER_ID: z.string().uuid(),
@@ -50,11 +51,20 @@ const runtimeSchema = z.object({
     if (value.METRICS_BEARER_TOKEN === value.OWNER_API_TOKEN) {
       context.addIssue({ code: "custom", path: ["METRICS_BEARER_TOKEN"], message: "must differ from OWNER_API_TOKEN" });
     }
-    if (value.DB_SSLMODE === "disable") {
-      context.addIssue({ code: "custom", path: ["DB_SSLMODE"], message: "must not be disable in production" });
-    }
-    if (!value.APP_DATABASE_URL) {
-      context.addIssue({ code: "custom", path: ["APP_DATABASE_URL"], message: "required in production for least-privilege separation" });
+    if (value.SINGLE_HOST_DEPLOYMENT) {
+      if (value.DB_SSLMODE !== "disable") {
+        context.addIssue({ code: "custom", path: ["DB_SSLMODE"], message: "must be disable for the isolated in-Docker PostgreSQL connection" });
+      }
+      if (!value.APP_DATABASE_URL || new URL(value.DATABASE_URL).hostname !== "postgres" || new URL(value.APP_DATABASE_URL).hostname !== "postgres") {
+        context.addIssue({ code: "custom", path: ["SINGLE_HOST_DEPLOYMENT"], message: "requires DATABASE_URL and APP_DATABASE_URL to target the internal postgres service" });
+      }
+    } else {
+      if (value.DB_SSLMODE === "disable") {
+        context.addIssue({ code: "custom", path: ["DB_SSLMODE"], message: "must not be disable in production" });
+      }
+      if (!value.APP_DATABASE_URL) {
+        context.addIssue({ code: "custom", path: ["APP_DATABASE_URL"], message: "required in production for least-privilege separation" });
+      }
     }
   }
   if ((value.LLM_PROVIDER && !value.LLM_MODEL) || (!value.LLM_PROVIDER && value.LLM_MODEL)) {
