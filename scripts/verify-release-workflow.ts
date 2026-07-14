@@ -119,9 +119,11 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
   requireRun(verifyProduction, /manifest\.git\?\.sha !== process\.env\.RELEASE_SHA/, "Production manifest must bind release SHA");
   const acceptanceStep = namedStep(acceptance, "Create and verify fail-closed acceptance declaration", "production-acceptance");
   requireRun(acceptanceStep, /release:acceptance:verify[\s\S]*--migration-rehearsal-evidence[\s\S]*--alerting-drill-evidence[\s\S]*--secret-rotation-evidence/, "Acceptance verifier step is missing or incomplete");
-  if (acceptanceStep.env?.RELEASE_ACCEPTANCE_EVIDENCE_PATH !== "release-evidence/production-acceptance-evidence.json") throw new Error("Acceptance evidence path must be explicit and artifact-aligned");
+  const acceptanceEvidencePath = "release-evidence/production-acceptance-evidence.json";
+  if (acceptanceStep.env?.RELEASE_ACCEPTANCE_EVIDENCE_PATH !== acceptanceEvidencePath) throw new Error("Acceptance evidence path must be explicit and artifact-aligned");
+  requireRun(acceptanceStep, /writeFileSync\(process\.env\.RELEASE_ACCEPTANCE_EVIDENCE_PATH,[\s\S]*--acceptance "\$RELEASE_ACCEPTANCE_EVIDENCE_PATH"/, "Acceptance declaration must write and verify the declared evidence path");
   const acceptanceUpload = namedStep(acceptance, "Upload final acceptance evidence", "production-acceptance");
-  if (!acceptanceUpload.uses?.startsWith("actions/upload-artifact@") || acceptanceUpload.with?.path !== "release-evidence/production-acceptance-evidence.json" || acceptanceUpload.with?.["if-no-files-found"] !== "error" || acceptanceUpload.with?.["retention-days"] !== 90) throw new Error("Acceptance evidence upload must use the verified output path");
+  if (!acceptanceUpload.uses?.startsWith("actions/upload-artifact@") || acceptanceUpload.with?.path !== acceptanceEvidencePath || acceptanceUpload.with?.["if-no-files-found"] !== "error" || acceptanceUpload.with?.["retention-days"] !== 90) throw new Error("Acceptance evidence upload must use the verified output path");
   const evidenceDownloads: Array<[string, string, string]> = [
     ["Download migration rehearsal evidence", "migration-rehearsal", "release-evidence/migration-rehearsal"],
     ["Download database roles evidence", "database-roles", "release-evidence/database-roles"],
