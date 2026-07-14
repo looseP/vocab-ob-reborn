@@ -6,11 +6,11 @@ const root = resolve(import.meta.dirname, "..");
 const release = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
 const promote = readFileSync(resolve(root, ".github/workflows/promote-release.yml"), "utf8");
 const ciWorkflow = readFileSync(resolve(root, ".github/workflows/ci.yml"), "utf8");
-const producerChecks = ["migration-rehearsal", "database-roles", "backup-restore", "rollback-compatibility", "alerting-drill"] as const;
+const producerChecks = ["migration-rehearsal", "database-roles", "backup-restore", "rollback-compatibility", "alerting-drill", "secret-rotation"] as const;
 type ProducerCheck = (typeof producerChecks)[number];
 const producerWorkflows = Object.fromEntries(producerChecks.map((check) => [check, readFileSync(resolve(root, `.github/workflows/release-check-${check}.yml`), "utf8")])) as Record<ProducerCheck, string>;
 
-type Step = { name?: string; uses?: string; run?: string; with?: Record<string, unknown> };
+type Step = { name?: string; uses?: string; run?: string; with?: Record<string, unknown>; env?: Record<string, unknown> };
 type Job = { needs?: string | string[]; "runs-on"?: unknown; environment?: unknown; concurrency?: { group?: unknown; "cancel-in-progress"?: unknown }; permissions?: Record<string, string>; steps?: Step[] };
 type Workflow = { permissions?: Record<string, string>; on?: { workflow_dispatch?: { inputs?: Record<string, { required?: boolean; type?: string }> } | null; push?: { tags?: string[] } }; jobs?: Record<string, Job> };
 
@@ -80,7 +80,7 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
   if (!publishUpload.uses?.startsWith("actions/upload-artifact@") || publishUpload.with?.name !== "${{ steps.release.outputs.artifact-name }}" || publishUpload.with?.["if-no-files-found"] !== "error" || publishUpload.with?.["retention-days"] !== 90 || typeof publishUpload.with.path !== "string" || !publishUpload.with.path.includes("release-manifest.json") || !publishUpload.with.path.includes("release-manifest.sha256")) throw new Error("Publish immutable artifact upload is invalid");
 
   const promotionInputs = promotion.on?.workflow_dispatch?.inputs;
-  const requiredInputs = ["prepare_run_id", "migration_rehearsal_run_id", "database_roles_run_id", "backup_restore_run_id", "rollback_compatibility_run_id", "alerting_drill_run_id"];
+  const requiredInputs = ["prepare_run_id", "migration_rehearsal_run_id", "database_roles_run_id", "backup_restore_run_id", "rollback_compatibility_run_id", "alerting_drill_run_id", "secret_rotation_run_id"];
   exactKeys(promotionInputs, requiredInputs, "Promotion input schema is invalid");
   for (const input of requiredInputs) if (promotionInputs?.[input]?.required !== true || promotionInputs[input]?.type !== "string") throw new Error(`Promotion input ${input} must be a required string`);
   const resolver = promotion.jobs!["resolve-release"]!;
@@ -100,7 +100,7 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
   if (staging.concurrency?.group !== "deploy-staging" || staging.concurrency["cancel-in-progress"] !== false || production.concurrency?.group !== "deploy-production" || production.concurrency["cancel-in-progress"] !== false) throw new Error("Deployment concurrency is invalid");
 
   const resolverStep = namedStep(resolver, "Resolve successful prepare run and unique artifact", "resolve-release");
-  requireRun(resolverStep, /prepare-artifact-id=.*GITHUB_OUTPUT[\s\S]*migration-rehearsal-artifact-id[\s\S]*alerting-drill-artifact-id/, "Resolver must output every verified artifact ID");
+  requireRun(resolverStep, /prepare-artifact-id=.*GITHUB_OUTPUT[\s\S]*migration-rehearsal-artifact-id[\s\S]*alerting-drill-artifact-id[\s\S]*secret-rotation-artifact-id/, "Resolver must output every verified artifact ID");
   requireRun(resolverStep, /select\(\.status == "completed" and \.conclusion == "success"\)[\s\S]*select\(\.path == "\.github\/workflows\/release\.yml"\)[\s\S]*select\(\.event == "workflow_dispatch" or \.event == "push"\)[\s\S]*select\(\.head_repository\.full_name == \$repo\)[\s\S]*\.head_sha/, "Resolver must bind complete trusted prepare metadata");
   requireRun(resolverStep, /select\(\.status == "completed" and \.conclusion == "success"\)[\s\S]*select\(\.path == \$path and \.event == "workflow_dispatch"\)[\s\S]*select\(\.head_repository\.full_name == \$repo and \.head_sha == \$sha\)/, "Resolver must bind complete trusted evidence metadata");
   const resolverRun = resolverStep.run ?? "";
@@ -118,13 +118,17 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
   requireRun(verifyStaging, /manifest\.git\?\.sha !== process\.env\.RELEASE_SHA/, "Staging manifest must bind release SHA");
   requireRun(verifyProduction, /manifest\.git\?\.sha !== process\.env\.RELEASE_SHA/, "Production manifest must bind release SHA");
   const acceptanceStep = namedStep(acceptance, "Create and verify fail-closed acceptance declaration", "production-acceptance");
-  requireRun(acceptanceStep, /release:acceptance:verify[\s\S]*--migration-rehearsal-evidence[\s\S]*--alerting-drill-evidence/, "Acceptance verifier step is missing or incomplete");
+  requireRun(acceptanceStep, /release:acceptance:verify[\s\S]*--migration-rehearsal-evidence[\s\S]*--alerting-drill-evidence[\s\S]*--secret-rotation-evidence/, "Acceptance verifier step is missing or incomplete");
+  if (acceptanceStep.env?.RELEASE_ACCEPTANCE_EVIDENCE_PATH !== "release-evidence/production-acceptance-evidence.json") throw new Error("Acceptance evidence path must be explicit and artifact-aligned");
+  const acceptanceUpload = namedStep(acceptance, "Upload final acceptance evidence", "production-acceptance");
+  if (!acceptanceUpload.uses?.startsWith("actions/upload-artifact@") || acceptanceUpload.with?.path !== "release-evidence/production-acceptance-evidence.json" || acceptanceUpload.with?.["if-no-files-found"] !== "error" || acceptanceUpload.with?.["retention-days"] !== 90) throw new Error("Acceptance evidence upload must use the verified output path");
   const evidenceDownloads: Array<[string, string, string]> = [
     ["Download migration rehearsal evidence", "migration-rehearsal", "release-evidence/migration-rehearsal"],
     ["Download database roles evidence", "database-roles", "release-evidence/database-roles"],
     ["Download backup restore evidence", "backup-restore", "release-evidence/backup-restore"],
     ["Download rollback compatibility evidence", "rollback-compatibility", "release-evidence/rollback-compatibility"],
     ["Download alerting drill evidence", "alerting-drill", "release-evidence/alerting-drill"],
+    ["Download secret rotation evidence", "secret-rotation", "release-evidence/secret-rotation"],
   ];
   for (const [stepName, output, path] of evidenceDownloads) requireDownload(namedStep(acceptance, stepName, "production-acceptance"), output, path, stepName);
 
@@ -134,6 +138,7 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
     "backup-restore": /npm run db:restore:drill/,
     "rollback-compatibility": /npm run release:rollback-check/,
     "alerting-drill": /npm run alerting:drill -- --confirm-staging --confirm-reversible/,
+    "secret-rotation": /npm run secret-rotation:evidence:verify/,
   };
   for (const check of producerChecks) {
     const producer = parseWorkflow(producers[check], `producer ${check}`);
@@ -143,7 +148,16 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
     const input = producer.on?.workflow_dispatch?.inputs?.prepare_run_id;
     if (!input || input.required !== true || input.type !== "string" || Object.keys(producer.on?.workflow_dispatch?.inputs ?? {}).length !== 1) throw new Error(`Producer ${check} must require only prepare_run_id`);
     const job = producer.jobs!.check!;
-    if (job["runs-on"] !== "ubuntu-24.04") throw new Error(`Producer ${check} runner is invalid`);
+    const expectedRunner = check === "secret-rotation" ? ["self-hosted", "linux", "vocab-staging"] : "ubuntu-24.04";
+    if (JSON.stringify(job["runs-on"]) !== JSON.stringify(expectedRunner)) throw new Error(`Producer ${check} runner is invalid`);
+    if (check === "secret-rotation") {
+      if (job.environment !== "staging" || job.concurrency?.group !== "release-secret-rotation-staging" || job.concurrency["cancel-in-progress"] !== false) throw new Error("Secret rotation producer must use protected staging environment and serialized execution");
+    }
+    if (check === "alerting-drill") {
+      if (job.environment !== "staging" || job.concurrency?.group !== "release-alerting-drill-staging" || job.concurrency["cancel-in-progress"] !== false) throw new Error("Alerting drill producer must use protected staging environment and serialized execution");
+      const drillStep = namedStep(job, "Execute live reversible alert delivery drill", "producer alerting-drill");
+      if (drillStep.env?.DRILL_LOCK_FILE !== "${{ vars.DRILL_LOCK_FILE }}") throw new Error("Alerting drill must consume the protected persistent DRILL_LOCK_FILE");
+    }
     if (job.permissions) throw new Error(`Producer ${check} must not add job permissions`);
     const allSteps = steps(job, `producer ${check}`);
     if (!allSteps.some((step) => typeof step.run === "string" && /\[\[ "\$PREPARE_RUN_ID" =~ \^\[1-9\]\[0-9\]\*\$ \]\]/.test(step.run) && /\.status == "completed" and \.conclusion == "success" and \.path == "\.github\/workflows\/release\.yml" and \.head_repository\.full_name == \$repo and \.head_sha == \$sha/.test(step.run) && /\[\[ "\$\(jq -er '\.total_count' <<<"\$artifacts"\)" -le 100 \]\]/.test(step.run) && /\(cd prepare && sha256sum --check release-manifest\.sha256\)/.test(step.run) && /sha256sum prepare\/release-manifest\.json/.test(step.run) && /actions\/artifacts\/\$artifact_id\/zip/.test(step.run) && /select\(length == 1 and \.\[0\]\.expired == false\)/.test(step.run))) throw new Error(`Producer ${check} must validate prepare metadata, unique artifact ID, sidecar, and raw manifest hash`);
