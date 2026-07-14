@@ -1,0 +1,188 @@
+name: vocab-observatory
+
+x-app-environment: &app-environment
+  DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+  DB_SSLMODE: disable
+  DB_POOL_MAX: ${DB_POOL_MAX:-5}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+x-app-base: &app-base
+  image: ${APP_IMAGE:?APP_IMAGE is required}
+  init: true
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  networks:
+    - app
+    - database
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:?POSTGRES_IMAGE is required}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  migrate:
+    image: ${MIGRATION_IMAGE:?MIGRATION_IMAGE is required}
+    init: true
+    restart: "no"
+    environment:
+      <<: *app-environment
+    networks:
+      - database
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["./node_modules/.bin/drizzle-kit", "migrate", "--config", "drizzle.config.ts"]
+
+  web:
+    <<: *app-base
+    environment:
+      <<: *app-environment
+      NODE_ENV: production
+      SINGLE_HOST_DEPLOYMENT: "true"
+      PORT: 3001
+      SERVE_FRONTEND: "true"
+      APP_DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      APP_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required and must be HTTPS}
+      OWNER_API_TOKEN: ${OWNER_API_TOKEN:?OWNER_API_TOKEN is required}
+      METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:?METRICS_BEARER_TOKEN is required}
+      LOCAL_OWNER_ID: ${LOCAL_OWNER_ID:?LOCAL_OWNER_ID is required}
+      READINESS_TIMEOUT_MS: ${READINESS_TIMEOUT_MS:-500}
+      SHUTDOWN_GRACE_MS: ${SHUTDOWN_GRACE_MS:-25000}
+      TRUST_PROXY: "true"
+      LOGIN_RATE_LIMIT_WINDOW_MS: ${LOGIN_RATE_LIMIT_WINDOW_MS:-60000}
+      LOGIN_RATE_LIMIT_ATTEMPTS: ${LOGIN_RATE_LIMIT_ATTEMPTS:-8}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      DATAMUSE_ENABLED: ${DATAMUSE_ENABLED:-false}
+    command: ["./node_modules/.bin/tsx", "src/server.ts"]
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 2s
+      retries: 6
+      start_period: 10s
+
+  caddy:
+    image: ${CADDY_IMAGE:?CADDY_IMAGE is required}
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    environment:
+      CADDY_EMAIL: ${CADDY_EMAIL:?CADDY_EMAIL is required}
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:?CADDY_SITE_ADDRESS is required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - public
+      - app
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  review-outbox-worker:
+    <<: *app-base
+    command: ["./node_modules/.bin/tsx", "scripts/run-review-outbox-worker.ts"]
+    environment:
+      <<: *app-environment
+      OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-20}
+      OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-60}
+      OUTBOX_SHUTDOWN_GRACE_SECONDS: ${OUTBOX_SHUTDOWN_GRACE_SECONDS:-75}
+    stop_grace_period: ${OUTBOX_STOP_GRACE_PERIOD:-75s}
+
+  llm-reservation-reaper:
+    <<: *app-base
+    command: ["./node_modules/.bin/tsx", "scripts/run-llm-reservation-reaper.ts"]
+    environment:
+      <<: *app-environment
+      LLM_REAPER_POLL_INTERVAL_MS: ${LLM_REAPER_POLL_INTERVAL_MS:-5000}
+      LLM_REAPER_BATCH_SIZE: ${LLM_REAPER_BATCH_SIZE:-100}
+    stop_grace_period: 30s
+
+  backup-scheduler:
+    image: ${BACKUP_IMAGE:?BACKUP_IMAGE is required}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    user: ${BACKUP_RUNTIME_USER:-node}
+    command: ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
+    environment:
+      <<: *app-environment
+      BACKUP_DIR: /backups
+      BACKUP_INTERVAL_MS: ${BACKUP_INTERVAL_MS:-86400000}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-14}
+      BACKUP_SIGNING_KEY: ${BACKUP_SIGNING_KEY:?BACKUP_SIGNING_KEY is required}
+      BACKUP_REQUIRE_SIGNING_KEY: "true"
+      BACKUP_OBJECT_LOCK: "false"
+    volumes:
+      - ${BACKUP_HOST_DIR:?BACKUP_HOST_DIR is required}:/backups
+    networks:
+      - database
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "test -w $${BACKUP_DIR} && pg_dump --version >/dev/null && pg_restore --version >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  public:
+  app:
+    internal: true
+  database:
+    internal: true
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

@@ -56,6 +56,38 @@ describe("runtime configuration", () => {
     })).toThrow(/must differ/);
   });
 
+  it("allows TLS-disabled database traffic only for the explicit isolated single-host topology", () => {
+    expect(loadRuntimeConfig({
+      ...base,
+      NODE_ENV: "production",
+      SINGLE_HOST_DEPLOYMENT: "true",
+      APP_ORIGIN: "https://vocab.example.com",
+      METRICS_BEARER_TOKEN: "metrics-token-at-least-24-characters",
+      APP_DATABASE_URL: "postgresql://user:password@postgres:5432/vocab",
+      DATABASE_URL: "postgresql://user:password@postgres:5432/vocab",
+      DB_SSLMODE: "disable",
+    })).toMatchObject({ SINGLE_HOST_DEPLOYMENT: true, DB_SSLMODE: "disable" });
+    expect(() => loadRuntimeConfig({
+      ...base,
+      NODE_ENV: "production",
+      SINGLE_HOST_DEPLOYMENT: "true",
+      APP_ORIGIN: "https://vocab.example.com",
+      METRICS_BEARER_TOKEN: "metrics-token-at-least-24-characters",
+      APP_DATABASE_URL: "postgresql://user:password@postgres:5432/vocab",
+      DATABASE_URL: "postgresql://user:password@postgres:5432/vocab",
+      DB_SSLMODE: "verify-full",
+    })).toThrow(/isolated in-Docker PostgreSQL/);
+    expect(() => loadRuntimeConfig({
+      ...base,
+      NODE_ENV: "production",
+      SINGLE_HOST_DEPLOYMENT: "true",
+      APP_ORIGIN: "https://vocab.example.com",
+      METRICS_BEARER_TOKEN: "metrics-token-at-least-24-characters",
+      APP_DATABASE_URL: "postgresql://user:password@external-db.example:5432/vocab",
+      DB_SSLMODE: "disable",
+    })).toThrow(/internal postgres service/);
+  });
+
   it("rejects invalid bounds and partial LLM configuration", () => {
     expect(() => loadRuntimeConfig({ ...base, DB_POOL_MAX: "0" })).toThrow(/DB_POOL_MAX/);
     expect(() => loadRuntimeConfig({ ...base, LLM_PROVIDER: "openai" })).toThrow(/LLM_MODEL/);
