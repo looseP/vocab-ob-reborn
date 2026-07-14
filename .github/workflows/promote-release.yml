@@ -106,13 +106,13 @@ jobs:
       packages: read
     steps:
       - name: Check out deploy adapter
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           ref: ${{ needs.resolve-release.outputs.release-sha }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -125,7 +125,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download immutable release evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.resolve-release.outputs.prepare-artifact-id }}
           path: .
@@ -155,7 +155,7 @@ jobs:
         run: npm run release:deploy -- --environment staging --manifest release-manifest.json
 
       - name: Upload staging deployment evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: staging-evidence-${{ needs.resolve-release.outputs.release-sha }}
           path: ${{ runner.temp }}/staging-deployment-evidence.json
@@ -178,41 +178,41 @@ jobs:
       ALERTING_DRILL_RUN_ID: ${{ inputs.alerting_drill_run_id }}
     steps:
       - name: Check out acceptance verifier
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           ref: ${{ needs.resolve-release.outputs.release-sha }}
       - name: Set up Node.js
-        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
       - name: Download immutable release evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.resolve-release.outputs.prepare-artifact-id }}
           path: .
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
       - name: Download staging deployment evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: staging-evidence-${{ needs.resolve-release.outputs.release-sha }}
           path: release-evidence
       - name: Download migration rehearsal evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { artifact-ids: "${{ needs.resolve-release.outputs.migration-rehearsal-artifact-id }}", path: release-evidence/migration-rehearsal, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
       - name: Download database roles evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { artifact-ids: "${{ needs.resolve-release.outputs.database-roles-artifact-id }}", path: release-evidence/database-roles, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
       - name: Download backup restore evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { artifact-ids: "${{ needs.resolve-release.outputs.backup-restore-artifact-id }}", path: release-evidence/backup-restore, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
       - name: Download rollback compatibility evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { artifact-ids: "${{ needs.resolve-release.outputs.rollback-compatibility-artifact-id }}", path: release-evidence/rollback-compatibility, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
       - name: Download alerting drill evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { artifact-ids: "${{ needs.resolve-release.outputs.alerting-drill-artifact-id }}", path: release-evidence/alerting-drill, github-token: "${{ secrets.GITHUB_TOKEN }}", repository: "${{ github.repository }}" }
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
@@ -241,7 +241,7 @@ jobs:
           NODE
           npm run release:acceptance:verify -- --manifest release-manifest.json --digest release-manifest.sha256 --deployment-evidence release-evidence/staging-deployment-evidence.json --acceptance release-evidence/production-acceptance.json --migration-rehearsal-evidence release-evidence/migration-rehearsal/evidence.json --database-roles-evidence release-evidence/database-roles/evidence.json --backup-restore-evidence release-evidence/backup-restore/evidence.json --rollback-compatibility-evidence release-evidence/rollback-compatibility/evidence.json --alerting-drill-evidence release-evidence/alerting-drill/evidence.json
       - name: Upload final acceptance evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-acceptance-${{ needs.resolve-release.outputs.release-sha }}
           path: ${{ runner.temp }}/production-acceptance-evidence.json
@@ -262,13 +262,13 @@ jobs:
       packages: read
     steps:
       - name: Check out deploy adapter
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           ref: ${{ needs.resolve-release.outputs.release-sha }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@1e60f620b9541dca151540d0c4072c26d1eb7c64 # v4.0.4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -281,7 +281,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download the same immutable release evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.resolve-release.outputs.prepare-artifact-id }}
           path: .
