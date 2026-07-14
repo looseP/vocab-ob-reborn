@@ -102,10 +102,10 @@ services:
       CADDY_EMAIL: ${CADDY_EMAIL:?CADDY_EMAIL is required}
       CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:?CADDY_SITE_ADDRESS is required}
     ports:
-      - "80:80"
-      - "443:443"
+      - "${CADDY_HTTP_BIND_ADDRESS:?CADDY_HTTP_BIND_ADDRESS is required}:80:80"
+      - "${CADDY_HTTPS_BIND_ADDRESS:?CADDY_HTTPS_BIND_ADDRESS is required}:443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${CADDY_CONFIG_FILE:?CADDY_CONFIG_FILE is required}:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:

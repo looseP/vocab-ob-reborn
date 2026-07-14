@@ -21,12 +21,30 @@ describe("single-host Compose contract", () => {
     )).toThrow(/Only Caddy may publish host ports/);
   });
 
-  it("rejects a Caddy route without readiness checking", () => {
+  it("rejects a Caddy route without readiness checking or local TLS", () => {
     expect(() => verifySingleHostCompose(
       compose,
       caddyfile.replace("    health_uri /readyz\n", ""),
       environment,
     )).toThrow(/readiness health check/);
+    expect(() => verifySingleHostCompose(
+      compose,
+      caddyfile.replace("  tls internal\n", ""),
+      environment,
+    )).toThrow(/local internal TLS/);
+  });
+
+  it("rejects a non-loopback proxy binding or Linux-only backup directory", () => {
+    expect(() => verifySingleHostCompose(
+      compose.replace("CADDY_HTTP_BIND_ADDRESS:?CADDY_HTTP_BIND_ADDRESS is required", "CADDY_HTTP_BIND_ADDRESS:-0.0.0.0"),
+      caddyfile,
+      environment,
+    )).toThrow(/HTTP loopback binding/);
+    expect(() => verifySingleHostCompose(
+      compose,
+      caddyfile,
+      environment.replace("BACKUP_HOST_DIR=D:/vocab-observatory/backups", "BACKUP_HOST_DIR=/srv/vocab-observatory/backups"),
+    )).toThrow(/Absolute Windows backup directory template/);
   });
 
   it("rejects an image template that can fall back to a tag", () => {
