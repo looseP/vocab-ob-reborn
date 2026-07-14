@@ -6,10 +6,9 @@ dist/
 *.tsbuildinfo
 
 # Drizzle generated artifacts
-# Note: migration SQL files ARE tracked (schema evolution history).
-# Only the meta/ snapshots and journal are ignored if they cause churn,
-# but for now we track the whole drizzle/ directory.
-# (was: drizzle/ — changed to track migrations for team collaboration)
+# drizzle-release/ is the single canonical migration history (tracked).
+# The legacy drizzle/ directory is superseded and should not be re-created.
+drizzle/
 
 # Local agent analysis artifacts (never commit to product PRs)
 .codebase-memory/
@@ -48,3 +47,8 @@ npm-debug.log*
 tmp/
 temp/
 backups/
+
+# Large binary artifacts (should not be tracked in git)
+*.zip
+*.tar.gz
+*.tgz

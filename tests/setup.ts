@@ -2,7 +2,7 @@
  * Test setup — runs before all tests.
  *
  * Sets a fallback DATABASE_URL so modules that check it at import time
- * don't throw. Real DB tests (review-concurrency) override this with
+ * don't throw. Real DB tests (review-service.integration) override this with
  * TEST_DATABASE_URL.
  */
 

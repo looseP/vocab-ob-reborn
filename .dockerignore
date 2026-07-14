@@ -16,4 +16,7 @@ backups
 *.log
 *.dump
 *.manifest.json
+*.zip
+*.tar.gz
+*.tgz
 .tmp*

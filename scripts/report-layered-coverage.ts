@@ -348,7 +348,7 @@ function collectEvidence(projectRoot: string): TestEvidence[] {
   const allTests = walkFiles(testRoot, (file) => file.endsWith(".test.ts"));
   const evidence: TestEvidence[] = [
     { category: "http-contract", files: allTests.filter((file) => file.startsWith("tests/http/")), count: 0, evidenceKind: "test-reference", enforcedBy: "npm run test:unit", executionScope: "unit-job" },
-    { category: "db-integration", files: allTests.filter((file) => file.includes(".integration.test.ts") || file === "tests/review-concurrency.test.ts"), count: 0, evidenceKind: "test-reference", enforcedBy: "npm run verify:db", executionScope: "database-job" },
+    { category: "db-integration", files: allTests.filter((file) => file.includes(".integration.test.ts")), count: 0, evidenceKind: "test-reference", enforcedBy: "npm run verify:db", executionScope: "database-job" },
     { category: "script-workflow", files: allTests.filter((file) => file.startsWith("tests/scripts/") || file.startsWith("tests/operations/")), count: 0, evidenceKind: "test-reference", enforcedBy: "npm run test:unit", executionScope: "unit-job" },
     { category: "e2e-journey", files: walkFiles(e2eRoot, (file) => file.endsWith(".spec.ts")), count: 0, evidenceKind: "test-reference", enforcedBy: "npm run test:e2e", executionScope: "e2e-job" },
   ];

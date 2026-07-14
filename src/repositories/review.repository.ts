@@ -183,7 +183,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     // and append the latest rating to recent_ratings (capped at 5).
     //
     // recent_ratings SQL breakdown:
-    //   recent_ratings || to_jsonb($5::text)  — append new rating to existing array
+    //   recent_ratings || to_jsonb($16::text)  — append a separately typed rating value
     //   jsonb_array_elements(...) WITH ORDINALITY  — explode to (elem, ord) pairs
     //   ORDER BY ord DESC LIMIT 5  — take 5 most recent
     //   jsonb_agg(elem ORDER BY ord ASC)  — re-aggregate in chronological order
@@ -203,12 +203,11 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
              FROM (
                SELECT elem, ord
                FROM jsonb_array_elements(
-                 recent_ratings || to_jsonb($5::text)
+                 recent_ratings || to_jsonb($16::text)
                ) WITH ORDINALITY t(elem, ord)
                ORDER BY ord DESC
                LIMIT 5
              ) sub
-             ORDER BY ord ASC
            ),
            updated_at = $12
        WHERE id = $13::uuid AND user_id = $14::uuid AND wordbook_id = $15::uuid`,
@@ -228,6 +227,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         input.progressId,
         input.userId,
         input.wordbookId,
+        String(input.rating), // $16: text for JSON append; $5 remains the enum value
       ],
     );
 
