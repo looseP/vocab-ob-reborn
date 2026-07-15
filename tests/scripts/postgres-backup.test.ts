@@ -15,6 +15,7 @@ import {
 
 let roots: string[] = [];
 const originalSslMode = process.env.DB_SSLMODE;
+const originalRootCertificate = process.env.DB_SSLROOTCERT;
 
 beforeEach(() => {
   process.env.DB_SSLMODE = "verify-full";
@@ -27,6 +28,8 @@ afterEach(() => {
   if (originalSslMode === undefined) delete process.env.DB_SSLMODE;
   else process.env.DB_SSLMODE = originalSslMode;
   delete process.env.PGSSLROOTCERT;
+  if (originalRootCertificate === undefined) delete process.env.DB_SSLROOTCERT;
+  else process.env.DB_SSLROOTCERT = originalRootCertificate;
 });
 
 function makeManifest(overrides: Partial<BackupManifest> = {}): BackupManifest {
@@ -47,7 +50,8 @@ function makeManifest(overrides: Partial<BackupManifest> = {}): BackupManifest {
 describe("postgres backup safety", () => {
   it("extracts encoded database names without exposing credentials", () => {
     expect(databaseName("postgresql://user:secret@localhost:5432/vocab%5Fprod")).toBe("vocab_prod");
-    process.env.PGSSLROOTCERT = "/run/secrets/postgres-ca.pem";
+    process.env.PGSSLROOTCERT = "/untrusted/ambient-ca.pem";
+    process.env.DB_SSLROOTCERT = "/run/secrets/postgres-ca.pem";
     const env = postgresEnvironment("postgresql://user:secret@db.example:5433/vocab");
     expect(env).toMatchObject({
       PGHOST: "db.example",

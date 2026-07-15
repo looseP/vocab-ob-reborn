@@ -748,6 +748,13 @@ async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fi
     [ineligibleWord, fixture.expectedL2Hash, fixture.expectedContentHash],
     "finalize_l2_content_hash for non-published word",
   );
+  const ineligibleHash = await admin.query<{ l2_content_hash: string | null; content_hash: string }>(
+    "SELECT l2_content_hash, content_hash FROM words WHERE id = $1",
+    [ineligibleWord],
+  );
+  if (ineligibleHash.rows[0]?.l2_content_hash !== null || ineligibleHash.rows[0]?.content_hash !== "2".repeat(64)) {
+    throw new Error(`non-published word hashes were modified: ${JSON.stringify(ineligibleHash.rows)}`);
+  }
   await expectActorFunctionRejected(
     app,
     fixture.users[0],
@@ -755,6 +762,14 @@ async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fi
     [targetWord, invalidL2Hash, invalidContentHash],
     "finalize_l2_content_hash with invalid hash format",
   );
+  const beforeRefreshHashes = await admin.query<{ l2_content_hash: string | null; content_hash: string }>(
+    "SELECT l2_content_hash, content_hash FROM words WHERE id = $1",
+    [targetWord],
+  );
+  if (beforeRefreshHashes.rows[0]?.l2_content_hash !== null
+    || beforeRefreshHashes.rows[0]?.content_hash !== "0".repeat(64)) {
+    throw new Error(`invalid hash format modified target word: ${JSON.stringify(beforeRefreshHashes.rows)}`);
+  }
 
   await actorCommitQuery(app, fixture.users[0], "SELECT public.refresh_l2_cache($1::uuid)", [targetWord]);
   const cacheRows = await admin.query<{

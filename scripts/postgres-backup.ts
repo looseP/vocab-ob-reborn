@@ -52,7 +52,7 @@ export function postgresEnvironment(databaseUrl: string): NodeJS.ProcessEnv {
   const parsed = new URL(databaseUrl);
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
-    if (key.startsWith("PG") && !["PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY", "PGSSLCRL"].includes(key)) delete env[key];
+    if (key.startsWith("PG")) delete env[key];
   }
   Object.assign(env, {
     PGHOST: parsed.hostname,
@@ -62,6 +62,7 @@ export function postgresEnvironment(databaseUrl: string): NodeJS.ProcessEnv {
     PGPASSWORD: decodeURIComponent(parsed.password),
     PGSSLMODE: databaseSslMode(),
   });
+  if (process.env.DB_SSLROOTCERT) env.PGSSLROOTCERT = process.env.DB_SSLROOTCERT;
   return env;
 }
 

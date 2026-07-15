@@ -43,8 +43,7 @@ describe("database role bootstrap least-privilege contract", () => {
       expect(source).not.toMatch(/new (?:Client|Pool)\(\{\s*connectionString/);
     }
     expect(drizzleConfig).toContain("const sslMode = databaseSslMode()");
-    expect(drizzleConfig).toContain("sslMode === \"verify-ca\" || sslMode === \"verify-full\"");
-    expect(drizzleConfig).toContain("{ rejectUnauthorized: true }");
+    expect(drizzleConfig).toContain("ssl: databaseSslConfig(sslMode).ssl!");
     expect(drizzleConfig).toContain("assertConnectionStringHasNoSslOptions(databaseUrl)");
   });
 
@@ -124,7 +123,7 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(verifier).toContain("[[undefined, \"without actor\"], [fixture.users[2], \"wrong actor\"]]");
     expect(verifier).toContain("`refresh_l2_cache ${label}`");
     expect(verifier).toContain("`finalize_l2_content_hash ${label}`");
-    expect(verifier).toContain("finalize_l2_content_hash with forged hashes");
+    expect(verifier).toContain("finalize_l2_content_hash with invalid hash format");
     expect(verifier).toContain("finalize_l2_content_hash for non-published word");
     expect(verifier).toContain("refresh_l2_cache for actor-ineligible word");
     expect(verifier).toContain("updated_count !== 2");

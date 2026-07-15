@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { ClientConfig } from "pg";
 
 export type DatabaseSslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";
@@ -18,11 +19,19 @@ export function databaseSslMode(mode = process.env.DB_SSLMODE ?? "disable"): Dat
   return mode as DatabaseSslMode;
 }
 
-export function databaseSslConfig(mode = process.env.DB_SSLMODE ?? "disable"): DatabaseSslConfig {
+export function databaseSslConfig(
+  mode = process.env.DB_SSLMODE ?? "disable",
+  rootCertificatePath = process.env.DB_SSLROOTCERT,
+): DatabaseSslConfig {
   const validatedMode = databaseSslMode(mode);
   if (validatedMode === "disable") return {};
   if (validatedMode === "verify-ca" || validatedMode === "verify-full") {
-    return { ssl: { rejectUnauthorized: true } };
+    return {
+      ssl: {
+        rejectUnauthorized: true,
+        ...(rootCertificatePath ? { ca: readFileSync(rootCertificatePath, "utf8") } : {}),
+      },
+    };
   }
   return { ssl: { rejectUnauthorized: false } };
 }
