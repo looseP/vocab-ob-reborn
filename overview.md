@@ -24,5 +24,5 @@
 - `SECURITY DEFINER` L2 cache/hash RPC 已补无 actor、错误 actor、伪造 hash、非 eligible word、跨目标和 paused/null/same-hash 排除的真实 PostgreSQL 验收逻辑；但 Docker 未启动，尚未取得运行时通过证据。
 - dump/restore 的 libpq TLS 已改为受控 `DB_SSLMODE`/`DB_SSLROOTCERT`，不继承 ambient `PG*`；node-postgres 与 Drizzle 同步消费严格 CA 配置。
 - Docker Desktop `desktop-linux` engine 仍不可连接，因此 PostgreSQL 17 的 prepare → migrate → converge → real LOGIN → 安全函数 → dump/restore 尚未真实执行。
-- diff coverage 根因已修复：只统计 Istanbul statement/branch/function range 所定义的可执行变更行；整个 governed source 文件缺失 coverage 时仍 fail closed。85% 阈值和 baseline 未变，当前结果 100% PASS。
+- diff coverage 根因已修复：只统计 Istanbul statement/branch/function range 所定义的可执行变更行；整个 governed source 文件缺失 coverage 时仍 fail closed；同一行所有适用 range 必须全部命中。85% 阈值和 baseline 未变，当前结果 98.91% PASS。
 - 仍需独立终审、push 和创建独立 PR；不会自动合并。
