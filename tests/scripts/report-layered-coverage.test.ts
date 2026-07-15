@@ -133,9 +133,9 @@ describe("diff coverage", () => {
     expect(calculateDiffCoverage({ "src/services/a.ts": [1] }, coverage, "base").ok).toBe(true);
     expect(calculateDiffCoverage({ "src/services/a.ts": [1, 2] }, coverage, "base")).toMatchObject({ pct: 50, ok: false });
     expect(calculateDiffCoverage({ "src/services/a.ts": [1, 2, 99] }, coverage, "base")).toMatchObject({
-      executableLines: 3,
+      executableLines: 2,
       coveredLines: 1,
-      pct: 33.33,
+      pct: 50,
       ok: false,
     });
     expect(calculateDiffCoverage({ "src/services/missing.ts": [1] }, coverage, "base")).toMatchObject({
@@ -155,6 +155,21 @@ describe("diff coverage", () => {
       ok: false,
     });
     expect(calculateDiffCoverage({}, coverage, "base")).toMatchObject({ pct: null, ok: true });
+  });
+
+  it("excludes instrumented-file lines that have no executable coverage range", () => {
+    const coverage = { "src/services/a.ts": fileCoverage("src/services/a.ts", [1]) };
+
+    expect(calculateDiffCoverage(
+      { "src/services/a.ts": [1, 99] },
+      coverage,
+      "base",
+    )).toMatchObject({
+      executableLines: 1,
+      coveredLines: 1,
+      pct: 100,
+      ok: true,
+    });
   });
 });
 

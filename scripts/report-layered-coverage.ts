@@ -144,8 +144,12 @@ export function calculateDiffCoverage(
   for (const [fileName, lines] of Object.entries(changedLines)) {
     const file = coverageByFile.get(normalizePath(fileName));
     const uniqueLines = new Set(lines);
-    executableLines += uniqueLines.size;
-    if (!file) continue;
+    if (!file) {
+      // A governed source file missing from the coverage report is a real gap.
+      // Keep failing closed instead of silently dropping all of its changed lines.
+      executableLines += uniqueLines.size;
+      continue;
+    }
 
     const statementRanges = Object.entries(file.statementMap).map(([id, location]) => ({ location, hit: file.s[id] ?? 0 }));
     const branchRanges = Object.entries(file.branchMap).flatMap(([id, branch]) =>
@@ -159,6 +163,10 @@ export function calculateDiffCoverage(
       const branches = branchRanges.filter(containsLine);
       const functions = functionRanges.filter(containsLine);
       const mostSpecific = statements.length > 0 ? statements : branches.length > 0 ? branches : functions;
+      // Type-only declarations, imports, signatures, and formatting lines have no
+      // Istanbul range and are therefore not executable coverage obligations.
+      if (mostSpecific.length === 0) continue;
+      executableLines += 1;
       if (mostSpecific.some(({ hit }) => hit > 0)) coveredLines += 1;
     }
   }

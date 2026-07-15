@@ -13,7 +13,7 @@
 - Vitest 主体：88 files / 1202 tests 全部通过；分层总体目标 PASS。
 - 分层覆盖率：domain branches 89.06%，service 76.76%，repository 75.05%；baseline gate 与最终目标均 PASS。
 - TypeScript typecheck PASS。
-- dependency-cruiser：166 modules / 539 dependencies / 0 violations。
+- dependency-cruiser：167 modules / 540 dependencies / 0 violations。
 - schema drift PASS（含 owner RLS 与安全函数静态合同）。
 - release workflow contract PASS。
 - cwd/alerting 聚焦回归：3 files / 89 tests PASS。
@@ -24,5 +24,5 @@
 - `SECURITY DEFINER` L2 cache/hash RPC 已补无 actor、错误 actor、伪造 hash、非 eligible word、跨目标和 paused/null/same-hash 排除的真实 PostgreSQL 验收逻辑；但 Docker 未启动，尚未取得运行时通过证据。
 - dump/restore 的 libpq TLS 已改为受控 `DB_SSLMODE`/`DB_SSLROOTCERT`，不继承 ambient `PG*`；node-postgres 与 Drizzle 同步消费严格 CA 配置。
 - Docker Desktop `desktop-linux` engine 仍不可连接，因此 PostgreSQL 17 的 prepare → migrate → converge → real LOGIN → 安全函数 → dump/restore 尚未真实执行。
-- `verify:engineering` 当前停在 diff coverage：92/113 changed executable lines = 81.42% < 85%；正在补高价值测试，不降低阈值。
+- `verify:engineering` 当前停在 diff coverage：92/113 = 81.42% < 85%。复算确认 21 个 miss 均为 Istanbul 无任何可执行 range 的 import/接口/多行签名；正在修正门禁只统计有 statement/branch/function range 的变更行，保留缺失 coverage 文件 fail-closed 与 85% 阈值。
 - 仍需独立终审、push 和创建独立 PR；不会自动合并。
