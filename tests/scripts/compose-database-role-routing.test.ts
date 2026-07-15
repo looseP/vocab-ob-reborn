@@ -20,6 +20,7 @@ const composeEnvironmentKeys = [
   "APP_IMAGE",
   "MIGRATION_IMAGE",
   "BACKUP_IMAGE",
+  "DATABASE_ADMIN_URL",
   "APP_DATABASE_URL",
   "WORKER_DATABASE_URL",
   "BACKUP_DATABASE_URL",
@@ -58,10 +59,11 @@ const productionEnvironment = {
   APP_IMAGE: "ghcr.io/example/vocab-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   MIGRATION_IMAGE: "ghcr.io/example/vocab-migration@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   BACKUP_IMAGE: "ghcr.io/example/vocab-backup@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  APP_DATABASE_URL: "postgresql://vocab_app:app-secret@db.example.test:5432/vocab",
-  WORKER_DATABASE_URL: "postgresql://vocab_worker:worker-secret@db.example.test:5432/vocab",
-  BACKUP_DATABASE_URL: "postgresql://vocab_backup:backup-secret@db.example.test:5432/vocab",
-  MIGRATION_DATABASE_URL: "postgresql://vocab_migration:migration-secret@db.example.test:5432/vocab",
+  DATABASE_ADMIN_URL: "postgresql://vocab_roles_admin:admin-secret-00001@db.example.test:5432/vocab",
+  APP_DATABASE_URL: "postgresql://vocab_app:app-secret-0000001@db.example.test:5432/vocab",
+  WORKER_DATABASE_URL: "postgresql://vocab_worker:worker-secret-00001@db.example.test:5432/vocab",
+  BACKUP_DATABASE_URL: "postgresql://vocab_backup:backup-secret-00001@db.example.test:5432/vocab",
+  MIGRATION_DATABASE_URL: "postgresql://vocab_migration:migration-secret-001@db.example.test:5432/vocab",
   APP_ORIGIN: "https://vocab.example.test",
   OWNER_API_TOKEN: "production-owner-token-00000001",
   METRICS_BEARER_TOKEN: "production-metrics-token-00001",
@@ -110,6 +112,7 @@ describeDocker("Compose rendered database role routing", () => {
 
   it("fails production rendering when required values are absent", () => {
     const result = composeConfig(["compose.production.yaml"], {
+      DATABASE_ADMIN_URL: "",
       APP_DATABASE_URL: "",
       WORKER_DATABASE_URL: "",
       BACKUP_DATABASE_URL: "",
@@ -138,12 +141,35 @@ describeDocker("Compose rendered database role routing", () => {
       expect(config.services[service]?.environment?.DATABASE_URL).toBe(productionEnvironment.WORKER_DATABASE_URL);
     }
     expect(config.services["backup-scheduler"]?.environment?.DATABASE_URL).toBe(productionEnvironment.BACKUP_DATABASE_URL);
+
+    const roleUrls = {
+      DATABASE_ADMIN_URL: productionEnvironment.DATABASE_ADMIN_URL,
+      APP_DATABASE_URL: productionEnvironment.APP_DATABASE_URL,
+      WORKER_DATABASE_URL: productionEnvironment.WORKER_DATABASE_URL,
+      BACKUP_DATABASE_URL: productionEnvironment.BACKUP_DATABASE_URL,
+      MIGRATION_DATABASE_URL: productionEnvironment.MIGRATION_DATABASE_URL,
+    };
+    for (const service of ["database-role-bootstrap", "database-role-converge"]) {
+      expect(config.services[service]?.environment).toMatchObject(roleUrls);
+    }
     for (const service of ["migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"]) {
       expect(config.services[service]?.environment?.DB_SSLMODE).toBe("verify-full");
+      expect(config.services[service]?.environment?.DATABASE_ADMIN_URL).toBeUndefined();
+    }
+    expect(config.services["database-role-bootstrap"]?.environment?.DB_SSLMODE).toBe("verify-full");
+    expect(config.services["database-role-converge"]?.environment?.DB_SSLMODE).toBe("verify-full");
+    expect(config.services.migrate?.depends_on?.["database-role-bootstrap"]).toMatchObject({
+      condition: "service_completed_successfully",
+    });
+    expect(config.services["database-role-converge"]?.depends_on?.migrate).toMatchObject({
+      condition: "service_completed_successfully",
+    });
+    for (const service of ["web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"]) {
+      expect(config.services[service]?.depends_on?.["database-role-converge"]).toMatchObject({
+        condition: "service_completed_successfully",
+      });
     }
     expect(config.services.web?.ports?.[0]?.host_ip).toBe("127.0.0.1");
     expect(config.services.postgres).toBeUndefined();
-    expect(config.services.migrate?.depends_on).toBeUndefined();
-    expect(config.services.migrate?.environment?.DB_SSLMODE).toBe("verify-full");
   });
 });
