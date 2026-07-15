@@ -22,7 +22,7 @@ playwright-report/
 test-results/
 sbom-*.cdx.json
 release-manifest.json
-tests/scripts/.alerting-drill-test-*.lock
+tests/scripts/.alerting-drill-test-*.lock*
 
 # Environment files
 .env
