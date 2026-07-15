@@ -1,10 +1,16 @@
-import { unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { rename, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runDrill, validateOptions, type DrillOptions } from "../../scripts/run-alerting-drill";
 
 const lockFile = resolve(import.meta.dirname, `.alerting-drill-test-${process.pid}.lock`);
+
+const releaseLock: NonNullable<DrillOptions["releaseLock"]> = async (_path, handle) => {
+  await handle.truncate(0);
+  await handle.close();
+};
 
 const base: DrillOptions = {
   environment: "staging",
@@ -19,12 +25,13 @@ const base: DrillOptions = {
   lockFile,
   requestId: "drill-12345678",
   resolveHost: async () => [{ address: "203.0.113.10" }],
+  releaseLock,
 };
 
 afterEach(async () => {
   vi.unstubAllGlobals();
   try {
-    await unlink(lockFile);
+    await rename(lockFile, `${lockFile}.${randomUUID()}.released`);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -95,15 +102,22 @@ describe("alerting drill safety gates", () => {
   });
 
   it("ambiguous firing POST 错误仍尝试 cleanup 并释放锁", async () => {
+    let releaseCalls = 0;
     let calls = 0;
     vi.stubGlobal("fetch", vi.fn(async () => {
       calls += 1;
       if (calls === 1) throw new Error("ambiguous firing failure");
       return new Response(null, { status: 200 });
     }));
-    await expect(runDrill(base)).rejects.toThrow("ambiguous firing failure");
+    await expect(runDrill({
+      ...base,
+      releaseLock: async (path, handle) => {
+        releaseCalls += 1;
+        await releaseLock(path, handle);
+      },
+    })).rejects.toThrow("ambiguous firing failure");
     expect(calls).toBe(2);
-    await expect(writeFile(lockFile, "new-lock", { flag: "wx" })).resolves.toBeUndefined();
+    expect(releaseCalls).toBe(1);
   });
 
   it("回执失败后仍以独立 signal 尝试 resolved", async () => {
