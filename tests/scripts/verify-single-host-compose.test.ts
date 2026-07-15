@@ -21,17 +21,27 @@ describe("single-host Compose contract", () => {
     )).toThrow(/Only Caddy may publish host ports/);
   });
 
-  it("rejects a Caddy route without readiness checking or local TLS", () => {
-    expect(() => verifySingleHostCompose(
-      compose,
-      caddyfile.replace("    health_uri /readyz\r\n", ""),
-      environment,
-    )).toThrow(/readiness health check/);
-    expect(() => verifySingleHostCompose(
-      compose,
-      caddyfile.replace("  tls internal\r\n", ""),
-      environment,
-    )).toThrow(/local internal TLS/);
+  it("rejects a Caddy route without readiness checking or local TLS for LF and CRLF", () => {
+    for (const lineEnding of ["\n", "\r\n"]) {
+      const platformCaddyfile = caddyfile.replace(/\r?\n/g, lineEnding);
+
+      expect(() => verifySingleHostCompose(
+        compose,
+        platformCaddyfile.replace(
+          /^[ \t]*health_uri \/readyz[ \t]*(?:\r?\n|$)/m,
+          "",
+        ),
+        environment,
+      )).toThrow(/readiness health check/);
+      expect(() => verifySingleHostCompose(
+        compose,
+        platformCaddyfile.replace(
+          /^[ \t]*tls internal[ \t]*(?:\r?\n|$)/m,
+          "",
+        ),
+        environment,
+      )).toThrow(/local internal TLS/);
+    }
   });
 
   it("rejects a non-loopback proxy binding or Linux-only backup directory", () => {
