@@ -11,9 +11,9 @@ export function verifySingleHostCompose(compose: string, caddyfile: string, envi
   requirePattern(compose, /^  caddy:$/m, "Caddy service");
   requirePattern(compose, /image: \$\{CADDY_IMAGE:\?CADDY_IMAGE is required\}/, "Fail-fast pinned Caddy image");
   requirePattern(compose, /image: \$\{POSTGRES_IMAGE:\?POSTGRES_IMAGE is required\}/, "Fail-fast pinned PostgreSQL image");
-  requirePattern(compose, /- "\$\{CADDY_HTTP_BIND_ADDRESS:\?CADDY_HTTP_BIND_ADDRESS is required\}:80:80"/, "Fail-fast Caddy HTTP loopback binding");
-  requirePattern(compose, /- "\$\{CADDY_HTTPS_BIND_ADDRESS:\?CADDY_HTTPS_BIND_ADDRESS is required\}:443:443"/, "Fail-fast Caddy HTTPS loopback binding");
-  requirePattern(compose, /- \$\{CADDY_CONFIG_FILE:\?CADDY_CONFIG_FILE is required\}:\/etc\/caddy\/Caddyfile:ro/, "Fail-fast Caddy configuration file");
+  requirePattern(compose, /- "\$\{CADDY_HTTP_BIND_ADDRESS:\?CADDY_HTTP_BIND_ADDRESS is required\}:\$\{CADDY_HTTP_HOST_PORT:-80\}:80"/, "Fail-fast Caddy HTTP loopback binding");
+  requirePattern(compose, /- "\$\{CADDY_HTTPS_BIND_ADDRESS:\?CADDY_HTTPS_BIND_ADDRESS is required\}:\$\{CADDY_HTTPS_HOST_PORT:-443\}:443"/, "Fail-fast Caddy HTTPS loopback binding");
+  requirePattern(compose, /- type: bind\n        source: \$\{CADDY_CONFIG_FILE:\?CADDY_CONFIG_FILE is required\}\n        target: \/etc\/caddy\/Caddyfile\n        read_only: true/, "Fail-fast Caddy configuration file long syntax");
   requirePattern(compose, /CADDY_SITE_ADDRESS: \$\{CADDY_SITE_ADDRESS:\?CADDY_SITE_ADDRESS is required\}/, "Fail-fast Caddy site address");
   requirePattern(compose, /APP_ORIGIN: \$\{APP_ORIGIN:\?APP_ORIGIN is required and must be HTTPS\}/, "Fail-fast HTTPS application origin");
   requirePattern(compose, /SINGLE_HOST_DEPLOYMENT: "true"/, "Explicit isolated single-host topology");
@@ -26,7 +26,7 @@ export function verifySingleHostCompose(compose: string, caddyfile: string, envi
   requirePattern(caddyfile, /Strict-Transport-Security/, "HSTS header");
   requirePattern(caddyfile, /X-Content-Type-Options/, "Content-type protection header");
   requirePattern(compose, /POSTGRES_PASSWORD: \$\{POSTGRES_PASSWORD:\?POSTGRES_PASSWORD is required\}/, "Fail-fast database password");
-  requirePattern(compose, /BACKUP_HOST_DIR:\?BACKUP_HOST_DIR is required/, "Fail-fast backup directory");
+  requirePattern(compose, /- type: bind\n        source: \$\{BACKUP_HOST_DIR:\?BACKUP_HOST_DIR is required\}\n        target: \/backups/, "Fail-fast backup directory long syntax");
   requirePattern(compose, /BACKUP_OBJECT_LOCK: "false"/, "Personal-host backup object lock disabled explicitly");
   requirePattern(compose, /read_only: true/, "Read-only application filesystems");
   requirePattern(compose, /no-new-privileges:true/, "No-new-privileges hardening");
@@ -46,7 +46,9 @@ export function verifySingleHostCompose(compose: string, caddyfile: string, envi
   requirePattern(environment, /^APP_ORIGIN=https:\/\/localhost$/m, "Local HTTPS origin template");
   requirePattern(environment, /^CADDY_SITE_ADDRESS=localhost$/m, "Local Caddy site address template");
   requirePattern(environment, /^CADDY_HTTP_BIND_ADDRESS=127\.0\.0\.1$/m, "Loopback HTTP bind template");
+  requirePattern(environment, /^CADDY_HTTP_HOST_PORT=80$/m, "Default Caddy HTTP host port template");
   requirePattern(environment, /^CADDY_HTTPS_BIND_ADDRESS=127\.0\.0\.1$/m, "Loopback HTTPS bind template");
+  requirePattern(environment, /^CADDY_HTTPS_HOST_PORT=443$/m, "Default Caddy HTTPS host port template");
   requirePattern(environment, /^CADDY_CONFIG_FILE=[A-Za-z]:\/.+\/Caddyfile$/m, "Absolute Windows Caddy configuration template");
   requirePattern(environment, /^BACKUP_HOST_DIR=[A-Za-z]:\/.+/m, "Absolute Windows backup directory template");
 }
