@@ -96,6 +96,11 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(bootstrap).toContain("GRANT SELECT ON ALL SEQUENCES IN SCHEMA public, auth, vocab_migrations TO vocab_backup");
   });
 
+  it("converges and verifies the database owner", () => {
+    expect(bootstrap).toContain("ALTER DATABASE %I OWNER TO vocab_migration");
+    expect(verifier).toContain("application database is not owned by vocab_migration");
+  });
+
   it("converges and verifies routine and type ownership across all schemas excluding extensions", () => {
     const managedSchemaSet = "n.nspname IN ('public', 'auth', 'vocab_migrations')";
     expect(bootstrap.match(new RegExp(managedSchemaSet.replace(/[()]/g, "\\$&"), "g"))?.length).toBeGreaterThanOrEqual(3);
