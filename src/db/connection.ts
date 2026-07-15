@@ -14,6 +14,7 @@
 
 import { Pool, types, type QueryConfig } from "pg";
 import { logger } from "./logger";
+import { postgresClientConfig } from "./ssl";
 import type { PoolHealth } from "./types";
 
 // Parse numeric/int8 as JS numbers instead of strings
@@ -53,16 +54,14 @@ export function getPool(): Pool {
     if (!url) {
       throw new Error("DATABASE_URL is not configured.");
     }
-    const sslMode = process.env.DB_SSLMODE ?? "disable";
     _pool = new Pool({
-      connectionString: url,
+      ...postgresClientConfig(url),
       max: boundedInteger("DB_POOL_MAX", 10, 1, 100),
       idleTimeoutMillis: boundedInteger("DB_IDLE_TIMEOUT_MS", 30_000, 1_000, 600_000),
       connectionTimeoutMillis: boundedInteger("DB_CONNECT_TIMEOUT_MS", 5_000, 100, 60_000),
       keepAlive: true,
       keepAliveInitialDelayMillis: boundedInteger("DB_KEEPALIVE_DELAY_MS", 10_000, 0, 600_000),
       allowExitOnIdle: true,
-      ...(sslMode !== "disable" ? { ssl: sslMode === "verify-full" || sslMode === "verify-ca" ? { rejectUnauthorized: true } : { rejectUnauthorized: false } } : {}),
     });
     _listenersAttached = false;
     attachPoolListeners(_pool);

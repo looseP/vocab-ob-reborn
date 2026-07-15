@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acceptanceDatabaseName,
   acceptanceDatabaseOwnerStatement,
@@ -14,15 +14,23 @@ import {
   type CatalogSnapshot,
 } from "../../scripts/verify-backup-rls-acceptance";
 
+const originalSslMode = process.env.DB_SSLMODE;
+
+beforeEach(() => {
+  process.env.DB_SSLMODE = "disable";
+});
+
 afterEach(() => {
   delete process.env.PG_BIN_DIR;
   delete process.env.PG_RESTORE_JOBS;
+  if (originalSslMode === undefined) delete process.env.DB_SSLMODE;
+  else process.env.DB_SSLMODE = originalSslMode;
 });
 
 describe("backup RLS acceptance command construction", () => {
   it("dumps ownership and ACL state while authenticating only as backup", () => {
     const invocation = buildPgDumpInvocation(
-      "postgresql://vocab_backup:backup-secret@db.internal:5433/vocab?sslmode=require",
+      "postgresql://vocab_backup:backup-secret@db.internal:5433/vocab",
       "/isolated/acceptance.dump",
     );
     expect(basename(invocation.command)).toMatch(/^pg_dump(?:\.exe)?$/);
@@ -41,8 +49,17 @@ describe("backup RLS acceptance command construction", () => {
       PGDATABASE: "vocab",
       PGUSER: "vocab_backup",
       PGPASSWORD: "backup-secret",
-      PGSSLMODE: "require",
+      PGSSLMODE: "disable",
     });
+  });
+
+  it("propagates verify-full to backup subprocesses", () => {
+    process.env.DB_SSLMODE = "verify-full";
+    const invocation = buildPgDumpInvocation(
+      "postgresql://vocab_backup:backup-secret@db.internal:5433/vocab",
+      "/isolated/acceptance.dump",
+    );
+    expect(invocation.env.PGSSLMODE).toBe("verify-full");
   });
 
   it("restores as the migration LOGIN and replays normalized ACL state", () => {
@@ -80,7 +97,7 @@ describe("backup RLS acceptance destructive and identity guards", () => {
 
   it("retargets all four LOGIN URLs without changing credentials", () => {
     const sourceUrls = {
-      app: "postgresql://vocab_app:app-secret@db.internal:5432/vocab?sslmode=require",
+      app: "postgresql://vocab_app:app-secret@db.internal:5432/vocab",
       worker: "postgresql://vocab_worker:worker-secret@db.internal:5432/vocab",
       backup: "postgresql://vocab_backup:backup-secret@db.internal:5432/vocab",
       migration: "postgresql://vocab_migration:migration-secret@db.internal:5432/vocab",

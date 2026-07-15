@@ -1,4 +1,5 @@
 import { Client } from "pg";
+import { postgresClientConfig } from "../src/db/ssl";
 
 const ROLE_NAMES = {
   app: "vocab_app",
@@ -360,7 +361,7 @@ async function main(): Promise<void> {
     throw new Error("DATABASE_ADMIN_URL must use a dedicated administration identity");
   }
 
-  const client = new Client({ connectionString: adminUrl.toString() });
+  const client = new Client(postgresClientConfig(adminUrl.toString()));
   let primaryError: unknown;
   const cleanupErrors: unknown[] = [];
   let transactionStarted = false;

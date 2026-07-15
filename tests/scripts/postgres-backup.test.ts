@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertSafeDrillTarget,
   databaseName,
@@ -14,11 +14,19 @@ import {
 } from "../../scripts/postgres-backup";
 
 let roots: string[] = [];
+const originalSslMode = process.env.DB_SSLMODE;
+
+beforeEach(() => {
+  process.env.DB_SSLMODE = "verify-full";
+});
 
 afterEach(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
   roots = [];
   delete process.env.ALLOW_DESTRUCTIVE_RESTORE;
+  if (originalSslMode === undefined) delete process.env.DB_SSLMODE;
+  else process.env.DB_SSLMODE = originalSslMode;
+  delete process.env.PGSSLROOTCERT;
 });
 
 function makeManifest(overrides: Partial<BackupManifest> = {}): BackupManifest {
@@ -39,15 +47,19 @@ function makeManifest(overrides: Partial<BackupManifest> = {}): BackupManifest {
 describe("postgres backup safety", () => {
   it("extracts encoded database names without exposing credentials", () => {
     expect(databaseName("postgresql://user:secret@localhost:5432/vocab%5Fprod")).toBe("vocab_prod");
-    const env = postgresEnvironment("postgresql://user:secret@db.example:5433/vocab?sslmode=require");
+    process.env.PGSSLROOTCERT = "/run/secrets/postgres-ca.pem";
+    const env = postgresEnvironment("postgresql://user:secret@db.example:5433/vocab");
     expect(env).toMatchObject({
       PGHOST: "db.example",
       PGPORT: "5433",
       PGDATABASE: "vocab",
       PGUSER: "user",
       PGPASSWORD: "secret",
-      PGSSLMODE: "require",
+      PGSSLMODE: "verify-full",
+      PGSSLROOTCERT: "/run/secrets/postgres-ca.pem",
     });
+    expect(() => postgresEnvironment("postgresql://user:secret@db.example:5433/vocab?sslmode=require"))
+      .toThrow(/must not contain TLS options/);
   });
 
   it("rejects source equality and unsafe drill database names", () => {

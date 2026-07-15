@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { Client } from "pg";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
+import { assertConnectionStringHasNoSslOptions, databaseSslMode } from "../src/db/ssl";
 
 export interface BackupManifest {
   version: 1 | 2;
@@ -47,10 +48,11 @@ export function assertSafeDrillTarget(sourceUrl: string, targetUrl: string): voi
 }
 
 export function postgresEnvironment(databaseUrl: string): NodeJS.ProcessEnv {
+  assertConnectionStringHasNoSslOptions(databaseUrl);
   const parsed = new URL(databaseUrl);
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const key of Object.keys(env)) {
-    if (key.startsWith("PG")) delete env[key];
+    if (key.startsWith("PG") && !["PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY", "PGSSLCRL"].includes(key)) delete env[key];
   }
   Object.assign(env, {
     PGHOST: parsed.hostname,
@@ -58,9 +60,8 @@ export function postgresEnvironment(databaseUrl: string): NodeJS.ProcessEnv {
     PGDATABASE: databaseName(databaseUrl),
     PGUSER: decodeURIComponent(parsed.username),
     PGPASSWORD: decodeURIComponent(parsed.password),
+    PGSSLMODE: databaseSslMode(),
   });
-  const sslMode = parsed.searchParams.get("sslmode");
-  if (sslMode) env.PGSSLMODE = sslMode;
   return env;
 }
 

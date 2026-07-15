@@ -5,6 +5,7 @@ import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 import { Client, type QueryResultRow } from "pg";
+import { postgresClientConfig } from "../src/db/ssl";
 import { databaseName, postgresEnvironment } from "./postgres-backup";
 
 const ROLE_URLS = {
@@ -299,7 +300,7 @@ async function runPostgres(invocation: PostgresInvocation): Promise<void> {
 }
 
 async function connect(databaseUrl: string): Promise<Client> {
-  const client = new Client({ connectionString: databaseUrl });
+  const client = new Client(postgresClientConfig(databaseUrl));
   await client.connect();
   return client;
 }
