@@ -309,7 +309,7 @@ describe("L2ContentService.confirmDraft", () => {
       softDelete: vi.fn(),
     };
     const l2ProgressRepo = {
-      markL2StaleForRecheck: vi.fn(async () => 1),
+      finalizeL2ContentHash: vi.fn(async () => 1),
       findByWordAndUser: vi.fn(),
       insert: vi.fn(),
       pause: vi.fn(),
@@ -356,22 +356,27 @@ describe("L2ContentService.confirmDraft", () => {
     expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
     // 3. word re-read to recompute hash
     expect(wordsRepo.findById).toHaveBeenCalledWith("word-1");
-    // 4. L2 recheck marked with a recomputed hash (64-char sha256 hex)
-    expect(l2ProgressRepo.markL2StaleForRecheck).toHaveBeenCalledWith(
+    // 4. The canonical L2 and full hashes are persisted by one atomic RPC.
+    expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledWith(
       "word-1",
       expect.stringMatching(/^[0-9a-f]{64}$/),
+      expect.stringMatching(/^[0-9a-f]{64}$/),
     );
+    const finalizeArgs = l2ProgressRepo.finalizeL2ContentHash.mock.calls[0] as unknown as [string, string, string];
+    expect(finalizeArgs[2]).not.toBe(finalizeArgs[1]);
   });
 
-  it("skips recheck when the word is missing (findById returns null)", async () => {
+  it("rolls back when the confirmed word disappears before hash finalization", async () => {
     const { l2ContentRepo, l2ProgressRepo } = setupRepos(null);
 
     const service = new L2ContentService({ llmProvider: makeProvider(), usageTracker: makeUsageTracker() as never });
-    await service.confirmDraft("word-1", "synonym", VALID_SYNONYM, "llm");
+    await expect(
+      service.confirmDraft("word-1", "synonym", VALID_SYNONYM, "llm"),
+    ).rejects.toThrow("Confirmed L2 word disappeared before hash finalization");
 
     expect(l2ContentRepo.insert).toHaveBeenCalled();
     expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalled();
-    expect(l2ProgressRepo.markL2StaleForRecheck).not.toHaveBeenCalled();
+    expect(l2ProgressRepo.finalizeL2ContentHash).not.toHaveBeenCalled();
   });
 
   // ── B6: sourceRef/approvedBy reach the repository insert ──────────────
@@ -417,19 +422,19 @@ describe("L2ContentService.confirmDraft", () => {
     ["corpus", VALID_CORPUS],
     ["synonym", VALID_SYNONYM],
     ["antonym", VALID_ANTONYM],
-  ] as const)("accepts valid %s content and runs insert → refreshL2Cache → markL2StaleForRecheck", async (field, content) => {
+  ] as const)("accepts valid %s content and runs insert → refreshL2Cache → finalizeL2ContentHash", async (field, content) => {
     const { l2ContentRepo, l2ProgressRepo } = setupRepos({ id: "word-1" });
 
     const service = new L2ContentService({ llmProvider: makeProvider(), usageTracker: makeUsageTracker() as never });
     await service.confirmDraft("word-1", field, content, "manual");
 
-    // insert → refreshL2Cache → markL2StaleForRecheck cascade executed
+    // insert → refreshL2Cache → finalizeL2ContentHash cascade executed
     expect(l2ContentRepo.insert).toHaveBeenCalledTimes(1);
     expect(l2ContentRepo.insert).toHaveBeenCalledWith(
       expect.objectContaining({ word_id: "word-1", field, content, source: "manual" }),
     );
     expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
-    expect(l2ProgressRepo.markL2StaleForRecheck).toHaveBeenCalledTimes(1);
+    expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -465,7 +470,7 @@ describe("L2ContentService.confirmDraft", () => {
     // Nothing should have been written / cascaded.
     expect(l2ContentRepo.insert).not.toHaveBeenCalled();
     expect(l2ContentRepo.refreshL2Cache).not.toHaveBeenCalled();
-    expect(l2ProgressRepo.markL2StaleForRecheck).not.toHaveBeenCalled();
+    expect(l2ProgressRepo.finalizeL2ContentHash).not.toHaveBeenCalled();
   });
 
   it("rejected content throws an actual ValidationError instance", async () => {
@@ -502,7 +507,7 @@ describe("L2ContentService — always available without LLM deps", () => {
         softDelete: vi.fn(),
       };
       const l2ProgressRepo = {
-        markL2StaleForRecheck: vi.fn(async () => 1),
+        finalizeL2ContentHash: vi.fn(async () => 1),
         findByWordAndUser: vi.fn(),
         insert: vi.fn(),
         pause: vi.fn(),
@@ -524,10 +529,10 @@ describe("L2ContentService — always available without LLM deps", () => {
     const service = new L2ContentService({});
     await service.confirmDraft("word-1", "collocation", VALID_COLLOCATION, "manual");
 
-    // confirm ran the full insert → refreshL2Cache → markL2StaleForRecheck cascade
+    // confirm ran the full insert → refreshL2Cache → finalizeL2ContentHash cascade
     expect(l2ContentRepo.insert).toHaveBeenCalledTimes(1);
     expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
-    expect(l2ProgressRepo.markL2StaleForRecheck).toHaveBeenCalledTimes(1);
+    expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledTimes(1);
   });
 
   it.each([

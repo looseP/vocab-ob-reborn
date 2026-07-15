@@ -43,7 +43,7 @@ function setupRepos(wordRow: unknown = { id: "word-1" }) {
     softDelete: vi.fn(),
   };
   const l2ProgressRepo = {
-    markL2StaleForRecheck: vi.fn(async () => 1),
+    finalizeL2ContentHash: vi.fn(async () => 1),
     findByWordAndUser: vi.fn(),
     insert: vi.fn(),
     pause: vi.fn(),

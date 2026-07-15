@@ -65,46 +65,17 @@ describe("L2ContentRepository", () => {
     expect(params).toEqual(["lc-1"]);
   });
 
-  it("refreshL2Cache groups active content by field and updates words JSONB columns", async () => {
+  it("refreshL2Cache delegates cache aggregation to the migration-owned RPC", async () => {
     const repo = new L2ContentRepository();
-    const selectRows = [
-      { field: "collocation", content: { phrase: "heavy rain" } },
-      { field: "collocation", content: { phrase: "light rain" } },
-      { field: "corpus", content: { sent: "It rained." } },
-      { field: "synonym", content: { word: "drizzle" } },
-    ];
-    const querySpy = vi
-      .spyOn(repo as any, "query")
-      // first call: SELECT field, content ...
-      .mockResolvedValueOnce(selectRows)
-      // second call: UPDATE words SET ...
-      .mockResolvedValueOnce([]);
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
 
     await repo.refreshL2Cache("w-1");
 
-    // 2 query calls: SELECT then UPDATE
-    expect(querySpy).toHaveBeenCalledTimes(2);
-
-    const [selectSql, selectParams] = querySpy.mock.calls[0] as [string, unknown[]];
-    expect(selectSql).toContain("SELECT field, content FROM word_l2_content");
-    expect(selectSql).toContain("is_active = true");
-    expect(selectParams).toEqual(["w-1"]);
-
-    const [updateSql, updateParams] = querySpy.mock.calls[1] as [string, string[]];
-    expect(updateSql).toContain("UPDATE words SET");
-    expect(updateSql).toContain("collocations = $2");
-    expect(updateSql).toContain("corpus_items = $3");
-    expect(updateSql).toContain("synonym_items = $4");
-    expect(updateSql).toContain("antonym_items = $5");
-    expect(updateParams[0]).toBe("w-1");
-    // collocation group has 2 items
-    expect(JSON.parse(updateParams[1])).toHaveLength(2);
-    // corpus group has 1 item
-    expect(JSON.parse(updateParams[2])).toHaveLength(1);
-    // synonym group has 1 item
-    expect(JSON.parse(updateParams[3])).toHaveLength(1);
-    // antonym group absent → empty array
-    expect(JSON.parse(updateParams[4])).toEqual([]);
+    expect(querySpy).toHaveBeenCalledTimes(1);
+    expect(querySpy).toHaveBeenCalledWith(
+      expect.stringContaining("SELECT public.refresh_l2_cache($1::uuid)"),
+      ["w-1"],
+    );
   });
 
   describe("extractL2Items", () => {
@@ -147,98 +118,56 @@ describe("L2ContentRepository", () => {
     });
   });
 
-  it("refreshL2Cache flattens a legacy array row into cache items", async () => {
+  it("refreshL2Cache schema-qualifies the RPC to avoid search_path ambiguity", async () => {
     const repo = new L2ContentRepository();
-    const selectRows = [
-      { field: "collocation", content: [{ phrase: "heavy rain" }, { phrase: "light rain" }] },
-    ];
-    vi.spyOn(repo as any, "query")
-      .mockResolvedValueOnce(selectRows)
-      .mockResolvedValueOnce([]);
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
 
-    await repo.refreshL2Cache("w-1");
+    await repo.refreshL2Cache("w-2");
 
-    const updateParams = (repo as any).query.mock.calls[1][1] as string[];
-    const collocations = JSON.parse(updateParams[1]);
-    expect(collocations).toEqual([{ phrase: "heavy rain" }, { phrase: "light rain" }]);
-    // not nested as a single array element
-    expect(collocations).not.toEqual([[{ phrase: "heavy rain" }, { phrase: "light rain" }]]);
+    const [sql] = querySpy.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain("public.refresh_l2_cache");
+    expect(sql).not.toMatch(/SELECT\s+refresh_l2_cache/i);
   });
 
-  it("refreshL2Cache flattens a v1 wrapper row into cache items", async () => {
+  it("refreshL2Cache casts the word identifier to uuid at the RPC boundary", async () => {
     const repo = new L2ContentRepository();
-    const selectRows = [
-      {
-        field: "corpus",
-        content: {
-          schemaVersion: "l2-content-v1",
-          items: [{ sent: "It rained." }, { sent: "It poured." }],
-        },
-      },
-    ];
-    vi.spyOn(repo as any, "query")
-      .mockResolvedValueOnce(selectRows)
-      .mockResolvedValueOnce([]);
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
 
-    await repo.refreshL2Cache("w-1");
+    await repo.refreshL2Cache("w-3");
 
-    const updateParams = (repo as any).query.mock.calls[1][1] as string[];
-    const corpus = JSON.parse(updateParams[2]);
-    expect(corpus).toEqual([{ sent: "It rained." }, { sent: "It poured." }]);
+    const [sql] = querySpy.mock.calls[0] as [string, unknown[]];
+    expect(sql).toMatch(/refresh_l2_cache\(\$1::uuid\)/);
   });
 
-  it("refreshL2Cache wraps a single object row into one cache item", async () => {
+  it("refreshL2Cache binds the requested word identifier as the only parameter", async () => {
     const repo = new L2ContentRepository();
-    const selectRows = [{ field: "synonym", content: { word: "drizzle" } }];
-    vi.spyOn(repo as any, "query")
-      .mockResolvedValueOnce(selectRows)
-      .mockResolvedValueOnce([]);
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
 
-    await repo.refreshL2Cache("w-1");
+    await repo.refreshL2Cache("word-specific-id");
 
-    const updateParams = (repo as any).query.mock.calls[1][1] as string[];
-    const synonyms = JSON.parse(updateParams[3]);
-    expect(synonyms).toEqual([{ word: "drizzle" }]);
-    expect(synonyms).toHaveLength(1);
+    const [, params] = querySpy.mock.calls[0] as [string, unknown[]];
+    expect(params).toEqual(["word-specific-id"]);
+    expect(params).toHaveLength(1);
   });
 
-  it("refreshL2Cache merges multiple active rows for a field in query order", async () => {
+  it("refreshL2Cache performs exactly one database round trip", async () => {
     const repo = new L2ContentRepository();
-    // rows arrive in created_at order; second is a v1 wrapper, third a bare array
-    const selectRows = [
-      { field: "antonym", content: { word: "dry" } },
-      { field: "antonym", content: { schemaVersion: "l2-content-v1", items: [{ word: "arid" }] } },
-      { field: "antonym", content: [{ word: "parched" }, { word: "bone-dry" }] },
-    ];
-    vi.spyOn(repo as any, "query")
-      .mockResolvedValueOnce(selectRows)
-      .mockResolvedValueOnce([]);
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
 
-    await repo.refreshL2Cache("w-1");
+    await repo.refreshL2Cache("w-4");
 
-    const updateParams = (repo as any).query.mock.calls[1][1] as string[];
-    const antonyms = JSON.parse(updateParams[4]);
-    expect(antonyms).toEqual([
-      { word: "dry" },
-      { word: "arid" },
-      { word: "parched" },
-      { word: "bone-dry" },
-    ]);
+    expect(querySpy).toHaveBeenCalledTimes(1);
   });
 
-  it("refreshL2Cache writes an empty array for a field with no rows", async () => {
+  it("refreshL2Cache does not aggregate or update cache tables in application SQL", async () => {
     const repo = new L2ContentRepository();
-    // only a collocation row; corpus/synonym/antonym absent
-    const selectRows = [{ field: "collocation", content: { phrase: "heavy rain" } }];
-    vi.spyOn(repo as any, "query")
-      .mockResolvedValueOnce(selectRows)
-      .mockResolvedValueOnce([]);
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
 
-    await repo.refreshL2Cache("w-1");
+    await repo.refreshL2Cache("w-5");
 
-    const updateParams = (repo as any).query.mock.calls[1][1] as string[];
-    expect(JSON.parse(updateParams[2])).toEqual([]); // corpus
-    expect(JSON.parse(updateParams[3])).toEqual([]); // synonym
-    expect(JSON.parse(updateParams[4])).toEqual([]); // antonym
+    const [sql] = querySpy.mock.calls[0] as [string, unknown[]];
+    expect(sql).not.toContain("word_l2_content");
+    expect(sql).not.toMatch(/UPDATE\s+words/i);
+    expect(sql).not.toContain("collocations =");
   });
 });

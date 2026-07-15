@@ -324,7 +324,7 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.increment_session_cards_seen(uuid,uuid,uuid)",
       "public.undo_review_log(uuid,uuid,uuid,uuid)",
       "public.refresh_l2_cache(uuid)",
-      "public.mark_l2_stale_for_recheck(uuid,text)",
+      "public.finalize_l2_content_hash(uuid,text,text)",
     ])],
     ["vocab_worker", new Set(["auth.uid()"])],
     ["vocab_backup", new Set()],

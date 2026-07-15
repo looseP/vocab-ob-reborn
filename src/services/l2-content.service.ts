@@ -7,8 +7,8 @@
  *   confirmDraft()  — persists an approved draft inside a transaction:
  *     1. insert word_l2_content row
  *     2. refreshL2Cache (aggregate active rows back into words JSONB columns)
- *     3. recompute l2_content_hash and markL2StaleForRecheck (re-trigger L2
- *        cards whose snapshot changed, without touching L1)
+ *     3. recompute and atomically persist L2/full hashes while re-triggering
+ *        changed L2 cards only, without touching L1
  *
  * Architecture: services may import db/transaction + db/content-hash (the
  * services-no-raw-db-access rule only forbids db/sql|connection|client|...).
@@ -16,7 +16,7 @@
 
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
-import { computeL2Hash } from "../db/content-hash";
+import { computeFullHash, computeL2Hash } from "../db/content-hash";
 import { parseLlmJson } from "../llm/parser";
 import type { LlmProvider } from "../llm/provider";
 import type { UsageTracker } from "../llm/usage-tracker";
@@ -947,14 +947,17 @@ ${provenanceSourceHint}`;
       // 2. Refresh the words JSONB cache columns from all active rows.
       await repos.l2Content.refreshL2Cache(wordId);
 
-      // 3. Re-read the word (cache columns just updated) and recompute L2 hash.
-      //    SELECT * returns the L2 JSONB columns even though WordRow omits them.
+      // 3. Re-read all cache and L1 fields, then compute canonical L2/full hashes.
       const word = await repos.words.findById(wordId);
-      if (word) {
-        const l2Hash = computeL2Hash(word as never);
-        // 4. Only re-trigger L2 cards whose snapshot changed (L1 untouched).
-        await repos.l2Progress.markL2StaleForRecheck(wordId, l2Hash);
+      if (!word) {
+        throw new Error("Confirmed L2 word disappeared before hash finalization");
       }
+      const l2Hash = computeL2Hash(word as never);
+      const contentHash = computeFullHash(word as never);
+
+      // 4. The migration-owned RPC atomically persists both word hashes and
+      //    re-triggers only changed, non-paused L2 snapshots (L1 untouched).
+      await repos.l2Progress.finalizeL2ContentHash(wordId, l2Hash, contentHash);
     }, { actorId });
   }
 }

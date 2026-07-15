@@ -309,13 +309,11 @@ export interface IL2ProgressRepository {
   ): Promise<UserWordL2ProgressRow | null>;
   insert(data: NewL2Progress): Promise<UserWordL2ProgressRow>;
   /**
-   * Mark L2 rows stale when a word's content hash changed. This is content-
-   * driven (the L2 content is global per word), so it intentionally affects
-   * ALL users/wordbooks for that word — every scoped L2 progress row whose
-   * snapshot changed must be re-evaluated. It does NOT cross-contaminate
-   * wordbooks in the user/operation-driven sense (pause/unpause/find).
+   * Atomically persist the canonical L2/full hashes and schedule stale,
+   * non-paused L2 progress rows for recheck. L2 content is global per word,
+   * so every user/wordbook snapshot for that word is considered.
    */
-  markL2StaleForRecheck(wordId: string, newL2Hash: string): Promise<number>;
+  finalizeL2ContentHash(wordId: string, newL2Hash: string, newContentHash: string): Promise<number>;
   /** Pause L2 progress scoped to (user, wordbook, word). */
   pause(userId: string, wordbookId: string, wordId: string, reason: string): Promise<void>;
   /** Unpause L2 progress scoped to (user, wordbook, word) by reason. */

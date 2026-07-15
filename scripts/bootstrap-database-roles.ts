@@ -303,8 +303,8 @@ async function convergePrivileges(client: Client, databaseName: string): Promise
       IF to_regprocedure('public.refresh_l2_cache(uuid)') IS NOT NULL THEN
         GRANT EXECUTE ON FUNCTION public.refresh_l2_cache(uuid) TO vocab_app;
       END IF;
-      IF to_regprocedure('public.mark_l2_stale_for_recheck(uuid,text)') IS NOT NULL THEN
-        GRANT EXECUTE ON FUNCTION public.mark_l2_stale_for_recheck(uuid, text) TO vocab_app;
+      IF to_regprocedure('public.finalize_l2_content_hash(uuid,text,text)') IS NOT NULL THEN
+        GRANT EXECUTE ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) TO vocab_app;
       END IF;
     END $$;
 

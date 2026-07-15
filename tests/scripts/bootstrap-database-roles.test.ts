@@ -96,6 +96,14 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(bootstrap).toContain("GRANT SELECT ON ALL SEQUENCES IN SCHEMA public, auth, vocab_migrations TO vocab_backup");
   });
 
+  it("grants and verifies only the atomic L2 hash finalizer", () => {
+    expect(bootstrap).toContain("to_regprocedure('public.finalize_l2_content_hash(uuid,text,text)')");
+    expect(bootstrap).toContain("GRANT EXECUTE ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) TO vocab_app");
+    expect(verifier).toContain("public.finalize_l2_content_hash(uuid,text,text)");
+    expect(bootstrap).not.toContain("mark_l2_stale_for_recheck");
+    expect(verifier).not.toContain("mark_l2_stale_for_recheck");
+  });
+
   it("converges and verifies the database owner", () => {
     expect(bootstrap).toContain("ALTER DATABASE %I OWNER TO vocab_migration");
     expect(verifier).toContain("application database is not owned by vocab_migration");
