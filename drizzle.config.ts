@@ -1,5 +1,5 @@
 import { defineConfig } from "drizzle-kit";
-import { assertConnectionStringHasNoSslOptions, databaseSslMode } from "./src/db/ssl";
+import { assertConnectionStringHasNoSslOptions, databaseSslConfig, databaseSslMode } from "./src/db/ssl";
 
 const databaseUrl = process.env.DATABASE_URL!;
 if (databaseUrl) assertConnectionStringHasNoSslOptions(databaseUrl);
@@ -22,9 +22,7 @@ export default defineConfig({
         user: decodeURIComponent(parsedDatabaseUrl!.username),
         password: decodeURIComponent(parsedDatabaseUrl!.password),
         database: decodeURIComponent(parsedDatabaseUrl!.pathname.slice(1)),
-        ssl: sslMode === "verify-ca" || sslMode === "verify-full"
-          ? { rejectUnauthorized: true }
-          : { rejectUnauthorized: false },
+        ssl: databaseSslConfig(sslMode).ssl!,
       },
   // Only introspect the public schema — auth.users is a local shim
   schemaFilter: ["public"],
