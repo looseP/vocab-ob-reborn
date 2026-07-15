@@ -11,7 +11,7 @@ type ProducerCheck = (typeof producerChecks)[number];
 const producerWorkflows = Object.fromEntries(producerChecks.map((check) => [check, readFileSync(resolve(root, `.github/workflows/release-check-${check}.yml`), "utf8")])) as Record<ProducerCheck, string>;
 
 type Step = { name?: string; uses?: string; run?: string; with?: Record<string, unknown>; env?: Record<string, unknown> };
-type Job = { needs?: string | string[]; "runs-on"?: unknown; environment?: unknown; concurrency?: { group?: unknown; "cancel-in-progress"?: unknown }; permissions?: Record<string, string>; steps?: Step[] };
+type Job = { needs?: string | string[]; "runs-on"?: unknown; environment?: unknown; concurrency?: { group?: unknown; "cancel-in-progress"?: unknown }; permissions?: Record<string, string>; env?: Record<string, unknown>; steps?: Step[] };
 type Workflow = { permissions?: Record<string, string>; on?: { workflow_dispatch?: { inputs?: Record<string, { required?: boolean; type?: string }> } | null; push?: { tags?: string[] } }; jobs?: Record<string, Job> };
 
 function parseWorkflow(source: string, name: string): Workflow {
@@ -47,6 +47,75 @@ function pinnedActions(value: Workflow, name: string): void {
 function requireRun(step: Step, pattern: RegExp, message: string): void {
   if (typeof step.run !== "string" || !pattern.test(step.run)) throw new Error(message);
 }
+function executableScript(step: Step): string {
+  return (step.run ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .join("\n");
+}
+function requireExactExecutableScript(step: Step, expected: string, message: string): void {
+  if (executableScript(step) !== expected) throw new Error(message);
+}
+function requireStepOrder(job: Job, before: string, after: string, jobName: string): void {
+  const allSteps = steps(job, jobName);
+  const beforeIndex = allSteps.findIndex((step) => step.name === before);
+  const afterIndex = allSteps.findIndex((step) => step.name === after);
+  if (beforeIndex < 0 || afterIndex < 0 || beforeIndex >= afterIndex) {
+    throw new Error(`${before} must run before ${after} in ${jobName}`);
+  }
+}
+function requireRlsAcceptanceContract(job: Job, jobName: string, verificationStepName: string): void {
+  const verification = namedStep(job, verificationStepName, jobName);
+  const acceptanceUrl = verification.env?.RLS_ACCEPTANCE_DATABASE_URL
+    ?? job.env?.RLS_ACCEPTANCE_DATABASE_URL;
+  const adminUrl = verification.env?.TEST_DATABASE_URL ?? job.env?.TEST_DATABASE_URL;
+  if (typeof acceptanceUrl !== "string" || typeof adminUrl !== "string") {
+    throw new Error(`${jobName} must provide admin and dedicated RLS acceptance database URLs`);
+  }
+  let acceptance: URL;
+  let admin: URL;
+  try {
+    acceptance = new URL(acceptanceUrl);
+    admin = new URL(adminUrl);
+  } catch {
+    throw new Error(`${jobName} database URLs must be valid URLs`);
+  }
+  if (
+    acceptance.protocol !== "postgresql:"
+    || decodeURIComponent(acceptance.username) !== "vocab_rls_acceptance"
+    || decodeURIComponent(admin.username) === "vocab_rls_acceptance"
+    || acceptanceUrl === adminUrl
+    || acceptance.hostname !== admin.hostname
+    || acceptance.port !== admin.port
+    || acceptance.pathname !== admin.pathname
+  ) {
+    throw new Error(`${jobName} must use a distinct dedicated RLS acceptance login on the admin database`);
+  }
+  const bootstrap = namedStep(job, "Prepare dedicated NOBYPASSRLS acceptance principal", jobName);
+  requireExactExecutableScript(
+    bootstrap,
+    [
+      "set -euo pipefail",
+      "npm run db:migrate",
+      "psql \"$DATABASE_URL\" \\",
+      "-v ON_ERROR_STOP=1 \\",
+      "-f scripts/rls-acceptance-bootstrap.sql",
+    ].join("\n"),
+    `${jobName} must migrate and bootstrap the restricted RLS acceptance principal`,
+  );
+  requireStepOrder(
+    job,
+    "Prepare dedicated NOBYPASSRLS acceptance principal",
+    verificationStepName,
+    jobName,
+  );
+  requireExactExecutableScript(
+    verification,
+    "npm run verify:db",
+    `${jobName} database verification command is missing`,
+  );
+}
 function requireDownload(step: Step, artifactOutput: string, path: string, name: string): void {
   if (!step.uses?.startsWith("actions/download-artifact@")) throw new Error(`${name} must use download-artifact`);
   if (step.with?.["artifact-ids"] !== `\${{ needs.resolve-release.outputs.${artifactOutput}-artifact-id }}` || step.with.path !== path || step.with.repository !== "${{ github.repository }}" || step.with["github-token"] !== "${{ secrets.GITHUB_TOKEN }}") throw new Error(`${name} must consume the verified artifact ID in the current repository`);
@@ -74,6 +143,7 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
   requireRun(namedStep(verify, "Verify supply chain and dependency audit", "verify"), /npm run security:verify/, "Verify security gate is missing");
   requireRun(namedStep(verify, "Verify engineering gates", "verify"), /npm run verify:engineering/, "Verify engineering gate is missing");
   requireRun(namedStep(verify, "Verify database release gates", "verify"), /npm run verify:db/, "Verify database gate is missing");
+  requireRlsAcceptanceContract(verify, "release verify", "Verify database release gates");
   const manifestStep = namedStep(publish, "Generate release evidence and manifest", "publish");
   requireRun(manifestStep, /npm run release:manifest[\s\S]*release:manifest:verify[\s\S]*sha256sum --check release-manifest\.sha256[\s\S]*artifact="release-\$\{GITHUB_SHA\}"/, "Publish manifest identity step is incomplete");
   const publishUpload = namedStep(publish, "Upload immutable release evidence", "publish");
@@ -179,6 +249,10 @@ export function verifyCiReleaseManifestContract(source: string): void {
   if (!/docker build --target backup-runtime --tag vocab-observatory-v2-backup:ci/.test(source)) throw new Error("CI must build backup image");
   for (const image of ["runtime", "migration", "backup"]) if (!new RegExp(`sbom-${image}\\.cdx\\.json`).test(source)) throw new Error(`CI must retain ${image} SBOM`);
   if (!/release-manifest\.sha256/.test(source)) throw new Error("CI must retain manifest digest");
+  const ci = parseWorkflow(source, "CI workflow");
+  const verify = ci.jobs?.verify;
+  if (!verify) throw new Error("CI verify job is required");
+  requireRlsAcceptanceContract(verify, "CI verify", "Database release verification");
 }
 
 verifyReleaseWorkflow(release, promote);

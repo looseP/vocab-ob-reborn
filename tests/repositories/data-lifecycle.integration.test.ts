@@ -17,7 +17,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
     await pool.query("TRUNCATE outbox_effect_receipts, outbox_events, llm_usage CASCADE");
   });
 
-  afterAll(async () => pool.end());
+  afterAll(async () => {
+    await pool.query("TRUNCATE outbox_effect_receipts, outbox_events, llm_usage CASCADE");
+    await pool.end();
+  });
 
   async function insertOutbox(count: number): Promise<string[]> {
     const ids: string[] = [];

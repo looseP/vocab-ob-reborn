@@ -217,16 +217,18 @@ let contextRepo: IL3ContextRepository;
 let service: L3ProposalService;
 let txContextRepo: IL3ContextRepository;
 let txProposalRepo: IL3ProposalRepository;
+let txRunner: typeof import("@/db/transaction").withTransaction;
 
 beforeEach(() => {
   proposalRepo = makeProposalRepo();
   contextRepo = makeContextRepo();
   txContextRepo = makeContextRepo();
   txProposalRepo = makeProposalRepo();
+  txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
   service = new L3ProposalService(
     proposalRepo,
     contextRepo,
-    async (cb) => cb({} as never),
+    txRunner,
     () => ({
       l3Context: txContextRepo,
       l3Proposal: txProposalRepo,
@@ -235,6 +237,22 @@ beforeEach(() => {
 });
 
 describe("L3ProposalService", () => {
+  it("reads proposal lists through the authenticated actor transaction", async () => {
+    await service.listProposals({ userId: "u1", limit: 10, cursor: null });
+
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(txProposalRepo.listProposals).toHaveBeenCalledWith({ userId: "u1", limit: 10, cursor: null });
+    expect(proposalRepo.listProposals).not.toHaveBeenCalled();
+  });
+
+  it("reads proposal details through the authenticated actor transaction", async () => {
+    await service.getProposal({ userId: "u1", proposalId: "prop-1" });
+
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(txProposalRepo.getProposalBundle).toHaveBeenCalledWith("u1", "prop-1");
+    expect(proposalRepo.getProposalBundle).not.toHaveBeenCalled();
+  });
+
   it("creates proposal and items without writing active L3 tables", async () => {
     await service.createProposal({
       userId: "u1",
@@ -243,6 +261,9 @@ describe("L3ProposalService", () => {
       items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
     });
 
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(txContextRepo.findWordbookByIdForUser).toHaveBeenCalledWith("u1", "wb-1");
+    expect(contextRepo.findWordbookByIdForUser).not.toHaveBeenCalled();
     expect(txProposalRepo.createProposal).toHaveBeenCalled();
     expect(txProposalRepo.createProposalItem).toHaveBeenCalled();
     expect(txContextRepo.createSource).not.toHaveBeenCalled();
@@ -281,7 +302,7 @@ describe("L3ProposalService", () => {
       startOffset: 11,
       endOffset: 16,
     });
-    proposalRepo = makeProposalRepo(items);
+    txProposalRepo = makeProposalRepo(items);
     service = new L3ProposalService(proposalRepo, contextRepo, async (cb) => cb({} as never), () => ({ l3Proposal: txProposalRepo, l3Context: txContextRepo } as unknown as IRepositories));
 
     const result = await service.validateProposal({ userId: "u1", proposalId: "prop-1" });
@@ -292,7 +313,7 @@ describe("L3ProposalService", () => {
   });
 
   it("validateProposal catches wordbook-scoped words outside the source wordbook", async () => {
-    contextRepo = makeContextRepo({ findWordInWordbookBySlug: vi.fn(async () => null) });
+    txContextRepo = makeContextRepo({ findWordInWordbookBySlug: vi.fn(async () => null) });
     service = new L3ProposalService(proposalRepo, contextRepo, async (cb) => cb({} as never), () => ({ l3Proposal: txProposalRepo, l3Context: txContextRepo } as unknown as IRepositories));
 
     const result = await service.validateProposal({ userId: "u1", proposalId: "prop-1" });
@@ -309,7 +330,7 @@ describe("L3ProposalService", () => {
       targetType: "l2_item",
       targetRef: { field: "corpus" },
     });
-    proposalRepo = makeProposalRepo(items);
+    txProposalRepo = makeProposalRepo(items);
     service = new L3ProposalService(proposalRepo, contextRepo, async (cb) => cb({} as never), () => ({ l3Proposal: txProposalRepo, l3Context: txContextRepo } as unknown as IRepositories));
 
     const result = await service.validateProposal({ userId: "u1", proposalId: "prop-1" });
@@ -477,7 +498,7 @@ describe("L3ProposalService", () => {
 
   it("confirmProposal rejects non-pending proposals", async () => {
     const confirmed = { ...PROPOSAL_ROW, status: "confirmed" as const };
-    proposalRepo = makeProposalRepo(proposalItems(), confirmed);
+    txProposalRepo = makeProposalRepo(proposalItems(), confirmed);
     service = new L3ProposalService(proposalRepo, contextRepo, async (cb) => cb({} as never), () => ({ l3Proposal: txProposalRepo, l3Context: txContextRepo } as unknown as IRepositories));
 
     await expect(service.confirmProposal({ userId: "u1", proposalId: "prop-1" })).rejects.toBeInstanceOf(ConflictError);
@@ -494,7 +515,7 @@ describe("L3ProposalService", () => {
 
   it("rejectProposal prevents later confirm", async () => {
     const rejected = { ...PROPOSAL_ROW, status: "rejected" as const };
-    proposalRepo = makeProposalRepo(proposalItems(), rejected);
+    txProposalRepo = makeProposalRepo(proposalItems(), rejected);
     service = new L3ProposalService(proposalRepo, contextRepo, async (cb) => cb({} as never), () => ({ l3Proposal: txProposalRepo, l3Context: txContextRepo } as unknown as IRepositories));
 
     await expect(service.confirmProposal({ userId: "u1", proposalId: "prop-1" })).rejects.toBeInstanceOf(ConflictError);

@@ -161,9 +161,18 @@ jobs:
         run: |
           docker run --rm --entrypoint node vocab-observatory-v2:ci -e "require.resolve('prom-client')"
 
+      - name: Prepare dedicated NOBYPASSRLS acceptance principal
+        run: |
+          set -euo pipefail
+          npm run db:migrate
+          psql "$DATABASE_URL" \
+            -v ON_ERROR_STOP=1 \
+            -f scripts/rls-acceptance-bootstrap.sql
+
       - name: Database release verification
         env:
           TEST_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
+          RLS_ACCEPTANCE_DATABASE_URL: postgresql://vocab_rls_acceptance:vocab_rls_acceptance_local_only@localhost:5432/vocab
         run: npm run verify:db
 
       - name: Migration replay is a no-op

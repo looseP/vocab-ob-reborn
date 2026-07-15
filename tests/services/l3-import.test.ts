@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotFoundError, ValidationError } from "@/errors";
 import type { Json, L3ImportJobRow, L3ProposalBundle, L3ProposalItemRow, L3ProposalRow, WordbookRow, WordRow } from "@/domain";
-import type { IL3ContextRepository, IRepositories } from "@/repositories/interfaces";
+import type {
+  IL3ContextRepository,
+  IL3ProposalRepository,
+  IRepositories,
+} from "@/repositories/interfaces";
 import type { CreateL3ProposalInput } from "@/schemas/service";
 import { L3ImportService } from "@/services/l3-import.service";
 import type { L3ProposalService } from "@/services/l3-proposal.service";
@@ -131,6 +135,16 @@ function makeContextRepo(overrides: Partial<IL3ContextRepository> = {}): IL3Cont
   } as IL3ContextRepository;
 }
 
+function makeProposalRepo(
+  overrides: Partial<IL3ProposalRepository> = {},
+): IL3ProposalRepository {
+  return {
+    findProposalByInputHash: vi.fn(async () => null),
+    getProposalBundle: vi.fn(async () => null),
+    ...overrides,
+  } as IL3ProposalRepository;
+}
+
 function makeProposalService(overrides: Partial<L3ProposalService> = {}): L3ProposalService {
   const createProposalInTx = vi.fn(async (_tx: unknown, input: CreateL3ProposalInput): Promise<L3ProposalBundle> => ({
     proposal: {
@@ -182,6 +196,7 @@ beforeEach(() => {
   contextRepo = makeContextRepo();
   proposalService = makeProposalService();
   mockRepos.l3Context = contextRepo;
+  mockRepos.l3Proposal = makeProposalRepo();
   service = new L3ImportService(contextRepo, proposalService);
 });
 
@@ -444,11 +459,12 @@ describe("L3ImportService", () => {
     contextRepo = makeContextRepo({
       findImportJobByInputHash: vi.fn(async () => existingJob),
     });
-    proposalService = makeProposalService({
-      findProposalByInputHash: vi.fn(async () => existingProposal),
-      getProposal: vi.fn(async () => ({ proposal: existingProposal, items: first.items })),
-    });
+    proposalService = makeProposalService();
     mockRepos.l3Context = contextRepo;
+    mockRepos.l3Proposal = makeProposalRepo({
+      findProposalByInputHash: vi.fn(async () => existingProposal),
+      getProposalBundle: vi.fn(async () => ({ proposal: existingProposal, items: first.items })),
+    });
     service = new L3ImportService(contextRepo, proposalService);
 
     const second = await service.createRawTextImportProposal({
@@ -462,6 +478,10 @@ describe("L3ImportService", () => {
     expect(second.importJob.id).toBe("job-1");
     expect(second.proposal.id).toBe("prop-1");
     expect(contextRepo.createImportJob).not.toHaveBeenCalled();
+    expect(mockRepos.l3Proposal?.findProposalByInputHash).toHaveBeenCalled();
+    expect(mockRepos.l3Proposal?.getProposalBundle).toHaveBeenCalled();
+    expect(proposalService.findProposalByInputHash).not.toHaveBeenCalled();
+    expect(proposalService.getProposal).not.toHaveBeenCalled();
     expect(proposalService.createProposalInTx).not.toHaveBeenCalled();
   });
 
@@ -504,11 +524,12 @@ describe("L3ImportService", () => {
         return dedupCallCount === 1 ? null : existingJob;
       }),
     });
-    proposalService = makeProposalService({
-      findProposalByInputHash: vi.fn(async () => existingProposal),
-      getProposal: vi.fn(async () => ({ proposal: existingProposal, items: [] })),
-    });
+    proposalService = makeProposalService();
     mockRepos.l3Context = contextRepo;
+    mockRepos.l3Proposal = makeProposalRepo({
+      findProposalByInputHash: vi.fn(async () => existingProposal),
+      getProposalBundle: vi.fn(async () => ({ proposal: existingProposal, items: [] })),
+    });
     service = new L3ImportService(contextRepo, proposalService);
 
     const result = await service.createRawTextImportProposal({

@@ -49,7 +49,7 @@ import {
   type L3DeleteResult,
 } from "../schemas/service";
 
-type TxRunner = <T>(callback: (tx: PoolClient) => Promise<T>) => Promise<T>;
+type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 function requireEnum(value: string, allowed: readonly string[], field: string): void {
@@ -158,24 +158,26 @@ export class L3ContextService {
     requireNonEmpty(input.title, "title");
     requireEnum(input.sourceType, L3_SOURCE_TYPES, "sourceType");
 
-    if (input.wordbookId) {
-      const wordbook = await this.l3Context.findWordbookByIdForUser(input.userId, input.wordbookId);
-      if (!wordbook) {
-        throw new NotFoundError("Wordbook", input.wordbookId);
+    return this.withActorRepository(input.userId, async (repository) => {
+      if (input.wordbookId) {
+        const wordbook = await repository.findWordbookByIdForUser(input.userId, input.wordbookId);
+        if (!wordbook) {
+          throw new NotFoundError("Wordbook", input.wordbookId);
+        }
       }
-    }
 
-    const source = await this.l3Context.createSource({
-      user_id: input.userId,
-      wordbook_id: input.wordbookId ?? null,
-      source_type: input.sourceType,
-      title: input.title.trim(),
-      author: input.author ?? null,
-      url: input.url ?? null,
-      language: input.language ?? null,
-      metadata: input.metadata ?? {},
-    } satisfies NewL3Source);
-    return { source };
+      const source = await repository.createSource({
+        user_id: input.userId,
+        wordbook_id: input.wordbookId ?? null,
+        source_type: input.sourceType,
+        title: input.title.trim(),
+        author: input.author ?? null,
+        url: input.url ?? null,
+        language: input.language ?? null,
+        metadata: input.metadata ?? {},
+      } satisfies NewL3Source);
+      return { source };
+    });
   }
 
   async createContext(input: CreateL3ContextInput): Promise<{ context: L3ContextRow }> {
@@ -183,22 +185,24 @@ export class L3ContextService {
     requireNonEmpty(input.text, "text");
     requireEnum(input.contextType, L3_CONTEXT_TYPES, "contextType");
 
-    const source = await this.l3Context.findSourceById(input.userId, input.sourceId);
-    if (!source) {
-      throw new NotFoundError("L3Source", input.sourceId);
-    }
+    return this.withActorRepository(input.userId, async (repository) => {
+      const source = await repository.findSourceById(input.userId, input.sourceId);
+      if (!source) {
+        throw new NotFoundError("L3Source", input.sourceId);
+      }
 
-    const context = await this.l3Context.createContext({
-      user_id: input.userId,
-      source_id: input.sourceId,
-      context_type: input.contextType,
-      text: input.text,
-      normalized_text: input.normalizedText ?? null,
-      language: input.language ?? source.language,
-      position: input.position ?? {},
-      metadata: input.metadata ?? {},
-    } satisfies NewL3Context);
-    return { context };
+      const context = await repository.createContext({
+        user_id: input.userId,
+        source_id: input.sourceId,
+        context_type: input.contextType,
+        text: input.text,
+        normalized_text: input.normalizedText ?? null,
+        language: input.language ?? source.language,
+        position: input.position ?? {},
+        metadata: input.metadata ?? {},
+      } satisfies NewL3Context);
+      return { context };
+    });
   }
 
   async createOccurrence(input: CreateL3OccurrenceInput): Promise<{ occurrence: L3OccurrenceRow }> {
@@ -206,41 +210,43 @@ export class L3ContextService {
     requireNonEmpty(input.surface, "surface");
     validateConfidence(input.confidence);
 
-    const contextWithSource = await this.l3Context.findContextWithSourceById(input.userId, input.contextId);
-    if (!contextWithSource) {
-      throw new NotFoundError("L3Context", input.contextId);
-    }
-    const { context, source } = contextWithSource;
+    return this.withActorRepository(input.userId, async (repository) => {
+      const contextWithSource = await repository.findContextWithSourceById(input.userId, input.contextId);
+      if (!contextWithSource) {
+        throw new NotFoundError("L3Context", input.contextId);
+      }
+      const { context, source } = contextWithSource;
 
-    const word = source.wordbook_id
-      ? input.wordId
-        ? await this.l3Context.findWordInWordbookById(source.wordbook_id, input.wordId)
-        : input.slug
-          ? await this.l3Context.findWordInWordbookBySlug(source.wordbook_id, input.slug)
-          : null
-      : input.wordId
-        ? await this.l3Context.findWordById(input.wordId)
-        : input.slug
-          ? await this.l3Context.findWordBySlug(input.slug)
-          : null;
-    if (!word) {
-      throw new NotFoundError("Word", input.wordId ?? input.slug ?? "");
-    }
+      const word = source.wordbook_id
+        ? input.wordId
+          ? await repository.findWordInWordbookById(source.wordbook_id, input.wordId)
+          : input.slug
+            ? await repository.findWordInWordbookBySlug(source.wordbook_id, input.slug)
+            : null
+        : input.wordId
+          ? await repository.findWordById(input.wordId)
+          : input.slug
+            ? await repository.findWordBySlug(input.slug)
+            : null;
+      if (!word) {
+        throw new NotFoundError("Word", input.wordId ?? input.slug ?? "");
+      }
 
-    validateOffset(input, context);
+      validateOffset(input, context);
 
-    const occurrence = await this.l3Context.createOccurrence({
-      user_id: input.userId,
-      context_id: input.contextId,
-      word_id: word.id,
-      surface: input.surface,
-      lemma: input.lemma ?? null,
-      start_offset: input.startOffset ?? null,
-      end_offset: input.endOffset ?? null,
-      confidence: input.confidence ?? null,
-      evidence: input.evidence ?? {},
-    } satisfies NewL3Occurrence);
-    return { occurrence };
+      const occurrence = await repository.createOccurrence({
+        user_id: input.userId,
+        context_id: input.contextId,
+        word_id: word.id,
+        surface: input.surface,
+        lemma: input.lemma ?? null,
+        start_offset: input.startOffset ?? null,
+        end_offset: input.endOffset ?? null,
+        confidence: input.confidence ?? null,
+        evidence: input.evidence ?? {},
+      } satisfies NewL3Occurrence);
+      return { occurrence };
+    });
   }
 
   async createContextLink(input: CreateL3ContextLinkInput): Promise<{ link: L3ContextLinkRow }> {
@@ -254,10 +260,13 @@ export class L3ContextService {
       return this.txRunner(async (tx) => {
         const repos = this.repositoryFactory(tx);
         return this.createContextLinkWithRepository(input, repos.l3Context, true);
-      });
+      }, { actorId: input.userId });
     }
 
-    return this.createContextLinkWithRepository(input, this.l3Context, false);
+    return this.withActorRepository(
+      input.userId,
+      (repository) => this.createContextLinkWithRepository(input, repository, false),
+    );
   }
 
   private async createContextLinkWithRepository(
@@ -338,30 +347,34 @@ export class L3ContextService {
     requireNonEmpty(input.userId, "userId");
     requireNonEmpty(input.occurrenceId, "occurrenceId");
 
-    const deleted = await this.l3Context.deleteOccurrence(input.userId, input.occurrenceId);
-    if (!deleted) {
-      throw new NotFoundError("L3Occurrence", input.occurrenceId);
-    }
+    return this.withActorRepository(input.userId, async (repository) => {
+      const deleted = await repository.deleteOccurrence(input.userId, input.occurrenceId);
+      if (!deleted) {
+        throw new NotFoundError("L3Occurrence", input.occurrenceId);
+      }
 
-    return {
-      deleted: { entityType: "occurrence", id: deleted.id },
-      activeReadInvalidation: true,
-    };
+      return {
+        deleted: { entityType: "occurrence", id: deleted.id },
+        activeReadInvalidation: true,
+      };
+    });
   }
 
   async deleteContextLink(input: DeleteL3ContextLinkInput): Promise<L3DeleteResult> {
     requireNonEmpty(input.userId, "userId");
     requireNonEmpty(input.contextLinkId, "contextLinkId");
 
-    const deleted = await this.l3Context.deleteContextLink(input.userId, input.contextLinkId);
-    if (!deleted) {
-      throw new NotFoundError("L3ContextLink", input.contextLinkId);
-    }
+    return this.withActorRepository(input.userId, async (repository) => {
+      const deleted = await repository.deleteContextLink(input.userId, input.contextLinkId);
+      if (!deleted) {
+        throw new NotFoundError("L3ContextLink", input.contextLinkId);
+      }
 
-    return {
-      deleted: { entityType: "context_link", id: deleted.id },
-      activeReadInvalidation: true,
-    };
+      return {
+        deleted: { entityType: "context_link", id: deleted.id },
+        activeReadInvalidation: true,
+      };
+    });
   }
 
   async deleteSource(input: DeleteL3SourceInput): Promise<L3DeleteResult> {
@@ -395,7 +408,7 @@ export class L3ContextService {
         deleted: { entityType: "source", id: deleted.id },
         activeReadInvalidation: true,
       };
-    });
+    }, { actorId: input.userId });
   }
 
   async deleteContext(input: DeleteL3ContextInput): Promise<L3DeleteResult> {
@@ -429,30 +442,32 @@ export class L3ContextService {
         deleted: { entityType: "context", id: deleted.id },
         activeReadInvalidation: true,
       };
-    });
+    }, { actorId: input.userId });
   }
 
   async createImportJob(input: CreateL3ImportJobInput): Promise<{ importJob: L3ImportJobRow }> {
     requireNonEmpty(input.userId, "userId");
     requireNonEmpty(input.inputHash, "inputHash");
     requireEnum(input.status, L3_IMPORT_JOB_STATUSES, "status");
-    if (input.sourceId) {
-      const source = await this.l3Context.findSourceById(input.userId, input.sourceId);
-      if (!source) {
-        throw new NotFoundError("L3Source", input.sourceId);
+    return this.withActorRepository(input.userId, async (repository) => {
+      if (input.sourceId) {
+        const source = await repository.findSourceById(input.userId, input.sourceId);
+        if (!source) {
+          throw new NotFoundError("L3Source", input.sourceId);
+        }
       }
-    }
 
-    const importJob = await this.l3Context.createImportJob({
-      user_id: input.userId,
-      source_id: input.sourceId ?? null,
-      status: input.status,
-      input_hash: input.inputHash,
-      input_summary: input.inputSummary ?? null,
-      stats: input.stats ?? {},
-      error: input.error ?? null,
-    } satisfies NewL3ImportJob);
-    return { importJob };
+      const importJob = await repository.createImportJob({
+        user_id: input.userId,
+        source_id: input.sourceId ?? null,
+        status: input.status,
+        input_hash: input.inputHash,
+        input_summary: input.inputSummary ?? null,
+        stats: input.stats ?? {},
+        error: input.error ?? null,
+      } satisfies NewL3ImportJob);
+      return { importJob };
+    });
   }
 
   async listContextsForWord(input: {
@@ -466,15 +481,17 @@ export class L3ContextService {
     if (!input.wordId && !input.slug) {
       throw new ValidationError("wordId or slug is required", "word");
     }
-    if (input.slug) {
-      const word = await this.l3Context.findWordBySlug(input.slug);
-      if (!word) throw new NotFoundError("Word", input.slug);
-    }
-    if (input.wordId) {
-      const word = await this.l3Context.findWordById(input.wordId);
-      if (!word) throw new NotFoundError("Word", input.wordId);
-    }
-    return this.l3Context.listContextsForWord(input);
+    return this.withActorRepository(input.userId, async (repository) => {
+      if (input.slug) {
+        const word = await repository.findWordBySlug(input.slug);
+        if (!word) throw new NotFoundError("Word", input.slug);
+      }
+      if (input.wordId) {
+        const word = await repository.findWordById(input.wordId);
+        if (!word) throw new NotFoundError("Word", input.wordId);
+      }
+      return repository.listContextsForWord(input);
+    });
   }
 
   async listContextsForSource(input: {
@@ -484,10 +501,19 @@ export class L3ContextService {
     cursor?: string | null;
   }): Promise<L3PaginatedList<L3SourceContextListItem>> {
     requireNonEmpty(input.userId, "userId");
-    const source = await this.l3Context.findSourceById(input.userId, input.sourceId);
-    if (!source) {
-      throw new NotFoundError("L3Source", input.sourceId);
-    }
-    return this.l3Context.listContextsForSource(input);
+    return this.withActorRepository(input.userId, async (repository) => {
+      const source = await repository.findSourceById(input.userId, input.sourceId);
+      if (!source) {
+        throw new NotFoundError("L3Source", input.sourceId);
+      }
+      return repository.listContextsForSource(input);
+    });
+  }
+
+  private withActorRepository<T>(
+    userId: string,
+    callback: (repository: IL3ContextRepository) => Promise<T>,
+  ): Promise<T> {
+    return this.txRunner(async (tx) => callback(this.repositoryFactory(tx).l3Context), { actorId: userId });
   }
 }

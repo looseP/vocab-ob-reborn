@@ -171,7 +171,7 @@ export class ReviewService {
           state: scheduling.state,
         } as SubmitAnswerResult,
       };
-    });
+    }, { actorId: userId });
 
     return transactionResult.result;
   }
@@ -233,7 +233,7 @@ export class ReviewService {
       );
 
       return { ok: true };
-    });
+    }, { actorId: userId });
   }
 
   /**
@@ -267,7 +267,7 @@ export class ReviewService {
       );
 
       return { ok: true };
-    });
+    }, { actorId: userId });
   }
 
   /**
@@ -303,6 +303,6 @@ export class ReviewService {
       }
 
       return { ok: true };
-    });
+    }, { actorId: userId });
   }
 }

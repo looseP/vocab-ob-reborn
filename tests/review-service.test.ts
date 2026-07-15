@@ -11,8 +11,11 @@ import type { UserWordProgressRow, Json } from "@/domain";
 const mockRepos: Partial<IRepositories> = {};
 let transactionCallbackActive = false;
 
-vi.mock("@/db/transaction", () => ({
-  withTransaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
+const { withTransactionMock } = vi.hoisted(() => ({
+  withTransactionMock: vi.fn(async (
+    cb: (tx: unknown) => Promise<unknown>,
+    _options?: { actorId?: string },
+  ) => {
     transactionCallbackActive = true;
     try {
       return await cb({});
@@ -20,6 +23,10 @@ vi.mock("@/db/transaction", () => ({
       transactionCallbackActive = false;
     }
   }),
+}));
+
+vi.mock("@/db/transaction", () => ({
+  withTransaction: withTransactionMock,
 }));
 vi.mock("@/repositories/factory", () => ({
   createRepositories: vi.fn(() => mockRepos),
@@ -139,6 +146,7 @@ describe("ReviewService.submitAnswer", () => {
     // Reset mockRepos between tests
     Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
     mockRepos.outbox = makeMockOutboxRepo();
+    withTransactionMock.mockClear();
   });
 
   it("returns idempotent result when idempotencyKey already exists", async () => {
@@ -160,6 +168,7 @@ describe("ReviewService.submitAnswer", () => {
     // Should NOT call findProgressForUpdate or saveAnswer
     expect(reviewRepo.findProgressForUpdate).not.toHaveBeenCalled();
     expect(reviewRepo.saveAnswer).not.toHaveBeenCalled();
+    expect(withTransactionMock).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
   });
 
   it("throws NotFoundError when progress not found", async () => {
@@ -270,6 +279,7 @@ describe("ReviewService.skip", () => {
   beforeEach(() => {
     Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
     mockRepos.outbox = makeMockOutboxRepo();
+    withTransactionMock.mockClear();
   });
 
   it("returns idempotent when key exists", async () => {
@@ -322,6 +332,7 @@ describe("ReviewService.skip", () => {
 
     expect(result.ok).toBe(true);
     expect(reviewRepo.skipCard).toHaveBeenCalledTimes(1);
+    expect(withTransactionMock).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
   });
 
   it("rejects a Session outside the progress owner/wordbook scope", async () => {
@@ -351,6 +362,7 @@ describe("ReviewService.suspend", () => {
   beforeEach(() => {
     Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
     mockRepos.outbox = makeMockOutboxRepo();
+    withTransactionMock.mockClear();
   });
 
   it("suspends card successfully", async () => {
@@ -372,6 +384,7 @@ describe("ReviewService.suspend", () => {
 
     expect(result.ok).toBe(true);
     expect(reviewRepo.suspendCard).toHaveBeenCalledTimes(1);
+    expect(withTransactionMock).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
   });
 
   it("handles optional sessionId (null)", async () => {
@@ -397,6 +410,7 @@ describe("ReviewService.undo", () => {
   beforeEach(() => {
     Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
     mockRepos.outbox = makeMockOutboxRepo();
+    withTransactionMock.mockClear();
   });
 
   it("undoes successfully", async () => {
@@ -415,6 +429,7 @@ describe("ReviewService.undo", () => {
     expect(reviewRepo.findReviewLogWordbookForUndo).toHaveBeenCalledWith("log-1", "u1");
     expect(mockRepos.sessions?.assertActiveOwned).toHaveBeenCalledWith("s1", "u1", "wb1");
     expect(reviewRepo.undoReviewLog).toHaveBeenCalledWith("log-1", "u1", "wb1", "s1", "key");
+    expect(withTransactionMock).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
   });
 
   it("does not reveal or mutate another user's review log", async () => {

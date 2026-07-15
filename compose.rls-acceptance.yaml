@@ -1,0 +1,40 @@
+name: vocab-observatory-rls-acceptance
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: ${RLS_ACCEPTANCE_ADMIN_USER:-vocab_rls_admin}
+      POSTGRES_PASSWORD: ${RLS_ACCEPTANCE_ADMIN_PASSWORD:-vocab_rls_admin_local_only}
+      POSTGRES_DB: ${RLS_ACCEPTANCE_DATABASE:-vocab_rls_acceptance}
+    ports:
+      - "127.0.0.1:${RLS_ACCEPTANCE_PORT:-55433}:5432"
+    volumes:
+      - rls-acceptance-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+
+  rls-role-bootstrap:
+    image: postgres:17-alpine
+    init: true
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${RLS_ACCEPTANCE_ADMIN_USER:-vocab_rls_admin}
+      PGPASSWORD: ${RLS_ACCEPTANCE_ADMIN_PASSWORD:-vocab_rls_admin_local_only}
+      PGDATABASE: ${RLS_ACCEPTANCE_DATABASE:-vocab_rls_acceptance}
+    volumes:
+      - ./scripts/rls-acceptance-bootstrap.sql:/bootstrap/rls-acceptance-bootstrap.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["psql", "-v", "ON_ERROR_STOP=1", "-f", "/bootstrap/rls-acceptance-bootstrap.sql"]
+
+volumes:
+  rls-acceptance-postgres-data:

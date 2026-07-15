@@ -61,6 +61,19 @@ function makeMockWordbookRepo(overrides: Partial<IWordbookRepository> = {}): IWo
   };
 }
 
+function makeNoteService(
+  notes: INoteRepository,
+  wordbooks: IWordbookRepository,
+  txRunner: typeof import("@/db/transaction").withTransaction = async (callback) => callback({} as never),
+): NoteService {
+  return new NoteService(
+    notes,
+    wordbooks,
+    txRunner,
+    () => ({ notes, wordbooks } as unknown as IRepositories),
+  );
+}
+
 function makeMockStatsRepo(overrides: Partial<IStatsRepository> = {}): IStatsRepository {
   return {
     getDashboardSummary: vi.fn(async () => ({
@@ -125,10 +138,53 @@ describe("NoteService", () => {
   });
 
   it("getNote returns empty when not found", async () => {
-    const service = new NoteService(makeMockNoteRepo(), makeMockWordbookRepo());
+    const notes = makeMockNoteRepo();
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const service = makeNoteService(notes, makeMockWordbookRepo(), txRunner);
     const result = await service.getNote("u1", "w1", "wb1");
     expect(result.contentMd).toBe("");
     expect(result.version).toBe(0);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(notes.findByWord).toHaveBeenCalledWith("u1", "wb1", "w1");
+  });
+
+  it("getRevisions uses the authenticated actor transaction", async () => {
+    const notes = makeMockNoteRepo({
+      findRevisions: vi.fn(async () => [{ id: "r1" }] as never),
+    });
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const service = makeNoteService(notes, makeMockWordbookRepo(), txRunner);
+
+    await expect(service.getRevisions("u1", "w1", "wb1")).resolves.toEqual([{ id: "r1" }]);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(notes.findRevisions).toHaveBeenCalledWith("u1", "wb1", "w1");
+  });
+
+  it("restoreRevision reads and writes inside one authenticated actor transaction", async () => {
+    const notes = makeMockNoteRepo({
+      findRevisions: vi.fn(async () => [{
+        id: "r1",
+        content_md: "restored",
+      }] as never),
+      upsert: vi.fn(async () => ({
+        note: {
+          id: "n1",
+          content_md: "restored",
+          version: 2,
+          updated_at: "2026",
+        } as NoteRow,
+        created: false,
+      })),
+    });
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const service = makeNoteService(notes, makeMockWordbookRepo(), txRunner);
+
+    await expect(service.restoreRevision("u1", "w1", "wb1", "r1")).resolves.toMatchObject({ version: 2 });
+
+    expect(txRunner).toHaveBeenCalledTimes(1);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(notes.findRevisions).toHaveBeenCalledWith("u1", "wb1", "w1");
+    expect(notes.upsert).toHaveBeenCalledWith("u1", "wb1", "w1", "restored");
   });
 
   it("upsertNote creates default wordbook when not provided", async () => {
@@ -146,7 +202,7 @@ describe("NoteService", () => {
     // H-NEW-2 fix: getOrCreateDefault is now called inside tx via repos.wordbooks
     mockRepos.notes = noteRepo;
     mockRepos.wordbooks = wbRepo;
-    const service = new NoteService(noteRepo, wbRepo);
+    const service = makeNoteService(noteRepo, wbRepo);
     const result = await service.upsertNote({
       userId: "u1", wordId: "w1", contentMd: "test",
     });
