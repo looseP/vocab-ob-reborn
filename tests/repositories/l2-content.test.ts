@@ -24,6 +24,18 @@ describe("L2ContentRepository", () => {
     expect(params[2]).toBe(JSON.stringify({ x: 1 }));
   });
 
+  it("insert rejects when the database returns no row", async () => {
+    const repo = new L2ContentRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+
+    await expect(repo.insert({
+      word_id: "w-1",
+      field: "collocation",
+      content: { x: 1 },
+      source: "llm",
+    })).rejects.toThrow("L2 content insert returned no row");
+  });
+
   it("findByWord returns all active rows when field is omitted", async () => {
     const repo = new L2ContentRepository();
     const mockRows = [{ id: "lc-1" }, { id: "lc-2" }];
