@@ -21,7 +21,6 @@ export interface DrillOptions {
   lockFile?: string;
   requestId?: string;
   resolveHost?: (hostname: string) => Promise<Array<{ address: string }>>;
-  releaseLock?: (path: string, handle: FileHandle) => Promise<void>;
 }
 
 interface Receipt {
@@ -243,7 +242,7 @@ export async function runDrill(options: DrillOptions): Promise<DrillEvidence> {
   } finally {
     clearTimeout(timer);
     try {
-      await (options.releaseLock ?? releaseLock)(options.lockFile!, lockHandle);
+      await releaseLock(options.lockFile!, lockHandle);
     } catch {
       process.stderr.write(`${JSON.stringify({ status: "lock_release_failed", action: "manual_lock_review" })}\n`);
     }
