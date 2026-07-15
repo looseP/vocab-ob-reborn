@@ -38,7 +38,7 @@ import {
 } from "../schemas/service";
 import { L3ProposalService } from "./l3-proposal.service";
 
-type TxRunner = <T>(callback: (tx: PoolClient) => Promise<T>) => Promise<T>;
+type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 const DEFAULT_LIMIT = 20;
@@ -152,37 +152,50 @@ export class L3RecommendationService {
     requireEnum(input.mode, L3_RECOMMENDATION_RUN_MODES, "mode");
     const limit = normalizeLimit(input.limit);
     const horizonDays = normalizeHorizonDays(input.horizonDays);
-    if (input.wordbookId) {
-      const wordbook = await this.l3Context.findWordbookByIdForUser(input.userId, input.wordbookId);
-      if (!wordbook) throw new NotFoundError("Wordbook", input.wordbookId);
-    }
-    if (input.seedSlug) {
-      const word = input.wordbookId
-        ? await this.l3Context.findWordInWordbookBySlug(input.wordbookId, input.seedSlug)
-        : await this.l3Context.findWordBySlug(input.seedSlug);
-      if (!word) throw new NotFoundError("Word", input.seedSlug);
-    }
+    const { candidates, signalCount, linkGapCandidateCount } = await this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      if (input.wordbookId) {
+        const wordbook = await repos.l3Context.findWordbookByIdForUser(
+          input.userId,
+          input.wordbookId,
+        );
+        if (!wordbook) throw new NotFoundError("Wordbook", input.wordbookId);
+      }
+      if (input.seedSlug) {
+        const word = input.wordbookId
+          ? await repos.l3Context.findWordInWordbookBySlug(input.wordbookId, input.seedSlug)
+          : await repos.l3Context.findWordBySlug(input.seedSlug);
+        if (!word) throw new NotFoundError("Word", input.seedSlug);
+      }
 
-    const signals = await this.recommendations.findSignals({
-      userId: input.userId,
-      wordbookId: input.wordbookId ?? null,
-      seedSlug: input.seedSlug ?? null,
-      horizonDays,
-      limit,
-    });
-    const linkGaps = input.mode === "link_suggestions" || input.mode === "gap_scan"
-      ? await this.recommendations.findLinkGapCandidates({
+      const signals = await repos.l3Recommendation.findSignals({
         userId: input.userId,
         wordbookId: input.wordbookId ?? null,
         seedSlug: input.seedSlug ?? null,
         horizonDays,
         limit,
-      })
-      : [];
-    const candidates = compactCandidates(this.buildCandidates(input.mode, signals, linkGaps), limit);
+      });
+      const linkGaps = input.mode === "link_suggestions" || input.mode === "gap_scan"
+        ? await repos.l3Recommendation.findLinkGapCandidates({
+          userId: input.userId,
+          wordbookId: input.wordbookId ?? null,
+          seedSlug: input.seedSlug ?? null,
+          horizonDays,
+          limit,
+        })
+        : [];
+      return {
+        candidates: compactCandidates(
+          this.buildCandidates(input.mode, signals, linkGaps),
+          limit,
+        ),
+        signalCount: signals.length,
+        linkGapCandidateCount: linkGaps.length,
+      };
+    }, { actorId: input.userId });
     const stats = {
-      signalCount: signals.length,
-      linkGapCandidateCount: linkGaps.length,
+      signalCount,
+      linkGapCandidateCount,
       itemCount: candidates.length,
       dryRun: Boolean(input.dryRun),
     } as Json;
@@ -231,21 +244,36 @@ export class L3RecommendationService {
         }));
       }
       return { run, items, stats };
-    });
+    }, { actorId: input.userId });
   }
 
   async listRecommendations(input: ListL3RecommendationsInput): Promise<L3PaginatedList<L3RecommendationItemRow>> {
     requireNonEmpty(input.userId, "userId");
     if (input.status) requireEnum(input.status, L3_RECOMMENDATION_STATUSES, "status");
     if (input.recommendationType) requireEnum(input.recommendationType, L3_RECOMMENDATION_TYPES, "recommendationType");
-    return this.recommendations.listItems({ ...input, limit: normalizeLimit(input.limit) });
+    return this.withActorRecommendationRepository(
+      input.userId,
+      (recommendations) => recommendations.listItems({ ...input, limit: normalizeLimit(input.limit) }),
+    );
   }
 
   async getRecommendation(input: L3RecommendationIdInput): Promise<L3RecommendationItemRow> {
     requireNonEmpty(input.userId, "userId");
-    const item = await this.recommendations.findItemByIdForUser(input.userId, input.recommendationId);
-    if (!item) throw new NotFoundError("L3Recommendation", input.recommendationId);
-    return item;
+    return this.withActorRecommendationRepository(input.userId, async (recommendations) => {
+      const item = await recommendations.findItemByIdForUser(input.userId, input.recommendationId);
+      if (!item) throw new NotFoundError("L3Recommendation", input.recommendationId);
+      return item;
+    });
+  }
+
+  private withActorRecommendationRepository<T>(
+    userId: string,
+    callback: (recommendations: IL3RecommendationRepository) => Promise<T>,
+  ): Promise<T> {
+    return this.txRunner(
+      async (tx) => callback(this.repositoryFactory(tx).l3Recommendation),
+      { actorId: userId },
+    );
   }
 
   async rejectRecommendation(input: RejectL3RecommendationInput): Promise<L3RecommendationItemRow> {
@@ -256,7 +284,7 @@ export class L3RecommendationService {
       if (!item) throw new NotFoundError("L3Recommendation", input.recommendationId);
       if (item.status !== "pending") throw new ConflictError(`Cannot reject ${item.status} recommendation`);
       return repos.l3Recommendation.markItemStatus(item.id, input.userId, "rejected");
-    });
+    }, { actorId: input.userId });
   }
 
   async acceptRecommendation(input: L3RecommendationIdInput): Promise<L3RecommendationAcceptResult> {
@@ -316,7 +344,7 @@ export class L3RecommendationService {
           payload: item.payload,
         },
       };
-    });
+    }, { actorId: input.userId });
   }
 
   private buildCandidates(

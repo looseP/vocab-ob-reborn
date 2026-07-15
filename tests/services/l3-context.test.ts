@@ -224,10 +224,14 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
   };
 }
 
-function makeService(repository: IL3ContextRepository, txRepository = repository): L3ContextService {
+function makeService(
+  repository: IL3ContextRepository,
+  txRepository = repository,
+  txRunner: typeof import("@/db/transaction").withTransaction = async (callback) => callback({} as never),
+): L3ContextService {
   return new L3ContextService(
     repository,
-    async (callback) => callback({} as never),
+    txRunner,
     () => ({ l3Context: txRepository } as unknown as IRepositories),
   );
 }
@@ -241,9 +245,18 @@ beforeEach(() => {
 });
 
 describe("L3ContextService", () => {
+  it("passes the authenticated actor into transactional source operations", async () => {
+    const txRunner = vi.fn(async (callback: (tx: never) => Promise<never>) => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    service = makeService(repo, repo, txRunner);
+
+    await service.deleteSource({ userId: "u1", sourceId: "src-1" });
+
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+  });
+
   it("rejects createContext when source does not exist for the user", async () => {
     repo = makeRepo({ findSourceById: vi.fn(async () => null) });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.createContext({
       userId: "u1",
@@ -256,7 +269,7 @@ describe("L3ContextService", () => {
 
   it("rejects createOccurrence when context does not exist", async () => {
     repo = makeRepo({ findContextWithSourceById: vi.fn(async () => null) });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.createOccurrence({
       userId: "u1",
@@ -269,7 +282,7 @@ describe("L3ContextService", () => {
 
   it("rejects createSource when wordbook is outside the user scope", async () => {
     repo = makeRepo({ findWordbookByIdForUser: vi.fn(async () => null) });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.createSource({
       userId: "u1",
@@ -288,7 +301,7 @@ describe("L3ContextService", () => {
       })),
       findWordInWordbookById: vi.fn(async () => null),
     });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.createOccurrence({
       userId: "u1",
@@ -304,7 +317,7 @@ describe("L3ContextService", () => {
 
   it("rejects createOccurrence when word does not exist", async () => {
     repo = makeRepo({ findWordById: vi.fn(async () => null) });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.createOccurrence({
       userId: "u1",
@@ -341,7 +354,7 @@ describe("L3ContextService", () => {
 
   it("validates word link targets exist", async () => {
     repo = makeRepo({ findWordById: vi.fn(async (wordId) => wordId === "w1" ? WORD_ROW : null) });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.createContextLink({
       userId: "u1",
@@ -364,7 +377,7 @@ describe("L3ContextService", () => {
       ),
       findWordById: vi.fn(async () => WORD_ROW),
     });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.createContextLink({
       userId: "u1",
@@ -388,7 +401,7 @@ describe("L3ContextService", () => {
         wordbookId === "wb-1" && wordId === WORD_ID ? WORD_ROW : null,
       ),
     });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await service.createContextLink({
       userId: "u1",
@@ -410,7 +423,7 @@ describe("L3ContextService", () => {
       })),
       findWordInWordbookById: vi.fn(async () => null),
     });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await expect(service.createContextLink({
       userId: "u1",
@@ -433,7 +446,7 @@ describe("L3ContextService", () => {
       })),
       findWordInWordbookById: vi.fn(async () => WORD_ROW),
     });
-    service = new L3ContextService(repo);
+    service = makeService(repo);
 
     await service.createContextLink({
       userId: "u1",

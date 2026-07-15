@@ -7,6 +7,9 @@
 
 import { createHash } from "node:crypto";
 import { NotFoundError, ValidationError } from "../errors";
+import { withTransaction } from "../db/transaction";
+import { createRepositories } from "../repositories/factory";
+import type { PoolClient } from "pg";
 import type {
   Json,
   L3ContextDetail,
@@ -23,7 +26,7 @@ import type {
   L3SourceSpace,
   L3WordSpace,
 } from "../domain";
-import type { IL3ContextRepository } from "../repositories/interfaces";
+import type { IL3ContextRepository, IRepositories } from "../repositories/interfaces";
 
 const DEFAULT_SPACE_LIMIT = 50;
 const MAX_SPACE_LIMIT = 100;
@@ -31,6 +34,10 @@ const DEFAULT_GRAPH_LIMIT = 100;
 const MAX_GRAPH_LIMIT = 300;
 const DEFAULT_GRAPH_DEPTH = 1;
 const MAX_GRAPH_DEPTH = 1;
+
+type TxRunner = typeof withTransaction;
+type RepositoryFactory = (tx?: PoolClient) => IRepositories;
+
 const GRAPH_NODE_TYPE_ORDER: Record<L3GraphNode["type"], number> = {
   word: 1,
   context: 2,
@@ -262,90 +269,109 @@ export interface GetGraphInput {
 }
 
 export class L3ReadService {
-  constructor(private readonly l3Context: IL3ContextRepository) {}
+  constructor(
+    private readonly l3Context: IL3ContextRepository,
+    private readonly txRunner: TxRunner = withTransaction,
+    private readonly repositoryFactory: RepositoryFactory = createRepositories,
+  ) {}
 
   async getContextDetail(input: GetContextDetailInput): Promise<L3ContextDetail> {
     requireNonEmpty(input.userId, "userId");
-    const detail = await this.l3Context.getContextDetail(input.userId, input.contextId);
-    if (!detail) {
-      throw new NotFoundError("L3Context", input.contextId);
-    }
-    return detail;
+    return this.withActorRepository(input.userId, async (repository) => {
+      const detail = await repository.getContextDetail(input.userId, input.contextId);
+      if (!detail) {
+        throw new NotFoundError("L3Context", input.contextId);
+      }
+      return detail;
+    });
   }
 
   async getWordSpace(input: GetWordSpaceInput): Promise<L3WordSpace> {
     requireNonEmpty(input.userId, "userId");
     requireNonEmpty(input.slug, "slug");
     const limit = normalizeLimit(input.limit, DEFAULT_SPACE_LIMIT, MAX_SPACE_LIMIT);
-    if (input.wordbookId) {
-      const wordbook = await this.l3Context.findWordbookByIdForUser(input.userId, input.wordbookId);
-      if (!wordbook) {
-        throw new NotFoundError("Wordbook", input.wordbookId);
+    return this.withActorRepository(input.userId, async (repository) => {
+      if (input.wordbookId) {
+        const wordbook = await repository.findWordbookByIdForUser(input.userId, input.wordbookId);
+        if (!wordbook) {
+          throw new NotFoundError("Wordbook", input.wordbookId);
+        }
       }
-    }
-    const result = await this.l3Context.getWordSpace({
-      userId: input.userId,
-      slug: input.slug,
-      wordbookId: input.wordbookId ?? null,
-      limit,
-      cursor: input.cursor ?? null,
+      const result = await repository.getWordSpace({
+        userId: input.userId,
+        slug: input.slug,
+        wordbookId: input.wordbookId ?? null,
+        limit,
+        cursor: input.cursor ?? null,
+      });
+      if (!result) {
+        throw new NotFoundError("Word", input.slug);
+      }
+      return result;
     });
-    if (!result) {
-      throw new NotFoundError("Word", input.slug);
-    }
-    return result;
   }
 
   async getSourceSpace(input: GetSourceSpaceInput): Promise<L3SourceSpace> {
     requireNonEmpty(input.userId, "userId");
     const limit = normalizeLimit(input.limit, DEFAULT_SPACE_LIMIT, MAX_SPACE_LIMIT);
-    const result = await this.l3Context.getSourceSpace({
-      userId: input.userId,
-      sourceId: input.sourceId,
-      limit,
-      cursor: input.cursor ?? null,
+    return this.withActorRepository(input.userId, async (repository) => {
+      const result = await repository.getSourceSpace({
+        userId: input.userId,
+        sourceId: input.sourceId,
+        limit,
+        cursor: input.cursor ?? null,
+      });
+      if (!result) {
+        throw new NotFoundError("L3Source", input.sourceId);
+      }
+      return result;
     });
-    if (!result) {
-      throw new NotFoundError("L3Source", input.sourceId);
-    }
-    return result;
   }
 
   async getGraph(input: GetGraphInput): Promise<L3GraphReadModel> {
     requireNonEmpty(input.userId, "userId");
     const depth = normalizeDepth(input.depth);
     const limit = normalizeLimit(input.limit, DEFAULT_GRAPH_LIMIT, MAX_GRAPH_LIMIT);
-    if (input.wordbookId) {
-      const wordbook = await this.l3Context.findWordbookByIdForUser(input.userId, input.wordbookId);
-      if (!wordbook) {
-        throw new NotFoundError("Wordbook", input.wordbookId);
+    return this.withActorRepository(input.userId, async (repository) => {
+      if (input.wordbookId) {
+        const wordbook = await repository.findWordbookByIdForUser(input.userId, input.wordbookId);
+        if (!wordbook) {
+          throw new NotFoundError("Wordbook", input.wordbookId);
+        }
       }
-    }
-    if (input.sourceId) {
-      const source = await this.l3Context.findSourceById(input.userId, input.sourceId);
-      if (!source) {
-        throw new NotFoundError("L3Source", input.sourceId);
+      if (input.sourceId) {
+        const source = await repository.findSourceById(input.userId, input.sourceId);
+        if (!source) {
+          throw new NotFoundError("L3Source", input.sourceId);
+        }
       }
-    }
-    if (input.slug) {
-      const word = input.wordbookId
-        ? await this.l3Context.findWordInWordbookBySlug(input.wordbookId, input.slug)
-        : await this.l3Context.findWordBySlug(input.slug);
-      if (!word) {
-        throw new NotFoundError("Word", input.slug);
+      if (input.slug) {
+        const word = input.wordbookId
+          ? await repository.findWordInWordbookBySlug(input.wordbookId, input.slug)
+          : await repository.findWordBySlug(input.slug);
+        if (!word) {
+          throw new NotFoundError("Word", input.slug);
+        }
       }
-    }
 
-    const seed = await this.l3Context.getGraph({
-      userId: input.userId,
-      wordbookId: input.wordbookId ?? null,
-      slug: input.slug ?? null,
-      sourceId: input.sourceId ?? null,
-      depth,
-      limit,
-      cursor: input.cursor ?? null,
+      const seed = await repository.getGraph({
+        userId: input.userId,
+        wordbookId: input.wordbookId ?? null,
+        slug: input.slug ?? null,
+        sourceId: input.sourceId ?? null,
+        depth,
+        limit,
+        cursor: input.cursor ?? null,
+      });
+      return this.assembleGraph(seed);
     });
-    return this.assembleGraph(seed);
+  }
+
+  private withActorRepository<T>(
+    userId: string,
+    callback: (repository: IL3ContextRepository) => Promise<T>,
+  ): Promise<T> {
+    return this.txRunner(async (tx) => callback(this.repositoryFactory(tx).l3Context), { actorId: userId });
   }
 
   private assembleGraph(seed: L3GraphReadModel): L3GraphReadModel {

@@ -29,6 +29,7 @@ release-manifest.json
 !.env.example
 !.env.single-host.example
 !.env.cloudflare-tunnel.example
+!.env.rls-acceptance.example
 
 # IDE
 .vscode/

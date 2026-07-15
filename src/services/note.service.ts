@@ -5,11 +5,15 @@
  * transaction, ensuring version increment and revision creation are atomic.
  */
 
-import type { INoteRepository, IWordbookRepository } from "../repositories/interfaces";
+import type { PoolClient } from "pg";
+import type { INoteRepository, IRepositories, IWordbookRepository } from "../repositories/interfaces";
 import type { NoteRevisionRow } from "../domain";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import { NotFoundError } from "../errors";
+
+type TxRunner = typeof withTransaction;
+type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 export interface UpsertNoteParams {
   userId: string;
@@ -28,19 +32,33 @@ export class NoteService {
   constructor(
     private readonly notes: INoteRepository,
     private readonly wordbooks: IWordbookRepository,
+    private readonly txRunner: TxRunner = withTransaction,
+    private readonly repositoryFactory: RepositoryFactory = createRepositories,
   ) {}
+
+  private withActorNotes<T>(
+    userId: string,
+    callback: (notes: INoteRepository) => Promise<T>,
+  ): Promise<T> {
+    return this.txRunner(
+      async (tx) => callback(this.repositoryFactory(tx).notes),
+      { actorId: userId },
+    );
+  }
 
   async getNote(
     userId: string,
     wordId: string,
     wordbookId: string,
   ): Promise<{ contentMd: string; updatedAt: string | null; version: number }> {
-    const note = await this.notes.findByWord(userId, wordbookId, wordId);
-    return {
-      contentMd: note?.content_md ?? "",
-      updatedAt: note?.updated_at ?? null,
-      version: note?.version ?? 0,
-    };
+    return this.withActorNotes(userId, async (notes) => {
+      const note = await notes.findByWord(userId, wordbookId, wordId);
+      return {
+        contentMd: note?.content_md ?? "",
+        updatedAt: note?.updated_at ?? null,
+        version: note?.version ?? 0,
+      };
+    });
   }
 
   /**
@@ -50,10 +68,10 @@ export class NoteService {
   async upsertNote(params: UpsertNoteParams): Promise<UpsertNoteResult> {
     const { userId, wordId, contentMd } = params;
 
-    return withTransaction(async (tx) => {
+    return this.txRunner(async (tx) => {
       // H-NEW-2 fix: getOrCreateDefault inside tx — if it creates a new
       // wordbook, that creation is atomic with the upsert
-      const repos = createRepositories(tx);
+      const repos = this.repositoryFactory(tx);
       const wordbookId = params.wordbookId
         ?? (await repos.wordbooks.getOrCreateDefault(userId)).id;
 
@@ -63,7 +81,7 @@ export class NoteService {
         updatedAt: result.note.updated_at,
         version: result.note.version,
       };
-    });
+    }, { actorId: userId });
   }
 
   async getRevisions(
@@ -71,7 +89,10 @@ export class NoteService {
     wordId: string,
     wordbookId: string,
   ): Promise<NoteRevisionRow[]> {
-    return this.notes.findRevisions(userId, wordbookId, wordId);
+    return this.withActorNotes(
+      userId,
+      (notes) => notes.findRevisions(userId, wordbookId, wordId),
+    );
   }
 
   async restoreRevision(
@@ -80,16 +101,28 @@ export class NoteService {
     wordbookId: string,
     revisionId: string,
   ): Promise<UpsertNoteResult> {
-    const revisions = await this.notes.findRevisions(userId, wordbookId, wordId);
-    const target = revisions.find((r) => r.id === revisionId);
-    if (!target) {
-      throw new NotFoundError("NoteRevision", revisionId);
-    }
-    return this.upsertNote({
-      userId,
-      wordId,
-      contentMd: target.content_md,
-      wordbookId,
-    });
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const revisions = await repos.notes.findRevisions(
+        userId,
+        wordbookId,
+        wordId,
+      );
+      const target = revisions.find((revision) => revision.id === revisionId);
+      if (!target) {
+        throw new NotFoundError("NoteRevision", revisionId);
+      }
+      const result = await repos.notes.upsert(
+        userId,
+        wordbookId,
+        wordId,
+        target.content_md,
+      );
+      return {
+        ok: true,
+        updatedAt: result.note.updated_at,
+        version: result.note.version,
+      };
+    }, { actorId: userId });
   }
 }

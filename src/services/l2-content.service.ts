@@ -141,6 +141,8 @@ export interface ConfirmDraftOptions {
   sourceRef?: string | null;
   /** Identity of the approver → `approved_by`. Defaults to `"user"`. */
   approvedBy?: string | null;
+  /** Authenticated actor projected into transaction-local PostgreSQL RLS. */
+  actorId?: string;
 }
 
 /**
@@ -896,6 +898,7 @@ ${provenanceSourceHint}`;
     const source = opts.source ?? "manual";
     const sourceRef = opts.sourceRef ?? null;
     const approvedBy = opts.approvedBy ?? "user";
+    const actorId = opts.actorId;
 
     // 0. Field-specific content validation — reject malformed structures before
     //    touching the DB. This is a defense-in-depth check (the HTTP layer also
@@ -952,6 +955,6 @@ ${provenanceSourceHint}`;
         // 4. Only re-trigger L2 cards whose snapshot changed (L1 untouched).
         await repos.l2Progress.markL2StaleForRecheck(wordId, l2Hash);
       }
-    });
+    }, { actorId });
   }
 }

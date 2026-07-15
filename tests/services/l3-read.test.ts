@@ -143,6 +143,18 @@ function makeGraphSeedWith(overrides: {
   };
 }
 
+function makeService(
+  repository: IL3ContextRepository,
+  txRepository = repository,
+  txRunner: typeof import("@/db/transaction").withTransaction = async (callback) => callback({} as never),
+): L3ReadService {
+  return new L3ReadService(
+    repository,
+    txRunner,
+    () => ({ l3Context: txRepository } as never),
+  );
+}
+
 function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepository {
   return {
     createSource: vi.fn(),
@@ -198,13 +210,23 @@ let service: L3ReadService;
 
 beforeEach(() => {
   repo = makeRepo();
-  service = new L3ReadService(repo);
+  service = makeService(repo);
 });
 
 describe("L3ReadService", () => {
+  it("runs protected reads through an actor-scoped transaction repository", async () => {
+    const txRunner = vi.fn(async (callback: (tx: never) => Promise<never>) => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    service = makeService(repo, repo, txRunner);
+
+    await service.getContextDetail({ userId: "u1", contextId: "ctx-1" });
+
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(repo.getContextDetail).toHaveBeenCalledWith("u1", "ctx-1");
+  });
+
   it("maps missing context detail to NotFoundError", async () => {
     repo = makeRepo({ getContextDetail: vi.fn(async () => null) });
-    service = new L3ReadService(repo);
+    service = makeService(repo);
 
     await expect(service.getContextDetail({ userId: "u1", contextId: "missing" })).rejects.toBeInstanceOf(NotFoundError);
   });
@@ -224,7 +246,7 @@ describe("L3ReadService", () => {
 
   it("rejects missing wordbook before word space repository read", async () => {
     repo = makeRepo({ findWordbookByIdForUser: vi.fn(async () => null) });
-    service = new L3ReadService(repo);
+    service = makeService(repo);
 
     await expect(service.getWordSpace({ userId: "u1", slug: "vivid", wordbookId: "foreign" })).rejects.toBeInstanceOf(NotFoundError);
     expect(repo.getWordSpace).not.toHaveBeenCalled();
@@ -239,7 +261,7 @@ describe("L3ReadService", () => {
 
   it("rejects wordbook-scoped graph when slug is not in that wordbook before repository graph read", async () => {
     repo = makeRepo({ findWordInWordbookBySlug: vi.fn(async () => null) });
-    service = new L3ReadService(repo);
+    service = makeService(repo);
 
     await expect(service.getGraph({ userId: "u1", wordbookId: "wb-1", slug: "foreign" })).rejects.toBeInstanceOf(NotFoundError);
     expect(repo.findWordbookByIdForUser).toHaveBeenCalledWith("u1", "wb-1");
@@ -257,7 +279,7 @@ describe("L3ReadService", () => {
       makeLink({ id: "link-external", target_type: "external", target_ref: { url: "https://example.com" } }),
     ];
     repo = makeRepo({ getGraph: vi.fn(async () => makeGraphSeed(links)) });
-    service = new L3ReadService(repo);
+    service = makeService(repo);
 
     const result = await service.getGraph({ userId: "u1", wordbookId: "wb-1", slug: "vivid", sourceId: "src-1" });
 
@@ -298,7 +320,7 @@ describe("L3ReadService", () => {
       makeLink({ id: "link-b", link_type: "illustrates", target_type: "external", target_ref: { url: "https://example.com" } }),
     ];
     repo = makeRepo({ getGraph: vi.fn(async () => makeGraphSeedWith({ occurrences: duplicateOccurrences, links: duplicateLinks })) });
-    service = new L3ReadService(repo);
+    service = makeService(repo);
 
     const result = await service.getGraph({ userId: "u1" });
 
@@ -338,7 +360,7 @@ describe("L3ReadService", () => {
       links: [linkExternal, linkTopic],
     });
     repo = makeRepo({ getGraph: vi.fn().mockResolvedValueOnce(seedA).mockResolvedValueOnce(seedB) });
-    service = new L3ReadService(repo);
+    service = makeService(repo);
 
     const first = await service.getGraph({ userId: "u1" });
     const second = await service.getGraph({ userId: "u1" });

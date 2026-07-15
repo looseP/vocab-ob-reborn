@@ -46,7 +46,7 @@ import {
   L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES,
 } from "../schemas/resource-budget";
 
-type TxRunner = <T>(callback: (tx: PoolClient) => Promise<T>) => Promise<T>;
+type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -137,8 +137,8 @@ function addIssue(
 
 export class L3ProposalService {
   constructor(
-    private readonly proposals: IL3ProposalRepository,
-    private readonly l3Context: IL3ContextRepository,
+    _proposals: IL3ProposalRepository,
+    _l3Context: IL3ContextRepository,
     private readonly txRunner: TxRunner = withTransaction,
     private readonly repositoryFactory: RepositoryFactory = createRepositories,
   ) {}
@@ -179,12 +179,17 @@ export class L3ProposalService {
         );
       }
     }
-    if (input.wordbookId) {
-      const wordbook = await this.l3Context.findWordbookByIdForUser(input.userId, input.wordbookId);
-      if (!wordbook) throw new NotFoundError("Wordbook", input.wordbookId);
-    }
-
-    return this.txRunner((tx) => this.createProposalInTx(tx, input));
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      if (input.wordbookId) {
+        const wordbook = await repos.l3Context.findWordbookByIdForUser(
+          input.userId,
+          input.wordbookId,
+        );
+        if (!wordbook) throw new NotFoundError("Wordbook", input.wordbookId);
+      }
+      return this.createProposalInTx(tx, input);
+    }, { actorId: input.userId });
   }
 
   /**
@@ -225,38 +230,72 @@ export class L3ProposalService {
   async listProposals(input: ListL3ProposalsInput): Promise<L3PaginatedList<L3ProposalRow>> {
     requireNonEmpty(input.userId, "userId");
     if (input.status) requireEnum(input.status, L3_PROPOSAL_STATUSES, "status");
-    return this.proposals.listProposals(input);
+    return this.withActorProposalRepository(
+      input.userId,
+      (proposals) => proposals.listProposals(input),
+    );
   }
 
   async getProposal(input: L3ProposalIdInput): Promise<L3ProposalBundle> {
     requireNonEmpty(input.userId, "userId");
-    const bundle = await this.proposals.getProposalBundle(input.userId, input.proposalId);
+    return this.withActorProposalRepository(
+      input.userId,
+      (proposals) => this.requireProposalBundle(proposals, input),
+    );
+  }
+
+  private async requireProposalBundle(
+    proposals: IL3ProposalRepository,
+    input: L3ProposalIdInput,
+  ): Promise<L3ProposalBundle> {
+    const bundle = await proposals.getProposalBundle(input.userId, input.proposalId);
     if (!bundle) throw new NotFoundError("L3Proposal", input.proposalId);
     return bundle;
   }
 
+  private withActorProposalRepository<T>(
+    userId: string,
+    callback: (proposals: IL3ProposalRepository) => Promise<T>,
+  ): Promise<T> {
+    return this.txRunner(
+      async (tx) => callback(this.repositoryFactory(tx).l3Proposal),
+      { actorId: userId },
+    );
+  }
+
   /** Find a proposal by (userId, inputHash) — used by L3ImportService for dedup. */
   async findProposalByInputHash(userId: string, inputHash: string): Promise<L3ProposalRow | null> {
-    return this.proposals.findProposalByInputHash(userId, inputHash);
+    return this.withActorProposalRepository(
+      userId,
+      (proposals) => proposals.findProposalByInputHash(userId, inputHash),
+    );
   }
 
   async validateProposal(input: L3ProposalIdInput): Promise<L3ProposalValidationResult> {
-    const bundle = await this.getProposal(input);
-    if (bundle.proposal.status !== "pending") {
-      throw new ConflictError(`Cannot validate ${bundle.proposal.status} proposal`);
-    }
-    const errors = await this.validateItems(bundle.proposal, bundle.items, this.l3Context);
-    const updatedItems: L3ProposalItemRow[] = [];
-    for (const item of bundle.items) {
-      const itemErrors = errors.filter((error) => error.itemId === item.id);
-      updatedItems.push(await this.proposals.updateProposalItemValidation(item.id, input.userId, itemErrors as unknown as Json));
-    }
-    return {
-      proposal: bundle.proposal,
-      items: updatedItems,
-      valid: errors.length === 0,
-      errors,
-    };
+    requireNonEmpty(input.userId, "userId");
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const bundle = await this.requireProposalBundle(repos.l3Proposal, input);
+      if (bundle.proposal.status !== "pending") {
+        throw new ConflictError(`Cannot validate ${bundle.proposal.status} proposal`);
+      }
+      const errors = await this.validateItems(bundle.proposal, bundle.items, repos.l3Context);
+      const updatedItems: L3ProposalItemRow[] = [];
+      for (const item of bundle.items) {
+        const itemErrors = errors.filter((error) => error.itemId === item.id);
+        updatedItems.push(await repos.l3Proposal.updateProposalItemValidation(
+          item.id,
+          input.userId,
+          itemErrors as unknown as Json,
+        ));
+      }
+      return {
+        proposal: bundle.proposal,
+        items: updatedItems,
+        valid: errors.length === 0,
+        errors,
+      };
+    }, { actorId: input.userId });
   }
 
   async confirmProposal(input: L3ProposalIdInput): Promise<L3ProposalConfirmResult> {
@@ -354,7 +393,7 @@ export class L3ProposalService {
 
       const confirmed = await repos.l3Proposal.markProposalConfirmed(input.proposalId, input.userId);
       return { proposal: confirmed, items: updatedItems, activeEntities };
-    });
+    }, { actorId: input.userId });
   }
 
   async rejectProposal(input: RejectL3ProposalInput): Promise<L3ProposalBundle> {
@@ -369,7 +408,7 @@ export class L3ProposalService {
       const rejected = await repos.l3Proposal.markProposalRejected(input.proposalId, input.userId, input.reviewNote ?? null);
       const items = await repos.l3Proposal.findProposalItems(input.userId, input.proposalId);
       return { proposal: rejected, items };
-    });
+    }, { actorId: input.userId });
   }
 
   private async markConfirmed(

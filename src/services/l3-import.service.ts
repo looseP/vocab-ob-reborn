@@ -42,7 +42,7 @@ export interface L3ImportProposalResult {
   parseStats: L3ImportParseStats;
 }
 
-type TxRunner = <T>(callback: (tx: PoolClient) => Promise<T>) => Promise<T>;
+type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 const MAX_RAW_TEXT_LENGTH = 500_000;
@@ -230,7 +230,7 @@ export class L3ImportService {
           items,
         });
         return { importJob, proposal: bundle.proposal, items: bundle.items, parseStats };
-      });
+      }, { actorId: input.userId });
     } catch (error) {
       // Race: another concurrent request inserted the same (user_id, input_hash).
       if (isUniqueViolation(error)) {
@@ -250,17 +250,21 @@ export class L3ImportService {
     userId: string,
     inputHash: string,
   ): Promise<L3ImportProposalResult | null> {
-    const importJob = await this.l3Context.findImportJobByInputHash(userId, inputHash);
-    if (!importJob || importJob.status !== "completed") return null;
-    const proposal = await this.l3Proposal.findProposalByInputHash(userId, inputHash);
-    if (!proposal) return null;
-    const bundle = await this.l3Proposal.getProposal({ userId, proposalId: proposal.id });
-    return {
-      importJob,
-      proposal: bundle.proposal,
-      items: bundle.items,
-      parseStats: importJob.stats as unknown as L3ImportParseStats,
-    };
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const importJob = await repos.l3Context.findImportJobByInputHash(userId, inputHash);
+      if (!importJob || importJob.status !== "completed") return null;
+      const proposal = await repos.l3Proposal.findProposalByInputHash(userId, inputHash);
+      if (!proposal) return null;
+      const bundle = await repos.l3Proposal.getProposalBundle(userId, proposal.id);
+      if (!bundle) return null;
+      return {
+        importJob,
+        proposal: bundle.proposal,
+        items: bundle.items,
+        parseStats: importJob.stats as unknown as L3ImportParseStats,
+      };
+    }, { actorId: userId });
   }
 
   private async validateEnvelope(
@@ -271,8 +275,12 @@ export class L3ImportService {
     requireNonEmpty(userId, "userId");
     requireEnum(source.sourceType, L3_SOURCE_TYPES, "sourceType");
     requireNonEmpty(source.title, "title");
-    if (wordbookId && !(await this.l3Context.findWordbookByIdForUser(userId, wordbookId))) {
-      throw new NotFoundError("Wordbook", wordbookId);
+    if (wordbookId) {
+      const wordbook = await this.txRunner(
+        async (tx) => this.repositoryFactory(tx).l3Context.findWordbookByIdForUser(userId, wordbookId),
+        { actorId: userId },
+      );
+      if (!wordbook) throw new NotFoundError("Wordbook", wordbookId);
     }
   }
 
@@ -320,19 +328,22 @@ export class L3ImportService {
   }
 
   private async findTargetWord(
-    _userId: string,
+    userId: string,
     wordbookId: string | null,
     wordId: string | null,
     slug: string | null,
   ): Promise<WordRow | null> {
-    if (wordbookId) {
+    return this.txRunner(async (tx) => {
+      const repository = this.repositoryFactory(tx).l3Context;
+      if (wordbookId) {
+        return wordId
+          ? repository.findWordInWordbookById(wordbookId, wordId)
+          : repository.findWordInWordbookBySlug(wordbookId, slug ?? "");
+      }
       return wordId
-        ? this.l3Context.findWordInWordbookById(wordbookId, wordId)
-        : this.l3Context.findWordInWordbookBySlug(wordbookId, slug ?? "");
-    }
-    return wordId
-      ? this.l3Context.findWordById(wordId)
-      : this.l3Context.findWordBySlug(slug ?? "");
+        ? repository.findWordById(wordId)
+        : repository.findWordBySlug(slug ?? "");
+    }, { actorId: userId });
   }
 
   private sourcePayload(input: CreateL3RawTextImportProposalInput | CreateL3StructuredImportProposalInput): Json {

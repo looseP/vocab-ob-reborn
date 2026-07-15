@@ -247,10 +247,8 @@ export function l2Routes(services: Services) {
       return jsonError(c, 400, "VALIDATION_ERROR", `Invalid content for field "${storageField}"`);
     }
 
-    // Assemble confirm options (B6). `source` keeps the legacy default; only
-    // well-known option keys are forwarded so unknown body fields are ignored.
     const confirmOptions: Record<string, unknown> = {
-      source: typeof body.source === "string" ? body.source : "manual",
+      source: typeof body.source === "string" ? body.source : "manual", actorId: c.get("userId"),
     };
     if (typeof body.sourceRef === "string") {
       confirmOptions.sourceRef = body.sourceRef;

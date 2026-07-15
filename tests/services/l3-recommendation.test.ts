@@ -223,18 +223,22 @@ function makeProposalRepo(): IL3ProposalRepository {
 let recommendationRepo: IL3RecommendationRepository;
 let contextRepo: IL3ContextRepository;
 let proposalRepo: IL3ProposalRepository;
+let txRecommendationRepo: IL3RecommendationRepository;
+let txRunner: typeof import("@/db/transaction").withTransaction;
 let service: L3RecommendationService;
 
 beforeEach(() => {
   recommendationRepo = makeRecommendationRepo();
+  txRecommendationRepo = makeRecommendationRepo();
   contextRepo = makeContextRepo();
   proposalRepo = makeProposalRepo();
+  txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
   service = new L3RecommendationService(
     recommendationRepo,
     contextRepo,
-    async (cb) => cb({} as never),
+    txRunner,
     () => ({
-      l3Recommendation: recommendationRepo,
+      l3Recommendation: txRecommendationRepo,
       l3Context: contextRepo,
       l3Proposal: proposalRepo,
     } as unknown as IRepositories),
@@ -242,13 +246,33 @@ beforeEach(() => {
 });
 
 describe("L3RecommendationService", () => {
+  it("reads recommendation lists through the authenticated actor transaction", async () => {
+    await service.listRecommendations({ userId: "u1", status: "pending", recommendationType: null, limit: 10, cursor: null });
+
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(txRecommendationRepo.listItems).toHaveBeenCalledWith({
+      userId: "u1", status: "pending", recommendationType: null, limit: 10, cursor: null,
+    });
+    expect(recommendationRepo.listItems).not.toHaveBeenCalled();
+  });
+
+  it("reads recommendation details through the authenticated actor transaction", async () => {
+    await service.getRecommendation({ userId: "u1", recommendationId: "rec-1" });
+
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(txRecommendationRepo.findItemByIdForUser).toHaveBeenCalledWith("u1", "rec-1");
+    expect(recommendationRepo.findItemByIdForUser).not.toHaveBeenCalled();
+  });
+
   it("generates deterministic review_pack recommendations with evidence", async () => {
     const result = await service.generateRecommendations({ userId: "u1", wordbookId: "wb-1", mode: "review_pack", limit: 5 });
 
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
     expect(contextRepo.findWordbookByIdForUser).toHaveBeenCalledWith("u1", "wb-1");
-    expect(recommendationRepo.findSignals).toHaveBeenCalledWith(expect.objectContaining({ userId: "u1", wordbookId: "wb-1", horizonDays: 7, limit: 5 }));
-    expect(recommendationRepo.createRun).toHaveBeenCalled();
-    expect(recommendationRepo.createItem).toHaveBeenCalledWith(expect.objectContaining({
+    expect(txRecommendationRepo.findSignals).toHaveBeenCalledWith(expect.objectContaining({ userId: "u1", wordbookId: "wb-1", horizonDays: 7, limit: 5 }));
+    expect(recommendationRepo.findSignals).not.toHaveBeenCalled();
+    expect(txRecommendationRepo.createRun).toHaveBeenCalled();
+    expect(txRecommendationRepo.createItem).toHaveBeenCalledWith(expect.objectContaining({
       recommendation_type: "review_pack",
       reason_codes: expect.arrayContaining(["fsrs_due", "fsrs_weak"]),
     }));
@@ -266,7 +290,8 @@ describe("L3RecommendationService", () => {
   it("generates link_gap recommendations without active link writes", async () => {
     const result = await service.generateRecommendations({ userId: "u1", mode: "link_suggestions" });
 
-    expect(recommendationRepo.findLinkGapCandidates).toHaveBeenCalled();
+    expect(txRecommendationRepo.findLinkGapCandidates).toHaveBeenCalled();
+    expect(recommendationRepo.findLinkGapCandidates).not.toHaveBeenCalled();
     expect(result.items[0]).toMatchObject({ recommendation_type: "link_gap", status: "pending" });
     expect(contextRepo.createContextLink).not.toHaveBeenCalled();
   });
@@ -275,15 +300,25 @@ describe("L3RecommendationService", () => {
     const result = await service.generateRecommendations({ userId: "u1", mode: "gap_scan", dryRun: true });
 
     expect(result.run.id).toBe("dry-run");
-    expect(recommendationRepo.createRun).not.toHaveBeenCalled();
-    expect(recommendationRepo.createItem).not.toHaveBeenCalled();
+    expect(txRecommendationRepo.createRun).not.toHaveBeenCalled();
+    expect(txRecommendationRepo.createItem).not.toHaveBeenCalled();
   });
 
   it("rejects missing wordbook before signal reads", async () => {
     contextRepo = makeContextRepo({ findWordbookByIdForUser: vi.fn(async () => null) });
-    service = new L3RecommendationService(recommendationRepo, contextRepo);
+    service = new L3RecommendationService(
+      recommendationRepo,
+      contextRepo,
+      txRunner,
+      () => ({
+        l3Recommendation: txRecommendationRepo,
+        l3Context: contextRepo,
+        l3Proposal: proposalRepo,
+      } as unknown as IRepositories),
+    );
 
     await expect(service.generateRecommendations({ userId: "u1", wordbookId: "foreign", mode: "review_pack" })).rejects.toBeInstanceOf(NotFoundError);
+    expect(txRecommendationRepo.findSignals).not.toHaveBeenCalled();
     expect(recommendationRepo.findSignals).not.toHaveBeenCalled();
   });
 

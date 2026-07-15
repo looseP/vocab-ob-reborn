@@ -229,7 +229,11 @@ class L3CrossContractHarness {
       async (cb) => cb({} as never),
       () => this.repositories,
     );
-    this.readService = new L3ReadService(this.contextRepo);
+    this.readService = new L3ReadService(
+      this.contextRepo,
+      txRunner,
+      repositoryFactory,
+    );
   }
 
   snapshot(): Record<WritableTable, number> {

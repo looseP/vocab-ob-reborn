@@ -24,12 +24,12 @@ describe("single-host Compose contract", () => {
   it("rejects a Caddy route without readiness checking or local TLS", () => {
     expect(() => verifySingleHostCompose(
       compose,
-      caddyfile.replace("    health_uri /readyz\n", ""),
+      caddyfile.replace("    health_uri /readyz\r\n", ""),
       environment,
     )).toThrow(/readiness health check/);
     expect(() => verifySingleHostCompose(
       compose,
-      caddyfile.replace("  tls internal\n", ""),
+      caddyfile.replace("  tls internal\r\n", ""),
       environment,
     )).toThrow(/local internal TLS/);
   });

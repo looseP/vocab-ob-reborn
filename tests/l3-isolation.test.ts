@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockPool } from "./helpers/mock-db";
 
 const mock = createMockPool();
+const ACTOR_ID = "00000000-0000-4000-8000-000000000011";
 vi.mock("@/db/connection", () => ({
   getPool: () => mock.pool,
   checkPoolHealth: vi.fn(),
@@ -173,13 +174,13 @@ describe("L3 isolation", () => {
     const importService = new L3ImportService(repos.l3Context, proposalService);
 
     await importService.createRawTextImportProposal({
-      userId: "u1",
+      userId: ACTOR_ID,
       source: { sourceType: "manual", title: "Note" },
       text: "A vivid account.",
       targetWords: [{ slug: "vivid" }],
     });
     await importService.createStructuredImportProposal({
-      userId: "u1",
+      userId: ACTOR_ID,
       source: { sourceType: "manual", title: "Examples" },
       contexts: [{ contextType: "sentence", text: "A vivid account." }],
     });
@@ -206,9 +207,9 @@ describe("L3 isolation", () => {
     const repos = createRepositories();
 
     await repos.l3Context.getContextDetail("u1", "00000000-0000-4000-8000-000000000001");
-    await repos.l3Context.getWordSpace({ userId: "u1", slug: "vivid", limit: 10 });
-    await repos.l3Context.getSourceSpace({ userId: "u1", sourceId: "00000000-0000-4000-8000-000000000002", limit: 10 });
-    await repos.l3Context.getGraph({ userId: "u1", depth: 1, limit: 10 });
+    await repos.l3Context.getWordSpace({ userId: ACTOR_ID, slug: "vivid", limit: 10 });
+    await repos.l3Context.getSourceSpace({ userId: ACTOR_ID, sourceId: "00000000-0000-4000-8000-000000000002", limit: 10 });
+    await repos.l3Context.getGraph({ userId: ACTOR_ID, depth: 1, limit: 10 });
 
     const sql = mock.calls.map((call) => call.text).join("\n");
     expect(sql).toContain("SELECT");
@@ -272,7 +273,7 @@ describe("L3 isolation", () => {
     const repos = createRepositories();
     const service = new L3RecommendationService(repos.l3Recommendation, repos.l3Context);
 
-    await service.generateRecommendations({ userId: "u1", mode: "review_pack" });
+    await service.generateRecommendations({ userId: ACTOR_ID, mode: "review_pack" });
 
     const sql = mock.calls.map((call) => call.text).join("\n");
     expect(sql).toContain("INSERT INTO l3_recommendation_runs");
@@ -346,7 +347,7 @@ describe("L3 isolation", () => {
     const repos = createRepositories();
     const service = new L3RecommendationService(repos.l3Recommendation, repos.l3Context);
 
-    await service.acceptRecommendation({ userId: "u1", recommendationId: "rec-1" });
+    await service.acceptRecommendation({ userId: ACTOR_ID, recommendationId: "rec-1" });
 
     const sql = mock.calls.map((call) => call.text).join("\n");
     expect(sql).toContain("INSERT INTO l3_proposals");
