@@ -129,7 +129,12 @@ describe("diff coverage", () => {
   });
 
   it("requires at least 85 percent of changed executable lines to be covered", () => {
-    const coverage = { "src/services/a.ts": fileCoverage("src/services/a.ts", [1, 0]) };
+    const statementOnly = fileCoverage("src/services/a.ts", [1, 0]);
+    statementOnly.fnMap = {};
+    statementOnly.f = {};
+    statementOnly.branchMap = {};
+    statementOnly.b = {};
+    const coverage = { "src/services/a.ts": statementOnly };
     expect(calculateDiffCoverage({ "src/services/a.ts": [1] }, coverage, "base").ok).toBe(true);
     expect(calculateDiffCoverage({ "src/services/a.ts": [1, 2] }, coverage, "base")).toMatchObject({ pct: 50, ok: false });
     expect(calculateDiffCoverage({ "src/services/a.ts": [1, 2, 99] }, coverage, "base")).toMatchObject({
@@ -158,11 +163,47 @@ describe("diff coverage", () => {
   });
 
   it("excludes instrumented-file lines that have no executable coverage range", () => {
-    const coverage = { "src/services/a.ts": fileCoverage("src/services/a.ts", [1]) };
+    const covered = fileCoverage("src/services/a.ts", [1]);
+    covered.b["0"] = [1, 1];
+    const coverage = { "src/services/a.ts": covered };
 
     expect(calculateDiffCoverage(
       { "src/services/a.ts": [1, 99] },
       coverage,
+      "base",
+    )).toMatchObject({
+      executableLines: 1,
+      coveredLines: 1,
+      pct: 100,
+      ok: true,
+    });
+  });
+
+  it("fails a changed line when any overlapping executable range is untested", () => {
+    const partial = fileCoverage("src/services/a.ts", [1]);
+    partial.b["0"] = [1, 0];
+    partial.f["0"] = 0;
+
+    expect(calculateDiffCoverage(
+      { "src/services/a.ts": [1] },
+      { "src/services/a.ts": partial },
+      "base",
+    )).toMatchObject({
+      executableLines: 1,
+      coveredLines: 0,
+      pct: 0,
+      ok: false,
+    });
+  });
+
+  it("covers a changed line only when its statement, function, and every branch arm are hit", () => {
+    const complete = fileCoverage("src/services/a.ts", [1]);
+    complete.b["0"] = [1, 1];
+    complete.f["0"] = 1;
+
+    expect(calculateDiffCoverage(
+      { "src/services/a.ts": [1] },
+      { "src/services/a.ts": complete },
       "base",
     )).toMatchObject({
       executableLines: 1,
