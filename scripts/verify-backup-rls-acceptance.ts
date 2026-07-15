@@ -16,6 +16,9 @@ const ROLE_URLS = {
 } as const;
 const BACKUP_ROLE = ROLE_URLS.backup[1];
 const ACCEPTANCE_DATABASE_PATTERN = /^vocab_backup_acceptance_[a-f0-9]{32}$/;
+const PG_TOOLS_CONTAINER_PATTERN = /^vocab-observatory-db-roles-[a-f0-9]{32}-postgres-1$/;
+const CONTAINER_DUMP_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const POSTGRES_ENV_NAMES = ["PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD", "PGSSLMODE"] as const;
 const APPLICATION_SCHEMAS = ["auth", "public", "vocab_migrations"] as const;
 
 type RoleKind = keyof typeof ROLE_URLS;
@@ -50,6 +53,13 @@ interface RelationOwnerRow extends OwnerRow {
 interface RoutineOwnerRow extends OwnerRow {
   identityArguments: string;
   kind: string;
+  securityDefiner: boolean;
+  config: string[] | null;
+  language: string;
+  volatility: string;
+  parallel: string;
+  leakproof: boolean;
+  definition: string;
 }
 
 interface TypeOwnerRow extends OwnerRow {
@@ -148,6 +158,7 @@ interface TriggerRow {
 
 export interface CatalogSnapshot {
   databaseOwner: string;
+  databaseAcl: string[] | null;
   schemas: OwnerRow[];
   relations: RelationOwnerRow[];
   columns: ColumnRow[];
@@ -187,26 +198,62 @@ function postgresBinary(name: string, binDirectory = process.env.PG_BIN_DIR): st
   return join(binDirectory, process.platform === "win32" ? `${name}.exe` : name);
 }
 
-export function buildPgDumpInvocation(databaseUrl: string, dumpPath: string): PostgresInvocation {
+function containerPostgresInvocation(
+  binary: "pg_dump" | "pg_restore",
+  args: string[],
+  databaseUrl: string,
+  dumpPath: string,
+  container = process.env.PG_TOOLS_CONTAINER?.trim(),
+): PostgresInvocation | undefined {
+  if (!container) return undefined;
+  if (!PG_TOOLS_CONTAINER_PATTERN.test(container)) {
+    throw new Error("PG_TOOLS_CONTAINER must be a guarded database roles acceptance PostgreSQL container name");
+  }
+  const dumpFile = basename(dumpPath);
+  if (!CONTAINER_DUMP_FILE_PATTERN.test(dumpFile)) {
+    throw new Error("Acceptance dump path must have a controlled file name");
+  }
+  const env = postgresEnvironment(databaseUrl);
+  env.PGHOST = "127.0.0.1";
+  env.PGPORT = "5432";
+  const internalDumpPath = `/tmp/${dumpFile}`;
   return {
+    command: "docker",
+    args: [
+      "exec",
+      ...POSTGRES_ENV_NAMES.flatMap((name) => ["-e", name]),
+      container,
+      binary,
+      ...args,
+      internalDumpPath,
+    ],
+    env,
+  };
+}
+
+export function buildPgDumpInvocation(databaseUrl: string, dumpPath: string): PostgresInvocation {
+  const args = ["--format=custom", "--compress=6", "--no-owner", "--file"];
+  return containerPostgresInvocation("pg_dump", args, databaseUrl, dumpPath) ?? {
     command: postgresBinary("pg_dump"),
-    args: ["--format=custom", "--compress=6", "--no-owner", "--file", dumpPath],
+    args: [...args, dumpPath],
     env: postgresEnvironment(databaseUrl),
   };
 }
 
 export function buildPgRestoreInvocation(databaseUrl: string, dumpPath: string): PostgresInvocation {
-  return {
+  const args = [
+    "--dbname",
+    databaseName(databaseUrl),
+    "--clean",
+    "--if-exists",
+    "--exit-on-error",
+    "--no-owner",
+    "--jobs",
+    process.env.PG_RESTORE_JOBS ?? "2",
+  ];
+  return containerPostgresInvocation("pg_restore", args, databaseUrl, dumpPath) ?? {
     command: postgresBinary("pg_restore"),
-    args: [
-      "--clean",
-      "--if-exists",
-      "--exit-on-error",
-      "--no-owner",
-      "--jobs",
-      process.env.PG_RESTORE_JOBS ?? "2",
-      dumpPath,
-    ],
+    args: [...args, dumpPath],
     env: postgresEnvironment(databaseUrl),
   };
 }
@@ -324,9 +371,37 @@ async function createAcceptanceDatabase(admin: Client, name: string): Promise<vo
   await admin.query(acceptanceDatabaseOwnerStatement(name));
 }
 
-async function dropAcceptanceDatabase(admin: Client, sourceUrl: string, targetUrl: string): Promise<void> {
+export function acceptanceDatabaseAclStatement(name: string): string {
+  const database = quoteAcceptanceDatabase(name);
+  return `REVOKE ALL ON DATABASE ${database} FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration; GRANT CONNECT ON DATABASE ${database} TO vocab_app, vocab_worker, vocab_backup, vocab_migration; GRANT CREATE, TEMPORARY ON DATABASE ${database} TO vocab_migration`;
+}
+
+async function convergeAcceptanceDatabaseAcl(admin: Client, name: string): Promise<void> {
+  await admin.query(acceptanceDatabaseAclStatement(name));
+}
+
+export const RESTORED_SCHEMA_OWNERSHIP_STATEMENT = `
+  ALTER SCHEMA public OWNER TO vocab_migration;
+  ALTER SCHEMA auth OWNER TO vocab_migration;
+  ALTER SCHEMA vocab_migrations OWNER TO vocab_migration;
+`;
+
+async function convergeRestoredSchemaOwnership(restoredAdmin: Client): Promise<void> {
+  await restoredAdmin.query(RESTORED_SCHEMA_OWNERSHIP_STATEMENT);
+}
+
+async function dropAcceptanceDatabase(admin: QueryClient, sourceUrl: string, targetUrl: string): Promise<void> {
   assertSafeAcceptanceDatabase(sourceUrl, targetUrl);
   await admin.query(`DROP DATABASE IF EXISTS ${quoteAcceptanceDatabase(databaseName(targetUrl))} WITH (FORCE)`);
+}
+
+export async function cleanupAttemptedAcceptanceDatabase(
+  createAttempted: boolean,
+  admin: QueryClient | undefined,
+  sourceUrl: string,
+  targetUrl: string,
+): Promise<void> {
+  if (createAttempted && admin) await dropAcceptanceDatabase(admin, sourceUrl, targetUrl);
 }
 
 async function expectPermissionDenied(client: Client, sql: string, params: unknown[], label: string): Promise<void> {
@@ -371,6 +446,41 @@ async function actorRows<T extends QueryResultRow>(client: Client, actor: string
   }
 }
 
+async function expectActorFunctionDenied(client: Client, actor: string | undefined, sql: string, params: unknown[], label: string): Promise<void> {
+  await client.query("BEGIN");
+  try {
+    if (actor) await client.query("SELECT set_config('request.jwt.claim.sub', $1, true)", [actor]);
+    await client.query(sql, params);
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], `actor function rollback failed: ${label}`);
+    }
+    if ((error as { code?: string }).code === "42501") return;
+    throw error;
+  }
+  await client.query("ROLLBACK");
+  throw new Error(`unexpectedly allowed: ${label}`);
+}
+
+async function verifyRestoredL2SecurityFunctions(app: Client, fixture: Fixture): Promise<void> {
+  const refreshSql = "SELECT public.refresh_l2_cache($1::uuid)";
+  const finalizeSql = "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text) AS updated_count";
+  const hashes = ["a".repeat(64), "b".repeat(64)];
+  const wrongActor = randomUUID();
+  for (const [actor, label] of [[undefined, "without actor"], [wrongActor, "wrong actor"]] as const) {
+    await expectActorFunctionDenied(app, actor, refreshSql, [fixture.word], `refresh_l2_cache ${label}`);
+    await expectActorFunctionDenied(app, actor, finalizeSql, [fixture.word, ...hashes], `finalize_l2_content_hash ${label}`);
+  }
+  const refreshed = await actorRows(app, fixture.users[0], refreshSql, [fixture.word]);
+  if (refreshed.length !== 1) throw new Error("restored vocab_app could not call refresh_l2_cache as the eligible actor");
+  const finalized = await actorRows<{ updated_count: number }>(app, fixture.users[0], finalizeSql, [fixture.word, ...hashes]);
+  if (finalized.length !== 1 || !Number.isInteger(Number(finalized[0]?.updated_count)) || Number(finalized[0]?.updated_count) < 0) {
+    throw new Error("restored vocab_app could not call finalize_l2_content_hash as the eligible actor");
+  }
+}
+
 async function verifyApplicationBoundary(app: Client, fixture: Fixture): Promise<void> {
   await assertLoginIdentity(app, ROLE_URLS.app[1]);
   const own = await actorRows(app, fixture.users[0], "SELECT id::text FROM wordbooks WHERE id = ANY($1::uuid[]) ORDER BY id", [fixture.wordbooks]);
@@ -379,6 +489,7 @@ async function verifyApplicationBoundary(app: Client, fixture: Fixture): Promise
   if (own.length !== 1 || own[0]?.id !== fixture.wordbooks[0] || other.length !== 0 || anonymous.length !== 0) {
     throw new Error("restored vocab_app did not enforce owner RLS positive and negative cases");
   }
+  await verifyRestoredL2SecurityFunctions(app, fixture);
 }
 
 async function verifyWorkerBoundary(worker: Client, fixture: Fixture): Promise<void> {
@@ -494,9 +605,14 @@ async function seedFixture(admin: Client): Promise<Fixture> {
       );
     }
     await admin.query(
-      `INSERT INTO words (id, slug, content_hash, source_path, title, lemma, definition_md, body_md)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO words (id, slug, content_hash, source_path, title, lemma, definition_md, body_md, is_published)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
       [fixture.word, `backup-${fixture.marker}`, fixture.marker.padEnd(64, "0").slice(0, 64), `backup/${fixture.marker}.md`, "Backup acceptance", "backup-acceptance", "fixture", "fixture"],
+    );
+    await admin.query(
+      `INSERT INTO word_l2_content (id, word_id, field, content, source, is_active)
+       VALUES ($1, $2, 'collocation', $3::jsonb, 'backup-acceptance', true)`,
+      [randomUUID(), fixture.word, JSON.stringify([{ acceptance: fixture.marker }])],
     );
     for (let index = 0; index < 2; index += 1) {
       await admin.query(
@@ -561,11 +677,11 @@ async function tableEvidence(client: Client, table: "wordbooks" | "user_word_pro
 }
 
 async function fixtureEvidence(client: Client, fixture: Fixture): Promise<TableEvidence[]> {
-  return Promise.all([
-    tableEvidence(client, "wordbooks", fixture.wordbooks),
-    tableEvidence(client, "user_word_progress", fixture.l1Progress),
-    tableEvidence(client, "user_word_l2_progress", fixture.l2Progress),
-  ]);
+  const evidence: TableEvidence[] = [];
+  evidence.push(await tableEvidence(client, "wordbooks", fixture.wordbooks));
+  evidence.push(await tableEvidence(client, "user_word_progress", fixture.l1Progress));
+  evidence.push(await tableEvidence(client, "user_word_l2_progress", fixture.l2Progress));
+  return evidence;
 }
 
 function assertCompleteEvidence(source: TableEvidence[], restored: TableEvidence[], fixture: Fixture): void {
@@ -587,8 +703,9 @@ function sortedAcl(value: unknown): string[] | null {
 
 export async function collectCatalogSnapshot(client: QueryClient): Promise<CatalogSnapshot> {
   const schemas = [...APPLICATION_SCHEMAS];
-  const database = await client.query<{ owner: string }>(
-    `SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = current_database()`,
+  const database = await client.query<{ owner: string; acl: string[] | null }>(
+    `SELECT pg_get_userbyid(datdba) AS owner, datacl AS acl
+     FROM pg_database WHERE datname = current_database()`,
   );
   const schemaRows = await client.query<{ schema: string; name: string; owner: string; acl: string[] | null }>(
     `SELECT n.nspname AS schema, n.nspname AS name, pg_get_userbyid(n.nspowner) AS owner, n.nspacl AS acl
@@ -634,14 +751,14 @@ export async function collectCatalogSnapshot(client: QueryClient): Promise<Catal
     schema: string; table: string; name: string; kind: string; definition: string;
     deferrable: boolean; initially_deferred: boolean; validated: boolean;
   }>(
-    `SELECT n.nspname AS schema, c.relname AS table, constraint.conname AS name,
-            constraint.contype::text AS kind, pg_get_constraintdef(constraint.oid, true) AS definition,
-            constraint.condeferrable AS deferrable, constraint.condeferred AS initially_deferred,
-            constraint.convalidated AS validated
-     FROM pg_constraint constraint JOIN pg_class c ON c.oid = constraint.conrelid
+    `SELECT n.nspname AS schema, c.relname AS table, con.conname AS name,
+            con.contype::text AS kind, pg_get_constraintdef(con.oid, true) AS definition,
+            con.condeferrable AS deferrable, con.condeferred AS initially_deferred,
+            con.convalidated AS validated
+     FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid
      JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = ANY($1::text[])
-     ORDER BY n.nspname, c.relname, constraint.conname`, [schemas],
+     ORDER BY n.nspname, c.relname, con.conname`, [schemas],
   );
   const triggers = await client.query<{
     schema: string; table: string; name: string; definition: string; enabled: string;
@@ -653,10 +770,20 @@ export async function collectCatalogSnapshot(client: QueryClient): Promise<Catal
      WHERE n.nspname = ANY($1::text[]) AND NOT trigger.tgisinternal
      ORDER BY n.nspname, c.relname, trigger.tgname`, [schemas],
   );
-  const routines = await client.query<{ schema: string; name: string; owner: string; identity_arguments: string; kind: string; acl: string[] | null }>(
+  const routines = await client.query<{
+    schema: string; name: string; owner: string; identity_arguments: string; kind: string; acl: string[] | null;
+    security_definer: boolean; config: string[] | null; language: string; volatility: string;
+    parallel: string; leakproof: boolean; definition: string;
+  }>(
     `SELECT n.nspname AS schema, p.proname AS name, pg_get_userbyid(p.proowner) AS owner,
-            pg_get_function_identity_arguments(p.oid) AS identity_arguments, p.prokind::text AS kind, p.proacl AS acl
+            pg_get_function_identity_arguments(p.oid) AS identity_arguments, p.prokind::text AS kind,
+            p.proacl AS acl, p.prosecdef AS security_definer,
+            ARRAY(SELECT value FROM unnest(p.proconfig) value ORDER BY value) AS config,
+            language.lanname AS language, p.provolatile::text AS volatility,
+            p.proparallel::text AS parallel, p.proleakproof AS leakproof,
+            pg_get_functiondef(p.oid) AS definition
      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     JOIN pg_language language ON language.oid = p.prolang
      WHERE n.nspname = ANY($1::text[])
      ORDER BY n.nspname, p.proname, pg_get_function_identity_arguments(p.oid), p.prokind`, [schemas],
   );
@@ -722,6 +849,7 @@ export async function collectCatalogSnapshot(client: QueryClient): Promise<Catal
   if (!owner) throw new Error("Unable to collect database owner");
   return {
     databaseOwner: owner,
+    databaseAcl: sortedAcl(database.rows[0]?.acl),
     schemas: schemaRows.rows.map((row) => ({ schema: row.schema, name: row.name, owner: row.owner })),
     relations: relations.rows.map((row) => ({ schema: row.schema, name: row.name, owner: row.owner, kind: row.kind })),
     columns: columns.rows.map((row) => ({
@@ -735,7 +863,12 @@ export async function collectCatalogSnapshot(client: QueryClient): Promise<Catal
       deferrable: row.deferrable, initiallyDeferred: row.initially_deferred, validated: row.validated,
     })),
     triggers: triggers.rows,
-    routines: routines.rows.map((row) => ({ schema: row.schema, name: row.name, owner: row.owner, identityArguments: row.identity_arguments, kind: row.kind })),
+    routines: routines.rows.map((row) => ({
+      schema: row.schema, name: row.name, owner: row.owner, identityArguments: row.identity_arguments,
+      kind: row.kind, securityDefiner: row.security_definer, config: sortedAcl(row.config),
+      language: row.language, volatility: row.volatility, parallel: row.parallel,
+      leakproof: row.leakproof, definition: row.definition.replaceAll("\r\n", "\n"),
+    })),
     types: types.rows.map((row) => ({ schema: row.schema, name: row.name, owner: row.owner, kind: row.kind })),
     extensions: extensions.rows,
     rowSecurity: rowSecurity.rows.map((row) => ({ schema: row.schema, table: row.table, rowSecurity: row.row_security, forceRowSecurity: row.force_row_security })),
@@ -765,7 +898,7 @@ export function assertMatchingCatalogSnapshots(
     throw new Error(`Restored catalog snapshot differs from source: databaseOwner (expected ${expectedRestoredDatabaseOwner})`);
   }
   const sections: (keyof CatalogSnapshot)[] = [
-    "schemas", "relations", "columns", "indexes", "constraints", "triggers",
+    "databaseAcl", "schemas", "relations", "columns", "indexes", "constraints", "triggers",
     "routines", "types", "extensions", "rowSecurity", "policies", "migrationHistory", "sequences", "acls",
   ];
   const mismatches = sections.filter((section) => JSON.stringify(source[section]) !== JSON.stringify(restored[section]));
@@ -794,7 +927,7 @@ export async function verifyBackupRlsAcceptance(): Promise<void> {
   let admin: Client | undefined;
   const clients: Client[] = [];
   let fixture: Fixture | undefined;
-  let restoreCreated = false;
+  let createAttempted = false;
   let primaryError: unknown;
   let restoredEvidence: TableEvidence[] | undefined;
   let restoredCatalog: CatalogSnapshot | undefined;
@@ -808,12 +941,14 @@ export async function verifyBackupRlsAcceptance(): Promise<void> {
     const sourceEvidence = await fixtureEvidence(backup, fixture);
     const sourceCatalog = await collectCatalogSnapshot(admin);
     await runPostgres(buildPgDumpInvocation(roleUrls.backup, dumpPath));
+    createAttempted = true;
     await createAcceptanceDatabase(admin, restoreName);
-    restoreCreated = true;
     await runPostgres(buildPgRestoreInvocation(restoredRoleUrls.migration, dumpPath));
+    await convergeAcceptanceDatabaseAcl(admin, restoreName);
 
     const restoredAdmin = await connect(restoreAdminUrl);
     clients.push(restoredAdmin);
+    await convergeRestoredSchemaOwnership(restoredAdmin);
     restoredCatalog = await collectCatalogSnapshot(restoredAdmin);
     assertMatchingCatalogSnapshots(sourceCatalog, restoredCatalog, sourceDatabaseOwner);
     restoredEvidence = await fixtureEvidence(restoredAdmin, fixture);
@@ -843,12 +978,10 @@ export async function verifyBackupRlsAcceptance(): Promise<void> {
       cleanupErrors.push(error);
     }
   }
-  if (restoreCreated && admin) {
-    try {
-      await dropAcceptanceDatabase(admin, adminUrl, restoreAdminUrl);
-    } catch (error) {
-      cleanupErrors.push(error);
-    }
+  try {
+    await cleanupAttemptedAcceptanceDatabase(createAttempted, admin, adminUrl, restoreAdminUrl);
+  } catch (error) {
+    cleanupErrors.push(error);
   }
   if (admin) {
     try {

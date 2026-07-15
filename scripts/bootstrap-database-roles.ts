@@ -71,7 +71,7 @@ async function roleSql(client: Client, role: RoleUrl): Promise<void> {
     ? "LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION BYPASSRLS"
     : "LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS";
   const statement = await client.query<{ sql: string }>(
-    `SELECT format('ALTER ROLE %I WITH ${attributes} PASSWORD %L', $1, $2) AS sql`,
+    `SELECT format('ALTER ROLE %I WITH ${attributes} PASSWORD %L', $1::text, $2::text) AS sql`,
     [role.role, role.password],
   );
   await client.query(statement.rows[0]!.sql);
@@ -81,7 +81,7 @@ async function roleSql(client: Client, role: RoleUrl): Promise<void> {
      FROM pg_auth_members membership
      JOIN pg_roles member ON member.oid = membership.member
      JOIN pg_roles parent ON parent.oid = membership.roleid
-     WHERE member.rolname = $1 OR parent.rolname = $1`,
+     WHERE member.rolname = $1::text OR parent.rolname = $1::text`,
     [role.role],
   );
   for (const membership of memberships.rows) {
@@ -108,7 +108,7 @@ async function ensureMigrationAuthority(client: Client, databaseName: string): P
   const statement = await client.query<{ sql: string }>(
     `SELECT format(
        'GRANT CONNECT, CREATE, TEMPORARY ON DATABASE %I TO vocab_migration; GRANT vocab_migration TO %I',
-       $1,
+       $1::text,
        current_user
      ) AS sql`,
     [databaseName],
@@ -118,7 +118,7 @@ async function ensureMigrationAuthority(client: Client, databaseName: string): P
 
 async function transferDatabaseOwnership(client: Client, databaseName: string): Promise<void> {
   const statement = await client.query<{ sql: string }>(
-    "SELECT format('ALTER DATABASE %I OWNER TO vocab_migration', $1) AS sql",
+    "SELECT format('ALTER DATABASE %I OWNER TO vocab_migration', $1::text) AS sql",
     [databaseName],
   );
   await client.query(statement.rows[0]!.sql);
@@ -222,7 +222,7 @@ async function transferApplicationOwnership(client: Client): Promise<void> {
   );
   for (const schema of schemas.rows) {
     const alter = await client.query<{ sql: string }>(
-      "SELECT format('ALTER SCHEMA %I OWNER TO vocab_migration', $1) AS sql",
+      "SELECT format('ALTER SCHEMA %I OWNER TO vocab_migration', $1::text) AS sql",
       [schema.schema_name],
     );
     await client.query(alter.rows[0]!.sql);
@@ -234,9 +234,9 @@ async function convergePrivileges(client: Client, databaseName: string): Promise
   const databasePrivileges = await client.query<{ sql: string }>(
     `SELECT format(
        'REVOKE ALL ON DATABASE %I FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration; GRANT CONNECT ON DATABASE %I TO vocab_app, vocab_worker, vocab_backup, vocab_migration; GRANT CREATE, TEMPORARY ON DATABASE %I TO vocab_migration',
-       $1,
-       $1,
-       $1
+       $1::text,
+       $1::text,
+       $1::text
      ) AS sql`,
     [databaseName],
   );

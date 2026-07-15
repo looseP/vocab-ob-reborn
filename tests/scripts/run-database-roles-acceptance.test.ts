@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   acceptanceEnvironment,
   acceptanceInvocations,
+  acceptancePostgresContainerName,
   acceptanceProjectName,
   cleanupInvocation,
+  resolveSpawnCommand,
   runDatabaseRolesAcceptance,
   throwOrchestrationErrors,
   type CommandInvocation,
@@ -22,12 +24,14 @@ const PASSWORDS = [
 describe("database roles acceptance orchestration", () => {
   it("guards random project names", () => {
     expect(acceptanceProjectName(UUID)).toBe(PROJECT);
+    expect(acceptancePostgresContainerName(PROJECT)).toBe(`${PROJECT}-postgres-1`);
+    expect(() => acceptancePostgresContainerName("vocab-observatory-db-roles-readable-postgres-1")).toThrow(/unguarded Compose project/);
     expect(() => acceptanceProjectName("../../other-project")).toThrow(/unguarded Compose project/);
     expect(() => cleanupInvocation("vocab-observatory-database-roles-acceptance", {})).toThrow(/unguarded Compose project/);
   });
 
   it("routes five exact identities through one dynamic high loopback port with distinct passwords", () => {
-    const env = acceptanceEnvironment(61234, PASSWORDS);
+    const env = acceptanceEnvironment(61234, PASSWORDS, PROJECT);
     const expected = {
       DATABASE_ADMIN_URL: "vocab_roles_admin",
       APP_DATABASE_URL: "vocab_app",
@@ -44,12 +48,29 @@ describe("database roles acceptance orchestration", () => {
       expect(url.username).toBe(username);
     }
     expect(new Set(Object.keys(expected).map((name) => new URL(env[name]!).password)).size).toBe(5);
-    expect(() => acceptanceEnvironment(49151, PASSWORDS)).toThrow(/dynamic high port/);
-    expect(() => acceptanceEnvironment(61234, [...PASSWORDS.slice(0, 4), PASSWORDS[0]!])).toThrow(/five distinct/);
+    expect(env.PG_TOOLS_CONTAINER).toBe(`${PROJECT}-postgres-1`);
+    expect(() => acceptanceEnvironment(49151, PASSWORDS, PROJECT)).toThrow(/dynamic high port/);
+    expect(() => acceptanceEnvironment(61234, [...PASSWORDS.slice(0, 4), PASSWORDS[0]!], PROJECT)).toThrow(/five distinct/);
+    expect(() => acceptanceEnvironment(61234, PASSWORDS, "vocab-observatory-db-roles-readable")).toThrow(/unguarded Compose project/);
+  });
+
+  it("does not inherit Compose compatibility naming into acceptance invocations", () => {
+    const previous = process.env.COMPOSE_COMPATIBILITY;
+    process.env.COMPOSE_COMPATIBILITY = "1";
+    try {
+      const env = acceptanceEnvironment(61234, PASSWORDS, PROJECT);
+      expect(env.COMPOSE_COMPATIBILITY).toBeUndefined();
+      expect(env.PG_TOOLS_CONTAINER).toBe(`${PROJECT}-postgres-1`);
+      expect(acceptanceInvocations(PROJECT, env).every((invocation) => invocation.env.COMPOSE_COMPATIBILITY === undefined)).toBe(true);
+      expect(cleanupInvocation(PROJECT, env).env.COMPOSE_COMPATIBILITY).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.COMPOSE_COMPATIBILITY;
+      else process.env.COMPOSE_COMPATIBILITY = previous;
+    }
   });
 
   it("freezes the required command arguments and strict execution order", () => {
-    const env = acceptanceEnvironment(61234, PASSWORDS);
+    const env = acceptanceEnvironment(61234, PASSWORDS, PROJECT);
     const invocations = acceptanceInvocations(PROJECT, env);
     expect(invocations.map(({ command, args }) => [command, args])).toEqual([
       ["docker", ["compose", "-f", "compose.database-roles-acceptance.yaml", "-p", PROJECT, "up", "-d", "--wait", "postgres"]],
@@ -64,6 +85,28 @@ describe("database roles acceptance orchestration", () => {
       "compose", "-f", "compose.database-roles-acceptance.yaml", "-p", PROJECT,
       "down", "--volumes", "--remove-orphans",
     ]);
+  });
+
+  it("uses Node plus the npm CLI JavaScript on Windows without changing docker", () => {
+    const npm = resolveSpawnCommand(
+      { command: "npm", args: ["run", "db:migrate"], env: { npm_execpath: "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js" } },
+      "win32",
+      "C:\\Program Files\\nodejs\\node.exe",
+    );
+    expect(npm).toEqual({
+      command: "C:\\Program Files\\nodejs\\node.exe",
+      args: ["C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js", "run", "db:migrate"],
+    });
+    expect(npm.command).not.toMatch(/npm\.cmd$/i);
+    expect(resolveSpawnCommand(
+      { command: "docker", args: ["compose", "up"], env: {} },
+      "win32",
+      "C:\\Program Files\\nodejs\\node.exe",
+    )).toEqual({ command: "docker", args: ["compose", "up"] });
+    expect(() => resolveSpawnCommand(
+      { command: "npm", args: ["run", "db:migrate"], env: { npm_execpath: "npm.cmd" } },
+      "win32",
+    )).toThrow(/npm CLI JavaScript/);
   });
 
   it("always cleans only its guarded project and returns success after cleanup", async () => {

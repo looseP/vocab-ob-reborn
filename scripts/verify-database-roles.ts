@@ -403,11 +403,11 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
     ["PUBLIC", new Set()],
     ["vocab_app", new Set([
       "auth.uid()",
-      "public.get_or_create_today_session(uuid,uuid,text,timestamp with time zone)",
-      "public.increment_session_cards_seen(uuid,uuid,uuid)",
-      "public.undo_review_log(uuid,uuid,uuid,uuid)",
+      "public.get_or_create_today_session(uuid, uuid, text, timestamp with time zone)",
+      "public.increment_session_cards_seen(uuid, uuid, uuid)",
+      "public.undo_review_log(uuid, uuid, uuid, uuid)",
       "public.refresh_l2_cache(uuid)",
-      "public.finalize_l2_content_hash(uuid,text,text)",
+      "public.finalize_l2_content_hash(uuid, text, text)",
     ])],
     ["vocab_worker", new Set(["auth.uid()"])],
     ["vocab_backup", new Set()],
@@ -415,7 +415,7 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
   const functions = await admin.query<{ role_name: string; routine: string }>(
     `SELECT CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE grantee.rolname END AS role_name,
             format('%I.%I(%s)', namespace.nspname, routine.proname,
-                   pg_get_function_identity_arguments(routine.oid)) AS routine
+                   pg_catalog.oidvectortypes(routine.proargtypes)) AS routine
      FROM pg_proc routine
      JOIN pg_namespace namespace ON namespace.oid = routine.pronamespace
      CROSS JOIN LATERAL aclexplode(routine.proacl) acl

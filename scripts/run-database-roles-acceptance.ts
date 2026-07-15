@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
-import { resolve } from "node:path";
+import { resolve, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
 
@@ -48,6 +48,11 @@ export function assertGuardedProjectName(project: string): void {
   }
 }
 
+export function acceptancePostgresContainerName(project: string): string {
+  assertGuardedProjectName(project);
+  return `${project}-postgres-1`;
+}
+
 export async function allocateLoopbackPort(): Promise<number> {
   return new Promise<number>((resolvePort, reject) => {
     const server = createServer();
@@ -78,7 +83,7 @@ function roleUrl(username: string, password: string, port: number): string {
   return url.toString();
 }
 
-export function acceptanceEnvironment(port: number, passwords: readonly string[]): NodeJS.ProcessEnv {
+export function acceptanceEnvironment(port: number, passwords: readonly string[], project: string): NodeJS.ProcessEnv {
   if (!Number.isInteger(port) || port < 49152 || port > 65535) {
     throw new Error("Acceptance port must be a dynamic high port");
   }
@@ -86,8 +91,9 @@ export function acceptanceEnvironment(port: number, passwords: readonly string[]
     throw new Error("Acceptance passwords must be five distinct values of at least 16 characters");
   }
   const [admin, app, worker, backup, migration] = passwords;
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
+    PG_TOOLS_CONTAINER: acceptancePostgresContainerName(project),
     DATABASE_ROLES_ACCEPTANCE_PORT: String(port),
     DATABASE_ROLES_ADMIN_PASSWORD: admin,
     DATABASE_ADMIN_URL: roleUrl("vocab_roles_admin", admin!, port),
@@ -98,6 +104,8 @@ export function acceptanceEnvironment(port: number, passwords: readonly string[]
     DB_SSLMODE: "disable",
     DB_POOL_MAX: "1",
   };
+  delete env.COMPOSE_COMPATIBILITY;
+  return env;
 }
 
 export function acceptanceInvocations(project: string, env: NodeJS.ProcessEnv): CommandInvocation[] {
@@ -122,10 +130,30 @@ export function cleanupInvocation(project: string, env: NodeJS.ProcessEnv): Comm
   };
 }
 
+export interface SpawnCommand {
+  command: string;
+  args: string[];
+}
+
+export function resolveSpawnCommand(
+  invocation: Pick<CommandInvocation, "command" | "args" | "env">,
+  platform: NodeJS.Platform = process.platform,
+  nodeExecutable: string = process.execPath,
+): SpawnCommand {
+  if (platform !== "win32" || invocation.command !== "npm") {
+    return { command: invocation.command, args: invocation.args };
+  }
+  const npmExecPath = invocation.env.npm_execpath?.trim();
+  if (!npmExecPath || !win32.isAbsolute(npmExecPath) || win32.basename(npmExecPath).toLowerCase() !== "npm-cli.js") {
+    throw new Error("Windows npm invocation requires npm_execpath to reference the absolute npm CLI JavaScript file");
+  }
+  return { command: nodeExecutable, args: [npmExecPath, ...invocation.args] };
+}
+
 export async function runCommand(invocation: CommandInvocation, signal?: AbortSignal): Promise<void> {
   await new Promise<void>((resolveRun, reject) => {
-    const executable = process.platform === "win32" && invocation.command === "npm" ? "npm.cmd" : invocation.command;
-    const child = spawn(executable, invocation.args, {
+    const executable = resolveSpawnCommand(invocation);
+    const child = spawn(executable.command, executable.args, {
       env: invocation.env,
       stdio: "inherit",
       windowsHide: true,
@@ -156,7 +184,7 @@ export async function runDatabaseRolesAcceptance(dependencies: AcceptanceDepende
   const offSignal = dependencies.offSignal ?? ((signal, listener) => process.off(signal, listener));
   const project = acceptanceProjectName(uuid());
   const port = await allocatePort();
-  const env = acceptanceEnvironment(port, Array.from({ length: 5 }, () => password()));
+  const env = acceptanceEnvironment(port, Array.from({ length: 5 }, () => password()), project);
   let interrupted: Error | undefined;
   const abortController = new AbortController();
   const interrupt = (signal: NodeJS.Signals) => (): void => {

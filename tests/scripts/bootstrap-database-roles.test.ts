@@ -56,7 +56,7 @@ describe("database role bootstrap least-privilege contract", () => {
   });
 
   it("removes and verifies both incoming and outgoing memberships", () => {
-    expect(bootstrap).toContain("WHERE member.rolname = $1 OR parent.rolname = $1");
+    expect(bootstrap).toContain("WHERE member.rolname = $1::text OR parent.rolname = $1::text");
     expect(bootstrap).toContain("assertZeroManagedRoleMemberships(client)");
     expect(verifier).toContain("zero incoming and outgoing memberships");
   });
@@ -104,18 +104,19 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(verifier).toContain("grantee.rolname = 'vocab_backup'");
     expect(verifier).toContain("managedRelations.rows.map");
     expect(verifier).toContain("privilegeKey(\"vocab_backup\", relation, \"SELECT\")");
+    expect(verifier).toContain("pg_catalog.oidvectortypes(routine.proargtypes)");
     expect(verifier).toContain("[\"vocab_backup\", new Set()]");
     expect(bootstrap).toContain("GRANT SELECT ON ALL TABLES IN SCHEMA public, auth, vocab_migrations TO vocab_backup");
     expect(bootstrap).toContain("GRANT SELECT ON ALL SEQUENCES IN SCHEMA public, auth, vocab_migrations TO vocab_backup");
   });
 
   it("grants and verifies only the actor-authorized L2 cache and hash functions", () => {
-    for (const signature of [
-      "public.refresh_l2_cache(uuid)",
-      "public.finalize_l2_content_hash(uuid,text,text)",
+    for (const [registrationSignature, verifierSignature] of [
+      ["public.refresh_l2_cache(uuid)", "public.refresh_l2_cache(uuid)"],
+      ["public.finalize_l2_content_hash(uuid,text,text)", "public.finalize_l2_content_hash(uuid, text, text)"],
     ]) {
-      expect(bootstrap).toContain(`to_regprocedure('${signature}')`);
-      expect(verifier).toContain(`\"${signature}\"`);
+      expect(bootstrap).toContain(`to_regprocedure('${registrationSignature}')`);
+      expect(verifier).toContain(`\"${verifierSignature}\"`);
     }
     expect(bootstrap).toContain("GRANT EXECUTE ON FUNCTION public.refresh_l2_cache(uuid) TO vocab_app");
     expect(bootstrap).toContain("GRANT EXECUTE ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) TO vocab_app");
@@ -131,6 +132,14 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(verifier).toContain("l2SecurityFunctions: true");
     expect(bootstrap).not.toContain("mark_l2_stale_for_recheck");
     expect(verifier).not.toContain("mark_l2_stale_for_recheck");
+  });
+
+  it("casts dynamic format parameters so PostgreSQL can infer prepared-statement types", () => {
+    expect(bootstrap).toContain("PASSWORD %L', $1::text, $2::text");
+    expect(bootstrap).toContain("DATABASE %I TO vocab_migration; GRANT vocab_migration TO %I',\n       $1::text,");
+    expect(bootstrap).toContain("ALTER DATABASE %I OWNER TO vocab_migration', $1::text");
+    expect(bootstrap).toContain("ALTER SCHEMA %I OWNER TO vocab_migration', $1::text");
+    expect(bootstrap).toContain("$1::text,\n       $1::text,\n       $1::text");
   });
 
   it("converges and verifies the database owner", () => {
