@@ -74,6 +74,83 @@ describe("release workflow structured contract", () => {
   it("rejects producer missing raw manifest hash", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "backup-restore": producers["backup-restore"].replace("sha256sum prepare/release-manifest.json", "echo digest") })).toThrow(/raw manifest hash/));
   it("rejects producer builder removed from check job", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "backup-restore": producers["backup-restore"].replace("release:check:evidence", "removed-builder") })).toThrow(/builder/));
   it("rejects producer real check removed", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "alerting-drill": producers["alerting-drill"].replace("npm run alerting:drill -- --confirm-staging --confirm-reversible", "echo fake") })).toThrow(/real check/));
+  it("rejects database roles producer using the legacy TEST_DATABASE_URL", () => {
+    const value = parse(producers["database-roles"]);
+    value.jobs.check.env.TEST_DATABASE_URL = value.jobs.check.env.DATABASE_ADMIN_URL;
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "database-roles": stringify(value),
+    })).toThrow(/legacy TEST_DATABASE_URL/);
+  });
+  it("rejects database roles producer migrating outside the migration LOGIN", () => {
+    const value = parse(producers["database-roles"]);
+    const migrate = value.jobs.check.steps.find(
+      (step: { name?: string }) => step.name === "Run authoritative migrations as vocab_migration",
+    );
+    migrate.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "database-roles": stringify(value),
+    })).toThrow(/MIGRATION_DATABASE_URL/);
+  });
+  it("rejects database roles producer collapsing to migrate and test under one identity", () => {
+    const value = parse(producers["database-roles"]);
+    const prepare = value.jobs.check.steps.find(
+      (step: { name?: string }) => step.name === "Prepare real database LOGIN roles",
+    );
+    prepare.run = "npm run db:migrate && npm run test:db-roles";
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "database-roles": stringify(value),
+    })).toThrow(/prepare phase|fake superuser role isolation/);
+  });
+  it("rejects database roles producer with reordered convergence", () => {
+    const value = parse(producers["database-roles"]);
+    const allSteps = value.jobs.check.steps as Array<{ name?: string }>;
+    const migrateIndex = allSteps.findIndex((step) => step.name === "Run authoritative migrations as vocab_migration");
+    const convergeIndex = allSteps.findIndex((step) => step.name === "Converge database role ownership and privileges");
+    [allSteps[migrateIndex], allSteps[convergeIndex]] = [allSteps[convergeIndex], allSteps[migrateIndex]];
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "database-roles": stringify(value),
+    })).toThrow(/must run before/);
+  });
+  it("rejects database roles producer inserting work between converge revocation and membership verification", () => {
+    const value = parse(producers["database-roles"]);
+    const allSteps = value.jobs.check.steps as Array<{ name?: string; run?: string }>;
+    const verifyIndex = allSteps.findIndex((step) => step.name === "Verify real database LOGIN isolation");
+    allSteps.splice(verifyIndex, 0, { name: "Unsafe membership window", run: "true" });
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "database-roles": stringify(value),
+    })).toThrow(/immediately after converge/);
+  });
+  it("rejects backup restore producer that reuses the admin password for a runtime role", () => {
+    const value = parse(producers["backup-restore"]);
+    value.jobs.check.env.APP_DATABASE_URL = "postgresql://vocab_app:vocab@127.0.0.1:5432/vocab";
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "backup-restore": stringify(value),
+    })).toThrow(/five distinct test-only passwords/);
+  });
+  it("rejects backup restore producer omitting the complete RLS backup restore", () => {
+    const value = parse(producers["backup-restore"]);
+    value.jobs.check.steps = value.jobs.check.steps.filter(
+      (step: { name?: string }) => step.name !== "Verify complete RLS backup and restore",
+    );
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "backup-restore": stringify(value),
+    })).toThrow(/Verify complete RLS backup and restore/);
+  });
+  it("rejects database roles producer adding a SET ROLE impersonation path", () => {
+    const value = parse(producers["database-roles"]);
+    value.jobs.check.steps.push({ name: "Legacy impersonation", run: "psql \"$DATABASE_ADMIN_URL\" -c 'SET ROLE vocab_app'" });
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "database-roles": stringify(value),
+    })).toThrow(/fake superuser role isolation/);
+  });
   it("rejects producer upload with weak retention", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "migration-rehearsal": producers["migration-rehearsal"].replace("retention-days: 90", "retention-days: 1") })).toThrow(/upload/));
   it("rejects producer sidecar outside artifact directory", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "rollback-compatibility": producers["rollback-compatibility"].replace("(cd prepare && sha256sum --check release-manifest.sha256)", "sha256sum --check prepare/release-manifest.sha256") })).toThrow(/sidecar/));
   it("rejects alerting drill without a protected persistent lock path", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, { ...producers, "alerting-drill": producers["alerting-drill"].replace("DRILL_LOCK_FILE: ${{ vars.DRILL_LOCK_FILE }}", "DRILL_LOCK_FILE: /tmp/drill.lock") })).toThrow(/DRILL_LOCK_FILE/));

@@ -1,7 +1,6 @@
 name: vocab-observatory
 
 x-app-environment: &app-environment
-  DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
   DB_SSLMODE: disable
   DB_POOL_MAX: ${DB_POOL_MAX:-5}
   LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -21,7 +20,7 @@ x-app-base: &app-base
     - app
     - database
   depends_on:
-    migrate:
+    database-role-converge:
       condition: service_completed_successfully
 
 services:
@@ -43,28 +42,63 @@ services:
       retries: 20
       start_period: 5s
 
-  migrate:
+  database-role-bootstrap:
     image: ${MIGRATION_IMAGE:?MIGRATION_IMAGE is required}
     init: true
     restart: "no"
     environment:
-      <<: *app-environment
+      DATABASE_ADMIN_URL: ${DATABASE_ADMIN_URL:?DATABASE_ADMIN_URL is required}
+      APP_DATABASE_URL: ${APP_DATABASE_URL:?APP_DATABASE_URL is required}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL is required}
+      BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:?BACKUP_DATABASE_URL is required}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}
     networks:
       - database
     depends_on:
       postgres:
         condition: service_healthy
+    command: ["./node_modules/.bin/tsx", "scripts/bootstrap-database-roles.ts", "prepare"]
+
+  migrate:
+    image: ${MIGRATION_IMAGE:?MIGRATION_IMAGE is required}
+    init: true
+    restart: "no"
+    environment:
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}
+    networks:
+      - database
+    depends_on:
+      database-role-bootstrap:
+        condition: service_completed_successfully
     command: ["./node_modules/.bin/drizzle-kit", "migrate", "--config", "drizzle.config.ts"]
+
+  database-role-converge:
+    image: ${MIGRATION_IMAGE:?MIGRATION_IMAGE is required}
+    init: true
+    restart: "no"
+    environment:
+      DATABASE_ADMIN_URL: ${DATABASE_ADMIN_URL:?DATABASE_ADMIN_URL is required}
+      APP_DATABASE_URL: ${APP_DATABASE_URL:?APP_DATABASE_URL is required}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL is required}
+      BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:?BACKUP_DATABASE_URL is required}
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}
+    networks:
+      - database
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["./node_modules/.bin/tsx", "scripts/bootstrap-database-roles.ts", "converge"]
 
   web:
     <<: *app-base
     environment:
       <<: *app-environment
+      DATABASE_URL: ${APP_DATABASE_URL:?APP_DATABASE_URL is required}
       NODE_ENV: production
       SINGLE_HOST_DEPLOYMENT: "true"
       PORT: 3001
       SERVE_FRONTEND: "true"
-      APP_DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      APP_DATABASE_URL: ${APP_DATABASE_URL:?APP_DATABASE_URL is required}
       APP_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required and must be HTTPS}
       OWNER_API_TOKEN: ${OWNER_API_TOKEN:?OWNER_API_TOKEN is required}
       METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:?METRICS_BEARER_TOKEN is required}
@@ -128,6 +162,7 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-review-outbox-worker.ts"]
     environment:
       <<: *app-environment
+      DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL is required}
       OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-20}
       OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-60}
@@ -139,6 +174,7 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-llm-reservation-reaper.ts"]
     environment:
       <<: *app-environment
+      DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL is required}
       LLM_REAPER_POLL_INTERVAL_MS: ${LLM_REAPER_POLL_INTERVAL_MS:-5000}
       LLM_REAPER_BATCH_SIZE: ${LLM_REAPER_BATCH_SIZE:-100}
     stop_grace_period: 30s
@@ -158,6 +194,7 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
     environment:
       <<: *app-environment
+      DATABASE_URL: ${BACKUP_DATABASE_URL:?BACKUP_DATABASE_URL is required}
       BACKUP_DIR: /backups
       BACKUP_INTERVAL_MS: ${BACKUP_INTERVAL_MS:-86400000}
       BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-14}
@@ -171,7 +208,7 @@ services:
     networks:
       - database
     depends_on:
-      migrate:
+      database-role-converge:
         condition: service_completed_successfully
     stop_grace_period: 30s
     healthcheck:

@@ -65,6 +65,85 @@ function requireStepOrder(job: Job, before: string, after: string, jobName: stri
     throw new Error(`${before} must run before ${after} in ${jobName}`);
   }
 }
+function requireDatabaseRolesProducerContract(job: Job, producerName = "database-roles"): void {
+  const jobName = `producer ${producerName}`;
+  const expectedUsers = {
+    APP_DATABASE_URL: "vocab_app",
+    WORKER_DATABASE_URL: "vocab_worker",
+    BACKUP_DATABASE_URL: "vocab_backup",
+    MIGRATION_DATABASE_URL: "vocab_migration",
+  } as const;
+  const adminValue = job.env?.DATABASE_ADMIN_URL;
+  if (typeof adminValue !== "string") throw new Error(`${jobName} must provide DATABASE_ADMIN_URL`);
+  if ("TEST_DATABASE_URL" in (job.env ?? {})) throw new Error(`${jobName} must not use the legacy TEST_DATABASE_URL superuser path`);
+  let admin: URL;
+  try {
+    admin = new URL(adminValue);
+  } catch {
+    throw new Error(`${jobName} DATABASE_ADMIN_URL must be valid`);
+  }
+  const adminUser = decodeURIComponent(admin.username);
+  if (!adminUser || Object.values(expectedUsers).includes(adminUser as (typeof expectedUsers)[keyof typeof expectedUsers])) {
+    throw new Error(`${jobName} must use a dedicated administration LOGIN`);
+  }
+  const passwords = new Set<string>([decodeURIComponent(admin.password)]);
+  for (const [name, username] of Object.entries(expectedUsers)) {
+    const value = job.env?.[name];
+    if (typeof value !== "string") throw new Error(`${jobName} must provide ${name}`);
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error(`${jobName} ${name} must be valid`);
+    }
+    if (
+      url.protocol !== "postgresql:"
+      || decodeURIComponent(url.username) !== username
+      || url.hostname !== admin.hostname
+      || url.port !== admin.port
+      || url.pathname !== admin.pathname
+    ) {
+      throw new Error(`${jobName} ${name} must authenticate as ${username} on the admin database`);
+    }
+    passwords.add(decodeURIComponent(url.password));
+  }
+  if (passwords.size !== 5 || [...passwords].some((password) => password.length < 16)) {
+    throw new Error(`${jobName} must use five distinct test-only passwords`);
+  }
+
+  const prepare = namedStep(job, "Prepare real database LOGIN roles", jobName);
+  const migrate = namedStep(job, "Run authoritative migrations as vocab_migration", jobName);
+  const converge = namedStep(job, "Converge database role ownership and privileges", jobName);
+  const verifyLogin = namedStep(job, "Verify real database LOGIN isolation", jobName);
+  const verify = producerName === "backup-restore"
+    ? namedStep(job, "Verify complete RLS backup and restore", jobName)
+    : verifyLogin;
+  requireExactExecutableScript(prepare, "npm exec -- tsx scripts/bootstrap-database-roles.ts prepare", `${jobName} prepare phase is invalid`);
+  requireExactExecutableScript(migrate, "npm run db:migrate", `${jobName} migration phase is invalid`);
+  requireExactExecutableScript(converge, "npm exec -- tsx scripts/bootstrap-database-roles.ts converge", `${jobName} converge phase is invalid`);
+  requireExactExecutableScript(verifyLogin, "npm run test:db-roles", `${jobName} LOGIN verification phase is invalid`);
+  if (producerName === "backup-restore") {
+    requireExactExecutableScript(verify, "npm run test:backup-rls", `${jobName} backup verification phase is invalid`);
+  }
+  if (migrate.env?.DATABASE_URL !== "${{ env.MIGRATION_DATABASE_URL }}") {
+    throw new Error(`${jobName} migrations must authenticate through MIGRATION_DATABASE_URL`);
+  }
+  requireStepOrder(job, prepare.name!, migrate.name!, jobName);
+  requireStepOrder(job, migrate.name!, converge.name!, jobName);
+  requireStepOrder(job, converge.name!, verifyLogin.name!, jobName);
+  if (producerName === "backup-restore") requireStepOrder(job, verifyLogin.name!, verify.name!, jobName);
+  const allSteps = steps(job, jobName);
+  const convergeIndex = allSteps.indexOf(converge);
+  const verifyIndex = allSteps.indexOf(verifyLogin);
+  if (verifyIndex !== convergeIndex + 1) {
+    throw new Error(`${jobName} must verify memberships immediately after converge revokes temporary migration authority`);
+  }
+  const executable = steps(job, jobName).map(executableScript).join("\n");
+  if (/npm run db:migrate\s*&&\s*npm run test:db-roles/.test(executable) || /\bSET\s+ROLE\b/i.test(executable)) {
+    throw new Error(`${jobName} must not fall back to fake superuser role isolation`);
+  }
+}
+
 function requireRlsAcceptanceContract(job: Job, jobName: string, verificationStepName: string): void {
   const verification = namedStep(job, verificationStepName, jobName);
   const acceptanceUrl = verification.env?.RLS_ACCEPTANCE_DATABASE_URL
@@ -206,8 +285,8 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
 
   const producerCommands: Record<ProducerCheck, RegExp> = {
     "migration-rehearsal": /npm run db:migrate && npm run test:db-release/,
-    "database-roles": /npm run db:migrate && npm run test:db-roles/,
-    "backup-restore": /npm run db:restore:drill/,
+    "database-roles": /npm run test:db-roles/,
+    "backup-restore": /npm run test:backup-rls/,
     "rollback-compatibility": /npm run release:rollback-check/,
     "alerting-drill": /npm run alerting:drill -- --confirm-staging --confirm-reversible/,
     "secret-rotation": /npm run secret-rotation:evidence:verify/,
@@ -231,6 +310,7 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
       if (drillStep.env?.DRILL_LOCK_FILE !== "${{ vars.DRILL_LOCK_FILE }}") throw new Error("Alerting drill must consume the protected persistent DRILL_LOCK_FILE");
     }
     if (job.permissions) throw new Error(`Producer ${check} must not add job permissions`);
+    if (check === "database-roles" || check === "backup-restore") requireDatabaseRolesProducerContract(job, check);
     const allSteps = steps(job, `producer ${check}`);
     if (!allSteps.some((step) => typeof step.run === "string" && /\[\[ "\$PREPARE_RUN_ID" =~ \^\[1-9\]\[0-9\]\*\$ \]\]/.test(step.run) && /\.status == "completed" and \.conclusion == "success" and \.path == "\.github\/workflows\/release\.yml" and \.head_repository\.full_name == \$repo and \.head_sha == \$sha/.test(step.run) && /\[\[ "\$\(jq -er '\.total_count' <<<"\$artifacts"\)" -le 100 \]\]/.test(step.run) && /\(cd prepare && sha256sum --check release-manifest\.sha256\)/.test(step.run) && /sha256sum prepare\/release-manifest\.json/.test(step.run) && /actions\/artifacts\/\$artifact_id\/zip/.test(step.run) && /select\(length == 1 and \.\[0\]\.expired == false\)/.test(step.run))) throw new Error(`Producer ${check} must validate prepare metadata, unique artifact ID, sidecar, and raw manifest hash`);
     if (!allSteps.some((step) => typeof step.run === "string" && producerCommands[check].test(step.run))) throw new Error(`Producer ${check} real check command is missing from check job`);
