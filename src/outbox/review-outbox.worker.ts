@@ -121,7 +121,7 @@ export class ReviewOutboxWorker {
         await repos.outbox.completeEffect(eventId, "session_cards_seen");
       }
       await repos.outbox.markProcessed(eventId, this.workerId);
-    });
+    }, { actorId: payload.userId });
   }
 
   private retryDelaySeconds(attempts: number): number {
