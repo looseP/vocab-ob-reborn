@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Client, type QueryResultRow } from "pg";
+import { computeFullHash, computeL2Hash } from "../src/db/content-hash";
+import { postgresClientConfig } from "../src/db/ssl";
 
 const ROLE_URLS = {
   app: ["APP_DATABASE_URL", "vocab_app"],
@@ -18,10 +20,13 @@ interface VerifiedUrl {
 }
 
 interface Fixture {
-  users: [string, string];
-  wordbooks: [string, string];
-  word: string;
-  l2Progress: [string, string];
+  users: [string, string, string];
+  wordbooks: [string, string, string, string, string];
+  words: [string, string, string];
+  l2Progress: [string, string, string, string, string];
+  expectedL2Hash: string;
+  expectedContentHash: string;
+  originalDueAt: string;
 }
 
 function requiredUrl(name: string): URL {
@@ -56,7 +61,7 @@ function verifiedRoleUrls(adminUrl: URL): VerifiedUrl[] {
 }
 
 async function connect(url: URL): Promise<Client> {
-  const client = new Client({ connectionString: url.toString() });
+  const client = new Client(postgresClientConfig(url.toString()));
   await client.connect();
   return client;
 }
@@ -95,6 +100,28 @@ async function actorQuery<T extends QueryResultRow>(
   }
 }
 
+async function actorCommitQuery<T extends QueryResultRow>(
+  client: Client,
+  actorId: string,
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT set_config('request.jwt.claim.sub', $1, true)", [actorId]);
+    const result = await client.query<T>(sql, params);
+    await client.query("COMMIT");
+    return result.rows;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], "actor command and rollback failed");
+    }
+    throw error;
+  }
+}
+
 async function expectActorInvisible(
   client: Client,
   actorId: string | undefined,
@@ -117,13 +144,31 @@ async function assertLoginIdentity(client: Client, expectedRole: string): Promis
 }
 
 async function seedFixture(admin: Client): Promise<Fixture> {
+  const originalContentHash = "0".repeat(64);
+  const expectedWordForHash = {
+    definition_md: "role probe",
+    core_definitions: [],
+    prototype_text: null,
+    metadata: {},
+    collocations: [{ order: "bare-1" }, { order: "bare-2" }],
+    corpus_items: [{ order: "wrapper-1" }, { order: "wrapper-2" }],
+    synonym_items: [{ order: "single" }],
+    antonym_items: [{ order: "active" }],
+  };
+  const expectedL2Hash = computeL2Hash(expectedWordForHash);
+  const expectedContentHash = computeFullHash(expectedWordForHash);
+  const originalDueAt = "2099-01-01T00:00:00.000Z";
   const fixture: Fixture = {
-    users: [randomUUID(), randomUUID()],
-    wordbooks: [randomUUID(), randomUUID()],
-    word: randomUUID(),
-    l2Progress: [randomUUID(), randomUUID()],
+    users: [randomUUID(), randomUUID(), randomUUID()],
+    wordbooks: [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()],
+    words: [randomUUID(), randomUUID(), randomUUID()],
+    l2Progress: [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()],
+    expectedL2Hash,
+    expectedContentHash,
+    originalDueAt,
   };
   const suffix = randomUUID().replaceAll("-", "");
+  const wordbookOwners = [fixture.users[0], fixture.users[1], fixture.users[0], fixture.users[1], fixture.users[1]];
   await admin.query("BEGIN");
   try {
     for (let index = 0; index < fixture.users.length; index += 1) {
@@ -135,32 +180,64 @@ async function seedFixture(admin: Client): Promise<Fixture> {
         "INSERT INTO profiles (id, email) VALUES ($1, $2)",
         [fixture.users[index], `p1a2-${suffix}-${index}@example.invalid`],
       );
+    }
+    for (let index = 0; index < fixture.wordbooks.length; index += 1) {
       await admin.query(
         "INSERT INTO wordbooks (id, user_id, name) VALUES ($1, $2, $3)",
-        [fixture.wordbooks[index], fixture.users[index], `p1a2-${suffix}-${index}`],
+        [fixture.wordbooks[index], wordbookOwners[index], `p1a2-${suffix}-${index}`],
+      );
+    }
+    for (let index = 0; index < fixture.words.length; index += 1) {
+      await admin.query(
+        `INSERT INTO words
+         (id, slug, content_hash, source_path, title, lemma, definition_md, body_md, is_published)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          fixture.words[index],
+          `p1a2-${suffix}-${index}`,
+          index === 0 ? originalContentHash : `${index}`.repeat(64),
+          `p1a2/${suffix}-${index}.md`,
+          `P1a2 role probe ${index}`,
+          `p1a2-role-probe-${index}`,
+          "role probe",
+          "role probe",
+          index !== 2,
+        ],
+      );
+    }
+    const l2Rows = [
+      ["collocation", [{ order: "bare-1" }, { order: "bare-2" }], "2026-01-01T00:00:00.000Z", true],
+      ["corpus", { schemaVersion: "l2-content-v1", items: [{ order: "wrapper-1" }, { order: "wrapper-2" }] }, "2026-01-02T00:00:00.000Z", true],
+      ["synonym", { order: "single" }, "2026-01-03T00:00:00.000Z", true],
+      ["antonym", [{ order: "active" }], "2026-01-04T00:00:00.000Z", true],
+      ["antonym", [{ order: "inactive" }], "2026-01-05T00:00:00.000Z", false],
+    ] as const;
+    for (const [field, content, createdAt, isActive] of l2Rows) {
+      await admin.query(
+        `INSERT INTO word_l2_content (word_id, field, content, source, created_at, is_active)
+         VALUES ($1, $2, $3::jsonb, 'p1a2-role-probe', $4, $5)`,
+        [fixture.words[0], field, JSON.stringify(content), createdAt, isActive],
       );
     }
     await admin.query(
-      `INSERT INTO words
-       (id, slug, content_hash, source_path, title, lemma, definition_md, body_md)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        fixture.word,
-        `p1a2-${suffix}`,
-        suffix.padEnd(64, "0").slice(0, 64),
-        `p1a2/${suffix}.md`,
-        "P1a2 role probe",
-        "p1a2-role-probe",
-        "role probe",
-        "role probe",
-      ],
+      `INSERT INTO word_l2_content (word_id, field, content, source, created_at, is_active)
+       VALUES ($1, 'collocation', '[{"order":"other-word"}]'::jsonb,
+               'p1a2-role-probe', '2026-01-01T00:00:00.000Z', true)`,
+      [fixture.words[1]],
     );
-    for (let index = 0; index < fixture.users.length; index += 1) {
+    const progressRows = [
+      [fixture.l2Progress[0], fixture.users[0], fixture.wordbooks[0], "c".repeat(64), false],
+      [fixture.l2Progress[1], fixture.users[1], fixture.wordbooks[1], "d".repeat(64), false],
+      [fixture.l2Progress[2], fixture.users[0], fixture.wordbooks[2], "e".repeat(64), true],
+      [fixture.l2Progress[3], fixture.users[1], fixture.wordbooks[3], null, false],
+      [fixture.l2Progress[4], fixture.users[1], fixture.wordbooks[4], expectedL2Hash, false],
+    ] as const;
+    for (const [id, userId, wordbookId, snapshot, paused] of progressRows) {
       await admin.query(
         `INSERT INTO user_word_l2_progress
-         (id, user_id, word_id, wordbook_id)
-         VALUES ($1, $2, $3, $4)`,
-        [fixture.l2Progress[index], fixture.users[index], fixture.word, fixture.wordbooks[index]],
+         (id, user_id, word_id, wordbook_id, l2_content_hash_snapshot, l2_paused, l2_due_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [id, userId, fixture.words[0], wordbookId, snapshot, paused, originalDueAt],
       );
     }
     await admin.query("COMMIT");
@@ -180,7 +257,7 @@ async function cleanupFixture(admin: Client, fixture: Fixture | undefined): Prom
   await admin.query("BEGIN");
   try {
     await admin.query("DELETE FROM public.users WHERE id = ANY($1::uuid[])", [fixture.users]);
-    await admin.query("DELETE FROM public.words WHERE id = $1", [fixture.word]);
+    await admin.query("DELETE FROM public.words WHERE id = ANY($1::uuid[])", [fixture.words]);
     await admin.query("COMMIT");
   } catch (error) {
     try {
@@ -561,14 +638,14 @@ async function verifyOwnership(admin: Client): Promise<void> {
 
 async function verifyAppRls(app: Client, fixture: Fixture): Promise<void> {
   await expectDenied(app, "SELECT id FROM import_runs LIMIT 1", [], "vocab_app privileged import audit read");
-  await expectDenied(app, "UPDATE words SET title = title WHERE id = $1", [fixture.word], "vocab_app catalog administration write");
+  await expectDenied(app, "UPDATE words SET title = title WHERE id = $1", [fixture.words[0]], "vocab_app catalog administration write");
   const own = await actorQuery<{ id: string }>(
     app,
     fixture.users[0],
     "SELECT id FROM wordbooks WHERE id = ANY($1::uuid[]) ORDER BY id",
     [fixture.wordbooks],
   );
-  if (own.length !== 1 || own[0]?.id !== fixture.wordbooks[0]) {
+  if (JSON.stringify(own.map(({ id }) => id).sort()) !== JSON.stringify([fixture.wordbooks[0], fixture.wordbooks[2]].sort())) {
     throw new Error("vocab_app did not enforce owner RLS for user A");
   }
   const other = await actorQuery<{ id: string }>(
@@ -577,7 +654,8 @@ async function verifyAppRls(app: Client, fixture: Fixture): Promise<void> {
     "SELECT id FROM wordbooks WHERE id = ANY($1::uuid[]) ORDER BY id",
     [fixture.wordbooks],
   );
-  if (other.length !== 1 || other[0]?.id !== fixture.wordbooks[1]) {
+  if (JSON.stringify(other.map(({ id }) => id).sort())
+    !== JSON.stringify([fixture.wordbooks[1], fixture.wordbooks[3], fixture.wordbooks[4]].sort())) {
     throw new Error("vocab_app did not enforce owner RLS for user B");
   }
   const anonymous = await actorQuery<{ id: string }>(
@@ -596,6 +674,134 @@ async function verifyAppRls(app: Client, fixture: Fixture): Promise<void> {
   );
 }
 
+async function expectActorFunctionDenied(
+  client: Client,
+  actorId: string | undefined,
+  sql: string,
+  params: unknown[],
+  label: string,
+): Promise<void> {
+  try {
+    await actorQuery(client, actorId, sql, params);
+  } catch (error) {
+    if ((error as { code?: string }).code === "42501") return;
+    throw error;
+  }
+  throw new Error(`unexpectedly allowed: ${label}`);
+}
+
+async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fixture): Promise<void> {
+  const targetWord = fixture.words[0];
+  const otherWord = fixture.words[1];
+  const ineligibleWord = fixture.words[2];
+  const forgedL2Hash = "f".repeat(64);
+  const forgedContentHash = "9".repeat(64);
+
+  for (const [actorId, label] of [[undefined, "without actor"], [fixture.users[2], "wrong actor"]] as const) {
+    await expectActorFunctionDenied(
+      app,
+      actorId,
+      "SELECT public.refresh_l2_cache($1::uuid)",
+      [targetWord],
+      `refresh_l2_cache ${label}`,
+    );
+    await expectActorFunctionDenied(
+      app,
+      actorId,
+      "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text)",
+      [targetWord, forgedL2Hash, forgedContentHash],
+      `finalize_l2_content_hash ${label}`,
+    );
+  }
+  await expectActorFunctionDenied(
+    app,
+    fixture.users[0],
+    "SELECT public.refresh_l2_cache($1::uuid)",
+    [otherWord],
+    "refresh_l2_cache for actor-ineligible word",
+  );
+  await expectActorFunctionDenied(
+    app,
+    fixture.users[0],
+    "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text)",
+    [ineligibleWord, fixture.expectedL2Hash, fixture.expectedContentHash],
+    "finalize_l2_content_hash for non-published word",
+  );
+  await expectActorFunctionDenied(
+    app,
+    fixture.users[0],
+    "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text)",
+    [targetWord, forgedL2Hash, forgedContentHash],
+    "finalize_l2_content_hash with forged hashes",
+  );
+
+  await actorCommitQuery(app, fixture.users[0], "SELECT public.refresh_l2_cache($1::uuid)", [targetWord]);
+  const cacheRows = await admin.query<{
+    id: string;
+    collocations: unknown;
+    corpus_items: unknown;
+    synonym_items: unknown;
+    antonym_items: unknown;
+  }>(
+    `SELECT id, collocations, corpus_items, synonym_items, antonym_items
+     FROM words WHERE id = ANY($1::uuid[]) ORDER BY id`,
+    [[targetWord, otherWord]],
+  );
+  const target = cacheRows.rows.find((row) => row.id === targetWord);
+  const other = cacheRows.rows.find((row) => row.id === otherWord);
+  if (!target || JSON.stringify(target.collocations) !== JSON.stringify([{ order: "bare-1" }, { order: "bare-2" }])
+    || JSON.stringify(target.corpus_items) !== JSON.stringify([{ order: "wrapper-1" }, { order: "wrapper-2" }])
+    || JSON.stringify(target.synonym_items) !== JSON.stringify([{ order: "single" }])
+    || JSON.stringify(target.antonym_items) !== JSON.stringify([{ order: "active" }])) {
+    throw new Error(`refresh_l2_cache produced unstable or incorrect aggregation: ${JSON.stringify(target)}`);
+  }
+  if (!other || JSON.stringify(other.collocations) !== "[]" || JSON.stringify(other.corpus_items) !== "[]"
+    || JSON.stringify(other.synonym_items) !== "[]" || JSON.stringify(other.antonym_items) !== "[]") {
+    throw new Error(`refresh_l2_cache modified a non-target word: ${JSON.stringify(other)}`);
+  }
+
+  const finalized = await actorCommitQuery<{ updated_count: number }>(
+    app,
+    fixture.users[0],
+    "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text) AS updated_count",
+    [targetWord, fixture.expectedL2Hash, fixture.expectedContentHash],
+  );
+  if (finalized[0]?.updated_count !== 2) {
+    throw new Error(`finalize_l2_content_hash updated unexpected progress count: ${JSON.stringify(finalized)}`);
+  }
+  const wordHashes = await admin.query<{ l2_content_hash: string | null; content_hash: string }>(
+    "SELECT l2_content_hash, content_hash FROM words WHERE id = $1",
+    [targetWord],
+  );
+  const wordHash = wordHashes.rows[0];
+  if (wordHash?.l2_content_hash !== fixture.expectedL2Hash || wordHash.content_hash !== fixture.expectedContentHash) {
+    throw new Error(`finalize_l2_content_hash persisted incorrect canonical hashes: ${JSON.stringify(wordHash)}`);
+  }
+  const progress = await admin.query<{
+    id: string;
+    l2_content_hash_snapshot: string | null;
+    l2_paused: boolean;
+    due_changed: boolean;
+  }>(
+    `SELECT id, l2_content_hash_snapshot, l2_paused, l2_due_at <> $2::timestamptz AS due_changed
+     FROM user_word_l2_progress WHERE word_id = $1 ORDER BY id`,
+    [targetWord, fixture.originalDueAt],
+  );
+  const expected = new Map([
+    [fixture.l2Progress[0], { snapshot: fixture.expectedL2Hash, changed: true }],
+    [fixture.l2Progress[1], { snapshot: fixture.expectedL2Hash, changed: true }],
+    [fixture.l2Progress[2], { snapshot: "e".repeat(64), changed: false }],
+    [fixture.l2Progress[3], { snapshot: null, changed: false }],
+    [fixture.l2Progress[4], { snapshot: fixture.expectedL2Hash, changed: false }],
+  ]);
+  for (const row of progress.rows) {
+    const expectedRow = expected.get(row.id);
+    if (!expectedRow || row.l2_content_hash_snapshot !== expectedRow.snapshot || row.due_changed !== expectedRow.changed) {
+      throw new Error(`finalize_l2_content_hash changed an excluded progress row: ${JSON.stringify(row)}`);
+    }
+  }
+}
+
 async function verifyWorker(worker: Client, fixture: Fixture): Promise<void> {
   const own = await actorQuery<{ id: string }>(
     worker,
@@ -603,7 +809,8 @@ async function verifyWorker(worker: Client, fixture: Fixture): Promise<void> {
     "SELECT id FROM user_word_l2_progress WHERE id = ANY($1::uuid[]) ORDER BY id",
     [fixture.l2Progress],
   );
-  if (own.length !== 1 || own[0]?.id !== fixture.l2Progress[0]) {
+  if (JSON.stringify(own.map(({ id }) => id).sort())
+    !== JSON.stringify([fixture.l2Progress[0], fixture.l2Progress[2]].sort())) {
     throw new Error("vocab_worker did not enforce owner RLS on L2 progress");
   }
   const anonymous = await actorQuery<{ id: string }>(
@@ -621,6 +828,13 @@ async function verifyWorker(worker: Client, fixture: Fixture): Promise<void> {
     "vocab_worker cross-owner L2 update",
   );
   await worker.query("SELECT id FROM outbox_events FOR UPDATE SKIP LOCKED LIMIT 0");
+  await expectDenied(worker, "SELECT public.refresh_l2_cache($1::uuid)", [fixture.words[0]], "vocab_worker L2 cache function execute");
+  await expectDenied(
+    worker,
+    "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text)",
+    [fixture.words[0], fixture.expectedL2Hash, fixture.expectedContentHash],
+    "vocab_worker L2 hash function execute",
+  );
   await expectDenied(worker, "DELETE FROM profiles WHERE id = $1", [fixture.users[0]], "vocab_worker unrelated table write");
 }
 
@@ -629,8 +843,15 @@ async function verifyBackup(backup: Client, fixture: Fixture): Promise<void> {
     "SELECT id FROM wordbooks WHERE id = ANY($1::uuid[]) ORDER BY id",
     [fixture.wordbooks],
   );
-  if (rows.rowCount !== 2) throw new Error("vocab_backup cannot read all owner rows for a complete dump");
+  if (rows.rowCount !== fixture.wordbooks.length) throw new Error("vocab_backup cannot read all owner rows for a complete dump");
   await expectDenied(backup, "UPDATE wordbooks SET name = name WHERE id = $1", [fixture.wordbooks[0]], "vocab_backup application write");
+  await expectDenied(backup, "SELECT public.refresh_l2_cache($1::uuid)", [fixture.words[0]], "vocab_backup L2 cache function execute");
+  await expectDenied(
+    backup,
+    "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text)",
+    [fixture.words[0], fixture.expectedL2Hash, fixture.expectedContentHash],
+    "vocab_backup L2 hash function execute",
+  );
   await expectDenied(backup, "CREATE TABLE backup_forbidden_probe(id integer)", [], "vocab_backup DDL");
   await expectDenied(backup, "CREATE ROLE backup_forbidden_role", [], "vocab_backup role administration");
 }
@@ -683,6 +904,7 @@ async function main(): Promise<void> {
     const backup = clients.get("backup")!;
     const migration = clients.get("migration")!;
     await verifyAppRls(app, fixture);
+    await verifyL2SecurityFunctions(app, admin, fixture);
     await verifyWorker(worker, fixture);
     await verifyBackup(backup, fixture);
     await verifyDdlIsolation(app, worker, backup, migration);
@@ -725,6 +947,7 @@ async function main(): Promise<void> {
     zeroIncomingAndOutgoingMemberships: true,
     exactPrivileges: true,
     functionExecuteAllowlist: true,
+    l2SecurityFunctions: true,
     ownershipConverged: true,
   }));
 }

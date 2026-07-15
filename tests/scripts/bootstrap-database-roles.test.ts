@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 const projectRoot = resolve(import.meta.dirname, "../..");
 const bootstrap = readFileSync(resolve(projectRoot, "scripts/bootstrap-database-roles.ts"), "utf8");
 const verifier = readFileSync(resolve(projectRoot, "scripts/verify-database-roles.ts"), "utf8");
+const backupAcceptance = readFileSync(resolve(projectRoot, "scripts/verify-backup-rls-acceptance.ts"), "utf8");
+const runtimeConnection = readFileSync(resolve(projectRoot, "src/db/connection.ts"), "utf8");
+const drizzleConfig = readFileSync(resolve(projectRoot, "drizzle.config.ts"), "utf8");
 
 function expectRoutineRevocationContract(source: string): void {
   expect(source).toContain("REVOKE ALL ON ALL ROUTINES IN SCHEMA public, auth, vocab_migrations");
@@ -34,6 +37,17 @@ function expectExactVerifierContract(source: string): void {
 }
 
 describe("database role bootstrap least-privilege contract", () => {
+  it("routes every runtime and governance pg connection through the shared TLS config", () => {
+    for (const source of [bootstrap, verifier, backupAcceptance, runtimeConnection]) {
+      expect(source).toContain("postgresClientConfig");
+      expect(source).not.toMatch(/new (?:Client|Pool)\(\{\s*connectionString/);
+    }
+    expect(drizzleConfig).toContain("const sslMode = databaseSslMode()");
+    expect(drizzleConfig).toContain("sslMode === \"verify-ca\" || sslMode === \"verify-full\"");
+    expect(drizzleConfig).toContain("{ rejectUnauthorized: true }");
+    expect(drizzleConfig).toContain("assertConnectionStringHasNoSslOptions(databaseUrl)");
+  });
+
   it("requires dedicated superusers in bootstrap and verifier", () => {
     expect(bootstrap).toContain("if (!principal?.rolsuper)");
     expect(bootstrap).toContain("SET LOCAL search_path = pg_catalog, public");
@@ -96,10 +110,26 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(bootstrap).toContain("GRANT SELECT ON ALL SEQUENCES IN SCHEMA public, auth, vocab_migrations TO vocab_backup");
   });
 
-  it("grants and verifies only the atomic L2 hash finalizer", () => {
-    expect(bootstrap).toContain("to_regprocedure('public.finalize_l2_content_hash(uuid,text,text)')");
+  it("grants and verifies only the actor-authorized L2 cache and hash functions", () => {
+    for (const signature of [
+      "public.refresh_l2_cache(uuid)",
+      "public.finalize_l2_content_hash(uuid,text,text)",
+    ]) {
+      expect(bootstrap).toContain(`to_regprocedure('${signature}')`);
+      expect(verifier).toContain(`\"${signature}\"`);
+    }
+    expect(bootstrap).toContain("GRANT EXECUTE ON FUNCTION public.refresh_l2_cache(uuid) TO vocab_app");
     expect(bootstrap).toContain("GRANT EXECUTE ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) TO vocab_app");
-    expect(verifier).toContain("public.finalize_l2_content_hash(uuid,text,text)");
+    expect(verifier).toContain("verifyL2SecurityFunctions(app, admin, fixture)");
+    expect(verifier).toContain("[[undefined, \"without actor\"], [fixture.users[2], \"wrong actor\"]]");
+    expect(verifier).toContain("`refresh_l2_cache ${label}`");
+    expect(verifier).toContain("`finalize_l2_content_hash ${label}`");
+    expect(verifier).toContain("finalize_l2_content_hash with forged hashes");
+    expect(verifier).toContain("finalize_l2_content_hash for non-published word");
+    expect(verifier).toContain("refresh_l2_cache for actor-ineligible word");
+    expect(verifier).toContain("updated_count !== 2");
+    expect(verifier).toContain("l2_due_at <> $2::timestamptz AS due_changed");
+    expect(verifier).toContain("l2SecurityFunctions: true");
     expect(bootstrap).not.toContain("mark_l2_stale_for_recheck");
     expect(verifier).not.toContain("mark_l2_stale_for_recheck");
   });
