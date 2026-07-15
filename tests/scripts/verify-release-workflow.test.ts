@@ -81,7 +81,91 @@ describe("release workflow structured contract", () => {
   it("rejects missing secret rotation acceptance input", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow.replace("      secret_rotation_run_id:\n        description: \"Run ID producing release-check-secret-rotation\"\n        required: true\n        type: string\n", ""), producers)).toThrow(/input schema/));
   it("rejects acceptance evidence uploaded from a different path", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow.replace("path: release-evidence/production-acceptance-evidence.json", "path: ${{ runner.temp }}/other.json"), producers)).toThrow(/Acceptance evidence/));
   it("rejects acceptance evidence written or verified outside the declared path", () => expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow.replace("writeFileSync(process.env.RELEASE_ACCEPTANCE_EVIDENCE_PATH", "writeFileSync(\"release-evidence/production-acceptance.json\"").replace("--acceptance \"$RELEASE_ACCEPTANCE_EVIDENCE_PATH\"", "--acceptance release-evidence/production-acceptance.json"), producers)).toThrow(/write and verify the declared evidence path/));
-  it("keeps CI release evidence", () => expect(() => verifyCiReleaseManifestContract(ciWorkflow)).not.toThrow());
+  it("keeps CI release evidence and the restricted RLS acceptance contract", () => expect(() => verifyCiReleaseManifestContract(ciWorkflow)).not.toThrow());
+  it("rejects CI without the dedicated RLS acceptance URL", () => {
+    const value = parse(ciWorkflow);
+    const verification = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Database release verification",
+    );
+    delete verification.env.RLS_ACCEPTANCE_DATABASE_URL;
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(
+      /dedicated RLS acceptance database URL/,
+    );
+  });
+  it("rejects CI when the acceptance role name is not the database username", () => {
+    const value = parse(ciWorkflow);
+    const verification = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Database release verification",
+    );
+    verification.env.RLS_ACCEPTANCE_DATABASE_URL =
+      "postgresql://vocab:vocab_rls_acceptance@localhost:5432/vocab";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(
+      /distinct dedicated RLS acceptance login/,
+    );
+  });
+  it("rejects CI when required bootstrap commands only appear in comments", () => {
+    const value = parse(ciWorkflow);
+    const bootstrap = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Prepare dedicated NOBYPASSRLS acceptance principal",
+    );
+    bootstrap.run = [
+      "# npm run db:migrate",
+      "# psql \"$DATABASE_URL\" \\",
+      "#   -v ON_ERROR_STOP=1 \\",
+      "#   -f scripts/rls-acceptance-bootstrap.sql",
+      "true",
+    ].join("\n");
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(
+      /bootstrap the restricted RLS acceptance principal/,
+    );
+  });
+  it("rejects CI when database verification only appears in a comment", () => {
+    const value = parse(ciWorkflow);
+    const verification = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Database release verification",
+    );
+    verification.run = "# npm run verify:db\ntrue";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(
+      /database verification command is missing/,
+    );
+  });
+  it("rejects release when database verification only appears in a comment", () => {
+    const value = parse(workflow);
+    const verification = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Verify database release gates",
+    );
+    verification.run = "# npm run verify:db\ntrue";
+    expect(() => verifyReleaseWorkflow(stringify(value), promotionWorkflow, producers)).toThrow(
+      /database verification command is missing/,
+    );
+  });
+  it("rejects CI when RLS bootstrap runs after database verification", () => {
+    const value = parse(ciWorkflow);
+    const allSteps = value.jobs.verify.steps as Array<{ name?: string }>;
+    const bootstrapIndex = allSteps.findIndex(
+      (step) => step.name === "Prepare dedicated NOBYPASSRLS acceptance principal",
+    );
+    const verificationIndex = allSteps.findIndex(
+      (step) => step.name === "Database release verification",
+    );
+    [allSteps[bootstrapIndex], allSteps[verificationIndex]] = [
+      allSteps[verificationIndex],
+      allSteps[bootstrapIndex],
+    ];
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(
+      /must run before/,
+    );
+  });
+  it("rejects release verification without the RLS bootstrap SQL", () => {
+    const value = parse(workflow);
+    const bootstrap = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Prepare dedicated NOBYPASSRLS acceptance principal",
+    );
+    bootstrap.run = "npm run db:migrate";
+    expect(() => verifyReleaseWorkflow(stringify(value), promotionWorkflow, producers)).toThrow(
+      /bootstrap the restricted RLS acceptance principal/,
+    );
+  });
   it("uploads layered coverage only after engineering verification succeeds", () => {
     const value = parse(ciWorkflow);
     const upload = value.jobs.verify.steps.find((step: { name?: string }) => step.name === "Upload layered coverage evidence");

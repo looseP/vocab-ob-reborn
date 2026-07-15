@@ -1,12 +1,23 @@
-import type { PoolClient } from "pg";
+import { randomUUID } from "node:crypto";
+import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getPool, resetPool } from "@/db/connection";
 import { withTransaction } from "@/db/transaction";
 
-const databaseUrl = process.env.TEST_DATABASE_URL;
-const ACTOR_A = "00000000-0000-4000-8000-000000000011";
-const ACTOR_B = "00000000-0000-4000-8000-000000000021";
+const adminDatabaseUrl = process.env.TEST_DATABASE_URL;
+const acceptanceDatabaseUrl = process.env.RLS_ACCEPTANCE_DATABASE_URL;
+const ACTOR_A = randomUUID();
+const ACTOR_B = randomUUID();
 const ACCEPTANCE_DATE = "2030-01-01";
+
+if (!adminDatabaseUrl) {
+  throw new Error("TEST_DATABASE_URL is required to seed the RLS acceptance fixture");
+}
+if (!acceptanceDatabaseUrl) {
+  throw new Error(
+    "RLS_ACCEPTANCE_DATABASE_URL is required for the restricted RLS acceptance session",
+  );
+}
 
 interface IdentityRow {
   claim: string | null;
@@ -26,42 +37,86 @@ function expectNoClaim(claim: string | null): void {
   expect([null, ""]).toContain(claim);
 }
 
-describe.skipIf(!databaseUrl)("RLS transaction identity", () => {
+describe("RLS transaction identity", () => {
   const originalDatabaseUrl = process.env.DATABASE_URL;
   const originalPoolMax = process.env.DB_POOL_MAX;
+  const adminPool = new Pool({ connectionString: adminDatabaseUrl, max: 1 });
 
   beforeAll(async () => {
-    // Integration tests may have initialized the singleton with another URL.
-    // Reset before changing configuration, then use one client so the hygiene
-    // cases prove identity does not leak across actual connection reuse.
-    await resetPool();
-    process.env.DATABASE_URL = databaseUrl!;
-    process.env.DB_POOL_MAX = "1";
-
-    await getPool().query(
+    await adminPool.query(
       `INSERT INTO users (id, email)
-       VALUES ($1, $2), ($3, $4)
-       ON CONFLICT (id) DO NOTHING`,
-      [ACTOR_A, "rls-actor-a@example.test", ACTOR_B, "rls-actor-b@example.test"],
+       VALUES ($1, $2), ($3, $4)`,
+      [
+        ACTOR_A,
+        `rls-actor-a-${ACTOR_A}@example.test`,
+        ACTOR_B,
+        `rls-actor-b-${ACTOR_B}@example.test`,
+      ],
     );
+
+    // Integration tests may have initialized the singleton with the admin URL.
+    // Reset before changing configuration, then use one restricted client so
+    // the hygiene cases prove identity does not leak across actual reuse.
+    await resetPool();
+    process.env.DATABASE_URL = acceptanceDatabaseUrl;
+    process.env.DB_POOL_MAX = "1";
   });
 
   afterAll(async () => {
-    await resetPool();
-    if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
-    else process.env.DATABASE_URL = originalDatabaseUrl;
-    if (originalPoolMax === undefined) delete process.env.DB_POOL_MAX;
-    else process.env.DB_POOL_MAX = originalPoolMax;
+    try {
+      await withTransaction(async (tx) => {
+        await tx.query(
+          `DELETE FROM daily_forecast_snapshots
+           WHERE user_id = $1 AND date IN ($2, $3)`,
+          [ACTOR_A, ACCEPTANCE_DATE, "2030-01-02"],
+        );
+      }, { actorId: ACTOR_A });
+    } finally {
+      await resetPool();
+      await adminPool.query(
+        "DELETE FROM users WHERE id = ANY($1::uuid[])",
+        [[ACTOR_A, ACTOR_B]],
+      );
+      await adminPool.end();
+
+      if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = originalDatabaseUrl;
+      if (originalPoolMax === undefined) delete process.env.DB_POOL_MAX;
+      else process.env.DB_POOL_MAX = originalPoolMax;
+    }
   });
 
-  it("runs as the dedicated NOBYPASSRLS acceptance principal", async () => {
-    const result = await getPool().query<{ sessionUser: string; bypassRls: boolean }>(
-      `SELECT session_user AS "sessionUser", rolbypassrls AS "bypassRls"
-       FROM pg_roles
-       WHERE rolname = session_user`,
+  it("runs as the dedicated non-owner NOSUPERUSER NOBYPASSRLS principal", async () => {
+    const result = await getPool().query<{
+      sessionUser: string;
+      currentUser: string;
+      superuser: boolean;
+      bypassRls: boolean;
+      ownsProbeTable: boolean;
+      roleMemberships: number;
+    }>(
+      `SELECT
+         session_user AS "sessionUser",
+         current_user AS "currentUser",
+         role.rolsuper AS "superuser",
+         role.rolbypassrls AS "bypassRls",
+         table_info.tableowner = current_user AS "ownsProbeTable",
+         (SELECT count(*)::int FROM pg_auth_members WHERE member = role.oid) AS "roleMemberships"
+       FROM pg_roles AS role
+       JOIN pg_tables AS table_info
+         ON table_info.schemaname = 'public'
+        AND table_info.tablename = 'daily_forecast_snapshots'
+       WHERE role.rolname = current_user`,
     );
 
-    expect(result.rows).toEqual([{ sessionUser: "vocab_rls_acceptance", bypassRls: false }]);
+    expect(result.rows).toEqual([{
+      sessionUser: "vocab_rls_acceptance",
+      currentUser: "vocab_rls_acceptance",
+      superuser: false,
+      bypassRls: false,
+      ownsProbeTable: false,
+      roleMemberships: 0,
+    }]);
   });
 
   it("allows actor A to write only its own row and blocks actor B reads and writes", async () => {

@@ -26,7 +26,7 @@
     "rls:acceptance:up": "docker compose -f compose.rls-acceptance.yaml -p vocab-observatory-rls-acceptance up -d postgres",
     "rls:acceptance:migrate": "cross-env DATABASE_URL=postgresql://vocab_rls_admin:vocab_rls_admin_local_only@127.0.0.1:55433/vocab_rls_acceptance DB_SSLMODE=disable tsx scripts/run-rls-acceptance-migrations.ts",
     "rls:acceptance:bootstrap": "docker compose -f compose.rls-acceptance.yaml -p vocab-observatory-rls-acceptance run --rm rls-role-bootstrap",
-    "rls:acceptance:test": "cross-env TEST_DATABASE_URL=postgresql://vocab_rls_acceptance:vocab_rls_acceptance_local_only@127.0.0.1:55433/vocab_rls_acceptance DB_SSLMODE=disable DB_POOL_MAX=1 vitest run --config vitest.integration.config.ts --reporter=verbose tests/db/transaction-rls.integration.test.ts",
+    "rls:acceptance:test": "cross-env TEST_DATABASE_URL=postgresql://vocab_rls_admin:vocab_rls_admin_local_only@127.0.0.1:55433/vocab_rls_acceptance RLS_ACCEPTANCE_DATABASE_URL=postgresql://vocab_rls_acceptance:vocab_rls_acceptance_local_only@127.0.0.1:55433/vocab_rls_acceptance DB_SSLMODE=disable DB_POOL_MAX=1 vitest run --config vitest.integration.config.ts --reporter=verbose tests/db/transaction-rls.integration.test.ts",
     "rls:acceptance:down": "docker compose -f compose.rls-acceptance.yaml -p vocab-observatory-rls-acceptance down --volumes --remove-orphans",
     "test:db-release": "tsx scripts/verify-release-database.ts",
     "test:capacity": "tsx scripts/verify-capacity.ts",
