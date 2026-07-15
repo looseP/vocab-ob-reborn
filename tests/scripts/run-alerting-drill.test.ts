@@ -1,10 +1,10 @@
-import { rm, writeFile } from "node:fs/promises";
+import { unlink, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runDrill, validateOptions, type DrillOptions } from "../../scripts/run-alerting-drill";
 
-const lockFile = resolve(".alerting-drill-test.lock");
+const lockFile = resolve(import.meta.dirname, `.alerting-drill-test-${process.pid}.lock`);
 
 const base: DrillOptions = {
   environment: "staging",
@@ -23,7 +23,11 @@ const base: DrillOptions = {
 
 afterEach(async () => {
   vi.unstubAllGlobals();
-  await rm(lockFile, { force: true });
+  try {
+    await unlink(lockFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 });
 
 describe("alerting drill safety gates", () => {

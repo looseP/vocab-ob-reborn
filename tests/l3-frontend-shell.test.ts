@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
 import { L3_SHELL_SECTIONS } from "@/frontend/viewModels/l3ShellViewModel";
@@ -105,6 +106,9 @@ import type {
   L3WordSpace,
   WordRow,
 } from "@/domain";
+
+const projectRoot = path.resolve(import.meta.dirname, "..");
+const projectPath = (...segments: string[]): string => path.join(projectRoot, ...segments).replaceAll("\\", "/");
 
 describe("Phase 4B L3 frontend shell", () => {
   it("creates the browser L3 client through the shared contract adapter", async () => {
@@ -282,7 +286,7 @@ describe("Phase 4B L3 frontend shell", () => {
   });
 
   it("wires Manual Editor delete UI through shared client commands and change callback", () => {
-    const source = readFileSync("src/frontend/pages/L3ManualEditorPage.tsx", "utf8");
+    const source = readFileSync(projectPath("src/frontend/pages/L3ManualEditorPage.tsx"), "utf8");
 
     expect(source).toContain("onManualChanged");
     expect(source).not.toContain("onManualCreated");
@@ -298,8 +302,8 @@ describe("Phase 4B L3 frontend shell", () => {
   });
 
   it("keeps Manual Editor delete success out of create-status semantics", () => {
-    const pageSource = readFileSync("src/frontend/pages/L3ManualEditorPage.tsx", "utf8");
-    const viewModelSource = readFileSync("src/frontend/viewModels/l3ManualEditorViewModel.ts", "utf8");
+    const pageSource = readFileSync(projectPath("src/frontend/pages/L3ManualEditorPage.tsx"), "utf8");
+    const viewModelSource = readFileSync(projectPath("src/frontend/viewModels/l3ManualEditorViewModel.ts"), "utf8");
 
     expect(pageSource).toContain('setDeleteStatus("deleted")');
     expect(pageSource).not.toContain('setDeleteStatus("created")');
@@ -307,7 +311,7 @@ describe("Phase 4B L3 frontend shell", () => {
   });
 
   it("wires Manual Editor stale updates through the generic manual command helper", () => {
-    const source = readFileSync("src/frontend/App.tsx", "utf8");
+    const source = readFileSync(projectPath("src/frontend/App.tsx"), "utf8");
 
     expect(source).toContain("markActiveReadStaleAfterManualCommand");
     expect(source).toContain("onManualChanged");
@@ -1783,8 +1787,8 @@ function sourceSpace(overrides: Partial<L3SourceSpace> = {}): L3SourceSpace {
 
 function l3FrontendBoundaryFiles(): string[] {
   const explicitFiles = [
-    "src/frontend/App.tsx",
-    "src/frontend/api/l3Client.ts",
+    projectPath("src/frontend/App.tsx"),
+    projectPath("src/frontend/api/l3Client.ts"),
   ];
   const directories = [
     "src/frontend/components",
@@ -1793,9 +1797,9 @@ function l3FrontendBoundaryFiles(): string[] {
     "src/frontend/viewModels",
   ];
   const discoveredFiles = directories.flatMap((directory) => (
-    readdirSync(directory, { withFileTypes: true })
+    readdirSync(projectPath(directory), { withFileTypes: true })
       .filter((entry) => entry.isFile() && /\.(ts|tsx)$/.test(entry.name))
-      .map((entry) => `${directory}/${entry.name}`)
+      .map((entry) => projectPath(directory, entry.name))
   ));
   return [...explicitFiles, ...discoveredFiles].sort();
 }
