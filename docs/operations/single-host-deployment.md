@@ -47,7 +47,9 @@ notepad D:\vocab-observatory\env\.env
 CADDY_SITE_ADDRESS=localhost
 APP_ORIGIN=https://localhost
 CADDY_HTTP_BIND_ADDRESS=127.0.0.1
+CADDY_HTTP_HOST_PORT=80
 CADDY_HTTPS_BIND_ADDRESS=127.0.0.1
+CADDY_HTTPS_HOST_PORT=443
 CADDY_CONFIG_FILE=D:/vocab-observatory/app/Caddyfile
 BACKUP_HOST_DIR=D:/vocab-observatory/backups
 ```
@@ -61,6 +63,14 @@ docker compose --env-file D:\vocab-observatory\env\.env -f compose.single-host.y
 ```
 
 渲染失败时先修正路径或缺失变量；不要删除数据库卷来“解决”配置问题。
+
+在正式启动前，可运行真实但隔离的诊断 smoke：
+
+```powershell
+npm run single-host:smoke -- --env-file D:/vocab-observatory/env/.env
+```
+
+该命令创建不可覆盖的随机 Compose project，使用两个随机 `127.0.0.1` 高端口和当前 checkout 的 Caddyfile，在 run-specific 临时目录验证备份挂载与 Caddy 临时 CA，并直接以该 CA 验证 HTTPS。它不会导入 Windows 信任证书，只清理由本次随机 project 创建的容器、网络和卷，不会触碰现有 `vocab-observatory` project 或其卷。失败诊断保存在 `.tmp/single-host-compose-smoke/<runId>/`，内容会脱敏。
 
 ## 2. 首次启动与本机验证
 

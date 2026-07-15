@@ -53,8 +53,36 @@ describe("single-host Compose contract", () => {
     expect(() => verifySingleHostCompose(
       compose,
       caddyfile,
+      environment.replace("CADDY_HTTP_BIND_ADDRESS=127.0.0.1", "CADDY_HTTP_BIND_ADDRESS=0.0.0.0"),
+    )).toThrow(/Loopback HTTP bind template/);
+    expect(() => verifySingleHostCompose(
+      compose,
+      caddyfile,
       environment.replace("BACKUP_HOST_DIR=D:/vocab-observatory/backups", "BACKUP_HOST_DIR=/srv/vocab-observatory/backups"),
     )).toThrow(/Absolute Windows backup directory template/);
+  });
+
+  it("freezes default host ports and long-syntax Windows bind mounts", () => {
+    expect(() => verifySingleHostCompose(
+      compose.replace("${CADDY_HTTP_HOST_PORT:-80}:80", "80:80"),
+      caddyfile,
+      environment,
+    )).toThrow(/HTTP loopback binding/);
+    expect(() => verifySingleHostCompose(
+      compose.replace("        target: /etc/caddy/Caddyfile\n        read_only: true", "        target: /etc/caddy/Caddyfile"),
+      caddyfile,
+      environment,
+    )).toThrow(/configuration file long syntax/);
+    expect(() => verifySingleHostCompose(
+      compose.replace("      - type: bind\n        source: ${BACKUP_HOST_DIR:?BACKUP_HOST_DIR is required}\n        target: /backups", "      - ${BACKUP_HOST_DIR:?BACKUP_HOST_DIR is required}:/backups"),
+      caddyfile,
+      environment,
+    )).toThrow(/backup directory long syntax/);
+    expect(() => verifySingleHostCompose(
+      compose,
+      caddyfile,
+      environment.replace("CADDY_HTTPS_HOST_PORT=443", "CADDY_HTTPS_HOST_PORT=8443"),
+    )).toThrow(/Default Caddy HTTPS host port template/);
   });
 
   it("rejects an image template that can fall back to a tag", () => {
