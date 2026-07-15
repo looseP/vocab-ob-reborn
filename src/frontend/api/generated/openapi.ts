@@ -1326,7 +1326,29 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        process: {
+                            uptimeSeconds: number;
+                            draining: boolean;
+                        };
+                        database: {
+                            healthy: boolean;
+                            totalConnections: number;
+                            idleConnections: number;
+                            waitingRequests: number;
+                        };
+                        outbox: {
+                            pending: number;
+                            processing: number;
+                            deadLetter: number;
+                            oldestPendingAgeSeconds: number | null;
+                        };
+                        llmReservations: {
+                            pending: number;
+                            expiredPending: number;
+                            oldestPendingAgeSeconds: number;
+                        };
+                    };
                 };
             };
             /** @description Invalid request */

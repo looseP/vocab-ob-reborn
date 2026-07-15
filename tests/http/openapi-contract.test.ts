@@ -93,6 +93,25 @@ describe("API contract", () => {
     expect(parameters.find((parameter) => parameter.name === "offset")?.required).toBe(false);
   });
 
+  it("publishes a precise operational metrics response", () => {
+    const document = JSON.parse(serializeOpenApiDocument()) as {
+      paths: Record<string, Record<string, {
+        responses: Record<string, { content?: Record<string, { schema?: Record<string, unknown> }> }>;
+      }>>;
+    };
+    const schema = document.paths["/api/operations/metrics"].get.responses["200"]
+      .content?.["application/json"].schema;
+
+    expect(schema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["process", "database", "outbox", "llmReservations"],
+    });
+    expect(schema?.properties).toHaveProperty("database");
+    expect(schema?.properties).toHaveProperty("outbox");
+    expect(schema?.properties).toHaveProperty("llmReservations");
+  });
+
   it("publishes precise L3 proposal and recommendation read responses", () => {
     const document = JSON.parse(serializeOpenApiDocument()) as {
       components?: { schemas?: Record<string, unknown> };

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { operationMetricsResponseSchema } from "@/http/operation-metrics-response-contract";
 import { createApp } from "@/http/server";
 import type { Services } from "@/services";
 
@@ -76,6 +77,7 @@ describe("observability HTTP endpoints", () => {
     });
     expect(authorized.status).toBe(200);
     expect(authorized.headers.get("Cache-Control")).toBe("no-store");
-    expect((await authorized.json()).database.healthy).toBe(true);
+    const body = operationMetricsResponseSchema.parse(await authorized.json());
+    expect(body.database.healthy).toBe(true);
   });
 });
