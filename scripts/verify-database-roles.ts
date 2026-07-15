@@ -240,6 +240,12 @@ async function seedFixture(admin: Client): Promise<Fixture> {
         [id, userId, fixture.words[0], wordbookId, snapshot, paused, originalDueAt],
       );
     }
+    await admin.query(
+      `INSERT INTO user_word_l2_progress
+       (user_id, word_id, wordbook_id, l2_content_hash_snapshot, l2_due_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [fixture.users[0], fixture.words[2], fixture.wordbooks[0], "6".repeat(64), originalDueAt],
+    );
     await admin.query("COMMIT");
     return fixture;
   } catch (error) {
@@ -690,12 +696,27 @@ async function expectActorFunctionDenied(
   throw new Error(`unexpectedly allowed: ${label}`);
 }
 
+async function expectActorFunctionRejected(
+  client: Client,
+  actorId: string,
+  sql: string,
+  params: unknown[],
+  label: string,
+): Promise<void> {
+  try {
+    await actorQuery(client, actorId, sql, params);
+  } catch {
+    return;
+  }
+  throw new Error(`unexpectedly allowed: ${label}`);
+}
+
 async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fixture): Promise<void> {
   const targetWord = fixture.words[0];
   const otherWord = fixture.words[1];
   const ineligibleWord = fixture.words[2];
-  const forgedL2Hash = "f".repeat(64);
-  const forgedContentHash = "9".repeat(64);
+  const invalidL2Hash = "not-a-sha256";
+  const invalidContentHash = "also-not-a-sha256";
 
   for (const [actorId, label] of [[undefined, "without actor"], [fixture.users[2], "wrong actor"]] as const) {
     await expectActorFunctionDenied(
@@ -709,7 +730,7 @@ async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fi
       app,
       actorId,
       "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text)",
-      [targetWord, forgedL2Hash, forgedContentHash],
+      [targetWord, fixture.expectedL2Hash, fixture.expectedContentHash],
       `finalize_l2_content_hash ${label}`,
     );
   }
@@ -720,19 +741,19 @@ async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fi
     [otherWord],
     "refresh_l2_cache for actor-ineligible word",
   );
-  await expectActorFunctionDenied(
+  await expectActorFunctionRejected(
     app,
     fixture.users[0],
     "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text)",
     [ineligibleWord, fixture.expectedL2Hash, fixture.expectedContentHash],
     "finalize_l2_content_hash for non-published word",
   );
-  await expectActorFunctionDenied(
+  await expectActorFunctionRejected(
     app,
     fixture.users[0],
     "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text)",
-    [targetWord, forgedL2Hash, forgedContentHash],
-    "finalize_l2_content_hash with forged hashes",
+    [targetWord, invalidL2Hash, invalidContentHash],
+    "finalize_l2_content_hash with invalid hash format",
   );
 
   await actorCommitQuery(app, fixture.users[0], "SELECT public.refresh_l2_cache($1::uuid)", [targetWord]);
