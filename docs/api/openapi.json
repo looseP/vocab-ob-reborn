@@ -1297,7 +1297,128 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema"
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "process": {
+                      "type": "object",
+                      "properties": {
+                        "uptimeSeconds": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "draining": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "uptimeSeconds",
+                        "draining"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "database": {
+                      "type": "object",
+                      "properties": {
+                        "healthy": {
+                          "type": "boolean"
+                        },
+                        "totalConnections": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "idleConnections": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "waitingRequests": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "healthy",
+                        "totalConnections",
+                        "idleConnections",
+                        "waitingRequests"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "outbox": {
+                      "type": "object",
+                      "properties": {
+                        "pending": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "processing": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "deadLetter": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "oldestPendingAgeSeconds": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "pending",
+                        "processing",
+                        "deadLetter",
+                        "oldestPendingAgeSeconds"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "llmReservations": {
+                      "type": "object",
+                      "properties": {
+                        "pending": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "expiredPending": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "oldestPendingAgeSeconds": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "pending",
+                        "expiredPending",
+                        "oldestPendingAgeSeconds"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "process",
+                    "database",
+                    "outbox",
+                    "llmReservations"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }

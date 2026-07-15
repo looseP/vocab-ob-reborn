@@ -18,6 +18,7 @@ import {
   l2DraftResponseSchema,
   l2ExternalPromptResponseSchema,
 } from "./l2-response-contract";
+import { operationMetricsResponseSchema } from "./operation-metrics-response-contract";
 import {
   l3ContextCreateSchema,
   l3ContextLinkCreateSchema,
@@ -187,7 +188,7 @@ export const apiOperations = [
   }),
   operation("get", "/api/auth/session", "getAuthSession", "owner", "none", undefined, 200, authSessionSchema),
   operation("delete", "/api/auth/session", "deleteAuthSession", "optionalSession", "sessionMutation", undefined, 204, z.null()),
-  operation("get", "/api/operations/metrics", "getOperationMetrics", "owner", "none"),
+  operation("get", "/api/operations/metrics", "getOperationMetrics", "owner", "none", undefined, 200, operationMetricsResponseSchema),
   operation("get", "/api/words", "listWords", "owner", "none", { query: wordsQuerySchema }, 200, wordListResponseSchema),
   operation("get", "/api/words/:slug", "getWord", "owner", "none", undefined, 200, wordDetailResponseSchema),
   operation("post", "/api/review/answer", "submitReviewAnswer", "owner", "sessionMutation", { body: reviewAnswerSchema }, 200, reviewAnswerResponseSchema),
