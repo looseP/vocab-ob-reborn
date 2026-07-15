@@ -46,7 +46,8 @@ export const AUTHORITATIVE_ANNOTATIONS_POLICY =
 
 const REFRESH_L2_CACHE_FUNCTION_CONTRACT = [
   "CREATE OR REPLACE FUNCTION public.refresh_l2_cache(p_word_id uuid)",
-  "RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public",
+  "RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public",
+  "DECLARE v_actor_id uuid := auth.uid(); BEGIN IF v_actor_id IS NULL OR NOT EXISTS ( SELECT 1 FROM public.user_word_l2_progress AS progress WHERE progress.user_id = v_actor_id AND progress.word_id = p_word_id ) THEN RAISE EXCEPTION 'actor cannot refresh L2 cache for word' USING ERRCODE = '42501'; END IF; WITH expanded",
   "FROM public.word_l2_content AS content",
   "WHERE content.word_id = p_word_id AND content.is_active = true",
   "UPDATE public.words AS word",
@@ -59,6 +60,7 @@ const REFRESH_L2_CACHE_FUNCTION_CONTRACT = [
 const FINALIZE_L2_HASH_FUNCTION_CONTRACT = [
   "CREATE OR REPLACE FUNCTION public.finalize_l2_content_hash(p_word_id uuid, p_new_l2_hash text, p_new_content_hash text)",
   "RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public",
+  "DECLARE v_actor_id uuid := auth.uid(); v_updated_count integer; BEGIN IF v_actor_id IS NULL OR NOT EXISTS ( SELECT 1 FROM public.user_word_l2_progress AS progress WHERE progress.user_id = v_actor_id AND progress.word_id = p_word_id ) THEN RAISE EXCEPTION 'actor cannot finalize L2 content hash for word' USING ERRCODE = '42501'; END IF",
   "IF p_new_l2_hash !~ '^[0-9a-f]{64}$' OR p_new_content_hash !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'invalid content hash'",
   "FROM public.words AS word",
   "WHERE word.id = p_word_id AND word.is_deleted = false AND word.is_published = true",

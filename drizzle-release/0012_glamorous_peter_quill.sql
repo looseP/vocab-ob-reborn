@@ -6,10 +6,23 @@ ALTER POLICY "profiles_select_own" ON "profiles" TO public USING ((auth.uid() = 
 
 CREATE OR REPLACE FUNCTION public.refresh_l2_cache(p_word_id uuid)
 RETURNS void
-LANGUAGE sql
+LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
+DECLARE
+  v_actor_id uuid := auth.uid();
+BEGIN
+  IF v_actor_id IS NULL OR NOT EXISTS (
+    SELECT 1
+    FROM public.user_word_l2_progress AS progress
+    WHERE progress.user_id = v_actor_id
+      AND progress.word_id = p_word_id
+  ) THEN
+    RAISE EXCEPTION 'actor cannot refresh L2 cache for word'
+      USING ERRCODE = '42501';
+  END IF;
+
   WITH expanded AS (
     SELECT content.field, item.value, content.created_at, item.ordinality
     FROM public.word_l2_content AS content
@@ -46,6 +59,7 @@ AS $$
       antonym_items = aggregated.antonym_items
   FROM aggregated
   WHERE word.id = p_word_id;
+END;
 $$;--> statement-breakpoint
 ALTER FUNCTION public.refresh_l2_cache(uuid) OWNER TO vocab_migration;--> statement-breakpoint
 REVOKE ALL ON FUNCTION public.refresh_l2_cache(uuid) FROM PUBLIC;--> statement-breakpoint
@@ -57,8 +71,19 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
+  v_actor_id uuid := auth.uid();
   v_updated_count integer;
 BEGIN
+  IF v_actor_id IS NULL OR NOT EXISTS (
+    SELECT 1
+    FROM public.user_word_l2_progress AS progress
+    WHERE progress.user_id = v_actor_id
+      AND progress.word_id = p_word_id
+  ) THEN
+    RAISE EXCEPTION 'actor cannot finalize L2 content hash for word'
+      USING ERRCODE = '42501';
+  END IF;
+
   IF p_new_l2_hash !~ '^[0-9a-f]{64}$'
      OR p_new_content_hash !~ '^[0-9a-f]{64}$' THEN
     RAISE EXCEPTION 'invalid content hash';

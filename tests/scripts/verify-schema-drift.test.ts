@@ -41,8 +41,14 @@ CREATE POLICY "word_annotations_own_all" ON "word_annotations" AS PERMISSIVE FOR
 
 const SECURITY_FUNCTION_SQL = `
 CREATE OR REPLACE FUNCTION public.refresh_l2_cache(p_word_id uuid)
-RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
 AS $$
+DECLARE v_actor_id uuid := auth.uid();
+BEGIN
+IF v_actor_id IS NULL OR NOT EXISTS (
+  SELECT 1 FROM public.user_word_l2_progress AS progress
+  WHERE progress.user_id = v_actor_id AND progress.word_id = p_word_id
+) THEN RAISE EXCEPTION 'actor cannot refresh L2 cache for word' USING ERRCODE = '42501'; END IF;
 WITH expanded AS (
   SELECT content.field FROM public.word_l2_content AS content
   WHERE content.word_id = p_word_id AND content.is_active = true
@@ -50,12 +56,19 @@ WITH expanded AS (
 UPDATE public.words AS word
 SET collocations = aggregated.collocations, corpus_items = aggregated.corpus_items, synonym_items = aggregated.synonym_items, antonym_items = aggregated.antonym_items
 FROM aggregated WHERE word.id = p_word_id;
+END;
 $$;
 ALTER FUNCTION public.refresh_l2_cache(uuid) OWNER TO vocab_migration;
 REVOKE ALL ON FUNCTION public.refresh_l2_cache(uuid) FROM PUBLIC;
 CREATE OR REPLACE FUNCTION public.finalize_l2_content_hash(p_word_id uuid, p_new_l2_hash text, p_new_content_hash text)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
-AS $$ BEGIN
+AS $$
+DECLARE v_actor_id uuid := auth.uid(); v_updated_count integer;
+BEGIN
+IF v_actor_id IS NULL OR NOT EXISTS (
+  SELECT 1 FROM public.user_word_l2_progress AS progress
+  WHERE progress.user_id = v_actor_id AND progress.word_id = p_word_id
+) THEN RAISE EXCEPTION 'actor cannot finalize L2 content hash for word' USING ERRCODE = '42501'; END IF;
 IF p_new_l2_hash !~ '^[0-9a-f]{64}$' OR p_new_content_hash !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'invalid content hash'; END IF;
 PERFORM 1 FROM public.words AS word
 WHERE word.id = p_word_id AND word.is_deleted = false AND word.is_published = true
@@ -134,6 +147,9 @@ describe("compareSecurityDefinerContract", () => {
     expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("OWNER TO vocab_migration", "OWNER TO vocab_app"))).toBe(false);
     expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("word.id = p_word_id AND word.is_deleted = false", "true AND word.is_deleted = false"))).toBe(false);
     expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("l2_paused = false", "true"))).toBe(false);
+    expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("v_actor_id IS NULL", "false"))).toBe(false);
+    expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("progress.user_id = v_actor_id", "true"))).toBe(false);
+    expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("USING ERRCODE = '42501'", ""))).toBe(false);
     expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("word.is_deleted = false", "true"))).toBe(false);
     expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("FOR UPDATE", ""))).toBe(false);
     expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("'^[0-9a-f]{64}$'", "'.*'"))).toBe(false);
