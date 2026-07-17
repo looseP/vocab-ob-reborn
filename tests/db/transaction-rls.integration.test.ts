@@ -94,6 +94,9 @@ describe("RLS transaction identity", () => {
       bypassRls: boolean;
       ownsProbeTable: boolean;
       roleMemberships: number;
+      canConnect: boolean;
+      canCreateDatabaseObjects: boolean;
+      canCreateTemporaryObjects: boolean;
     }>(
       `SELECT
          session_user AS "sessionUser",
@@ -101,7 +104,10 @@ describe("RLS transaction identity", () => {
          role.rolsuper AS "superuser",
          role.rolbypassrls AS "bypassRls",
          table_info.tableowner = current_user AS "ownsProbeTable",
-         (SELECT count(*)::int FROM pg_auth_members WHERE member = role.oid) AS "roleMemberships"
+         (SELECT count(*)::int FROM pg_auth_members WHERE member = role.oid OR roleid = role.oid) AS "roleMemberships",
+         has_database_privilege(current_user, current_database(), 'CONNECT') AS "canConnect",
+         has_database_privilege(current_user, current_database(), 'CREATE') AS "canCreateDatabaseObjects",
+         has_database_privilege(current_user, current_database(), 'TEMPORARY') AS "canCreateTemporaryObjects"
        FROM pg_roles AS role
        JOIN pg_tables AS table_info
          ON table_info.schemaname = 'public'
@@ -116,6 +122,9 @@ describe("RLS transaction identity", () => {
       bypassRls: false,
       ownsProbeTable: false,
       roleMemberships: 0,
+      canConnect: true,
+      canCreateDatabaseObjects: false,
+      canCreateTemporaryObjects: false,
     }]);
   });
 

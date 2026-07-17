@@ -12,11 +12,12 @@
 
 ## 最新本地证据（2026-07-17）
 
-- `verify:engineering` 全链 PASS：90 files / 1276 tests 全部通过。
+- `verify:engineering` 全链 PASS：90 files / 1278 tests 全部通过。
 - dependency-cruiser：167 modules / 540 dependencies / 0 violations；TypeScript、schema drift、API governance、frontend build、runtime、alerting、release/secret-rotation/workflow contracts 全部 PASS。
 - 分层覆盖率 baseline 与最终目标均 PASS：domain branches 89.06%，service 76.76%，repository 75.05%；diff coverage 98.91% PASS，85% 阈值未降低。
 - PostgreSQL 17 fresh 四角色验收 PASS：真实 LOGIN、dedicated superuser admin、RLS、exact privileges、零双向 membership、L2 安全函数、ownership 及容器内 `pg_dump → pg_restore` 精确对账全部通过。
 - PostgreSQL 17 旧卷升级验收 PASS：历史数据保留、权威 migration count 13、ownership 收敛；fresh/旧卷随机容器、网络和数据卷均完整清理。
+- restricted RLS LOGIN 验收 PASS：修复精确 database ACL 收敛后 test-only `vocab_rls_acceptance` 缺 `CONNECT` 的问题；该身份仅获显式 CONNECT，无 CREATE/TEMPORARY，且无双向 role membership。独立验收入口统一为 `healthy → prepare → migrate as vocab_migration → converge → bootstrap → test`，真实 PostgreSQL 17 验收 5/5 通过并完整清理资源。
 - `git diff --check` PASS；shared index 为空，没有其他代理 staged 内容。
 
 ## PR 状态与未完成项

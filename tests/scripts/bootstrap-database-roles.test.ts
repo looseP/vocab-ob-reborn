@@ -3,9 +3,13 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const projectRoot = resolve(import.meta.dirname, "../..");
+const packageJson = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8")) as {
+  scripts: Record<string, string>;
+};
 const bootstrap = readFileSync(resolve(projectRoot, "scripts/bootstrap-database-roles.ts"), "utf8");
 const verifier = readFileSync(resolve(projectRoot, "scripts/verify-database-roles.ts"), "utf8");
 const backupAcceptance = readFileSync(resolve(projectRoot, "scripts/verify-backup-rls-acceptance.ts"), "utf8");
+const rlsAcceptanceBootstrap = readFileSync(resolve(projectRoot, "scripts/rls-acceptance-bootstrap.sql"), "utf8");
 const runtimeConnection = readFileSync(resolve(projectRoot, "src/db/connection.ts"), "utf8");
 const drizzleConfig = readFileSync(resolve(projectRoot, "drizzle.config.ts"), "utf8");
 
@@ -59,6 +63,23 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(bootstrap).toContain("WHERE member.rolname = $1::text OR parent.rolname = $1::text");
     expect(bootstrap).toContain("assertZeroManagedRoleMemberships(client)");
     expect(verifier).toContain("zero incoming and outgoing memberships");
+    expect(rlsAcceptanceBootstrap).toContain("WHERE member.rolname = 'vocab_rls_acceptance'");
+    expect(rlsAcceptanceBootstrap).toContain("OR parent.rolname = 'vocab_rls_acceptance'");
+  });
+
+  it("grants the restricted RLS acceptance LOGIN only explicit database CONNECT", () => {
+    expect(rlsAcceptanceBootstrap).toContain("REVOKE ALL ON DATABASE %I FROM vocab_rls_acceptance");
+    expect(rlsAcceptanceBootstrap).toContain("GRANT CONNECT ON DATABASE %I TO vocab_rls_acceptance");
+    expect(rlsAcceptanceBootstrap).not.toMatch(/GRANT\s+(?:CREATE|TEMPORARY).*DATABASE.*vocab_rls_acceptance/i);
+  });
+
+  it("keeps the standalone RLS acceptance entrypoint on the authoritative role sequence", () => {
+    expect(packageJson.scripts["rls:acceptance:up"]).toContain("--wait --wait-timeout 60 postgres");
+    expect(packageJson.scripts["rls:acceptance:migrate"]).toContain("vocab_migration");
+    expect(packageJson.scripts["rls:acceptance:migrate"]).not.toContain("vocab_rls_admin:vocab_rls_admin_local_only");
+    expect(packageJson.scripts["rls:acceptance:verify"]).toBe(
+      "npm run rls:acceptance:roles:prepare && npm run rls:acceptance:migrate && npm run rls:acceptance:roles:converge && npm run rls:acceptance:bootstrap && npm run rls:acceptance:test",
+    );
   });
 
   it("revokes current and future routine execution in every managed schema", () => {

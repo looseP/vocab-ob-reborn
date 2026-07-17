@@ -54,20 +54,39 @@ $$;
 
 -- A reused local acceptance database may have historical role memberships.
 -- NOINHERIT blocks implicit privileges, but explicit SET ROLE would remain;
--- remove every membership so the acceptance identity has no alternate role.
+-- remove both incoming and outgoing memberships so no principal can pivot
+-- into or out of the acceptance identity.
 DO $$
 DECLARE
-  granted_role record;
+  membership_edge record;
 BEGIN
-  FOR granted_role IN
-    SELECT parent.rolname
+  FOR membership_edge IN
+    SELECT parent.rolname AS parent_role, member.rolname AS member_role
     FROM pg_auth_members AS membership
     JOIN pg_roles AS parent ON parent.oid = membership.roleid
     JOIN pg_roles AS member ON member.oid = membership.member
     WHERE member.rolname = 'vocab_rls_acceptance'
+       OR parent.rolname = 'vocab_rls_acceptance'
   LOOP
-    EXECUTE format('REVOKE %I FROM vocab_rls_acceptance', granted_role.rolname);
+    EXECUTE format(
+      'REVOKE %I FROM %I',
+      membership_edge.parent_role,
+      membership_edge.member_role
+    );
   END LOOP;
+END
+$$;
+
+-- Exact database capability: the production-role converge phase revokes
+-- PUBLIC CONNECT, so the test-only restricted LOGIN must receive CONNECT
+-- explicitly without gaining CREATE or TEMPORARY.
+DO $$
+BEGIN
+  EXECUTE format(
+    'REVOKE ALL ON DATABASE %I FROM vocab_rls_acceptance; GRANT CONNECT ON DATABASE %I TO vocab_rls_acceptance',
+    current_database(),
+    current_database()
+  );
 END
 $$;
 
