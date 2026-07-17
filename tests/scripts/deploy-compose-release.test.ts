@@ -42,23 +42,31 @@ describe("Compose release deployment contract", () => {
     expect(() => readDeploymentImages(manifest(images))).toThrow(/immutable registry reference|exactly runtime/);
   });
 
-  it("orders pull, isolated migration, rollout readiness, and smoke without a shell", () => {
+  it("orders pull, prepare, migration, converge, rollout readiness, and smoke without a shell", () => {
     const commands = buildDeploymentCommands("C:/safe/deploy.env", "C:/safe/images.env");
     expect(commands.map(({ binary, args }) => [binary, ...args])).toEqual([
-      ["docker", "compose", "-f", "compose.production.yaml", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "pull", "migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"],
+      ["docker", "compose", "-f", "compose.production.yaml", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "pull", "database-role-bootstrap", "migrate", "database-role-converge", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"],
+      ["docker", "compose", "-f", "compose.production.yaml", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "run", "--rm", "--no-deps", "--no-build", "database-role-bootstrap"],
       ["docker", "compose", "-f", "compose.production.yaml", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "run", "--rm", "--no-deps", "--no-build", "migrate"],
+      ["docker", "compose", "-f", "compose.production.yaml", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "run", "--rm", "--no-deps", "--no-build", "database-role-converge"],
       ["docker", "compose", "-f", "compose.production.yaml", "--env-file", "C:/safe/deploy.env", "--env-file", "C:/safe/images.env", "up", "-d", "--no-deps", "--no-build", "--wait", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"],
       [process.platform === "win32" ? "npm.cmd" : "npm", "run", "release:smoke"],
     ]);
   });
 
-  it("stops before rollout and smoke when migration fails", () => {
+  it.each([
+    ["prepare", ["pull", "prepare"]],
+    ["migration", ["pull", "prepare", "migration"]],
+    ["converge", ["pull", "prepare", "migration", "converge"]],
+  ] as const)("stops before runtime rollout when %s fails", (failedPhase, expectedPhases) => {
     const attempted: string[] = [];
     expect(() => executeDeploymentCommands(buildDeploymentCommands("C:/safe/deploy.env", "C:/safe/images.env"), ({ phase }) => {
       attempted.push(phase);
-      if (phase === "migration") throw new Error("migration failed");
-    })).toThrow("migration failed");
-    expect(attempted).toEqual(["pull", "migration"]);
+      if (phase === failedPhase) throw new Error(`${failedPhase} failed`);
+    })).toThrow(`${failedPhase} failed`);
+    expect(attempted).toEqual(expectedPhases);
+    expect(attempted).not.toContain("rollout");
+    expect(attempted).not.toContain("smoke");
   });
 
   it("rejects additional image keys", () => {
@@ -85,7 +93,14 @@ describe("Compose release deployment contract", () => {
     expect(() => executeDeploymentCommands(buildDeploymentCommands("C:/safe/deploy.env", "C:/safe/images.env"), ({ phase }) => {
       if (phase === "smoke") throw new Error("smoke failed");
     }, (phase, success) => evidence.push([phase, success]))).toThrow("smoke failed");
-    expect(evidence).toEqual([["pull", true], ["migration", true], ["rollout", true], ["smoke", false]]);
+    expect(evidence).toEqual([
+      ["pull", true],
+      ["prepare", true],
+      ["migration", true],
+      ["converge", true],
+      ["rollout", true],
+      ["smoke", false],
+    ]);
   });
 
   it("creates redacted evidence with manifest digest and timestamp", () => {
@@ -94,10 +109,11 @@ describe("Compose release deployment contract", () => {
     expect(JSON.stringify(evidence)).not.toContain("ghcr.io");
   });
 
-  it("requires exactly four ordered successful phases", () => {
-    const items = (["pull", "migration", "rollout", "smoke"] as const).map((phase) => createEvidence("staging", "c".repeat(64), phase, true));
+  it("requires exactly six ordered successful governance phases", () => {
+    const items = (["pull", "prepare", "migration", "converge", "rollout", "smoke"] as const)
+      .map((phase) => createEvidence("staging", "c".repeat(64), phase, true));
     expect(() => validateSuccessfulDeploymentEvidence(summarizeDeploymentEvidence("staging", "c".repeat(64), items))).not.toThrow();
-    expect(() => validateSuccessfulDeploymentEvidence(summarizeDeploymentEvidence("staging", "c".repeat(64), items.slice(0, 3)))).toThrow(/exactly/);
+    expect(() => validateSuccessfulDeploymentEvidence(summarizeDeploymentEvidence("staging", "c".repeat(64), items.slice(0, 5)))).toThrow(/exactly/);
     expect(() => summarizeDeploymentEvidence("staging", "c".repeat(64), [items[0], items[0]])).toThrow(/order/);
   });
 

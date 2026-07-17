@@ -147,10 +147,17 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(verifier).toContain("application database is not owned by vocab_migration");
   });
 
-  it("converges and verifies routine and type ownership across all schemas excluding extensions", () => {
+  it("transfers existing managed objects before migrations and verifies final ownership", () => {
     const managedSchemaSet = "n.nspname IN ('public', 'auth', 'vocab_migrations')";
     expect(bootstrap.match(new RegExp(managedSchemaSet.replace(/[()]/g, "\\$&"), "g"))?.length).toBeGreaterThanOrEqual(3);
     expect(bootstrap).toContain("dependency.deptype = 'e'");
+    expect(bootstrap).toContain("ORDER BY CASE WHEN c.relkind = 'S' THEN 1 ELSE 0 END");
+    const migrationAuthority = bootstrap.indexOf("await ensureMigrationAuthority(client, databaseName)");
+    const ownershipTransfer = bootstrap.indexOf("await transferApplicationOwnership(client)", migrationAuthority);
+    const convergeGuard = bootstrap.indexOf("if (phase === \"converge\")", ownershipTransfer);
+    expect(migrationAuthority).toBeGreaterThan(-1);
+    expect(ownershipTransfer).toBeGreaterThan(migrationAuthority);
+    expect(convergeGuard).toBeGreaterThan(ownershipTransfer);
     expect(verifier).toContain("application routines are not owned by vocab_migration");
     expect(verifier).toContain("application types are not owned by vocab_migration");
     expect(verifier).toContain("dependency.classid = 'pg_proc'::regclass");

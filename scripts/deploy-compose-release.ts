@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 
 export type DeployEnvironment = "staging" | "production";
-export type Command = { binary: string; args: string[]; phase: "pull" | "migration" | "rollout" | "smoke" };
+export type Command = { binary: string; args: string[]; phase: "pull" | "prepare" | "migration" | "converge" | "rollout" | "smoke" };
 export type DeploymentEvidence = { environment: DeployEnvironment; manifestSha256: string; phase: Command["phase"]; success: boolean; timestamp: string };
 export type DeploymentEvidenceSummary = { schemaVersion: 1; environment: DeployEnvironment; manifestSha256: string; phases: Array<{ phase: Command["phase"]; success: boolean; timestamp: string }> };
-const DEPLOYMENT_PHASES = ["pull", "migration", "rollout", "smoke"] as const;
+const DEPLOYMENT_PHASES = ["pull", "prepare", "migration", "converge", "rollout", "smoke"] as const;
 
 type ReleaseManifest = {
   images?: Record<string, { reference?: unknown }>;
@@ -45,8 +45,10 @@ export function readDeploymentImages(manifestPath: string): Record<(typeof IMAGE
 export function buildDeploymentCommands(deployEnvFile: string, imageEnvFile: string): Command[] {
   const compose = ["compose", "-f", "compose.production.yaml", "--env-file", deployEnvFile, "--env-file", imageEnvFile];
   return [
-    { binary: "docker", args: [...compose, "pull", "migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"], phase: "pull" },
+    { binary: "docker", args: [...compose, "pull", "database-role-bootstrap", "migrate", "database-role-converge", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"], phase: "pull" },
+    { binary: "docker", args: [...compose, "run", "--rm", "--no-deps", "--no-build", "database-role-bootstrap"], phase: "prepare" },
     { binary: "docker", args: [...compose, "run", "--rm", "--no-deps", "--no-build", "migrate"], phase: "migration" },
+    { binary: "docker", args: [...compose, "run", "--rm", "--no-deps", "--no-build", "database-role-converge"], phase: "converge" },
     { binary: "docker", args: [...compose, "up", "-d", "--no-deps", "--no-build", "--wait", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"], phase: "rollout" },
     { binary: process.platform === "win32" ? "npm.cmd" : "npm", args: ["run", "release:smoke"], phase: "smoke" },
   ];
@@ -97,7 +99,7 @@ export function summarizeDeploymentEvidence(environment: DeployEnvironment, mani
 
 export function validateSuccessfulDeploymentEvidence(summary: DeploymentEvidenceSummary): void {
   if (summary.phases.length !== DEPLOYMENT_PHASES.length || summary.phases.some((item, index) => item.phase !== DEPLOYMENT_PHASES[index] || item.success !== true)) {
-    throw new Error("Successful deployment requires exactly pull, migration, rollout, and smoke success");
+    throw new Error("Successful deployment requires exactly pull, prepare, migration, converge, rollout, and smoke success");
   }
 }
 

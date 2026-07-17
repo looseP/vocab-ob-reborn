@@ -47,6 +47,19 @@ export function assertSafeDrillTarget(sourceUrl: string, targetUrl: string): voi
   }
 }
 
+export function assertDrillVerificationIdentity(targetUrl: string, verificationUrl: string): void {
+  const target = new URL(targetUrl);
+  const verification = new URL(verificationUrl);
+  const targetIdentity = `${target.hostname.toLowerCase()}:${target.port || "5432"}/${databaseName(targetUrl)}`;
+  const verificationIdentity = `${verification.hostname.toLowerCase()}:${verification.port || "5432"}/${databaseName(verificationUrl)}`;
+  if (targetIdentity !== verificationIdentity) {
+    throw new Error("DRILL_TEST_DATABASE_URL must identify the restored drill database");
+  }
+  if (decodeURIComponent(target.username) === decodeURIComponent(verification.username)) {
+    throw new Error("DRILL_TEST_DATABASE_URL must not reuse the restore identity");
+  }
+}
+
 export function postgresEnvironment(databaseUrl: string): NodeJS.ProcessEnv {
   assertConnectionStringHasNoSslOptions(databaseUrl);
   const parsed = new URL(databaseUrl);
@@ -198,6 +211,51 @@ async function schemaEvidence(databaseUrl: string): Promise<BackupManifest["sche
   }
 }
 
+const DRILL_VERIFICATION_PASSTHROUGH = [
+  "PATH",
+  "Path",
+  "PATHEXT",
+  "SYSTEMROOT",
+  "SystemRoot",
+  "COMSPEC",
+  "ComSpec",
+  "TEMP",
+  "TMP",
+  "DB_SSLMODE",
+  "DB_SSLROOTCERT",
+] as const;
+
+export function drillVerificationEnvironment(
+  environment: NodeJS.ProcessEnv,
+  targetUrl: string,
+  verificationUrl: string,
+): NodeJS.ProcessEnv {
+  const isolated: NodeJS.ProcessEnv = {};
+  for (const name of DRILL_VERIFICATION_PASSTHROUGH) {
+    const value = environment[name];
+    if (value !== undefined) isolated[name] = value;
+  }
+  isolated.DATABASE_URL = targetUrl;
+  isolated.TEST_DATABASE_URL = verificationUrl;
+  return isolated;
+}
+
+export function pgRestoreArguments(targetUrl: string, dumpPath: string, jobs: string): string[] {
+  if (!/^\d+$/.test(jobs) || Number(jobs) < 1) {
+    throw new Error("PG_RESTORE_JOBS must be a positive integer");
+  }
+  return [
+    "--clean",
+    "--if-exists",
+    "--exit-on-error",
+    "--no-owner",
+    "--no-privileges",
+    "--dbname", databaseName(targetUrl),
+    "--jobs", jobs,
+    dumpPath,
+  ];
+}
+
 async function assertEmptyDrillDatabase(targetUrl: string): Promise<void> {
   const client = new Client({ connectionString: targetUrl });
   try {
@@ -267,8 +325,12 @@ export async function createBackup(): Promise<void> {
 async function restoreDrill(manifestPath: string): Promise<void> {
   const sourceUrl = process.env.DATABASE_URL;
   const targetUrl = process.env.DRILL_DATABASE_URL;
-  if (!sourceUrl || !targetUrl) throw new Error("DATABASE_URL and DRILL_DATABASE_URL are required");
+  const verificationUrl = process.env.DRILL_TEST_DATABASE_URL;
+  if (!sourceUrl || !targetUrl || !verificationUrl) {
+    throw new Error("DATABASE_URL, DRILL_DATABASE_URL, and DRILL_TEST_DATABASE_URL are required");
+  }
   assertSafeDrillTarget(sourceUrl, targetUrl);
+  assertDrillVerificationIdentity(targetUrl, verificationUrl);
   const manifest = await verifyManifest(resolve(manifestPath), process.env.BACKUP_SIGNING_KEY);
   if (manifest.database !== databaseName(sourceUrl)) {
     throw new Error("Backup manifest database does not match DATABASE_URL");
@@ -276,19 +338,15 @@ async function restoreDrill(manifestPath: string): Promise<void> {
   await assertEmptyDrillDatabase(targetUrl);
   const dumpPath = resolve(dirname(manifestPath), manifest.dumpFile);
 
-  await run(binary("pg_restore"), [
-    "--clean",
-    "--if-exists",
-    "--exit-on-error",
-    "--no-owner",
-    "--no-privileges",
-    "--jobs", process.env.PG_RESTORE_JOBS ?? "2",
-    dumpPath,
-  ], { env: postgresEnvironment(targetUrl) });
+  await run(
+    binary("pg_restore"),
+    pgRestoreArguments(targetUrl, dumpPath, process.env.PG_RESTORE_JOBS ?? "2"),
+    { env: postgresEnvironment(targetUrl) },
+  );
 
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   await run(npm, ["run", "test:db-release"], {
-    env: { ...process.env, DATABASE_URL: targetUrl, TEST_DATABASE_URL: targetUrl },
+    env: drillVerificationEnvironment(process.env, targetUrl, verificationUrl),
   });
   const restoredEvidence = await schemaEvidence(targetUrl);
   if (JSON.stringify(restoredEvidence) !== JSON.stringify(manifest.schemaEvidence)) {

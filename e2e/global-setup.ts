@@ -1,8 +1,8 @@
 import pg from "pg";
-import { E2E_DATABASE_URL, E2E_OWNER_EMAIL, E2E_OWNER_ID } from "./constants";
+import { E2E_OWNER_EMAIL, E2E_OWNER_ID, E2E_SETUP_DATABASE_URL } from "./constants";
 
 export default async function globalSetup(): Promise<void> {
-  const client = new pg.Client({ connectionString: E2E_DATABASE_URL });
+  const client = new pg.Client({ connectionString: E2E_SETUP_DATABASE_URL });
   await client.connect();
   try {
     await client.query("BEGIN");

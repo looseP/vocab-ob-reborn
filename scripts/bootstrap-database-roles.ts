@@ -158,6 +158,7 @@ async function transferApplicationOwnership(client: Client): Promise<void> {
               AND dependency.objid = c.oid
               AND dependency.deptype = 'e'
           )
+        ORDER BY CASE WHEN c.relkind = 'S' THEN 1 ELSE 0 END, n.nspname, c.relname
       LOOP
         EXECUTE format(
           CASE item.relkind
@@ -383,8 +384,11 @@ async function main(): Promise<void> {
     const databaseName = decodeURIComponent(adminUrl.pathname.slice(1));
     await ensureMigrationAuthority(client, databaseName);
     await ensureApplicationSchemas(client);
+    // Existing local volumes were created by the historical administration role.
+    // The authoritative migration LOGIN must own every managed object before it
+    // executes ALTER TABLE / ALTER ROUTINE statements in later migrations.
+    await transferApplicationOwnership(client);
     if (phase === "converge") {
-      await transferApplicationOwnership(client);
       await convergePrivileges(client, databaseName);
       await transferDatabaseOwnership(client, databaseName);
       await revokeAdminMigrationMembership(client);

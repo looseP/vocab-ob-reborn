@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { resolve, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -53,21 +53,40 @@ export function acceptancePostgresContainerName(project: string): string {
   return `${project}-postgres-1`;
 }
 
-export async function allocateLoopbackPort(): Promise<number> {
-  return new Promise<number>((resolvePort, reject) => {
+export interface HighPortAllocationDependencies {
+  candidatePort?: () => number;
+  probePort?: (port: number) => Promise<boolean>;
+  attempts?: number;
+}
+
+async function probeLoopbackPort(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolveAvailability, reject) => {
     const server = createServer();
     server.unref();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string" || address.port < 49152) {
-        server.close(() => reject(new Error("Unable to allocate a dynamic high loopback port")));
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE" || error.code === "EACCES") {
+        resolveAvailability(false);
         return;
       }
-      const port = address.port;
-      server.close((error) => error ? reject(error) : resolvePort(port));
+      reject(error);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      server.close((error) => error ? reject(error) : resolveAvailability(true));
     });
   });
+}
+
+export async function allocateLoopbackPort(dependencies: HighPortAllocationDependencies = {}): Promise<number> {
+  const attempts = dependencies.attempts ?? 32;
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 32) throw new Error("High port allocation attempts must be between 1 and 32");
+  const candidatePort = dependencies.candidatePort ?? (() => randomInt(49152, 65536));
+  const probePort = dependencies.probePort ?? probeLoopbackPort;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const port = candidatePort();
+    if (!Number.isInteger(port) || port < 49152 || port > 65535) throw new Error("High port candidate must be between 49152 and 65535");
+    if (await probePort(port)) return port;
+  }
+  throw new Error(`Unable to allocate a dynamic high loopback port after ${attempts} attempts`);
 }
 
 function generatedPassword(): string {
@@ -214,6 +233,7 @@ export async function runDatabaseRolesAcceptance(dependencies: AcceptanceDepende
     } catch (error) {
       cleanupError = error;
     }
+    if (primaryError === undefined && interrupted !== undefined) primaryError = interrupted;
     offSignal("SIGINT", signalListeners.SIGINT);
     offSignal("SIGTERM", signalListeners.SIGTERM);
   }

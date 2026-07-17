@@ -2,11 +2,18 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
-import { verifyCiReleaseManifestContract, verifyReleaseWorkflow } from "../../scripts/verify-release-workflow";
+import {
+  verifyCiReleaseManifestContract,
+  verifyDatabaseVerificationScriptContract,
+  verifyMonthlyRecoveryDrillContract,
+  verifyReleaseWorkflow,
+} from "../../scripts/verify-release-workflow";
 
 const workflow = readFileSync(resolve(import.meta.dirname, "../../.github/workflows/release.yml"), "utf8");
 const promotionWorkflow = readFileSync(resolve(import.meta.dirname, "../../.github/workflows/promote-release.yml"), "utf8");
 const ciWorkflow = readFileSync(resolve(import.meta.dirname, "../../.github/workflows/ci.yml"), "utf8");
+const monthlyDrillWorkflow = readFileSync(resolve(import.meta.dirname, "../../.github/workflows/monthly-drill.yml"), "utf8");
+const packageSource = readFileSync(resolve(import.meta.dirname, "../../package.json"), "utf8");
 const producerNames = ["migration-rehearsal", "database-roles", "backup-restore", "rollback-compatibility", "alerting-drill", "secret-rotation"] as const;
 const producers = Object.fromEntries(producerNames.map((name) => [name, readFileSync(resolve(import.meta.dirname, `../../.github/workflows/release-check-${name}.yml`), "utf8")])) as Record<(typeof producerNames)[number], string>;
 
@@ -81,6 +88,38 @@ describe("release workflow structured contract", () => {
       ...producers,
       "database-roles": stringify(value),
     })).toThrow(/legacy TEST_DATABASE_URL/);
+  });
+  it("rejects migration rehearsal producer migrating outside the migration LOGIN", () => {
+    const value = parse(producers["migration-rehearsal"]);
+    const migrate = value.jobs.check.steps.find(
+      (step: { name?: string }) => step.name === "Run authoritative migrations as vocab_migration",
+    );
+    migrate.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "migration-rehearsal": stringify(value),
+    })).toThrow(/MIGRATION_DATABASE_URL/);
+  });
+  it("rejects migration rehearsal producer without the governance chain", () => {
+    const value = parse(producers["migration-rehearsal"]);
+    value.jobs.check.steps = value.jobs.check.steps.filter(
+      (step: { name?: string }) => step.name !== "Converge database role ownership and privileges",
+    );
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "migration-rehearsal": stringify(value),
+    })).toThrow(/Converge database role ownership and privileges/);
+  });
+  it("rejects migration rehearsal using the admin identity for release verification", () => {
+    const value = parse(producers["migration-rehearsal"]);
+    const rehearsal = value.jobs.check.steps.find(
+      (step: { name?: string }) => step.name === "Run real migration rehearsal",
+    );
+    rehearsal.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyReleaseWorkflow(workflow, promotionWorkflow, {
+      ...producers,
+      "migration-rehearsal": stringify(value),
+    })).toThrow(/migration DATABASE_URL and admin TEST_DATABASE_URL/);
   });
   it("rejects database roles producer migrating outside the migration LOGIN", () => {
     const value = parse(producers["database-roles"]);
@@ -186,8 +225,7 @@ describe("release workflow structured contract", () => {
       (step: { name?: string }) => step.name === "Prepare dedicated NOBYPASSRLS acceptance principal",
     );
     bootstrap.run = [
-      "# npm run db:migrate",
-      "# psql \"$DATABASE_URL\" \\",
+      "# psql \"$DATABASE_ADMIN_URL\" \\",
       "#   -v ON_ERROR_STOP=1 \\",
       "#   -f scripts/rls-acceptance-bootstrap.sql",
       "true",
@@ -216,6 +254,93 @@ describe("release workflow structured contract", () => {
       /database verification command is missing/,
     );
   });
+  it("rejects CI without an existing-volume role upgrade rehearsal", () => {
+    const value = parse(ciWorkflow);
+    value.jobs.verify.steps = value.jobs.verify.steps.filter(
+      (step: { name?: string }) => step.name !== "Existing-volume database role upgrade rehearsal",
+    );
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/Existing-volume database role upgrade rehearsal/);
+  });
+  it("rejects CI when the existing-volume rehearsal is only a comment", () => {
+    const value = parse(ciWorkflow);
+    const rehearsal = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Existing-volume database role upgrade rehearsal",
+    );
+    rehearsal.run = "# npm run db-roles:upgrade:acceptance\ntrue";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/existing-volume database role upgrade rehearsal/);
+  });
+  it("rejects CI verify migrating before role preparation", () => {
+    const value = parse(ciWorkflow);
+    const allSteps = value.jobs.verify.steps as Array<{ name?: string }>;
+    const prepareIndex = allSteps.findIndex((step) => step.name === "Prepare real database LOGIN roles");
+    const migrateIndex = allSteps.findIndex((step) => step.name === "Run authoritative migrations as vocab_migration");
+    [allSteps[prepareIndex], allSteps[migrateIndex]] = [allSteps[migrateIndex], allSteps[prepareIndex]];
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/must run before/);
+  });
+  it("rejects CI verify converging before migration", () => {
+    const value = parse(ciWorkflow);
+    const allSteps = value.jobs.verify.steps as Array<{ name?: string }>;
+    const migrateIndex = allSteps.findIndex((step) => step.name === "Run authoritative migrations as vocab_migration");
+    const convergeIndex = allSteps.findIndex((step) => step.name === "Converge database role ownership and privileges");
+    [allSteps[migrateIndex], allSteps[convergeIndex]] = [allSteps[convergeIndex], allSteps[migrateIndex]];
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/must run before/);
+  });
+  it("rejects CI verify migrations outside vocab_migration", () => {
+    const value = parse(ciWorkflow);
+    const migrate = value.jobs.verify.steps.find((step: { name?: string }) => step.name === "Run authoritative migrations as vocab_migration");
+    migrate.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/MIGRATION_DATABASE_URL/);
+  });
+  it("rejects CI verify database gates using the wrong identities", () => {
+    const value = parse(ciWorkflow);
+    const verification = value.jobs.verify.steps.find((step: { name?: string }) => step.name === "Database release verification");
+    verification.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    verification.env.TEST_DATABASE_URL = "${{ env.MIGRATION_DATABASE_URL }}";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/migration DATABASE_URL and admin TEST_DATABASE_URL/);
+  });
+  it("rejects CI verify without a real LOGIN isolation step", () => {
+    const value = parse(ciWorkflow);
+    value.jobs.verify.steps = value.jobs.verify.steps.filter(
+      (step: { name?: string }) => step.name !== "Verify real database LOGIN isolation",
+    );
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/Verify real database LOGIN isolation/);
+  });
+  it("rejects CI verify replacing the real LOGIN isolation command", () => {
+    const value = parse(ciWorkflow);
+    const verification = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Verify real database LOGIN isolation",
+    );
+    verification.run = "npm run test:integration";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/LOGIN verification phase/);
+  });
+  it("rejects CI verify separating LOGIN isolation from convergence", () => {
+    const value = parse(ciWorkflow);
+    const allSteps = value.jobs.verify.steps as Array<{ name?: string; run?: string }>;
+    const verificationIndex = allSteps.findIndex((step) => step.name === "Verify real database LOGIN isolation");
+    allSteps.splice(verificationIndex, 0, { name: "Unrelated step", run: "true" });
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/immediately after converge/);
+  });
+  it("rejects CI verify creating the RLS login before convergence", () => {
+    const value = parse(ciWorkflow);
+    const allSteps = value.jobs.verify.steps as Array<{ name?: string }>;
+    const convergeIndex = allSteps.findIndex((step) => step.name === "Converge database role ownership and privileges");
+    const bootstrapIndex = allSteps.findIndex((step) => step.name === "Prepare dedicated NOBYPASSRLS acceptance principal");
+    [allSteps[convergeIndex], allSteps[bootstrapIndex]] = [allSteps[bootstrapIndex], allSteps[convergeIndex]];
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/must run before/);
+  });
+  it("rejects CI verify migration replay outside vocab_migration", () => {
+    const value = parse(ciWorkflow);
+    const replay = value.jobs.verify.steps.find((step: { name?: string }) => step.name === "Migration replay is a no-op");
+    replay.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/replay must authenticate through MIGRATION_DATABASE_URL/);
+  });
+  it("rejects CI data lifecycle integration using a stale database identity", () => {
+    const value = parse(ciWorkflow);
+    const lifecycle = value.jobs.verify.steps.find((step: { name?: string }) => step.name === "Data lifecycle integration and contract gate");
+    lifecycle.env.TEST_DATABASE_URL = "postgresql://vocab:vocab@localhost:5432/vocab";
+    lifecycle.env.DATA_LIFECYCLE_DATABASE_URL = "postgresql://vocab:vocab@localhost:5432/vocab";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/dedicated test database admin/);
+  });
   it("rejects CI when RLS bootstrap runs after database verification", () => {
     const value = parse(ciWorkflow);
     const allSteps = value.jobs.verify.steps as Array<{ name?: string }>;
@@ -233,6 +358,64 @@ describe("release workflow structured contract", () => {
       /must run before/,
     );
   });
+  it("rejects Browser E2E migrating before role preparation", () => {
+    const value = parse(ciWorkflow);
+    const allSteps = value.jobs.e2e.steps as Array<{ name?: string }>;
+    const prepareIndex = allSteps.findIndex((step) => step.name === "Prepare real database LOGIN roles");
+    const migrateIndex = allSteps.findIndex((step) => step.name === "Run authoritative migrations as vocab_migration");
+    [allSteps[prepareIndex], allSteps[migrateIndex]] = [allSteps[migrateIndex], allSteps[prepareIndex]];
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/must run before/);
+  });
+  it("rejects Browser E2E converging before migration", () => {
+    const value = parse(ciWorkflow);
+    const allSteps = value.jobs.e2e.steps as Array<{ name?: string }>;
+    const migrateIndex = allSteps.findIndex((step) => step.name === "Run authoritative migrations as vocab_migration");
+    const convergeIndex = allSteps.findIndex((step) => step.name === "Converge database role ownership and privileges");
+    [allSteps[migrateIndex], allSteps[convergeIndex]] = [allSteps[convergeIndex], allSteps[migrateIndex]];
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/must run before/);
+  });
+  it("rejects Browser E2E role governance commands that only appear in comments", () => {
+    const value = parse(ciWorkflow);
+    const prepare = value.jobs.e2e.steps.find((step: { name?: string }) => step.name === "Prepare real database LOGIN roles");
+    prepare.run = "# npm exec -- tsx scripts/bootstrap-database-roles.ts prepare\ntrue";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/prepare phase/);
+  });
+  it("rejects Browser E2E migrations outside vocab_migration", () => {
+    const value = parse(ciWorkflow);
+    const migrate = value.jobs.e2e.steps.find((step: { name?: string }) => step.name === "Run authoritative migrations as vocab_migration");
+    migrate.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/MIGRATION_DATABASE_URL/);
+  });
+  it("rejects Browser E2E fixture setup falling back to vocab_app", () => {
+    const value = parse(ciWorkflow);
+    const runtime = value.jobs.e2e.steps.find((step: { name?: string }) => step.name === "Run Playwright E2E tests as vocab_app");
+    runtime.env.E2E_SETUP_DATABASE_URL = "${{ env.APP_DATABASE_URL }}";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/fixture setup isolated to the database admin/);
+  });
+  it("rejects release verification migrating outside vocab_migration", () => {
+    const value = parse(workflow);
+    const migrate = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Run authoritative migrations as vocab_migration",
+    );
+    migrate.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyReleaseWorkflow(stringify(value), promotionWorkflow, producers)).toThrow(/MIGRATION_DATABASE_URL/);
+  });
+  it("rejects release verification with reordered convergence", () => {
+    const value = parse(workflow);
+    const allSteps = value.jobs.verify.steps as Array<{ name?: string }>;
+    const migrateIndex = allSteps.findIndex((step) => step.name === "Run authoritative migrations as vocab_migration");
+    const convergeIndex = allSteps.findIndex((step) => step.name === "Converge database role ownership and privileges");
+    [allSteps[migrateIndex], allSteps[convergeIndex]] = [allSteps[convergeIndex], allSteps[migrateIndex]];
+    expect(() => verifyReleaseWorkflow(stringify(value), promotionWorkflow, producers)).toThrow(/must run before/);
+  });
+  it("rejects release verification database gates under the wrong identities", () => {
+    const value = parse(workflow);
+    const verification = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Verify database release gates",
+    );
+    verification.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyReleaseWorkflow(stringify(value), promotionWorkflow, producers)).toThrow(/migration DATABASE_URL and admin TEST_DATABASE_URL/);
+  });
   it("rejects release verification without the RLS bootstrap SQL", () => {
     const value = parse(workflow);
     const bootstrap = value.jobs.verify.steps.find(
@@ -242,6 +425,78 @@ describe("release workflow structured contract", () => {
     expect(() => verifyReleaseWorkflow(stringify(value), promotionWorkflow, producers)).toThrow(
       /bootstrap the restricted RLS acceptance principal/,
     );
+  });
+  it("accepts the migration-free database verification script", () => {
+    expect(() => verifyDatabaseVerificationScriptContract(packageSource)).not.toThrow();
+  });
+  it.each([
+    "verify:db",
+    "test:db-release",
+    "test:integration",
+    "test:db-roles",
+    "test:capacity",
+  ])("rejects database verification script %s when it hides another migration", (name) => {
+    const value = JSON.parse(packageSource);
+    value.scripts[name] = `npm run db:migrate && ${value.scripts[name]}`;
+    expect(() => verifyDatabaseVerificationScriptContract(JSON.stringify(value))).toThrow(/migration-free/);
+  });
+  it("accepts the governed monthly recovery drill", () => {
+    expect(() => verifyMonthlyRecoveryDrillContract(monthlyDrillWorkflow)).not.toThrow();
+  });
+  it("rejects monthly recovery migrations outside vocab_migration", () => {
+    const value = parse(monthlyDrillWorkflow);
+    const migrate = value.jobs.drill.steps.find(
+      (step: { name?: string }) => step.name === "Run authoritative migrations as vocab_migration",
+    );
+    migrate.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyMonthlyRecoveryDrillContract(stringify(value))).toThrow(/MIGRATION_DATABASE_URL/);
+  });
+  it("rejects monthly recovery backups using the administration identity", () => {
+    const value = parse(monthlyDrillWorkflow);
+    const backup = value.jobs.drill.steps.find(
+      (step: { name?: string }) => step.name === "Create signed backup as vocab_backup",
+    );
+    backup.env.DATABASE_URL = "${{ env.DATABASE_ADMIN_URL }}";
+    expect(() => verifyMonthlyRecoveryDrillContract(stringify(value))).toThrow(/BACKUP_DATABASE_URL/);
+  });
+  it("rejects monthly recovery drill databases owned by the administrator", () => {
+    const value = parse(monthlyDrillWorkflow);
+    const create = value.jobs.drill.steps.find(
+      (step: { name?: string }) => step.name === "Create isolated drill database owned by vocab_migration",
+    );
+    create.run = create.run.replace("OWNER vocab_migration", "OWNER vocab_drill_admin");
+    expect(() => verifyMonthlyRecoveryDrillContract(stringify(value))).toThrow(/database creation/);
+  });
+  it("rejects monthly recovery restores outside the migration identity", () => {
+    const value = parse(monthlyDrillWorkflow);
+    const restore = value.jobs.drill.steps.find(
+      (step: { name?: string }) => step.name === "Run isolated restore drill as vocab_migration",
+    );
+    restore.env.DRILL_DATABASE_URL = "${{ env.DRILL_DATABASE_ADMIN_URL }}";
+    expect(() => verifyMonthlyRecoveryDrillContract(stringify(value))).toThrow(/restore as vocab_migration/);
+  });
+  it("rejects monthly recovery release verification under the restore identity", () => {
+    const value = parse(monthlyDrillWorkflow);
+    const restore = value.jobs.drill.steps.find(
+      (step: { name?: string }) => step.name === "Run isolated restore drill as vocab_migration",
+    );
+    restore.env.DRILL_TEST_DATABASE_URL = "${{ env.DRILL_MIGRATION_DATABASE_URL }}";
+    expect(() => verifyMonthlyRecoveryDrillContract(stringify(value))).toThrow(/verify through the drill admin/);
+  });
+  it("rejects monthly recovery restore verification without convergence", () => {
+    const value = parse(monthlyDrillWorkflow);
+    value.jobs.drill.steps = value.jobs.drill.steps.filter(
+      (step: { name?: string }) => step.name !== "Converge restored database ownership and privileges",
+    );
+    expect(() => verifyMonthlyRecoveryDrillContract(stringify(value))).toThrow(/Converge restored database ownership and privileges/);
+  });
+  it("rejects monthly recovery restore verification against the source database", () => {
+    const value = parse(monthlyDrillWorkflow);
+    const verification = value.jobs.drill.steps.find(
+      (step: { name?: string }) => step.name === "Verify restored database LOGIN isolation",
+    );
+    verification.env.APP_DATABASE_URL = "${{ env.APP_DATABASE_URL }}";
+    expect(() => verifyMonthlyRecoveryDrillContract(stringify(value))).toThrow(/DRILL_APP_DATABASE_URL/);
   });
   it("uploads layered coverage only after engineering verification succeeds", () => {
     const value = parse(ciWorkflow);

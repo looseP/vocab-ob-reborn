@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   acceptanceEnvironment,
   acceptanceInvocations,
+  allocateLoopbackPort,
   acceptancePostgresContainerName,
   acceptanceProjectName,
   cleanupInvocation,
@@ -28,6 +29,44 @@ describe("database roles acceptance orchestration", () => {
     expect(() => acceptancePostgresContainerName("vocab-observatory-db-roles-readable-postgres-1")).toThrow(/unguarded Compose project/);
     expect(() => acceptanceProjectName("../../other-project")).toThrow(/unguarded Compose project/);
     expect(() => cleanupInvocation("vocab-observatory-database-roles-acceptance", {})).toThrow(/unguarded Compose project/);
+  });
+
+  it("allocates a loopback port from the required high range", async () => {
+    const port = await allocateLoopbackPort();
+    expect(port).toBeGreaterThanOrEqual(49152);
+    expect(port).toBeLessThanOrEqual(65535);
+  });
+
+  it("retries occupied high ports and returns the first available candidate", async () => {
+    const candidatePort = vi.fn<() => number>()
+      .mockReturnValueOnce(50001)
+      .mockReturnValueOnce(50002)
+      .mockReturnValueOnce(50003);
+    const probePort = vi.fn<(port: number) => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    await expect(allocateLoopbackPort({ candidatePort, probePort })).resolves.toBe(50003);
+    expect(probePort.mock.calls).toEqual([[50001], [50002], [50003]]);
+  });
+
+  it("fails closed after the configured high-port attempts are exhausted", async () => {
+    const probePort = vi.fn<(port: number) => Promise<boolean>>().mockResolvedValue(false);
+
+    await expect(allocateLoopbackPort({
+      candidatePort: () => 50001,
+      probePort,
+      attempts: 3,
+    })).rejects.toThrow(/after 3 attempts/);
+    expect(probePort).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects invalid port-allocation dependencies before probing", async () => {
+    const probePort = vi.fn<(port: number) => Promise<boolean>>().mockResolvedValue(true);
+    await expect(allocateLoopbackPort({ attempts: 0, probePort })).rejects.toThrow(/between 1 and 32/);
+    await expect(allocateLoopbackPort({ candidatePort: () => 49151, probePort })).rejects.toThrow(/between 49152 and 65535/);
+    expect(probePort).not.toHaveBeenCalled();
   });
 
   it("routes five exact identities through one dynamic high loopback port with distinct passwords", () => {
@@ -180,6 +219,27 @@ describe("database roles acceptance orchestration", () => {
     })).rejects.toThrow(/interrupted by SIGINT/);
     expect(calls).toHaveLength(2);
     expect(calls[1]?.args).toContain("down");
+    expect(listeners.size).toBe(0);
+  });
+
+  it("does not report success when SIGTERM arrives during cleanup", async () => {
+    const listeners = new Map<NodeJS.Signals, () => void>();
+    const calls: CommandInvocation[] = [];
+    await expect(runDatabaseRolesAcceptance({
+      uuid: () => UUID,
+      password: (() => {
+        let index = 0;
+        return () => PASSWORDS[index++]!;
+      })(),
+      allocatePort: async () => 61234,
+      run: async (invocation) => {
+        calls.push(invocation);
+        if (invocation.args.includes("down")) listeners.get("SIGTERM")?.();
+      },
+      onSignal: (signal, listener) => { listeners.set(signal, listener); },
+      offSignal: (signal) => { listeners.delete(signal); },
+    })).rejects.toThrow(/interrupted by SIGTERM/);
+    expect(calls.at(-1)?.args).toContain("down");
     expect(listeners.size).toBe(0);
   });
 

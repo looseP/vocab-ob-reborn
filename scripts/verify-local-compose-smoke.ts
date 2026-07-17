@@ -50,9 +50,11 @@ export function assessServiceStatuses(processes: ComposeProcess[]): ServiceStatu
   if (!postgres || postgres.State !== "running" || postgres.Health !== "healthy") {
     errors.push("postgres must be running and healthy");
   }
-  const migrate = byService.get("migrate");
-  if (!migrate || migrate.State !== "exited" || Number(migrate.ExitCode) !== 0) {
-    errors.push("migrate must be exited with code 0");
+  for (const service of ["database-role-bootstrap", "migrate", "database-role-converge"] as const) {
+    const process = byService.get(service);
+    if (!process || process.State !== "exited" || Number(process.ExitCode) !== 0) {
+      errors.push(`${service} must be exited with code 0`);
+    }
   }
   const web = byService.get("web");
   if (!web || web.State !== "running" || web.Health !== "healthy") {
@@ -94,6 +96,20 @@ export function resolveSmokeBackupRuntimeUser(
     throw new Error(`Cannot resolve host UID:GID for backup bind mount on ${platform}`);
   }
   return `${uid}:${gid}`;
+}
+
+export function resolveSmokeDatabaseEnvironment(): Record<string, string> {
+  return {
+    DATABASE_URL: "",
+    DATABASE_ADMIN_URL: "postgresql://vocab_roles_admin:SmokeVocabAdmin_8wQ4tK@postgres:5432/vocab",
+    APP_DATABASE_URL: "postgresql://vocab_app:SmokeVocabApp_7rN3zM4c@postgres:5432/vocab",
+    WORKER_DATABASE_URL: "postgresql://vocab_worker:SmokeVocabWorker_4xV9pC@postgres:5432/vocab",
+    BACKUP_DATABASE_URL: "postgresql://vocab_backup:SmokeVocabBackup_6kT2yH@postgres:5432/vocab",
+    MIGRATION_DATABASE_URL: "postgresql://vocab_migration:SmokeVocabMigration_5mJ8qD@postgres:5432/vocab",
+    POSTGRES_USER: "vocab_roles_admin",
+    POSTGRES_PASSWORD: "SmokeVocabAdmin_8wQ4tK",
+    POSTGRES_DB: "vocab",
+  };
 }
 
 export function resolveSmokeImageEnvironment(
@@ -182,6 +198,7 @@ async function main(): Promise<void> {
     "APP_IMAGE",
     "MIGRATION_IMAGE",
     "BACKUP_IMAGE",
+    "DATABASE_ADMIN_URL",
     "APP_DATABASE_URL",
     "WORKER_DATABASE_URL",
     "BACKUP_DATABASE_URL",
@@ -203,11 +220,7 @@ async function main(): Promise<void> {
     APP_ORIGIN: `http://127.0.0.1:${appPort}`,
     APP_NODE_ENV: "development",
     DB_SSLMODE: "disable",
-    DATABASE_URL: "",
-    APP_DATABASE_URL: "",
-    WORKER_DATABASE_URL: "",
-    BACKUP_DATABASE_URL: "",
-    MIGRATION_DATABASE_URL: "",
+    ...resolveSmokeDatabaseEnvironment(),
     BACKUP_HOST_DIR: backupDirectory,
     BACKUP_RUNTIME_USER: resolveSmokeBackupRuntimeUser(),
   });
