@@ -1,10 +1,19 @@
 name: vocab-observatory
 
 x-app-environment: &app-environment
-  DATABASE_URL: ${APP_DATABASE_URL:-${DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}}
+  DATABASE_URL: ${APP_DATABASE_URL:-postgresql://vocab_app:LocalVocabApp_7rN3zM4c@postgres:5432/${POSTGRES_DB:-vocab}}
   DB_SSLMODE: ${DB_SSLMODE:-disable}
   DB_POOL_MAX: ${DB_POOL_MAX:-5}
   LOG_LEVEL: ${LOG_LEVEL:-info}
+
+x-database-role-environment: &database-role-environment
+  # Preserve the historical local admin identity so existing postgres-data volumes remain upgradeable.
+  DATABASE_ADMIN_URL: ${DATABASE_ADMIN_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}
+  APP_DATABASE_URL: ${APP_DATABASE_URL:-postgresql://vocab_app:LocalVocabApp_7rN3zM4c@postgres:5432/${POSTGRES_DB:-vocab}}
+  WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://vocab_worker:LocalVocabWorker_4xV9pC@postgres:5432/${POSTGRES_DB:-vocab}}
+  BACKUP_DATABASE_URL: ${BACKUP_DATABASE_URL:-postgresql://vocab_backup:LocalVocabBackup_6kT2yH@postgres:5432/${POSTGRES_DB:-vocab}}
+  MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:-postgresql://vocab_migration:LocalVocabMigration_5mJ8qD@postgres:5432/${POSTGRES_DB:-vocab}}
+  DB_SSLMODE: ${DB_SSLMODE:-disable}
 
 x-app-base: &app-base
   image: ${APP_IMAGE:-vocab-observatory-v2:local}
@@ -22,7 +31,7 @@ x-app-base: &app-base
     - /tmp:size=64m,mode=1777
   environment: *app-environment
   depends_on:
-    migrate:
+    database-role-converge:
       condition: service_completed_successfully
 
 services:
@@ -42,6 +51,19 @@ services:
       retries: 20
       start_period: 5s
 
+  database-role-bootstrap:
+    image: ${MIGRATION_IMAGE:-vocab-observatory-v2-migration:local}
+    build:
+      context: .
+      target: migration
+    init: true
+    restart: "no"
+    environment: *database-role-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["./node_modules/.bin/tsx", "scripts/bootstrap-database-roles.ts", "prepare"]
+
   migrate:
     image: ${MIGRATION_IMAGE:-vocab-observatory-v2-migration:local}
     build:
@@ -51,11 +73,24 @@ services:
     restart: "no"
     environment:
       <<: *app-environment
-      DATABASE_URL: ${MIGRATION_DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:-postgresql://vocab_migration:LocalVocabMigration_5mJ8qD@postgres:5432/${POSTGRES_DB:-vocab}}
     depends_on:
-      postgres:
-        condition: service_healthy
+      database-role-bootstrap:
+        condition: service_completed_successfully
     command: ["./node_modules/.bin/drizzle-kit", "migrate", "--config", "drizzle.config.ts"]
+
+  database-role-converge:
+    image: ${MIGRATION_IMAGE:-vocab-observatory-v2-migration:local}
+    build:
+      context: .
+      target: migration
+    init: true
+    restart: "no"
+    environment: *database-role-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["./node_modules/.bin/tsx", "scripts/bootstrap-database-roles.ts", "converge"]
 
   web:
     <<: *app-base
@@ -64,7 +99,7 @@ services:
       NODE_ENV: ${APP_NODE_ENV:-development}
       PORT: 3001
       SERVE_FRONTEND: "true"
-      APP_DATABASE_URL: ${APP_DATABASE_URL:-}
+      APP_DATABASE_URL: ${APP_DATABASE_URL:-postgresql://vocab_app:LocalVocabApp_7rN3zM4c@postgres:5432/${POSTGRES_DB:-vocab}}
       APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:${APP_PORT:-3001}}
       # Local-only examples; production overrides must supply real secrets.
       OWNER_API_TOKEN: ${OWNER_API_TOKEN:-local-owner-api-token-only-0001}
@@ -96,7 +131,7 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-review-outbox-worker.ts"]
     environment:
       <<: *app-environment
-      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}
+      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://vocab_worker:LocalVocabWorker_4xV9pC@postgres:5432/${POSTGRES_DB:-vocab}}
       OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-20}
       OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-60}
@@ -108,7 +143,7 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-llm-reservation-reaper.ts"]
     environment:
       <<: *app-environment
-      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}
+      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://vocab_worker:LocalVocabWorker_4xV9pC@postgres:5432/${POSTGRES_DB:-vocab}}
       LLM_REAPER_POLL_INTERVAL_MS: ${LLM_REAPER_POLL_INTERVAL_MS:-5000}
       LLM_REAPER_BATCH_SIZE: ${LLM_REAPER_BATCH_SIZE:-100}
     stop_grace_period: 30s
@@ -126,7 +161,7 @@ services:
     command: ["./node_modules/.bin/tsx", "scripts/run-backup-scheduler.ts"]
     environment:
       <<: *app-environment
-      DATABASE_URL: ${BACKUP_DATABASE_URL:-postgresql://${POSTGRES_USER:-vocab}:${POSTGRES_PASSWORD:-vocab}@postgres:5432/${POSTGRES_DB:-vocab}}
+      DATABASE_URL: ${BACKUP_DATABASE_URL:-postgresql://vocab_backup:LocalVocabBackup_6kT2yH@postgres:5432/${POSTGRES_DB:-vocab}}
       BACKUP_DIR: ${BACKUP_DIR:-/backups}
       BACKUP_INTERVAL_MS: ${BACKUP_INTERVAL_MS:-86400000}
       BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-14}
@@ -178,7 +213,7 @@ services:
       DATA_LIFECYCLE_STATEMENT_TIMEOUT_MS: ${DATA_LIFECYCLE_STATEMENT_TIMEOUT_MS:-30000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
-      migrate:
+      database-role-converge:
         condition: service_completed_successfully
     command: ["./node_modules/.bin/tsx", "scripts/run-data-lifecycle.ts"]
 

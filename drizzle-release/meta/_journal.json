@@ -78,6 +78,20 @@
       "when": 1783771202000,
       "tag": "0010_big_proemial_gods",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784115516999,
+      "tag": "0011_heavy_leopardon",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784121222459,
+      "tag": "0012_glamorous_peter_quill",
+      "breakpoints": true
     }
   ]
 }

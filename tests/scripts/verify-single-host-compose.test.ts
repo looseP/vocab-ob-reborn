@@ -93,6 +93,75 @@ describe("single-host Compose contract", () => {
     )).toThrow(/Immutable runtime image template/);
   });
 
+  it("rejects shared or leaked privileged database credentials", () => {
+    expect(() => verifySingleHostCompose(
+      compose.replace(
+        "      DATABASE_URL: ${APP_DATABASE_URL:?APP_DATABASE_URL is required}",
+        "      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}",
+      ),
+      caddyfile,
+      environment,
+    )).toThrow(/shared PostgreSQL credentials|Shared POSTGRES_USER/);
+    expect(() => verifySingleHostCompose(
+      compose.replace(
+        "      DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL is required}\n      OUTBOX_POLL_INTERVAL_MS:",
+        "      DATABASE_URL: ${WORKER_DATABASE_URL:?WORKER_DATABASE_URL is required}\n      DATABASE_ADMIN_URL: ${DATABASE_ADMIN_URL:?DATABASE_ADMIN_URL is required}\n      OUTBOX_POLL_INTERVAL_MS:",
+      ),
+      caddyfile,
+      environment,
+    )).toThrow(/must not receive administration/);
+  });
+
+  it("rejects database role username drift, password reuse, or an unusable admin URL", () => {
+    expect(() => verifySingleHostCompose(
+      compose,
+      caddyfile,
+      environment.replace("APP_DATABASE_URL=postgresql://vocab_app:", "APP_DATABASE_URL=postgresql://vocab_admin:"),
+    )).toThrow(/APP_DATABASE_URL username must be exactly vocab_app/);
+    expect(() => verifySingleHostCompose(
+      compose,
+      caddyfile,
+      environment.replace(
+        "REPLACE_WITH_DISTINCT_LONG_WORKER_DATABASE_PASSWORD",
+        "REPLACE_WITH_DISTINCT_LONG_APP_DATABASE_PASSWORD",
+      ),
+    )).toThrow(/password placeholders must be distinct/);
+    expect(() => verifySingleHostCompose(
+      compose,
+      caddyfile,
+      environment.replace(
+        "POSTGRES_PASSWORD=REPLACE_WITH_DISTINCT_LONG_ADMIN_DATABASE_PASSWORD",
+        "POSTGRES_PASSWORD=REPLACE_WITH_DIFFERENT_ADMIN_DATABASE_PASSWORD",
+      ),
+    )).toThrow(/POSTGRES_PASSWORD must equal the DATABASE_ADMIN_URL password/);
+    expect(() => verifySingleHostCompose(
+      compose,
+      caddyfile,
+      environment.replace(
+        "REPLACE_WITH_DISTINCT_LONG_APP_DATABASE_PASSWORD",
+        "REPLACE_WITH_DISTINCT_LONG_ADMIN_DATABASE_PASSWORD",
+      ),
+    )).toThrow(/password placeholders must be distinct/);
+  });
+
+  it("rejects missing or reordered role bootstrap, migration, and convergence", () => {
+    expect(() => verifySingleHostCompose(
+      compose.replace("      database-role-bootstrap:\n        condition: service_completed_successfully", "      postgres:\n        condition: service_healthy"),
+      caddyfile,
+      environment,
+    )).toThrow(/Migration after role bootstrap/);
+    expect(() => verifySingleHostCompose(
+      compose.replace('"converge"', '"prepare"'),
+      caddyfile,
+      environment,
+    )).toThrow(/database-role-converge mode/);
+    expect(() => verifySingleHostCompose(
+      compose.replace("      migrate:\n        condition: service_completed_successfully", "      postgres:\n        condition: service_healthy"),
+      caddyfile,
+      environment,
+    )).toThrow(/Privilege convergence after migration/);
+  });
+
   it("rejects a mutable Caddy image or an implicit topology", () => {
     expect(() => verifySingleHostCompose(
       compose.replace('      SINGLE_HOST_DEPLOYMENT: "true"\n', ""),

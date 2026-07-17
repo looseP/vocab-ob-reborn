@@ -144,8 +144,12 @@ export function calculateDiffCoverage(
   for (const [fileName, lines] of Object.entries(changedLines)) {
     const file = coverageByFile.get(normalizePath(fileName));
     const uniqueLines = new Set(lines);
-    executableLines += uniqueLines.size;
-    if (!file) continue;
+    if (!file) {
+      // A governed source file missing from the coverage report is a real gap.
+      // Keep failing closed instead of silently dropping all of its changed lines.
+      executableLines += uniqueLines.size;
+      continue;
+    }
 
     const statementRanges = Object.entries(file.statementMap).map(([id, location]) => ({ location, hit: file.s[id] ?? 0 }));
     const branchRanges = Object.entries(file.branchMap).flatMap(([id, branch]) =>
@@ -155,11 +159,19 @@ export function calculateDiffCoverage(
     for (const line of uniqueLines) {
       const containsLine = ({ location }: { location: Location }): boolean =>
         location.start.line <= line && line <= location.end.line;
-      const statements = statementRanges.filter(containsLine);
-      const branches = branchRanges.filter(containsLine);
-      const functions = functionRanges.filter(containsLine);
-      const mostSpecific = statements.length > 0 ? statements : branches.length > 0 ? branches : functions;
-      if (mostSpecific.some(({ hit }) => hit > 0)) coveredLines += 1;
+      const ranges = [
+        ...statementRanges.filter(containsLine),
+        ...branchRanges.filter(containsLine),
+        ...functionRanges.filter(containsLine),
+      ];
+      // Type-only declarations, imports, signatures, and formatting lines have no
+      // Istanbul range and are therefore not executable coverage obligations.
+      if (ranges.length === 0) continue;
+      executableLines += 1;
+      // A changed line is covered only when every applicable statement, function,
+      // and individual branch arm is exercised. This prevents a hit statement from
+      // masking an untested function or branch arm on the same line.
+      if (ranges.every(({ hit }) => hit > 0)) coveredLines += 1;
     }
   }
   const percentage = executableLines === 0 ? null : Number(((coveredLines / executableLines) * 100).toFixed(2));

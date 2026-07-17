@@ -15,15 +15,20 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
+      DATABASE_ADMIN_URL: postgresql://vocab_ci_admin:P1a2CiVerifyAdmin_8wQ4tK@localhost:5432/vocab
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2CiVerifyApp_7rN3zM4c@localhost:5432/vocab
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2CiVerifyWorker_4xV9pC@localhost:5432/vocab
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2CiVerifyBackup_6kT2yH@localhost:5432/vocab
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2CiVerifyMigration_5mJ8qD@localhost:5432/vocab
+      DB_SSLMODE: disable
       CAPACITY_TEST_CONFIRM: vocab
 
     services:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: vocab
-          POSTGRES_PASSWORD: vocab
+          POSTGRES_USER: vocab_ci_admin
+          POSTGRES_PASSWORD: P1a2CiVerifyAdmin_8wQ4tK
           POSTGRES_DB: vocab
         ports:
           - 5432:5432
@@ -115,6 +120,10 @@ jobs:
           LOCAL_COMPOSE_SMOKE_SKIP_BUILD: "true"
         run: npm run runtime:smoke:local
 
+      - name: Existing-volume database role upgrade rehearsal
+        timeout-minutes: 8
+        run: npm run db-roles:upgrade:acceptance
+
       - name: Upload local Compose smoke diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -161,27 +170,43 @@ jobs:
         run: |
           docker run --rm --entrypoint node vocab-observatory-v2:ci -e "require.resolve('prom-client')"
 
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+        run: npm run db:migrate
+
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Verify real database LOGIN isolation
+        run: npm run test:db-roles
+
       - name: Prepare dedicated NOBYPASSRLS acceptance principal
         run: |
           set -euo pipefail
-          npm run db:migrate
-          psql "$DATABASE_URL" \
+          psql "$DATABASE_ADMIN_URL" \
             -v ON_ERROR_STOP=1 \
             -f scripts/rls-acceptance-bootstrap.sql
 
       - name: Database release verification
         env:
-          TEST_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+          TEST_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
           RLS_ACCEPTANCE_DATABASE_URL: postgresql://vocab_rls_acceptance:vocab_rls_acceptance_local_only@localhost:5432/vocab
         run: npm run verify:db
 
       - name: Migration replay is a no-op
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
         run: npm run db:migrate
 
       - name: Data lifecycle integration and contract gate
         env:
-          TEST_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
-          DATA_LIFECYCLE_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
+          TEST_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
+          DATA_LIFECYCLE_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
         run: npm run test:data-lifecycle
 
       - name: Verify rollback migration compatibility
@@ -222,14 +247,19 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
+      DATABASE_ADMIN_URL: postgresql://vocab_e2e_admin:P1a2CiE2eAdmin_8wQ4tK@localhost:5432/vocab
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2CiE2eApp_7rN3zM4c@localhost:5432/vocab
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2CiE2eWorker_4xV9pC@localhost:5432/vocab
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2CiE2eBackup_6kT2yH@localhost:5432/vocab
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2CiE2eMigration_5mJ8qD@localhost:5432/vocab
+      DB_SSLMODE: disable
 
     services:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: vocab
-          POSTGRES_PASSWORD: vocab
+          POSTGRES_USER: vocab_e2e_admin
+          POSTGRES_PASSWORD: P1a2CiE2eAdmin_8wQ4tK
           POSTGRES_DB: vocab
         ports:
           - 5432:5432
@@ -262,10 +292,21 @@ jobs:
       - name: Build frontend
         run: npm run frontend:build
 
-      - name: Run database migrations
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
         run: npm run db:migrate
 
-      - name: Run Playwright E2E tests
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Run Playwright E2E tests as vocab_app
+        env:
+          DATABASE_URL: "${{ env.APP_DATABASE_URL }}"
+          E2E_SETUP_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
         run: npm run test:e2e
 
       - name: Upload Playwright artifacts on failure

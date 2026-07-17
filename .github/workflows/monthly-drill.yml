@@ -12,29 +12,38 @@ permissions:
 jobs:
   drill:
     name: Backup & Restore Drill
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     env:
-      DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab
-      DRILL_DATABASE_URL: postgresql://vocab:vocab@localhost:5432/vocab_drill
-      ALLOW_DESTRUCTIVE_RESTORE: "localhost:5432/vocab_drill"
+      DATABASE_ADMIN_URL: postgresql://vocab_drill_admin:P1a2MonthlyAdmin_9sL4fQ@127.0.0.1:5432/vocab
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2MonthlyApp_7rN3zM4c@127.0.0.1:5432/vocab
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2MonthlyWorker_4xV9pC@127.0.0.1:5432/vocab
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2MonthlyBackup_6kT2yH@127.0.0.1:5432/vocab
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2MonthlyMigration_5mJ8qD@127.0.0.1:5432/vocab
+      DRILL_DATABASE_ADMIN_URL: postgresql://vocab_drill_admin:P1a2MonthlyAdmin_9sL4fQ@127.0.0.1:5432/vocab_drill
+      DRILL_APP_DATABASE_URL: postgresql://vocab_app:P1a2MonthlyApp_7rN3zM4c@127.0.0.1:5432/vocab_drill
+      DRILL_WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2MonthlyWorker_4xV9pC@127.0.0.1:5432/vocab_drill
+      DRILL_BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2MonthlyBackup_6kT2yH@127.0.0.1:5432/vocab_drill
+      DRILL_MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2MonthlyMigration_5mJ8qD@127.0.0.1:5432/vocab_drill
+      ALLOW_DESTRUCTIVE_RESTORE: "127.0.0.1:5432/vocab_drill"
       BACKUP_SIGNING_KEY: "ci-drill-signing-key-24-chars"
       BACKUP_OBJECT_LOCK: "false"
+      DB_SSLMODE: disable
 
     services:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: vocab
-          POSTGRES_PASSWORD: vocab
+          POSTGRES_USER: vocab_drill_admin
+          POSTGRES_PASSWORD: P1a2MonthlyAdmin_9sL4fQ
           POSTGRES_DB: vocab
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U vocab_drill_admin -d vocab"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 20
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -52,26 +61,64 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run database migrations
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
         run: npm run db:migrate
 
-      - name: Create signed backup
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Verify real database LOGIN isolation
+        run: npm run test:db-roles
+
+      - name: Create signed backup as vocab_backup
+        env:
+          DATABASE_URL: "${{ env.BACKUP_DATABASE_URL }}"
         run: npm run db:backup
 
       - name: Verify backup manifest
         run: |
+          set -euo pipefail
           MANIFEST=$(ls -t backups/*.manifest.json | head -1)
           npm run db:backup:verify -- "$MANIFEST"
           echo "Verified: $MANIFEST"
 
-      - name: Create drill database
+      - name: Create isolated drill database owned by vocab_migration
         run: |
-          psql "$DATABASE_URL" -c "CREATE DATABASE vocab_drill OWNER vocab;"
+          set -euo pipefail
+          psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE vocab_drill OWNER vocab_migration;"
 
-      - name: Run isolated restore drill
+      - name: Run isolated restore drill as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.BACKUP_DATABASE_URL }}"
+          DRILL_DATABASE_URL: "${{ env.DRILL_MIGRATION_DATABASE_URL }}"
+          DRILL_TEST_DATABASE_URL: "${{ env.DRILL_DATABASE_ADMIN_URL }}"
         run: |
+          set -euo pipefail
           MANIFEST=$(ls -t backups/*.manifest.json | head -1)
           npm run db:restore:drill -- "$MANIFEST"
+
+      - name: Converge restored database ownership and privileges
+        env:
+          DATABASE_ADMIN_URL: "${{ env.DRILL_DATABASE_ADMIN_URL }}"
+          APP_DATABASE_URL: "${{ env.DRILL_APP_DATABASE_URL }}"
+          WORKER_DATABASE_URL: "${{ env.DRILL_WORKER_DATABASE_URL }}"
+          BACKUP_DATABASE_URL: "${{ env.DRILL_BACKUP_DATABASE_URL }}"
+          MIGRATION_DATABASE_URL: "${{ env.DRILL_MIGRATION_DATABASE_URL }}"
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Verify restored database LOGIN isolation
+        env:
+          DATABASE_ADMIN_URL: "${{ env.DRILL_DATABASE_ADMIN_URL }}"
+          APP_DATABASE_URL: "${{ env.DRILL_APP_DATABASE_URL }}"
+          WORKER_DATABASE_URL: "${{ env.DRILL_WORKER_DATABASE_URL }}"
+          BACKUP_DATABASE_URL: "${{ env.DRILL_BACKUP_DATABASE_URL }}"
+          MIGRATION_DATABASE_URL: "${{ env.DRILL_MIGRATION_DATABASE_URL }}"
+        run: npm run test:db-roles
 
       - name: Record drill evidence
         if: always()

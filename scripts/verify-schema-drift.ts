@@ -12,7 +12,7 @@
  * only read by drizzle-kit config loading — `generate` does not connect to a DB)
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,54 @@ export const AUTHORITATIVE_SEARCH_VECTOR =
 /** Authoritative generated SQL for the words.idx_words_search GIN index. */
 export const AUTHORITATIVE_SEARCH_INDEX =
   `CREATE INDEX "idx_words_search" ON "words" USING gin ("search_vector" tsvector_ops)`;
+
+/** Authoritative generated RLS contracts for owner-scoped rows. */
+export const AUTHORITATIVE_L2_PROGRESS_RLS =
+  `ALTER TABLE "user_word_l2_progress" ENABLE ROW LEVEL SECURITY`;
+export const AUTHORITATIVE_L2_PROGRESS_POLICY =
+  `CREATE POLICY "user_word_l2_progress_own_all" ON "user_word_l2_progress" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id))`;
+export const AUTHORITATIVE_PROFILES_SELECT_POLICY =
+  `CREATE POLICY "profiles_select_own" ON "profiles" AS PERMISSIVE FOR SELECT TO public USING ((auth.uid() = id))`;
+export const AUTHORITATIVE_HIGHLIGHTS_RLS =
+  `ALTER TABLE "word_highlights" ENABLE ROW LEVEL SECURITY`;
+export const AUTHORITATIVE_HIGHLIGHTS_POLICY =
+  `CREATE POLICY "word_highlights_own_all" ON "word_highlights" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id))`;
+export const AUTHORITATIVE_ANNOTATIONS_RLS =
+  `ALTER TABLE "word_annotations" ENABLE ROW LEVEL SECURITY`;
+export const AUTHORITATIVE_ANNOTATIONS_POLICY =
+  `CREATE POLICY "word_annotations_own_all" ON "word_annotations" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id))`;
+
+const REFRESH_L2_CACHE_FUNCTION_CONTRACT = [
+  "CREATE OR REPLACE FUNCTION public.refresh_l2_cache(p_word_id uuid)",
+  "RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public",
+  "DECLARE v_actor_id uuid := auth.uid(); BEGIN IF v_actor_id IS NULL OR NOT EXISTS ( SELECT 1 FROM public.user_word_l2_progress AS progress WHERE progress.user_id = v_actor_id AND progress.word_id = p_word_id ) THEN RAISE EXCEPTION 'actor cannot refresh L2 cache for word' USING ERRCODE = '42501'; END IF; WITH expanded",
+  "FROM public.word_l2_content AS content",
+  "WHERE content.word_id = p_word_id AND content.is_active = true",
+  "UPDATE public.words AS word",
+  "SET collocations = aggregated.collocations, corpus_items = aggregated.corpus_items, synonym_items = aggregated.synonym_items, antonym_items = aggregated.antonym_items",
+  "WHERE word.id = p_word_id",
+  "ALTER FUNCTION public.refresh_l2_cache(uuid) OWNER TO vocab_migration",
+  "REVOKE ALL ON FUNCTION public.refresh_l2_cache(uuid) FROM PUBLIC",
+] as const;
+
+const FINALIZE_L2_HASH_FUNCTION_CONTRACT = [
+  "CREATE OR REPLACE FUNCTION public.finalize_l2_content_hash(p_word_id uuid, p_new_l2_hash text, p_new_content_hash text)",
+  "RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public",
+  "DECLARE v_actor_id uuid := auth.uid(); v_updated_count integer; BEGIN IF v_actor_id IS NULL OR NOT EXISTS ( SELECT 1 FROM public.user_word_l2_progress AS progress WHERE progress.user_id = v_actor_id AND progress.word_id = p_word_id ) THEN RAISE EXCEPTION 'actor cannot finalize L2 content hash for word' USING ERRCODE = '42501'; END IF",
+  "IF p_new_l2_hash !~ '^[0-9a-f]{64}$' OR p_new_content_hash !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'invalid content hash'",
+  "FROM public.words AS word",
+  "WHERE word.id = p_word_id AND word.is_deleted = false AND word.is_published = true",
+  "FROM public.word_l2_content AS content WHERE content.word_id = word.id AND content.is_active = true",
+  "FOR UPDATE",
+  "SET l2_content_hash = p_new_l2_hash, content_hash = p_new_content_hash, updated_at = pg_catalog.now()",
+  "UPDATE public.user_word_l2_progress",
+  "SET l2_content_hash_snapshot = p_new_l2_hash, l2_due_at = pg_catalog.now()",
+  "WHERE word_id = p_word_id AND l2_content_hash_snapshot IS NOT NULL AND l2_content_hash_snapshot <> p_new_l2_hash AND l2_paused = false",
+  "GET DIAGNOSTICS v_updated_count = ROW_COUNT",
+  "RETURN v_updated_count",
+  "ALTER FUNCTION public.finalize_l2_content_hash(uuid, text, text) OWNER TO vocab_migration",
+  "REVOKE ALL ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) FROM PUBLIC",
+] as const;
 
 /** Collapse whitespace and drop trailing statement punctuation for stable comparison. */
 export function normalizeSql(sql: string): string {
@@ -49,10 +97,38 @@ export function extractSearchIndexSql(sql: string): string | null {
   return m ? m[0] : null;
 }
 
+/** Compare regenerated DDL against the authoritative L2 progress RLS contract. */
+export function compareL2ProgressRlsContract(generatedSql: string): boolean {
+  const normalized = normalizeSql(generatedSql);
+  return normalized.includes(normalizeSql(AUTHORITATIVE_L2_PROGRESS_RLS))
+    && normalized.includes(normalizeSql(AUTHORITATIVE_L2_PROGRESS_POLICY));
+}
+
+/** Compare all owner-scoped RLS contracts emitted from src/db/schema.ts. */
+export function compareOwnerRlsContract(generatedSql: string): boolean {
+  const normalized = normalizeSql(generatedSql);
+  return [
+    AUTHORITATIVE_PROFILES_SELECT_POLICY,
+    AUTHORITATIVE_HIGHLIGHTS_RLS,
+    AUTHORITATIVE_HIGHLIGHTS_POLICY,
+    AUTHORITATIVE_ANNOTATIONS_RLS,
+    AUTHORITATIVE_ANNOTATIONS_POLICY,
+  ].every((contract) => normalized.includes(normalizeSql(contract)));
+}
+
+/** Compare hand-authored SECURITY DEFINER migration contracts. */
+export function compareSecurityDefinerContract(migrationSql: string): boolean {
+  const normalized = normalizeSql(migrationSql);
+  return [...REFRESH_L2_CACHE_FUNCTION_CONTRACT, ...FINALIZE_L2_HASH_FUNCTION_CONTRACT]
+    .every((contract) => normalized.includes(normalizeSql(contract)));
+}
+
 export interface DriftResult {
   ok: boolean;
   columnMatch: boolean;
   indexMatch: boolean;
+  l2ProgressRlsMatch: boolean;
+  ownerRlsMatch: boolean;
   detail: string;
 }
 
@@ -62,20 +138,26 @@ export function compareSearchVectorContract(generatedSql: string): DriftResult {
   const idx = extractSearchIndexSql(generatedSql);
   const columnMatch = col != null && normalizeSql(col) === normalizeSql(AUTHORITATIVE_SEARCH_VECTOR);
   const indexMatch = idx != null && normalizeSql(idx) === normalizeSql(AUTHORITATIVE_SEARCH_INDEX);
-  const ok = columnMatch && indexMatch;
+  const l2ProgressRlsMatch = compareL2ProgressRlsContract(generatedSql);
+  const ownerRlsMatch = compareOwnerRlsContract(generatedSql);
+  const ok = columnMatch && indexMatch && l2ProgressRlsMatch && ownerRlsMatch;
 
   const problems: string[] = [];
   if (col == null) problems.push("search_vector column not found");
   else if (!columnMatch) problems.push("search_vector column drifted from authoritative contract");
   if (idx == null) problems.push("idx_words_search index not found");
   else if (!indexMatch) problems.push("idx_words_search index drifted from authoritative contract");
+  if (!l2ProgressRlsMatch) problems.push("user_word_l2_progress owner RLS drifted from authoritative contract");
+  if (!ownerRlsMatch) problems.push("profiles/highlights/annotations owner RLS drifted from authoritative contract");
 
   return {
     ok,
     columnMatch,
     indexMatch,
+    l2ProgressRlsMatch,
+    ownerRlsMatch,
     detail: ok
-      ? "search_vector column and idx_words_search index match authoritative contract"
+      ? "search vector and owner RLS policies match authoritative contracts"
       : problems.join("; "),
   };
 }
@@ -123,10 +205,20 @@ export default defineConfig({
     if (!result.ok) {
       throw new Error(`Schema drift detected: ${result.detail}`);
     }
-    console.log(`[schema-drift] OK — ${result.detail}`);
+
+    const securityFunctionMigration = path.join(projectRoot, "drizzle-release", "0012_glamorous_peter_quill.sql");
+    if (!existsSync(securityFunctionMigration)) {
+      throw new Error("Schema drift detected: SECURITY DEFINER migration is missing");
+    }
+    const securityFunctionSql = readFileSync(securityFunctionMigration, "utf8");
+    if (!compareSecurityDefinerContract(securityFunctionSql)) {
+      throw new Error("Schema drift detected: SECURITY DEFINER function contract changed");
+    }
+
+    console.log(`[schema-drift] OK — ${result.detail}; SECURITY DEFINER functions match authoritative contracts`);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
-    if (existsSync(configPath)) rmSync(configPath, { force: true });
+    if (existsSync(configPath)) unlinkSync(configPath);
   }
 }
 

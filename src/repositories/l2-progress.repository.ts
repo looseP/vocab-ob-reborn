@@ -9,7 +9,7 @@
  * wordbook_id, word_id). The V2 review track is wordbook-scoped, so a user
  * reviewing the same word in two different wordbooks must get independent L2
  * progress rows — sharing would let one wordbook's L2 state pollute another's.
- * Only markL2StaleForRecheck is word-level: L2 content is global per word, so
+ * Only finalizeL2ContentHash is word-level: L2 content is global per word, so
  * a content-hash change must re-evaluate every scoped row for that word.
  */
 
@@ -53,25 +53,17 @@ export class L2ProgressRepository extends BaseRepository implements IL2ProgressR
     return row;
   }
 
-  /**
-   * Mark L2 rows stale when a word's content hash changed, so they get
-   * re-evaluated. Only non-paused rows with a prior snapshot are affected.
-   * This is content-driven (L2 content is global per word), so it touches
-   * every scoped row for that word regardless of user/wordbook. Returns the
-   * count of rows scheduled for recheck.
-   */
-  async markL2StaleForRecheck(wordId: string, newL2Hash: string): Promise<number> {
-    const rows = await this.query<{ id: string }>(
-      `UPDATE user_word_l2_progress
-       SET l2_content_hash_snapshot = $1, l2_due_at = now()
-       WHERE word_id = $2::uuid
-         AND l2_content_hash_snapshot IS NOT NULL
-         AND l2_content_hash_snapshot != $1
-         AND l2_paused = false
-       RETURNING id`,
-      [newL2Hash, wordId],
+  /** Persist canonical hashes and schedule changed, non-paused L2 snapshots atomically. */
+  async finalizeL2ContentHash(
+    wordId: string,
+    newL2Hash: string,
+    newContentHash: string,
+  ): Promise<number> {
+    const row = await this.queryOne<{ updated_count: number }>(
+      `SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text) AS updated_count`,
+      [wordId, newL2Hash, newContentHash],
     );
-    return rows.length;
+    return row?.updated_count ?? 0;
   }
 
   async pause(userId: string, wordbookId: string, wordId: string, reason: string): Promise<void> {

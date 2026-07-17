@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { EXTERNAL_RELEASE_CHECKS, parseReleaseCheckEvidence, type ExternalReleaseCheck } from "./release-check-evidence";
 
-const PHASES = ["pull", "migration", "rollout", "smoke"] as const;
+const PHASES = ["pull", "prepare", "migration", "converge", "rollout", "smoke"] as const;
 const CHECKS = [...EXTERNAL_RELEASE_CHECKS, "smoke"] as const;
 type JsonRecord = Record<string, unknown>;
 export type ExternalEvidenceBytes = Readonly<Record<ExternalReleaseCheck, Buffer>>;
@@ -42,7 +42,7 @@ export function verifyProductionReleaseAcceptance(manifestBytes: Buffer, sidecar
   const deployment = record(JSON.parse(deploymentBytes.toString("utf8")), "staging deployment evidence");
   exactKeys(deployment, ["schemaVersion", "environment", "manifestSha256", "phases"], "staging deployment evidence");
   if (deployment.schemaVersion !== 1 || deployment.environment !== "staging" || deployment.manifestSha256 !== manifestSha256) throw new Error("Staging deployment identity mismatch");
-  if (!Array.isArray(deployment.phases) || deployment.phases.length !== PHASES.length) throw new Error("Staging deployment must contain exactly four phases");
+  if (!Array.isArray(deployment.phases) || deployment.phases.length !== PHASES.length) throw new Error("Staging deployment must contain exactly six governance phases");
   deployment.phases.forEach((value, index) => {
     const phase = record(value, `staging phase ${index}`);
     exactKeys(phase, ["phase", "success", "timestamp"], `staging phase ${index}`);
@@ -74,7 +74,7 @@ export function verifyProductionReleaseAcceptance(manifestBytes: Buffer, sidecar
 
   const smoke = record(checks.smoke, "smoke check");
   exactKeys(smoke, ["status", "source", "producer", "releaseSha", "manifestSha256", "observedAt", "evidenceSha256"], "smoke check");
-  const smokePhase = record(deployment.phases[3], "staging smoke phase");
+  const smokePhase = record(deployment.phases[PHASES.length - 1], "staging smoke phase");
   const deploymentDigest = createHash("sha256").update(deploymentBytes).digest("hex");
   if (smoke.status !== "passed" || smoke.source !== "staging-deployment-evidence" || smoke.producer !== "release-workflow/staging" || smoke.releaseSha !== releaseSha || smoke.manifestSha256 !== manifestSha256 || smoke.evidenceSha256 !== deploymentDigest || smoke.observedAt !== smokePhase.timestamp) throw new Error("Smoke evidence mismatch");
   observedAt(smoke.observedAt, "smoke", now);

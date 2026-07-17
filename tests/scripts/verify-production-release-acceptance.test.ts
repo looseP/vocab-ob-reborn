@@ -8,7 +8,7 @@ const manifest = Buffer.from(JSON.stringify({ git: { sha: releaseSha } }));
 const manifestSha256 = createHash("sha256").update(manifest).digest("hex");
 const sidecar = `${manifestSha256}  release-manifest.json\n`;
 const observedAt = "2026-07-11T00:00:00.000Z";
-const phases = ["pull", "migration", "rollout", "smoke"].map((phase) => ({ phase, success: true, timestamp: observedAt }));
+const phases = ["pull", "prepare", "migration", "converge", "rollout", "smoke"].map((phase) => ({ phase, success: true, timestamp: observedAt }));
 const deploymentBytes = Buffer.from(JSON.stringify({ schemaVersion: 1, environment: "staging", manifestSha256, phases }));
 const evidence = Object.fromEntries(EXTERNAL_RELEASE_CHECKS.map((check) => [check, Buffer.from(JSON.stringify(buildReleaseCheckEvidence({ check, producer: RELEASE_CHECK_PRODUCERS[check], releaseSha, manifestSha256, observedAt })))])) as Record<ExternalReleaseCheck, Buffer>;
 type CheckDeclaration = {
@@ -58,6 +58,11 @@ describe("release check evidence", () => {
 
 describe("production release acceptance", () => {
   it("accepts verified source artifact bytes", () => expect(verify()).toEqual({ schemaVersion: 1, decision: "GO", releaseSha, manifestSha256, environment: "production", checks }));
+  it("rejects legacy deployment evidence that omits prepare and converge", () => {
+    const legacyPhases = phases.filter(({ phase }) => phase !== "prepare" && phase !== "converge");
+    const legacyDeployment = Buffer.from(JSON.stringify({ schemaVersion: 1, environment: "staging", manifestSha256, phases: legacyPhases }));
+    expect(() => verify({ deploymentBytes: legacyDeployment })).toThrow(/exactly six governance phases/);
+  });
   it("rejects missing artifact", () => { const missing = { ...evidence }; delete (missing as Partial<typeof evidence>).backupRestore; expect(() => verify({ evidence: missing })).toThrow(/Missing backupRestore/); });
   it("rejects missing secret rotation proof", () => { const missing = { ...evidence }; delete (missing as Partial<typeof evidence>).secretRotation; expect(() => verify({ evidence: missing })).toThrow(/Missing secretRotation/); });
   it("rejects an acceptance declaration without secret rotation", () => { const incomplete = { ...checks }; delete (incomplete as Partial<typeof checks>).secretRotation; expect(() => verify({ acceptance: { ...acceptance, checks: incomplete } })).toThrow(/keys/); });

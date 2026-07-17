@@ -50,36 +50,33 @@ describe("L2ProgressRepository", () => {
     expect(params[2]).toBe("word-1");
   });
 
-  // ── markL2StaleForRecheck (word-level, content-driven) ─────────────────
+  // ── finalizeL2ContentHash (word-level, content-driven) ──────────────────
 
-  it("markL2StaleForRecheck only affects l2_paused=false rows", async () => {
+  it("finalizeL2ContentHash calls the schema-qualified migration-owned RPC", async () => {
     const repo = new L2ProgressRepository();
-    vi.spyOn(repo as any, "query").mockResolvedValue([{ id: "l2-1" }]);
-    const count = await repo.markL2StaleForRecheck("word-1", "newhash");
-    expect(count).toBe(1);
-    const sqlCall = (repo as any).query.mock.calls[0][0];
-    expect(sqlCall).toContain("l2_paused = false");
+    const queryOneSpy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ updated_count: 1 });
+
+    await repo.finalizeL2ContentHash("word-1", "l2hash", "fullhash");
+
+    expect(queryOneSpy).toHaveBeenCalledTimes(1);
+    expect(queryOneSpy).toHaveBeenCalledWith(
+      expect.stringContaining("SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text) AS updated_count"),
+      ["word-1", "l2hash", "fullhash"],
+    );
   });
 
-  it("markL2StaleForRecheck updates l2_due_at to now", async () => {
+  it("finalizeL2ContentHash returns the RPC updated_count", async () => {
     const repo = new L2ProgressRepository();
-    vi.spyOn(repo as any, "query").mockResolvedValue([{ id: "l2-1" }]);
-    await repo.markL2StaleForRecheck("word-1", "newhash");
-    const sqlCall = (repo as any).query.mock.calls[0][0];
-    expect(sqlCall).toContain("l2_due_at = now()");
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue({ updated_count: 2 });
+
+    await expect(repo.finalizeL2ContentHash("word-1", "l2hash", "fullhash")).resolves.toBe(2);
   });
 
-  it("markL2StaleForRecheck stays word-scoped (no wordbook filter) — content is global per word", async () => {
-    // L2 content is global per word; a content-hash change must re-evaluate
-    // every scoped L2 row for that word regardless of user/wordbook. So the
-    // stale query intentionally does NOT filter by wordbook_id — this is the
-    // content-driven path, NOT the user/operation-driven path.
+  it("finalizeL2ContentHash returns zero when the RPC returns no row", async () => {
     const repo = new L2ProgressRepository();
-    vi.spyOn(repo as any, "query").mockResolvedValue([{ id: "l2-1" }, { id: "l2-2" }]);
-    await repo.markL2StaleForRecheck("word-1", "newhash");
-    const sqlCall = (repo as any).query.mock.calls[0][0];
-    expect(sqlCall).toContain("word_id = $2::uuid");
-    expect(sqlCall).not.toContain("wordbook_id");
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+
+    await expect(repo.finalizeL2ContentHash("word-1", "l2hash", "fullhash")).resolves.toBe(0);
   });
 
   // ── pause / unpause (wordbook-scoped) ──────────────────────────────────

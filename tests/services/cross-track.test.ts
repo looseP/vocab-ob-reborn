@@ -9,7 +9,7 @@ function makeMockL2Repo(overrides: Partial<IL2ProgressRepository> = {}): IL2Prog
   return {
     findByWordbookWordAndUser: vi.fn(async () => null),
     insert: vi.fn(async () => ({}) as never),
-    markL2StaleForRecheck: vi.fn(async () => 0),
+    finalizeL2ContentHash: vi.fn(async () => 0),
     pause: vi.fn(async () => undefined),
     unpauseByReason: vi.fn(async () => undefined),
     ...overrides,

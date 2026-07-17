@@ -5,10 +5,16 @@
  * of an anonymous Error class, so errorToResponse correctly maps to 404.
  */
 
-import type { IWordRepository } from "../repositories/interfaces";
+import type { PoolClient } from "pg";
+import type { IRepositories, IWordRepository } from "../repositories/interfaces";
 import type { PaginatedResult, WordSummary } from "../domain";
 import { Word } from "../domain/word.entity";
+import { withTransaction } from "../db/transaction";
+import { createRepositories } from "../repositories/factory";
 import { NotFoundError } from "../errors";
+
+type TxRunner = typeof withTransaction;
+type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 export interface GetWordsParams {
   userId: string;
@@ -22,20 +28,27 @@ export interface GetWordsParams {
 }
 
 export class WordService {
-  constructor(private readonly words: IWordRepository) {}
+  constructor(
+    private readonly words: IWordRepository,
+    private readonly txRunner: TxRunner = withTransaction,
+    private readonly repositoryFactory: RepositoryFactory = createRepositories,
+  ) {}
 
   async getPublicWords(params: GetWordsParams): Promise<PaginatedResult<WordSummary>> {
-    return this.words.findPublic({
-      filters: {
-        q: params.q,
-        freq: params.freq,
-        semantic: params.semantic,
-        review: params.review,
-      },
-      pagination: { limit: params.limit, offset: params.offset },
-      userId: params.userId,
-      wordbookId: params.wordbookId,
-    });
+    return this.txRunner(async (tx) => {
+      const words = this.repositoryFactory(tx).words;
+      return words.findPublic({
+        filters: {
+          q: params.q,
+          freq: params.freq,
+          semantic: params.semantic,
+          review: params.review,
+        },
+        pagination: { limit: params.limit, offset: params.offset },
+        userId: params.userId,
+        wordbookId: params.wordbookId,
+      });
+    }, { actorId: params.userId });
   }
 
   async getWordBySlug(slug: string): Promise<{ word: Word }> {

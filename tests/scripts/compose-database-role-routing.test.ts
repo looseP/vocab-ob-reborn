@@ -5,7 +5,13 @@ import { describe, expect, it } from "vitest";
 const projectRoot = resolve(import.meta.dirname, "../..");
 const dockerAvailable = spawnSync("docker", ["compose", "version"], { encoding: "utf8" }).status === 0;
 const describeDocker = dockerAvailable ? describe : describe.skip;
-const localDatabaseUrl = "postgresql://vocab:vocab@postgres:5432/vocab";
+const localRoleUrls = {
+  DATABASE_ADMIN_URL: "postgresql://vocab:vocab@postgres:5432/vocab",
+  APP_DATABASE_URL: "postgresql://vocab_app:LocalVocabApp_7rN3zM4c@postgres:5432/vocab",
+  WORKER_DATABASE_URL: "postgresql://vocab_worker:LocalVocabWorker_4xV9pC@postgres:5432/vocab",
+  BACKUP_DATABASE_URL: "postgresql://vocab_backup:LocalVocabBackup_6kT2yH@postgres:5432/vocab",
+  MIGRATION_DATABASE_URL: "postgresql://vocab_migration:LocalVocabMigration_5mJ8qD@postgres:5432/vocab",
+};
 
 interface ComposeConfig {
   services: Record<string, {
@@ -20,6 +26,7 @@ const composeEnvironmentKeys = [
   "APP_IMAGE",
   "MIGRATION_IMAGE",
   "BACKUP_IMAGE",
+  "DATABASE_ADMIN_URL",
   "APP_DATABASE_URL",
   "WORKER_DATABASE_URL",
   "BACKUP_DATABASE_URL",
@@ -58,10 +65,11 @@ const productionEnvironment = {
   APP_IMAGE: "ghcr.io/example/vocab-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   MIGRATION_IMAGE: "ghcr.io/example/vocab-migration@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   BACKUP_IMAGE: "ghcr.io/example/vocab-backup@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  APP_DATABASE_URL: "postgresql://vocab_app:app-secret@db.example.test:5432/vocab",
-  WORKER_DATABASE_URL: "postgresql://vocab_worker:worker-secret@db.example.test:5432/vocab",
-  BACKUP_DATABASE_URL: "postgresql://vocab_backup:backup-secret@db.example.test:5432/vocab",
-  MIGRATION_DATABASE_URL: "postgresql://vocab_migration:migration-secret@db.example.test:5432/vocab",
+  DATABASE_ADMIN_URL: "postgresql://vocab_roles_admin:admin-secret-00001@db.example.test:5432/vocab",
+  APP_DATABASE_URL: "postgresql://vocab_app:app-secret-0000001@db.example.test:5432/vocab",
+  WORKER_DATABASE_URL: "postgresql://vocab_worker:worker-secret-00001@db.example.test:5432/vocab",
+  BACKUP_DATABASE_URL: "postgresql://vocab_backup:backup-secret-00001@db.example.test:5432/vocab",
+  MIGRATION_DATABASE_URL: "postgresql://vocab_migration:migration-secret-001@db.example.test:5432/vocab",
   APP_ORIGIN: "https://vocab.example.test",
   OWNER_API_TOKEN: "production-owner-token-00000001",
   METRICS_BEARER_TOKEN: "production-metrics-token-00001",
@@ -72,8 +80,9 @@ const productionEnvironment = {
 };
 
 describeDocker("Compose rendered database role routing", () => {
-  it("renders a runnable local default without extra database roles", () => {
+  it("renders a runnable local default with governed database roles", () => {
     const config = parseConfig(composeConfig(["compose.yaml"], {
+      DATABASE_ADMIN_URL: "",
       APP_DATABASE_URL: "",
       WORKER_DATABASE_URL: "",
       BACKUP_DATABASE_URL: "",
@@ -81,16 +90,32 @@ describeDocker("Compose rendered database role routing", () => {
       DATABASE_URL: "",
     }));
 
-    for (const service of ["migrate", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"]) {
-      expect(config.services[service]?.environment?.DATABASE_URL).toBe(localDatabaseUrl);
+    expect(config.services.postgres?.environment).toMatchObject({
+      POSTGRES_USER: "vocab",
+      POSTGRES_PASSWORD: "vocab",
+      POSTGRES_DB: "vocab",
+    });
+    expect(config.services.migrate?.environment?.DATABASE_URL).toBe(localRoleUrls.MIGRATION_DATABASE_URL);
+    for (const service of ["database-role-bootstrap", "database-role-converge"]) {
+      expect(config.services[service]?.environment).toMatchObject(localRoleUrls);
     }
+    for (const service of ["review-outbox-worker", "llm-reservation-reaper"]) {
+      expect(config.services[service]?.environment?.DATABASE_URL).toBe(localRoleUrls.WORKER_DATABASE_URL);
+    }
+    expect(config.services["backup-scheduler"]?.environment?.DATABASE_URL).toBe(localRoleUrls.BACKUP_DATABASE_URL);
     expect(config.services.web?.environment).toMatchObject({
-      DATABASE_URL: localDatabaseUrl,
+      DATABASE_URL: localRoleUrls.APP_DATABASE_URL,
+      APP_DATABASE_URL: localRoleUrls.APP_DATABASE_URL,
       NODE_ENV: "development",
       APP_ORIGIN: "http://127.0.0.1:3001",
       OWNER_API_TOKEN: "local-owner-api-token-only-0001",
       LOCAL_OWNER_ID: "00000000-0000-4000-8000-000000000001",
     });
+    expect(config.services.migrate?.depends_on?.["database-role-bootstrap"]).toMatchObject({ condition: "service_completed_successfully" });
+    expect(config.services["database-role-converge"]?.depends_on?.migrate).toMatchObject({ condition: "service_completed_successfully" });
+    for (const service of ["web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"]) {
+      expect(config.services[service]?.depends_on?.["database-role-converge"]).toMatchObject({ condition: "service_completed_successfully" });
+    }
     expect(config.services["backup-scheduler"]?.environment?.BACKUP_SIGNING_KEY).toBe("local-backup-signing-key-only-0001");
     expect(config.services["backup-scheduler"]?.user).toBe("node");
   });
@@ -110,6 +135,7 @@ describeDocker("Compose rendered database role routing", () => {
 
   it("fails production rendering when required values are absent", () => {
     const result = composeConfig(["compose.production.yaml"], {
+      DATABASE_ADMIN_URL: "",
       APP_DATABASE_URL: "",
       WORKER_DATABASE_URL: "",
       BACKUP_DATABASE_URL: "",
@@ -138,12 +164,35 @@ describeDocker("Compose rendered database role routing", () => {
       expect(config.services[service]?.environment?.DATABASE_URL).toBe(productionEnvironment.WORKER_DATABASE_URL);
     }
     expect(config.services["backup-scheduler"]?.environment?.DATABASE_URL).toBe(productionEnvironment.BACKUP_DATABASE_URL);
+
+    const roleUrls = {
+      DATABASE_ADMIN_URL: productionEnvironment.DATABASE_ADMIN_URL,
+      APP_DATABASE_URL: productionEnvironment.APP_DATABASE_URL,
+      WORKER_DATABASE_URL: productionEnvironment.WORKER_DATABASE_URL,
+      BACKUP_DATABASE_URL: productionEnvironment.BACKUP_DATABASE_URL,
+      MIGRATION_DATABASE_URL: productionEnvironment.MIGRATION_DATABASE_URL,
+    };
+    for (const service of ["database-role-bootstrap", "database-role-converge"]) {
+      expect(config.services[service]?.environment).toMatchObject(roleUrls);
+    }
     for (const service of ["migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"]) {
       expect(config.services[service]?.environment?.DB_SSLMODE).toBe("verify-full");
+      expect(config.services[service]?.environment?.DATABASE_ADMIN_URL).toBeUndefined();
+    }
+    expect(config.services["database-role-bootstrap"]?.environment?.DB_SSLMODE).toBe("verify-full");
+    expect(config.services["database-role-converge"]?.environment?.DB_SSLMODE).toBe("verify-full");
+    expect(config.services.migrate?.depends_on?.["database-role-bootstrap"]).toMatchObject({
+      condition: "service_completed_successfully",
+    });
+    expect(config.services["database-role-converge"]?.depends_on?.migrate).toMatchObject({
+      condition: "service_completed_successfully",
+    });
+    for (const service of ["web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"]) {
+      expect(config.services[service]?.depends_on?.["database-role-converge"]).toMatchObject({
+        condition: "service_completed_successfully",
+      });
     }
     expect(config.services.web?.ports?.[0]?.host_ip).toBe("127.0.0.1");
     expect(config.services.postgres).toBeUndefined();
-    expect(config.services.migrate?.depends_on).toBeUndefined();
-    expect(config.services.migrate?.environment?.DB_SSLMODE).toBe("verify-full");
   });
 });

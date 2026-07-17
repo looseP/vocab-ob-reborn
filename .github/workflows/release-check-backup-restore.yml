@@ -11,16 +11,17 @@ jobs:
     services:
       postgres:
         image: postgres:17-alpine
-        env: { POSTGRES_USER: vocab, POSTGRES_PASSWORD: vocab, POSTGRES_DB: vocab }
+        env: { POSTGRES_USER: vocab_backup_admin, POSTGRES_PASSWORD: P1a2CiBackupAdmin_9sL4fQ, POSTGRES_DB: vocab }
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U vocab -d vocab" --health-interval 5s --health-timeout 3s --health-retries 20
+          --health-cmd "pg_isready -U vocab_backup_admin -d vocab" --health-interval 5s --health-timeout 3s --health-retries 20
     env:
-      DATABASE_URL: postgresql://vocab:vocab@127.0.0.1:5432/vocab
-      DRILL_DATABASE_URL: postgresql://vocab:vocab@127.0.0.1:5432/vocab_drill
-      ALLOW_DESTRUCTIVE_RESTORE: 127.0.0.1:5432/vocab_drill
-      BACKUP_SIGNING_KEY: isolated-release-drill-signing-key
-      BACKUP_OBJECT_LOCK: "false"
+      DATABASE_ADMIN_URL: postgresql://vocab_backup_admin:P1a2CiBackupAdmin_9sL4fQ@127.0.0.1:5432/vocab
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2CiApp_7rN3zM4c@127.0.0.1:5432/vocab
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2CiWorker_4xV9pC@127.0.0.1:5432/vocab
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2CiBackup_6kT2yH@127.0.0.1:5432/vocab
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2CiMigration_5mJ8qD@127.0.0.1:5432/vocab
+      DB_SSLMODE: disable
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with: { persist-credentials: false, ref: "${{ github.sha }}" }
@@ -41,16 +42,18 @@ jobs:
           unzip -q prepare.zip -d prepare
           (cd prepare && sha256sum --check release-manifest.sha256)
           echo "MANIFEST_SHA256=$(sha256sum prepare/release-manifest.json | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
-      - name: Execute isolated backup restore drill
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm run db:migrate
-          npm run db:backup
-          psql "$DATABASE_URL" -c "CREATE DATABASE vocab_drill OWNER vocab;"
-          manifest="$(ls -t backups/*.manifest.json | head -1)"
-          npm run db:backup:verify -- "$manifest"
-          npm run db:restore:drill -- "$manifest"
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+        run: npm run db:migrate
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+      - name: Verify real database LOGIN isolation
+        run: npm run test:db-roles
+      - name: Verify complete RLS backup and restore
+        run: npm run test:backup-rls
       - run: npm run release:check:evidence -- --check backupRestore --producer release-check/backup-restore --release-sha "$GITHUB_SHA" --manifest-sha256 "$MANIFEST_SHA256" --observed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" --output evidence.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with: { name: release-check-backup-restore, path: evidence.json, if-no-files-found: error, retention-days: 90 }

@@ -6,6 +6,8 @@ const root = resolve(import.meta.dirname, "..");
 const release = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
 const promote = readFileSync(resolve(root, ".github/workflows/promote-release.yml"), "utf8");
 const ciWorkflow = readFileSync(resolve(root, ".github/workflows/ci.yml"), "utf8");
+const monthlyDrillWorkflow = readFileSync(resolve(root, ".github/workflows/monthly-drill.yml"), "utf8");
+const packageSource = readFileSync(resolve(root, "package.json"), "utf8");
 const producerChecks = ["migration-rehearsal", "database-roles", "backup-restore", "rollback-compatibility", "alerting-drill", "secret-rotation"] as const;
 type ProducerCheck = (typeof producerChecks)[number];
 const producerWorkflows = Object.fromEntries(producerChecks.map((check) => [check, readFileSync(resolve(root, `.github/workflows/release-check-${check}.yml`), "utf8")])) as Record<ProducerCheck, string>;
@@ -65,11 +67,107 @@ function requireStepOrder(job: Job, before: string, after: string, jobName: stri
     throw new Error(`${before} must run before ${after} in ${jobName}`);
   }
 }
-function requireRlsAcceptanceContract(job: Job, jobName: string, verificationStepName: string): void {
+function requireDatabaseRolesProducerContract(job: Job, producerName = "database-roles"): void {
+  const jobName = `producer ${producerName}`;
+  const expectedUsers = {
+    APP_DATABASE_URL: "vocab_app",
+    WORKER_DATABASE_URL: "vocab_worker",
+    BACKUP_DATABASE_URL: "vocab_backup",
+    MIGRATION_DATABASE_URL: "vocab_migration",
+  } as const;
+  const adminValue = job.env?.DATABASE_ADMIN_URL;
+  if (typeof adminValue !== "string") throw new Error(`${jobName} must provide DATABASE_ADMIN_URL`);
+  if ("TEST_DATABASE_URL" in (job.env ?? {})) throw new Error(`${jobName} must not use the legacy TEST_DATABASE_URL superuser path`);
+  let admin: URL;
+  try {
+    admin = new URL(adminValue);
+  } catch {
+    throw new Error(`${jobName} DATABASE_ADMIN_URL must be valid`);
+  }
+  const adminUser = decodeURIComponent(admin.username);
+  if (!adminUser || Object.values(expectedUsers).includes(adminUser as (typeof expectedUsers)[keyof typeof expectedUsers])) {
+    throw new Error(`${jobName} must use a dedicated administration LOGIN`);
+  }
+  const passwords = new Set<string>([decodeURIComponent(admin.password)]);
+  for (const [name, username] of Object.entries(expectedUsers)) {
+    const value = job.env?.[name];
+    if (typeof value !== "string") throw new Error(`${jobName} must provide ${name}`);
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error(`${jobName} ${name} must be valid`);
+    }
+    if (
+      url.protocol !== "postgresql:"
+      || decodeURIComponent(url.username) !== username
+      || url.hostname !== admin.hostname
+      || url.port !== admin.port
+      || url.pathname !== admin.pathname
+    ) {
+      throw new Error(`${jobName} ${name} must authenticate as ${username} on the admin database`);
+    }
+    passwords.add(decodeURIComponent(url.password));
+  }
+  if (passwords.size !== 5 || [...passwords].some((password) => password.length < 16)) {
+    throw new Error(`${jobName} must use five distinct test-only passwords`);
+  }
+
+  const prepare = namedStep(job, "Prepare real database LOGIN roles", jobName);
+  const migrate = namedStep(job, "Run authoritative migrations as vocab_migration", jobName);
+  const converge = namedStep(job, "Converge database role ownership and privileges", jobName);
+  const verifyLogin = namedStep(job, "Verify real database LOGIN isolation", jobName);
+  const verify = producerName === "backup-restore"
+    ? namedStep(job, "Verify complete RLS backup and restore", jobName)
+    : verifyLogin;
+  requireExactExecutableScript(prepare, "npm exec -- tsx scripts/bootstrap-database-roles.ts prepare", `${jobName} prepare phase is invalid`);
+  requireExactExecutableScript(migrate, "npm run db:migrate", `${jobName} migration phase is invalid`);
+  requireExactExecutableScript(converge, "npm exec -- tsx scripts/bootstrap-database-roles.ts converge", `${jobName} converge phase is invalid`);
+  requireExactExecutableScript(verifyLogin, "npm run test:db-roles", `${jobName} LOGIN verification phase is invalid`);
+  if (producerName === "backup-restore") {
+    requireExactExecutableScript(verify, "npm run test:backup-rls", `${jobName} backup verification phase is invalid`);
+  }
+  if (migrate.env?.DATABASE_URL !== "${{ env.MIGRATION_DATABASE_URL }}") {
+    throw new Error(`${jobName} migrations must authenticate through MIGRATION_DATABASE_URL`);
+  }
+  requireStepOrder(job, prepare.name!, migrate.name!, jobName);
+  requireStepOrder(job, migrate.name!, converge.name!, jobName);
+  requireStepOrder(job, converge.name!, verifyLogin.name!, jobName);
+  if (producerName === "backup-restore") requireStepOrder(job, verifyLogin.name!, verify.name!, jobName);
+  const allSteps = steps(job, jobName);
+  const convergeIndex = allSteps.indexOf(converge);
+  const verifyIndex = allSteps.indexOf(verifyLogin);
+  if (verifyIndex !== convergeIndex + 1) {
+    throw new Error(`${jobName} must verify memberships immediately after converge revokes temporary migration authority`);
+  }
+  const executable = steps(job, jobName).map(executableScript).join("\n");
+  if (/npm run db:migrate\s*&&\s*npm run test:db-roles/.test(executable) || /\bSET\s+ROLE\b/i.test(executable)) {
+    throw new Error(`${jobName} must not fall back to fake superuser role isolation`);
+  }
+}
+
+function requireRlsAcceptanceContract(
+  job: Job,
+  jobName: string,
+  verificationStepName: string,
+  bootstrapScript = [
+    "set -euo pipefail",
+    "npm run db:migrate",
+    "psql \"$DATABASE_URL\" \\",
+    "-v ON_ERROR_STOP=1 \\",
+    "-f scripts/rls-acceptance-bootstrap.sql",
+  ].join("\n"),
+): void {
   const verification = namedStep(job, verificationStepName, jobName);
-  const acceptanceUrl = verification.env?.RLS_ACCEPTANCE_DATABASE_URL
-    ?? job.env?.RLS_ACCEPTANCE_DATABASE_URL;
-  const adminUrl = verification.env?.TEST_DATABASE_URL ?? job.env?.TEST_DATABASE_URL;
+  const resolveJobEnvReference = (value: unknown): unknown => {
+    if (typeof value !== "string") return value;
+    const match = value.match(/^\$\{\{ env\.([A-Z0-9_]+) \}\}$/);
+    return match ? job.env?.[match[1]!] : value;
+  };
+  const acceptanceUrl = resolveJobEnvReference(
+    verification.env?.RLS_ACCEPTANCE_DATABASE_URL ?? job.env?.RLS_ACCEPTANCE_DATABASE_URL,
+  );
+  const adminUrl = resolveJobEnvReference(verification.env?.TEST_DATABASE_URL ?? job.env?.TEST_DATABASE_URL);
   if (typeof acceptanceUrl !== "string" || typeof adminUrl !== "string") {
     throw new Error(`${jobName} must provide admin and dedicated RLS acceptance database URLs`);
   }
@@ -95,13 +193,7 @@ function requireRlsAcceptanceContract(job: Job, jobName: string, verificationSte
   const bootstrap = namedStep(job, "Prepare dedicated NOBYPASSRLS acceptance principal", jobName);
   requireExactExecutableScript(
     bootstrap,
-    [
-      "set -euo pipefail",
-      "npm run db:migrate",
-      "psql \"$DATABASE_URL\" \\",
-      "-v ON_ERROR_STOP=1 \\",
-      "-f scripts/rls-acceptance-bootstrap.sql",
-    ].join("\n"),
+    bootstrapScript,
     `${jobName} must migrate and bootstrap the restricted RLS acceptance principal`,
   );
   requireStepOrder(
@@ -143,7 +235,25 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
   requireRun(namedStep(verify, "Verify supply chain and dependency audit", "verify"), /npm run security:verify/, "Verify security gate is missing");
   requireRun(namedStep(verify, "Verify engineering gates", "verify"), /npm run verify:engineering/, "Verify engineering gate is missing");
   requireRun(namedStep(verify, "Verify database release gates", "verify"), /npm run verify:db/, "Verify database gate is missing");
-  requireRlsAcceptanceContract(verify, "release verify", "Verify database release gates");
+  requireDatabaseRolesProducerContract(verify, "release verify");
+  const releaseVerification = namedStep(verify, "Verify database release gates", "release verify");
+  if (
+    releaseVerification.env?.DATABASE_URL !== "${{ env.MIGRATION_DATABASE_URL }}"
+    || releaseVerification.env?.TEST_DATABASE_URL !== "${{ env.DATABASE_ADMIN_URL }}"
+  ) {
+    throw new Error("Release database gate must use migration DATABASE_URL and admin TEST_DATABASE_URL");
+  }
+  requireRlsAcceptanceContract(
+    verify,
+    "release verify",
+    "Verify database release gates",
+    [
+      "set -euo pipefail",
+      "psql \"$DATABASE_ADMIN_URL\" \\",
+      "-v ON_ERROR_STOP=1 \\",
+      "-f scripts/rls-acceptance-bootstrap.sql",
+    ].join("\n"),
+  );
   const manifestStep = namedStep(publish, "Generate release evidence and manifest", "publish");
   requireRun(manifestStep, /npm run release:manifest[\s\S]*release:manifest:verify[\s\S]*sha256sum --check release-manifest\.sha256[\s\S]*artifact="release-\$\{GITHUB_SHA\}"/, "Publish manifest identity step is incomplete");
   const publishUpload = namedStep(publish, "Upload immutable release evidence", "publish");
@@ -205,9 +315,9 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
   for (const [stepName, output, path] of evidenceDownloads) requireDownload(namedStep(acceptance, stepName, "production-acceptance"), output, path, stepName);
 
   const producerCommands: Record<ProducerCheck, RegExp> = {
-    "migration-rehearsal": /npm run db:migrate && npm run test:db-release/,
-    "database-roles": /npm run db:migrate && npm run test:db-roles/,
-    "backup-restore": /npm run db:restore:drill/,
+    "migration-rehearsal": /npm run test:db-release/,
+    "database-roles": /npm run test:db-roles/,
+    "backup-restore": /npm run test:backup-rls/,
     "rollback-compatibility": /npm run release:rollback-check/,
     "alerting-drill": /npm run alerting:drill -- --confirm-staging --confirm-reversible/,
     "secret-rotation": /npm run secret-rotation:evidence:verify/,
@@ -231,6 +341,20 @@ export function verifyReleaseWorkflow(source: string, promotionSource = promote,
       if (drillStep.env?.DRILL_LOCK_FILE !== "${{ vars.DRILL_LOCK_FILE }}") throw new Error("Alerting drill must consume the protected persistent DRILL_LOCK_FILE");
     }
     if (job.permissions) throw new Error(`Producer ${check} must not add job permissions`);
+    if (check === "migration-rehearsal" || check === "database-roles" || check === "backup-restore") {
+      requireDatabaseRolesProducerContract(job, check);
+    }
+    if (check === "migration-rehearsal") {
+      const rehearsal = namedStep(job, "Run real migration rehearsal", "producer migration-rehearsal");
+      requireExactExecutableScript(rehearsal, "npm run test:db-release", "Migration rehearsal verification command is invalid");
+      if (
+        rehearsal.env?.DATABASE_URL !== "${{ env.MIGRATION_DATABASE_URL }}"
+        || rehearsal.env?.TEST_DATABASE_URL !== "${{ env.DATABASE_ADMIN_URL }}"
+      ) {
+        throw new Error("Migration rehearsal must use migration DATABASE_URL and admin TEST_DATABASE_URL");
+      }
+      requireStepOrder(job, "Verify real database LOGIN isolation", rehearsal.name!, "producer migration-rehearsal");
+    }
     const allSteps = steps(job, `producer ${check}`);
     if (!allSteps.some((step) => typeof step.run === "string" && /\[\[ "\$PREPARE_RUN_ID" =~ \^\[1-9\]\[0-9\]\*\$ \]\]/.test(step.run) && /\.status == "completed" and \.conclusion == "success" and \.path == "\.github\/workflows\/release\.yml" and \.head_repository\.full_name == \$repo and \.head_sha == \$sha/.test(step.run) && /\[\[ "\$\(jq -er '\.total_count' <<<"\$artifacts"\)" -le 100 \]\]/.test(step.run) && /\(cd prepare && sha256sum --check release-manifest\.sha256\)/.test(step.run) && /sha256sum prepare\/release-manifest\.json/.test(step.run) && /actions\/artifacts\/\$artifact_id\/zip/.test(step.run) && /select\(length == 1 and \.\[0\]\.expired == false\)/.test(step.run))) throw new Error(`Producer ${check} must validate prepare metadata, unique artifact ID, sidecar, and raw manifest hash`);
     if (!allSteps.some((step) => typeof step.run === "string" && producerCommands[check].test(step.run))) throw new Error(`Producer ${check} real check command is missing from check job`);
@@ -252,9 +376,272 @@ export function verifyCiReleaseManifestContract(source: string): void {
   const ci = parseWorkflow(source, "CI workflow");
   const verify = ci.jobs?.verify;
   if (!verify) throw new Error("CI verify job is required");
-  requireRlsAcceptanceContract(verify, "CI verify", "Database release verification");
+  const volumeUpgrade = namedStep(verify, "Existing-volume database role upgrade rehearsal", "CI verify");
+  requireExactExecutableScript(
+    volumeUpgrade,
+    "npm run db-roles:upgrade:acceptance",
+    "CI verify must execute the existing-volume database role upgrade rehearsal",
+  );
+  requireRlsAcceptanceContract(
+    verify,
+    "CI verify",
+    "Database release verification",
+    [
+      "set -euo pipefail",
+      "psql \"$DATABASE_ADMIN_URL\" \\",
+      "-v ON_ERROR_STOP=1 \\",
+      "-f scripts/rls-acceptance-bootstrap.sql",
+    ].join("\n"),
+  );
+  requireDatabaseRolesProducerContract(verify, "CI verify");
+  const verifyPrepare = namedStep(verify, "Prepare real database LOGIN roles", "CI verify");
+  const verifyMigrate = namedStep(verify, "Run authoritative migrations as vocab_migration", "CI verify");
+  const verifyConverge = namedStep(verify, "Converge database role ownership and privileges", "CI verify");
+  requireStepOrder(verify, verifyPrepare.name!, verifyMigrate.name!, "CI verify");
+  requireStepOrder(verify, verifyMigrate.name!, verifyConverge.name!, "CI verify");
+
+  const verification = namedStep(verify, "Database release verification", "CI verify");
+  if (
+    verification.env?.DATABASE_URL !== "${{ env.MIGRATION_DATABASE_URL }}"
+    || verification.env?.TEST_DATABASE_URL !== "${{ env.DATABASE_ADMIN_URL }}"
+  ) {
+    throw new Error("CI verify database gate must use migration DATABASE_URL and admin TEST_DATABASE_URL");
+  }
+  const bootstrap = namedStep(verify, "Prepare dedicated NOBYPASSRLS acceptance principal", "CI verify");
+  requireStepOrder(verify, verifyConverge.name!, bootstrap.name!, "CI verify");
+  const replay = namedStep(verify, "Migration replay is a no-op", "CI verify");
+  requireExactExecutableScript(replay, "npm run db:migrate", "CI verify migration replay command is invalid");
+  if (replay.env?.DATABASE_URL !== "${{ env.MIGRATION_DATABASE_URL }}") {
+    throw new Error("CI verify migration replay must authenticate through MIGRATION_DATABASE_URL");
+  }
+  const lifecycle = namedStep(verify, "Data lifecycle integration and contract gate", "CI verify");
+  if (
+    lifecycle.env?.TEST_DATABASE_URL !== "${{ env.DATABASE_ADMIN_URL }}"
+    || lifecycle.env?.DATA_LIFECYCLE_DATABASE_URL !== "${{ env.DATABASE_ADMIN_URL }}"
+  ) {
+    throw new Error("CI verify data lifecycle integration must use the dedicated test database admin");
+  }
+
+  const e2e = ci.jobs?.e2e;
+  if (!e2e) throw new Error("CI Browser E2E job is required");
+  const jobName = "CI Browser E2E";
+  const expectedUsers = {
+    APP_DATABASE_URL: "vocab_app",
+    WORKER_DATABASE_URL: "vocab_worker",
+    BACKUP_DATABASE_URL: "vocab_backup",
+    MIGRATION_DATABASE_URL: "vocab_migration",
+  } as const;
+  const adminValue = e2e.env?.DATABASE_ADMIN_URL;
+  if (typeof adminValue !== "string") throw new Error(`${jobName} must provide DATABASE_ADMIN_URL`);
+  let admin: URL;
+  try {
+    admin = new URL(adminValue);
+  } catch {
+    throw new Error(`${jobName} DATABASE_ADMIN_URL must be valid`);
+  }
+  const passwords = new Set([decodeURIComponent(admin.password)]);
+  for (const [name, username] of Object.entries(expectedUsers)) {
+    const value = e2e.env?.[name];
+    if (typeof value !== "string") throw new Error(`${jobName} must provide ${name}`);
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error(`${jobName} ${name} must be valid`);
+    }
+    if (
+      url.protocol !== "postgresql:"
+      || decodeURIComponent(url.username) !== username
+      || url.hostname !== admin.hostname
+      || url.port !== admin.port
+      || url.pathname !== admin.pathname
+    ) {
+      throw new Error(`${jobName} ${name} must authenticate as ${username} on the admin database`);
+    }
+    passwords.add(decodeURIComponent(url.password));
+  }
+  if (passwords.size !== 5 || [...passwords].some((password) => password.length < 16)) {
+    throw new Error(`${jobName} must use five distinct test-only passwords`);
+  }
+
+  const prepare = namedStep(e2e, "Prepare real database LOGIN roles", jobName);
+  const migrate = namedStep(e2e, "Run authoritative migrations as vocab_migration", jobName);
+  const converge = namedStep(e2e, "Converge database role ownership and privileges", jobName);
+  const runtime = namedStep(e2e, "Run Playwright E2E tests as vocab_app", jobName);
+  requireExactExecutableScript(prepare, "npm exec -- tsx scripts/bootstrap-database-roles.ts prepare", `${jobName} prepare phase is invalid`);
+  requireExactExecutableScript(migrate, "npm run db:migrate", `${jobName} migration phase is invalid`);
+  requireExactExecutableScript(converge, "npm exec -- tsx scripts/bootstrap-database-roles.ts converge", `${jobName} converge phase is invalid`);
+  requireExactExecutableScript(runtime, "npm run test:e2e", `${jobName} runtime phase is invalid`);
+  if (migrate.env?.DATABASE_URL !== "${{ env.MIGRATION_DATABASE_URL }}") {
+    throw new Error(`${jobName} migrations must authenticate through MIGRATION_DATABASE_URL`);
+  }
+  if (
+    runtime.env?.DATABASE_URL !== "${{ env.APP_DATABASE_URL }}"
+    || runtime.env?.E2E_SETUP_DATABASE_URL !== "${{ env.DATABASE_ADMIN_URL }}"
+  ) {
+    throw new Error(`${jobName} must run application traffic as vocab_app with privileged fixture setup isolated to the database admin`);
+  }
+  requireStepOrder(e2e, prepare.name!, migrate.name!, jobName);
+  requireStepOrder(e2e, migrate.name!, converge.name!, jobName);
+  requireStepOrder(e2e, converge.name!, runtime.name!, jobName);
 }
 
+export function verifyDatabaseVerificationScriptContract(source: string): void {
+  const value: unknown = JSON.parse(source);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("package.json must be an object");
+  }
+  const scripts = (value as { scripts?: unknown }).scripts;
+  if (typeof scripts !== "object" || scripts === null || Array.isArray(scripts)) {
+    throw new Error("package.json scripts are required");
+  }
+  const actual = scripts as Record<string, unknown>;
+  const expected = {
+    "verify:db": "npm run test:db-release && npm run test:integration && npm run test:db-roles && npm run test:capacity",
+    "test:db-release": "tsx scripts/verify-release-database.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts --reporter=verbose",
+    "test:db-roles": "tsx scripts/verify-database-roles.ts",
+    "test:capacity": "tsx scripts/verify-capacity.ts",
+  } as const;
+  for (const [name, command] of Object.entries(expected)) {
+    if (actual[name] !== command) {
+      throw new Error(`${name} must match the migration-free database verification contract`);
+    }
+  }
+}
+
+export function verifyMonthlyRecoveryDrillContract(source: string): void {
+  const workflow = parseWorkflow(source, "monthly recovery drill");
+  exactKeys(workflow.permissions, ["contents"], "Monthly recovery drill permissions are not minimal");
+  if (workflow.permissions?.contents !== "read") throw new Error("Monthly recovery drill contents permission must be read");
+  exactKeys(workflow.jobs, ["drill"], "Monthly recovery drill must contain only the drill job");
+  const drill = workflow.jobs!.drill!;
+  const jobName = "monthly recovery drill";
+  if (drill["runs-on"] !== "ubuntu-24.04") throw new Error("Monthly recovery drill must use ubuntu-24.04");
+  if (drill.permissions) throw new Error("Monthly recovery drill must not add job permissions");
+  requireDatabaseRolesProducerContract(drill, jobName);
+
+  const expectedUsers = {
+    DRILL_APP_DATABASE_URL: "vocab_app",
+    DRILL_WORKER_DATABASE_URL: "vocab_worker",
+    DRILL_BACKUP_DATABASE_URL: "vocab_backup",
+    DRILL_MIGRATION_DATABASE_URL: "vocab_migration",
+  } as const;
+  const sourceAdminValue = drill.env?.DATABASE_ADMIN_URL;
+  const drillAdminValue = drill.env?.DRILL_DATABASE_ADMIN_URL;
+  if (typeof sourceAdminValue !== "string" || typeof drillAdminValue !== "string") {
+    throw new Error("Monthly recovery drill must provide source and drill administration URLs");
+  }
+  let sourceAdmin: URL;
+  let drillAdmin: URL;
+  try {
+    sourceAdmin = new URL(sourceAdminValue);
+    drillAdmin = new URL(drillAdminValue);
+  } catch {
+    throw new Error("Monthly recovery drill administration URLs must be valid");
+  }
+  if (
+    sourceAdmin.protocol !== "postgresql:"
+    || drillAdmin.protocol !== "postgresql:"
+    || sourceAdmin.username !== drillAdmin.username
+    || sourceAdmin.password !== drillAdmin.password
+    || sourceAdmin.hostname !== drillAdmin.hostname
+    || sourceAdmin.port !== drillAdmin.port
+    || sourceAdmin.pathname === drillAdmin.pathname
+    || decodeURIComponent(drillAdmin.pathname.slice(1)) !== "vocab_drill"
+  ) {
+    throw new Error("Monthly recovery drill administration URL must isolate vocab_drill on the source cluster");
+  }
+  for (const [drillName, username] of Object.entries(expectedUsers)) {
+    const sourceName = drillName.replace(/^DRILL_/, "");
+    const sourceValue = drill.env?.[sourceName];
+    const drillValue = drill.env?.[drillName];
+    if (typeof sourceValue !== "string" || typeof drillValue !== "string") {
+      throw new Error(`Monthly recovery drill must provide ${sourceName} and ${drillName}`);
+    }
+    let sourceUrl: URL;
+    let drillUrl: URL;
+    try {
+      sourceUrl = new URL(sourceValue);
+      drillUrl = new URL(drillValue);
+    } catch {
+      throw new Error(`Monthly recovery drill ${drillName} must be valid`);
+    }
+    if (
+      decodeURIComponent(sourceUrl.username) !== username
+      || sourceUrl.username !== drillUrl.username
+      || sourceUrl.password !== drillUrl.password
+      || sourceUrl.hostname !== drillUrl.hostname
+      || sourceUrl.port !== drillUrl.port
+      || sourceUrl.pathname === drillUrl.pathname
+      || drillUrl.pathname !== drillAdmin.pathname
+    ) {
+      throw new Error(`Monthly recovery drill ${drillName} must reuse ${username} only on the isolated drill database`);
+    }
+  }
+
+  const backup = namedStep(drill, "Create signed backup as vocab_backup", jobName);
+  requireExactExecutableScript(backup, "npm run db:backup", "Monthly recovery drill backup command is invalid");
+  if (backup.env?.DATABASE_URL !== "${{ env.BACKUP_DATABASE_URL }}") {
+    throw new Error("Monthly recovery drill backup must authenticate through BACKUP_DATABASE_URL");
+  }
+  const create = namedStep(drill, "Create isolated drill database owned by vocab_migration", jobName);
+  requireExactExecutableScript(
+    create,
+    [
+      "set -euo pipefail",
+      "psql \"$DATABASE_ADMIN_URL\" -v ON_ERROR_STOP=1 -c \"CREATE DATABASE vocab_drill OWNER vocab_migration;\"",
+    ].join("\n"),
+    "Monthly recovery drill database creation is invalid",
+  );
+  const restore = namedStep(drill, "Run isolated restore drill as vocab_migration", jobName);
+  if (
+    restore.env?.DATABASE_URL !== "${{ env.BACKUP_DATABASE_URL }}"
+    || restore.env?.DRILL_DATABASE_URL !== "${{ env.DRILL_MIGRATION_DATABASE_URL }}"
+    || restore.env?.DRILL_TEST_DATABASE_URL !== "${{ env.DRILL_DATABASE_ADMIN_URL }}"
+  ) {
+    throw new Error("Monthly recovery drill restore must read as vocab_backup, restore as vocab_migration, and verify through the drill admin");
+  }
+  requireExactExecutableScript(
+    restore,
+    [
+      "set -euo pipefail",
+      "MANIFEST=$(ls -t backups/*.manifest.json | head -1)",
+      "npm run db:restore:drill -- \"$MANIFEST\"",
+    ].join("\n"),
+    "Monthly recovery drill restore command is invalid",
+  );
+  const restoredConverge = namedStep(drill, "Converge restored database ownership and privileges", jobName);
+  const restoredVerify = namedStep(drill, "Verify restored database LOGIN isolation", jobName);
+  requireExactExecutableScript(restoredConverge, "npm exec -- tsx scripts/bootstrap-database-roles.ts converge", "Monthly recovery drill restored converge phase is invalid");
+  requireExactExecutableScript(restoredVerify, "npm run test:db-roles", "Monthly recovery drill restored LOGIN verification is invalid");
+  for (const [name] of Object.entries(expectedUsers)) {
+    const sourceName = name.replace(/^DRILL_/, "");
+    if (restoredConverge.env?.[sourceName] !== `\${{ env.${name} }}` || restoredVerify.env?.[sourceName] !== `\${{ env.${name} }}`) {
+      throw new Error(`Monthly recovery drill restored verification must route ${sourceName} to ${name}`);
+    }
+  }
+  if (
+    restoredConverge.env?.DATABASE_ADMIN_URL !== "${{ env.DRILL_DATABASE_ADMIN_URL }}"
+    || restoredVerify.env?.DATABASE_ADMIN_URL !== "${{ env.DRILL_DATABASE_ADMIN_URL }}"
+  ) {
+    throw new Error("Monthly recovery drill restored governance must use DRILL_DATABASE_ADMIN_URL");
+  }
+  requireStepOrder(drill, "Verify real database LOGIN isolation", backup.name!, jobName);
+  requireStepOrder(drill, backup.name!, create.name!, jobName);
+  requireStepOrder(drill, create.name!, restore.name!, jobName);
+  requireStepOrder(drill, restore.name!, restoredConverge.name!, jobName);
+  requireStepOrder(drill, restoredConverge.name!, restoredVerify.name!, jobName);
+  const allSteps = steps(drill, jobName);
+  if (allSteps.indexOf(restoredVerify) !== allSteps.indexOf(restoredConverge) + 1) {
+    throw new Error("Monthly recovery drill must verify restored LOGIN isolation immediately after converge");
+  }
+  pinnedActions(workflow, jobName);
+  if (/continue-on-error\s*:\s*true/.test(source)) throw new Error("Monthly recovery drill must not continue on error");
+}
+
+verifyDatabaseVerificationScriptContract(packageSource);
 verifyReleaseWorkflow(release, promote);
 verifyCiReleaseManifestContract(ciWorkflow);
+verifyMonthlyRecoveryDrillContract(monthlyDrillWorkflow);
 console.log("Release workflow contract passed.");

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   applyGraphReadSuccess,
@@ -166,9 +167,11 @@ const graph = (nodes: L3GraphReadModel["nodes"] = []): L3GraphReadModel => ({
   nextCursor: null,
 });
 
+const projectRoot = path.resolve(import.meta.dirname, "..");
+
 describe("Phase 4A.1 L3 frontend contract scaffold", () => {
   it("keeps the contract module free of server-only runtime dependencies", () => {
-    const source = readFileSync("src/l3/frontend/contract.ts", "utf8");
+    const source = readFileSync(path.join(projectRoot, "src/l3/frontend/contract.ts"), "utf8");
 
     expect(source).not.toMatch(/from ["']@\/(?:db|repositories|services|http)\//);
     expect(source).not.toMatch(/from ["'](?:node:)?(?:fs|path|crypto|process)["']/);

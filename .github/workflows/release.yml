@@ -27,20 +27,24 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: vocab
-          POSTGRES_PASSWORD: vocab
-          POSTGRES_DB: vocab
+          POSTGRES_USER: vocab_release_admin
+          POSTGRES_PASSWORD: P1a2ReleaseAdmin_8wQ4tK
+          POSTGRES_DB: vocab_release
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U vocab -d vocab"
+          --health-cmd "pg_isready -U vocab_release_admin -d vocab_release"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
     env:
-      DATABASE_URL: postgresql://vocab:vocab@127.0.0.1:5432/vocab
-      TEST_DATABASE_URL: postgresql://vocab:vocab@127.0.0.1:5432/vocab
-      RLS_ACCEPTANCE_DATABASE_URL: postgresql://vocab_rls_acceptance:vocab_rls_acceptance_local_only@127.0.0.1:5432/vocab
+      DATABASE_ADMIN_URL: postgresql://vocab_release_admin:P1a2ReleaseAdmin_8wQ4tK@127.0.0.1:5432/vocab_release
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2ReleaseApp_7rN3zM4c@127.0.0.1:5432/vocab_release
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2ReleaseWorker_4xV9pC@127.0.0.1:5432/vocab_release
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2ReleaseBackup_6kT2yH@127.0.0.1:5432/vocab_release
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2ReleaseMigration_5mJ8qD@127.0.0.1:5432/vocab_release
+      RLS_ACCEPTANCE_DATABASE_URL: postgresql://vocab_rls_acceptance:vocab_rls_acceptance_local_only@127.0.0.1:5432/vocab_release
+      DB_SSLMODE: disable
       CAPACITY_TEST_CONFIRM: vocab
     steps:
       - name: Check out release source
@@ -80,15 +84,31 @@ jobs:
       - name: Verify engineering gates
         run: npm run verify:engineering
 
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+        run: npm run db:migrate
+
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Verify real database LOGIN isolation
+        run: npm run test:db-roles
+
       - name: Prepare dedicated NOBYPASSRLS acceptance principal
         run: |
           set -euo pipefail
-          npm run db:migrate
-          psql "$DATABASE_URL" \
+          psql "$DATABASE_ADMIN_URL" \
             -v ON_ERROR_STOP=1 \
             -f scripts/rls-acceptance-bootstrap.sql
 
       - name: Verify database release gates
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+          TEST_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
         run: npm run verify:db
 
   publish:

@@ -89,24 +89,34 @@ function makeMockStatsRepo(overrides: Partial<IStatsRepository> = {}): IStatsRep
 // ── Tests ───────────────────────────────────────────────────────────────
 
 describe("WordService", () => {
-  it("getPublicWords delegates to repository", async () => {
-    const repo = makeMockWordRepo({
+  it("getPublicWords uses the authenticated actor transaction repository", async () => {
+    const constructorRepo = makeMockWordRepo();
+    const txRepo = makeMockWordRepo({
       findPublic: vi.fn(async () => ({
         items: [{ id: "1", slug: "aboard" } as WordSummary],
         total: 1, limit: 10, offset: 0, hasMore: false,
       })),
     });
-    const service = new WordService(repo);
+    const fakeTx = {} as never;
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback(fakeTx)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const repositoryFactory = vi.fn(() => ({ words: txRepo } as unknown as IRepositories));
+    const service = new WordService(constructorRepo, txRunner, repositoryFactory);
+
     const result = await service.getPublicWords({
       userId: "u1", q: "ab", limit: 10, offset: 0,
     });
 
     expect(result.items).toHaveLength(1);
-    expect(repo.findPublic).toHaveBeenCalledWith(expect.objectContaining({
+    expect(txRunner).toHaveBeenCalledTimes(1);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(repositoryFactory).toHaveBeenCalledWith(fakeTx);
+    expect(txRepo.findPublic).toHaveBeenCalledWith({
       filters: { q: "ab", freq: undefined, semantic: undefined, review: undefined },
       pagination: { limit: 10, offset: 0 },
       userId: "u1",
-    }));
+      wordbookId: undefined,
+    });
+    expect(constructorRepo.findPublic).not.toHaveBeenCalled();
   });
 
   it("getWordBySlug throws NotFound when missing", async () => {
@@ -214,22 +224,43 @@ describe("NoteService", () => {
 });
 
 describe("WordbookService", () => {
-  it("create rejects empty name", async () => {
-    const service = new WordbookService(makeMockWordbookRepo());
+  it("create rejects empty name before opening an actor transaction", async () => {
+    const repo = makeMockWordbookRepo();
+    const txRunner = vi.fn();
+    const repositoryFactory = vi.fn();
+    const service = new WordbookService(
+      repo,
+      txRunner as unknown as typeof import("@/db/transaction").withTransaction,
+      repositoryFactory,
+    );
+
     await expect(service.create({ userId: "u1", name: "" }))
       .rejects.toBeInstanceOf(BusinessRuleError);
+    expect(txRunner).not.toHaveBeenCalled();
+    expect(repositoryFactory).not.toHaveBeenCalled();
   });
 
-  it("create with isDefault checks existing default", async () => {
-    const repo = makeMockWordbookRepo({
+  it("create with isDefault checks the tx-scoped repository", async () => {
+    const constructorRepo = makeMockWordbookRepo();
+    const txRepo = makeMockWordbookRepo({
       findDefaultByUser: vi.fn(async () => ({ id: "existing" } as WordbookRow)),
     });
-    const service = new WordbookService(repo);
+    const fakeTx = {} as never;
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback(fakeTx)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const repositoryFactory = vi.fn(() => ({ wordbooks: txRepo } as unknown as IRepositories));
+    const service = new WordbookService(constructorRepo, txRunner, repositoryFactory);
+
     await expect(service.create({ userId: "u1", name: "Test", isDefault: true }))
       .rejects.toMatchObject({ code: "BUSINESS_RULE" });
+    expect(txRunner).toHaveBeenCalledTimes(1);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(repositoryFactory).toHaveBeenCalledWith(fakeTx);
+    expect(txRepo.findDefaultByUser).toHaveBeenCalledWith("u1");
+    expect(txRepo.create).not.toHaveBeenCalled();
+    expect(constructorRepo.findDefaultByUser).not.toHaveBeenCalled();
   });
 
-  it("persists a normalized description when creating a wordbook", async () => {
+  it("persists a normalized description through the tx-scoped repository", async () => {
     const row = {
       id: "wb1",
       user_id: "u1",
@@ -240,8 +271,12 @@ describe("WordbookService", () => {
       created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
     } satisfies WordbookRow;
-    const repo = makeMockWordbookRepo({ create: vi.fn(async () => row) });
-    const service = new WordbookService(repo);
+    const constructorRepo = makeMockWordbookRepo();
+    const txRepo = makeMockWordbookRepo({ create: vi.fn(async () => row) });
+    const fakeTx = {} as never;
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback(fakeTx)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const repositoryFactory = vi.fn(() => ({ wordbooks: txRepo } as unknown as IRepositories));
+    const service = new WordbookService(constructorRepo, txRunner, repositoryFactory);
 
     const result = await service.create({
       userId: "u1",
@@ -249,53 +284,120 @@ describe("WordbookService", () => {
       description: "  Vocabulary for exams  ",
     });
 
-    expect(repo.create).toHaveBeenCalledWith("u1", "Test", false, "Vocabulary for exams");
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(repositoryFactory).toHaveBeenCalledWith(fakeTx);
+    expect(txRepo.create).toHaveBeenCalledWith("u1", "Test", false, "Vocabulary for exams");
+    expect(constructorRepo.create).not.toHaveBeenCalled();
     expect(result.description).toBe("Vocabulary for exams");
   });
 
-  it("addWords skips empty array", async () => {
+  it("addWords skips empty arrays before opening an actor transaction", async () => {
     const repo = makeMockWordbookRepo();
-    const service = new WordbookService(repo);
-    await service.addWords("wb1", []);
+    const txRunner = vi.fn();
+    const repositoryFactory = vi.fn();
+    const service = new WordbookService(
+      repo,
+      txRunner as unknown as typeof import("@/db/transaction").withTransaction,
+      repositoryFactory,
+    );
+
+    await service.addWords("u1", "wb1", []);
+
+    expect(txRunner).not.toHaveBeenCalled();
+    expect(repositoryFactory).not.toHaveBeenCalled();
     expect(repo.addWords).not.toHaveBeenCalled();
   });
 
-  it("delegates reads, non-empty additions, and word counts", async () => {
+  it("delegates reads, additions, and counts through authenticated actor transactions", async () => {
     const first = {
       id: "wb1", user_id: "u1", name: "Default", description: null,
       is_default: true, settings: {}, created_at: "2026-07-10T00:00:00Z",
       updated_at: "2026-07-10T00:00:00Z",
     } satisfies WordbookRow;
     const second = { ...first, id: "wb2", name: "Extra", is_default: false } satisfies WordbookRow;
-    const repo = makeMockWordbookRepo({
+    const constructorRepo = makeMockWordbookRepo();
+    const txRepo = makeMockWordbookRepo({
       getOrCreateDefault: vi.fn(async () => first),
       findAllByUser: vi.fn(async () => [first, second]),
       findById: vi.fn(async (id) => id === "wb1" ? first : null),
       countWords: vi.fn(async () => 2),
     });
-    const service = new WordbookService(repo);
+    const fakeTx = {} as never;
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback(fakeTx)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const repositoryFactory = vi.fn(() => ({ wordbooks: txRepo } as unknown as IRepositories));
+    const service = new WordbookService(constructorRepo, txRunner, repositoryFactory);
 
     expect((await service.getOrCreateDefault("u1")).id).toBe("wb1");
     expect(await service.findAllByUser("u1")).toHaveLength(2);
-    expect((await service.findById("wb1"))?.name).toBe("Default");
-    expect(await service.findById("missing")).toBeNull();
-    await service.addWords("wb1", ["word-1", "word-2"]);
-    expect(repo.addWords).toHaveBeenCalledWith("wb1", ["word-1", "word-2"]);
-    expect(await service.getWordCount("wb1")).toBe(2);
+    expect((await service.findById("u1", "wb1"))?.name).toBe("Default");
+    expect(await service.findById("u1", "missing")).toBeNull();
+    await service.addWords("u1", "wb1", ["word-1", "word-2"]);
+    expect(await service.getWordCount("u1", "wb1")).toBe(2);
+
+    expect(txRunner).toHaveBeenCalledTimes(6);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(repositoryFactory).toHaveBeenCalledTimes(6);
+    expect(repositoryFactory).toHaveBeenCalledWith(fakeTx);
+    expect(txRepo.getOrCreateDefault).toHaveBeenCalledWith("u1");
+    expect(txRepo.findAllByUser).toHaveBeenCalledWith("u1");
+    expect(txRepo.findById).toHaveBeenNthCalledWith(1, "wb1");
+    expect(txRepo.findById).toHaveBeenNthCalledWith(2, "missing");
+    expect(txRepo.addWords).toHaveBeenCalledWith("wb1", ["word-1", "word-2"]);
+    expect(txRepo.countWords).toHaveBeenCalledWith("wb1");
+    expect(constructorRepo.getOrCreateDefault).not.toHaveBeenCalled();
+    expect(constructorRepo.findAllByUser).not.toHaveBeenCalled();
+    expect(constructorRepo.findById).not.toHaveBeenCalled();
+    expect(constructorRepo.addWords).not.toHaveBeenCalled();
+    expect(constructorRepo.countWords).not.toHaveBeenCalled();
   });
 });
 
 describe("StatsService", () => {
-  it("getDashboardSummary delegates to repo", async () => {
-    const repo = makeMockStatsRepo();
-    const service = new StatsService(repo);
+  it("getDashboardSummary uses the authenticated actor transaction repository", async () => {
+    const constructorRepo = makeMockStatsRepo();
+    const txRepo = makeMockStatsRepo();
+    const fakeTx = {} as never;
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback(fakeTx)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const repositoryFactory = vi.fn(() => ({ stats: txRepo } as unknown as IRepositories));
+    const service = new StatsService(constructorRepo, txRunner, repositoryFactory);
+
     const result = await service.getDashboardSummary("u1", "wb1");
+
     expect(result.totalWords).toBe(100);
     expect(result.streakDays).toBe(3);
+    expect(txRunner).toHaveBeenCalledTimes(1);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(repositoryFactory).toHaveBeenCalledWith(fakeTx);
+    expect(txRepo.getDashboardSummary).toHaveBeenCalledWith("u1", "wb1");
+    expect(constructorRepo.getDashboardSummary).not.toHaveBeenCalled();
   });
 
-  it("computeForecast derives from summary", () => {
-    const service = new StatsService(makeMockStatsRepo());
+  it("getRatingDistribution uses the authenticated actor transaction repository", async () => {
+    const constructorRepo = makeMockStatsRepo();
+    const txRepo = makeMockStatsRepo();
+    const fakeTx = {} as never;
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback(fakeTx)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const repositoryFactory = vi.fn(() => ({ stats: txRepo } as unknown as IRepositories));
+    const service = new StatsService(constructorRepo, txRunner, repositoryFactory);
+
+    await expect(service.getRatingDistribution("u1", "wb1", 7)).resolves.toEqual({
+      again: 1, hard: 2, good: 5, easy: 2,
+    });
+    expect(txRunner).toHaveBeenCalledTimes(1);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(repositoryFactory).toHaveBeenCalledWith(fakeTx);
+    expect(txRepo.getRatingDistribution).toHaveBeenCalledWith("u1", "wb1", 7);
+    expect(constructorRepo.getRatingDistribution).not.toHaveBeenCalled();
+  });
+
+  it("computeForecast derives from summary without opening a transaction", () => {
+    const txRunner = vi.fn();
+    const repositoryFactory = vi.fn();
+    const service = new StatsService(
+      makeMockStatsRepo(),
+      txRunner as unknown as typeof import("@/db/transaction").withTransaction,
+      repositoryFactory,
+    );
     const forecast = service.computeForecast({
       totalWords: 100, trackedWords: 50, dueToday: 10,
       reviewedToday: 5, reviewed7d: 35, reviewed30d: 150,
@@ -304,5 +406,7 @@ describe("StatsService", () => {
     expect(forecast.dueNow).toBe(10);
     expect(forecast.due7d).toBe(15);
     expect(forecast.due14d).toBe(20);
+    expect(txRunner).not.toHaveBeenCalled();
+    expect(repositoryFactory).not.toHaveBeenCalled();
   });
 });

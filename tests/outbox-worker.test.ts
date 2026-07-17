@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withTransaction } from "@/db/transaction";
 import type { IOutboxRepository, IRepositories, OutboxEventRow } from "@/repositories/interfaces";
 import { ReviewOutboxWorker } from "@/outbox/review-outbox.worker";
 
@@ -66,7 +67,7 @@ beforeEach(() => {
   mockRepos.l2Progress = {
     findByWordbookWordAndUser: vi.fn(async () => null),
     insert: vi.fn(async () => ({}) as never),
-    markL2StaleForRecheck: vi.fn(async () => 0),
+    finalizeL2ContentHash: vi.fn(async () => 0),
     pause: vi.fn(async () => undefined),
     unpauseByReason: vi.fn(async () => undefined),
   };
@@ -139,6 +140,19 @@ describe("ReviewOutboxWorker", () => {
       "00000000-0000-4000-8000-000000000105",
     );
     expect(mockRepos.l2Progress?.findByWordbookWordAndUser).not.toHaveBeenCalled();
+  });
+
+  it("scopes every user-data effect transaction to the validated event actor", async () => {
+    const outbox = makeOutbox();
+    mockRepos.outbox = outbox;
+    const worker = new ReviewOutboxWorker(outbox, { workerId: "worker-1" });
+
+    await worker.processBatch();
+
+    expect(withTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { actorId: "00000000-0000-4000-8000-000000000104" },
+    );
   });
 
   it("skips an effect that already has a durable receipt", async () => {

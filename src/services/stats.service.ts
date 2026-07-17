@@ -5,8 +5,14 @@
  * Adds lightweight business logic (e.g., forecast calculation) on top.
  */
 
-import type { IStatsRepository } from "../repositories/interfaces";
+import type { PoolClient } from "pg";
+import type { IRepositories, IStatsRepository } from "../repositories/interfaces";
 import type { DashboardSummary, RatingDistribution } from "../repositories/interfaces";
+import { withTransaction } from "../db/transaction";
+import { createRepositories } from "../repositories/factory";
+
+type TxRunner = typeof withTransaction;
+type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 export interface ReviewForecast {
   dueNow: number;
@@ -15,10 +21,27 @@ export interface ReviewForecast {
 }
 
 export class StatsService {
-  constructor(private readonly stats: IStatsRepository) {}
+  constructor(
+    private readonly stats: IStatsRepository,
+    private readonly txRunner: TxRunner = withTransaction,
+    private readonly repositoryFactory: RepositoryFactory = createRepositories,
+  ) {}
+
+  private withActorStats<T>(
+    userId: string,
+    callback: (stats: IStatsRepository) => Promise<T>,
+  ): Promise<T> {
+    return this.txRunner(
+      async (tx) => callback(this.repositoryFactory(tx).stats),
+      { actorId: userId },
+    );
+  }
 
   async getDashboardSummary(userId: string, wordbookId: string): Promise<DashboardSummary> {
-    return this.stats.getDashboardSummary(userId, wordbookId);
+    return this.withActorStats(
+      userId,
+      (stats) => stats.getDashboardSummary(userId, wordbookId),
+    );
   }
 
   async getRatingDistribution(
@@ -26,7 +49,10 @@ export class StatsService {
     wordbookId: string,
     days = 30,
   ): Promise<RatingDistribution> {
-    return this.stats.getRatingDistribution(userId, wordbookId, days);
+    return this.withActorStats(
+      userId,
+      (stats) => stats.getRatingDistribution(userId, wordbookId, days),
+    );
   }
 
   /**

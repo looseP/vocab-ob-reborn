@@ -82,45 +82,11 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
     );
   }
 
-  /**
-   * Aggregate all active L2 content rows for a word, grouped by field,
-   * and write the arrays back into the words JSONB cache columns:
-   *   collocation → collocations
-   *   corpus      → corpus_items
-   *   synonym     → synonym_items
-   *   antonym     → antonym_items
-   *
-   * Fields without rows resolve to an empty array, clearing stale cache.
-   */
+  /** Refresh the four words L2 JSONB caches through the migration-owned RPC. */
   async refreshL2Cache(wordId: string): Promise<void> {
-    const rows = await this.query<{ field: string; content: unknown }>(
-      `SELECT field, content FROM word_l2_content
-       WHERE word_id = $1::uuid AND is_active = true`,
-      [wordId],
-    );
-
-    // Group active content by field, flattening each row's content blob
-    // (legacy arrays / v1 wrappers / single objects) into the cache list.
-    const grouped: Record<string, unknown[]> = {};
-    for (const row of rows) {
-      if (!grouped[row.field]) grouped[row.field] = [];
-      grouped[row.field].push(...extractL2Items(row.content));
-    }
-
     await this.query(
-      `UPDATE words SET
-         collocations = $2,
-         corpus_items = $3,
-         synonym_items = $4,
-         antonym_items = $5
-       WHERE id = $1::uuid`,
-      [
-        wordId,
-        JSON.stringify(grouped.collocation ?? []),
-        JSON.stringify(grouped.corpus ?? []),
-        JSON.stringify(grouped.synonym ?? []),
-        JSON.stringify(grouped.antonym ?? []),
-      ],
+      `SELECT public.refresh_l2_cache($1::uuid)`,
+      [wordId],
     );
   }
 }

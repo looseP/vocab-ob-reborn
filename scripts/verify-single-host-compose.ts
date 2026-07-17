@@ -31,11 +31,60 @@ export function verifySingleHostCompose(compose: string, caddyfile: string, envi
   requirePattern(compose, /read_only: true/, "Read-only application filesystems");
   requirePattern(compose, /no-new-privileges:true/, "No-new-privileges hardening");
   requirePattern(compose, /cap_drop:\n    - ALL/, "Capabilities dropped");
-  for (const service of ["postgres", "migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler"]) {
-    requirePattern(compose, new RegExp(`^  ${service}:$`, "m"), `Single-host service ${service}`);
-  }
+  const serviceBlock = (service: string): string => {
+    const match = compose.match(new RegExp(`^  ${service}:\\r?\\n([\\s\\S]*?)(?=^  [a-z0-9-]+:|^networks:)`, "m"));
+    if (!match) throw new Error(`Single-host service ${service} is missing or malformed`);
+    return match[0];
+  };
+  for (const service of [
+    "postgres",
+    "database-role-bootstrap",
+    "migrate",
+    "database-role-converge",
+    "web",
+    "review-outbox-worker",
+    "llm-reservation-reaper",
+    "backup-scheduler",
+  ]) serviceBlock(service);
   if (/^\s+ports:/m.test(compose.replace(/  caddy:[\s\S]*?(?=^  [a-z]|^networks:)/m, ""))) {
     throw new Error("Only Caddy may publish host ports in the single-host Compose file");
+  }
+
+  const roleJobEnvironment = [
+    "DATABASE_ADMIN_URL",
+    "APP_DATABASE_URL",
+    "WORKER_DATABASE_URL",
+    "BACKUP_DATABASE_URL",
+    "MIGRATION_DATABASE_URL",
+  ];
+  for (const service of ["database-role-bootstrap", "database-role-converge"]) {
+    const block = serviceBlock(service);
+    requirePattern(block, /image: \$\{MIGRATION_IMAGE:\?MIGRATION_IMAGE is required\}/, `${service} migration image`);
+    for (const variable of roleJobEnvironment) {
+      requirePattern(block, new RegExp(`${variable}: \\$\\{${variable}:\\?${variable} is required\\}`), `${service} ${variable}`);
+    }
+    requirePattern(block, new RegExp(`bootstrap-database-roles\\.ts", "${service === "database-role-bootstrap" ? "prepare" : "converge"}"`), `${service} mode`);
+  }
+  requirePattern(serviceBlock("database-role-bootstrap"), /depends_on:\r?\n      postgres:\r?\n        condition: service_healthy/, "Bootstrap after healthy PostgreSQL");
+  requirePattern(serviceBlock("migrate"), /DATABASE_URL: \$\{MIGRATION_DATABASE_URL:\?MIGRATION_DATABASE_URL is required\}/, "Migration role routing");
+  requirePattern(serviceBlock("migrate"), /depends_on:\r?\n      database-role-bootstrap:\r?\n        condition: service_completed_successfully/, "Migration after role bootstrap");
+  requirePattern(serviceBlock("database-role-converge"), /depends_on:\r?\n      migrate:\r?\n        condition: service_completed_successfully/, "Privilege convergence after migration");
+
+  const runtimeRoutes: Record<string, string> = {
+    web: "APP_DATABASE_URL",
+    "review-outbox-worker": "WORKER_DATABASE_URL",
+    "llm-reservation-reaper": "WORKER_DATABASE_URL",
+    "backup-scheduler": "BACKUP_DATABASE_URL",
+  };
+  for (const [service, variable] of Object.entries(runtimeRoutes)) {
+    const block = serviceBlock(service);
+    requirePattern(block, new RegExp(`DATABASE_URL: \\$\\{${variable}:\\?${variable} is required\\}`), `${service} database role routing`);
+    if (/DATABASE_ADMIN_URL|MIGRATION_DATABASE_URL|\$\{POSTGRES_(?:USER|PASSWORD)/.test(block)) {
+      throw new Error(`${service} must not receive administration, migration, or shared PostgreSQL credentials`);
+    }
+  }
+  if (/DATABASE_URL:\s+postgresql:\/\/\$\{POSTGRES_USER/.test(compose)) {
+    throw new Error("Shared POSTGRES_USER database URLs are forbidden");
   }
 
   requirePattern(environment, /^APP_IMAGE=.+@sha256:REPLACE_WITH_64_HEX_DIGEST$/m, "Immutable runtime image template");
@@ -51,6 +100,30 @@ export function verifySingleHostCompose(compose: string, caddyfile: string, envi
   requirePattern(environment, /^CADDY_HTTPS_HOST_PORT=443$/m, "Default Caddy HTTPS host port template");
   requirePattern(environment, /^CADDY_CONFIG_FILE=[A-Za-z]:\/.+\/Caddyfile$/m, "Absolute Windows Caddy configuration template");
   requirePattern(environment, /^BACKUP_HOST_DIR=[A-Za-z]:\/.+/m, "Absolute Windows backup directory template");
+
+  const expectedRoleUsernames: Record<string, string> = {
+    DATABASE_ADMIN_URL: "vocab_admin",
+    APP_DATABASE_URL: "vocab_app",
+    WORKER_DATABASE_URL: "vocab_worker",
+    BACKUP_DATABASE_URL: "vocab_backup",
+    MIGRATION_DATABASE_URL: "vocab_migration",
+  };
+  const rolePasswords = new Map<string, string>();
+  for (const [variable, username] of Object.entries(expectedRoleUsernames)) {
+    const match = environment.match(new RegExp(`^${variable}=postgresql:\\/\\/([^:]+):([^@]+)@postgres:5432/vocab$`, "m"));
+    if (!match) throw new Error(`${variable} template is missing or malformed`);
+    if (match[1] !== username) throw new Error(`${variable} username must be exactly ${username}`);
+    if (match[2]!.length < 24) throw new Error(`${variable} password placeholder must be long`);
+    rolePasswords.set(variable, match[2]!);
+  }
+  if (new Set(rolePasswords.values()).size !== Object.keys(expectedRoleUsernames).length) {
+    throw new Error("Database role password placeholders must be distinct");
+  }
+  requirePattern(environment, /^POSTGRES_USER=vocab_admin$/m, "Dedicated PostgreSQL initialization identity");
+  const postgresPassword = environment.match(/^POSTGRES_PASSWORD=(.+)$/m)?.[1];
+  if (!postgresPassword || postgresPassword !== rolePasswords.get("DATABASE_ADMIN_URL")) {
+    throw new Error("POSTGRES_PASSWORD must equal the DATABASE_ADMIN_URL password");
+  }
 }
 
 const isDirectExecution = process.argv[1] !== undefined

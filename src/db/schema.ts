@@ -49,7 +49,7 @@ export const profiles = pgTable("profiles", {
 		}).onDelete("cascade"),
 	unique("profiles_email_key").on(table.email),
 	pgPolicy("profiles_update_own", { as: "permissive", for: "update", to: ["public"], using: sql`(auth.uid() = id)`, withCheck: sql`(auth.uid() = id)`  }),
-	pgPolicy("profiles_select_own", { as: "permissive", for: "select", to: ["public"] }),
+	pgPolicy("profiles_select_own", { as: "permissive", for: "select", to: ["public"], using: sql`(auth.uid() = id)` }),
 	check("profiles_role_check", sql`role = ANY (ARRAY['user'::text, 'editor'::text, 'admin'::text])`),
 ]);
 
@@ -594,6 +594,7 @@ export const wordHighlights = pgTable("word_highlights", {
 			foreignColumns: [wordbooks.id],
 			name: "word_highlights_wordbook_id_fkey"
 		}).onDelete("cascade"),
+	pgPolicy("word_highlights_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 ]);
 
 export const wordAnnotations = pgTable("word_annotations", {
@@ -621,6 +622,7 @@ export const wordAnnotations = pgTable("word_annotations", {
 			foreignColumns: [wordbooks.id],
 			name: "word_annotations_wordbook_id_fkey"
 		}).onDelete("cascade"),
+	pgPolicy("word_annotations_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 ]);
 
 export const wordTags = pgTable("word_tags", {
@@ -744,6 +746,7 @@ export const userWordL2Progress = pgTable("user_word_l2_progress", {
 	uniqueIndex("idx_l2_progress_user_wordbook_word").on(table.userId, table.wordbookId, table.wordId),
 	index("idx_l2_progress_wordbook_due").on(table.wordbookId, table.userId, table.l2DueAt).where(sql`(l2_paused = false)`),
 	index("idx_l2_progress_word").on(table.wordId),
+	pgPolicy("user_word_l2_progress_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 	check("l2_state_check", sql`l2_state = ANY (ARRAY['new'::text, 'learning'::text, 'review'::text, 'relearning'::text, 'suspended'::text])`),
 	check("l2_retention_check", sql`l2_desired_retention >= 0.900 AND l2_desired_retention <= 0.990`),
 	check("l2_paused_reason_check", sql`l2_paused_reason IS NULL OR l2_paused_reason = ANY (ARRAY['l1_cascade_failure'::text, 'wordbook_focus'::text, 'manual'::text])`),

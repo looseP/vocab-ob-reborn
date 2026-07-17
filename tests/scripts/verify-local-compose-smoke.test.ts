@@ -7,12 +7,15 @@ import {
   parseComposePs,
   parsePublishedPort,
   resolveSmokeBackupRuntimeUser,
+  resolveSmokeDatabaseEnvironment,
   resolveSmokeImageEnvironment,
 } from "../../scripts/verify-local-compose-smoke";
 
 const healthyProcesses = [
   { Service: "postgres", State: "running", Health: "healthy" },
+  { Service: "database-role-bootstrap", State: "exited", ExitCode: 0 },
   { Service: "migrate", State: "exited", ExitCode: 0 },
+  { Service: "database-role-converge", State: "exited", ExitCode: 0 },
   { Service: "web", State: "running", Health: "healthy" },
   { Service: "review-outbox-worker", State: "running" },
   { Service: "llm-reservation-reaper", State: "running" },
@@ -31,17 +34,23 @@ describe("local Compose smoke helpers", () => {
     expect(parseComposePs(healthyProcesses.map((process) => JSON.stringify(process)).join("\n"))).toEqual(healthyProcesses);
   });
 
-  it("requires migration success and all long-running services", () => {
+  it("requires role governance and migration success plus all long-running services", () => {
     expect(assessServiceStatuses(healthyProcesses)).toEqual({ ok: true, errors: [] });
-    const failed = healthyProcesses.map((process) => process.Service === "migrate"
+    const failed = healthyProcesses.map((process) => process.Service === "database-role-bootstrap"
       ? { ...process, ExitCode: 1 }
-      : process.Service === "review-outbox-worker"
-        ? { ...process, State: "exited" }
-        : process);
+      : process.Service === "migrate"
+        ? { ...process, ExitCode: 1 }
+        : process.Service === "database-role-converge"
+          ? { ...process, ExitCode: 1 }
+          : process.Service === "review-outbox-worker"
+            ? { ...process, State: "exited" }
+            : process);
     expect(assessServiceStatuses(failed)).toEqual({
       ok: false,
       errors: [
+        "database-role-bootstrap must be exited with code 0",
         "migrate must be exited with code 0",
+        "database-role-converge must be exited with code 0",
         "review-outbox-worker must be running",
       ],
     });
@@ -65,6 +74,27 @@ describe("local Compose smoke helpers", () => {
     expect(resolveSmokeBackupRuntimeUser("darwin", 502, 20)).toBe("502:20");
     expect(resolveSmokeBackupRuntimeUser("win32")).toBe("node");
     expect(() => resolveSmokeBackupRuntimeUser("linux", null, null)).toThrow(/Cannot resolve host UID:GID/);
+  });
+
+  it("uses isolated postgres-host smoke URLs for all five identities", () => {
+    const environment = resolveSmokeDatabaseEnvironment();
+    const urls = [
+      environment.DATABASE_ADMIN_URL,
+      environment.APP_DATABASE_URL,
+      environment.WORKER_DATABASE_URL,
+      environment.BACKUP_DATABASE_URL,
+      environment.MIGRATION_DATABASE_URL,
+    ].map((value) => new URL(value));
+    expect(urls.map((url) => decodeURIComponent(url.username))).toEqual([
+      "vocab_roles_admin",
+      "vocab_app",
+      "vocab_worker",
+      "vocab_backup",
+      "vocab_migration",
+    ]);
+    expect(urls.every((url) => url.hostname === "postgres" && url.pathname === "/vocab")).toBe(true);
+    expect(new Set(urls.map((url) => decodeURIComponent(url.password))).size).toBe(5);
+    expect(urls.every((url) => decodeURIComponent(url.password).length >= 16)).toBe(true);
   });
 
   it("preserves prebuilt CI images only in skip-build mode", () => {
