@@ -17,10 +17,22 @@ function requirePattern(source: string, pattern: RegExp, label: string): void {
 
 requirePattern(dockerfile, /^FROM node:22\.22\.2-bookworm-slim AS runtime$/m, "Pinned runtime stage");
 requirePattern(dockerfile, /^FROM build AS migration$/m, "Dedicated migration stage");
-requirePattern(dockerfile, /^FROM runtime AS backup-runtime$/m, "Dedicated backup runtime stage");
-requirePattern(dockerfile, /^ARG POSTGRES_CLIENT_MAJOR=17$/m, "Pinned PostgreSQL client major");
-requirePattern(dockerfile, /postgresql-client-\$\{POSTGRES_CLIENT_MAJOR\}/, "PostgreSQL backup client install");
-requirePattern(dockerfile, /FROM runtime AS backup-runtime[\s\S]*?^USER node$/m, "Non-root backup runtime");
+requirePattern(dockerfile, /^FROM postgres:17\.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394 AS postgres-backup-client$/m, "Digest-pinned PostgreSQL backup client source");
+requirePattern(dockerfile, /^FROM scratch AS backup-runtime$/m, "Metadata-clean backup runtime stage");
+requirePattern(dockerfile, /client_root=\/postgres-client-root;/, "Isolated PostgreSQL client filesystem");
+requirePattern(dockerfile, /client_dir="\$\{client_root\}\/opt\/postgres-client";/, "Dedicated PostgreSQL client runtime directory");
+requirePattern(dockerfile, /for name in pg_dump pg_restore; do[\s\S]*?ldd "\$\{binary\}"[\s\S]*?done \| sort -u > \/tmp\/postgres-client-libraries;/, "Architecture-neutral PostgreSQL client dependency discovery");
+requirePattern(dockerfile, /cp -L "\$\{library\}" "\$\{client_dir\}\/lib\/\$\(basename "\$\{library\}"\)";/, "Isolated PostgreSQL client dependency copy");
+requirePattern(dockerfile, /loader="\$\(ldd \/usr\/lib\/postgresql\/17\/bin\/pg_dump \| awk '[^']+'\)";/, "Architecture-neutral PostgreSQL client loader discovery");
+requirePattern(dockerfile, /exec "\/opt\/postgres-client\/lib\/%s" --library-path "\/opt\/postgres-client\/lib"/, "Isolated PostgreSQL client wrapper");
+requirePattern(dockerfile, /"\$\{client_dir\}\/lib\/\$\{loader_name\}" --library-path "\$\{client_dir\}\/lib" "\$\{client_dir\}\/bin\/\$\{name\}\.real" --version;/, "Isolated PostgreSQL client validation");
+requirePattern(dockerfile, /^COPY --from=runtime \/ \/$/m, "Complete Node runtime filesystem copy");
+requirePattern(dockerfile, /^COPY --from=postgres-backup-client \/postgres-client-root\/ \/$/m, "Minimal PostgreSQL client filesystem copy");
+requirePattern(dockerfile, /RUN node --version[\s\S]*?&& npm --version[\s\S]*?&& pg_dump --version[\s\S]*?&& pg_restore --version/, "Backup runtime toolchain validation");
+requirePattern(dockerfile, /test ! -e \/opt\/postgres-client\/bin\/postgres/, "PostgreSQL server exclusion assertion");
+requirePattern(dockerfile, /test ! -e \/opt\/postgres-client\/bin\/psql/, "Interactive PostgreSQL client exclusion assertion");
+requirePattern(dockerfile, /scripts\/verify-release-database\.ts/, "Restore drill release database verifier");
+requirePattern(dockerfile, /FROM scratch AS backup-runtime[\s\S]*?^USER node$/m, "Non-root backup runtime");
 requirePattern(dockerfile, /^RUN npm ci --omit=dev --ignore-scripts/m, "Production-only dependency install");
 requirePattern(dockerfile, /FROM node:22\.22\.2-bookworm-slim AS runtime[\s\S]*?^USER node$/m, "Non-root final runtime");
 requirePattern(dockerfile, /^RUN npm run frontend:build$/m, "Frontend build");
@@ -36,12 +48,16 @@ requirePattern(compose, /scripts\/run-backup-scheduler\.ts/, "Backup scheduler c
 const backupService = compose.match(/^  backup-scheduler:\r?\n([\s\S]*?)(?=^  [a-z][a-z0-9-]*:|^volumes:)/m)?.[1];
 if (!backupService) throw new Error("Compose backup scheduler service is missing or malformed");
 requirePattern(backupService, /target: backup-runtime/, "Backup runtime image target");
-requirePattern(backupService, /POSTGRES_CLIENT_MAJOR: \$\{POSTGRES_CLIENT_MAJOR:-17\}/, "PostgreSQL client major build argument");
+if (/\bargs:\s*\n\s*POSTGRES_CLIENT_MAJOR:/.test(backupService)) {
+  throw new Error("Backup runtime must source its pinned PostgreSQL client from the Dockerfile, not a mutable build argument");
+}
 requirePattern(backupService, /BACKUP_REQUIRE_SIGNING_KEY: \$\{BACKUP_REQUIRE_SIGNING_KEY:-true\}/, "Production backup signing requirement");
 requirePattern(backupService, /pg_dump --version[^\n]*pg_restore --version/, "Backup client binary healthcheck");
 requirePattern(envExample, /^BACKUP_IMAGE=vocab-observatory-v2-backup:local$/m, "Backup image example");
 requirePattern(envExample, /^BACKUP_REQUIRE_SIGNING_KEY=true$/m, "Backup signing requirement example");
-requirePattern(envExample, /^POSTGRES_CLIENT_MAJOR=17$/m, "PostgreSQL client major example");
+if (/^POSTGRES_CLIENT_MAJOR=/m.test(envExample)) {
+  throw new Error("PostgreSQL backup client major must be pinned in the Dockerfile, not exposed as a mutable environment setting");
+}
 requirePattern(envExample, /^APP_NODE_ENV=development$/m, "Local development environment example");
 requirePattern(envExample, /^APP_ORIGIN=http:\/\/127\.0\.0\.1:3001$/m, "Local loopback origin example");
 requirePattern(productionCompose, /APP_IMAGE:\?APP_IMAGE is required for production/, "Production immutable app image fail-fast");
