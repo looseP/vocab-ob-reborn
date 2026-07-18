@@ -93,7 +93,7 @@ Alert when no verified backup exists inside the RPO window, a scheduled backup f
 
 ## Automated scheduled backup
 
-The `backup-scheduler` Compose service uses the dedicated `backup-runtime` Docker stage and runs `scripts/run-backup-scheduler.ts`. The stage installs PostgreSQL client major 17 by default (`POSTGRES_CLIENT_MAJOR=17`), matching the Compose PostgreSQL major, and includes both `pg_dump` and `pg_restore`. It:
+The `backup-scheduler` Compose service uses the dedicated `backup-runtime` Docker stage and runs `scripts/run-backup-scheduler.ts`. PostgreSQL client 17.10 comes from the digest-pinned official `postgres:17.10-bookworm` build stage, matching the Compose PostgreSQL major. The build extracts only `pg_dump`, `pg_restore`, and the architecture-specific shared-library closure reported by `ldd`; it does not copy the database server or the PostgreSQL image root filesystem. The final stage is rebuilt from `scratch` using the pinned Node Bookworm runtime filesystem, so `node`, `npm`, `tsx`, and the isolated restore verifier are available without inheriting either source image's entrypoint, command, exposed port, or data volume metadata. This avoids package downloads during the application image build without disabling TLS or repository signature verification. It:
 
 - Creates a backup every `BACKUP_INTERVAL_MS` (default: 24h).
 - Requires `BACKUP_SIGNING_KEY` by default in Compose (`BACKUP_REQUIRE_SIGNING_KEY=true`) and fails closed before starting when it is absent. Local script and CI invocations remain compatible unless they explicitly enable this requirement.
@@ -110,7 +110,6 @@ BACKUP_RETENTION_COUNT=14
 BACKUP_SIGNING_KEY=<strong-key>
 BACKUP_REQUIRE_SIGNING_KEY=true
 BACKUP_OBJECT_LOCK=true
-POSTGRES_CLIENT_MAJOR=17
 ```
 
 ## Object lock and immutability

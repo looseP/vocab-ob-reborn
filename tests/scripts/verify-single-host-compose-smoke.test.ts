@@ -8,6 +8,7 @@ import {
   buildSingleHostCleanupArgs,
   buildSingleHostComposeArgs,
   buildSingleHostProjectResourceFilters,
+  collectSmokeSecrets,
   combineSmokeErrors,
   createSingleHostSmokeIdentity,
   parseComposePs,
@@ -105,6 +106,13 @@ describe("single-host Compose smoke helpers", () => {
     }
   });
 
+  it("ignores only explicit container-only exposed ports with no host mapping", () => {
+    const processes = readyProcesses();
+    processes[0]!.Publishers = [{ URL: "", TargetPort: 5432, PublishedPort: 0, Protocol: "tcp" }];
+    processes[2]!.Publishers = [{ URL: "", TargetPort: 3001, PublishedPort: "0", Protocol: "tcp" }];
+    expect(assessPublishedSurface(processes, { httpPort: 49152, httpsPort: 49153 })).toEqual({ ok: true, errors: [] });
+  });
+
   it("rejects publishers on every service other than Caddy", () => {
     const unsafe = readyProcesses();
     unsafe[2]!.Publishers = [{ URL: "127.0.0.1", TargetPort: 3001, PublishedPort: 49154, Protocol: "tcp" }];
@@ -112,6 +120,32 @@ describe("single-host Compose smoke helpers", () => {
       ok: false,
       errors: ["web must not publish host ports"],
     });
+  });
+
+  it("fails closed for malformed or ambiguous non-Caddy publisher records", () => {
+    const malformedPublishers = [
+      { URL: "", TargetPort: 3001, Protocol: "tcp" },
+      { URL: "", TargetPort: 3001, PublishedPort: null, Protocol: "tcp" },
+      { URL: "", TargetPort: 3001, PublishedPort: "", Protocol: "tcp" },
+      { URL: "", TargetPort: 3001, PublishedPort: "abc", Protocol: "tcp" },
+      { URL: "", TargetPort: 3001, PublishedPort: Number.NaN, Protocol: "tcp" },
+      { URL: "", TargetPort: 3001, PublishedPort: -1, Protocol: "tcp" },
+      { URL: "", TargetPort: 3001, PublishedPort: 1.5, Protocol: "tcp" },
+      { TargetPort: 3001, PublishedPort: 0, Protocol: "tcp" },
+      { URL: null, TargetPort: 3001, PublishedPort: 0, Protocol: "tcp" },
+      { URL: "127.0.0.1", TargetPort: 3001, PublishedPort: 0, Protocol: "tcp" },
+    ];
+    for (const publisher of malformedPublishers) {
+      const unsafe = readyProcesses();
+      unsafe[2]!.Publishers = [publisher];
+      expect(assessPublishedSurface(unsafe, { httpPort: 49152, httpsPort: 49153 }).errors)
+        .toContain("web must not publish host ports");
+    }
+
+    const malformedCaddy = readyProcesses();
+    malformedCaddy[3]!.Publishers![0] = { URL: "127.0.0.1", TargetPort: 80, Protocol: "tcp" };
+    expect(assessPublishedSurface(malformedCaddy, { httpPort: 49152, httpsPort: 49153 }).errors.join(" "))
+      .toMatch(/high host port/);
   });
 
   it("redacts every non-empty configured secret without exposing overlap", () => {
@@ -122,10 +156,47 @@ describe("single-host Compose smoke helpers", () => {
     expect(output).toBe("db=[REDACTED] owner=[REDACTED] metrics=[REDACTED] backup=[REDACTED] llm=[REDACTED] blank=");
   });
 
+  it("collects complete database URLs and encoded credentials for diagnostics redaction", () => {
+    const databaseUrls = {
+      DATABASE_ADMIN_URL: "postgresql://admin:admin%2Fsecret@postgres:5432/vocab",
+      APP_DATABASE_URL: "postgresql://app:app%23secret@postgres:5432/vocab",
+      WORKER_DATABASE_URL: "postgresql://worker:worker%40secret@postgres:5432/vocab",
+      BACKUP_DATABASE_URL: "postgresql://backup:backup%25secret@postgres:5432/vocab",
+      MIGRATION_DATABASE_URL: "not-a-url-migration-secret",
+    };
+    const secrets = collectSmokeSecrets({
+      ...databaseUrls,
+      POSTGRES_PASSWORD: "bootstrap-secret",
+      OWNER_API_TOKEN: "owner-token",
+    });
+    const diagnostic = [
+      ...Object.values(databaseUrls),
+      "admin admin%2Fsecret admin/secret",
+      "app app%23secret app#secret",
+      "worker worker%40secret worker@secret",
+      "backup backup%25secret backup%secret",
+      "bootstrap-secret owner-token",
+    ].join("\n");
+    const redacted = redactDiagnostics(diagnostic, secrets);
+    for (const value of [
+      ...Object.values(databaseUrls),
+      "admin", "admin%2Fsecret", "admin/secret",
+      "app", "app%23secret", "app#secret",
+      "worker", "worker%40secret", "worker@secret",
+      "backup", "backup%25secret", "backup%secret",
+      "bootstrap-secret", "owner-token",
+    ]) {
+      expect(redacted).not.toContain(value);
+    }
+  });
+
   it("does not let ambient Compose values or untracked secrets reach Docker", () => {
     expect(buildDockerChildEnvironment({
       PATH: "C:/Windows/System32",
       DOCKER_CONTEXT: "desktop-linux",
+      ProgramFiles: "C:/Program Files",
+      "ProgramFiles(x86)": "C:/Program Files (x86)",
+      ProgramW6432: "C:/Program Files",
       COMPOSE_FILE: "unsafe.yaml",
       COMPOSE_PROJECT_NAME: "vocab-observatory",
       POSTGRES_PASSWORD: "ambient-secret",
@@ -135,6 +206,9 @@ describe("single-host Compose smoke helpers", () => {
     }, { CADDY_HTTP_HOST_PORT: "49152" })).toEqual({
       PATH: "C:/Windows/System32",
       DOCKER_CONTEXT: "desktop-linux",
+      ProgramFiles: "C:/Program Files",
+      "ProgramFiles(x86)": "C:/Program Files (x86)",
+      ProgramW6432: "C:/Program Files",
       CADDY_HTTP_HOST_PORT: "49152",
     });
   });
@@ -153,6 +227,7 @@ describe("single-host Compose smoke helpers", () => {
       path: "/readyz",
       method: "GET",
       servername: "localhost",
+      headers: { Host: "localhost" },
       ca,
       rejectUnauthorized: true,
     });

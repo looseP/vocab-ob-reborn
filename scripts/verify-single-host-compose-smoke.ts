@@ -18,6 +18,13 @@ const secretKeys = [
   "BACKUP_SIGNING_KEY",
   "LLM_API_KEY",
 ] as const;
+const sensitiveDatabaseUrlKeys = [
+  "DATABASE_ADMIN_URL",
+  "APP_DATABASE_URL",
+  "WORKER_DATABASE_URL",
+  "BACKUP_DATABASE_URL",
+  "MIGRATION_DATABASE_URL",
+] as const;
 const dockerChildEnvironmentAllowlist = new Set([
   "APPDATA",
   "COMSPEC",
@@ -35,6 +42,9 @@ const dockerChildEnvironmentAllowlist = new Set([
   "PATH",
   "PATHEXT",
   "PROGRAMDATA",
+  "PROGRAMFILES",
+  "PROGRAMFILES(X86)",
+  "PROGRAMW6432",
   "SYSTEMROOT",
   "TEMP",
   "TMP",
@@ -48,10 +58,10 @@ export interface SingleHostSmokeArgs {
 }
 
 export interface ComposePublisher {
-  URL?: string;
-  TargetPort?: number | string;
-  PublishedPort?: number | string;
-  Protocol?: string;
+  URL?: string | null;
+  TargetPort?: number | string | null;
+  PublishedPort?: number | string | null;
+  Protocol?: string | null;
 }
 
 export interface ComposeProcess {
@@ -180,19 +190,27 @@ export function parseLoopbackPublishedPort(publisher: ComposePublisher, targetPo
   return publishedPort;
 }
 
+function publishedHostPorts(process: ComposeProcess): ComposePublisher[] {
+  return (process.Publishers ?? []).filter((publisher) => {
+    const isExplicitContainerOnly = publisher.URL === ""
+      && (publisher.PublishedPort === 0 || publisher.PublishedPort === "0");
+    return !isExplicitContainerOnly;
+  });
+}
+
 export function assessPublishedSurface(
   processes: ComposeProcess[],
   expected: PublishedSurfaceExpectation,
 ): Assessment {
   const errors: string[] = [];
   for (const process of processes) {
-    const publishers = process.Publishers ?? [];
+    const publishers = publishedHostPorts(process);
     if (process.Service !== "caddy" && publishers.length > 0) {
       errors.push(`${process.Service ?? "unknown service"} must not publish host ports`);
     }
   }
   const caddy = processes.find((process) => process.Service === "caddy");
-  const publishers = caddy?.Publishers ?? [];
+  const publishers = caddy ? publishedHostPorts(caddy) : [];
   if (publishers.length !== 2) errors.push("caddy must publish exactly container ports 80 and 443");
   for (const [targetPort, expectedHostPort] of [[80, expected.httpPort], [443, expected.httpsPort]] as const) {
     const publisher = publishers.find((candidate) => Number(candidate.TargetPort) === targetPort);
@@ -213,6 +231,30 @@ export function redactDiagnostics(text: string, secrets: readonly string[]): str
   return [...new Set(secrets.filter((secret) => secret.length > 0))]
     .sort((left, right) => right.length - left.length)
     .reduce((redacted, secret) => redacted.replaceAll(secret, "[REDACTED]"), text);
+}
+
+export function collectSmokeSecrets(environment: Record<string, string | undefined>): string[] {
+  const secrets = secretKeys.map((key) => environment[key]?.trim() ?? "");
+  for (const key of sensitiveDatabaseUrlKeys) {
+    const rawUrl = environment[key]?.trim() ?? "";
+    if (!rawUrl) continue;
+    secrets.push(rawUrl);
+    try {
+      const parsed = new URL(rawUrl);
+      for (const value of [parsed.username, parsed.password]) {
+        if (!value) continue;
+        secrets.push(value);
+        try {
+          secrets.push(decodeURIComponent(value));
+        } catch {
+          // Keep the raw URL component when percent-decoding is malformed.
+        }
+      }
+    } catch {
+      // The runtime validator reports malformed URLs; redact the raw value here regardless.
+    }
+  }
+  return [...new Set(secrets.filter(Boolean))];
 }
 
 export function buildDockerChildEnvironment(
@@ -311,6 +353,7 @@ export function buildSecureEndpointRequestOptions(
     path,
     method: "GET",
     servername: "localhost",
+    headers: { Host: "localhost" },
     ca,
     rejectUnauthorized: true,
   };
@@ -367,7 +410,7 @@ async function main(): Promise<void> {
   mkdirSync(backupDirectory, { recursive: true });
 
   const parsedEnvironment = parseDotenv(readFileSync(parsedArgs.envFile, "utf8"));
-  const secrets = secretKeys.map((key) => parsedEnvironment[key]?.trim() ?? "").filter(Boolean);
+  const secrets = collectSmokeSecrets(parsedEnvironment);
 
   const httpPort = await findAvailableHighPort();
   let httpsPort = await findAvailableHighPort();
