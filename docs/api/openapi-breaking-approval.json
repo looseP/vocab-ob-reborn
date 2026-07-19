@@ -1,12 +1,30 @@
 {
   "version": 1,
-  "baseSha256": "0e1e7d1f1db9bd4ee8e87864b5940c606085801b19d048bdfc96d251486ed15f",
-  "currentSha256": "9ac5eb9e7c0f195d2a4cf548fe37e9032f3188988f492b988deeb47744cfe642",
+  "baseSha256": "9ac5eb9e7c0f195d2a4cf548fe37e9032f3188988f492b988deeb47744cfe642",
+  "currentSha256": "9b55390c3263534146f8f0b4c970467080fdf634480a8db13e25a5da078cc221",
   "issues": [
-    {
-      "kind": "breaking",
-      "location": "paths./api/operations/metrics.get.responses.200.content.application/json.schema",
-      "message": "schema type 发生变化"
-    }
+    {"kind":"breaking","location":"paths./api/l3/sources.post.responses.201.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/contexts.post.responses.201.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/occurrences.post.responses.201.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/context-links.post.responses.201.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/occurrences/{id}.delete.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/context-links/{id}.delete.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/sources/{id}.delete.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/contexts/{id}.get.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/contexts/{id}.delete.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/words/{slug}/space.get.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/sources/{id}/space.get.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/graph.get.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/words/{slug}/contexts.get.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/sources/{id}/contexts.get.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/imports/raw-text.post.responses.201.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/imports/structured.post.responses.201.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/proposals.post.responses.201.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/recommendations/generate.post.responses.201.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/recommendations/{id}/accept.post.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/recommendations/{id}/reject.post.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/proposals/{id}/validate.post.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/proposals/{id}/confirm.post.responses.200.content.application/json.schema","message":"schema type 发生变化"},
+    {"kind":"breaking","location":"paths./api/l3/proposals/{id}/reject.post.responses.200.content.application/json.schema","message":"schema type 发生变化"}
   ]
 }

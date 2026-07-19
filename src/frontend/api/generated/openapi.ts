@@ -3163,7 +3163,22 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        source: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
+                            title: string;
+                            author: string | null;
+                            url: string | null;
+                            language: string | null;
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        };
+                    };
                 };
             };
             /** @description Invalid request */
@@ -3341,7 +3356,22 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        context: {
+                            id: string;
+                            source_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            context_type: "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
+                            text: string;
+                            normalized_text: string | null;
+                            language: string | null;
+                            position: components["schemas"]["JsonValue"];
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        };
+                    };
                 };
             };
             /** @description Invalid request */
@@ -3518,7 +3548,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        occurrence: {
+                            id: string;
+                            context_id: string;
+                            word_id: string;
+                            user_id: string;
+                            surface: string;
+                            lemma: string | null;
+                            start_offset: number | null;
+                            end_offset: number | null;
+                            confidence: (number | string) | null;
+                            evidence: components["schemas"]["JsonValue"];
+                            created_at: string;
+                        };
+                    };
                 };
             };
             /** @description Invalid request */
@@ -3697,7 +3741,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        link: {
+                            id: string;
+                            user_id: string;
+                            context_id: string | null;
+                            word_id: string | null;
+                            /** @enum {string} */
+                            link_type: "supports" | "illustrates" | "contrasts" | "collocates_with" | "synonym_of" | "antonym_of" | "derived_from" | "topic_related" | "manual_link";
+                            /** @enum {string} */
+                            target_type: "word" | "l2_item" | "context" | "source" | "topic" | "external";
+                            target_id: string | null;
+                            target_ref: components["schemas"]["JsonValue"];
+                            confidence: (number | string) | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            created_at: string;
+                        };
+                    };
                 };
             };
             /** @description Invalid request */
@@ -3857,7 +3917,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        deleted: {
+                            /** @enum {string} */
+                            entityType: "source" | "context" | "occurrence" | "context_link";
+                            id: string;
+                        };
+                        /** @constant */
+                        activeReadInvalidation: true;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -4017,7 +4085,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        deleted: {
+                            /** @enum {string} */
+                            entityType: "source" | "context" | "occurrence" | "context_link";
+                            id: string;
+                        };
+                        /** @constant */
+                        activeReadInvalidation: true;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -4177,7 +4253,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        deleted: {
+                            /** @enum {string} */
+                            entityType: "source" | "context" | "occurrence" | "context_link";
+                            id: string;
+                        };
+                        /** @constant */
+                        activeReadInvalidation: true;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -4337,7 +4421,64 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        context: {
+                            id: string;
+                            source_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            context_type: "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
+                            text: string;
+                            normalized_text: string | null;
+                            language: string | null;
+                            position: components["schemas"]["JsonValue"];
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        source: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
+                            title: string;
+                            author: string | null;
+                            url: string | null;
+                            language: string | null;
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        occurrences: {
+                            id: string;
+                            context_id: string;
+                            word_id: string;
+                            user_id: string;
+                            surface: string;
+                            lemma: string | null;
+                            start_offset: number | null;
+                            end_offset: number | null;
+                            confidence: (number | string) | null;
+                            evidence: components["schemas"]["JsonValue"];
+                            created_at: string;
+                        }[];
+                        links: {
+                            id: string;
+                            user_id: string;
+                            context_id: string | null;
+                            word_id: string | null;
+                            /** @enum {string} */
+                            link_type: "supports" | "illustrates" | "contrasts" | "collocates_with" | "synonym_of" | "antonym_of" | "derived_from" | "topic_related" | "manual_link";
+                            /** @enum {string} */
+                            target_type: "word" | "l2_item" | "context" | "source" | "topic" | "external";
+                            target_id: string | null;
+                            target_ref: components["schemas"]["JsonValue"];
+                            confidence: (number | string) | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            created_at: string;
+                        }[];
+                    };
                 };
             };
             /** @description Invalid request */
@@ -4497,7 +4638,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        deleted: {
+                            /** @enum {string} */
+                            entityType: "source" | "context" | "occurrence" | "context_link";
+                            id: string;
+                        };
+                        /** @constant */
+                        activeReadInvalidation: true;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -4661,7 +4810,95 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        word: {
+                            id: string;
+                            slug: string;
+                            title: string;
+                            lemma: string;
+                            pos: string | null;
+                            cefr: string | null;
+                            ipa: string | null;
+                            aliases: string[];
+                            short_definition: string | null;
+                            definition_md: string;
+                            body_md: string;
+                            examples: components["schemas"]["JsonValue"];
+                            metadata: components["schemas"]["JsonValue"];
+                            source_path: string;
+                            source_updated_at: string | null;
+                            content_hash: string;
+                            is_published: boolean;
+                            is_deleted: boolean;
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        contexts: {
+                            id: string;
+                            source_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            context_type: "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
+                            text: string;
+                            normalized_text: string | null;
+                            language: string | null;
+                            position: components["schemas"]["JsonValue"];
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                        sources: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
+                            title: string;
+                            author: string | null;
+                            url: string | null;
+                            language: string | null;
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                        occurrences: {
+                            id: string;
+                            context_id: string;
+                            word_id: string;
+                            user_id: string;
+                            surface: string;
+                            lemma: string | null;
+                            start_offset: number | null;
+                            end_offset: number | null;
+                            confidence: (number | string) | null;
+                            evidence: components["schemas"]["JsonValue"];
+                            created_at: string;
+                        }[];
+                        links: {
+                            id: string;
+                            user_id: string;
+                            context_id: string | null;
+                            word_id: string | null;
+                            /** @enum {string} */
+                            link_type: "supports" | "illustrates" | "contrasts" | "collocates_with" | "synonym_of" | "antonym_of" | "derived_from" | "topic_related" | "manual_link";
+                            /** @enum {string} */
+                            target_type: "word" | "l2_item" | "context" | "source" | "topic" | "external";
+                            target_id: string | null;
+                            target_ref: components["schemas"]["JsonValue"];
+                            confidence: (number | string) | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            created_at: string;
+                        }[];
+                        stats: {
+                            sourceCount: number;
+                            contextCount: number;
+                            occurrenceCount: number;
+                            linkCount: number;
+                        };
+                        limit: number;
+                        cursor: string | null;
+                        nextCursor: string | null;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -4824,7 +5061,73 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        source: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
+                            title: string;
+                            author: string | null;
+                            url: string | null;
+                            language: string | null;
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        contexts: {
+                            id: string;
+                            source_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            context_type: "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
+                            text: string;
+                            normalized_text: string | null;
+                            language: string | null;
+                            position: components["schemas"]["JsonValue"];
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                        occurrences: {
+                            id: string;
+                            context_id: string;
+                            word_id: string;
+                            user_id: string;
+                            surface: string;
+                            lemma: string | null;
+                            start_offset: number | null;
+                            end_offset: number | null;
+                            confidence: (number | string) | null;
+                            evidence: components["schemas"]["JsonValue"];
+                            created_at: string;
+                        }[];
+                        links: {
+                            id: string;
+                            user_id: string;
+                            context_id: string | null;
+                            word_id: string | null;
+                            /** @enum {string} */
+                            link_type: "supports" | "illustrates" | "contrasts" | "collocates_with" | "synonym_of" | "antonym_of" | "derived_from" | "topic_related" | "manual_link";
+                            /** @enum {string} */
+                            target_type: "word" | "l2_item" | "context" | "source" | "topic" | "external";
+                            target_id: string | null;
+                            target_ref: components["schemas"]["JsonValue"];
+                            confidence: (number | string) | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            created_at: string;
+                        }[];
+                        stats: {
+                            sourceCount: number;
+                            contextCount: number;
+                            occurrenceCount: number;
+                            linkCount: number;
+                        };
+                        limit: number;
+                        cursor: string | null;
+                        nextCursor: string | null;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -4989,7 +5292,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        nodes: {
+                            id: string;
+                            /** @enum {string} */
+                            type: "word" | "context" | "source" | "l2_item" | "topic" | "external";
+                            label: string;
+                            ref: components["schemas"]["JsonValue"];
+                            metadata?: components["schemas"]["JsonValue"];
+                        }[];
+                        edges: {
+                            id: string;
+                            /** @enum {string} */
+                            type: "supports" | "illustrates" | "contrasts" | "collocates_with" | "synonym_of" | "antonym_of" | "derived_from" | "topic_related" | "manual_link" | "occurs_in" | "belongs_to";
+                            sourceNodeId: string;
+                            targetNodeId: string;
+                            confidence?: (number | string) | null;
+                            provenance?: components["schemas"]["JsonValue"];
+                            evidence?: components["schemas"]["JsonValue"];
+                        }[];
+                        stats: {
+                            sourceCount: number;
+                            contextCount: number;
+                            occurrenceCount: number;
+                            linkCount: number;
+                            nodeCount: number;
+                            edgeCount: number;
+                        };
+                        limit: number;
+                        cursor: string | null;
+                        nextCursor: string | null;
+                        metadata?: components["schemas"]["JsonValue"];
+                    };
                 };
             };
             /** @description Invalid request */
@@ -5152,7 +5486,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        items: {
+                            id: string;
+                            source_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            context_type: "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
+                            text: string;
+                            normalized_text: string | null;
+                            language: string | null;
+                            position: components["schemas"]["JsonValue"];
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                        limit: number;
+                        cursor: string | null;
+                        nextCursor: string | null;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -5315,7 +5667,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        items: {
+                            id: string;
+                            source_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            context_type: "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
+                            text: string;
+                            normalized_text: string | null;
+                            language: string | null;
+                            position: components["schemas"]["JsonValue"];
+                            metadata: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                        limit: number;
+                        cursor: string | null;
+                        nextCursor: string | null;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -5512,7 +5882,63 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        importJob: {
+                            id: string;
+                            user_id: string;
+                            source_id: string | null;
+                            /** @enum {string} */
+                            status: "pending" | "processing" | "completed" | "failed";
+                            input_hash: string;
+                            input_summary: string | null;
+                            stats: components["schemas"]["JsonValue"];
+                            error: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        proposal: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "agent" | "import" | "external_tool" | "manual_draft" | "mcp_future" | "other";
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected" | "canceled";
+                            title: string | null;
+                            summary: string | null;
+                            input_hash: string | null;
+                            proposed_by: string | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            review_note: string | null;
+                            confirmed_at: string | null;
+                            rejected_at: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        items: {
+                            id: string;
+                            proposal_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            item_type: "source" | "context" | "occurrence" | "context_link";
+                            ordinal: number;
+                            payload: components["schemas"]["JsonValue"];
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected";
+                            validation_errors: components["schemas"]["JsonValue"];
+                            active_entity_type: ("source" | "context" | "occurrence" | "context_link") | null;
+                            active_entity_id: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                        parseStats: {
+                            contextCount: number;
+                            occurrenceCount: number;
+                            linkCount: number;
+                            skippedContextCount: number;
+                            warnings: string[];
+                        };
+                    };
                 };
             };
             /** @description Invalid request */
@@ -5741,7 +6167,63 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        importJob: {
+                            id: string;
+                            user_id: string;
+                            source_id: string | null;
+                            /** @enum {string} */
+                            status: "pending" | "processing" | "completed" | "failed";
+                            input_hash: string;
+                            input_summary: string | null;
+                            stats: components["schemas"]["JsonValue"];
+                            error: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        proposal: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "agent" | "import" | "external_tool" | "manual_draft" | "mcp_future" | "other";
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected" | "canceled";
+                            title: string | null;
+                            summary: string | null;
+                            input_hash: string | null;
+                            proposed_by: string | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            review_note: string | null;
+                            confirmed_at: string | null;
+                            rejected_at: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        items: {
+                            id: string;
+                            proposal_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            item_type: "source" | "context" | "occurrence" | "context_link";
+                            ordinal: number;
+                            payload: components["schemas"]["JsonValue"];
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected";
+                            validation_errors: components["schemas"]["JsonValue"];
+                            active_entity_type: ("source" | "context" | "occurrence" | "context_link") | null;
+                            active_entity_id: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                        parseStats: {
+                            contextCount: number;
+                            occurrenceCount: number;
+                            linkCount: number;
+                            skippedContextCount: number;
+                            warnings: string[];
+                        };
+                    };
                 };
             };
             /** @description Invalid request */
@@ -6108,7 +6590,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        proposal: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "agent" | "import" | "external_tool" | "manual_draft" | "mcp_future" | "other";
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected" | "canceled";
+                            title: string | null;
+                            summary: string | null;
+                            input_hash: string | null;
+                            proposed_by: string | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            review_note: string | null;
+                            confirmed_at: string | null;
+                            rejected_at: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        items: {
+                            id: string;
+                            proposal_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            item_type: "source" | "context" | "occurrence" | "context_link";
+                            ordinal: number;
+                            payload: components["schemas"]["JsonValue"];
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected";
+                            validation_errors: components["schemas"]["JsonValue"];
+                            active_entity_type: ("source" | "context" | "occurrence" | "context_link") | null;
+                            active_entity_id: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                    };
                 };
             };
             /** @description Invalid request */
@@ -6278,7 +6796,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        run: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            mode: "review_pack" | "learn_next" | "gap_scan" | "link_suggestions";
+                            /** @enum {string} */
+                            status: "completed" | "failed";
+                            input_hash: string | null;
+                            stats: components["schemas"]["JsonValue"];
+                            created_at: string;
+                            completed_at: string | null;
+                        };
+                        items: {
+                            id: string;
+                            run_id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            recommendation_type: "review_pack" | "learn_next" | "link_gap" | "context_gap" | "l2_gap" | "weak_word" | "related_word";
+                            /** @enum {string} */
+                            status: "pending" | "accepted" | "rejected" | "dismissed" | "expired";
+                            title: string;
+                            summary: string;
+                            priority_score: number | string;
+                            confidence: number | string;
+                            reason_codes: components["schemas"]["JsonValue"];
+                            evidence: components["schemas"]["JsonValue"];
+                            payload: components["schemas"]["JsonValue"];
+                            accepted_proposal_id: string | null;
+                            created_at: string;
+                            updated_at: string;
+                            expires_at: string | null;
+                            accepted_at: string | null;
+                            rejected_at: string | null;
+                            dismissed_at: string | null;
+                        }[];
+                        stats: components["schemas"]["JsonValue"];
+                    };
                 };
             };
             /** @description Invalid request */
@@ -6812,7 +7369,70 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        item: {
+                            id: string;
+                            run_id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            recommendation_type: "review_pack" | "learn_next" | "link_gap" | "context_gap" | "l2_gap" | "weak_word" | "related_word";
+                            /** @enum {string} */
+                            status: "pending" | "accepted" | "rejected" | "dismissed" | "expired";
+                            title: string;
+                            summary: string;
+                            priority_score: number | string;
+                            confidence: number | string;
+                            reason_codes: components["schemas"]["JsonValue"];
+                            evidence: components["schemas"]["JsonValue"];
+                            payload: components["schemas"]["JsonValue"];
+                            accepted_proposal_id: string | null;
+                            created_at: string;
+                            updated_at: string;
+                            expires_at: string | null;
+                            accepted_at: string | null;
+                            rejected_at: string | null;
+                            dismissed_at: string | null;
+                        };
+                        proposal?: {
+                            proposal: {
+                                id: string;
+                                user_id: string;
+                                wordbook_id: string | null;
+                                /** @enum {string} */
+                                source_type: "agent" | "import" | "external_tool" | "manual_draft" | "mcp_future" | "other";
+                                /** @enum {string} */
+                                status: "pending" | "confirmed" | "rejected" | "canceled";
+                                title: string | null;
+                                summary: string | null;
+                                input_hash: string | null;
+                                proposed_by: string | null;
+                                provenance: components["schemas"]["JsonValue"];
+                                review_note: string | null;
+                                confirmed_at: string | null;
+                                rejected_at: string | null;
+                                created_at: string;
+                                updated_at: string;
+                            };
+                            items: {
+                                id: string;
+                                proposal_id: string;
+                                user_id: string;
+                                /** @enum {string} */
+                                item_type: "source" | "context" | "occurrence" | "context_link";
+                                ordinal: number;
+                                payload: components["schemas"]["JsonValue"];
+                                /** @enum {string} */
+                                status: "pending" | "confirmed" | "rejected";
+                                validation_errors: components["schemas"]["JsonValue"];
+                                active_entity_type: ("source" | "context" | "occurrence" | "context_link") | null;
+                                active_entity_id: string | null;
+                                created_at: string;
+                                updated_at: string;
+                            }[];
+                        };
+                        actionPayload?: components["schemas"]["JsonValue"];
+                    };
                 };
             };
             /** @description Invalid request */
@@ -6978,7 +7598,30 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        id: string;
+                        run_id: string;
+                        user_id: string;
+                        wordbook_id: string | null;
+                        /** @enum {string} */
+                        recommendation_type: "review_pack" | "learn_next" | "link_gap" | "context_gap" | "l2_gap" | "weak_word" | "related_word";
+                        /** @enum {string} */
+                        status: "pending" | "accepted" | "rejected" | "dismissed" | "expired";
+                        title: string;
+                        summary: string;
+                        priority_score: number | string;
+                        confidence: number | string;
+                        reason_codes: components["schemas"]["JsonValue"];
+                        evidence: components["schemas"]["JsonValue"];
+                        payload: components["schemas"]["JsonValue"];
+                        accepted_proposal_id: string | null;
+                        created_at: string;
+                        updated_at: string;
+                        expires_at: string | null;
+                        accepted_at: string | null;
+                        rejected_at: string | null;
+                        dismissed_at: string | null;
+                    };
                 };
             };
             /** @description Invalid request */
@@ -7334,7 +7977,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        proposal: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "agent" | "import" | "external_tool" | "manual_draft" | "mcp_future" | "other";
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected" | "canceled";
+                            title: string | null;
+                            summary: string | null;
+                            input_hash: string | null;
+                            proposed_by: string | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            review_note: string | null;
+                            confirmed_at: string | null;
+                            rejected_at: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        items: {
+                            id: string;
+                            proposal_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            item_type: "source" | "context" | "occurrence" | "context_link";
+                            ordinal: number;
+                            payload: components["schemas"]["JsonValue"];
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected";
+                            validation_errors: components["schemas"]["JsonValue"];
+                            active_entity_type: ("source" | "context" | "occurrence" | "context_link") | null;
+                            active_entity_id: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                        valid: boolean;
+                        errors: {
+                            itemId: string;
+                            ordinal: number;
+                            /** @enum {string} */
+                            itemType: "source" | "context" | "occurrence" | "context_link";
+                            field: string;
+                            message: string;
+                        }[];
+                    };
                 };
             };
             /** @description Invalid request */
@@ -7494,7 +8182,51 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        proposal: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "agent" | "import" | "external_tool" | "manual_draft" | "mcp_future" | "other";
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected" | "canceled";
+                            title: string | null;
+                            summary: string | null;
+                            input_hash: string | null;
+                            proposed_by: string | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            review_note: string | null;
+                            confirmed_at: string | null;
+                            rejected_at: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        items: {
+                            id: string;
+                            proposal_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            item_type: "source" | "context" | "occurrence" | "context_link";
+                            ordinal: number;
+                            payload: components["schemas"]["JsonValue"];
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected";
+                            validation_errors: components["schemas"]["JsonValue"];
+                            active_entity_type: ("source" | "context" | "occurrence" | "context_link") | null;
+                            active_entity_id: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                        activeEntities: {
+                            itemId: string;
+                            /** @enum {string} */
+                            itemType: "source" | "context" | "occurrence" | "context_link";
+                            /** @enum {string} */
+                            activeEntityType: "source" | "context" | "occurrence" | "context_link";
+                            activeEntityId: string;
+                        }[];
+                    };
                 };
             };
             /** @description Invalid request */
@@ -7660,7 +8392,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": {
+                        proposal: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string | null;
+                            /** @enum {string} */
+                            source_type: "agent" | "import" | "external_tool" | "manual_draft" | "mcp_future" | "other";
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected" | "canceled";
+                            title: string | null;
+                            summary: string | null;
+                            input_hash: string | null;
+                            proposed_by: string | null;
+                            provenance: components["schemas"]["JsonValue"];
+                            review_note: string | null;
+                            confirmed_at: string | null;
+                            rejected_at: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        };
+                        items: {
+                            id: string;
+                            proposal_id: string;
+                            user_id: string;
+                            /** @enum {string} */
+                            item_type: "source" | "context" | "occurrence" | "context_link";
+                            ordinal: number;
+                            payload: components["schemas"]["JsonValue"];
+                            /** @enum {string} */
+                            status: "pending" | "confirmed" | "rejected";
+                            validation_errors: components["schemas"]["JsonValue"];
+                            active_entity_type: ("source" | "context" | "occurrence" | "context_link") | null;
+                            active_entity_id: string | null;
+                            created_at: string;
+                            updated_at: string;
+                        }[];
+                    };
                 };
             };
             /** @description Invalid request */
