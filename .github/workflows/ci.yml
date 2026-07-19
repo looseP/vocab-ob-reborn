@@ -184,6 +184,13 @@ jobs:
       - name: Verify real database LOGIN isolation
         run: npm run test:db-roles
 
+      - name: Verify backup image create, signature, and isolated restore
+        timeout-minutes: 5
+        env:
+          BACKUP_IMAGE: vocab-observatory-v2-backup:ci
+          BACKUP_SIGNING_KEY: CiBackupRestoreSigningKey_7mQ4vN8x
+        run: npm run db:restore:container:acceptance
+
       - name: Prepare dedicated NOBYPASSRLS acceptance principal
         run: |
           set -euo pipefail

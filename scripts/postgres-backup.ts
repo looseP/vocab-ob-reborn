@@ -322,15 +322,13 @@ export async function createBackup(): Promise<void> {
   console.log(JSON.stringify({ ok: true, manifest: manifestPath, bytes: manifest.bytes, sha256: manifest.sha256, signed: !!signingKey }));
 }
 
-async function restoreDrill(manifestPath: string): Promise<void> {
+async function restoreFromManifest(manifestPath: string): Promise<{ targetUrl: string; schemaEvidence: BackupManifest["schemaEvidence"] }> {
   const sourceUrl = process.env.DATABASE_URL;
   const targetUrl = process.env.DRILL_DATABASE_URL;
-  const verificationUrl = process.env.DRILL_TEST_DATABASE_URL;
-  if (!sourceUrl || !targetUrl || !verificationUrl) {
-    throw new Error("DATABASE_URL, DRILL_DATABASE_URL, and DRILL_TEST_DATABASE_URL are required");
+  if (!sourceUrl || !targetUrl) {
+    throw new Error("DATABASE_URL and DRILL_DATABASE_URL are required");
   }
   assertSafeDrillTarget(sourceUrl, targetUrl);
-  assertDrillVerificationIdentity(targetUrl, verificationUrl);
   const manifest = await verifyManifest(resolve(manifestPath), process.env.BACKUP_SIGNING_KEY);
   if (manifest.database !== databaseName(sourceUrl)) {
     throw new Error("Backup manifest database does not match DATABASE_URL");
@@ -344,24 +342,57 @@ async function restoreDrill(manifestPath: string): Promise<void> {
     { env: postgresEnvironment(targetUrl) },
   );
 
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  await run(npm, ["run", "test:db-release"], {
-    env: drillVerificationEnvironment(process.env, targetUrl, verificationUrl),
-  });
   const restoredEvidence = await schemaEvidence(targetUrl);
   if (JSON.stringify(restoredEvidence) !== JSON.stringify(manifest.schemaEvidence)) {
     throw new Error("Restored schema evidence does not match backup manifest");
   }
+  return { targetUrl, schemaEvidence: restoredEvidence };
+}
+
+export function validateRestoreDrillEnvironment(environment: NodeJS.ProcessEnv): {
+  sourceUrl: string;
+  targetUrl: string;
+  verificationUrl: string;
+} {
+  const sourceUrl = environment.DATABASE_URL;
+  const targetUrl = environment.DRILL_DATABASE_URL;
+  const verificationUrl = environment.DRILL_TEST_DATABASE_URL;
+  if (!sourceUrl || !targetUrl || !verificationUrl) {
+    throw new Error("DATABASE_URL, DRILL_DATABASE_URL, and DRILL_TEST_DATABASE_URL are required");
+  }
+  assertSafeDrillTarget(sourceUrl, targetUrl);
+  assertDrillVerificationIdentity(targetUrl, verificationUrl);
+  return { sourceUrl, targetUrl, verificationUrl };
+}
+
+async function restoreDrill(manifestPath: string): Promise<void> {
+  const { verificationUrl } = validateRestoreDrillEnvironment(process.env);
+  const restored = await restoreFromManifest(manifestPath);
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  await run(npm, ["run", "test:db-release"], {
+    env: drillVerificationEnvironment(process.env, restored.targetUrl, verificationUrl),
+  });
   console.log(JSON.stringify({
     ok: true,
-    restoredDatabase: databaseName(targetUrl),
+    restoredDatabase: databaseName(restored.targetUrl),
     manifest: resolve(manifestPath),
-    schemaEvidence: restoredEvidence,
+    schemaEvidence: restored.schemaEvidence,
+  }));
+}
+
+async function restoreOnly(manifestPath: string): Promise<void> {
+  const restored = await restoreFromManifest(manifestPath);
+  console.log(JSON.stringify({
+    ok: true,
+    restoredDatabase: databaseName(restored.targetUrl),
+    manifest: resolve(manifestPath),
+    schemaEvidence: restored.schemaEvidence,
+    releaseVerification: "external",
   }));
 }
 
 function usage(): never {
-  throw new Error("Usage: postgres-backup.ts <create|verify|restore-drill> [manifest.json]");
+  throw new Error("Usage: postgres-backup.ts <create|verify|restore-only|restore-drill> [manifest.json]");
 }
 
 async function main(): Promise<void> {
@@ -373,6 +404,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ ok: true, manifest: resolve(manifest), bytes: verified.bytes, sha256: verified.sha256, signed: !!verified.hmac }));
     return;
   }
+  if (command === "restore-only" && manifest) return restoreOnly(resolve(manifest));
   if (command === "restore-drill" && manifest) return restoreDrill(resolve(manifest));
   usage();
 }
