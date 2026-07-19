@@ -320,6 +320,30 @@ describe("release workflow structured contract", () => {
     allSteps.splice(verificationIndex, 0, { name: "Unrelated step", run: "true" });
     expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/immediately after converge/);
   });
+  it("rejects CI without the real backup container restore acceptance", () => {
+    const value = parse(ciWorkflow);
+    value.jobs.verify.steps = value.jobs.verify.steps.filter(
+      (step: { name?: string }) => step.name !== "Verify backup image create, signature, and isolated restore",
+    );
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/Verify backup image create/);
+  });
+  it("rejects CI when backup container acceptance is replaced or uses another image", () => {
+    const value = parse(ciWorkflow);
+    const acceptance = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Verify backup image create, signature, and isolated restore",
+    );
+    acceptance.run = "echo skipped";
+    acceptance.env.BACKUP_IMAGE = "another:latest";
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/real backup container restore acceptance/);
+  });
+  it("rejects CI when backup container acceptance runs after RLS bootstrap", () => {
+    const value = parse(ciWorkflow);
+    const allSteps = value.jobs.verify.steps as Array<{ name?: string }>;
+    const acceptanceIndex = allSteps.findIndex((step) => step.name === "Verify backup image create, signature, and isolated restore");
+    const bootstrapIndex = allSteps.findIndex((step) => step.name === "Prepare dedicated NOBYPASSRLS acceptance principal");
+    [allSteps[acceptanceIndex], allSteps[bootstrapIndex]] = [allSteps[bootstrapIndex], allSteps[acceptanceIndex]];
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/must run before/);
+  });
   it("rejects CI verify creating the RLS login before convergence", () => {
     const value = parse(ciWorkflow);
     const allSteps = value.jobs.verify.steps as Array<{ name?: string }>;

@@ -394,6 +394,21 @@ export function verifyCiReleaseManifestContract(source: string): void {
     ].join("\n"),
   );
   requireDatabaseRolesProducerContract(verify, "CI verify");
+  const backupRestore = namedStep(verify, "Verify backup image create, signature, and isolated restore", "CI verify");
+  requireExactExecutableScript(
+    backupRestore,
+    "npm run db:restore:container:acceptance",
+    "CI verify must execute the real backup container restore acceptance",
+  );
+  if (backupRestore.env?.BACKUP_IMAGE !== "vocab-observatory-v2-backup:ci") {
+    throw new Error("CI backup restore acceptance must use the built backup image");
+  }
+  const backupSigningKey = backupRestore.env?.BACKUP_SIGNING_KEY;
+  if (typeof backupSigningKey !== "string" || backupSigningKey.length < 24) {
+    throw new Error("CI backup restore acceptance must use a test-only signing key of at least 24 characters");
+  }
+  requireStepOrder(verify, "Verify real database LOGIN isolation", backupRestore.name!, "CI verify");
+  requireStepOrder(verify, backupRestore.name!, "Prepare dedicated NOBYPASSRLS acceptance principal", "CI verify");
   const verifyPrepare = namedStep(verify, "Prepare real database LOGIN roles", "CI verify");
   const verifyMigrate = namedStep(verify, "Run authoritative migrations as vocab_migration", "CI verify");
   const verifyConverge = namedStep(verify, "Converge database role ownership and privileges", "CI verify");

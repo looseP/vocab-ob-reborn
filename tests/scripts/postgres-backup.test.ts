@@ -11,6 +11,7 @@ import {
   pgRestoreArguments,
   postgresEnvironment,
   signManifest,
+  validateRestoreDrillEnvironment,
   verifyManifest,
   verifyManifestSignature,
   type BackupManifest,
@@ -93,6 +94,16 @@ describe("postgres backup safety", () => {
       target,
       "postgresql://vocab_migration:other@db:5432/vocab_drill",
     )).toThrow(/must not reuse the restore identity/);
+  });
+
+  it("rejects a mismatched verification identity before restore execution", () => {
+    process.env.ALLOW_DESTRUCTIVE_RESTORE = "db:5432/vocab_drill";
+    expect(() => validateRestoreDrillEnvironment({
+      DATABASE_URL: "postgresql://vocab_backup:backup@db:5432/vocab",
+      DRILL_DATABASE_URL: "postgresql://vocab_migration:migration@db:5432/vocab_drill",
+      DRILL_TEST_DATABASE_URL: "postgresql://vocab_drill_admin:admin@other-db:5432/vocab_drill",
+      ALLOW_DESTRUCTIVE_RESTORE: process.env.ALLOW_DESTRUCTIVE_RESTORE,
+    })).toThrow(/restored drill database/);
   });
 
   it("passes the restored database explicitly to pg_restore", () => {

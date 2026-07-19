@@ -63,6 +63,7 @@
     "db:backup": "tsx scripts/postgres-backup.ts create",
     "db:backup:verify": "tsx scripts/postgres-backup.ts verify",
     "db:restore:drill": "tsx scripts/postgres-backup.ts restore-drill",
+    "db:restore:container:acceptance": "tsx scripts/verify-backup-container-restore.ts",
     "runtime:verify": "tsx scripts/verify-container-runtime.ts",
     "single-host:verify": "tsx scripts/verify-single-host-compose.ts",
     "single-host:smoke": "tsx scripts/verify-single-host-compose-smoke.ts",
