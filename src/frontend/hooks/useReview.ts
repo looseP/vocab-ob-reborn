@@ -41,14 +41,14 @@ export function useReview() {
   const currentCard = !completed && currentIndex < queue.length ? queue[currentIndex] : null;
   const remaining = Math.max(0, queue.length - currentIndex);
 
-  const startReview = useCallback(async () => {
+  const startReview = useCallback(async (mode: string = "review") => {
     setLoading(true);
     setError(null);
     setCompleted(false);
     setCurrentIndex(0);
     setStats({ reviewed: 0, again: 0, hard: 0, good: 0, easy: 0 });
     try {
-      const result = await apiFetch<QueueResponse>("/review/queue?limit=20");
+      const result = await apiFetch<QueueResponse>(`/review/queue?limit=20&mode=${mode}`);
       if (!result.items || result.items.length === 0) {
         setError("没有待复习的单词");
         setQueue([]);

@@ -77,12 +77,12 @@ export class ReviewService {
   /**
    * Get the review queue for a user: due cards + today's session.
    */
-  async getQueue(userId: string, wordbookId: string, limit = 20) {
+  async getQueue(userId: string, wordbookId: string, limit = 20, mode = "review") {
     if (!this.deps.findDueCards || !this.deps.getOrCreateTodaySession) {
       throw new Error("Review queue dependencies not configured");
     }
     const dueCards = await this.deps.findDueCards(userId, wordbookId, limit);
-    const session = await this.deps.getOrCreateTodaySession(userId, wordbookId, "review");
+    const session = await this.deps.getOrCreateTodaySession(userId, wordbookId, mode);
 
     return {
       items: dueCards.map((card) => ({

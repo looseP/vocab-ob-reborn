@@ -10,18 +10,18 @@ import { ReviewProgressBar } from "@/frontend/components/review/ReviewProgressBa
 import { CompletionCelebration } from "@/frontend/components/review/CompletionCelebration";
 import { useReview } from "@/frontend/hooks/useReview";
 
-function ReviewModeSelector({ onStart }: { onStart: () => void }) {
-  const modes = [
-    { icon: Repeat, title: "标准复习", desc: "按间隔重复算法安排的卡片", variant: "primary" as const, action: onStart },
-    { icon: Zap, title: "练习模式", desc: "针对性强化练习", variant: "secondary" as const, action: onStart },
-    { icon: BookOpen, title: "自由复习", desc: "自由选择词汇复习", variant: "secondary" as const, action: onStart },
-  ];
+const reviewModes = [
+  { key: "review", icon: Repeat, title: "标准复习", desc: "按 FSRS 间隔重复算法安排的到期卡片", variant: "primary" as const },
+  { key: "cram", icon: Zap, title: "练习模式", desc: "集中强化练习，不受到期限制", variant: "secondary" as const },
+  { key: "preview", icon: BookOpen, title: "自由复习", desc: "自由浏览词汇，不评分", variant: "secondary" as const },
+] as const;
 
+function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
   return (
     <div className="space-y-6">
       <Card
         className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]"
-        onClick={onStart}
+        onClick={() => onStart("review")}
       >
         <div className="flex items-center gap-4">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
@@ -36,14 +36,14 @@ function ReviewModeSelector({ onStart }: { onStart: () => void }) {
       </Card>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {modes.map((m) => {
+        {reviewModes.map((m) => {
           const Icon = m.icon;
           return (
-            <Card key={m.title} className="h-full">
+            <Card key={m.key} className="h-full">
               <Icon className="mb-3 h-6 w-6 text-[var(--color-accent)]" />
-              <h3 className="mb-1 text-lg font-semibold">{m.title}</h3>
+              <h3 className="mb-1 text-lg font-semibold text-[var(--color-ink)]">{m.title}</h3>
               <p className="mb-4 text-sm text-[var(--color-ink-soft)]">{m.desc}</p>
-              <Button size="sm" variant={m.variant} onClick={m.action}>开始</Button>
+              <Button size="sm" variant={m.variant} onClick={() => onStart(m.key)}>开始</Button>
             </Card>
           );
         })}
@@ -52,18 +52,18 @@ function ReviewModeSelector({ onStart }: { onStart: () => void }) {
   );
 }
 
-function ReviewSession({ onBack }: { onBack: () => void }) {
+function ReviewSession({ reviewMode, onBack }: { reviewMode: string; onBack: () => void }) {
   const { currentCard, loading, error, stats, completed, currentIndex, remaining, startReview, answer, skip } = useReview();
 
   useEffect(() => {
-    startReview();
-  }, [startReview]);
+    startReview(reviewMode);
+  }, [startReview, reviewMode]);
 
   if (completed) {
     return (
       <CompletionCelebration
         stats={stats}
-        onRestart={startReview}
+        onRestart={() => startReview(reviewMode)}
         onBack={onBack}
       />
     );
@@ -75,7 +75,7 @@ function ReviewSession({ onBack }: { onBack: () => void }) {
         <EmptyState
           title="无法加载复习队列"
           description={error}
-          action={<Button onClick={startReview}><RotateCcw className="h-4 w-4" />重试</Button>}
+          action={<Button onClick={() => startReview(reviewMode)}><RotateCcw className="h-4 w-4" />重试</Button>}
         />
       </Card>
     );
@@ -125,6 +125,12 @@ function ReviewSession({ onBack }: { onBack: () => void }) {
 
 export function ReviewPage() {
   const [mode, setMode] = useState<"select" | "session">("select");
+  const [reviewMode, setReviewMode] = useState("review");
+
+  const handleStart = (m: string) => {
+    setReviewMode(m);
+    setMode("session");
+  };
 
   return (
     <div className="space-y-6">
@@ -135,9 +141,9 @@ export function ReviewPage() {
         </p>
       </div>
       {mode === "select" ? (
-        <ReviewModeSelector onStart={() => setMode("session")} />
+        <ReviewModeSelector onStart={handleStart} />
       ) : (
-        <ReviewSession onBack={() => setMode("select")} />
+        <ReviewSession reviewMode={reviewMode} onBack={() => setMode("select")} />
       )}
     </div>
   );
