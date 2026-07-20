@@ -57,6 +57,24 @@ export function reviewRoutes(services: Services) {
     return c.json({ items: leeches, total: leeches.length });
   });
 
+  // GET /timeline — recent review log entries
+  app.get("/timeline", async (c) => {
+    const userId = c.get("userId");
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const timeline = await services.reviews.getTimeline(userId, wordbook.id, limit);
+    return c.json({ items: timeline, total: timeline.length });
+  });
+
+  // GET /heatmap — daily review counts for heatmap
+  app.get("/heatmap", async (c) => {
+    const userId = c.get("userId");
+    const days = Math.min(parseInt(c.req.query("days") ?? "365", 10) || 365, 730);
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const heatmap = await services.reviews.getHeatmap(userId, wordbook.id, days);
+    return c.json({ items: heatmap });
+  });
+
   app.post("/answer", async (c) => {
     const body = await c.req.json();
     const parsed = reviewAnswerSchema.safeParse(body);

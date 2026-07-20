@@ -591,4 +591,33 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       [userId, wordbookId, limit],
     );
   }
+
+  async getTimeline(userId: string, wordbookId: string, limit: number) {
+    return this.query<{
+      id: string; rating: string; created_at: string;
+      word_slug: string; word_lemma: string;
+    }>(
+      `SELECT rl.id, rl.rating, rl.created_at,
+              w.slug AS word_slug, w.lemma AS word_lemma
+       FROM review_logs rl
+       JOIN words w ON w.id = rl.word_id
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2
+       ORDER BY rl.created_at DESC
+       LIMIT $3`,
+      [userId, wordbookId, limit],
+    );
+  }
+
+  async getHeatmap(userId: string, wordbookId: string, days: number) {
+    return this.query<{ date: string; count: string }>(
+      `SELECT date_trunc('day', rl.created_at)::date::text AS date,
+              COUNT(*)::text AS count
+       FROM review_logs rl
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2
+         AND rl.created_at >= now() - ($3 || ' days')::interval
+       GROUP BY date_trunc('day', rl.created_at)
+       ORDER BY date`,
+      [userId, wordbookId, days],
+    );
+  }
 }

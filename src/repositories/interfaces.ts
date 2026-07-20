@@ -114,6 +114,10 @@ export interface IReviewRepository {
 
   findLeeches?(userId: string, wordbookId: string, limit: number): Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
 
+  getTimeline?(userId: string, wordbookId: string, limit: number): Promise<Array<{ id: string; rating: string; created_at: string; word_slug: string; word_lemma: string }>>;
+
+  getHeatmap?(userId: string, wordbookId: string, days: number): Promise<Array<{ date: string; count: string }>>;
+
   /** User-scoped advisory lock + idempotency check. MUST be in a transaction. */
   checkIdempotency(userId: string, idempotencyKey: string): Promise<string | null>;
 

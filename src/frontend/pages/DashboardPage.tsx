@@ -5,6 +5,8 @@ import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { ReviewStatsPanel } from "@/frontend/components/review/ReviewStatsPanel";
 import { LeechPanel } from "@/frontend/components/review/LeechPanel";
+import { WordReviewTimeline } from "@/frontend/components/review/WordReviewTimeline";
+import { MasteryHeatmap } from "@/frontend/components/review/MasteryHeatmap";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Skeleton } from "@/frontend/components/ui/Skeleton";
 import { apiFetch } from "@/frontend/api/client";
@@ -152,6 +154,12 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ReviewStatsPanel />
         <LeechPanel />
+      </div>
+
+      {/* 热力图 + 时间线 */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <MasteryHeatmap />
+        <WordReviewTimeline />
       </div>
 
       {/* 最近笔记 */}

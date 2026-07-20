@@ -67,6 +67,8 @@ export interface ReviewServiceDeps {
   getReviewStats?: (userId: string, wordbookId: string) => Promise<{ todayCount: number; totalCount: number; ratingDist: { again: number; hard: number; good: number; easy: number } }>;
   /** Find leeches (optional) */
   findLeeches?: (userId: string, wordbookId: string, limit: number) => Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
+  getTimeline?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ id: string; rating: string; created_at: string; word_slug: string; word_lemma: string }>>;
+  getHeatmap?: (userId: string, wordbookId: string, days: number) => Promise<Array<{ date: string; count: string }>>;
 }
 
 export class ReviewService {
@@ -121,6 +123,16 @@ export class ReviewService {
         dueAt: progress.due_at,
       };
     });
+  }
+
+  async getTimeline(userId: string, wordbookId: string, limit = 50) {
+    if (!this.deps.getTimeline) throw new Error("getTimeline not configured");
+    return this.deps.getTimeline(userId, wordbookId, limit);
+  }
+
+  async getHeatmap(userId: string, wordbookId: string, days = 365) {
+    if (!this.deps.getHeatmap) throw new Error("getHeatmap not configured");
+    return this.deps.getHeatmap(userId, wordbookId, days);
   }
 
   /**
