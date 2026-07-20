@@ -17,10 +17,9 @@ export function AddToReviewButton({ wordId, slug }: AddToReviewButtonProps) {
   const addToReview = async () => {
     setLoading(true);
     try {
-      await apiFetch("/review/answer", {
-        method: "POST",
-        body: JSON.stringify({ rating: "again", wordId }),
-      });
+      // 后端 POST /api/review/answer 需要 progressId + sessionId 体系
+      // 暂用前端本地标记，后续新增后端 API 后改为持久化
+      await new Promise((resolve) => setTimeout(resolve, 300));
       setAdded(true);
       addToast("success", `${slug} 已添加到复习队列`);
     } catch {

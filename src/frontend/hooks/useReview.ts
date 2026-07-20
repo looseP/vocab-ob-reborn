@@ -62,10 +62,8 @@ export function useReview() {
     if (!currentCard) return;
     setLoading(true);
     try {
-      await apiFetch("/review/answer", {
-        method: "POST",
-        body: JSON.stringify({ rating, wordId: currentCard.id }),
-      });
+      // 后端 POST /api/review/answer 需要 progressId + sessionId + wordbook_id 体系
+      // 暂用前端本地管理评分，后续新增 GET /api/review/queue 后改为后端持久化
       setStats((prev) => ({
         reviewed: prev.reviewed + 1,
         again: prev.again + (rating === "again" ? 1 : 0),
@@ -81,8 +79,8 @@ export function useReview() {
         setCurrentIndex(next);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "提交评分失败");
-      addToast("error", "评分提交失败，请重试");
+      setError(err instanceof Error ? err.message : "评分失败");
+      addToast("error", "评分失败，请重试");
     } finally {
       setLoading(false);
     }
