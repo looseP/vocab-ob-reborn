@@ -80,4 +80,21 @@ export class NoteRepository extends BaseRepository implements INoteRepository {
       [userId, wordId, wordbookId],
     );
   }
+
+  async listByUser(
+    userId: string,
+    limit: number,
+    offset: number,
+  ): Promise<Array<NoteRow & { word_slug: string; word_lemma: string; word_title: string }>> {
+    return this.query<NoteRow & { word_slug: string; word_lemma: string; word_title: string }>(
+      `SELECT n.id, n.user_id, n.word_id, n.wordbook_id, n.content_md, n.version, n.created_at, n.updated_at,
+              w.slug AS word_slug, w.lemma AS word_lemma, w.title AS word_title
+       FROM notes n
+       JOIN words w ON w.id = n.word_id
+       WHERE n.user_id = $1
+       ORDER BY n.updated_at DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, offset],
+    );
+  }
 }

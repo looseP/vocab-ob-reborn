@@ -61,6 +61,26 @@ export class NoteService {
     });
   }
 
+  async listNotes(
+    userId: string,
+    limit = 50,
+    offset = 0,
+  ): Promise<Array<{ id: string; wordSlug: string; wordLemma: string; wordTitle: string; contentMd: string; version: number; updatedAt: string }>> {
+    return this.withActorNotes(userId, async (notes) => {
+      if (!notes.listByUser) throw new Error("listByUser not implemented");
+      const rows = await notes.listByUser(userId, limit, offset);
+      return rows.map((r) => ({
+        id: r.id,
+        wordSlug: r.word_slug,
+        wordLemma: r.word_lemma,
+        wordTitle: r.word_title,
+        contentMd: r.content_md,
+        version: r.version,
+        updatedAt: r.updated_at,
+      }));
+    });
+  }
+
   /**
    * M4 fix: wrap in transaction so upsert + revision are atomic.
    * H-NEW-2 fix: getOrCreateDefault moved inside transaction callback.

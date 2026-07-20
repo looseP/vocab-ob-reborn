@@ -233,6 +233,7 @@ export interface INoteRepository {
     contentMd: string,
   ): Promise<{ note: NoteRow; created: boolean }>;
   findRevisions(userId: string, wordbookId: string, wordId: string): Promise<NoteRevisionRow[]>;
+  listByUser?(userId: string, limit: number, offset: number): Promise<Array<NoteRow & { word_slug: string; word_lemma: string; word_title: string }>>;
 }
 
 // ── Wordbook ────────────────────────────────────────────────────────────
