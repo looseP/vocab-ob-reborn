@@ -31,8 +31,8 @@ import { validationError } from "../error-response";
 export function reviewRoutes(services: Services) {
   const app = new Hono<AppEnv>();
 
-  // GET / — fetch review queue (due cards + today's session)
-  app.get("/", async (c) => {
+  // GET /queue — fetch review queue (due cards + today's session)
+  app.get("/queue", async (c) => {
     const userId = c.get("userId");
     const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
     const wordbook = await services.wordbooks.getOrCreateDefault(userId);
