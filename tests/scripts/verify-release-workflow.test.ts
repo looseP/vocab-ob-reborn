@@ -221,6 +221,22 @@ describe("release workflow structured contract", () => {
     provenance.run = provenance.run.replace("docker run --rm --entrypoint pg_restore vocab-observatory-v2-backup:ci --version", "true");
     expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/verify and merge backup PostgreSQL client provenance/);
   });
+  it("rejects CI when backup provenance overwrites the root-owned Syft SBOM in place", () => {
+    const value = parse(ciWorkflow);
+    const provenance = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Verify backup SBOM PostgreSQL client provenance",
+    );
+    provenance.run = provenance.run.replace("sbom-backup-verified.cdx.json", "sbom-backup.cdx.json");
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/verify and merge backup PostgreSQL client provenance/);
+  });
+  it("rejects CI when the SBOM upload omits the provenance-verified backup artifact", () => {
+    const value = parse(ciWorkflow);
+    const upload = value.jobs.verify.steps.find(
+      (step: { name?: string }) => step.name === "Upload image SBOMs",
+    );
+    upload.with.path = upload.with.path.replace("sbom-backup-verified.cdx.json\n", "");
+    expect(() => verifyCiReleaseManifestContract(stringify(value))).toThrow(/provenance-verified backup SBOM/);
+  });
   it("rejects CI without the dedicated RLS acceptance URL", () => {
     const value = parse(ciWorkflow);
     const verification = value.jobs.verify.steps.find(

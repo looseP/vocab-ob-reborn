@@ -164,7 +164,7 @@ jobs:
           test "$(docker run --rm --entrypoint pg_restore vocab-observatory-v2-backup:ci --version | awk 'NR == 1 && $2 == "(PostgreSQL)" { print $3 }')" = "17.10"
           docker run --rm --entrypoint node vocab-observatory-v2-backup:ci -e "const fs=require('fs'); if(fs.existsSync('/opt/postgres-client/bin/postgres') || fs.existsSync('/opt/postgres-client/bin/psql')) process.exit(1)"
           docker cp "${container}:/opt/postgres-client/provenance.tsv" .tmp-backup-client-provenance.tsv
-          node scripts/verify-backup-sbom.mjs .tmp-backup-client-provenance.tsv sbom-backup.cdx.json sbom-backup.cdx.json
+          node scripts/verify-backup-sbom.mjs .tmp-backup-client-provenance.tsv sbom-backup.cdx.json sbom-backup-verified.cdx.json
 
       - name: Upload image SBOMs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -174,6 +174,7 @@ jobs:
             sbom-runtime.cdx.json
             sbom-migration.cdx.json
             sbom-backup.cdx.json
+            sbom-backup-verified.cdx.json
           if-no-files-found: error
           retention-days: 30
 
@@ -262,6 +263,7 @@ jobs:
             sbom-runtime.cdx.json
             sbom-migration.cdx.json
             sbom-backup.cdx.json
+            sbom-backup-verified.cdx.json
             drizzle-release/meta/_journal.json
           if-no-files-found: error
           retention-days: 90
