@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Volume2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
+import { Badge } from "@/frontend/components/ui/Badge";
 import { Spinner } from "@/frontend/components/ui/Spinner";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
@@ -79,15 +80,11 @@ export function WordDetailPage() {
             <h1 className="section-title text-4xl font-bold text-[var(--color-ink)]">
               {word.lemma}
             </h1>
-            <div className="mt-2 flex items-center gap-3 text-sm text-[var(--color-ink-soft)]">
-              {word.pos && <span>{word.pos}</span>}
-              {word.cefr && (
-                <span className="rounded-full bg-[var(--color-pill-bg)] px-2 py-0.5 text-[var(--color-pill-text)]">
-                  {word.cefr}
-                </span>
-              )}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {word.pos && <Badge>{word.pos}</Badge>}
+              {word.cefr && <Badge tone="warm">CEFR {word.cefr}</Badge>}
               {word.ipa && (
-                <span className="flex items-center gap-1 font-mono">
+                <span className="flex items-center gap-1 font-mono text-sm text-[var(--color-ink-soft)]">
                   <Volume2 className="h-3 w-3" />
                   {word.ipa}
                 </span>

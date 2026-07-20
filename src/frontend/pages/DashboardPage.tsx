@@ -1,26 +1,66 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, Brain } from "lucide-react";
+import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, Brain, CheckCircle2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
+import { Badge } from "@/frontend/components/ui/Badge";
+import { Skeleton } from "@/frontend/components/ui/Skeleton";
+import { apiFetch } from "@/frontend/api/client";
 
-function StatCard({ icon: Icon, label, value, color }: { icon: typeof Repeat; label: string; value: string; color: string }) {
+interface QueueData {
+  stats: { total: number; remaining: number };
+  session: { cardsSeen: number };
+}
+interface WordsData {
+  total: number;
+}
+
+function StatCard({ icon: Icon, label, value, color, loading }: {
+  icon: typeof Repeat;
+  label: string;
+  value: number | string;
+  color: string;
+  loading?: boolean;
+}) {
   return (
     <Card className="flex items-center gap-4">
-      <div
-        className="flex h-12 w-12 items-center justify-center rounded-xl"
-        style={{ backgroundColor: `var(--color-surface-muted)` }}
-      >
+      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--color-surface-muted)]">
         <Icon className="h-6 w-6" style={{ color }} />
       </div>
       <div>
         <p className="text-xs text-[var(--color-ink-soft)]">{label}</p>
-        <p className="text-2xl font-bold" style={{ color }}>{value}</p>
+        {loading ? (
+          <Skeleton className="mt-1 h-7 w-12" />
+        ) : (
+          <p className="text-2xl font-bold" style={{ color }}>{value}</p>
+        )}
       </div>
     </Card>
   );
 }
 
 export function DashboardPage() {
+  const [dueCount, setDueCount] = useState(0);
+  const [reviewedToday, setReviewedToday] = useState(0);
+  const [totalWords, setTotalWords] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      apiFetch<QueueData>("/review/queue?limit=100").catch(() => null),
+      apiFetch<WordsData>("/words?limit=1").catch(() => null),
+    ]).then(([queue, words]) => {
+      if (queue) {
+        setDueCount(queue.stats.total);
+        setReviewedToday(queue.session.cardsSeen);
+      }
+      if (words) setTotalWords(words.total);
+      setLoading(false);
+    });
+  }, []);
+
+  const mastered = Math.max(0, totalWords - dueCount);
+
   return (
     <div className="space-y-6">
       <div>
@@ -30,10 +70,10 @@ export function DashboardPage() {
 
       {/* 统计卡片 */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={Repeat} label="今日待复习" value="—" color="var(--color-accent)" />
-        <StatCard icon={Target} label="已掌握" value="—" color="var(--color-accent)" />
-        <StatCard icon={Brain} label="学习中" value="—" color="var(--color-accent-2)" />
-        <StatCard icon={Flame} label="连续天数" value="—" color="var(--color-accent-2)" />
+        <StatCard icon={Repeat} label="今日待复习" value={dueCount} color="var(--color-accent)" loading={loading} />
+        <StatCard icon={CheckCircle2} label="今日已复习" value={reviewedToday} color="var(--color-accent)" loading={loading} />
+        <StatCard icon={BookOpen} label="词条总数" value={totalWords} color="var(--color-accent-2)" loading={loading} />
+        <StatCard icon={Target} label="已掌握" value={mastered} color="var(--color-accent)" loading={loading} />
       </div>
 
       {/* 快速入口 */}
@@ -45,7 +85,9 @@ export function DashboardPage() {
             </div>
             <div className="flex-1">
               <h3 className="text-lg font-semibold text-[var(--color-ink)]">开始复习</h3>
-              <p className="text-sm text-[var(--color-ink-soft)]">间隔重复训练，巩固记忆</p>
+              <p className="text-sm text-[var(--color-ink-soft)]">
+                {dueCount > 0 ? `${dueCount} 张卡片待复习` : "暂无待复习卡片"}
+              </p>
             </div>
             <Button size="sm">前往</Button>
           </Link>
@@ -65,7 +107,7 @@ export function DashboardPage() {
         </Card>
       </div>
 
-      {/* 学习进度（占位） */}
+      {/* 学习进度 */}
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="section-title flex items-center gap-2 text-lg font-semibold text-[var(--color-ink)]">
@@ -73,12 +115,38 @@ export function DashboardPage() {
             学习进度
           </h2>
         </div>
-        <div className="flex h-48 items-center justify-center text-[var(--color-ink-soft)]">
-          <p className="text-sm">统计数据即将上线</p>
-        </div>
+        {loading ? (
+          <Skeleton className="h-48 w-full" />
+        ) : totalWords > 0 ? (
+          <div className="space-y-4">
+            <div>
+              <div className="mb-2 flex items-center justify-between text-sm">
+                <span className="text-[var(--color-ink-soft)]">掌握进度</span>
+                <span className="font-medium text-[var(--color-ink)]">
+                  {mastered}/{totalWords}
+                </span>
+              </div>
+              <div className="h-3 overflow-hidden rounded-full bg-[var(--color-surface-muted)]">
+                <div
+                  className="h-full rounded-full bg-[var(--color-accent)] transition-all duration-500"
+                  style={{ width: `${(mastered / totalWords) * 100}%` }}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge tone="accent">待复习 {dueCount}</Badge>
+              <Badge tone="warm">已复习 {reviewedToday}</Badge>
+              <Badge>总计 {totalWords}</Badge>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-48 items-center justify-center text-[var(--color-ink-soft)]">
+            <p className="text-sm">暂无数据</p>
+          </div>
+        )}
       </Card>
 
-      {/* 最近笔记（占位） */}
+      {/* 最近笔记 */}
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="section-title flex items-center gap-2 text-lg font-semibold text-[var(--color-ink)]">

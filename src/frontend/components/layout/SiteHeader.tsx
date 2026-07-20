@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { BookOpen, LayoutGrid, Repeat, Notebook } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
+import { WordbookSwitcher } from "@/frontend/components/wordbook/WordbookSwitcher";
 
 const navItems = [
   { href: "/words", label: "词条库", icon: BookOpen },
@@ -56,6 +57,9 @@ export function SiteHeader() {
         </nav>
 
         <div className="flex items-center gap-3">
+          <div className="hidden md:block">
+            <WordbookSwitcher />
+          </div>
           <ThemeToggle />
         </div>
       </div>
