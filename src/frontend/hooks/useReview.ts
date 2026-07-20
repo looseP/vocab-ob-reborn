@@ -3,7 +3,7 @@ import { apiFetch } from "@/frontend/api/client";
 import { useToast } from "@/frontend/components/ui/Toast";
 
 export interface ReviewCard {
-  wordId: string;
+  id: string;
   slug: string;
   title: string;
   lemma: string;
@@ -64,7 +64,7 @@ export function useReview() {
     try {
       await apiFetch("/review/answer", {
         method: "POST",
-        body: JSON.stringify({ rating, wordId: currentCard.wordId }),
+        body: JSON.stringify({ rating, wordId: currentCard.id }),
       });
       setStats((prev) => ({
         reviewed: prev.reviewed + 1,
