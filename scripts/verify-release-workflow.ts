@@ -376,6 +376,30 @@ export function verifyCiReleaseManifestContract(source: string): void {
   const ci = parseWorkflow(source, "CI workflow");
   const verify = ci.jobs?.verify;
   if (!verify) throw new Error("CI verify job is required");
+  const sbomGeneration = namedStep(verify, "Generate image CycloneDX SBOMs", "CI verify");
+  const sbomProvenance = namedStep(verify, "Verify backup SBOM PostgreSQL client provenance", "CI verify");
+  const sbomUpload = namedStep(verify, "Upload image SBOMs", "CI verify");
+  const provenanceScript = executableScript(sbomProvenance);
+  for (const command of [
+    "set -euo pipefail",
+    "docker image inspect vocab-observatory-v2-backup:ci --format '{{.Config.User}}'",
+    "docker run --rm --entrypoint pg_dump vocab-observatory-v2-backup:ci --version",
+    "docker run --rm --entrypoint pg_restore vocab-observatory-v2-backup:ci --version",
+    "docker run --rm --entrypoint node vocab-observatory-v2-backup:ci",
+    "docker cp \"${container}:/opt/postgres-client/provenance.tsv\" .tmp-backup-client-provenance.tsv",
+    "node scripts/verify-backup-sbom.mjs .tmp-backup-client-provenance.tsv sbom-backup.cdx.json sbom-backup-verified.cdx.json",
+  ]) {
+    if (!provenanceScript.includes(command)) throw new Error("CI must verify and merge backup PostgreSQL client provenance into the backup SBOM");
+  }
+  if (!provenanceScript.includes("$2 == \"(PostgreSQL)\" { print $3 }") || !provenanceScript.includes("/opt/postgres-client/bin/postgres") || !provenanceScript.includes("/opt/postgres-client/bin/psql")) {
+    throw new Error("CI backup SBOM provenance gate must verify exact PostgreSQL tool versions and forbidden binaries");
+  }
+  const sbomUploadPath = typeof sbomUpload.with?.path === "string" ? sbomUpload.with.path : "";
+  if (!sbomUploadPath.includes("sbom-backup.cdx.json") || !sbomUploadPath.includes("sbom-backup-verified.cdx.json")) {
+    throw new Error("CI must upload both the raw and provenance-verified backup SBOM artifacts");
+  }
+  requireStepOrder(verify, sbomGeneration.name!, sbomProvenance.name!, "CI verify");
+  requireStepOrder(verify, sbomProvenance.name!, sbomUpload.name!, "CI verify");
   const volumeUpgrade = namedStep(verify, "Existing-volume database role upgrade rehearsal", "CI verify");
   requireExactExecutableScript(
     volumeUpgrade,
