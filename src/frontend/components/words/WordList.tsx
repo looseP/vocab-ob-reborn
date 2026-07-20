@@ -45,9 +45,9 @@ export function WordList({ words, loading, error }: WordListProps) {
                 <p className="text-lg font-semibold text-[var(--color-ink)]">
                   {word.lemma}
                 </p>
-                {word.shortDefinition && (
+                {word.short_definition && (
                   <p className="text-sm text-[var(--color-ink-soft)]">
-                    {word.shortDefinition}
+                    {word.short_definition}
                   </p>
                 )}
               </div>

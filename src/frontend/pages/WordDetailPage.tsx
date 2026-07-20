@@ -13,12 +13,12 @@ interface WordDetail {
   pos: string | null;
   cefr: string | null;
   ipa: string | null;
-  shortDefinition: string | null;
-  definitionMd: string;
-  bodyMd: string;
+  short_definition: string | null;
+  definition_md: string;
+  body_md: string;
   examples: Array<{ text: string; translation?: string }>;
   aliases: string[];
-  isPublished: boolean;
+  is_published: boolean;
 }
 
 export function WordDetailPage() {
@@ -93,18 +93,18 @@ export function WordDetailPage() {
           </div>
         </div>
 
-        {word.shortDefinition && (
-          <p className="mt-4 text-lg text-[var(--color-ink)]">{word.shortDefinition}</p>
+        {word.short_definition && (
+          <p className="mt-4 text-lg text-[var(--color-ink)]">{word.short_definition}</p>
         )}
       </Card>
 
-      {word.definitionMd && (
+      {word.definition_md && (
         <Card>
           <h2 className="section-title mb-3 text-lg font-semibold text-[var(--color-ink)]">
             释义
           </h2>
           <div className="prose prose-sm max-w-none text-[var(--color-ink-soft)]">
-            {word.definitionMd}
+            {word.definition_md}
           </div>
         </Card>
       )}

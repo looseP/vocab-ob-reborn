@@ -8,8 +8,8 @@ export interface WordListItem {
   pos: string | null;
   cefr: string | null;
   ipa: string | null;
-  shortDefinition: string | null;
-  isPublished: boolean;
+  short_definition: string | null;
+  is_published: boolean;
 }
 
 interface WordListResponse {
