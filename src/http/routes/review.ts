@@ -31,6 +31,15 @@ import { validationError } from "../error-response";
 export function reviewRoutes(services: Services) {
   const app = new Hono<AppEnv>();
 
+  // GET / — fetch review queue (due cards + today's session)
+  app.get("/", async (c) => {
+    const userId = c.get("userId");
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const queue = await services.reviews.getQueue(userId, wordbook.id, limit);
+    return c.json(queue);
+  });
+
   app.post("/answer", async (c) => {
     const body = await c.req.json();
     const parsed = reviewAnswerSchema.safeParse(body);

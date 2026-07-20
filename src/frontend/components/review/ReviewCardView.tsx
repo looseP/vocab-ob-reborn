@@ -1,13 +1,15 @@
 import { Button } from "@/frontend/components/ui/Button";
 import { Card } from "@/frontend/components/ui/Card";
+import { Badge } from "@/frontend/components/ui/Badge";
 import { Spinner } from "@/frontend/components/ui/Spinner";
+import { Link } from "react-router-dom";
 import type { ReviewCard } from "@/frontend/hooks/useReview";
 
 const ratings = [
-  { value: "again", label: "不会", color: "var(--color-accent-2)" },
-  { value: "hard", label: "困难", color: "var(--color-highlight)" },
-  { value: "good", label: "良好", color: "var(--color-accent)" },
-  { value: "easy", label: "简单", color: "var(--color-accent)" },
+  { value: "again", label: "重来", variant: "danger" as const },
+  { value: "hard", label: "困难", variant: "secondary" as const },
+  { value: "good", label: "良好", variant: "secondary" as const },
+  { value: "easy", label: "简单", variant: "primary" as const },
 ] as const;
 
 interface ReviewCardViewProps {
@@ -32,9 +34,6 @@ export function ReviewCardView({ card, loading, error, onAnswer, onSkip }: Revie
     return (
       <Card className="py-20 text-center">
         <p className="text-[var(--color-accent-2)]">{error}</p>
-        <Button className="mt-4" onClick={() => window.location.reload()}>
-          重试
-        </Button>
       </Card>
     );
   }
@@ -50,36 +49,36 @@ export function ReviewCardView({ card, loading, error, onAnswer, onSkip }: Revie
 
   return (
     <Card className="space-y-6">
-      <div className="text-center">
-        <h2 className="section-title text-3xl font-bold text-[var(--color-ink)]">
-          {card.lemma}
-        </h2>
-        <div className="mt-2 flex items-center justify-center gap-3 text-sm text-[var(--color-ink-soft)]">
-          {card.pos && <span>{card.pos}</span>}
-          {card.cefr && <span className="rounded-full bg-[var(--color-pill-bg)] px-2 py-0.5 text-[var(--color-pill-text)]">{card.cefr}</span>}
-          {card.ipa && <span className="font-mono">{card.ipa}</span>}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          <Badge tone="accent">{card.state}</Badge>
+          {card.reviewCount > 0 && <Badge>复习 {card.reviewCount} 次</Badge>}
         </div>
+        <Link
+          to={`/words/${card.word.slug}`}
+          className="text-sm font-semibold text-[var(--color-accent)]"
+        >
+          查看详情
+        </Link>
       </div>
 
-      {card.short_definition && (
-        <p className="text-center text-[var(--color-ink)]">{card.short_definition}</p>
-      )}
-
-      {card.definition_md && (
-        <div className="prose prose-sm max-w-none text-[var(--color-ink-soft)]">
-          {card.definition_md}
-        </div>
-      )}
+      <div className="text-center">
+        <h2 className="section-title text-4xl font-bold text-[var(--color-ink)]">
+          {card.word.lemma}
+        </h2>
+        {card.word.title !== card.word.lemma && (
+          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{card.word.title}</p>
+        )}
+      </div>
 
       <div className="flex justify-center gap-2 pt-4">
         {ratings.map((r) => (
           <Button
             key={r.value}
-            variant={r.value === "again" ? "danger" : r.value === "easy" ? "primary" : "secondary"}
+            variant={r.variant}
             size="lg"
             disabled={loading}
             onClick={() => onAnswer(r.value)}
-            style={{ borderColor: r.color }}
           >
             {r.label}
           </Button>

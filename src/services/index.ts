@@ -117,6 +117,8 @@ export function createServices(deps: ServiceDeps) {
     reviews: new ReviewService({
       fsrsAdapter: deps.fsrsAdapter,
       loadWeights,
+      findDueCards: (userId, wordbookId, limit) => repos.reviews.findDueCards(userId, wordbookId, limit),
+      getOrCreateTodaySession: (userId, wordbookId, mode) => repos.sessions.getOrCreateToday(userId, wordbookId, mode),
     }),
     notes: new NoteService(repos.notes, repos.wordbooks),
     wordbooks: new WordbookService(repos.wordbooks),

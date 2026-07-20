@@ -3,28 +3,30 @@ import { apiFetch } from "@/frontend/api/client";
 import { useToast } from "@/frontend/components/ui/Toast";
 
 export interface ReviewCard {
-  id: string;
-  slug: string;
-  title: string;
-  lemma: string;
-  definition_md: string;
-  body_md: string;
-  pos: string | null;
-  cefr: string | null;
-  ipa: string | null;
-  short_definition: string | null;
-  examples: Array<{ text: string; translation?: string }>;
+  progressId: string;
+  word: {
+    id: string;
+    slug: string;
+    title: string;
+    lemma: string;
+  };
+  state: string;
+  dueAt: string | null;
+  lastRating: string | null;
+  reviewCount: number;
 }
 
-interface WordsResponse {
+interface QueueResponse {
   items: ReviewCard[];
-  total: number;
+  session: { id: string; mode: string; cardsSeen: number };
+  stats: { total: number; remaining: number };
 }
 
 export type Rating = "again" | "hard" | "good" | "easy";
 
 export function useReview() {
   const [queue, setQueue] = useState<ReviewCard[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,28 +44,37 @@ export function useReview() {
     setCurrentIndex(0);
     setStats({ reviewed: 0, again: 0, hard: 0, good: 0, easy: 0 });
     try {
-      const result = await apiFetch<WordsResponse>("/words?limit=20");
+      const result = await apiFetch<QueueResponse>("/review/queue?limit=20");
       if (!result.items || result.items.length === 0) {
-        setError("没有可复习的单词");
+        setError("没有待复习的单词");
         setQueue([]);
+        setSessionId(null);
         return;
       }
       setQueue(result.items);
+      setSessionId(result.session.id);
       addToast("info", `已加载 ${result.items.length} 张复习卡片`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载复习队列失败");
       setQueue([]);
+      setSessionId(null);
     } finally {
       setLoading(false);
     }
   }, [addToast]);
 
   const answer = useCallback(async (rating: Rating) => {
-    if (!currentCard) return;
+    if (!currentCard || !sessionId) return;
     setLoading(true);
     try {
-      // 后端 POST /api/review/answer 需要 progressId + sessionId + wordbook_id 体系
-      // 暂用前端本地管理评分，后续新增 GET /api/review/queue 后改为后端持久化
+      await apiFetch("/review/answer", {
+        method: "POST",
+        body: JSON.stringify({
+          rating,
+          progressId: currentCard.progressId,
+          sessionId,
+        }),
+      });
       setStats((prev) => ({
         reviewed: prev.reviewed + 1,
         again: prev.again + (rating === "again" ? 1 : 0),
@@ -74,17 +85,17 @@ export function useReview() {
       const next = currentIndex + 1;
       if (next >= queue.length) {
         setCompleted(true);
-        addToast("success", "复习完成！");
+        addToast("success", "复习完成！FSRS 调度已更新");
       } else {
         setCurrentIndex(next);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "评分失败");
-      addToast("error", "评分失败，请重试");
+      addToast("error", "评分提交失败");
     } finally {
       setLoading(false);
     }
-  }, [currentCard, currentIndex, queue.length, addToast]);
+  }, [currentCard, sessionId, currentIndex, queue.length, addToast]);
 
   const skip = useCallback(() => {
     const next = currentIndex + 1;
