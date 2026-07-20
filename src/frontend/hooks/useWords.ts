@@ -20,7 +20,7 @@ interface WordListResponse {
   hasMore: boolean;
 }
 
-export function useWords(params?: { page?: number; pageSize?: number; q?: string }) {
+export function useWords(params?: { page?: number; pageSize?: number; q?: string; cefr?: string }) {
   const [words, setWords] = useState<WordListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +30,7 @@ export function useWords(params?: { page?: number; pageSize?: number; q?: string
     const searchParams = new URLSearchParams();
     if (params?.pageSize) searchParams.set("limit", String(params.pageSize));
     if (params?.q) searchParams.set("q", params.q);
+    if (params?.cefr) searchParams.set("cefr", params.cefr);
 
     const query = searchParams.toString();
     setLoading(true);
@@ -41,7 +42,7 @@ export function useWords(params?: { page?: number; pageSize?: number; q?: string
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [params?.page, params?.pageSize, params?.q]);
+  }, [params?.page, params?.pageSize, params?.q, params?.cefr]);
 
   return { words, loading, error, total };
 }

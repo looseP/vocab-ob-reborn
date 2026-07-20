@@ -60,7 +60,7 @@ export interface ReviewServiceDeps {
   /** Load wordbook-level FSRS weights (returns null if not configured) */
   loadWeights: (wordbookId: string) => Promise<number[] | null>;
   /** Find due cards for a user in a wordbook (optional: tests may omit) */
-  findDueCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string } }>>;
+  findDueCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
   /** Get or create today's session (optional: tests may omit) */
   getOrCreateTodaySession?: (userId: string, wordbookId: string, mode?: string) => Promise<{ id: string; user_id: string; wordbook_id: string; mode: string; cards_seen: number; started_at: string; ended_at: string | null }>;
 }

@@ -103,7 +103,7 @@ export interface UndoRpcResult {
 
 export interface IReviewRepository {
   findDueCards(userId: string, wordbookId: string, limit: number): Promise<
-    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string } }>
+    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
   >;
 
   /** User-scoped advisory lock + idempotency check. MUST be in a transaction. */

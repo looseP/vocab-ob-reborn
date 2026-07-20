@@ -66,8 +66,15 @@ export function ReviewCardView({ card, loading, error, onAnswer, onSkip }: Revie
         <h2 className="section-title text-4xl font-bold text-[var(--color-ink)]">
           {card.word.lemma}
         </h2>
-        {card.word.title !== card.word.lemma && (
-          <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{card.word.title}</p>
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+          {card.word.pos && <Badge>{card.word.pos}</Badge>}
+          {card.word.cefr && <Badge tone="warm">CEFR {card.word.cefr}</Badge>}
+          {card.word.ipa && (
+            <span className="font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
+          )}
+        </div>
+        {card.word.short_definition && (
+          <p className="mt-3 text-lg text-[var(--color-ink)]">{card.word.short_definition}</p>
         )}
       </div>
 

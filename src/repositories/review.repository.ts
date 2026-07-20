@@ -57,10 +57,11 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   ) {
     // H3 fix: use prefixed columns + explicit w.id AS w_id to avoid ambiguity
     const rows = await this.query<
-      UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string }
+      UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }
     >(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
-              w.id AS w_id, w.slug, w.title, w.lemma
+              w.id AS w_id, w.slug, w.title, w.lemma,
+              w.short_definition, w.ipa, w.pos, w.cefr
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
@@ -72,10 +73,10 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     );
 
     return rows.map((r) => {
-      const { slug, title, lemma, w_id, ...progress } = r;
+      const { slug, title, lemma, w_id, short_definition, ipa, pos, cefr, ...progress } = r;
       return {
         progress: progress as unknown as UserWordProgressRow,
-        word: { id: w_id, slug, title, lemma },
+        word: { id: w_id, slug, title, lemma, short_definition, ipa, pos, cefr },
       };
     });
   }

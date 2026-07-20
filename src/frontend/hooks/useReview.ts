@@ -9,6 +9,10 @@ export interface ReviewCard {
     slug: string;
     title: string;
     lemma: string;
+    short_definition: string | null;
+    ipa: string | null;
+    pos: string | null;
+    cefr: string | null;
   };
   state: string;
   dueAt: string | null;
