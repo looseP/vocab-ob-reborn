@@ -61,13 +61,13 @@ export function ReviewCardView({ card, loading, error, onAnswer, onSkip }: Revie
         </div>
       </div>
 
-      {card.shortDefinition && (
-        <p className="text-center text-[var(--color-ink)]">{card.shortDefinition}</p>
+      {card.short_definition && (
+        <p className="text-center text-[var(--color-ink)]">{card.short_definition}</p>
       )}
 
-      {card.definitionMd && (
+      {card.definition_md && (
         <div className="prose prose-sm max-w-none text-[var(--color-ink-soft)]">
-          {card.definitionMd}
+          {card.definition_md}
         </div>
       )}
 

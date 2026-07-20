@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { BrowserSessionGate } from "./components/BrowserSessionGate";
 import { SiteFrame } from "./components/layout/SiteFrame";
+import { ToastProvider } from "./components/ui/Toast";
+import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { HomePage } from "./pages/HomePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ReviewPage } from "./pages/ReviewPage";
@@ -24,20 +26,24 @@ function L3HomeContent() {
 
 export function App() {
   return (
-    <BrowserSessionGate>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<SiteFrame><HomePage /></SiteFrame>} />
-          <Route path="/dashboard" element={<SiteFrame><DashboardPage /></SiteFrame>} />
-          <Route path="/review" element={<SiteFrame><ReviewPage /></SiteFrame>} />
-          <Route path="/review/*" element={<SiteFrame><ReviewPage /></SiteFrame>} />
-          <Route path="/words" element={<SiteFrame><WordsPage /></SiteFrame>} />
-          <Route path="/words/:slug" element={<SiteFrame><WordDetailPage /></SiteFrame>} />
-          <Route path="/notes" element={<SiteFrame><NotesPage /></SiteFrame>} />
-          <Route path="/l3" element={<SiteFrame><L3Page /></SiteFrame>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
-    </BrowserSessionGate>
+    <ErrorBoundary>
+      <ToastProvider>
+        <BrowserSessionGate>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<SiteFrame><HomePage /></SiteFrame>} />
+              <Route path="/dashboard" element={<SiteFrame><DashboardPage /></SiteFrame>} />
+              <Route path="/review" element={<SiteFrame><ReviewPage /></SiteFrame>} />
+              <Route path="/review/*" element={<SiteFrame><ReviewPage /></SiteFrame>} />
+              <Route path="/words" element={<SiteFrame><WordsPage /></SiteFrame>} />
+              <Route path="/words/:slug" element={<SiteFrame><WordDetailPage /></SiteFrame>} />
+              <Route path="/notes" element={<SiteFrame><NotesPage /></SiteFrame>} />
+              <Route path="/l3" element={<SiteFrame><L3Page /></SiteFrame>} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </BrowserSessionGate>
+      </ToastProvider>
+    </ErrorBoundary>
   );
 }

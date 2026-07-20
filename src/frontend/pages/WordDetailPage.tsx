@@ -4,9 +4,12 @@ import { ArrowLeft, Volume2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Spinner } from "@/frontend/components/ui/Spinner";
+import { WordNotes } from "@/frontend/components/words/WordNotes";
+import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
 import { apiFetch } from "@/frontend/api/client";
 
 interface WordDetail {
+  id: string;
   slug: string;
   title: string;
   lemma: string;
@@ -91,6 +94,9 @@ export function WordDetailPage() {
               )}
             </div>
           </div>
+          <div className="flex items-center gap-2">
+            <AddToReviewButton wordId={word.id} slug={word.slug} />
+          </div>
         </div>
 
         {word.short_definition && (
@@ -144,6 +150,8 @@ export function WordDetailPage() {
           </div>
         </Card>
       )}
+
+      <WordNotes slug={word.slug} />
     </div>
   );
 }
