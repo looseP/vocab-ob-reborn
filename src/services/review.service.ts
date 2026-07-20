@@ -63,6 +63,10 @@ export interface ReviewServiceDeps {
   findDueCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
   /** Get or create today's session (optional: tests may omit) */
   getOrCreateTodaySession?: (userId: string, wordbookId: string, mode?: string) => Promise<{ id: string; user_id: string; wordbook_id: string; mode: string; cards_seen: number; started_at: string; ended_at: string | null }>;
+  /** Get review stats (optional) */
+  getReviewStats?: (userId: string, wordbookId: string) => Promise<{ todayCount: number; totalCount: number; ratingDist: { again: number; hard: number; good: number; easy: number } }>;
+  /** Find leeches (optional) */
+  findLeeches?: (userId: string, wordbookId: string, limit: number) => Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
 }
 
 export class ReviewService {
@@ -97,6 +101,26 @@ export class ReviewService {
         remaining: dueCards.length,
       },
     };
+  }
+
+  async getStats(userId: string, wordbookId: string) {
+    if (!this.deps.getReviewStats) throw new Error("getReviewStats not configured");
+    return this.deps.getReviewStats(userId, wordbookId);
+  }
+
+  async getLeeches(userId: string, wordbookId: string, limit = 20) {
+    if (!this.deps.findLeeches) throw new Error("findLeeches not configured");
+    const rows = await this.deps.findLeeches(userId, wordbookId, limit);
+    return rows.map((r) => {
+      const { slug, title, lemma, w_id, short_definition, ...progress } = r;
+      return {
+        progressId: progress.id,
+        word: { id: w_id, slug, title, lemma, short_definition },
+        lapseCount: progress.lapse_count,
+        state: progress.state,
+        dueAt: progress.due_at,
+      };
+    });
   }
 
   /**

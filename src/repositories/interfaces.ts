@@ -106,6 +106,14 @@ export interface IReviewRepository {
     Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
   >;
 
+  getStats?(userId: string, wordbookId: string): Promise<{
+    todayCount: number;
+    totalCount: number;
+    ratingDist: { again: number; hard: number; good: number; easy: number };
+  }>;
+
+  findLeeches?(userId: string, wordbookId: string, limit: number): Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
+
   /** User-scoped advisory lock + idempotency check. MUST be in a transaction. */
   checkIdempotency(userId: string, idempotencyKey: string): Promise<string | null>;
 

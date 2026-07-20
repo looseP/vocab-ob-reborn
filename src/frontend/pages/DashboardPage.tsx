@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, Brain, CheckCircle2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
+import { ReviewStatsPanel } from "@/frontend/components/review/ReviewStatsPanel";
+import { LeechPanel } from "@/frontend/components/review/LeechPanel";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Skeleton } from "@/frontend/components/ui/Skeleton";
 import { apiFetch } from "@/frontend/api/client";
@@ -145,6 +147,12 @@ export function DashboardPage() {
           </div>
         )}
       </Card>
+
+      {/* 复习统计 + 漏词管理 */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ReviewStatsPanel />
+        <LeechPanel />
+      </div>
 
       {/* 最近笔记 */}
       <Card>

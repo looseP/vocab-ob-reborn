@@ -40,6 +40,23 @@ export function reviewRoutes(services: Services) {
     return c.json(queue);
   });
 
+  // GET /stats — review statistics
+  app.get("/stats", async (c) => {
+    const userId = c.get("userId");
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const stats = await services.reviews.getStats(userId, wordbook.id);
+    return c.json(stats);
+  });
+
+  // GET /leeches — words with high lapse count
+  app.get("/leeches", async (c) => {
+    const userId = c.get("userId");
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const leeches = await services.reviews.getLeeches(userId, wordbook.id, limit);
+    return c.json({ items: leeches, total: leeches.length });
+  });
+
   app.post("/answer", async (c) => {
     const body = await c.req.json();
     const parsed = reviewAnswerSchema.safeParse(body);

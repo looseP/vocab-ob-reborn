@@ -119,6 +119,8 @@ export function createServices(deps: ServiceDeps) {
       loadWeights,
       findDueCards: (userId, wordbookId, limit) => repos.reviews.findDueCards(userId, wordbookId, limit),
       getOrCreateTodaySession: (userId, wordbookId, mode) => repos.sessions.getOrCreateToday(userId, wordbookId, mode),
+      getReviewStats: (userId, wordbookId) => repos.reviews.getStats!(userId, wordbookId),
+      findLeeches: (userId, wordbookId, limit) => repos.reviews.findLeeches!(userId, wordbookId, limit),
     }),
     notes: new NoteService(repos.notes, repos.wordbooks),
     wordbooks: new WordbookService(repos.wordbooks),
