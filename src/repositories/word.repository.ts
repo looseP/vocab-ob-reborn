@@ -137,12 +137,12 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     const values: string[] = [];
     const params: unknown[] = [];
     words.forEach((w, i) => {
-      const base = i * 9;
-      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`);
-      params.push(w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, w.short_definition, "", "");
+      const base = i * 11;
+      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`);
+      params.push(w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, w.short_definition, "", "", "", "");
     });
     const result = await this.query<{ id: string }>(
-      `INSERT INTO words (slug, title, lemma, pos, cefr, ipa, short_definition, content_hash, source_path)
+      `INSERT INTO words (slug, title, lemma, pos, cefr, ipa, short_definition, content_hash, source_path, definition_md, body_md)
        VALUES ${values.join(", ")}
        ON CONFLICT (slug) DO UPDATE SET
          title = EXCLUDED.title, lemma = EXCLUDED.lemma, pos = EXCLUDED.pos,
