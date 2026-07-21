@@ -48,6 +48,10 @@ export interface IWordRepository {
   findPublic(options: GetPublicWordsOptions): Promise<PaginatedResult<WordSummary>>;
   count(): Promise<number>;
   findSlugs(limit?: number): Promise<string[]>;
+  insertMany?(words: Array<{
+    slug: string; title: string; lemma: string; pos: string | null;
+    cefr: string | null; ipa: string | null; short_definition: string | null;
+  }>): Promise<number>;
 }
 
 // ── Review ──────────────────────────────────────────────────────────────

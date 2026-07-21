@@ -27,6 +27,29 @@ export type AppEnv = {
 export function wordRoutes(services: Services) {
   const app = new Hono<AppEnv>();
 
+  // POST /batch — bulk import words
+  app.post("/batch", async (c) => {
+    const body = await c.req.json();
+    const words = body?.words;
+    if (!Array.isArray(words) || words.length === 0) {
+      return c.json({ error: "words array is required" }, 400);
+    }
+    if (words.length > 500) {
+      return c.json({ error: "max 500 words per batch" }, 400);
+    }
+    const sanitized = words.slice(0, 500).map((w: Record<string, unknown>) => ({
+      slug: String(w.slug ?? w.lemma ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-"),
+      title: String(w.title ?? w.lemma ?? ""),
+      lemma: String(w.lemma ?? w.title ?? ""),
+      pos: w.pos ? String(w.pos) : null,
+      cefr: w.cefr ? String(w.cefr) : null,
+      ipa: w.ipa ? String(w.ipa) : null,
+      short_definition: w.short_definition ? String(w.short_definition) : null,
+    })).filter((w: { slug: string }) => w.slug.length > 0);
+    const result = await services.words.batchCreate(sanitized);
+    return c.json(result);
+  });
+
   // GET / — paginated/filtered word list
   app.get("/", async (c) => {
     const parsed = wordsQuerySchema.safeParse(c.req.query());

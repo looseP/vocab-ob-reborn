@@ -10,6 +10,7 @@ import { WordsPage } from "./pages/WordsPage";
 import { WordDetailPage } from "./pages/WordDetailPage";
 import { NotesPage } from "./pages/NotesPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { ImportPage } from "./pages/ImportPage";
 import { OmniPalette } from "./components/search/OmniPalette";
 import { L3Shell } from "./components/L3Shell";
 
@@ -41,6 +42,7 @@ export function App() {
               <Route path="/words/:slug" element={<SiteFrame><WordDetailPage /></SiteFrame>} />
               <Route path="/notes" element={<SiteFrame><NotesPage /></SiteFrame>} />
               <Route path="/settings" element={<SiteFrame><SettingsPage /></SiteFrame>} />
+              <Route path="/import" element={<SiteFrame><ImportPage /></SiteFrame>} />
               <Route path="/l3" element={<SiteFrame><L3Page /></SiteFrame>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

@@ -1,6 +1,8 @@
 import { useState, useCallback } from "react";
-import { Search, Filter } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Search, Filter, Upload } from "lucide-react";
 import { Input } from "@/frontend/components/ui/Input";
+import { Button } from "@/frontend/components/ui/Button";
 import { WordList } from "@/frontend/components/words/WordList";
 import { useWords } from "@/frontend/hooks/useWords";
 
@@ -58,6 +60,11 @@ export function WordsPage() {
               </option>
             ))}
           </select>
+          <Link to="/import">
+            <Button size="sm" variant="secondary">
+              <Upload className="h-4 w-4" /> 批量导入
+            </Button>
+          </Link>
         </div>
       </div>
 

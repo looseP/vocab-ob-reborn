@@ -128,4 +128,29 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     );
     return rows.map((r) => r.slug);
   }
+
+  async insertMany(words: Array<{
+    slug: string; title: string; lemma: string; pos: string | null;
+    cefr: string | null; ipa: string | null; short_definition: string | null;
+  }>): Promise<number> {
+    if (words.length === 0) return 0;
+    const values: string[] = [];
+    const params: unknown[] = [];
+    words.forEach((w, i) => {
+      const base = i * 7;
+      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`);
+      params.push(w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, w.short_definition);
+    });
+    const result = await this.query<{ id: string }>(
+      `INSERT INTO words (slug, title, lemma, pos, cefr, ipa, short_definition)
+       VALUES ${values.join(", ")}
+       ON CONFLICT (slug) DO UPDATE SET
+         title = EXCLUDED.title, lemma = EXCLUDED.lemma, pos = EXCLUDED.pos,
+         cefr = EXCLUDED.cefr, ipa = EXCLUDED.ipa, short_definition = EXCLUDED.short_definition,
+         updated_at = now()
+       RETURNING id`,
+      params,
+    );
+    return result.length;
+  }
 }
