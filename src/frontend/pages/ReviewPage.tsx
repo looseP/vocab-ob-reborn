@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Repeat, Zap, BookOpen, Sparkles, RotateCcw } from "lucide-react";
+import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -14,6 +14,7 @@ const reviewModes = [
   { key: "review", icon: Repeat, title: "标准复习", desc: "按 FSRS 间隔重复算法安排的到期卡片", variant: "primary" as const },
   { key: "cram", icon: Zap, title: "练习模式", desc: "集中强化练习，不受到期限制", variant: "secondary" as const },
   { key: "preview", icon: BookOpen, title: "自由复习", desc: "自由浏览词汇，不评分", variant: "secondary" as const },
+  { key: "zen", icon: InfinityIcon, title: "禅模式", desc: "无限循环复习，巩固记忆", variant: "secondary" as const },
 ] as const;
 
 function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
@@ -55,17 +56,40 @@ function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
 function ReviewSession({ reviewMode, onBack }: { reviewMode: string; onBack: () => void }) {
   const { currentCard, loading, error, stats, completed, currentIndex, remaining, startReview, answer, skip } = useReview();
 
-  useEffect(() => {
-    startReview(reviewMode);
-  }, [startReview, reviewMode]);
+  const apiMode = reviewMode === "zen" ? "review" : reviewMode;
+  const isZen = reviewMode === "zen";
 
-  if (completed) {
+  useEffect(() => {
+    startReview(apiMode);
+  }, [startReview, apiMode]);
+
+  // Zen mode: auto-restart when completed
+  useEffect(() => {
+    if (completed && isZen) {
+      const timer = setTimeout(() => startReview(apiMode), 800);
+      return () => clearTimeout(timer);
+    }
+  }, [completed, isZen, apiMode, startReview]);
+
+  if (completed && !isZen) {
     return (
       <CompletionCelebration
         stats={stats}
-        onRestart={() => startReview(reviewMode)}
+        onRestart={() => startReview(apiMode)}
         onBack={onBack}
       />
+    );
+  }
+
+  if (completed && isZen) {
+    return (
+      <div className="flex h-48 items-center justify-center">
+        <div className="text-center">
+          <InfinityIcon className="mx-auto mb-3 h-8 w-8 animate-pulse text-[var(--color-accent)]" />
+          <p className="text-sm text-[var(--color-ink-soft)]">重新加载队列中...</p>
+          <p className="mt-1 text-xs text-[var(--color-ink-soft)]">禅模式 · 已复习 {stats.reviewed} 张</p>
+        </div>
+      </div>
     );
   }
 

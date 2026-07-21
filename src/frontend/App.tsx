@@ -9,6 +9,8 @@ import { ReviewPage } from "./pages/ReviewPage";
 import { WordsPage } from "./pages/WordsPage";
 import { WordDetailPage } from "./pages/WordDetailPage";
 import { NotesPage } from "./pages/NotesPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import { OmniPalette } from "./components/search/OmniPalette";
 import { L3Shell } from "./components/L3Shell";
 
 function L3Page() {
@@ -38,9 +40,11 @@ export function App() {
               <Route path="/words" element={<SiteFrame><WordsPage /></SiteFrame>} />
               <Route path="/words/:slug" element={<SiteFrame><WordDetailPage /></SiteFrame>} />
               <Route path="/notes" element={<SiteFrame><NotesPage /></SiteFrame>} />
+              <Route path="/settings" element={<SiteFrame><SettingsPage /></SiteFrame>} />
               <Route path="/l3" element={<SiteFrame><L3Page /></SiteFrame>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            <OmniPalette />
           </BrowserRouter>
         </BrowserSessionGate>
       </ToastProvider>

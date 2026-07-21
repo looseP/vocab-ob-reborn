@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, LayoutGrid, Repeat, Notebook } from "lucide-react";
+import { BookOpen, LayoutGrid, Repeat, Notebook, Settings } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { WordbookSwitcher } from "@/frontend/components/wordbook/WordbookSwitcher";
 
@@ -8,6 +8,7 @@ const navItems = [
   { href: "/review", label: "复习", icon: Repeat },
   { href: "/dashboard", label: "仪表盘", icon: LayoutGrid },
   { href: "/notes", label: "笔记", icon: Notebook },
+  { href: "/settings", label: "设置", icon: Settings },
 ] as const;
 
 export function SiteHeader() {
