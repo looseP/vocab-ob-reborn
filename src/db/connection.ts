@@ -27,7 +27,7 @@ types.setTypeParser(types.builtins.TIMESTAMPTZ, (val) => val);
 types.setTypeParser(types.builtins.DATE, (val) => val);
 
 let _pool: Pool | null = null;
-let _listenersAttached = false;
+let _batchImportPool: Pool | null = null;
 
 function boundedInteger(name: string, fallback: number, minimum: number, maximum: number): number {
   const value = Number(process.env[name] ?? fallback);
@@ -35,6 +35,20 @@ function boundedInteger(name: string, fallback: number, minimum: number, maximum
     throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
   }
   return value;
+}
+
+function createPool(url: string): Pool {
+  const pool = new Pool({
+    ...postgresClientConfig(url),
+    max: boundedInteger("DB_POOL_MAX", 10, 1, 100),
+    idleTimeoutMillis: boundedInteger("DB_IDLE_TIMEOUT_MS", 30_000, 1_000, 600_000),
+    connectionTimeoutMillis: boundedInteger("DB_CONNECT_TIMEOUT_MS", 5_000, 100, 60_000),
+    keepAlive: true,
+    keepAliveInitialDelayMillis: boundedInteger("DB_KEEPALIVE_DELAY_MS", 10_000, 0, 600_000),
+    allowExitOnIdle: true,
+  });
+  attachPoolListeners(pool);
+  return pool;
 }
 
 export function getPool(): Pool {
@@ -54,25 +68,30 @@ export function getPool(): Pool {
     if (!url) {
       throw new Error("DATABASE_URL is not configured.");
     }
-    _pool = new Pool({
-      ...postgresClientConfig(url),
-      max: boundedInteger("DB_POOL_MAX", 10, 1, 100),
-      idleTimeoutMillis: boundedInteger("DB_IDLE_TIMEOUT_MS", 30_000, 1_000, 600_000),
-      connectionTimeoutMillis: boundedInteger("DB_CONNECT_TIMEOUT_MS", 5_000, 100, 60_000),
-      keepAlive: true,
-      keepAliveInitialDelayMillis: boundedInteger("DB_KEEPALIVE_DELAY_MS", 10_000, 0, 600_000),
-      allowExitOnIdle: true,
-    });
-    _listenersAttached = false;
-    attachPoolListeners(_pool);
+    _pool = createPool(url);
   }
   return _pool;
 }
 
-function attachPoolListeners(pool: Pool): void {
-  if (_listenersAttached) return;
-  _listenersAttached = true;
+/**
+ * Dedicated pool for bulk word import, authenticated as the minimal-privilege
+ * `vocab_batch_import` role (SELECT/INSERT/UPDATE on `words` only). This keeps
+ * batch writes fully decoupled from the read-only `vocab_app` runtime role and
+ * satisfies the project's least-privilege database contract. Throws clearly when
+ * BATCH_IMPORT_DATABASE_URL is absent.
+ */
+export function getBatchImportPool(): Pool {
+  if (!_batchImportPool) {
+    const url = process.env.BATCH_IMPORT_DATABASE_URL;
+    if (!url) {
+      throw new Error("BATCH_IMPORT_DATABASE_URL is not configured (required for word batch import).");
+    }
+    _batchImportPool = createPool(url);
+  }
+  return _batchImportPool;
+}
 
+function attachPoolListeners(pool: Pool): void {
   pool.on("error", (err: Error) => {
     logger.error("db", "Idle pool client error (auto-removed by pg)", err);
   });
@@ -113,11 +132,13 @@ export async function checkPoolHealth(queryTimeoutMs = 400): Promise<PoolHealth>
 }
 
 export async function resetPool(): Promise<void> {
-  if (!_pool) return;
+  if (!_pool && !_batchImportPool) return;
   const oldPool = _pool;
+  const oldBatchImportPool = _batchImportPool;
   _pool = null;
-  _listenersAttached = false;
-  await oldPool.end();
+  _batchImportPool = null;
+  if (oldPool) await oldPool.end();
+  if (oldBatchImportPool) await oldBatchImportPool.end();
   logger.info("db", "Pool reset completed");
 }
 
