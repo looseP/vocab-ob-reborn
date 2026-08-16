@@ -29,6 +29,10 @@ jobs:
       BACKUP_SIGNING_KEY: "ci-drill-signing-key-24-chars"
       BACKUP_OBJECT_LOCK: "false"
       DB_SSLMODE: disable
+      # The runner image ships PostgreSQL 16 client tools, which cannot dump a
+      # 17.x server. pg_dump/pg_restore resolve to the pinned 17.10 portable
+      # client extracted from the Dockerfile's postgres-backup-client stage.
+      PG_BIN_DIR: /usr/local/bin
 
     services:
       postgres:
@@ -60,6 +64,20 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install pinned PostgreSQL 17.10 backup client
+        run: |
+          set -euo pipefail
+          docker build --target postgres-backup-client --tag vocab-pg-client:drill .
+          container="pg-client-extract-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker create --name "${container}" vocab-pg-client:drill >/dev/null
+          docker cp "${container}:/postgres-client-root" /tmp/postgres-client-root
+          docker rm "${container}" >/dev/null
+          sudo cp -a /tmp/postgres-client-root/. /
+          test "$(pg_dump --version | awk 'NR == 1 && $2 == "(PostgreSQL)" { print $3 }')" = "17.10"
+          test "$(pg_restore --version | awk 'NR == 1 && $2 == "(PostgreSQL)" { print $3 }')" = "17.10"
+          pg_dump --version
+          pg_restore --version
 
       - name: Prepare real database LOGIN roles
         run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
