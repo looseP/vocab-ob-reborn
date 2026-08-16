@@ -31,6 +31,51 @@ import { validationError } from "../error-response";
 export function reviewRoutes(services: Services) {
   const app = new Hono<AppEnv>();
 
+  // GET /queue — fetch review queue (due cards + today's session)
+  app.get("/queue", async (c) => {
+    const userId = c.get("userId");
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+    const mode = c.req.query("mode") === "cram" ? "cram" : c.req.query("mode") === "preview" ? "preview" : "review";
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const queue = await services.reviews.getQueue(userId, wordbook.id, limit, mode);
+    return c.json(queue);
+  });
+
+  // GET /stats — review statistics
+  app.get("/stats", async (c) => {
+    const userId = c.get("userId");
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const stats = await services.reviews.getStats(userId, wordbook.id);
+    return c.json(stats);
+  });
+
+  // GET /leeches — words with high lapse count
+  app.get("/leeches", async (c) => {
+    const userId = c.get("userId");
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const leeches = await services.reviews.getLeeches(userId, wordbook.id, limit);
+    return c.json({ items: leeches, total: leeches.length });
+  });
+
+  // GET /timeline — recent review log entries
+  app.get("/timeline", async (c) => {
+    const userId = c.get("userId");
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const timeline = await services.reviews.getTimeline(userId, wordbook.id, limit);
+    return c.json({ items: timeline, total: timeline.length });
+  });
+
+  // GET /heatmap — daily review counts for heatmap
+  app.get("/heatmap", async (c) => {
+    const userId = c.get("userId");
+    const days = Math.min(parseInt(c.req.query("days") ?? "365", 10) || 365, 730);
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const heatmap = await services.reviews.getHeatmap(userId, wordbook.id, days);
+    return c.json({ items: heatmap });
+  });
+
   app.post("/answer", async (c) => {
     const body = await c.req.json();
     const parsed = reviewAnswerSchema.safeParse(body);

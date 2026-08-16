@@ -107,8 +107,20 @@ export interface UndoRpcResult {
 
 export interface IReviewRepository {
   findDueCards(userId: string, wordbookId: string, limit: number): Promise<
-    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string } }>
+    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
   >;
+
+  getStats?(userId: string, wordbookId: string): Promise<{
+    todayCount: number;
+    totalCount: number;
+    ratingDist: { again: number; hard: number; good: number; easy: number };
+  }>;
+
+  findLeeches?(userId: string, wordbookId: string, limit: number): Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
+
+  getTimeline?(userId: string, wordbookId: string, limit: number): Promise<Array<{ id: string; rating: string; created_at: string; word_slug: string; word_lemma: string }>>;
+
+  getHeatmap?(userId: string, wordbookId: string, days: number): Promise<Array<{ date: string; count: string }>>;
 
   /** User-scoped advisory lock + idempotency check. MUST be in a transaction. */
   checkIdempotency(userId: string, idempotencyKey: string): Promise<string | null>;
@@ -237,6 +249,7 @@ export interface INoteRepository {
     contentMd: string,
   ): Promise<{ note: NoteRow; created: boolean }>;
   findRevisions(userId: string, wordbookId: string, wordId: string): Promise<NoteRevisionRow[]>;
+  listByUser?(userId: string, limit: number, offset: number): Promise<Array<NoteRow & { word_slug: string; word_lemma: string; word_title: string }>>;
 }
 
 // ── Wordbook ────────────────────────────────────────────────────────────

@@ -1,0 +1,126 @@
+import { useCallback, useState } from "react";
+import { apiFetch } from "@/frontend/api/client";
+import { useToast } from "@/frontend/components/ui/Toast";
+
+export interface ReviewCard {
+  progressId: string;
+  word: {
+    id: string;
+    slug: string;
+    title: string;
+    lemma: string;
+    short_definition: string | null;
+    ipa: string | null;
+    pos: string | null;
+    cefr: string | null;
+  };
+  state: string;
+  dueAt: string | null;
+  lastRating: string | null;
+  reviewCount: number;
+}
+
+interface QueueResponse {
+  items: ReviewCard[];
+  session: { id: string; mode: string; cardsSeen: number };
+  stats: { total: number; remaining: number };
+}
+
+export type Rating = "again" | "hard" | "good" | "easy";
+
+export function useReview() {
+  const [queue, setQueue] = useState<ReviewCard[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState({ reviewed: 0, again: 0, hard: 0, good: 0, easy: 0 });
+  const [completed, setCompleted] = useState(false);
+  const { addToast } = useToast();
+
+  const currentCard = !completed && currentIndex < queue.length ? queue[currentIndex] : null;
+  const remaining = Math.max(0, queue.length - currentIndex);
+
+  const startReview = useCallback(async (mode: string = "review") => {
+    setLoading(true);
+    setError(null);
+    setCompleted(false);
+    setCurrentIndex(0);
+    setStats({ reviewed: 0, again: 0, hard: 0, good: 0, easy: 0 });
+    try {
+      const result = await apiFetch<QueueResponse>(`/review/queue?limit=20&mode=${mode}`);
+      if (!result.items || result.items.length === 0) {
+        setError("没有待复习的单词");
+        setQueue([]);
+        setSessionId(null);
+        return;
+      }
+      setQueue(result.items);
+      setSessionId(result.session.id);
+      addToast("info", `已加载 ${result.items.length} 张复习卡片`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载复习队列失败");
+      setQueue([]);
+      setSessionId(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [addToast]);
+
+  const answer = useCallback(async (rating: Rating) => {
+    if (!currentCard || !sessionId) return;
+    setLoading(true);
+    try {
+      await apiFetch("/review/answer", {
+        method: "POST",
+        body: JSON.stringify({
+          rating,
+          progressId: currentCard.progressId,
+          sessionId,
+        }),
+      });
+      setStats((prev) => ({
+        reviewed: prev.reviewed + 1,
+        again: prev.again + (rating === "again" ? 1 : 0),
+        hard: prev.hard + (rating === "hard" ? 1 : 0),
+        good: prev.good + (rating === "good" ? 1 : 0),
+        easy: prev.easy + (rating === "easy" ? 1 : 0),
+      }));
+      const next = currentIndex + 1;
+      if (next >= queue.length) {
+        setCompleted(true);
+        addToast("success", "复习完成！FSRS 调度已更新");
+      } else {
+        setCurrentIndex(next);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "评分失败");
+      addToast("error", "评分提交失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [currentCard, sessionId, currentIndex, queue.length, addToast]);
+
+  const skip = useCallback(() => {
+    const next = currentIndex + 1;
+    if (next >= queue.length) {
+      setCompleted(true);
+    } else {
+      setCurrentIndex(next);
+    }
+  }, [currentIndex, queue.length]);
+
+  return {
+    currentCard,
+    queue,
+    loading,
+    error,
+    stats,
+    completed,
+    currentIndex,
+    remaining,
+    startReview,
+    answer,
+    skip,
+  };
+}

@@ -70,5 +70,24 @@ export function wordRoutes(services: Services) {
     return c.json(word.toDetail());
   });
 
+  // GET /:slug/notes — fetch user's note for a word
+  app.get("/:slug/notes", async (c) => {
+    const userId = c.get("userId");
+    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const note = await services.notes.getNote(userId, word.id, wordbook.id);
+    return c.json({ content_md: note.contentMd, updated_at: note.updatedAt, version: note.version });
+  });
+
+  // PUT /:slug/notes — create or update user's note for a word
+  app.put("/:slug/notes", async (c) => {
+    const userId = c.get("userId");
+    const body = await c.req.json();
+    const contentMd = typeof body?.content_md === "string" ? body.content_md : "";
+    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
+    await services.notes.upsertNote({ userId, wordId: word.id, contentMd });
+    return c.json({ ok: true });
+  });
+
   return app;
 }

@@ -23,8 +23,20 @@ import {
 } from "./l3-response-contract";
 import {
   reviewAnswerResponseSchema,
+  reviewHeatmapResponseSchema,
+  reviewLeechesResponseSchema,
+  reviewQueueResponseSchema,
   reviewSimpleResponseSchema,
+  reviewStatsResponseSchema,
+  reviewTimelineResponseSchema,
 } from "./review-response-contract";
+import {
+  noteListResponseSchema,
+  wordNoteResponseSchema,
+  wordNoteUpsertResponseSchema,
+  wordbookDefaultResponseSchema,
+  wordbookListResponseSchema,
+} from "./note-wordbook-response-contract";
 import {
   wordBatchCreateResponseSchema,
   wordDetailResponseSchema,
@@ -160,6 +172,26 @@ const l2FieldRequestSchema = z.object({
   styleProfileId: z.string().optional(),
   userInstruction: z.string().optional(),
 }).passthrough();
+const reviewQueueQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  mode: z.enum(["review", "cram", "preview"]).optional(),
+});
+const reviewLeechesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+const reviewTimelineQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+const reviewHeatmapQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(730).optional(),
+});
+const noteListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+const wordNoteUpsertRequestSchema = z.object({
+  content_md: z.string().optional(),
+});
 const l2ConfirmRequestSchema = l2FieldRequestSchema.extend({
   content: z.unknown().optional(),
   items: z.array(z.unknown()).optional(),
@@ -210,6 +242,16 @@ export const apiOperations = [
   operation("get", "/api/words", "listWords", "owner", "none", { query: wordsQuerySchema }, 200, wordListResponseSchema),
   operation("get", "/api/words/:slug", "getWord", "owner", "none", undefined, 200, wordDetailResponseSchema),
   operation("post", "/api/words/batch", "batchCreateWords", "owner", "sessionMutation", { body: wordBatchCreateSchema }, 200, wordBatchCreateResponseSchema),
+  operation("get", "/api/words/:slug/notes", "getWordNote", "owner", "none", undefined, 200, wordNoteResponseSchema),
+  operation("put", "/api/words/:slug/notes", "upsertWordNote", "owner", "sessionMutation", { body: wordNoteUpsertRequestSchema }, 200, wordNoteUpsertResponseSchema),
+  operation("get", "/api/notes", "listNotes", "owner", "none", { query: noteListQuerySchema }, 200, noteListResponseSchema),
+  operation("get", "/api/wordbooks", "listWordbooks", "owner", "none", undefined, 200, wordbookListResponseSchema),
+  operation("get", "/api/wordbooks/default", "getOrCreateDefaultWordbook", "owner", "none", undefined, 200, wordbookDefaultResponseSchema),
+  operation("get", "/api/review/queue", "getReviewQueue", "owner", "none", { query: reviewQueueQuerySchema }, 200, reviewQueueResponseSchema),
+  operation("get", "/api/review/stats", "getReviewStats", "owner", "none", undefined, 200, reviewStatsResponseSchema),
+  operation("get", "/api/review/leeches", "listReviewLeeches", "owner", "none", { query: reviewLeechesQuerySchema }, 200, reviewLeechesResponseSchema),
+  operation("get", "/api/review/timeline", "listReviewTimeline", "owner", "none", { query: reviewTimelineQuerySchema }, 200, reviewTimelineResponseSchema),
+  operation("get", "/api/review/heatmap", "getReviewHeatmap", "owner", "none", { query: reviewHeatmapQuerySchema }, 200, reviewHeatmapResponseSchema),
   operation("post", "/api/review/answer", "submitReviewAnswer", "owner", "sessionMutation", { body: reviewAnswerSchema }, 200, reviewAnswerResponseSchema),
   operation("post", "/api/review/skip", "skipReview", "owner", "sessionMutation", { body: reviewSkipSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/suspend", "suspendReview", "owner", "sessionMutation", { body: reviewSuspendSchema }, 200, reviewSimpleResponseSchema),

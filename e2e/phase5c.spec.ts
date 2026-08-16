@@ -3,6 +3,9 @@ import { test, expect } from "./fixtures";
 const DELETE_ID = "00000000-0000-4000-8000-000000000050";
 
 async function openDeleteForm(page: import("@playwright/test").Page) {
+  // The router rebuild moved the L3 surfaces under /l3; the Manual Editor
+  // section button lives in the L3 shell navigation.
+  await page.goto("/l3");
   await page.getByRole("button", { name: "Manual Editor", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Delete active row", exact: true })).toBeVisible();
 

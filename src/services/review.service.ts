@@ -59,10 +59,81 @@ export interface ReviewServiceDeps {
   fsrsAdapter: FsrsAdapterFn;
   /** Load wordbook-level FSRS weights (returns null if not configured) */
   loadWeights: (wordbookId: string) => Promise<number[] | null>;
+  /** Find due cards for a user in a wordbook (optional: tests may omit) */
+  findDueCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
+  /** Get or create today's session (optional: tests may omit) */
+  getOrCreateTodaySession?: (userId: string, wordbookId: string, mode?: string) => Promise<{ id: string; user_id: string; wordbook_id: string; mode: string; cards_seen: number; started_at: string; ended_at: string | null }>;
+  /** Get review stats (optional) */
+  getReviewStats?: (userId: string, wordbookId: string) => Promise<{ todayCount: number; totalCount: number; ratingDist: { again: number; hard: number; good: number; easy: number } }>;
+  /** Find leeches (optional) */
+  findLeeches?: (userId: string, wordbookId: string, limit: number) => Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
+  getTimeline?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ id: string; rating: string; created_at: string; word_slug: string; word_lemma: string }>>;
+  getHeatmap?: (userId: string, wordbookId: string, days: number) => Promise<Array<{ date: string; count: string }>>;
 }
 
 export class ReviewService {
   constructor(private readonly deps: ReviewServiceDeps) {}
+
+  /**
+   * Get the review queue for a user: due cards + today's session.
+   */
+  async getQueue(userId: string, wordbookId: string, limit = 20, mode = "review") {
+    if (!this.deps.findDueCards || !this.deps.getOrCreateTodaySession) {
+      throw new Error("Review queue dependencies not configured");
+    }
+    const dueCards = await this.deps.findDueCards(userId, wordbookId, limit);
+    const session = await this.deps.getOrCreateTodaySession(userId, wordbookId, mode);
+
+    return {
+      items: dueCards.map((card) => ({
+        progressId: card.progress.id,
+        word: card.word,
+        state: card.progress.state,
+        dueAt: card.progress.due_at,
+        lastRating: card.progress.last_rating,
+        reviewCount: card.progress.review_count,
+      })),
+      session: {
+        id: session.id,
+        mode: session.mode,
+        cardsSeen: session.cards_seen,
+      },
+      stats: {
+        total: dueCards.length,
+        remaining: dueCards.length,
+      },
+    };
+  }
+
+  async getStats(userId: string, wordbookId: string) {
+    if (!this.deps.getReviewStats) throw new Error("getReviewStats not configured");
+    return this.deps.getReviewStats(userId, wordbookId);
+  }
+
+  async getLeeches(userId: string, wordbookId: string, limit = 20) {
+    if (!this.deps.findLeeches) throw new Error("findLeeches not configured");
+    const rows = await this.deps.findLeeches(userId, wordbookId, limit);
+    return rows.map((r) => {
+      const { slug, title, lemma, w_id, short_definition, ...progress } = r;
+      return {
+        progressId: progress.id,
+        word: { id: w_id, slug, title, lemma, short_definition },
+        lapseCount: progress.lapse_count,
+        state: progress.state,
+        dueAt: progress.due_at,
+      };
+    });
+  }
+
+  async getTimeline(userId: string, wordbookId: string, limit = 50) {
+    if (!this.deps.getTimeline) throw new Error("getTimeline not configured");
+    return this.deps.getTimeline(userId, wordbookId, limit);
+  }
+
+  async getHeatmap(userId: string, wordbookId: string, days = 365) {
+    if (!this.deps.getHeatmap) throw new Error("getHeatmap not configured");
+    return this.deps.getHeatmap(userId, wordbookId, days);
+  }
 
   /**
    * Submit a review answer. Runs in a single transaction.

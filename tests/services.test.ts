@@ -158,6 +158,19 @@ describe("WordService", () => {
 
     await expect(service.batchCreate([])).rejects.toThrow("insertMany not configured");
   });
+
+  it("getWordCount and getAllSlugs delegate to the repository", async () => {
+    const repo = makeMockWordRepo({
+      count: vi.fn(async () => 42),
+      findSlugs: vi.fn(async () => ["abound", "breach"]),
+    });
+    const service = new WordService(repo);
+
+    await expect(service.getWordCount()).resolves.toBe(42);
+    expect(repo.count).toHaveBeenCalledTimes(1);
+    await expect(service.getAllSlugs(2)).resolves.toEqual(["abound", "breach"]);
+    expect(repo.findSlugs).toHaveBeenCalledWith(2);
+  });
 });
 
 describe("NoteService", () => {
@@ -187,6 +200,47 @@ describe("NoteService", () => {
     await expect(service.getRevisions("u1", "w1", "wb1")).resolves.toEqual([{ id: "r1" }]);
     expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
     expect(notes.findRevisions).toHaveBeenCalledWith("u1", "wb1", "w1");
+  });
+
+  it("listNotes maps joined rows to note summaries", async () => {
+    const notes = makeMockNoteRepo({
+      listByUser: vi.fn(async () => [{
+        id: "n1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+        content_md: "note", version: 2,
+        created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-02T00:00:00Z",
+        word_slug: "abound", word_lemma: "abound", word_title: "Abound",
+      }]),
+    });
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const service = makeNoteService(notes, makeMockWordbookRepo(), txRunner);
+
+    await expect(service.listNotes("u1", 20, 10)).resolves.toEqual([{
+      id: "n1", wordSlug: "abound", wordLemma: "abound", wordTitle: "Abound",
+      contentMd: "note", version: 2, updatedAt: "2026-08-02T00:00:00Z",
+    }]);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(notes.listByUser).toHaveBeenCalledWith("u1", 20, 10);
+  });
+
+  it("listNotes fails closed when the repository lacks listByUser", async () => {
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const service = makeNoteService(makeMockNoteRepo(), makeMockWordbookRepo(), txRunner);
+
+    await expect(service.listNotes("u1")).rejects.toThrow("listByUser not implemented");
+  });
+
+  it("restoreRevision rejects an unknown revision id", async () => {
+    const notes = makeMockNoteRepo({
+      findRevisions: vi.fn(async () => [] as never),
+      upsert: vi.fn(),
+    });
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const service = makeNoteService(notes, makeMockWordbookRepo(), txRunner);
+
+    await expect(service.restoreRevision("u1", "w1", "wb1", "missing")).rejects.toMatchObject({
+      httpStatus: 404, code: "NOT_FOUND",
+    });
+    expect(notes.upsert).not.toHaveBeenCalled();
   });
 
   it("restoreRevision reads and writes inside one authenticated actor transaction", async () => {

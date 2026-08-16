@@ -57,10 +57,11 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   ) {
     // H3 fix: use prefixed columns + explicit w.id AS w_id to avoid ambiguity
     const rows = await this.query<
-      UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string }
+      UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }
     >(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
-              w.id AS w_id, w.slug, w.title, w.lemma
+              w.id AS w_id, w.slug, w.title, w.lemma,
+              w.short_definition, w.ipa, w.pos, w.cefr
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
@@ -72,10 +73,10 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     );
 
     return rows.map((r) => {
-      const { slug, title, lemma, w_id, ...progress } = r;
+      const { slug, title, lemma, w_id, short_definition, ipa, pos, cefr, ...progress } = r;
       return {
         progress: progress as unknown as UserWordProgressRow,
-        word: { id: w_id, slug, title, lemma },
+        word: { id: w_id, slug, title, lemma, short_definition, ipa, pos, cefr },
       };
     });
   }
@@ -540,5 +541,83 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       [userId, wordbookId, wordId, value],
     );
     return rows.length;
+  }
+
+  async getStats(userId: string, wordbookId: string) {
+    const rows = await this.query<{
+      today_count: string;
+      total_count: string;
+      again_count: string;
+      hard_count: string;
+      good_count: string;
+      easy_count: string;
+    }>(
+      `SELECT
+        COUNT(*) FILTER (WHERE rl.created_at >= date_trunc('day', now()))::text AS today_count,
+        COUNT(*)::text AS total_count,
+        COUNT(*) FILTER (WHERE rl.rating = 'again')::text AS again_count,
+        COUNT(*) FILTER (WHERE rl.rating = 'hard')::text AS hard_count,
+        COUNT(*) FILTER (WHERE rl.rating = 'good')::text AS good_count,
+        COUNT(*) FILTER (WHERE rl.rating = 'easy')::text AS easy_count
+       FROM review_logs rl
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2`,
+      [userId, wordbookId],
+    );
+    const r = rows[0] ?? {};
+    return {
+      todayCount: parseInt(r.today_count ?? "0", 10),
+      totalCount: parseInt(r.total_count ?? "0", 10),
+      ratingDist: {
+        again: parseInt(r.again_count ?? "0", 10),
+        hard: parseInt(r.hard_count ?? "0", 10),
+        good: parseInt(r.good_count ?? "0", 10),
+        easy: parseInt(r.easy_count ?? "0", 10),
+      },
+    };
+  }
+
+  async findLeeches(userId: string, wordbookId: string, limit: number) {
+    return this.query<
+      UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }
+    >(
+      `SELECT ${PROGRESS_COLUMNS_PREFIXED},
+              w.id AS w_id, w.slug, w.title, w.lemma, w.short_definition
+       FROM user_word_progress uwp
+       JOIN words w ON w.id = uwp.word_id
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         AND uwp.lapse_count >= 2
+       ORDER BY uwp.lapse_count DESC, uwp.due_at ASC NULLS FIRST
+       LIMIT $3`,
+      [userId, wordbookId, limit],
+    );
+  }
+
+  async getTimeline(userId: string, wordbookId: string, limit: number) {
+    return this.query<{
+      id: string; rating: string; created_at: string;
+      word_slug: string; word_lemma: string;
+    }>(
+      `SELECT rl.id, rl.rating, rl.created_at,
+              w.slug AS word_slug, w.lemma AS word_lemma
+       FROM review_logs rl
+       JOIN words w ON w.id = rl.word_id
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2
+       ORDER BY rl.created_at DESC
+       LIMIT $3`,
+      [userId, wordbookId, limit],
+    );
+  }
+
+  async getHeatmap(userId: string, wordbookId: string, days: number) {
+    return this.query<{ date: string; count: string }>(
+      `SELECT date_trunc('day', rl.created_at)::date::text AS date,
+              COUNT(*)::text AS count
+       FROM review_logs rl
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2
+         AND rl.created_at >= now() - ($3 || ' days')::interval
+       GROUP BY date_trunc('day', rl.created_at)
+       ORDER BY date`,
+      [userId, wordbookId, days],
+    );
   }
 }

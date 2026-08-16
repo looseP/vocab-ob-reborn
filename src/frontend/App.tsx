@@ -1,6 +1,19 @@
 import { useMemo, useState } from "react";
-import { L3Shell, type L3ShellSection } from "./components/L3Shell";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { BrowserSessionGate } from "./components/BrowserSessionGate";
+import { SiteFrame } from "./components/layout/SiteFrame";
+import { ToastProvider } from "./components/ui/Toast";
+import { ErrorBoundary } from "./components/ui/ErrorBoundary";
+import { HomePage } from "./pages/HomePage";
+import { DashboardPage } from "./pages/DashboardPage";
+import { ReviewPage } from "./pages/ReviewPage";
+import { WordsPage } from "./pages/WordsPage";
+import { WordDetailPage } from "./pages/WordDetailPage";
+import { NotesPage } from "./pages/NotesPage";
+import { SettingsPage } from "./pages/SettingsPage";
+import { ImportPage } from "./pages/ImportPage";
+import { OmniPalette } from "./components/search/OmniPalette";
+import { L3Shell, type L3ShellSection } from "./components/L3Shell";
 import { L3ContextPage } from "./pages/L3ContextPage";
 import { L3GraphPage } from "./pages/L3GraphPage";
 import { L3HomePage } from "./pages/L3HomePage";
@@ -25,7 +38,12 @@ import type {
   L3WordHandoff,
 } from "./viewModels/l3NavigationViewModel";
 
-export function App() {
+/**
+ * The L3 sub-application under /l3. Section switching, cross-surface
+ * navigation handoffs, and the active-read stale cache wiring are held in
+ * local state here (the router only owns mounting the sub-app).
+ */
+function L3Page() {
   const [section, setSection] = useState<L3ShellSection>("home");
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [graphHandoff, setGraphHandoff] = useState<L3GraphHandoff | null>(null);
@@ -96,10 +114,35 @@ export function App() {
   }[section];
 
   return (
-    <BrowserSessionGate>
-      <L3Shell activeSection={section} onNavigate={setSection}>
-        {page}
-      </L3Shell>
-    </BrowserSessionGate>
+    <L3Shell activeSection={section} onNavigate={setSection}>
+      {page}
+    </L3Shell>
+  );
+}
+
+export function App() {
+  return (
+    <ErrorBoundary>
+      <ToastProvider>
+        <BrowserSessionGate>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<SiteFrame><HomePage /></SiteFrame>} />
+              <Route path="/dashboard" element={<SiteFrame><DashboardPage /></SiteFrame>} />
+              <Route path="/review" element={<SiteFrame><ReviewPage /></SiteFrame>} />
+              <Route path="/review/*" element={<SiteFrame><ReviewPage /></SiteFrame>} />
+              <Route path="/words" element={<SiteFrame><WordsPage /></SiteFrame>} />
+              <Route path="/words/:slug" element={<SiteFrame><WordDetailPage /></SiteFrame>} />
+              <Route path="/notes" element={<SiteFrame><NotesPage /></SiteFrame>} />
+              <Route path="/settings" element={<SiteFrame><SettingsPage /></SiteFrame>} />
+              <Route path="/import" element={<SiteFrame><ImportPage /></SiteFrame>} />
+              <Route path="/l3" element={<SiteFrame><L3Page /></SiteFrame>} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+            <OmniPalette />
+          </BrowserRouter>
+        </BrowserSessionGate>
+      </ToastProvider>
+    </ErrorBoundary>
   );
 }
