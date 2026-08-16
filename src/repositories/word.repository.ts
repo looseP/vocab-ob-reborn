@@ -9,7 +9,7 @@
  * so all PG features (tsvector, ANY(), ILIKE) are first-class.
  */
 
-import { createHash } from "crypto";
+import { createHash } from "node:crypto";
 import type {
   GetPublicWordsOptions,
   PaginatedResult,
@@ -135,19 +135,38 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     cefr: string | null; ipa: string | null; short_definition: string | null;
   }>): Promise<number> {
     if (words.length === 0) return 0;
+    // `words` requires `content_hash` (64-hex, unique), `source_path`,
+    // `definition_md`, and `body_md` as NOT NULL with no defaults. The batch
+    // import payload only carries a minimal field set, so we derive stable
+    // values here: a content hash from the provided fields (satisfies the
+    // `^[0-9a-f]{64}$` CHECK and the unique constraint), a deterministic
+    // source path, and markdown bodies from the short definition.
+    const perRow = 11;
     const values: string[] = [];
     const params: unknown[] = [];
     words.forEach((w, i) => {
-      const base = i * 11;
-      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`);
-      params.push(w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, w.short_definition, createHash("sha256").update(w.slug).digest("hex"), "", "", "");
+      const base = i * perRow;
+      const short = w.short_definition ?? "";
+      const contentHash = createHash("sha256")
+        .update([w.slug, w.title, w.lemma, w.pos ?? "", w.cefr ?? "", w.ipa ?? "", short].join("\u0000"))
+        .digest("hex");
+      values.push(
+        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`,
+      );
+      params.push(
+        w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, short,
+        contentHash, `batch-import/${w.slug}.md`, short, short,
+      );
     });
-    const result = await this.query<{ id: string }>(
-      `INSERT INTO words (slug, title, lemma, pos, cefr, ipa, short_definition, content_hash, source_path, definition_md, body_md)
+    const result = await this.queryViaBatchPool<{ id: string }>(
+      `INSERT INTO words
+         (slug, title, lemma, pos, cefr, ipa, short_definition, content_hash, source_path, definition_md, body_md)
        VALUES ${values.join(", ")}
        ON CONFLICT (slug) DO UPDATE SET
          title = EXCLUDED.title, lemma = EXCLUDED.lemma, pos = EXCLUDED.pos,
          cefr = EXCLUDED.cefr, ipa = EXCLUDED.ipa, short_definition = EXCLUDED.short_definition,
+         content_hash = EXCLUDED.content_hash, source_path = EXCLUDED.source_path,
+         definition_md = EXCLUDED.definition_md, body_md = EXCLUDED.body_md,
          updated_at = now()
        RETURNING id`,
       params,
