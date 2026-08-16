@@ -37,3 +37,7 @@ export const wordListResponseSchema: z.ZodType<PaginatedResult<WordSummary>> = z
   offset: z.number().int().nonnegative(),
   hasMore: z.boolean(),
 }).strict();
+
+export const wordBatchCreateResponseSchema = z.object({
+  inserted: z.number().int().nonnegative(),
+}).strict();
