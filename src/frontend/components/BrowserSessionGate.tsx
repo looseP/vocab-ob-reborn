@@ -133,7 +133,7 @@ export function BrowserSessionGate({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-panel-strong)] px-4 py-2 text-xs text-[var(--color-ink-soft)] shadow-[var(--shadow-panel)] backdrop-blur-xl">
+      <div className="session-toolbar fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-panel-strong)] px-4 py-2 text-xs text-[var(--color-ink-soft)] shadow-[var(--shadow-panel)] backdrop-blur-xl">
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-[var(--color-accent)]" />
           {session.role}
