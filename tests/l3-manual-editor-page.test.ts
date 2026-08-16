@@ -6,7 +6,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent } from "@testing-library/dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-// @ts-expect-error -- importing the component under test from a tsx module in a ts test
 import { L3ManualEditorPage } from "@/frontend/pages/L3ManualEditorPage";
 import { normalizeL3Error, type L3FrontendClient, type L3ManualDeleteResponse } from "@/l3/frontend/contract";
 
