@@ -139,12 +139,15 @@ describe("Phase 4B L3 frontend shell", () => {
   });
 
   it("keeps implemented L3 frontend files away from local network calls", () => {
-    for (const file of l3FrontendBoundaryFiles().filter((candidate) => !candidate.endsWith("src/frontend/api/l3Client.ts"))) {
+    for (const file of l3FrontendBoundaryFiles().filter((candidate) => !candidate.replaceAll("\\", "/").includes("src/frontend/api/"))) {
       const source = readFileSync(file, "utf8");
       expect(source).not.toMatch(/\bfetch\s*\(/);
       expect(source).not.toMatch(/XMLHttpRequest/);
       expect(source).not.toContain("/api/l3/");
-      if (file.includes("/pages/") && !file.endsWith("src/frontend/pages/L3HomePage.tsx")) {
+      // L3 surfaces keep using the typed L3 client. Non-L3 pages reach the API
+      // only through the generic apiFetch module (src/frontend/api/client),
+      // which the global no-raw-fetch rules above keep exclusive.
+      if (file.includes("/pages/L3") && !file.endsWith("src/frontend/pages/L3HomePage.tsx")) {
         expect(source).toMatch(/L3FrontendClient|client\./);
       }
     }
@@ -310,12 +313,16 @@ describe("Phase 4B L3 frontend shell", () => {
     expect(viewModelSource).toContain('export type ManualDeleteStatus = "editing" | "submitting" | "deleted" | "failed"');
   });
 
-  it("wires Manual Editor stale updates through the generic manual command helper", () => {
-    const source = readFileSync(projectPath("src/frontend/App.tsx"), "utf8");
+  it("routes Manual Editor command results through the shared contract helpers", () => {
+    // The router rebuild replaced the single-page shell: pages now remount per
+    // route and refetch, so the app-level active-read stale wiring is gone.
+    // Manual command success/failure semantics must still flow through the
+    // shared contract helpers instead of bespoke status mutation.
+    const source = readFileSync(projectPath("src/frontend/pages/L3ManualEditorPage.tsx"), "utf8");
 
-    expect(source).toContain("markActiveReadStaleAfterManualCommand");
-    expect(source).toContain("onManualChanged");
-    expect(source).not.toContain("onManualCreated");
+    expect(source).toContain("applyManualDeleteSuccess");
+    expect(source).toContain("manualCreateSuccessActions");
+    expect(source).not.toContain('setDeleteStatus("created")');
   });
 
   it("forces Manual Editor audit markers even when advanced JSON tries to override them", () => {

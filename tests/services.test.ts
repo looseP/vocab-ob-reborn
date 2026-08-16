@@ -139,6 +139,25 @@ describe("WordService", () => {
     expect(result.word.isPublished).toBe(true);
     expect(result.word.freqLabel).toBe("基础词");
   });
+
+  it("batchCreate delegates to insertMany and returns the inserted count", async () => {
+    const repo = makeMockWordRepo({
+      insertMany: vi.fn(async () => 3),
+    });
+    const service = new WordService(repo);
+    const batch = [
+      { slug: "abound", title: "Abound", lemma: "abound", pos: "verb", cefr: "C1", ipa: null, short_definition: "def" },
+    ];
+
+    await expect(service.batchCreate(batch)).resolves.toEqual({ inserted: 3 });
+    expect(repo.insertMany).toHaveBeenCalledWith(batch);
+  });
+
+  it("batchCreate fails closed when the repository has no insertMany", async () => {
+    const service = new WordService(makeMockWordRepo());
+
+    await expect(service.batchCreate([])).rejects.toThrow("insertMany not configured");
+  });
 });
 
 describe("NoteService", () => {

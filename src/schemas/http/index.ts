@@ -32,6 +32,23 @@ export const wordsQuerySchema = z.object({
   wordbookId: uuidSchema.optional(),
 });
 
+// Mirrors the manual sanitization in routes/words.ts POST /batch: every field
+// is optional (slug falls back to lemma, then title) and rows without a
+// non-empty sanitized slug are dropped server-side.
+export const wordBatchCreateItemSchema = z.object({
+  slug: z.string().optional(),
+  title: z.string().optional(),
+  lemma: z.string().optional(),
+  pos: z.string().optional(),
+  cefr: z.string().optional(),
+  ipa: z.string().optional(),
+  short_definition: z.string().optional(),
+});
+
+export const wordBatchCreateSchema = z.object({
+  words: z.array(wordBatchCreateItemSchema).min(1).max(500),
+});
+
 // ── Review ──────────────────────────────────────────────────────────────
 export const reviewAnswerSchema = z.object({
   progressId: uuidSchema,
