@@ -106,10 +106,10 @@ export function acceptanceEnvironment(port: number, passwords: readonly string[]
   if (!Number.isInteger(port) || port < 49152 || port > 65535) {
     throw new Error("Acceptance port must be a dynamic high port");
   }
-  if (passwords.length !== 5 || new Set(passwords).size !== 5 || passwords.some((value) => value.length < 16)) {
-    throw new Error("Acceptance passwords must be five distinct values of at least 16 characters");
+  if (passwords.length !== 6 || new Set(passwords).size !== 6 || passwords.some((value) => value.length < 16)) {
+    throw new Error("Acceptance passwords must be six distinct values of at least 16 characters");
   }
-  const [admin, app, worker, backup, migration] = passwords;
+  const [admin, app, worker, backup, migration, batchImport] = passwords;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PG_TOOLS_CONTAINER: acceptancePostgresContainerName(project),
@@ -120,6 +120,7 @@ export function acceptanceEnvironment(port: number, passwords: readonly string[]
     WORKER_DATABASE_URL: roleUrl("vocab_worker", worker!, port),
     BACKUP_DATABASE_URL: roleUrl("vocab_backup", backup!, port),
     MIGRATION_DATABASE_URL: roleUrl("vocab_migration", migration!, port),
+    BATCH_IMPORT_DATABASE_URL: roleUrl("vocab_batch_import", batchImport!, port),
     DB_SSLMODE: "disable",
     DB_POOL_MAX: "1",
   };
@@ -203,7 +204,7 @@ export async function runDatabaseRolesAcceptance(dependencies: AcceptanceDepende
   const offSignal = dependencies.offSignal ?? ((signal, listener) => process.off(signal, listener));
   const project = acceptanceProjectName(uuid());
   const port = await allocatePort();
-  const env = acceptanceEnvironment(port, Array.from({ length: 5 }, () => password()), project);
+  const env = acceptanceEnvironment(port, Array.from({ length: 6 }, () => password()), project);
   let interrupted: Error | undefined;
   const abortController = new AbortController();
   const interrupt = (signal: NodeJS.Signals) => (): void => {

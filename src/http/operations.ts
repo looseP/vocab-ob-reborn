@@ -26,6 +26,7 @@ import {
   reviewSimpleResponseSchema,
 } from "./review-response-contract";
 import {
+  wordBatchCreateResponseSchema,
   wordDetailResponseSchema,
   wordListResponseSchema,
 } from "./words-response-contract";
@@ -56,6 +57,7 @@ import {
   reviewSkipSchema,
   reviewSuspendSchema,
   reviewUndoSchema,
+  wordBatchCreateSchema,
   wordsQuerySchema,
 } from "../schemas/http";
 
@@ -207,6 +209,7 @@ export const apiOperations = [
   operation("get", "/api/operations/metrics", "getOperationMetrics", "owner", "none", undefined, 200, operationMetricsResponseSchema),
   operation("get", "/api/words", "listWords", "owner", "none", { query: wordsQuerySchema }, 200, wordListResponseSchema),
   operation("get", "/api/words/:slug", "getWord", "owner", "none", undefined, 200, wordDetailResponseSchema),
+  operation("post", "/api/words/batch", "batchCreateWords", "owner", "sessionMutation", { body: wordBatchCreateSchema }, 200, wordBatchCreateResponseSchema),
   operation("post", "/api/review/answer", "submitReviewAnswer", "owner", "sessionMutation", { body: reviewAnswerSchema }, 200, reviewAnswerResponseSchema),
   operation("post", "/api/review/skip", "skipReview", "owner", "sessionMutation", { body: reviewSkipSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/suspend", "suspendReview", "owner", "sessionMutation", { body: reviewSuspendSchema }, 200, reviewSimpleResponseSchema),

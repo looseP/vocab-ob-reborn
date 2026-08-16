@@ -20,6 +20,7 @@ const PASSWORDS = [
   "worker-password-003",
   "backup-password-004",
   "migration-password-5",
+  "batch-import-password-06",
 ] as const;
 
 describe("database roles acceptance orchestration", () => {
@@ -69,7 +70,7 @@ describe("database roles acceptance orchestration", () => {
     expect(probePort).not.toHaveBeenCalled();
   });
 
-  it("routes five exact identities through one dynamic high loopback port with distinct passwords", () => {
+  it("routes six exact identities through one dynamic high loopback port with distinct passwords", () => {
     const env = acceptanceEnvironment(61234, PASSWORDS, PROJECT);
     const expected = {
       DATABASE_ADMIN_URL: "vocab_roles_admin",
@@ -77,6 +78,7 @@ describe("database roles acceptance orchestration", () => {
       WORKER_DATABASE_URL: "vocab_worker",
       BACKUP_DATABASE_URL: "vocab_backup",
       MIGRATION_DATABASE_URL: "vocab_migration",
+      BATCH_IMPORT_DATABASE_URL: "vocab_batch_import",
     } as const;
     expect(env.DATABASE_ROLES_ACCEPTANCE_PORT).toBe("61234");
     for (const [name, username] of Object.entries(expected)) {
@@ -86,10 +88,10 @@ describe("database roles acceptance orchestration", () => {
       expect(url.pathname).toBe("/vocab_roles_acceptance");
       expect(url.username).toBe(username);
     }
-    expect(new Set(Object.keys(expected).map((name) => new URL(env[name]!).password)).size).toBe(5);
+    expect(new Set(Object.keys(expected).map((name) => new URL(env[name]!).password)).size).toBe(6);
     expect(env.PG_TOOLS_CONTAINER).toBe(`${PROJECT}-postgres-1`);
     expect(() => acceptanceEnvironment(49151, PASSWORDS, PROJECT)).toThrow(/dynamic high port/);
-    expect(() => acceptanceEnvironment(61234, [...PASSWORDS.slice(0, 4), PASSWORDS[0]!], PROJECT)).toThrow(/five distinct/);
+    expect(() => acceptanceEnvironment(61234, [...PASSWORDS.slice(0, 5), PASSWORDS[0]!], PROJECT)).toThrow(/six distinct/);
     expect(() => acceptanceEnvironment(61234, PASSWORDS, "vocab-observatory-db-roles-readable")).toThrow(/unguarded Compose project/);
   });
 
@@ -157,7 +159,8 @@ describe("database roles acceptance orchestration", () => {
         .mockReturnValueOnce(PASSWORDS[1])
         .mockReturnValueOnce(PASSWORDS[2])
         .mockReturnValueOnce(PASSWORDS[3])
-        .mockReturnValueOnce(PASSWORDS[4]),
+        .mockReturnValueOnce(PASSWORDS[4])
+        .mockReturnValueOnce(PASSWORDS[5]),
       allocatePort: async () => 61234,
       run: async (invocation) => { calls.push(invocation); },
       onSignal: () => undefined,

@@ -5,6 +5,7 @@ import type { WordRow } from "@/domain";
 import { NotFoundError } from "@/errors";
 import type { Services } from "@/services";
 import {
+  wordBatchCreateResponseSchema,
   wordDetailResponseSchema,
   wordListResponseSchema,
 } from "@/http/words-response-contract";
@@ -51,6 +52,7 @@ function makeMockServices(): Services {
       getWordBySlug: vi.fn(),
       getWordCount: vi.fn().mockResolvedValue(1),
       getAllSlugs: vi.fn().mockResolvedValue(["abound"]),
+      batchCreate: vi.fn().mockResolvedValue({ inserted: 0 }),
     },
     reviews: {
       submitAnswer: vi.fn(),
@@ -166,5 +168,109 @@ describe("GET /api/words/:slug", () => {
     const app = createApp(services);
     const res = await app.request("/api/words/nonexistent", { headers: AUTH_HEADERS });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/words/batch", () => {
+  it("sanitizes rows, delegates to batchCreate, and matches the response contract", async () => {
+    const services = makeMockServices();
+    services.words.batchCreate = vi.fn().mockResolvedValue({ inserted: 2 });
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/batch", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        words: [
+          { lemma: "Blue Sky!", short_definition: "a wide sky" },
+          { slug: "existing", title: "Existing", lemma: "existing", pos: "noun" },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = wordBatchCreateResponseSchema.parse(await res.json());
+    expect(body).toEqual({ inserted: 2 });
+
+    // slug derives from lemma, lowercased with non [a-z0-9-] collapsed to "-";
+    // title/lemma fall back to each other; missing optionals become null
+    expect(services.words.batchCreate).toHaveBeenCalledWith([
+      { slug: "blue-sky-", title: "Blue Sky!", lemma: "Blue Sky!", pos: null, cefr: null, ipa: null, short_definition: "a wide sky" },
+      { slug: "existing", title: "Existing", lemma: "existing", pos: "noun", cefr: null, ipa: null, short_definition: null },
+    ]);
+  });
+
+  it("rejects a missing or empty words array with 400", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+
+    const missing = await app.request("/api/words/batch", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(missing.status).toBe(400);
+
+    const empty = await app.request("/api/words/batch", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({ words: [] }),
+    });
+    expect(empty.status).toBe(400);
+    expect(services.words.batchCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects batches larger than 500 words with 400", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const words = Array.from({ length: 501 }, (_, i) => ({ lemma: `w-${i}` }));
+
+    const res = await app.request("/api/words/batch", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({ words }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(services.words.batchCreate).not.toHaveBeenCalled();
+  });
+
+  it("drops rows whose sanitized slug is empty", async () => {
+    const services = makeMockServices();
+    services.words.batchCreate = vi.fn().mockResolvedValue({ inserted: 2 });
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/batch", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        words: [
+          { lemma: "" },
+          { lemma: "!!!" },
+          { lemma: "valid" },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ inserted: 2 });
+    // empty lemma sanitizes to "" and is dropped; "!!!" sanitizes to "---"
+    // (non-empty, kept as-is); only the empty row is filtered out
+    expect(services.words.batchCreate).toHaveBeenCalledWith([
+      { slug: "---", title: "!!!", lemma: "!!!", pos: null, cefr: null, ipa: null, short_definition: null },
+      { slug: "valid", title: "valid", lemma: "valid", pos: null, cefr: null, ipa: null, short_definition: null },
+    ]);
+  });
+
+  it("rejects missing credentials with 401", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/words/batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ words: [{ lemma: "valid" }] }),
+    });
+    expect(res.status).toBe(401);
+    expect(services.words.batchCreate).not.toHaveBeenCalled();
   });
 });

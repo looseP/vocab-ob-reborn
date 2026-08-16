@@ -67,4 +67,13 @@ export class WordService {
   async getAllSlugs(limit?: number): Promise<string[]> {
     return this.words.findSlugs(limit);
   }
+
+  async batchCreate(words: Array<{
+    slug: string; title: string; lemma: string; pos: string | null;
+    cefr: string | null; ipa: string | null; short_definition: string | null;
+  }>): Promise<{ inserted: number }> {
+    if (!this.words.insertMany) throw new Error("insertMany not configured");
+    const count = await this.words.insertMany(words);
+    return { inserted: count };
+  }
 }

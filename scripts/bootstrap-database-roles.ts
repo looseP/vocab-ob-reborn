@@ -6,6 +6,7 @@ const ROLE_NAMES = {
   worker: "vocab_worker",
   backup: "vocab_backup",
   migration: "vocab_migration",
+  batch_import: "vocab_batch_import",
 } as const;
 
 type RoleKind = keyof typeof ROLE_NAMES;
@@ -231,10 +232,17 @@ async function transferApplicationOwnership(client: Client): Promise<void> {
   await client.query("ALTER SCHEMA public OWNER TO vocab_migration");
 }
 
-async function convergePrivileges(client: Client, databaseName: string): Promise<void> {
+async function convergePrivileges(client: Client, databaseName: string, batchImportRole: string | null): Promise<void> {
+  // vocab_batch_import is optional: only converged when BATCH_IMPORT_DATABASE_URL
+  // was supplied (role created earlier in this same transaction by roleSql).
+  // When absent, it is never referenced, so environments without batch import
+  // keep working and the converge script stays fail-closed.
+  const batchDb = batchImportRole ? `, ${batchImportRole}` : "";
+  const batchSchemaRevoke = batchImportRole ? `, ${batchImportRole}` : "";
+  const batchSchemaUsage = batchImportRole ? `\n    GRANT USAGE ON SCHEMA public TO ${batchImportRole};` : "";
   const databasePrivileges = await client.query<{ sql: string }>(
     `SELECT format(
-       'REVOKE ALL ON DATABASE %I FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration; GRANT CONNECT ON DATABASE %I TO vocab_app, vocab_worker, vocab_backup, vocab_migration; GRANT CREATE, TEMPORARY ON DATABASE %I TO vocab_migration',
+       'REVOKE ALL ON DATABASE %I FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration${batchDb}; GRANT CONNECT ON DATABASE %I TO vocab_app, vocab_worker, vocab_backup, vocab_migration${batchDb}; GRANT CREATE, TEMPORARY ON DATABASE %I TO vocab_migration',
        $1::text,
        $1::text,
        $1::text
@@ -244,12 +252,12 @@ async function convergePrivileges(client: Client, databaseName: string): Promise
   await client.query(databasePrivileges.rows[0]!.sql);
 
   await client.query(`
-    REVOKE ALL ON SCHEMA public FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration;
-    REVOKE ALL ON SCHEMA auth FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration;
-    REVOKE ALL ON SCHEMA vocab_migrations FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration;
+    REVOKE ALL ON SCHEMA public FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration${batchSchemaRevoke};
+    REVOKE ALL ON SCHEMA auth FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration${batchSchemaRevoke};
+    REVOKE ALL ON SCHEMA vocab_migrations FROM PUBLIC, vocab_app, vocab_worker, vocab_backup, vocab_migration${batchSchemaRevoke};
     GRANT USAGE ON SCHEMA public, auth TO vocab_app, vocab_worker;
     GRANT USAGE ON SCHEMA public, auth, vocab_migrations TO vocab_backup;
-    GRANT USAGE, CREATE ON SCHEMA public, auth, vocab_migrations TO vocab_migration;
+    GRANT USAGE, CREATE ON SCHEMA public, auth, vocab_migrations TO vocab_migration;${batchSchemaUsage}
 
     REVOKE ALL ON ALL TABLES IN SCHEMA public, auth, vocab_migrations
       FROM PUBLIC, vocab_app, vocab_worker, vocab_backup;
@@ -262,6 +270,25 @@ async function convergePrivileges(client: Client, databaseName: string): Promise
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.login_rate_limits TO vocab_app;
     GRANT SELECT, UPDATE ON TABLE public.profiles TO vocab_app;
     GRANT SELECT ON TABLE public.words TO vocab_app;
+
+    -- vocab_batch_import: dedicated minimal-privilege role for bulk word import.
+    -- Writes words (INSERT/UPDATE) via a dedicated connection pool, decoupled
+    -- from the read-only vocab_app runtime role. Guard everything on role
+    -- existence so convergence is idempotent and fail-closed.
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vocab_batch_import') THEN
+        GRANT SELECT, INSERT, UPDATE ON TABLE public.words TO vocab_batch_import;
+        -- DROP POLICY IF EXISTS + CREATE POLICY is the portable idempotent form.
+        -- CREATE POLICY IF NOT EXISTS is only supported on PostgreSQL 17+ and is
+        -- rejected by the pinned postgres:17-alpine image used in CI/acceptance.
+        DROP POLICY IF EXISTS vocab_batch_import_insert ON public.words;
+        CREATE POLICY vocab_batch_import_insert ON public.words
+          FOR INSERT TO vocab_batch_import WITH CHECK (true);
+        DROP POLICY IF EXISTS vocab_batch_import_update ON public.words;
+        CREATE POLICY vocab_batch_import_update ON public.words
+          FOR UPDATE TO vocab_batch_import USING (true) WITH CHECK (true);
+      END IF;
+    END $$;
     GRANT SELECT, INSERT ON TABLE public.word_l2_content TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.user_word_progress TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.user_word_l2_progress TO vocab_app;
@@ -357,6 +384,11 @@ async function main(): Promise<void> {
     roleUrl("backup", "BACKUP_DATABASE_URL", expectedDatabase),
     roleUrl("migration", "MIGRATION_DATABASE_URL", expectedDatabase),
   ];
+  // Optional dedicated role for bulk word import. Only converged when the
+  // caller supplies BATCH_IMPORT_DATABASE_URL (keeps CI/other deploys untouched).
+  if (process.env.BATCH_IMPORT_DATABASE_URL) {
+    roles.push(roleUrl("batch_import", "BATCH_IMPORT_DATABASE_URL", expectedDatabase));
+  }
   const adminUsername = decodeURIComponent(adminUrl.username);
   if (!adminUsername || Object.values(ROLE_NAMES).includes(adminUsername as (typeof ROLE_NAMES)[RoleKind])) {
     throw new Error("DATABASE_ADMIN_URL must use a dedicated administration identity");
@@ -389,7 +421,7 @@ async function main(): Promise<void> {
     // executes ALTER TABLE / ALTER ROUTINE statements in later migrations.
     await transferApplicationOwnership(client);
     if (phase === "converge") {
-      await convergePrivileges(client, databaseName);
+      await convergePrivileges(client, databaseName, process.env.BATCH_IMPORT_DATABASE_URL ? ROLE_NAMES.batch_import : null);
       await transferDatabaseOwnership(client, databaseName);
       await revokeAdminMigrationMembership(client);
       await assertZeroManagedRoleMemberships(client);
