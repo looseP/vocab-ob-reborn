@@ -466,3 +466,112 @@ describe("ReviewService.undo", () => {
     )).rejects.toBeInstanceOf(BusinessRuleError);
   });
 });
+
+// ── Frontend rebuild: queue / stats / leeches / timeline / heatmap ──────
+describe("ReviewService — rebuild read methods", () => {
+  function makeProgressRow(overrides: Partial<UserWordProgressRow> = {}): UserWordProgressRow {
+    return {
+      id: "p1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+      state: "review", stability: 1.5, difficulty: 0.3, retrievability: 0.9,
+      desired_retention: 0.9, due_at: "2026-01-01T00:00:00Z", last_reviewed_at: null,
+      last_rating: "good", review_count: 3, lapse_count: 4, again_count: 1,
+      hard_count: 0, good_count: 2, easy_count: 0, interval_days: 7,
+      scheduler_payload: {} as Json,
+      content_hash_snapshot: "old-hash",
+      l1_content_hash_snapshot: null,
+      recent_ratings: [],
+      l1_weak_signal: false,
+      skip_count: 0,
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-02T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  it("getQueue returns cards with session and stats, forwarding the mode", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findDueCards = vi.fn(async () => [{
+      progress: makeProgressRow(),
+      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1" },
+    }]);
+    const getOrCreateTodaySession = vi.fn(async () => ({
+      id: "s1", user_id: "u1", wordbook_id: "wb1", mode: "cram",
+      cards_seen: 2, started_at: "2026-08-16T00:00:00Z", ended_at: null,
+    }));
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null, findDueCards, getOrCreateTodaySession });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "cram");
+
+    expect(queue.items).toEqual([{
+      progressId: "p1",
+      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1" },
+      state: "review",
+      dueAt: "2026-01-01T00:00:00Z",
+      lastRating: "good",
+      reviewCount: 3,
+    }]);
+    expect(queue.session).toEqual({ id: "s1", mode: "cram", cardsSeen: 2 });
+    expect(queue.stats).toEqual({ total: 1, remaining: 1 });
+    expect(getOrCreateTodaySession).toHaveBeenCalledWith("u1", "wb1", "cram");
+  });
+
+  it("getQueue fails closed when queue dependencies are not configured", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    await expect(service.getQueue("u1", "wb1")).rejects.toThrow("Review queue dependencies not configured");
+  });
+
+  it("getStats delegates to the stats dependency and fails closed without it", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const stats = { todayCount: 3, totalCount: 30, ratingDist: { again: 1, hard: 2, good: 5, easy: 2 } };
+    const getReviewStats = vi.fn(async () => stats);
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null, getReviewStats });
+
+    await expect(service.getStats("u1", "wb1")).resolves.toEqual(stats);
+    expect(getReviewStats).toHaveBeenCalledWith("u1", "wb1");
+
+    const bare = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    await expect(bare.getStats("u1", "wb1")).rejects.toThrow("getReviewStats not configured");
+  });
+
+  it("getLeeches maps joined rows to card summaries and fails closed without the dependency", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findLeeches = vi.fn(async () => [{
+      ...makeProgressRow({ id: "p2", due_at: null }),
+      slug: "abound", title: "Abound", lemma: "abound", w_id: "w-9", short_definition: "def",
+    }]);
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null, findLeeches });
+
+    const leeches = await service.getLeeches("u1", "wb1", 5);
+
+    expect(leeches).toEqual([{
+      progressId: "p2",
+      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def" },
+      lapseCount: 4,
+      state: "review",
+      dueAt: null,
+    }]);
+    expect(findLeeches).toHaveBeenCalledWith("u1", "wb1", 5);
+
+    const bare = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    await expect(bare.getLeeches("u1", "wb1")).rejects.toThrow("findLeeches not configured");
+  });
+
+  it("getTimeline and getHeatmap pass through their dependencies and fail closed without them", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const timelineRows = [{ id: "rl1", rating: "good", created_at: "2026-08-01T00:00:00Z", word_slug: "abound", word_lemma: "abound" }];
+    const heatmapRows = [{ date: "2026-08-01", count: "7" }];
+    const getTimeline = vi.fn(async () => timelineRows);
+    const getHeatmap = vi.fn(async () => heatmapRows);
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null, getTimeline, getHeatmap });
+
+    await expect(service.getTimeline("u1", "wb1", 50)).resolves.toEqual(timelineRows);
+    expect(getTimeline).toHaveBeenCalledWith("u1", "wb1", 50);
+    await expect(service.getHeatmap("u1", "wb1", 365)).resolves.toEqual(heatmapRows);
+    expect(getHeatmap).toHaveBeenCalledWith("u1", "wb1", 365);
+
+    const bare = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    await expect(bare.getTimeline("u1", "wb1")).rejects.toThrow();
+    await expect(bare.getHeatmap("u1", "wb1")).rejects.toThrow();
+  });
+});
