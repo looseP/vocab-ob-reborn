@@ -3,6 +3,7 @@ import { Plus, Check } from "lucide-react";
 import { Button } from "@/frontend/components/ui/Button";
 import { useToast } from "@/frontend/components/ui/Toast";
 import { apiFetch } from "@/frontend/api/client";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
 
 interface AddToReviewButtonProps {
   wordId: string;
@@ -17,13 +18,19 @@ export function AddToReviewButton({ wordId, slug }: AddToReviewButtonProps) {
   const addToReview = async () => {
     setLoading(true);
     try {
-      // 后端 POST /api/review/answer 需要 progressId + sessionId 体系
-      // 暂用前端本地标记，后续新增后端 API 后改为持久化
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await apiFetch<{ ok: true; progressId: string }>("/api/review/cards", {
+        method: "POST",
+        body: JSON.stringify({ wordId }),
+      });
       setAdded(true);
       addToast("success", `${slug} 已添加到复习队列`);
-    } catch {
-      addToast("error", "添加失败，请重试");
+    } catch (error) {
+      if (error instanceof BrowserApiError && error.status === 409) {
+        setAdded(true);
+        addToast("success", `${slug} 已在复习队列`);
+      } else {
+        addToast("error", "添加失败，请重试");
+      }
     } finally {
       setLoading(false);
     }

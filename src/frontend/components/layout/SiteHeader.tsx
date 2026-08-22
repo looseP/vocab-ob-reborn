@@ -1,7 +1,9 @@
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, LayoutGrid, Repeat, Notebook, Settings } from "lucide-react";
+import { BookOpen, ClipboardType, LayoutGrid, Repeat, Notebook, Settings } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { WordbookSwitcher } from "@/frontend/components/wordbook/WordbookSwitcher";
+import { useCaptureFloatingWindow } from "@/frontend/hooks/useCaptureFloatingWindow";
+import { useToast } from "@/frontend/components/ui/Toast";
 
 const navItems = [
   { href: "/words", label: "词条库", icon: BookOpen },
@@ -13,6 +15,21 @@ const navItems = [
 
 export function SiteHeader() {
   const location = useLocation();
+  const launchCapture = useCaptureFloatingWindow();
+  const { addToast } = useToast();
+
+  const onLaunchCapture = async () => {
+    try {
+      const result = await launchCapture();
+      if (result === "unauthenticated") {
+        addToast("warning", "请先登录，再打开悬浮捕获窗");
+      } else if (result === "popup-blocked") {
+        addToast("error", "弹窗被浏览器拦截，请允许本站弹出窗口后重试");
+      }
+    } catch {
+      addToast("error", "打开悬浮窗失败，请稍后重试");
+    }
+  };
 
   return (
     <header
@@ -61,6 +78,15 @@ export function SiteHeader() {
           <div className="hidden md:block">
             <WordbookSwitcher />
           </div>
+          <button
+            type="button"
+            onClick={() => void onLaunchCapture()}
+            title="打开悬浮捕获窗（置顶小窗）"
+            aria-label="打开悬浮捕获窗"
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface-glass)] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-accent)]"
+          >
+            <ClipboardType className="h-[17px] w-[17px]" />
+          </button>
           <ThemeToggle />
         </div>
       </div>

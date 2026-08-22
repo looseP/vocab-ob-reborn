@@ -12,6 +12,7 @@ import { WordDetailPage } from "./pages/WordDetailPage";
 import { NotesPage } from "./pages/NotesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ImportPage } from "./pages/ImportPage";
+import { CapturePage } from "./pages/CapturePage";
 import { OmniPalette } from "./components/search/OmniPalette";
 import { L3Shell, type L3ShellSection } from "./components/L3Shell";
 import { L3ContextPage } from "./pages/L3ContextPage";
@@ -136,6 +137,7 @@ export function App() {
               <Route path="/notes" element={<SiteFrame><NotesPage /></SiteFrame>} />
               <Route path="/settings" element={<SiteFrame><SettingsPage /></SiteFrame>} />
               <Route path="/import" element={<SiteFrame><ImportPage /></SiteFrame>} />
+              <Route path="/capture" element={<CapturePage />} />
               <Route path="/l3" element={<SiteFrame><L3Page /></SiteFrame>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

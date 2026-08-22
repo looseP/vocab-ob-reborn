@@ -357,6 +357,22 @@ button {
   transition-duration: 280ms;
 }
 
+/* Capture panel phase transitions (auto-disabled by prefers-reduced-motion below) */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-rise {
+  animation: rise-in 180ms ease-out both;
+}
+
 .vocab-topology {
   --graph-root: #5f63c7;
   --graph-synonym: var(--color-accent);
