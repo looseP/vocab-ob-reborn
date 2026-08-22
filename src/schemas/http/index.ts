@@ -102,6 +102,15 @@ export const batchAddFromContentSchema = z.object({
   autoEnqueue: z.boolean().optional().default(true),
 });
 
+// ── Reading capture (R1) ────────────────────────────────────────────────
+export const captureRequestSchema = z.object({
+  headword: z.string().trim().min(1).max(120),
+  sentence: z.string().trim().min(1).max(4000).optional(),
+  sourceUrl: z.string().url().max(2048).optional(),
+  obsidianRef: z.string().min(1).max(1024).optional(),
+  wordbookId: uuidSchema.optional(),
+});
+
 // ── Notes ───────────────────────────────────────────────────────────────
 export const noteSchema = z.object({
   contentMd: z.string().max(20_000),

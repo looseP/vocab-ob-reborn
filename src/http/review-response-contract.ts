@@ -100,3 +100,17 @@ export const reviewHeatmapResponseSchema = z.object({
     count: z.string(),
   }).strict()),
 }).strict();
+
+// ── Card enqueue endpoints (R0) ─────────────────────────────────────────────
+
+export const reviewEnqueueCardResponseSchema = z.object({
+  ok: z.literal(true),
+  progressId: z.string().uuid(),
+}).strict();
+
+export const reviewEnqueueCardsBatchResponseSchema = z.object({
+  ok: z.literal(true),
+  added: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  progressIds: z.array(z.string().uuid()),
+}).strict();

@@ -23,6 +23,8 @@ import {
 } from "./l3-response-contract";
 import {
   reviewAnswerResponseSchema,
+  reviewEnqueueCardResponseSchema,
+  reviewEnqueueCardsBatchResponseSchema,
   reviewHeatmapResponseSchema,
   reviewLeechesResponseSchema,
   reviewQueueResponseSchema,
@@ -47,6 +49,7 @@ import {
   l2DraftResponseSchema,
   l2ExternalPromptResponseSchema,
 } from "./l2-response-contract";
+import { captureResponseSchema } from "./capture-response-contract";
 import { operationMetricsResponseSchema } from "./operation-metrics-response-contract";
 import {
   l3ContextCreateSchema,
@@ -69,6 +72,9 @@ import {
   reviewSkipSchema,
   reviewSuspendSchema,
   reviewUndoSchema,
+  addToReviewSchema,
+  batchAddToReviewSchema,
+  captureRequestSchema,
   wordBatchCreateSchema,
   wordsQuerySchema,
 } from "../schemas/http";
@@ -256,6 +262,9 @@ export const apiOperations = [
   operation("post", "/api/review/skip", "skipReview", "owner", "sessionMutation", { body: reviewSkipSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/suspend", "suspendReview", "owner", "sessionMutation", { body: reviewSuspendSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/undo", "undoReview", "owner", "sessionMutation", { body: reviewUndoSchema }, 200, reviewSimpleResponseSchema),
+  operation("post", "/api/review/cards", "enqueueReviewCard", "owner", "sessionMutation", { body: addToReviewSchema }, 201, reviewEnqueueCardResponseSchema),
+  operation("post", "/api/review/cards/batch", "enqueueReviewCardsBatch", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewEnqueueCardsBatchResponseSchema),
+  operation("post", "/api/capture", "createCapture", "owner", "sessionMutation", { body: captureRequestSchema }, 201, captureResponseSchema),
   operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),
   operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
   operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }, 200, l2ConfirmResponseSchema),

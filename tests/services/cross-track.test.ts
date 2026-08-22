@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import type { IL2ProgressRepository, IReviewRepository } from "@/repositories/interfaces";
+import type { IL2ProgressRepository, InsertNewCardStatus, IReviewRepository } from "@/repositories/interfaces";
 import type { UserWordL2ProgressRow } from "@/domain";
 import { CrossTrackService, type CrossTrackL1Snapshot } from "@/services/cross-track.service";
 
@@ -24,6 +24,7 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     findProgressForSkip: vi.fn(async () => null),
     findProgressForSuspend: vi.fn(async () => null),
     findProgressForOutbox: vi.fn(async () => null),
+    insertNewCard: vi.fn(async (): Promise<InsertNewCardStatus> => ({ status: "inserted", progressId: "p-new" })),
     saveAnswer: vi.fn(async () => ({ reviewLogId: "log-1" })),
     skipCard: vi.fn(async () => ({ reviewLogId: "log-skip" })),
     suspendCard: vi.fn(async () => ({ reviewLogId: "log-suspend" })),

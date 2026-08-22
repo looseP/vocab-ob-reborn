@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { IOutboxRepository, IRepositories, IReviewRepository, ISessionRepository } from "@/repositories/interfaces";
+import type { IOutboxRepository, IRepositories, IReviewRepository, ISessionRepository, InsertNewCardStatus } from "@/repositories/interfaces";
 import type { ProgressWithContentHash, SaveAnswerInput, UndoRpcResult } from "@/repositories/interfaces";
 import { ReviewService, type FsrsAdapterFn } from "@/services/review.service";
 import { NotFoundError, BusinessRuleError } from "@/errors";
@@ -96,6 +96,7 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     findProgressForSkip: vi.fn(async () => null),
     findProgressForSuspend: vi.fn(async () => null),
     findProgressForOutbox: vi.fn(async () => makeMockProgress()),
+    insertNewCard: vi.fn(async (): Promise<InsertNewCardStatus> => ({ status: "inserted", progressId: "p-new" })),
     saveAnswer: vi.fn(async () => ({ reviewLogId: "log-1" })),
     skipCard: vi.fn(async () => ({ reviewLogId: "log-skip" })),
     suspendCard: vi.fn(async () => ({ reviewLogId: "log-suspend" })),

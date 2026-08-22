@@ -16,6 +16,8 @@ import type {
 } from "../domain";
 import type {
   IReviewRepository,
+  InsertNewCardInput,
+  InsertNewCardStatus,
   ProgressForAction,
   ProgressWithContentHash,
   SaveAnswerInput,
@@ -99,6 +101,39 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       [userId, idempotencyKey],
     );
     return rows[0]?.id ?? null;
+  }
+
+  /**
+   * Atomically create a new L1 card (state='new', algo='fsrs').
+   * Word existence and wordbook ownership are guarded in the same transaction;
+   * a duplicate (user_id, word_id, wordbook_id) resolves to 'duplicate'.
+   * MUST be in a transaction.
+   */
+  async insertNewCard(input: InsertNewCardInput): Promise<InsertNewCardStatus> {
+    this.requireTx();
+    const word = await this.queryOne<{ id: string }>(
+      `SELECT id FROM words WHERE id = $1::uuid`,
+      [input.wordId],
+    );
+    if (!word) return { status: "word_not_found", progressId: null };
+
+    const wordbook = await this.queryOne<{ id: string }>(
+      `SELECT id FROM wordbooks WHERE id = $1::uuid AND user_id = $2`,
+      [input.wordbookId, input.userId],
+    );
+    if (!wordbook) return { status: "wordbook_invalid", progressId: null };
+
+    const rows = await this.query<{ id: string }>(
+      `INSERT INTO user_word_progress
+         (user_id, word_id, wordbook_id, schedule_algo, state, desired_retention)
+       VALUES ($1, $2::uuid, $3::uuid, 'fsrs', 'new', $4)
+       ON CONFLICT (user_id, word_id, wordbook_id) DO NOTHING
+       RETURNING id`,
+      [input.userId, input.wordId, input.wordbookId, input.desiredRetention],
+    );
+    const row = rows[0];
+    if (!row) return { status: "duplicate", progressId: null };
+    return { status: "inserted", progressId: row.id };
   }
 
   /**

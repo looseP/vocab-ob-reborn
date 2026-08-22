@@ -12,6 +12,7 @@
 
 import { WordService } from "./word.service";
 import { ReviewService, type FsrsAdapterFn, type FsrsScheduling } from "./review.service";
+import { CaptureService } from "./capture.service";
 import { NoteService } from "./note.service";
 import { WordbookService } from "./wordbook.service";
 import { StatsService } from "./stats.service";
@@ -114,6 +115,7 @@ export function createServices(deps: ServiceDeps) {
       },
     ),
     words: new WordService(repos.words),
+    capture: new CaptureService(repos.words),
     reviews: new ReviewService({
       fsrsAdapter: deps.fsrsAdapter,
       loadWeights,
