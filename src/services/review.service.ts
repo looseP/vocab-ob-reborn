@@ -20,6 +20,7 @@ import type { SubmitAnswerInput, SubmitAnswerResult, SkipReviewInput, SuspendRev
 import {
   NotFoundError,
   BusinessRuleError,
+  ConflictError,
 } from "../errors";
 import type { Json, ReviewRating, ReviewState, UserWordProgressRow } from "../domain";
 import type { ProgressWithContentHash } from "../repositories/interfaces";
@@ -29,6 +30,37 @@ import {
   buildReviewAnswerRecordedPayload,
   reviewOutboxDedupeKey,
 } from "../outbox/review-answer.event";
+import {
+  REVIEW_CARD_ENQUEUED,
+  buildReviewCardEnqueuedPayload,
+  enqueuePayloadAsJson,
+  reviewCardEnqueuedDedupeKey,
+} from "../outbox/review-card-enqueued.event";
+
+/** L1 track default until per-user settings are wired (R0 hardcode decision). */
+export const L1_DEFAULT_DESIRED_RETENTION = "0.850";
+
+export interface EnqueueCardInput {
+  wordId: string;
+  wordbookId: string;
+}
+
+export interface EnqueueCardResult {
+  ok: true;
+  progressId: string;
+}
+
+export interface EnqueueCardsInput {
+  wordIds: string[];
+  wordbookId: string;
+}
+
+export interface EnqueueCardsResult {
+  ok: true;
+  added: number;
+  skipped: number;
+  progressIds: string[];
+}
 
 export interface FsrsScheduling {
   difficulty: number | null;
@@ -241,6 +273,112 @@ export class ReviewService {
           nextDueAt: scheduling.dueAt,
           state: scheduling.state,
         } as SubmitAnswerResult,
+      };
+    }, { actorId: userId });
+
+    return transactionResult.result;
+  }
+
+  /**
+   * Enqueue a single word as a brand-new L1 card. One transaction.
+   * Duplicate (user, word, wordbook) raises ConflictError (409).
+   */
+  async enqueueCard(input: EnqueueCardInput, userId: string): Promise<EnqueueCardResult> {
+    const transactionResult = await withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const outcome = await repos.reviews.insertNewCard({
+        userId,
+        wordId: input.wordId,
+        wordbookId: input.wordbookId,
+        desiredRetention: L1_DEFAULT_DESIRED_RETENTION,
+      });
+      if (outcome.status === "word_not_found") {
+        throw new NotFoundError("Word", input.wordId);
+      }
+      if (outcome.status === "wordbook_invalid") {
+        throw new NotFoundError("Wordbook", input.wordbookId);
+      }
+      if (outcome.status === "duplicate" || !outcome.progressId) {
+        throw new ConflictError("Word is already in the review queue for this wordbook");
+      }
+      await repos.outbox.enqueue({
+        aggregateType: "user_word_progress",
+        aggregateId: outcome.progressId,
+        eventType: REVIEW_CARD_ENQUEUED,
+        payload: enqueuePayloadAsJson(
+          buildReviewCardEnqueuedPayload({
+            version: 1,
+            progressId: outcome.progressId,
+            userId,
+            wordbookId: input.wordbookId,
+            wordId: input.wordId,
+          }),
+        ),
+        dedupeKey: reviewCardEnqueuedDedupeKey(outcome.progressId),
+      });
+      return {
+        result: { ok: true, progressId: outcome.progressId } as EnqueueCardResult,
+      };
+    }, { actorId: userId });
+
+    return transactionResult.result;
+  }
+
+  /**
+   * Enqueue multiple words as new L1 cards in one transaction.
+   * Duplicates are counted as skipped; any unknown word or unowned wordbook
+   * aborts the whole batch with NotFoundError (all-or-nothing).
+   */
+  async enqueueCards(input: EnqueueCardsInput, userId: string): Promise<EnqueueCardsResult> {
+    if (input.wordIds.length === 0) {
+      throw new BusinessRuleError("wordIds must not be empty");
+    }
+
+    const transactionResult = await withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const progressIds: string[] = [];
+      let skipped = 0;
+      let missingWordId: string | null = null;
+      let invalidWordbook = false;
+
+      for (const wordId of input.wordIds) {
+        const outcome = await repos.reviews.insertNewCard({
+          userId,
+          wordId,
+          wordbookId: input.wordbookId,
+          desiredRetention: L1_DEFAULT_DESIRED_RETENTION,
+        });
+        if (outcome.status === "inserted" && outcome.progressId) {
+          progressIds.push(outcome.progressId);
+          await repos.outbox.enqueue({
+            aggregateType: "user_word_progress",
+            aggregateId: outcome.progressId,
+            eventType: REVIEW_CARD_ENQUEUED,
+            payload: enqueuePayloadAsJson(
+              buildReviewCardEnqueuedPayload({
+                version: 1,
+                progressId: outcome.progressId,
+                userId,
+                wordbookId: input.wordbookId,
+                wordId,
+              }),
+            ),
+            dedupeKey: reviewCardEnqueuedDedupeKey(outcome.progressId),
+          });
+        } else if (outcome.status === "duplicate") {
+          skipped += 1;
+        } else if (outcome.status === "word_not_found") {
+          missingWordId ??= wordId;
+        } else {
+          invalidWordbook = true;
+        }
+      }
+
+      if (missingWordId) throw new NotFoundError("Word", missingWordId);
+      if (invalidWordbook) throw new NotFoundError("Wordbook", input.wordbookId);
+
+      return {
+        result: { ok: true, added: progressIds.length, skipped, progressIds } as EnqueueCardsResult,
       };
     }, { actorId: userId });
 

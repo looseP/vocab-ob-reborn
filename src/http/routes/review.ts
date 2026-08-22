@@ -16,11 +16,14 @@
  *   POST /skip      skip the current card
  *   POST /suspend   suspend a card
  *   POST /undo      undo the last review log entry
+ *   POST /cards     enqueue a word as a new L1 card (R0)
  */
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AppEnv } from "./words";
 import {
+  addToReviewSchema,
+  batchAddToReviewSchema,
   reviewAnswerSchema,
   reviewSkipSchema,
   reviewSuspendSchema,
@@ -117,6 +120,40 @@ export function reviewRoutes(services: Services) {
     }
     const userId = c.get("userId");
     const result = await services.reviews.undo(parsed.data, userId);
+    return c.json(result);
+  });
+
+  // POST /cards — enqueue a word as a new L1 card (R0)
+  app.post("/cards", async (c) => {
+    const body = await c.req.json();
+    const parsed = addToReviewSchema.safeParse(body);
+    if (!parsed.success) {
+      return validationError(c, parsed.error.flatten());
+    }
+    const userId = c.get("userId");
+    const wordbookId = parsed.data.wordbookId
+      ?? (await services.wordbooks.getOrCreateDefault(userId)).id;
+    const result = await services.reviews.enqueueCard(
+      { wordId: parsed.data.wordId, wordbookId },
+      userId,
+    );
+    return c.json(result, 201);
+  });
+
+  // POST /cards/batch — enqueue multiple words; duplicates count as skipped
+  app.post("/cards/batch", async (c) => {
+    const body = await c.req.json();
+    const parsed = batchAddToReviewSchema.safeParse(body);
+    if (!parsed.success) {
+      return validationError(c, parsed.error.flatten());
+    }
+    const userId = c.get("userId");
+    const wordbookId = parsed.data.wordbookId
+      ?? (await services.wordbooks.getOrCreateDefault(userId)).id;
+    const result = await services.reviews.enqueueCards(
+      { wordIds: parsed.data.wordIds, wordbookId },
+      userId,
+    );
     return c.json(result);
   });
 

@@ -72,6 +72,22 @@ export interface ProgressForAction {
   skip_count: number;
 }
 
+/** Input for creating a brand-new L1 card (state='new'). */
+export interface InsertNewCardInput {
+  userId: string;
+  wordId: string;
+  wordbookId: string;
+  /** Numeric string written to desired_retention, e.g. "0.850". */
+  desiredRetention: string;
+}
+
+/** Result status of an atomic new-card insert attempt. */
+export type InsertNewCardStatus =
+  | { status: "inserted"; progressId: string }
+  | { status: "duplicate"; progressId: null }
+  | { status: "word_not_found"; progressId: null }
+  | { status: "wordbook_invalid"; progressId: null };
+
 export interface SaveAnswerInput {
   progressId: string;
   userId: string;
@@ -136,6 +152,14 @@ export interface IReviewRepository {
 
   /** Load the current authoritative progress for outbox convergence. MUST be in a transaction. */
   findProgressForOutbox(progressId: string, userId: string, wordbookId: string): Promise<UserWordProgressRow | null>;
+
+  /**
+   * Atomically create a new L1 card (state='new', algo='fsrs'). Guards word
+   * existence and wordbook ownership in the same transaction; duplicate
+   * (user_id, word_id, wordbook_id) resolves to 'duplicate' instead of throwing.
+   * MUST be in a transaction.
+   */
+  insertNewCard(input: InsertNewCardInput): Promise<InsertNewCardStatus>;
 
   /** UPDATE progress + INSERT review_log. MUST be in a transaction. */
   saveAnswer(input: SaveAnswerInput): Promise<{ reviewLogId: string }>;
