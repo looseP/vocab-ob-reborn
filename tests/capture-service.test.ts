@@ -162,6 +162,35 @@ describe("CaptureService.capture — L3 reservation (deferred)", () => {
   });
 });
 
+describe("CaptureService.capture — defensive guards", () => {
+  beforeEach(() => {
+    withTransactionMock.mockClear();
+  });
+
+  it("throws when the word repository lacks insertMany (batch pool unconfigured)", async () => {
+    const words = {
+      findBySlug: vi.fn(async () => null),
+    } as unknown as IWordRepository;
+
+    const service = new CaptureService(words);
+    await expect(service.capture({ userId: "u1", wordbookId: "wb1", headword: "ephemeral" })).rejects.toThrow(
+      "insertMany not configured",
+    );
+  });
+
+  it("fails closed when the stub re-fetch returns null after upsert", async () => {
+    const words = {
+      findBySlug: vi.fn(async () => null),
+      insertMany: vi.fn(async () => 0),
+    } as unknown as IWordRepository;
+
+    const service = new CaptureService(words);
+    await expect(service.capture({ userId: "u1", wordbookId: "wb1", headword: "ephemeral" })).rejects.toThrow(
+      'capture word upsert failed for slug "ephemeral"',
+    );
+  });
+});
+
 describe("CaptureService.capture — validation", () => {
   beforeEach(() => {
     withTransactionMock.mockClear();
