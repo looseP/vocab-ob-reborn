@@ -1,5 +1,9 @@
 import { z } from "zod";
-import type { ImportVocabNoteFileResult, ImportVocabNotesResult } from "../services/vocab-import.service";
+import type {
+  ImportVocabNoteFileResult,
+  ImportVocabNoteWordEntry,
+  ImportVocabNotesResult,
+} from "../services/vocab-import.service";
 
 export const vocabNoteImportFileStatusSchema = z.enum([
   "imported",
@@ -8,6 +12,22 @@ export const vocabNoteImportFileStatusSchema = z.enum([
   "rejected",
   "failed",
 ]);
+
+export const vocabNoteImportWordTierSchema = z.enum([
+  "ok",
+  "needs_supplement",
+  "rejected",
+]);
+
+export const vocabNoteImportWordEntrySchema: z.ZodType<ImportVocabNoteWordEntry> = z.object({
+  slug: z.string(),
+  pos: z.string().nullable(),
+  cefr: z.string().nullable(),
+  tier: vocabNoteImportWordTierSchema,
+  score: z.number(),
+  issues: z.array(z.string()),
+  outcome: z.enum(["imported", "unchanged"]).optional(),
+}).strict();
 
 export const vocabNoteImportFileResultSchema: z.ZodType<ImportVocabNoteFileResult> = z.object({
   path: z.string(),
@@ -21,9 +41,11 @@ export const vocabNoteImportFileResultSchema: z.ZodType<ImportVocabNoteFileResul
   minScore: z.number().nullable(),
   issues: z.array(z.string()),
   error: z.string().optional(),
+  words: z.array(vocabNoteImportWordEntrySchema),
 }).strict();
 
 export const vocabNotesImportResponseSchema: z.ZodType<ImportVocabNotesResult> = z.object({
+  dryRun: z.boolean(),
   results: z.array(vocabNoteImportFileResultSchema),
   stats: z.object({
     files: z.number().int().nonnegative(),

@@ -5208,6 +5208,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        dryRun: boolean;
                         results: {
                             path: string;
                             /** @enum {string} */
@@ -5221,6 +5222,17 @@ export interface operations {
                             minScore: number | null;
                             issues: string[];
                             error?: string;
+                            words: {
+                                slug: string;
+                                pos: string | null;
+                                cefr: string | null;
+                                /** @enum {string} */
+                                tier: "ok" | "needs_supplement" | "rejected";
+                                score: number;
+                                issues: string[];
+                                /** @enum {string} */
+                                outcome?: "imported" | "unchanged";
+                            }[];
                         }[];
                         stats: {
                             files: number;

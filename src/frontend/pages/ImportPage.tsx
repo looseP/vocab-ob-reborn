@@ -1,8 +1,9 @@
-import { useCallback, useRef, useState } from "react";
-import { Upload, FileJson, FileText, CheckCircle2, AlertCircle, Trash2, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Upload, FileJson, FileText, CheckCircle2, AlertCircle, Trash2, Loader2, ChevronRight } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
+import { Modal } from "@/frontend/components/ui/Modal";
 import { useToast } from "@/frontend/components/ui/Toast";
 import { apiFetch } from "@/frontend/api/client";
 
@@ -27,6 +28,17 @@ interface NoteFileEntry {
 }
 
 type FileStatus = "imported" | "unchanged" | "needs_supplement" | "rejected" | "failed";
+type WordTier = "ok" | "needs_supplement" | "rejected";
+
+interface VocabNoteWordEntry {
+  slug: string;
+  pos: string | null;
+  cefr: string | null;
+  tier: WordTier;
+  score: number;
+  issues: string[];
+  outcome?: "imported" | "unchanged";
+}
 
 interface VocabNoteFileResult {
   path: string;
@@ -40,6 +52,7 @@ interface VocabNoteFileResult {
   minScore: number | null;
   issues: string[];
   error?: string;
+  words?: VocabNoteWordEntry[];
 }
 
 interface VocabNotesImportStats {
@@ -52,6 +65,8 @@ interface VocabNotesImportStats {
 }
 
 interface VocabNotesImportResult {
+  /** Server-side verdict on whether this run wrote anything — the source of truth for rendering. */
+  dryRun: boolean;
   results: VocabNoteFileResult[];
   stats: VocabNotesImportStats;
 }
@@ -60,6 +75,9 @@ interface VocabNotesImportResult {
 
 const MAX_FILES_PER_REQUEST = 50;
 const MAX_REQUEST_BODY_BYTES = 700 * 1024;
+// Mirror of the server's per-file schema limits (zod counts UTF-16 chars).
+const SERVER_MAX_CONTENT_CHARS = 200_000;
+const SERVER_MAX_PATH_CHARS = 1_024;
 const encoder = new TextEncoder();
 
 function chunkNoteFiles(files: NoteFileEntry[]): NoteFileEntry[][] {
@@ -104,6 +122,131 @@ const STATUS_LABELS: Record<FileStatus, string> = {
   failed: "失败",
 };
 
+/** Dry-run outcomes use future-tense wording: nothing was written yet. */
+const PREVIEW_STATUS_LABELS: Record<FileStatus, string> = {
+  imported: "将导入",
+  unchanged: "无变化",
+  needs_supplement: "待补充",
+  rejected: "将拒绝",
+  failed: "失败",
+};
+
+const WORD_TIER_LABELS: Record<WordTier, string> = {
+  ok: "通过",
+  needs_supplement: "待补充",
+  rejected: "拒绝",
+};
+
+const WORD_TIER_TONES: Record<WordTier, "default" | "warm" | "accent"> = {
+  ok: "accent",
+  needs_supplement: "warm",
+  rejected: "warm",
+};
+
+/**
+ * Surfaces the field-level validation errors returned by the API (400
+ * VALIDATION_ERROR) so the real cause is visible instead of a generic
+ * "Invalid request". `details` shape: { formErrors: string[], fieldErrors: Record<string, string[]> }.
+ */
+function formatValidationDetails(details: unknown, fallback: string): string {
+  if (!details || typeof details !== "object") return fallback;
+  const rec = details as { formErrors?: unknown; fieldErrors?: unknown };
+  const parts: string[] = [];
+  if (Array.isArray(rec.formErrors)) parts.push(...rec.formErrors.map(String));
+  if (rec.fieldErrors && typeof rec.fieldErrors === "object") {
+    for (const [field, messages] of Object.entries(rec.fieldErrors as Record<string, unknown>)) {
+      if (Array.isArray(messages)) parts.push(`${field}: ${messages.map(String).join("；")}`);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n") : fallback;
+}
+
+/**
+ * Rendered markdown view. `marked` + `dompurify` are lazy-loaded on first
+ * use so they stay out of the main bundle; output is always sanitized
+ * before touching the DOM.
+ */
+function RenderedMarkdown({ content }: { content: string }) {
+  const [html, setHtml] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [{ marked }, { default: DOMPurify }] = await Promise.all([
+          import("marked"),
+          import("dompurify"),
+        ]);
+        const raw = await marked.parse(content, { gfm: true, breaks: true, async: true });
+        if (!cancelled) setHtml(DOMPurify.sanitize(raw));
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [content]);
+  if (failed) {
+    return <p className="text-sm text-[var(--color-accent-2)]">Markdown 渲染失败，请切换到「纯文本」查看。</p>;
+  }
+  if (html === null) {
+    return <p className="text-sm text-[var(--color-ink-soft)]">正在渲染 Markdown...</p>;
+  }
+  return (
+    <div
+      className="prose-obsidian max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-strong)] p-4 text-sm"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+/** Original-note view of the selected file — rendered markdown by default, plain text with line numbers as fallback. Read from the in-memory entries, no server round-trip. */
+function RawContentTab({ path, entries }: { path: string; entries: NoteFileEntry[] }) {
+  const [mode, setMode] = useState<"rendered" | "plain">("rendered");
+  const content = entries.find((e) => e.path === path)?.content;
+  if (content === undefined) {
+    return <p className="text-sm text-[var(--color-ink-soft)]">未找到该文件的原始内容。</p>;
+  }
+  const lines = content.split("\n");
+  return (
+    <div>
+      <div className="mb-2 flex justify-end">
+        <div className="flex rounded-lg border border-[var(--color-border)] p-0.5 text-xs">
+          {([["rendered", "渲染视图"], ["plain", "纯文本"]] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setMode(value)}
+              className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+                mode === value
+                  ? "bg-[var(--color-accent)] text-white"
+                  : "text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === "rendered" ? (
+        <RenderedMarkdown content={content} />
+      ) : (
+        <div className="max-h-[60vh] overflow-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]">
+          <table className="w-full border-collapse font-mono text-xs leading-5">
+            <tbody>
+              {lines.map((line, i) => (
+                <tr key={i} className="align-top">
+                  <td className="w-12 select-none border-r border-[var(--color-border)] px-2 text-right text-[var(--color-ink-soft)]">{i + 1}</td>
+                  <td className="whitespace-pre-wrap break-words px-3 text-[var(--color-ink)]">{line || "\u00a0"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const STATUS_TONES: Record<FileStatus, "default" | "warm" | "accent"> = {
   imported: "accent",
   unchanged: "default",
@@ -132,6 +275,8 @@ export function ImportPage() {
   const [previewMode, setPreviewMode] = useState(false);
   const [noteResults, setNoteResults] = useState<VocabNoteFileResult[]>([]);
   const [noteStats, setNoteStats] = useState<VocabNotesImportStats | null>(null);
+  const [detailFile, setDetailFile] = useState<VocabNoteFileResult | null>(null);
+  const [detailTab, setDetailTab] = useState<"words" | "raw">("words");
 
   // JSON tab state
   const [text, setText] = useState("");
@@ -190,10 +335,50 @@ export function ImportPage() {
     setUploading(true);
     setError(null);
     setProgress({ done: 0, total: entries.length });
+    // Drop the previous run's results up front so a mid-run failure can never
+    // leave stale numbers on screen next to this run's error.
+    setNoteResults([]);
+    setNoteStats(null);
+    const results: VocabNoteFileResult[] = [];
+    const stats = emptyStats();
     try {
-      const chunks = chunkNoteFiles(entries);
-      const results: VocabNoteFileResult[] = [];
-      const stats = emptyStats();
+      // Pre-flight per-file checks against the server's hard limits. One bad
+      // file must not 400 the whole chunk (validation is all-or-nothing).
+      const sendable: NoteFileEntry[] = [];
+      for (const entry of entries) {
+        const problem =
+          !entry.content || entry.content.trim().length === 0
+            ? "文件内容为空"
+            : entry.content.length > SERVER_MAX_CONTENT_CHARS
+              ? `文件内容 ${entry.content.length} 字符，超过服务端 ${SERVER_MAX_CONTENT_CHARS} 字符上限`
+              : entry.path.length > SERVER_MAX_PATH_CHARS
+                ? "文件路径超过服务端 1024 字符上限"
+                : null;
+        if (problem) {
+          results.push({
+            path: entry.path,
+            status: "failed",
+            total: 0,
+            imported: 0,
+            unchanged: 0,
+            needsSupplement: 0,
+            rejected: 0,
+            failedWords: 1,
+            minScore: null,
+            issues: [],
+            error: problem,
+          });
+          stats.failed += 1;
+        } else {
+          sendable.push(entry);
+        }
+      }
+      if (results.length > 0) {
+        setPreviewMode(asPreview);
+        setNoteResults([...results]);
+        setNoteStats({ ...stats });
+      }
+      const chunks = chunkNoteFiles(sendable);
       for (const chunk of chunks) {
         const res = await apiFetch<VocabNotesImportResult>("/imports/vocab-notes", {
           method: "POST",
@@ -202,11 +387,13 @@ export function ImportPage() {
         });
         results.push(...res.results);
         mergeStats(stats, res.stats);
+        // Commit per chunk: if a later chunk fails, what is shown reflects
+        // exactly what this run already did (preview counts, or real writes).
+        setPreviewMode(res.dryRun);
+        setNoteResults([...results]);
+        setNoteStats({ ...stats });
         setProgress((p) => ({ done: Math.min(entries.length, (p?.done ?? 0) + chunk.length), total: entries.length }));
       }
-      setPreviewMode(asPreview);
-      setNoteResults(results);
-      setNoteStats(stats);
       if (stats.failed === 0 && stats.rejected === 0) {
         addToast(
           "success",
@@ -218,8 +405,18 @@ export function ImportPage() {
         addToast("warning", `完成，但有 ${stats.failed} 个文件失败、${stats.rejected} 个词条被拒绝`);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "导入失败");
-      addToast("error", "导入失败");
+      const message = e instanceof Error ? e.message : "导入失败";
+      const detail = (e as { details?: unknown }).details;
+      const formatted = formatValidationDetails(detail, message);
+      setError(formatted);
+      if (!asPreview && results.length > 0) {
+        addToast(
+          "warning",
+          `部分完成：前 ${results.length} 个文件已写入数据库，后续分块失败（${message}）`,
+        );
+      } else {
+        addToast("error", asPreview ? "预览失败" : "导入失败");
+      }
     } finally {
       setUploading(false);
       setProgress(null);
@@ -315,9 +512,9 @@ export function ImportPage() {
       {/* 错误提示 */}
       {error && (
         <Card className="border-[var(--color-accent-2)]">
-          <div className="flex items-center gap-2 text-[var(--color-accent-2)]">
-            <AlertCircle className="h-5 w-5" />
-            <span className="font-medium">{error}</span>
+          <div className="flex items-start gap-2 text-[var(--color-accent-2)]">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+            <span className="whitespace-pre-line font-medium">{error}</span>
           </div>
         </Card>
       )}
@@ -468,12 +665,13 @@ export function ImportPage() {
                   {previewMode ? "预览结果（未写入）" : "导入结果"}
                 </span>
                 <div className="flex flex-wrap gap-2 text-xs">
-                  <Badge tone="accent">导入 {noteStats.imported}</Badge>
+                  <Badge tone="accent">{previewMode ? "将导入" : "导入"} {noteStats.imported}</Badge>
                   <Badge>无变化 {noteStats.unchanged}</Badge>
                   {noteStats.needsSupplement > 0 && <Badge tone="warm">待补充 {noteStats.needsSupplement}</Badge>}
                   {noteStats.rejected > 0 && <Badge tone="warm">拒绝 {noteStats.rejected}</Badge>}
                   {noteStats.failed > 0 && <Badge tone="warm">失败文件 {noteStats.failed}</Badge>}
                 </div>
+                <span className="ml-auto text-xs text-[var(--color-ink-soft)]">点击文件行查看逐词明细</span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -483,22 +681,28 @@ export function ImportPage() {
                       <th className="pb-2 pr-4">状态</th>
                       <th className="pb-2 pr-4">词条</th>
                       <th className="pb-2 pr-4">最低分</th>
-                      <th className="pb-2">说明</th>
+                      <th className="pb-2 pr-4">说明</th>
+                      <th className="pb-2" aria-label="展开明细" />
                     </tr>
                   </thead>
                   <tbody>
                     {noteResults.map((r) => (
-                      <tr key={r.path} className="border-b border-[var(--color-border)] align-top">
+                      <tr
+                        key={r.path}
+                        className="cursor-pointer border-b border-[var(--color-border)] align-top transition-colors hover:bg-[var(--color-surface-muted)]"
+                        onClick={() => { setDetailFile(r); setDetailTab("words"); }}
+                      >
                         <td className="py-2 pr-4 font-mono text-xs text-[var(--color-ink)]">{r.path}</td>
-                        <td className="py-2 pr-4"><Badge tone={STATUS_TONES[r.status]}>{STATUS_LABELS[r.status]}</Badge></td>
+                        <td className="py-2 pr-4"><Badge tone={STATUS_TONES[r.status]}>{(previewMode ? PREVIEW_STATUS_LABELS : STATUS_LABELS)[r.status]}</Badge></td>
                         <td className="py-2 pr-4 text-xs text-[var(--color-ink-soft)]">
-                          导入 {r.imported} / 无变化 {r.unchanged} / 拒绝 {r.rejected}
+                          {previewMode ? "将导入" : "导入"} {r.imported} / 无变化 {r.unchanged} / 拒绝 {r.rejected}
                           {r.needsSupplement > 0 && ` / 待补 ${r.needsSupplement}`}
                         </td>
                         <td className="py-2 pr-4 text-xs text-[var(--color-ink-soft)]">{r.minScore ?? "—"}</td>
-                        <td className="py-2 text-xs text-[var(--color-ink-soft)]">
+                        <td className="py-2 pr-4 text-xs text-[var(--color-ink-soft)]">
                           {r.error ?? r.issues.slice(0, 3).join("；")}{r.issues.length > 3 ? ` 等 ${r.issues.length} 条` : ""}
                         </td>
+                        <td className="py-2 text-right"><ChevronRight className="ml-auto h-4 w-4 text-[var(--color-ink-soft)]" /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -506,6 +710,80 @@ export function ImportPage() {
               </div>
             </Card>
           )}
+
+          {/* 文件详情小窗：词条明细 / 原始内容 */}
+          <Modal
+            open={detailFile !== null}
+            onClose={() => setDetailFile(null)}
+            size="lg"
+            title={detailFile?.path ?? ""}
+            footer={<Button variant="secondary" onClick={() => setDetailFile(null)}>关闭</Button>}
+          >
+            {detailFile && (
+              <>
+                <div className="mb-3 flex gap-1 border-b border-[var(--color-border)]">
+                  {([["words", `词条明细${detailFile.words?.length ? ` (${detailFile.words.length})` : ""}`], ["raw", "原始内容"]] as const).map(
+                    ([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setDetailTab(value)}
+                        className={`rounded-t-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                          detailTab === value
+                            ? "border-b-2 border-[var(--color-accent)] text-[var(--color-accent)]"
+                            : "text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ),
+                  )}
+                </div>
+                {detailTab === "words" ? (
+                  (detailFile.words?.length ?? 0) > 0 ? (
+                    <div className="max-h-[60vh] overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="sticky top-0 border-b border-[var(--color-border)] bg-[var(--color-panel-strong)] text-left text-[var(--color-ink-soft)]">
+                            <th className="py-1.5 pr-3">词条</th>
+                            <th className="py-1.5 pr-3">词性</th>
+                            <th className="py-1.5 pr-3">CEFR</th>
+                            <th className="py-1.5 pr-3">解析</th>
+                            <th className="py-1.5 pr-3">写入</th>
+                            <th className="py-1.5 pr-3">分数</th>
+                            <th className="py-1.5">问题</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detailFile.words!.map((w) => (
+                            <tr key={w.slug} className="border-b border-[var(--color-border)] align-top last:border-b-0">
+                              <td className="py-1.5 pr-3 font-mono text-xs text-[var(--color-ink)]">{w.slug}</td>
+                              <td className="py-1.5 pr-3 text-xs text-[var(--color-ink-soft)]">{w.pos ?? "—"}</td>
+                              <td className="py-1.5 pr-3 text-xs text-[var(--color-ink-soft)]">{w.cefr ?? "—"}</td>
+                              <td className="py-1.5 pr-3"><Badge tone={WORD_TIER_TONES[w.tier]}>{WORD_TIER_LABELS[w.tier]}</Badge></td>
+                              <td className="py-1.5 pr-3 text-xs text-[var(--color-ink-soft)]">
+                                {previewMode
+                                  ? "未写入"
+                                  : w.outcome === "imported" ? "已导入" : w.outcome === "unchanged" ? "无变化" : "—"}
+                              </td>
+                              <td className="py-1.5 pr-3 text-xs text-[var(--color-ink-soft)]">{w.score}</td>
+                              <td className="py-1.5 text-xs text-[var(--color-accent-2)]">{w.issues.slice(0, 2).join("；")}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-[var(--color-ink-soft)]">
+                      该文件没有可展示的逐词明细{detailFile.error ? `：${detailFile.error}` : "。"}
+                    </p>
+                  )
+                ) : (
+                  <RawContentTab path={detailFile.path} entries={entries} />
+                )}
+              </>
+            )}
+          </Modal>
 
           {/* 格式说明 */}
           <Card>

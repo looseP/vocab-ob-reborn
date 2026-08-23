@@ -20,6 +20,7 @@ afterAll(() => {
 const AUTH_HEADERS = { Authorization: "Bearer test-owner" };
 
 const SERVICE_RESULT: ImportVocabNotesResult = {
+  dryRun: false,
   results: [
     {
       path: "L1_雅思词汇/accelerate.md",
@@ -32,6 +33,9 @@ const SERVICE_RESULT: ImportVocabNotesResult = {
       failedWords: 0,
       minScore: 90,
       issues: [],
+      words: [
+        { slug: "accelerate", pos: "v", cefr: "B1", tier: "ok", score: 90, issues: [], outcome: "imported" },
+      ],
     },
     {
       path: "L1_雅思词汇/broken.md",
@@ -45,6 +49,7 @@ const SERVICE_RESULT: ImportVocabNotesResult = {
       minScore: null,
       issues: [],
       error: "no word entries parsed",
+      words: [],
     },
   ],
   stats: { files: 2, imported: 1, unchanged: 0, needsSupplement: 0, rejected: 0, failed: 1 },
@@ -81,6 +86,7 @@ describe("POST /api/imports/vocab-notes", () => {
     const res = await app.request("/api/imports/vocab-notes", makeRequest(VALID_BODY));
     expect(res.status).toBe(200);
     const body = vocabNotesImportResponseSchema.parse(await res.json());
+    expect(body.dryRun).toBe(false);
     expect(body.stats).toMatchObject({ files: 2, imported: 1, failed: 1 });
     expect(body.results[1].error).toBe("no word entries parsed");
 
@@ -157,5 +163,17 @@ describe("POST /api/imports/vocab-notes", () => {
     const [, options] = (importFiles.mock.calls[0] ?? []) as [unknown[], { strictness?: string; dryRun?: boolean }];
     expect(options.strictness).toBe("standard");
     expect(options.dryRun).toBeUndefined();
+  });
+
+  it("forwards dryRun=true for previews and echoes it back in the response", async () => {
+    const importFiles = vi.fn().mockResolvedValue({ ...SERVICE_RESULT, dryRun: true });
+    const app = createApp(makeMockServices(importFiles));
+
+    const res = await app.request("/api/imports/vocab-notes", makeRequest({ ...VALID_BODY, dryRun: true }));
+    expect(res.status).toBe(200);
+    const body = vocabNotesImportResponseSchema.parse(await res.json());
+    expect(body.dryRun).toBe(true);
+    const [, options] = (importFiles.mock.calls[0] ?? []) as [unknown[], { strictness?: string; dryRun?: boolean }];
+    expect(options.dryRun).toBe(true);
   });
 });
