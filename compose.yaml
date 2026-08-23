@@ -1,4 +1,4 @@
-name: vocab-observatory
+﻿name: vocab-observatory
 
 x-app-environment: &app-environment
   DATABASE_URL: ${APP_DATABASE_URL:-postgresql://vocab_app:LocalVocabApp_7rN3zM4c@postgres:5432/${POSTGRES_DB:-vocab}}

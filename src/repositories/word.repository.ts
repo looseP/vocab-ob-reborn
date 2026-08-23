@@ -16,7 +16,7 @@ import type {
   WordRow,
   WordSummary,
 } from "../domain";
-import type { IWordRepository } from "./interfaces";
+import type { IWordRepository, UpsertFullWordInput } from "./interfaces";
 import { BaseRepository } from "./base";
 
 const SUMMARY_COLUMNS = `w.id, w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, w.short_definition, w.metadata`;
@@ -172,5 +172,76 @@ export class WordRepository extends BaseRepository implements IWordRepository {
       params,
     );
     return result.length;
+  }
+
+  /**
+   * Full-note upsert through the batch-import pool. Hash-guarded: when the
+   * stored content_hash equals the incoming one, the DO UPDATE ... WHERE
+   * clause turns the statement into a no-op and "unchanged" is returned.
+   */
+  async upsertFullWord(input: UpsertFullWordInput): Promise<"imported" | "unchanged"> {
+    const rows = await this.queryViaBatchPool<{ id: string }>(
+      `INSERT INTO words (
+         slug, title, lemma, pos, cefr, ipa, aliases,
+         short_definition, definition_md, body_md, examples, metadata,
+         core_definitions, prototype_text,
+         content_hash, source_path, source_updated_at, synced_at,
+         is_published, quality_status, quality_issues
+       )
+       VALUES (
+         $1, $2, $3, $4, $5, $6, $7::text[],
+         $8, $9, $10, $11::jsonb, $12::jsonb,
+         $13::jsonb, $14,
+         $15, $16, $17::timestamptz, now(),
+         $18, $19, $20::jsonb
+       )
+       ON CONFLICT (slug) DO UPDATE SET
+         title = EXCLUDED.title,
+         lemma = EXCLUDED.lemma,
+         pos = EXCLUDED.pos,
+         cefr = EXCLUDED.cefr,
+         ipa = EXCLUDED.ipa,
+         aliases = EXCLUDED.aliases,
+         short_definition = EXCLUDED.short_definition,
+         definition_md = EXCLUDED.definition_md,
+         body_md = EXCLUDED.body_md,
+         examples = EXCLUDED.examples,
+         metadata = EXCLUDED.metadata,
+         core_definitions = EXCLUDED.core_definitions,
+         prototype_text = EXCLUDED.prototype_text,
+         content_hash = EXCLUDED.content_hash,
+         source_path = EXCLUDED.source_path,
+         source_updated_at = EXCLUDED.source_updated_at,
+         synced_at = now(),
+         is_published = EXCLUDED.is_published,
+         quality_status = EXCLUDED.quality_status,
+         quality_issues = EXCLUDED.quality_issues,
+         updated_at = now()
+       WHERE words.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+       RETURNING id`,
+      [
+        input.slug,
+        input.title,
+        input.lemma,
+        input.pos,
+        input.cefr,
+        input.ipa,
+        input.aliases,
+        input.shortDefinition,
+        input.definitionMd,
+        input.bodyMd,
+        JSON.stringify(input.examplesJson ?? []),
+        JSON.stringify(input.metadataJson ?? {}),
+        JSON.stringify(input.coreDefinitionsJson ?? []),
+        input.prototypeText,
+        input.contentHash,
+        input.sourcePath,
+        input.sourceUpdatedAt,
+        input.isPublished,
+        input.qualityStatus,
+        JSON.stringify(input.qualityIssuesJson ?? []),
+      ],
+    );
+    return rows.length > 0 ? "imported" : "unchanged";
   }
 }

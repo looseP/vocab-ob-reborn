@@ -52,6 +52,39 @@ export interface IWordRepository {
     slug: string; title: string; lemma: string; pos: string | null;
     cefr: string | null; ipa: string | null; short_definition: string | null;
   }>): Promise<number>;
+  /**
+   * Full-note upsert through the dedicated batch-import role. Hash-guarded:
+   * when the stored content_hash already equals the incoming one the update
+   * is skipped ("unchanged"). Writes definition/body/metadata/etc. beyond the
+   * minimal stub fields handled by insertMany. MUST be called outside an app
+   * transaction (uses its own pool); each call is atomic on its own.
+   */
+  upsertFullWord?(input: UpsertFullWordInput): Promise<"imported" | "unchanged">;
+}
+
+/** Payload for the rich-note import upsert (all words-table content fields). */
+export interface UpsertFullWordInput {
+  slug: string;
+  title: string;
+  lemma: string;
+  pos: string | null;
+  cefr: string | null;
+  ipa: string | null;
+  aliases: string[];
+  shortDefinition: string | null;
+  definitionMd: string;
+  bodyMd: string;
+  /** JSON.stringify-ready payload for the examples jsonb column. */
+  examplesJson: unknown;
+  metadataJson: unknown;
+  coreDefinitionsJson: unknown;
+  prototypeText: string | null;
+  contentHash: string;
+  sourcePath: string;
+  sourceUpdatedAt: string | null;
+  isPublished: boolean;
+  qualityStatus: "ok" | "needs_supplement";
+  qualityIssuesJson: unknown;
 }
 
 // ── Review ──────────────────────────────────────────────────────────────
