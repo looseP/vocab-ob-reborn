@@ -18,6 +18,7 @@ import { authMiddleware } from "./middleware/auth";
 import { wordRoutes, type AppEnv } from "./routes/words";
 import { reviewRoutes } from "./routes/review";
 import { captureRoutes } from "./routes/capture";
+import { importRoutes } from "./routes/imports";
 import { wordbookRoutes } from "./routes/wordbooks";
 import { noteRoutes } from "./routes/notes";
 import { l2Routes } from "./routes/l2";
@@ -99,6 +100,7 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/words", wordRoutes(services));
   app.route("/api/review", reviewRoutes(services));
   app.route("/api/capture", captureRoutes(services));
+  app.route("/api/imports", importRoutes(services));
   app.route("/api/wordbooks", wordbookRoutes(services));
   app.route("/api/notes", noteRoutes(services));
   app.route("/api/l2", l2Routes(services));

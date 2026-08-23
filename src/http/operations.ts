@@ -50,6 +50,7 @@ import {
   l2ExternalPromptResponseSchema,
 } from "./l2-response-contract";
 import { captureResponseSchema } from "./capture-response-contract";
+import { vocabNotesImportResponseSchema } from "./import-response-contract";
 import { operationMetricsResponseSchema } from "./operation-metrics-response-contract";
 import {
   l3ContextCreateSchema,
@@ -75,6 +76,7 @@ import {
   addToReviewSchema,
   batchAddToReviewSchema,
   captureRequestSchema,
+  vocabNotesImportRequestSchema,
   wordBatchCreateSchema,
   wordsQuerySchema,
 } from "../schemas/http";
@@ -265,6 +267,7 @@ export const apiOperations = [
   operation("post", "/api/review/cards", "enqueueReviewCard", "owner", "sessionMutation", { body: addToReviewSchema }, 201, reviewEnqueueCardResponseSchema),
   operation("post", "/api/review/cards/batch", "enqueueReviewCardsBatch", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewEnqueueCardsBatchResponseSchema),
   operation("post", "/api/capture", "createCapture", "owner", "sessionMutation", { body: captureRequestSchema }, 201, captureResponseSchema),
+  operation("post", "/api/imports/vocab-notes", "importVocabNotes", "owner", "sessionMutation", { body: vocabNotesImportRequestSchema }, 200, vocabNotesImportResponseSchema),
   operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),
   operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
   operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }, 200, l2ConfirmResponseSchema),
