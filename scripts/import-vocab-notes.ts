@@ -1,12 +1,18 @@
 /**
  * Manual bulk importer — walks the L1 migration corpus directory and pushes
  * every collection note through VocabImportService against a reachable
- * Postgres (the compose stack exposes 127.0.0.1:5432).
+ * Postgres.
  *
- * Usage (from wt-main):
- *   $env:INGEST_CORPUS_DIR="D:\Notes\L1_雅思词汇_迁移包_2026-08-22\L1词库_完整迁移包_2026-08-22"
- *   $env:BATCH_IMPORT_DATABASE_URL="postgresql://vocab_batch_import:...@127.0.0.1:5432/vocab"
- *   npx tsx scripts/import-vocab-notes.ts [--dry-run] [--strict]
+ * The database is never exposed to the host (exposure-surface discipline),
+ * so run this INSIDE the stack, where `postgres:5432` resolves:
+ *
+ *   docker compose build web   # after adding this script
+ *   docker compose exec -T -e INGEST_CORPUS_DIR=/work/corpus \
+ *     -e BATCH_IMPORT_DATABASE_URL='postgresql://vocab_batch_import:...@postgres:5432/vocab' \
+ *     -e DB_SSLMODE=disable \
+ *     web npx tsx scripts/import-vocab-notes.ts [--dry-run] [--strict]
+ *
+ * Mount the corpus with: docker compose run ... -v "D:\Notes\...:/work/corpus:ro"
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
