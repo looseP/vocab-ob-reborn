@@ -9,6 +9,12 @@ export const L3_PROPOSAL_MAX_ITEMS = 1_000;
 export const L3_PROPOSAL_PAYLOAD_MAX_BYTES = 256 * 1024;
 export const L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES = 1024 * 1024;
 
+// Vocab-note import (P3): bounded so a single request stays well under the
+// global 1 MiB API body limit; the frontend chunks large uploads itself.
+export const VOCAB_IMPORT_MAX_FILES = 50;
+export const VOCAB_IMPORT_PATH_MAX_LENGTH = 1_024;
+export const VOCAB_IMPORT_CONTENT_MAX_BYTES = 200_000;
+
 export interface JsonResourceBudget {
   maxBytes: number;
   maxDepth: number;

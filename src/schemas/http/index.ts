@@ -14,6 +14,9 @@ import {
   L3_PROPOSAL_MAX_ITEMS,
   L3_PROPOSAL_PAYLOAD_MAX_BYTES,
   L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES,
+  VOCAB_IMPORT_CONTENT_MAX_BYTES,
+  VOCAB_IMPORT_MAX_FILES,
+  VOCAB_IMPORT_PATH_MAX_LENGTH,
 } from "../resource-budget";
 
 // ── Primitives ──────────────────────────────────────────────────────────
@@ -148,6 +151,20 @@ export const annotationUpsertSchema = z.object({
 
 // ── Quality ─────────────────────────────────────────────────────────────
 export const qualityStrictnessSchema = z.enum(["lenient", "standard", "strict"]).default("standard");
+
+// ── Vocab-note import (P3) ─────────────────────────────────────────────
+export const vocabNotesImportFileSchema = z.object({
+  /** Vault-relative note path, e.g. "L1_雅思词汇/accelerate.md". */
+  path: z.string().trim().min(1).max(VOCAB_IMPORT_PATH_MAX_LENGTH),
+  content: z.string().min(1).max(VOCAB_IMPORT_CONTENT_MAX_BYTES),
+  updatedAt: z.string().datetime().nullish(),
+});
+
+export const vocabNotesImportRequestSchema = z.object({
+  files: z.array(vocabNotesImportFileSchema).min(1).max(VOCAB_IMPORT_MAX_FILES),
+  dryRun: z.boolean().optional(),
+  strictness: qualityStrictnessSchema.optional(),
+});
 
 // ── L3 context space ───────────────────────────────────────────────────
 function withinJsonBudget(value: unknown, maxBytes: number): boolean {
