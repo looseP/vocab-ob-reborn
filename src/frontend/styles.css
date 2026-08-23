@@ -245,8 +245,37 @@ button {
   color: var(--color-ink);
   font-family: var(--font-heading), serif;
   letter-spacing: -0.03em;
+  font-weight: 700;
   margin-top: 1.3em;
   margin-bottom: 0.5em;
+}
+
+/* Tailwind preflight resets heading sizes to inherit — restore hierarchy. */
+.prose-obsidian h1:first-child,
+.prose-obsidian h2:first-child,
+.prose-obsidian h3:first-child,
+.prose-obsidian h4:first-child,
+.prose-obsidian p:first-child {
+  margin-top: 0;
+}
+
+.prose-obsidian h1 {
+  font-size: 1.75em;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 0.3em;
+}
+
+.prose-obsidian h2 {
+  font-size: 1.4em;
+}
+
+.prose-obsidian h3 {
+  font-size: 1.17em;
+}
+
+.prose-obsidian h4 {
+  font-size: 1.05em;
+  color: var(--color-ink-soft);
 }
 
 .prose-obsidian p,
@@ -255,9 +284,82 @@ button {
   line-height: 1.75;
 }
 
+.prose-obsidian p {
+  margin: 0.6em 0;
+}
+
+.prose-obsidian strong,
+.prose-obsidian b {
+  font-weight: 700;
+  color: var(--color-ink);
+}
+
+.prose-obsidian em {
+  font-style: italic;
+}
+
+.prose-obsidian del,
+.prose-obsidian s {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.prose-obsidian a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .prose-obsidian ul,
 .prose-obsidian ol {
   padding-left: 1.25rem;
+  margin: 0.6em 0;
+}
+
+/* Tailwind preflight strips list markers — restore bullets / numbering. */
+.prose-obsidian ul {
+  list-style: disc;
+}
+
+.prose-obsidian ol {
+  list-style: decimal;
+}
+
+.prose-obsidian li {
+  margin: 0.25em 0;
+}
+
+.prose-obsidian li > ul,
+.prose-obsidian li > ol {
+  margin: 0.25em 0;
+}
+
+.prose-obsidian li > ul {
+  list-style: circle;
+}
+
+.prose-obsidian li::marker {
+  color: var(--color-accent);
+}
+
+.prose-obsidian hr {
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  margin: 1.25rem 0;
+}
+
+.prose-obsidian pre {
+  background: var(--color-code-bg);
+  border-radius: 0.6rem;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+
+.prose-obsidian pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.85em;
 }
 
 .prose-obsidian blockquote {

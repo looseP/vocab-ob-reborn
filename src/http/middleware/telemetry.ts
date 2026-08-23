@@ -17,6 +17,7 @@ function stableRoute(path: string): string {
   if (path.startsWith("/api/operations")) return "/api/operations/*";
   if (path.startsWith("/api/words")) return "/api/words/*";
   if (path.startsWith("/api/review")) return "/api/review/*";
+  if (path.startsWith("/api/imports")) return "/api/imports/*";
   if (path.startsWith("/api/l2")) return "/api/l2/*";
   if (path.startsWith("/api/l3")) return "/api/l3/*";
   return "unmatched";

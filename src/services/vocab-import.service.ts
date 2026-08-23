@@ -15,6 +15,7 @@ import {
   parseVocabCollection,
   type IngestWord,
   type QualityStrictness,
+  type WordQualityTier,
 } from "../domain/ingest";
 import type { IWordRepository, UpsertFullWordInput } from "../repositories/interfaces";
 import { ValidationError } from "../errors";
@@ -51,9 +52,24 @@ export interface ImportVocabNoteFileResult {
   minScore: number | null;
   issues: string[];
   error?: string;
+  /** Per-word parse outcome — powers preview drill-down in the UI. */
+  words: ImportVocabNoteWordEntry[];
+}
+
+export interface ImportVocabNoteWordEntry {
+  slug: string;
+  pos: string | null;
+  cefr: string | null;
+  tier: WordQualityTier;
+  score: number;
+  issues: string[];
+  /** Write outcome in a real run; absent during dryRun (nothing written). */
+  outcome?: "imported" | "unchanged";
 }
 
 export interface ImportVocabNotesResult {
+  /** Echoes the effective dry-run flag so consumers can trust the server's verdict, not their own request state. */
+  dryRun: boolean;
   results: ImportVocabNoteFileResult[];
   stats: {
     files: number;
@@ -105,7 +121,7 @@ export class VocabImportService {
       stats.rejected += result.rejected;
       if (result.status === "failed") stats.failed += 1;
     }
-    return { results, stats };
+    return { dryRun: options.dryRun === true, results, stats };
   }
 
   private async importOneFile(
@@ -123,6 +139,7 @@ export class VocabImportService {
       failedWords: 0,
       minScore: null as number | null,
       issues: [] as string[],
+      words: [] as ImportVocabNoteWordEntry[],
     };
 
     try {
@@ -136,6 +153,16 @@ export class VocabImportService {
         base.total += 1;
         base.minScore =
           base.minScore == null ? quality.score : Math.min(base.minScore, quality.score);
+
+        const entry: ImportVocabNoteWordEntry = {
+          slug: word.slug,
+          pos: word.pos,
+          cefr: word.cefr,
+          tier: quality.tier,
+          score: quality.score,
+          issues: quality.issues.map((issue) => issue.reason),
+        };
+        base.words.push(entry);
 
         if (quality.tier === "rejected") {
           base.rejected += 1;
@@ -154,6 +181,7 @@ export class VocabImportService {
           quality.issues.map((issue) => issue.reason),
           file,
         );
+        entry.outcome = outcome;
         if (outcome === "imported") base.imported += 1;
         else base.unchanged += 1;
       }

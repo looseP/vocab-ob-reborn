@@ -43,6 +43,10 @@ describe("VocabImportService.importFiles", () => {
 
     expect(result.stats).toMatchObject({ files: 1, imported: 1, rejected: 0, failed: 0 });
     expect(result.results[0]).toMatchObject({ path: OK_FILE.path, status: "imported", total: 1 });
+    expect(result.dryRun).toBe(false);
+    expect(result.results[0]!.words).toMatchObject([
+      { slug: "accelerate", pos: "v", cefr: null, tier: "ok", score: expect.any(Number), outcome: "imported" },
+    ]);
     const call = upsertFullWord.mock.calls[0]![0] as UpsertFullWordInput;
     expect(call.slug).toBe("accelerate");
     expect(call.sourcePath).toBe(OK_FILE.path);
@@ -65,6 +69,10 @@ describe("VocabImportService.importFiles", () => {
     expect(result.results[0]!.status).toBe("rejected");
     expect(result.stats.rejected).toBe(1);
     expect(result.results[0]!.issues[0]).toContain("ghost");
+    expect(result.results[0]!.words).toMatchObject([
+      { slug: "ghost", pos: null, cefr: null, tier: "rejected", score: expect.any(Number) },
+    ]);
+    expect(result.results[0]!.words[0]!.issues.length).toBeGreaterThan(0);
     expect(upsertFullWord).not.toHaveBeenCalled();
   });
 
@@ -74,8 +82,21 @@ describe("VocabImportService.importFiles", () => {
 
     const result = await service.importFiles([OK_FILE], { dryRun: true });
 
+    expect(result.dryRun).toBe(true);
     expect(result.stats.imported).toBe(1);
+    expect(result.results[0]!.words[0]).toMatchObject({ slug: "accelerate", tier: "ok" });
+    expect(result.results[0]!.words[0]!.outcome).toBeUndefined();
     expect(upsertFullWord).not.toHaveBeenCalled();
+  });
+
+  it("reports dryRun=false by default so consumers can trust the write outcome", async () => {
+    const upsertFullWord = vi.fn(async (_input: UpsertFullWordInput) => "imported" as const);
+    const service = new VocabImportService(makeWordsRepo(upsertFullWord));
+
+    const result = await service.importFiles([OK_FILE]);
+
+    expect(result.dryRun).toBe(false);
+    expect(upsertFullWord).toHaveBeenCalledTimes(1);
   });
 
   it("isolates a failing file so later files still import", async () => {

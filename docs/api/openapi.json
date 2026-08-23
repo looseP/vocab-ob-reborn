@@ -9287,6 +9287,9 @@
                   "$schema": "https://json-schema.org/draft/2020-12/schema",
                   "type": "object",
                   "properties": {
+                    "dryRun": {
+                      "type": "boolean"
+                    },
                     "results": {
                       "type": "array",
                       "items": {
@@ -9353,6 +9356,70 @@
                           },
                           "error": {
                             "type": "string"
+                          },
+                          "words": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "pos": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "cefr": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "tier": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ok",
+                                    "needs_supplement",
+                                    "rejected"
+                                  ]
+                                },
+                                "score": {
+                                  "type": "number"
+                                },
+                                "issues": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "outcome": {
+                                  "type": "string",
+                                  "enum": [
+                                    "imported",
+                                    "unchanged"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "slug",
+                                "pos",
+                                "cefr",
+                                "tier",
+                                "score",
+                                "issues"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -9365,7 +9432,8 @@
                           "rejected",
                           "failedWords",
                           "minScore",
-                          "issues"
+                          "issues",
+                          "words"
                         ],
                         "additionalProperties": false
                       }
@@ -9416,6 +9484,7 @@
                     }
                   },
                   "required": [
+                    "dryRun",
                     "results",
                     "stats"
                   ],
