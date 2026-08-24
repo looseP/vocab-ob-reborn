@@ -24,6 +24,25 @@ L1 retention(0.85) ≠ L2 retention(0.90)。
 | content_hash | `l1_content_hash` | `l2_content_hash` |
 | weights | per-wordbook `fsrs_weights` | per-wordbook `fsrs_l2_weights`（冷启动复用 L1） |
 
+### L1 desired_retention=0.85 的产品依据（勿"修复"）
+
+L1 的 0.85 是**刻意的低压力定位**，不是保守默认值，依据如下：
+
+- **产品意图**：L1 层是廉价的眼熟漏斗（混眼熟），不给用户施压。全局调高 DR
+  会线性放大每日到期队列——那是全员加压，与分层哲学相悖。
+- **重复集中在难词，由 FSRS 难度自适应局部完成**：`again` 评级自动大幅缩短
+  该词间隔、简单词间隔指数拉长。"重在重复"不需要全局调参来实现。
+- **低 DR 反而加速 L2 晋升**：间隔效应（在更低提取概率时成功回忆 → stability
+  增幅更大）意味着 0.85 下每个有效复习换来更大的 S 跳跃，更少总复习次数即
+  到达 L2 准入门（S≥21d 且 ≥5 次）。
+- **主动加量有专属出口**：用户想多刷走 `cram` 模式（queue API `mode=cram`），
+  调度节奏不为此买单。
+- **压力分层是设计而非失衡**：L1 容忍遗忘（<5s 再认，15% 遗忘成本极低）；
+  L2 辨析记忆才值得高频维护，且 CHECK 锁死 `l2_desired_retention ≥ 0.900`。
+
+后续如需差异化（如备考冲刺），方向是词书级 DR 配置
+（wordbook-space spec 已预留字段），而非修改本常量。
+
 ### content_hash 分层（隔离的物理基础）
 
 `src/db/content-hash.ts` 计算三层 hash：
