@@ -2278,6 +2278,16 @@
                     "examples": {
                       "$ref": "#/components/schemas/JsonValue"
                     },
+                    "prototype_text": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "metadata": {
                       "$ref": "#/components/schemas/JsonValue"
                     }
@@ -2295,6 +2305,7 @@
                     "definition_md",
                     "body_md",
                     "examples",
+                    "prototype_text",
                     "metadata"
                   ],
                   "additionalProperties": false
@@ -15146,6 +15157,16 @@
                         "body_md": {
                           "type": "string"
                         },
+                        "prototype_text": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "examples": {
                           "$ref": "#/components/schemas/JsonValue"
                         },
@@ -15193,6 +15214,7 @@
                         "short_definition",
                         "definition_md",
                         "body_md",
+                        "prototype_text",
                         "examples",
                         "metadata",
                         "source_path",

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+﻿import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import type { L3ContextRow, L3SourceRow, WordbookRow, WordRow } from "@/domain";
 import type { IL3ContextRepository, IRepositories } from "@/repositories/interfaces";
@@ -44,6 +44,7 @@ const WORD_ROW: WordRow = {
   short_definition: null,
   definition_md: "",
   body_md: "",
+      prototype_text: null,
   examples: [],
   metadata: {},
   source_path: "words/vivid.md",

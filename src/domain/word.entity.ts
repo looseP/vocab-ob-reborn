@@ -34,6 +34,7 @@ export class Word {
       definition_md: this.row.definition_md,
       body_md: this.row.body_md,
       examples: this.row.examples,
+      prototype_text: this.row.prototype_text,
       metadata: this.row.metadata,
     };
   }

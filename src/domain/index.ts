@@ -32,6 +32,7 @@ export interface WordRow {
   short_definition: string | null;
   definition_md: string;
   body_md: string;
+  prototype_text: string | null;
   examples: Json;
   metadata: Json;
   source_path: string;
@@ -61,6 +62,7 @@ export interface WordDetail extends WordSummary {
   definition_md: string;
   body_md: string;
   examples: Json;
+  prototype_text: string | null;
 }
 
 export interface WordFilters {

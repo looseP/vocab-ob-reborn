@@ -1927,6 +1927,7 @@ export interface operations {
                         definition_md: string;
                         body_md: string;
                         examples: components["schemas"]["JsonValue"];
+                        prototype_text: string | null;
                         metadata: components["schemas"]["JsonValue"];
                     };
                 };
@@ -7662,6 +7663,7 @@ export interface operations {
                             short_definition: string | null;
                             definition_md: string;
                             body_md: string;
+                            prototype_text: string | null;
                             examples: components["schemas"]["JsonValue"];
                             metadata: components["schemas"]["JsonValue"];
                             source_path: string;

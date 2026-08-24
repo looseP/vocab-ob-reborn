@@ -4,6 +4,7 @@ import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Modal } from "@/frontend/components/ui/Modal";
+import { Markdown } from "@/frontend/components/ui/Markdown";
 import { useToast } from "@/frontend/components/ui/Toast";
 import { apiFetch } from "@/frontend/api/client";
 
@@ -162,39 +163,14 @@ function formatValidationDetails(details: unknown, fallback: string): string {
 }
 
 /**
- * Rendered markdown view. `marked` + `dompurify` are lazy-loaded on first
- * use so they stay out of the main bundle; output is always sanitized
- * before touching the DOM.
+ * Rendered markdown view for the modal — wraps the shared <Markdown> component
+ * with the preview panel's scroll container.
  */
 function RenderedMarkdown({ content }: { content: string }) {
-  const [html, setHtml] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [{ marked }, { default: DOMPurify }] = await Promise.all([
-          import("marked"),
-          import("dompurify"),
-        ]);
-        const raw = await marked.parse(content, { gfm: true, breaks: true, async: true });
-        if (!cancelled) setHtml(DOMPurify.sanitize(raw));
-      } catch {
-        if (!cancelled) setFailed(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [content]);
-  if (failed) {
-    return <p className="text-sm text-[var(--color-accent-2)]">Markdown 渲染失败，请切换到「纯文本」查看。</p>;
-  }
-  if (html === null) {
-    return <p className="text-sm text-[var(--color-ink-soft)]">正在渲染 Markdown...</p>;
-  }
   return (
-    <div
-      className="prose-obsidian max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-strong)] p-4 text-sm"
-      dangerouslySetInnerHTML={{ __html: html }}
+    <Markdown
+      content={content}
+      className="max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-strong)] p-4"
     />
   );
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotFoundError, ValidationError } from "@/errors";
 import type { Json, L3ImportJobRow, L3ProposalBundle, L3ProposalItemRow, L3ProposalRow, WordbookRow, WordRow } from "@/domain";
 import type {
@@ -10,7 +10,7 @@ import type { CreateL3ProposalInput } from "@/schemas/service";
 import { L3ImportService } from "@/services/l3-import.service";
 import type { L3ProposalService } from "@/services/l3-proposal.service";
 
-// ── Mock infrastructure ─────────────────────────────────────────────────
+// 鈹€鈹€ Mock infrastructure 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const mockRepos: Partial<IRepositories> = {};
 
 vi.mock("@/db/transaction", () => ({
@@ -43,6 +43,7 @@ const WORD_ROW: WordRow = {
   short_definition: null,
   definition_md: "",
   body_md: "",
+      prototype_text: null,
   examples: [],
   metadata: {},
   source_path: "words/vivid.md",
@@ -214,13 +215,13 @@ describe("L3ImportService", () => {
 
     // Dedup check happened first
     expect(contextRepo.findImportJobByInputHash).toHaveBeenCalledTimes(1);
-    // Import job created directly as completed — no processing intermediate
+    // Import job created directly as completed 鈥?no processing intermediate
     expect(contextRepo.createImportJob).toHaveBeenCalledWith(expect.objectContaining({
       user_id: "u1",
       status: "completed",
       input_summary: "Essay: 2 contexts",
     }));
-    // No status update needed — job was created as completed
+    // No status update needed 鈥?job was created as completed
     expect(contextRepo.updateImportJobStatus).not.toHaveBeenCalled();
     expect(result.importJob.status).toBe("completed");
     // Proposal created via createProposalInTx within the same transaction
@@ -403,7 +404,7 @@ describe("L3ImportService", () => {
     expect(contextRepo.createImportJob).not.toHaveBeenCalled();
   });
 
-  it("rolls back the entire transaction when proposal creation fails — no orphan import job", async () => {
+  it("rolls back the entire transaction when proposal creation fails 鈥?no orphan import job", async () => {
     // Override createProposalInTx to throw
     (proposalService as unknown as { createProposalInTx: ReturnType<typeof vi.fn> }).createProposalInTx
       = vi.fn(async () => { throw new Error("proposal insert failed"); });
@@ -434,7 +435,7 @@ describe("L3ImportService", () => {
     expect(proposalService.validateProposal).toHaveBeenCalledWith({ userId: "u1", proposalId: "prop-1" });
   });
 
-  // ── Idempotency tests ────────────────────────────────────────────────
+  // 鈹€鈹€ Idempotency tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
   it("returns existing result when the same raw text input is submitted twice (dedup by input_hash)", async () => {
     // First call creates the import
@@ -474,7 +475,7 @@ describe("L3ImportService", () => {
       targetWords: [{ slug: "vivid" }],
     });
 
-    // Same result returned — no new import job or proposal created
+    // Same result returned 鈥?no new import job or proposal created
     expect(second.importJob.id).toBe("job-1");
     expect(second.proposal.id).toBe("prop-1");
     expect(contextRepo.createImportJob).not.toHaveBeenCalled();
@@ -499,7 +500,7 @@ describe("L3ImportService", () => {
       targetWords: [{ slug: "vivid" }],
     });
 
-    // Different inputs → different input hashes → both created
+    // Different inputs 鈫?different input hashes 鈫?both created
     expect(result1.proposal.input_hash).not.toBe(result2.proposal.input_hash);
     expect(contextRepo.createImportJob).toHaveBeenCalledTimes(2);
     expect(proposalService.createProposalInTx).toHaveBeenCalledTimes(2);
@@ -539,7 +540,7 @@ describe("L3ImportService", () => {
       targetWords: [{ slug: "vivid" }],
     });
 
-    // Race was resolved — existing result returned
+    // Race was resolved 鈥?existing result returned
     expect(result.importJob.id).toBe("job-1");
     expect(result.proposal.id).toBe("prop-1");
     // findImportJobByInputHash called twice: once for dedup (null), once for race fallback (existing)
