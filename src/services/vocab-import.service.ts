@@ -102,8 +102,12 @@ export class VocabImportService {
     }
 
     const results: ImportVocabNoteFileResult[] = [];
+    // Upsert is keyed by slug and overwrites wholesale, so two entries with the
+    // same headword in one batch silently lose everything but the last one.
+    // Scope: this request only — chunked uploads arrive as separate requests.
+    const seenSlugs = new Map<string, string>();
     for (const file of files) {
-      results.push(await this.importOneFile(file, strictness, options.dryRun === true));
+      results.push(await this.importOneFile(file, strictness, options.dryRun === true, seenSlugs));
     }
 
     const stats = {
@@ -128,6 +132,7 @@ export class VocabImportService {
     file: ImportVocabNoteFileInput,
     strictness: QualityStrictness,
     dryRun: boolean,
+    seenSlugs: Map<string, string>,
   ): Promise<ImportVocabNoteFileResult> {
     const base = {
       path: file.path,
@@ -162,6 +167,17 @@ export class VocabImportService {
           score: quality.score,
           issues: quality.issues.map((issue) => issue.reason),
         };
+        if (word.slug) {
+          const firstPath = seenSlugs.get(word.slug);
+          if (firstPath !== undefined) {
+            const origin = firstPath === file.path ? "本文件前文" : firstPath;
+            const reason = `重复词条 slug "${word.slug}"（首次出现于 ${origin}）；后导入者将整体覆盖先导入者`;
+            entry.issues.push(reason);
+            base.issues.push(`${word.slug}: ${reason}`);
+          } else {
+            seenSlugs.set(word.slug, file.path);
+          }
+        }
         base.words.push(entry);
 
         if (quality.tier === "rejected") {

@@ -152,6 +152,23 @@ describe("parseVocabCollection", () => {
     expect(accelerate!.definitionMd).toContain("- priority: 1");
   });
 
+  it("orders senses by priority regardless of written order (nulls last, stable)", () => {
+    const [word] = parseVocabCollection(
+      `# t\n\n---\n\n## release\n\n### Identity\n- lemma: release\n\n### Core Definitions`
+        + `\n1. 释放\n   - priority: 2`
+        + `\n2. 发行\n   - priority: 1`
+        + `\n3. 无优先义项甲`
+        + `\n4. 无优先义项乙`,
+    ).words;
+    expect(word!.coreDefinitions.map((d) => d.sense)).toEqual([
+      "发行",
+      "释放",
+      "无优先义项甲",
+      "无优先义项乙",
+    ]);
+    expect(word!.definitionMd.split("\n")[0]).toBe("1. 发行");
+  });
+
   it("treats blank morphology fields as null and keeps non-empty ones", () => {
     const [, dock] = parsed.words;
     expect(dock!.morphology.prefix).toBeNull();
@@ -213,19 +230,20 @@ describe("computeIngestHash", () => {
 });
 
 describe("assessWordCompleteness (ported gate)", () => {
-  it("standard: corpus-shaped word (ipa present, no examples) is ok", () => {
+  it("standard: corpus-shaped word with ipa is fully scored ok", () => {
     const word = parseVocabCollection(SAMPLE_FILE).words[0]!;
     const report = assessWordCompleteness(word);
     expect(report.tier).toBe("ok");
-    expect(report.score).toBe(80);
-    expect(report.missing).toEqual(["examples"]);
+    expect(report.score).toBe(100);
+    expect(report.missing).toEqual([]);
   });
 
-  it("standard: missing ipa AND examples flags needs_supplement", () => {
+  it("standard: missing ipa alone flags needs_supplement", () => {
     const file = parseVocabCollection(SAMPLE_FILE.replace("- ipa: /əkˈseləreɪt/", "- ipa:"));
     const report = assessWordCompleteness(file.words[0]!);
     expect(report.tier).toBe("needs_supplement");
     expect(report.score).toBe(60);
+    expect(report.missing).toEqual(["ipa"]);
   });
 
   it("any strictness rejects a definition-less word", () => {
@@ -238,7 +256,7 @@ describe("assessWordCompleteness (ported gate)", () => {
   });
 
   it("strict flags any single missing field as needs_supplement", () => {
-    const word = parseVocabCollection(SAMPLE_FILE).words[0]!;
+    const word = parseVocabCollection(SAMPLE_FILE.replace("- ipa: /əkˈseləreɪt/", "- ipa:")).words[0]!;
     expect(assessWordCompleteness(word, "strict").tier).toBe("needs_supplement");
     expect(assessWordCompleteness(word, "lenient").tier).toBe("ok");
   });

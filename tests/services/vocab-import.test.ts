@@ -136,8 +136,23 @@ describe("VocabImportService.importFiles", () => {
     const result = await service.importFiles([missingIpa], { strictness: "strict" });
 
     expect(result.results[0]!.status).toBe("needs_supplement");
+    expect(result.results[0]!.words[0]!.issues.join("\n")).toContain("缺少音标");
     const call = upsertFullWord.mock.calls[0]![0] as UpsertFullWordInput;
     expect(call.isPublished).toBe(false);
     expect(call.qualityStatus).toBe("needs_supplement");
+  });
+
+  it("flags duplicate slugs across files instead of silently overwriting", async () => {
+    const upsertFullWord = vi.fn(async (_input: UpsertFullWordInput) => "imported" as const);
+    const service = new VocabImportService(makeWordsRepo(upsertFullWord));
+    const dupFile = { ...OK_FILE, path: "L1_重复.md" };
+
+    const result = await service.importFiles([OK_FILE, dupFile]);
+
+    expect(result.results[0]!.words[0]!.issues).toEqual([]);
+    expect(result.results[1]!.words[0]!.issues.join(";")).toContain("重复词条 slug");
+    expect(result.results[1]!.issues.join(";")).toContain("首次出现于 L1_雅思词汇_交通旅行.md");
+    // Both occurrences still import — last write wins is preserved.
+    expect(result.stats.imported).toBe(2);
   });
 });
