@@ -161,7 +161,23 @@ function parseCoreDefinitions(sectionBody: string | undefined): ParsedCoreDefini
     current = { sense: line, en: null, priority: null, tags: [] };
   }
   pushCurrent();
-  return definitions.filter((def) => def.sense.length > 0);
+  return sortByPriority(definitions.filter((def) => def.sense.length > 0));
+}
+
+/**
+ * Display order must follow recognition priority regardless of the order the
+ * senses were written in. Stable for ties and for missing priorities (kept at
+ * the end, in file order).
+ */
+function sortByPriority(definitions: ParsedCoreDefinition[]): ParsedCoreDefinition[] {
+  return definitions
+    .map((def, index) => ({ def, index }))
+    .sort((a, b) => {
+      const pa = a.def.priority ?? Number.MAX_SAFE_INTEGER;
+      const pb = b.def.priority ?? Number.MAX_SAFE_INTEGER;
+      return pa === pb ? a.index - b.index : pa - pb;
+    })
+    .map((entry) => entry.def);
 }
 
 function renderDefinitionMd(definitions: ParsedCoreDefinition[]): string {

@@ -17,6 +17,16 @@ Recommended shape:
 - YAML front matter inside each word block is not required. Use simple labeled sections for easier review.
 - Keep each word short enough to scan in 30-60 seconds.
 
+Headword uniqueness rules:
+
+- A headword may appear **once across the whole corpus** (all files). Import
+  upserts are keyed by slug and overwrite wholesale: the last import of a
+  duplicated headword replaces all earlier content.
+- Merge multi-POS meanings into the single entry (`pos: v/n`), one sense per
+  meaning — never split a headword into several entries.
+- The importer flags duplicates it sees within one upload batch; cross-batch
+  duplicates are only detectable via the database and are NOT warned about.
+
 ## L1 Word Template
 
 ```md
@@ -58,6 +68,10 @@ abandon = 丢下不管 / 不再继续
 - suffix:
 - family: abandoned, abandonment
 
+### Etymology Narrative
+
+Optional 2-3 sentence origin story.
+
 ### Mnemonic
 
 - type: story
@@ -85,7 +99,9 @@ Required:
 
 Optional but recommended:
 
-- `ipa`: pronunciation.
+- `ipa`: pronunciation. Practically required: under the default `standard`
+  quality gate, a word without IPA lands on `needs_supplement` and is
+  imported unpublished.
 - `cefr`: A1-C2 level if available.
 - `aliases`: inflections, spelling variants, or common alternate forms.
 
@@ -120,8 +136,9 @@ Required.
 Rules:
 
 - Usually 1-3 senses.
-- Sort by recognition priority, not dictionary completeness.
-- `priority: 1` is the main sense shown first.
+- Senses are displayed **sorted by `priority`**, not by written order.
+  `priority: 1` is the main sense shown first; senses without a priority
+  keep file order after all prioritized ones.
 - Each sense should be short enough for quick review.
 - Tags are optional and should be coarse, such as `core`, `formal`, `spoken`, `person`, `object`, `abstract`.
 
@@ -129,20 +146,20 @@ Maps to:
 
 - `words.core_definitions`
 
-Suggested JSON shape after conversion:
+Stored JSON shape:
 
 ```json
 [
   {
-    "sense_id": "abandon.v.01",
-    "pos": "v",
-    "zh": "放弃；停止继续",
+    "sense": "放弃；停止继续",
     "en": "to stop doing, supporting, or trying to achieve something",
     "priority": 1,
     "tags": ["core"]
   }
 ]
 ```
+
+`words.definition_md` is rendered from this list (numbered, priority order).
 
 ### Prototype
 
@@ -182,6 +199,20 @@ Suggested JSON shape after conversion:
   "family": ["abandoned", "abandonment"]
 }
 ```
+
+### Etymology Narrative
+
+Optional.
+
+Rules:
+
+- 2-3 sentences of narrative etymology; plain prose, no lists.
+- Do not invent origins — leave the section out if unknown.
+- Displayed on the word detail page as its own card.
+
+Maps to:
+
+- `words.metadata.etymology_narrative`
 
 ### Mnemonic
 
@@ -262,25 +293,35 @@ If these appear during review, move them to L2/L3 later instead of importing the
 | `Identity.cefr` | `words.cefr` |
 | `Identity.aliases` | `words.aliases` |
 | `Short Definition` | `words.short_definition` |
-| `Core Definitions` | `words.core_definitions` |
+| `Core Definitions` | `words.core_definitions` (+ rendered `words.definition_md`) |
 | `Prototype` | `words.prototype_text` |
-| `Morphology` | `words.metadata.morphology` |
-| `Mnemonic` | `words.metadata.mnemonic` |
+| `Morphology` | `words.metadata.morphology_*` |
+| `Etymology Narrative` | `words.metadata.etymology_narrative` |
+| `Mnemonic` | `words.metadata.mnemonic_type` / `mnemonic_text` |
 | `Semantic Chain` | `words.metadata.semantic_chain` |
-| `Reviewer Notes` | review-only, not imported by default |
+| `Reviewer Notes` | review-only; `- confidence:` maps to `words.metadata.confidence` |
 
 ## Hash Boundary
 
-L1 content hash should be computed only from:
+The ingest content hash (`computeIngestHash`, sha256) is computed from the
+parsed word's:
 
-- `definition_md`
-- `core_definitions`
-- `prototype_text`
-- `metadata.morphology`
-- `metadata.mnemonic`
-- `metadata.semantic_chain`
+- `slug`, `title`, `lemma`, `pos`, `cefr`, `ipa`
+- `short_definition`
+- `definition_md` (rendered core definitions)
+- `body_md` (the raw entry block, verbatim)
 
-L1 Markdown review notes and L2 sections must not affect `l1_content_hash`.
+Consequences:
+
+- Any edit inside the entry block — **including Reviewer Notes** — changes the
+  hash and triggers a re-upsert on the next import. The rewrite is harmless
+  when only notes changed: all imported fields keep identical values, only
+  `updated_at` / `synced_at` churn.
+- The structured metadata sections (morphology/mnemonic/semantic chain/
+  etymology) are covered indirectly because they live inside `body_md`.
+- The minimal stub path (`WordRepository.insertMany`) uses a different
+  formula on purpose, so a stub and its later full-note import always produce
+  different hashes and the upsert refreshes content.
 
 ## Recommended Review Checklist
 
