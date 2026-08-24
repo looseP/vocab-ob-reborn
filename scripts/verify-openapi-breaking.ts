@@ -78,6 +78,9 @@ function compareSchema(
     issue(issues, "unknown", location, "schema 无法解析（仅支持有效的本地 $ref）");
     return;
   }
+  // Unchanged schema targets cannot introduce a breaking change — skip before
+  // composition keywords (oneOf/anyOf/…) trigger fail-closed UNKNOWN noise.
+  if (stable(base) === stable(current)) return;
   if (UNSUPPORTED_SCHEMA_KEYS.some((key) => key in base || key in current)) {
     issue(issues, "unknown", location, "受影响 schema 使用了无法安全比较的组合/条件关键字");
     return;

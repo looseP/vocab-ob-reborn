@@ -208,6 +208,7 @@ interface WordSpaceRow extends JoinedContextWithSourceRow {
   word_short_definition: string | null;
   word_definition_md: string;
   word_body_md: string;
+  word_prototype_text: string | null;
   word_examples: Json;
   word_metadata: Json;
   word_source_path: string;
@@ -264,6 +265,7 @@ function mapWord(row: WordSpaceRow): WordRow {
     short_definition: row.word_short_definition,
     definition_md: row.word_definition_md,
     body_md: row.word_body_md,
+    prototype_text: row.word_prototype_text,
     examples: row.word_examples,
     metadata: row.word_metadata,
     source_path: row.word_source_path,
@@ -912,6 +914,7 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
          w.ipa AS word_ipa, w.aliases AS word_aliases,
          w.short_definition AS word_short_definition,
          w.definition_md AS word_definition_md, w.body_md AS word_body_md,
+         w.prototype_text AS word_prototype_text,
          w.examples AS word_examples, w.metadata AS word_metadata,
          w.source_path AS word_source_path, w.source_updated_at AS word_source_updated_at,
          w.content_hash AS word_content_hash, w.is_published AS word_is_published,

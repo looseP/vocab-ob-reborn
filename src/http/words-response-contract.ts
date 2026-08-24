@@ -27,6 +27,7 @@ export const wordDetailResponseSchema: z.ZodType<WordDetail> = z.object({
   definition_md: z.string(),
   body_md: z.string(),
   examples: jsonValueSchema,
+  prototype_text: z.string().nullable(),
   metadata: jsonValueSchema,
 }).strict();
 

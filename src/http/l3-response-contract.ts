@@ -266,6 +266,7 @@ const wordRowResponseSchema: z.ZodType<WordRow> = z.object({
   short_definition: z.string().nullable(),
   definition_md: z.string(),
   body_md: z.string(),
+  prototype_text: z.string().nullable(),
   examples: jsonValueSchema,
   metadata: jsonValueSchema,
   source_path: z.string(),

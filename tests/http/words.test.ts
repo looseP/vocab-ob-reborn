@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+﻿import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createApp } from "@/http/server";
 import { Word } from "@/domain/word.entity";
 import type { WordRow } from "@/domain";
@@ -10,7 +10,7 @@ import {
   wordListResponseSchema,
 } from "@/http/words-response-contract";
 
-// ── Auth env setup ──────────────────────────────────────────────────────
+// 鈹€鈹€ Auth env setup 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // authMiddleware resolves the bearer token against OWNER_API_TOKEN.
 // We set it so "test-owner" maps to role=owner, satisfying app.use("/api/*", authMiddleware("owner")).
 const ORIGINAL_OWNER_TOKEN = process.env.OWNER_API_TOKEN;
@@ -26,7 +26,7 @@ afterAll(() => {
   process.env.LOCAL_OWNER_ID = ORIGINAL_LOCAL_OWNER;
 });
 
-// ── Mock services (no DB) ───────────────────────────────────────────────
+// 鈹€鈹€ Mock services (no DB) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 function makeMockServices(): Services {
   return {
     words: {
@@ -80,6 +80,7 @@ const WORD_ROW: WordRow = {
   short_definition: "exist in large numbers",
   definition_md: "To exist in large numbers.",
   body_md: "# abound",
+      prototype_text: null,
   examples: [{ text: "Fish abound in the lake." }],
   metadata: { word_freq: "C1", semantic_field: "quantity" },
   source_path: "private/content/abound.md",
@@ -91,7 +92,7 @@ const WORD_ROW: WordRow = {
   updated_at: "2026-07-13T00:00:00.000Z",
 };
 
-// ── Tests ───────────────────────────────────────────────────────────────
+// 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 describe("GET /api/words", () => {
   it("returns paginated word list", async () => {
     const services = makeMockServices();
@@ -150,6 +151,7 @@ describe("GET /api/words/:slug", () => {
       short_definition: "exist in large numbers",
       definition_md: "To exist in large numbers.",
       body_md: "# abound",
+      prototype_text: null,
       examples: [{ text: "Fish abound in the lake." }],
       metadata: { word_freq: "C1", semantic_field: "quantity" },
     });

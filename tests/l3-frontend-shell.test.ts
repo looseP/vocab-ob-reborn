@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+﻿import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
@@ -1672,6 +1672,7 @@ function wordRow(overrides: Partial<WordRow> = {}): WordRow {
     short_definition: "bright and clear",
     definition_md: "Bright and clear.",
     body_md: "",
+      prototype_text: null,
     examples: [],
     metadata: {},
     source_path: "words/vivid.md",

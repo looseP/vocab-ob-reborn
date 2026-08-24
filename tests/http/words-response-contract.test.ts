@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import {
   wordDetailResponseSchema,
   wordListResponseSchema,
@@ -32,6 +32,7 @@ describe("Words response contracts", () => {
       aliases: ["abounds", "abounded"],
       definition_md: "To exist in large numbers.",
       body_md: "# abound",
+      prototype_text: null,
       examples: [{ text: "Fish abound in the lake." }],
     };
 
@@ -53,3 +54,4 @@ describe("Words response contracts", () => {
     expect(() => wordListResponseSchema.parse({ ...response, items: [{ ...summary, id: 123 }] })).toThrow();
   });
 });
+

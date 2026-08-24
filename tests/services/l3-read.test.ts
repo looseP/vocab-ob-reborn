@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotFoundError, ValidationError } from "@/errors";
 import type {
   Json,
@@ -36,6 +36,7 @@ const WORD_ROW: WordRow = {
   short_definition: null,
   definition_md: "",
   body_md: "",
+      prototype_text: null,
   examples: [],
   metadata: {},
   source_path: "words/vivid.md",

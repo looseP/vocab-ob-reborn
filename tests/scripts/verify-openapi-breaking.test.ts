@@ -69,6 +69,21 @@ describe("compareOpenApiDocuments", () => {
     expect(messages(base, withoutStatus)).toContain("response status 被删除");
   });
 
+  it("父 schema 变更时跳过未变化的相同 $ref 组合目标", () => {
+    const jsonValue = {
+      anyOf: [{ type: "string" }, { type: "number" }, { type: "null" }],
+    };
+    const base = document({
+      type: "object",
+      properties: { id: { type: "string" }, extra: { $ref: "#/components/schemas/JsonValue" } },
+      required: ["id"],
+    });
+    (base as Record<string, any>).components = { schemas: { JsonValue: jsonValue } };
+    const current = structuredClone(base);
+    current.paths["/words"].post.responses["200"].content["application/json"].schema.properties.note = { type: "string" };
+    expect(compareOpenApiDocuments(base, current)).toEqual([]);
+  });
+
   it("检测 request schema 新增 required field", () => {
     const base = document({ type: "object", properties: { term: { type: "string" } } });
     const current = document({ type: "object", properties: { term: { type: "string" } }, required: ["term"] });
