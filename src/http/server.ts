@@ -22,6 +22,7 @@ import { importRoutes } from "./routes/imports";
 import { wordbookRoutes } from "./routes/wordbooks";
 import { noteRoutes } from "./routes/notes";
 import { l2Routes } from "./routes/l2";
+import { l2DrillRoutes } from "./routes/l2-drill";
 import { l3Routes } from "./routes/l3";
 import { authRoutes } from "./routes/auth";
 import { requestTelemetry, isMetricsAuthorized } from "./middleware/telemetry";
@@ -104,6 +105,7 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/wordbooks", wordbookRoutes(services));
   app.route("/api/notes", noteRoutes(services));
   app.route("/api/l2", l2Routes(services));
+  app.route("/api/l2-drill", l2DrillRoutes(services));
   app.route("/api/l3", l3Routes(services));
 
   return app;

@@ -49,6 +49,12 @@ import {
   l2DraftResponseSchema,
   l2ExternalPromptResponseSchema,
 } from "./l2-response-contract";
+import {
+  l2DrillQueueResponseSchema,
+  l2SelfAssessResponseSchema,
+  l2TaskAnswerResponseSchema,
+  l2UndoResponseSchema,
+} from "./l2-drill-response-contract";
 import { captureResponseSchema } from "./capture-response-contract";
 import { vocabNotesImportResponseSchema } from "./import-response-contract";
 import { operationMetricsResponseSchema } from "./operation-metrics-response-contract";
@@ -73,12 +79,16 @@ import {
   reviewSkipSchema,
   reviewSuspendSchema,
   reviewUndoSchema,
+  clearL1WeakSignalSchema,
   addToReviewSchema,
   batchAddToReviewSchema,
   captureRequestSchema,
   vocabNotesImportRequestSchema,
   wordBatchCreateSchema,
   wordsQuerySchema,
+  l2TaskAnswerSchema,
+  l2SelfAssessSchema,
+  l2UndoSchema,
 } from "../schemas/http";
 
 export type HttpMethod = "delete" | "get" | "patch" | "post" | "put";
@@ -264,6 +274,7 @@ export const apiOperations = [
   operation("post", "/api/review/skip", "skipReview", "owner", "sessionMutation", { body: reviewSkipSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/suspend", "suspendReview", "owner", "sessionMutation", { body: reviewSuspendSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/undo", "undoReview", "owner", "sessionMutation", { body: reviewUndoSchema }, 200, reviewSimpleResponseSchema),
+  operation("post", "/api/review/weak-signal/clear", "clearL1WeakSignal", "owner", "sessionMutation", { body: clearL1WeakSignalSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/cards", "enqueueReviewCard", "owner", "sessionMutation", { body: addToReviewSchema }, 201, reviewEnqueueCardResponseSchema),
   operation("post", "/api/review/cards/batch", "enqueueReviewCardsBatch", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewEnqueueCardsBatchResponseSchema),
   operation("post", "/api/capture", "createCapture", "owner", "sessionMutation", { body: captureRequestSchema }, 201, captureResponseSchema),
@@ -271,6 +282,10 @@ export const apiOperations = [
   operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),
   operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
   operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }, 200, l2ConfirmResponseSchema),
+  operation("get", "/api/l2-drill/queue", "getL2DrillQueue", "owner", "none", { query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional().default(20) }) }, 200, l2DrillQueueResponseSchema),
+  operation("post", "/api/l2-drill/task/answer", "submitL2TaskAnswer", "owner", "sessionMutation", { body: l2TaskAnswerSchema }, 200, l2TaskAnswerResponseSchema),
+  operation("post", "/api/l2-drill/self-assess", "submitL2SelfAssessment", "owner", "sessionMutation", { body: l2SelfAssessSchema }, 200, l2SelfAssessResponseSchema),
+  operation("post", "/api/l2-drill/undo", "undoL2Drill", "owner", "sessionMutation", { body: l2UndoSchema }, 200, l2UndoResponseSchema),
   operation("post", "/api/l3/sources", "createL3Source", "owner", "sessionMutation", { body: l3SourceCreateSchema }, 201, l3SourceCreateResponseSchema),
   operation("post", "/api/l3/contexts", "createL3Context", "owner", "sessionMutation", { body: l3ContextCreateSchema }, 201, l3ContextCreateResponseSchema),
   operation("post", "/api/l3/occurrences", "createL3Occurrence", "owner", "sessionMutation", { body: l3OccurrenceCreateSchema }, 201, l3OccurrenceCreateResponseSchema),

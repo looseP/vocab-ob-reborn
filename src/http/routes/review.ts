@@ -24,6 +24,7 @@ import type { AppEnv } from "./words";
 import {
   addToReviewSchema,
   batchAddToReviewSchema,
+  clearL1WeakSignalSchema,
   reviewAnswerSchema,
   reviewSkipSchema,
   reviewSuspendSchema,
@@ -120,6 +121,23 @@ export function reviewRoutes(services: Services) {
     }
     const userId = c.get("userId");
     const result = await services.reviews.undo(parsed.data, userId);
+    return c.json(result);
+  });
+
+  // POST /weak-signal/clear — clear the L1 weak-signal flag for a word (P1-4)
+  app.post("/weak-signal/clear", async (c) => {
+    const body = await c.req.json();
+    const parsed = clearL1WeakSignalSchema.safeParse(body);
+    if (!parsed.success) {
+      return validationError(c, parsed.error.flatten());
+    }
+    const userId = c.get("userId");
+    const wordbookId = parsed.data.wordbookId
+      ?? (await services.wordbooks.getOrCreateDefault(userId)).id;
+    const result = await services.reviews.clearL1WeakSignal(
+      { wordId: parsed.data.wordId, wordbookId },
+      userId,
+    );
     return c.json(result);
   });
 
