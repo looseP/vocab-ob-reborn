@@ -247,12 +247,8 @@ export interface UserWordL2ProgressRow {
   l2_weights_source: string;
   l2_predicted_retrievability: number | null;
   // 2026-08-24 l2-drill spec：产出步自评标记（非 FSRS 字段）。
-  l2_production_status: string | null;
-  // ⚠️ NOT the L3 main model — see ADR-0005. Unused placeholder flags on the L2 row;
-  // real L3 context space will be an independent l3_ table family in Phase 3, not in FSRS.
-  l3_pending: boolean;
-  l3_self_assessments: unknown[];
-  created_at: string;
+	l2_production_status: string | null;
+	created_at: string;
 }
 
 /** 辨析训练会话步骤明细（l2_drill_session_steps 行）。事实记录，非调度器。 */

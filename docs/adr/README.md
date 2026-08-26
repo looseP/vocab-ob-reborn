@@ -173,6 +173,6 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 
 这三条是不可妥协的架构红线。
 
-此外，**写 L3 相关代码前必读 ADR-0005**：`user_word_l2_progress` 上的
-`l3_pending` / `l3_self_assessments` 列**不是** L3 语境空间主模型，L3 必须用独立
-`l3_` 表族实现。
+此外，**写 L3 相关代码前必读 ADR-0005**：L3 语境空间必须用独立 `l3_` 表族实现，
+不依赖 `user_word_l2_progress`（原 `l3_pending` / `l3_self_assessments` 死字段
+已于 migration 0014 移除，并经 depcruise 规则 `l3-no-l2-progress-repo` 机器守护）。

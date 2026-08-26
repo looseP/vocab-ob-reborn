@@ -104,10 +104,7 @@ function makeL2Row(
     l2_inherited_from_l1: true,
     l2_weights_source: "inherited",
     l2_predicted_retrievability: null,
-    // placeholder flags required by the row shape — NOT the L3 main model (ADR-0005)
     l2_production_status: null,
-    l3_pending: false,
-    l3_self_assessments: [],
     created_at: "2025-01-01T00:00:00Z",
     ...overrides,
   };
