@@ -25,13 +25,18 @@ import { L3ImportService } from "./l3-import.service";
 import { L3ReadService } from "./l3-read.service";
 import { L3RecommendationService } from "./l3-recommendation.service";
 import { CrossTrackService } from "./cross-track.service";
+import { L2DrillService } from "./l2-drill.service";
+import { L3ContextSourceAdapter } from "./l3-context-source-adapter";
 import { AuthSessionService } from "./auth-session.service";
 import { LoginRateLimitService } from "./login-rate-limit.service";
 import { RuntimeStatusService } from "./runtime-status.service";
+import { telemetry } from "../observability/telemetry";
 import type { LlmProvider } from "../llm/provider";
 import type { UsageTracker } from "../llm/usage-tracker";
 import type { DictionaryProvider } from "../dictionary/provider";
+import type { ContextSource } from "../domain/context-source";
 import { createRepositories } from "../repositories/factory";
+import { withTransaction } from "../db/transaction";
 import { AuthSessionRepository } from "../repositories/auth-session.repository";
 import {
   LoginRateLimitRepository,
@@ -54,6 +59,8 @@ export interface ServiceDeps {
   loginRateLimitAttempts?: number;
   /** Load wordbook FSRS weights */
   loadWeights?: (wordbookId: string) => Promise<number[] | null>;
+  /** Load wordbook L2-track weights（缺省回退 loadWeights，双轨 spec §十） */
+  loadL2Weights?: (wordbookId: string) => Promise<number[] | null>;
   /** LLM provider — optional; required to enable the L2 draft/confirm flow. */
   llmProvider?: LlmProvider;
   /** LLM usage tracker — paired with llmProvider for budget enforcement. */
@@ -64,6 +71,12 @@ export interface ServiceDeps {
    * server assembles a Datamuse provider when a dictionary source is enabled.
    */
   dictionaryProvider?: DictionaryProvider;
+  /**
+   * Context source — optional; FR-12 接线2. When absent, L2DrillService
+   * defaults to L3ContextSourceAdapter (reads L3 contexts for the word).
+   * Inject noopContextSource or a mock to disable L3 context consumption.
+   */
+  contextSource?: ContextSource;
 }
 
 export function createServices(deps: ServiceDeps) {
@@ -118,21 +131,60 @@ export function createServices(deps: ServiceDeps) {
     words: new WordService(repos.words),
     capture: new CaptureService(repos.words),
     vocabImport: new VocabImportService(repos.words),
+    // ReviewService 的读路径依赖：owner-scoped 表全部启用 RLS，池直连（无
+    // request.jwt.claim.sub）会静默返回空数据 —— 每个依赖必须携带 actorId
+    // 的事务执行。sessions.getOrCreateToday 已在仓库内部自带事务，直接透传。
     reviews: new ReviewService({
       fsrsAdapter: deps.fsrsAdapter,
       loadWeights,
-      findDueCards: (userId, wordbookId, limit) => repos.reviews.findDueCards(userId, wordbookId, limit),
+      findDueCards: (userId, wordbookId, limit) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.findDueCards(userId, wordbookId, limit),
+          { actorId: userId },
+        ),
       getOrCreateTodaySession: (userId, wordbookId, mode) => repos.sessions.getOrCreateToday(userId, wordbookId, mode),
-      getReviewStats: (userId, wordbookId) => repos.reviews.getStats!(userId, wordbookId),
-      findLeeches: (userId, wordbookId, limit) => repos.reviews.findLeeches!(userId, wordbookId, limit),
-      getTimeline: (userId, wordbookId, limit) => repos.reviews.getTimeline!(userId, wordbookId, limit),
-      getHeatmap: (userId, wordbookId, days) => repos.reviews.getHeatmap!(userId, wordbookId, days),
+      getReviewStats: (userId, wordbookId) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.getStats!(userId, wordbookId),
+          { actorId: userId },
+        ),
+      findLeeches: (userId, wordbookId, limit) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.findLeeches!(userId, wordbookId, limit),
+          { actorId: userId },
+        ),
+      getTimeline: (userId, wordbookId, limit) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.getTimeline!(userId, wordbookId, limit),
+          { actorId: userId },
+        ),
+      getHeatmap: (userId, wordbookId, days) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.getHeatmap!(userId, wordbookId, days),
+          { actorId: userId },
+        ),
+      clearL1WeakSignal: (userId, wordbookId, wordId) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.markL1WeakSignal(userId, wordbookId, wordId, false),
+          { actorId: userId },
+        ),
     }),
     notes: new NoteService(repos.notes, repos.wordbooks),
     wordbooks: new WordbookService(repos.wordbooks),
     stats: new StatsService(repos.stats),
     l2Transition,
     crossTrack,
+    l2Drill: new L2DrillService({
+      fsrsAdapter: deps.fsrsAdapter,
+      loadWeights,
+      loadL2Weights: deps.loadL2Weights,
+      // FR-12 接线2：注入 L3 语境源，让 L2 产出自评步优先使用用户自己的 L3 语境。
+      // 未注入时回退到 noopContextSource（恒返 []，不影响任何现有行为）。
+      // 生产环境默认注入 L3ContextSourceAdapter（自带 withTransaction + RLS）。
+      contextSource: deps.contextSource ?? new L3ContextSourceAdapter(),
+      // P2-5：注入全局 telemetry 单例，采集 L3 命中率/延迟/L2 verdict 真实流量
+      telemetry,
+    }),
     l2content,
     l3Context,
     l3Proposal,

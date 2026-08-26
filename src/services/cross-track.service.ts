@@ -28,6 +28,8 @@
 
 import type { IL2ProgressRepository, IReviewRepository } from "../repositories/interfaces";
 import type { ReviewRating } from "../domain";
+import type { Telemetry } from "../observability/telemetry";
+import { logger } from "../observability/logger";
 
 /** Reasons that mark an L2 progress row as paused. Mirrors the DB CHECK. */
 export const L2_PAUSE_REASON = {
@@ -39,7 +41,36 @@ export const L2_PAUSE_REASON = {
 /** Window sizes — Phase 2C spec §七. */
 const L1_CASCADE_FAILURE_WINDOW = 2;
 const L1_CASCADE_RECOVERY_WINDOW = 2;
-const L2_WEAK_SIGNAL_WINDOW = 3;
+/**
+ * P2-6: L2 复习节奏调优 — 弱信号触发窗口大小可通过环境变量调整。
+ *
+ * 设计原点：Phase 2C spec §七 默认 3（连续 3 次 'again' 才标记 L1
+ * weak_signal）。决策依据：L2 辨析失败 ≠ L1 识别弱（可能只是 synonym
+ * 干扰项偏难），所以 N=3 提供容错。调优依据：P2-5 监控指标
+ * `l2_weak_signal_triggered_total` 触发频率与 L1 重刷通过率对比，过密则
+ * 上调 N=4~5 降低噪声，过疏则下调 N=2 提升敏感度（但 N<2 易被偶发误
+ * 触发，N>10 则弱信号失去意义）。
+ *
+ * Bounds enforced: [2, 10] —— 与 Phase 2C 容错窗口设计一致。非法值回退
+ * 默认 3 并 warn，避免静默使用错误参数导致级联逻辑漂移。
+ */
+const L2_WEAK_SIGNAL_WINDOW = resolveL2WeakSignalWindow();
+
+function resolveL2WeakSignalWindow(): number {
+  const raw = process.env.L2_WEAK_SIGNAL_WINDOW;
+  if (raw === undefined || raw === "") return 3;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 2 || parsed > 10) {
+    logger.warn(
+      "cross-track",
+      "L2_WEAK_SIGNAL_WINDOW out of bounds [2, 10]; falling back to 3",
+      { raw, fallback: 3 },
+    );
+    return 3;
+  }
+  logger.info("cross-track", "L2_WEAK_SIGNAL_WINDOW configured", { value: parsed });
+  return parsed;
+}
 
 /** Ratings that count as "good or better" for L1 recovery. */
 const RECOVERY_RATINGS: ReadonlySet<ReviewRating> = new Set(["good", "easy"]);
@@ -59,10 +90,17 @@ export interface CrossTrackL1Snapshot {
 }
 
 export class CrossTrackService {
+  /** P2-6: 可选 telemetry，未注入则跳过弱信号触发计数（测试默认 noop） */
+  private readonly telemetry: Telemetry | null;
+
   constructor(
     private readonly l2ProgressRepo: IL2ProgressRepository,
     private readonly reviewRepo: IReviewRepository,
-  ) {}
+    /** P2-6: 可选 telemetry，注入后会在 L2→L1 弱信号触发时计数 */
+    telemetry: Telemetry | null = null,
+  ) {
+    this.telemetry = telemetry;
+  }
 
   /**
    * L1→L2 cascade (Phase 2C rule, spec §七 table).
@@ -147,6 +185,9 @@ export class CrossTrackService {
         wordId,
         true,
       );
+      // P2-6: 记录 L2→L1 弱信号级联触发频率（outbox worker beginEffect 已幂等保护，
+      // 一个 eventId 最多触发一次 checkL2FailureCascade，计数不会重复）
+      this.telemetry?.observeL2WeakSignalTriggered();
     }
   }
 }

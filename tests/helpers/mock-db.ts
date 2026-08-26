@@ -26,7 +26,12 @@ export interface MockQueryCall {
   params: unknown[];
 }
 
-export function createMockPool() {
+export function createMockPool(opts: { recordTxControl?: boolean } = {}) {
+  // 默认记录事务控制语句（withTransaction 自身的测试依赖完整序列）。
+  // 仓库层测试可传 recordTxControl:false，让 connect() 客户端过滤
+  // BEGIN/COMMIT/ROLLBACK/set_config，保持 calls 只含业务 SQL。
+  const recordTxControl = opts.recordTxControl ?? true;
+  const TX_CONTROL = /^(BEGIN|COMMIT|ROLLBACK)(\s|$)|set_config\(/;
   const calls: MockQueryCall[] = [];
   let nextRows: unknown[] = [];
   let rowMap: Map<string, unknown[]> = new Map();
@@ -43,7 +48,12 @@ export function createMockPool() {
       return { rows: nextRows as never[], rowCount: nextRows.length };
     }),
     connect: vi.fn(async () => ({
-      query: pool.query,
+      query: vi.fn(async (text: string, params?: unknown[]): Promise<MockQueryResult> => {
+        if (!recordTxControl && TX_CONTROL.test(text)) {
+          return { rows: [], rowCount: 0 };
+        }
+        return pool.query(text, params);
+      }),
       release: vi.fn(),
     })),
     totalCount: 0,

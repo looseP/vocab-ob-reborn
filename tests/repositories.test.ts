@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockPool, type MockQueryCall } from "./helpers/mock-db";
 
 // Mock the connection BEFORE importing repositories
-const mock = createMockPool();
+const mock = createMockPool({ recordTxControl: false });
 vi.mock("@/db/connection", () => ({
   getPool: () => mock.pool,
   checkPoolHealth: vi.fn(),
@@ -338,7 +338,7 @@ describe("SessionRepository", () => {
       id: "s1", started_at: todayIso.toISOString(), ended_at: null,
     }]);
     const repos = createRepositories();
-    const result = await repos.sessions.getOrCreateToday("u1", "wb1");
+    const result = await repos.sessions.getOrCreateToday("00000000-0000-4000-8000-000000000001", "wb1");
     expect(result.id).toBe("s1");
     // Only the find query — no create
     expect(mock.calls.length).toBe(1);
@@ -680,7 +680,7 @@ describe("SessionRepository (extended)", () => {
   it("getOrCreateToday delegates atomic creation to the database function", async () => {
     mock.setRows([{ id: "s-new", started_at: new Date().toISOString(), ended_at: null }]);
     const repos = createRepositories();
-    const result = await repos.sessions.getOrCreateToday("u1", "wb1");
+    const result = await repos.sessions.getOrCreateToday("00000000-0000-4000-8000-000000000001", "wb1");
     expect(result.id).toBe("s-new");
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0].text).toContain("get_or_create_today_session");

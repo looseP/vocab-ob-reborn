@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { withTransaction } from "../db/transaction";
 import { logger } from "../observability/logger";
+import { telemetry, type Telemetry } from "../observability/telemetry";
 import { createRepositories } from "../repositories/factory";
 import type { IOutboxRepository, OutboxEventRow } from "../repositories/interfaces";
 import { OutboxRepository } from "../repositories/outbox.repository";
@@ -17,6 +18,11 @@ export interface ReviewOutboxWorkerOptions {
   batchSize?: number;
   leaseSeconds?: number;
   maxRetryDelaySeconds?: number;
+  /**
+   * P2-6: 可选 Prometheus telemetry。生产环境注入全局 telemetry 单例，
+   * 采集 L2→L1 弱信号级联触发频率。测试可不注入（默认 null）。
+   */
+  telemetry?: Telemetry | null;
 }
 
 export class ReviewOutboxWorker {
@@ -24,6 +30,7 @@ export class ReviewOutboxWorker {
   private readonly batchSize: number;
   private readonly leaseSeconds: number;
   private readonly maxRetryDelaySeconds: number;
+  private readonly telemetry: Telemetry | null;
 
   constructor(
     private readonly outbox: IOutboxRepository = new OutboxRepository(),
@@ -33,6 +40,7 @@ export class ReviewOutboxWorker {
     this.batchSize = options.batchSize ?? 20;
     this.leaseSeconds = options.leaseSeconds ?? 60;
     this.maxRetryDelaySeconds = options.maxRetryDelaySeconds ?? 900;
+    this.telemetry = options.telemetry ?? null;
   }
 
   async processBatch(shouldContinue: () => boolean = () => true): Promise<number> {
@@ -80,6 +88,23 @@ export class ReviewOutboxWorker {
   }
 
   private async applyReviewAnswerEffects(eventId: string, payload: ReviewAnswerRecordedPayload): Promise<void> {
+    // L2 轨事件（l2-drill spec §七）：只做 l2_weak_signal，不递增 cards_seen
+    // （一词不记两次账），也绝不触发 L1 侧的 transition/cascade。
+    if (payload.track === "l2") {
+      await withTransaction(async (tx) => {
+        const repos = createRepositories(tx);
+        // P2-6：注入 telemetry 用于记录 L2→L1 弱信号触发频率（在 CrossTrackService
+        // 内部 markL1WeakSignal 后调用 observeL2WeakSignalTriggered）
+        const crossTrack = new CrossTrackService(repos.l2Progress, repos.reviews, this.telemetry);
+        if (await repos.outbox.beginEffect(eventId, "l2_weak_signal", this.workerId)) {
+          await crossTrack.checkL2FailureCascade(payload.userId, payload.wordbookId, payload.wordId);
+          await repos.outbox.completeEffect(eventId, "l2_weak_signal");
+        }
+        await repos.outbox.markProcessed(eventId, this.workerId);
+      }, { actorId: payload.userId });
+      return;
+    }
+
     await withTransaction(async (tx) => {
       const repos = createRepositories(tx);
       const progress = await repos.reviews.findProgressForOutbox(
@@ -106,7 +131,7 @@ export class ReviewOutboxWorker {
         recent_ratings: progress.recent_ratings ?? [],
       };
       const l2Transition = new L2TransitionService(repos.l2Progress);
-      const crossTrack = new CrossTrackService(repos.l2Progress, repos.reviews);
+      const crossTrack = new CrossTrackService(repos.l2Progress, repos.reviews, this.telemetry);
 
       if (await repos.outbox.beginEffect(eventId, "l2_transition", this.workerId)) {
         await l2Transition.checkAndTransition(transition);

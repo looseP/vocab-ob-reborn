@@ -246,11 +246,34 @@ export interface UserWordL2ProgressRow {
   l2_inherited_from_l1: boolean;
   l2_weights_source: string;
   l2_predicted_retrievability: number | null;
+  // 2026-08-24 l2-drill spec：产出步自评标记（非 FSRS 字段）。
+  l2_production_status: string | null;
   // ⚠️ NOT the L3 main model — see ADR-0005. Unused placeholder flags on the L2 row;
   // real L3 context space will be an independent l3_ table family in Phase 3, not in FSRS.
   l3_pending: boolean;
   l3_self_assessments: unknown[];
   created_at: string;
+}
+
+/** 辨析训练会话步骤明细（l2_drill_session_steps 行）。事实记录，非调度器。 */
+export interface L2DrillStepRow {
+  id: string;
+  session_id: string;
+  user_id: string;
+  wordbook_id: string;
+  word_id: string;
+  progress_id: string;
+  step_index: number;
+  step_type: "l2_discrimination" | "l2_production";
+  status: "pending" | "completed" | "skipped";
+  task_id: string | null;
+  task_type: string | null;
+  task_payload: Json;
+  outcome: "correct" | "incorrect" | "self_passed" | "self_weak" | null;
+  mapped_rating: ReviewRating | null;
+  review_log_id: string | null;
+  created_at: string;
+  completed_at: string | null;
 }
 
 // ── L2 Content ───────────────────────────────────────────────────────────

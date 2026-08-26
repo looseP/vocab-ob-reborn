@@ -131,4 +131,311 @@ describe("L2ProgressRepository", () => {
     expect(sql).toContain("wordbook_id = $2::uuid");
     expect(params[1]).toBe("wb-A");
   });
+
+  // ── M5 回归：findDrillStepBySessionWordStep ───────────────────────────
+  // 此前 submitTaskAnswer 幂等重放一律返回 { type: "done" }，丢失产出步入口。
+  // 修复后调用方需用此方法按 (session, user, word, step_index) 精确定位产出步。
+  describe("findDrillStepBySessionWordStep (M5 regression)", () => {
+    it("scopes by (session_id, user_id, word_id, step_index) without FOR UPDATE", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      await repo.findDrillStepBySessionWordStep("sess-1", "user-1", "word-1", 1);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [sql, params] = spy.mock.calls[0];
+      expect(sql).toContain("session_id = $1::uuid");
+      expect(sql).toContain("user_id = $2::uuid");
+      expect(sql).toContain("word_id = $3::uuid");
+      expect(sql).toContain("step_index = $4");
+      expect(sql).not.toContain("FOR UPDATE");
+      expect(params).toEqual(["sess-1", "user-1", "word-1", 1]);
+    });
+
+    it("returns the located row as-is", async () => {
+      const repo = new L2ProgressRepository();
+      const row = { id: "step-2", status: "pending", step_index: 1 };
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue(row);
+      const result = await repo.findDrillStepBySessionWordStep("sess-1", "user-1", "word-1", 1);
+      expect(result).toEqual(row);
+    });
+
+    it("returns null when not found", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      const result = await repo.findDrillStepBySessionWordStep("sess-1", "user-1", "word-1", 1);
+      expect(result).toBeNull();
+    });
+  });
+
+  // ── M8 回归：findPendingProductionStepsForResume ─────────────────────
+  // 此前 getQueue 只看 findDueCards，若辨析步已 correct 但产出步未自评，
+  // 用户刷新后会 lost-in-session。修复后用此方法补 pending 产出步。
+  describe("findPendingProductionStepsForResume (M8 regression)", () => {
+    it("scopes by (session_id, user_id) + step_type='l2_production' + status='pending'", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      await repo.findPendingProductionStepsForResume("sess-1", "user-1");
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [sql, params] = spy.mock.calls[0];
+      expect(sql).toContain("session_id = $1::uuid");
+      expect(sql).toContain("user_id = $2::uuid");
+      expect(sql).toContain("step_type = 'l2_production'");
+      expect(sql).toContain("status = 'pending'");
+      // 不应上锁：调用方在 getQueue 中是只读补集
+      expect(sql).not.toContain("FOR UPDATE");
+      expect(params).toEqual(["sess-1", "user-1"]);
+    });
+
+    it("JOINs user_word_l2_progress + words and returns empty array when no rows", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      const result = await repo.findPendingProductionStepsForResume("sess-1", "user-1");
+      expect(result).toEqual([]);
+    });
+
+    it("maps prefixed columns to {step, progress, word} structure", async () => {
+      const repo = new L2ProgressRepository();
+      const row = {
+        // step 字段（无前缀，来自 s.*）
+        id: "step-1",
+        session_id: "sess-1",
+        user_id: "user-1",
+        wordbook_id: "wb-1",
+        word_id: "word-1",
+        progress_id: "prog-1",
+        step_index: 1,
+        step_type: "l2_production",
+        status: "pending",
+        task_payload: { taskId: "t", taskType: "production", prompt: "x", stepIndex: 1 },
+        // progress 字段（p_ 前缀）
+        p_id: "prog-1",
+        p_user_id: "user-1",
+        p_wordbook_id: "wb-1",
+        p_word_id: "word-1",
+        p_l2_stability: 3.5,
+        p_l2_difficulty: 5.0,
+        p_l2_state: "review",
+        p_l2_due_at: "2026-01-01T00:00:00Z",
+        p_l2_review_count: 2,
+        p_l2_paused: false,
+        // word 字段（w_ 前缀）
+        w_id: "word-1",
+        w_slug: "sustain",
+        w_title: "sustain",
+        w_lemma: "sustain",
+      };
+      vi.spyOn(repo as any, "query").mockResolvedValue([row]);
+      const result = await repo.findPendingProductionStepsForResume("sess-1", "user-1");
+      expect(result).toHaveLength(1);
+      expect(result[0].step.id).toBe("step-1");
+      expect(result[0].progress.id).toBe("prog-1");
+      expect(result[0].word.id).toBe("word-1");
+      expect(result[0].word.slug).toBe("sustain");
+    });
+  });
+
+  // ── M7 回归：L2 撤销链路方法族 ───────────────────────────────────────
+  // 此前 undo 只覆盖 l2_production 撤销，辨析步撤销丢失。修复后新增
+  // findReviewLogForL2Undo / applyL2UndoSnapshot / markL2ReviewLogUndone /
+  // insertL2UndoAuditLog 四方法，让 L2 undo 与 L1 undoReviewLog 等价。
+  describe("findReviewLogForL2Undo (M7 regression)", () => {
+    it("scopes by (id, user_id) + track='l2' + FOR UPDATE", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      await repo.findReviewLogForL2Undo("log-1", "user-1");
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [sql, params] = spy.mock.calls[0];
+      expect(sql).toContain("FROM review_logs");
+      expect(sql).toContain("id = $1::uuid");
+      expect(sql).toContain("user_id = $2::uuid");
+      expect(sql).toContain("track = 'l2'");
+      // 必须加 FOR UPDATE，避免并发撤销竞态
+      expect(sql).toContain("FOR UPDATE");
+      expect(params).toEqual(["log-1", "user-1"]);
+    });
+
+    it("returns null when not found", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      const result = await repo.findReviewLogForL2Undo("log-1", "user-1");
+      expect(result).toBeNull();
+    });
+
+    it("maps snake_case columns to camelCase fields", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue({
+        word_id: "word-1",
+        wordbook_id: "wb-1",
+        undone: false,
+        previous_snapshot: { l2_state: "review", l2_stability: 3.5 },
+      });
+      const result = await repo.findReviewLogForL2Undo("log-1", "user-1");
+      expect(result).toEqual({
+        wordId: "word-1",
+        wordbookId: "wb-1",
+        undone: false,
+        previousSnapshot: { l2_state: "review", l2_stability: 3.5 },
+      });
+    });
+  });
+
+  describe("applyL2UndoSnapshot (M7 regression)", () => {
+    it("updates user_word_l2_progress with COALESCE on snapshot fields", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([{ id: "prog-1" }]);
+      const result = await repo.applyL2UndoSnapshot("prog-1", "user-1", {
+        l2_stability: 3.5,
+        l2_difficulty: 5.0,
+        l2_state: "review",
+        l2_due_at: "2026-01-01T00:00:00Z",
+        recent_ratings: ["good"],
+      });
+      expect(result).toBe(1);
+      const [sql, params]: [string, unknown[]] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("UPDATE user_word_l2_progress");
+      expect(sql).toContain("l2_stability = COALESCE");
+      expect(sql).toContain("l2_difficulty = COALESCE");
+      expect(sql).toContain("l2_state = COALESCE");
+      expect(sql).toContain("l2_due_at = COALESCE");
+      expect(sql).toContain("recent_ratings = COALESCE");
+      expect(sql).toContain("id = $1::uuid");
+      expect(sql).toContain("user_id = $2::uuid");
+      expect(params[0]).toBe("prog-1");
+      expect(params[1]).toBe("user-1");
+      expect(params[2]).toBe(3.5); // l2_stability
+      expect(params[3]).toBe(5.0); // l2_difficulty
+    });
+
+    it("returns 0 when progress row not found or not owned", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      const result = await repo.applyL2UndoSnapshot("prog-1", "user-1", {});
+      expect(result).toBe(0);
+    });
+
+    it("handles null snapshot fields by passing null to COALESCE", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([{ id: "prog-1" }]);
+      await repo.applyL2UndoSnapshot("prog-1", "user-1", {});
+      const params = spy.mock.calls[0][1] as unknown[];
+      // 缺失字段应转为 null，让 COALESCE 保留既有 DB 值
+      expect(params[2]).toBeNull(); // l2_stability
+      expect(params[3]).toBeNull(); // l2_difficulty
+      expect(params[4]).toBeNull(); // l2_state
+    });
+  });
+
+  describe("markL2ReviewLogUndone (M7 regression)", () => {
+    it("sets undone=true + undone_at=now(), scoped by track='l2' and undone=false", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([{ id: "log-1" }]);
+      const result = await repo.markL2ReviewLogUndone("log-1", "user-1");
+      expect(result).toBe(1);
+      const [sql, params]: [string, unknown[]] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("UPDATE review_logs");
+      expect(sql).toContain("undone = true");
+      expect(sql).toContain("undone_at = now()");
+      expect(sql).toContain("id = $1::uuid");
+      expect(sql).toContain("user_id = $2::uuid");
+      expect(sql).toContain("track = 'l2'");
+      expect(sql).toContain("undone = false");
+      expect(params).toEqual(["log-1", "user-1"]);
+    });
+
+    it("returns 0 when log already undone or not owned", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      const result = await repo.markL2ReviewLogUndone("log-1", "user-1");
+      expect(result).toBe(0);
+    });
+  });
+
+  describe("insertL2UndoAuditLog (M7 regression)", () => {
+    it("inserts audit row with track='l2', rating=NULL, metadata={action:'undo'}", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      await repo.insertL2UndoAuditLog({
+        userId: "user-1",
+        wordId: "word-1",
+        wordbookId: "wb-1",
+        progressId: "prog-1",
+        sessionId: "sess-1",
+        reviewLogId: "log-1",
+        restoredState: "review",
+        idempotencyKey: "idem-1",
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [sql, params]: [string, unknown[]] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("INSERT INTO review_logs");
+      expect(sql).toContain("track");
+      expect(sql).toContain("'l2'");
+      expect(params[0]).toBe("user-1");
+      expect(params[1]).toBe("word-1");
+      expect(params[2]).toBe("wb-1");
+      expect(params[3]).toBe("prog-1");
+      expect(params[4]).toBe("sess-1");
+      // rating=NULL 由 SQL 文本硬编码，不出现在 params 中
+      expect(params[5]).toBe("review"); // restoredState
+      // metadata 应包含 action:'undo' 和 undone_log_id
+      const metadata = JSON.parse(params[6] as string);
+      expect(metadata.action).toBe("undo");
+      expect(metadata.undone_log_id).toBe("log-1");
+      expect(params[8]).toBe("idem-1"); // idempotency_key
+    });
+
+    it("accepts null idempotencyKey", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      await repo.insertL2UndoAuditLog({
+        userId: "user-1",
+        wordId: "word-1",
+        wordbookId: "wb-1",
+        progressId: "prog-1",
+        sessionId: "sess-1",
+        reviewLogId: "log-1",
+        restoredState: "review",
+        idempotencyKey: null,
+      });
+      const params = spy.mock.calls[0][1] as unknown[];
+      expect(params[8]).toBeNull();
+    });
+  });
+
+  // ── M3 回归：insertDrillStepIfAbsent 冲突回读 user 过滤 ───────────────
+  // 回读 SQL 之前只按 (session, word, step_index) 过滤，未带 user_id。
+  // 若攻击者持有他人 session_id，可回读到他人行的 task_payload（DB 存储
+  // 含 answerIndex）→ 答案泄漏路径。修复后回读必须 user-scoped。
+  describe("insertDrillStepIfAbsent conflict re-read scoped by user (M3 regression)", () => {
+    it("re-read query filters by user_id to prevent cross-user task_payload leaks", async () => {
+      const repo = new L2ProgressRepository();
+      // 第一次调用 = INSERT...RETURNING（唯一约束冲突 → 无行返回）
+      // 第二次调用 = 冲突回读 SELECT（必须带 user_id）
+      const row = { id: "step-dup", status: "pending", step_index: 0 };
+      const spy = vi
+        .spyOn(repo as any, "queryOne")
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(row);
+
+      const result = await repo.insertDrillStepIfAbsent({
+        session_id: "sess-1",
+        user_id: "user-1",
+        wordbook_id: "wb-1",
+        word_id: "word-1",
+        progress_id: "prog-1",
+        step_index: 0,
+        step_type: "l2_discrimination",
+        task_id: "cloze:x",
+        task_type: "cloze_mcq",
+        task_payload: { taskId: "cloze:x" },
+      });
+
+      expect(result).toEqual(row);
+      expect(spy).toHaveBeenCalledTimes(2);
+      const [sql, params] = spy.mock.calls[1];
+      expect(sql).toContain("user_id = $1::uuid");
+      expect(sql).toContain("session_id = $2::uuid");
+      expect(sql).toContain("word_id = $3::uuid");
+      expect(sql).toContain("step_index = $4");
+      expect(params).toEqual(["user-1", "sess-1", "word-1", 0]);
+    });
+  });
 });

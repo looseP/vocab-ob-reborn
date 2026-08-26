@@ -9,6 +9,7 @@ import type { SessionRow } from "../domain";
 import type { ISessionRepository } from "./interfaces";
 import { BaseRepository } from "./base";
 import { startOfTodayIsoInDisplayTz } from "../db/timezone";
+import { withTransaction } from "../db/transaction";
 import { NotFoundError } from "../errors";
 
 export class SessionRepository extends BaseRepository implements ISessionRepository {
@@ -32,13 +33,22 @@ export class SessionRepository extends BaseRepository implements ISessionReposit
     mode = "review",
   ): Promise<SessionRow> {
     const todayIso = startOfTodayIsoInDisplayTz();
-    const row = await this.queryOne<SessionRow>(
-      `SELECT id, user_id, wordbook_id, mode, cards_seen, started_at, ended_at
-       FROM get_or_create_today_session($1::uuid, $2::uuid, $3, $4::timestamptz)`,
-      [userId, wordbookId, mode, todayIso],
-    );
-    if (!row) throw new Error("session get-or-create returned no row");
-    return row;
+    // get_or_create_today_session 是 invoker-rights 函数：内部 SELECT/INSERT 均受
+    // sessions 的 RLS 约束。池连接不带身份 claim（auth.uid() 为 NULL）时既查不到
+    // 已有行、INSERT 也会被拒 —— 因此未绑定事务时必须在携带 actorId 的事务内执行。
+    const run = async (repo: SessionRepository): Promise<SessionRow> => {
+      const row = await repo.queryOne<SessionRow>(
+        `SELECT id, user_id, wordbook_id, mode, cards_seen, started_at, ended_at
+         FROM get_or_create_today_session($1::uuid, $2::uuid, $3, $4::timestamptz)`,
+        [userId, wordbookId, mode, todayIso],
+      );
+      if (!row) throw new Error("session get-or-create returned no row");
+      return row;
+    };
+    if (this.tx) {
+      return run(this);
+    }
+    return withTransaction(async (tx) => run(new SessionRepository(tx)), { actorId: userId });
   }
 
   async create(
