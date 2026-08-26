@@ -576,4 +576,30 @@ describe("ReviewService — rebuild read methods", () => {
     await expect(bare.getTimeline("u1", "wb1")).rejects.toThrow();
     await expect(bare.getHeatmap("u1", "wb1")).rejects.toThrow();
   });
+
+  it("clearL1WeakSignal delegates to the dependency and returns ok", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const clearL1WeakSignal = vi.fn(async () => 1);
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null, clearL1WeakSignal });
+
+    await expect(service.clearL1WeakSignal({ wordbookId: "wb1", wordId: "w1" }, "u1")).resolves.toEqual({ ok: true });
+    expect(clearL1WeakSignal).toHaveBeenCalledWith("u1", "wb1", "w1");
+  });
+
+  it("clearL1WeakSignal throws NotFoundError when no row updated", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const clearL1WeakSignal = vi.fn(async () => 0);
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null, clearL1WeakSignal });
+
+    await expect(service.clearL1WeakSignal({ wordbookId: "wb1", wordId: "w1" }, "u1")).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("clearL1WeakSignal fails closed without the dependency", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+
+    await expect(service.clearL1WeakSignal({ wordbookId: "wb1", wordId: "w1" }, "u1")).rejects.toThrow(
+      /clearL1WeakSignal dependency not configured/,
+    );
+  });
 });

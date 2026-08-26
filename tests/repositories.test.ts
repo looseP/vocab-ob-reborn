@@ -11,6 +11,7 @@ vi.mock("@/db/connection", () => ({
 
 import { createRepositories } from "@/index";
 import { AuthSessionRepository, type AuthSessionRecord } from "@/repositories/auth-session.repository";
+import { SessionRepository } from "@/repositories/session.repository";
 import type { AnnotationRow, HighlightRow, NoteRow, ReviewRating, WordRow, WordSummary } from "@/domain";
 
 beforeEach(() => mock.reset());
@@ -682,6 +683,16 @@ describe("SessionRepository (extended)", () => {
     const repos = createRepositories();
     const result = await repos.sessions.getOrCreateToday("00000000-0000-4000-8000-000000000001", "wb1");
     expect(result.id).toBe("s-new");
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0].text).toContain("get_or_create_today_session");
+  });
+
+  it("getOrCreateToday runs inline (no extra transaction) when already bound to a tx", async () => {
+    mock.setRows([{ id: "s-tx", started_at: new Date().toISOString(), ended_at: null }]);
+    // 构造时绑定 tx → 走 run(this) 直连路径，不再套 withTransaction
+    const repo = new SessionRepository(mock.pool as never);
+    const result = await repo.getOrCreateToday("00000000-0000-4000-8000-000000000001", "wb1");
+    expect(result.id).toBe("s-tx");
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0].text).toContain("get_or_create_today_session");
   });

@@ -438,4 +438,319 @@ describe("L2ProgressRepository", () => {
       expect(params).toEqual(["user-1", "sess-1", "word-1", 0]);
     });
   });
+
+  // ── insert（含 l2_scheduler_payload 序列化）───────────────────────────
+  describe("insert payload handling", () => {
+    it("serializes l2_scheduler_payload when provided", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: "l2-2" });
+      await repo.insert({
+        user_id: "user-1",
+        wordbook_id: "wb-1",
+        word_id: "word-1",
+        l2_stability: 5.25,
+        l2_difficulty: 7.0,
+        l2_state: "review",
+        l2_desired_retention: 0.9,
+        l2_due_at: "2026-01-01T00:00:00Z",
+        l2_inherited_from_l1: true,
+        l2_weights_source: "inherited",
+        l2_scheduler_payload: { due: "2026-01-01T00:00:00Z", stability: 5.25, difficulty: 7.0, state: 2 },
+      });
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("l2_scheduler_payload");
+      expect(params[10]).toBe(JSON.stringify({ due: "2026-01-01T00:00:00Z", stability: 5.25, difficulty: 7.0, state: 2 }));
+    });
+
+    it("passes null l2_scheduler_payload when absent", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: "l2-3" });
+      await repo.insert({
+        user_id: "user-1",
+        wordbook_id: "wb-1",
+        word_id: "word-1",
+        l2_stability: 5.25,
+        l2_difficulty: 7.0,
+        l2_state: "review",
+        l2_desired_retention: 0.9,
+        l2_due_at: "2026-01-01T00:00:00Z",
+        l2_inherited_from_l1: true,
+        l2_weights_source: "inherited",
+      });
+      const params = spy.mock.calls[0][1] as unknown[];
+      expect(params[10]).toBeNull();
+    });
+
+    it("throws when insert returns no row", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      await expect(
+        repo.insert({
+          user_id: "user-1",
+          wordbook_id: "wb-1",
+          word_id: "word-1",
+          l2_stability: 1,
+          l2_difficulty: 1,
+          l2_state: "review",
+          l2_desired_retention: 0.9,
+          l2_due_at: "2026-01-01T00:00:00Z",
+          l2_inherited_from_l1: true,
+          l2_weights_source: "inherited",
+        }),
+      ).rejects.toThrow(/no row/);
+    });
+  });
+
+  // ── findDueCards（L2 到期口径队列）────────────────────────────────────
+  describe("findDueCards", () => {
+    it("filters unpaused due cards and maps joined rows to {progress, word}", async () => {
+      const repo = new L2ProgressRepository();
+      const row = {
+        id: "p1",
+        l2_paused: false,
+        l2_due_at: "2026-01-01T00:00:00Z",
+        w_id: "word-1",
+        w_slug: "sustain",
+        w_title: "sustain",
+        w_lemma: "sustain",
+        w_pos: "verb",
+        w_ipa: null,
+        w_cefr: "B2",
+        w_short_definition: "维持",
+        w_corpus_items: [],
+        w_synonym_items: [],
+        w_antonym_items: [],
+      };
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([row]);
+      const result = await repo.findDueCards("user-1", "wb-1", 10);
+      expect(result).toHaveLength(1);
+      expect(result[0].progress.id).toBe("p1");
+      expect(result[0].word.lemma).toBe("sustain");
+      expect(result[0].word.pos).toBe("verb");
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("l2_paused = false");
+      expect(sql).toContain("l2_due_at <= now()");
+      expect(sql).toContain("ORDER BY p.l2_due_at ASC");
+      expect(params).toEqual(["user-1", "wb-1", 10]);
+    });
+
+    it("returns empty array when no due cards", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      await expect(repo.findDueCards("user-1", "wb-1", 10)).resolves.toEqual([]);
+    });
+  });
+
+  // ── findForUpdate（SELECT FOR UPDATE + JOIN words）────────────────────
+  describe("findForUpdate", () => {
+    it("returns mapped {progress, word} when found", async () => {
+      const repo = new L2ProgressRepository();
+      const row = {
+        id: "p1",
+        l2_state: "review",
+        w_id: "word-1",
+        w_slug: "sustain",
+        w_title: "sustain",
+        w_lemma: "sustain",
+        w_pos: null,
+        w_ipa: null,
+        w_cefr: null,
+        w_short_definition: null,
+        w_corpus_items: [],
+        w_synonym_items: [],
+        w_antonym_items: [],
+      };
+      const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(row);
+      const result = await repo.findForUpdate("p1", "user-1");
+      expect(result?.progress.id).toBe("p1");
+      expect(result?.word.slug).toBe("sustain");
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("FOR UPDATE OF p");
+      expect(params).toEqual(["p1", "user-1"]);
+    });
+
+    it("returns null when not found", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      await expect(repo.findForUpdate("p1", "user-1")).resolves.toBeNull();
+    });
+  });
+
+  // ── saveL2Answer（L2 应答持久化 + track='l2' review log）──────────────
+  describe("saveL2Answer", () => {
+    function makeInput(overrides: Record<string, unknown> = {}) {
+      return {
+        progressId: "prog-1",
+        userId: "user-1",
+        wordbookId: "wb-1",
+        wordId: "word-1",
+        rating: "good" as const,
+        state: "review",
+        stability: 3.5,
+        difficulty: 5.0,
+        retrievability: 0.8,
+        dueAt: "2026-09-01T00:00:00Z",
+        lastReviewedAt: "2026-08-25T00:00:00Z",
+        intervalDays: 7,
+        scheduledDays: 10,
+        elapsedDays: 1,
+        nextPayload: { due: "2026-09-01T00:00:00Z", stability: 3.5, difficulty: 5.0, state: 2 },
+        contentHashSnapshot: "hash",
+        previousSnapshot: { l2_stability: 2.0 },
+        logMetadata: { mode: "l2_drill", step_index: 0 },
+        sessionId: "sess-1",
+        idempotencyKey: "idem-1",
+        ...overrides,
+      };
+    }
+
+    it("keeps nextPayload when usable and writes the update + track='l2' log", async () => {
+      const repo = new L2ProgressRepository();
+      const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: "log-1" });
+      const result = await repo.saveL2Answer(makeInput());
+      expect(result).toEqual({ reviewLogId: "log-1" });
+      // UPDATE 参数：$9 = 序列化后的 usable payload（原样保留）
+      const updateParams = querySpy.mock.calls[0][1] as unknown[];
+      expect(updateParams[8]).toBe(JSON.stringify({ due: "2026-09-01T00:00:00Z", stability: 3.5, difficulty: 5.0, state: 2 }));
+      // INSERT review_logs：track='l2'
+      const logSql = (repo as any).queryOne.mock.calls[0][0] as string;
+      expect(logSql).toContain("'l2'");
+      const logParams = (repo as any).queryOne.mock.calls[0][1] as unknown[];
+      expect(logParams[0]).toBe("user-1");
+      expect(logParams[7]).toBe(1); // elapsed_days
+      expect(logParams[8]).toBe(10); // scheduled_days
+    });
+
+    it("rebuilds payload from scalar columns when nextPayload is unusable (empty object)", async () => {
+      const repo = new L2ProgressRepository();
+      const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: "log-2" });
+      await repo.saveL2Answer(makeInput({ nextPayload: {} }));
+      const updateParams = querySpy.mock.calls[0][1] as unknown[];
+      const payload = JSON.parse(updateParams[8] as string);
+      expect(payload.due).toBe("2026-09-01T00:00:00Z");
+      expect(payload.stability).toBe(3.5);
+      expect(payload.difficulty).toBe(5.0);
+      expect(payload.state).toBe(2);
+      expect(payload.reps).toBe(1);
+      expect(payload.elapsed_days).toBe(0);
+    });
+
+    it("rebuilds payload when nextPayload is null", async () => {
+      const repo = new L2ProgressRepository();
+      const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: "log-3" });
+      await repo.saveL2Answer(makeInput({ nextPayload: null }));
+      const updateParams = querySpy.mock.calls[0][1] as unknown[];
+      const payload = JSON.parse(updateParams[8] as string);
+      expect(payload.state).toBe(2);
+    });
+
+    it("throws when review log insert returns no row", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      await expect(repo.saveL2Answer(makeInput())).rejects.toThrow(/no id/);
+    });
+  });
+
+  // ── updateProductionStatus / drill step 写方法 ────────────────────────
+  describe("production status + drill step writes", () => {
+    it("updateProductionStatus sets l2_production_status scoped by user+wordbook+word", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      await repo.updateProductionStatus("user-1", "wb-1", "word-1", "passed");
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("l2_production_status = $4");
+      expect(params).toEqual(["user-1", "wb-1", "word-1", "passed"]);
+    });
+
+    it("insertDrillStepIfAbsent returns inserted row on success", async () => {
+      const repo = new L2ProgressRepository();
+      const row = { id: "step-new", status: "pending", step_index: 0 };
+      const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValueOnce(row);
+      const result = await repo.insertDrillStepIfAbsent({
+        session_id: "sess-1",
+        user_id: "user-1",
+        wordbook_id: "wb-1",
+        word_id: "word-1",
+        progress_id: "prog-1",
+        step_index: 0,
+        step_type: "l2_discrimination",
+      });
+      expect(result).toEqual(row);
+      expect(spy).toHaveBeenCalledTimes(1); // 未走冲突回读
+      const [sql] = spy.mock.calls[0] as [string];
+      expect(sql).toContain("ON CONFLICT (session_id, word_id, step_index) DO NOTHING");
+    });
+
+    it("insertDrillStepIfAbsent throws when neither insert nor re-read returns a row", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      await expect(
+        repo.insertDrillStepIfAbsent({
+          session_id: "sess-1",
+          user_id: "user-1",
+          wordbook_id: "wb-1",
+          word_id: "word-1",
+          progress_id: "prog-1",
+          step_index: 0,
+          step_type: "l2_discrimination",
+        }),
+      ).rejects.toThrow(/no row/);
+    });
+
+    it("findDrillStepForUpdate scopes by id+user_id with FOR UPDATE", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      await repo.findDrillStepForUpdate("step-1", "user-1");
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("FOR UPDATE");
+      expect(sql).toContain("user_id = $2::uuid");
+      expect(params).toEqual(["step-1", "user-1"]);
+    });
+
+    it("findLastDrillStep orders by created_at/step_index desc and limits 1", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+      await repo.findLastDrillStep("sess-1", "user-1");
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("ORDER BY created_at DESC, step_index DESC");
+      expect(sql).toContain("LIMIT 1");
+      expect(params).toEqual(["sess-1", "user-1"]);
+    });
+
+    it("completeDrillStep updates status/outcome/mapped_rating/review_log_id", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      await repo.completeDrillStep("step-1", "user-1", {
+        outcome: "correct",
+        mappedRating: "good",
+        reviewLogId: "log-1",
+      });
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("status = 'completed'");
+      expect(sql).toContain("mapped_rating = $4");
+      expect(params).toEqual(["step-1", "user-1", "correct", "good", "log-1"]);
+    });
+
+    it("skipDrillStep only updates pending rows", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      await repo.skipDrillStep("step-1", "user-1");
+      const [sql] = spy.mock.calls[0] as [string];
+      expect(sql).toContain("status = 'skipped'");
+      expect(sql).toContain("status = 'pending'");
+    });
+
+    it("deleteDrillStep deletes scoped by id+user_id", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+      await repo.deleteDrillStep("step-1", "user-1");
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("DELETE FROM l2_drill_session_steps");
+      expect(params).toEqual(["step-1", "user-1"]);
+    });
+  });
 });

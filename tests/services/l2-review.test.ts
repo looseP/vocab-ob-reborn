@@ -16,6 +16,15 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BusinessRuleError, NotFoundError } from "@/errors";
+
+vi.mock("@/db/transaction", () => ({
+  withTransaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
+}));
+vi.mock("@/repositories/factory", () => ({
+  createRepositories: vi.fn(),
+}));
+
+import { createRepositories } from "@/repositories/factory";
 import type { UserWordL2ProgressRow } from "@/domain";
 import type {
   IL2ProgressRepository,
@@ -744,5 +753,103 @@ describe("L2ReviewService.answerWithinTx (FR-12 接线1)", () => {
       l2_due_at: "2026-08-20T00:00:00Z",
       recent_ratings: ["good", "again"],
     });
+  });
+});
+
+// ─── submitL2Answer 公共入口 + 回退分支（覆盖率收口）──────────────────────
+describe("L2ReviewService.submitL2Answer (public entry)", () => {
+  it("wraps answerWithinTx in an actorId transaction via createRepositories", async () => {
+    const { service } = makeService();
+    const repos = makeMockRepos();
+    (repos.l2Progress.findForUpdate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      progress: makeProgressRow({ l2_paused: false }),
+      word: { id: WORD_ID },
+    });
+    (createRepositories as ReturnType<typeof vi.fn>).mockReturnValue(repos);
+
+    const result = await service.submitL2Answer(
+      { progressId: PROGRESS_ID, sessionId: SESSION_ID, rating: "good" },
+      USER_ID,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.reviewLogId).toBe(REVIEW_LOG_ID);
+    expect(createRepositories).toHaveBeenCalled();
+  });
+
+  it("treats loadWeights rejection as null weights fallback (never blocks answer)", async () => {
+    const fsrsAdapter = vi.fn(() => makeScheduling());
+    const service = new L2ReviewService({
+      fsrsAdapter: fsrsAdapter as never,
+      loadL2Weights: vi.fn(async () => null) as never,
+      loadWeights: vi.fn(async () => {
+        throw new Error("db down");
+      }) as never,
+    });
+    const repos = makeMockRepos();
+    (repos.l2Progress.findForUpdate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      progress: makeProgressRow({ l2_paused: false }),
+      word: { id: WORD_ID },
+    });
+
+    await service.answerWithinTx(
+      repos,
+      { progressId: PROGRESS_ID, sessionId: SESSION_ID, rating: "good" },
+      USER_ID,
+    );
+
+    // 两个 loader 都失败 → fsrsAdapter 收到 null weights（内部用默认）
+    expect(fsrsAdapter).toHaveBeenCalledWith(expect.anything(), "good", expect.any(Date), 0.9, null);
+  });
+
+  it("defaults recent_ratings to [] and content hash to fallback when null", async () => {
+    const fsrsAdapter = vi.fn(() => makeScheduling());
+    const service = new L2ReviewService({
+      fsrsAdapter: fsrsAdapter as never,
+      loadWeights: vi.fn(async () => null) as never,
+    });
+    const repos = makeMockRepos();
+    (repos.l2Progress.findForUpdate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      progress: makeProgressRow({
+        l2_paused: false,
+        recent_ratings: null as never,
+        l2_content_hash_snapshot: null,
+      }),
+      word: { id: WORD_ID },
+    });
+
+    await service.answerWithinTx(
+      repos,
+      { progressId: PROGRESS_ID, sessionId: SESSION_ID, rating: "good" },
+      USER_ID,
+    );
+
+    const saveArgs = (repos.l2Progress.saveL2Answer as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(saveArgs.previousSnapshot.recent_ratings).toEqual([]);
+    expect(saveArgs.contentHashSnapshot).toBe(`l2:${WORD_ID}:${PROGRESS_ID}`);
+  });
+
+  it("maps null retrievability and scheduledDays to null outputs", async () => {
+    const fsrsAdapter = vi.fn(() => makeScheduling({ retrievability: null, scheduledDays: null } as never));
+    const service = new L2ReviewService({
+      fsrsAdapter: fsrsAdapter as never,
+      loadWeights: vi.fn(async () => null) as never,
+    });
+    const repos = makeMockRepos();
+    (repos.l2Progress.findForUpdate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      progress: makeProgressRow({ l2_paused: false }),
+      word: { id: WORD_ID },
+    });
+
+    await service.answerWithinTx(
+      repos,
+      { progressId: PROGRESS_ID, sessionId: SESSION_ID, rating: "good" },
+      USER_ID,
+    );
+
+    const saveArgs = (repos.l2Progress.saveL2Answer as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(saveArgs.retrievability).toBeNull();
+    expect(saveArgs.intervalDays).toBeNull();
+    expect(saveArgs.scheduledDays).toBeNull();
   });
 });

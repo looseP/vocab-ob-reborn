@@ -1139,3 +1139,436 @@ describe("fetchContextSnippets L3 timeout fail-fast (M1 regression)", () => {
     }
   });
 });
+
+// ─── getQueue 主循环（到期卡建步出队）───────────────────────────────────
+describe("getQueue due-cards loop", () => {
+  const word = {
+    id: WORD_ID,
+    slug: "sustain",
+    title: "sustain",
+    lemma: "sustain",
+    pos: "verb",
+    ipa: null,
+    cefr: null,
+    short_definition: "维持",
+    corpus_items: [{ text: "Sunlight can sustain life.", translation: "阳光维持生命" }],
+    synonym_items: [
+      { word: "maintain", semanticDiff: "保持现状" },
+      { word: "support", semanticDiff: "物理支撑" },
+      { word: "endure", semanticDiff: "忍受" },
+    ],
+    antonym_items: [],
+  };
+
+  it("builds a step-0 task, inserts it, and surfaces the card", async () => {
+    const svc = makeService();
+    const session = { id: SESSION_ID, mode: "l2_drill" };
+    mockRepos.sessions.getOrCreateToday.mockResolvedValue(session);
+    mockRepos.l2Progress.findPendingProductionStepsForResume.mockResolvedValue([]);
+    mockRepos.l2Progress.findDueCards.mockResolvedValue([
+      { progress: { id: PROGRESS_ID, wordbook_id: WORDBOOK_ID }, word },
+    ]);
+    mockRepos.l2Progress.insertDrillStepIfAbsent.mockResolvedValue({
+      id: "step-0",
+      status: "pending",
+    });
+
+    const result = await svc.getQueue(USER_ID, WORDBOOK_ID);
+
+    expect(result.items).toHaveLength(1);
+    const item = result.items[0];
+    expect(item.stepId).toBe("step-0");
+    expect(item.singleStep).toBe(false);
+    expect(item.word.lemma).toBe("sustain");
+    // 建步调用参数
+    expect(mockRepos.l2Progress.insertDrillStepIfAbsent).toHaveBeenCalledTimes(1);
+    const insertArgs = mockRepos.l2Progress.insertDrillStepIfAbsent.mock.calls[0][0];
+    expect(insertArgs.session_id).toBe(SESSION_ID);
+    expect(insertArgs.step_index).toBe(0);
+    expect(["cloze_mcq", "synonym_discrimination"]).toContain(insertArgs.task_type);
+  });
+
+  it("skips cards whose step is already settled (completed)", async () => {
+    const svc = makeService();
+    const session = { id: SESSION_ID, mode: "l2_drill" };
+    mockRepos.sessions.getOrCreateToday.mockResolvedValue(session);
+    mockRepos.l2Progress.findPendingProductionStepsForResume.mockResolvedValue([]);
+    mockRepos.l2Progress.findDueCards.mockResolvedValue([
+      { progress: { id: PROGRESS_ID, wordbook_id: WORDBOOK_ID }, word },
+    ]);
+    // 已结算的步（如再次到期重现）→ 不出队
+    mockRepos.l2Progress.insertDrillStepIfAbsent.mockResolvedValue({
+      id: "step-settled",
+      status: "completed",
+    });
+
+    const result = await svc.getQueue(USER_ID, WORDBOOK_ID);
+    expect(result.items).toEqual([]);
+  });
+
+  it("skips pending production steps without a task_payload", async () => {
+    const svc = makeService();
+    const session = { id: SESSION_ID, mode: "l2_drill" };
+    mockRepos.sessions.getOrCreateToday.mockResolvedValue(session);
+    mockRepos.l2Progress.findDueCards.mockResolvedValue([]);
+    mockRepos.l2Progress.findPendingProductionStepsForResume.mockResolvedValue([
+      {
+        step: {
+          id: "prod-no-payload",
+          session_id: SESSION_ID,
+          word_id: WORD_ID,
+          progress_id: PROGRESS_ID,
+          step_index: 1,
+          step_type: "l2_production",
+          status: "pending",
+          task_payload: null, // 无负载 → 跳过
+        },
+        progress: { id: PROGRESS_ID, l2_due_at: null, l2_review_count: 0, l2_paused: false },
+        word: {
+          id: WORD_ID, slug: "s", title: "s", lemma: "s",
+          pos: null, ipa: null, cefr: null, short_definition: null,
+          corpus_items: [], synonym_items: [], antonym_items: [],
+        },
+      },
+    ]);
+
+    const result = await svc.getQueue(USER_ID, WORDBOOK_ID);
+    expect(result.items).toEqual([]);
+  });
+});
+
+// ─── submitTaskAnswer 错误分支 ───────────────────────────────────────────
+describe("submitTaskAnswer error branches", () => {
+  const step = {
+    id: STEP_ID,
+    session_id: SESSION_ID,
+    user_id: USER_ID,
+    wordbook_id: WORDBOOK_ID,
+    word_id: WORD_ID,
+    progress_id: PROGRESS_ID,
+    step_index: 0,
+    step_type: "l2_discrimination" as const,
+    status: "pending" as const,
+    task_id: "cloze:x",
+    task_type: "cloze_mcq",
+    task_payload: { taskId: "cloze:x", taskType: "cloze_mcq", prompt: "____", options: ["a","b","c","d"], answerIndex: 0, stepIndex: 0 },
+  };
+
+  it("throws NotFoundError when step belongs to another session", async () => {
+    const svc = makeService();
+    mockRepos.reviews.checkIdempotency.mockResolvedValue(null);
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue({ ...step, session_id: "other-session" });
+    await expect(
+      svc.submitTaskAnswer({ sessionId: SESSION_ID, stepId: STEP_ID, choiceIndex: 0 }, USER_ID),
+    ).rejects.toThrow(/Drill step/);
+  });
+
+  it("throws NotFoundError when step not found", async () => {
+    const svc = makeService();
+    mockRepos.reviews.checkIdempotency.mockResolvedValue(null);
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue(null);
+    await expect(
+      svc.submitTaskAnswer({ sessionId: SESSION_ID, stepId: STEP_ID, choiceIndex: 0 }, USER_ID),
+    ).rejects.toThrow(/Drill step/);
+  });
+
+  it("throws BusinessRuleError when step already settled", async () => {
+    const svc = makeService();
+    mockRepos.reviews.checkIdempotency.mockResolvedValue(null);
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue({ ...step, status: "completed" });
+    await expect(
+      svc.submitTaskAnswer({ sessionId: SESSION_ID, stepId: STEP_ID, choiceIndex: 0 }, USER_ID),
+    ).rejects.toThrow(/already settled/);
+  });
+
+  it("throws BusinessRuleError when submitting a production step via task-answer", async () => {
+    const svc = makeService();
+    mockRepos.reviews.checkIdempotency.mockResolvedValue(null);
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue({ ...step, step_type: "l2_production", step_index: 1 });
+    await expect(
+      svc.submitTaskAnswer({ sessionId: SESSION_ID, stepId: STEP_ID, choiceIndex: 0 }, USER_ID),
+    ).rejects.toThrow(/self-assessment endpoint/);
+  });
+
+  it("throws NotFoundError when L2 progress row missing", async () => {
+    const svc = makeService();
+    mockRepos.reviews.checkIdempotency.mockResolvedValue(null);
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue(step);
+    mockRepos.l2Progress.findForUpdate.mockResolvedValue(null);
+    await expect(
+      svc.submitTaskAnswer({ sessionId: SESSION_ID, stepId: STEP_ID, choiceIndex: 0 }, USER_ID),
+    ).rejects.toThrow(/L2 progress/);
+  });
+
+  it("marks step skipped and returns skipped when card is paused (race)", async () => {
+    const svc = makeService();
+    mockRepos.reviews.checkIdempotency.mockResolvedValue(null);
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue(step);
+    mockRepos.l2Progress.findForUpdate.mockResolvedValue({
+      progress: { id: PROGRESS_ID, l2_paused: true },
+      word: { id: WORD_ID },
+    });
+    mockRepos.l2Progress.skipDrillStep.mockResolvedValue(undefined);
+
+    const result = await svc.submitTaskAnswer(
+      { sessionId: SESSION_ID, stepId: STEP_ID, choiceIndex: 0 },
+      USER_ID,
+    );
+    expect(result).toEqual({ ok: true, skipped: true, nextStep: { type: "done" } });
+    expect(mockRepos.l2Progress.skipDrillStep).toHaveBeenCalledWith(STEP_ID, USER_ID);
+    // 不应触发 FSRS 应答
+    expect(mockRepos.l2Progress.saveL2Answer).not.toHaveBeenCalled();
+  });
+});
+
+// ─── submitSelfAssessment 错误分支 ───────────────────────────────────────
+describe("submitSelfAssessment error branches", () => {
+  const prodStep = {
+    id: STEP_ID,
+    session_id: SESSION_ID,
+    user_id: USER_ID,
+    wordbook_id: WORDBOOK_ID,
+    word_id: WORD_ID,
+    progress_id: PROGRESS_ID,
+    step_index: 1,
+    step_type: "l2_production" as const,
+    status: "pending" as const,
+    outcome: null,
+    task_payload: { taskId: "p", taskType: "production", prompt: "x", stepIndex: 1 },
+  };
+
+  it("throws NotFoundError when step not found", async () => {
+    const svc = makeService();
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue(null);
+    await expect(
+      svc.submitSelfAssessment({ sessionId: SESSION_ID, stepId: STEP_ID, verdict: "passed" }, USER_ID),
+    ).rejects.toThrow(/Drill step/);
+  });
+
+  it("throws BusinessRuleError when step is not a production step", async () => {
+    const svc = makeService();
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue({
+      ...prodStep,
+      step_type: "l2_discrimination",
+      step_index: 0,
+    });
+    await expect(
+      svc.submitSelfAssessment({ sessionId: SESSION_ID, stepId: STEP_ID, verdict: "passed" }, USER_ID),
+    ).rejects.toThrow(/production steps only/);
+  });
+
+  it("throws BusinessRuleError when step is settled but not self-verdict", async () => {
+    const svc = makeService();
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue({
+      ...prodStep,
+      status: "completed",
+      outcome: "correct",
+    });
+    await expect(
+      svc.submitSelfAssessment({ sessionId: SESSION_ID, stepId: STEP_ID, verdict: "passed" }, USER_ID),
+    ).rejects.toThrow(/already settled/);
+  });
+
+  it("records verdict telemetry when telemetry is injected", async () => {
+    const telemetry = { observeL2ProductionVerdict: vi.fn(), observeL3ContextLookup: vi.fn() };
+    const svc = new L2DrillService({
+      fsrsAdapter: vi.fn(),
+      loadWeights: vi.fn().mockResolvedValue(null),
+      loadL2Weights: vi.fn().mockResolvedValue(null),
+      telemetry: telemetry as any,
+    });
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue({
+      ...prodStep,
+      task_payload: { taskId: "p", taskType: "production", prompt: "x", stepIndex: 1, sourceTitle: "Notes", contextId: "ctx" },
+    });
+    mockRepos.l2Progress.updateProductionStatus.mockResolvedValue(undefined);
+    mockRepos.l2Progress.completeDrillStep.mockResolvedValue(undefined);
+
+    const result = await svc.submitSelfAssessment(
+      { sessionId: SESSION_ID, stepId: STEP_ID, verdict: "weak" },
+      USER_ID,
+    );
+    expect(result).toEqual({ ok: true, productionStatus: "weak" });
+    // 带 L3 语境 → hasL3Context=true
+    expect(telemetry.observeL2ProductionVerdict).toHaveBeenCalledWith("weak", true);
+  });
+});
+
+// ─── undo 辨析步撤销失败分支 ─────────────────────────────────────────────
+describe("undo discrimination failure branches", () => {
+  const REVIEW_LOG_ID = "log-77777777-7777-4777-8777-777777777777";
+  const discStep = {
+    id: STEP_ID,
+    session_id: SESSION_ID,
+    user_id: USER_ID,
+    wordbook_id: WORDBOOK_ID,
+    word_id: WORD_ID,
+    progress_id: PROGRESS_ID,
+    step_index: 0,
+    step_type: "l2_discrimination" as const,
+    status: "completed" as const,
+    outcome: "correct",
+    review_log_id: REVIEW_LOG_ID,
+  };
+
+  it("throws when the L2 review log cannot be found", async () => {
+    const svc = makeService();
+    mockRepos.l2Progress.findLastDrillStep.mockResolvedValue(discStep);
+    mockRepos.l2Progress.findReviewLogForL2Undo.mockResolvedValue(null);
+    await expect(svc.undo(SESSION_ID, USER_ID)).rejects.toThrow(/not found or already undone/);
+  });
+
+  it("throws when markL2ReviewLogUndone affects zero rows", async () => {
+    const svc = makeService();
+    mockRepos.l2Progress.findLastDrillStep.mockResolvedValue(discStep);
+    mockRepos.l2Progress.findReviewLogForL2Undo.mockResolvedValue({
+      wordId: WORD_ID,
+      wordbookId: WORDBOOK_ID,
+      undone: false,
+      previousSnapshot: { l2_state: "review" },
+    });
+    mockRepos.l2Progress.applyL2UndoSnapshot.mockResolvedValue(1);
+    mockRepos.l2Progress.markL2ReviewLogUndone.mockResolvedValue(0);
+    await expect(svc.undo(SESSION_ID, USER_ID)).rejects.toThrow(/not owned/);
+  });
+
+  it("derives restoredState from previousSnapshot.l2_state on successful undo", async () => {
+    const svc = makeService();
+    mockRepos.l2Progress.findLastDrillStep.mockResolvedValue(discStep);
+    mockRepos.l2Progress.findReviewLogForL2Undo.mockResolvedValue({
+      wordId: WORD_ID,
+      wordbookId: WORDBOOK_ID,
+      undone: false,
+      previousSnapshot: { l2_state: "learning" },
+    });
+    mockRepos.l2Progress.applyL2UndoSnapshot.mockResolvedValue(1);
+    mockRepos.l2Progress.markL2ReviewLogUndone.mockResolvedValue(1);
+    mockRepos.l2Progress.findDrillStepBySessionWordStep.mockResolvedValue(null);
+    mockRepos.l2Progress.deleteDrillStep.mockResolvedValue(undefined);
+    mockRepos.l2Progress.insertL2UndoAuditLog.mockResolvedValue(undefined);
+
+    const result = await svc.undo(SESSION_ID, USER_ID, "idem-disc-state");
+    expect(result).toEqual({ ok: true });
+    expect(mockRepos.l2Progress.insertL2UndoAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ restoredState: "learning", idempotencyKey: "idem-disc-state" }),
+    );
+  });
+});
+
+// ─── fetchContextSnippets telemetry（P2-5 命中率/延迟采集）────────────────
+describe("fetchContextSnippets telemetry (P2-5)", () => {
+  function makeTelemetryService(contextSource: any) {
+    const telemetry = { observeL2ProductionVerdict: vi.fn(), observeL3ContextLookup: vi.fn() };
+    const svc = new L2DrillService({
+      fsrsAdapter: vi.fn(() => ({
+        difficulty: 5.0, dueAt: "2026-09-25T00:00:00.000Z", logDueAt: null,
+        elapsedDays: 1, scheduledDays: 10, retrievability: 0.85, stability: 3.5,
+        state: "review" as const,
+        nextPayload: { due: "2026-09-25T00:00:00.000Z", stability: 3.5, difficulty: 5.0, state: 2 },
+      })),
+      loadWeights: vi.fn().mockResolvedValue(null),
+      loadL2Weights: vi.fn().mockResolvedValue(null),
+      contextSource,
+      telemetry: telemetry as any,
+    });
+    return { svc, telemetry };
+  }
+
+  const discriminationStep = {
+    id: STEP_ID,
+    session_id: SESSION_ID,
+    user_id: USER_ID,
+    wordbook_id: WORDBOOK_ID,
+    word_id: WORD_ID,
+    progress_id: PROGRESS_ID,
+    step_index: 0,
+    step_type: "l2_discrimination" as const,
+    status: "pending" as const,
+    task_id: "cloze:x",
+    task_type: "cloze_mcq",
+    task_payload: { taskId: "cloze:x", taskType: "cloze_mcq", prompt: "____", options: ["a","b","c","d"], answerIndex: 0, stepIndex: 0 },
+  };
+  const l2Progress = {
+    progress: {
+      id: PROGRESS_ID, user_id: USER_ID, wordbook_id: WORDBOOK_ID, word_id: WORD_ID,
+      l2_paused: false, l2_desired_retention: 0.9, l2_scheduler_payload: { due: "2026-08-20T00:00:00Z", stability: 3, difficulty: 5, state: 2 },
+      l2_due_at: "2026-08-20T00:00:00Z", l2_last_reviewed_at: null, l2_review_count: 2,
+      l2_stability: 3, l2_difficulty: 5, l2_state: "review", l2_content_hash_snapshot: "h", recent_ratings: [],
+    },
+    word: {
+      id: WORD_ID, slug: "sustain", title: "sustain", lemma: "sustain", pos: "verb",
+      ipa: null, cefr: null, short_definition: "维持",
+      corpus_items: [{ text: "Sunlight sustains life.", translation: "阳光维持生命" }],
+      synonym_items: [], antonym_items: [],
+    },
+  };
+
+  it("records hit when context source returns snippets and writes source metadata", async () => {
+    const { svc, telemetry } = makeTelemetryService({
+      getContextSnippets: vi.fn().mockResolvedValue([
+        { text: "We must sustain the momentum.", contextId: "ctx-1", sourceTitle: "Notes" },
+      ]),
+    });
+    mockRepos.reviews.checkIdempotency.mockResolvedValue(null);
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue(discriminationStep);
+    mockRepos.l2Progress.findForUpdate.mockResolvedValue(l2Progress);
+    mockRepos.l2Progress.saveL2Answer.mockResolvedValue({ reviewLogId: "log-t" });
+    mockRepos.l2Progress.completeDrillStep.mockResolvedValue(undefined);
+    mockRepos.l2Progress.insertDrillStepIfAbsent.mockResolvedValue({ id: "prod-t", status: "pending" });
+    mockRepos.sessions.assertActiveOwned.mockResolvedValue(undefined);
+    mockRepos.outbox.enqueue.mockResolvedValue({ id: "e", inserted: true });
+
+    const result = await svc.submitTaskAnswer(
+      { sessionId: SESSION_ID, stepId: STEP_ID, choiceIndex: 0, idempotencyKey: "idem-t" },
+      USER_ID,
+    );
+    expect(result.outcome).toBe("correct");
+    expect(telemetry.observeL3ContextLookup).toHaveBeenCalledWith("hit", expect.any(Number));
+    // L3 语境写入产出步 payload
+    const prodPayload = mockRepos.l2Progress.insertDrillStepIfAbsent.mock.calls[0][0].task_payload;
+    expect(prodPayload.sourceTitle).toBe("Notes");
+    expect(prodPayload.contextId).toBe("ctx-1");
+  });
+
+  it("records miss when context source returns empty", async () => {
+    const { svc, telemetry } = makeTelemetryService({ getContextSnippets: vi.fn().mockResolvedValue([]) });
+    mockRepos.reviews.checkIdempotency.mockResolvedValue(null);
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue(discriminationStep);
+    mockRepos.l2Progress.findForUpdate.mockResolvedValue(l2Progress);
+    mockRepos.l2Progress.saveL2Answer.mockResolvedValue({ reviewLogId: "log-m" });
+    mockRepos.l2Progress.completeDrillStep.mockResolvedValue(undefined);
+    mockRepos.l2Progress.insertDrillStepIfAbsent.mockResolvedValue({ id: "prod-m", status: "pending" });
+    mockRepos.sessions.assertActiveOwned.mockResolvedValue(undefined);
+    mockRepos.outbox.enqueue.mockResolvedValue({ id: "e", inserted: true });
+
+    await svc.submitTaskAnswer(
+      { sessionId: SESSION_ID, stepId: STEP_ID, choiceIndex: 0, idempotencyKey: "idem-m" },
+      USER_ID,
+    );
+    expect(telemetry.observeL3ContextLookup).toHaveBeenCalledWith("miss", expect.any(Number));
+  });
+
+  it("records error and degrades to corpus when context source throws", async () => {
+    const { svc, telemetry } = makeTelemetryService({
+      getContextSnippets: vi.fn().mockRejectedValue(new Error("l3 down")),
+    });
+    mockRepos.reviews.checkIdempotency.mockResolvedValue(null);
+    mockRepos.l2Progress.findDrillStepForUpdate.mockResolvedValue(discriminationStep);
+    mockRepos.l2Progress.findForUpdate.mockResolvedValue(l2Progress);
+    mockRepos.l2Progress.saveL2Answer.mockResolvedValue({ reviewLogId: "log-e" });
+    mockRepos.l2Progress.completeDrillStep.mockResolvedValue(undefined);
+    mockRepos.l2Progress.insertDrillStepIfAbsent.mockResolvedValue({ id: "prod-e", status: "pending" });
+    mockRepos.sessions.assertActiveOwned.mockResolvedValue(undefined);
+    mockRepos.outbox.enqueue.mockResolvedValue({ id: "e", inserted: true });
+
+    const result = await svc.submitTaskAnswer(
+      { sessionId: SESSION_ID, stepId: STEP_ID, choiceIndex: 0, idempotencyKey: "idem-e" },
+      USER_ID,
+    );
+    expect(result.outcome).toBe("correct"); // L3 故障不阻塞辨析提交
+    expect(telemetry.observeL3ContextLookup).toHaveBeenCalledWith("error", expect.any(Number));
+    // 回退 corpus 参照例句
+    const prodPayload = mockRepos.l2Progress.insertDrillStepIfAbsent.mock.calls[0][0].task_payload;
+    expect(prodPayload.referenceExample).toBe("Sunlight sustains life.");
+  });
+});

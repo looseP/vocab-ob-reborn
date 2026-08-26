@@ -261,3 +261,13 @@ describe("noopContextSource (FR-12 接线2 默认实现)", () => {
     expect(result).toEqual([]);
   });
 });
+
+describe("L3ContextSourceAdapter default construction", () => {
+  it("constructs with production defaults (txRunner + repoFactory fallback)", () => {
+    // 不注入 deps → 构造函数走默认分支（withTransaction / createRepositories）
+    const adapter = new L3ContextSourceAdapter();
+    expect(typeof adapter.getContextSnippets).toBe("function");
+    expect((adapter as any).txRunner).toBeDefined();
+    expect((adapter as any).repoFactory).toBeDefined();
+  });
+});

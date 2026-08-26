@@ -375,3 +375,118 @@ describe("l2-task adversarial property scan (H1/H2 regression)", () => {
     }
   });
 });
+
+// ─── 分支/卫生补充（覆盖率收口）─────────────────────────────────────────
+describe("l2-task hygiene edge branches", () => {
+  it("judgeL2TaskChoice returns false for non-object payloads", () => {
+    expect(judgeL2TaskChoice(null, 0)).toBe(false);
+    expect(judgeL2TaskChoice("string", 0)).toBe(false);
+  });
+
+  it("handles non-array cache columns gracefully (asArray fallback)", () => {
+    const word = {
+      ...makeWord(),
+      corpus_items: null,
+      synonym_items: "not-an-array",
+      antonym_items: undefined,
+    };
+    // 无可用语料/干扰项 → 两题型都不可行 → null（降级信号），不抛异常
+    expect(generateL2DiscriminationTask({ sessionId: SESSION, wordId: WORD_ID, word })).toBeNull();
+  });
+
+  it("skips corpus entries without text or with non-string text", () => {
+    const word = makeWord({
+      corpus_items: [
+        { translation: "no text" },
+        { text: 42 },
+        { text: "Sunlight can sustain life." },
+      ],
+      synonym_items: [],
+      antonym_items: [
+        { word: "maintain" },
+        { word: "weaken" },
+        { word: "destroy" },
+      ],
+    });
+    const task = generateL2DiscriminationTask({ sessionId: SESSION, wordId: WORD_ID, word });
+    // 至少有一个合法 corpus 条目（第 3 条），应能生成 cloze
+    expect(task).not.toBeNull();
+    if (task) expect(task.prompt).toContain("____");
+  });
+
+  it("cloze is infeasible when distractor pool has fewer than 3 entries", () => {
+    const word = makeWord({
+      synonym_items: [],
+      antonym_items: [
+        { word: "weaken" }, // 仅 1 个干扰项 → cloze 不可行
+      ],
+    });
+    // 只有 corpus 命中、干扰项不足 → buildClozeMcq 返回 null；也无近义素材 → 整体 null
+    expect(generateL2DiscriminationTask({ sessionId: SESSION, wordId: WORD_ID, word })).toBeNull();
+  });
+
+  it("filters synonym entries missing semanticDiff (synonymEntries null branch)", () => {
+    const word = makeWord({
+      corpus_items: [],
+      synonym_items: [
+        { word: "maintain" }, // 无 semanticDiff → 被过滤
+        { word: "support", semanticDiff: "物理支撑" },
+        { word: "endure", semanticDiff: "忍受" },
+      ],
+      antonym_items: [
+        { word: "weaken" },
+        { word: "destroy" },
+        { word: "release" },
+      ],
+    });
+    const task = generateL2DiscriminationTask({ sessionId: SESSION, wordId: WORD_ID, word });
+    expect(task).not.toBeNull();
+    expect(task!.taskType).toBe("synonym_discrimination");
+  });
+
+  it("synonym discrimination is infeasible when fewer than 2 valid distractor others", () => {
+    const word = makeWord({
+      corpus_items: [],
+      synonym_items: [
+        { word: "support", semanticDiff: "物理支撑" },
+      ],
+      antonym_items: [{ word: "weaken" }],
+    });
+    expect(generateL2DiscriminationTask({ sessionId: SESSION, wordId: WORD_ID, word })).toBeNull();
+  });
+
+  it("production task omits hintTranslation when short_definition is null", () => {
+    const task = buildL2ProductionTask({
+      sessionId: SESSION,
+      wordId: WORD_ID,
+      word: makeWord({ short_definition: null }),
+    });
+    expect(task.hintTranslation).toBeUndefined();
+  });
+
+  it("production task carries sourceTitle/contextId when L3 snippet provides them", () => {
+    const task = buildL2ProductionTask({
+      sessionId: SESSION,
+      wordId: WORD_ID,
+      word: makeWord({ corpus_items: [] }),
+      contextSnippets: [
+        { text: "We must sustain the momentum.", contextId: "ctx-1", sourceTitle: "Reading Notes" },
+      ],
+    });
+    expect(task.referenceExample).toBe("We must sustain the momentum.");
+    expect(task.sourceTitle).toBe("Reading Notes");
+    expect(task.contextId).toBe("ctx-1");
+  });
+
+  it("production task omits source metadata when L3 snippet has none", () => {
+    const task = buildL2ProductionTask({
+      sessionId: SESSION,
+      wordId: WORD_ID,
+      word: makeWord({ corpus_items: [] }),
+      contextSnippets: [{ text: "Plain snippet." }],
+    });
+    expect(task.referenceExample).toBe("Plain snippet.");
+    expect(task.sourceTitle).toBeUndefined();
+    expect(task.contextId).toBeUndefined();
+  });
+});
