@@ -728,16 +728,6 @@ export const userWordL2Progress = pgTable("user_word_l2_progress", {
 	// 2026-08-24 l2-drill spec：产出步自评结果（passed/weak）。非 FSRS 字段，
 	// 仅作能力阶段标记；NULL = 尚未做过产出任务。
 	l2ProductionStatus: text("l2_production_status"),
-	// ⚠️ L3 BOUNDARY — these columns are NOT the L3 context-space main model.
-	// They are lightweight flags carried over from the Phase-0 self-growing draft and are
-	// currently UNUSED by any business code (no service/repo/route reads or writes them).
-	// The real L3 (agent self-growing knowledge chain) will live in an INDEPENDENT table
-	// family (l3_sources / l3_contexts / l3_proposals) built in Phase 3 — see ADR-0005.
-	// L3 does NOT participate in FSRS scheduling (ADR-0004 §6.2). Do not treat these
-	// fields as the L3 source of truth; do not couple L3 logic to this L2 progress table.
-	// Kept (not dropped) only to avoid migration churn; will be reconsidered when L3 lands.
-	l3Pending: boolean("l3_pending").default(false),
-	l3SelfAssessments: jsonb("l3_self_assessments").default([]).notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	uniqueIndex("idx_l2_progress_user_wordbook_word").on(table.userId, table.wordbookId, table.wordId),

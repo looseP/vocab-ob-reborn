@@ -80,3 +80,15 @@ Phase 3 的 L3（agent 自生长知识链）**必须**通过独立表族实现�
 ADR-0005's proposal/review/confirm requirement applies to agent-generated or otherwise unreviewed L3 writes. Phase 3A's owner/manual HTTP API is a confirmed foundation-write surface: the authenticated owner explicitly creates trusted source/context/occurrence/link rows.
 
 There is no `l3_proposals` table in Phase 3A because this phase does not implement agents, LLM parsing, recommendation, MCP, or bulk import parsing that would create unreviewed candidates. Phase 3B/3C should add `l3_proposals` before any automated or agent-generated L3 evidence can become authoritative.
+
+## Resolution (2026-08-26)
+
+死字段清理完成（兑现本 ADR §4「届时再评估」承诺）：
+
+- 全仓复确认 `l3_pending` / `l3_self_assessments` 无任何 service / repository / route /
+  domain 读写，仅 schema、domain 类型与测试 fixture 引用。
+- 已移除 `src/db/schema.ts` 与 `src/domain/index.ts` 中的字段定义及 fixture 引用。
+- 新增 migration `0014_flaky_trauma.sql`：`ALTER TABLE "user_word_l2_progress"
+  DROP COLUMN "l3_pending", DROP COLUMN "l3_self_assessments";`
+- 补 depcruise 规则 `l3-no-l2-progress-repo`：禁止 `services/l3* → repositories/l2-progress`，
+  把本 ADR §Tradeoffs 承诺的边界从注释升级为机器守护（反向规则 `l2-no-l3-direct` 已由 ADR-0016 落地）。

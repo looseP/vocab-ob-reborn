@@ -85,6 +85,13 @@ module.exports = {
       to: { path: '^src/(repositories/l3-|domain/l3-)' },
     },
     {
+      name: 'l3-no-l2-progress-repo',
+      severity: 'error',
+      comment: 'L3 服务不得依赖 l2-progress 仓库 — 死字段清理后 L3 与 L2 进度彻底解耦（ADR-0005），L3 只经 ContextSource 抽象消费',
+      from: { path: '^src/services/l3-' },
+      to: { path: '^src/repositories/l2-progress' },
+    },
+    {
       name: 'no-orphans',
       severity: 'warn',
       comment: '孤立模块（无人引用）— 可能是死代码',

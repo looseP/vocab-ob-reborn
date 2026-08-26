@@ -81,8 +81,6 @@ function makeProgressRow(overrides: Partial<UserWordL2ProgressRow> = {}): UserWo
     l2_weights_source: "fsrs_l2_weights",
     l2_predicted_retrievability: null,
     l2_production_status: null,
-    l3_pending: false,
-    l3_self_assessments: [],
     created_at: "2026-08-25T00:00:00Z",
     ...overrides,
   };
