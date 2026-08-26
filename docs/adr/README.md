@@ -161,6 +161,8 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0004](./0004-purpose-stack-patterns-philosophy.md) | 目的 / 技术栈 / 工程模式 / Tradeoff / 设计哲学（含 L3 前瞻） | Phase 0→2B |
 | [0005](./0005-l3-context-space-boundary.md) | L3 语境空间边界——不属于 user_word_l2_progress / 不参与 FSRS / 独立 l3_ 表族 | Phase 2C→3 |
 | [0006](./0006-l2-composer-contract-freeze.md) | L2 Composer 合同冻结（not chat / collocation 必词典落地 / external-prompt 非持久 / Phase 2E 不引入 L3） | Phase 2E |
+| [0015](./0015-l2-review-outbox-track-routing.md) | L2 复习闭环 Outbox track='l2' 事件路由（FR-12 接线1） | Phase 2E→FR-12 |
+| [0016](./0016-l3-context-source-adapter-for-l2-drill.md) | L3 语境源适配器接入 L2 Drill 产出自评（FR-12 接线2） | Phase 2E→FR-12 |
 
 ## 并行 agent 必读
 
