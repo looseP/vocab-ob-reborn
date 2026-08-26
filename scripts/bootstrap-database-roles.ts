@@ -292,6 +292,7 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     GRANT SELECT, INSERT ON TABLE public.word_l2_content TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.user_word_progress TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.user_word_l2_progress TO vocab_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l2_drill_session_steps TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.notes TO vocab_app;
     GRANT SELECT, INSERT ON TABLE public.note_revisions TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.sessions TO vocab_app;

@@ -67,6 +67,24 @@ beforeEach(() => {
   mockRepos.l2Progress = {
     findByWordbookWordAndUser: vi.fn(async () => null),
     insert: vi.fn(async () => ({}) as never),
+    findDueCards: vi.fn(async () => []),
+    findForUpdate: vi.fn(async () => null),
+    saveL2Answer: vi.fn(async () => ({ reviewLogId: "log-l2" })),
+    updateProductionStatus: vi.fn(async () => undefined),
+    insertDrillStepIfAbsent: vi.fn(async () => ({}) as never),
+    findDrillStepForUpdate: vi.fn(async () => null),
+    findLastDrillStep: vi.fn(async () => null),
+    // M5 修复后接口新增方法：返回 null 表示无产出步可找
+    findDrillStepBySessionWordStep: vi.fn(async () => null),
+    // M7 修复：L2 撤销链路方法（worker 不应触达，但接口对齐需补全 mock）
+    findPendingProductionStepsForResume: vi.fn(async () => []),
+    findReviewLogForL2Undo: vi.fn(async () => null),
+    applyL2UndoSnapshot: vi.fn(async () => 0),
+    markL2ReviewLogUndone: vi.fn(async () => 0),
+    insertL2UndoAuditLog: vi.fn(async () => undefined),
+    completeDrillStep: vi.fn(async () => undefined),
+    skipDrillStep: vi.fn(async () => undefined),
+    deleteDrillStep: vi.fn(async () => undefined),
     finalizeL2ContentHash: vi.fn(async () => 0),
     pause: vi.fn(async () => undefined),
     unpauseByReason: vi.fn(async () => undefined),
@@ -197,5 +215,168 @@ describe("ReviewOutboxWorker", () => {
       "Unsupported outbox event type: unknown.v1",
       128,
     );
+  });
+
+  // ─── FR-12 接线1：track='l2' 分支（l2-drill spec §七） ──────────────────
+  // L2 轨事件只做 l2_weak_signal，不递增 cards_seen，不触发 L1 侧联动。
+
+  describe("track='l2' branch (FR-12 wiring)", () => {
+    function l2Event(overrides: Partial<OutboxEventRow> = {}): OutboxEventRow {
+      // track='l2' 事件：payload 必须带 track 字段，其余字段沿用 event() 默认
+      return event({
+        payload: {
+          version: 1,
+          reviewLogId: "00000000-0000-4000-8000-000000000102",
+          progressId: "00000000-0000-4000-8000-000000000107",
+          sessionId: "00000000-0000-4000-8000-000000000103",
+          userId: "00000000-0000-4000-8000-000000000104",
+          wordbookId: "00000000-0000-4000-8000-000000000105",
+          wordId: "00000000-0000-4000-8000-000000000106",
+          track: "l2",
+        },
+        ...overrides,
+      });
+    }
+
+    it("triggers l2_weak_signal effect and skips cards_seen / l1 cascade / l2_transition", async () => {
+      const claimBatch = vi.fn<() => Promise<OutboxEventRow[]>>()
+        .mockResolvedValueOnce([l2Event()])
+        .mockResolvedValue([]);
+      const outbox = makeOutbox({ claimBatch });
+      mockRepos.outbox = outbox;
+      const worker = new ReviewOutboxWorker(outbox, { workerId: "worker-1" });
+
+      expect(await worker.processBatch()).toBe(1);
+
+      // l2_weak_signal 收据：beginEffect 被调用一次且 effectName='l2_weak_signal'
+      expect(outbox.beginEffect).toHaveBeenCalledWith(
+        l2Event().id,
+        "l2_weak_signal",
+        "worker-1",
+      );
+      expect(outbox.completeEffect).toHaveBeenCalledWith(
+        l2Event().id,
+        "l2_weak_signal",
+      );
+      // cards_seen 不递增（一词不记两次账）
+      expect(mockRepos.sessions?.incrementCardsSeenFromOutbox).not.toHaveBeenCalled();
+      // L1 路径不应被触达
+      expect(mockRepos.reviews?.findProgressForOutbox).not.toHaveBeenCalled();
+      // l2_transition / l1_cascade 收据不应被申请
+      expect(outbox.beginEffect).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "l2_transition",
+        expect.anything(),
+      );
+      expect(outbox.beginEffect).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "l1_cascade",
+        expect.anything(),
+      );
+      // 事件应被标记为已处理
+      expect(outbox.markProcessed).toHaveBeenCalledWith(l2Event().id, "worker-1");
+    });
+
+    it("invokes CrossTrackService.checkL2FailureCascade via l2Progress lookup", async () => {
+      // checkL2FailureCascade 会调用 l2Progress.findByWordbookWordAndUser
+      // 加载 L2 progress 行的 recent_ratings，判断是否触发弱信号。
+      const claimBatch = vi.fn<() => Promise<OutboxEventRow[]>>()
+        .mockResolvedValueOnce([l2Event()])
+        .mockResolvedValue([]);
+      const outbox = makeOutbox({ claimBatch });
+      mockRepos.outbox = outbox;
+      // L2 行存在但 recent_ratings 不足 3 个 again → 不触发 markL1WeakSignal
+      mockRepos.l2Progress = {
+        ...mockRepos.l2Progress,
+        findByWordbookWordAndUser: vi.fn(async () => ({
+          id: "l2-row-1",
+          recent_ratings: ["good", "again"],
+        })),
+      } as unknown as typeof mockRepos.l2Progress;
+      const worker = new ReviewOutboxWorker(outbox, { workerId: "worker-1" });
+
+      await worker.processBatch();
+
+      // findByWordbookWordAndUser 必须用事件的 (userId, wordbookId, wordId) 调用
+      expect(mockRepos.l2Progress?.findByWordbookWordAndUser).toHaveBeenCalledWith(
+        "00000000-0000-4000-8000-000000000104",
+        "00000000-0000-4000-8000-000000000105",
+        "00000000-0000-4000-8000-000000000106",
+      );
+      // recent_ratings 不满足窗口条件 → markL1WeakSignal 不应被调用
+      expect(mockRepos.reviews?.markL1WeakSignal).not.toHaveBeenCalled();
+    });
+
+    it("marks l1_weak_signal when L2 recent_ratings window is all again", async () => {
+      const claimBatch = vi.fn<() => Promise<OutboxEventRow[]>>()
+        .mockResolvedValueOnce([l2Event()])
+        .mockResolvedValue([]);
+      const outbox = makeOutbox({ claimBatch });
+      mockRepos.outbox = outbox;
+      // L2 行 recent_ratings 最后 3 个都是 again → 触发 markL1WeakSignal
+      mockRepos.l2Progress = {
+        ...mockRepos.l2Progress,
+        findByWordbookWordAndUser: vi.fn(async () => ({
+          id: "l2-row-1",
+          recent_ratings: ["good", "again", "again", "again"],
+        })),
+      } as unknown as typeof mockRepos.l2Progress;
+      mockRepos.reviews = {
+        ...mockRepos.reviews,
+        markL1WeakSignal: vi.fn(async () => 1),
+      } as unknown as typeof mockRepos.reviews;
+      const worker = new ReviewOutboxWorker(outbox, { workerId: "worker-1" });
+
+      await worker.processBatch();
+
+      expect(mockRepos.reviews?.markL1WeakSignal).toHaveBeenCalledWith(
+        "00000000-0000-4000-8000-000000000104",
+        "00000000-0000-4000-8000-000000000105",
+        "00000000-0000-4000-8000-000000000106",
+        true,
+      );
+      expect(outbox.markProcessed).toHaveBeenCalledWith(l2Event().id, "worker-1");
+    });
+
+    it("skips l2_weak_signal when receipt already exists (idempotent)", async () => {
+      const claimBatch = vi.fn<() => Promise<OutboxEventRow[]>>()
+        .mockResolvedValueOnce([l2Event()])
+        .mockResolvedValue([]);
+      const outbox = makeOutbox({
+        claimBatch,
+        // l2_weak_signal 收据已存在 → beginEffect 返回 false
+        beginEffect: vi.fn(async (_eventId, effectName) => effectName !== "l2_weak_signal"),
+      });
+      mockRepos.outbox = outbox;
+      const worker = new ReviewOutboxWorker(outbox, { workerId: "worker-1" });
+
+      await worker.processBatch();
+
+      // 收据已存在 → 不应触达 L2 progress 查询
+      expect(mockRepos.l2Progress?.findByWordbookWordAndUser).not.toHaveBeenCalled();
+      // completeEffect 不应被调用（l2_weak_signal 收据已存在，跳过）
+      expect(outbox.completeEffect).not.toHaveBeenCalledWith(
+        l2Event().id,
+        "l2_weak_signal",
+      );
+      // 事件仍应被标记为已处理
+      expect(outbox.markProcessed).toHaveBeenCalledWith(l2Event().id, "worker-1");
+    });
+
+    it("scopes L2 effect transaction to the event actor (RLS)", async () => {
+      const claimBatch = vi.fn<() => Promise<OutboxEventRow[]>>()
+        .mockResolvedValueOnce([l2Event()])
+        .mockResolvedValue([]);
+      const outbox = makeOutbox({ claimBatch });
+      mockRepos.outbox = outbox;
+      const worker = new ReviewOutboxWorker(outbox, { workerId: "worker-1" });
+
+      await worker.processBatch();
+
+      expect(withTransaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { actorId: "00000000-0000-4000-8000-000000000104" },
+      );
+    });
   });
 });

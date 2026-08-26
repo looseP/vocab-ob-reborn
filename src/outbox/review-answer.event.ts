@@ -11,6 +11,12 @@ export const reviewAnswerRecordedPayloadSchema = z.object({
   userId: z.string().uuid(),
   wordbookId: z.string().uuid(),
   wordId: z.string().uuid(),
+  /**
+   * 加性演进（l2-drill spec §七，v1 兼容）：'l1' 事件走原有效应链，
+   * 'l2' 事件走 l2_weak_signal 且不递增 cards_seen。
+   * 存量事件无此字段 → 解析时缺省 'l1'。
+   */
+  track: z.enum(["l1", "l2"]).optional().default("l1"),
 });
 
 export type ReviewAnswerRecordedPayload = z.infer<typeof reviewAnswerRecordedPayloadSchema>;

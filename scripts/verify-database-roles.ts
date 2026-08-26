@@ -343,6 +343,7 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.word_l2_content": ["SELECT", "INSERT"],
       "public.user_word_progress": ["SELECT", "INSERT", "UPDATE"],
       "public.user_word_l2_progress": ["SELECT", "INSERT", "UPDATE"],
+      "public.l2_drill_session_steps": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.notes": ["SELECT", "INSERT", "UPDATE"],
       "public.note_revisions": ["SELECT", "INSERT"],
       "public.sessions": ["SELECT", "INSERT", "UPDATE"],

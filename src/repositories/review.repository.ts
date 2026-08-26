@@ -595,7 +595,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         COUNT(*) FILTER (WHERE rl.rating = 'good')::text AS good_count,
         COUNT(*) FILTER (WHERE rl.rating = 'easy')::text AS easy_count
        FROM review_logs rl
-       WHERE rl.user_id = $1 AND rl.wordbook_id = $2`,
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'`,
       [userId, wordbookId],
     );
     const r = rows[0] ?? {};
@@ -636,7 +636,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
               w.slug AS word_slug, w.lemma AS word_lemma
        FROM review_logs rl
        JOIN words w ON w.id = rl.word_id
-       WHERE rl.user_id = $1 AND rl.wordbook_id = $2
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'
        ORDER BY rl.created_at DESC
        LIMIT $3`,
       [userId, wordbookId, limit],
@@ -648,7 +648,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       `SELECT date_trunc('day', rl.created_at)::date::text AS date,
               COUNT(*)::text AS count
        FROM review_logs rl
-       WHERE rl.user_id = $1 AND rl.wordbook_id = $2
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'
          AND rl.created_at >= now() - ($3 || ' days')::interval
        GROUP BY date_trunc('day', rl.created_at)
        ORDER BY date`,

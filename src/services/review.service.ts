@@ -62,6 +62,11 @@ export interface EnqueueCardsResult {
   progressIds: string[];
 }
 
+export interface ClearL1WeakSignalInput {
+  wordId: string;
+  wordbookId: string;
+}
+
 export interface FsrsScheduling {
   difficulty: number | null;
   dueAt: string;
@@ -101,6 +106,12 @@ export interface ReviewServiceDeps {
   findLeeches?: (userId: string, wordbookId: string, limit: number) => Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
   getTimeline?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ id: string; rating: string; created_at: string; word_slug: string; word_lemma: string }>>;
   getHeatmap?: (userId: string, wordbookId: string, days: number) => Promise<Array<{ date: string; count: string }>>;
+  /**
+   * Clear the L1 weak-signal flag for a single progress row (P1-4).
+   * Calls markL1WeakSignal(userId, wordbookId, wordId, false) inside an
+   * RLS-scoped transaction. Returns the number of rows updated.
+   */
+  clearL1WeakSignal?: (userId: string, wordbookId: string, wordId: string) => Promise<number>;
 }
 
 export class ReviewService {
@@ -124,6 +135,7 @@ export class ReviewService {
         dueAt: card.progress.due_at,
         lastRating: card.progress.last_rating,
         reviewCount: card.progress.review_count,
+        l1WeakSignal: card.progress.l1_weak_signal,
       })),
       session: {
         id: session.id,
@@ -257,6 +269,7 @@ export class ReviewService {
         userId,
         wordbookId: progress.wordbook_id,
         wordId: progress.word_id,
+        track: "l1",
       });
       await repos.outbox.enqueue({
         aggregateType: "review_log",
@@ -513,5 +526,25 @@ export class ReviewService {
 
       return { ok: true };
     }, { actorId: userId });
+  }
+
+  /**
+   * Clear the L1 weak-signal flag for a single progress row (P1-4).
+   *
+   * Phase 2C decision-2: markL1WeakSignal only *marks* — it never re-cards
+   * or touches due_at/needs_recheck. The user decides whether to re-grind
+   * L1 after seeing the flag in the UI. This endpoint lets the user manually
+   * dismiss the flag once they've acknowledged it (e.g. after re-reviewing
+   * the word or deciding it's a false positive).
+   */
+  async clearL1WeakSignal(input: ClearL1WeakSignalInput, userId: string): Promise<{ ok: boolean }> {
+    if (!this.deps.clearL1WeakSignal) {
+      throw new Error("clearL1WeakSignal dependency not configured");
+    }
+    const updated = await this.deps.clearL1WeakSignal(userId, input.wordbookId, input.wordId);
+    if (updated === 0) {
+      throw new NotFoundError("WordProgress", input.wordId);
+    }
+    return { ok: true };
   }
 }

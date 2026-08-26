@@ -78,6 +78,11 @@ export const reviewUndoSchema = z.object({
   idempotencyKey: z.string().min(1).max(200).optional(),
 });
 
+export const clearL1WeakSignalSchema = z.object({
+  wordId: uuidSchema,
+  wordbookId: uuidSchema.optional(),
+});
+
 export const reviewRejoinSchema = z.object({
   progressId: uuidSchema,
 });
@@ -96,6 +101,29 @@ export const addToReviewSchema = z.object({
 export const batchAddToReviewSchema = z.object({
   wordIds: z.array(uuidSchema).min(1).max(100),
   wordbookId: uuidSchema.optional(),
+});
+
+// ── L2 drill mode (双轨 spec) ─────────────────────────────────────────────
+// 辨析步应答：choiceIndex 为选项下标（0-3）。幂等键全局共享（不限 track）。
+export const l2TaskAnswerSchema = z.object({
+  sessionId: uuidSchema,
+  stepId: uuidSchema,
+  choiceIndex: z.number().int().min(0).max(3),
+  idempotencyKey: z.string().min(1).max(200).optional(),
+});
+
+// 产出步自评：verdict 不带 FSRS，只回填能力阶段（spec D6'）。
+export const l2SelfAssessSchema = z.object({
+  sessionId: uuidSchema,
+  stepId: uuidSchema,
+  verdict: z.enum(["passed", "weak"]),
+  idempotencyKey: z.string().min(1).max(200).optional(),
+});
+
+// 撤销本会话最近一步：仅产出自评可撤（spec 红线）。
+export const l2UndoSchema = z.object({
+  sessionId: uuidSchema,
+  idempotencyKey: z.string().min(1).max(200).optional(),
 });
 
 export const batchAddFromContentSchema = z.object({

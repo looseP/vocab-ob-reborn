@@ -65,6 +65,26 @@ module.exports = {
       to: { path: '^src/llm/' },
     },
     {
+      name: 'l2-no-direct-l3-adapter',
+      severity: 'error',
+      comment: 'L2 drill 模块不得直接依赖 L3ContextSourceAdapter，必须通过 ContextSource 抽象接口（src/domain/context-source.ts）— ADR-0016 / FR-12 接线2 红线。services/index.ts 作为 DI 装配器例外',
+      from: {
+        path: '^src/(services/l2-|domain/l2-|repositories/l2-|http/routes/l2-|http/l2-)',
+        pathNot: '^src/services/index\\.ts$',
+      },
+      to: { path: 'src/services/l3-context-source-adapter' },
+    },
+    {
+      name: 'l2-no-l3-direct',
+      severity: 'error',
+      comment: 'L2 模块不得直接依赖 L3 repositories 或 L3 domain（l3-* / domain/l3-*），必须通过 ContextSource 抽象接口 — ADR-0016 DIP',
+      from: {
+        path: '^src/(services/l2-|domain/l2-|repositories/l2-|http/routes/l2-|http/l2-)',
+        pathNot: '^src/services/index\\.ts$',
+      },
+      to: { path: '^src/(repositories/l3-|domain/l3-)' },
+    },
+    {
       name: 'no-orphans',
       severity: 'warn',
       comment: '孤立模块（无人引用）— 可能是死代码',

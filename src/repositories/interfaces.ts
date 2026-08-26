@@ -12,6 +12,7 @@ import type {
   GetPublicWordsOptions,
   UserWordProgressRow,
   UserWordL2ProgressRow,
+  L2DrillStepRow,
   L2ContentRow,
   L3ContextLinkRow,
   L3ContextRow,
@@ -368,6 +369,73 @@ export interface NewL2Progress {
   l2_due_at: string;
   l2_inherited_from_l1: boolean;
   l2_weights_source: string;
+  /**
+   * Initial StoredSchedulerCard (2026-08-24 l2-drill spec §四 payload 断路修复).
+   * Inherited rows are born in ts-fsrs Review state with the inherited
+   * S/D — without this, toCard({}) degrades the card to a fresh New card.
+   */
+  l2_scheduler_payload?: Json;
+}
+
+/** Word content caches joined for L2 drill queue/task generation (spec §五). */
+export interface L2WordContent {
+  id: string;
+  slug: string;
+  title: string;
+  lemma: string;
+  pos: string | null;
+  ipa: string | null;
+  cefr: string | null;
+  short_definition: string | null;
+  corpus_items: Json;
+  synonym_items: Json;
+  antonym_items: Json;
+}
+
+/** SELECT FOR UPDATE result for the L2 answer path (spec §八 step 2). */
+export interface L2ProgressForUpdate {
+  progress: UserWordL2ProgressRow;
+  word: L2WordContent;
+}
+
+/** Persist one L2 review: full l2_* reschedule + track='l2' review log. */
+export interface SaveL2AnswerInput {
+  progressId: string;
+  userId: string;
+  wordbookId: string;
+  wordId: string;
+  rating: ReviewRating;
+  state: string;
+  stability: number | string | null;
+  difficulty: number | string | null;
+  retrievability: number | string | null;
+  dueAt: string;
+  lastReviewedAt: string;
+  intervalDays: number | null;
+  scheduledDays: number | null;
+  /** H3 修复：距上次复习的流逝天数（来自 FSRS scheduling.elapsedDays）。
+   * 之前 INSERT 把 scheduledDays 错填到 elapsed_days 列、scheduled_days 恒为 null，
+   *  导致 L2 track 的 review_logs 审计数据错乱。 */
+  elapsedDays: number | null;
+  nextPayload: Json;
+  contentHashSnapshot: string;
+  previousSnapshot: Json;
+  logMetadata: Json;
+  sessionId: string | null;
+  idempotencyKey: string | null;
+}
+
+export interface NewL2DrillStep {
+  session_id: string;
+  user_id: string;
+  wordbook_id: string;
+  word_id: string;
+  progress_id: string;
+  step_index: number;
+  step_type: "l2_discrimination" | "l2_production";
+  task_id?: string | null;
+  task_type?: string | null;
+  task_payload?: Json;
 }
 
 export interface IL2ProgressRepository {
@@ -381,12 +449,121 @@ export interface IL2ProgressRepository {
     wordbookId: string,
     wordId: string,
   ): Promise<UserWordL2ProgressRow | null>;
-  insert(data: NewL2Progress): Promise<UserWordL2ProgressRow>;
-  /**
-   * Atomically persist the canonical L2/full hashes and schedule stale,
-   * non-paused L2 progress rows for recheck. L2 content is global per word,
-   * so every user/wordbook snapshot for that word is considered.
-   */
+    insert(data: NewL2Progress): Promise<UserWordL2ProgressRow>;
+    /** L2 到期口径队列（l2_drill spec §一）：未暂停且 l2_due_at <= now，按到期升序。 */
+    findDueCards(
+      userId: string,
+      wordbookId: string,
+      limit: number,
+    ): Promise<Array<{ progress: UserWordL2ProgressRow; word: L2WordContent }>>;
+    /** SELECT FOR UPDATE + JOIN words 缓存（spec §八 step 2）。MUST be in a transaction. */
+    findForUpdate(progressId: string, userId: string): Promise<L2ProgressForUpdate | null>;
+    /**
+     * Atomically persist one L2 review: reschedule every l2_* field, append
+     * recent_ratings, bump the rating counter + lapse counter, refresh the
+     * content-hash snapshot, and INSERT the track='l2' review log.
+     * MUST be in a transaction. Returns the new log id for outbox wiring.
+     */
+    saveL2Answer(input: SaveL2AnswerInput): Promise<{ reviewLogId: string }>;
+    /** Capability-stage marker for the production step (spec §〇½ D6'). NULL = 未做过产出。 */
+    updateProductionStatus(
+      userId: string,
+      wordbookId: string,
+      wordId: string,
+      status: "passed" | "weak" | null,
+    ): Promise<void>;
+    /** 幂等建步（UNIQUE(session,word,step_index) 冲突时静默返回既有行）。 */
+    insertDrillStepIfAbsent(data: NewL2DrillStep): Promise<L2DrillStepRow>;
+    /** SELECT FOR UPDATE。MUST be in a transaction. */
+    findDrillStepForUpdate(stepId: string, userId: string): Promise<L2DrillStepRow | null>;
+    findLastDrillStep(sessionId: string, userId: string): Promise<L2DrillStepRow | null>;
+    /**
+     * M5 修复：幂等重放查找同会话同词的指定 step_index 行。
+     * 用于辨析步重放命中已结算记录后，重新找回产出步入口。
+     * 不上锁（SELECT 不带 FOR UPDATE），调用方仅在已确认幂等重放时使用。
+     */
+    findDrillStepBySessionWordStep(
+      sessionId: string,
+      userId: string,
+      wordId: string,
+      stepIndex: number,
+    ): Promise<L2DrillStepRow | null>;
+    /**
+     * M8 修复：取本会话所有 pending 产出步（含 progress + word JOIN）。
+     * getQueue 在常规到期卡之外追加这些半截会话步，让前端刷新后能继续走产出。
+     * 不上锁：调用方在写路径（INSERT 已完成，仅做读侧补集）。
+     */
+    findPendingProductionStepsForResume(
+      sessionId: string,
+      userId: string,
+    ): Promise<
+      Array<{
+        step: L2DrillStepRow;
+        progress: UserWordL2ProgressRow;
+        word: L2WordContent;
+      }>
+    >;
+    /**
+     * M7 修复：L2 辨析步撤销所需的 review_log 行读取。
+     * 返回 review_logs.undone / previous_progress_snapshot / word_id / wordbook_id；
+     * 必须是 track='l2'、未撤销、且 snapshot 非空。MUST be in a transaction.
+     */
+    findReviewLogForL2Undo(
+      reviewLogId: string,
+      userId: string,
+    ): Promise<{
+      wordId: string;
+      wordbookId: string;
+      undone: boolean;
+      previousSnapshot: Json;
+    } | null>;
+    /**
+     * M7 修复：把 previous_progress_snapshot 回写到 user_word_l2_progress 行。
+     * 与 L1 undo_review_log RPC 对 L1 表的等价动作，但作用于 L2 表。
+     * MUST be in a transaction. 返回受影响行数（0 表示 progress 已不存在/不属该用户）。
+     */
+    applyL2UndoSnapshot(
+      progressId: string,
+      userId: string,
+      previousSnapshot: Json,
+    ): Promise<number>;
+    /**
+     * M7 修复：标记 review_logs 行 undone=true + undone_at=now()。
+     * MUST be in a transaction. 返回受影响行数。
+     */
+    markL2ReviewLogUndone(reviewLogId: string, userId: string): Promise<number>;
+    /**
+     * M7 修复：插入撤销幂等审计行到 review_logs（track='l2'、rating=NULL、
+     * metadata={action:'undo', undone_log_id}）。与 L1 undoReviewLog 的
+     * 幂等日志结构对齐，复用 checkIdempotency 的检测路径。MUST be in a transaction.
+     */
+    insertL2UndoAuditLog(input: {
+      userId: string;
+      wordId: string;
+      wordbookId: string;
+      progressId: string;
+      sessionId: string;
+      reviewLogId: string;
+      restoredState: string;
+      idempotencyKey: string | null;
+    }): Promise<void>;
+    completeDrillStep(
+      stepId: string,
+      userId: string,
+      patch: {
+        outcome: NonNullable<L2DrillStepRow["outcome"]>;
+        mappedRating?: L2DrillStepRow["mapped_rating"];
+        reviewLogId?: string | null;
+      },
+    ): Promise<void>;
+    /** 竞态降级：步标 skipped（不产生 outcome/计数）。 */
+    skipDrillStep(stepId: string, userId: string): Promise<void>;
+    deleteDrillStep(stepId: string, userId: string): Promise<void>;
+    /**
+     * Atomically persist the canonical L2/full hashes and schedule stale,
+     * non-paused L2 progress rows for recheck. L2 content is global per word,
+     * so every user/wordbook snapshot for that word is considered.
+     */
   finalizeL2ContentHash(wordId: string, newL2Hash: string, newContentHash: string): Promise<number>;
   /** Pause L2 progress scoped to (user, wordbook, word). */
   pause(userId: string, wordbookId: string, wordId: string, reason: string): Promise<void>;

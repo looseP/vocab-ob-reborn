@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Coverage for the repository methods added by the frontend rebuild series:
  * review queue/leeches/timeline/heatmap reads, session lifecycle helpers,
  * and the note list read.
@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockPool } from "../helpers/mock-db";
 
-const mock = createMockPool();
+const mock = createMockPool({ recordTxControl: false });
 vi.mock("@/db/connection", () => ({
   getPool: () => mock.pool,
   resetPool: vi.fn(),
@@ -31,7 +31,7 @@ function dueCardRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("ReviewRepository — rebuild read methods", () => {
+describe("ReviewRepository 鈥?rebuild read methods", () => {
   it("findDueCards splits progress and word columns (H3 prefixed join)", async () => {
     mock.setRows([dueCardRow()]);
     const repos = createRepositories();
@@ -164,7 +164,7 @@ describe("ReviewRepository — rebuild read methods", () => {
   });
 });
 
-describe("SessionRepository — lifecycle helpers", () => {
+describe("SessionRepository 鈥?lifecycle helpers", () => {
   const sessionRow = {
     id: "s1", user_id: "u1", wordbook_id: "wb1", mode: "cram",
     cards_seen: 2, started_at: "2026-08-16T00:00:00Z", ended_at: null,
@@ -174,10 +174,10 @@ describe("SessionRepository — lifecycle helpers", () => {
     mock.setRows([sessionRow]);
     const repos = createRepositories();
 
-    await expect(repos.sessions.getOrCreateToday("u1", "wb1", "cram")).resolves.toEqual(sessionRow);
+    await expect(repos.sessions.getOrCreateToday("00000000-0000-4000-8000-000000000001", "wb1", "cram")).resolves.toEqual(sessionRow);
     const q = mock.lastQuery!;
     expect(q.text).toContain("get_or_create_today_session($1::uuid, $2::uuid, $3, $4::timestamptz)");
-    expect(q.params[0]).toBe("u1");
+    expect(q.params[0]).toBe("00000000-0000-4000-8000-000000000001");
     expect(q.params[2]).toBe("cram");
     expect(typeof q.params[3]).toBe("string");
   });
@@ -185,7 +185,7 @@ describe("SessionRepository — lifecycle helpers", () => {
   it("getOrCreateToday fails closed when the RPC returns no row", async () => {
     mock.setRows([]);
     const repos = createRepositories();
-    await expect(repos.sessions.getOrCreateToday("u1", "wb1")).rejects.toThrow("session get-or-create returned no row");
+    await expect(repos.sessions.getOrCreateToday("00000000-0000-4000-8000-000000000001", "wb1")).rejects.toThrow("session get-or-create returned no row");
   });
 
   it("create inserts a session row and fails closed on empty result", async () => {
@@ -232,7 +232,7 @@ describe("SessionRepository — lifecycle helpers", () => {
   });
 });
 
-describe("NoteRepository — listByUser", () => {
+describe("NoteRepository 鈥?listByUser", () => {
   it("lists a user's notes joined with word slugs, newest first", async () => {
     const row = {
       id: "n1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
@@ -260,3 +260,4 @@ describe("NoteRepository — listByUser", () => {
     await expect(repos.notes.upsert("u1", "w1", "wb1", "content")).rejects.toThrow("note upsert returned no row");
   });
 });
+
