@@ -7,6 +7,7 @@ import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { HomePage } from "./pages/HomePage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ReviewPage } from "./pages/ReviewPage";
+import { L2DrillPage } from "./pages/L2DrillPage";
 import { WordsPage } from "./pages/WordsPage";
 import { WordDetailPage } from "./pages/WordDetailPage";
 import { NotesPage } from "./pages/NotesPage";
@@ -132,6 +133,7 @@ export function App() {
               <Route path="/dashboard" element={<SiteFrame><DashboardPage /></SiteFrame>} />
               <Route path="/review" element={<SiteFrame><ReviewPage /></SiteFrame>} />
               <Route path="/review/*" element={<SiteFrame><ReviewPage /></SiteFrame>} />
+              <Route path="/l2-drill" element={<SiteFrame><L2DrillPage /></SiteFrame>} />
               <Route path="/words" element={<SiteFrame><WordsPage /></SiteFrame>} />
               <Route path="/words/:slug" element={<SiteFrame><WordDetailPage /></SiteFrame>} />
               <Route path="/notes" element={<SiteFrame><NotesPage /></SiteFrame>} />

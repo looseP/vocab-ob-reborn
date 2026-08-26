@@ -18,6 +18,7 @@ export interface ReviewCard {
   dueAt: string | null;
   lastRating: string | null;
   reviewCount: number;
+  l1WeakSignal?: boolean;
 }
 
 interface QueueResponse {
@@ -110,6 +111,25 @@ export function useReview() {
     }
   }, [currentIndex, queue.length]);
 
+  const clearWeakSignal = useCallback(async (wordId: string) => {
+    if (!currentCard) return;
+    setLoading(true);
+    try {
+      await apiFetch("/review/weak-signal/clear", {
+        method: "POST",
+        body: JSON.stringify({ wordId }),
+      });
+      setQueue((prev) => prev.map((c) =>
+        c.word.id === wordId ? { ...c, l1WeakSignal: false } : c,
+      ));
+      addToast("success", "已清除弱信号标记");
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "清除弱信号失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [currentCard, addToast]);
+
   return {
     currentCard,
     queue,
@@ -122,5 +142,6 @@ export function useReview() {
     startReview,
     answer,
     skip,
+    clearWeakSignal,
   };
 }

@@ -3,6 +3,7 @@ import { Card } from "@/frontend/components/ui/Card";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Spinner } from "@/frontend/components/ui/Spinner";
 import { Link } from "react-router-dom";
+import { Zap } from "lucide-react";
 import type { ReviewCard } from "@/frontend/hooks/useReview";
 
 const ratings = [
@@ -18,9 +19,10 @@ interface ReviewCardViewProps {
   error: string | null;
   onAnswer: (rating: "again" | "hard" | "good" | "easy") => void;
   onSkip: () => void;
+  onClearWeakSignal?: (wordId: string) => void;
 }
 
-export function ReviewCardView({ card, loading, error, onAnswer, onSkip }: ReviewCardViewProps) {
+export function ReviewCardView({ card, loading, error, onAnswer, onSkip, onClearWeakSignal }: ReviewCardViewProps) {
   if (loading && !card) {
     return (
       <Card className="flex items-center justify-center py-20">
@@ -49,6 +51,27 @@ export function ReviewCardView({ card, loading, error, onAnswer, onSkip }: Revie
 
   return (
     <Card className="space-y-6">
+      {card.l1WeakSignal && (
+        <div className="flex items-center justify-between rounded-lg border border-[var(--color-warm-border,transparent)] bg-[var(--color-surface-muted)] px-3 py-2">
+          <div className="flex items-center gap-2">
+            <Badge tone="warm" className="flex items-center gap-1">
+              <Zap size={12} /> 弱信号
+            </Badge>
+            <span className="text-xs text-[var(--color-ink-soft)]">
+              L2 连续判错，已触发 L1 重刷
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={loading}
+            onClick={() => onClearWeakSignal?.(card.word.id)}
+          >
+            清除标记
+          </Button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div className="flex gap-2">
           <Badge tone="accent">{card.state}</Badge>

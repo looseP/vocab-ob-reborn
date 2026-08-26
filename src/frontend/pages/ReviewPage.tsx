@@ -54,7 +54,7 @@ function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
 }
 
 function ReviewSession({ reviewMode, onBack }: { reviewMode: string; onBack: () => void }) {
-  const { currentCard, loading, error, stats, completed, currentIndex, remaining, startReview, answer, skip } = useReview();
+  const { currentCard, loading, error, stats, completed, currentIndex, remaining, startReview, answer, skip, clearWeakSignal } = useReview();
 
   const apiMode = reviewMode === "zen" ? "review" : reviewMode;
   const isZen = reviewMode === "zen";
@@ -142,6 +142,7 @@ function ReviewSession({ reviewMode, onBack }: { reviewMode: string; onBack: () 
         error={error}
         onAnswer={answer}
         onSkip={skip}
+        onClearWeakSignal={clearWeakSignal}
       />
     </div>
   );
