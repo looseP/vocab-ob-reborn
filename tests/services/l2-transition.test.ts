@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterAll, afterEach, describe, it, expect, vi } from "vitest";
 
 vi.mock("@/db/transaction", () => ({
   withTransaction: vi.fn(async (cb: any) => cb({})),
@@ -28,6 +28,14 @@ describe("L2TransitionService.checkAndTransition", () => {
     const service = new L2TransitionService(mockL2Repo as any);
     await service.checkAndTransition(makeProgress());
     expect(mockL2Repo.insert).toHaveBeenCalled();
+    // payload 断路修复（l2-drill spec §四）：继承行必须带初始 StoredSchedulerCard
+    const inserted = mockL2Repo.insert.mock.calls[0]![0] as { l2_scheduler_payload?: Record<string, unknown> };
+    const payload = inserted.l2_scheduler_payload as Record<string, unknown>;
+    expect(payload).toBeDefined();
+    expect(payload.state).toBe(2); // ts-fsrs State.Review —— 绝不能是 New(0)
+    expect(Number(payload.stability)).toBeGreaterThan(0);
+    expect(() => new Date(String(payload.due))).not.toThrow();
+    expect(new Date(String(payload.due)).getTime()).not.toBeNaN();
   });
 
   it("does NOT transition when stability < 21", async () => {
@@ -194,5 +202,75 @@ describe("L2TransitionService.checkAndTransition", () => {
     // Both rows are for the same user+word but different wordbooks.
     expect(findBy).toHaveBeenCalledWith("user-1", "wb-A", "word-1");
     expect(findBy).toHaveBeenCalledWith("user-1", "wb-B", "word-1");
+  });
+});
+
+// ── P2-6: L2_DESIRED_RETENTION env-var tuning ─────────────────────────────
+// 模块级常量在 import 时一次性求值，须 vi.resetModules + dynamic import
+// 才能让 process.env 改动生效。验证调优旋钮：合法值生效，越界回退默认。
+describe("L2TransitionService L2_DESIRED_RETENTION env-var tuning (P2-6)", () => {
+  const envBackup = process.env.L2_DESIRED_RETENTION;
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+
+  afterEach(() => {
+    delete process.env.L2_DESIRED_RETENTION;
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
+
+  afterAll(() => {
+    if (envBackup !== undefined) process.env.L2_DESIRED_RETENTION = envBackup;
+    warnSpy.mockRestore();
+    infoSpy.mockRestore();
+  });
+
+  async function importServiceAndInsert(value: string) {
+    process.env.L2_DESIRED_RETENTION = value;
+    vi.resetModules();
+    const mod = await import("@/services/l2-transition.service");
+    const L2TransitionServiceDyn = mod.L2TransitionService;
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn().mockResolvedValue(null),
+      insert: vi.fn().mockResolvedValue({ id: "l2-1" }),
+    };
+    const service = new L2TransitionServiceDyn(mockL2Repo as any);
+    await service.checkAndTransition(makeProgress());
+    return mockL2Repo.insert.mock.calls[0][0] as { l2_desired_retention: number };
+  }
+
+  it("L2_DESIRED_RETENTION=0.950 writes 0.95 to the new L2 row", async () => {
+    const inserted = await importServiceAndInsert("0.950");
+    expect(inserted.l2_desired_retention).toBe(0.95);
+  });
+
+  it("L2_DESIRED_RETENTION=0.990 writes 0.99 (upper bound)", async () => {
+    const inserted = await importServiceAndInsert("0.990");
+    expect(inserted.l2_desired_retention).toBe(0.99);
+  });
+
+  it("L2_DESIRED_RETENTION=0.900 writes 0.9 (lower bound)", async () => {
+    const inserted = await importServiceAndInsert("0.900");
+    expect(inserted.l2_desired_retention).toBe(0.9);
+  });
+
+  it("L2_DESIRED_RETENTION=0.85 falls back to 0.9 (below DB CHECK lower bound)", async () => {
+    const inserted = await importServiceAndInsert("0.85");
+    expect(inserted.l2_desired_retention).toBe(0.9);
+  });
+
+  it("L2_DESIRED_RETENTION=1.0 falls back to 0.9 (above DB CHECK upper bound)", async () => {
+    const inserted = await importServiceAndInsert("1.0");
+    expect(inserted.l2_desired_retention).toBe(0.9);
+  });
+
+  it("L2_DESIRED_RETENTION=abc falls back to 0.9 (non-numeric)", async () => {
+    const inserted = await importServiceAndInsert("abc");
+    expect(inserted.l2_desired_retention).toBe(0.9);
+  });
+
+  it("L2_DESIRED_RETENTION=0.955 rounds to 0.955 (NUMERIC(4,3) 3 decimal places)", async () => {
+    const inserted = await importServiceAndInsert("0.955");
+    expect(inserted.l2_desired_retention).toBeCloseTo(0.955, 3);
   });
 });

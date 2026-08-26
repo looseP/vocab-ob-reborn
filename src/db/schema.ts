@@ -325,7 +325,7 @@ export const sessions = pgTable("sessions", {
 		}).onDelete("cascade"),
 	unique("sessions_id_user_wordbook_unique").on(table.id, table.userId, table.wordbookId),
 	pgPolicy("sessions_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)`  }),
-	check("sessions_mode_check", sql`mode = ANY (ARRAY['review'::text, 'cram'::text, 'preview'::text])`),
+	check("sessions_mode_check", sql`mode = ANY (ARRAY['review'::text, 'cram'::text, 'preview'::text, 'l2_drill'::text])`),
 ]);
 
 export const noteRevisions = pgTable("note_revisions", {
@@ -544,16 +544,9 @@ export const reviewLogs = pgTable("review_logs", {
 			foreignColumns: [sessions.id, sessions.userId, sessions.wordbookId],
 			name: "review_logs_session_scope_fkey"
 		}),
-	foreignKey({
-			columns: [table.progressId],
-			foreignColumns: [userWordProgress.id],
-			name: "review_logs_progress_id_fkey"
-		}).onDelete("set null"),
-	foreignKey({
-			columns: [table.progressId, table.userId, table.wordbookId],
-			foreignColumns: [userWordProgress.id, userWordProgress.userId, userWordProgress.wordbookId],
-			name: "review_logs_progress_scope_fkey"
-		}),
+	// progress_id 是裸列（2026-08-24 l2-drill spec §三）：track='l2' 的日志指向
+	// user_word_l2_progress.id，指向 L1 行的复合 FK 已随 0013 迁移解除，
+	// 引用完整性由应用层校验 + track CHECK 保证（双轨 spec 决策）。
 	foreignKey({
 			columns: [table.wordbookId, table.userId],
 			foreignColumns: [wordbooks.id, wordbooks.userId],
@@ -564,6 +557,7 @@ export const reviewLogs = pgTable("review_logs", {
 			foreignColumns: [wordbooks.id],
 			name: "fk_review_logs_wordbook"
 		}).onDelete("cascade"),
+	check("review_logs_track_check", sql`track = ANY (ARRAY['l1'::text, 'l2'::text])`),
 	pgPolicy("review_logs_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)`  }),
 ]);
 
@@ -731,6 +725,9 @@ export const userWordL2Progress = pgTable("user_word_l2_progress", {
 	l2InheritedFromL1: boolean("l2_inherited_from_l1").default(false),
 	l2WeightsSource: text("l2_weights_source").default('inherited'),
 	l2PredictedRetrievability: numeric("l2_predicted_retrievability", { precision: 8, scale: 6 }),
+	// 2026-08-24 l2-drill spec：产出步自评结果（passed/weak）。非 FSRS 字段，
+	// 仅作能力阶段标记；NULL = 尚未做过产出任务。
+	l2ProductionStatus: text("l2_production_status"),
 	// ⚠️ L3 BOUNDARY — these columns are NOT the L3 context-space main model.
 	// They are lightweight flags carried over from the Phase-0 self-growing draft and are
 	// currently UNUSED by any business code (no service/repo/route reads or writes them).
@@ -750,6 +747,70 @@ export const userWordL2Progress = pgTable("user_word_l2_progress", {
 	check("l2_state_check", sql`l2_state = ANY (ARRAY['new'::text, 'learning'::text, 'review'::text, 'relearning'::text, 'suspended'::text])`),
 	check("l2_retention_check", sql`l2_desired_retention >= 0.900 AND l2_desired_retention <= 0.990`),
 	check("l2_paused_reason_check", sql`l2_paused_reason IS NULL OR l2_paused_reason = ANY (ARRAY['l1_cascade_failure'::text, 'wordbook_focus'::text, 'manual'::text])`),
+	check("l2_production_status_check", sql`l2_production_status IS NULL OR l2_production_status = ANY (ARRAY['passed'::text, 'weak'::text])`),
+]);
+
+// 辨析训练会话的步骤明细表（2026-08-24 l2-drill spec §三）。
+// 事实记录而非调度器：FSRS 真相在 user_word_l2_progress；删步不影响调度。
+export const l2DrillSessionSteps = pgTable("l2_drill_session_steps", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	sessionId: uuid("session_id").notNull(),
+	userId: uuid("user_id").notNull(),
+	wordbookId: uuid("wordbook_id").notNull(),
+	wordId: uuid("word_id").notNull(),
+	// L2 进度行 id。裸 uuid + 应用层校验：词书空间策略未来引入 master 行时可平滑切换。
+	progressId: uuid("progress_id").notNull(),
+	stepIndex: integer("step_index").notNull(),
+	stepType: text("step_type").notNull(),
+	status: text("status").default('pending').notNull(),
+	taskId: text("task_id"),
+	taskType: text("task_type"),
+	taskPayload: jsonb("task_payload"),
+	outcome: text("outcome"),
+	mappedRating: reviewRating("mapped_rating"),
+	reviewLogId: uuid("review_log_id"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completedAt: timestamp("completed_at", { withTimezone: true, mode: 'string' }),
+}, (table) => [
+	uniqueIndex("idx_l2_drill_steps_session_word_step").on(table.sessionId, table.wordId, table.stepIndex),
+	index("idx_l2_drill_steps_session").using("btree", table.sessionId.asc().nullsLast(), table.createdAt.desc().nullsFirst()),
+	index("idx_l2_drill_steps_user_word").using("btree", table.userId.asc().nullsLast(), table.wordId.asc().nullsLast()),
+	foreignKey({
+			columns: [table.sessionId],
+			foreignColumns: [sessions.id],
+			name: "l2_drill_steps_session_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.userId],
+			foreignColumns: [profiles.id],
+			name: "l2_drill_steps_user_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.wordId],
+			foreignColumns: [words.id],
+			name: "l2_drill_steps_word_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.wordbookId],
+			foreignColumns: [wordbooks.id],
+			name: "fk_l2_drill_steps_wordbook"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.sessionId, table.userId, table.wordbookId],
+			foreignColumns: [sessions.id, sessions.userId, sessions.wordbookId],
+			name: "l2_drill_steps_session_scope_fkey"
+		}),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "l2_drill_steps_wordbook_owner_fkey"
+		}).onDelete("cascade"),
+	unique("l2_drill_steps_id_user_wordbook_unique").on(table.id, table.userId, table.wordbookId),
+	pgPolicy("l2_drill_steps_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l2_drill_steps_step_type_check", sql`step_type = ANY (ARRAY['l2_discrimination'::text, 'l2_production'::text])`),
+	check("l2_drill_steps_status_check", sql`status = ANY (ARRAY['pending'::text, 'completed'::text, 'skipped'::text])`),
+	check("l2_drill_steps_task_type_check", sql`task_type IS NULL OR task_type = ANY (ARRAY['cloze_mcq'::text, 'synonym_discrimination'::text, 'production'::text])`),
+	check("l2_drill_steps_outcome_check", sql`outcome IS NULL OR outcome = ANY (ARRAY['correct'::text, 'incorrect'::text, 'self_passed'::text, 'self_weak'::text])`),
 ]);
 
 export const llmUsage = pgTable("llm_usage", {

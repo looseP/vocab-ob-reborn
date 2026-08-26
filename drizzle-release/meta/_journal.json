@@ -92,6 +92,13 @@
       "when": 1784121222459,
       "tag": "0012_glamorous_peter_quill",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787586339483,
+      "tag": "0013_perpetual_adam_warlock",
+      "breakpoints": true
     }
   ]
 }
