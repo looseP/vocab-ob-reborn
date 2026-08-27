@@ -49,6 +49,10 @@ export interface PrioritizedReviewQueueCandidate<T extends ReviewQueueCandidate>
 export interface ReviewQueueBatch<T extends ReviewQueueCandidate> {
   /** 因新卡配额被推迟到后续批次的新卡数量。 */
   deferredNewCards: number;
+  /** 配额过滤后还有剩余卡片可继续分页（offset+items.length < eligible.length）。 */
+  hasMore: boolean;
+  /** 配额过滤后全部可入选卡数（跨页一致，供客户端估算总进度）。 */
+  eligibleTotal: number;
   items: PrioritizedReviewQueueCandidate<T>[];
 }
 
@@ -227,6 +231,8 @@ export function prioritizeReviewQueueItems<T extends ReviewQueueCandidate>(
 
 /**
  * 构建单批复习队列：按优先级排序 + 新卡配额限制。
+ * 支持 offset 分页：先对整个候选池施加配额得到"可入选"列表，再按
+ * offset/limit 切片，保证跨页配额一致（新卡占比不会因分页被放大）。
  * 返回选中项（含优先级元数据）与因配额被推迟的新卡数。
  */
 export function buildReviewQueueBatch<T extends ReviewQueueCandidate>(
@@ -234,23 +240,22 @@ export function buildReviewQueueBatch<T extends ReviewQueueCandidate>(
   now = new Date(),
   limit = REVIEW_QUEUE_BATCH_LIMIT,
   weights?: readonly number[] | null,
+  offset = 0,
 ): ReviewQueueBatch<T> {
   const sorted = scoreReviewQueueItems(items, now, weights);
   const maxNewCards = getMaxNewCardsPerBatch(limit);
-  const selected: PrioritizedReviewQueueCandidate<T>[] = [];
+
+  const eligible: PrioritizedReviewQueueCandidate<T>[] = [];
   let selectedNewCards = 0;
 
   for (const entry of sorted) {
-    if (selected.length >= limit) {
-      break;
-    }
     if (entry.item.state === "new" && !entry.item.needs_recheck) {
       if (selectedNewCards >= maxNewCards) {
         continue;
       }
       selectedNewCards += 1;
     }
-    selected.push({
+    eligible.push({
       item: entry.item,
       priority: {
         bucket: entry.priority.bucket,
@@ -261,12 +266,15 @@ export function buildReviewQueueBatch<T extends ReviewQueueCandidate>(
     });
   }
 
+  const page = eligible.slice(offset, offset + limit);
   const totalNewCards = sorted.filter(
     (entry) => entry.item.state === "new" && !entry.item.needs_recheck,
   ).length;
 
   return {
     deferredNewCards: Math.max(totalNewCards - selectedNewCards, 0),
-    items: selected,
+    hasMore: offset + page.length < eligible.length,
+    eligibleTotal: eligible.length,
+    items: page,
   };
 }

@@ -3198,6 +3198,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 mode?: "review" | "cram" | "preview";
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -3239,6 +3240,7 @@ export interface operations {
                             total: number;
                             remaining: number;
                         };
+                        hasMore: boolean;
                     };
                 };
             };

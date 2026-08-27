@@ -117,6 +117,43 @@ describe("buildReviewQueueBatch", () => {
   });
 });
 
+describe("buildReviewQueueBatch — offset pagination (P2)", () => {
+  it("slices pages by offset and reports hasMore/eligibleTotal consistently", () => {
+    // 15 review + 10 new，limit=20 → 配额内 8 张新卡 → eligible = 23 张
+    const candidates: ReviewQueueCandidate[] = [
+      ...Array.from({ length: 15 }, () => makeCandidate({ state: "review" })),
+      ...Array.from({ length: 10 }, () => makeCandidate({ state: "new" })),
+    ];
+    const page1 = buildReviewQueueBatch(candidates, new Date(), 20, null, 0);
+    const page2 = buildReviewQueueBatch(candidates, new Date(), 20, null, 20);
+    const page3 = buildReviewQueueBatch(candidates, new Date(), 20, null, 40);
+
+    expect(page1.items.length).toBe(20);
+    expect(page1.hasMore).toBe(true);
+    expect(page1.eligibleTotal).toBe(23);
+    expect(page2.items.length).toBe(3);
+    expect(page2.hasMore).toBe(false);
+    expect(page2.eligibleTotal).toBe(23);
+    expect(page3.items.length).toBe(0);
+    expect(page3.hasMore).toBe(false);
+  });
+
+  it("keeps the new-card quota stable across pages (no amplification)", () => {
+    const candidates: ReviewQueueCandidate[] = [
+      ...Array.from({ length: 15 }, () => makeCandidate({ state: "review" })),
+      ...Array.from({ length: 10 }, () => makeCandidate({ state: "new" })),
+    ];
+    const page1 = buildReviewQueueBatch(candidates, new Date(), 20, null, 0);
+    const page2 = buildReviewQueueBatch(candidates, new Date(), 20, null, 20);
+
+    const newOnBothPages = [...page1.items, ...page2.items].filter(({ item }) => item.state === "new").length;
+    expect(newOnBothPages).toBe(MAX_NEW_CARDS_PER_BATCH);
+    // 跨页 deferredNewCards 一致（基于整个候选池计算）
+    expect(page2.deferredNewCards).toBe(page1.deferredNewCards);
+    expect(page1.deferredNewCards).toBe(10 - MAX_NEW_CARDS_PER_BATCH);
+  });
+});
+
 describe("prioritizeReviewQueueItems", () => {
   it("sorts without applying the new-card quota", () => {
     const items = prioritizeReviewQueueItems([

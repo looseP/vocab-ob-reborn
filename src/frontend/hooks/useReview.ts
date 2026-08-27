@@ -30,6 +30,8 @@ interface QueueResponse {
   items: ReviewCard[];
   session: { id: string; mode: string; cardsSeen: number };
   stats: { total: number; remaining: number; deferredNewCards?: number };
+  /** 是否还有更多卡片可继续分页加载（P2 加载更多）。 */
+  hasMore: boolean;
 }
 
 export type Rating = "again" | "hard" | "good" | "easy";
@@ -83,6 +85,8 @@ interface PersistedSession {
   /** 本会话跳过的卡数（完成页区分"已评分/跳过/挂起"）。旧缓存无此字段时按 0 处理。 */
   skipped?: number;
   suspended?: number;
+  /** 队列是否还有更多卡片可继续分页加载。旧缓存无此字段时按 false 处理（到末尾再探测）。 */
+  hasMore?: boolean;
   savedAt: number;
 }
 
@@ -161,6 +165,10 @@ export function useReview() {
   const [suspended, setSuspended] = useState(0);
   const [completed, setCompleted] = useState(false);
   const [lastAnswer, setLastAnswer] = useState<LastAnswer | null>(null);
+  /** 队列是否还有更多卡片可继续分页加载（P2）。 */
+  const [hasMore, setHasMore] = useState(false);
+  /** 正在加载下一页。 */
+  const [loadingMore, setLoadingMore] = useState(false);
   /** 本次会话对应的 wordIds（startReview 时记录），用于缓存分桶。 */
   const wordIdsRef = useRef<string[] | undefined>(undefined);
   const { addToast } = useToast();
@@ -185,6 +193,8 @@ export function useReview() {
         setSkipped(cached.skipped ?? 0);
         setSuspended(cached.suspended ?? 0);
         setCompleted(cached.completed);
+        setHasMore(cached.hasMore ?? false);
+        setLoadingMore(false);
         setError(null);
         setLastAnswer(null);
         addToast("info", `已恢复复习会话（进度 ${cached.stats.reviewed}/${cached.queue.length}）`);
@@ -199,6 +209,8 @@ export function useReview() {
     setDeferredNewCards(0);
     setSkipped(0);
     setSuspended(0);
+    setHasMore(false);
+    setLoadingMore(false);
     setLastAnswer(null);
     setStats({ reviewed: 0, again: 0, hard: 0, good: 0, easy: 0 });
     clearCache(mode, wordIds);
@@ -216,6 +228,7 @@ export function useReview() {
       }
       setQueue(result.items);
       setSessionId(result.session.id);
+      setHasMore(Boolean(result.hasMore));
       if (typeof result.stats?.deferredNewCards === "number") {
         setDeferredNewCards(result.stats.deferredNewCards);
       }
@@ -460,6 +473,61 @@ export function useReview() {
   }, [currentCard, addToast]);
 
   /**
+   * 加载更多（P2 分页）：按当前已加载的卡片数作为 offset 拉取下一页并追加。
+   * 返回是否实际追加了新卡片（false = 已无更多）。
+   */
+  const loadMore = useCallback(async (): Promise<boolean> => {
+    if (busyRef.current || loadingMore) return false;
+    if (!sessionId) return false;
+    busyRef.current = true;
+    setLoadingMore(true);
+    try {
+      const params = new URLSearchParams({ limit: "20", mode, offset: String(queue.length) });
+      if (wordIdsRef.current && wordIdsRef.current.length > 0) {
+        params.set("wordIds", wordIdsRef.current.join(","));
+      }
+      const result = await apiFetch<QueueResponse>(`/review/queue?${params.toString()}`);
+      const newItems = result.items ?? [];
+      setHasMore(Boolean(result.hasMore));
+      if (newItems.length === 0) {
+        return false;
+      }
+      setQueue((prev) => [...prev, ...newItems]);
+      return true;
+    } catch {
+      addToast("warning", "加载更多卡片失败");
+      return false;
+    } finally {
+      busyRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [mode, sessionId, queue.length, loadingMore, addToast]);
+
+  /** 预加载阈值：剩余卡片 ≤ 该值时提前拉取下一页，避免到达末尾时的"完成"闪现。 */
+  const LOAD_MORE_THRESHOLD = 5;
+
+  // 预加载：剩余较少且有更多时提前拉取下一页（无缝续卡）。
+  useEffect(() => {
+    if (completed || !hasMore || loadingMore) return;
+    if (remaining <= LOAD_MORE_THRESHOLD) {
+      void loadMore();
+    }
+  }, [completed, hasMore, loadingMore, remaining, loadMore]);
+
+  // 续载兜底：已到达当前批末尾（completed）但仍有更多卡片时，拉取下一页并恢复进行。
+  // 无更多且为禅模式时，交由 ReviewPage 的 zen-restart 逻辑重新拉取（无限循环）。
+  useEffect(() => {
+    if (!completed || !hasMore || loadingMore) return;
+    let cancelled = false;
+    void loadMore().then((ok) => {
+      if (!cancelled && ok) setCompleted(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [completed, hasMore, loadingMore, loadMore]);
+
+  /**
    * 每当会话的核心进度变化，同步写入 sessionStorage。
    * 缓存只在真实加载过队列后才写；未开始会话（queue 空）不写。
    */
@@ -477,8 +545,9 @@ export function useReview() {
       skipped,
       suspended,
       completed,
+      hasMore,
     });
-  }, [mode, sessionId, queue, currentIndex, stats, deferredNewCards, skipped, suspended, completed]);
+  }, [mode, sessionId, queue, currentIndex, stats, deferredNewCards, skipped, suspended, completed, hasMore]);
 
   return {
     currentCard,
@@ -494,6 +563,10 @@ export function useReview() {
     completed,
     currentIndex,
     remaining,
+    /** 队列是否还有更多卡片可继续分页加载（P2）。 */
+    hasMore,
+    /** 正在加载下一页。 */
+    loadingMore,
     /** 最近一次可撤销的评分（null = 无可撤销项）。 */
     lastAnswer,
     startReview,
@@ -505,5 +578,6 @@ export function useReview() {
     browseNext,
     browsePrev,
     clearWeakSignal,
+    loadMore,
   };
 }

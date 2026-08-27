@@ -70,6 +70,8 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
     currentIndex,
     remaining,
     queue,
+    hasMore,
+    loadingMore,
     lastAnswer,
     startReview,
     answer,
@@ -112,13 +114,15 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiMode, force]);
 
-  // Zen mode: auto-restart when completed
+  // Zen mode: auto-restart when completed AND no more pages remain.
+  // 队列分页（P2）：completed 但仍有更多卡片时由 useReview 自动续载下一页；
+  // 只有无更多卡片时禅模式才重新拉取队列，避免无限循环中断。
   useEffect(() => {
-    if (completed && isZen) {
+    if (completed && isZen && !hasMore) {
       const timer = setTimeout(() => startReview(apiMode), 800);
       return () => clearTimeout(timer);
     }
-  }, [completed, isZen, apiMode, startReview]);
+  }, [completed, isZen, hasMore, apiMode, startReview]);
 
   const showCompletion = completed && !isZen;
   const showZenReloading = completed && isZen;
@@ -209,6 +213,11 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
             reviewContext={{ mode: apiMode, wordIds }}
             reviewProgress={{ reviewed: stats.reviewed, total: queue.length }}
           />
+          {loadingMore && (
+            <p className="text-center text-xs text-[var(--color-ink-soft)]">
+              <span className="animate-pulse">正在加载更多卡片…</span>
+            </p>
+          )}
         </>
       )}
 

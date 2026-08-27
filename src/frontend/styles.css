@@ -491,6 +491,21 @@ button {
   animation: sheet-in 160ms ease-out both;
 }
 
+/* ─── 全局 Reduced Motion（WCAG 2.1 2.3.3） ───
+ * 用户系统开启"减少动态效果"时，统一关闭全站动画与过渡：
+ * Tailwind animate-* 工具类、rise-in/sheet-in 等 keyframes、按钮/卡片
+ * hover 过渡、滚动吸附动画。优先于此前的分区规则（topology/zen）。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 .vocab-topology {
   --graph-root: #5f63c7;
   --graph-synonym: var(--color-accent);
