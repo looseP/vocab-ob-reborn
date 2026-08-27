@@ -420,7 +420,7 @@ describe("ReviewRepository", () => {
     mock.setRows([]);
     await txRepos.reviews.findProgressForUpdate("p1", "u1");
 
-    expect(mock.lastQuery!.text).toContain("FOR UPDATE");
+    expect(mock.lastQuery!.text).toContain("FOR UPDATE OF uwp");
     expect(mock.lastQuery!.text).toContain("JOIN words w");
     expect(mock.lastQuery!.text).toContain("uwp.user_id = $2");
     expect(mock.lastQuery!.params).toEqual(["p1", "u1"]);

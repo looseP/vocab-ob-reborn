@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { IOutboxRepository, IRepositories, IReviewRepository, ISessionRepository, InsertNewCardStatus } from "@/repositories/interfaces";
 import type { ProgressWithContentHash, SaveAnswerInput, UndoRpcResult } from "@/repositories/interfaces";
 import { ReviewService, type FsrsAdapterFn } from "@/services/review.service";
+import { REVIEW_QUEUE_CANDIDATE_LIMIT } from "@/services/review-queue";
 import { NotFoundError, BusinessRuleError } from "@/errors";
 import type { UserWordProgressRow, Json } from "@/domain";
 
@@ -91,6 +92,10 @@ function makeMockFsrsAdapter(): { adapter: FsrsAdapterFn; calls: unknown[][] } {
 function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReviewRepository {
   return {
     findDueCards: vi.fn(async () => []),
+    findDueCandidates: vi.fn(async () => []),
+    findPracticeCards: vi.fn(async () => []),
+    findWordsByIds: vi.fn(async () => []),
+    findDrillCandidates: vi.fn(async () => []),
     checkIdempotency: vi.fn(async () => null),
     findProgressForUpdate: vi.fn(async () => makeMockProgress()),
     findProgressForSkip: vi.fn(async () => null),
@@ -600,6 +605,347 @@ describe("ReviewService — rebuild read methods", () => {
 
     await expect(service.clearL1WeakSignal({ wordbookId: "wb1", wordId: "w1" }, "u1")).rejects.toThrow(
       /clearL1WeakSignal dependency not configured/,
+    );
+  });
+});
+
+// ── P0: practice modes (cram / preview) side-effect boundaries ──────────
+describe("ReviewService — P0 practice-mode behavior", () => {
+  function makeProgressRow(overrides: Partial<UserWordProgressRow> = {}): UserWordProgressRow {
+    return {
+      id: "p1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+      state: "review", stability: 1.5, difficulty: 0.3, retrievability: 0.9,
+      desired_retention: 0.9, due_at: "2026-01-01T00:00:00Z", last_reviewed_at: null,
+      last_rating: "good", review_count: 3, lapse_count: 0, again_count: 0,
+      hard_count: 0, good_count: 3, easy_count: 0, interval_days: 7,
+      scheduler_payload: {} as Json,
+      content_hash_snapshot: "old-hash",
+      l1_content_hash_snapshot: null,
+      recent_ratings: [],
+      l1_weak_signal: false,
+      skip_count: 0,
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-02T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function makePracticeCard() {
+    return {
+      progress: makeProgressRow(),
+      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1" },
+    };
+  }
+
+  function makeSession(mode: string) {
+    return vi.fn(async () => ({
+      id: "s1", user_id: "u1", wordbook_id: "wb1", mode,
+      cards_seen: 0, started_at: "2026-08-16T00:00:00Z", ended_at: null,
+    }));
+  }
+
+  it("getQueue routes cram/preview to findPracticeCards and review to findDueCards", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findDueCards = vi.fn(async () => [makePracticeCard()]);
+    const findPracticeCards = vi.fn(async () => [makePracticeCard()]);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards,
+      findPracticeCards,
+      getOrCreateTodaySession: makeSession("cram"),
+    });
+
+    // cram → practice deck, NOT the due deck
+    await service.getQueue("u1", "wb1", 20, "cram");
+    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findDueCards).not.toHaveBeenCalled();
+
+    // preview → practice deck, NOT the due deck
+    findPracticeCards.mockClear();
+    findDueCards.mockClear();
+    await service.getQueue("u1", "wb1", 20, "preview");
+    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findDueCards).not.toHaveBeenCalled();
+
+    // review → due deck only
+    findPracticeCards.mockClear();
+    findDueCards.mockClear();
+    await service.getQueue("u1", "wb1", 20, "review");
+    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findPracticeCards).not.toHaveBeenCalled();
+  });
+
+  it("getQueue falls back to findDueCards when findPracticeCards is not wired", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findDueCards = vi.fn(async () => []);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards,
+      getOrCreateTodaySession: makeSession("cram"),
+    });
+
+    await service.getQueue("u1", "wb1", 20, "cram");
+    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 20);
+  });
+
+  it("getQueue forwards the practice mode to the session", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const getOrCreateTodaySession = makeSession("preview");
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findPracticeCards: vi.fn(async () => []),
+      getOrCreateTodaySession,
+    });
+
+    await service.getQueue("u1", "wb1", 20, "preview");
+    expect(getOrCreateTodaySession).toHaveBeenCalledWith("u1", "wb1", "preview");
+  });
+
+  it("submitAnswer in cram mode is a no-persistence self-test (no tx, no repos, no outbox)", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    mockRepos.reviews = makeMockReviewRepo();
+    mockRepos.sessions = makeMockSessionRepo();
+    mockRepos.outbox = makeMockOutboxRepo();
+    withTransactionMock.mockClear();
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    const result = await service.submitAnswer(
+      { progressId: "p1", rating: "good", sessionId: "s1", mode: "cram" },
+      "u1",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.state).toBe("practice");
+    expect(result.reviewLogId).toMatch(/^cram-/);
+    // Cram must NOT touch the database at all.
+    expect(withTransactionMock).not.toHaveBeenCalled();
+    expect(mockRepos.reviews?.findProgressForUpdate).not.toHaveBeenCalled();
+    expect(mockRepos.reviews?.saveAnswer).not.toHaveBeenCalled();
+    expect(mockRepos.outbox?.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("submitAnswer outside cram still runs the transaction path", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    mockRepos.reviews = makeMockReviewRepo();
+    mockRepos.sessions = makeMockSessionRepo();
+    mockRepos.outbox = makeMockOutboxRepo();
+    withTransactionMock.mockClear();
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    const result = await service.submitAnswer(
+      { progressId: "p1", rating: "good", sessionId: "s1", mode: "preview" },
+      "u1",
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.state).toBe("review");
+    expect(withTransactionMock).toHaveBeenCalledTimes(1);
+    expect(mockRepos.reviews?.saveAnswer).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── P1: queue-priority routing (review/zen candidate builder) ────────────
+describe("ReviewService — P1 queue-priority routing", () => {
+  function makeProgressRow(overrides: Partial<UserWordProgressRow> = {}): UserWordProgressRow & { needs_recheck: boolean } {
+    return {
+      id: "p1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+      state: "review", stability: 1.5, difficulty: 0.3, retrievability: 0.9,
+      desired_retention: 0.9, due_at: "2026-01-01T00:00:00Z", last_reviewed_at: null,
+      last_rating: "good", review_count: 3, lapse_count: 0, again_count: 0,
+      hard_count: 0, good_count: 3, easy_count: 0, interval_days: 7,
+      scheduler_payload: {} as Json,
+      content_hash_snapshot: "old-hash",
+      l1_content_hash_snapshot: null,
+      recent_ratings: [],
+      l1_weak_signal: false,
+      skip_count: 0,
+      created_at: "2025-01-01T00:00:00Z",
+      updated_at: "2025-01-02T00:00:00Z",
+      needs_recheck: false,
+      ...overrides,
+    };
+  }
+
+  function makeWord(id = "w-1") {
+    return { id, slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1" };
+  }
+
+  function makeSession(mode: string) {
+    return vi.fn(async () => ({
+      id: "s1", user_id: "u1", wordbook_id: "wb1", mode,
+      cards_seen: 0, started_at: "2026-08-16T00:00:00Z", ended_at: null,
+    }));
+  }
+
+  it("routes review mode through the priority builder and attaches queue metadata", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const candidates = [
+      { progress: makeProgressRow({ state: "review" }), word: makeWord("w-1") },
+      { progress: makeProgressRow({ id: "p2", state: "new" }), word: makeWord("w-2") },
+    ];
+    const findDueCandidates = vi.fn(async () => candidates);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findDueCandidates,
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "review");
+
+    expect(findDueCandidates).toHaveBeenCalledWith("u1", "wb1", REVIEW_QUEUE_CANDIDATE_LIMIT);
+    expect(queue.stats).toEqual({ total: 2, remaining: 2, deferredNewCards: 0 });
+    // review 卡带队列优先级元数据
+    expect(queue.items[0].queueBucket).toBe("overdue");
+    expect(queue.items[0].queueLabel).toBe("到期复习");
+    expect(typeof queue.items[0].queueReason).toBe("string");
+    // new 卡殿后
+    expect(queue.items[1].queueBucket).toBe("new");
+  });
+
+  it("falls back to findDueCards when the candidate pool is empty", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findDueCards = vi.fn(async () => [{
+      progress: makeProgressRow(),
+      word: makeWord("w-1"),
+    }]);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards,
+      findDueCandidates: vi.fn(async () => []),
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "review");
+    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(queue.stats).toEqual({ total: 1, remaining: 1 });
+  });
+
+  it("falls back to findDueCards when findDueCandidates is not wired", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findDueCards = vi.fn(async () => [{
+      progress: makeProgressRow(),
+      word: makeWord("w-1"),
+    }]);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards,
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "review");
+    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(queue.items[0].queueBucket).toBeUndefined();
+  });
+});
+
+// ── P2: free-review selection (wordIds) ──────────────────────────────────
+describe("ReviewService — P2 free-review selection", () => {
+  function makeWord(id: string) {
+    return { id, slug: `slug-${id}`, title: `Title ${id}`, lemma: `lemma-${id}`, short_definition: "def", ipa: null, pos: "verb", cefr: "C1" };
+  }
+
+  function makeSession() {
+    return vi.fn(async () => ({
+      id: "s1", user_id: "u1", wordbook_id: "wb1", mode: "preview",
+      cards_seen: 0, started_at: "2026-08-16T00:00:00Z", ended_at: null,
+    }));
+  }
+
+  it("routes preview+wordIds through findWordsByIds preserving selection order", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    // 返回顺序与传入不一致，验证 service 按 wordIds 保序
+    const findWordsByIds = vi.fn(async () => [makeWord("w-2"), makeWord("w-1"), makeWord("w-3")]);
+    const findPracticeCards = vi.fn(async () => []);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findPracticeCards,
+      findWordsByIds,
+      getOrCreateTodaySession: makeSession(),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "preview", ["w-1", "w-2", "w-3"]);
+
+    expect(findWordsByIds).toHaveBeenCalledWith("u1", ["w-1", "w-2", "w-3"]);
+    expect(findPracticeCards).not.toHaveBeenCalled();
+    expect(queue.items.map((i) => i.word.id)).toEqual(["w-1", "w-2", "w-3"]);
+    expect(queue.items[0].state).toBe("new");
+    expect(queue.session.mode).toBe("preview");
+    expect(queue.stats).toEqual({ total: 3, remaining: 3 });
+  });
+
+  it("ignores empty wordIds and falls back to the practice deck", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findWordsByIds = vi.fn(async () => [makeWord("w-1")]);
+    const findPracticeCards = vi.fn(async () => []);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findPracticeCards,
+      findWordsByIds,
+      getOrCreateTodaySession: makeSession(),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "preview", []);
+
+    expect(findWordsByIds).not.toHaveBeenCalled();
+    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(queue.stats).toEqual({ total: 0, remaining: 0 });
+  });
+});
+
+// ── 补全：drill candidates (cram 练习变体) ────────────────────────────────
+describe("ReviewService — drill candidates", () => {
+  it("resolves cloze from examples and filters unmatchable words", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findDrillCandidates = vi.fn(async () => [
+      {
+        progress: { id: "p1", state: "review" } as UserWordProgressRow,
+        word: {
+          id: "w1", slug: "abandon", title: "Abandon", lemma: "abandon",
+          short_definition: "放弃",
+          examples: [{ text: "He decided to abandon the plan." }] as unknown as Json,
+        },
+      },
+      {
+        progress: { id: "p2", state: "review" } as UserWordProgressRow,
+        word: {
+          id: "w2", slug: "x", title: "X", lemma: "unmatchable",
+          short_definition: null,
+          examples: [{ text: "Nothing here." }] as unknown as Json,
+        },
+      },
+    ]);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDrillCandidates,
+    });
+
+    const items = await service.getDrillCandidates("u1", "wb1", 20);
+
+    expect(findDrillCandidates).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(items).toHaveLength(1);
+    expect(items[0].lemma).toBe("abandon");
+    expect(items[0].clozeText).toContain("▢▢▢");
+    expect(items[0].clozeLength).toBe(7);
+  });
+
+  it("fails closed without findDrillCandidates", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    await expect(service.getDrillCandidates("u1", "wb1")).rejects.toThrow(
+      /findDrillCandidates not configured/,
     );
   });
 });

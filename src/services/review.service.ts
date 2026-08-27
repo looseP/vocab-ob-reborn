@@ -36,6 +36,13 @@ import {
   enqueuePayloadAsJson,
   reviewCardEnqueuedDedupeKey,
 } from "../outbox/review-card-enqueued.event";
+import {
+  REVIEW_QUEUE_CANDIDATE_LIMIT,
+  buildReviewQueueBatch,
+} from "./review-queue";
+import type { ReviewQueueCandidate, ReviewQueuePriorityBucket } from "./review-queue";
+import { findClozeFromExamples } from "./drill-engine";
+import type { DrillCard } from "./drill-engine";
 
 /** L1 track default until per-user settings are wired (R0 hardcode decision). */
 export const L1_DEFAULT_DESIRED_RETENTION = "0.850";
@@ -48,6 +55,27 @@ export interface EnqueueCardInput {
 export interface EnqueueCardResult {
   ok: true;
   progressId: string;
+}
+
+/** 复习队列项 DTO —— review/zen 模式携带优先级元数据（P1）。 */
+export interface ReviewQueueItemDto {
+  progressId: string;
+  word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null };
+  state: ReviewState;
+  dueAt: string | null;
+  lastRating: ReviewRating | null;
+  reviewCount: number;
+  l1WeakSignal: boolean;
+  queueBucket?: ReviewQueuePriorityBucket;
+  queueLabel?: string;
+  queueReason?: string;
+  retrievability?: number | null;
+}
+
+export interface ReviewQueueDto {
+  items: ReviewQueueItemDto[];
+  session: { id: string; mode: string; cardsSeen: number };
+  stats: { total: number; remaining: number; deferredNewCards?: number };
 }
 
 export interface EnqueueCardsInput {
@@ -98,6 +126,18 @@ export interface ReviewServiceDeps {
   loadWeights: (wordbookId: string) => Promise<number[] | null>;
   /** Find due cards for a user in a wordbook (optional: tests may omit) */
   findDueCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
+  /**
+   * Due candidate pool (P1): a larger pool that the queue-priority builder
+   * buckets/sorts and applies the new-card quota to before returning the
+   * final batch for review/zen modes. Carries needs_recheck.
+   */
+  findDueCandidates?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
+  /** Find all active cards regardless of due_at — used by cram/preview practice modes. */
+  findPracticeCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
+  /** Free-review selection: fetch words by ids (published only), independent of review progress. */
+  findWordsByIds?: (userId: string, wordIds: string[]) => Promise<Array<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }>>;
+  /** Drill candidates: already-reviewed words joined with examples for cloze resolution. */
+  findDrillCandidates?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; examples: Json } }>>;
   /** Get or create today's session (optional: tests may omit) */
   getOrCreateTodaySession?: (userId: string, wordbookId: string, mode?: string) => Promise<{ id: string; user_id: string; wordbook_id: string; mode: string; cards_seen: number; started_at: string; ended_at: string | null }>;
   /** Get review stats (optional) */
@@ -119,23 +159,115 @@ export class ReviewService {
 
   /**
    * Get the review queue for a user: due cards + today's session.
+   * Mode split:
+   * - cram/preview are practice modes → full active deck (findPracticeCards),
+   *   no scheduling side-effects, no priority metadata.
+   * - review (and zen, which maps to review) uses the P1 queue-priority
+   *   builder: a candidate pool is bucketed/sorted by predicted recall,
+   *   overdue window and state tier, and a new-card quota is applied
+   *   (deferredNewCards in stats).
    */
-  async getQueue(userId: string, wordbookId: string, limit = 20, mode = "review") {
+  async getQueue(userId: string, wordbookId: string, limit = 20, mode = "review", wordIds?: string[]): Promise<ReviewQueueDto> {
     if (!this.deps.findDueCards || !this.deps.getOrCreateTodaySession) {
       throw new Error("Review queue dependencies not configured");
     }
-    const dueCards = await this.deps.findDueCards(userId, wordbookId, limit);
+    const isPractice = mode === "cram" || mode === "preview";
     const session = await this.deps.getOrCreateTodaySession(userId, wordbookId, mode);
 
+    if (isPractice) {
+      // 自由复习勾选入口（P2）：传入 wordIds 时按选定词直接浏览（保序、无 DB 写）
+      if (wordIds && wordIds.length > 0) {
+        const words = (await this.deps.findWordsByIds?.(userId, wordIds)) ?? [];
+        const orderMap = new Map(wordIds.map((id, i) => [id, i]));
+        const ordered = words.sort(
+          (a, b) => (orderMap.get(a.id) ?? Number.POSITIVE_INFINITY) - (orderMap.get(b.id) ?? Number.POSITIVE_INFINITY),
+        );
+        return {
+          items: ordered.map((word) => ({
+            progressId: word.id,
+            word,
+            state: "new" as const,
+            dueAt: null,
+            lastRating: null,
+            reviewCount: 0,
+            l1WeakSignal: false,
+          })),
+          session: {
+            id: session.id,
+            mode: "preview",
+            cardsSeen: 0,
+          },
+          stats: {
+            total: ordered.length,
+            remaining: ordered.length,
+          },
+        };
+      }
+
+      const deck = this.deps.findPracticeCards ?? this.deps.findDueCards;
+      const practiceCards = await deck(userId, wordbookId, limit);
+      return {
+        items: practiceCards.map((card) => this.toQueueItem(card)),
+        session: {
+          id: session.id,
+          mode: session.mode,
+          cardsSeen: session.cards_seen,
+        },
+        stats: {
+          total: practiceCards.length,
+          remaining: practiceCards.length,
+        },
+      };
+    }
+
+    // review / zen：候选池 → 优先级分桶 + 新卡配额（P1）
+    const candidates = this.deps.findDueCandidates
+      ? await this.deps.findDueCandidates(userId, wordbookId, REVIEW_QUEUE_CANDIDATE_LIMIT)
+      : null;
+    if (!candidates || candidates.length === 0) {
+      // 依赖缺失或无到期候选时退回 findDueCards 直出，保持向后兼容
+      const dueCards = await this.deps.findDueCards(userId, wordbookId, limit);
+      return {
+        items: dueCards.map((card) => this.toQueueItem(card)),
+        session: {
+          id: session.id,
+          mode: session.mode,
+          cardsSeen: session.cards_seen,
+        },
+        stats: {
+          total: dueCards.length,
+          remaining: dueCards.length,
+        },
+      };
+    }
+
+    let weights: number[] | null = null;
+    try {
+      weights = await this.deps.loadWeights(wordbookId);
+    } catch {
+      // 权重加载失败时回退默认权重
+    }
+
+    const batch = buildReviewQueueBatch(
+      candidates.map((card) => this.toQueueCandidate(card)),
+      new Date(),
+      limit,
+      weights,
+    );
+
     return {
-      items: dueCards.map((card) => ({
-        progressId: card.progress.id,
-        word: card.word,
-        state: card.progress.state,
-        dueAt: card.progress.due_at,
-        lastRating: card.progress.last_rating,
-        reviewCount: card.progress.review_count,
-        l1WeakSignal: card.progress.l1_weak_signal,
+      items: batch.items.map(({ item, priority }) => ({
+        progressId: item.progressId,
+        word: item.word,
+        state: item.state,
+        dueAt: item.due_at,
+        lastRating: item.lastRating,
+        reviewCount: item.review_count,
+        l1WeakSignal: item.l1WeakSignal,
+        queueBucket: priority.bucket,
+        queueLabel: priority.label,
+        queueReason: priority.reason,
+        retrievability: priority.retrievability,
       })),
       session: {
         id: session.id,
@@ -143,10 +275,75 @@ export class ReviewService {
         cardsSeen: session.cards_seen,
       },
       stats: {
-        total: dueCards.length,
-        remaining: dueCards.length,
+        total: batch.items.length,
+        remaining: batch.items.length,
+        deferredNewCards: batch.deferredNewCards,
       },
     };
+  }
+
+  /** 练习模式（cram/preview）的队列项 —— 无优先级元数据。 */
+  private toQueueItem(card: { progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }): ReviewQueueItemDto {
+    return {
+      progressId: card.progress.id,
+      word: card.word,
+      state: card.progress.state,
+      dueAt: card.progress.due_at,
+      lastRating: card.progress.last_rating,
+      reviewCount: card.progress.review_count,
+      l1WeakSignal: card.progress.l1_weak_signal,
+    };
+  }
+
+  /** 把候选行转换成队列优先级构建器可消费的候选（携带 word/进度数据）。 */
+  private toQueueCandidate(
+    card: { progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } },
+  ): ReviewQueueCandidate & { progressId: string; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }; lastRating: ReviewRating | null; l1WeakSignal: boolean } {
+    return {
+      progressId: card.progress.id,
+      state: card.progress.state,
+      due_at: card.progress.due_at,
+      review_count: card.progress.review_count,
+      desired_retention: card.progress.desired_retention,
+      scheduler_payload: card.progress.scheduler_payload,
+      needs_recheck: card.progress.needs_recheck,
+      word: card.word,
+      lastRating: card.progress.last_rating,
+      l1WeakSignal: card.progress.l1_weak_signal,
+    };
+  }
+
+  /**
+   * Get drill candidates for the cram 练习变体 (cloze/definition).
+   * Pure read: resolves a cloze from each candidate's examples and filters
+   * out words with no redactable sentence. No scheduling side-effects.
+   */
+  async getDrillCandidates(userId: string, wordbookId: string, limit = 20): Promise<DrillCard[]> {
+    if (!this.deps.findDrillCandidates) {
+      throw new Error("findDrillCandidates not configured");
+    }
+    const rows = await this.deps.findDrillCandidates(userId, wordbookId, limit);
+    const items: DrillCard[] = [];
+    for (const row of rows) {
+      const cloze = findClozeFromExamples(
+        row.word.examples as Array<{ text?: string | null }> | null,
+        row.word.lemma,
+      );
+      if (!cloze) continue;
+      items.push({
+        progressId: row.progress.id,
+        wordId: row.word.id,
+        lemma: row.word.lemma,
+        title: row.word.title,
+        slug: row.word.slug,
+        shortDefinition: row.word.short_definition,
+        state: row.progress.state,
+        clozeText: cloze.text,
+        clozeLength: cloze.matchedLength,
+        clozeSource: cloze.source,
+      });
+    }
+    return items;
   }
 
   async getStats(userId: string, wordbookId: string) {
@@ -184,6 +381,19 @@ export class ReviewService {
    * H1 fix: uses createRepositories(tx) so all queries share the tx connection.
    */
   async submitAnswer(input: SubmitAnswerInput, userId: string): Promise<SubmitAnswerResult> {
+    // P0: cram is a no-persistence self-test (original v1 Drill semantics).
+    // It must NOT write review_logs or scheduler_payload — the rating is
+    // purely for in-session feedback. Return a synthetic result, mirroring
+    // the original "free" mode's synthetic reviewLogId.
+    if (input.mode === "cram") {
+      return {
+        ok: true,
+        reviewLogId: `cram-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        nextDueAt: new Date().toISOString(),
+        state: "practice",
+      };
+    }
+
     const transactionResult = await withTransaction(async (tx) => {
       // H1 fix: create repos bound to this transaction connection
       const repos = createRepositories(tx);

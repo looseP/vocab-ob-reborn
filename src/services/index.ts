@@ -142,6 +142,26 @@ export function createServices(deps: ServiceDeps) {
           (tx) => createRepositories(tx).reviews.findDueCards(userId, wordbookId, limit),
           { actorId: userId },
         ),
+      findDueCandidates: (userId, wordbookId, limit) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.findDueCandidates(userId, wordbookId, limit),
+          { actorId: userId },
+        ),
+      findPracticeCards: (userId, wordbookId, limit) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.findPracticeCards(userId, wordbookId, limit),
+          { actorId: userId },
+        ),
+      findWordsByIds: (userId, wordIds) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.findWordsByIds(wordIds),
+          { actorId: userId },
+        ),
+      findDrillCandidates: (userId, wordbookId, limit) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.findDrillCandidates(userId, wordbookId, limit),
+          { actorId: userId },
+        ),
       getOrCreateTodaySession: (userId, wordbookId, mode) => repos.sessions.getOrCreateToday(userId, wordbookId, mode),
       getReviewStats: (userId, wordbookId) =>
         withTransaction(

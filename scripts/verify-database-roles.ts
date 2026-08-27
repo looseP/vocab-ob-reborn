@@ -372,7 +372,8 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.llm_usage": ["SELECT", "UPDATE"],
       "public.user_word_progress": ["SELECT", "UPDATE"],
       "public.user_word_l2_progress": ["SELECT", "INSERT", "UPDATE"],
-      "public.sessions": ["UPDATE"],
+      // outbox worker 的 session_cards_seen 更新需读取 sessions 列（PG11+ UPDATE 要求 SELECT）
+      "public.sessions": ["SELECT", "UPDATE"],
     }).map(([relation, privileges]) => [relation, new Set(privileges)]))],
   ]);
   const tablePrivileges = await admin.query<{ role_name: string; relation: string; privilege: string }>(

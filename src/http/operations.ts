@@ -23,6 +23,8 @@ import {
 } from "./l3-response-contract";
 import {
   reviewAnswerResponseSchema,
+  reviewDashboardStatsResponseSchema,
+  reviewDrillQueueResponseSchema,
   reviewEnqueueCardResponseSchema,
   reviewEnqueueCardsBatchResponseSchema,
   reviewHeatmapResponseSchema,
@@ -267,6 +269,7 @@ export const apiOperations = [
   operation("get", "/api/wordbooks/default", "getOrCreateDefaultWordbook", "owner", "none", undefined, 200, wordbookDefaultResponseSchema),
   operation("get", "/api/review/queue", "getReviewQueue", "owner", "none", { query: reviewQueueQuerySchema }, 200, reviewQueueResponseSchema),
   operation("get", "/api/review/stats", "getReviewStats", "owner", "none", undefined, 200, reviewStatsResponseSchema),
+  operation("get", "/api/review/stats/dashboard", "getReviewDashboardStats", "owner", "none", undefined, 200, reviewDashboardStatsResponseSchema),
   operation("get", "/api/review/leeches", "listReviewLeeches", "owner", "none", { query: reviewLeechesQuerySchema }, 200, reviewLeechesResponseSchema),
   operation("get", "/api/review/timeline", "listReviewTimeline", "owner", "none", { query: reviewTimelineQuerySchema }, 200, reviewTimelineResponseSchema),
   operation("get", "/api/review/heatmap", "getReviewHeatmap", "owner", "none", { query: reviewHeatmapQuerySchema }, 200, reviewHeatmapResponseSchema),
@@ -277,6 +280,7 @@ export const apiOperations = [
   operation("post", "/api/review/weak-signal/clear", "clearL1WeakSignal", "owner", "sessionMutation", { body: clearL1WeakSignalSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/cards", "enqueueReviewCard", "owner", "sessionMutation", { body: addToReviewSchema }, 201, reviewEnqueueCardResponseSchema),
   operation("post", "/api/review/cards/batch", "enqueueReviewCardsBatch", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewEnqueueCardsBatchResponseSchema),
+  operation("get", "/api/review/drill/queue", "getReviewDrillQueue", "owner", "none", { query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional().default(20) }) }, 200, reviewDrillQueueResponseSchema),
   operation("post", "/api/capture", "createCapture", "owner", "sessionMutation", { body: captureRequestSchema }, 201, captureResponseSchema),
   operation("post", "/api/imports/vocab-notes", "importVocabNotes", "owner", "sessionMutation", { body: vocabNotesImportRequestSchema }, 200, vocabNotesImportResponseSchema),
   operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),

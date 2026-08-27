@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Coverage for the repository methods added by the frontend rebuild series:
  * review queue/leeches/timeline/heatmap reads, session lifecycle helpers,
  * and the note list read.
@@ -60,18 +60,89 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     await expect(repos.reviews.findDueCards("u1", "wb1", 10)).resolves.toEqual([]);
   });
 
-  it("findLeeches filters lapse_count >= 2 ordered by worst first", async () => {
-    mock.setRows([dueCardRow({ id: "p2", lapse_count: 5 })]);
+  it("findPracticeCards returns the full active deck ignoring due_at", async () => {
+    mock.setRows([dueCardRow({ id: "p2", due_at: null })]);
+    const repos = createRepositories();
+
+    const cards = await repos.reviews.findPracticeCards!("u1", "wb1", 20);
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].progress.id).toBe("p2");
+    expect(cards[0].word.id).toBe("w-9");
+    const q = mock.lastQuery!;
+    expect(q.text).toContain("uwp.state != 'suspended'");
+    expect(q.text).not.toContain("due_at IS NULL");
+    expect(q.params).toEqual(["u1", "wb1", 20]);
+  });
+
+  it("findDueCandidates returns the due candidate pool with needs_recheck", async () => {
+    mock.setRows([dueCardRow({ id: "p3", needs_recheck: true })]);
+    const repos = createRepositories();
+
+    const cards = await repos.reviews.findDueCandidates!("u1", "wb1", 200);
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].progress.id).toBe("p3");
+    expect(cards[0].progress.needs_recheck).toBe(true);
+    const q = mock.lastQuery!;
+    expect(q.text).toContain("uwp.state != 'suspended'");
+    expect(q.text).toContain("(uwp.due_at IS NULL OR uwp.due_at <= now())");
+    expect(q.params).toEqual(["u1", "wb1", 200]);
+  });
+
+  it("findWordsByIds queries published words and returns empty for no ids", async () => {
+    const repos = createRepositories();
+
+    mock.setRows([{ id: "w9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "exist in large numbers", ipa: null, pos: "verb", cefr: "C1" }]);
+    const words = await repos.reviews.findWordsByIds!(["w9"]);
+    expect(words).toHaveLength(1);
+    expect(words[0].lemma).toBe("abound");
+    const q = mock.lastQuery!;
+    expect(q.text).toContain("id = ANY($1::uuid[])");
+    expect(q.text).toContain("is_published = true AND is_deleted = false");
+    expect(q.params).toEqual([["w9"]]);
+
+    mock.reset();
+    await expect(repos.reviews.findWordsByIds!([])).resolves.toEqual([]);
+    expect(mock.lastQuery).toBeUndefined();
+  });
+
+  it("findDrillCandidates splits progress and word columns with examples", async () => {
+    const row = {
+      ...dueCardRow({ id: "p4", state: "review", review_count: 3 }),
+      examples: [{ text: "The river abounds with fish." }],
+    };
+    mock.setRows([row]);
+    const repos = createRepositories();
+
+    const cards = await repos.reviews.findDrillCandidates!("u1", "wb1", 20);
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0].progress.id).toBe("p4");
+    expect(cards[0].progress).not.toHaveProperty("examples");
+    expect(cards[0].word).toEqual({
+      id: "w-9", slug: "abound", title: "Abound", lemma: "abound",
+      short_definition: "exist in large numbers", examples: [{ text: "The river abounds with fish." }],
+    });
+    const q = mock.lastQuery!;
+    expect(q.text).toContain("uwp.state != 'new' AND uwp.state != 'suspended'");
+    expect(q.text).toContain("uwp.review_count >= 1");
+    expect(q.params).toEqual(["u1", "wb1", 20]);
+  });
+
+  it("findLeeches filters lapse_count >= LEECH_LAPSE_THRESHOLD ordered by worst first", async () => {
+    mock.setRows([dueCardRow({ id: "p2", lapse_count: 9 })]);
     const repos = createRepositories();
 
     const leeches = await repos.reviews.findLeeches!("u1", "wb1", 5);
 
     // raw joined rows are returned; the service maps them
-    expect(leeches[0]).toMatchObject({ id: "p2", lapse_count: 5, slug: "abound", w_id: "w-9" });
+    expect(leeches[0]).toMatchObject({ id: "p2", lapse_count: 9, slug: "abound", w_id: "w-9" });
     const q = mock.lastQuery!;
-    expect(q.text).toContain("uwp.lapse_count >= 2");
+    // 统一漏词阈值：与域实体共用 LEECH_LAPSE_THRESHOLD（项目决策 = 2）
+    expect(q.text).toContain("uwp.lapse_count >= $4");
     expect(q.text).toContain("ORDER BY uwp.lapse_count DESC");
-    expect(q.params).toEqual(["u1", "wb1", 5]);
+    expect(q.params).toEqual(["u1", "wb1", 5, 2]);
   });
 
   it("getTimeline joins review logs with word slugs newest first", async () => {
@@ -85,7 +156,11 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     const q = mock.lastQuery!;
     expect(q.text).toContain("FROM review_logs rl");
     expect(q.text).toContain("JOIN words w ON w.id = rl.word_id");
-    expect(q.text).toContain("ORDER BY rl.created_at DESC");
+    // 统一口径：时间线时间字段为 reviewed_at（响应仍以 created_at 字段名暴露）
+    expect(q.text).toContain("rl.reviewed_at AS created_at");
+    expect(q.text).toContain("ORDER BY rl.reviewed_at DESC");
+    // 过滤非评分动作（skip/suspend/undo 的 rating=NULL），避免 "null" 徽标
+    expect(q.text).toContain("rl.rating IS NOT NULL");
     expect(q.params).toEqual(["u1", "wb1", 50]);
   });
 
@@ -97,13 +172,14 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
 
     expect(heatmap).toEqual([{ date: "2026-08-01", count: "7" }]);
     const q = mock.lastQuery!;
-    expect(q.text).toContain("date_trunc('day', rl.created_at)");
+    // 统一口径：按显示时区(Asia/Shanghai)切日分组，时间字段用 reviewed_at
+    expect(q.text).toContain("(rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date::text AS date");
     expect(q.text).toContain("COUNT(*)::text AS count");
-    expect(q.text).toContain("GROUP BY date_trunc('day', rl.created_at)");
+    expect(q.text).toContain("GROUP BY (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date");
     expect(q.params).toEqual(["u1", "wb1", 365]);
   });
 
-  it("getStats parses aggregate text counts and defaults to zero when empty", async () => {
+  it("getStats uses the display-timezone day boundary and parses counts", async () => {
     const repos = createRepositories();
 
     mock.setRows([{ today_count: "3", total_count: "30", again_count: "1", hard_count: "2", good_count: "5", easy_count: "2" }]);
@@ -111,6 +187,14 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
       todayCount: 3, totalCount: 30,
       ratingDist: { again: 1, hard: 2, good: 5, easy: 2 },
     });
+
+    // 统一口径：today 边界来自显示时区(Asia/Shanghai)当日零点，时间字段为 reviewed_at。
+    // 上海零点 = 前一日 16:00 UTC（Asia/Shanghai = UTC+8）。
+    const q = mock.lastQuery!;
+    expect(q.text).toContain("rl.reviewed_at >= $3");
+    expect(q.text).not.toContain("rl.created_at");
+    expect(typeof q.params[2]).toBe("string");
+    expect(q.params[2]).toMatch(/^\d{4}-\d{2}-\d{2}T16:00:00\.000Z$/);
 
     mock.setRows([]);
     await expect(repos.reviews.getStats!("u1", "wb1")).resolves.toEqual({
@@ -126,7 +210,7 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     mock.setRows([dueCardRow()]);
     const progress = await txRepos.reviews.findProgressForUpdate("p1", "u1");
     expect(progress).toMatchObject({ id: "p1", user_id: "u1" });
-    expect(mock.lastQuery!.text).toContain("FOR UPDATE");
+    expect(mock.lastQuery!.text).toContain("FOR UPDATE OF uwp");
 
     mock.setRows([]);
     await expect(txRepos.reviews.findProgressForUpdate("p1", "u1")).resolves.toBeNull();

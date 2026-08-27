@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/frontend/api/client";
 
 export interface WordListItem {
+  id: string;
   slug: string;
   title: string;
   lemma: string;

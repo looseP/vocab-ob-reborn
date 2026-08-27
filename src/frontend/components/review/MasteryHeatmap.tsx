@@ -28,6 +28,20 @@ const intensityColors = [
 
 const intensityOpacity = [0.3, 0.4, 0.6, 0.8, 1];
 
+/** 显示时区(Asia/Shanghai)日键 —— 与后端 heatmap 的分组口径一致。 */
+function dayKeyInDisplayTz(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((p) => p.type === "year")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : date.toISOString().slice(0, 10);
+}
+
 export function MasteryHeatmap() {
   const [entries, setEntries] = useState<HeatmapEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,7 +74,7 @@ export function MasteryHeatmap() {
         if (date > today) {
           week.push({ date: "", count: -1 });
         } else {
-          const dateStr = date.toISOString().slice(0, 10);
+          const dateStr = dayKeyInDisplayTz(date);
           week.push({ date: dateStr, count: heatmapMap.get(dateStr) ?? 0 });
         }
       }

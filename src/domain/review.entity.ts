@@ -17,8 +17,13 @@ export interface WordRef {
   lemma: string;
 }
 
-/** Lapse threshold for leech detection (FSRS convention). */
-const LEECH_LAPSE_THRESHOLD = 8;
+/**
+ * Lapse threshold for leech detection.
+ * 漏词判定的唯一权威常量：ReviewCard.isLeech 与 ReviewRepository.findLeeches
+ * 共用此值，避免面板(SQL)与域定义出现双标。
+ * 项目决策：遗忘 2 次即标记漏词（较 FSRS 默认 8 更敏感，便于尽早干预）。
+ */
+export const LEECH_LAPSE_THRESHOLD = 2;
 
 export class ReviewCard {
   constructor(

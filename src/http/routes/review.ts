@@ -40,9 +40,21 @@ export function reviewRoutes(services: Services) {
     const userId = c.get("userId");
     const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
     const mode = c.req.query("mode") === "cram" ? "cram" : c.req.query("mode") === "preview" ? "preview" : "review";
+    // 自由复习勾选入口（P2）：wordIds 逗号分隔，按用户选定顺序浏览
+    const wordIdsParam = c.req.query("wordIds");
+    const wordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
     const wordbook = await services.wordbooks.getOrCreateDefault(userId);
-    const queue = await services.reviews.getQueue(userId, wordbook.id, limit, mode);
+    const queue = await services.reviews.getQueue(userId, wordbook.id, limit, mode, wordIds);
     return c.json(queue);
+  });
+
+  // GET /drill/queue — cram 练习变体候选（cloze/definition 自测），纯读无副作用
+  app.get("/drill/queue", async (c) => {
+    const userId = c.get("userId");
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const items = await services.reviews.getDrillCandidates(userId, wordbook.id, limit);
+    return c.json({ items });
   });
 
   // GET /stats — review statistics
@@ -51,6 +63,22 @@ export function reviewRoutes(services: Services) {
     const wordbook = await services.wordbooks.getOrCreateDefault(userId);
     const stats = await services.reviews.getStats(userId, wordbook.id);
     return c.json(stats);
+  });
+
+  // GET /stats/dashboard — 仪表盘汇总统计（连续打卡/7d/30d/预测/评分分布）
+  // 接线原项目 StatsService（StatsRepository 按 Asia/Shanghai 显示时区聚合）。
+  app.get("/stats/dashboard", async (c) => {
+    const userId = c.get("userId");
+    const wordbook = await services.wordbooks.getOrCreateDefault(userId);
+    const [summary, ratingDist] = await Promise.all([
+      services.stats.getDashboardSummary(userId, wordbook.id),
+      services.stats.getRatingDistribution(userId, wordbook.id),
+    ]);
+    return c.json({
+      ...summary,
+      ratingDist,
+      forecast: services.stats.computeForecast(summary),
+    });
   });
 
   // GET /leeches — words with high lapse count
