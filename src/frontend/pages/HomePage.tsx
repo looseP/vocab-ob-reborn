@@ -1,12 +1,14 @@
 import { Link } from "react-router-dom";
-import { BookOpen, Repeat, LayoutGrid, Notebook, Sparkles } from "lucide-react";
+import { BookOpen, Repeat, LayoutGrid, Notebook, Sparkles, Zap, Upload } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 
 const features = [
   { href: "/review", icon: Repeat, title: "复习", desc: "间隔重复训练，巩固记忆" },
   { href: "/words", icon: BookOpen, title: "词条库", desc: "浏览和管理词汇" },
+  { href: "/l2-drill", icon: Zap, title: "辨析", desc: "完形填空 / 词汇填空自测" },
   { href: "/dashboard", icon: LayoutGrid, title: "仪表盘", desc: "学习进度和统计" },
   { href: "/notes", icon: Notebook, title: "笔记", desc: "词汇笔记和标注" },
+  { href: "/import", icon: Upload, title: "导入", desc: "批量导入词汇和笔记" },
   { href: "/l3", icon: Sparkles, title: "L3 进阶研究", desc: "知识图谱、提案、推荐" },
 ] as const;
 

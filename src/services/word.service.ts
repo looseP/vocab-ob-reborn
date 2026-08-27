@@ -22,6 +22,7 @@ export interface GetWordsParams {
   freq?: string;
   semantic?: string;
   review?: string;
+  cefr?: string;
   wordbookId?: string;
   limit: number;
   offset: number;
@@ -43,6 +44,7 @@ export class WordService {
           freq: params.freq,
           semantic: params.semantic,
           review: params.review,
+          cefr: params.cefr,
         },
         pagination: { limit: params.limit, offset: params.offset },
         userId: params.userId,

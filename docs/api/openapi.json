@@ -1715,6 +1715,15 @@
         "parameters": [
           {
             "in": "query",
+            "name": "cefr",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 10
+            }
+          },
+          {
+            "in": "query",
             "name": "freq",
             "required": false,
             "schema": {

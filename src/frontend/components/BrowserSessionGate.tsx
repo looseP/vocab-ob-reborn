@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Lock, LogOut, Eye, EyeOff } from "lucide-react";
 import {
   createBrowserSession,
@@ -6,6 +6,8 @@ import {
   getBrowserSession,
   type BrowserSession,
 } from "../api/browserAuth";
+import { AUTH_EXPIRED_EVENT } from "../api/browserRequest";
+import { useToast } from "./ui/Toast";
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { Spinner } from "./ui/Spinner";
@@ -16,17 +18,36 @@ export function BrowserSessionGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  const { addToast } = useToast();
+  // 防止 401 风暴下重复处理"会话过期"（并发请求全部 401 时只兜底一次）
+  const handledExpiryRef = useRef(false);
 
   useEffect(() => {
     void getBrowserSession().then(setSession).catch(() => setSession(null));
   }, []);
+
+  // 会话过期兜底：任意业务请求返回 401（cookie 会话失效/过期）时，
+  // 清掉本地会话并回到登录页，避免用户困在"加载失败"页面。
+  useEffect(() => {
+    const onExpired = () => {
+      if (handledExpiryRef.current) return;
+      handledExpiryRef.current = true;
+      addToast("warning", "会话已过期，请重新登录");
+      void deleteBrowserSession().catch(() => {});
+      setSession(null);
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+  }, [addToast]);
 
   const login = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      setSession(await createBrowserSession(ownerToken));
+      const next = await createBrowserSession(ownerToken);
+      setSession(next);
+      handledExpiryRef.current = false; // 新会话生效，重置过期兜底标志
       setOwnerToken("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Login failed");

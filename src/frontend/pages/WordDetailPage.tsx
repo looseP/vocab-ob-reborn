@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Volume2, Lightbulb, Network, Puzzle, Quote } from "lucide-react";
+import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
+import { ArrowLeft, Volume2, Lightbulb, Network, Puzzle, Quote, Undo2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -51,9 +51,33 @@ function SectionCard({ title, children }: { title: string; children: React.React
 
 export function WordDetailPage() {
   const { slug } = useParams<{ slug: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [word, setWord] = useState<WordDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // 来自复习队列：state 的字段由 ReviewCardView 注入。
+  const reviewBack = (location.state as null | { from?: string; mode?: string; wordIds?: string[]; reviewed?: number; total?: number })?.from === "review"
+    ? (location.state as { from: string; mode?: string; wordIds?: string[]; reviewed?: number; total?: number })
+    : null;
+
+  const goBack = () => {
+    if (!reviewBack) {
+      navigate("/words");
+      return;
+    }
+    // SPA 中点击"查看详情"是 pushState 进入，上一条就是 /review，直接 navigate(-1) 返回复习页面；
+    // 即使历史栈非预期（用户多开详情），兜底直接导航到 /review —— sessionStorage 缓存会恢复进度。
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    const to = reviewBack.wordIds && reviewBack.wordIds.length > 0
+      ? `/review?wordIds=${reviewBack.wordIds.join(",")}`
+      : "/review";
+    navigate(to, { replace: false });
+  };
 
   useEffect(() => {
     if (!slug) return;
@@ -116,12 +140,32 @@ export function WordDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Link to="/words">
-        <Button variant="ghost" size="sm">
-          <ArrowLeft className="h-4 w-4" />
-          返回词条库
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button variant="ghost" size="sm" onClick={goBack}>
+          {reviewBack ? (
+            <>
+              <Undo2 className="h-4 w-4" />
+              <span>返回复习队列</span>
+              {typeof reviewBack.reviewed === "number" && typeof reviewBack.total === "number" && reviewBack.total > 0 && (
+                <span className="ml-1 text-xs text-[var(--color-ink-soft)]">（{reviewBack.reviewed}/{reviewBack.total}）</span>
+              )}
+            </>
+          ) : (
+            <>
+              <ArrowLeft className="h-4 w-4" />
+              返回词条库
+            </>
+          )}
         </Button>
-      </Link>
+        {reviewBack && (
+          <Link to="/words">
+            <Button variant="ghost" size="sm">
+              <ArrowLeft className="h-4 w-4" />
+              返回词条库
+            </Button>
+          </Link>
+        )}
+      </div>
 
       <Card>
         <div className="flex items-start justify-between">

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Undo2 } from "lucide-react";
+import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Undo2, History } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -9,6 +9,7 @@ import { ReviewCardView } from "@/frontend/components/review/ReviewCardView";
 import { DrillSession } from "@/frontend/components/review/DrillSession";
 import { ReviewProgressBar } from "@/frontend/components/review/ReviewProgressBar";
 import { CompletionCelebration } from "@/frontend/components/review/CompletionCelebration";
+import { ReviewHistoryDrawer, type ReviewHistoryEntry } from "@/frontend/components/review/ReviewHistoryDrawer";
 import { useReview } from "@/frontend/hooks/useReview";
 
 const reviewModes = [
@@ -54,8 +55,30 @@ function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
   );
 }
 
-function ReviewSession({ reviewMode, wordIds, onBack }: { reviewMode: string; wordIds?: string[]; onBack: () => void }) {
-  const { currentCard, mode, loading, error, stats, deferredNewCards, completed, currentIndex, remaining, lastAnswer, startReview, answer, skip, suspendCurrent, undoLast, browseNext, browsePrev, clearWeakSignal } = useReview();
+function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: string; wordIds?: string[]; onBack: () => void; force?: boolean }) {
+  const {
+    currentCard,
+    mode,
+    sessionId,
+    loading,
+    error,
+    stats,
+    deferredNewCards,
+    completed,
+    currentIndex,
+    remaining,
+    queue,
+    lastAnswer,
+    startReview,
+    answer,
+    skip,
+    suspendCurrent,
+    undoLast,
+    applyHistoryUndo,
+    browseNext,
+    browsePrev,
+    clearWeakSignal,
+  } = useReview();
 
   // 从词条库勾选进入（P2）：强制自由复习浏览模式，不评分、不写入数据
   const isFreeSelection = !!wordIds && wordIds.length > 0;
@@ -63,9 +86,29 @@ function ReviewSession({ reviewMode, wordIds, onBack }: { reviewMode: string; wo
   const isZen = reviewMode === "zen";
   const isPreview = reviewMode === "preview" || isFreeSelection;
 
+  // 历史记录抽屉：快捷键 H 切换。
+  // 注意：preview / 自由复习 / 选词浏览 会话不产生评分日志，但仍然允许查看历史（入口 UX 一致）；
+  //       条目级"撤销"按钮由抽屉自己根据 sessionId 存在性决定禁/启用。
+  const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => {
-    startReview(apiMode, wordIds);
-  }, [startReview, apiMode, wordIds]);
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.toLowerCase() === "h") {
+        e.preventDefault();
+        setDrawerOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    void startReview(apiMode, wordIds, force ? { force: true } : undefined);
+    // 仅在进入会话时跑一次；重复依赖会导致缓存恢复后立刻被 force 清掉
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiMode, force]);
 
   // Zen mode: auto-restart when completed
   useEffect(() => {
@@ -75,55 +118,11 @@ function ReviewSession({ reviewMode, wordIds, onBack }: { reviewMode: string; wo
     }
   }, [completed, isZen, apiMode, startReview]);
 
-  if (completed && !isZen) {
-    return (
-      <CompletionCelebration
-        stats={stats}
-        onRestart={() => startReview(apiMode)}
-        onBack={onBack}
-      />
-    );
-  }
-
-  if (completed && isZen) {
-    return (
-      <div className="flex h-48 items-center justify-center">
-        <div className="text-center">
-          <InfinityIcon className="mx-auto mb-3 h-8 w-8 animate-pulse text-[var(--color-accent)]" />
-          <p className="text-sm text-[var(--color-ink-soft)]">重新加载队列中...</p>
-          <p className="mt-1 text-xs text-[var(--color-ink-soft)]">禅模式 · 已复习 {stats.reviewed} 张</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error && !currentCard) {
-    return (
-      <Card>
-        <EmptyState
-          title="无法加载复习队列"
-          description={error}
-          action={<Button onClick={() => startReview(reviewMode)}><RotateCcw className="h-4 w-4" />重试</Button>}
-        />
-      </Card>
-    );
-  }
-
-  if (!loading && !currentCard && remaining === 0) {
-    return (
-      <Card>
-        <EmptyState
-          title="没有待复习的单词"
-          description="导入更多单词或稍后再来"
-          action={
-            <Link to="/words">
-              <Button variant="secondary">浏览词条库</Button>
-            </Link>
-          }
-        />
-      </Card>
-    );
-  }
+  const showCompletion = completed && !isZen;
+  const showZenReloading = completed && isZen;
+  const showError = Boolean(error && !currentCard);
+  const showEmpty = !loading && !currentCard && remaining === 0 && !showCompletion && !showZenReloading && !showError;
+  const showCard = !showCompletion && !showZenReloading && !showError && !showEmpty;
 
   return (
     <div className="space-y-6">
@@ -139,6 +138,11 @@ function ReviewSession({ reviewMode, wordIds, onBack }: { reviewMode: string; wo
           )}
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setDrawerOpen(true)} title="复习历史记录（H）">
+            <History className="h-4 w-4" />
+            历史
+            <kbd className="ml-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-soft)]">H</kbd>
+          </Button>
           {lastAnswer && !isPreview && (
             <Button variant="ghost" size="sm" disabled={loading} onClick={() => void undoLast()}>
               <Undo2 className="h-4 w-4" />撤销
@@ -148,21 +152,75 @@ function ReviewSession({ reviewMode, wordIds, onBack }: { reviewMode: string; wo
         </div>
       </div>
 
-      <ReviewProgressBar completed={stats.reviewed} remaining={remaining} />
+      {showCompletion ? (
+        <CompletionCelebration
+          stats={stats}
+          onRestart={() => startReview(apiMode)}
+          onBack={onBack}
+        />
+      ) : showZenReloading ? (
+        <div className="flex h-48 items-center justify-center">
+          <div className="text-center">
+            <InfinityIcon className="mx-auto mb-3 h-8 w-8 animate-pulse text-[var(--color-accent)]" />
+            <p className="text-sm text-[var(--color-ink-soft)]">重新加载队列中...</p>
+            <p className="mt-1 text-xs text-[var(--color-ink-soft)]">禅模式 · 已复习 {stats.reviewed} 张</p>
+          </div>
+        </div>
+      ) : showError ? (
+        <Card>
+          <EmptyState
+            title="无法加载复习队列"
+            description={error ?? undefined}
+            action={<Button onClick={() => startReview(reviewMode)}><RotateCcw className="h-4 w-4" />重试</Button>}
+          />
+        </Card>
+      ) : showEmpty ? (
+        <Card>
+          <EmptyState
+            title="没有待复习的单词"
+            description="导入更多单词或稍后再来"
+            action={
+              <Link to="/words">
+                <Button variant="secondary">浏览词条库</Button>
+              </Link>
+            }
+          />
+        </Card>
+      ) : (
+        <>
+          <ReviewProgressBar completed={stats.reviewed} remaining={remaining} />
+          <ReviewCardView
+            card={currentCard}
+            loading={loading}
+            error={error}
+            preview={isPreview}
+            onAnswer={answer}
+            onSkip={skip}
+            onSuspend={isPreview ? undefined : suspendCurrent}
+            onUndo={isPreview ? undefined : undoLast}
+            canUndo={!isPreview && !!lastAnswer}
+            onPrev={browsePrev}
+            onNext={browseNext}
+            onClearWeakSignal={clearWeakSignal}
+            reviewContext={{ mode: apiMode, wordIds }}
+            reviewProgress={{ reviewed: stats.reviewed, total: queue.length }}
+          />
+        </>
+      )}
 
-      <ReviewCardView
-        card={currentCard}
-        loading={loading}
-        error={error}
-        preview={isPreview}
-        onAnswer={answer}
-        onSkip={skip}
-        onSuspend={isPreview ? undefined : suspendCurrent}
-        onUndo={isPreview ? undefined : undoLast}
-        canUndo={!isPreview && !!lastAnswer}
-        onPrev={browsePrev}
-        onNext={browseNext}
-        onClearWeakSignal={clearWeakSignal}
+      <ReviewHistoryDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        sessionId={sessionId}
+        sessionScopeId={sessionId ?? undefined}
+        onUndoSuccess={async (entry) => {
+          await applyHistoryUndo({
+            reviewLogId: entry.id,
+            rating: entry.rating,
+            word_slug: entry.word_slug,
+            word_lemma: entry.word_lemma,
+          });
+        }}
       />
     </div>
   );
@@ -175,8 +233,71 @@ export function ReviewPage() {
   const [mode, setMode] = useState<"select" | "session">("select");
   const [reviewMode, setReviewMode] = useState("review");
 
+  // 首次挂载时检查 sessionStorage 是否有可恢复的复习会话。
+  // 命中后直接进入 session 视图，startReview(force=false) 会自动走缓存恢复；
+  // 未命中则保持 select 模式让用户手动选模式。
+  useEffect(() => {
+    try {
+      if (typeof window === "undefined") return;
+      const prefix = "vocab:review:session:";
+      const now = Date.now();
+      const TTL = 30 * 60 * 1000;
+      let best: { mode: string; reviewed: number; savedAt: number } | null = null;
+      for (let i = 0; i < window.sessionStorage.length; i++) {
+        const key = window.sessionStorage.key(i);
+        if (!key || !key.startsWith(prefix)) continue;
+        const raw = window.sessionStorage.getItem(key);
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw) as { mode: string; savedAt: number; stats: { reviewed: number }; completed: boolean; queue: unknown[] };
+          if (now - parsed.savedAt > TTL) {
+            window.sessionStorage.removeItem(key);
+            continue;
+          }
+          if (parsed.completed || !parsed.queue || parsed.queue.length === 0) continue;
+          // 优先选择进度最新（savedAt 最大）的会话
+          if (!best || parsed.savedAt > best.savedAt) {
+            best = { mode: parsed.mode, reviewed: parsed.stats.reviewed, savedAt: parsed.savedAt };
+          }
+        } catch {
+          // ignore corrupt entry
+        }
+      }
+      if (best) {
+        setReviewMode(best.mode);
+        setMode("session");
+      }
+    } catch {
+      /* private mode / quota: 静默降级到 select 模式 */
+    }
+  }, []);
+
+  const [forceBootstrap, setForceBootstrap] = useState(false);
+
+  // 显式点击"开始"按钮：同步清对应 mode 的缓存，再进入会话（force=true 让 useReview 发起新服务器请求）。
+  // 这样用户点击"开始"一定是开一个全新的会话（不会命中旧缓存）。
   const handleStart = (m: string) => {
+    try {
+      if (typeof window !== "undefined") {
+        const prefix = "vocab:review:session:";
+        for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
+          const key = window.sessionStorage.key(i);
+          if (!key || !key.startsWith(prefix)) continue;
+          const raw = window.sessionStorage.getItem(key);
+          if (!raw) continue;
+          try {
+            const parsed = JSON.parse(raw) as { mode: string };
+            if (parsed.mode === m) window.sessionStorage.removeItem(key);
+          } catch {
+            window.sessionStorage.removeItem(key);
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     setReviewMode(m);
+    setForceBootstrap(true);
     setMode("session");
   };
 
@@ -197,8 +318,46 @@ export function ReviewPage() {
       ) : reviewMode === "cram" ? (
         <DrillSession onBack={() => setMode("select")} />
       ) : (
-        <ReviewSession reviewMode={reviewMode} onBack={() => setMode("select")} />
+        // 自动恢复的会话用 force=false（缓存命中共用）；
+        // 用户显式点"开始"的 handleStart 设置了 forceBootstrap=true → 清旧缓存，新启一个会话
+        <BootstrapReviewSession
+          reviewMode={reviewMode}
+          onBack={() => { setForceBootstrap(false); setMode("select"); }}
+          force={forceBootstrap}
+        />
       )}
     </div>
   );
+}
+
+/**
+ * 桥接组件：在 ReviewSession 之前判断是否应该复用缓存。
+ * - 用户显式点击"开始"（force=true 被上层传入）：强制清对应缓存，开一个新会话；
+ * - 从详情页返回 / 浏览器恢复（force=false）：若存在未完成的缓存会话则命中；否则新拉队列。
+ */
+function BootstrapReviewSession({ reviewMode, onBack, force }: { reviewMode: string; onBack: () => void; force?: boolean }) {
+  // 显式点击"开始"：首次挂载（force=true 的那次）清掉对应 mode 的 sessionStorage 缓存。
+  // 注意：必须用 useEffect，useMemo 不保证副作用必然执行。
+  useEffect(() => {
+    if (!force) return;
+    try {
+      if (typeof window === "undefined") return;
+      const prefix = "vocab:review:session:";
+      for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
+        const key = window.sessionStorage.key(i);
+        if (!key || !key.startsWith(prefix)) continue;
+        const raw = window.sessionStorage.getItem(key);
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw) as { mode: string };
+          if (parsed.mode === reviewMode) window.sessionStorage.removeItem(key);
+        } catch {
+          window.sessionStorage.removeItem(key);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [force, reviewMode]);
+  return <ReviewSession reviewMode={reviewMode} onBack={onBack} force={force} />;
 }
