@@ -1,124 +1,39 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { BrowserSessionGate } from "./components/BrowserSessionGate";
 import { SiteFrame } from "./components/layout/SiteFrame";
 import { ToastProvider } from "./components/ui/Toast";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
-import { HomePage } from "./pages/HomePage";
-import { DashboardPage } from "./pages/DashboardPage";
-import { ReviewPage } from "./pages/ReviewPage";
-import { L2DrillPage } from "./pages/L2DrillPage";
-import { WordsPage } from "./pages/WordsPage";
-import { WordDetailPage } from "./pages/WordDetailPage";
-import { NotesPage } from "./pages/NotesPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { ImportPage } from "./pages/ImportPage";
-import { CapturePage } from "./pages/CapturePage";
+import { Spinner } from "./components/ui/Spinner";
 import { OmniPalette } from "./components/search/OmniPalette";
-import { L3Shell, type L3ShellSection } from "./components/L3Shell";
-import { L3ContextPage } from "./pages/L3ContextPage";
-import { L3GraphPage } from "./pages/L3GraphPage";
-import { L3HomePage } from "./pages/L3HomePage";
-import { L3ImportPage } from "./pages/L3ImportPage";
-import { L3ManualEditorPage } from "./pages/L3ManualEditorPage";
-import { L3ProposalPage } from "./pages/L3ProposalPage";
-import { L3RecommendationPage } from "./pages/L3RecommendationPage";
-import { L3SourceSpacePage } from "./pages/L3SourceSpacePage";
-import { L3WordSpacePage } from "./pages/L3WordSpacePage";
-import { createBrowserL3Client } from "./api/l3Client";
-import {
-  PHASE_4C_CACHE_POLICY,
-  markActiveReadStaleAfterManualCommand,
-  markActiveReadStaleAfterProposalConfirm,
-  type L3ActiveReadStaleState,
-} from "./state/l3CacheSignals";
-import type {
-  L3ContextHandoff,
-  L3GraphHandoff,
-  L3NavigationIntent,
-  L3SourceHandoff,
-  L3WordHandoff,
-} from "./viewModels/l3NavigationViewModel";
 
-/**
- * The L3 sub-application under /l3. Section switching, cross-surface
- * navigation handoffs, and the active-read stale cache wiring are held in
- * local state here (the router only owns mounting the sub-app).
- */
-function L3Page() {
-  const [section, setSection] = useState<L3ShellSection>("home");
-  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
-  const [graphHandoff, setGraphHandoff] = useState<L3GraphHandoff | null>(null);
-  const [contextHandoff, setContextHandoff] = useState<L3ContextHandoff | null>(null);
-  const [wordHandoff, setWordHandoff] = useState<L3WordHandoff | null>(null);
-  const [sourceHandoff, setSourceHandoff] = useState<L3SourceHandoff | null>(null);
-  const [activeReadStale, setActiveReadStale] = useState<L3ActiveReadStaleState | null>(null);
-  const l3Client = useMemo(() => createBrowserL3Client(), []);
+// 路由级代码分割：每个页面独立 chunk，首屏只加载当前路由所需代码。
+// 注意：命名导出需映射为 default 供 React.lazy 使用。
+const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
+const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
+const ReviewPage = lazy(() => import("./pages/ReviewPage").then((m) => ({ default: m.ReviewPage })));
+const L2DrillPage = lazy(() => import("./pages/L2DrillPage").then((m) => ({ default: m.L2DrillPage })));
+const WordsPage = lazy(() => import("./pages/WordsPage").then((m) => ({ default: m.WordsPage })));
+const WordDetailPage = lazy(() => import("./pages/WordDetailPage").then((m) => ({ default: m.WordDetailPage })));
+const NotesPage = lazy(() => import("./pages/NotesPage").then((m) => ({ default: m.NotesPage })));
+const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const ImportPage = lazy(() => import("./pages/ImportPage").then((m) => ({ default: m.ImportPage })));
+const CapturePage = lazy(() => import("./pages/CapturePage").then((m) => ({ default: m.CapturePage })));
+// L3 子应用全家桶（L3Shell + 9 个子页 + l3Client）独立成块，访问 /l3 时才加载。
+const L3Page = lazy(() => import("./pages/L3Page").then((m) => ({ default: m.L3Page })));
 
-  const openProposal = (proposalId: string) => {
-    setSelectedProposalId(proposalId);
-    setSection("proposals");
-  };
-
-  const openProposalQueue = () => {
-    setSelectedProposalId(null);
-    setSection("proposals");
-  };
-
-  const navigateL3 = (intent: L3NavigationIntent) => {
-    if (intent.target === "graph") {
-      setGraphHandoff({ ...intent.query, nonce: Date.now() });
-      setSection("graph");
-      return;
-    }
-    if (intent.target === "context") {
-      setContextHandoff({ contextId: intent.contextId, nonce: Date.now() });
-      setSection("context");
-      return;
-    }
-    if (intent.target === "word") {
-      setWordHandoff({ slug: intent.slug, ...(intent.wordbookId ? { wordbookId: intent.wordbookId } : {}), nonce: Date.now() });
-      setSection("word");
-      return;
-    }
-    if (intent.target === "source") {
-      setSourceHandoff({ sourceId: intent.sourceId, nonce: Date.now() });
-      setSection("source");
-      return;
-    }
-    if (intent.target === "proposal") {
-      intent.proposalId ? openProposal(intent.proposalId) : openProposalQueue();
-      return;
-    }
-    if (intent.target === "recommendation") {
-      setSection("recommendations");
-    }
-  };
-
-  const page = {
-    home: <L3HomePage cachePolicy={PHASE_4C_CACHE_POLICY} />,
-    manual: <L3ManualEditorPage client={l3Client} onManualChanged={(reason) => setActiveReadStale(markActiveReadStaleAfterManualCommand(reason))} onNavigate={navigateL3} />,
-    import: <L3ImportPage client={l3Client} onOpenProposal={openProposal} onOpenProposalQueue={openProposalQueue} />,
-    proposals: (
-      <L3ProposalPage
-        client={l3Client}
-        selectedProposalId={selectedProposalId}
-        onSelectProposal={setSelectedProposalId}
-        onConfirmed={(result) => setActiveReadStale(markActiveReadStaleAfterProposalConfirm(result))}
-        onNavigate={navigateL3}
-      />
-    ),
-    recommendations: <L3RecommendationPage client={l3Client} onNavigate={navigateL3} />,
-    graph: <L3GraphPage client={l3Client} handoff={graphHandoff} staleState={activeReadStale} onGraphRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
-    context: <L3ContextPage client={l3Client} handoff={contextHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
-    word: <L3WordSpacePage client={l3Client} handoff={wordHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
-    source: <L3SourceSpacePage client={l3Client} handoff={sourceHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
-  }[section];
-
+/** 路由懒加载的降级态：占满内容区居中显示加载指示，避免布局跳动。 */
+function PageSuspense({ children }: { children: ReactNode }) {
   return (
-    <L3Shell activeSection={section} onNavigate={setSection}>
-      {page}
-    </L3Shell>
+    <Suspense
+      fallback={
+        <div className="flex h-[60vh] items-center justify-center">
+          <Spinner className="h-8 w-8" />
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
   );
 }
 
@@ -129,18 +44,18 @@ export function App() {
         <BrowserSessionGate>
           <BrowserRouter>
             <Routes>
-              <Route path="/" element={<SiteFrame><HomePage /></SiteFrame>} />
-              <Route path="/dashboard" element={<SiteFrame><DashboardPage /></SiteFrame>} />
-              <Route path="/review" element={<SiteFrame><ReviewPage /></SiteFrame>} />
-              <Route path="/review/*" element={<SiteFrame><ReviewPage /></SiteFrame>} />
-              <Route path="/l2-drill" element={<SiteFrame><L2DrillPage /></SiteFrame>} />
-              <Route path="/words" element={<SiteFrame><WordsPage /></SiteFrame>} />
-              <Route path="/words/:slug" element={<SiteFrame><WordDetailPage /></SiteFrame>} />
-              <Route path="/notes" element={<SiteFrame><NotesPage /></SiteFrame>} />
-              <Route path="/settings" element={<SiteFrame><SettingsPage /></SiteFrame>} />
-              <Route path="/import" element={<SiteFrame><ImportPage /></SiteFrame>} />
-              <Route path="/capture" element={<CapturePage />} />
-              <Route path="/l3" element={<SiteFrame><L3Page /></SiteFrame>} />
+              <Route path="/" element={<SiteFrame><PageSuspense><HomePage /></PageSuspense></SiteFrame>} />
+              <Route path="/dashboard" element={<SiteFrame><PageSuspense><DashboardPage /></PageSuspense></SiteFrame>} />
+              <Route path="/review" element={<SiteFrame><PageSuspense><ReviewPage /></PageSuspense></SiteFrame>} />
+              <Route path="/review/*" element={<SiteFrame><PageSuspense><ReviewPage /></PageSuspense></SiteFrame>} />
+              <Route path="/l2-drill" element={<SiteFrame><PageSuspense><L2DrillPage /></PageSuspense></SiteFrame>} />
+              <Route path="/words" element={<SiteFrame><PageSuspense><WordsPage /></PageSuspense></SiteFrame>} />
+              <Route path="/words/:slug" element={<SiteFrame><PageSuspense><WordDetailPage /></PageSuspense></SiteFrame>} />
+              <Route path="/notes" element={<SiteFrame><PageSuspense><NotesPage /></PageSuspense></SiteFrame>} />
+              <Route path="/settings" element={<SiteFrame><PageSuspense><SettingsPage /></PageSuspense></SiteFrame>} />
+              <Route path="/import" element={<SiteFrame><PageSuspense><ImportPage /></PageSuspense></SiteFrame>} />
+              <Route path="/capture" element={<PageSuspense><CapturePage /></PageSuspense>} />
+              <Route path="/l3" element={<SiteFrame><PageSuspense><L3Page /></PageSuspense></SiteFrame>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             <OmniPalette />
