@@ -315,7 +315,9 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     GRANT SELECT, UPDATE ON TABLE public.llm_usage TO vocab_worker;
     GRANT SELECT, UPDATE ON TABLE public.user_word_progress TO vocab_worker;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.user_word_l2_progress TO vocab_worker;
-    GRANT UPDATE ON TABLE public.sessions TO vocab_worker;
+    -- outbox worker 的 session_cards_seen 效果执行 UPDATE ... WHERE（读取 id/user_id/wordbook_id/ended_at 列），
+    -- PG11+ 要求 UPDATE 中读取的列具备 SELECT 权限，缺省会报 permission denied for table sessions。
+    GRANT SELECT, UPDATE ON TABLE public.sessions TO vocab_worker;
 
     DO $$ BEGIN
       IF to_regprocedure('auth.uid()') IS NOT NULL THEN

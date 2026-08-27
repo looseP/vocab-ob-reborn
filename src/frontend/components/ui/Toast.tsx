@@ -3,14 +3,28 @@ import { CheckCircle2, AlertCircle, Info, X, XCircle } from "lucide-react";
 
 type ToastType = "success" | "error" | "info" | "warning";
 
+/** Toast 内嵌动作按钮（如评分后的「撤销」入口）。 */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
+export interface ToastOptions {
+  /** 展示时长（ms），默认 4000。带 action 的提示建议 ≥8000。 */
+  duration?: number;
+  action?: ToastAction;
+}
+
 interface Toast {
   id: number;
   type: ToastType;
   message: string;
+  duration: number;
+  action?: ToastAction;
 }
 
 interface ToastContextValue {
-  addToast: (type: ToastType, message: string) => void;
+  addToast: (type: ToastType, message: string, options?: ToastOptions) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -32,12 +46,13 @@ const colors = {
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const addToast = useCallback((type: ToastType, message: string) => {
+  const addToast = useCallback((type: ToastType, message: string, options?: ToastOptions) => {
     const id = Date.now() + Math.random();
-    setToasts((prev) => [...prev, { id, type, message }]);
+    const duration = options?.duration ?? 4000;
+    setToasts((prev) => [...prev, { id, type, message, duration, action: options?.action }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, duration);
   }, []);
 
   const removeToast = useCallback((id: number) => {
@@ -57,6 +72,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             >
               <Icon className={`h-4 w-4 ${colors[toast.type]}`} />
               <span className="text-sm text-[var(--color-ink)]">{toast.message}</span>
+              {toast.action && (
+                <button
+                  onClick={() => {
+                    removeToast(toast.id);
+                    toast.action?.onClick();
+                  }}
+                  className="ml-1 rounded-full border border-[var(--color-border)] px-3 py-1 text-xs font-semibold text-[var(--color-accent)] transition-colors hover:bg-[var(--color-surface-muted)]"
+                >
+                  {toast.action.label}
+                </button>
+              )}
               <button
                 onClick={() => removeToast(toast.id)}
                 className="ml-2 text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]"

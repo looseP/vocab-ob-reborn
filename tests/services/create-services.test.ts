@@ -22,6 +22,10 @@ import { createServices } from "@/services";
 function makeRepos() {
   const reviews = {
     findDueCards: vi.fn(async () => []),
+    findDueCandidates: vi.fn(async () => []),
+    findPracticeCards: vi.fn(async () => []),
+    findWordsByIds: vi.fn(async () => []),
+    findDrillCandidates: vi.fn(async () => []),
     getStats: vi.fn(async () => ({ todayCount: 0, totalCount: 0, ratingDist: { again: 0, hard: 0, good: 0, easy: 0 } })),
     findLeeches: vi.fn(async () => []),
     getTimeline: vi.fn(async () => []),
@@ -77,8 +81,13 @@ describe("createServices wiring", () => {
     });
 
     await services.reviews.getQueue("u1", "wb1", 5, "cram");
-    expect(reviews.findDueCards).toHaveBeenCalledWith("u1", "wb1", 5);
+    expect(reviews.findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 5);
+    expect(reviews.findDueCards).not.toHaveBeenCalled();
     expect(sessions.getOrCreateToday).toHaveBeenCalledWith("u1", "wb1", "cram");
+
+    await services.reviews.getQueue("u1", "wb1", 5, "review");
+    expect(reviews.findDueCards).toHaveBeenCalledWith("u1", "wb1", 5);
+    expect(reviews.findPracticeCards).toHaveBeenCalledTimes(1);
 
     await services.reviews.getStats("u1", "wb1");
     expect(reviews.getStats).toHaveBeenCalledWith("u1", "wb1");

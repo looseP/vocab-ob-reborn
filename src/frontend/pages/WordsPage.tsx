@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
-import { Link } from "react-router-dom";
-import { Search, Filter, Upload } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Search, Filter, Upload, BookOpen } from "lucide-react";
 import { Input } from "@/frontend/components/ui/Input";
 import { Button } from "@/frontend/components/ui/Button";
 import { WordList } from "@/frontend/components/words/WordList";
@@ -12,6 +12,9 @@ export function WordsPage() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [cefr, setCefr] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const navigate = useNavigate();
 
   const debouncedSetQuery = useCallback(
     (value: string) => {
@@ -27,6 +30,31 @@ export function WordsPage() {
     cefr: cefr || undefined,
     pageSize: 50,
   });
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const enterSelecting = useCallback(() => {
+    setSelecting((v) => {
+      if (v) setSelectedIds(new Set());
+      return !v;
+    });
+  }, []);
+
+  const startFreeReview = useCallback(() => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    navigate(`/review?wordIds=${ids.join(",")}`);
+  }, [selectedIds, navigate]);
 
   return (
     <div className="space-y-6">
@@ -47,7 +75,7 @@ export function WordsPage() {
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Filter className="h-4 w-4 text-[var(--color-ink-soft)]" />
           <select
             value={cefr}
@@ -60,6 +88,14 @@ export function WordsPage() {
               </option>
             ))}
           </select>
+          <Button size="sm" variant={selecting ? "primary" : "secondary"} onClick={enterSelecting}>
+            <BookOpen className="h-4 w-4" /> 自由复习
+          </Button>
+          {selecting && (
+            <Button size="sm" variant="primary" disabled={selectedIds.size === 0} onClick={startFreeReview}>
+              复习已选 ({selectedIds.size})
+            </Button>
+          )}
           <Link to="/import">
             <Button size="sm" variant="secondary">
               <Upload className="h-4 w-4" /> 批量导入
@@ -68,7 +104,20 @@ export function WordsPage() {
         </div>
       </div>
 
-      <WordList words={words} loading={loading} error={error} />
+      {selecting && (
+        <p className="text-sm text-[var(--color-ink-soft)]">
+          勾选要复习的单词，然后点击「复习已选」进入自由复习（不评分、不写入复习数据）。
+        </p>
+      )}
+
+      <WordList
+        words={words}
+        loading={loading}
+        error={error}
+        selectable={selecting}
+        selectedIds={selectedIds}
+        onToggleSelect={toggleSelect}
+      />
     </div>
   );
 }

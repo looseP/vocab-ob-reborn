@@ -25,6 +25,8 @@ import type {
 } from "./interfaces";
 import { BaseRepository } from "./base";
 import { ValidationError } from "../errors";
+import { startOfTodayIsoInDisplayTz } from "../db/timezone";
+import { LEECH_LAPSE_THRESHOLD } from "../domain/review.entity";
 
 // ── H2 fix: whitelist for rating → counter column ───────────────────────
 const RATING_COUNTER_MAP: Record<ReviewRating, string> = {
@@ -42,11 +44,24 @@ const PROGRESS_COLUMNS_PREFIXED = `
   uwp.lapse_count, uwp.again_count, uwp.hard_count, uwp.good_count,
   uwp.easy_count, uwp.interval_days, uwp.scheduler_payload,
   uwp.content_hash_snapshot, uwp.l1_content_hash_snapshot, uwp.skip_count, uwp.created_at, uwp.updated_at,
-  uwp.recent_ratings, uwp.l1_weak_signal
+  uwp.recent_ratings, uwp.l1_weak_signal, uwp.needs_recheck
 `;
 
 // Bare columns for single-table queries (no JOIN ambiguity)
 const PROGRESS_COLUMNS = PROGRESS_COLUMNS_PREFIXED.replace(/uwp\./g, "");
+
+/** Joined progress + word row shape returned by the queue queries. */
+type ReviewCardQueryRow = UserWordProgressRow & {
+  slug: string;
+  title: string;
+  lemma: string;
+  w_id: string;
+  short_definition: string | null;
+  ipa: string | null;
+  pos: string | null;
+  cefr: string | null;
+  needs_recheck: boolean;
+};
 
 export class ReviewRepository extends BaseRepository implements IReviewRepository {
   /**
@@ -58,9 +73,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     limit: number,
   ) {
     // H3 fix: use prefixed columns + explicit w.id AS w_id to avoid ambiguity
-    const rows = await this.query<
-      UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }
-    >(
+    const rows = await this.query<ReviewCardQueryRow>(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
               w.id AS w_id, w.slug, w.title, w.lemma,
               w.short_definition, w.ipa, w.pos, w.cefr
@@ -74,10 +87,122 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       [userId, wordbookId, limit],
     );
 
+    return this.mapReviewCardRows(rows);
+  }
+
+  /**
+   * Find all active (non-suspended) cards for a user/wordbook, regardless of
+   * due_at. Used by the practice modes (cram / preview) which are NOT limited
+   * by the FSRS schedule. No scheduling side-effects happen in those modes.
+   */
+  async findPracticeCards(
+    userId: string,
+    wordbookId: string,
+    limit: number,
+  ) {
+    const rows = await this.query<ReviewCardQueryRow>(
+      `SELECT ${PROGRESS_COLUMNS_PREFIXED},
+              w.id AS w_id, w.slug, w.title, w.lemma,
+              w.short_definition, w.ipa, w.pos, w.cefr
+       FROM user_word_progress uwp
+       JOIN words w ON w.id = uwp.word_id
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         AND uwp.state != 'suspended'
+       ORDER BY uwp.due_at ASC NULLS FIRST, uwp.last_reviewed_at ASC NULLS FIRST
+       LIMIT $3`,
+      [userId, wordbookId, limit],
+    );
+
+    return this.mapReviewCardRows(rows);
+  }
+
+  /**
+   * Find all due (schedule-eligible) candidate cards for a user/wordbook.
+   * Unlike findDueCards this is used as the *candidate pool* for the P1
+   * queue-priority builder (review/zen): a larger pool is fetched and the
+   * service layer applies priority bucketing + the new-card quota before
+   * returning the final batch. Carries needs_recheck so the builder can
+   * promote content-changed cards to the front.
+   */
+  async findDueCandidates(
+    userId: string,
+    wordbookId: string,
+    limit: number,
+  ): Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>> {
+    const rows = await this.query<ReviewCardQueryRow>(
+      `SELECT ${PROGRESS_COLUMNS_PREFIXED},
+              w.id AS w_id, w.slug, w.title, w.lemma,
+              w.short_definition, w.ipa, w.pos, w.cefr
+       FROM user_word_progress uwp
+       JOIN words w ON w.id = uwp.word_id
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         AND uwp.state != 'suspended'
+         AND (uwp.due_at IS NULL OR uwp.due_at <= now())
+       ORDER BY uwp.due_at ASC NULLS FIRST, uwp.last_reviewed_at ASC NULLS FIRST
+       LIMIT $3`,
+      [userId, wordbookId, limit],
+    );
+
+    return this.mapReviewCardRows<UserWordProgressRow & { needs_recheck: boolean }>(rows);
+  }
+
+  /**
+   * Fetch words by ids for the free-review (勾选) flow — P2. Mirrors the
+   * original free/queue semantics: query the words table directly (published
+   * only), regardless of review-progress membership, so the user can freely
+   * pick any word from the library. Order is re-applied by the caller to
+   * preserve the user's selection order.
+   */
+  async findWordsByIds(
+    wordIds: string[],
+  ): Promise<Array<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }>> {
+    if (wordIds.length === 0) return [];
+    return this.query<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }>(
+      `SELECT id, slug, title, lemma, short_definition, ipa, pos, cefr
+       FROM words
+       WHERE id = ANY($1::uuid[]) AND is_published = true AND is_deleted = false`,
+      [wordIds],
+    );
+  }
+
+  /**
+   * Fetch drill candidates (cram 练习变体): already-reviewed words
+   * (state != new/suspended, review_count >= 1) joined with their examples,
+   * so the service layer can resolve a cloze per word. Purely read-only.
+   */
+  async findDrillCandidates(
+    userId: string,
+    wordbookId: string,
+    limit: number,
+  ): Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; examples: Json } }>> {
+    const rows = await this.query<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null; examples: Json }>(
+      `SELECT ${PROGRESS_COLUMNS_PREFIXED},
+              w.id AS w_id, w.slug, w.title, w.lemma, w.short_definition, w.examples
+       FROM user_word_progress uwp
+       JOIN words w ON w.id = uwp.word_id
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         AND uwp.state != 'new' AND uwp.state != 'suspended'
+         AND uwp.review_count >= 1
+       ORDER BY uwp.due_at ASC NULLS FIRST
+       LIMIT $3`,
+      [userId, wordbookId, limit],
+    );
+    return rows.map((r) => {
+      const { slug, title, lemma, w_id, short_definition, examples, ...progress } = r;
+      return {
+        progress: progress as UserWordProgressRow,
+        word: { id: w_id, slug, title, lemma, short_definition, examples },
+      };
+    });
+  }
+
+  private mapReviewCardRows<T extends UserWordProgressRow = UserWordProgressRow>(
+    rows: Array<ReviewCardQueryRow>,
+  ): Array<{ progress: T; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }> {
     return rows.map((r) => {
       const { slug, title, lemma, w_id, short_definition, ipa, pos, cefr, ...progress } = r;
       return {
-        progress: progress as unknown as UserWordProgressRow,
+        progress: progress as unknown as T,
         word: { id: w_id, slug, title, lemma, short_definition, ipa, pos, cefr },
       };
     });
@@ -139,6 +264,10 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   /**
    * Owner-scoped SELECT FOR UPDATE with word join for slug/title/lemma.
    * MUST be in a transaction. M7 fix: include word fields.
+   * FOR UPDATE OF uwp locks only the progress row — words is read-only for
+   * vocab_app (GRANT SELECT only), so locking the joined words table would
+   * fail with permission denied (regression guard: L2 repo already uses
+   * `FOR UPDATE OF p` for the same reason).
    */
   async findProgressForUpdate(progressId: string, userId: string): Promise<ProgressWithContentHash | null> {
     this.requireTx();
@@ -148,7 +277,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.id = $1::uuid AND uwp.user_id = $2
-       FOR UPDATE`,
+       FOR UPDATE OF uwp`,
       [progressId, userId],
     );
   }
@@ -579,6 +708,9 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   }
 
   async getStats(userId: string, wordbookId: string) {
+    // 统一口径：以显示时区(Asia/Shanghai)的当日零点为"今天"边界（对齐原项目
+    // StatsRepository 的 startOfTodayIsoInDisplayTz），时间字段统一用 reviewed_at。
+    const todayStart = startOfTodayIsoInDisplayTz();
     const rows = await this.query<{
       today_count: string;
       total_count: string;
@@ -588,7 +720,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       easy_count: string;
     }>(
       `SELECT
-        COUNT(*) FILTER (WHERE rl.created_at >= date_trunc('day', now()))::text AS today_count,
+        COUNT(*) FILTER (WHERE rl.reviewed_at >= $3)::text AS today_count,
         COUNT(*)::text AS total_count,
         COUNT(*) FILTER (WHERE rl.rating = 'again')::text AS again_count,
         COUNT(*) FILTER (WHERE rl.rating = 'hard')::text AS hard_count,
@@ -596,7 +728,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         COUNT(*) FILTER (WHERE rl.rating = 'easy')::text AS easy_count
        FROM review_logs rl
        WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'`,
-      [userId, wordbookId],
+      [userId, wordbookId, todayStart],
     );
     const r = rows[0] ?? {};
     return {
@@ -612,6 +744,8 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   }
 
   async findLeeches(userId: string, wordbookId: string, limit: number) {
+    // 统一漏词阈值：与域实体 ReviewCard.isLeech 共用 LEECH_LAPSE_THRESHOLD
+    // （项目决策 = 2，遗忘 2 次即标记漏词），消除双标。
     return this.query<
       UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }
     >(
@@ -620,37 +754,43 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
-         AND uwp.lapse_count >= 2
+         AND uwp.lapse_count >= $4
        ORDER BY uwp.lapse_count DESC, uwp.due_at ASC NULLS FIRST
        LIMIT $3`,
-      [userId, wordbookId, limit],
+      [userId, wordbookId, limit, LEECH_LAPSE_THRESHOLD],
     );
   }
 
   async getTimeline(userId: string, wordbookId: string, limit: number) {
+    // 时间线只展示"评分动作"（again/hard/good/easy）。skip/suspend/undo 写的是
+    // rating=NULL 的日志，过滤后避免前端出现无意义的 "null" 徽标；同时让
+    // rating 字段与响应契约 z.string() 严格一致。
     return this.query<{
       id: string; rating: string; created_at: string;
       word_slug: string; word_lemma: string;
     }>(
-      `SELECT rl.id, rl.rating, rl.created_at,
+      `SELECT rl.id, rl.rating, rl.reviewed_at AS created_at,
               w.slug AS word_slug, w.lemma AS word_lemma
        FROM review_logs rl
        JOIN words w ON w.id = rl.word_id
        WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'
-       ORDER BY rl.created_at DESC
+         AND rl.rating IS NOT NULL
+       ORDER BY rl.reviewed_at DESC
        LIMIT $3`,
       [userId, wordbookId, limit],
     );
   }
 
   async getHeatmap(userId: string, wordbookId: string, days: number) {
+    // 统一口径：按显示时区(Asia/Shanghai)切日分组（对齐原项目 streak 的
+    // Asia/Shanghai 日界），时间字段统一用 reviewed_at。
     return this.query<{ date: string; count: string }>(
-      `SELECT date_trunc('day', rl.created_at)::date::text AS date,
+      `SELECT (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date::text AS date,
               COUNT(*)::text AS count
        FROM review_logs rl
        WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'
-         AND rl.created_at >= now() - ($3 || ' days')::interval
-       GROUP BY date_trunc('day', rl.created_at)
+         AND rl.reviewed_at >= now() - ($3 || ' days')::interval
+       GROUP BY (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date
        ORDER BY date`,
       [userId, wordbookId, days],
     );

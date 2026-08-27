@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Undo2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { ReviewCardView } from "@/frontend/components/review/ReviewCardView";
+import { DrillSession } from "@/frontend/components/review/DrillSession";
 import { ReviewProgressBar } from "@/frontend/components/review/ReviewProgressBar";
 import { CompletionCelebration } from "@/frontend/components/review/CompletionCelebration";
 import { useReview } from "@/frontend/hooks/useReview";
 
 const reviewModes = [
   { key: "review", icon: Repeat, title: "标准复习", desc: "按 FSRS 间隔重复算法安排的到期卡片", variant: "primary" as const },
-  { key: "cram", icon: Zap, title: "练习模式", desc: "集中强化练习，不受到期限制", variant: "secondary" as const },
-  { key: "preview", icon: BookOpen, title: "自由复习", desc: "自由浏览词汇，不评分", variant: "secondary" as const },
+  { key: "cram", icon: Zap, title: "练习模式", desc: "完形填空 / 词汇填空自测，错题回尾，不写入复习数据", variant: "secondary" as const },
+  { key: "preview", icon: BookOpen, title: "自由复习", desc: "自由浏览词汇，不评分、不写入数据", variant: "secondary" as const },
   { key: "zen", icon: InfinityIcon, title: "禅模式", desc: "无限循环复习，巩固记忆", variant: "secondary" as const },
 ] as const;
 
@@ -53,15 +54,18 @@ function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
   );
 }
 
-function ReviewSession({ reviewMode, onBack }: { reviewMode: string; onBack: () => void }) {
-  const { currentCard, loading, error, stats, completed, currentIndex, remaining, startReview, answer, skip, clearWeakSignal } = useReview();
+function ReviewSession({ reviewMode, wordIds, onBack }: { reviewMode: string; wordIds?: string[]; onBack: () => void }) {
+  const { currentCard, mode, loading, error, stats, deferredNewCards, completed, currentIndex, remaining, lastAnswer, startReview, answer, skip, suspendCurrent, undoLast, browseNext, browsePrev, clearWeakSignal } = useReview();
 
-  const apiMode = reviewMode === "zen" ? "review" : reviewMode;
+  // 从词条库勾选进入（P2）：强制自由复习浏览模式，不评分、不写入数据
+  const isFreeSelection = !!wordIds && wordIds.length > 0;
+  const apiMode = isFreeSelection ? "preview" : reviewMode === "zen" ? "review" : reviewMode;
   const isZen = reviewMode === "zen";
+  const isPreview = reviewMode === "preview" || isFreeSelection;
 
   useEffect(() => {
-    startReview(apiMode);
-  }, [startReview, apiMode]);
+    startReview(apiMode, wordIds);
+  }, [startReview, apiMode, wordIds]);
 
   // Zen mode: auto-restart when completed
   useEffect(() => {
@@ -124,14 +128,24 @@ function ReviewSession({ reviewMode, onBack }: { reviewMode: string; onBack: () 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Badge tone="accent">已复习 {stats.reviewed}</Badge>
           {stats.again > 0 && <Badge tone="warm">不会 {stats.again}</Badge>}
           {stats.hard > 0 && <Badge>困难 {stats.hard}</Badge>}
           {stats.good > 0 && <Badge tone="accent">良好 {stats.good}</Badge>}
           {stats.easy > 0 && <Badge tone="accent">简单 {stats.easy}</Badge>}
+          {deferredNewCards > 0 && !isPreview && (
+            <Badge tone="warm">{deferredNewCards} 张新卡已延迟（新卡配额）</Badge>
+          )}
         </div>
-        <Button variant="ghost" size="sm" onClick={onBack}>退出</Button>
+        <div className="flex items-center gap-2">
+          {lastAnswer && !isPreview && (
+            <Button variant="ghost" size="sm" disabled={loading} onClick={() => void undoLast()}>
+              <Undo2 className="h-4 w-4" />撤销
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={onBack}>退出</Button>
+        </div>
       </div>
 
       <ReviewProgressBar completed={stats.reviewed} remaining={remaining} />
@@ -140,8 +154,14 @@ function ReviewSession({ reviewMode, onBack }: { reviewMode: string; onBack: () 
         card={currentCard}
         loading={loading}
         error={error}
+        preview={isPreview}
         onAnswer={answer}
         onSkip={skip}
+        onSuspend={isPreview ? undefined : suspendCurrent}
+        onUndo={isPreview ? undefined : undoLast}
+        canUndo={!isPreview && !!lastAnswer}
+        onPrev={browsePrev}
+        onNext={browseNext}
         onClearWeakSignal={clearWeakSignal}
       />
     </div>
@@ -149,6 +169,9 @@ function ReviewSession({ reviewMode, onBack }: { reviewMode: string; onBack: () 
 }
 
 export function ReviewPage() {
+  const [searchParams] = useSearchParams();
+  const wordIdsParam = searchParams.get("wordIds");
+  const freeWordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
   const [mode, setMode] = useState<"select" | "session">("select");
   const [reviewMode, setReviewMode] = useState("review");
 
@@ -156,6 +179,8 @@ export function ReviewPage() {
     setReviewMode(m);
     setMode("session");
   };
+
+  const isFreeSelection = !!freeWordIds && freeWordIds.length > 0;
 
   return (
     <div className="space-y-6">
@@ -165,8 +190,12 @@ export function ReviewPage() {
           {mode === "select" ? "选择复习模式开始训练" : "复习进行中"}
         </p>
       </div>
-      {mode === "select" ? (
+      {mode === "select" && !isFreeSelection ? (
         <ReviewModeSelector onStart={handleStart} />
+      ) : isFreeSelection ? (
+        <ReviewSession reviewMode="preview" wordIds={freeWordIds} onBack={() => setMode("select")} />
+      ) : reviewMode === "cram" ? (
+        <DrillSession onBack={() => setMode("select")} />
       ) : (
         <ReviewSession reviewMode={reviewMode} onBack={() => setMode("select")} />
       )}

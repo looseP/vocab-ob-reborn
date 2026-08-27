@@ -160,6 +160,26 @@ export interface IReviewRepository {
     Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
   >;
 
+  /** Due candidate pool (with needs_recheck) consumed by the P1 queue-priority builder. */
+  findDueCandidates(userId: string, wordbookId: string, limit: number): Promise<
+    Array<{ progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
+  >;
+
+  /** All active (non-suspended) cards regardless of due_at — used by cram/preview practice modes. */
+  findPracticeCards(userId: string, wordbookId: string, limit: number): Promise<
+    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
+  >;
+
+  /** Free-review selection: fetch words by ids directly (published only), independent of review progress. */
+  findWordsByIds(wordIds: string[]): Promise<
+    Array<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }>
+  >;
+
+  /** Drill candidates: already-reviewed words joined with examples for cloze resolution. */
+  findDrillCandidates(userId: string, wordbookId: string, limit: number): Promise<
+    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; examples: Json } }>
+  >;
+
   getStats?(userId: string, wordbookId: string): Promise<{
     todayCount: number;
     totalCount: number;

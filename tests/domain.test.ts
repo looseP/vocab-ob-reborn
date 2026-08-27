@@ -113,14 +113,14 @@ describe("ReviewCard entity", () => {
     expect(card.isAnswerable).toBe(false);
   });
 
-  it("isLeech triggers at 8+ lapses", () => {
-    const card = new ReviewCard(makeProgressRow({ lapse_count: 8 }),
+  it("isLeech triggers at 2+ lapses", () => {
+    const card = new ReviewCard(makeProgressRow({ lapse_count: 2 }),
       { id: "w1", slug: "aboard", title: "aboard", lemma: "aboard" });
     expect(card.isLeech).toBe(true);
   });
 
   it("isLeech false below threshold", () => {
-    const card = new ReviewCard(makeProgressRow({ lapse_count: 7 }),
+    const card = new ReviewCard(makeProgressRow({ lapse_count: 1 }),
       { id: "w1", slug: "aboard", title: "aboard", lemma: "aboard" });
     expect(card.isLeech).toBe(false);
   });

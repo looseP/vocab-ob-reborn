@@ -37,6 +37,10 @@ function makeMockL2Repo(overrides: Partial<IL2ProgressRepository> = {}): IL2Prog
 function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReviewRepository {
   return {
     findDueCards: vi.fn(async () => []),
+    findDueCandidates: vi.fn(async () => []),
+    findPracticeCards: vi.fn(async () => []),
+    findWordsByIds: vi.fn(async () => []),
+    findDrillCandidates: vi.fn(async () => []),
     checkIdempotency: vi.fn(async () => null),
     findProgressForUpdate: vi.fn(async () => null),
     findProgressForSkip: vi.fn(async () => null),

@@ -58,6 +58,8 @@ export const reviewAnswerSchema = z.object({
   rating: reviewRatingSchema,
   sessionId: uuidSchema,
   idempotencyKey: z.string().min(1).max(200).optional(),
+  // Mode-aware side-effect boundary (P0): cram is a no-persistence self-test.
+  mode: z.enum(["review", "cram", "preview", "zen"]).optional(),
 });
 
 export const reviewSkipSchema = z.object({

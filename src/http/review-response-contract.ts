@@ -66,6 +66,49 @@ export const reviewStatsResponseSchema = z.object({
   }).strict(),
 }).strict();
 
+/**
+ * GET /api/review/stats/dashboard —— 仪表盘汇总统计。
+ * 接线原项目 StatsService：连续打卡(streakDays)、近 7/30 天复习量、
+ * 到期/已追踪/总词数、评分分布与复习预测。全部基于 Asia/Shanghai 显示时区。
+ */
+export const reviewDashboardStatsResponseSchema = z.object({
+  totalWords: z.number().int().nonnegative(),
+  trackedWords: z.number().int().nonnegative(),
+  dueToday: z.number().int().nonnegative(),
+  reviewedToday: z.number().int().nonnegative(),
+  reviewed7d: z.number().int().nonnegative(),
+  reviewed30d: z.number().int().nonnegative(),
+  streakDays: z.number().int().nonnegative(),
+  notesCount: z.number().int().nonnegative(),
+  ratingDist: z.object({
+    again: z.number().int().nonnegative(),
+    hard: z.number().int().nonnegative(),
+    good: z.number().int().nonnegative(),
+    easy: z.number().int().nonnegative(),
+  }).strict(),
+  forecast: z.object({
+    dueNow: z.number().int().nonnegative(),
+    due7d: z.number().int().nonnegative(),
+    due14d: z.number().int().nonnegative(),
+  }).strict(),
+}).strict();
+
+/** GET /api/review/drill/queue —— cram 练习变体候选（cloze/definition 自测）。 */
+export const reviewDrillQueueResponseSchema = z.object({
+  items: z.array(z.object({
+    progressId: z.string(),
+    wordId: z.string(),
+    lemma: z.string(),
+    title: z.string(),
+    slug: z.string(),
+    shortDefinition: z.string().nullable(),
+    state: reviewStateSchema,
+    clozeText: z.string(),
+    clozeLength: z.number().int().nonnegative(),
+    clozeSource: z.string(),
+  }).strict()),
+}).strict();
+
 export const reviewLeechesResponseSchema = z.object({
   items: z.array(z.object({
     progressId: z.string(),

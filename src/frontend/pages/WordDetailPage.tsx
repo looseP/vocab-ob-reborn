@@ -5,6 +5,7 @@ import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Spinner } from "@/frontend/components/ui/Spinner";
+import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
@@ -95,6 +96,23 @@ export function WordDetailPage() {
     ["后缀", meta.morphology_suffix],
   ].filter(([, v]) => typeof v === "string" && v.length > 0) as Array<[string, string]>;
   const family = meta.morphology_family ?? [];
+  // aliases 列的 DB 默认值是 ['']（含一个空串），必须过滤掉，否则 stub 词会被
+  // 误判为“有内容”，并渲染出空的别名区块。
+  const aliases = (word.aliases ?? []).filter((alias) => alias.trim().length > 0);
+
+  // Stub words (e.g. created via batch import with only a lemma) have no
+  // displayable content — render an explicit empty state instead of a bare page.
+  const hasContent =
+    (word.definition_md ?? "").trim().length > 0 ||
+    (word.body_md ?? "").trim().length > 0 ||
+    (word.prototype_text ?? "").trim().length > 0 ||
+    morphologyParts.length > 0 ||
+    family.length > 0 ||
+    (meta.mnemonic_text ?? "").trim().length > 0 ||
+    (meta.semantic_chain ?? "").trim().length > 0 ||
+    (meta.etymology_narrative ?? "").trim().length > 0 ||
+    (word.examples ?? []).length > 0 ||
+    aliases.length > 0;
 
   return (
     <div className="space-y-6">
@@ -133,6 +151,15 @@ export function WordDetailPage() {
           </p>
         )}
       </Card>
+
+      {!hasContent && (
+        <Card>
+          <EmptyState
+            title="该词条暂无详细内容"
+            description="此词条可能由批量导入或捕获创建，尚未补充释义、词源等资料。你仍可以在这里添加自己的笔记。"
+          />
+        </Card>
+      )}
 
       {(word.definition_md ?? "").trim().length > 0 && (
         <SectionCard title="核心释义">
@@ -225,10 +252,10 @@ export function WordDetailPage() {
         </SectionCard>
       )}
 
-      {word.aliases && word.aliases.length > 0 && (
+      {aliases.length > 0 && (
         <SectionCard title="别名">
           <div className="flex flex-wrap gap-2">
-            {word.aliases.map((alias) => (
+            {aliases.map((alias) => (
               <span
                 key={alias}
                 className="rounded-full bg-[var(--color-pill-warm-bg)] px-3 py-1 text-sm text-[var(--color-pill-warm-text)]"
