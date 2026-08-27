@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/frontend/components/ui/Button";
 import { Card } from "@/frontend/components/ui/Card";
@@ -53,6 +53,37 @@ interface ReviewCardViewProps {
  */
 export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip, onPrev, onNext, onClearWeakSignal, onSuspend, onUndo, canUndo, reviewContext, reviewProgress }: ReviewCardViewProps) {
   const [revealed, setRevealed] = useState(false);
+
+  // 操作区容器：评分/跳过/挂起/撤销/翻页后把焦点移回这里，
+  // 避免按钮卸载后焦点掉回 body（键盘/读屏用户的焦点链断裂）。
+  const actionRef = useRef<HTMLDivElement>(null);
+  const refocusActions = () => {
+    requestAnimationFrame(() => actionRef.current?.focus());
+  };
+  const handleAnswer = (rating: "again" | "hard" | "good" | "easy") => {
+    onAnswer(rating);
+    refocusActions();
+  };
+  const handleSkip = () => {
+    onSkip();
+    refocusActions();
+  };
+  const handleSuspend = () => {
+    onSuspend?.();
+    refocusActions();
+  };
+  const handleUndo = () => {
+    onUndo?.();
+    refocusActions();
+  };
+  const handlePrev = () => {
+    onPrev?.();
+    refocusActions();
+  };
+  const handleNext = () => {
+    onNext?.();
+    refocusActions();
+  };
 
   // 切换卡片时重置翻转状态
   useEffect(() => {
@@ -256,24 +287,34 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
       </div>
 
       {preview ? (
-        <div className="flex justify-center gap-3 pt-4">
-          <Button variant="secondary" size="lg" disabled={loading} onClick={onPrev}>
+        <div
+          ref={actionRef}
+          tabIndex={-1}
+          aria-label="卡片导航操作区"
+          className="flex justify-center gap-3 pt-4 focus:outline-none"
+        >
+          <Button variant="secondary" size="lg" disabled={loading} onClick={handlePrev}>
             <ArrowLeft className="h-4 w-4" /> 上一个
           </Button>
-          <Button variant="secondary" size="lg" disabled={loading} onClick={onNext}>
+          <Button variant="secondary" size="lg" disabled={loading} onClick={handleNext}>
             下一个 <ArrowRight className="h-4 w-4" />
           </Button>
         </div>
       ) : (
         <>
-          <div className="flex justify-center gap-2 pt-4">
+          <div
+            ref={actionRef}
+            tabIndex={-1}
+            aria-label="评分操作区"
+            className="flex justify-center gap-2 pt-4 focus:outline-none"
+          >
             {ratings.map((r) => (
               <Button
                 key={r.value}
                 variant={r.variant}
                 size="lg"
                 disabled={loading}
-                onClick={() => onAnswer(r.value)}
+                onClick={() => handleAnswer(r.value)}
               >
                 {r.label}
                 <Kbd>{r.key}</Kbd>
@@ -282,11 +323,11 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
           </div>
 
           <div className="text-center">
-            <Button variant="ghost" size="sm" disabled={loading} onClick={onSkip}>
+            <Button variant="ghost" size="sm" disabled={loading} onClick={handleSkip}>
               跳过<Kbd>S</Kbd>
             </Button>
             {onSuspend && (
-              <Button variant="ghost" size="sm" disabled={loading} onClick={onSuspend} className="ml-3">
+              <Button variant="ghost" size="sm" disabled={loading} onClick={handleSuspend} className="ml-3">
                 挂起<Kbd>P</Kbd>
               </Button>
             )}
