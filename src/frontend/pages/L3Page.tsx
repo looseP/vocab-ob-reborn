@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { L3FrontendClient } from "@/l3/frontend/contract";
 import { L3Shell, type L3ShellSection } from "@/frontend/components/L3Shell";
 import { L3ContextPage } from "@/frontend/pages/L3ContextPage";
 import { L3GraphPage } from "@/frontend/pages/L3GraphPage";
@@ -38,7 +39,7 @@ export function L3Page() {
   const [wordHandoff, setWordHandoff] = useState<L3WordHandoff | null>(null);
   const [sourceHandoff, setSourceHandoff] = useState<L3SourceHandoff | null>(null);
   const [activeReadStale, setActiveReadStale] = useState<L3ActiveReadStaleState | null>(null);
-  const l3Client = useMemo(() => createBrowserL3Client(), []);
+  const l3Client = useMemo<L3FrontendClient>(() => createBrowserL3Client(), []);
 
   const openProposal = (proposalId: string) => {
     setSelectedProposalId(proposalId);
