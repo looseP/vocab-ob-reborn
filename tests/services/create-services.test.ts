@@ -81,12 +81,13 @@ describe("createServices wiring", () => {
     });
 
     await services.reviews.getQueue("u1", "wb1", 5, "cram");
-    expect(reviews.findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 5);
+    // +1 探针：多取一行以判断分页 hasMore
+    expect(reviews.findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 6);
     expect(reviews.findDueCards).not.toHaveBeenCalled();
     expect(sessions.getOrCreateToday).toHaveBeenCalledWith("u1", "wb1", "cram");
 
     await services.reviews.getQueue("u1", "wb1", 5, "review");
-    expect(reviews.findDueCards).toHaveBeenCalledWith("u1", "wb1", 5);
+    expect(reviews.findDueCards).toHaveBeenCalledWith("u1", "wb1", 6);
     expect(reviews.findPracticeCards).toHaveBeenCalledTimes(1);
 
     await services.reviews.getStats("u1", "wb1");

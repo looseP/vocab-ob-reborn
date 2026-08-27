@@ -53,6 +53,8 @@ export const reviewQueueResponseSchema = z.object({
     total: z.number().int().nonnegative(),
     remaining: z.number().int().nonnegative(),
   }).strict(),
+  /** 是否还有更多卡片可继续分页加载（配合 offset 使用）。 */
+  hasMore: z.boolean(),
 }).strict();
 
 export const reviewStatsResponseSchema = z.object({

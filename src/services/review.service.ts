@@ -76,6 +76,8 @@ export interface ReviewQueueDto {
   items: ReviewQueueItemDto[];
   session: { id: string; mode: string; cardsSeen: number };
   stats: { total: number; remaining: number; deferredNewCards?: number };
+  /** 是否还有更多卡片可继续分页加载（offset + items.length < 池大小）。 */
+  hasMore: boolean;
 }
 
 export interface EnqueueCardsInput {
@@ -167,7 +169,7 @@ export class ReviewService {
    *   overdue window and state tier, and a new-card quota is applied
    *   (deferredNewCards in stats).
    */
-  async getQueue(userId: string, wordbookId: string, limit = 20, mode = "review", wordIds?: string[]): Promise<ReviewQueueDto> {
+  async getQueue(userId: string, wordbookId: string, limit = 20, mode = "review", wordIds?: string[], offset = 0): Promise<ReviewQueueDto> {
     if (!this.deps.findDueCards || !this.deps.getOrCreateTodaySession) {
       throw new Error("Review queue dependencies not configured");
     }
@@ -201,22 +203,26 @@ export class ReviewService {
             total: ordered.length,
             remaining: ordered.length,
           },
+          hasMore: false,
         };
       }
 
       const deck = this.deps.findPracticeCards ?? this.deps.findDueCards;
-      const practiceCards = await deck(userId, wordbookId, limit);
+      // +1 探针：多取一行以判断是否还有下一页
+      const fetched = await deck(userId, wordbookId, limit + offset + 1);
+      const page = fetched.slice(offset, offset + limit);
       return {
-        items: practiceCards.map((card) => this.toQueueItem(card)),
+        items: page.map((card) => this.toQueueItem(card)),
         session: {
           id: session.id,
           mode: session.mode,
           cardsSeen: session.cards_seen,
         },
         stats: {
-          total: practiceCards.length,
-          remaining: practiceCards.length,
+          total: page.length,
+          remaining: page.length,
         },
+        hasMore: fetched.length > offset + limit,
       };
     }
 
@@ -226,18 +232,20 @@ export class ReviewService {
       : null;
     if (!candidates || candidates.length === 0) {
       // 依赖缺失或无到期候选时退回 findDueCards 直出，保持向后兼容
-      const dueCards = await this.deps.findDueCards(userId, wordbookId, limit);
+      const fetched = await this.deps.findDueCards(userId, wordbookId, limit + offset + 1);
+      const page = fetched.slice(offset, offset + limit);
       return {
-        items: dueCards.map((card) => this.toQueueItem(card)),
+        items: page.map((card) => this.toQueueItem(card)),
         session: {
           id: session.id,
           mode: session.mode,
           cardsSeen: session.cards_seen,
         },
         stats: {
-          total: dueCards.length,
-          remaining: dueCards.length,
+          total: page.length,
+          remaining: page.length,
         },
+        hasMore: fetched.length > offset + limit,
       };
     }
 
@@ -253,6 +261,7 @@ export class ReviewService {
       new Date(),
       limit,
       weights,
+      offset,
     );
 
     return {
@@ -275,10 +284,11 @@ export class ReviewService {
         cardsSeen: session.cards_seen,
       },
       stats: {
-        total: batch.items.length,
-        remaining: batch.items.length,
+        total: batch.eligibleTotal,
+        remaining: Math.max(0, batch.eligibleTotal - offset),
         deferredNewCards: batch.deferredNewCards,
       },
+      hasMore: batch.hasMore,
     };
   }
 

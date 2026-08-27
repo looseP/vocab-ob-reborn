@@ -42,10 +42,19 @@ export function NotesPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<NotesResponse>("/notes?limit=50")
-      .then((result) => setNotes(result.items ?? []))
-      .catch((err) => setError(err instanceof Error ? err.message : "加载失败"))
-      .finally(() => setLoading(false));
+    const controller = new AbortController();
+    apiFetch<NotesResponse>("/notes?limit=50", { signal: controller.signal })
+      .then((result) => {
+        if (!controller.signal.aborted) setNotes(result.items ?? []);
+      })
+      .catch((err) => {
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "加载失败");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    // 组件卸载时中止请求，避免在已卸载组件上 setState（React 竞态警告）
+    return () => controller.abort();
   }, []);
 
   return (

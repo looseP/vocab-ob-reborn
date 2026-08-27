@@ -39,12 +39,13 @@ export function reviewRoutes(services: Services) {
   app.get("/queue", async (c) => {
     const userId = c.get("userId");
     const limit = Math.min(parseInt(c.req.query("limit") ?? "20", 10) || 20, 100);
+    const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
     const mode = c.req.query("mode") === "cram" ? "cram" : c.req.query("mode") === "preview" ? "preview" : "review";
     // 自由复习勾选入口（P2）：wordIds 逗号分隔，按用户选定顺序浏览
     const wordIdsParam = c.req.query("wordIds");
     const wordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
     const wordbook = await services.wordbooks.getOrCreateDefault(userId);
-    const queue = await services.reviews.getQueue(userId, wordbook.id, limit, mode, wordIds);
+    const queue = await services.reviews.getQueue(userId, wordbook.id, limit, mode, wordIds, offset);
     return c.json(queue);
   });
 

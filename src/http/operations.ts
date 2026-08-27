@@ -195,6 +195,7 @@ const l2FieldRequestSchema = z.object({
 const reviewQueueQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   mode: z.enum(["review", "cram", "preview"]).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 const reviewLeechesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),

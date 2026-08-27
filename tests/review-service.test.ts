@@ -658,21 +658,21 @@ describe("ReviewService — P0 practice-mode behavior", () => {
 
     // cram → practice deck, NOT the due deck
     await service.getQueue("u1", "wb1", 20, "cram");
-    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 21);
     expect(findDueCards).not.toHaveBeenCalled();
 
     // preview → practice deck, NOT the due deck
     findPracticeCards.mockClear();
     findDueCards.mockClear();
     await service.getQueue("u1", "wb1", 20, "preview");
-    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 21);
     expect(findDueCards).not.toHaveBeenCalled();
 
     // review → due deck only
     findPracticeCards.mockClear();
     findDueCards.mockClear();
     await service.getQueue("u1", "wb1", 20, "review");
-    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 21);
     expect(findPracticeCards).not.toHaveBeenCalled();
   });
 
@@ -687,7 +687,7 @@ describe("ReviewService — P0 practice-mode behavior", () => {
     });
 
     await service.getQueue("u1", "wb1", 20, "cram");
-    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 21);
   });
 
   it("getQueue forwards the practice mode to the session", async () => {
@@ -703,6 +703,33 @@ describe("ReviewService — P0 practice-mode behavior", () => {
 
     await service.getQueue("u1", "wb1", 20, "preview");
     expect(getOrCreateTodaySession).toHaveBeenCalledWith("u1", "wb1", "preview");
+  });
+
+  it("paginates practice decks by offset and reports hasMore via the +1 probe", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findPracticeCards = vi.fn(async () =>
+      Array.from({ length: 41 }, () => makePracticeCard()),
+    );
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findPracticeCards,
+      getOrCreateTodaySession: makeSession("cram"),
+    });
+
+    const page1 = await service.getQueue("u1", "wb1", 20, "cram", undefined, 0);
+    expect(page1.items.length).toBe(20);
+    expect(page1.hasMore).toBe(true);
+    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 21);
+
+    const page2 = await service.getQueue("u1", "wb1", 20, "cram", undefined, 20);
+    expect(page2.items.length).toBe(20);
+    expect(page2.hasMore).toBe(true);
+
+    const page3 = await service.getQueue("u1", "wb1", 20, "cram", undefined, 40);
+    expect(page3.items.length).toBe(1);
+    expect(page3.hasMore).toBe(false);
   });
 
   it("submitAnswer in cram mode is a no-persistence self-test (no tx, no repos, no outbox)", async () => {
@@ -823,7 +850,7 @@ describe("ReviewService — P1 queue-priority routing", () => {
     });
 
     const queue = await service.getQueue("u1", "wb1", 20, "review");
-    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 21);
     expect(queue.stats).toEqual({ total: 1, remaining: 1 });
   });
 
@@ -841,8 +868,34 @@ describe("ReviewService — P1 queue-priority routing", () => {
     });
 
     const queue = await service.getQueue("u1", "wb1", 20, "review");
-    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findDueCards).toHaveBeenCalledWith("u1", "wb1", 21);
     expect(queue.items[0].queueBucket).toBeUndefined();
+  });
+
+  it("paginates review queue by offset and reports hasMore from the eligible pool", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const candidates = Array.from({ length: 25 }, () => ({
+      progress: makeProgressRow({ id: `p-${Math.random()}` }),
+      word: makeWord("w-1"),
+    }));
+    const findDueCandidates = vi.fn(async () => candidates);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findDueCandidates,
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const page1 = await service.getQueue("u1", "wb1", 20, "review", undefined, 0);
+    expect(page1.items.length).toBe(20);
+    expect(page1.hasMore).toBe(true);
+    expect(page1.stats.total).toBe(25);
+
+    const page2 = await service.getQueue("u1", "wb1", 20, "review", undefined, 20);
+    expect(page2.items.length).toBe(5);
+    expect(page2.hasMore).toBe(false);
+    expect(page2.stats.total).toBe(25);
   });
 });
 
@@ -899,7 +952,7 @@ describe("ReviewService — P2 free-review selection", () => {
     const queue = await service.getQueue("u1", "wb1", 20, "preview", []);
 
     expect(findWordsByIds).not.toHaveBeenCalled();
-    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 20);
+    expect(findPracticeCards).toHaveBeenCalledWith("u1", "wb1", 21);
     expect(queue.stats).toEqual({ total: 0, remaining: 0 });
   });
 });
