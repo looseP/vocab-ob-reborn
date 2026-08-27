@@ -475,6 +475,22 @@ button {
   animation: rise-in 180ms ease-out both;
 }
 
+/* Sheet drawer animation (右侧滑入) */
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-sheet {
+  animation: sheet-in 160ms ease-out both;
+}
+
 .vocab-topology {
   --graph-root: #5f63c7;
   --graph-synonym: var(--color-accent);

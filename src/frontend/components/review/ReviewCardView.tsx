@@ -37,17 +37,21 @@ interface ReviewCardViewProps {
   onClearWeakSignal?: (wordId: string) => void;
   /** 挂起当前卡（P0：v1 的 p/P 快捷键对齐）。 */
   onSuspend?: () => void;
-  /** 撤销最近一次评分（P0：v1 的 u/U 快捷键对齐）。 */
+  /** 撤销最近一次评分（P0：v1 的 u/U 快捷键对齐 + Ctrl/Cmd+Z）。 */
   onUndo?: () => void;
   /** 是否存在可撤销的评分。 */
   canUndo?: boolean;
+  /** 当前复习会话的 mode 与 wordIds，点击"查看详情"时塞入路由 state，便于返回按钮渲染。 */
+  reviewContext?: { mode: string; wordIds?: string[] };
+  /** 当前在队列中的进度，仅用于文案展示（返回复习后会通过缓存还原）。 */
+  reviewProgress?: { reviewed: number; total: number };
 }
 
 /**
  * 翻转卡片交互（P2）：非 preview 模式点击卡片在「词形 ↔ 释义」间切换，
  * 先自测回忆再评分；preview 模式直接展示全部内容用于浏览。
  */
-export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip, onPrev, onNext, onClearWeakSignal, onSuspend, onUndo, canUndo }: ReviewCardViewProps) {
+export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip, onPrev, onNext, onClearWeakSignal, onSuspend, onUndo, canUndo, reviewContext, reviewProgress }: ReviewCardViewProps) {
   const [revealed, setRevealed] = useState(false);
 
   // 切换卡片时重置翻转状态
@@ -55,8 +59,10 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
     setRevealed(false);
   }, [card?.progressId]);
 
-  // 键盘快捷键（P0，对齐 v1）：评分模式 空格/Enter 翻转、1-4 评分、S 跳过、P 挂起、U 撤销；
-  // preview 模式 ←/→ 翻页。输入控件聚焦时豁免。
+  // 键盘快捷键（P0，对齐 v1）：
+  //   评分模式：空格/Enter 翻转、1-4 评分、S 跳过、P 挂起、U 或 Ctrl/Cmd+Z 撤销；
+  //   preview 模式：←/→ 翻页。
+  // 输入控件聚焦时豁免。
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -66,10 +72,19 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
       ) {
         return;
       }
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-
+      const modifierActive = Boolean(event.metaKey || event.ctrlKey);
       const key = event.key.toLowerCase();
       const isPreview = Boolean(preview);
+
+      // Ctrl/Cmd+Z = 撤销（即使卡面仍在 loading，只要 canUndo 就触发）
+      if (modifierActive && !event.altKey && (key === "z" || event.key === "Z")) {
+        if (isPreview) return; // preview 不评分，无可撤销
+        if (!canUndo) return;
+        event.preventDefault();
+        onUndo?.();
+        return;
+      }
+      if (modifierActive || event.altKey) return;
 
       if (isPreview) {
         if (key === "arrowleft") {
@@ -169,7 +184,14 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
           )}
         </div>
         <Link
-          to={`/words/${card.word.slug}`}
+          to={{ pathname: `/words/${card.word.slug}` }}
+          state={{
+            from: "review",
+            mode: reviewContext?.mode,
+            wordIds: reviewContext?.wordIds,
+            reviewed: reviewProgress?.reviewed,
+            total: reviewProgress?.total,
+          }}
           className="text-sm font-semibold text-[var(--color-accent)]"
         >
           查看详情
@@ -271,7 +293,7 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
           </div>
 
           <p className="text-center text-xs text-[var(--color-ink-soft)] opacity-70">
-            空格 翻转 · 1-4 评分 · S 跳过 · P 挂起{canUndo ? " · U 撤销上一张" : ""}
+            空格 翻转 · 1-4 评分 · S 跳过 · P 挂起 · H 历史{canUndo ? " · U / Ctrl+Z 撤销上一张" : ""}
           </p>
         </>
       )}
