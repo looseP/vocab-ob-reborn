@@ -117,9 +117,11 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
   // Zen mode: auto-restart when completed AND no more pages remain.
   // 队列分页（P2）：completed 但仍有更多卡片时由 useReview 自动续载下一页；
   // 只有无更多卡片时禅模式才重新拉取队列，避免无限循环中断。
+  // force=true：绕过 sessionStorage 缓存（缓存的已完成会话会让 startReview
+  // 反复恢复同一 completed 状态，导致无限"重新加载队列中..."），真实重拉队列。
   useEffect(() => {
     if (completed && isZen && !hasMore) {
-      const timer = setTimeout(() => startReview(apiMode), 800);
+      const timer = setTimeout(() => startReview(apiMode, undefined, { force: true }), 800);
       return () => clearTimeout(timer);
     }
   }, [completed, isZen, hasMore, apiMode, startReview]);
