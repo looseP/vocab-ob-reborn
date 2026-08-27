@@ -232,9 +232,11 @@ export function ReviewPage() {
   const freeWordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
   const [mode, setMode] = useState<"select" | "session">("select");
   const [reviewMode, setReviewMode] = useState("review");
+  // 检测到未完成的复习会话时，不静默进入；先展示"继续上次 / 重新开始"确认条。
+  const [pendingRestore, setPendingRestore] = useState<{ mode: string; reviewed: number; total: number } | null>(null);
 
   // 首次挂载时检查 sessionStorage 是否有可恢复的复习会话。
-  // 命中后直接进入 session 视图，startReview(force=false) 会自动走缓存恢复；
+  // 命中后先提示用户选择"继续上次"或"重新开始"（不静默自动进入）；
   // 未命中则保持 select 模式让用户手动选模式。
   useEffect(() => {
     try {
@@ -242,7 +244,7 @@ export function ReviewPage() {
       const prefix = "vocab:review:session:";
       const now = Date.now();
       const TTL = 30 * 60 * 1000;
-      let best: { mode: string; reviewed: number; savedAt: number } | null = null;
+      let best: { mode: string; reviewed: number; total: number; savedAt: number } | null = null;
       for (let i = 0; i < window.sessionStorage.length; i++) {
         const key = window.sessionStorage.key(i);
         if (!key || !key.startsWith(prefix)) continue;
@@ -257,15 +259,14 @@ export function ReviewPage() {
           if (parsed.completed || !parsed.queue || parsed.queue.length === 0) continue;
           // 优先选择进度最新（savedAt 最大）的会话
           if (!best || parsed.savedAt > best.savedAt) {
-            best = { mode: parsed.mode, reviewed: parsed.stats.reviewed, savedAt: parsed.savedAt };
+            best = { mode: parsed.mode, reviewed: parsed.stats.reviewed, total: parsed.queue.length, savedAt: parsed.savedAt };
           }
         } catch {
           // ignore corrupt entry
         }
       }
       if (best) {
-        setReviewMode(best.mode);
-        setMode("session");
+        setPendingRestore({ mode: best.mode, reviewed: best.reviewed, total: best.total });
       }
     } catch {
       /* private mode / quota: 静默降级到 select 模式 */
@@ -274,33 +275,57 @@ export function ReviewPage() {
 
   const [forceBootstrap, setForceBootstrap] = useState(false);
 
-  // 显式点击"开始"按钮：同步清对应 mode 的缓存，再进入会话（force=true 让 useReview 发起新服务器请求）。
-  // 这样用户点击"开始"一定是开一个全新的会话（不会命中旧缓存）。
-  const handleStart = (m: string) => {
+  // 清空指定 mode 的复习会话缓存（"重新开始/显式开始"时调用）。
+  const clearModeCache = (m: string) => {
     try {
-      if (typeof window !== "undefined") {
-        const prefix = "vocab:review:session:";
-        for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
-          const key = window.sessionStorage.key(i);
-          if (!key || !key.startsWith(prefix)) continue;
-          const raw = window.sessionStorage.getItem(key);
-          if (!raw) continue;
-          try {
-            const parsed = JSON.parse(raw) as { mode: string };
-            if (parsed.mode === m) window.sessionStorage.removeItem(key);
-          } catch {
-            window.sessionStorage.removeItem(key);
-          }
+      if (typeof window === "undefined") return;
+      const prefix = "vocab:review:session:";
+      for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
+        const key = window.sessionStorage.key(i);
+        if (!key || !key.startsWith(prefix)) continue;
+        const raw = window.sessionStorage.getItem(key);
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw) as { mode: string };
+          if (parsed.mode === m) window.sessionStorage.removeItem(key);
+        } catch {
+          window.sessionStorage.removeItem(key);
         }
       }
     } catch {
       /* ignore */
     }
+  };
+
+  // 显式点击"开始"按钮：同步清对应 mode 的缓存，再进入会话（force=true 让 useReview 发起新服务器请求）。
+  // 这样用户点击"开始"一定是开一个全新的会话（不会命中旧缓存）。
+  const handleStart = (m: string) => {
+    clearModeCache(m);
     setReviewMode(m);
     setForceBootstrap(true);
     setMode("session");
   };
 
+  // 确认条：继续上次进度（force=false，交给 useReview 从缓存恢复）。
+  const handleContinueRestore = () => {
+    if (!pendingRestore) return;
+    setReviewMode(pendingRestore.mode);
+    setForceBootstrap(false);
+    setPendingRestore(null);
+    setMode("session");
+  };
+
+  // 确认条：重新开始（清旧缓存 + force=true 新启一个会话）。
+  const handleStartFresh = () => {
+    if (!pendingRestore) return;
+    clearModeCache(pendingRestore.mode);
+    setReviewMode(pendingRestore.mode);
+    setForceBootstrap(true);
+    setPendingRestore(null);
+    setMode("session");
+  };
+
+  const restoreModeTitle = reviewModes.find((m) => m.key === pendingRestore?.mode)?.title ?? "上次复习";
   const isFreeSelection = !!freeWordIds && freeWordIds.length > 0;
 
   return (
@@ -312,7 +337,28 @@ export function ReviewPage() {
         </p>
       </div>
       {mode === "select" && !isFreeSelection ? (
-        <ReviewModeSelector onStart={handleStart} />
+        <>
+          {pendingRestore && (
+            <Card className="border-[var(--color-accent-border,var(--color-border-strong))]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <RotateCcw className="h-5 w-5 text-[var(--color-accent)]" />
+                  <div>
+                    <p className="text-sm font-medium text-[var(--color-ink)]">
+                      检测到未完成的{restoreModeTitle}会话（已复习 {pendingRestore.reviewed}/{pendingRestore.total}）
+                    </p>
+                    <p className="text-xs text-[var(--color-ink-soft)]">可继续上次进度，或清空重新开始</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={handleContinueRestore}>继续上次</Button>
+                  <Button size="sm" variant="secondary" onClick={handleStartFresh}>重新开始</Button>
+                </div>
+              </div>
+            </Card>
+          )}
+          <ReviewModeSelector onStart={handleStart} />
+        </>
       ) : isFreeSelection ? (
         <ReviewSession reviewMode="preview" wordIds={freeWordIds} onBack={() => setMode("select")} />
       ) : reviewMode === "cram" ? (

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, CheckCircle2, CalendarRange, CalendarClock } from "lucide-react";
+import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, CheckCircle2, CalendarRange, CalendarClock, RotateCcw } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
+import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { ReviewStatsPanel } from "@/frontend/components/review/ReviewStatsPanel";
 import { LeechPanel } from "@/frontend/components/review/LeechPanel";
 import { WordReviewTimeline } from "@/frontend/components/review/WordReviewTimeline";
@@ -63,9 +64,12 @@ export function DashboardPage() {
   const [totalWords, setTotalWords] = useState(0);
   const [dashboard, setDashboard] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    return Promise.all([
       apiFetch<QueueData>("/review/queue?limit=100").catch(() => null),
       apiFetch<WordsData>("/words?limit=1").catch(() => null),
       apiFetch<DashboardStats>("/review/stats/dashboard").catch(() => null),
@@ -73,9 +77,16 @@ export function DashboardPage() {
       if (queue) setDueCount(queue.stats.total);
       if (words) setTotalWords(words.total);
       setDashboard(dash);
-      setLoading(false);
-    });
+      // 三个数据源全部失败 → 明确错误态并提供重试；部分失败则保留已有数据继续展示
+      if (!queue && !words && !dash) {
+        setError("加载统计失败，请检查网络后重试");
+      }
+    }).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const effectiveTotal = dashboard?.totalWords ?? totalWords;
   const effectiveDue = dashboard?.dueToday ?? dueCount ?? 0;
@@ -88,6 +99,21 @@ export function DashboardPage() {
         <h1 className="section-title text-2xl font-bold text-[var(--color-ink)]">仪表盘</h1>
         <p className="text-sm text-[var(--color-ink-soft)]">学习进度和统计</p>
       </div>
+
+      {/* 加载失败：明确错误态 + 重试 */}
+      {error && (
+        <Card>
+          <EmptyState
+            title="无法加载统计"
+            description={error}
+            action={
+              <Button onClick={() => void load()}>
+                <RotateCcw className="h-4 w-4" />重试
+              </Button>
+            }
+          />
+        </Card>
+      )}
 
       {/* 统计卡片：核心指标 + 连续打卡 + 趋势 */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
