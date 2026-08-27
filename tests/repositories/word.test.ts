@@ -89,3 +89,48 @@ describe("WordRepository.insertMany", () => {
     expect(mock.calls).toHaveLength(0);
   });
 });
+
+describe("WordRepository.findPublic", () => {
+  it("adds a cefr predicate and binds the value when a cefr filter is provided", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 1 }],
+      "ORDER BY w.lemma": [
+        { id: "w-1", slug: "farcical", title: "farcical", lemma: "farcical", pos: "adj", cefr: "C2", ipa: null, short_definition: null },
+      ],
+    });
+    const repository = new WordRepository();
+
+    const result = await repository.findPublic({
+      filters: { cefr: "C2" },
+      pagination: { limit: 50, offset: 0 },
+      userId: "u-1",
+    });
+
+    expect(result.total).toBe(1);
+    // 最后执行的 data 查询应带 cefr 过滤条件，且参数绑定传入 C2
+    const dataQuery = mock.lastQuery!;
+    expect(dataQuery.text).toContain("w.cefr = $");
+    expect(dataQuery.params).toContain("C2");
+    // count 查询同样带 cefr 过滤
+    expect(mock.calls[0]!.text).toContain("w.cefr = $");
+    expect(mock.calls[0]!.params).toContain("C2");
+  });
+
+  it("omits the cefr predicate when no cefr filter is provided", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 0 }],
+      "ORDER BY w.lemma": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: {},
+      pagination: { limit: 50, offset: 0 },
+      userId: "u-1",
+    });
+
+    // SELECT 列表本身含 w.cefr 列，这里断言的是"无过滤条件"（WHERE 中无 w.cefr = 谓词）
+    expect(mock.calls[0]!.text).not.toContain("w.cefr = ");
+    expect(mock.lastQuery!.text).not.toContain("w.cefr = ");
+  });
+});
