@@ -221,7 +221,8 @@ export function useReview() {
       }
       const result = await apiFetch<QueueResponse>(`/review/queue?${params.toString()}`);
       if (!result.items || result.items.length === 0) {
-        setError("没有待复习的单词");
+        // 队列为空不是错误：不设 error，让完成/空态分支渲染"没有待复习的单词"，
+        // 避免禅模式空队列被误判为"无法加载复习队列"。
         setQueue([]);
         setSessionId(null);
         return;
