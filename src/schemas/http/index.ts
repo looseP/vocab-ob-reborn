@@ -31,6 +31,7 @@ export const wordsQuerySchema = z.object({
   freq: z.string().max(50).optional(),
   q: z.string().max(200).optional(),
   semantic: z.string().max(100).optional(),
+  cefr: z.string().max(10).optional(),
   review: z.enum(["all", "tracked", "due", "untracked"]).optional().default("all"),
   wordbookId: uuidSchema.optional(),
 });

@@ -95,6 +95,38 @@ describe("browser API request", () => {
     expect(result).toEqual({ data: payload, status: 201 });
   });
 
+  it("aborts a hanging request after timeoutMs and surfaces a readable TIMEOUT error", async () => {
+    // 永不 resolve 的 fetch：仅响应 signal 的 abort
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      await new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")), { once: true });
+      });
+      return response({ ok: true });
+    }) as unknown as typeof fetch;
+    const request = createBrowserRequest({ fetch: fetchImpl });
+    await expect(request("/api/slow", { timeoutMs: 50 })).rejects.toMatchObject({
+      status: 0,
+      code: "TIMEOUT",
+    });
+  });
+
+  it("keeps caller-provided abort (cancel) distinguishable from timeout", async () => {
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      await new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("aborted")), { once: true });
+      });
+      return response({ ok: true });
+    }) as unknown as typeof fetch;
+    const request = createBrowserRequest({ fetch: fetchImpl });
+    const controller = new AbortController();
+    const pending = request("/api/cancel", { timeoutMs: 5000, signal: controller.signal }).then(
+      () => "resolved",
+      (e: unknown) => `rejected:${e instanceof Error ? e.name : String(e)}`,
+    );
+    controller.abort();
+    await expect(pending).resolves.toMatch(/^rejected:AbortError/);
+  });
+
   it("keeps the L3 wire path while reusing shared request policy", async () => {
     const fetchImpl = vi.fn(async () => response({ items: [], limit: 20, cursor: null, nextCursor: null })) as unknown as typeof fetch;
     const client = createBrowserL3Client("/backend", fetchImpl);

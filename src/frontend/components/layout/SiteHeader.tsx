@@ -77,7 +77,8 @@ export function SiteHeader() {
         </nav>
 
         <div className="flex items-center gap-3">
-          <div className="hidden md:block">
+          {/* 词书切换在移动端也可见（顶部导航被隐藏时仍需能切换词书） */}
+          <div className="hidden min-[420px]:block">
             <WordbookSwitcher />
           </div>
           <button

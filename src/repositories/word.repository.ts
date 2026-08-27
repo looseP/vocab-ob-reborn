@@ -65,6 +65,12 @@ export class WordRepository extends BaseRepository implements IWordRepository {
       paramIdx++;
     }
 
+    if (filters.cefr) {
+      where.push(`w.cefr = $${paramIdx}`);
+      params.push(filters.cefr);
+      paramIdx++;
+    }
+
     if (wordbookId) {
       where.push(`EXISTS (
         SELECT 1 FROM wordbook_items wbi

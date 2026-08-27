@@ -70,6 +70,7 @@ export interface WordFilters {
   freq?: string;
   semantic?: string;
   review?: string;
+  cefr?: string;
 }
 
 export interface GetPublicWordsOptions {
