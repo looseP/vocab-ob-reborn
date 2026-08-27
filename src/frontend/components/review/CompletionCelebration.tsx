@@ -1,14 +1,19 @@
 import { motion } from "framer-motion";
-import { PartyPopper } from "lucide-react";
+import { PartyPopper, FastForward, Ban } from "lucide-react";
 import { Button } from "@/frontend/components/ui/Button";
 
 interface CompletionCelebrationProps {
   stats: { reviewed: number; again: number; hard: number; good: number; easy: number };
+  /** 本会话跳过的卡数（区分"已评分/跳过"，避免用户误以为全部完成）。 */
+  skipped?: number;
+  /** 本会话挂起的卡数。 */
+  suspended?: number;
   onRestart: () => void;
   onBack: () => void;
 }
 
-export function CompletionCelebration({ stats, onRestart, onBack }: CompletionCelebrationProps) {
+export function CompletionCelebration({ stats, skipped = 0, suspended = 0, onRestart, onBack }: CompletionCelebrationProps) {
+  const unfinished = skipped + suspended;
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
@@ -29,8 +34,27 @@ export function CompletionCelebration({ stats, onRestart, onBack }: CompletionCe
         今日复习已完成 🎉
       </h2>
       <p className="mt-2 text-[var(--color-ink-soft)]">
-        共复习 {stats.reviewed} 张卡片
+        已评分 {stats.reviewed} 张卡片
       </p>
+
+      {/* 跳过/挂起提示：让用户知道队列并非全部完成 */}
+      {unfinished > 0 && (
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+          {skipped > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-1 text-xs text-[var(--color-ink-soft)]">
+              <FastForward className="h-3.5 w-3.5" />跳过 {skipped}
+            </span>
+          )}
+          {suspended > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-[var(--color-rating-again-border)] bg-[var(--color-rating-again-bg)] px-3 py-1 text-xs text-[var(--color-accent-2)]">
+              <Ban className="h-3.5 w-3.5" />挂起 {suspended}
+            </span>
+          )}
+          {unfinished > 0 && (
+            <span className="text-xs text-[var(--color-ink-soft)]">共 {unfinished} 张未完成，可在下方再复习一轮或稍后处理</span>
+          )}
+        </div>
+      )}
 
       <div className="mt-8 grid grid-cols-4 gap-4">
         <div className="rounded-2xl border border-[var(--color-rating-again-border)] bg-[var(--color-rating-again-bg)] px-4 py-3 text-center">

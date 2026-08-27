@@ -80,6 +80,9 @@ interface PersistedSession {
   stats: { reviewed: number; again: number; hard: number; good: number; easy: number };
   deferredNewCards: number;
   completed: boolean;
+  /** 本会话跳过的卡数（完成页区分"已评分/跳过/挂起"）。旧缓存无此字段时按 0 处理。 */
+  skipped?: number;
+  suspended?: number;
   savedAt: number;
 }
 
@@ -154,6 +157,8 @@ export function useReview() {
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState({ reviewed: 0, again: 0, hard: 0, good: 0, easy: 0 });
   const [deferredNewCards, setDeferredNewCards] = useState(0);
+  const [skipped, setSkipped] = useState(0);
+  const [suspended, setSuspended] = useState(0);
   const [completed, setCompleted] = useState(false);
   const [lastAnswer, setLastAnswer] = useState<LastAnswer | null>(null);
   /** 本次会话对应的 wordIds（startReview 时记录），用于缓存分桶。 */
@@ -177,6 +182,8 @@ export function useReview() {
         setCurrentIndex(cached.currentIndex);
         setStats(cached.stats);
         setDeferredNewCards(cached.deferredNewCards);
+        setSkipped(cached.skipped ?? 0);
+        setSuspended(cached.suspended ?? 0);
         setCompleted(cached.completed);
         setError(null);
         setLastAnswer(null);
@@ -190,6 +197,8 @@ export function useReview() {
     setMode(mode);
     setCurrentIndex(0);
     setDeferredNewCards(0);
+    setSkipped(0);
+    setSuspended(0);
     setLastAnswer(null);
     setStats({ reviewed: 0, again: 0, hard: 0, good: 0, easy: 0 });
     clearCache(mode, wordIds);
@@ -375,6 +384,7 @@ export function useReview() {
         }).catch(() => addToast("warning", "跳过未能同步到服务器"));
       }
       setLastAnswer(null);
+      setSkipped((prev) => prev + 1);
       const next = currentIndex + 1;
       if (next >= queue.length) {
         setCompleted(true);
@@ -402,6 +412,7 @@ export function useReview() {
         }),
       });
       setLastAnswer(null);
+      setSuspended((prev) => prev + 1);
       addToast("success", `已挂起「${currentCard.word.lemma}」，不再进入复习队列`);
       const next = currentIndex + 1;
       if (next >= queue.length) {
@@ -463,9 +474,11 @@ export function useReview() {
       currentIndex,
       stats,
       deferredNewCards,
+      skipped,
+      suspended,
       completed,
     });
-  }, [mode, sessionId, queue, currentIndex, stats, deferredNewCards, completed]);
+  }, [mode, sessionId, queue, currentIndex, stats, deferredNewCards, skipped, suspended, completed]);
 
   return {
     currentCard,
@@ -476,6 +489,8 @@ export function useReview() {
     error,
     stats,
     deferredNewCards,
+    skipped,
+    suspended,
     completed,
     currentIndex,
     remaining,
