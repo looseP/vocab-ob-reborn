@@ -64,6 +64,8 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
     error,
     stats,
     deferredNewCards,
+    skipped,
+    suspended,
     completed,
     currentIndex,
     remaining,
@@ -155,6 +157,8 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
       {showCompletion ? (
         <CompletionCelebration
           stats={stats}
+          skipped={skipped}
+          suspended={suspended}
           onRestart={() => startReview(apiMode)}
           onBack={onBack}
         />
