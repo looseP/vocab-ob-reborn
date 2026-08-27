@@ -1830,6 +1830,7 @@ export interface operations {
     listWords: {
         parameters: {
             query?: {
+                cefr?: string;
                 freq?: string;
                 limit?: number;
                 offset?: number;
