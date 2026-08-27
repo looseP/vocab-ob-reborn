@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, Volume2, Lightbulb, Network, Puzzle, Quote, Undo2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
@@ -9,34 +8,7 @@ import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
-import { apiFetch } from "@/frontend/api/client";
-
-interface WordDetail {
-  id: string;
-  slug: string;
-  title: string;
-  lemma: string;
-  pos: string | null;
-  cefr: string | null;
-  ipa: string | null;
-  short_definition: string | null;
-  definition_md: string;
-  body_md: string;
-  examples: Array<{ text: string; translation?: string }>;
-  prototype_text?: string | null;
-  aliases: string[];
-  metadata?: {
-    morphology_prefix?: string;
-    morphology_root?: string;
-    morphology_suffix?: string;
-    morphology_family?: string[];
-    etymology_narrative?: string;
-    mnemonic_type?: string;
-    mnemonic_text?: string;
-    semantic_chain?: string;
-    [key: string]: unknown;
-  } | null;
-}
+import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -53,9 +25,7 @@ export function WordDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const location = useLocation();
   const navigate = useNavigate();
-  const [word, setWord] = useState<WordDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { word, loading, error } = useWordDetail(slug);
 
   // 来自复习队列：state 的字段由 ReviewCardView 注入。
   const reviewBack = (location.state as null | { from?: string; mode?: string; wordIds?: string[]; reviewed?: number; total?: number })?.from === "review"
@@ -78,18 +48,6 @@ export function WordDetailPage() {
       : "/review";
     navigate(to, { replace: false });
   };
-
-  useEffect(() => {
-    if (!slug) return;
-    setLoading(true);
-    apiFetch<WordDetail>(`/words/${slug}`)
-      .then((data) => {
-        setWord(data);
-        setError(null);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [slug]);
 
   if (loading) {
     return (
