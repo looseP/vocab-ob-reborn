@@ -130,6 +130,12 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
 
       if (key === " " || key === "enter") {
         if (event.repeat) return;
+        // 翻转卡片本身是原生 button：Enter/Space 走原生 click（含读屏合成激活），
+        // 这里跳过避免与 onClick 双重翻转。
+        const target = event.target as HTMLElement | null;
+        if (target && typeof target.closest === "function" && target.closest("[data-flip-card]")) {
+          return;
+        }
         event.preventDefault();
         setRevealed((v) => !v);
         return;
@@ -182,6 +188,61 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
 
   const showDefinition = preview || revealed;
 
+  // 卡片主体内容：aria-live 区域在翻转时向读屏播报词形↔释义切换。
+  const flipBody = (
+    <span aria-live="polite" className="block w-full">
+      <AnimatePresence mode="wait">
+        {showDefinition ? (
+          <motion.div
+            key="back"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+            className="flex h-full flex-col items-center justify-center text-center"
+          >
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {card.word.pos && <Badge>{card.word.pos}</Badge>}
+              {card.word.cefr && <Badge tone="warm">CEFR {card.word.cefr}</Badge>}
+              {card.word.ipa && (
+                <span className="font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
+              )}
+            </div>
+            {card.word.short_definition ? (
+              <p className="mt-3 text-lg text-[var(--color-ink)]">{card.word.short_definition}</p>
+            ) : (
+              <p className="mt-3 text-sm text-[var(--color-ink-soft)]">暂无释义</p>
+            )}
+            {!preview && (
+              <span className="mt-4 inline-flex items-center gap-1 text-xs text-[var(--color-ink-soft)] opacity-70">
+                <EyeOff className="h-3.5 w-3.5" /> 点击返回词形
+              </span>
+            )}
+          </motion.div>
+        ) : (
+          <motion.div
+            key="front"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+            className="flex h-full flex-col items-center justify-center text-center"
+          >
+            <h2 className="section-title text-4xl font-bold text-[var(--color-ink)]">
+              {card.word.lemma}
+            </h2>
+            {card.word.ipa && (
+              <span className="mt-2 font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
+            )}
+            <span className="mt-4 inline-flex items-center gap-1 text-xs text-[var(--color-ink-soft)] opacity-70">
+              <Eye className="h-3.5 w-3.5" /> 点击显示释义
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </span>
+  );
+
   return (
     <Card className="space-y-6">
       {card.l1WeakSignal && (
@@ -229,62 +290,26 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
         </Link>
       </div>
 
-      {/* 卡片主体：preview 直接展示；评分模式先词形后释义，点击翻转 */}
-      <div
-        className="relative min-h-[12rem] cursor-pointer rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-6 py-8"
-        onClick={() => !preview && setRevealed((v) => !v)}
-        title={preview ? undefined : "点击翻转"}
-      >
-        <AnimatePresence mode="wait">
-          {showDefinition ? (
-            <motion.div
-              key="back"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.15 }}
-              className="flex h-full flex-col items-center justify-center text-center"
-            >
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                {card.word.pos && <Badge>{card.word.pos}</Badge>}
-                {card.word.cefr && <Badge tone="warm">CEFR {card.word.cefr}</Badge>}
-                {card.word.ipa && (
-                  <span className="font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
-                )}
-              </div>
-              {card.word.short_definition ? (
-                <p className="mt-3 text-lg text-[var(--color-ink)]">{card.word.short_definition}</p>
-              ) : (
-                <p className="mt-3 text-sm text-[var(--color-ink-soft)]">暂无释义</p>
-              )}
-              {!preview && (
-                <span className="mt-4 inline-flex items-center gap-1 text-xs text-[var(--color-ink-soft)] opacity-70">
-                  <EyeOff className="h-3.5 w-3.5" /> 点击返回词形
-                </span>
-              )}
-            </motion.div>
-          ) : (
-            <motion.div
-              key="front"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.15 }}
-              className="flex h-full flex-col items-center justify-center text-center"
-            >
-              <h2 className="section-title text-4xl font-bold text-[var(--color-ink)]">
-                {card.word.lemma}
-              </h2>
-              {card.word.ipa && (
-                <span className="mt-2 font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
-              )}
-              <span className="mt-4 inline-flex items-center gap-1 text-xs text-[var(--color-ink-soft)] opacity-70">
-                <Eye className="h-3.5 w-3.5" /> 点击显示释义
-              </span>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+      {/* 卡片主体：preview 直接展示；评分模式先词形后释义。
+          翻转控件为原生 button（读屏/键盘可达）：Enter/Space 走原生 click，
+          全局空格快捷键在 [data-flip-card] 上跳过，避免双重翻转。 */}
+      {!preview ? (
+        <button
+          type="button"
+          data-flip-card
+          aria-pressed={revealed}
+          aria-label={revealed ? `翻转「${card.word.lemma}」，隐藏释义` : `翻转「${card.word.lemma}」，显示释义`}
+          title="点击翻转"
+          className="relative flex min-h-[12rem] w-full cursor-pointer items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-6 py-8 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2"
+          onClick={() => setRevealed((v) => !v)}
+        >
+          {flipBody}
+        </button>
+      ) : (
+        <div className="relative flex min-h-[12rem] w-full cursor-pointer items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-6 py-8">
+          {flipBody}
+        </div>
+      )}
 
       {preview ? (
         <div
