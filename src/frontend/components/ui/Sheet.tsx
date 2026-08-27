@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { Button } from "./Button";
 
@@ -23,17 +23,61 @@ const sizeClasses: Record<NonNullable<SheetProps["size"]>, string> = {
 };
 
 export function Sheet({ open, onClose, title, subtitle, headerRight, children, size = "md", footer }: SheetProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // 打开前焦点元素：关闭后还原，避免键盘/读屏用户焦点"失踪"
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+    // 记录打开前焦点，供关闭后还原
+    restoreFocusRef.current = document.activeElement as HTMLElement | null;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      // Tab 焦点陷阱：Tab / Shift+Tab 在 dialog 内循环（首尾回绕）
+      if (e.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusables = Array.from(
+        dialog.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+      ).filter((el) => !el.hasAttribute("disabled") && el.offsetParent !== null);
+      if (focusables.length === 0) {
+        e.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !dialog.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !dialog.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener("keydown", handler);
+
+    // 打开后把初始焦点移到对话框标题（读屏播报对话框语义），
+    // 延迟一帧确保动画渲染完成后再聚焦。
+    const focusInitial = () => {
+      dialogRef.current?.querySelector<HTMLElement>("[data-sheet-title]")?.focus();
+    };
+    const raf = requestAnimationFrame(focusInitial);
+
+    window.addEventListener("keydown", onKeyDown);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      window.removeEventListener("keydown", handler);
+      cancelAnimationFrame(raf);
+      window.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = prev;
+      // 关闭后还原焦点到打开前的元素
+      restoreFocusRef.current?.focus();
+      restoreFocusRef.current = null;
     };
   }, [open, onClose]);
 
@@ -47,6 +91,7 @@ export function Sheet({ open, onClose, title, subtitle, headerRight, children, s
         aria-hidden
       />
       <div
+        ref={dialogRef}
         className={clsx(
           "absolute right-0 top-0 h-full w-full",
           sizeClasses[size],
@@ -59,7 +104,13 @@ export function Sheet({ open, onClose, title, subtitle, headerRight, children, s
         <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h2 className="section-title truncate text-lg font-semibold text-[var(--color-ink)]">{title}</h2>
+              <h2
+                data-sheet-title
+                tabIndex={-1}
+                className="section-title truncate text-lg font-semibold text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2"
+              >
+                {title}
+              </h2>
             </div>
             {subtitle ? (
               <p className="mt-1 truncate text-xs text-[var(--color-ink-soft)]">{subtitle}</p>
