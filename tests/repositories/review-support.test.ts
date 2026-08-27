@@ -100,7 +100,7 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     const q = mock.lastQuery!;
     expect(q.text).toContain("id = ANY($1::uuid[])");
     expect(q.text).toContain("is_published = true AND is_deleted = false");
-    expect(q.params).toEqual(["w9"]);
+    expect(q.params).toEqual([["w9"]]);
 
     mock.reset();
     await expect(repos.reviews.findWordsByIds!([])).resolves.toEqual([]);
