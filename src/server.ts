@@ -147,7 +147,18 @@ const services = createServices({
 const app = createApp(services);
 if (config.SERVE_FRONTEND) {
   app.use("/*", serveStatic({ root: "./dist/frontend" }));
-  app.get("/*", serveStatic({ root: "./dist/frontend", path: "index.html" }));
+  // index.html 一律不缓存：保证部署后新构建立即可见（哈希资源按文件名长期缓存不受影响，
+  // 旧标签页引用过期 chunk 时由 ErrorBoundary 的"应用已更新"提示兜底）。
+  app.get(
+    "/*",
+    serveStatic({
+      root: "./dist/frontend",
+      path: "index.html",
+      onFound: (_path, c) => {
+        c.header("Cache-Control", "no-cache");
+      },
+    }),
+  );
 }
 
 const server = serve({ fetch: app.fetch, port }, (info) => {
