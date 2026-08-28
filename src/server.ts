@@ -8,6 +8,7 @@
  */
 import { serve } from "@hono/node-server";
 import type { Server as HttpServer } from "node:http";
+import type { Context } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createApp } from "./http/server";
 import { createServices, type FsrsAdapterFn, type FsrsScheduling } from "./services";
@@ -146,9 +147,12 @@ const services = createServices({
 
 const app = createApp(services);
 if (config.SERVE_FRONTEND) {
-  app.use("/*", serveStatic({ root: "./dist/frontend" }));
-  // index.html 一律不缓存：保证部署后新构建立即可见（哈希资源按文件名长期缓存不受影响，
-  // 旧标签页引用过期 chunk 时由 ErrorBoundary 的"应用已更新"提示兜底）。
+  // index.html 一律不缓存：保证部署后新构建立即可见。哈希资源（/assets/*）按文件名
+  // 长期缓存不受影响；旧标签页引用过期 chunk 时由 ErrorBoundary 的"应用已更新"提示兜底。
+  const noCacheHtml = (path: string, c: Context) => {
+    if (path.endsWith("index.html")) c.header("Cache-Control", "no-cache");
+  };
+  app.use("/*", serveStatic({ root: "./dist/frontend", onFound: noCacheHtml }));
   app.get(
     "/*",
     serveStatic({
