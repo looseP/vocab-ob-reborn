@@ -202,14 +202,15 @@ describe("WordRepository.findPublic", () => {
     expect(dataQuery.text).toContain("WHEN w.lemma ILIKE $");
     expect(dataQuery.text).toContain("ts_rank(");
     expect(dataQuery.text).toContain("GREATEST(");
-    // WHERE(7) + ORDER(7) + limit + offset = 16 个参数；%q% 通配：WHERE 5 + ORDER 2 = 7
-    expect(dataQuery.params).toHaveLength(16);
-    expect(dataQuery.params.filter((p) => p === "%勇气%")).toHaveLength(7);
+    // WHERE(8，含 aliases %q%) + ORDER(8) + limit + offset = 18 个参数；
+    // %q% 通配：WHERE 6（lemma/short_def/def_md/aliases/pinyin/pinyin_initial）+ ORDER 3 = 9
+    expect(dataQuery.params).toHaveLength(18);
+    expect(dataQuery.params.filter((p) => p === "%勇气%")).toHaveLength(9);
     expect(dataQuery.params).toContain("勇气%");
     expect(dataQuery.params[dataQuery.params.length - 2]).toBe(20);
     expect(dataQuery.params[dataQuery.params.length - 1]).toBe(0);
     // count 查询只带 WHERE 参数（不含排序参数）
-    expect(mock.calls[0]!.params).toEqual(["勇气", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "勇气"]);
+    expect(mock.calls[0]!.params).toEqual(["勇气", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "勇气", "%勇气%"]);
   });
 
   it("strips spaces from the query when matching pinyin columns", async () => {
@@ -281,10 +282,14 @@ describe("WordRepository L1 search logic", () => {
     });
 
     const dataQuery = mock.lastQuery!;
-    // 谓词：lemma 需同时包含每个 token（组合词条 & 非连续命中）
-    expect(dataQuery.text).toContain("w.lemma ILIKE $8 AND w.lemma ILIKE $9");
+    // 谓词：P1-6 多词任一 token 命中 lemma 即入池（$9/$10 = 两个 token 参数）
+    expect(dataQuery.text).toContain("w.lemma ILIKE $9 OR w.lemma ILIKE $10");
+    // 谓词：P1-5 aliases（unnest）纳入检索
+    expect(dataQuery.text).toContain("unnest(w.aliases)");
     // 排序：lemma 同时包含全部 token 的层级（位于完整前缀之后）
-    expect(dataQuery.text).toContain("w.lemma ILIKE ALL (ARRAY[$12, $13]) THEN 2");
+    expect(dataQuery.text).toContain("w.lemma ILIKE ALL (ARRAY[$13, $14]) THEN 2");
+    // 排序：P1-6 任一 token 命中层（复用 token 参数，位于 aliases 层之后）
+    expect(dataQuery.text).toContain("w.lemma ILIKE $13 OR w.lemma ILIKE $14) THEN 4");
     // 两个 token 的包裹参数
     expect(dataQuery.params).toContain("%space%");
     expect(dataQuery.params).toContain("%exploration%");
@@ -324,8 +329,28 @@ describe("WordRepository L1 search logic", () => {
 
     const dataQuery = mock.lastQuery!;
     expect(dataQuery.text).not.toContain("ILIKE ALL (ARRAY[");
-    // 单 token：谓词参数仍为 7 个（不含多词 token 参数）
-    expect(mock.calls[0]!.params).toEqual(["勇气", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "勇气"]);
+    // 单 token：谓词参数 8 个（含 P1-5 aliases 的 %q% 参数），不含多词 token 参数
+    expect(mock.calls[0]!.params).toEqual(["勇气", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "勇气", "%勇气%"]);
+  });
+
+  it("searches aliases (inflections/variants) with a dedicated ranking tier (P1-5)", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 1 }],
+      "ORDER BY CASE": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: { q: "more" },
+      pagination: { limit: 20, offset: 0 },
+      userId: "u-1",
+    });
+
+    const dataQuery = mock.lastQuery!;
+    // 谓词含 aliases 子串匹配
+    expect(dataQuery.text).toContain("unnest(w.aliases) AS a WHERE a ILIKE $8");
+    // 排序含 aliases 命中层（单 token：0 精确 / 1 前缀 / 2 aliases）
+    expect(dataQuery.text).toContain("unnest(w.aliases) AS a WHERE a ILIKE $11) THEN 2");
   });
 });
 

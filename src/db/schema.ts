@@ -188,6 +188,9 @@ export const words = pgTable("words", {
 }, (table) => [
 	index("idx_words_aliases_gin").using("gin", table.aliases.asc().nullsLast().op("array_ops")),
 	index("idx_words_lemma_trgm").using("gin", table.lemma.asc().nullsLast().op("gin_trgm_ops")),
+	// P1-4：中文释义子串检索（P1）的 ILIKE '%…%' 走全表扫描，补 gin_trgm 索引加速。
+	index("idx_words_short_definition_trgm").using("gin", table.shortDefinition.asc().nullsLast().op("gin_trgm_ops")),
+	index("idx_words_definition_md_trgm").using("gin", table.definitionMd.asc().nullsLast().op("gin_trgm_ops")),
 	index("idx_words_metadata_gin").using("gin", table.metadata.asc().nullsLast().op("jsonb_ops")),
 	index("idx_words_pinyin_trgm").using("gin", table.pinyin.asc().nullsLast().op("gin_trgm_ops")),
 	index("idx_words_pinyin_initial_trgm").using("gin", table.pinyinInitial.asc().nullsLast().op("gin_trgm_ops")),
