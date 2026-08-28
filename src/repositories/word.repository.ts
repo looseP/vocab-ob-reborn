@@ -42,7 +42,13 @@ export class WordRepository extends BaseRepository implements IWordRepository {
   ): Promise<PaginatedResult<WordSummary>> {
     const { pagination, filters = {}, userId, wordbookId } = options;
     const { limit, offset } = pagination;
-    const where: string[] = ["w.is_published = true", "w.is_deleted = false"];
+    const where: string[] = [
+      "w.is_published = true",
+      "w.is_deleted = false",
+      // L1-4：默认过滤 stub 词条（仅 lemma、无释义内容，批量导入/阅读采集产生），
+      // 与"stub 不进复习队列"规则一致，避免占位结果干扰浏览与搜索。
+      "(w.short_definition IS NOT NULL AND w.short_definition <> '')",
+    ];
     const params: unknown[] = [];
     let paramIdx = 1;
 
@@ -51,26 +57,40 @@ export class WordRepository extends BaseRepository implements IWordRepository {
       // 因此叠加 short_definition / definition_md 的 ILIKE 子串匹配，支持按中文释义检索。
       // P2：拼音搜索（pinyin / pinyin_initial，去空格对齐无空格存储）+ 拼写容错
       // （word_similarity，纠正 "courge→courage" 类输入；函数式查询，7k 词条成本可忽略）。
-      const qNoSpace = filters.q.replace(/\s+/g, "");
-      where.push(
-        `(w.search_vector @@ websearch_to_tsquery('english', $${paramIdx})
+      const q = filters.q;
+      const qNoSpace = q.replace(/\s+/g, "");
+      // L1-1：多词查询按空格拆 token（≥2 个时），要求 lemma 同时包含全部 token，
+      // 使 "space exploration" 能命中组合词条与跨词非连续 lemma，而非只整串子串。
+      const tokens = q.split(/\s+/).filter((t) => t.length >= 2);
+      const multiWord = tokens.length >= 2;
+      const wrappedTokens = tokens.map((t) => `%${t}%`);
+
+      let predicate = `(w.search_vector @@ websearch_to_tsquery('english', $${paramIdx})
           OR w.lemma ILIKE $${paramIdx + 1}
           OR w.short_definition ILIKE $${paramIdx + 2}
           OR w.definition_md ILIKE $${paramIdx + 3}
           OR w.pinyin ILIKE $${paramIdx + 4}
           OR w.pinyin_initial ILIKE $${paramIdx + 5}
-          OR word_similarity($${paramIdx + 6}, w.lemma) > 0.3)`,
-      );
-      params.push(
-        filters.q,
-        `%${filters.q}%`,
-        `%${filters.q}%`,
-        `%${filters.q}%`,
+          OR word_similarity($${paramIdx + 6}, w.lemma) > 0.3)`;
+      const qParams: unknown[] = [
+        q,
+        `%${q}%`,
+        `%${q}%`,
+        `%${q}%`,
         `%${qNoSpace}%`,
         `%${qNoSpace}%`,
-        filters.q,
-      );
-      paramIdx += 7;
+        q,
+      ];
+
+      if (multiWord) {
+        predicate += ` OR (${wrappedTokens
+          .map((_, i) => `w.lemma ILIKE $${paramIdx + 7 + i}`)
+          .join(" AND ")})`;
+        qParams.push(...wrappedTokens);
+      }
+      where.push(predicate);
+      params.push(...qParams);
+      paramIdx += qParams.length;
     }
 
     if (filters.freq) {
@@ -126,30 +146,61 @@ export class WordRepository extends BaseRepository implements IWordRepository {
 
     // P1：相关性排序——精确 lemma > lemma 前缀 > 全文命中 > 其余子串，命中内按 ts_rank 降序。
     // P2：追加拼音命中层（在子串之上），并用 GREATEST(ts_rank, word_similarity) 让拼写容错命中也能靠前。
+    // L1-1：多词查询时在"完整前缀"之下插入"lemma 同时包含全部 token"层。
+    // L1-3：同文本相关度内按 CEFR 加权（A1 最高），常用词优先。
     // 无搜索词时保持按字母序浏览。
     let orderClause = "w.lemma ASC";
     const orderParams: unknown[] = [];
     if (filters.q) {
       const q = filters.q;
       const qNoSpace = q.replace(/\s+/g, "");
+      const tokens = q.split(/\s+/).filter((t) => t.length >= 2);
+      const multiWord = tokens.length >= 2;
+      const wrappedTokens = tokens.map((t) => `%${t}%`);
+
+      const whens = [
+        `WHEN w.lemma ILIKE $${paramIdx} THEN 0`,
+        `WHEN w.lemma ILIKE $${paramIdx + 1} THEN 1`,
+      ];
+      orderParams.push(q, `${q}%`);
+
+      if (multiWord) {
+        whens.push(
+          `WHEN w.lemma ILIKE ALL (ARRAY[${wrappedTokens
+            .map((_, i) => `$${paramIdx + 2 + i}`)
+            .join(", ")}]) THEN 2`,
+        );
+        orderParams.push(...wrappedTokens);
+      }
+
+      // multiWord 会让 CASE 层数整体 +1（fts 3 / pinyin 4 / else 5，否则 2/3/4）
+      const shift = multiWord ? 1 : 0;
+      const o = paramIdx + 2 + wrappedTokens.length;
+      whens.push(
+        `WHEN w.search_vector @@ websearch_to_tsquery('english', $${o}) THEN ${2 + shift}`,
+        `WHEN w.pinyin ILIKE $${o + 1} OR w.pinyin_initial ILIKE $${o + 2} THEN ${3 + shift}`,
+        `ELSE ${4 + shift}`,
+      );
+      orderParams.push(q, `%${qNoSpace}%`, `%${qNoSpace}%`);
+
       orderClause = `CASE
-          WHEN w.lemma ILIKE $${paramIdx} THEN 0
-          WHEN w.lemma ILIKE $${paramIdx + 1} THEN 1
-          WHEN w.search_vector @@ websearch_to_tsquery('english', $${paramIdx + 2}) THEN 2
-          WHEN w.pinyin ILIKE $${paramIdx + 3} OR w.pinyin_initial ILIKE $${paramIdx + 4} THEN 3
-          ELSE 4
+          ${whens.join("\n          ")}
         END ASC,
         GREATEST(
-          ts_rank(w.search_vector, websearch_to_tsquery('english', $${paramIdx + 5})),
-          word_similarity($${paramIdx + 6}, w.lemma)
+          ts_rank(w.search_vector, websearch_to_tsquery('english', $${o + 3})),
+          word_similarity($${o + 4}, w.lemma)
         ) DESC NULLS LAST,
+        CASE w.cefr
+          WHEN 'A1' THEN 6 WHEN 'A2' THEN 5 WHEN 'B1' THEN 4
+          WHEN 'B2' THEN 3 WHEN 'C1' THEN 2 WHEN 'C2' THEN 1
+          ELSE 0
+        END DESC,
         w.lemma ASC`;
-      orderParams.push(q, `${q}%`, q, `%${qNoSpace}%`, `%${qNoSpace}%`, q, q);
-      paramIdx += 7;
+      orderParams.push(q, q);
     }
 
     const dataSql = `SELECT ${SUMMARY_COLUMNS} FROM words w WHERE ${whereClause}
-                     ORDER BY ${orderClause} LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
+                     ORDER BY ${orderClause} LIMIT $${paramIdx + orderParams.length} OFFSET $${paramIdx + orderParams.length + 1}`;
     const items = await this.query<WordSummary>(dataSql, [
       ...params,
       ...orderParams,
@@ -164,6 +215,38 @@ export class WordRepository extends BaseRepository implements IWordRepository {
       offset,
       hasMore: offset + items.length < total,
     };
+  }
+
+  /**
+   * 输入联想（L1-2）：按 lemma / 拼音前缀即时返回 top-N 建议。
+   * lemma 前缀命中优先于拼音命中，再按 lemma 字母序；同样过滤 stub 词条。
+   */
+  async suggest(q: string, limit = 8): Promise<WordSummary[]> {
+    const query = q.trim();
+    if (!query) return [];
+    const qNoSpace = query.replace(/\s+/g, "");
+    return this.query<WordSummary>(
+      `SELECT ${SUMMARY_COLUMNS}
+       FROM words w
+       WHERE w.is_published = true AND w.is_deleted = false
+         AND (w.short_definition IS NOT NULL AND w.short_definition <> '')
+         AND (w.lemma ILIKE $1 OR w.pinyin ILIKE $2 OR w.pinyin_initial ILIKE $3)
+       ORDER BY CASE
+         WHEN w.lemma ILIKE $4 THEN 0
+         WHEN w.pinyin ILIKE $5 OR w.pinyin_initial ILIKE $6 THEN 1
+         ELSE 2
+       END ASC, w.lemma ASC
+       LIMIT $7`,
+      [
+        `%${query}%`,
+        `%${qNoSpace}%`,
+        `%${qNoSpace}%`,
+        `${query}%`,
+        `%${qNoSpace}%`,
+        `%${qNoSpace}%`,
+        limit,
+      ],
+    );
   }
 
   async count(): Promise<number> {

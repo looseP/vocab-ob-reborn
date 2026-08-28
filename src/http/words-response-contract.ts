@@ -39,6 +39,11 @@ export const wordListResponseSchema: z.ZodType<PaginatedResult<WordSummary>> = z
   hasMore: z.boolean(),
 }).strict();
 
+// L1-2：输入联想响应——仅 items（无需分页元数据）。
+export const wordSuggestResponseSchema = z.object({
+  items: z.array(wordSummaryResponseSchema),
+}).strict();
+
 export const wordBatchCreateResponseSchema = z.object({
   inserted: z.number().int().nonnegative(),
 }).strict();

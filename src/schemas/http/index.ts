@@ -36,6 +36,12 @@ export const wordsQuerySchema = z.object({
   wordbookId: uuidSchema.optional(),
 });
 
+// L1-2：输入联想查询参数——q 必填、上限小（联想只需少量结果）。
+export const wordSuggestQuerySchema = z.object({
+  q: z.string().min(1).max(100),
+  limit: z.coerce.number().int().min(1).max(20).optional().default(8),
+});
+
 // Mirrors the manual sanitization in routes/words.ts POST /batch: every field
 // is optional (slug falls back to lemma, then title) and rows without a
 // non-empty sanitized slug are dropped server-side.

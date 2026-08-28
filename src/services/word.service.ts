@@ -62,6 +62,11 @@ export class WordService {
     return { word: new Word(row) };
   }
 
+  /** 输入联想（L1-2）：读侧接口，直接走注入仓库，无需事务。 */
+  async suggestWords(q: string, limit = 8): Promise<WordSummary[]> {
+    return this.words.suggest(q, limit);
+  }
+
   async getWordCount(): Promise<number> {
     return this.words.count();
   }

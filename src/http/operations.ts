@@ -45,6 +45,7 @@ import {
   wordBatchCreateResponseSchema,
   wordDetailResponseSchema,
   wordListResponseSchema,
+  wordSuggestResponseSchema,
 } from "./words-response-contract";
 import {
   l2ConfirmResponseSchema,
@@ -88,6 +89,7 @@ import {
   vocabNotesImportRequestSchema,
   wordBatchCreateSchema,
   wordsQuerySchema,
+  wordSuggestQuerySchema,
   l2TaskAnswerSchema,
   l2SelfAssessSchema,
   l2UndoSchema,
@@ -261,6 +263,7 @@ export const apiOperations = [
   operation("delete", "/api/auth/session", "deleteAuthSession", "optionalSession", "sessionMutation", undefined, 204, z.null()),
   operation("get", "/api/operations/metrics", "getOperationMetrics", "owner", "none", undefined, 200, operationMetricsResponseSchema),
   operation("get", "/api/words", "listWords", "owner", "none", { query: wordsQuerySchema }, 200, wordListResponseSchema),
+  operation("get", "/api/words/suggest", "suggestWords", "owner", "none", { query: wordSuggestQuerySchema }, 200, wordSuggestResponseSchema),
   operation("get", "/api/words/:slug", "getWord", "owner", "none", undefined, 200, wordDetailResponseSchema),
   operation("post", "/api/words/batch", "batchCreateWords", "owner", "sessionMutation", { body: wordBatchCreateSchema }, 200, wordBatchCreateResponseSchema),
   operation("get", "/api/words/:slug/notes", "getWordNote", "owner", "none", undefined, 200, wordNoteResponseSchema),
