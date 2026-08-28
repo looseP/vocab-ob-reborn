@@ -45,9 +45,10 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     const where: string[] = [
       "w.is_published = true",
       "w.is_deleted = false",
-      // L1-4：默认过滤 stub 词条（仅 lemma、无释义内容，批量导入/阅读采集产生），
-      // 与"stub 不进复习队列"规则一致，避免占位结果干扰浏览与搜索。
-      "(w.short_definition IS NOT NULL AND w.short_definition <> '')",
+      // L1-4：默认过滤 stub 词条（仅 lemma、无内容，批量导入/阅读采集产生）。
+      // 判定依据是核心内容列 definition_md 是否为空（NOT NULL，stub 写入空串）——
+      // 不能看 short_definition（真实词条可能无短释义但有完整释义）。
+      "(w.definition_md <> '')",
     ];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -173,9 +174,11 @@ export class WordRepository extends BaseRepository implements IWordRepository {
         orderParams.push(...wrappedTokens);
       }
 
+      // o = 下一个可用参数索引（始终以 orderParams 实际长度为准，
+      // 避免单 token 时 wrappedTokens.length=1 造成的索引偏移）
+      const o = paramIdx + orderParams.length;
       // multiWord 会让 CASE 层数整体 +1（fts 3 / pinyin 4 / else 5，否则 2/3/4）
       const shift = multiWord ? 1 : 0;
-      const o = paramIdx + 2 + wrappedTokens.length;
       whens.push(
         `WHEN w.search_vector @@ websearch_to_tsquery('english', $${o}) THEN ${2 + shift}`,
         `WHEN w.pinyin ILIKE $${o + 1} OR w.pinyin_initial ILIKE $${o + 2} THEN ${3 + shift}`,
@@ -229,7 +232,7 @@ export class WordRepository extends BaseRepository implements IWordRepository {
       `SELECT ${SUMMARY_COLUMNS}
        FROM words w
        WHERE w.is_published = true AND w.is_deleted = false
-         AND (w.short_definition IS NOT NULL AND w.short_definition <> '')
+         AND w.definition_md <> ''
          AND (w.lemma ILIKE $1 OR w.pinyin ILIKE $2 OR w.pinyin_initial ILIKE $3)
        ORDER BY CASE
          WHEN w.lemma ILIKE $4 THEN 0

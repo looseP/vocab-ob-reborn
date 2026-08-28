@@ -229,7 +229,7 @@ describe("WordRepository.findPublic", () => {
 });
 
 describe("WordRepository L1 search logic", () => {
-  it("filters stub words (empty short_definition) from the list by default (L1-4)", async () => {
+  it("filters stub words (empty definition_md) from the list by default (L1-4)", async () => {
     mock.setRowMap({
       "count(*)": [{ total: 0 }],
       "ORDER BY w.lemma": [],
@@ -242,9 +242,7 @@ describe("WordRepository L1 search logic", () => {
       userId: "u-1",
     });
 
-    expect(mock.lastQuery!.text).toContain(
-      "(w.short_definition IS NOT NULL AND w.short_definition <> '')",
-    );
+    expect(mock.lastQuery!.text).toContain("w.definition_md <> ''");
   });
 
   it("adds a multi-token lemma predicate and ranking tier for multi-word queries (L1-1)", async () => {
@@ -326,7 +324,7 @@ describe("WordRepository.suggest", () => {
     const query = mock.lastQuery!;
     expect(query.text).toContain("w.lemma ILIKE $1");
     expect(query.text).toContain("w.pinyin ILIKE $2");
-    expect(query.text).toContain("(w.short_definition IS NOT NULL AND w.short_definition <> '')");
+    expect(query.text).toContain("w.definition_md <> ''");
     expect(query.text).toContain("WHEN w.lemma ILIKE $4 THEN 0");
     expect(query.text).toContain("LIMIT $7");
     expect(query.params).toEqual(["%cour%", "%cour%", "%cour%", "cour%", "%cour%", "%cour%", 8]);
