@@ -181,10 +181,16 @@ export const words = pgTable("words", {
 	qualityIssues: jsonb("quality_issues").default([]).notNull(),
 	// Full-text search vector — authoritative expression in SEARCH_VECTOR_EXPRESSION.
 	searchVector: tsvector("search_vector").generatedAlwaysAs(SEARCH_VECTOR_EXPRESSION),
+	// 中文释义拼音检索列（P2）：导入时由 short_definition / definition_md 的汉字生成。
+	// 全拼（无空格小写）与首字母（小写）各一列，配 trigram GIN 索引支持拼音子串检索。
+	pinyin: text("pinyin"),
+	pinyinInitial: text("pinyin_initial"),
 }, (table) => [
 	index("idx_words_aliases_gin").using("gin", table.aliases.asc().nullsLast().op("array_ops")),
 	index("idx_words_lemma_trgm").using("gin", table.lemma.asc().nullsLast().op("gin_trgm_ops")),
 	index("idx_words_metadata_gin").using("gin", table.metadata.asc().nullsLast().op("jsonb_ops")),
+	index("idx_words_pinyin_trgm").using("gin", table.pinyin.asc().nullsLast().op("gin_trgm_ops")),
+	index("idx_words_pinyin_initial_trgm").using("gin", table.pinyinInitial.asc().nullsLast().op("gin_trgm_ops")),
 	index("idx_words_public_lemma_sort").using("btree", table.lemma.asc().nullsLast()).where(sql`((is_published = true) AND (is_deleted = false))`),
 	index("idx_words_public_metadata_filter").using("gin", table.metadata.asc().nullsLast().op("jsonb_path_ops")).where(sql`((is_published = true) AND (is_deleted = false))`),
 	index("idx_words_published").using("btree", table.isPublished.asc().nullsLast(), table.isDeleted.asc().nullsLast()),
