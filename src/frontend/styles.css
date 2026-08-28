@@ -711,28 +711,6 @@ body.zen-mode main {
     radial-gradient(circle at 80% 70%, rgba(224, 144, 96, 0.02), transparent 40%);
 }
 
-/* Backface visibility for 3D card flip */
-.backface-hidden {
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-}
-
-/* Zen review container - remove layout padding */
-.zen-review-container {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-}
-
-/* Reduced motion for zen mode */
-@media (prefers-reduced-motion: reduce) {
-  .zen-review-container * {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-  
-  .backface-hidden {
-    transition: none !important;
-  }
-}
+/* 说明：早前的 .zen-review-container（全屏 fixed z-30）与 .backface-hidden（3D 翻转）
+   从未被组件使用，属遗留死代码。禅模式实际为页内布局（SiteFrame 内 pb-24 为底部
+   导航留白），因此不存在与移动端底部导航的层级冲突，这里一并移除。 */
