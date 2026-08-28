@@ -338,6 +338,10 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
       IF to_regprocedure('public.finalize_l2_content_hash(uuid,text,text)') IS NOT NULL THEN
         GRANT EXECUTE ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) TO vocab_app;
       END IF;
+      IF to_regprocedure('public.word_similarity(text,text)') IS NOT NULL THEN
+        -- P2 拼写容错搜索：pg_trgm 的 word_similarity 需授权给运行搜索的角色
+        GRANT EXECUTE ON FUNCTION public.word_similarity(text, text) TO vocab_app;
+      END IF;
     END $$;
 
     GRANT SELECT ON ALL TABLES IN SCHEMA public, auth, vocab_migrations TO vocab_backup;

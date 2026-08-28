@@ -410,6 +410,8 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.undo_review_log(uuid, uuid, uuid, uuid)",
       "public.refresh_l2_cache(uuid)",
       "public.finalize_l2_content_hash(uuid, text, text)",
+      // P2 拼写容错搜索：pg_trgm word_similarity 授权给 vocab_app
+      "public.word_similarity(text, text)",
     ])],
     ["vocab_worker", new Set(["auth.uid()"])],
     ["vocab_backup", new Set()],
