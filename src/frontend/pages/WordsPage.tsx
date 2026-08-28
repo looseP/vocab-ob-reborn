@@ -6,6 +6,7 @@ import { Button } from "@/frontend/components/ui/Button";
 import { WordList } from "@/frontend/components/words/WordList";
 import { useWords } from "@/frontend/hooks/useWords";
 import { useRecentSearches } from "@/frontend/hooks/useRecentSearches";
+import { useWordSuggest } from "@/frontend/hooks/useWordSuggest";
 
 const CEFR_LEVELS = ["", "A1", "A2", "B1", "B2", "C1", "C2"] as const;
 
@@ -18,6 +19,8 @@ export function WordsPage() {
   const navigate = useNavigate();
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { recent, add, remove, clear } = useRecentSearches();
+  // L1-2：输入联想——跟随实时输入（非防抖查询词），在输入框下方即时展示建议
+  const { suggestions } = useWordSuggest(query);
 
   const debouncedSetQuery = useCallback((value: string) => {
     setQuery(value);
@@ -84,6 +87,25 @@ export function WordsPage() {
             onChange={(e) => debouncedSetQuery(e.target.value)}
             className="w-full pl-11"
           />
+          {/* L1-2：输入联想下拉——点击建议立即触发完整搜索 */}
+          {query.trim() !== "" && suggestions.length > 0 && (
+            <ul className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-strong)] shadow-[var(--shadow-panel)]">
+              {suggestions.map((s) => (
+                <li key={s.id} className="border-b border-[var(--color-border)] last:border-b-0">
+                  <button
+                    type="button"
+                    onClick={() => applySearch(s.lemma)}
+                    className="flex w-full items-baseline justify-between gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-muted)]"
+                  >
+                    <span className="text-sm font-semibold text-[var(--color-ink)]">{s.lemma}</span>
+                    <span className="truncate text-xs text-[var(--color-ink-soft)]">
+                      {s.short_definition}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

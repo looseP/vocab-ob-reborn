@@ -53,13 +53,20 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
 
   it("findPublic returns paginated results", async () => {
     const repos = createRepositories();
+    // L1-4：findPublic 默认过滤 stub（definition_md 为空）。
+    // seededWordCount 来自 words.count()（含 stub），此处按列表契约取可列表词条数。
+    const pool = (await import("@/db/connection")).getPool();
+    const listable = (await pool.query(
+      `SELECT count(*)::int AS total FROM words
+       WHERE is_deleted = false AND is_published = true AND definition_md <> ''`,
+    )).rows[0].total as number;
     const result = await repos.words.findPublic({
       userId: randomUUID(),
       pagination: { limit: 5, offset: 0 },
     });
-    expect(result.items.length).toBe(Math.min(5, seededWordCount));
-    expect(result.total).toBe(seededWordCount);
-    expect(result.hasMore).toBe(seededWordCount > 5);
+    expect(result.items.length).toBe(Math.min(5, listable));
+    expect(result.total).toBe(listable);
+    expect(result.hasMore).toBe(listable > 5);
   });
 
   it("findPublic with search filter works", async () => {

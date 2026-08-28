@@ -12,7 +12,7 @@
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AuthRole, Principal } from "@/http/middleware/auth";
-import { wordsQuerySchema } from "@/schemas/http";
+import { wordsQuerySchema, wordSuggestQuerySchema } from "@/schemas/http";
 import { validationError } from "../error-response";
 
 export type AppEnv = {
@@ -61,6 +61,17 @@ export function wordRoutes(services: Services) {
       userId: c.get("userId"),
     });
     return c.json(result);
+  });
+
+  // GET /suggest — 输入联想（L1-2）：lemma / 拼音前缀 top-N。
+  // 注意：必须注册在 GET /:slug 之前，否则 "/suggest" 会被当作 slug 命中。
+  app.get("/suggest", async (c) => {
+    const parsed = wordSuggestQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) {
+      return validationError(c, parsed.error.flatten());
+    }
+    const items = await services.words.suggestWords(parsed.data.q, parsed.data.limit);
+    return c.json({ items });
   });
 
   // GET /:slug — single word lookup; NotFoundError thrown by the service

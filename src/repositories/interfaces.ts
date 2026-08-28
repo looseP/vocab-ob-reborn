@@ -47,6 +47,8 @@ export interface IWordRepository {
   findById(id: string): Promise<WordRow | null>;
   findBySlug(slug: string): Promise<WordRow | null>;
   findPublic(options: GetPublicWordsOptions): Promise<PaginatedResult<WordSummary>>;
+  /** 输入联想：按 lemma / 拼音前缀返回 top-N 建议（L1-2）。 */
+  suggest(q: string, limit?: number): Promise<WordSummary[]>;
   count(): Promise<number>;
   findSlugs(limit?: number): Promise<string[]>;
   insertMany?(words: Array<{

@@ -30,6 +30,7 @@ function makeMockWordRepo(overrides: Partial<IWordRepository> = {}): IWordReposi
     findById: vi.fn(async () => null),
     findBySlug: vi.fn(async () => null),
     findPublic: vi.fn(async () => ({ items: [], total: 0, limit: 10, offset: 0, hasMore: false })),
+    suggest: vi.fn(async () => []),
     count: vi.fn(async () => 0),
     findSlugs: vi.fn(async () => []),
     ...overrides,

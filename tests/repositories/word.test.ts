@@ -227,3 +227,106 @@ describe("WordRepository.findPublic", () => {
     expect(mock.lastQuery!.text).not.toContain("ts_rank(");
   });
 });
+
+describe("WordRepository L1 search logic", () => {
+  it("filters stub words (empty definition_md) from the list by default (L1-4)", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 0 }],
+      "ORDER BY w.lemma": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: {},
+      pagination: { limit: 50, offset: 0 },
+      userId: "u-1",
+    });
+
+    expect(mock.lastQuery!.text).toContain("w.definition_md <> ''");
+  });
+
+  it("adds a multi-token lemma predicate and ranking tier for multi-word queries (L1-1)", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 3 }],
+      "ORDER BY CASE": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: { q: "space exploration" },
+      pagination: { limit: 20, offset: 0 },
+      userId: "u-1",
+    });
+
+    const dataQuery = mock.lastQuery!;
+    // 谓词：lemma 需同时包含每个 token（组合词条 & 非连续命中）
+    expect(dataQuery.text).toContain("w.lemma ILIKE $8 AND w.lemma ILIKE $9");
+    // 排序：lemma 同时包含全部 token 的层级（位于完整前缀之后）
+    expect(dataQuery.text).toContain("w.lemma ILIKE ALL (ARRAY[$12, $13]) THEN 2");
+    // 两个 token 的包裹参数
+    expect(dataQuery.params).toContain("%space%");
+    expect(dataQuery.params).toContain("%exploration%");
+  });
+
+  it("weights ordering by CEFR so common words surface first on ties (L1-3)", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 1 }],
+      "ORDER BY CASE": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: { q: "courage" },
+      pagination: { limit: 20, offset: 0 },
+      userId: "u-1",
+    });
+
+    const dataQuery = mock.lastQuery!;
+    expect(dataQuery.text).toContain("WHEN 'A1' THEN 6");
+    expect(dataQuery.text).toContain("WHEN 'C2' THEN 1");
+    expect(dataQuery.text).toMatch(/CASE w\.cefr/);
+  });
+
+  it("keeps single-token queries at the original param shape (no multi-word branch)", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 1 }],
+      "ORDER BY CASE": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: { q: "勇气" },
+      pagination: { limit: 20, offset: 0 },
+      userId: "u-1",
+    });
+
+    const dataQuery = mock.lastQuery!;
+    expect(dataQuery.text).not.toContain("ILIKE ALL (ARRAY[");
+    // 单 token：谓词参数仍为 7 个（不含多词 token 参数）
+    expect(mock.calls[0]!.params).toEqual(["勇气", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "勇气"]);
+  });
+});
+
+describe("WordRepository.suggest", () => {
+  it("returns [] without querying when q is blank", async () => {
+    const repository = new WordRepository();
+
+    await expect(repository.suggest("   ")).resolves.toEqual([]);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  it("queries lemma prefix first, pinyin fallback, with stub filtering and LIMIT", async () => {
+    mock.setRows([]);
+    const repository = new WordRepository();
+
+    await repository.suggest("cour", 8);
+
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("w.lemma ILIKE $1");
+    expect(query.text).toContain("w.pinyin ILIKE $2");
+    expect(query.text).toContain("w.definition_md <> ''");
+    expect(query.text).toContain("WHEN w.lemma ILIKE $4 THEN 0");
+    expect(query.text).toContain("LIMIT $7");
+    expect(query.params).toEqual(["%cour%", "%cour%", "%cour%", "cour%", "%cour%", "%cour%", 8]);
+  });
+});
