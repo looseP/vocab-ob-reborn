@@ -107,7 +107,9 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     }
 
     if (filters.cefr) {
-      where.push(`w.cefr = $${paramIdx}`);
+      // P0-1：cefr 区间归一——区间值（B2–C1 等）按下限参与过滤。
+      // left(cefr,2) 取首级，精确值 "B2" 与区间 "B2–C1" 均匹配 B2，避免精确匹配排除区间词条。
+      where.push(`left(w.cefr, 2) = $${paramIdx}`);
       params.push(filters.cefr);
       paramIdx++;
     }
@@ -193,7 +195,8 @@ export class WordRepository extends BaseRepository implements IWordRepository {
           ts_rank(w.search_vector, websearch_to_tsquery('english', $${o + 3})),
           word_similarity($${o + 4}, w.lemma)
         ) DESC NULLS LAST,
-        CASE w.cefr
+        -- P0-1：cefr 区间归一——排序权重取区间下限（left 首级），B2–C1 按 B2 参与加权
+        CASE left(w.cefr, 2)
           WHEN 'A1' THEN 6 WHEN 'A2' THEN 5 WHEN 'B1' THEN 4
           WHEN 'B2' THEN 3 WHEN 'C1' THEN 2 WHEN 'C2' THEN 1
           ELSE 0

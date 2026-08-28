@@ -128,11 +128,33 @@ describe("WordRepository.findPublic", () => {
     expect(result.total).toBe(1);
     // 最后执行的 data 查询应带 cefr 过滤条件，且参数绑定传入 C2
     const dataQuery = mock.lastQuery!;
-    expect(dataQuery.text).toContain("w.cefr = $");
+    expect(dataQuery.text).toContain("left(w.cefr, 2) = $");
     expect(dataQuery.params).toContain("C2");
     // count 查询同样带 cefr 过滤
-    expect(mock.calls[0]!.text).toContain("w.cefr = $");
+    expect(mock.calls[0]!.text).toContain("left(w.cefr, 2) = $");
     expect(mock.calls[0]!.params).toContain("C2");
+  });
+
+  it("normalizes cefr ranges to the lower bound for filtering and sorting (P0-1)", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 1 }],
+      "ORDER BY w.lemma": [],
+    });
+    const repository = new WordRepository();
+
+    // 区间值 "B2–C1"（en-dash）按下限 B2 参与过滤
+    await repository.findPublic({
+      filters: { cefr: "B2", q: "spectrum" },
+      pagination: { limit: 20, offset: 0 },
+      userId: "u-1",
+    });
+
+    const dataQuery = mock.lastQuery!;
+    expect(dataQuery.text).toContain("left(w.cefr, 2) = $");
+    // 排序权重同样按下限（CASE left(w.cefr, 2)），区间词条参与 B2 加权
+    expect(dataQuery.text).toContain("CASE left(w.cefr, 2)");
+    expect(dataQuery.text).toContain("WHEN 'B2' THEN 3");
+    expect(dataQuery.text).toContain("WHEN 'C1' THEN 2");
   });
 
   it("omits the cefr predicate when no cefr filter is provided", async () => {
@@ -284,7 +306,7 @@ describe("WordRepository L1 search logic", () => {
     const dataQuery = mock.lastQuery!;
     expect(dataQuery.text).toContain("WHEN 'A1' THEN 6");
     expect(dataQuery.text).toContain("WHEN 'C2' THEN 1");
-    expect(dataQuery.text).toMatch(/CASE w\.cefr/);
+    expect(dataQuery.text).toMatch(/CASE left\(w\.cefr, 2\)/);
   });
 
   it("keeps single-token queries at the original param shape (no multi-word branch)", async () => {
