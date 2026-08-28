@@ -133,4 +133,54 @@ describe("WordRepository.findPublic", () => {
     expect(mock.calls[0]!.text).not.toContain("w.cefr = ");
     expect(mock.lastQuery!.text).not.toContain("w.cefr = ");
   });
+
+  it("adds Chinese substring predicates and relevance ordering when a q filter is provided", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 3 }],
+      "ORDER BY CASE": [
+        { id: "w-1", slug: "courage", title: "courage", lemma: "courage", pos: "n", cefr: "B2", ipa: null, short_definition: "勇气" },
+      ],
+    });
+    const repository = new WordRepository();
+
+    const result = await repository.findPublic({
+      filters: { q: "勇气" },
+      pagination: { limit: 20, offset: 0 },
+      userId: "u-1",
+    });
+
+    expect(result.total).toBe(3);
+    const dataQuery = mock.lastQuery!;
+    // 中文释义子串匹配：short_definition / definition_md 也进入搜索谓词
+    expect(dataQuery.text).toContain("short_definition ILIKE $");
+    expect(dataQuery.text).toContain("definition_md ILIKE $");
+    // 相关性排序：精确 lemma > 前缀 > 全文命中，命中内按 ts_rank 降序
+    expect(dataQuery.text).toContain("WHEN w.lemma ILIKE $");
+    expect(dataQuery.text).toContain("ts_rank(");
+    // 参数绑定：WHERE 用 3 个 %q% 通配，ORDER 用 q / 前缀 / q / q，末尾 limit/offset
+    expect(dataQuery.params.filter((p) => p === "%勇气%")).toHaveLength(3);
+    expect(dataQuery.params).toContain("勇气%");
+    expect(dataQuery.params[dataQuery.params.length - 2]).toBe(20);
+    expect(dataQuery.params[dataQuery.params.length - 1]).toBe(0);
+    // count 查询只带 WHERE 参数（不含排序参数）
+    expect(mock.calls[0]!.params).toEqual(["勇气", "%勇气%", "%勇气%", "%勇气%"]);
+  });
+
+  it("keeps lemma ordering and no search predicates when no q is provided", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 0 }],
+      "ORDER BY w.lemma": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: {},
+      pagination: { limit: 50, offset: 0 },
+      userId: "u-1",
+    });
+
+    expect(mock.lastQuery!.text).toContain("ORDER BY w.lemma ASC");
+    expect(mock.lastQuery!.text).not.toContain("short_definition ILIKE");
+    expect(mock.lastQuery!.text).not.toContain("ts_rank(");
+  });
 });

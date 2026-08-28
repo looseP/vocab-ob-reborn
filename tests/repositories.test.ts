@@ -241,7 +241,8 @@ describe("WordRepository", () => {
     // First query = count, second = data
     mock.setRowMap({
       "count(*)": [{ total: 42 }],
-      "ORDER BY w.lemma": [
+      // 带 q 时走相关性排序（ORDER BY CASE ...），不再按 lemma 字母序
+      "ORDER BY CASE": [
         { id: "1", slug: "aboard", lemma: "aboard" } as WordSummary,
       ],
     });

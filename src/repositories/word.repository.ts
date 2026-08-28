@@ -46,11 +46,16 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     let paramIdx = 1;
 
     if (filters.q) {
+      // P1：中文释义子串搜索——to_tsvector('english') 对中文不分词，仅整段 token 能命中，
+      // 因此叠加 short_definition / definition_md 的 ILIKE 子串匹配，支持按中文释义检索。
       where.push(
-        `(w.search_vector @@ websearch_to_tsquery('english', $${paramIdx}) OR w.lemma ILIKE $${paramIdx + 1})`,
+        `(w.search_vector @@ websearch_to_tsquery('english', $${paramIdx})
+          OR w.lemma ILIKE $${paramIdx + 1}
+          OR w.short_definition ILIKE $${paramIdx + 2}
+          OR w.definition_md ILIKE $${paramIdx + 3})`,
       );
-      params.push(filters.q, `%${filters.q}%`);
-      paramIdx += 2;
+      params.push(filters.q, `%${filters.q}%`, `%${filters.q}%`, `%${filters.q}%`);
+      paramIdx += 4;
     }
 
     if (filters.freq) {
@@ -104,10 +109,29 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     const countRow = await this.queryOne<{ total: number }>(countSql, params);
     const total = countRow?.total ?? 0;
 
+    // P1：相关性排序——精确 lemma > lemma 前缀 > 全文命中 > 其余子串，命中内按 ts_rank 降序。
+    // 无搜索词时保持按字母序浏览。
+    let orderClause = "w.lemma ASC";
+    const orderParams: unknown[] = [];
+    if (filters.q) {
+      const q = filters.q;
+      orderClause = `CASE
+          WHEN w.lemma ILIKE $${paramIdx} THEN 0
+          WHEN w.lemma ILIKE $${paramIdx + 1} THEN 1
+          WHEN w.search_vector @@ websearch_to_tsquery('english', $${paramIdx + 2}) THEN 2
+          ELSE 3
+        END ASC,
+        ts_rank(w.search_vector, websearch_to_tsquery('english', $${paramIdx + 3})) DESC NULLS LAST,
+        w.lemma ASC`;
+      orderParams.push(q, `${q}%`, q, q);
+      paramIdx += 4;
+    }
+
     const dataSql = `SELECT ${SUMMARY_COLUMNS} FROM words w WHERE ${whereClause}
-                     ORDER BY w.lemma ASC LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
+                     ORDER BY ${orderClause} LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
     const items = await this.query<WordSummary>(dataSql, [
       ...params,
+      ...orderParams,
       limit,
       offset,
     ]);
