@@ -77,8 +77,10 @@ export function SiteHeader() {
         </nav>
 
         <div className="flex items-center gap-3">
-          {/* 词书切换在移动端也可见（顶部导航被隐藏时仍需能切换词书） */}
-          <div className="hidden min-[420px]:block">
+          {/* 词书切换在移动端也可见（顶部导航被隐藏时仍需能切换词书）。
+              375px（iPhone SE 等）也需可用：右侧仅需约 170px，词书名有 truncate 兜底，
+              故断点放宽到 360px，仅 <360px 的超窄旧机隐藏。 */}
+          <div className="hidden min-[360px]:block">
             <WordbookSwitcher />
           </div>
           <button
