@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, CheckCircle2, CalendarRange, CalendarClock, RotateCcw } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
@@ -66,14 +66,22 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // 竞态防护：重试会中止上一轮请求；组件卸载时中止，避免在已卸载组件上 setState。
+  const abortRef = useRef<AbortController | null>(null);
+
   const load = useCallback(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const { signal } = controller;
     setLoading(true);
     setError(null);
     return Promise.all([
-      apiFetch<QueueData>("/review/queue?limit=100").catch(() => null),
-      apiFetch<WordsData>("/words?limit=1").catch(() => null),
-      apiFetch<DashboardStats>("/review/stats/dashboard").catch(() => null),
+      apiFetch<QueueData>("/review/queue?limit=100", { signal }).catch(() => null),
+      apiFetch<WordsData>("/words?limit=1", { signal }).catch(() => null),
+      apiFetch<DashboardStats>("/review/stats/dashboard", { signal }).catch(() => null),
     ]).then(([queue, words, dash]) => {
+      if (signal.aborted) return;
       if (queue) setDueCount(queue.stats.total);
       if (words) setTotalWords(words.total);
       setDashboard(dash);
@@ -81,11 +89,14 @@ export function DashboardPage() {
       if (!queue && !words && !dash) {
         setError("加载统计失败，请检查网络后重试");
       }
-    }).finally(() => setLoading(false));
+    }).finally(() => {
+      if (!signal.aborted) setLoading(false);
+    });
   }, []);
 
   useEffect(() => {
     void load();
+    return () => abortRef.current?.abort();
   }, [load]);
 
   const effectiveTotal = dashboard?.totalWords ?? totalWords;
