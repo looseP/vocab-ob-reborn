@@ -1,6 +1,6 @@
-﻿import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { IRepositories, IWordRepository, UpsertFullWordInput } from "@/repositories/interfaces";
-import { VocabImportService } from "@/services/vocab-import.service";
+import { VocabImportService, isNonVocabNoteFile } from "@/services/vocab-import.service";
 
 const mockRepos: Partial<IRepositories> = {};
 
@@ -154,5 +154,59 @@ describe("VocabImportService.importFiles", () => {
     expect(result.results[1]!.issues.join(";")).toContain("首次出现于 L1_雅思词汇_交通旅行.md");
     // Both occurrences still import — last write wins is preserved.
     expect(result.stats.imported).toBe(2);
+  });
+});
+
+describe("VocabImportService 非单词样本守卫（P0）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("isNonVocabNoteFile flags README.md and system/backup dirs", () => {
+    expect(isNonVocabNoteFile("README.md")).toBe(true);
+    expect(isNonVocabNoteFile("notes/README.md")).toBe(true);
+    expect(isNonVocabNoteFile("_系统/模板.md")).toBe(true);
+    expect(isNonVocabNoteFile("_校验信息/校验.md")).toBe(true);
+    expect(isNonVocabNoteFile("_backup/旧词库.md")).toBe(true);
+    expect(isNonVocabNoteFile("L1_雅思词汇_交通旅行.md")).toBe(false);
+    expect(isNonVocabNoteFile("L1_雅思词汇/accelerate.md")).toBe(false);
+  });
+
+  it("skips README / system-dir files entirely without touching the repository", async () => {
+    const readme = {
+      path: "README.md",
+      content: `# 包说明\n\n## 一、包内目录结构\n\n说明文字\n\n## 二、四库词数与 confidence\n\n统计信息\n`,
+      updatedAt: "2026-08-22T00:00:00Z",
+    };
+    const upsertFullWord = vi.fn(async (_input: UpsertFullWordInput) => "imported" as const);
+    const service = new VocabImportService(makeWordsRepo(upsertFullWord));
+
+    const result = await service.importFiles([readme]);
+
+    expect(result.results[0]!.status).toBe("unchanged");
+    expect(result.results[0]!.total).toBe(0);
+    expect(result.results[0]!.issues.join(";")).toContain("跳过非词库笔记文件");
+    expect(upsertFullWord).not.toHaveBeenCalled();
+  });
+
+  it("rejects a headword that cannot produce a slug (non-latin) even with a definition", async () => {
+    const chineseHeading = {
+      ...OK_FILE,
+      content: `# t\n\n---\n\n## 勇气\n\n### Identity\n- lemma: 勇气\n- pos: n.\n\n### Short Definition\n勇气\n\n### Core Definitions\n1. 勇气\n   - en: courage\n   - priority: 1\n   - tags: core\n`,
+    };
+    const upsertFullWord = vi.fn(async (_input: UpsertFullWordInput) => "imported" as const);
+    const service = new VocabImportService(makeWordsRepo(upsertFullWord));
+
+    const result = await service.importFiles([chineseHeading]);
+
+    expect(result.results[0]!.status).toBe("rejected");
+    expect(result.stats.rejected).toBe(1);
+    expect(result.results[0]!.issues.join(";")).toContain("无法生成 slug");
+    expect(result.results[0]!.words[0]).toMatchObject({
+      slug: "",
+      tier: "rejected",
+      score: 0,
+    });
+    expect(upsertFullWord).not.toHaveBeenCalled();
   });
 });

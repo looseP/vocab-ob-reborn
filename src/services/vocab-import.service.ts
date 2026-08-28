@@ -89,6 +89,20 @@ function deriveFileStatus(counters: Omit<ImportVocabNoteFileResult, "path" | "st
   return "unchanged";
 }
 
+/**
+ * 非词库笔记文件判定（P0 非单词样本守卫）：
+ * - README.md（及 `## 标题` 会被当词头解析，实测产生 `confidence`/`9` 等伪词条）；
+ * - 本项目语料中的系统/校验/备份目录（`_系统`、`_校验信息`、`_backup`）。
+ * 这类文件跳过、不解析为词条；需扩展时在此追加。
+ */
+const NON_VOCAB_NOTE_DIRS = new Set(["_系统", "_校验信息", "_backup"]);
+export function isNonVocabNoteFile(path: string): boolean {
+  const segments = path.split(/[\\/]/);
+  const basename = segments[segments.length - 1] ?? "";
+  if (basename.toLowerCase() === "readme.md") return true;
+  return segments.some((segment) => NON_VOCAB_NOTE_DIRS.has(segment));
+}
+
 export class VocabImportService {
   constructor(private readonly words: IWordRepository) {}
 
@@ -107,6 +121,23 @@ export class VocabImportService {
     // Scope: this request only — chunked uploads arrive as separate requests.
     const seenSlugs = new Map<string, string>();
     for (const file of files) {
+      // P0 非单词样本守卫：README / 系统目录等非词库笔记整文件跳过，不解析为词条。
+      if (isNonVocabNoteFile(file.path)) {
+        results.push({
+          path: file.path,
+          status: "unchanged",
+          total: 0,
+          imported: 0,
+          unchanged: 0,
+          needsSupplement: 0,
+          rejected: 0,
+          failedWords: 0,
+          minScore: null,
+          issues: [`跳过非词库笔记文件（README/系统目录不解析为词条）`],
+          words: [],
+        });
+        continue;
+      }
       results.push(await this.importOneFile(file, strictness, options.dryRun === true, seenSlugs));
     }
 
@@ -154,8 +185,26 @@ export class VocabImportService {
 
       for (const word of collection.words) {
         attachSource(word, file);
-        const quality = assessWordCompleteness(word, strictness);
         base.total += 1;
+
+        // P0 非单词样本守卫：词头无法生成 slug（纯非拉丁/纯符号，如中文笔记标题）
+        // 即使带释义也不能写入——空 slug 会撞 words.slug 唯一约束或覆盖脏数据。
+        if (!word.slug) {
+          const reason = `词头 "${word.lemma}" 无法生成 slug（非拉丁/纯符号）——拒绝写入`;
+          base.rejected += 1;
+          base.issues.push(`${word.lemma}: ${reason}`);
+          base.words.push({
+            slug: word.slug,
+            pos: word.pos,
+            cefr: word.cefr,
+            tier: "rejected",
+            score: 0,
+            issues: [reason],
+          });
+          continue;
+        }
+
+        const quality = assessWordCompleteness(word, strictness);
         base.minScore =
           base.minScore == null ? quality.score : Math.min(base.minScore, quality.score);
 
