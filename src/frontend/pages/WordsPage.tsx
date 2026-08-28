@@ -198,13 +198,13 @@ export function WordsPage() {
         onToggleSelect={toggleSelect}
       />
 
-      {/* P2-7：分页——「加载更多」追加下一页；总数与已加载数展示 */}
-      {!loading && !error && words.length > 0 && (
+      {/* P2-7：分页——「加载更多」追加下一页；总数与已加载数展示（空结果也显示 0/total） */}
+      {!loading && !error && (
         <div className="flex flex-col items-center gap-2 pt-2">
           <p className="text-xs text-[var(--color-ink-soft)]">
             已加载 {words.length} / {total} 词
           </p>
-          {hasMore && (
+          {hasMore && words.length > 0 && (
             <Button variant="secondary" onClick={loadMore} disabled={loadingMore}>
               {loadingMore ? "加载中..." : "加载更多"}
             </Button>
