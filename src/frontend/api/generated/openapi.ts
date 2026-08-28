@@ -1847,12 +1847,10 @@ export interface operations {
         parameters: {
             query?: {
                 cefr?: string;
-                freq?: string;
                 limit?: number;
                 offset?: number;
                 q?: string;
                 review?: "all" | "tracked" | "due" | "untracked";
-                semantic?: string;
                 wordbookId?: string;
             };
             header?: never;

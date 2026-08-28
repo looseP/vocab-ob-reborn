@@ -28,9 +28,7 @@ export const uuidSchema = z.string().uuid();
 export const wordsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(60),
   offset: z.coerce.number().int().min(0).optional().default(0),
-  freq: z.string().max(50).optional(),
   q: z.string().max(200).optional(),
-  semantic: z.string().max(100).optional(),
   cefr: z.string().max(10).optional(),
   review: z.enum(["all", "tracked", "due", "untracked"]).optional().default("all"),
   wordbookId: uuidSchema.optional(),

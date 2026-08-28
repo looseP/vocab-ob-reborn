@@ -249,7 +249,7 @@ describe("WordRepository", () => {
     const repos = createRepositories();
     const result = await repos.words.findPublic({
       userId: "u1",
-      filters: { q: "ab", freq: "基础词" },
+      filters: { q: "ab", cefr: "B1" },
       pagination: { limit: 10, offset: 0 },
     });
 
@@ -260,7 +260,7 @@ describe("WordRepository", () => {
     expect(mock.calls.length).toBe(2);
     // Verify search filter applied
     expect(mock.calls[0].text).toContain("websearch_to_tsquery");
-    expect(mock.calls[0].text).toContain("word_freq");
+    expect(mock.calls[0].text).toContain("left(w.cefr, 2)");
   });
 
   it("applies owner-scoped wordbook and review filters", async () => {

@@ -19,8 +19,6 @@ type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 export interface GetWordsParams {
   userId: string;
   q?: string;
-  freq?: string;
-  semantic?: string;
   review?: string;
   cefr?: string;
   wordbookId?: string;
@@ -41,8 +39,6 @@ export class WordService {
       return words.findPublic({
         filters: {
           q: params.q,
-          freq: params.freq,
-          semantic: params.semantic,
           review: params.review,
           cefr: params.cefr,
         },
