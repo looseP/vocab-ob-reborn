@@ -48,6 +48,9 @@ export function useWords(params?: { pageSize?: number; q?: string; cefr?: string
     const query = searchParams.toString();
     setLoading(true);
     setError(null);
+    // 切筛选/搜索时清空旧列表：避免切换瞬间仍显示上一步筛选的旧数据
+    // （WordList 仅在 loading && words.length === 0 时展示加载态）。
+    setWords([]);
     apiFetch<WordListResponse>(`/words${query ? `?${query}` : ""}`, { signal: controller.signal })
       .then((result) => {
         if (controller.signal.aborted) return;
