@@ -423,6 +423,14 @@ button {
   color: var(--color-pill-warm-text);
 }
 
+/* 词条库搜索结果关键词高亮（A2） */
+.search-highlight {
+  background: var(--color-pill-bg);
+  color: var(--color-pill-text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 /* ─── Global interaction enhancements ─── */
 
 /* Smooth link transitions */

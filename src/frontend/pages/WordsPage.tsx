@@ -1,10 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Search, Filter, Upload, BookOpen } from "lucide-react";
+import { Search, Filter, Upload, BookOpen, History, X } from "lucide-react";
 import { Input } from "@/frontend/components/ui/Input";
 import { Button } from "@/frontend/components/ui/Button";
 import { WordList } from "@/frontend/components/words/WordList";
 import { useWords } from "@/frontend/hooks/useWords";
+import { useRecentSearches } from "@/frontend/hooks/useRecentSearches";
 
 const CEFR_LEVELS = ["", "A1", "A2", "B1", "B2", "C1", "C2"] as const;
 
@@ -15,15 +16,25 @@ export function WordsPage() {
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { recent, add, remove, clear } = useRecentSearches();
 
-  const debouncedSetQuery = useCallback(
-    (value: string) => {
-      setQuery(value);
-      const timer = setTimeout(() => setDebouncedQuery(value), 300);
-      return () => clearTimeout(timer);
-    },
-    [],
-  );
+  const debouncedSetQuery = useCallback((value: string) => {
+    setQuery(value);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => setDebouncedQuery(value), 300);
+  }, []);
+
+  // A2：每次防抖提交的非空搜索记录进最近搜索（去重、最近优先）
+  useEffect(() => {
+    if (debouncedQuery.trim()) add(debouncedQuery.trim());
+  }, [debouncedQuery, add]);
+
+  // 点击最近搜索：立即生效，跳过防抖
+  const applySearch = useCallback((value: string) => {
+    setQuery(value);
+    setDebouncedQuery(value);
+  }, []);
 
   const { words, loading, error } = useWords({
     q: debouncedQuery || undefined,
@@ -110,10 +121,42 @@ export function WordsPage() {
         </p>
       )}
 
+      {query === "" && recent.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <History className="h-4 w-4 text-[var(--color-ink-soft)]" />
+          {recent.map((term) => (
+            <span
+              key={term}
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-pill-border)] bg-[var(--color-pill-bg)] py-1 pl-3 pr-1.5 text-sm text-[var(--color-pill-text)]"
+            >
+              <button type="button" onClick={() => applySearch(term)} className="hover:underline">
+                {term}
+              </button>
+              <button
+                type="button"
+                aria-label={`删除最近搜索「${term}」`}
+                onClick={() => remove(term)}
+                className="rounded-full p-0.5 opacity-60 transition-opacity hover:opacity-100"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            onClick={clear}
+            className="text-xs text-[var(--color-ink-soft)] hover:underline"
+          >
+            清空
+          </button>
+        </div>
+      )}
+
       <WordList
         words={words}
         loading={loading}
         error={error}
+        highlight={debouncedQuery}
         selectable={selecting}
         selectedIds={selectedIds}
         onToggleSelect={toggleSelect}

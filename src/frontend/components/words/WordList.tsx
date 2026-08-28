@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Card } from "@/frontend/components/ui/Card";
 import { Spinner } from "@/frontend/components/ui/Spinner";
+import { HighlightText } from "@/frontend/components/words/HighlightText";
 import type { WordListItem } from "@/frontend/hooks/useWords";
 
 interface WordListProps {
@@ -11,9 +12,19 @@ interface WordListProps {
   selectable?: boolean;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
+  /** 搜索结果关键词高亮（A2）：在 lemma / 中文释义中高亮匹配子串。 */
+  highlight?: string;
 }
 
-export function WordList({ words, loading, error, selectable, selectedIds, onToggleSelect }: WordListProps) {
+export function WordList({
+  words,
+  loading,
+  error,
+  selectable,
+  selectedIds,
+  onToggleSelect,
+  highlight,
+}: WordListProps) {
   if (loading && words.length === 0) {
     return (
       <Card className="flex items-center justify-center py-12">
@@ -58,11 +69,11 @@ export function WordList({ words, loading, error, selectable, selectedIds, onTog
                 />
                 <div>
                   <p className="text-lg font-semibold text-[var(--color-ink)]">
-                    {word.lemma}
+                    <HighlightText text={word.lemma} highlight={highlight ?? ""} />
                   </p>
                   {word.short_definition && (
                     <p className="text-sm text-[var(--color-ink-soft)]">
-                      {word.short_definition}
+                      <HighlightText text={word.short_definition} highlight={highlight ?? ""} />
                     </p>
                   )}
                 </div>
@@ -92,11 +103,11 @@ export function WordList({ words, loading, error, selectable, selectedIds, onTog
             <div className="flex items-center gap-4">
               <div>
                 <p className="text-lg font-semibold text-[var(--color-ink)]">
-                  {word.lemma}
+                  <HighlightText text={word.lemma} highlight={highlight ?? ""} />
                 </p>
                 {word.short_definition && (
                   <p className="text-sm text-[var(--color-ink-soft)]">
-                    {word.short_definition}
+                    <HighlightText text={word.short_definition} highlight={highlight ?? ""} />
                   </p>
                 )}
               </div>
