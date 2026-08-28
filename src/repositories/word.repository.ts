@@ -94,18 +94,6 @@ export class WordRepository extends BaseRepository implements IWordRepository {
       paramIdx += qParams.length;
     }
 
-    if (filters.freq) {
-      where.push(`w.metadata->>'word_freq' = $${paramIdx}`);
-      params.push(filters.freq);
-      paramIdx++;
-    }
-
-    if (filters.semantic) {
-      where.push(`w.metadata->>'semantic_field' = $${paramIdx}`);
-      params.push(filters.semantic);
-      paramIdx++;
-    }
-
     if (filters.cefr) {
       // P0-1：cefr 区间归一——区间值（B2–C1 等）按下限参与过滤。
       // left(cefr,2) 取首级，精确值 "B2" 与区间 "B2–C1" 均匹配 B2，避免精确匹配排除区间词条。

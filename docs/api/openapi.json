@@ -1724,15 +1724,6 @@
           },
           {
             "in": "query",
-            "name": "freq",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 50
-            }
-          },
-          {
-            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -1775,15 +1766,6 @@
                 "due",
                 "untracked"
               ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "semantic",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "maxLength": 100
             }
           },
           {

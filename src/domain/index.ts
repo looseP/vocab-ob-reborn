@@ -67,8 +67,6 @@ export interface WordDetail extends WordSummary {
 
 export interface WordFilters {
   q?: string;
-  freq?: string;
-  semantic?: string;
   review?: string;
   cefr?: string;
 }
