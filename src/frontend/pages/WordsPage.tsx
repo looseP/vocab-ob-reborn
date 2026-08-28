@@ -14,6 +14,7 @@ export function WordsPage() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [cefr, setCefr] = useState("");
+  const [review, setReview] = useState("all");
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
@@ -39,9 +40,11 @@ export function WordsPage() {
     setDebouncedQuery(value);
   }, []);
 
-  const { words, loading, error } = useWords({
+  // P2-7/8：review 筛选 + 「加载更多」分页
+  const { words, loading, loadingMore, error, total, hasMore, loadMore } = useWords({
     q: debouncedQuery || undefined,
     cefr: cefr || undefined,
+    review: review || undefined,
     pageSize: 50,
   });
 
@@ -121,6 +124,17 @@ export function WordsPage() {
               </option>
             ))}
           </select>
+          {/* P2-8：复习状态筛选——复用 /words 的 review 过滤 */}
+          <select
+            value={review}
+            onChange={(e) => setReview(e.target.value)}
+            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-input)] px-3 py-2 text-sm text-[var(--color-ink)] focus:border-[var(--color-accent)] focus:outline-none"
+          >
+            <option value="all">全部</option>
+            <option value="tracked">已追踪</option>
+            <option value="due">待复习</option>
+            <option value="untracked">未追踪</option>
+          </select>
           <Button size="sm" variant={selecting ? "primary" : "secondary"} onClick={enterSelecting}>
             <BookOpen className="h-4 w-4" /> 自由复习
           </Button>
@@ -183,6 +197,20 @@ export function WordsPage() {
         selectedIds={selectedIds}
         onToggleSelect={toggleSelect}
       />
+
+      {/* P2-7：分页——「加载更多」追加下一页；总数与已加载数展示 */}
+      {!loading && !error && words.length > 0 && (
+        <div className="flex flex-col items-center gap-2 pt-2">
+          <p className="text-xs text-[var(--color-ink-soft)]">
+            已加载 {words.length} / {total} 词
+          </p>
+          {hasMore && (
+            <Button variant="secondary" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? "加载中..." : "加载更多"}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

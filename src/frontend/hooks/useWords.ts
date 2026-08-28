@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/frontend/api/client";
 
 export interface WordListItem {
@@ -21,29 +21,39 @@ interface WordListResponse {
   hasMore: boolean;
 }
 
-export function useWords(params?: { page?: number; pageSize?: number; q?: string; cefr?: string }) {
+/**
+ * 词条库列表（P2-8）：支持 q / cefr / review 筛选与「加载更多」分页。
+ * 参数变化时重置列表并中止旧请求（竞态防护）；loadMore 追加下一页，同样带中止。
+ */
+export function useWords(params?: { pageSize?: number; q?: string; cefr?: string; review?: string }) {
   const [words, setWords] = useState<WordListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const moreController = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    // 竞态防护：参数变化（切筛选/搜索/翻页）时中止上一个请求，
+    // 竞态防护：参数变化（切筛选/搜索）时中止上一个请求，
     // 避免"后发先回"导致旧结果覆盖新结果（列表错乱）。
     const controller = new AbortController();
     const searchParams = new URLSearchParams();
-    if (params?.pageSize) searchParams.set("limit", String(params.pageSize));
+    searchParams.set("limit", String(params?.pageSize ?? 50));
+    searchParams.set("offset", "0");
     if (params?.q) searchParams.set("q", params.q);
     if (params?.cefr) searchParams.set("cefr", params.cefr);
+    if (params?.review && params.review !== "all") searchParams.set("review", params.review);
 
     const query = searchParams.toString();
     setLoading(true);
+    setError(null);
     apiFetch<WordListResponse>(`/words${query ? `?${query}` : ""}`, { signal: controller.signal })
       .then((result) => {
         if (controller.signal.aborted) return;
         setWords(result.items ?? []);
         setTotal(result.total ?? 0);
-        setError(null);
+        setHasMore(result.hasMore ?? false);
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
@@ -54,7 +64,43 @@ export function useWords(params?: { page?: number; pageSize?: number; q?: string
         setLoading(false);
       });
     return () => controller.abort();
-  }, [params?.page, params?.pageSize, params?.q, params?.cefr]);
+  }, [params?.pageSize, params?.q, params?.cefr, params?.review]);
 
-  return { words, loading, error, total };
+  /** 追加下一页（P2-7）。offset 用当前已加载条数，保证与筛选条件一致。 */
+  const loadMore = useCallback(() => {
+    if (loadingMore || loading || !hasMore) return;
+    const size = params?.pageSize ?? 50;
+    const searchParams = new URLSearchParams();
+    searchParams.set("limit", String(size));
+    searchParams.set("offset", String(words.length));
+    if (params?.q) searchParams.set("q", params.q);
+    if (params?.cefr) searchParams.set("cefr", params.cefr);
+    if (params?.review && params.review !== "all") searchParams.set("review", params.review);
+    const query = searchParams.toString();
+
+    moreController.current?.abort();
+    const controller = new AbortController();
+    moreController.current = controller;
+    setLoadingMore(true);
+    apiFetch<WordListResponse>(`/words${query ? `?${query}` : ""}`, { signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setWords((prev) => [...prev, ...(result.items ?? [])]);
+        setTotal(result.total ?? 0);
+        setHasMore(result.hasMore ?? false);
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setError("加载更多失败");
+      })
+      .finally(() => {
+        if (controller.signal.aborted) return;
+        setLoadingMore(false);
+      });
+  }, [loadingMore, loading, hasMore, words.length, params?.pageSize, params?.q, params?.cefr, params?.review]);
+
+  // 卸载时中止挂起的 loadMore
+  useEffect(() => () => moreController.current?.abort(), []);
+
+  return { words, loading, loadingMore, error, total, hasMore, loadMore };
 }
