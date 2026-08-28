@@ -72,7 +72,8 @@ export class WordRepository extends BaseRepository implements IWordRepository {
           OR w.definition_md ILIKE $${paramIdx + 3}
           OR w.pinyin ILIKE $${paramIdx + 4}
           OR w.pinyin_initial ILIKE $${paramIdx + 5}
-          OR word_similarity($${paramIdx + 6}, w.lemma) > 0.3)`;
+          OR word_similarity($${paramIdx + 6}, w.lemma) > 0.3
+          OR EXISTS (SELECT 1 FROM unnest(w.aliases) AS a WHERE a ILIKE $${paramIdx + 7}))`;
       const qParams: unknown[] = [
         q,
         `%${q}%`,
@@ -81,12 +82,15 @@ export class WordRepository extends BaseRepository implements IWordRepository {
         `%${qNoSpace}%`,
         `%${qNoSpace}%`,
         q,
+        `%${q}%`,
       ];
 
       if (multiWord) {
+        // P1-6：多词任一 token 命中 lemma 即入池（跨字段/部分命中不遗漏，如
+        // "space exploration" 也能召回 spacecraft）；相关性由排序层区分。
         predicate += ` OR (${wrappedTokens
-          .map((_, i) => `w.lemma ILIKE $${paramIdx + 7 + i}`)
-          .join(" AND ")})`;
+          .map((_, i) => `w.lemma ILIKE $${paramIdx + 8 + i}`)
+          .join(" OR ")})`;
         qParams.push(...wrappedTokens);
       }
       where.push(predicate);
@@ -154,25 +158,41 @@ export class WordRepository extends BaseRepository implements IWordRepository {
         `WHEN w.lemma ILIKE $${paramIdx + 1} THEN 1`,
       ];
       orderParams.push(q, `${q}%`);
+      let tier = 2;
 
       if (multiWord) {
+        // P1-6：lemma 同时包含全部 token —— 最强组合命中
         whens.push(
           `WHEN w.lemma ILIKE ALL (ARRAY[${wrappedTokens
             .map((_, i) => `$${paramIdx + 2 + i}`)
-            .join(", ")}]) THEN 2`,
+            .join(", ")}]) THEN ${tier}`,
         );
         orderParams.push(...wrappedTokens);
+        tier++;
       }
 
-      // o = 下一个可用参数索引（始终以 orderParams 实际长度为准，
-      // 避免单 token 时 wrappedTokens.length=1 造成的索引偏移）
-      const o = paramIdx + orderParams.length;
-      // multiWord 会让 CASE 层数整体 +1（fts 3 / pinyin 4 / else 5，否则 2/3/4）
-      const shift = multiWord ? 1 : 0;
+      // P1-5：aliases（屈折/变体/不规则形，如 much→more）命中
+      const oAlias = paramIdx + orderParams.length;
       whens.push(
-        `WHEN w.search_vector @@ websearch_to_tsquery('english', $${o}) THEN ${2 + shift}`,
-        `WHEN w.pinyin ILIKE $${o + 1} OR w.pinyin_initial ILIKE $${o + 2} THEN ${3 + shift}`,
-        `ELSE ${4 + shift}`,
+        `WHEN EXISTS (SELECT 1 FROM unnest(w.aliases) AS a WHERE a ILIKE $${oAlias}) THEN ${tier}`,
+      );
+      orderParams.push(`%${q}%`);
+      tier++;
+
+      if (multiWord) {
+        // P1-6：lemma 命中任一 token（复用全部 token 参数）
+        whens.push(
+          `WHEN (${wrappedTokens.map((_, i) => `w.lemma ILIKE $${paramIdx + 2 + i}`).join(" OR ")}) THEN ${tier}`,
+        );
+        tier++;
+      }
+
+      // o = 下一个可用参数索引（始终以 orderParams 实际长度为准）
+      const o = paramIdx + orderParams.length;
+      whens.push(
+        `WHEN w.search_vector @@ websearch_to_tsquery('english', $${o}) THEN ${tier}`,
+        `WHEN w.pinyin ILIKE $${o + 1} OR w.pinyin_initial ILIKE $${o + 2} THEN ${tier + 1}`,
+        `ELSE ${tier + 2}`,
       );
       orderParams.push(q, `%${qNoSpace}%`, `%${qNoSpace}%`);
 
