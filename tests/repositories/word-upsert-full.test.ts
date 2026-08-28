@@ -50,8 +50,12 @@ describe("WordRepository.upsertFullWord", () => {
     const params = mock.lastQuery!.params;
     expect(params[0]).toBe("accelerate");
     expect(params[6]).toEqual(["accelerates"]);
-    expect(params[17]).toBe(true);
-    expect(params[18]).toBe("ok");
+    // pinyin 列由中文释义生成（$15=全拼 jiasu，$16=首字母 js）
+    expect(params[14]).toBe("jiasu");
+    expect(params[15]).toBe("js");
+    // isPublished / qualityStatus / qualityIssues 因新增 pinyin 列后移
+    expect(params[19]).toBe(true);
+    expect(params[20]).toBe("ok");
   });
 
   it("returns unchanged when the hash guard skips the update", async () => {
@@ -68,8 +72,8 @@ describe("WordRepository.upsertFullWord", () => {
       qualityIssuesJson: ["缺少例句（collocation / corpus 均为空）"],
     });
     const params = mock.lastQuery!.params;
-    expect(params[17]).toBe(false);
-    expect(params[18]).toBe("needs_supplement");
-    expect(params[19]).toContain("缺少例句");
+    expect(params[19]).toBe(false);
+    expect(params[20]).toBe("needs_supplement");
+    expect(params[21]).toContain("缺少例句");
   });
 });

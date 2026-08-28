@@ -29,7 +29,7 @@ describe("WordRepository.insertMany", () => {
     expect(mock.calls).toHaveLength(0);
   });
 
-  it("writes one 11-column row per word via the batch pool and returns the row count", async () => {
+  it("writes one 13-column row per word via the batch pool and returns the row count", async () => {
     batchMock.setRows([{ id: "w-1" }, { id: "w-2" }]);
     const repository = new WordRepository();
 
@@ -42,7 +42,7 @@ describe("WordRepository.insertMany", () => {
     const query = batchMock.lastQuery!;
     expect(query.text).toContain("INSERT INTO words");
     expect(query.text).toContain("ON CONFLICT (slug) DO UPDATE");
-    expect(query.params).toHaveLength(22);
+    expect(query.params).toHaveLength(26);
 
     expect(query.params.slice(0, 7)).toEqual([
       "abound", "Abound", "abound", "verb", "C1", "/əˈbaʊnd/", "exist in large numbers",
@@ -52,15 +52,34 @@ describe("WordRepository.insertMany", () => {
     expect(query.params[8]).toBe("batch-import/abound.md");
     expect(query.params[9]).toBe("exist in large numbers");
     expect(query.params[10]).toBe("exist in large numbers");
+    // 英文释义无汉字 → 拼音列为 null
+    expect(query.params[11]).toBeNull();
+    expect(query.params[12]).toBeNull();
 
     // second row: nullable fields stay null, empty short definition becomes ""
-    expect(query.params.slice(11, 18)).toEqual(["breach", "Breach", "breach", null, null, null, ""]);
-    expect(query.params[19]).toBe("batch-import/breach.md");
-    expect(query.params[20]).toBe("");
-    expect(query.params[21]).toBe("");
+    expect(query.params.slice(13, 20)).toEqual(["breach", "Breach", "breach", null, null, null, ""]);
+    expect(query.params[21]).toBe("batch-import/breach.md");
+    expect(query.params[22]).toBe("");
+    expect(query.params[23]).toBe("");
+    // 空释义 → 拼音列仍为 null
+    expect(query.params[24]).toBeNull();
+    expect(query.params[25]).toBeNull();
 
     // the read-only vocab_app pool must never see the bulk write
     expect(mock.calls).toHaveLength(0);
+  });
+
+  it("computes pinyin columns from Chinese short definitions on insert", async () => {
+    batchMock.setRows([{ id: "w-1" }]);
+    const repository = new WordRepository();
+
+    await repository.insertMany([
+      { slug: "courage", title: "Courage", lemma: "courage", pos: "n", cefr: "B2", ipa: "/ˈkʌrɪdʒ/", short_definition: "勇气，胆量" },
+    ]);
+
+    const query = batchMock.lastQuery!;
+    expect(query.params[11]).toBe("yongqidanliang");
+    expect(query.params[12]).toBe("yqdl");
   });
 
   it("derives a deterministic sha256 content hash from all batch fields", async () => {
@@ -134,7 +153,7 @@ describe("WordRepository.findPublic", () => {
     expect(mock.lastQuery!.text).not.toContain("w.cefr = ");
   });
 
-  it("adds Chinese substring predicates and relevance ordering when a q filter is provided", async () => {
+  it("adds Chinese substring, pinyin, and typo-tolerance predicates with relevance ordering when a q filter is provided", async () => {
     mock.setRowMap({
       "count(*)": [{ total: 3 }],
       "ORDER BY CASE": [
@@ -151,19 +170,43 @@ describe("WordRepository.findPublic", () => {
 
     expect(result.total).toBe(3);
     const dataQuery = mock.lastQuery!;
-    // 中文释义子串匹配：short_definition / definition_md 也进入搜索谓词
+    // 中文释义子串 + 拼音 + 拼写容错谓词
     expect(dataQuery.text).toContain("short_definition ILIKE $");
     expect(dataQuery.text).toContain("definition_md ILIKE $");
-    // 相关性排序：精确 lemma > 前缀 > 全文命中，命中内按 ts_rank 降序
+    expect(dataQuery.text).toContain("pinyin ILIKE $");
+    expect(dataQuery.text).toContain("pinyin_initial ILIKE $");
+    expect(dataQuery.text).toContain("word_similarity($");
+    // 相关性排序：精确 > 前缀 > 全文 > 拼音 > 子串，GREATEST(ts_rank, word_similarity) 兜底
     expect(dataQuery.text).toContain("WHEN w.lemma ILIKE $");
     expect(dataQuery.text).toContain("ts_rank(");
-    // 参数绑定：WHERE 用 3 个 %q% 通配，ORDER 用 q / 前缀 / q / q，末尾 limit/offset
-    expect(dataQuery.params.filter((p) => p === "%勇气%")).toHaveLength(3);
+    expect(dataQuery.text).toContain("GREATEST(");
+    // WHERE(7) + ORDER(7) + limit + offset = 16 个参数；%q% 通配：WHERE 5 + ORDER 2 = 7
+    expect(dataQuery.params).toHaveLength(16);
+    expect(dataQuery.params.filter((p) => p === "%勇气%")).toHaveLength(7);
     expect(dataQuery.params).toContain("勇气%");
     expect(dataQuery.params[dataQuery.params.length - 2]).toBe(20);
     expect(dataQuery.params[dataQuery.params.length - 1]).toBe(0);
     // count 查询只带 WHERE 参数（不含排序参数）
-    expect(mock.calls[0]!.params).toEqual(["勇气", "%勇气%", "%勇气%", "%勇气%"]);
+    expect(mock.calls[0]!.params).toEqual(["勇气", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "%勇气%", "勇气"]);
+  });
+
+  it("strips spaces from the query when matching pinyin columns", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 1 }],
+      "ORDER BY CASE": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: { q: "yong qi" },
+      pagination: { limit: 20, offset: 0 },
+      userId: "u-1",
+    });
+
+    const dataQuery = mock.lastQuery!;
+    // 拼音列用去空格后的查询词匹配（与无空格存储对齐）；lemma/释义 ILIKE 仍保留空格原样
+    expect(dataQuery.params).toContain("%yongqi%");
+    expect(dataQuery.params).toContain("%yong qi%");
   });
 
   it("keeps lemma ordering and no search predicates when no q is provided", async () => {

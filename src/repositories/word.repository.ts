@@ -10,6 +10,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { computePinyinFromCjk } from "../domain/ingest/pinyin";
 import type {
   GetPublicWordsOptions,
   PaginatedResult,
@@ -48,14 +49,28 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     if (filters.q) {
       // P1：中文释义子串搜索——to_tsvector('english') 对中文不分词，仅整段 token 能命中，
       // 因此叠加 short_definition / definition_md 的 ILIKE 子串匹配，支持按中文释义检索。
+      // P2：拼音搜索（pinyin / pinyin_initial，去空格对齐无空格存储）+ 拼写容错
+      // （word_similarity，纠正 "courge→courage" 类输入；函数式查询，7k 词条成本可忽略）。
+      const qNoSpace = filters.q.replace(/\s+/g, "");
       where.push(
         `(w.search_vector @@ websearch_to_tsquery('english', $${paramIdx})
           OR w.lemma ILIKE $${paramIdx + 1}
           OR w.short_definition ILIKE $${paramIdx + 2}
-          OR w.definition_md ILIKE $${paramIdx + 3})`,
+          OR w.definition_md ILIKE $${paramIdx + 3}
+          OR w.pinyin ILIKE $${paramIdx + 4}
+          OR w.pinyin_initial ILIKE $${paramIdx + 5}
+          OR word_similarity($${paramIdx + 6}, w.lemma) > 0.3)`,
       );
-      params.push(filters.q, `%${filters.q}%`, `%${filters.q}%`, `%${filters.q}%`);
-      paramIdx += 4;
+      params.push(
+        filters.q,
+        `%${filters.q}%`,
+        `%${filters.q}%`,
+        `%${filters.q}%`,
+        `%${qNoSpace}%`,
+        `%${qNoSpace}%`,
+        filters.q,
+      );
+      paramIdx += 7;
     }
 
     if (filters.freq) {
@@ -110,21 +125,27 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     const total = countRow?.total ?? 0;
 
     // P1：相关性排序——精确 lemma > lemma 前缀 > 全文命中 > 其余子串，命中内按 ts_rank 降序。
+    // P2：追加拼音命中层（在子串之上），并用 GREATEST(ts_rank, word_similarity) 让拼写容错命中也能靠前。
     // 无搜索词时保持按字母序浏览。
     let orderClause = "w.lemma ASC";
     const orderParams: unknown[] = [];
     if (filters.q) {
       const q = filters.q;
+      const qNoSpace = q.replace(/\s+/g, "");
       orderClause = `CASE
           WHEN w.lemma ILIKE $${paramIdx} THEN 0
           WHEN w.lemma ILIKE $${paramIdx + 1} THEN 1
           WHEN w.search_vector @@ websearch_to_tsquery('english', $${paramIdx + 2}) THEN 2
-          ELSE 3
+          WHEN w.pinyin ILIKE $${paramIdx + 3} OR w.pinyin_initial ILIKE $${paramIdx + 4} THEN 3
+          ELSE 4
         END ASC,
-        ts_rank(w.search_vector, websearch_to_tsquery('english', $${paramIdx + 3})) DESC NULLS LAST,
+        GREATEST(
+          ts_rank(w.search_vector, websearch_to_tsquery('english', $${paramIdx + 5})),
+          word_similarity($${paramIdx + 6}, w.lemma)
+        ) DESC NULLS LAST,
         w.lemma ASC`;
-      orderParams.push(q, `${q}%`, q, q);
-      paramIdx += 4;
+      orderParams.push(q, `${q}%`, q, `%${qNoSpace}%`, `%${qNoSpace}%`, q, q);
+      paramIdx += 7;
     }
 
     const dataSql = `SELECT ${SUMMARY_COLUMNS} FROM words w WHERE ${whereClause}
@@ -171,7 +192,7 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     // values here: a content hash from the provided fields (satisfies the
     // `^[0-9a-f]{64}$` CHECK and the unique constraint), a deterministic
     // source path, and markdown bodies from the short definition.
-    const perRow = 11;
+    const perRow = 13;
     const values: string[] = [];
     const params: unknown[] = [];
     words.forEach((w, i) => {
@@ -180,23 +201,27 @@ export class WordRepository extends BaseRepository implements IWordRepository {
       const contentHash = createHash("sha256")
         .update([w.slug, w.title, w.lemma, w.pos ?? "", w.cefr ?? "", w.ipa ?? "", short].join("\u0000"))
         .digest("hex");
+      // P2：拼音列随导入生成（从中文释义取全拼/首字母）。
+      const { pinyin, pinyinInitial } = computePinyinFromCjk(short);
       values.push(
-        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`,
+        `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11}, $${base + 12}, $${base + 13})`,
       );
       params.push(
         w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, short,
         contentHash, `batch-import/${w.slug}.md`, short, short,
+        pinyin, pinyinInitial,
       );
     });
     const result = await this.queryViaBatchPool<{ id: string }>(
       `INSERT INTO words
-         (slug, title, lemma, pos, cefr, ipa, short_definition, content_hash, source_path, definition_md, body_md)
+         (slug, title, lemma, pos, cefr, ipa, short_definition, content_hash, source_path, definition_md, body_md, pinyin, pinyin_initial)
        VALUES ${values.join(", ")}
        ON CONFLICT (slug) DO UPDATE SET
          title = EXCLUDED.title, lemma = EXCLUDED.lemma, pos = EXCLUDED.pos,
          cefr = EXCLUDED.cefr, ipa = EXCLUDED.ipa, short_definition = EXCLUDED.short_definition,
          content_hash = EXCLUDED.content_hash, source_path = EXCLUDED.source_path,
          definition_md = EXCLUDED.definition_md, body_md = EXCLUDED.body_md,
+         pinyin = EXCLUDED.pinyin, pinyin_initial = EXCLUDED.pinyin_initial,
          updated_at = now()
        RETURNING id`,
       params,
@@ -210,20 +235,22 @@ export class WordRepository extends BaseRepository implements IWordRepository {
    * clause turns the statement into a no-op and "unchanged" is returned.
    */
   async upsertFullWord(input: UpsertFullWordInput): Promise<"imported" | "unchanged"> {
+    // P2：拼音列从中文释义生成（全拼/首字母）。
+    const { pinyin, pinyinInitial } = computePinyinFromCjk(input.shortDefinition, input.definitionMd);
     const rows = await this.queryViaBatchPool<{ id: string }>(
       `INSERT INTO words (
          slug, title, lemma, pos, cefr, ipa, aliases,
          short_definition, definition_md, body_md, examples, metadata,
-         core_definitions, prototype_text,
+         core_definitions, prototype_text, pinyin, pinyin_initial,
          content_hash, source_path, source_updated_at, synced_at,
          is_published, quality_status, quality_issues
        )
        VALUES (
          $1, $2, $3, $4, $5, $6, $7::text[],
          $8, $9, $10, $11::jsonb, $12::jsonb,
-         $13::jsonb, $14,
-         $15, $16, $17::timestamptz, now(),
-         $18, $19, $20::jsonb
+         $13::jsonb, $14, $15, $16,
+         $17, $18, $19::timestamptz, now(),
+         $20, $21, $22::jsonb
        )
        ON CONFLICT (slug) DO UPDATE SET
          title = EXCLUDED.title,
@@ -239,6 +266,8 @@ export class WordRepository extends BaseRepository implements IWordRepository {
          metadata = EXCLUDED.metadata,
          core_definitions = EXCLUDED.core_definitions,
          prototype_text = EXCLUDED.prototype_text,
+         pinyin = EXCLUDED.pinyin,
+         pinyin_initial = EXCLUDED.pinyin_initial,
          content_hash = EXCLUDED.content_hash,
          source_path = EXCLUDED.source_path,
          source_updated_at = EXCLUDED.source_updated_at,
@@ -264,6 +293,8 @@ export class WordRepository extends BaseRepository implements IWordRepository {
         JSON.stringify(input.metadataJson ?? {}),
         JSON.stringify(input.coreDefinitionsJson ?? []),
         input.prototypeText,
+        pinyin,
+        pinyinInitial,
         input.contentHash,
         input.sourcePath,
         input.sourceUpdatedAt,

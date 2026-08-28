@@ -21,7 +21,7 @@ const PASSWORDS = [
 
 describe("existing local volume role upgrade", () => {
   it("derives the expected migration count from the authoritative journal", () => {
-    expect(authoritativeMigrationCount()).toBe(15);
+    expect(authoritativeMigrationCount()).toBe(16);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
