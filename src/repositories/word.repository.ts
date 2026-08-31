@@ -278,9 +278,11 @@ export class WordRepository extends BaseRepository implements IWordRepository {
       `w.definition_md <> ''`,
       `w.metadata->>'source_path' LIKE 'L1_雅思词汇/L1_雅思词汇_%.md'`,
     ];
+    // 子串匹配语义场名：直接在完整 source_path 上做 ILIKE，避免 LIKE 的 `_`
+    // 通配符干扰（`_` 单字符通配会让部分词根失效），`太空` → 太空探索。
     if (q && q.trim()) {
-      params.push(q.trim());
-      where.push(`(metadata->>'source_path') ILIKE '%L1_雅思词汇_' || $${params.length} || '.md%'`);
+      params.push(`%${q.trim()}%`);
+      where.push(`w.metadata->>'source_path' ILIKE $${params.length}`);
     }
     const rows = await this.query<SemanticFieldGroupRow>(
       `SELECT

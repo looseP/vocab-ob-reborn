@@ -38,7 +38,7 @@ describe("WordRepository.findSemanticFieldGroups", () => {
     expect(groups[0]).toEqual({ field: "学校教育", count: 2, updated_at: "2026-08-28T00:00:00.000Z" });
   });
 
-  it("appends an ILIKE filter when q is provided", async () => {
+  it("appends an ILIKE substring filter when q is provided", async () => {
     mock.setRows([]);
     const repository = new WordRepository();
 
@@ -46,7 +46,8 @@ describe("WordRepository.findSemanticFieldGroups", () => {
 
     const query = mock.lastQuery!;
     expect(query.text).toContain("ILIKE");
-    expect(query.params).toContain("太空");
+    expect(query.text).toContain("w.metadata->>'source_path' ILIKE $1");
+    expect(query.params).toContain("%太空%");
   });
 
   it("drops rows whose extracted field is empty", async () => {

@@ -101,9 +101,13 @@ export class PlazaService {
   async getOverview(params: { userId: string; q?: string }): Promise<PlazaOverview> {
     const { q } = params;
     return this.withActorWords(params.userId, async (words) => {
-      const groups = await words.findSemanticFieldGroups(q);
-      const total = groups.length;
-      const collections = groups.map(toCollectionSummary);
+      // total = 全量语义场数（无 q）；showing = q 过滤后的命中数。
+      // 前端据此区分「无任何数据」与「无匹配结果」两种空态。
+      const [allGroups, filteredGroups] = await Promise.all([
+        words.findSemanticFieldGroups(undefined),
+        words.findSemanticFieldGroups(q),
+      ]);
+      const collections = filteredGroups.map(toCollectionSummary);
       const group: PlazaGroup = {
         kind: "semantic_field",
         label: "语义场",
@@ -112,20 +116,21 @@ export class PlazaService {
       };
       return {
         available: true,
-        counts: { showing: collections.length, total },
+        counts: { showing: collections.length, total: allGroups.length },
         groups: collections.length > 0 ? [group] : [],
-        total,
+        total: allGroups.length,
       };
     });
   }
 
-  async getCollection(slug: string): Promise<PlazaCollectionDetail> {
+  async getCollection(params: { userId: string; slug: string }): Promise<PlazaCollectionDetail> {
+    const { slug } = params;
     const field = fieldFromPlazaSlug(slug);
     if (!field) {
       throw new NotFoundError("PlazaCollection", slug);
     }
     const prefix = sourcePathPrefixForField(field);
-    return this.withActorWords("plaza-reader", async (words) => {
+    return this.withActorWords(params.userId, async (words) => {
       const rows = await words.findBySourcePathPrefix(prefix);
       if (rows.length === 0) {
         throw new NotFoundError("PlazaCollection", slug);
