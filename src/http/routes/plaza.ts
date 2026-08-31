@@ -64,6 +64,15 @@ export function plazaRoutes(services: Services) {
     return c.json(detail);
   });
 
+  // GET /review-stats/:slug — 集合内复习统计（E1）：语义场/词根 slug 均可
+  app.get("/review-stats/:slug", async (c) => {
+    const stats = await services.plaza.getReviewStats({
+      userId: c.get("userId"),
+      slug: c.req.param("slug"),
+    });
+    return c.json(stats);
+  });
+
   // GET /collections/:slug — 语义场集合详情（NotFoundError → 404 由全局中间件映射）
   app.get("/collections/:slug", async (c) => {
     const detail = await services.plaza.getCollection({

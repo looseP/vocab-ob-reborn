@@ -66,6 +66,11 @@ export interface IWordRepository {
   findBySourcePathPrefix(prefix: string): Promise<PlazaWordRow[]>;
   /** 词汇广场（P4）：取词根 token 命中（作为 morphology_root 任一部分）的全部已发布词。 */
   findByRootToken(token: string): Promise<PlazaWordRow[]>;
+  /**
+   * 词汇广场（P4 E1）：按 wordIds 聚合集合内的复习统计（已追踪 / 待复习）。
+   * user_word_progress 走 owner RLS，必须在携带 actorId=userId 的事务内执行。
+   */
+  countReviewStatsByWordIds(userId: string, wordIds: string[]): Promise<{ tracked: number; due: number }>;
   count(): Promise<number>;
   findSlugs(limit?: number): Promise<string[]>;
   insertMany?(words: Array<{

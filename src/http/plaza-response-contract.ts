@@ -82,3 +82,9 @@ export const rootCollectionDetailResponseSchema = z.object({
   type: z.enum(["simple", "compound", "mixed"]),
   words: z.array(rootWordCardResponseSchema),
 }).strict();
+
+/** 集合内复习统计（E1）：已追踪 / 待复习计数。 */
+export const plazaReviewStatsResponseSchema = z.object({
+  tracked: z.number().int().nonnegative(),
+  due: z.number().int().nonnegative(),
+}).strict();

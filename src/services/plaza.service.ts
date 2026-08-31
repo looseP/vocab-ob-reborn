@@ -18,6 +18,7 @@ import type {
   PlazaGroup,
   PlazaKind,
   PlazaOverview,
+  PlazaReviewStats,
   PlazaWordCard,
   PlazaWordRow,
   RootCollectionDetail,
@@ -279,6 +280,30 @@ export class PlazaService {
     });
     this.cache.set(cacheKey, detail);
     return detail;
+  }
+
+  /**
+   * 集合内复习统计（E1）：取集合词 id 列表，聚合 user_word_progress 的
+   * 已追踪 / 待复习计数。集合词 id 复用详情查询（语义场/词根），保证与
+   * 详情页展示一致。
+   */
+  async getReviewStats(params: { userId: string; slug: string }): Promise<PlazaReviewStats> {
+    const { userId, slug } = params;
+    return this.withActorWords(userId, async (words) => {
+      const token = tokenFromRootSlug(slug);
+      let wordIds: string[];
+      if (token) {
+        const rows = await words.findByRootToken(token);
+        wordIds = rows.map((r) => r.id);
+      } else {
+        const field = fieldFromPlazaSlug(slug);
+        if (!field) throw new NotFoundError("PlazaCollection", slug);
+        const rows = await words.findBySourcePathPrefix(sourcePathPrefixForField(field));
+        wordIds = rows.map((r) => r.id);
+      }
+      if (wordIds.length === 0) throw new NotFoundError("PlazaCollection", slug);
+      return words.countReviewStatsByWordIds(userId, wordIds);
+    });
   }
 
   private toOverview(

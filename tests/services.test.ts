@@ -36,6 +36,7 @@ function makeMockWordRepo(overrides: Partial<IWordRepository> = {}): IWordReposi
     findRootFamilyGroups: vi.fn(async () => []),
     findBySourcePathPrefix: vi.fn(async () => []),
     findByRootToken: vi.fn(async () => []),
+    countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 0, due: 0 })),
     count: vi.fn(async () => 0),
     findSlugs: vi.fn(async () => []),
     ...overrides,

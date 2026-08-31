@@ -23,6 +23,7 @@ function makeMockWordRepo(overrides: Partial<IWordRepository> = {}): IWordReposi
     findRootFamilyGroups: vi.fn(async () => []),
     findBySourcePathPrefix: vi.fn(async () => []),
     findByRootToken: vi.fn(async () => []),
+    countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 0, due: 0 })),
     count: vi.fn(async () => 0),
     findSlugs: vi.fn(async () => []),
     ...overrides,
@@ -347,5 +348,43 @@ describe("PlazaService.getRootCollection", () => {
 
     expect(second).toEqual(first);
     expect(repo.findByRootToken).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PlazaService.getReviewStats", () => {
+  it("aggregates review stats for a semantic-field slug", async () => {
+    const repo = makeMockWordRepo({
+      findBySourcePathPrefix: vi.fn(async () => [WORD_ROW]),
+      countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 3, due: 1 })),
+    });
+    const { service } = makeService(repo);
+
+    const stats = await service.getReviewStats({ userId: "user-1", slug: "semantic-学校教育" });
+
+    expect(repo.findBySourcePathPrefix).toHaveBeenCalledWith("L1_雅思词汇/L1_雅思词汇_学校教育.md");
+    expect(repo.countReviewStatsByWordIds).toHaveBeenCalledWith("user-1", ["w-1"]);
+    expect(stats).toEqual({ tracked: 3, due: 1 });
+  });
+
+  it("aggregates review stats for a root-family slug", async () => {
+    const repo = makeMockWordRepo({
+      findByRootToken: vi.fn(async () => [WORD_ROW]),
+      countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 2, due: 0 })),
+    });
+    const { service } = makeService(repo);
+
+    const stats = await service.getReviewStats({ userId: "user-1", slug: "root-chart" });
+
+    expect(repo.findByRootToken).toHaveBeenCalledWith("chart");
+    expect(stats).toEqual({ tracked: 2, due: 0 });
+  });
+
+  it("throws NotFound for an unknown collection", async () => {
+    const repo = makeMockWordRepo({
+      findBySourcePathPrefix: vi.fn(async () => []),
+    });
+    const { service } = makeService(repo);
+
+    await expect(service.getReviewStats({ userId: "user-1", slug: "semantic-不存在" })).rejects.toBeInstanceOf(NotFoundError);
   });
 });
