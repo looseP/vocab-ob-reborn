@@ -10,6 +10,7 @@ import { WordService } from "@/services/word.service";
 import { NoteService } from "@/services/note.service";
 import { WordbookService } from "@/services/wordbook.service";
 import { StatsService } from "@/services/stats.service";
+import { plazaCache } from "@/services/plaza-cache";
 import { NotFoundError, BusinessRuleError } from "@/errors";
 import type { WordRow, WordSummary, NoteRow, WordbookRow } from "@/domain";
 
@@ -156,6 +157,22 @@ describe("WordService", () => {
 
     await expect(service.batchCreate(batch)).resolves.toEqual({ inserted: 3 });
     expect(repo.insertMany).toHaveBeenCalledWith(batch);
+  });
+
+  it("batchCreate invalidates the plaza aggregate cache after writing", async () => {
+    const repo = makeMockWordRepo({
+      insertMany: vi.fn(async () => 1),
+    });
+    const service = new WordService(repo);
+    const invalidate = vi.spyOn(plazaCache, "invalidateAll");
+
+    await service.batchCreate([
+      { slug: "abound", title: "Abound", lemma: "abound", pos: "verb", cefr: "C1", ipa: null, short_definition: "def" },
+    ]);
+
+    expect(repo.insertMany).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    invalidate.mockRestore();
   });
 
   it("batchCreate fails closed when the repository has no insertMany", async () => {
