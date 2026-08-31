@@ -94,7 +94,7 @@ describe("DataLifecycleRepository.run guards", () => {
 });
 
 describe("DataLifecycleRepository.run dry-run", () => {
-  it("reports five eligible counts without opening a mutation transaction", async () => {
+  it("reports six eligible counts without opening a mutation transaction", async () => {
     const fake = fakePool([{ count: 3 }]);
     const repository = new DataLifecycleRepository(fake.pool);
     const result = await repository.run({ cutoff: new Date("2026-01-01T00:00:00.000Z"), dryRun: true });
@@ -105,10 +105,11 @@ describe("DataLifecycleRepository.run dry-run", () => {
       llmTerminal: 3,
       llmSettled: 3,
       reviewLogs: 3,
+      drillOrphanSteps: 3,
     });
-    expect(result.archived).toEqual({ outboxProcessed: 0, authSessions: 0, llmTerminal: 0, llmSettled: 0, reviewLogs: 0 });
-    expect(result.deleted).toEqual({ outboxProcessed: 0, authSessions: 0, llmTerminal: 0, llmSettled: 0, reviewLogs: 0 });
-    expect(fake.query).toHaveBeenCalledTimes(5);
+    expect(result.archived).toEqual({ outboxProcessed: 0, authSessions: 0, llmTerminal: 0, llmSettled: 0, reviewLogs: 0, drillOrphanSteps: 0 });
+    expect(result.deleted).toEqual({ outboxProcessed: 0, authSessions: 0, llmTerminal: 0, llmSettled: 0, reviewLogs: 0, drillOrphanSteps: 0 });
+    expect(fake.query).toHaveBeenCalledTimes(6);
     expect(fake.connect).not.toHaveBeenCalled();
   });
 });
@@ -123,8 +124,8 @@ describe("DataLifecycleRepository mutation transactions", () => {
       policy: { batchSize: 10, maxBatches: 1, maxRows: 10 },
     });
 
-    expect(result.deleted).toEqual({ outboxProcessed: 0, authSessions: 0, llmTerminal: 0, llmSettled: 0, reviewLogs: 0 });
-    expect(fake.clients).toHaveLength(5);
+    expect(result.deleted).toEqual({ outboxProcessed: 0, authSessions: 0, llmTerminal: 0, llmSettled: 0, reviewLogs: 0, drillOrphanSteps: 0 });
+    expect(fake.clients).toHaveLength(6);
     for (const client of fake.clients) {
       const sql = client.query.mock.calls.map(([text]) => text);
       expect(sql[0]).toBe("BEGIN");
@@ -147,5 +148,44 @@ describe("DataLifecycleRepository mutation transactions", () => {
     expect(fake.clients).toHaveLength(1);
     expect(fake.clients[0].query).toHaveBeenCalledWith("ROLLBACK");
     expect(fake.clients[0].release).toHaveBeenCalledOnce();
+  });
+
+  it("deletes orphan drill steps scoped to ended sessions with SKIP LOCKED batching", async () => {
+    const fake = mutationPool();
+    fake.clients.length = 0;
+    // 让孤儿步批次返回 rowCount=1，其余返回 0
+    const connect = fake.connect as ReturnType<typeof vi.fn>;
+    connect.mockImplementation(async () => {
+      const release = vi.fn();
+      const query = vi.fn(async (text: string) => {
+        if (text.includes("DELETE FROM l2_drill_session_steps")) {
+          return { rows: [], rowCount: 1 };
+        }
+        if (text.includes("DELETE FROM")) return { rows: [], rowCount: 0 };
+        if (text.includes("SELECT (SELECT count(*)::int FROM candidates)")) {
+          return { rows: [{ selected: 0, archived: 0, deleted: 0 }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: null };
+      });
+      const client = { query, release };
+      fake.clients.push(client);
+      return client;
+    });
+
+    const result = await new DataLifecycleRepository(fake.pool).run({
+      cutoff: new Date("2026-01-01T00:00:00.000Z"),
+      dryRun: false,
+      allowWrite: true,
+      policy: { batchSize: 10, maxBatches: 1, maxRows: 10 },
+    });
+
+    expect(result.deleted.drillOrphanSteps).toBe(1);
+    const drillDelete = fake.clients
+      .flatMap((client) => client.query.mock.calls.map(([text]) => String(text)))
+      .find((text) => text.includes("DELETE FROM l2_drill_session_steps"));
+    expect(drillDelete).toBeTruthy();
+    expect(drillDelete).toContain("JOIN sessions ssn ON ssn.id = s.session_id");
+    expect(drillDelete).toContain("s.status = 'pending' AND ssn.ended_at IS NOT NULL");
+    expect(drillDelete).toContain("FOR UPDATE SKIP LOCKED");
   });
 });
