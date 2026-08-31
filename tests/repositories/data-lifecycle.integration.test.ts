@@ -193,7 +193,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
       await pool.query("INSERT INTO users (id, email) VALUES ($1, $2)", [userId, `${userId}@example.test`]);
       await pool.query("INSERT INTO profiles (id, email) VALUES ($1, $2)", [userId, `${userId}@example.test`]);
       await pool.query(`INSERT INTO words (id, slug, content_hash, source_path, title, lemma, definition_md, body_md)
-        VALUES ($1, $2, repeat('d', 64), $3, 'test', 'test', 'test', 'test')`, [wordId, wordId, `/test/${wordId}`]);
+        VALUES ($1, $2, md5($3::text) || md5($4::text), $5, 'test', 'test', 'test', 'test')`, [wordId, wordId, randomUUID(), randomUUID(), `/test/${wordId}`]);
       await pool.query("INSERT INTO wordbooks (id, user_id, name) VALUES ($1, $2, 'test')", [wordbookId, userId]);
       // 已结束会话 + 孤儿 pending 步（应被清理）
       const endedSession = randomUUID();
