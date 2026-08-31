@@ -325,7 +325,8 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     const having = [`count(*) >= $${params.length + 1}`];
     params.push(Math.max(1, opts.minCount ?? 1));
     if (opts.letter && /^[a-z]$/.test(opts.letter)) {
-      having.push(`root LIKE $${params.length + 1}`);
+      // HAVING 不能引用 SELECT 输出别名 root，必须用完整 token 表达式
+      having.push(`${tokenExpr} LIKE $${params.length + 1}`);
       params.push(`${opts.letter.toLowerCase()}%`);
     }
     return this.query<RootFamilyGroupRow>(
