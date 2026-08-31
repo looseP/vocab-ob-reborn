@@ -6,6 +6,7 @@ import { Badge } from "@/frontend/components/ui/Badge";
 import { Button } from "@/frontend/components/ui/Button";
 import { Spinner } from "@/frontend/components/ui/Spinner";
 import { apiFetch } from "@/frontend/api/client";
+import { extractRootTokens } from "@/frontend/utils/plazaSlugs";
 
 type PlazaKind = "semantic_field" | "root_affix";
 type RootFamilyType = "simple" | "compound" | "mixed";
@@ -156,18 +157,34 @@ export function PlazaCollectionPage() {
                   </div>
                   {word.cefr && <Badge className="shrink-0">{word.cefr}</Badge>}
                 </div>
-                {isRoot && (rootWord.prefix || rootWord.suffix) && (
+                {isRoot && (rootWord.prefix || rootWord.suffix || rootWord.root) && (
                   <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
                     {rootWord.prefix && (
                       <span className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[var(--color-ink-soft)]">
                         {rootWord.prefix}
                       </span>
                     )}
-                    {rootWord.root && (
-                      <span className="rounded-md border border-[var(--color-accent)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 font-semibold text-[var(--color-accent)]">
-                        {rootWord.root}
-                      </span>
-                    )}
+                    {/* B4-2：复合词根（如 air + condition）拆 token，各 token 独立渲染为
+                        可点击家族徽标——当前家族高亮，其他 token 跳转到对应家族。 */}
+                    {rootWord.root && extractRootTokens(rootWord.root).map((token) => (
+                      token === data.title ? (
+                        <span
+                          key={token}
+                          className="rounded-md border border-[var(--color-accent)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 font-semibold text-[var(--color-accent)]"
+                        >
+                          {token}
+                        </span>
+                      ) : (
+                        <Link
+                          key={token}
+                          to={`/plaza/${encodeURIComponent(`root-${token}`)}`}
+                          className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                          title={`查看词根家族「${token}」`}
+                        >
+                          {token}
+                        </Link>
+                      )
+                    ))}
                     {rootWord.suffix && (
                       <span className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[var(--color-ink-soft)]">
                         {rootWord.suffix}
