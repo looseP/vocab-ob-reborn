@@ -98,7 +98,7 @@ describe("GET /api/plaza/collections/:slug", () => {
     const body = plazaCollectionResponseSchema.parse(await res.json());
     expect(body.title).toBe("学校教育");
     expect(body.words).toHaveLength(1);
-    expect(services.plaza.getCollection).toHaveBeenCalledWith("semantic-学校教育");
+    expect(services.plaza.getCollection).toHaveBeenCalledWith({ userId: "user-123", slug: "semantic-学校教育" });
   });
 
   it("maps NotFoundError to 404", async () => {

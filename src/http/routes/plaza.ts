@@ -42,7 +42,10 @@ export function plazaRoutes(services: Services) {
 
   // GET /collections/:slug — collection detail（NotFoundError → 404 由全局中间件映射）
   app.get("/collections/:slug", async (c) => {
-    const detail = await services.plaza.getCollection(c.req.param("slug"));
+    const detail = await services.plaza.getCollection({
+      userId: c.get("userId"),
+      slug: c.req.param("slug"),
+    });
     return c.json(detail);
   });
 

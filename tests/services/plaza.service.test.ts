@@ -58,7 +58,9 @@ describe("PlazaService.getOverview", () => {
 
     const result = await service.getOverview({ userId: "user-1" });
 
-    expect(repo.findSemanticFieldGroups).toHaveBeenCalledWith(undefined);
+    // total 用全量分组、showing 用过滤后分组，两次调用
+    expect(repo.findSemanticFieldGroups).toHaveBeenNthCalledWith(1, undefined);
+    expect(repo.findSemanticFieldGroups).toHaveBeenNthCalledWith(2, undefined);
     expect(result.available).toBe(true);
     expect(result.total).toBe(1);
     expect(result.counts).toEqual({ showing: 1, total: 1 });
@@ -77,18 +79,21 @@ describe("PlazaService.getOverview", () => {
     });
   });
 
-  it("passes q through to the repository", async () => {
+  it("separates filtered showing count from total, enabling the no-match empty state", async () => {
     const repo = makeMockWordRepo({
-      findSemanticFieldGroups: vi.fn(async () => []),
+      findSemanticFieldGroups: vi
+        .fn()
+        .mockImplementation(async (q?: string) => (q ? [] : [GROUP_ROW])),
     });
     const service = makeService(repo);
 
     const result = await service.getOverview({ userId: "user-1", q: "太空" });
 
-    expect(repo.findSemanticFieldGroups).toHaveBeenCalledWith("太空");
-    expect(result.total).toBe(0);
+    expect(repo.findSemanticFieldGroups).toHaveBeenNthCalledWith(1, undefined);
+    expect(repo.findSemanticFieldGroups).toHaveBeenNthCalledWith(2, "太空");
+    expect(result.total).toBe(1);
+    expect(result.counts).toEqual({ showing: 0, total: 1 });
     expect(result.groups).toHaveLength(0);
-    expect(result.counts).toEqual({ showing: 0, total: 0 });
   });
 });
 
@@ -99,7 +104,7 @@ describe("PlazaService.getCollection", () => {
     });
     const service = makeService(repo);
 
-    const result = await service.getCollection("semantic-学校教育");
+    const result = await service.getCollection({ userId: "user-1", slug: "semantic-学校教育" });
 
     expect(repo.findBySourcePathPrefix).toHaveBeenCalledWith("L1_雅思词汇/L1_雅思词汇_学校教育.md");
     expect(result).toMatchObject({
@@ -122,7 +127,7 @@ describe("PlazaService.getCollection", () => {
     const repo = makeMockWordRepo();
     const service = makeService(repo);
 
-    await expect(service.getCollection("root-chart")).rejects.toBeInstanceOf(NotFoundError);
+    await expect(service.getCollection({ userId: "user-1", slug: "root-chart" })).rejects.toBeInstanceOf(NotFoundError);
     expect(repo.findBySourcePathPrefix).not.toHaveBeenCalled();
   });
 
@@ -132,7 +137,7 @@ describe("PlazaService.getCollection", () => {
     });
     const service = makeService(repo);
 
-    await expect(service.getCollection("semantic-不存在")).rejects.toBeInstanceOf(NotFoundError);
+    await expect(service.getCollection({ userId: "user-1", slug: "semantic-不存在" })).rejects.toBeInstanceOf(NotFoundError);
   });
 });
 
