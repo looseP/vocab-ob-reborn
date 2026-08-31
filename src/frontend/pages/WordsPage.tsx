@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Search, Filter, Upload, BookOpen, History, X } from "lucide-react";
+import { Search, Filter, Upload, BookOpen, History, Users, X } from "lucide-react";
 import { Input } from "@/frontend/components/ui/Input";
 import { Button } from "@/frontend/components/ui/Button";
 import { WordList } from "@/frontend/components/words/WordList";
@@ -75,9 +75,17 @@ export function WordsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="section-title text-2xl font-bold text-[var(--color-ink)]">词条库</h1>
-        <p className="text-sm text-[var(--color-ink-soft)]">浏览和管理词汇</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="section-title text-2xl font-bold text-[var(--color-ink)]">词条库</h1>
+          <p className="text-sm text-[var(--color-ink-soft)]">浏览和管理词汇</p>
+        </div>
+        {/* 广场快捷入口：移动端底部 tab 无广场，这里为全端（尤其移动）提供入口 */}
+        <Link to="/plaza">
+          <Button size="sm" variant="secondary">
+            <Users className="h-4 w-4" /> 浏览广场
+          </Button>
+        </Link>
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
