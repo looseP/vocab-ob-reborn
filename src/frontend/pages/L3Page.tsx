@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { L3FrontendClient } from "@/l3/frontend/contract";
 import { L3Shell, type L3ShellSection } from "@/frontend/components/L3Shell";
 import { L3ContextPage } from "@/frontend/pages/L3ContextPage";
@@ -32,6 +33,8 @@ import type {
  * 独立成文件以便路由级代码分割（lazy import），避免 L3 全家桶进入首屏 bundle。
  */
 export function L3Page() {
+  const [searchParams] = useSearchParams();
+  const deepLinkContextId = searchParams.get("contextId");
   const [section, setSection] = useState<L3ShellSection>("home");
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [graphHandoff, setGraphHandoff] = useState<L3GraphHandoff | null>(null);
@@ -40,6 +43,14 @@ export function L3Page() {
   const [sourceHandoff, setSourceHandoff] = useState<L3SourceHandoff | null>(null);
   const [activeReadStale, setActiveReadStale] = useState<L3ActiveReadStaleState | null>(null);
   const l3Client = useMemo<L3FrontendClient>(() => createBrowserL3Client(), []);
+
+  // P3-9：支持 /l3?contextId=xxx 深链——挂载时与 URL 参数变化时自动定位到语境详情。
+  // L2 产出步「查看原文」→ 直达对应语境，闭环 L3 溯源链路（L2ProductionTask 跳转）。
+  useEffect(() => {
+    if (!deepLinkContextId) return;
+    setContextHandoff({ contextId: deepLinkContextId, nonce: Date.now() });
+    setSection("context");
+  }, [deepLinkContextId]);
 
   const openProposal = (proposalId: string) => {
     setSelectedProposalId(proposalId);
