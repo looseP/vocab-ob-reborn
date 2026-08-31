@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { L3ContextDetail } from "@/domain";
 import { L3ErrorMessage } from "../components/L3ErrorMessage";
 import { L3NavigationActions } from "../components/L3NavigationActions";
@@ -52,18 +52,12 @@ export function L3ContextPage({ client, handoff, staleState, onReadRefreshed, on
   const isBusy = status !== "idle";
   const staleText = readStaleBannerText(staleState);
 
-  useEffect(() => {
-    if (!handoff) return;
-    setContextId(handoff.contextId);
-  }, [handoff?.nonce]);
-
-  const loadContext = async (event?: FormEvent<HTMLFormElement>) => {
-    event?.preventDefault();
+  const runLoad = useCallback(async (id: string) => {
     setError(null);
 
     let payload;
     try {
-      payload = buildContextLookupPayload({ contextId });
+      payload = buildContextLookupPayload({ contextId: id });
     } catch (caught) {
       setError(normalizeUnknownError(caught));
       return;
@@ -81,6 +75,19 @@ export function L3ContextPage({ client, handoff, staleState, onReadRefreshed, on
     } finally {
       setStatus("idle");
     }
+  }, [client, onReadRefreshed]);
+
+  // 内部导航 / deep link（P3-9：/l3?contextId=xxx）的 handoff 到达时，
+  // 预填输入框并自动加载语境详情，无需再手动点 Load context。
+  useEffect(() => {
+    if (!handoff) return;
+    setContextId(handoff.contextId);
+    void runLoad(handoff.contextId);
+  }, [handoff?.nonce, runLoad]);
+
+  const loadContext = (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    void runLoad(contextId);
   };
 
   return (

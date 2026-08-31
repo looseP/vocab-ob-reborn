@@ -17,9 +17,8 @@ interface Props {
  * Zero FSRS - verdict only updates the capability stage (spec D6').
  *
  * P3-8: 若 task.sourceTitle / task.contextId 存在，说明 referenceExample 来
- * 自 L3 语境空间。渲染来源徽标 + 跳转链接到 L3 入口（L3Page 是 SPA 内部
- * section 切换，暂不支持 deep link，所以这里只跳到 /l3 让用户手动查找；
- * 后续 P3-9 可加 query param 支持 ?contextId=xxx 自动加载语境详情）。
+ * 自 L3 语境空间。渲染来源徽标 + 跳转链接到 L3 入口；P3-9 起链接带
+ * ?contextId=xxx，由 L3Page 深链直达对应语境详情（自动加载）。
  */
 export function L2ProductionTask({ task, disabled, onVerdict }: Props) {
   const [draft, setDraft] = useState("");
@@ -68,7 +67,7 @@ export function L2ProductionTask({ task, disabled, onVerdict }: Props) {
                     </span>
                   </div>
                   <Link
-                    to="/l3"
+                    to={task.contextId ? `/l3?contextId=${encodeURIComponent(task.contextId)}` : "/l3"}
                     className="text-xs font-semibold text-[var(--color-accent)]"
                     title={task.contextId ? `contextId: ${task.contextId}` : "前往 L3 语境空间"}
                   >
