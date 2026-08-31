@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { IRepositories, IWordRepository, UpsertFullWordInput } from "@/repositories/interfaces";
 import { VocabImportService, isNonVocabNoteFile } from "@/services/vocab-import.service";
+import { plazaCache } from "@/services/plaza-cache";
 
 const mockRepos: Partial<IRepositories> = {};
 
@@ -97,6 +98,30 @@ describe("VocabImportService.importFiles", () => {
 
     expect(result.dryRun).toBe(false);
     expect(upsertFullWord).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates the plaza aggregate cache after a real import", async () => {
+    const upsertFullWord = vi.fn(async (_input: UpsertFullWordInput) => "imported" as const);
+    const service = new VocabImportService(makeWordsRepo(upsertFullWord));
+    const invalidate = vi.spyOn(plazaCache, "invalidateAll");
+
+    await service.importFiles([OK_FILE]);
+
+    expect(upsertFullWord).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    invalidate.mockRestore();
+  });
+
+  it("does not invalidate the plaza cache in dryRun mode", async () => {
+    const upsertFullWord = vi.fn(async (_input: UpsertFullWordInput) => "imported" as const);
+    const service = new VocabImportService(makeWordsRepo(upsertFullWord));
+    const invalidate = vi.spyOn(plazaCache, "invalidateAll");
+
+    await service.importFiles([OK_FILE], { dryRun: true });
+
+    expect(upsertFullWord).not.toHaveBeenCalled();
+    expect(invalidate).not.toHaveBeenCalled();
+    invalidate.mockRestore();
   });
 
   it("isolates a failing file so later files still import", async () => {
