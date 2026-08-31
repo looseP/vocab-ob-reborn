@@ -11,6 +11,7 @@
  */
 
 import { WordService } from "./word.service";
+import { PlazaService } from "./plaza.service";
 import { ReviewService, type FsrsAdapterFn, type FsrsScheduling } from "./review.service";
 import { CaptureService } from "./capture.service";
 import { VocabImportService } from "./vocab-import.service";
@@ -129,6 +130,7 @@ export function createServices(deps: ServiceDeps) {
       },
     ),
     words: new WordService(repos.words),
+    plaza: new PlazaService(repos.words),
     capture: new CaptureService(repos.words),
     vocabImport: new VocabImportService(repos.words),
     // ReviewService 的读路径依赖：owner-scoped 表全部启用 RLS，池直连（无

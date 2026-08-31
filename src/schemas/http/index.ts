@@ -40,6 +40,11 @@ export const wordSuggestQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(20).optional().default(8),
 });
 
+// ── Plaza（词汇广场 · P4）──────────────────────────────────────────────
+export const plazaQuerySchema = z.object({
+  q: z.string().trim().max(100).optional(),
+});
+
 // Mirrors the manual sanitization in routes/words.ts POST /batch: every field
 // is optional (slug falls back to lemma, then title) and rows without a
 // non-empty sanitized slug are dropped server-side.

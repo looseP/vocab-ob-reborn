@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, CheckCircle2, CalendarRange, CalendarClock, RotateCcw } from "lucide-react";
+import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, CheckCircle2, CalendarRange, CalendarClock, RotateCcw, Users } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
@@ -163,6 +163,19 @@ export function DashboardPage() {
             <div className="flex-1">
               <h3 className="text-lg font-semibold text-[var(--color-ink)]">浏览词条</h3>
               <p className="text-sm text-[var(--color-ink-soft)]">查看和管理词汇库</p>
+            </div>
+            <Button size="sm" variant="secondary">前往</Button>
+          </Link>
+        </Card>
+
+        <Card className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]">
+          <Link to="/plaza" className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
+              <Users className="h-7 w-7 text-[var(--color-accent)]" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-[var(--color-ink)]">浏览广场</h3>
+              <p className="text-sm text-[var(--color-ink-soft)]">按语义场主题浏览整组词汇</p>
             </div>
             <Button size="sm" variant="secondary">前往</Button>
           </Link>

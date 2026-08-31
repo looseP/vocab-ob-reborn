@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, ClipboardType, LayoutGrid, Repeat, Notebook, Settings, Upload, Zap } from "lucide-react";
+import { BookOpen, ClipboardType, LayoutGrid, Repeat, Notebook, Settings, Upload, Users, Zap } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { WordbookSwitcher } from "@/frontend/components/wordbook/WordbookSwitcher";
 import { useCaptureFloatingWindow } from "@/frontend/hooks/useCaptureFloatingWindow";
@@ -7,6 +7,7 @@ import { useToast } from "@/frontend/components/ui/Toast";
 
 const navItems = [
   { href: "/words", label: "词条库", icon: BookOpen },
+  { href: "/plaza", label: "广场", icon: Users },
   { href: "/review", label: "复习", icon: Repeat },
   { href: "/l2-drill", label: "辨析", icon: Zap },
   { href: "/dashboard", label: "仪表盘", icon: LayoutGrid },

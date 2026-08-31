@@ -39,6 +39,8 @@ import type {
   SessionRow,
   ReviewState,
   ReviewRating,
+  SemanticFieldGroupRow,
+  PlazaWordRow,
   Json,
 } from "../domain";
 
@@ -49,6 +51,13 @@ export interface IWordRepository {
   findPublic(options: GetPublicWordsOptions): Promise<PaginatedResult<WordSummary>>;
   /** 输入联想：按 lemma / 拼音前缀返回 top-N 建议（L1-2）。 */
   suggest(q: string, limit?: number): Promise<WordSummary[]>;
+  /**
+   * 词汇广场（P4）：按 L1 语义场 source_path 前缀实时聚合分组（自生长集合）。
+   * q 非空时在 SQL 层按语义场名过滤。
+   */
+  findSemanticFieldGroups(q?: string): Promise<SemanticFieldGroupRow[]>;
+  /** 词汇广场（P4）：取某语义场 source_path 前缀下的全部已发布词（含 updated_at）。 */
+  findBySourcePathPrefix(prefix: string): Promise<PlazaWordRow[]>;
   count(): Promise<number>;
   findSlugs(limit?: number): Promise<string[]>;
   insertMany?(words: Array<{

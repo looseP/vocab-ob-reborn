@@ -48,6 +48,10 @@ import {
   wordSuggestResponseSchema,
 } from "./words-response-contract";
 import {
+  plazaCollectionResponseSchema,
+  plazaOverviewResponseSchema,
+} from "./plaza-response-contract";
+import {
   l2ConfirmResponseSchema,
   l2DraftResponseSchema,
   l2ExternalPromptResponseSchema,
@@ -90,6 +94,7 @@ import {
   wordBatchCreateSchema,
   wordsQuerySchema,
   wordSuggestQuerySchema,
+  plazaQuerySchema,
   l2TaskAnswerSchema,
   l2SelfAssessSchema,
   l2UndoSchema,
@@ -268,6 +273,8 @@ export const apiOperations = [
   operation("post", "/api/words/batch", "batchCreateWords", "owner", "sessionMutation", { body: wordBatchCreateSchema }, 200, wordBatchCreateResponseSchema),
   operation("get", "/api/words/:slug/notes", "getWordNote", "owner", "none", undefined, 200, wordNoteResponseSchema),
   operation("put", "/api/words/:slug/notes", "upsertWordNote", "owner", "sessionMutation", { body: wordNoteUpsertRequestSchema }, 200, wordNoteUpsertResponseSchema),
+  operation("get", "/api/plaza", "getPlazaOverview", "owner", "none", { query: plazaQuerySchema }, 200, plazaOverviewResponseSchema),
+  operation("get", "/api/plaza/collections/:slug", "getPlazaCollection", "owner", "none", undefined, 200, plazaCollectionResponseSchema),
   operation("get", "/api/notes", "listNotes", "owner", "none", { query: noteListQuerySchema }, 200, noteListResponseSchema),
   operation("get", "/api/wordbooks", "listWordbooks", "owner", "none", undefined, 200, wordbookListResponseSchema),
   operation("get", "/api/wordbooks/default", "getOrCreateDefaultWordbook", "owner", "none", undefined, 200, wordbookDefaultResponseSchema),
