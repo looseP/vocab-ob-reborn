@@ -41,6 +41,7 @@ import type {
   ReviewRating,
   SemanticFieldGroupRow,
   PlazaWordRow,
+  RootFamilyGroupRow,
   Json,
 } from "../domain";
 
@@ -56,8 +57,15 @@ export interface IWordRepository {
    * q 非空时在 SQL 层按语义场名过滤。
    */
   findSemanticFieldGroups(q?: string): Promise<SemanticFieldGroupRow[]>;
+  /**
+   * 词汇广场（P4）：按 morphology_root 提取词根 token 聚合家族（自生长集合）。
+   * minCount 过滤最小家族规模；q 按词根子串；letter 按词根首字母。
+   */
+  findRootFamilyGroups(opts?: { minCount?: number; q?: string; letter?: string }): Promise<RootFamilyGroupRow[]>;
   /** 词汇广场（P4）：取某语义场 source_path 前缀下的全部已发布词（含 updated_at）。 */
   findBySourcePathPrefix(prefix: string): Promise<PlazaWordRow[]>;
+  /** 词汇广场（P4）：取词根 token 命中（作为 morphology_root 任一部分）的全部已发布词。 */
+  findByRootToken(token: string): Promise<PlazaWordRow[]>;
   count(): Promise<number>;
   findSlugs(limit?: number): Promise<string[]>;
   insertMany?(words: Array<{

@@ -4,7 +4,7 @@ import type {
   IRepositories,
   IWordRepository,
 } from "@/repositories/interfaces";
-import { PlazaService, toPlazaSlug, fieldFromPlazaSlug } from "@/services/plaza.service";
+import { PlazaService, toPlazaSlug, fieldFromPlazaSlug, toRootSlug, tokenFromRootSlug, extractRootTokens } from "@/services/plaza.service";
 import { NotFoundError } from "@/errors";
 import type {
   PlazaWordRow,
@@ -19,7 +19,9 @@ function makeMockWordRepo(overrides: Partial<IWordRepository> = {}): IWordReposi
     findPublic: vi.fn(async () => ({ items: [], total: 0, limit: 10, offset: 0, hasMore: false })),
     suggest: vi.fn(async () => []),
     findSemanticFieldGroups: vi.fn(async () => []),
+    findRootFamilyGroups: vi.fn(async () => []),
     findBySourcePathPrefix: vi.fn(async () => []),
+    findByRootToken: vi.fn(async () => []),
     count: vi.fn(async () => 0),
     findSlugs: vi.fn(async () => []),
     ...overrides,
@@ -141,7 +143,7 @@ describe("PlazaService.getCollection", () => {
   });
 });
 
-describe("plaza slug helpers", () => {
+describe("plaza slug & root token helpers", () => {
   it("round-trips field name through slug", () => {
     expect(toPlazaSlug("学校教育")).toBe("semantic-学校教育");
     expect(fieldFromPlazaSlug("semantic-学校教育")).toBe("学校教育");
@@ -152,5 +154,115 @@ describe("plaza slug helpers", () => {
     expect(fieldFromPlazaSlug("root-学校教育")).toBeNull();
     expect(fieldFromPlazaSlug("semantic-")).toBeNull();
     expect(fieldFromPlazaSlug("")).toBeNull();
+  });
+
+  it("round-trips root token through root slug", () => {
+    expect(toRootSlug("chart")).toBe("root-chart");
+    expect(tokenFromRootSlug("root-chart")).toBe("chart");
+    expect(tokenFromRootSlug("semantic-学校教育")).toBeNull();
+    expect(tokenFromRootSlug("root-")).toBeNull();
+    expect(tokenFromRootSlug("root-1x")).toBeNull();
+  });
+
+  it("extracts root tokens handling compound, full-width parens, and noise", () => {
+    expect(extractRootTokens("chart (from Late Latin charta)")).toEqual(["chart"]);
+    expect(extractRootTokens("german（Germania，罗马称谓）")).toEqual(["german"]);
+    expect(extractRootTokens("air + condition (air < Latin aer)")).toEqual(["air", "condition"]);
+    expect(extractRootTokens("nostos (Greek 'homecoming') + algos (Greek 'pain')")).toEqual(["nostos", "algos"]);
+    // 含连字符的专名（al-khwarizmi）被纯字母噪声过滤剔除（JS 与 SQL 一致）
+    expect(extractRootTokens("al-Khwarizmi (borrowed Arabic proper name)")).toEqual([]);
+    expect(extractRootTokens("cogn (know)")).toEqual(["cogn"]);
+    expect(extractRootTokens("")).toEqual([]);
+    expect(extractRootTokens("EMPTY")).toEqual([]);
+    expect(extractRootTokens(null)).toEqual([]);
+    // 噪声：单字符、纯中文/符号被剔除
+    expect(extractRootTokens("a (x) + 中国人")).toEqual([]);
+    // 同词内去重
+    expect(extractRootTokens("leg (Latin) + leg (PIE)")).toEqual(["leg"]);
+  });
+});
+
+describe("PlazaService.getRootsOverview", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns root families with minCount applied to both total and showing", async () => {
+    const repo = makeMockWordRepo({
+      findRootFamilyGroups: vi.fn(async () => [{ root: "chart", count: 6, updatedAt: "2026-08-28T00:00:00.000Z" }]),
+    });
+    const service = makeService(repo);
+
+    const result = await service.getRootsOverview({ userId: "user-1", minCount: 3 });
+
+    expect(repo.findRootFamilyGroups).toHaveBeenNthCalledWith(1, { minCount: 3 });
+    expect(repo.findRootFamilyGroups).toHaveBeenNthCalledWith(2, { minCount: 3, q: undefined, letter: undefined });
+    expect(result.available).toBe(true);
+    expect(result.counts).toEqual({ showing: 1, total: 1 });
+    expect(result.collections[0]).toMatchObject({
+      slug: "root-chart",
+      title: "chart",
+      kind: "root_affix",
+      count: 6,
+    });
+  });
+
+  it("passes q and letter through for root families and defaults minCount to 3", async () => {
+    const repo = makeMockWordRepo({
+      findRootFamilyGroups: vi.fn(async () => []),
+    });
+    const service = makeService(repo);
+
+    await service.getRootsOverview({ userId: "user-1", q: "tele", letter: "t" });
+
+    expect(repo.findRootFamilyGroups).toHaveBeenNthCalledWith(2, { minCount: 3, q: "tele", letter: "t" });
+  });
+});
+
+describe("PlazaService.getRootCollection", () => {
+  it("returns a root collection detail with root structure cards", async () => {
+    const repo = makeMockWordRepo({
+      findByRootToken: vi.fn(async () => [
+        {
+          ...WORD_ROW,
+          metadata: {
+            semantic_chain: "纸 -> 图表",
+            morphology_root: "chart (from Late Latin charta)",
+            morphology_prefix: "EMPTY",
+            morphology_suffix: "",
+          },
+        },
+      ]),
+    });
+    const service = makeService(repo);
+
+    const result = await service.getRootCollection({ userId: "user-1", slug: "root-chart" });
+
+    expect(repo.findByRootToken).toHaveBeenCalledWith("chart");
+    expect(result).toMatchObject({
+      slug: "root-chart",
+      title: "chart",
+      kind: "root_affix",
+      count: 1,
+      type: "simple",
+    });
+    expect(result.words[0]).toEqual({
+      id: "w-1",
+      slug: "abound",
+      lemma: "abound",
+      cefr: "B2",
+      short_definition: "大量存在",
+      semantic_chain: "纸 -> 图表",
+      root: "chart (from Late Latin charta)",
+      prefix: null,
+      suffix: null,
+    });
+  });
+
+  it("throws NotFound for an unknown root token", async () => {
+    const repo = makeMockWordRepo({
+      findByRootToken: vi.fn(async () => []),
+    });
+    const service = makeService(repo);
+
+    await expect(service.getRootCollection({ userId: "user-1", slug: "root-unknown" })).rejects.toBeInstanceOf(NotFoundError);
   });
 });

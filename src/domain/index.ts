@@ -20,6 +20,10 @@ export interface PaginatedResult<T> {
 // ── Plaza（词汇广场 · 自生长集合）────────────────────────────────────────
 /** 语义场集合的 slug 前缀（对齐原版 collection-note 约定）。 */
 export const PLAZA_SEMANTIC_SLUG_PREFIX = "semantic";
+/** 词根词缀集合的 slug 前缀。 */
+export const PLAZA_ROOT_SLUG_PREFIX = "root";
+
+export type PlazaKind = "semantic_field" | "root_affix";
 
 /** 语义场集合分组行（由 words.source_path 实时推导）。 */
 export interface SemanticFieldGroupRow {
@@ -28,11 +32,18 @@ export interface SemanticFieldGroupRow {
   updatedAt: string;
 }
 
-/** 词汇广场集合摘要（一个 L1 语义场）。 */
+/** 词根家族分组行（由 words.morphology_root 提取 token 后聚合）。 */
+export interface RootFamilyGroupRow {
+  root: string;
+  count: number;
+  updatedAt: string;
+}
+
+/** 词汇广场集合摘要（语义场或词根家族）。 */
 export interface PlazaCollectionSummary {
   slug: string;
   title: string;
-  kind: "semantic_field";
+  kind: PlazaKind;
   count: number;
   updatedAt: string;
 }
@@ -52,14 +63,27 @@ export interface PlazaWordCard {
   semantic_chain: string | null;
 }
 
+/** 词根集合详情页的词卡：词根结构（prefix/root/suffix）+ 语义链。 */
+export interface RootWordCard extends PlazaWordCard {
+  root: string | null;
+  prefix: string | null;
+  suffix: string | null;
+}
+
 /** 集合详情：摘要 + 关联词卡。 */
 export interface PlazaCollectionDetail extends PlazaCollectionSummary {
   words: PlazaWordCard[];
 }
 
-/** 广场分组（Phase 1 仅语义场一类）。 */
+/** 词根集合详情：摘要 + 词根结构词卡。 */
+export interface RootCollectionDetail extends PlazaCollectionSummary {
+  type: "simple" | "compound" | "mixed";
+  words: RootWordCard[];
+}
+
+/** 广场分组（语义场 / 词根词缀）。 */
 export interface PlazaGroup {
-  kind: "semantic_field";
+  kind: PlazaKind;
   label: string;
   count: number;
   collections: PlazaCollectionSummary[];
@@ -70,6 +94,14 @@ export interface PlazaOverview {
   available: boolean;
   counts: { showing: number; total: number };
   groups: PlazaGroup[];
+  total: number;
+}
+
+/** 词根词缀广场响应（独立端点 /api/plaza/roots，避免触碰冻结的语义场契约）。 */
+export interface RootsOverview {
+  available: boolean;
+  counts: { showing: number; total: number };
+  collections: PlazaCollectionSummary[];
   total: number;
 }
 

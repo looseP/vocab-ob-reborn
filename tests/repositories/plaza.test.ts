@@ -79,3 +79,51 @@ describe("WordRepository.findBySourcePathPrefix", () => {
     expect(words).toHaveLength(1);
   });
 });
+
+describe("WordRepository.findRootFamilyGroups", () => {
+  it("unnests compound morphology roots, extracts tokens, and filters noise", async () => {
+    mock.setRows([{ root: "chart", count: 6, updated_at: "2026-08-28T00:00:00.000Z" }]);
+    const repository = new WordRepository();
+
+    const groups = await repository.findRootFamilyGroups({ minCount: 3 });
+
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("string_to_array(w.metadata->>'morphology_root', '+')");
+    expect(query.text).toContain("substring(btrim(part) FROM '^[^ (（+]+')");
+    expect(query.text).toContain("~ '^[a-z]{2,}$'");
+    expect(query.text).toContain("HAVING count(*) >= $1");
+    expect(query.text).toContain("ORDER BY count DESC, root ASC");
+    expect(query.params).toEqual([3]);
+    expect(groups).toEqual([{ root: "chart", count: 6, updated_at: "2026-08-28T00:00:00.000Z" }]);
+  });
+
+  it("appends q ILIKE and letter prefix filters with correct param ordering", async () => {
+    mock.setRows([]);
+    const repository = new WordRepository();
+
+    await repository.findRootFamilyGroups({ minCount: 5, q: "tele", letter: "t" });
+
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("ILIKE $1");
+    expect(query.text).toContain("HAVING count(*) >= $2");
+    expect(query.text).toContain("root LIKE $3");
+    // where 的 q(%tele%) → having 的 minCount(5) → letter(t%)
+    expect(query.params).toEqual(["%tele%", 5, "t%"]);
+  });
+});
+
+describe("WordRepository.findByRootToken", () => {
+  it("matches words whose morphology_root contains the token, ordered by lemma", async () => {
+    mock.setRows([{ id: "w-1", slug: "abound", lemma: "abound" }]);
+    const repository = new WordRepository();
+
+    const words = await repository.findByRootToken("chart");
+
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("EXISTS (");
+    expect(query.text).toContain("string_to_array(w.metadata->>'morphology_root', '+')");
+    expect(query.text).toContain("= $1");
+    expect(query.params).toEqual(["chart"]);
+    expect(words).toHaveLength(1);
+  });
+});

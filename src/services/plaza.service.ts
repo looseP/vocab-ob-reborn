@@ -16,12 +16,17 @@ import type {
   PlazaCollectionDetail,
   PlazaCollectionSummary,
   PlazaGroup,
+  PlazaKind,
   PlazaOverview,
   PlazaWordCard,
   PlazaWordRow,
+  RootCollectionDetail,
+  RootFamilyGroupRow,
+  RootsOverview,
+  RootWordCard,
   SemanticFieldGroupRow,
 } from "../domain";
-import { PLAZA_SEMANTIC_SLUG_PREFIX } from "../domain";
+import { PLAZA_ROOT_SLUG_PREFIX, PLAZA_SEMANTIC_SLUG_PREFIX } from "../domain";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import { NotFoundError } from "../errors";
@@ -52,6 +57,43 @@ export function fieldFromPlazaSlug(slug: string): string | null {
   return field.length > 0 ? field : null;
 }
 
+/**
+ * 词根 token 提取（P4 深度逻辑优化）：
+ * 1) 按 `+` 拆分复合词根（air + condition → [air, condition]）
+ * 2) 每部分取括号（半/全角）前的首个连续字母串，小写化（"chart (from …)" → chart；
+ *    "german（Germania…）" → german；"al-Khwarizmi (…)" → al-khwarizmi）
+ * 3) 过滤噪声：非 [a-z]{2,}（空、单字符、纯中文/符号）剔除
+ * 与 SQL 提取（findRootFamilyGroups）保持一致，避免聚合与详情不一致。
+ */
+export function extractRootTokens(morphologyRoot: string | null | undefined): string[] {
+  if (!morphologyRoot || morphologyRoot === "EMPTY") return [];
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  for (const part of morphologyRoot.split("+")) {
+    // `+` 拆分后各部分可能带前导空格，先 trim 再提取首个连续字母串
+    const match = /^[A-Za-z][A-Za-z'-]*/.exec(part.trim());
+    if (!match) continue;
+    const token = match[0].toLowerCase();
+    if (token.length < 2 || !/^[a-z]{2,}$/.test(token)) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+/** 词根 token → 集合 slug（`root-<token>`，token 已是小写拉丁）。 */
+export function toRootSlug(token: string): string {
+  return `${PLAZA_ROOT_SLUG_PREFIX}-${token}`;
+}
+
+/** 集合 slug → 词根 token（找不到前缀返回 null）。 */
+export function tokenFromRootSlug(slug: string): string | null {
+  if (!slug.startsWith(`${PLAZA_ROOT_SLUG_PREFIX}-`)) return null;
+  const token = slug.slice(PLAZA_ROOT_SLUG_PREFIX.length + 1).trim().toLowerCase();
+  return /^[a-z]{2,}$/.test(token) ? token : null;
+}
+
 function metadataString(metadata: unknown, key: string): string | null {
   if (metadata !== null && typeof metadata === "object" && !Array.isArray(metadata)) {
     const value = (metadata as Record<string, unknown>)[key];
@@ -70,6 +112,16 @@ function toCollectionSummary(row: SemanticFieldGroupRow): PlazaCollectionSummary
   };
 }
 
+function toRootCollectionSummary(row: RootFamilyGroupRow): PlazaCollectionSummary {
+  return {
+    slug: toRootSlug(row.root),
+    title: row.root,
+    kind: "root_affix",
+    count: row.count,
+    updatedAt: row.updatedAt,
+  };
+}
+
 function toWordCard(word: PlazaWordRow): PlazaWordCard {
   return {
     id: word.id,
@@ -79,6 +131,30 @@ function toWordCard(word: PlazaWordRow): PlazaWordCard {
     short_definition: word.short_definition,
     semantic_chain: metadataString(word.metadata, "semantic_chain"),
   };
+}
+
+/** 词根结构字段：`EMPTY` 哨兵视为空（导入占位），避免详情页展示无意义值。 */
+function cleanMorphField(value: string | null): string | null {
+  return value && value !== "EMPTY" ? value : null;
+}
+
+function toRootWordCard(word: PlazaWordRow): RootWordCard {
+  return {
+    ...toWordCard(word),
+    root: cleanMorphField(metadataString(word.metadata, "morphology_root")),
+    prefix: cleanMorphField(metadataString(word.metadata, "morphology_prefix")),
+    suffix: cleanMorphField(metadataString(word.metadata, "morphology_suffix")),
+  };
+}
+
+/** 词根集合类型：全复合 / 全简单 / 混合（按家族词的 morphology_root 是否含 `+`）。 */
+function classifyRootFamily(words: PlazaWordRow[]): RootCollectionDetail["type"] {
+  const flags = new Set(words.map((word) => {
+    const raw = metadataString(word.metadata, "morphology_root") ?? "";
+    return raw.includes("+") ? "compound" : "simple";
+  }));
+  if (flags.size <= 1) return flags.has("compound") ? "compound" : "simple";
+  return "mixed";
 }
 
 export class PlazaService {
@@ -108,16 +184,28 @@ export class PlazaService {
         words.findSemanticFieldGroups(q),
       ]);
       const collections = filteredGroups.map(toCollectionSummary);
-      const group: PlazaGroup = {
-        kind: "semantic_field",
-        label: "语义场",
-        count: collections.length,
-        collections,
-      };
+      return this.toOverview(collections, allGroups.length, "semantic_field");
+    });
+  }
+
+  async getRootsOverview(params: {
+    userId: string;
+    minCount?: number;
+    q?: string;
+    letter?: string;
+  }): Promise<RootsOverview> {
+    const { minCount, q, letter } = params;
+    return this.withActorWords(params.userId, async (words) => {
+      const min = Math.max(1, minCount ?? 3);
+      const [allGroups, filteredGroups] = await Promise.all([
+        words.findRootFamilyGroups({ minCount: min }),
+        words.findRootFamilyGroups({ minCount: min, q, letter }),
+      ]);
+      const collections = filteredGroups.map(toRootCollectionSummary);
       return {
         available: true,
         counts: { showing: collections.length, total: allGroups.length },
-        groups: collections.length > 0 ? [group] : [],
+        collections,
         total: allGroups.length,
       };
     });
@@ -145,5 +233,48 @@ export class PlazaService {
         words: rows.map(toWordCard),
       };
     });
+  }
+
+  async getRootCollection(params: { userId: string; slug: string }): Promise<RootCollectionDetail> {
+    const { slug } = params;
+    const token = tokenFromRootSlug(slug);
+    if (!token) {
+      throw new NotFoundError("PlazaCollection", slug);
+    }
+    return this.withActorWords(params.userId, async (words) => {
+      const rows = await words.findByRootToken(token);
+      if (rows.length === 0) {
+        throw new NotFoundError("PlazaCollection", slug);
+      }
+      const firstUpdated = rows.reduce((acc, row) => (row.updated_at > acc ? row.updated_at : acc), rows[0].updated_at);
+      return {
+        slug,
+        title: token,
+        kind: "root_affix",
+        count: rows.length,
+        updatedAt: firstUpdated,
+        type: classifyRootFamily(rows),
+        words: rows.map(toRootWordCard),
+      };
+    });
+  }
+
+  private toOverview(
+    collections: PlazaCollectionSummary[],
+    total: number,
+    kind: PlazaKind,
+  ): PlazaOverview {
+    const group: PlazaGroup = {
+      kind,
+      label: kind === "root_affix" ? "词根词缀" : "语义场",
+      count: collections.length,
+      collections,
+    };
+    return {
+      available: true,
+      counts: { showing: collections.length, total },
+      groups: collections.length > 0 ? [group] : [],
+      total,
+    };
   }
 }
