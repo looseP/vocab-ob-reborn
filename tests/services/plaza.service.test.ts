@@ -170,6 +170,19 @@ describe("PlazaService.getCollection", () => {
 
     await expect(service.getCollection({ userId: "user-1", slug: "semantic-不存在" })).rejects.toBeInstanceOf(NotFoundError);
   });
+
+  it("serves repeated semantic collection details from cache without re-querying", async () => {
+    const repo = makeMockWordRepo({
+      findBySourcePathPrefix: vi.fn(async () => [WORD_ROW]),
+    });
+    const { service } = makeService(repo);
+
+    const first = await service.getCollection({ userId: "user-1", slug: "semantic-学校教育" });
+    const second = await service.getCollection({ userId: "user-1", slug: "semantic-学校教育" });
+
+    expect(second).toEqual(first);
+    expect(repo.findBySourcePathPrefix).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("plaza slug & root token helpers", () => {
@@ -244,6 +257,34 @@ describe("PlazaService.getRootsOverview", () => {
 
     expect(repo.findRootFamilyGroups).toHaveBeenNthCalledWith(2, { minCount: 3, q: "tele", letter: "t" });
   });
+
+  it("serves repeated roots overviews from cache without re-querying", async () => {
+    const repo = makeMockWordRepo({
+      findRootFamilyGroups: vi.fn(async () => [{ root: "chart", count: 6, updatedAt: "2026-08-28T00:00:00.000Z" }]),
+    });
+    const { service } = makeService(repo);
+
+    const first = await service.getRootsOverview({ userId: "user-1", minCount: 3 });
+    const second = await service.getRootsOverview({ userId: "user-1", minCount: 3 });
+
+    expect(second).toEqual(first);
+    // 缓存命中：一次调用 = total+showing 各一次，共 2 次查库
+    expect(repo.findRootFamilyGroups).toHaveBeenCalledTimes(2);
+  });
+
+  it("isolates cache entries by filter parameters (minCount/q/letter)", async () => {
+    const repo = makeMockWordRepo({
+      findRootFamilyGroups: vi.fn(async () => [{ root: "chart", count: 6, updatedAt: "2026-08-28T00:00:00.000Z" }]),
+    });
+    const { service } = makeService(repo);
+
+    await service.getRootsOverview({ userId: "user-1", minCount: 3 });
+    await service.getRootsOverview({ userId: "user-1", minCount: 10 });
+    await service.getRootsOverview({ userId: "user-1", minCount: 3, q: "chart" });
+
+    // 三种不同 key → 各触发一次全量+过滤查库
+    expect(repo.findRootFamilyGroups).toHaveBeenCalledTimes(6);
+  });
 });
 
 describe("PlazaService.getRootCollection", () => {
@@ -293,5 +334,18 @@ describe("PlazaService.getRootCollection", () => {
     const { service } = makeService(repo);
 
     await expect(service.getRootCollection({ userId: "user-1", slug: "root-unknown" })).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("serves repeated root collection details from cache without re-querying", async () => {
+    const repo = makeMockWordRepo({
+      findByRootToken: vi.fn(async () => [WORD_ROW]),
+    });
+    const { service } = makeService(repo);
+
+    const first = await service.getRootCollection({ userId: "user-1", slug: "root-chart" });
+    const second = await service.getRootCollection({ userId: "user-1", slug: "root-chart" });
+
+    expect(second).toEqual(first);
+    expect(repo.findByRootToken).toHaveBeenCalledTimes(1);
   });
 });
