@@ -179,7 +179,7 @@ export function PlazaPage() {
           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-ink-soft)]" />
           <Input
             type="search"
-            placeholder={isRoot ? "搜索词根（如：tele、port、spec）..." : "搜索语义场（如：学校、太空、健康）..."}
+            placeholder={isRoot ? "搜索词根（如：port、leg、work）..." : "搜索语义场（如：学校、太空、健康）..."}
             value={query}
             onChange={(e) => debouncedSetQuery(e.target.value)}
             className="w-full pl-11"

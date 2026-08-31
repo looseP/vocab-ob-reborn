@@ -106,7 +106,8 @@ describe("WordRepository.findRootFamilyGroups", () => {
     const query = mock.lastQuery!;
     expect(query.text).toContain("ILIKE $1");
     expect(query.text).toContain("HAVING count(*) >= $2");
-    expect(query.text).toContain("root LIKE $3");
+    // HAVING 不能引用输出别名，须用完整 token 表达式过滤首字母
+    expect(query.text).toContain("btrim(lower(substring(btrim(part) FROM '^[^ (（+]+'))) LIKE $3");
     // where 的 q(%tele%) → having 的 minCount(5) → letter(t%)
     expect(query.params).toEqual(["%tele%", 5, "t%"]);
   });
