@@ -6,6 +6,7 @@ import {
   plazaOverviewResponseSchema,
   plazaCollectionResponseSchema,
   plazaRootsResponseSchema,
+  plazaReviewStatsResponseSchema,
   rootCollectionDetailResponseSchema,
 } from "@/http/plaza-response-contract";
 
@@ -88,6 +89,7 @@ function makeMockServices(): Services {
           suffix: null,
         }],
       }),
+      getReviewStats: vi.fn().mockResolvedValue({ tracked: 5, due: 2 }),
     },
   } as unknown as Services;
 }
@@ -182,5 +184,25 @@ describe("GET /api/plaza/collections/:slug", () => {
     expect(body.type).toBe("simple");
     expect(body.words[0]).toMatchObject({ root: "chart (from Late Latin charta)", prefix: null, suffix: null });
     expect(services.plaza.getRootCollection).toHaveBeenCalledWith({ userId: "user-123", slug: "root-chart" });
+  });
+});
+
+describe("GET /api/plaza/review-stats/:slug", () => {
+  it("returns tracked/due counts matching the response contract", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/plaza/review-stats/semantic-%E5%AD%A6%E6%A0%A1%E6%95%99%E8%82%B2", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = plazaReviewStatsResponseSchema.parse(await res.json());
+    expect(body).toEqual({ tracked: 5, due: 2 });
+    expect(services.plaza.getReviewStats).toHaveBeenCalledWith({ userId: "user-123", slug: "semantic-学校教育" });
+  });
+
+  it("maps NotFoundError to 404", async () => {
+    const services = makeMockServices();
+    (services.plaza.getReviewStats as ReturnType<typeof vi.fn>).mockRejectedValue(new NotFoundError("PlazaCollection", "nope"));
+    const app = createApp(services);
+    const res = await app.request("/api/plaza/review-stats/nope", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(404);
   });
 });

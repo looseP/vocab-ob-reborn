@@ -128,3 +128,31 @@ describe("WordRepository.findByRootToken", () => {
     expect(words).toHaveLength(1);
   });
 });
+
+describe("WordRepository.countReviewStatsByWordIds", () => {
+  it("returns zero stats without querying for an empty id list", async () => {
+    mock.setRows([{ tracked: 1, due: 1 }]);
+    const repository = new WordRepository();
+
+    const stats = await repository.countReviewStatsByWordIds("user-1", []);
+
+    expect(stats).toEqual({ tracked: 0, due: 0 });
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  it("left-joins user_word_progress and counts tracked/due with FILTER", async () => {
+    mock.setRows([{ tracked: "5", due: "2" }]);
+    const repository = new WordRepository();
+
+    const stats = await repository.countReviewStatsByWordIds("user-1", ["w-1", "w-2"]);
+
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("FROM unnest($1::uuid[]) AS wid(word_id)");
+    expect(query.text).toContain("LEFT JOIN user_word_progress p");
+    expect(query.text).toContain("p.word_id = wid.word_id AND p.user_id = $2");
+    expect(query.text).toContain("p.state <> 'suspended'");
+    expect(query.text).toContain("p.due_at <= now()");
+    expect(query.params).toEqual([["w-1", "w-2"], "user-1"]);
+    expect(stats).toEqual({ tracked: 5, due: 2 });
+  });
+});

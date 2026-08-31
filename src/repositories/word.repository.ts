@@ -379,6 +379,30 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     );
   }
 
+  /**
+   * 词汇广场（P4 E1）：按 wordIds 聚合集合内复习统计。
+   * tracked = 有 user_word_progress 行；due = 非 suspended 且 due_at <= now()。
+   * user_word_progress 是 owner-scoped RLS 表，本方法必须在携带 actorId=userId
+   * 的事务内执行（PlazaService 的 withActorWords 已保证）。
+   */
+  async countReviewStatsByWordIds(userId: string, wordIds: string[]): Promise<{ tracked: number; due: number }> {
+    if (wordIds.length === 0) return { tracked: 0, due: 0 };
+    const row = await this.queryOne<{ tracked: string; due: string }>(
+      `SELECT
+         count(*) FILTER (WHERE p.id IS NOT NULL)::int AS tracked,
+         count(*) FILTER (WHERE p.id IS NOT NULL AND p.state <> 'suspended'
+             AND p.due_at IS NOT NULL AND p.due_at <= now())::int AS due
+       FROM unnest($1::uuid[]) AS wid(word_id)
+       LEFT JOIN user_word_progress p
+         ON p.word_id = wid.word_id AND p.user_id = $2`,
+      [wordIds, userId],
+    );
+    return {
+      tracked: row ? parseInt(row.tracked, 10) : 0,
+      due: row ? parseInt(row.due, 10) : 0,
+    };
+  }
+
   async count(): Promise<number> {
     const row = await this.queryOne<{ count: string }>(
       `SELECT count(*) FROM words WHERE is_deleted = false`,

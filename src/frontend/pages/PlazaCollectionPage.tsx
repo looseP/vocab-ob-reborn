@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { BookOpen, ChevronRight, Layers, Users } from "lucide-react";
+import { BookOpen, ChevronRight, Layers, Play, Users } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Badge } from "@/frontend/components/ui/Badge";
+import { Button } from "@/frontend/components/ui/Button";
 import { Spinner } from "@/frontend/components/ui/Spinner";
 import { apiFetch } from "@/frontend/api/client";
 
@@ -43,6 +44,8 @@ export function PlazaCollectionPage() {
   const [data, setData] = useState<PlazaCollectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // E1：集合内复习统计（已追踪 / 待复习）
+  const [reviewStats, setReviewStats] = useState<{ tracked: number; due: number } | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -63,6 +66,12 @@ export function PlazaCollectionPage() {
         if (controller.signal.aborted) return;
         setLoading(false);
       });
+    // E1：集合内复习统计（独立端点，失败不阻塞详情）
+    apiFetch<{ tracked: number; due: number }>(`/plaza/review-stats/${encodeURIComponent(slug)}`, {
+      signal: controller.signal,
+    })
+      .then(setReviewStats)
+      .catch(() => { /* 统计非关键路径，失败静默 */ });
     return () => controller.abort();
   }, [slug]);
 
@@ -104,16 +113,34 @@ export function PlazaCollectionPage() {
           <Badge tone="warm">{kindLabel}</Badge>
           <Badge>{isRoot ? `家族 ${data.count} 词` : `关联词条 ${data.count}`}</Badge>
           {isRoot && data.type && <Badge>{TYPE_LABEL[data.type]}</Badge>}
+          {/* E1：集合内复习统计 */}
+          {reviewStats && (
+            <Badge>已追踪 {reviewStats.tracked}</Badge>
+          )}
+          {reviewStats && reviewStats.due > 0 && (
+            <Badge tone="warm">待复习 {reviewStats.due}</Badge>
+          )}
         </div>
         <h1 className="section-title mt-3 flex items-center gap-3 text-3xl font-bold text-[var(--color-ink)]">
           {isRoot ? <Layers className="h-7 w-7 text-[var(--color-accent)]" /> : <Users className="h-7 w-7 text-[var(--color-accent)]" />}
           {isRoot ? `-${data.title}-` : data.title}
         </h1>
-        <p className="mt-2 text-sm text-[var(--color-ink-soft)]">
-          {isRoot
-            ? `共享「${data.title}」词根的 ${data.count} 个词——按词源关系组织，点进词条查看完整释义与词根结构。`
-            : `按主题组织的 ${data.count} 个词条——浏览整组知识，点进词条可查看完整释义与词源。`}
-        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <p className="text-sm text-[var(--color-ink-soft)]">
+            {isRoot
+              ? `共享「${data.title}」词根的 ${data.count} 个词——按词源关系组织，点进词条查看完整释义与词根结构。`
+              : `按主题组织的 ${data.count} 个词条——浏览整组知识，点进词条可查看完整释义与词源。`}
+          </p>
+          {/* E3：集合一键自由复习（复用 /review?wordIds= 通道，不评分不写复习数据） */}
+          {data.words.length > 0 && (
+            <Link to={`/review?wordIds=${data.words.map((w) => w.id).join(",")}`}>
+              <Button size="sm">
+                <Play className="h-4 w-4" />
+                自由复习该集合（{data.words.length}）
+              </Button>
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

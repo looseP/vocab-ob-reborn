@@ -105,6 +105,12 @@ export interface RootsOverview {
   total: number;
 }
 
+/** 集合内复习统计（E1）：按 wordIds 聚合 user_word_progress。 */
+export interface PlazaReviewStats {
+  tracked: number;
+  due: number;
+}
+
 // ── Word ────────────────────────────────────────────────────────────────
 export type ReviewRating = "again" | "hard" | "good" | "easy";
 

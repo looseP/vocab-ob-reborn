@@ -1,5 +1,5 @@
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Volume2, Lightbulb, Network, Puzzle, Quote, Undo2 } from "lucide-react";
+import { ArrowLeft, Volume2, Lightbulb, Network, Puzzle, Quote, Undo2, Layers, Users } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -9,6 +9,7 @@ import { Markdown } from "@/frontend/components/ui/Markdown";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
 import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
+import { deriveWordCollections } from "@/frontend/utils/plazaSlugs";
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -141,6 +142,20 @@ export function WordDetailPage() {
                 </span>
               )}
             </div>
+            {/* E2：广场集合反链——语义场 / 词根家族徽标，点击跳回对应集合 */}
+            {deriveWordCollections(meta).map((ref) => (
+              <Link
+                key={ref.slug}
+                to={`/plaza/${encodeURIComponent(ref.slug)}`}
+                className="mt-2 mr-2 inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-1 text-xs font-medium text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                title={`查看${ref.slug.startsWith("root-") ? "词根家族" : "语义场"}「${ref.title}」`}
+              >
+                {ref.slug.startsWith("root-")
+                  ? <Layers className="h-3 w-3" />
+                  : <Users className="h-3 w-3" />}
+                {ref.title}
+              </Link>
+            ))}
           </div>
           <div className="flex items-center gap-2">
             <AddToReviewButton wordId={word.id} slug={word.slug} />

@@ -51,6 +51,7 @@ import {
   plazaCollectionResponseSchema,
   plazaOverviewResponseSchema,
   plazaRootsResponseSchema,
+  plazaReviewStatsResponseSchema,
   rootCollectionDetailResponseSchema,
 } from "./plaza-response-contract";
 import {
@@ -280,6 +281,7 @@ export const apiOperations = [
   operation("get", "/api/plaza/collections/:slug", "getPlazaCollection", "owner", "none", undefined, 200, plazaCollectionResponseSchema),
   operation("get", "/api/plaza/roots", "getPlazaRootsOverview", "owner", "none", { query: plazaRootsQuerySchema }, 200, plazaRootsResponseSchema),
   operation("get", "/api/plaza/roots/:slug", "getPlazaRootCollection", "owner", "none", undefined, 200, rootCollectionDetailResponseSchema),
+  operation("get", "/api/plaza/review-stats/:slug", "getPlazaReviewStats", "owner", "none", undefined, 200, plazaReviewStatsResponseSchema),
   operation("get", "/api/notes", "listNotes", "owner", "none", { query: noteListQuerySchema }, 200, noteListResponseSchema),
   operation("get", "/api/wordbooks", "listWordbooks", "owner", "none", undefined, 200, wordbookListResponseSchema),
   operation("get", "/api/wordbooks/default", "getOrCreateDefaultWordbook", "owner", "none", undefined, 200, wordbookDefaultResponseSchema),
