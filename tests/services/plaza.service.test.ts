@@ -5,6 +5,7 @@ import type {
   IWordRepository,
 } from "@/repositories/interfaces";
 import { PlazaService, toPlazaSlug, fieldFromPlazaSlug, toRootSlug, tokenFromRootSlug, extractRootTokens } from "@/services/plaza.service";
+import { PlazaCache } from "@/services/plaza-cache";
 import { NotFoundError } from "@/errors";
 import type {
   PlazaWordRow,
@@ -29,10 +30,10 @@ function makeMockWordRepo(overrides: Partial<IWordRepository> = {}): IWordReposi
 }
 
 /** 注入不触库的 txRunner + repositoryFactory，让服务在测试中走 mock 仓库。 */
-function makeService(repo: IWordRepository): PlazaService {
+function makeService(repo: IWordRepository, cache: PlazaCache = new PlazaCache()): { service: PlazaService; cache: PlazaCache } {
   const txRunner = (async (cb: (tx: PoolClient) => Promise<unknown>) => cb({} as PoolClient)) as typeof import("@/db/transaction").withTransaction;
   const repositoryFactory = (() => ({ words: repo })) as unknown as (tx?: PoolClient) => IRepositories;
-  return new PlazaService(repo, txRunner, repositoryFactory);
+  return { service: new PlazaService(repo, txRunner, repositoryFactory, cache), cache };
 }
 
 const GROUP_ROW: SemanticFieldGroupRow = { field: "学校教育", count: 401, updatedAt: "2026-08-28T00:00:00.000Z" };
@@ -56,7 +57,7 @@ describe("PlazaService.getOverview", () => {
     const repo = makeMockWordRepo({
       findSemanticFieldGroups: vi.fn(async () => [GROUP_ROW]),
     });
-    const service = makeService(repo);
+    const { service } = makeService(repo);
 
     const result = await service.getOverview({ userId: "user-1" });
 
@@ -87,7 +88,7 @@ describe("PlazaService.getOverview", () => {
         .fn()
         .mockImplementation(async (q?: string) => (q ? [] : [GROUP_ROW])),
     });
-    const service = makeService(repo);
+    const { service } = makeService(repo);
 
     const result = await service.getOverview({ userId: "user-1", q: "太空" });
 
@@ -97,6 +98,34 @@ describe("PlazaService.getOverview", () => {
     expect(result.counts).toEqual({ showing: 0, total: 1 });
     expect(result.groups).toHaveLength(0);
   });
+
+  it("serves repeated calls from cache without re-querying the repository", async () => {
+    const repo = makeMockWordRepo({
+      findSemanticFieldGroups: vi.fn(async () => [GROUP_ROW]),
+    });
+    const { service } = makeService(repo);
+
+    const first = await service.getOverview({ userId: "user-1" });
+    const second = await service.getOverview({ userId: "user-1" });
+
+    expect(second).toEqual(first);
+    // 缓存命中：第二次不再查库（一次调用 = total+showing 各一次）
+    expect(repo.findSemanticFieldGroups).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-queries after cache invalidation", async () => {
+    const repo = makeMockWordRepo({
+      findSemanticFieldGroups: vi.fn(async () => [GROUP_ROW]),
+    });
+    const { service, cache } = makeService(repo);
+    await service.getOverview({ userId: "user-1" });
+    expect(cache.size).toBe(1);
+
+    cache.invalidateAll();
+
+    await service.getOverview({ userId: "user-1" });
+    expect(repo.findSemanticFieldGroups).toHaveBeenCalledTimes(4);
+  });
 });
 
 describe("PlazaService.getCollection", () => {
@@ -104,7 +133,7 @@ describe("PlazaService.getCollection", () => {
     const repo = makeMockWordRepo({
       findBySourcePathPrefix: vi.fn(async () => [WORD_ROW]),
     });
-    const service = makeService(repo);
+    const { service } = makeService(repo);
 
     const result = await service.getCollection({ userId: "user-1", slug: "semantic-学校教育" });
 
@@ -127,7 +156,7 @@ describe("PlazaService.getCollection", () => {
 
   it("throws NotFound for a slug without the semantic- prefix", async () => {
     const repo = makeMockWordRepo();
-    const service = makeService(repo);
+    const { service } = makeService(repo);
 
     await expect(service.getCollection({ userId: "user-1", slug: "root-chart" })).rejects.toBeInstanceOf(NotFoundError);
     expect(repo.findBySourcePathPrefix).not.toHaveBeenCalled();
@@ -137,7 +166,7 @@ describe("PlazaService.getCollection", () => {
     const repo = makeMockWordRepo({
       findBySourcePathPrefix: vi.fn(async () => []),
     });
-    const service = makeService(repo);
+    const { service } = makeService(repo);
 
     await expect(service.getCollection({ userId: "user-1", slug: "semantic-不存在" })).rejects.toBeInstanceOf(NotFoundError);
   });
@@ -189,7 +218,7 @@ describe("PlazaService.getRootsOverview", () => {
     const repo = makeMockWordRepo({
       findRootFamilyGroups: vi.fn(async () => [{ root: "chart", count: 6, updatedAt: "2026-08-28T00:00:00.000Z" }]),
     });
-    const service = makeService(repo);
+    const { service } = makeService(repo);
 
     const result = await service.getRootsOverview({ userId: "user-1", minCount: 3 });
 
@@ -209,7 +238,7 @@ describe("PlazaService.getRootsOverview", () => {
     const repo = makeMockWordRepo({
       findRootFamilyGroups: vi.fn(async () => []),
     });
-    const service = makeService(repo);
+    const { service } = makeService(repo);
 
     await service.getRootsOverview({ userId: "user-1", q: "tele", letter: "t" });
 
@@ -232,7 +261,7 @@ describe("PlazaService.getRootCollection", () => {
         },
       ]),
     });
-    const service = makeService(repo);
+    const { service } = makeService(repo);
 
     const result = await service.getRootCollection({ userId: "user-1", slug: "root-chart" });
 
@@ -261,7 +290,7 @@ describe("PlazaService.getRootCollection", () => {
     const repo = makeMockWordRepo({
       findByRootToken: vi.fn(async () => []),
     });
-    const service = makeService(repo);
+    const { service } = makeService(repo);
 
     await expect(service.getRootCollection({ userId: "user-1", slug: "root-unknown" })).rejects.toBeInstanceOf(NotFoundError);
   });

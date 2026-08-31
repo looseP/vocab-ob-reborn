@@ -19,6 +19,7 @@ import {
 } from "../domain/ingest";
 import type { IWordRepository, UpsertFullWordInput } from "../repositories/interfaces";
 import { ValidationError } from "../errors";
+import { plazaCache } from "./plaza-cache";
 
 export interface ImportVocabNoteFileInput {
   path: string;
@@ -156,6 +157,8 @@ export class VocabImportService {
       stats.rejected += result.rejected;
       if (result.status === "failed") stats.failed += 1;
     }
+    // P4 性能：真实写入后清空广场聚合缓存，让语义场/词根聚合尽快反映新词库。
+    if (options.dryRun !== true) plazaCache.invalidateAll();
     return { dryRun: options.dryRun === true, results, stats };
   }
 
