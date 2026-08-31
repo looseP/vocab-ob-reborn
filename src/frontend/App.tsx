@@ -15,6 +15,8 @@ const ReviewPage = lazy(() => import("./pages/ReviewPage").then((m) => ({ defaul
 const L2DrillPage = lazy(() => import("./pages/L2DrillPage").then((m) => ({ default: m.L2DrillPage })));
 const WordsPage = lazy(() => import("./pages/WordsPage").then((m) => ({ default: m.WordsPage })));
 const WordDetailPage = lazy(() => import("./pages/WordDetailPage").then((m) => ({ default: m.WordDetailPage })));
+const PlazaPage = lazy(() => import("./pages/PlazaPage").then((m) => ({ default: m.PlazaPage })));
+const PlazaCollectionPage = lazy(() => import("./pages/PlazaCollectionPage").then((m) => ({ default: m.PlazaCollectionPage })));
 const NotesPage = lazy(() => import("./pages/NotesPage").then((m) => ({ default: m.NotesPage })));
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const ImportPage = lazy(() => import("./pages/ImportPage").then((m) => ({ default: m.ImportPage })));
@@ -51,6 +53,8 @@ export function App() {
               <Route path="/l2-drill" element={<SiteFrame><PageSuspense><L2DrillPage /></PageSuspense></SiteFrame>} />
               <Route path="/words" element={<SiteFrame><PageSuspense><WordsPage /></PageSuspense></SiteFrame>} />
               <Route path="/words/:slug" element={<SiteFrame><PageSuspense><WordDetailPage /></PageSuspense></SiteFrame>} />
+              <Route path="/plaza" element={<SiteFrame><PageSuspense><PlazaPage /></PageSuspense></SiteFrame>} />
+              <Route path="/plaza/:slug" element={<SiteFrame><PageSuspense><PlazaCollectionPage /></PageSuspense></SiteFrame>} />
               <Route path="/notes" element={<SiteFrame><PageSuspense><NotesPage /></PageSuspense></SiteFrame>} />
               <Route path="/settings" element={<SiteFrame><PageSuspense><SettingsPage /></PageSuspense></SiteFrame>} />
               <Route path="/import" element={<SiteFrame><PageSuspense><ImportPage /></PageSuspense></SiteFrame>} />

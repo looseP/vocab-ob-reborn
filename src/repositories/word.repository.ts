@@ -14,6 +14,8 @@ import { computePinyinFromCjk } from "../domain/ingest/pinyin";
 import type {
   GetPublicWordsOptions,
   PaginatedResult,
+  PlazaWordRow,
+  SemanticFieldGroupRow,
   WordRow,
   WordSummary,
 } from "../domain";
@@ -260,6 +262,52 @@ export class WordRepository extends BaseRepository implements IWordRepository {
         `%${qNoSpace}%`,
         limit,
       ],
+    );
+  }
+
+  /**
+   * 词汇广场（P4）：按 L1 语义场 source_path 前缀实时聚合分组。
+   * 语义场名从 `L1_雅思词汇/L1_雅思词汇_<场名>.md` 提取；q 非空时按场名过滤。
+   * 自生长：词库精修/导入后无需任何额外同步，广场自动反映最新分组。
+   */
+  async findSemanticFieldGroups(q?: string): Promise<SemanticFieldGroupRow[]> {
+    const params: unknown[] = [];
+    const where = [
+      `w.is_published = true`,
+      `w.is_deleted = false`,
+      `w.definition_md <> ''`,
+      `w.metadata->>'source_path' LIKE 'L1_雅思词汇/L1_雅思词汇_%.md'`,
+    ];
+    if (q && q.trim()) {
+      params.push(q.trim());
+      where.push(`(metadata->>'source_path') ILIKE '%L1_雅思词汇_' || $${params.length} || '.md%'`);
+    }
+    const rows = await this.query<SemanticFieldGroupRow>(
+      `SELECT
+         substring(w.metadata->>'source_path' FROM '^L1_雅思词汇/L1_雅思词汇_([^/]+)\\.md$') AS field,
+         count(*)::int AS count,
+         max(w.updated_at)::text AS updated_at
+       FROM words w
+       WHERE ${where.join(" AND ")}
+       GROUP BY 1
+       ORDER BY count DESC, field ASC`,
+      params,
+    );
+    return rows.filter((r) => r.field);
+  }
+
+  /**
+   * 词汇广场（P4）：取某语义场 source_path 前缀下的全部已发布词（含 updated_at）。
+   */
+  async findBySourcePathPrefix(prefix: string): Promise<PlazaWordRow[]> {
+    return this.query<PlazaWordRow>(
+      `SELECT ${SUMMARY_COLUMNS}, w.updated_at
+       FROM words w
+       WHERE w.is_published = true AND w.is_deleted = false
+         AND w.definition_md <> ''
+         AND w.metadata->>'source_path' = $1
+       ORDER BY w.lemma ASC`,
+      [prefix],
     );
   }
 

@@ -17,6 +17,62 @@ export interface PaginatedResult<T> {
   hasMore: boolean;
 }
 
+// ── Plaza（词汇广场 · 自生长集合）────────────────────────────────────────
+/** 语义场集合的 slug 前缀（对齐原版 collection-note 约定）。 */
+export const PLAZA_SEMANTIC_SLUG_PREFIX = "semantic";
+
+/** 语义场集合分组行（由 words.source_path 实时推导）。 */
+export interface SemanticFieldGroupRow {
+  field: string;
+  count: number;
+  updatedAt: string;
+}
+
+/** 词汇广场集合摘要（一个 L1 语义场）。 */
+export interface PlazaCollectionSummary {
+  slug: string;
+  title: string;
+  kind: "semantic_field";
+  count: number;
+  updatedAt: string;
+}
+
+/** 词汇广场集合详情查询行（WordSummary + updated_at，不落响应契约外字段）。 */
+export interface PlazaWordRow extends WordSummary {
+  updated_at: string;
+}
+
+/** 集合详情页的词卡。 */
+export interface PlazaWordCard {
+  id: string;
+  slug: string;
+  lemma: string;
+  cefr: string | null;
+  short_definition: string | null;
+  semantic_chain: string | null;
+}
+
+/** 集合详情：摘要 + 关联词卡。 */
+export interface PlazaCollectionDetail extends PlazaCollectionSummary {
+  words: PlazaWordCard[];
+}
+
+/** 广场分组（Phase 1 仅语义场一类）。 */
+export interface PlazaGroup {
+  kind: "semantic_field";
+  label: string;
+  count: number;
+  collections: PlazaCollectionSummary[];
+}
+
+/** 广场总览响应。 */
+export interface PlazaOverview {
+  available: boolean;
+  counts: { showing: number; total: number };
+  groups: PlazaGroup[];
+  total: number;
+}
+
 // ── Word ────────────────────────────────────────────────────────────────
 export type ReviewRating = "again" | "hard" | "good" | "easy";
 

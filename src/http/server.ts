@@ -16,6 +16,7 @@ import { API_JSON_BODY_MAX_BYTES } from "../schemas/resource-budget";
 import { handleError } from "./middleware/error";
 import { authMiddleware } from "./middleware/auth";
 import { wordRoutes, type AppEnv } from "./routes/words";
+import { plazaRoutes } from "./routes/plaza";
 import { reviewRoutes } from "./routes/review";
 import { captureRoutes } from "./routes/capture";
 import { importRoutes } from "./routes/imports";
@@ -99,6 +100,7 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
 
   // 路由模块挂载
   app.route("/api/words", wordRoutes(services));
+  app.route("/api/plaza", plazaRoutes(services));
   app.route("/api/review", reviewRoutes(services));
   app.route("/api/capture", captureRoutes(services));
   app.route("/api/imports", importRoutes(services));
