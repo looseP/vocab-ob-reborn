@@ -1,4 +1,4 @@
-﻿import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
@@ -543,6 +543,18 @@ describe("Phase 4B L3 frontend shell", () => {
     expect(formatL3ErrorDetails(error)).not.toBe("[object Object]");
     expect(formatL3ErrorDetails(validation)).toBeNull();
     expect(validation.itemErrors).toEqual([{ itemId: "item-1", field: "surface", message: "surface mismatch" }]);
+  });
+
+  it("suppresses redundant resource-descriptor JSON for not_found errors", () => {
+    const notFound = normalizeL3Error(404, {
+      code: "L3_CONTEXT_NOT_FOUND",
+      message: "L3Context not found: 00000000-0000-0000-0000-000000000000",
+      details: { resourceType: "L3Context", identifier: "00000000-0000-0000-0000-000000000000" },
+    });
+
+    expect(notFound).toMatchObject({ status: 404, kind: "not_found", retryHint: "refresh" });
+    // message 已含 id；details 只是资源描述符，不应再渲染为原始 JSON
+    expect(formatL3ErrorDetails(notFound)).toBeNull();
   });
 
   it("keeps 409 and 422 feedback shapes consistent across L3 surfaces", () => {

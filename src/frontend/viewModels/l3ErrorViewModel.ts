@@ -8,6 +8,9 @@ export interface L3ErrorUxContract {
 }
 
 export function formatL3ErrorDetails(error: NormalizedL3Error): string | null {
+  // not_found 的 details 只是资源描述符（resourceType/identifier），message 已含 id，
+  // 再渲染原始 JSON 对用户无意义（P3-9 深链无效 id 场景暴露）。
+  if (error.kind === "not_found") return null;
   if (error.fieldErrors || error.itemErrors || error.details === undefined || error.details === null) return null;
   if (typeof error.details === "string") return error.details;
   try {
