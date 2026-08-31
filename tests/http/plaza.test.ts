@@ -5,6 +5,8 @@ import { NotFoundError } from "@/errors";
 import {
   plazaOverviewResponseSchema,
   plazaCollectionResponseSchema,
+  plazaRootsResponseSchema,
+  rootCollectionDetailResponseSchema,
 } from "@/http/plaza-response-contract";
 
 const ORIGINAL_OWNER_TOKEN = process.env.OWNER_API_TOKEN;
@@ -55,6 +57,37 @@ function makeMockServices(): Services {
           semantic_chain: "丰富 -> 大量存在",
         }],
       }),
+      getRootsOverview: vi.fn().mockResolvedValue({
+        available: true,
+        counts: { showing: 1, total: 1 },
+        collections: [{
+          slug: "root-chart",
+          title: "chart",
+          kind: "root_affix",
+          count: 6,
+          updatedAt: "2026-08-28T00:00:00.000Z",
+        }],
+        total: 1,
+      }),
+      getRootCollection: vi.fn().mockResolvedValue({
+        slug: "root-chart",
+        title: "chart",
+        kind: "root_affix",
+        count: 1,
+        updatedAt: "2026-08-28T00:00:00.000Z",
+        type: "simple",
+        words: [{
+          id: "w-1",
+          slug: "abound",
+          lemma: "abound",
+          cefr: "B2",
+          short_definition: "大量存在",
+          semantic_chain: "纸 -> 图表",
+          root: "chart (from Late Latin charta)",
+          prefix: null,
+          suffix: null,
+        }],
+      }),
     },
   } as unknown as Services;
 }
@@ -89,6 +122,36 @@ describe("GET /api/plaza", () => {
   });
 });
 
+describe("GET /api/plaza/roots", () => {
+  it("returns the roots overview matching the response contract", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/plaza/roots?minCount=5&letter=t&q=tele", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = plazaRootsResponseSchema.parse(await res.json());
+    expect(body.collections[0].slug).toBe("root-chart");
+    expect(services.plaza.getRootsOverview).toHaveBeenCalledWith({
+      userId: "user-123",
+      minCount: 5,
+      q: "tele",
+      letter: "t",
+    });
+  });
+
+  it("defaults minCount to 3 when omitted", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/plaza/roots", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(services.plaza.getRootsOverview).toHaveBeenCalledWith({
+      userId: "user-123",
+      minCount: 3,
+      q: undefined,
+      letter: undefined,
+    });
+  });
+});
+
 describe("GET /api/plaza/collections/:slug", () => {
   it("returns the collection detail matching the response contract", async () => {
     const services = makeMockServices();
@@ -107,5 +170,17 @@ describe("GET /api/plaza/collections/:slug", () => {
     const app = createApp(services);
     const res = await app.request("/api/plaza/collections/nope", { headers: AUTH_HEADERS });
     expect(res.status).toBe(404);
+  });
+
+  it("returns a root_affix collection detail with root structure cards", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/plaza/roots/root-chart", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = rootCollectionDetailResponseSchema.parse(await res.json());
+    expect(body.kind).toBe("root_affix");
+    expect(body.type).toBe("simple");
+    expect(body.words[0]).toMatchObject({ root: "chart (from Late Latin charta)", prefix: null, suffix: null });
+    expect(services.plaza.getRootCollection).toHaveBeenCalledWith({ userId: "user-123", slug: "root-chart" });
   });
 });

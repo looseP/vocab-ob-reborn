@@ -15,6 +15,7 @@ import type {
   GetPublicWordsOptions,
   PaginatedResult,
   PlazaWordRow,
+  RootFamilyGroupRow,
   SemanticFieldGroupRow,
   WordRow,
   WordSummary,
@@ -296,6 +297,70 @@ export class WordRepository extends BaseRepository implements IWordRepository {
       params,
     );
     return rows.filter((r) => r.field);
+  }
+
+  /**
+   * 词汇广场（P4）：按 morphology_root 提取词根 token 聚合家族。
+   * 提取规则与 service 保持一致：按 `+` 拆分复合词根，每部分取括号（半/全角）
+   * 前的首个连续字母串（小写）；过滤非 [a-z]{2,} 的噪声 token。
+   * minCount / q / letter 在 SQL 层过滤；自生长，词库精修后自动反映。
+   */
+  async findRootFamilyGroups(opts: { minCount?: number; q?: string; letter?: string } = {}): Promise<RootFamilyGroupRow[]> {
+    const params: unknown[] = [];
+    // 与 service.extractRootTokens 保持一致：`+` 拆分后先 btrim（部分可能带前导空格），
+    // 再取括号前的首个连续字母串，过滤非 [a-z]{2,} 噪声。
+    const tokenExpr = `btrim(lower(substring(btrim(part) FROM '^[^ (（+]+')))`;
+    const where = [
+      `w.is_published = true`,
+      `w.is_deleted = false`,
+      `w.definition_md <> ''`,
+      `w.metadata->>'morphology_root' IS NOT NULL`,
+      `w.metadata->>'morphology_root' NOT IN ('', 'EMPTY')`,
+      `${tokenExpr} ~ '^[a-z]{2,}$'`,
+    ];
+    if (opts.q && opts.q.trim()) {
+      params.push(`%${opts.q.trim().toLowerCase()}%`);
+      where.push(`${tokenExpr} ILIKE $${params.length}`);
+    }
+    const having = [`count(*) >= $${params.length + 1}`];
+    params.push(Math.max(1, opts.minCount ?? 1));
+    if (opts.letter && /^[a-z]$/.test(opts.letter)) {
+      having.push(`root LIKE $${params.length + 1}`);
+      params.push(`${opts.letter.toLowerCase()}%`);
+    }
+    return this.query<RootFamilyGroupRow>(
+      `SELECT
+         ${tokenExpr} AS root,
+         count(*)::int AS count,
+         max(w.updated_at)::text AS updated_at
+       FROM words w
+       CROSS JOIN LATERAL unnest(string_to_array(w.metadata->>'morphology_root', '+')) AS part
+       WHERE ${where.join(" AND ")}
+       GROUP BY 1
+       HAVING ${having.join(" AND ")}
+       ORDER BY count DESC, root ASC`,
+      params,
+    );
+  }
+
+  /**
+   * 词汇广场（P4）：取词根 token 命中（morphology_root 任一部分提取出该 token）的
+   * 全部已发布词（含 updated_at 与完整 metadata，供词根结构展示）。
+   */
+  async findByRootToken(token: string): Promise<PlazaWordRow[]> {
+    const tokenExpr = `btrim(lower(substring(btrim(part) FROM '^[^ (（+]+')))`;
+    return this.query<PlazaWordRow>(
+      `SELECT ${SUMMARY_COLUMNS}, w.updated_at
+       FROM words w
+       WHERE w.is_published = true AND w.is_deleted = false
+         AND w.definition_md <> ''
+         AND EXISTS (
+           SELECT 1 FROM unnest(string_to_array(w.metadata->>'morphology_root', '+')) AS part
+           WHERE ${tokenExpr} = $1
+         )
+       ORDER BY w.lemma ASC`,
+      [token],
+    );
   }
 
   /**

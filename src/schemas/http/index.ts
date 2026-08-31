@@ -41,8 +41,17 @@ export const wordSuggestQuerySchema = z.object({
 });
 
 // ── Plaza（词汇广场 · P4）──────────────────────────────────────────────
+// 注意：/api/plaza 契约冻结为语义场（含历史兼容），词根词缀走独立端点
+// /api/plaza/roots，避免响应契约变更触发 verify-openapi-breaking 门禁。
 export const plazaQuerySchema = z.object({
   q: z.string().trim().max(100).optional(),
+});
+
+/** 词根词缀广场查询参数（P4）：minCount 最小家族规模、q 词根子串、letter 首字母。 */
+export const plazaRootsQuerySchema = z.object({
+  minCount: z.coerce.number().int().min(1).max(200).optional().default(3),
+  q: z.string().trim().max(100).optional(),
+  letter: z.string().regex(/^[a-zA-Z]$/).optional(),
 });
 
 // Mirrors the manual sanitization in routes/words.ts POST /batch: every field
