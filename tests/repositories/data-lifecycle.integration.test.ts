@@ -185,6 +185,45 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("data lifecycle repository", () 
     }
   });
 
+  it("deletes orphan drill steps from ended sessions but keeps active-session pending steps", async () => {
+    const userId = randomUUID();
+    const wordId = randomUUID();
+    const wordbookId = randomUUID();
+    try {
+      await pool.query("INSERT INTO users (id, email) VALUES ($1, $2)", [userId, `${userId}@example.test`]);
+      await pool.query("INSERT INTO profiles (id, email) VALUES ($1, $2)", [userId, `${userId}@example.test`]);
+      await pool.query(`INSERT INTO words (id, slug, content_hash, source_path, title, lemma, definition_md, body_md)
+        VALUES ($1, $2, repeat('d', 64), $3, 'test', 'test', 'test', 'test')`, [wordId, wordId, `/test/${wordId}`]);
+      await pool.query("INSERT INTO wordbooks (id, user_id, name) VALUES ($1, $2, 'test')", [wordbookId, userId]);
+      // 已结束会话 + 孤儿 pending 步（应被清理）
+      const endedSession = randomUUID();
+      await pool.query(`INSERT INTO sessions (id, user_id, wordbook_id, mode, started_at, ended_at)
+        VALUES ($1, $2, $3, 'l2_drill', now() - interval '2 days', now() - interval '1 day')`, [endedSession, userId, wordbookId]);
+      await pool.query(`INSERT INTO l2_drill_session_steps
+        (session_id, user_id, wordbook_id, word_id, progress_id, step_index, step_type, status)
+        VALUES ($1, $2, $3, $4, $5, 0, 'l2_discrimination', 'pending')`, [endedSession, userId, wordbookId, wordId, randomUUID()]);
+      // 活跃会话 + pending 步（不应被清理）
+      const activeSession = randomUUID();
+      await pool.query(`INSERT INTO sessions (id, user_id, wordbook_id, mode, started_at)
+        VALUES ($1, $2, $3, 'l2_drill', now())`, [activeSession, userId, wordbookId]);
+      await pool.query(`INSERT INTO l2_drill_session_steps
+        (session_id, user_id, wordbook_id, word_id, progress_id, step_index, step_type, status)
+        VALUES ($1, $2, $3, $4, $5, 0, 'l2_discrimination', 'pending')`, [activeSession, userId, wordbookId, wordId, randomUUID()]);
+
+      const result = await repo.run({ cutoff, allowWrite: true });
+      expect(result.deleted.drillOrphanSteps).toBe(1);
+
+      const remaining = await pool.query(
+        "SELECT count(*)::int count FROM l2_drill_session_steps WHERE session_id = ANY($1::uuid[])",
+        [[endedSession, activeSession]],
+      );
+      expect(remaining.rows[0].count).toBe(1);
+    } finally {
+      await pool.query("DELETE FROM users WHERE id = $1", [userId]);
+      await pool.query("DELETE FROM words WHERE id = $1", [wordId]);
+    }
+  });
+
   it("two concurrent runners have no duplicate or missed deletions and receipts cascade", async () => {
     await pool.query("TRUNCATE outbox_effect_receipts, outbox_events CASCADE");
     const ids = await insertOutbox(220);

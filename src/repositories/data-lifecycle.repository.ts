@@ -37,7 +37,8 @@ export type LifecycleTarget =
   | "authSessions"
   | "llmTerminal"
   | "llmSettled"
-  | "reviewLogs";
+  | "reviewLogs"
+  | "drillOrphanSteps";
 
 type LifecycleLimits = { batchSize: number; maxBatches: number; maxRows: number };
 
@@ -51,7 +52,7 @@ export type DataLifecycleResult = {
 };
 
 const TARGETS: LifecycleTarget[] = [
-  "outboxProcessed", "authSessions", "llmTerminal", "llmSettled", "reviewLogs",
+  "outboxProcessed", "authSessions", "llmTerminal", "llmSettled", "reviewLogs", "drillOrphanSteps",
 ];
 
 function counters(): Record<LifecycleTarget, number> {
@@ -103,6 +104,8 @@ export class DataLifecycleRepository {
       llmTerminal: new Date(cutoffTime - policy.llmTerminalDays * 86_400_000),
       llmSettled: new Date(cutoffTime - policy.llmSettledDays * 86_400_000),
       reviewLogs: new Date(cutoffTime - policy.reviewLogDays * 86_400_000),
+      // 孤儿步不依赖时间 cutoff，此处仅满足类型契约。
+      drillOrphanSteps: new Date(cutoffTime),
     };
     const eligible = await this.countEligible(cutoffs);
     const archived = counters();
@@ -117,6 +120,10 @@ export class DataLifecycleRepository {
       const review = await this.archiveReviewBatches(cutoffs.reviewLogs, limits);
       archived.reviewLogs = review.archived;
       deleted.reviewLogs = review.deleted;
+      // L2 drill 孤儿 pending 步：删除所属会话已结束（ended_at IS NOT NULL）且仍
+      // pending 的步。会话结束即无读取路径（getQueue 只恢复活跃会话的 pending
+      // 产出步），纯孤儿；不依赖时间 cutoff（与会话结束状态强相关）。
+      deleted.drillOrphanSteps = await this.deleteDrillOrphanBatches(limits);
     }
 
     return { policyVersion: DATA_LIFECYCLE_POLICY_VERSION, eligible, archived, deleted, cutoff, durationMs: Date.now() - startedAt };
@@ -124,15 +131,20 @@ export class DataLifecycleRepository {
 
   private async countEligible(cutoffs: Record<LifecycleTarget, Date>): Promise<Record<LifecycleTarget, number>> {
     const result = counters();
-    const queries: Array<[LifecycleTarget, string]> = [
-      ["outboxProcessed", "SELECT count(*)::int AS count FROM outbox_events WHERE status = 'processed' AND processed_at < $1"],
-      ["authSessions", "SELECT count(*)::int AS count FROM auth_sessions WHERE expires_at < $1 OR revoked_at < $1"],
-      ["llmTerminal", "SELECT count(*)::int AS count FROM llm_usage WHERE status IN ('released', 'expired') AND finalized_at < $1"],
-      ["llmSettled", "SELECT count(*)::int AS count FROM llm_usage WHERE status = 'settled' AND created_at < $1"],
-      ["reviewLogs", "SELECT count(*)::int AS count FROM review_logs WHERE reviewed_at < $1"],
+    const queries: Array<[LifecycleTarget, string, unknown[]]> = [
+      ["outboxProcessed", "SELECT count(*)::int AS count FROM outbox_events WHERE status = 'processed' AND processed_at < $1", [cutoffs.outboxProcessed]],
+      ["authSessions", "SELECT count(*)::int AS count FROM auth_sessions WHERE expires_at < $1 OR revoked_at < $1", [cutoffs.authSessions]],
+      ["llmTerminal", "SELECT count(*)::int AS count FROM llm_usage WHERE status IN ('released', 'expired') AND finalized_at < $1", [cutoffs.llmTerminal]],
+      ["llmSettled", "SELECT count(*)::int AS count FROM llm_usage WHERE status = 'settled' AND created_at < $1", [cutoffs.llmSettled]],
+      ["reviewLogs", "SELECT count(*)::int AS count FROM review_logs WHERE reviewed_at < $1", [cutoffs.reviewLogs]],
+      // 孤儿步判定与会话结束状态强相关，不依赖时间 cutoff → 无参。
+      ["drillOrphanSteps", `SELECT count(*)::int AS count
+        FROM l2_drill_session_steps s
+        JOIN sessions ssn ON ssn.id = s.session_id
+        WHERE s.status = 'pending' AND ssn.ended_at IS NOT NULL`, []],
     ];
-    const rows = await Promise.all(queries.map(async ([target, text]) => {
-      const query = await this.pool.query<{ count: number }>(text, [cutoffs[target]]);
+    const rows = await Promise.all(queries.map(async ([target, text, params]) => {
+      const query = await this.pool.query<{ count: number }>(text, params);
       return [target, query.rows[0]?.count ?? 0] as const;
     }));
     for (const [target, count] of rows) result[target] = count;
@@ -177,6 +189,43 @@ export class DataLifecycleRepository {
         await client.query("BEGIN");
         await this.setBatchTimeouts(client);
         const result = await client.query(statement, [cutoff, limit]);
+        rowCount = result.rowCount ?? 0;
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      total += rowCount;
+      if (rowCount < limit) return total;
+    }
+    return total;
+  }
+
+  /**
+   * 删除 L2 drill 孤儿 pending 步：所属会话已结束（ended_at IS NOT NULL）且步仍
+   * pending。会话结束即无读取路径（getQueue 的 M8 恢复只覆盖活跃会话的 pending
+   * 产出步），纯孤儿，可安全删除。无时间 cutoff 依赖，批内 FOR UPDATE SKIP LOCKED
+   * 避免与并发作业互相阻塞。
+   */
+  private async deleteDrillOrphanBatches(limits: LifecycleLimits): Promise<number> {
+    let total = 0;
+    const statement = `WITH candidates AS (
+      SELECT s.id
+      FROM l2_drill_session_steps s
+      JOIN sessions ssn ON ssn.id = s.session_id
+      WHERE s.status = 'pending' AND ssn.ended_at IS NOT NULL
+      ORDER BY s.id FOR UPDATE SKIP LOCKED LIMIT $1
+    ) DELETE FROM l2_drill_session_steps target USING candidates WHERE target.id = candidates.id`;
+    for (let batch = 0; batch < limits.maxBatches && total < limits.maxRows; batch += 1) {
+      const limit = Math.min(limits.batchSize, limits.maxRows - total);
+      const client = await this.pool.connect();
+      let rowCount = 0;
+      try {
+        await client.query("BEGIN");
+        await this.setBatchTimeouts(client);
+        const result = await client.query(statement, [limit]);
         rowCount = result.rowCount ?? 0;
         await client.query("COMMIT");
       } catch (error) {
