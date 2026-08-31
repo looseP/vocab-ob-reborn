@@ -30,6 +30,7 @@ import { PLAZA_ROOT_SLUG_PREFIX, PLAZA_SEMANTIC_SLUG_PREFIX } from "../domain";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import { NotFoundError } from "../errors";
+import { plazaCache, type PlazaCache } from "./plaza-cache";
 
 type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
@@ -162,6 +163,7 @@ export class PlazaService {
     private readonly words: IWordRepository,
     private readonly txRunner: TxRunner = withTransaction,
     private readonly repositoryFactory: RepositoryFactory = createRepositories,
+    private readonly cache: PlazaCache = plazaCache,
   ) {}
 
   private withActorWords<T>(
@@ -175,8 +177,11 @@ export class PlazaService {
   }
 
   async getOverview(params: { userId: string; q?: string }): Promise<PlazaOverview> {
+    const cacheKey = `overview:semantic:${params.q ?? ""}`;
+    const cached = this.cache.get<PlazaOverview>(cacheKey);
+    if (cached) return cached;
     const { q } = params;
-    return this.withActorWords(params.userId, async (words) => {
+    const overview = await this.withActorWords(params.userId, async (words) => {
       // total = 全量语义场数（无 q）；showing = q 过滤后的命中数。
       // 前端据此区分「无任何数据」与「无匹配结果」两种空态。
       const [allGroups, filteredGroups] = await Promise.all([
@@ -186,6 +191,8 @@ export class PlazaService {
       const collections = filteredGroups.map(toCollectionSummary);
       return this.toOverview(collections, allGroups.length, "semantic_field");
     });
+    this.cache.set(cacheKey, overview);
+    return overview;
   }
 
   async getRootsOverview(params: {
@@ -194,9 +201,12 @@ export class PlazaService {
     q?: string;
     letter?: string;
   }): Promise<RootsOverview> {
-    const { minCount, q, letter } = params;
-    return this.withActorWords(params.userId, async (words) => {
-      const min = Math.max(1, minCount ?? 3);
+    const min = Math.max(1, params.minCount ?? 3);
+    const cacheKey = `overview:roots:${min}:${params.q ?? ""}:${params.letter ?? ""}`;
+    const cached = this.cache.get<RootsOverview>(cacheKey);
+    if (cached) return cached;
+    const { q, letter } = params;
+    const overview = await this.withActorWords(params.userId, async (words) => {
       const [allGroups, filteredGroups] = await Promise.all([
         words.findRootFamilyGroups({ minCount: min }),
         words.findRootFamilyGroups({ minCount: min, q, letter }),
@@ -209,16 +219,21 @@ export class PlazaService {
         total: allGroups.length,
       };
     });
+    this.cache.set(cacheKey, overview);
+    return overview;
   }
 
   async getCollection(params: { userId: string; slug: string }): Promise<PlazaCollectionDetail> {
+    const cacheKey = `collection:${params.slug}`;
+    const cached = this.cache.get<PlazaCollectionDetail>(cacheKey);
+    if (cached) return cached;
     const { slug } = params;
     const field = fieldFromPlazaSlug(slug);
     if (!field) {
       throw new NotFoundError("PlazaCollection", slug);
     }
     const prefix = sourcePathPrefixForField(field);
-    return this.withActorWords(params.userId, async (words) => {
+    const detail: PlazaCollectionDetail = await this.withActorWords(params.userId, async (words) => {
       const rows = await words.findBySourcePathPrefix(prefix);
       if (rows.length === 0) {
         throw new NotFoundError("PlazaCollection", slug);
@@ -233,15 +248,20 @@ export class PlazaService {
         words: rows.map(toWordCard),
       };
     });
+    this.cache.set(cacheKey, detail);
+    return detail;
   }
 
   async getRootCollection(params: { userId: string; slug: string }): Promise<RootCollectionDetail> {
+    const cacheKey = `collection:${params.slug}`;
+    const cached = this.cache.get<RootCollectionDetail>(cacheKey);
+    if (cached) return cached;
     const { slug } = params;
     const token = tokenFromRootSlug(slug);
     if (!token) {
       throw new NotFoundError("PlazaCollection", slug);
     }
-    return this.withActorWords(params.userId, async (words) => {
+    const detail: RootCollectionDetail = await this.withActorWords(params.userId, async (words) => {
       const rows = await words.findByRootToken(token);
       if (rows.length === 0) {
         throw new NotFoundError("PlazaCollection", slug);
@@ -257,6 +277,8 @@ export class PlazaService {
         words: rows.map(toRootWordCard),
       };
     });
+    this.cache.set(cacheKey, detail);
+    return detail;
   }
 
   private toOverview(

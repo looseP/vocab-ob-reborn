@@ -12,6 +12,7 @@ import { Word } from "../domain/word.entity";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import { NotFoundError } from "../errors";
+import { plazaCache } from "./plaza-cache";
 
 type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
@@ -77,6 +78,8 @@ export class WordService {
   }>): Promise<{ inserted: number }> {
     if (!this.words.insertMany) throw new Error("insertMany not configured");
     const count = await this.words.insertMany(words);
+    // P4 性能：批量写词后清空广场聚合缓存。
+    plazaCache.invalidateAll();
     return { inserted: count };
   }
 }
