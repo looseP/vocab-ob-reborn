@@ -7,6 +7,7 @@ import type {
 } from "@/repositories/interfaces";
 import type { WordRow } from "@/domain";
 import { CaptureService, slugifyHeadword } from "@/services/capture.service";
+import { plazaCache } from "@/services/plaza-cache";
 import { ValidationError } from "@/errors";
 
 // ── Mock infrastructure (same pattern as review-enqueue.test.ts) ─────────
@@ -106,6 +107,22 @@ describe("CaptureService.capture — new word stub", () => {
     expect(mocks.wordbooks.addWords).toHaveBeenCalledWith("wb1", ["w-1"]);
     expect(result.noteContentMd).toBeNull();
     expect(withTransactionMock).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+  });
+
+  it("does not invalidate the plaza cache — capture only creates stubs (filtered from aggregations)", async () => {
+    let call = 0;
+    const rows = [null, makeWordRow()];
+    const mocks = makeRepos(null);
+    mocks.words.findBySlug.mockImplementation(async () => rows[Math.min(call++, 1)]!);
+    const invalidate = vi.spyOn(plazaCache, "invalidateAll");
+
+    const result = await makeService(mocks.words).capture(BASE_INPUT);
+
+    expect(result.ok).toBe(true);
+    expect(mocks.words.insertMany).toHaveBeenCalledTimes(1);
+    // 契约锁定：capture 建的是 stub（definition_md=''），不参与广场聚合，故不失效缓存
+    expect(invalidate).not.toHaveBeenCalled();
+    invalidate.mockRestore();
   });
 });
 
