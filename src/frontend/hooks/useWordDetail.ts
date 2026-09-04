@@ -60,6 +60,8 @@ export interface WordDetail {
   prototype_text?: string | null;
   aliases: string[];
   l2_content?: WordDetailL2Content | null;
+  /** 当前用户是否已为该词晋升 L2 行（待扩展提示）。 */
+  l2_promoted?: boolean;
   metadata?: {
     morphology_prefix?: string;
     morphology_root?: string;

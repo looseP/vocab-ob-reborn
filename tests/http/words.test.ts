@@ -160,7 +160,7 @@ describe("GET /api/words/:slug", () => {
     const services = makeMockServices();
     services.words.getWordBySlug = vi
       .fn()
-      .mockResolvedValue({ word: new Word(WORD_ROW) });
+      .mockResolvedValue({ word: new Word(WORD_ROW), l2Promoted: true });
     const app = createApp(services);
     const res = await app.request("/api/words/abound", { headers: AUTH_HEADERS });
     expect(res.status).toBe(200);
@@ -212,6 +212,7 @@ describe("GET /api/words/:slug", () => {
         ],
         antonym_items: [{ word: "lack", semanticDiff: "lack 表示缺乏", tone: "neutral", usage: "lack resources", delta: "反义", object: "通用" }],
       },
+      l2_promoted: true,
     });
     // v1 溯源字段必须原样透传（溯源徽标依赖），不得被契约剥离
     expect(rawBody.l2_content.collocations[0]).toHaveProperty("provenance");
@@ -219,14 +220,26 @@ describe("GET /api/words/:slug", () => {
     expect(rawBody).not.toHaveProperty("content_hash");
     expect(rawBody).not.toHaveProperty("source_path");
     expect(rawBody).not.toHaveProperty("is_deleted");
-    expect(services.words.getWordBySlug).toHaveBeenCalledWith("abound");
+    expect(services.words.getWordBySlug).toHaveBeenCalledWith("abound", "user-123");
+  });
+
+  it("returns l2_promoted=false when the service reports no L2 promotion", async () => {
+    const services = makeMockServices();
+    services.words.getWordBySlug = vi
+      .fn()
+      .mockResolvedValue({ word: new Word(WORD_ROW), l2Promoted: false });
+    const app = createApp(services);
+    const res = await app.request("/api/words/abound", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = wordDetailResponseSchema.parse(await res.json());
+    expect(body.l2_promoted).toBe(false);
   });
 
   it("returns empty l2_content arrays when the row omits the JSONB caches", async () => {
     const services = makeMockServices();
     services.words.getWordBySlug = vi
       .fn()
-      .mockResolvedValue({ word: new Word({ ...WORD_ROW, collocations: undefined, corpus_items: undefined, synonym_items: undefined, antonym_items: undefined }) });
+      .mockResolvedValue({ word: new Word({ ...WORD_ROW, collocations: undefined, corpus_items: undefined, synonym_items: undefined, antonym_items: undefined }), l2Promoted: true });
     const app = createApp(services);
     const res = await app.request("/api/words/abound", { headers: AUTH_HEADERS });
     expect(res.status).toBe(200);

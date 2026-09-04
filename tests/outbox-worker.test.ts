@@ -66,6 +66,7 @@ beforeEach(() => {
   mockRepos.outbox = makeOutbox();
   mockRepos.l2Progress = {
     findByWordbookWordAndUser: vi.fn(async () => null),
+    existsByUserAndWord: vi.fn(async () => false),
     insert: vi.fn(async () => ({}) as never),
     findDueCards: vi.fn(async () => []),
     findForUpdate: vi.fn(async () => null),

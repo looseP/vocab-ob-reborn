@@ -6,7 +6,7 @@
  */
 
 import type { PoolClient } from "pg";
-import type { IRepositories, IWordRepository } from "../repositories/interfaces";
+import type { IL2ProgressRepository, IRepositories, IWordRepository } from "../repositories/interfaces";
 import type { PaginatedResult, WordSummary } from "../domain";
 import { Word } from "../domain/word.entity";
 import { withTransaction } from "../db/transaction";
@@ -32,6 +32,8 @@ export class WordService {
     private readonly words: IWordRepository,
     private readonly txRunner: TxRunner = withTransaction,
     private readonly repositoryFactory: RepositoryFactory = createRepositories,
+    /** 可选：L2 进度仓储——详情页 l2_promoted 标记的 EXISTS 检查。 */
+    private readonly l2Progress?: IL2ProgressRepository,
   ) {}
 
   async getPublicWords(params: GetWordsParams): Promise<PaginatedResult<WordSummary>> {
@@ -50,13 +52,17 @@ export class WordService {
     }, { actorId: params.userId });
   }
 
-  async getWordBySlug(slug: string): Promise<{ word: Word }> {
+  async getWordBySlug(slug: string, userId?: string): Promise<{ word: Word; l2Promoted: boolean }> {
     const row = await this.words.findBySlug(slug);
     if (!row) {
       // M1 fix: use NotFoundError (AppError subclass) → errorToResponse maps to 404
       throw new NotFoundError("Word", slug);
     }
-    return { word: new Word(row) };
+    // Phase C 业务联动：详情页"待扩展"提示需要知道该词是否已进入 L2 训练轨道。
+    // 读侧 EXISTS 直走注入仓储（无事务需求）；未带 userId 的调用方保持 false。
+    const l2Promoted =
+      userId && this.l2Progress ? await this.l2Progress.existsByUserAndWord(userId, row.id) : false;
+    return { word: new Word(row), l2Promoted };
   }
 
   /** 输入联想（L1-2）：读侧接口，直接走注入仓库，无需事务。 */

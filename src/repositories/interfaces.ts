@@ -493,6 +493,10 @@ export interface IL2ProgressRepository {
     wordbookId: string,
     wordId: string,
   ): Promise<UserWordL2ProgressRow | null>;
+  /**
+   * 是否已为该词晋升出 L2 行（跨词书 EXISTS）。供词条详情"待扩展"提示使用。
+   */
+  existsByUserAndWord(userId: string, wordId: string): Promise<boolean>;
     insert(data: NewL2Progress): Promise<UserWordL2ProgressRow>;
     /** L2 到期口径队列（l2_drill spec §一）：未暂停且 l2_due_at <= now，按到期升序。 */
     findDueCards(

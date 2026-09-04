@@ -171,6 +171,8 @@ export interface WordDetail extends WordSummary {
   examples: Json;
   prototype_text: string | null;
   l2_content: WordDetailL2Content;
+  /** 当前用户是否已为该词晋升 L2 行（待扩展提示；未带用户语义时为 false）。 */
+  l2_promoted: boolean;
 }
 
 export interface WordFilters {

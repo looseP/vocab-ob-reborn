@@ -2350,6 +2350,7 @@ export interface operations {
                                 [key: string]: unknown;
                             })[];
                         };
+                        l2_promoted: boolean;
                     };
                 };
             };

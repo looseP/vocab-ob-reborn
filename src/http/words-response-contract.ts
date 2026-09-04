@@ -48,6 +48,7 @@ export const wordDetailResponseSchema: z.ZodType<WordDetail> = z.object({
   prototype_text: z.string().nullable(),
   metadata: jsonValueSchema,
   l2_content: wordDetailL2ContentSchema,
+  l2_promoted: z.boolean(),
 }).strict();
 
 export const wordListResponseSchema: z.ZodType<PaginatedResult<WordSummary>> = z.object({

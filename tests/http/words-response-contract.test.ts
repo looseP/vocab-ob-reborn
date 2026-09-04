@@ -49,6 +49,7 @@ describe("Words response contracts", () => {
         synonym_items: [],
         antonym_items: [],
       },
+      l2_promoted: true,
     };
 
     const parsed = wordDetailResponseSchema.parse(detail);
@@ -73,9 +74,13 @@ describe("Words response contracts", () => {
       body_md: "y",
       prototype_text: null,
       examples: [],
+      l2_content: { collocations: [], corpus_items: [], synonym_items: [], antonym_items: [] },
+      l2_promoted: false,
     };
     // 缺少 l2_content → 400 语义（契约拒绝）
-    expect(() => wordDetailResponseSchema.parse(base)).toThrow();
+    expect(() => wordDetailResponseSchema.parse({ ...base, l2_content: undefined })).toThrow();
+    // 缺少 l2_promoted → 契约拒绝
+    expect(() => wordDetailResponseSchema.parse({ ...base, l2_promoted: undefined })).toThrow();
     // 搭配条目缺必填字段（phrase）→ 拒绝
     expect(() =>
       wordDetailResponseSchema.parse({

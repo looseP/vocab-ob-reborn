@@ -32,6 +32,21 @@ const RATING_COUNTER: Record<ReviewRating, string> = {
 };
 
 export class L2ProgressRepository extends BaseRepository implements IL2ProgressRepository {
+  /**
+   * 是否已为该词晋升出 L2 行（跨词书 EXISTS——详情页"待扩展"提示只需知道
+   * 该词是否进入 L2 训练轨道，无需区分词书）。
+   */
+  async existsByUserAndWord(userId: string, wordId: string): Promise<boolean> {
+    const row = await this.queryOne<{ exists: boolean }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM user_word_l2_progress
+         WHERE user_id = $1 AND word_id = $2::uuid
+       ) AS exists`,
+      [userId, wordId],
+    );
+    return row?.exists === true;
+  }
+
   async findByWordbookWordAndUser(
     userId: string,
     wordbookId: string,

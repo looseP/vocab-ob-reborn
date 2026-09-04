@@ -8,6 +8,8 @@ import { CrossTrackService, type CrossTrackL1Snapshot } from "@/services/cross-t
 function makeMockL2Repo(overrides: Partial<IL2ProgressRepository> = {}): IL2ProgressRepository {
     return {
       findByWordbookWordAndUser: vi.fn(async () => null),
+      // Phase C：详情页"待扩展"标记（跨轨测试不触达，stub false）
+      existsByUserAndWord: vi.fn(async () => false),
       insert: vi.fn(async () => ({}) as never),
       findDueCards: vi.fn(async () => []),
       findForUpdate: vi.fn(async () => null),

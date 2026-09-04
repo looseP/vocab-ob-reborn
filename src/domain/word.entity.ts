@@ -47,6 +47,8 @@ export class Word {
         synonym_items: l2CacheArray(this.row.synonym_items),
         antonym_items: l2CacheArray(this.row.antonym_items),
       },
+      // 实体本身无用户语义，默认 false；路由层（owner scope）以 EXISTS 结果覆盖。
+      l2_promoted: false,
     };
   }
 

@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { RotateCcw, Undo2, Zap } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
@@ -116,7 +116,21 @@ function DrillSession({ onBack }: { onBack: () => void }) {
       <ReviewProgressBar completed={doneCount} remaining={remaining} />
 
       {currentItem && production ? (
-        <L2ProductionTask task={production.task} disabled={loading} onVerdict={submitVerdict} />
+        <div className="space-y-3">
+          {/* C3 业务联动：单步降级 = 缺辨析素材 → 深链到词条详情的扩展面板 */}
+          {currentItem.singleStep && (
+            <p className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-2 text-sm text-[var(--color-ink-soft)]">
+              「{currentItem.word.lemma}」缺少辨析素材（语料/近义），本次跳过辨析直接产出。
+              <Link
+                to={`/words/${currentItem.word.slug}`}
+                className="ml-1 font-semibold text-[var(--color-accent)]"
+              >
+                去补充 →
+              </Link>
+            </p>
+          )}
+          <L2ProductionTask task={production.task} disabled={loading} onVerdict={submitVerdict} />
+        </div>
       ) : currentItem ? (
         <L2DiscriminationTask
           task={currentItem.task}

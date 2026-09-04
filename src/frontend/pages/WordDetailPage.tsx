@@ -1,5 +1,5 @@
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Volume2, Lightbulb, Network, Puzzle, Quote, Undo2, Layers, Users } from "lucide-react";
+import { ArrowLeft, Volume2, Lightbulb, Network, Puzzle, Quote, Undo2, Layers, Users, Sparkles } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -306,6 +306,19 @@ export function WordDetailPage() {
             <Markdown content={word.body_md} />
           </div>
         </details>
+      )}
+
+      {/* C2 业务联动：已晋升 L2 但尚无扩展内容 → 待扩展提示，指向下方 Composer */}
+      {word.l2_promoted && !hasL2Content && (
+        <Card className="border-[var(--color-accent)]">
+          <p className="flex items-start gap-2 text-sm text-[var(--color-ink)]">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-accent)]" />
+            <span>
+              这个词已进入辨析训练（L2）轨道，但还没有辨析素材。用下方「扩展内容」生成搭配、例句与近义辨析后，
+              它们会直接成为训练题面。
+            </span>
+          </p>
+        </Card>
       )}
 
       {/* L2 enrichment 扩展面板：AI 生成草稿 → 勾选采纳 → 入库并刷新 L2 缓存 */}

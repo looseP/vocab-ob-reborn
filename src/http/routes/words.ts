@@ -76,9 +76,11 @@ export function wordRoutes(services: Services) {
 
   // GET /:slug — single word lookup; NotFoundError thrown by the service
   // is mapped to 404 by the global handleError middleware.
+  // l2_promoted：当前用户是否已为该词晋升 L2 行（详情页"待扩展"提示）。
   app.get("/:slug", async (c) => {
-    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
-    return c.json(word.toDetail());
+    const userId = c.get("userId");
+    const { word, l2Promoted } = await services.words.getWordBySlug(c.req.param("slug"), userId);
+    return c.json({ ...word.toDetail(), l2_promoted: l2Promoted });
   });
 
   // GET /:slug/notes — fetch user's note for a word

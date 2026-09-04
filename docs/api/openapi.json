@@ -2841,6 +2841,9 @@
                         "antonym_items"
                       ],
                       "additionalProperties": false
+                    },
+                    "l2_promoted": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -2858,7 +2861,8 @@
                     "examples",
                     "prototype_text",
                     "metadata",
-                    "l2_content"
+                    "l2_content",
+                    "l2_promoted"
                   ],
                   "additionalProperties": false
                 }
