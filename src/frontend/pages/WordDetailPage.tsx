@@ -8,6 +8,7 @@ import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { WordL2Content } from "@/frontend/components/words/WordL2Content";
+import { WordL2Composer } from "@/frontend/components/words/WordL2Composer";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
 import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
 import { deriveWordCollections } from "@/frontend/utils/plazaSlugs";
@@ -27,7 +28,7 @@ export function WordDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const location = useLocation();
   const navigate = useNavigate();
-  const { word, loading, error } = useWordDetail(slug);
+  const { word, loading, error, refresh } = useWordDetail(slug);
 
   // 来自复习队列：state 的字段由 ReviewCardView 注入。
   const reviewBack = (location.state as null | { from?: string; mode?: string; wordIds?: string[]; reviewed?: number; total?: number })?.from === "review"
@@ -306,6 +307,9 @@ export function WordDetailPage() {
           </div>
         </details>
       )}
+
+      {/* L2 enrichment 扩展面板：AI 生成草稿 → 勾选采纳 → 入库并刷新 L2 缓存 */}
+      <WordL2Composer slug={word.slug} onConfirmed={refresh} />
 
       <WordNotes slug={word.slug} />
     </div>

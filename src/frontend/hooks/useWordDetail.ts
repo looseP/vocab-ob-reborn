@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/frontend/api/client";
 
 /** L2 内容条目的溯源信息（v1 wrapper passthrough，可能缺省）。 */
@@ -116,11 +116,19 @@ export function useWordDetail(slug?: string) {
   const [word, setWord] = useState<WordDetail | null>(() => (slug ? getCache(slug) : null));
   const [loading, setLoading] = useState(() => !word);
   const [error, setError] = useState<string | null>(null);
+  // L2 扩展确认后需要绕过内存缓存强制重取：refreshNonce 变化触发重新请求。
+  const [refreshNonce, setRefreshNonce] = useState(0);
+
+  const refresh = useCallback(() => {
+    if (!slug) return;
+    cache.delete(slug);
+    setRefreshNonce((n) => n + 1);
+  }, [slug]);
 
   useEffect(() => {
     if (!slug) return;
     const cached = getCache(slug);
-    if (cached) {
+    if (cached && refreshNonce === 0) {
       setWord(cached);
       setLoading(false);
       setError(null);
@@ -144,7 +152,7 @@ export function useWordDetail(slug?: string) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, refreshNonce]);
 
-  return { word, loading, error };
+  return { word, loading, error, refresh };
 }
