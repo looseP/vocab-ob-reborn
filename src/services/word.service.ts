@@ -6,7 +6,7 @@
  */
 
 import type { PoolClient } from "pg";
-import type { IL2ProgressRepository, IRepositories, IWordRepository } from "../repositories/interfaces";
+import type { IRepositories, IWordRepository } from "../repositories/interfaces";
 import type { PaginatedResult, WordSummary } from "../domain";
 import { Word } from "../domain/word.entity";
 import { withTransaction } from "../db/transaction";
@@ -32,8 +32,6 @@ export class WordService {
     private readonly words: IWordRepository,
     private readonly txRunner: TxRunner = withTransaction,
     private readonly repositoryFactory: RepositoryFactory = createRepositories,
-    /** 可选：L2 进度仓储——详情页 l2_promoted 标记的 EXISTS 检查。 */
-    private readonly l2Progress?: IL2ProgressRepository,
   ) {}
 
   async getPublicWords(params: GetWordsParams): Promise<PaginatedResult<WordSummary>> {
@@ -58,10 +56,15 @@ export class WordService {
       // M1 fix: use NotFoundError (AppError subclass) → errorToResponse maps to 404
       throw new NotFoundError("Word", slug);
     }
+    if (!userId) return { word: new Word(row), l2Promoted: false };
     // Phase C 业务联动：详情页"待扩展"提示需要知道该词是否已进入 L2 训练轨道。
-    // 读侧 EXISTS 直走注入仓储（无事务需求）；未带 userId 的调用方保持 false。
-    const l2Promoted =
-      userId && this.l2Progress ? await this.l2Progress.existsByUserAndWord(userId, row.id) : false;
+    // user_word_l2_progress 是 owner-RLS 表——EXISTS 必须在携带
+    // request.jwt.claim.sub 的事务里执行（裸池连接会被 RLS 过滤成 false，
+    // 同词汇广场 getCollection 教训①）。
+    const l2Promoted = await this.txRunner(
+      async (tx) => this.repositoryFactory(tx).l2Progress.existsByUserAndWord(userId, row.id),
+      { actorId: userId },
+    );
     return { word: new Word(row), l2Promoted };
   }
 

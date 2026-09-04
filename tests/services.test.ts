@@ -148,28 +148,29 @@ describe("WordService", () => {
     expect(result.word.freqLabel).toBe("基础词");
   });
 
-  it("getWordBySlug reports l2Promoted from the L2 progress repository", async () => {
-    const repo = makeMockWordRepo({
-      findBySlug: vi.fn(async () => ({
-        id: "w-1", slug: "aboard", is_published: true, is_deleted: false,
-        content_hash: "abc", metadata: {},
-      } as unknown as WordRow)),
-    });
+  it("getWordBySlug reports l2Promoted via an actor-scoped transaction", async () => {
+    const row = {
+      id: "w-1", slug: "aboard", is_published: true, is_deleted: false,
+      content_hash: "abc", metadata: {},
+    } as unknown as WordRow;
+    const constructorRepo = makeMockWordRepo({ findBySlug: vi.fn(async () => row) });
     const l2Progress = { existsByUserAndWord: vi.fn(async () => true) };
-    const service = new WordService(repo, undefined, undefined, l2Progress as never);
+    const fakeTx = { query: vi.fn() } as never;
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback(fakeTx)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const repositoryFactory = vi.fn(() => ({ l2Progress } as unknown as IRepositories));
+    const service = new WordService(constructorRepo, txRunner, repositoryFactory);
 
     const promoted = await service.getWordBySlug("aboard", "u1");
     expect(promoted.l2Promoted).toBe(true);
     expect(l2Progress.existsByUserAndWord).toHaveBeenCalledWith("u1", "w-1");
+    // 业务查询必须携带 request.jwt.claim.sub（owner-RLS 表，广场教训①）
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
 
-    // 未传 userId → 不查询，恒为 false
-    const anon = await new WordService(repo, undefined, undefined, l2Progress as never).getWordBySlug("aboard");
+    // 未传 userId → 不开事务，恒为 false
+    const anon = await service.getWordBySlug("aboard");
     expect(anon.l2Promoted).toBe(false);
     expect(l2Progress.existsByUserAndWord).toHaveBeenCalledTimes(1);
-
-    // 未注入 L2 仓储 → false（兼容旧构造）
-    const bare = await new WordService(repo).getWordBySlug("aboard", "u1");
-    expect(bare.l2Promoted).toBe(false);
+    expect(txRunner).toHaveBeenCalledTimes(1);
   });
 
   it("batchCreate delegates to insertMany and returns the inserted count", async () => {

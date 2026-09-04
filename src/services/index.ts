@@ -132,7 +132,7 @@ export function createServices(deps: ServiceDeps) {
         attemptLimit: deps.loginRateLimitAttempts,
       },
     ),
-    words: new WordService(repos.words, withTransaction, createRepositories, repos.l2Progress),
+    words: new WordService(repos.words, withTransaction, createRepositories),
     plaza: new PlazaService(repos.words),
     capture: new CaptureService(repos.words),
     vocabImport: new VocabImportService(repos.words),
