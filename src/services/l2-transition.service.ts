@@ -44,6 +44,17 @@ const TRANSITION_ALLOWED_RATINGS = new Set(["good", "easy"]);
 const MS_PER_DAY = 86_400_000;
 
 /**
+ * PG timestamp 字符串（如 "2026-09-08 23:33:12.275+00"）→ ISO 8601。
+ * 契约里 l2DueAt 与其他 datetime 字段保持同一形态，前端 new Date() 可直接解析。
+ */
+function toIsoNullable(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.trim().replace(" ", "T").replace(/([+-]\d\d)$/, "$1:00");
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/**
  * P2-6: L2 复习节奏调优 — desired_retention 可通过环境变量调整。
  *
  * 仅作用于 *新创建* 的 L2 progress 行（在 L1→L2 跃迁时写入
@@ -220,7 +231,7 @@ export class L2TransitionService {
         progress.word_id,
       );
       if (existing) {
-        return { alreadyPromoted: true, l2DueAt: existing.l2_due_at ?? null };
+        return { alreadyPromoted: true, l2DueAt: toIsoNullable(existing.l2_due_at) };
       }
       // 已处于 actor 事务上下文（runWithActor），直接走晋升主体，避免嵌套事务
       await this.transitionInto(repo, progress);
@@ -229,7 +240,7 @@ export class L2TransitionService {
         progress.wordbook_id,
         progress.word_id,
       );
-      return { alreadyPromoted: false, l2DueAt: row?.l2_due_at ?? null };
+      return { alreadyPromoted: false, l2DueAt: toIsoNullable(row?.l2_due_at ?? null) };
     });
   }
 }

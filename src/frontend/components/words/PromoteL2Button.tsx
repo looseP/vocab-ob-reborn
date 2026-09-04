@@ -32,7 +32,8 @@ export function PromoteL2Button({ slug, promoted, onPromoted }: PromoteL2ButtonP
       if (result.alreadyPromoted) {
         addToast("success", `${slug} 已在 L2 训练轨道`);
       } else {
-        const when = result.l2DueAt ? new Date(result.l2DueAt).toLocaleDateString() : null;
+        const parsed = result.l2DueAt ? new Date(result.l2DueAt) : null;
+        const when = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleDateString() : null;
         addToast("success", when ? `${slug} 已晋升 L2，预计 ${when} 进入辨析训练` : `${slug} 已晋升 L2`);
       }
       onPromoted();
