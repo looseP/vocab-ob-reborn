@@ -89,7 +89,9 @@ export function createServices(deps: ServiceDeps) {
 
   // L2TransitionService and CrossTrackService are consumed by the outbox
   // worker. ReviewService only persists the authoritative answer and event.
-  const l2Transition = new L2TransitionService(repos.l2Progress);
+  const l2Transition = new L2TransitionService(repos.l2Progress, (run, opts) =>
+    withTransaction((tx) => run(createRepositories(tx).l2Progress), { actorId: opts.actorId }),
+  );
 
   // CrossTrackService (Phase 2C) owns the L1↔L2 cascade rules: L1 collapsing
   // pauses L2, L1 recovering resumes the cascade pause, L2 sustained failure

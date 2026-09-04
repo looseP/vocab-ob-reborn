@@ -84,7 +84,24 @@ export class L2TransitionService {
    *   substitute a mock; production code passes the real instance from
    *   `createRepositories()`.
    */
-  constructor(private readonly l2ProgressRepo: IL2ProgressRepository) {}
+  constructor(
+    private readonly l2ProgressRepo: IL2ProgressRepository,
+    /**
+     * Phase F：actor 事务执行器（HTTP 主动晋升入口注入）。user_word_l2_progress
+     * 的 INSERT 带 WITH CHECK RLS——裸池写入会被静默拒绝（row-level security）。
+     * worker 的实例在自身 actor 事务内构造，单参直调即可，故为可选。
+     */
+    private readonly txRunner?: <T>(
+      run: (repo: IL2ProgressRepository) => Promise<T>,
+      opts: { actorId: string },
+    ) => Promise<T>,
+  ) {}
+
+  /** 用注入的事务执行器（若有）在 actor 上下文里跑 promoteNow 主体。 */
+  private runWithActor<T>(progress: L1ProgressSnapshot, run: (repo: IL2ProgressRepository) => Promise<T>): Promise<T> {
+    if (this.txRunner) return this.txRunner(run, { actorId: progress.user_id });
+    return run(this.l2ProgressRepo);
+  }
 
   /**
    * Evaluate the transition conditions for a single L1 progress snapshot
@@ -103,11 +120,22 @@ export class L2TransitionService {
       if (progress.review_count < TRANSITION_REVIEW_COUNT_THRESHOLD) return;
       if (!TRANSITION_ALLOWED_RATINGS.has(progress.last_rating ?? "")) return;
     }
+    // Phase F：worker（无 txRunner，实例本身在 actor 事务内）直调注入 repo；
+    // HTTP 主动晋升（有 txRunner）在携带 request.jwt.claim.sub 的事务里执行。
+    await this.runWithActor(progress, (repo) => this.transitionInto(repo, progress));
+  }
+
+  /**
+   * 晋升主体：幂等检查 + 继承算术 + 插入。repo 由调用方决定
+   * （worker=tx-scoped 实例；HTTP=actor 事务仓库），本方法不感知连接上下文。
+   */
+  private async transitionInto(repo: IL2ProgressRepository, progress: L1ProgressSnapshot): Promise<void> {
+    const l1S = Number(progress.stability);
 
     // ── Idempotency check (wordbook-scoped) ──────────────────────────────
     // Same user+word in a DIFFERENT wordbook must NOT block this transition —
     // each wordbook gets its own independent L2 progress row.
-    const existing = await this.l2ProgressRepo.findByWordbookWordAndUser(
+    const existing = await repo.findByWordbookWordAndUser(
       progress.user_id,
       progress.wordbook_id,
       progress.word_id,
@@ -144,7 +172,7 @@ export class L2TransitionService {
     };
 
     try {
-      await this.l2ProgressRepo.insert({
+      await repo.insert({
         user_id: progress.user_id,
         wordbook_id: progress.wordbook_id,
         word_id: progress.word_id,
@@ -185,20 +213,23 @@ export class L2TransitionService {
     alreadyPromoted: boolean;
     l2DueAt: string | null;
   }> {
-    const existing = await this.l2ProgressRepo.findByWordbookWordAndUser(
-      progress.user_id,
-      progress.wordbook_id,
-      progress.word_id,
-    );
-    if (existing) {
-      return { alreadyPromoted: true, l2DueAt: existing.l2_due_at ?? null };
-    }
-    await this.checkAndTransition(progress, { force: true });
-    const row = await this.l2ProgressRepo.findByWordbookWordAndUser(
-      progress.user_id,
-      progress.wordbook_id,
-      progress.word_id,
-    );
-    return { alreadyPromoted: false, l2DueAt: row?.l2_due_at ?? null };
+    return this.runWithActor(progress, async (repo) => {
+      const existing = await repo.findByWordbookWordAndUser(
+        progress.user_id,
+        progress.wordbook_id,
+        progress.word_id,
+      );
+      if (existing) {
+        return { alreadyPromoted: true, l2DueAt: existing.l2_due_at ?? null };
+      }
+      // 已处于 actor 事务上下文（runWithActor），直接走晋升主体，避免嵌套事务
+      await this.transitionInto(repo, progress);
+      const row = await repo.findByWordbookWordAndUser(
+        progress.user_id,
+        progress.wordbook_id,
+        progress.word_id,
+      );
+      return { alreadyPromoted: false, l2DueAt: row?.l2_due_at ?? null };
+    });
   }
 }
