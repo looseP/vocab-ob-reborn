@@ -145,6 +145,8 @@ export function WordDetailPage() {
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {word.pos && <Badge>{word.pos}</Badge>}
               {word.cefr && <Badge tone="warm">CEFR {word.cefr}</Badge>}
+              {/* Phase E：晋升状态徽标（与下方"待扩展"提示互斥出现） */}
+              {word.l2_promoted && <Badge tone="accent">已晋升 L2</Badge>}
               {word.ipa && (
                 <span className="flex items-center gap-1 font-mono text-sm text-[var(--color-ink-soft)]">
                   <Volume2 className="h-3 w-3" />

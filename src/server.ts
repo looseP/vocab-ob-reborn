@@ -80,15 +80,21 @@ const fsrsAdapter: FsrsAdapterFn = (schedulerPayload, rating, now, desiredRetent
 };
 
 /**
- * LLM provider assembly — optional. Reads provider/model/apiKey/baseURL from
- * env. When LLM_PROVIDER is unset, the L2 draft/confirm routes respond 503.
+ * LLM provider assembly — provider optional, usage tracker always on.
+ * Reads provider/model/apiKey/baseURL from env. When LLM_PROVIDER is unset,
+ * the L2 draft routes respond 503 while llm-status still reports budget.
  */
-function buildLlmDeps():
-  | { llmProvider: ReturnType<typeof createLlmProvider>; usageTracker: UsageTracker }
-  | undefined {
+function buildLlmDeps(): {
+  llmProvider?: ReturnType<typeof createLlmProvider>;
+  usageTracker: UsageTracker;
+  providerInfo?: { provider: string; model: string };
+} {
   const provider = config.LLM_PROVIDER;
   const model = config.LLM_MODEL;
-  if (!provider || !model) return undefined;
+  // Phase D：UsageTracker 不再与 provider 绑定——预算体系恒在，
+  // llm-status 端点在未配置 LLM 时也能报告配额水位。
+  const usageTracker = new UsageTracker(new LlmUsageRepository());
+  if (!provider || !model) return { usageTracker };
 
   const providerConfig: LlmProviderConfig = {
     provider,
@@ -102,18 +108,16 @@ function buildLlmDeps():
 
   return {
     llmProvider: createLlmProvider(providerConfig),
-    // Phase 2B: UsageTracker receives the repository (DB access stays at the
-    // repository boundary). The daily budget is read from env inside the
-    // tracker by default.
-    usageTracker: new UsageTracker(new LlmUsageRepository()),
+    usageTracker,
+    providerInfo: { provider, model },
   };
 }
 
 const llmDeps = buildLlmDeps();
-if (llmDeps) {
+if (llmDeps.llmProvider) {
   logger.info("server", `LLM provider configured: ${config.LLM_PROVIDER} / ${config.LLM_MODEL}`);
 } else {
-  logger.info("server", "LLM provider not configured — L2 draft/confirm routes will 503");
+  logger.info("server", "LLM provider not configured — L2 draft routes will 503");
 }
 
 /**

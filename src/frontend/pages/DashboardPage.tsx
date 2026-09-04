@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, CheckCircle2, CalendarRange, CalendarClock, RotateCcw, Users } from "lucide-react";
+import { Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, CheckCircle2, CalendarRange, CalendarClock, RotateCcw, Users, Layers, Zap } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
@@ -30,6 +30,8 @@ interface DashboardStats {
   streakDays: number;
   notesCount: number;
   forecast: { dueNow: number; due7d: number; due14d: number };
+  /** Phase E：L2 轨统计（已晋升 / 到期待练 / 弱信号）。 */
+  l2?: { promoted: number; dueNow: number; weakSignal: number };
 }
 
 function StatCard({ icon: Icon, label, value, color, loading, suffix }: {
@@ -136,6 +138,9 @@ export function DashboardPage() {
         <StatCard icon={TrendingUp} label="近 30 天复习" value={dashboard?.reviewed30d ?? 0} color="var(--color-accent)" loading={loading} />
         <StatCard icon={Target} label="已掌握" value={mastered} color="var(--color-accent)" loading={loading} />
         <StatCard icon={CalendarClock} label="未来 7 天预计复习" value={dashboard?.forecast.due7d ?? 0} color="var(--color-accent-2)" loading={loading} />
+        {/* Phase E：L2 双轨统计 */}
+        <StatCard icon={Layers} label="L2 已晋升" value={dashboard?.l2?.promoted ?? 0} color="var(--color-accent)" loading={loading} />
+        <StatCard icon={Zap} label="L2 待辨析" value={dashboard?.l2?.dueNow ?? 0} color="var(--color-accent-2)" loading={loading} />
       </div>
 
       {/* 快速入口 */}

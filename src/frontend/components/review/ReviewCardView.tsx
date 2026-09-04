@@ -290,6 +290,46 @@ export function ReviewCardView({ card, loading, error, preview, onAnswer, onSkip
         </Link>
       </div>
 
+      {/* Phase E 晋升可视化：S≥21d 且复习≥5 次即晋升 L2 辨析训练（双条件进度） */}
+      {typeof card.stability === "number" && (
+        <div className="rounded-lg border border-[var(--color-border)] px-3 py-2" data-testid="promotion-progress">
+          <div className="flex items-center justify-between text-xs text-[var(--color-ink-soft)]">
+            <span>晋升进度 · 达标后自动进入辨析训练</span>
+            {card.stability >= 21 && card.reviewCount >= 5 && (
+              <span className="font-semibold text-[var(--color-accent)]">已达晋升门</span>
+            )}
+          </div>
+          <div className="mt-1.5 grid grid-cols-2 gap-3">
+            {(() => {
+              const sRatio = Math.min(1, card.stability / 21);
+              const cRatio = Math.min(1, card.reviewCount / 5);
+              return (
+                <>
+                  <div>
+                    <div className="mb-1 flex justify-between text-[11px] text-[var(--color-ink-soft)]">
+                      <span>稳定度</span>
+                      <span className="font-mono">{Math.round(card.stability * 10) / 10}d / 21d</span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-muted)]">
+                      <div className="h-full rounded-full bg-[var(--color-accent)]" style={{ width: `${Math.round(sRatio * 100)}%` }} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mb-1 flex justify-between text-[11px] text-[var(--color-ink-soft)]">
+                      <span>复习次数</span>
+                      <span className="font-mono">{card.reviewCount} / 5</span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-muted)]">
+                      <div className="h-full rounded-full bg-[var(--color-accent)]" style={{ width: `${Math.round(cRatio * 100)}%` }} />
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* 卡片主体：preview 直接展示；评分模式先词形后释义。
           翻转控件为原生 button（读屏/键盘可达）：Enter/Space 走原生 click，
           全局空格快捷键在 [data-flip-card] 上跳过，避免双重翻转。 */}

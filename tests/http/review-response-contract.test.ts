@@ -59,6 +59,7 @@ describe("Review response contracts", () => {
       notesCount: 7,
       ratingDist: { again: 2, hard: 3, good: 20, easy: 10 },
       forecast: { dueNow: 12, due7d: 18, due14d: 24 },
+      l2: { promoted: 6, dueNow: 4, weakSignal: 1 },
     } as const;
 
     expect(reviewDashboardStatsResponseSchema.parse(response)).toEqual(response);

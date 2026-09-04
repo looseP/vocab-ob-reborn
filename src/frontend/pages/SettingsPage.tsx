@@ -1,15 +1,25 @@
 import { useState, useEffect } from "react";
-import { Settings, Sun, Moon, Monitor, Target, Save } from "lucide-react";
+import { Settings, Sun, Moon, Monitor, Target, Save, Sparkles } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { useToast } from "@/frontend/components/ui/Toast";
+import { apiFetch } from "@/frontend/api/client";
 
 type Theme = "light" | "dark" | "system";
+
+/** Phase D：LLM 接入状态（GET /api/l2/llm-status）。 */
+interface LlmStatus {
+  configured: boolean;
+  provider: string | null;
+  model: string | null;
+  budget: { dailyLimitTokens: number; usedTodayTokens: number; resetsAt: string } | null;
+}
 
 export function SettingsPage() {
   const [theme, setTheme] = useState<Theme>("system");
   const [dailyLimit, setDailyLimit] = useState(50);
+  const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const { addToast } = useToast();
 
   useEffect(() => {
@@ -17,6 +27,21 @@ export function SettingsPage() {
     if (saved) setTheme(saved);
     const limit = localStorage.getItem("vocab-daily-limit");
     if (limit) setDailyLimit(parseInt(limit, 10));
+  }, []);
+
+  // Phase D：加载 LLM 接入状态（失败静默降级为"状态不可用"）。
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<LlmStatus>("/l2/llm-status")
+      .then((s) => {
+        if (!cancelled) setLlmStatus(s);
+      })
+      .catch(() => {
+        if (!cancelled) setLlmStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const applyTheme = (t: Theme) => {
@@ -110,6 +135,56 @@ export function SettingsPage() {
             保存设置
           </Button>
         </div>
+      </Card>
+
+      {/* AI 扩展（Phase D） */}
+      <Card>
+        <div className="mb-4 flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-[var(--color-accent)]" />
+          <h2 className="section-title text-lg font-semibold text-[var(--color-ink)]">AI 扩展</h2>
+          {llmStatus === null ? (
+            <Badge>状态不可用</Badge>
+          ) : llmStatus.configured ? (
+            <Badge tone="accent">已接入</Badge>
+          ) : (
+            <Badge tone="warm">未接入</Badge>
+          )}
+        </div>
+        {llmStatus === null ? (
+          <p className="text-sm text-[var(--color-ink-soft)]">暂时无法读取 AI 状态，请稍后刷新。</p>
+        ) : llmStatus.configured ? (
+          <div className="space-y-3">
+            <p className="text-sm text-[var(--color-ink)]">
+              词条详情页可为单词生成搭配、例句与近义辨析（{llmStatus.provider ?? "-"} / {llmStatus.model ?? "-"}）。
+            </p>
+            {llmStatus.budget && (
+              <div>
+                <div className="mb-1 flex justify-between text-xs text-[var(--color-ink-soft)]">
+                  <span>今日 token 用量</span>
+                  <span className="font-mono">
+                    {llmStatus.budget.usedTodayTokens.toLocaleString()} / {llmStatus.budget.dailyLimitTokens.toLocaleString()}
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--color-surface-muted)]">
+                  <div
+                    className="h-full rounded-full bg-[var(--color-accent)]"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        Math.round((llmStatus.budget.usedTodayTokens / llmStatus.budget.dailyLimitTokens) * 100),
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--color-ink-soft)]">
+            服务端尚未接入 AI 供应商。你仍可在词条详情页使用「外部生成」通道（复制提示词到任意外部 AI 工具，
+            再粘贴结果采纳），该通道不消耗任何预算。
+          </p>
+        )}
       </Card>
 
       {/* FSRS 参数 */}

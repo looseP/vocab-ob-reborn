@@ -979,6 +979,15 @@ export interface ILlmUsageRepository {
 }
 
 // ── Stats ───────────────────────────────────────────────────────────────
+export interface DashboardL2Stats {
+  /** 已晋升 L2 轨的词数（跨词书 EXISTS 口径）。 */
+  promoted: number;
+  /** L2 到期待练（未暂停且 l2_due_at <= now）。 */
+  dueNow: number;
+  /** L1 弱信号词数（l2 连败标记，词书 scope）。 */
+  weakSignal: number;
+}
+
 export interface DashboardSummary {
   totalWords: number;
   trackedWords: number;
@@ -988,6 +997,8 @@ export interface DashboardSummary {
   reviewed30d: number;
   streakDays: number;
   notesCount: number;
+  /** Phase E：双轨可视化统计。 */
+  l2: DashboardL2Stats;
 }
 
 export interface RatingDistribution {

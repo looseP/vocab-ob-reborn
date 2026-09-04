@@ -66,6 +66,8 @@ export interface ServiceDeps {
   llmProvider?: LlmProvider;
   /** LLM usage tracker — paired with llmProvider for budget enforcement. */
   usageTracker?: UsageTracker;
+  /** Provider 展示元信息（Phase D llm-status）；未配置时缺省。 */
+  providerInfo?: { provider: string; model: string };
   /**
    * Dictionary provider — optional; grounds the collocation draft flow (B3).
    * When absent, collocation drafts return `NO_DICTIONARY_CANDIDATES`. The
@@ -107,6 +109,7 @@ export function createServices(deps: ServiceDeps) {
     llmProvider: deps.llmProvider,
     usageTracker: deps.usageTracker,
     dictionaryProvider: deps.dictionaryProvider,
+    providerInfo: deps.providerInfo,
   });
 
   const l3Context = new L3ContextService(repos.l3Context);

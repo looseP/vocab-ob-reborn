@@ -19,6 +19,8 @@ export interface ReviewCard {
   lastRating: string | null;
   reviewCount: number;
   l1WeakSignal?: boolean;
+  /** Phase E 晋升可视化：L1 stability（天），晋升门 S≥21d ∧ reviewCount≥5。 */
+  stability?: number | null;
   /** 队列优先级元数据（review/zen 模式，P1）。 */
   queueBucket?: string;
   queueLabel?: string;

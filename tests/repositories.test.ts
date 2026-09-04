@@ -356,9 +356,9 @@ describe("SessionRepository", () => {
 });
 
 describe("StatsRepository", () => {
-  it("getDashboardSummary aggregates 8 queries", async () => {
-    // All count queries return 5
-    mock.setRows([{ count: "5" }]);
+  it("getDashboardSummary aggregates 9 queries", async () => {
+    // All count queries return 5; the L2 stats query reads its own columns.
+    mock.setRows([{ count: "5", promoted: "2", due_now: "1", weak_signal: "0" }]);
     const repos = createRepositories();
     const result = await repos.stats.getDashboardSummary("u1", "wb1");
 
@@ -366,8 +366,9 @@ describe("StatsRepository", () => {
     expect(result.trackedWords).toBe(5);
     expect(result.dueToday).toBe(5);
     expect(result.reviewedToday).toBe(5);
-    // 7 parallel queries + 1 streak query
-    expect(mock.calls.length).toBe(8);
+    expect(result.l2).toEqual({ promoted: 2, dueNow: 1, weakSignal: 0 });
+    // 8 parallel queries + 1 streak query
+    expect(mock.calls.length).toBe(9);
   });
 
   it("getRatingDistribution groups by rating", async () => {
@@ -382,6 +383,24 @@ describe("StatsRepository", () => {
     expect(dist.good).toBe(7);
     expect(dist.hard).toBe(0);
     expect(dist.easy).toBe(0);
+  });
+});
+
+describe("L2ProgressRepository", () => {
+  it("existsByUserAndWord returns the EXISTS flag scoped to user+word", async () => {
+    mock.setRows([{ exists: true }]);
+    const repos = createRepositories();
+    const result = await repos.l2Progress.existsByUserAndWord("u1", "w-1");
+
+    expect(result).toBe(true);
+    expect(mock.lastQuery!.text).toContain("SELECT EXISTS(");
+    expect(mock.lastQuery!.text).toContain("user_id = $1");
+    expect(mock.lastQuery!.text).toContain("word_id = $2::uuid");
+    expect(mock.lastQuery!.params).toEqual(["u1", "w-1"]);
+
+    mock.setRows([{ exists: false }]);
+    const absent = await createRepositories().l2Progress.existsByUserAndWord("u1", "w-1");
+    expect(absent).toBe(false);
   });
 });
 

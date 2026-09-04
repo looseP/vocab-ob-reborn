@@ -43,6 +43,8 @@ export const reviewQueueResponseSchema = z.object({
     dueAt: z.string().nullable(),
     lastRating: reviewRatingSchema.nullable(),
     reviewCount: z.number().int().nonnegative(),
+    /** Phase E 晋升可视化：L1 stability（天），晋升门 S≥21d ∧ reviewCount≥5。 */
+    stability: z.number().nullable(),
   }).strict()),
   session: z.object({
     id: z.string(),
@@ -92,6 +94,12 @@ export const reviewDashboardStatsResponseSchema = z.object({
     dueNow: z.number().int().nonnegative(),
     due7d: z.number().int().nonnegative(),
     due14d: z.number().int().nonnegative(),
+  }).strict(),
+  /** Phase E：L2 轨统计（已晋升 / 到期待练 / 弱信号）。 */
+  l2: z.object({
+    promoted: z.number().int().nonnegative(),
+    dueNow: z.number().int().nonnegative(),
+    weakSignal: z.number().int().nonnegative(),
   }).strict(),
 }).strict();
 

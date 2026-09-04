@@ -66,6 +66,8 @@ export interface ReviewQueueItemDto {
   lastRating: ReviewRating | null;
   reviewCount: number;
   l1WeakSignal: boolean;
+  /** Phase E 晋升可视化：L1 stability（天）。晋升门 = S≥21d ∧ reviewCount≥5。 */
+  stability: number | null;
   queueBucket?: ReviewQueuePriorityBucket;
   queueLabel?: string;
   queueReason?: string;
@@ -192,6 +194,7 @@ export class ReviewService {
             dueAt: null,
             lastRating: null,
             reviewCount: 0,
+            stability: null,
             l1WeakSignal: false,
           })),
           session: {
@@ -273,6 +276,7 @@ export class ReviewService {
         lastRating: item.lastRating,
         reviewCount: item.review_count,
         l1WeakSignal: item.l1WeakSignal,
+        stability: item.stability,
         queueBucket: priority.bucket,
         queueLabel: priority.label,
         queueReason: priority.reason,
@@ -302,13 +306,14 @@ export class ReviewService {
       lastRating: card.progress.last_rating,
       reviewCount: card.progress.review_count,
       l1WeakSignal: card.progress.l1_weak_signal,
+      stability: card.progress.stability,
     };
   }
 
   /** 把候选行转换成队列优先级构建器可消费的候选（携带 word/进度数据）。 */
   private toQueueCandidate(
     card: { progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } },
-  ): ReviewQueueCandidate & { progressId: string; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }; lastRating: ReviewRating | null; l1WeakSignal: boolean } {
+  ): ReviewQueueCandidate & { progressId: string; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }; lastRating: ReviewRating | null; l1WeakSignal: boolean; stability: number | null } {
     return {
       progressId: card.progress.id,
       state: card.progress.state,
@@ -320,6 +325,7 @@ export class ReviewService {
       word: card.word,
       lastRating: card.progress.last_rating,
       l1WeakSignal: card.progress.l1_weak_signal,
+      stability: card.progress.stability,
     };
   }
 

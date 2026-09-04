@@ -87,6 +87,7 @@ function makeMockStatsRepo(overrides: Partial<IStatsRepository> = {}): IStatsRep
       totalWords: 100, trackedWords: 50, dueToday: 5,
       reviewedToday: 10, reviewed7d: 70, reviewed30d: 300,
       streakDays: 3, notesCount: 20,
+      l2: { promoted: 8, dueNow: 2, weakSignal: 1 },
     })),
     getRatingDistribution: vi.fn(async () => ({ again: 1, hard: 2, good: 5, easy: 2 })),
     ...overrides,
@@ -145,6 +146,30 @@ describe("WordService", () => {
     expect(result.word.slug).toBe("aboard");
     expect(result.word.isPublished).toBe(true);
     expect(result.word.freqLabel).toBe("基础词");
+  });
+
+  it("getWordBySlug reports l2Promoted from the L2 progress repository", async () => {
+    const repo = makeMockWordRepo({
+      findBySlug: vi.fn(async () => ({
+        id: "w-1", slug: "aboard", is_published: true, is_deleted: false,
+        content_hash: "abc", metadata: {},
+      } as unknown as WordRow)),
+    });
+    const l2Progress = { existsByUserAndWord: vi.fn(async () => true) };
+    const service = new WordService(repo, undefined, undefined, l2Progress as never);
+
+    const promoted = await service.getWordBySlug("aboard", "u1");
+    expect(promoted.l2Promoted).toBe(true);
+    expect(l2Progress.existsByUserAndWord).toHaveBeenCalledWith("u1", "w-1");
+
+    // 未传 userId → 不查询，恒为 false
+    const anon = await new WordService(repo, undefined, undefined, l2Progress as never).getWordBySlug("aboard");
+    expect(anon.l2Promoted).toBe(false);
+    expect(l2Progress.existsByUserAndWord).toHaveBeenCalledTimes(1);
+
+    // 未注入 L2 仓储 → false（兼容旧构造）
+    const bare = await new WordService(repo).getWordBySlug("aboard", "u1");
+    expect(bare.l2Promoted).toBe(false);
   });
 
   it("batchCreate delegates to insertMany and returns the inserted count", async () => {
@@ -498,6 +523,7 @@ describe("StatsService", () => {
       totalWords: 100, trackedWords: 50, dueToday: 10,
       reviewedToday: 5, reviewed7d: 35, reviewed30d: 150,
       streakDays: 7, notesCount: 3,
+      l2: { promoted: 0, dueNow: 0, weakSignal: 0 },
     });
     expect(forecast.dueNow).toBe(10);
     expect(forecast.due7d).toBe(15);

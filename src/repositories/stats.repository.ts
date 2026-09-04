@@ -18,7 +18,7 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     // M5 fix: use display timezone for "today" boundary
     const todayIso = startOfTodayIsoInDisplayTz();
 
-    const [totalRow, trackedRow, dueRow, todayRow, weekRow, monthRow, notesRow] =
+    const [totalRow, trackedRow, dueRow, todayRow, weekRow, monthRow, notesRow, l2Row] =
       await Promise.all([
         this.queryOne<{ count: string }>(
           `SELECT count(*) FROM words WHERE is_deleted = false`,
@@ -57,6 +57,19 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
            WHERE user_id = $1 AND wordbook_id = $2::uuid`,
           [userId, wordbookId],
         ),
+        // Phase E：双轨统计。promoted/dueNow 跨词书（与 l2_promoted EXISTS 口径一致），
+        // weakSignal 属 L1 轨标记 → 词书 scope。单次往返三个标量子查询。
+        this.queryOne<{ promoted: string; due_now: string; weak_signal: string }>(
+          `SELECT
+             (SELECT count(*) FROM user_word_l2_progress
+              WHERE user_id = $1) AS promoted,
+             (SELECT count(*) FROM user_word_l2_progress
+              WHERE user_id = $1 AND l2_paused = false
+                AND l2_due_at IS NOT NULL AND l2_due_at <= now()) AS due_now,
+             (SELECT count(*) FROM user_word_progress
+              WHERE user_id = $1 AND wordbook_id = $2::uuid AND l1_weak_signal = true) AS weak_signal`,
+          [userId, wordbookId],
+        ),
       ]);
 
     const streak = await this.calculateStreak(userId, wordbookId);
@@ -70,6 +83,11 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
       reviewed30d: monthRow ? parseInt(monthRow.count, 10) : 0,
       streakDays: streak,
       notesCount: notesRow ? parseInt(notesRow.count, 10) : 0,
+      l2: {
+        promoted: l2Row ? parseInt(l2Row.promoted, 10) : 0,
+        dueNow: l2Row ? parseInt(l2Row.due_now, 10) : 0,
+        weakSignal: l2Row ? parseInt(l2Row.weak_signal, 10) : 0,
+      },
     };
   }
 

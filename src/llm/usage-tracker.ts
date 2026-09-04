@@ -57,6 +57,23 @@ export class UsageTracker {
     return this.repo.getDailyUsage();
   }
 
+  /**
+   * D1：只读预算快照（GET /api/l2/llm-status 消费）。
+   * resetsAt = 下一个 UTC 零点——与 getDailyUsage 的 UTC 日界口径一致。
+   */
+  async getBudgetStatus(): Promise<{
+    dailyLimitTokens: number;
+    usedTodayTokens: number;
+    resetsAt: string;
+  }> {
+    const usedTodayTokens = await this.getDailyUsage();
+    const now = new Date();
+    const resetsAt = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1),
+    ).toISOString();
+    return { dailyLimitTokens: this.dailyBudget, usedTodayTokens, resetsAt };
+  }
+
   /** True when today's usage has reached (or exceeded) the daily limit. */
   async isOverBudget(): Promise<boolean> {
     return (await this.getDailyUsage()) >= this.dailyBudget;

@@ -516,6 +516,7 @@ describe("ReviewService — rebuild read methods", () => {
       lastRating: "good",
       reviewCount: 3,
       l1WeakSignal: false,
+      stability: 1.5,
     }]);
     expect(queue.session).toEqual({ id: "s1", mode: "cram", cardsSeen: 2 });
     expect(queue.stats).toEqual({ total: 1, remaining: 1 });

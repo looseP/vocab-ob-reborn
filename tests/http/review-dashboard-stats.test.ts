@@ -29,6 +29,7 @@ const SUMMARY = {
   reviewed30d: 80,
   streakDays: 3,
   notesCount: 7,
+  l2: { promoted: 6, dueNow: 4, weakSignal: 1 },
 } as const;
 
 const RATING_DIST = { again: 2, hard: 3, good: 20, easy: 10 } as const;

@@ -62,6 +62,8 @@ export interface L2ContentServiceDeps {
   usageTracker?: UsageTracker;
   /** Dictionary provider — grounds the collocation draft flow (B3). */
   dictionaryProvider?: DictionaryProvider;
+  /** Provider 展示元信息（Phase D llm-status 端点用），未配置时缺省。 */
+  providerInfo?: { provider: string; model: string };
 }
 
 export interface WordContext {
@@ -401,6 +403,32 @@ export class L2ContentService {
    * The third parameter accepts a legacy `source: string` (back-compat) or a
    * {@link GenerateDraftOptions} object carrying `styleProfileId`, `count`, etc.
    */
+  /**
+   * Phase D：llm-status 只读快照（GET /api/l2/llm-status 消费）。
+   * 零写路径：configured 只反映构造期 provider 注入；budget 来自
+   * UsageTracker.getBudgetStatus（tracker 缺省时 budget=null）。
+   */
+  async getStatus(): Promise<{
+    configured: boolean;
+    provider: string | null;
+    model: string | null;
+    budget: {
+      dailyLimitTokens: number;
+      usedTodayTokens: number;
+      resetsAt: string;
+    } | null;
+  }> {
+    const budget = this.deps.usageTracker
+      ? await this.deps.usageTracker.getBudgetStatus()
+      : null;
+    return {
+      configured: this.deps.llmProvider != null,
+      provider: this.deps.providerInfo?.provider ?? null,
+      model: this.deps.providerInfo?.model ?? null,
+      budget,
+    };
+  }
+
   async generateDraft(
     word: WordContext,
     field: L2Field,

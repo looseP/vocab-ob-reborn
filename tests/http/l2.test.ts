@@ -8,6 +8,7 @@ import {
   l2ConfirmResponseSchema,
   l2DraftResponseSchema,
   l2ExternalPromptResponseSchema,
+  l2LlmStatusResponseSchema,
 } from "@/http/l2-response-contract";
 
 // ── Auth env setup ──────────────────────────────────────────────────────
@@ -1168,5 +1169,56 @@ describe("POST /api/l2/:slug/confirm — P4 error semantics", () => {
 
     expect(res.status).toBe(404);
     expect(confirmDraft).not.toHaveBeenCalled();
+  });
+});
+
+// ── Phase D: GET /api/l2/llm-status ─────────────────────────────────────
+describe("GET /api/l2/llm-status", () => {
+  it("returns configured status with budget when the service reports it", async () => {
+    const l2content = new L2ContentService({
+      llmProvider: {} as never,
+      providerInfo: { provider: "openai", model: "gpt-test" },
+      usageTracker: {
+        getBudgetStatus: async () => ({
+          dailyLimitTokens: 50000,
+          usedTodayTokens: 1200,
+          resetsAt: "2026-09-05T00:00:00.000Z",
+        }),
+      } as never,
+    });
+    const services = makeMockServices(l2content);
+    const app = createApp(services);
+
+    const res = await app.request("/api/l2/llm-status", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = l2LlmStatusResponseSchema.parse(await res.json());
+    expect(body.configured).toBe(true);
+    expect(body.provider).toBe("openai");
+    expect(body.model).toBe("gpt-test");
+    expect(body.budget).toEqual({
+      dailyLimitTokens: 50000,
+      usedTodayTokens: 1200,
+      resetsAt: "2026-09-05T00:00:00.000Z",
+    });
+  });
+
+  it("returns unconfigured with null budget when no provider/tracker injected", async () => {
+    const services = makeMockServices(new L2ContentService({}));
+    const app = createApp(services);
+
+    const res = await app.request("/api/l2/llm-status", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = l2LlmStatusResponseSchema.parse(await res.json());
+    expect(body.configured).toBe(false);
+    expect(body.provider).toBeNull();
+    expect(body.model).toBeNull();
+    expect(body.budget).toBeNull();
+  });
+
+  it("requires owner credentials with 401", async () => {
+    const services = makeMockServices(new L2ContentService({}));
+    const app = createApp(services);
+    const res = await app.request("/api/l2/llm-status");
+    expect(res.status).toBe(401);
   });
 });

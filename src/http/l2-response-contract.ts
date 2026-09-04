@@ -32,3 +32,15 @@ export const l2ExternalPromptResponseSchema = z.object({
 export const l2ConfirmResponseSchema = z.object({
   ok: z.literal(true),
 }).strict();
+
+/** Phase D：LLM 接入状态快照（设置页"AI 扩展"卡消费）。 */
+export const l2LlmStatusResponseSchema = z.object({
+  configured: z.boolean(),
+  provider: z.string().nullable(),
+  model: z.string().nullable(),
+  budget: z.object({
+    dailyLimitTokens: z.number().int().positive(),
+    usedTodayTokens: z.number().int().nonnegative(),
+    resetsAt: z.string(),
+  }).nullable(),
+}).strict();

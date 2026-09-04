@@ -7384,6 +7384,16 @@
                             "type": "integer",
                             "minimum": 0,
                             "maximum": 9007199254740991
+                          },
+                          "stability": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -7392,7 +7402,8 @@
                           "state",
                           "dueAt",
                           "lastRating",
-                          "reviewCount"
+                          "reviewCount",
+                          "stability"
                         ],
                         "additionalProperties": false
                       }
@@ -8200,6 +8211,32 @@
                         "due14d"
                       ],
                       "additionalProperties": false
+                    },
+                    "l2": {
+                      "type": "object",
+                      "properties": {
+                        "promoted": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "dueNow": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "weakSignal": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "promoted",
+                        "dueNow",
+                        "weakSignal"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -8212,7 +8249,8 @@
                     "streakDays",
                     "notesCount",
                     "ratingDist",
-                    "forecast"
+                    "forecast",
+                    "l2"
                   ],
                   "additionalProperties": false
                 }
@@ -13442,6 +13480,403 @@
           },
           "500": {
             "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/l2/llm-status": {
+      "get": {
+        "operationId": "getL2LlmStatus",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "provider": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "model": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "budget": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "dailyLimitTokens": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "usedTodayTokens": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "resetsAt": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "dailyLimitTokens",
+                            "usedTodayTokens",
+                            "resetsAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "configured",
+                    "provider",
+                    "model",
+                    "budget"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Business rule rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Upstream or budget unavailable",
             "content": {
               "application/json": {
                 "schema": {
