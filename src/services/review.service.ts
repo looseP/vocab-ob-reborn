@@ -140,6 +140,8 @@ export interface ReviewServiceDeps {
   findPracticeCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
   /** Free-review selection: fetch words by ids (published only), independent of review progress. */
   findWordsByIds?: (userId: string, wordIds: string[]) => Promise<Array<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }>>;
+  /** 主动晋升入口（Phase F）：读 L1 进度行（actor 事务内执行）。 */
+  findProgressByUserWordbookWord?: (userId: string, wordbookId: string, wordId: string) => Promise<UserWordProgressRow | null>;
   /** Drill candidates: already-reviewed words joined with examples for cloze resolution. */
   findDrillCandidates?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; examples: Json } }>>;
   /** Get or create today's session (optional: tests may omit) */
@@ -365,6 +367,17 @@ export class ReviewService {
   async getStats(userId: string, wordbookId: string) {
     if (!this.deps.getReviewStats) throw new Error("getReviewStats not configured");
     return this.deps.getReviewStats(userId, wordbookId);
+  }
+
+  /**
+   * 主动晋升入口（Phase F）：读 L1 进度行，供 L2TransitionService.promoteNow 继承。
+   * 未配置依赖时 fail-closed（与其它读侧一致）。
+   */
+  async getProgressSnapshot(userId: string, wordbookId: string, wordId: string): Promise<UserWordProgressRow | null> {
+    if (!this.deps.findProgressByUserWordbookWord) {
+      throw new Error("findProgressByUserWordbookWord not configured");
+    }
+    return this.deps.findProgressByUserWordbookWord(userId, wordbookId, wordId);
   }
 
   async getLeeches(userId: string, wordbookId: string, limit = 20) {

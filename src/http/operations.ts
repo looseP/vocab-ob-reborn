@@ -59,6 +59,7 @@ import {
   l2DraftResponseSchema,
   l2ExternalPromptResponseSchema,
   l2LlmStatusResponseSchema,
+  l2PromoteResponseSchema,
 } from "./l2-response-contract";
 import {
   l2DrillQueueResponseSchema,
@@ -303,6 +304,7 @@ export const apiOperations = [
   operation("post", "/api/capture", "createCapture", "owner", "sessionMutation", { body: captureRequestSchema }, 201, captureResponseSchema),
   operation("post", "/api/imports/vocab-notes", "importVocabNotes", "owner", "sessionMutation", { body: vocabNotesImportRequestSchema }, 200, vocabNotesImportResponseSchema),
   operation("get", "/api/l2/llm-status", "getL2LlmStatus", "owner", "none", undefined, 200, l2LlmStatusResponseSchema),
+  operation("post", "/api/l2/:slug/promote", "promoteL2", "owner", "sessionMutation", undefined, 200, l2PromoteResponseSchema),
   operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),
   operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
   operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }, 200, l2ConfirmResponseSchema),

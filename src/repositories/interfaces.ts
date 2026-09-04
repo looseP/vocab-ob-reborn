@@ -228,6 +228,12 @@ export interface IReviewRepository {
   /** SELECT FOR UPDATE minimal fields for suspend. MUST be in a transaction. */
   findProgressForSuspend(progressId: string, userId: string): Promise<ProgressForAction | null>;
 
+  /**
+   * 主动晋升入口（Phase F）：按 (user, wordbook, word) 读 L1 进度行。
+   * owner-RLS 表——调用方必须在 actor 事务内执行（无 requireTx，读侧由注入闭包保证）。
+   */
+  findByUserWordbookWord(userId: string, wordbookId: string, wordId: string): Promise<UserWordProgressRow | null>;
+
   /** Load the current authoritative progress for outbox convergence. MUST be in a transaction. */
   findProgressForOutbox(progressId: string, userId: string, wordbookId: string): Promise<UserWordProgressRow | null>;
 

@@ -162,6 +162,12 @@ export function createServices(deps: ServiceDeps) {
           (tx) => createRepositories(tx).reviews.findWordsByIds(wordIds),
           { actorId: userId },
         ),
+      // Phase F：主动晋升前置读——owner-RLS 表必须在 actor 事务内
+      findProgressByUserWordbookWord: (userId, wordbookId, wordId) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.findByUserWordbookWord(userId, wordbookId, wordId),
+          { actorId: userId },
+        ),
       findDrillCandidates: (userId, wordbookId, limit) =>
         withTransaction(
           (tx) => createRepositories(tx).reviews.findDrillCandidates(userId, wordbookId, limit),

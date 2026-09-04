@@ -44,3 +44,10 @@ export const l2LlmStatusResponseSchema = z.object({
     resetsAt: z.string(),
   }).nullable(),
 }).strict();
+
+/** Phase F：主动晋升响应（alreadyPromoted=true 表示幂等命中既有 L2 行）。 */
+export const l2PromoteResponseSchema = z.object({
+  ok: z.literal(true),
+  alreadyPromoted: z.boolean(),
+  l2DueAt: z.string().nullable(),
+}).strict();

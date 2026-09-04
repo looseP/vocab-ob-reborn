@@ -89,14 +89,20 @@ export class L2TransitionService {
   /**
    * Evaluate the transition conditions for a single L1 progress snapshot
    * and, if eligible, insert an inherited L2 progress row. Idempotent.
+   *
+   * @param options.force 主动晋升入口（Phase F）：跳过三条门槛检查，保留
+   *   幂等与继承语义（低 S 触底 1.0d floor；自动链路调用方不受影响）。
    */
-  async checkAndTransition(progress: L1ProgressSnapshot): Promise<void> {
+  async checkAndTransition(progress: L1ProgressSnapshot, options?: { force?: boolean }): Promise<void> {
+    const force = options?.force === true;
     const l1S = Number(progress.stability);
 
     // ── Transition conditions ────────────────────────────────────────────
-    if (l1S < TRANSITION_STABILITY_THRESHOLD) return;
-    if (progress.review_count < TRANSITION_REVIEW_COUNT_THRESHOLD) return;
-    if (!TRANSITION_ALLOWED_RATINGS.has(progress.last_rating ?? "")) return;
+    if (!force) {
+      if (l1S < TRANSITION_STABILITY_THRESHOLD) return;
+      if (progress.review_count < TRANSITION_REVIEW_COUNT_THRESHOLD) return;
+      if (!TRANSITION_ALLOWED_RATINGS.has(progress.last_rating ?? "")) return;
+    }
 
     // ── Idempotency check (wordbook-scoped) ──────────────────────────────
     // Same user+word in a DIFFERENT wordbook must NOT block this transition —
@@ -168,5 +174,31 @@ export class L2TransitionService {
       }
       throw err;
     }
+  }
+
+  /**
+   * 主动晋升（Phase F）：用户从词条详情页一键晋升，跳过 L1 稳定高原门槛。
+   * 幂等：已有 L2 行时直接返回既有到期时间，不重复插入。
+   * 继承语义与自动晋升完全一致（ratio/floor/D+2/state=review/DR）。
+   */
+  async promoteNow(progress: L1ProgressSnapshot): Promise<{
+    alreadyPromoted: boolean;
+    l2DueAt: string | null;
+  }> {
+    const existing = await this.l2ProgressRepo.findByWordbookWordAndUser(
+      progress.user_id,
+      progress.wordbook_id,
+      progress.word_id,
+    );
+    if (existing) {
+      return { alreadyPromoted: true, l2DueAt: existing.l2_due_at ?? null };
+    }
+    await this.checkAndTransition(progress, { force: true });
+    const row = await this.l2ProgressRepo.findByWordbookWordAndUser(
+      progress.user_id,
+      progress.wordbook_id,
+      progress.word_id,
+    );
+    return { alreadyPromoted: false, l2DueAt: row?.l2_due_at ?? null };
   }
 }

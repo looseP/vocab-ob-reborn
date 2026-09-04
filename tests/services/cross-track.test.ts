@@ -47,6 +47,8 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     findProgressForUpdate: vi.fn(async () => null),
     findProgressForSkip: vi.fn(async () => null),
     findProgressForSuspend: vi.fn(async () => null),
+    // Phase F：主动晋升前置读（跨轨测试不触达，stub null）
+    findByUserWordbookWord: vi.fn(async () => null),
     findProgressForOutbox: vi.fn(async () => null),
     insertNewCard: vi.fn(async (): Promise<InsertNewCardStatus> => ({ status: "inserted", progressId: "p-new" })),
     saveAnswer: vi.fn(async () => ({ reviewLogId: "log-1" })),

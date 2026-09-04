@@ -297,6 +297,23 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   }
 
   /**
+   * 主动晋升入口（Phase F）：按 (user, wordbook, word) 读 L1 进度行。
+   * user_word_progress 是 owner-RLS 表——调用方必须在携带
+   * request.jwt.claim.sub 的事务内执行（见 createServices 注入闭包）。
+   */
+  async findByUserWordbookWord(
+    userId: string,
+    wordbookId: string,
+    wordId: string,
+  ): Promise<UserWordProgressRow | null> {
+    return this.queryOne<UserWordProgressRow>(
+      `SELECT * FROM user_word_progress
+       WHERE user_id = $1 AND wordbook_id = $2::uuid AND word_id = $3::uuid`,
+      [userId, wordbookId, wordId],
+    );
+  }
+
+  /**
    * SELECT FOR UPDATE minimal fields for suspend. MUST be in a transaction.
    */
   async findProgressForSuspend(progressId: string, userId: string): Promise<ProgressForAction | null> {

@@ -9,6 +9,7 @@ import { Markdown } from "@/frontend/components/ui/Markdown";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { WordL2Content } from "@/frontend/components/words/WordL2Content";
 import { WordL2Composer } from "@/frontend/components/words/WordL2Composer";
+import { PromoteL2Button } from "@/frontend/components/words/PromoteL2Button";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
 import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
 import { deriveWordCollections } from "@/frontend/utils/plazaSlugs";
@@ -170,6 +171,7 @@ export function WordDetailPage() {
             ))}
           </div>
           <div className="flex items-center gap-2">
+            <PromoteL2Button slug={word.slug} promoted={Boolean(word.l2_promoted)} onPromoted={refresh} />
             <AddToReviewButton wordId={word.id} slug={word.slug} />
           </div>
         </div>

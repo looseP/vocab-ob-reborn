@@ -274,3 +274,46 @@ describe("L2TransitionService L2_DESIRED_RETENTION env-var tuning (P2-6)", () =>
     expect(inserted.l2_desired_retention).toBeCloseTo(0.955, 3);
   });
 });
+
+// ── Phase F: 主动晋升（promoteNow + force）───────────────────────────────
+describe("L2TransitionService.promoteNow", () => {
+  it("force-skips the gate: low-stability word still gets promoted with 1.0d floor", async () => {
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn()
+        .mockResolvedValueOnce(null) // promoteNow 幂等预检
+        .mockResolvedValueOnce(null) // checkAndTransition 内部幂等检查
+        .mockResolvedValueOnce({ id: "l2-new", l2_due_at: "2026-09-06T00:00:00.000Z" }), // 插入后回读
+      insert: vi.fn().mockResolvedValue({ id: "l2-new" }),
+    };
+    const service = new L2TransitionService(mockL2Repo as any);
+    const result = await service.promoteNow(makeProgress({ stability: 2, review_count: 1, last_rating: "again" }));
+    expect(result.alreadyPromoted).toBe(false);
+    expect(result.l2DueAt).toBe("2026-09-06T00:00:00.000Z");
+    // 低 S 也必须插入（force 跳门槛），且 S 触底 1.0d floor
+    expect(mockL2Repo.insert).toHaveBeenCalled();
+    const inserted = mockL2Repo.insert.mock.calls[0]![0] as { l2_stability: number };
+    expect(inserted.l2_stability).toBeGreaterThanOrEqual(1.0);
+  });
+
+  it("is idempotent: returns the existing row instead of inserting twice", async () => {
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn().mockResolvedValue({ id: "l2-existing", l2_due_at: "2026-09-20T00:00:00.000Z" }),
+      insert: vi.fn(),
+    };
+    const service = new L2TransitionService(mockL2Repo as any);
+    const result = await service.promoteNow(makeProgress());
+    expect(result).toEqual({ alreadyPromoted: true, l2DueAt: "2026-09-20T00:00:00.000Z" });
+    expect(mockL2Repo.insert).not.toHaveBeenCalled();
+  });
+
+  it("checkAndTransition force bypasses all three gates", async () => {
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn().mockResolvedValue(null),
+      insert: vi.fn().mockResolvedValue({ id: "l2-1" }),
+    };
+    const service = new L2TransitionService(mockL2Repo as any);
+    // S=2 / count=1 / again —— 三条件全部不达标，force 仍插入
+    await service.checkAndTransition(makeProgress({ stability: 2, review_count: 1, last_rating: "again" }), { force: true });
+    expect(mockL2Repo.insert).toHaveBeenCalled();
+  });
+});
