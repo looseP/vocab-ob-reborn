@@ -1,0 +1,155 @@
+name: Monthly Recovery Drill
+
+on:
+  schedule:
+    # First day of each month at 03:00 UTC
+    - cron: "0 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    name: Backup & Restore Drill
+    runs-on: ubuntu-24.04
+
+    env:
+      DATABASE_ADMIN_URL: postgresql://vocab_drill_admin:P1a2MonthlyAdmin_9sL4fQ@127.0.0.1:5432/vocab
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2MonthlyApp_7rN3zM4c@127.0.0.1:5432/vocab
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2MonthlyWorker_4xV9pC@127.0.0.1:5432/vocab
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2MonthlyBackup_6kT2yH@127.0.0.1:5432/vocab
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2MonthlyMigration_5mJ8qD@127.0.0.1:5432/vocab
+      DRILL_DATABASE_ADMIN_URL: postgresql://vocab_drill_admin:P1a2MonthlyAdmin_9sL4fQ@127.0.0.1:5432/vocab_drill
+      DRILL_APP_DATABASE_URL: postgresql://vocab_app:P1a2MonthlyApp_7rN3zM4c@127.0.0.1:5432/vocab_drill
+      DRILL_WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2MonthlyWorker_4xV9pC@127.0.0.1:5432/vocab_drill
+      DRILL_BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2MonthlyBackup_6kT2yH@127.0.0.1:5432/vocab_drill
+      DRILL_MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2MonthlyMigration_5mJ8qD@127.0.0.1:5432/vocab_drill
+      ALLOW_DESTRUCTIVE_RESTORE: "127.0.0.1:5432/vocab_drill"
+      BACKUP_SIGNING_KEY: "ci-drill-signing-key-24-chars"
+      BACKUP_OBJECT_LOCK: "false"
+      DB_SSLMODE: disable
+      # The runner image ships PostgreSQL 16 client tools, which cannot dump a
+      # 17.x server. pg_dump/pg_restore resolve to the pinned 17.10 portable
+      # client extracted from the Dockerfile's postgres-backup-client stage.
+      PG_BIN_DIR: /usr/local/bin
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vocab_drill_admin
+          POSTGRES_PASSWORD: P1a2MonthlyAdmin_9sL4fQ
+          POSTGRES_DB: vocab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vocab_drill_admin -d vocab"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Pin npm version
+        run: npm install --global npm@10.9.7
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pinned PostgreSQL 17.10 backup client
+        run: |
+          set -euo pipefail
+          docker build --target postgres-backup-client --tag vocab-pg-client:drill .
+          container="pg-client-extract-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker create --name "${container}" vocab-pg-client:drill >/dev/null
+          docker cp "${container}:/postgres-client-root" /tmp/postgres-client-root
+          docker rm "${container}" >/dev/null
+          sudo cp -a /tmp/postgres-client-root/. /
+          test "$(pg_dump --version | awk 'NR == 1 && $2 == "(PostgreSQL)" { print $3 }')" = "17.10"
+          test "$(pg_restore --version | awk 'NR == 1 && $2 == "(PostgreSQL)" { print $3 }')" = "17.10"
+          pg_dump --version
+          pg_restore --version
+
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+        run: npm run db:migrate
+
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Verify real database LOGIN isolation
+        run: npm run test:db-roles
+
+      - name: Create signed backup as vocab_backup
+        env:
+          DATABASE_URL: "${{ env.BACKUP_DATABASE_URL }}"
+        run: npm run db:backup
+
+      - name: Verify backup manifest
+        run: |
+          set -euo pipefail
+          MANIFEST=$(ls -t backups/*.manifest.json | head -1)
+          npm run db:backup:verify -- "$MANIFEST"
+          echo "Verified: $MANIFEST"
+
+      - name: Create isolated drill database owned by vocab_migration
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE vocab_drill OWNER vocab_migration;"
+
+      - name: Run isolated restore drill as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.BACKUP_DATABASE_URL }}"
+          DRILL_DATABASE_URL: "${{ env.DRILL_MIGRATION_DATABASE_URL }}"
+          DRILL_TEST_DATABASE_URL: "${{ env.DRILL_DATABASE_ADMIN_URL }}"
+        run: |
+          set -euo pipefail
+          MANIFEST=$(ls -t backups/*.manifest.json | head -1)
+          npm run db:restore:drill -- "$MANIFEST"
+
+      - name: Converge restored database ownership and privileges
+        env:
+          DATABASE_ADMIN_URL: "${{ env.DRILL_DATABASE_ADMIN_URL }}"
+          APP_DATABASE_URL: "${{ env.DRILL_APP_DATABASE_URL }}"
+          WORKER_DATABASE_URL: "${{ env.DRILL_WORKER_DATABASE_URL }}"
+          BACKUP_DATABASE_URL: "${{ env.DRILL_BACKUP_DATABASE_URL }}"
+          MIGRATION_DATABASE_URL: "${{ env.DRILL_MIGRATION_DATABASE_URL }}"
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Verify restored database LOGIN isolation
+        env:
+          DATABASE_ADMIN_URL: "${{ env.DRILL_DATABASE_ADMIN_URL }}"
+          APP_DATABASE_URL: "${{ env.DRILL_APP_DATABASE_URL }}"
+          WORKER_DATABASE_URL: "${{ env.DRILL_WORKER_DATABASE_URL }}"
+          BACKUP_DATABASE_URL: "${{ env.DRILL_BACKUP_DATABASE_URL }}"
+          MIGRATION_DATABASE_URL: "${{ env.DRILL_MIGRATION_DATABASE_URL }}"
+        run: npm run test:db-roles
+
+      - name: Record drill evidence
+        if: always()
+        run: |
+          echo "## Monthly Recovery Drill Evidence" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backup manifest**: $(ls -t backups/*.manifest.json 2>/dev/null | head -1 || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Signing key**: provided (HMAC-SHA256)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if restore drill did not pass
+        if: ${{ job.status != 'success' }}
+        run: |
+          echo "Monthly recovery drill FAILED — investigate immediately"
+          exit 1

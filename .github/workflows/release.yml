@@ -1,0 +1,254 @@
+name: Immutable release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_ROOT: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+  RELEASE_MANIFEST_PATH: release-manifest.json
+
+jobs:
+  verify:
+    name: Re-verify release commit
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vocab_release_admin
+          POSTGRES_PASSWORD: P1a2ReleaseAdmin_8wQ4tK
+          POSTGRES_DB: vocab_release
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vocab_release_admin -d vocab_release"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_ADMIN_URL: postgresql://vocab_release_admin:P1a2ReleaseAdmin_8wQ4tK@127.0.0.1:5432/vocab_release
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2ReleaseApp_7rN3zM4c@127.0.0.1:5432/vocab_release
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2ReleaseWorker_4xV9pC@127.0.0.1:5432/vocab_release
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2ReleaseBackup_6kT2yH@127.0.0.1:5432/vocab_release
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2ReleaseMigration_5mJ8qD@127.0.0.1:5432/vocab_release
+      RLS_ACCEPTANCE_DATABASE_URL: postgresql://vocab_rls_acceptance:vocab_rls_acceptance_local_only@127.0.0.1:5432/vocab_release
+      DB_SSLMODE: disable
+      CAPACITY_TEST_CONFIRM: vocab
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release commit is reachable from main
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+            git fetch --no-tags --unshallow origin main
+          else
+            git fetch --no-tags origin main
+          fi
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
+            echo "Release commit must be reachable from origin/main" >&2
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify supply chain and dependency audit
+        run: npm run security:verify
+
+      - name: Verify engineering gates
+        run: npm run verify:engineering
+
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+        run: npm run db:migrate
+
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Verify real database LOGIN isolation
+        run: npm run test:db-roles
+
+      - name: Prepare dedicated NOBYPASSRLS acceptance principal
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_ADMIN_URL" \
+            -v ON_ERROR_STOP=1 \
+            -f scripts/rls-acceptance-bootstrap.sql
+
+      - name: Verify database release gates
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+          TEST_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
+        run: npm run verify:db
+
+  publish:
+    name: Build and publish immutable images
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      artifact-name: ${{ steps.release.outputs.artifact-name }}
+      manifest-sha256: ${{ steps.release.outputs.manifest-sha256 }}
+    steps:
+      - name: Validate release ref
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "push" && ! "$RELEASE_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tags must use a versioned vX.Y.Z form" >&2
+            exit 1
+          fi
+
+      - name: Check out release source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build and push all release images once
+        id: images
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-evidence
+          node <<'NODE'
+          const { writeFileSync } = require("node:fs");
+          const root = process.env.IMAGE_ROOT.toLowerCase();
+          const sha = process.env.RELEASE_SHA;
+          const target = (name, stage) => ({
+            context: ".",
+            dockerfile: "Dockerfile",
+            target: stage,
+            tags: [`${root}-${name}:${sha}`],
+            attest: ["type=provenance,mode=max", "type=sbom"],
+          });
+          writeFileSync("release-evidence/docker-bake.json", JSON.stringify({
+            group: { default: { targets: ["runtime", "migration", "backup"] } },
+            target: {
+              runtime: target("runtime", "runtime"),
+              migration: target("migration", "migration"),
+              backup: target("backup", "backup-runtime"),
+            },
+          }, null, 2));
+          NODE
+          docker buildx bake \
+            --file release-evidence/docker-bake.json \
+            --push \
+            --metadata-file release-evidence/build-metadata.json
+
+          node <<'NODE'
+          const { readFileSync, writeFileSync, appendFileSync } = require("node:fs");
+          const metadata = JSON.parse(readFileSync("release-evidence/build-metadata.json", "utf8"));
+          const root = process.env.IMAGE_ROOT.toLowerCase();
+          const sha = process.env.RELEASE_SHA;
+          const output = process.env.GITHUB_OUTPUT;
+          for (const name of ["runtime", "migration", "backup"]) {
+            const digest = metadata[name]?.["containerimage.digest"];
+            if (!/^sha256:[a-f0-9]{64}$/.test(digest ?? "")) throw new Error(`Missing registry digest for ${name}`);
+            appendFileSync(output, `${name}=${root}-${name}@${digest}\n`);
+          }
+          NODE
+
+      - name: Generate release evidence and manifest
+        id: release
+        shell: bash
+        env:
+          RUNTIME_IMAGE: ${{ steps.images.outputs.runtime }}
+          MIGRATION_IMAGE: ${{ steps.images.outputs.migration }}
+          BACKUP_IMAGE: ${{ steps.images.outputs.backup }}
+          RELEASE_CANDIDATE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          npm run sbom:npm
+          for image in runtime migration backup; do
+            case "$image" in
+              runtime) ref="$RUNTIME_IMAGE" ;;
+              migration) ref="$MIGRATION_IMAGE" ;;
+              backup) ref="$BACKUP_IMAGE" ;;
+            esac
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$PWD:/workspace" \
+              anchore/syft@sha256:844ed6a928ef9396fac26d1de374e71dcaf80df14f05841670ed41619c5a718f \
+              "$ref" -o "cyclonedx-json=/workspace/sbom-${image}.cdx.json"
+          done
+          node -e 'const fs=require("fs"); for (const path of ["sbom-npm.cdx.json","sbom-runtime.cdx.json","sbom-migration.cdx.json","sbom-backup.cdx.json"]) { const value=JSON.parse(fs.readFileSync(path,"utf8")); if (value.bomFormat!=="CycloneDX" || !/^1\.[4-6]$/.test(value.specVersion)) throw new Error(`Invalid CycloneDX SBOM: ${path}`); }'
+          npm run release:manifest
+          npm run release:manifest:verify
+          sha256sum --check release-manifest.sha256
+          artifact="release-${GITHUB_SHA}"
+          manifest_sha256="$(cut -d ' ' -f 1 release-manifest.sha256)"
+          [[ "$manifest_sha256" =~ ^[a-f0-9]{64}$ ]]
+          echo "artifact-name=$artifact" >> "$GITHUB_OUTPUT"
+          echo "manifest-sha256=$manifest_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.release.outputs.artifact-name }}
+          path: |
+            release-manifest.json
+            release-manifest.sha256
+            sbom-npm.cdx.json
+            sbom-runtime.cdx.json
+            sbom-migration.cdx.json
+            sbom-backup.cdx.json
+            drizzle-release/meta/_journal.json
+            release-evidence/build-metadata.json
+          if-no-files-found: error
+          retention-days: 90

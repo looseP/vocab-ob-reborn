@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "baseSha256": "3794f38e056fa5b451a1a60abe026aa4e6cd92e4bdd05be8e8fe5f870e20269b",
+  "currentSha256": "fbf6deeba0ab547ccf0bd9aeee1ccb0a3dc6505c7a5af509463b5c16ae5914ad",
+  "issues": [
+    {
+      "kind": "breaking",
+      "location": "paths./api/words.get.parameters.query:freq",
+      "message": "删除 request parameter"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/words.get.parameters.query:semantic",
+      "message": "删除 request parameter"
+    }
+  ]
+}

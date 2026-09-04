@@ -1,0 +1,59 @@
+name: Release check - backup restore
+
+on:
+  workflow_dispatch:
+    inputs:
+      prepare_run_id: { description: "Same-repository successful release prepare run ID", required: true, type: string }
+permissions: { actions: read, contents: read }
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: vocab_backup_admin, POSTGRES_PASSWORD: P1a2CiBackupAdmin_9sL4fQ, POSTGRES_DB: vocab }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U vocab_backup_admin -d vocab" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_ADMIN_URL: postgresql://vocab_backup_admin:P1a2CiBackupAdmin_9sL4fQ@127.0.0.1:5432/vocab
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2CiApp_7rN3zM4c@127.0.0.1:5432/vocab
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2CiWorker_4xV9pC@127.0.0.1:5432/vocab
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2CiBackup_6kT2yH@127.0.0.1:5432/vocab
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2CiMigration_5mJ8qD@127.0.0.1:5432/vocab
+      DB_SSLMODE: disable
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with: { persist-credentials: false, ref: "${{ github.sha }}" }
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with: { node-version-file: .nvmrc, cache: npm }
+      - run: npm ci --ignore-scripts
+      - name: Bind to trusted prepare manifest
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}", PREPARE_RUN_ID: "${{ inputs.prepare_run_id }}", REPOSITORY: "${{ github.repository }}" }
+        run: |
+          set -euo pipefail
+          [[ "$PREPARE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$REPOSITORY/actions/runs/$PREPARE_RUN_ID" | jq -e --arg repo "$REPOSITORY" --arg sha "$GITHUB_SHA" 'select(.status == "completed" and .conclusion == "success" and .path == ".github/workflows/release.yml" and .head_repository.full_name == $repo and .head_sha == $sha)' >/dev/null
+          artifacts="$(gh api "repos/$REPOSITORY/actions/runs/$PREPARE_RUN_ID/artifacts?per_page=100")"
+          [[ "$(jq -er '.total_count' <<<"$artifacts")" -le 100 ]]
+          artifact_id="$(jq -er --arg name "release-$GITHUB_SHA" '[.artifacts[] | select(.name == $name)] | select(length == 1 and .[0].expired == false) | .[0].id' <<<"$artifacts")"
+          mkdir prepare
+          gh api "repos/$REPOSITORY/actions/artifacts/$artifact_id/zip" > prepare.zip
+          unzip -q prepare.zip -d prepare
+          (cd prepare && sha256sum --check release-manifest.sha256)
+          echo "MANIFEST_SHA256=$(sha256sum prepare/release-manifest.json | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+        run: npm run db:migrate
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+      - name: Verify real database LOGIN isolation
+        run: npm run test:db-roles
+      - name: Verify complete RLS backup and restore
+        run: npm run test:backup-rls
+      - run: npm run release:check:evidence -- --check backupRestore --producer release-check/backup-restore --release-sha "$GITHUB_SHA" --manifest-sha256 "$MANIFEST_SHA256" --observed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" --output evidence.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with: { name: release-check-backup-restore, path: evidence.json, if-no-files-found: error, retention-days: 90 }

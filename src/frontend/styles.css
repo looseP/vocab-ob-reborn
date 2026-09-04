@@ -1,0 +1,724 @@
+@import "tailwindcss";
+
+/* ─── Light theme (default) ─── */
+:root {
+  --color-canvas: #f6f1e7;
+  --color-canvas-deep: #e9dec9;
+  --color-panel: rgba(255, 251, 244, 0.85);
+  --color-panel-strong: rgba(247, 240, 227, 0.95);
+  --color-border: rgba(103, 77, 44, 0.16);
+  --color-border-strong: rgba(103, 77, 44, 0.28);
+  --color-ink: #231a12;
+  --color-ink-soft: rgba(35, 26, 18, 0.72);
+  --color-accent: #0f6f62;
+  --color-accent-rgb: 15, 111, 98;
+  --color-accent-subtle: rgba(200, 160, 80, 0.18);
+  --color-accent-2: #b2572f;
+  --color-highlight: #f3dca2;
+
+  /* semantic tokens */
+  --color-surface-glass: rgba(255, 255, 255, 0.55);
+  --color-surface-glass-hover: rgba(255, 255, 255, 0.5);
+  --color-surface-input: rgba(255, 255, 255, 0.72);
+  --color-surface-soft: rgba(255, 255, 255, 0.45);
+  --color-surface-soft-deep: rgba(255, 255, 255, 0.48);
+  --color-surface-muted: rgba(15, 111, 98, 0.08);
+  --color-surface-muted-warm: rgba(178, 87, 47, 0.08);
+
+  /* pill */
+  --color-pill-bg: rgba(15, 111, 98, 0.08);
+  --color-pill-border: rgba(15, 111, 98, 0.16);
+  --color-pill-text: #0c534a;
+  --color-pill-warm-bg: rgba(178, 87, 47, 0.08);
+  --color-pill-warm-border: rgba(178, 87, 47, 0.16);
+  --color-pill-warm-text: #8a4525;
+
+  /* shadows */
+  --shadow-panel: 0 16px 44px rgba(71, 50, 20, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  --shadow-panel-strong: 0 18px 52px rgba(71, 50, 20, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+
+  /* body bg */
+  --bg-body: linear-gradient(180deg, #f9f4ea 0%, #f6f1e7 38%, #efe6d7 100%);
+  --bg-body-radial-1: radial-gradient(circle at top left, rgba(243, 220, 162, 0.75), transparent 32%);
+  --bg-body-radial-2: radial-gradient(circle at 88% 10%, rgba(15, 111, 98, 0.14), transparent 20%);
+  --bg-ambient-1: linear-gradient(110deg, rgba(15, 111, 98, 0.08), transparent 30%);
+  --bg-ambient-2: linear-gradient(290deg, rgba(178, 87, 47, 0.1), transparent 25%);
+  --bg-ambient-mask: radial-gradient(circle at center, black 55%, transparent 92%);
+
+  /* selection */
+  --color-selection: rgba(178, 87, 47, 0.22);
+
+  /* highlight colors */
+  --color-highlight-key: #eab308;
+  --color-highlight-error: #f97316;
+  --color-highlight-root: #16a34a;
+  --color-highlight-collocation: #3b82f6;
+
+  /* rating colors */
+  --color-rating-again-bg: rgba(178, 87, 47, 0.12);
+  --color-rating-again-border: rgba(178, 87, 47, 0.2);
+  --color-rating-hard-bg: rgba(243, 220, 162, 0.55);
+  --color-rating-hard-border: rgba(243, 220, 162, 0.8);
+  --color-rating-good-border: rgba(15, 111, 98, 0.16);
+  --color-rating-easy-bg: rgba(15, 111, 98, 0.2);
+  --color-rating-easy-border: rgba(15, 111, 98, 0.3);
+
+  /* relation colors */
+  --color-relation-synonym: #3b82f6;
+  --color-relation-antonym: #f59e0b;
+  --color-relation-root: #8b5cf6;
+
+  /* shadow & glow tokens (rgb components for dynamic opacity) */
+  --color-shadow-warm: 35, 26, 18;
+  --color-glow-white: 255, 255, 255;
+
+  /* header bg */
+  --color-header-bg: rgba(246, 241, 231, 0.72);
+  --color-header-border-b: var(--color-border);
+
+  /* grid */
+  --color-grid: rgba(103, 77, 44, 0.08);
+
+  /* prose */
+  --color-code-bg: rgba(35, 26, 18, 0.08);
+  --color-blockquote-border: rgba(15, 111, 98, 0.28);
+  --color-blockquote-bg: rgba(255, 255, 255, 0.44);
+  --color-thead-bg: rgba(15, 111, 98, 0.08);
+}
+
+/* ─── Dark theme ─── */
+[data-theme="dark"] {
+  --color-canvas: #1a1714;
+  --color-canvas-deep: #141210;
+  --color-panel: rgba(40, 36, 30, 0.85);
+  --color-panel-strong: rgba(48, 43, 36, 0.95);
+  --color-border: rgba(196, 178, 148, 0.14);
+  --color-border-strong: rgba(196, 178, 148, 0.24);
+  --color-ink: #e8e0d4;
+  --color-ink-soft: rgba(232, 224, 212, 0.68);
+  --color-accent: #3ec9b4;
+  --color-accent-rgb: 62, 201, 180;
+  --color-accent-subtle: rgba(200, 160, 80, 0.12);
+  --color-accent-2: #e09060;
+  --color-highlight: rgba(243, 220, 162, 0.2);
+
+  --color-surface-glass: rgba(60, 54, 44, 0.6);
+  --color-surface-glass-hover: rgba(70, 63, 52, 0.6);
+  --color-surface-input: rgba(50, 45, 38, 0.8);
+  --color-surface-soft: rgba(50, 45, 38, 0.6);
+  --color-surface-soft-deep: rgba(55, 49, 42, 0.7);
+  --color-surface-muted: rgba(62, 201, 180, 0.1);
+  --color-surface-muted-warm: rgba(224, 144, 96, 0.1);
+
+  --color-pill-bg: rgba(62, 201, 180, 0.12);
+  --color-pill-border: rgba(62, 201, 180, 0.2);
+  --color-pill-text: #3ec9b4;
+  --color-pill-warm-bg: rgba(224, 144, 96, 0.12);
+  --color-pill-warm-border: rgba(224, 144, 96, 0.2);
+  --color-pill-warm-text: #e09060;
+
+  --shadow-panel: 0 16px 44px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-panel-strong: 0 18px 52px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+  --bg-body: linear-gradient(180deg, #1e1b17 0%, #1a1714 38%, #151310 100%);
+  --bg-body-radial-1: radial-gradient(circle at top left, rgba(243, 220, 162, 0.12), transparent 32%);
+  --bg-body-radial-2: radial-gradient(circle at 88% 10%, rgba(62, 201, 180, 0.06), transparent 20%);
+  --bg-ambient-1: linear-gradient(110deg, rgba(62, 201, 180, 0.05), transparent 30%);
+  --bg-ambient-2: linear-gradient(290deg, rgba(224, 144, 96, 0.06), transparent 25%);
+  --bg-ambient-mask: radial-gradient(circle at center, black 55%, transparent 92%);
+
+  --color-selection: rgba(224, 144, 96, 0.3);
+
+  /* highlight colors */
+  --color-highlight-key: #facc15;
+  --color-highlight-error: #fb923c;
+  --color-highlight-root: #4ade80;
+  --color-highlight-collocation: #60a5fa;
+
+  /* rating colors */
+  --color-rating-again-bg: rgba(224, 144, 96, 0.15);
+  --color-rating-again-border: rgba(224, 144, 96, 0.28);
+  --color-rating-hard-bg: rgba(243, 220, 162, 0.18);
+  --color-rating-hard-border: rgba(243, 220, 162, 0.35);
+  --color-rating-good-border: rgba(62, 201, 180, 0.2);
+  --color-rating-easy-bg: rgba(62, 201, 180, 0.18);
+  --color-rating-easy-border: rgba(62, 201, 180, 0.3);
+
+  /* relation colors */
+  --color-relation-synonym: #60a5fa;
+  --color-relation-antonym: #fbbf24;
+  --color-relation-root: #a78bfa;
+
+  /* shadow & glow tokens (rgb components for dynamic opacity) */
+  --color-shadow-warm: 35, 26, 18;
+  --color-glow-white: 255, 255, 255;
+
+  --color-header-bg: rgba(26, 23, 20, 0.82);
+  --color-header-border-b: var(--color-border);
+
+  --color-grid: rgba(196, 178, 148, 0.06);
+
+  --color-code-bg: rgba(232, 224, 212, 0.1);
+  --color-blockquote-border: rgba(62, 201, 180, 0.24);
+  --color-blockquote-bg: rgba(255, 255, 255, 0.04);
+  --color-thead-bg: rgba(62, 201, 180, 0.08);
+}
+
+@theme inline {
+  --color-background: var(--color-canvas);
+  --color-foreground: var(--color-ink);
+  --font-sans: var(--font-body);
+  --font-serif: var(--font-heading);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background:
+    var(--bg-body-radial-1),
+    var(--bg-body-radial-2),
+    var(--bg-body);
+  color: var(--color-ink);
+  font-family: var(--font-body), sans-serif;
+  transition: background 0.3s ease, color 0.2s ease;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+::selection {
+  background: var(--color-selection);
+}
+
+.ambient-bg {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  background:
+    var(--bg-ambient-1),
+    var(--bg-ambient-2);
+  mask-image: var(--bg-ambient-mask);
+  transition: background 0.3s ease;
+}
+
+.panel {
+  border: 1px solid var(--color-border);
+  background: var(--color-panel);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-panel);
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.panel-strong {
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-panel-strong);
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow-panel-strong);
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.section-title {
+  font-family: var(--font-heading), serif;
+  letter-spacing: -0.03em;
+}
+
+.prose-obsidian {
+  color: var(--color-ink-soft);
+}
+
+.prose-obsidian h1,
+.prose-obsidian h2,
+.prose-obsidian h3,
+.prose-obsidian h4 {
+  color: var(--color-ink);
+  font-family: var(--font-heading), serif;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  margin-top: 1.3em;
+  margin-bottom: 0.5em;
+}
+
+/* Tailwind preflight resets heading sizes to inherit — restore hierarchy. */
+.prose-obsidian h1:first-child,
+.prose-obsidian h2:first-child,
+.prose-obsidian h3:first-child,
+.prose-obsidian h4:first-child,
+.prose-obsidian p:first-child {
+  margin-top: 0;
+}
+
+.prose-obsidian h1 {
+  font-size: 1.75em;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 0.3em;
+}
+
+.prose-obsidian h2 {
+  font-size: 1.4em;
+}
+
+.prose-obsidian h3 {
+  font-size: 1.17em;
+}
+
+.prose-obsidian h4 {
+  font-size: 1.05em;
+  color: var(--color-ink-soft);
+}
+
+.prose-obsidian p,
+.prose-obsidian li,
+.prose-obsidian blockquote {
+  line-height: 1.75;
+}
+
+.prose-obsidian p {
+  margin: 0.6em 0;
+}
+
+.prose-obsidian strong,
+.prose-obsidian b {
+  font-weight: 700;
+  color: var(--color-ink);
+}
+
+.prose-obsidian em {
+  font-style: italic;
+}
+
+.prose-obsidian del,
+.prose-obsidian s {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.prose-obsidian a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.prose-obsidian ul,
+.prose-obsidian ol {
+  padding-left: 1.25rem;
+  margin: 0.6em 0;
+}
+
+/* Tailwind preflight strips list markers — restore bullets / numbering. */
+.prose-obsidian ul {
+  list-style: disc;
+}
+
+.prose-obsidian ol {
+  list-style: decimal;
+}
+
+.prose-obsidian li {
+  margin: 0.25em 0;
+}
+
+.prose-obsidian li > ul,
+.prose-obsidian li > ol {
+  margin: 0.25em 0;
+}
+
+.prose-obsidian li > ul {
+  list-style: circle;
+}
+
+.prose-obsidian li::marker {
+  color: var(--color-accent);
+}
+
+.prose-obsidian hr {
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  margin: 1.25rem 0;
+}
+
+.prose-obsidian pre {
+  background: var(--color-code-bg);
+  border-radius: 0.6rem;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+
+.prose-obsidian pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+.prose-obsidian blockquote {
+  border-left: 3px solid var(--color-blockquote-border);
+  margin: 1.25rem 0;
+  padding: 0.75rem 1rem;
+  background: var(--color-blockquote-bg);
+  border-radius: 0.85rem;
+}
+
+.prose-obsidian code {
+  background: var(--color-code-bg);
+  border-radius: 0.4rem;
+  padding: 0.15rem 0.35rem;
+  font-size: 0.9em;
+}
+
+.prose-obsidian table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 0.9rem;
+  margin: 1rem 0;
+}
+
+.prose-obsidian th,
+.prose-obsidian td {
+  border: 1px solid var(--color-border);
+  padding: 0.75rem;
+  text-align: left;
+}
+
+.prose-obsidian thead {
+  background: var(--color-thead-bg);
+}
+
+.prose-obsidian mark {
+  background: var(--color-highlight);
+  color: var(--color-ink);
+  border-radius: 0.35rem;
+  padding: 0.05rem 0.25rem;
+}
+
+.soft-grid {
+  background-image:
+    linear-gradient(var(--color-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-grid) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-position: center;
+}
+
+.pill {
+  border: 1px solid var(--color-pill-border);
+  background: var(--color-pill-bg);
+  color: var(--color-pill-text);
+}
+
+.pill-warm {
+  border: 1px solid var(--color-pill-warm-border);
+  background: var(--color-pill-warm-bg);
+  color: var(--color-pill-warm-text);
+}
+
+/* 词条库搜索结果关键词高亮（A2） */
+.search-highlight {
+  background: var(--color-pill-bg);
+  color: var(--color-pill-text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ─── Global interaction enhancements ─── */
+
+/* Smooth link transitions */
+a {
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+
+/* Button press feedback — subtle scale on active */
+button {
+  transition:
+    transform 0.1s ease,
+    opacity 0.15s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    filter 0.15s ease;
+}
+
+/* Focus visible ring for keyboard users */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Smooth selection */
+::selection {
+  background: var(--color-selection);
+  transition: background-color 0.1s ease;
+}
+
+/* Custom duration used by Toast animations */
+.duration-\[280ms\] {
+  transition-duration: 280ms;
+}
+
+/* Capture panel phase transitions (auto-disabled by prefers-reduced-motion below) */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-rise {
+  animation: rise-in 180ms ease-out both;
+}
+
+/* Sheet drawer animation (右侧滑入) */
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-sheet {
+  animation: sheet-in 160ms ease-out both;
+}
+
+/* ─── 全局 Reduced Motion（WCAG 2.1 2.3.3） ───
+ * 用户系统开启"减少动态效果"时，统一关闭全站动画与过渡：
+ * Tailwind animate-* 工具类、rise-in/sheet-in 等 keyframes、按钮/卡片
+ * hover 过渡、滚动吸附动画。优先于此前的分区规则（topology/zen）。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.vocab-topology {
+  --graph-root: #5f63c7;
+  --graph-synonym: var(--color-accent);
+  --graph-antonym: var(--color-accent-2);
+  --graph-related: #a67c52;
+  --graph-muted: rgba(103, 77, 44, 0.28);
+}
+
+[data-theme="dark"] .vocab-topology {
+  --graph-root: #9b9ffc;
+  --graph-related: #c9a87c;
+  --graph-muted: rgba(196, 178, 148, 0.24);
+}
+
+.vocab-topology__canvas svg {
+  display: block;
+  touch-action: none;
+}
+
+.vocab-topology__edge {
+  stroke: var(--graph-muted);
+  stroke-linecap: round;
+  opacity: 0.58;
+  transition: opacity 0.16s ease, stroke-width 0.16s ease;
+}
+
+.vocab-topology__edge.relation-root-family {
+  stroke: var(--graph-root);
+}
+
+.vocab-topology__edge.relation-synonym {
+  stroke: var(--graph-synonym);
+}
+
+.vocab-topology__edge.relation-antonym {
+  stroke: var(--graph-antonym);
+}
+
+.vocab-topology__edge.relation-related {
+  stroke: var(--graph-related);
+  stroke-dasharray: 4 4;
+}
+
+.vocab-topology__edge.is-active {
+  opacity: 0.95;
+  stroke-width: 2.4px;
+}
+
+.vocab-topology__edge.is-muted {
+  opacity: 0.12;
+}
+
+.vocab-topology__node {
+  cursor: default;
+  outline: none;
+}
+
+.vocab-topology__node.is-clickable {
+  cursor: pointer;
+}
+
+.vocab-topology__node-circle {
+  fill: var(--color-surface-glass);
+  stroke: var(--color-border-strong);
+  stroke-width: 1.5px;
+  filter: drop-shadow(0 8px 16px rgba(35, 26, 18, 0.12));
+  transition: opacity 0.16s ease, stroke-width 0.16s ease, filter 0.16s ease;
+}
+
+[data-theme="dark"] .vocab-topology__node-circle {
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.28));
+}
+
+.vocab-topology__node.node-current .vocab-topology__node-circle {
+  fill: var(--color-accent);
+  stroke: rgba(255, 255, 255, 0.74);
+  stroke-width: 2.5px;
+}
+
+.vocab-topology__node.node-root .vocab-topology__node-circle {
+  fill: color-mix(in srgb, var(--graph-root) 22%, var(--color-surface-glass));
+  stroke: var(--graph-root);
+}
+
+.vocab-topology__node.node-synonym .vocab-topology__node-circle {
+  fill: color-mix(in srgb, var(--graph-synonym) 20%, var(--color-surface-glass));
+  stroke: var(--graph-synonym);
+}
+
+.vocab-topology__node.node-antonym .vocab-topology__node-circle {
+  fill: color-mix(in srgb, var(--graph-antonym) 20%, var(--color-surface-glass));
+  stroke: var(--graph-antonym);
+}
+
+.vocab-topology__node.node-related .vocab-topology__node-circle {
+  fill: color-mix(in srgb, var(--graph-related) 18%, var(--color-surface-glass));
+  stroke: var(--graph-related);
+}
+
+.vocab-topology__node.is-orphan .vocab-topology__node-circle {
+  fill: var(--color-surface-soft);
+  stroke: var(--graph-muted);
+  stroke-dasharray: 4 4;
+}
+
+.vocab-topology__node-label {
+  fill: var(--color-ink);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  paint-order: stroke;
+  pointer-events: none;
+  stroke: var(--color-panel);
+  stroke-linejoin: round;
+  stroke-width: 4px;
+}
+
+.vocab-topology__node.node-current .vocab-topology__node-label {
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.vocab-topology__node.is-active .vocab-topology__node-circle,
+.vocab-topology__node.is-neighbor .vocab-topology__node-circle,
+.vocab-topology__node:focus-visible .vocab-topology__node-circle {
+  filter: drop-shadow(0 10px 22px rgba(15, 111, 98, 0.22));
+  stroke-width: 3px;
+}
+
+.vocab-topology__node.is-muted {
+  opacity: 0.24;
+}
+
+.vocab-topology__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  padding: 0.35rem 0.65rem;
+  color: var(--color-ink-soft);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.vocab-topology__legend-mark {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  background: var(--graph-root);
+}
+
+.vocab-topology__legend-item.relation-root-family .vocab-topology__legend-mark {
+  background: var(--graph-root);
+}
+
+.vocab-topology__legend-item.relation-synonym .vocab-topology__legend-mark {
+  background: var(--graph-synonym);
+}
+
+.vocab-topology__legend-item.relation-antonym .vocab-topology__legend-mark {
+  background: var(--graph-antonym);
+}
+
+.vocab-topology__legend-item.relation-related .vocab-topology__legend-mark {
+  background: var(--graph-related);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vocab-topology__edge,
+  .vocab-topology__node,
+  .vocab-topology__node-circle {
+    transition: none;
+  }
+}
+
+/* ─── Zen Mode Styles ─── */
+
+body.zen-mode {
+  overflow: hidden;
+}
+
+body.zen-mode [role="banner"],
+body.zen-mode .back-to-top {
+  display: none !important;
+}
+
+body.zen-mode main {
+  padding: 0 !important;
+}
+
+/* Zen review ambient background */
+.zen-ambient-bg {
+  background:
+    radial-gradient(circle at 20% 30%, rgba(15, 111, 98, 0.04), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(178, 87, 47, 0.03), transparent 40%);
+}
+
+[data-theme="dark"] .zen-ambient-bg {
+  background:
+    radial-gradient(circle at 20% 30%, rgba(62, 201, 180, 0.03), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(224, 144, 96, 0.02), transparent 40%);
+}
+
+/* 说明：早前的 .zen-review-container（全屏 fixed z-30）与 .backface-hidden（3D 翻转）
+   从未被组件使用，属遗留死代码。禅模式实际为页内布局（SiteFrame 内 pb-24 为底部
+   导航留白），因此不存在与移动端底部导航的层级冲突，这里一并移除。 */

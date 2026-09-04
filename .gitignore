@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Drizzle generated artifacts
+# drizzle-release/ is the single canonical migration history (tracked).
+# The legacy drizzle/ directory is superseded and should not be re-created.
+drizzle/
+
+# Local agent analysis artifacts (never commit to product PRs)
+.codebase-memory/
+.learnings/
+docs/superpowers/plans/
+docs/screenshots/
+vite.review.config.ts
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+sbom-*.cdx.json
+release-manifest.json
+tests/scripts/.alerting-drill-test-*.lock*
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.single-host.example
+!.env.cloudflare-tunnel.example
+!.env.rls-acceptance.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary
+.tmp/
+tmp/
+temp/
+backups/
+
+# Large binary artifacts (should not be tracked in git)
+*.zip
+*.tar.gz
+*.tgz

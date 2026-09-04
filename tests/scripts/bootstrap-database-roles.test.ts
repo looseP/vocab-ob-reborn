@@ -1,0 +1,199 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const projectRoot = resolve(import.meta.dirname, "../..");
+const packageJson = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8")) as {
+  scripts: Record<string, string>;
+};
+const bootstrap = readFileSync(resolve(projectRoot, "scripts/bootstrap-database-roles.ts"), "utf8");
+const verifier = readFileSync(resolve(projectRoot, "scripts/verify-database-roles.ts"), "utf8");
+const backupAcceptance = readFileSync(resolve(projectRoot, "scripts/verify-backup-rls-acceptance.ts"), "utf8");
+const rlsAcceptanceBootstrap = readFileSync(resolve(projectRoot, "scripts/rls-acceptance-bootstrap.sql"), "utf8");
+const runtimeConnection = readFileSync(resolve(projectRoot, "src/db/connection.ts"), "utf8");
+const drizzleConfig = readFileSync(resolve(projectRoot, "drizzle.config.ts"), "utf8");
+
+function expectRoutineRevocationContract(source: string): void {
+  expect(source).toContain("REVOKE ALL ON ALL ROUTINES IN SCHEMA public, auth, vocab_migrations");
+  expect(source).toContain("FROM PUBLIC, vocab_app, vocab_worker, vocab_backup");
+  for (const schema of ["public", "auth", "vocab_migrations"]) {
+    expect(source).toContain(`FOR ROLE vocab_migration IN SCHEMA ${schema}`);
+    expect(source).toMatch(new RegExp(`IN SCHEMA ${schema}\\s+REVOKE ALL ON ROUTINES FROM PUBLIC, vocab_app, vocab_worker, vocab_backup`));
+  }
+}
+
+function expectExactVerifierContract(source: string): void {
+  expect(source).toContain("const unexpected = [...actual].filter");
+  expect(source).toContain("const missing = [...expected].filter");
+  for (const label of [
+    "application table",
+    "managed routine EXECUTE",
+    "backup relation",
+    "managed sequence",
+    "database",
+    "schema",
+    "default ACL",
+  ]) {
+    expect(source).toContain(`"${label}"`);
+  }
+  expect(source).toContain("managed roles retain column ACLs");
+  expect(source).toContain("acl.grantee = 0");
+}
+
+describe("database role bootstrap least-privilege contract", () => {
+  it("routes every runtime and governance pg connection through the shared TLS config", () => {
+    for (const source of [bootstrap, verifier, backupAcceptance, runtimeConnection]) {
+      expect(source).toContain("postgresClientConfig");
+      expect(source).not.toMatch(/new (?:Client|Pool)\(\{\s*connectionString/);
+    }
+    expect(drizzleConfig).toContain("const sslMode = databaseSslMode()");
+    expect(drizzleConfig).toContain("ssl: databaseSslConfig(sslMode).ssl!");
+    expect(drizzleConfig).toContain("assertConnectionStringHasNoSslOptions(databaseUrl)");
+  });
+
+  it("requires dedicated superusers in bootstrap and verifier", () => {
+    expect(bootstrap).toContain("if (!principal?.rolsuper)");
+    expect(bootstrap).toContain("SET LOCAL search_path = pg_catalog, public");
+    expect(verifier).toContain("identity.session_user !== adminUsername");
+    expect(verifier).toContain("!identity.rolsuper");
+    expect(verifier).toContain("dedicatedSuperuserAdmin: true");
+  });
+
+  it("removes and verifies both incoming and outgoing memberships", () => {
+    expect(bootstrap).toContain("WHERE member.rolname = $1::text OR parent.rolname = $1::text");
+    expect(bootstrap).toContain("assertZeroManagedRoleMemberships(client)");
+    expect(verifier).toContain("zero incoming and outgoing memberships");
+    expect(rlsAcceptanceBootstrap).toContain("WHERE member.rolname = 'vocab_rls_acceptance'");
+    expect(rlsAcceptanceBootstrap).toContain("OR parent.rolname = 'vocab_rls_acceptance'");
+  });
+
+  it("grants the restricted RLS acceptance LOGIN only explicit database CONNECT", () => {
+    expect(rlsAcceptanceBootstrap).toContain("REVOKE ALL ON DATABASE %I FROM vocab_rls_acceptance");
+    expect(rlsAcceptanceBootstrap).toContain("GRANT CONNECT ON DATABASE %I TO vocab_rls_acceptance");
+    expect(rlsAcceptanceBootstrap).not.toMatch(/GRANT\s+(?:CREATE|TEMPORARY).*DATABASE.*vocab_rls_acceptance/i);
+  });
+
+  it("keeps the standalone RLS acceptance entrypoint on the authoritative role sequence", () => {
+    expect(packageJson.scripts["rls:acceptance:up"]).toContain("--wait --wait-timeout 60 postgres");
+    expect(packageJson.scripts["rls:acceptance:migrate"]).toContain("vocab_migration");
+    expect(packageJson.scripts["rls:acceptance:migrate"]).not.toContain("vocab_rls_admin:vocab_rls_admin_local_only");
+    expect(packageJson.scripts["rls:acceptance:verify"]).toBe(
+      "npm run rls:acceptance:roles:prepare && npm run rls:acceptance:migrate && npm run rls:acceptance:roles:converge && npm run rls:acceptance:bootstrap && npm run rls:acceptance:test",
+    );
+  });
+
+  it("revokes current and future routine execution in every managed schema", () => {
+    expectRoutineRevocationContract(bootstrap);
+    const publicLeak = bootstrap.replace(
+      "REVOKE ALL ON ALL ROUTINES IN SCHEMA public, auth, vocab_migrations",
+      "REVOKE ALL ON ALL ROUTINES IN SCHEMA public, auth",
+    );
+    expect(() => expectRoutineRevocationContract(publicLeak)).toThrow();
+    const backupLeak = bootstrap.replace(
+      "REVOKE ALL ON ROUTINES FROM PUBLIC, vocab_app, vocab_worker, vocab_backup",
+      "REVOKE ALL ON ROUTINES FROM PUBLIC, vocab_app, vocab_worker",
+    );
+    expect(() => expectRoutineRevocationContract(backupLeak)).toThrow();
+  });
+
+  it("resets all default ACL grantees before granting backup SELECT only", () => {
+    for (const schema of ["public", "auth", "vocab_migrations"]) {
+      for (const kind of ["TABLES", "SEQUENCES", "ROUTINES"]) {
+        expect(bootstrap).toMatch(new RegExp(
+          `IN SCHEMA ${schema}\\s+REVOKE ALL ON ${kind} FROM PUBLIC, vocab_app, vocab_worker, vocab_backup`,
+        ));
+      }
+      expect(bootstrap).toMatch(new RegExp(`IN SCHEMA ${schema}\\s+GRANT SELECT ON TABLES TO vocab_backup`));
+      expect(bootstrap).toMatch(new RegExp(`IN SCHEMA ${schema}\\s+GRANT SELECT ON SEQUENCES TO vocab_backup`));
+      expect(bootstrap).not.toMatch(new RegExp(`IN SCHEMA ${schema}\\s+GRANT .* ON ROUTINES TO vocab_backup`));
+    }
+  });
+
+  it("verifies expected-minus-actual and actual-minus-expected for every ACL layer", () => {
+    expectExactVerifierContract(verifier);
+    const oneWayVerifier = verifier.replace(
+      "const missing = [...expected].filter((item) => !actual.has(item)).sort();",
+      "const missing: string[] = [];",
+    );
+    expect(() => expectExactVerifierContract(oneWayVerifier)).toThrow();
+    expect(verifier).toContain("new Map()],\n    [\"vocab_app\"");
+    expect(verifier).toContain("[\"PUBLIC\", new Set()]");
+    expect(verifier).toContain("[\"vocab_backup\", new Set()]");
+  });
+
+  it("makes backup managed relation SELECT exact and routine EXECUTE empty", () => {
+    expect(verifier).toContain("grantee.rolname = 'vocab_backup'");
+    expect(verifier).toContain("managedRelations.rows.map");
+    expect(verifier).toContain("privilegeKey(\"vocab_backup\", relation, \"SELECT\")");
+    expect(verifier).toContain("pg_catalog.oidvectortypes(routine.proargtypes)");
+    expect(verifier).toContain("[\"vocab_backup\", new Set()]");
+    expect(bootstrap).toContain("GRANT SELECT ON ALL TABLES IN SCHEMA public, auth, vocab_migrations TO vocab_backup");
+    expect(bootstrap).toContain("GRANT SELECT ON ALL SEQUENCES IN SCHEMA public, auth, vocab_migrations TO vocab_backup");
+  });
+
+  it("grants and verifies only the actor-authorized L2 cache and hash functions", () => {
+    for (const [registrationSignature, verifierSignature] of [
+      ["public.refresh_l2_cache(uuid)", "public.refresh_l2_cache(uuid)"],
+      ["public.finalize_l2_content_hash(uuid,text,text)", "public.finalize_l2_content_hash(uuid, text, text)"],
+    ]) {
+      expect(bootstrap).toContain(`to_regprocedure('${registrationSignature}')`);
+      expect(verifier).toContain(`\"${verifierSignature}\"`);
+    }
+    expect(bootstrap).toContain("GRANT EXECUTE ON FUNCTION public.refresh_l2_cache(uuid) TO vocab_app");
+    expect(bootstrap).toContain("GRANT EXECUTE ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) TO vocab_app");
+    expect(verifier).toContain("verifyL2SecurityFunctions(app, admin, fixture)");
+    expect(verifier).toContain("[[undefined, \"without actor\"], [fixture.users[2], \"wrong actor\"]]");
+    expect(verifier).toContain("`refresh_l2_cache ${label}`");
+    expect(verifier).toContain("`finalize_l2_content_hash ${label}`");
+    expect(verifier).toContain("finalize_l2_content_hash with invalid hash format");
+    expect(verifier).toContain("finalize_l2_content_hash for non-published word");
+    expect(verifier).toContain("refresh_l2_cache for actor-ineligible word");
+    expect(verifier).toContain("updated_count !== 2");
+    expect(verifier).toContain("l2_due_at <> $2::timestamptz AS due_changed");
+    expect(verifier).toContain("l2SecurityFunctions: true");
+    expect(bootstrap).not.toContain("mark_l2_stale_for_recheck");
+    expect(verifier).not.toContain("mark_l2_stale_for_recheck");
+  });
+
+  it("casts dynamic format parameters so PostgreSQL can infer prepared-statement types", () => {
+    expect(bootstrap).toContain("PASSWORD %L', $1::text, $2::text");
+    expect(bootstrap).toContain("DATABASE %I TO vocab_migration; GRANT vocab_migration TO %I',\n       $1::text,");
+    expect(bootstrap).toContain("ALTER DATABASE %I OWNER TO vocab_migration', $1::text");
+    expect(bootstrap).toContain("ALTER SCHEMA %I OWNER TO vocab_migration', $1::text");
+    expect(bootstrap).toContain("$1::text,\n       $1::text,\n       $1::text");
+  });
+
+  it("converges and verifies the database owner", () => {
+    expect(bootstrap).toContain("ALTER DATABASE %I OWNER TO vocab_migration");
+    expect(verifier).toContain("application database is not owned by vocab_migration");
+  });
+
+  it("transfers existing managed objects before migrations and verifies final ownership", () => {
+    const managedSchemaSet = "n.nspname IN ('public', 'auth', 'vocab_migrations')";
+    expect(bootstrap.match(new RegExp(managedSchemaSet.replace(/[()]/g, "\\$&"), "g"))?.length).toBeGreaterThanOrEqual(3);
+    expect(bootstrap).toContain("dependency.deptype = 'e'");
+    expect(bootstrap).toContain("ORDER BY CASE WHEN c.relkind = 'S' THEN 1 ELSE 0 END");
+    const migrationAuthority = bootstrap.indexOf("await ensureMigrationAuthority(client, databaseName)");
+    const ownershipTransfer = bootstrap.indexOf("await transferApplicationOwnership(client)", migrationAuthority);
+    const convergeGuard = bootstrap.indexOf("if (phase === \"converge\")", ownershipTransfer);
+    expect(migrationAuthority).toBeGreaterThan(-1);
+    expect(ownershipTransfer).toBeGreaterThan(migrationAuthority);
+    expect(convergeGuard).toBeGreaterThan(ownershipTransfer);
+    expect(verifier).toContain("application routines are not owned by vocab_migration");
+    expect(verifier).toContain("application types are not owned by vocab_migration");
+    expect(verifier).toContain("dependency.classid = 'pg_proc'::regclass");
+    expect(verifier).toContain("dependency.classid = 'pg_type'::regclass");
+  });
+
+  it("preserves primary, rollback, and end failures and publishes success after cleanup", () => {
+    expect(bootstrap).toContain("let primaryError: unknown");
+    expect(bootstrap).toContain("cleanupErrors.push(rollbackError)");
+    expect(bootstrap).toContain("cleanupErrors.push(endError)");
+    expect(bootstrap).toContain("new AggregateError(errors, \"database role bootstrap or cleanup failed\")");
+    expect(bootstrap).not.toMatch(/ROLLBACK"\)\.catch\(\(\) => undefined\)/);
+    const end = bootstrap.indexOf("await client.end()");
+    const success = bootstrap.indexOf("console.log(JSON.stringify({", end);
+    expect(end).toBeGreaterThan(-1);
+    expect(success).toBeGreaterThan(end);
+  });
+});

@@ -1,0 +1,145 @@
+/**
+ * PostgreSQL connection pool — singleton, with type-parser customization.
+ *
+ * Ported from v1's lib/db/pool.ts with two changes:
+ * 1. Uses v2's lightweight logger (no @/lib/logger dependency).
+ * 2. Loads .env via dotenv at first access (so scripts/tests don't need
+ *    an external dotenv-cli wrapper).
+ *
+ * Type parsers (global side-effect, same as v1):
+ * - NUMERIC / INT8 → JS number (pg default is string)
+ * - TIMESTAMP / TIMESTAMPTZ / DATE → ISO string (pg default is Date, which
+ *   breaks downstream `.slice(0,10)` usage)
+ */
+
+import { Pool, types, type QueryConfig } from "pg";
+import { logger } from "./logger";
+import { postgresClientConfig } from "./ssl";
+import type { PoolHealth } from "./types";
+
+// Parse numeric/int8 as JS numbers instead of strings
+types.setTypeParser(types.builtins.NUMERIC, (val) => parseFloat(val));
+types.setTypeParser(types.builtins.INT8, (val) => parseInt(val, 10));
+
+// Keep timestamps as ISO strings
+types.setTypeParser(types.builtins.TIMESTAMP, (val) => val);
+types.setTypeParser(types.builtins.TIMESTAMPTZ, (val) => val);
+types.setTypeParser(types.builtins.DATE, (val) => val);
+
+let _pool: Pool | null = null;
+let _batchImportPool: Pool | null = null;
+
+function boundedInteger(name: string, fallback: number, minimum: number, maximum: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
+function createPool(url: string): Pool {
+  const pool = new Pool({
+    ...postgresClientConfig(url),
+    max: boundedInteger("DB_POOL_MAX", 10, 1, 100),
+    idleTimeoutMillis: boundedInteger("DB_IDLE_TIMEOUT_MS", 30_000, 1_000, 600_000),
+    connectionTimeoutMillis: boundedInteger("DB_CONNECT_TIMEOUT_MS", 5_000, 100, 60_000),
+    keepAlive: true,
+    keepAliveInitialDelayMillis: boundedInteger("DB_KEEPALIVE_DELAY_MS", 10_000, 0, 600_000),
+    allowExitOnIdle: true,
+  });
+  attachPoolListeners(pool);
+  return pool;
+}
+
+export function getPool(): Pool {
+  if (!_pool) {
+    // Load .env on first access — keeps the public API simple for callers
+    // that don't use dotenv-cli.
+    if (!process.env.DATABASE_URL) {
+      try {
+        // ESM dynamic import fallback — works under tsx
+        const { config } = require("dotenv");
+        config();
+      } catch {
+        // dotenv is a devDependency; if missing, rely on real env vars.
+      }
+    }
+    const url = process.env.DATABASE_URL;
+    if (!url) {
+      throw new Error("DATABASE_URL is not configured.");
+    }
+    _pool = createPool(url);
+  }
+  return _pool;
+}
+
+/**
+ * Dedicated pool for bulk word import, authenticated as the minimal-privilege
+ * `vocab_batch_import` role (SELECT/INSERT/UPDATE on `words` only). This keeps
+ * batch writes fully decoupled from the read-only `vocab_app` runtime role and
+ * satisfies the project's least-privilege database contract. Throws clearly when
+ * BATCH_IMPORT_DATABASE_URL is absent.
+ */
+export function getBatchImportPool(): Pool {
+  if (!_batchImportPool) {
+    const url = process.env.BATCH_IMPORT_DATABASE_URL;
+    if (!url) {
+      throw new Error("BATCH_IMPORT_DATABASE_URL is not configured (required for word batch import).");
+    }
+    _batchImportPool = createPool(url);
+  }
+  return _batchImportPool;
+}
+
+function attachPoolListeners(pool: Pool): void {
+  pool.on("error", (err: Error) => {
+    logger.error("db", "Idle pool client error (auto-removed by pg)", err);
+  });
+  pool.on("connect", () => {
+    logger.debug("db", "New client connected to pool");
+  });
+  pool.on("acquire", () => {
+    logger.debug("db", "Client acquired from pool");
+  });
+  pool.on("remove", () => {
+    logger.debug("db", "Client removed from pool");
+  });
+}
+
+export async function checkPoolHealth(queryTimeoutMs = 400): Promise<PoolHealth> {
+  const pool = getPool();
+  try {
+    const healthQuery = {
+      text: "SELECT 1",
+      query_timeout: queryTimeoutMs,
+    } as QueryConfig & { query_timeout: number };
+    await pool.query(healthQuery);
+    return {
+      ok: true,
+      totalCount: pool.totalCount,
+      idleCount: pool.idleCount,
+      waitingCount: pool.waitingCount,
+    };
+  } catch (err) {
+    logger.error("db", "Health check query failed", err);
+    return {
+      ok: false,
+      totalCount: pool.totalCount,
+      idleCount: pool.idleCount,
+      waitingCount: pool.waitingCount,
+    };
+  }
+}
+
+export async function resetPool(): Promise<void> {
+  if (!_pool && !_batchImportPool) return;
+  const oldPool = _pool;
+  const oldBatchImportPool = _batchImportPool;
+  _pool = null;
+  _batchImportPool = null;
+  if (oldPool) await oldPool.end();
+  if (oldBatchImportPool) await oldBatchImportPool.end();
+  logger.info("db", "Pool reset completed");
+}
+
+export { getPool as pool };

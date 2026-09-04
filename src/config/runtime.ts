@@ -1,0 +1,86 @@
+import { z } from "zod";
+
+const booleanString = z.enum(["true", "false"]).transform((value) => value === "true");
+const integer = (minimum: number, maximum: number) => z.coerce.number().int().min(minimum).max(maximum);
+const emptyStringAsUndefined = <T extends z.ZodType>(schema: T) => z.preprocess(
+  (value) => value === "" ? undefined : value,
+  schema.optional(),
+);
+const optionalPostgresUrl = emptyStringAsUndefined(z.string().url().startsWith("postgresql://"));
+
+const runtimeSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  PORT: integer(1, 65_535).default(3_001),
+  DATABASE_URL: z.string().url().startsWith("postgresql://"),
+  APP_DATABASE_URL: optionalPostgresUrl,
+  WORKER_DATABASE_URL: optionalPostgresUrl,
+  BACKUP_DATABASE_URL: optionalPostgresUrl,
+  MIGRATION_DATABASE_URL: optionalPostgresUrl,
+  DB_SSLMODE: z.enum(["disable", "require", "verify-ca", "verify-full"]).default("disable"),
+  SINGLE_HOST_DEPLOYMENT: booleanString.default(false),
+  OWNER_API_TOKEN: z.string().min(24),
+  METRICS_BEARER_TOKEN: emptyStringAsUndefined(z.string().min(24)),
+  LOCAL_OWNER_ID: z.string().uuid(),
+  APP_ORIGIN: z.string().url(),
+  TRUST_PROXY: booleanString.default(false),
+  SERVE_FRONTEND: booleanString.default(false),
+  READINESS_TIMEOUT_MS: integer(100, 10_000).default(500),
+  SHUTDOWN_GRACE_MS: integer(1_000, 120_000).default(25_000),
+  DB_POOL_MAX: integer(1, 100).default(10),
+  DB_IDLE_TIMEOUT_MS: integer(1_000, 600_000).default(30_000),
+  DB_CONNECT_TIMEOUT_MS: integer(100, 60_000).default(5_000),
+  DB_KEEPALIVE_DELAY_MS: integer(0, 600_000).default(10_000),
+  LOGIN_RATE_LIMIT_WINDOW_MS: integer(1_000, 3_600_000).default(60_000),
+  LOGIN_RATE_LIMIT_ATTEMPTS: integer(1, 1_000).default(8),
+  LLM_PROVIDER: emptyStringAsUndefined(z.enum(["openai", "anthropic"])),
+  LLM_MODEL: emptyStringAsUndefined(z.string().min(1)),
+  LLM_API_KEY: emptyStringAsUndefined(z.string().min(1)),
+  LLM_BASE_URL: emptyStringAsUndefined(z.string().url()),
+  LLM_TIMEOUT_MS: integer(1_000, 120_000).default(30_000),
+  LLM_MAX_TOKENS: integer(1, 32_768).default(2_048),
+  LLM_MAX_CONCURRENCY: integer(1, 100).default(4),
+  DATAMUSE_ENABLED: booleanString.default(false),
+}).superRefine((value, context) => {
+  if (value.NODE_ENV === "production") {
+    if (!value.METRICS_BEARER_TOKEN) {
+      context.addIssue({ code: "custom", path: ["METRICS_BEARER_TOKEN"], message: "required in production" });
+    }
+    if (!value.APP_ORIGIN.startsWith("https://")) {
+      context.addIssue({ code: "custom", path: ["APP_ORIGIN"], message: "must use https in production" });
+    }
+    if (value.METRICS_BEARER_TOKEN === value.OWNER_API_TOKEN) {
+      context.addIssue({ code: "custom", path: ["METRICS_BEARER_TOKEN"], message: "must differ from OWNER_API_TOKEN" });
+    }
+    if (value.SINGLE_HOST_DEPLOYMENT) {
+      if (value.DB_SSLMODE !== "disable") {
+        context.addIssue({ code: "custom", path: ["DB_SSLMODE"], message: "must be disable for the isolated in-Docker PostgreSQL connection" });
+      }
+      if (!value.APP_DATABASE_URL || new URL(value.DATABASE_URL).hostname !== "postgres" || new URL(value.APP_DATABASE_URL).hostname !== "postgres") {
+        context.addIssue({ code: "custom", path: ["SINGLE_HOST_DEPLOYMENT"], message: "requires DATABASE_URL and APP_DATABASE_URL to target the internal postgres service" });
+      }
+    } else {
+      if (value.DB_SSLMODE === "disable") {
+        context.addIssue({ code: "custom", path: ["DB_SSLMODE"], message: "must not be disable in production" });
+      }
+      if (!value.APP_DATABASE_URL) {
+        context.addIssue({ code: "custom", path: ["APP_DATABASE_URL"], message: "required in production for least-privilege separation" });
+      }
+    }
+  }
+  if ((value.LLM_PROVIDER && !value.LLM_MODEL) || (!value.LLM_PROVIDER && value.LLM_MODEL)) {
+    context.addIssue({ code: "custom", path: ["LLM_MODEL"], message: "LLM_PROVIDER and LLM_MODEL must be configured together" });
+  }
+});
+
+export type RuntimeConfig = z.infer<typeof runtimeSchema>;
+
+export function loadRuntimeConfig(environment: NodeJS.ProcessEnv = process.env): RuntimeConfig {
+  const parsed = runtimeSchema.safeParse(environment);
+  if (!parsed.success) {
+    const details = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "configuration"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`Invalid runtime configuration: ${details}`);
+  }
+  return parsed.data;
+}

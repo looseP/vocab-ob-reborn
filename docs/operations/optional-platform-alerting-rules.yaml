@@ -1,0 +1,186 @@
+# Optional platform rules: DO NOT load until the named external exporters are installed.
+# Required contracts:
+# - backup/restore-drill collector exports the bounded timestamp and last-attempt gauges below.
+# - blackbox_exporter provides probe_ssl_earliest_cert_expiry for the production HTTPS module.
+# - CI canary exporter provides vocab_platform_runner_canary_last_success_timestamp_seconds.
+#   This is canary freshness, not proof that a runner is online; runner state needs a GitHub API exporter.
+# These metrics are intentionally not presented as application metrics.
+# Relabel each optional exporter target with environment="production"; rules intentionally ignore non-production series.
+
+groups:
+  - name: vocab-observatory.optional-platform
+    interval: 1m
+    rules:
+      - alert: VocabBackupStale
+        expr: time() - vocab_platform_backup_last_success_timestamp_seconds{service="vocab_observatory",environment="production"} > 90000
+        for: 15m
+        labels:
+          severity: critical
+          service: vocab_observatory
+          component: backup
+          team: vocab-observatory
+          alert_family: backup-freshness
+        annotations:
+          summary: "Vocab Observatory has no successful backup in 25 hours"
+          description: "The external backup collector reports a stale last-success timestamp."
+          runbook_url: "docs/operations/slo-runbook.md#vocabbackupstale-critical-optional"
+
+      - alert: VocabBackupFailed
+        expr: |
+          vocab_platform_backup_last_attempt_success{service="vocab_observatory",environment="production"} == 0
+          and on (service, environment)
+          time() - vocab_platform_backup_last_attempt_timestamp_seconds{service="vocab_observatory",environment="production"} < 90000
+        for: 5m
+        labels:
+          severity: critical
+          service: vocab_observatory
+          component: backup
+          team: vocab-observatory
+          alert_family: backup-attempt
+        annotations:
+          summary: "Vocab Observatory most recent backup attempt failed"
+          description: "The external backup collector reports a failed attempt within the last 25 hours."
+          runbook_url: "docs/operations/slo-runbook.md#vocabbackupfailed-critical-optional"
+
+      - alert: VocabBackupCollectorMissing
+        expr: absent(vocab_platform_backup_last_success_timestamp_seconds{service="vocab_observatory",environment="production"})
+        for: 15m
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: backup
+          team: vocab-observatory
+          alert_family: backup-collector
+        annotations:
+          summary: "Vocab Observatory backup status metric is missing"
+          description: "The optional external backup collector has not exported its required gauge for fifteen minutes."
+          runbook_url: "docs/operations/slo-runbook.md#vocabbackupcollectormissing-warning-optional"
+
+      - alert: VocabRestoreDrillCollectorMissing
+        expr: absent(vocab_platform_restore_drill_last_success_timestamp_seconds{service="vocab_observatory",environment="production"})
+        for: 15m
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: restore-drill
+          team: vocab-observatory
+          alert_family: restore-drill-collector
+        annotations:
+          summary: "Vocab Observatory restore drill status metric is missing"
+          description: "The optional restore drill collector has not exported its required success timestamp for fifteen minutes."
+          runbook_url: "docs/operations/slo-runbook.md#vocabrestoredrillcollectormissing-warning-optional"
+
+      - alert: VocabRestoreDrillFailed
+        expr: |
+          vocab_platform_restore_drill_last_attempt_success{service="vocab_observatory",environment="production"} == 0
+          and on (service, environment)
+          time() - vocab_platform_restore_drill_last_attempt_timestamp_seconds{service="vocab_observatory",environment="production"} < 3024000
+        for: 5m
+        labels:
+          severity: critical
+          service: vocab_observatory
+          component: restore-drill
+          team: vocab-observatory
+          alert_family: restore-drill-attempt
+        annotations:
+          summary: "Vocab Observatory most recent restore drill failed"
+          description: "The external drill collector reports a failed attempt within the last 35 days."
+          runbook_url: "docs/operations/slo-runbook.md#vocabrestoredrillfailed-critical-optional"
+
+      - alert: VocabRestoreDrillOverdue
+        expr: time() - vocab_platform_restore_drill_last_success_timestamp_seconds{service="vocab_observatory",environment="production"} > 3024000
+        for: 1h
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: restore-drill
+          team: vocab-observatory
+          alert_family: restore-drill-freshness
+        annotations:
+          summary: "Vocab Observatory restore drill is overdue"
+          description: "The external drill collector reports no successful restore drill in 35 days."
+          runbook_url: "docs/operations/slo-runbook.md#vocabrestoredrilloverdue-warning-optional"
+
+      - alert: VocabRestoreDrillCriticallyOverdue
+        expr: time() - vocab_platform_restore_drill_last_success_timestamp_seconds{service="vocab_observatory",environment="production"} > 3456000
+        for: 1h
+        labels:
+          severity: critical
+          service: vocab_observatory
+          component: restore-drill
+          team: vocab-observatory
+          alert_family: restore-drill-freshness
+        annotations:
+          summary: "Vocab Observatory restore drill is critically overdue"
+          description: "The external drill collector reports no successful restore drill in 40 days."
+          runbook_url: "docs/operations/slo-runbook.md#vocabrestoredrillcriticallyoverdue-critical-optional"
+
+      - alert: VocabTlsProbeMetricMissing
+        expr: absent(probe_ssl_earliest_cert_expiry{job="blackbox-vocab-observatory",environment="production"})
+        for: 15m
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: tls
+          team: vocab-observatory
+          alert_family: tls-probe
+        annotations:
+          summary: "Vocab Observatory TLS probe metric is missing"
+          description: "blackbox_exporter has not exposed the production certificate-expiry metric for fifteen minutes."
+          runbook_url: "docs/operations/slo-runbook.md#vocabtlsprobemetricmissing-warning-optional"
+
+      - alert: VocabTlsCertificateExpiring
+        expr: probe_ssl_earliest_cert_expiry{job="blackbox-vocab-observatory",environment="production"} - time() < 1209600
+        for: 1h
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: tls
+          team: vocab-observatory
+          alert_family: tls-expiry
+        annotations:
+          summary: "Vocab Observatory TLS certificate expires within 14 days"
+          description: "blackbox_exporter reports less than fourteen days remaining for {{ $labels.instance }}."
+          runbook_url: "docs/operations/slo-runbook.md#vocabtlscertificateexpiring-warning-optional"
+
+      - alert: VocabTlsCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry{job="blackbox-vocab-observatory",environment="production"} - time() < 604800
+        for: 30m
+        labels:
+          severity: critical
+          service: vocab_observatory
+          component: tls
+          team: vocab-observatory
+          alert_family: tls-expiry
+        annotations:
+          summary: "Vocab Observatory TLS certificate expires within 7 days"
+          description: "blackbox_exporter reports less than seven days remaining for {{ $labels.instance }}."
+          runbook_url: "docs/operations/slo-runbook.md#vocabtlscertificateexpiringsoon-critical-optional"
+
+      - alert: VocabRunnerCanaryCollectorMissing
+        expr: absent(vocab_platform_runner_canary_last_success_timestamp_seconds{service="vocab_observatory",environment="production"})
+        for: 15m
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: ci-runner
+          team: vocab-observatory
+          alert_family: runner-canary-collector
+        annotations:
+          summary: "Vocab Observatory runner canary metric is missing"
+          description: "The optional CI canary exporter has not exposed its production success timestamp for fifteen minutes."
+          runbook_url: "docs/operations/slo-runbook.md#vocabrunnercanarycollectormissing-warning-optional"
+
+      - alert: VocabRunnerCanaryStale
+        expr: time() - vocab_platform_runner_canary_last_success_timestamp_seconds{service="vocab_observatory",environment="production"} > 3600
+        for: 15m
+        labels:
+          severity: warning
+          service: vocab_observatory
+          component: ci-runner
+          team: vocab-observatory
+          alert_family: runner-canary
+        annotations:
+          summary: "Vocab Observatory CI runner canary is stale"
+          description: "The external canary exporter reports no successful canary job for more than one hour; this does not by itself prove that the runner is offline."
+          runbook_url: "docs/operations/slo-runbook.md#vocabrunnercanarystale-warning-optional"

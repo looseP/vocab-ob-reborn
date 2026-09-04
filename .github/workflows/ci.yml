@@ -1,0 +1,346 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Engineering Gate + Migration Rehearsal
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_ADMIN_URL: postgresql://vocab_ci_admin:P1a2CiVerifyAdmin_8wQ4tK@localhost:5432/vocab
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2CiVerifyApp_7rN3zM4c@localhost:5432/vocab
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2CiVerifyWorker_4xV9pC@localhost:5432/vocab
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2CiVerifyBackup_6kT2yH@localhost:5432/vocab
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2CiVerifyMigration_5mJ8qD@localhost:5432/vocab
+      DB_SSLMODE: disable
+      CAPACITY_TEST_CONFIRM: vocab
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vocab_ci_admin
+          POSTGRES_PASSWORD: P1a2CiVerifyAdmin_8wQ4tK
+          POSTGRES_DB: vocab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Pin npm version
+        run: npm install --global npm@10.9.7
+
+      - name: Install dependencies and verify lockfile
+        run: npm ci
+
+      - name: Supply-chain security gate
+        run: npm run security:verify
+
+      - name: Generate npm CycloneDX SBOM
+        run: npm run sbom:npm
+
+      - name: Upload npm SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-npm-cyclonedx
+          path: sbom-npm.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Engineering verification
+        env:
+          COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ROUTE_COMPLEXITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: npm run verify:engineering
+
+      - name: Upload layered coverage evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: layered-coverage-report
+          path: |
+            coverage/layered-summary.json
+            coverage/layered-summary.md
+            coverage/coverage-summary.json
+            coverage/index.html
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Official Prometheus rule syntax gate
+        run: |
+          docker run --rm --entrypoint /bin/promtool \
+            --volume "${PWD}/docs/operations:/rules:ro" \
+            prom/prometheus@sha256:3b1d5be5c3eef4f027665ddaa3b1a7de8a58d96a0a6de5dd45629afd267ecaf0 \
+            check rules /rules/alerting-rules.yaml /rules/optional-platform-alerting-rules.yaml
+
+      - name: Official Alertmanager config syntax gate
+        run: |
+          docker run --rm --entrypoint /bin/amtool \
+            --volume "${PWD}/docs/operations:/rules:ro" \
+            prom/alertmanager@sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba \
+            check-config /rules/alertmanager.yaml
+
+      - name: Build production runtime image
+        run: docker build --target runtime --tag vocab-observatory-v2:ci .
+
+      - name: Build migration image
+        run: docker build --target migration --tag vocab-observatory-v2-migration:ci .
+
+      - name: Build backup image
+        run: docker build --target backup-runtime --tag vocab-observatory-v2-backup:ci .
+
+      - name: Clean-volume local Compose smoke
+        timeout-minutes: 8
+        env:
+          APP_IMAGE: vocab-observatory-v2:ci
+          MIGRATION_IMAGE: vocab-observatory-v2-migration:ci
+          BACKUP_IMAGE: vocab-observatory-v2-backup:ci
+          LOCAL_COMPOSE_SMOKE_SKIP_BUILD: "true"
+        run: npm run runtime:smoke:local
+
+      - name: Existing-volume database role upgrade rehearsal
+        timeout-minutes: 8
+        run: npm run db-roles:upgrade:acceptance
+
+      - name: Upload local Compose smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: local-compose-smoke-diagnostics
+          path: .tmp/local-compose-smoke/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Generate image CycloneDX SBOMs
+        run: |
+          for entry in \
+            "runtime vocab-observatory-v2:ci" \
+            "migration vocab-observatory-v2-migration:ci" \
+            "backup vocab-observatory-v2-backup:ci"
+          do
+            set -- ${entry}
+            docker run --rm \
+              --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume "${PWD}:/out" \
+              anchore/syft@sha256:844ed6a928ef9396fac26d1de374e71dcaf80df14f05841670ed41619c5a718f \
+              "docker:$2" \
+              --output "cyclonedx-json=/out/sbom-$1.cdx.json"
+          done
+
+      - name: Verify backup SBOM PostgreSQL client provenance
+        run: |
+          set -euo pipefail
+          container="backup-sbom-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm "${container}" >/dev/null 2>&1 || true
+            rm -f .tmp-backup-client-provenance.tsv
+          }
+          trap cleanup EXIT
+          test "$(docker image inspect vocab-observatory-v2-backup:ci --format '{{.Config.User}}')" = "node"
+          docker create --name "${container}" vocab-observatory-v2-backup:ci >/dev/null
+          test "$(docker run --rm --entrypoint pg_dump vocab-observatory-v2-backup:ci --version | awk 'NR == 1 && $2 == "(PostgreSQL)" { print $3 }')" = "17.10"
+          test "$(docker run --rm --entrypoint pg_restore vocab-observatory-v2-backup:ci --version | awk 'NR == 1 && $2 == "(PostgreSQL)" { print $3 }')" = "17.10"
+          docker run --rm --entrypoint node vocab-observatory-v2-backup:ci -e "const fs=require('fs'); if(fs.existsSync('/opt/postgres-client/bin/postgres') || fs.existsSync('/opt/postgres-client/bin/psql')) process.exit(1)"
+          docker cp "${container}:/opt/postgres-client/provenance.tsv" .tmp-backup-client-provenance.tsv
+          node scripts/verify-backup-sbom.mjs .tmp-backup-client-provenance.tsv sbom-backup.cdx.json sbom-backup-verified.cdx.json
+
+      - name: Upload image SBOMs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-images-cyclonedx
+          path: |
+            sbom-runtime.cdx.json
+            sbom-migration.cdx.json
+            sbom-backup.cdx.json
+            sbom-backup-verified.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verify runtime image user and production dependencies
+        run: |
+          test "$(docker image inspect vocab-observatory-v2:ci --format '{{.Config.User}}')" = "node"
+          docker run --rm --entrypoint node vocab-observatory-v2:ci -e "const p=require('./package.json'); if(!p.dependencies.tsx) process.exit(1)"
+          if docker run --rm --entrypoint node vocab-observatory-v2:ci -e "require.resolve('vitest')"; then exit 1; fi
+
+      - name: Verify prom-client is in production image
+        run: |
+          docker run --rm --entrypoint node vocab-observatory-v2:ci -e "require.resolve('prom-client')"
+
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+        run: npm run db:migrate
+
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Verify real database LOGIN isolation
+        run: npm run test:db-roles
+
+      - name: Verify backup image create, signature, and isolated restore
+        timeout-minutes: 5
+        env:
+          BACKUP_IMAGE: vocab-observatory-v2-backup:ci
+          BACKUP_SIGNING_KEY: CiBackupRestoreSigningKey_7mQ4vN8x
+        run: npm run db:restore:container:acceptance
+
+      - name: Prepare dedicated NOBYPASSRLS acceptance principal
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_ADMIN_URL" \
+            -v ON_ERROR_STOP=1 \
+            -f scripts/rls-acceptance-bootstrap.sql
+
+      - name: Database release verification
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+          TEST_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
+          RLS_ACCEPTANCE_DATABASE_URL: postgresql://vocab_rls_acceptance:vocab_rls_acceptance_local_only@localhost:5432/vocab
+        run: npm run verify:db
+
+      - name: Migration replay is a no-op
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+        run: npm run db:migrate
+
+      - name: Data lifecycle integration and contract gate
+        env:
+          TEST_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
+          DATA_LIFECYCLE_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
+        run: npm run test:data-lifecycle
+
+      - name: Verify rollback migration compatibility
+        if: github.event_name == 'pull_request'
+        env:
+          ROLLBACK_BASE_REF: ${{ github.event.pull_request.base.sha }}
+        run: npm run release:rollback-check
+
+      - name: Generate release manifest
+        env:
+          RELEASE_CANDIDATE: pr-${{ github.event.pull_request.number || github.run_number }}-${{ github.sha }}
+          RUNTIME_IMAGE: ghcr.io/loosep/vocab-observatory-runtime@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          MIGRATION_IMAGE: ghcr.io/loosep/vocab-observatory-migration@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          BACKUP_IMAGE: ghcr.io/loosep/vocab-observatory-backup@sha256:3333333333333333333333333333333333333333333333333333333333333333
+          POSTGRES_VERSION: "17"
+        run: npm run release:manifest
+
+      - name: Verify release manifest
+        run: npm run release:manifest:verify
+
+      - name: Upload release candidate evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-candidate-evidence
+          path: |
+            release-manifest.json
+            release-manifest.sha256
+            sbom-npm.cdx.json
+            sbom-runtime.cdx.json
+            sbom-migration.cdx.json
+            sbom-backup.cdx.json
+            sbom-backup-verified.cdx.json
+            drizzle-release/meta/_journal.json
+          if-no-files-found: error
+          retention-days: 90
+
+  e2e:
+    name: Browser E2E (Playwright)
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_ADMIN_URL: postgresql://vocab_e2e_admin:P1a2CiE2eAdmin_8wQ4tK@localhost:5432/vocab
+      APP_DATABASE_URL: postgresql://vocab_app:P1a2CiE2eApp_7rN3zM4c@localhost:5432/vocab
+      WORKER_DATABASE_URL: postgresql://vocab_worker:P1a2CiE2eWorker_4xV9pC@localhost:5432/vocab
+      BACKUP_DATABASE_URL: postgresql://vocab_backup:P1a2CiE2eBackup_6kT2yH@localhost:5432/vocab
+      MIGRATION_DATABASE_URL: postgresql://vocab_migration:P1a2CiE2eMigration_5mJ8qD@localhost:5432/vocab
+      DB_SSLMODE: disable
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vocab_e2e_admin
+          POSTGRES_PASSWORD: P1a2CiE2eAdmin_8wQ4tK
+          POSTGRES_DB: vocab
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Pin npm version
+        run: npm install --global npm@10.9.7
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        run: npm run frontend:build
+
+      - name: Prepare real database LOGIN roles
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts prepare
+
+      - name: Run authoritative migrations as vocab_migration
+        env:
+          DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
+        run: npm run db:migrate
+
+      - name: Converge database role ownership and privileges
+        run: npm exec -- tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Run Playwright E2E tests as vocab_app
+        env:
+          DATABASE_URL: "${{ env.APP_DATABASE_URL }}"
+          E2E_SETUP_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
+        run: npm run test:e2e
+
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14

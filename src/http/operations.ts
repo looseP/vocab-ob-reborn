@@ -1,0 +1,338 @@
+import { z, type ZodType } from "zod";
+import {
+  l3ContextCreateResponseSchema,
+  l3ContextDetailResponseSchema,
+  l3ContextLinkCreateResponseSchema,
+  l3ContextListResponseSchema,
+  l3DeleteResponseSchema,
+  l3GraphResponseSchema,
+  l3ImportProposalResponseSchema,
+  l3OccurrenceCreateResponseSchema,
+  l3ProposalBundleResponseSchema,
+  l3ProposalConfirmResponseSchema,
+  l3ProposalListResponseSchema,
+  l3ProposalValidationResponseSchema,
+  l3RecommendationAcceptResponseSchema,
+  l3RecommendationBundleResponseSchema,
+  l3RecommendationDetailResponseSchema,
+  l3RecommendationItemResponseSchema,
+  l3RecommendationListResponseSchema,
+  l3SourceCreateResponseSchema,
+  l3SourceSpaceResponseSchema,
+  l3WordSpaceResponseSchema,
+} from "./l3-response-contract";
+import {
+  reviewAnswerResponseSchema,
+  reviewDashboardStatsResponseSchema,
+  reviewDrillQueueResponseSchema,
+  reviewEnqueueCardResponseSchema,
+  reviewEnqueueCardsBatchResponseSchema,
+  reviewHeatmapResponseSchema,
+  reviewLeechesResponseSchema,
+  reviewQueueResponseSchema,
+  reviewSimpleResponseSchema,
+  reviewStatsResponseSchema,
+  reviewTimelineResponseSchema,
+} from "./review-response-contract";
+import {
+  noteListResponseSchema,
+  wordNoteResponseSchema,
+  wordNoteUpsertResponseSchema,
+  wordbookDefaultResponseSchema,
+  wordbookListResponseSchema,
+} from "./note-wordbook-response-contract";
+import {
+  wordBatchCreateResponseSchema,
+  wordDetailResponseSchema,
+  wordListResponseSchema,
+  wordSuggestResponseSchema,
+} from "./words-response-contract";
+import {
+  plazaCollectionResponseSchema,
+  plazaOverviewResponseSchema,
+  plazaRootsResponseSchema,
+  plazaReviewStatsResponseSchema,
+  rootCollectionDetailResponseSchema,
+} from "./plaza-response-contract";
+import {
+  l2ConfirmResponseSchema,
+  l2DraftResponseSchema,
+  l2ExternalPromptResponseSchema,
+} from "./l2-response-contract";
+import {
+  l2DrillQueueResponseSchema,
+  l2SelfAssessResponseSchema,
+  l2TaskAnswerResponseSchema,
+  l2UndoResponseSchema,
+} from "./l2-drill-response-contract";
+import { captureResponseSchema } from "./capture-response-contract";
+import { vocabNotesImportResponseSchema } from "./import-response-contract";
+import { operationMetricsResponseSchema } from "./operation-metrics-response-contract";
+import {
+  l3ContextCreateSchema,
+  l3ContextLinkCreateSchema,
+  l3GraphQuerySchema,
+  l3LimitCursorQuerySchema,
+  l3OccurrenceCreateSchema,
+  l3ProposalCreateSchema,
+  l3ProposalListQuerySchema,
+  l3ProposalRejectSchema,
+  l3RawTextImportCreateSchema,
+  l3RecommendationGenerateSchema,
+  l3RecommendationListQuerySchema,
+  l3RecommendationRejectSchema,
+  l3SourceCreateSchema,
+  l3SourceSpaceQuerySchema,
+  l3StructuredImportCreateSchema,
+  l3WordSpaceQuerySchema,
+  reviewAnswerSchema,
+  reviewSkipSchema,
+  reviewSuspendSchema,
+  reviewUndoSchema,
+  clearL1WeakSignalSchema,
+  addToReviewSchema,
+  batchAddToReviewSchema,
+  captureRequestSchema,
+  vocabNotesImportRequestSchema,
+  wordBatchCreateSchema,
+  wordsQuerySchema,
+  wordSuggestQuerySchema,
+  plazaQuerySchema,
+  plazaRootsQuerySchema,
+  l2TaskAnswerSchema,
+  l2SelfAssessSchema,
+  l2UndoSchema,
+} from "../schemas/http";
+
+export type HttpMethod = "delete" | "get" | "patch" | "post" | "put";
+
+export type ApiAuthPolicy = "metrics" | "optionalSession" | "owner" | "public";
+export type ApiCsrfPolicy = "none" | "sessionMutation";
+
+export interface ApiRequestHeader {
+  readonly name: string;
+  readonly required: boolean;
+  readonly description: string;
+  readonly schema: Readonly<Record<string, unknown>>;
+}
+
+export interface ApiResponseHeader {
+  readonly name: string;
+  readonly description: string;
+  readonly schema: Readonly<Record<string, unknown>>;
+}
+
+export interface ApiOperation {
+  readonly method: HttpMethod;
+  readonly path: string;
+  readonly operationId: string;
+  readonly auth: ApiAuthPolicy;
+  readonly csrf: ApiCsrfPolicy;
+  readonly requestHeaders?: readonly ApiRequestHeader[];
+  readonly responseHeaders?: Readonly<Record<number, readonly ApiResponseHeader[]>>;
+  readonly request?: {
+    readonly body?: ZodType;
+    readonly query?: ZodType;
+  };
+  readonly response: {
+    readonly status: number;
+    readonly schema: ZodType;
+    readonly mediaType: "application/json" | "text/plain";
+  };
+}
+
+const jsonResponseSchema = z.unknown();
+export const apiErrorResponseSchema = z.object({
+  error: z.string(),
+  code: z.string(),
+  message: z.string(),
+  details: z.unknown().optional(),
+  requestId: z.string(),
+}).passthrough();
+const livenessResponseSchema = z.object({ status: z.literal("ok") });
+const healthResponseSchema = z.object({
+  ok: z.literal(true),
+  service: z.string(),
+  phase: z.string(),
+});
+const readinessResponseSchema = z.object({ status: z.string() }).passthrough();
+const authSessionCreatedSchema = z.object({
+  authenticated: z.literal(true),
+  actorId: z.string(),
+  role: z.string(),
+  expiresAt: z.string(),
+  csrfToken: z.string(),
+});
+const authSessionSchema = z.object({
+  authenticated: z.literal(true),
+  actorId: z.string(),
+  role: z.string(),
+  authMethod: z.string(),
+});
+const authSessionCreateSchema = z.object({ ownerToken: z.string().min(1) });
+const cacheControlHeader: ApiResponseHeader = {
+  name: "Cache-Control",
+  description: "Prevents authentication state from being cached.",
+  schema: { type: "string" },
+};
+const setCookieHeader: ApiResponseHeader = {
+  name: "Set-Cookie",
+  description: "Sets or clears the session and CSRF cookies.",
+  schema: { type: "string" },
+};
+const retryAfterHeader: ApiResponseHeader = {
+  name: "Retry-After",
+  description: "Seconds before another authentication attempt.",
+  schema: { type: "integer", minimum: 1 },
+};
+const originHeader: ApiRequestHeader = {
+  name: "Origin",
+  required: true,
+  description: "Must match the configured application origin.",
+  schema: { type: "string", format: "uri" },
+};
+const requestedWithHeader: ApiRequestHeader = {
+  name: "X-Requested-With",
+  required: true,
+  description: "Must equal VocabObservatory.",
+  schema: { type: "string", const: "VocabObservatory" },
+};
+
+const l2FieldRequestSchema = z.object({
+  field: z.enum(["collocation", "example", "corpus", "synonym", "antonym"]),
+  styleProfileId: z.string().optional(),
+  userInstruction: z.string().optional(),
+}).passthrough();
+const reviewQueueQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  mode: z.enum(["review", "cram", "preview"]).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+const reviewLeechesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+const reviewTimelineQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+const reviewHeatmapQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(730).optional(),
+});
+const noteListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+const wordNoteUpsertRequestSchema = z.object({
+  content_md: z.string().optional(),
+});
+const l2ConfirmRequestSchema = l2FieldRequestSchema.extend({
+  content: z.unknown().optional(),
+  items: z.array(z.unknown()).optional(),
+  document: z.unknown().optional(),
+  source: z.string().optional(),
+  sourceRef: z.string().nullable().optional(),
+});
+
+function operation(
+  method: HttpMethod,
+  path: string,
+  operationId: string,
+  auth: ApiAuthPolicy,
+  csrf: ApiCsrfPolicy,
+  request?: ApiOperation["request"],
+  status = 200,
+  responseSchema: ZodType = jsonResponseSchema,
+  mediaType: "application/json" | "text/plain" = "application/json",
+  contract?: Pick<ApiOperation, "requestHeaders" | "responseHeaders">,
+): ApiOperation {
+  return {
+    method,
+    path,
+    operationId,
+    auth,
+    csrf,
+    ...(contract ?? {}),
+    ...(request ? { request } : {}),
+    response: { status, schema: responseSchema, mediaType },
+  };
+}
+
+export const apiOperations = [
+  operation("get", "/healthz", "getLiveness", "public", "none", undefined, 200, livenessResponseSchema),
+  operation("get", "/health", "getHealth", "public", "none", undefined, 200, healthResponseSchema),
+  operation("get", "/readyz", "getReadiness", "public", "none", undefined, 200, readinessResponseSchema),
+  operation("get", "/metrics", "getPrometheusMetrics", "metrics", "none", undefined, 200, z.string(), "text/plain"),
+  operation("post", "/api/auth/session", "createAuthSession", "public", "none", { body: authSessionCreateSchema }, 201, authSessionCreatedSchema, "application/json", {
+    requestHeaders: [originHeader, requestedWithHeader],
+    responseHeaders: {
+      201: [cacheControlHeader, setCookieHeader],
+      429: [cacheControlHeader, retryAfterHeader],
+    },
+  }),
+  operation("get", "/api/auth/session", "getAuthSession", "owner", "none", undefined, 200, authSessionSchema),
+  operation("delete", "/api/auth/session", "deleteAuthSession", "optionalSession", "sessionMutation", undefined, 204, z.null()),
+  operation("get", "/api/operations/metrics", "getOperationMetrics", "owner", "none", undefined, 200, operationMetricsResponseSchema),
+  operation("get", "/api/words", "listWords", "owner", "none", { query: wordsQuerySchema }, 200, wordListResponseSchema),
+  operation("get", "/api/words/suggest", "suggestWords", "owner", "none", { query: wordSuggestQuerySchema }, 200, wordSuggestResponseSchema),
+  operation("get", "/api/words/:slug", "getWord", "owner", "none", undefined, 200, wordDetailResponseSchema),
+  operation("post", "/api/words/batch", "batchCreateWords", "owner", "sessionMutation", { body: wordBatchCreateSchema }, 200, wordBatchCreateResponseSchema),
+  operation("get", "/api/words/:slug/notes", "getWordNote", "owner", "none", undefined, 200, wordNoteResponseSchema),
+  operation("put", "/api/words/:slug/notes", "upsertWordNote", "owner", "sessionMutation", { body: wordNoteUpsertRequestSchema }, 200, wordNoteUpsertResponseSchema),
+  operation("get", "/api/plaza", "getPlazaOverview", "owner", "none", { query: plazaQuerySchema }, 200, plazaOverviewResponseSchema),
+  operation("get", "/api/plaza/collections/:slug", "getPlazaCollection", "owner", "none", undefined, 200, plazaCollectionResponseSchema),
+  operation("get", "/api/plaza/roots", "getPlazaRootsOverview", "owner", "none", { query: plazaRootsQuerySchema }, 200, plazaRootsResponseSchema),
+  operation("get", "/api/plaza/roots/:slug", "getPlazaRootCollection", "owner", "none", undefined, 200, rootCollectionDetailResponseSchema),
+  operation("get", "/api/plaza/review-stats/:slug", "getPlazaReviewStats", "owner", "none", undefined, 200, plazaReviewStatsResponseSchema),
+  operation("get", "/api/notes", "listNotes", "owner", "none", { query: noteListQuerySchema }, 200, noteListResponseSchema),
+  operation("get", "/api/wordbooks", "listWordbooks", "owner", "none", undefined, 200, wordbookListResponseSchema),
+  operation("get", "/api/wordbooks/default", "getOrCreateDefaultWordbook", "owner", "none", undefined, 200, wordbookDefaultResponseSchema),
+  operation("get", "/api/review/queue", "getReviewQueue", "owner", "none", { query: reviewQueueQuerySchema }, 200, reviewQueueResponseSchema),
+  operation("get", "/api/review/stats", "getReviewStats", "owner", "none", undefined, 200, reviewStatsResponseSchema),
+  operation("get", "/api/review/stats/dashboard", "getReviewDashboardStats", "owner", "none", undefined, 200, reviewDashboardStatsResponseSchema),
+  operation("get", "/api/review/leeches", "listReviewLeeches", "owner", "none", { query: reviewLeechesQuerySchema }, 200, reviewLeechesResponseSchema),
+  operation("get", "/api/review/timeline", "listReviewTimeline", "owner", "none", { query: reviewTimelineQuerySchema }, 200, reviewTimelineResponseSchema),
+  operation("get", "/api/review/heatmap", "getReviewHeatmap", "owner", "none", { query: reviewHeatmapQuerySchema }, 200, reviewHeatmapResponseSchema),
+  operation("post", "/api/review/answer", "submitReviewAnswer", "owner", "sessionMutation", { body: reviewAnswerSchema }, 200, reviewAnswerResponseSchema),
+  operation("post", "/api/review/skip", "skipReview", "owner", "sessionMutation", { body: reviewSkipSchema }, 200, reviewSimpleResponseSchema),
+  operation("post", "/api/review/suspend", "suspendReview", "owner", "sessionMutation", { body: reviewSuspendSchema }, 200, reviewSimpleResponseSchema),
+  operation("post", "/api/review/undo", "undoReview", "owner", "sessionMutation", { body: reviewUndoSchema }, 200, reviewSimpleResponseSchema),
+  operation("post", "/api/review/weak-signal/clear", "clearL1WeakSignal", "owner", "sessionMutation", { body: clearL1WeakSignalSchema }, 200, reviewSimpleResponseSchema),
+  operation("post", "/api/review/cards", "enqueueReviewCard", "owner", "sessionMutation", { body: addToReviewSchema }, 201, reviewEnqueueCardResponseSchema),
+  operation("post", "/api/review/cards/batch", "enqueueReviewCardsBatch", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewEnqueueCardsBatchResponseSchema),
+  operation("get", "/api/review/drill/queue", "getReviewDrillQueue", "owner", "none", { query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional().default(20) }) }, 200, reviewDrillQueueResponseSchema),
+  operation("post", "/api/capture", "createCapture", "owner", "sessionMutation", { body: captureRequestSchema }, 201, captureResponseSchema),
+  operation("post", "/api/imports/vocab-notes", "importVocabNotes", "owner", "sessionMutation", { body: vocabNotesImportRequestSchema }, 200, vocabNotesImportResponseSchema),
+  operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),
+  operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
+  operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }, 200, l2ConfirmResponseSchema),
+  operation("get", "/api/l2-drill/queue", "getL2DrillQueue", "owner", "none", { query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional().default(20) }) }, 200, l2DrillQueueResponseSchema),
+  operation("post", "/api/l2-drill/task/answer", "submitL2TaskAnswer", "owner", "sessionMutation", { body: l2TaskAnswerSchema }, 200, l2TaskAnswerResponseSchema),
+  operation("post", "/api/l2-drill/self-assess", "submitL2SelfAssessment", "owner", "sessionMutation", { body: l2SelfAssessSchema }, 200, l2SelfAssessResponseSchema),
+  operation("post", "/api/l2-drill/undo", "undoL2Drill", "owner", "sessionMutation", { body: l2UndoSchema }, 200, l2UndoResponseSchema),
+  operation("post", "/api/l3/sources", "createL3Source", "owner", "sessionMutation", { body: l3SourceCreateSchema }, 201, l3SourceCreateResponseSchema),
+  operation("post", "/api/l3/contexts", "createL3Context", "owner", "sessionMutation", { body: l3ContextCreateSchema }, 201, l3ContextCreateResponseSchema),
+  operation("post", "/api/l3/occurrences", "createL3Occurrence", "owner", "sessionMutation", { body: l3OccurrenceCreateSchema }, 201, l3OccurrenceCreateResponseSchema),
+  operation("post", "/api/l3/context-links", "createL3ContextLink", "owner", "sessionMutation", { body: l3ContextLinkCreateSchema }, 201, l3ContextLinkCreateResponseSchema),
+  operation("delete", "/api/l3/occurrences/:id", "deleteL3Occurrence", "owner", "sessionMutation", undefined, 200, l3DeleteResponseSchema),
+  operation("delete", "/api/l3/context-links/:id", "deleteL3ContextLink", "owner", "sessionMutation", undefined, 200, l3DeleteResponseSchema),
+  operation("delete", "/api/l3/sources/:id", "deleteL3Source", "owner", "sessionMutation", undefined, 200, l3DeleteResponseSchema),
+  operation("delete", "/api/l3/contexts/:id", "deleteL3Context", "owner", "sessionMutation", undefined, 200, l3DeleteResponseSchema),
+  operation("get", "/api/l3/contexts/:id", "getL3Context", "owner", "none", undefined, 200, l3ContextDetailResponseSchema),
+  operation("get", "/api/l3/words/:slug/space", "getL3WordSpace", "owner", "none", { query: l3WordSpaceQuerySchema }, 200, l3WordSpaceResponseSchema),
+  operation("get", "/api/l3/sources/:id/space", "getL3SourceSpace", "owner", "none", { query: l3SourceSpaceQuerySchema }, 200, l3SourceSpaceResponseSchema),
+  operation("get", "/api/l3/graph", "getL3Graph", "owner", "none", { query: l3GraphQuerySchema }, 200, l3GraphResponseSchema),
+  operation("get", "/api/l3/words/:slug/contexts", "listL3WordContexts", "owner", "none", { query: l3LimitCursorQuerySchema }, 200, l3ContextListResponseSchema),
+  operation("get", "/api/l3/sources/:id/contexts", "listL3SourceContexts", "owner", "none", { query: l3LimitCursorQuerySchema }, 200, l3ContextListResponseSchema),
+  operation("post", "/api/l3/imports/raw-text", "createL3RawTextImport", "owner", "sessionMutation", { body: l3RawTextImportCreateSchema }, 201, l3ImportProposalResponseSchema),
+  operation("post", "/api/l3/imports/structured", "createL3StructuredImport", "owner", "sessionMutation", { body: l3StructuredImportCreateSchema }, 201, l3ImportProposalResponseSchema),
+  operation("post", "/api/l3/proposals", "createL3Proposal", "owner", "sessionMutation", { body: l3ProposalCreateSchema }, 201, l3ProposalBundleResponseSchema),
+  operation("post", "/api/l3/recommendations/generate", "generateL3Recommendations", "owner", "sessionMutation", { body: l3RecommendationGenerateSchema }, 201, l3RecommendationBundleResponseSchema),
+  operation("get", "/api/l3/recommendations", "listL3Recommendations", "owner", "none", { query: l3RecommendationListQuerySchema }, 200, l3RecommendationListResponseSchema),
+  operation("get", "/api/l3/recommendations/:id", "getL3Recommendation", "owner", "none", undefined, 200, l3RecommendationDetailResponseSchema),
+  operation("post", "/api/l3/recommendations/:id/accept", "acceptL3Recommendation", "owner", "sessionMutation", undefined, 200, l3RecommendationAcceptResponseSchema),
+  operation("post", "/api/l3/recommendations/:id/reject", "rejectL3Recommendation", "owner", "sessionMutation", { body: l3RecommendationRejectSchema }, 200, l3RecommendationItemResponseSchema),
+  operation("get", "/api/l3/proposals", "listL3Proposals", "owner", "none", { query: l3ProposalListQuerySchema }, 200, l3ProposalListResponseSchema),
+  operation("get", "/api/l3/proposals/:id", "getL3Proposal", "owner", "none", undefined, 200, l3ProposalBundleResponseSchema),
+  operation("post", "/api/l3/proposals/:id/validate", "validateL3Proposal", "owner", "sessionMutation", undefined, 200, l3ProposalValidationResponseSchema),
+  operation("post", "/api/l3/proposals/:id/confirm", "confirmL3Proposal", "owner", "sessionMutation", undefined, 200, l3ProposalConfirmResponseSchema),
+  operation("post", "/api/l3/proposals/:id/reject", "rejectL3Proposal", "owner", "sessionMutation", { body: l3ProposalRejectSchema }, 200, l3ProposalBundleResponseSchema),
+] as const satisfies readonly ApiOperation[];

@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: ${DATABASE_ROLES_ADMIN_USER:-vocab_roles_admin}
+      POSTGRES_PASSWORD: ${DATABASE_ROLES_ADMIN_PASSWORD:?DATABASE_ROLES_ADMIN_PASSWORD is required}
+      POSTGRES_DB: vocab_roles_acceptance
+    ports:
+      - "127.0.0.1:${DATABASE_ROLES_ACCEPTANCE_PORT:?DATABASE_ROLES_ACCEPTANCE_PORT is required}:5432"
+    volumes:
+      - database-roles-acceptance-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d vocab_roles_acceptance"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    stop_grace_period: 3s
+
+volumes:
+  database-roles-acceptance-postgres-data:

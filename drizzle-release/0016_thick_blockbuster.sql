@@ -1,0 +1,2 @@
+CREATE INDEX "idx_words_short_definition_trgm" ON "words" USING gin ("short_definition" gin_trgm_ops);--> statement-breakpoint
+CREATE INDEX "idx_words_definition_md_trgm" ON "words" USING gin ("definition_md" gin_trgm_ops);
