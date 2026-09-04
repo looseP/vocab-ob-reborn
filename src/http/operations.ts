@@ -38,7 +38,10 @@ import {
   noteListResponseSchema,
   wordNoteResponseSchema,
   wordNoteUpsertResponseSchema,
+  wordbookAddWordsResponseSchema,
+  wordbookCreateResponseSchema,
   wordbookDefaultResponseSchema,
+  wordbookDetailResponseSchema,
   wordbookListResponseSchema,
 } from "./note-wordbook-response-contract";
 import {
@@ -102,6 +105,8 @@ import {
   l2TaskAnswerSchema,
   l2SelfAssessSchema,
   l2UndoSchema,
+  wordbookCreateSchema,
+  wordbookAddWordsSchema,
 } from "../schemas/http";
 
 export type HttpMethod = "delete" | "get" | "patch" | "post" | "put";
@@ -284,6 +289,9 @@ export const apiOperations = [
   operation("get", "/api/plaza/review-stats/:slug", "getPlazaReviewStats", "owner", "none", undefined, 200, plazaReviewStatsResponseSchema),
   operation("get", "/api/notes", "listNotes", "owner", "none", { query: noteListQuerySchema }, 200, noteListResponseSchema),
   operation("get", "/api/wordbooks", "listWordbooks", "owner", "none", undefined, 200, wordbookListResponseSchema),
+  operation("post", "/api/wordbooks", "createWordbook", "owner", "sessionMutation", { body: wordbookCreateSchema }, 201, wordbookCreateResponseSchema),
+  operation("get", "/api/wordbooks/:id", "getWordbook", "owner", "none", undefined, 200, wordbookDetailResponseSchema),
+  operation("post", "/api/wordbooks/:id/words", "addWordsToWordbook", "owner", "sessionMutation", { body: wordbookAddWordsSchema }, 200, wordbookAddWordsResponseSchema),
   operation("get", "/api/wordbooks/default", "getOrCreateDefaultWordbook", "owner", "none", undefined, 200, wordbookDefaultResponseSchema),
   operation("get", "/api/review/queue", "getReviewQueue", "owner", "none", { query: reviewQueueQuerySchema }, 200, reviewQueueResponseSchema),
   operation("get", "/api/review/stats", "getReviewStats", "owner", "none", undefined, 200, reviewStatsResponseSchema),

@@ -1,6 +1,7 @@
 /**
- * Response contracts for the note and wordbook read endpoints added by the
- * frontend rebuild (GET /api/notes, word note fetch/upsert, wordbook list).
+ * Response contracts for the note and wordbook endpoints added by the
+ * frontend rebuild (GET /api/notes, word note fetch/upsert, wordbook list)
+ * plus the wordbook write path (create / detail / add words).
  */
 import { z } from "zod";
 
@@ -40,3 +41,14 @@ export const wordbookListResponseSchema = z.object({
 }).strict();
 
 export const wordbookDefaultResponseSchema = wordbookSummarySchema;
+
+export const wordbookCreateResponseSchema = wordbookSummarySchema;
+
+export const wordbookDetailResponseSchema = wordbookSummarySchema.extend({
+  wordCount: z.number().int().nonnegative(),
+}).strict();
+
+export const wordbookAddWordsResponseSchema = z.object({
+  ok: z.literal(true),
+  added: z.number().int().nonnegative(),
+}).strict();

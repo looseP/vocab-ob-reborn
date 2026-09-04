@@ -10,6 +10,7 @@ import {
   DbConnectionError,
   errorToResponse,
   isDbConnectionError,
+  isConstraintViolation,
 } from "@/errors";
 
 describe("Error hierarchy", () => {
@@ -109,5 +110,127 @@ describe("isDbConnectionError", () => {
     expect(isDbConnectionError({ message: "syntax error" })).toBe(false);
     expect(isDbConnectionError(null)).toBe(false);
     expect(isDbConnectionError("string")).toBe(false);
+  });
+});
+
+describe("errorToResponse — DB constraint / invalid-input violations", () => {
+  const cases = [
+    { sqlstate: "23503", status: 422, code: "FOREIGN_KEY_VIOLATION" },
+    { sqlstate: "23505", status: 409, code: "CONFLICT" },
+    { sqlstate: "23502", status: 400, code: "NOT_NULL_VIOLATION" },
+    { sqlstate: "23514", status: 400, code: "CHECK_VIOLATION" },
+    { sqlstate: "22P02", status: 400, code: "INVALID_INPUT" },
+  ];
+
+  for (const { sqlstate, status, code } of cases) {
+    it(`maps SQLSTATE ${sqlstate} to ${status} ${code}`, () => {
+      const { status: actualStatus, body } = errorToResponse({ code: sqlstate });
+      expect(actualStatus).toBe(status);
+      expect(body.code).toBe(code);
+      expect(typeof body.error).toBe("string");
+      expect(body.error.length).toBeGreaterThan(0);
+    });
+  }
+
+  it("does not reuse the DB-connection branch for 23505", () => {
+    const { status, body } = errorToResponse({ code: "23505" });
+    expect(status).toBe(409);
+    expect(status).not.toBe(503);
+    expect(body.code).toBe("CONFLICT");
+    expect(body.code).not.toBe("DB_UNAVAILABLE");
+  });
+
+  it("still maps connection SQLSTATEs to 503 before the constraint branch", () => {
+    const { status, body } = errorToResponse({ code: "08006" });
+    expect(status).toBe(503);
+    expect(body.code).toBe("DB_UNAVAILABLE");
+  });
+
+  it("keeps 42501 (insufficient_privilege / RLS) on the 500 path", () => {
+    const { status, body } = errorToResponse({ code: "42501" });
+    expect(status).toBe(500);
+    expect(body.code).toBe("INTERNAL");
+    expect(body.error).toBe("Internal server error");
+    expect(isConstraintViolation({ code: "42501" })).toBe(false);
+  });
+
+  it("keeps unknown SQLSTATEs on the 500 path", () => {
+    const { status, body } = errorToResponse({ code: "99999" });
+    expect(status).toBe(500);
+    expect(body.code).toBe("INTERNAL");
+  });
+
+  it("keeps inherited Object.prototype keys on the 500 path", () => {
+    for (const key of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+      expect(errorToResponse({ code: key })).toEqual({
+        status: 500,
+        body: { error: "Internal server error", code: "INTERNAL" },
+      });
+    }
+  });
+
+  it("does not affect AppError subclasses", () => {
+    const { status, body } = errorToResponse(new ValidationError("Invalid rating", "rating"));
+    expect(status).toBe(422);
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.error).toBe("Invalid rating");
+    expect(body.details).toEqual({ field: "rating" });
+  });
+
+  it("never leaks database internals into the response body", () => {
+    const pgError = {
+      code: "23503",
+      detail: 'Key (word_id)=(3d2f9a1c) is not present in table "words".',
+      constraint: "wordbook_items_word_id_fkey",
+      table: "wordbook_items",
+      column: "word_id",
+      message: 'insert or update on table "wordbook_items" violates foreign key constraint',
+      schema: "public",
+    };
+    const { body } = errorToResponse(pgError);
+
+    expect(body.code).toBe("FOREIGN_KEY_VIOLATION");
+    expect(body.error).toBe("Referenced resource does not exist.");
+    expect(body.details).toBeUndefined();
+
+    const serialized = JSON.stringify(body);
+    for (const leak of [
+      pgError.detail,
+      pgError.constraint,
+      pgError.message,
+      pgError.table,
+      pgError.column,
+      pgError.schema,
+    ]) {
+      expect(serialized).not.toContain(leak);
+    }
+    // Spot-check the sensitive fragments too, so the assertion cannot pass
+    // only because of a serialization quirk.
+    expect(serialized).not.toContain("wordbook_items_word_id_fkey");
+    expect(serialized).not.toContain("words");
+    expect(serialized).not.toContain("word_id");
+  });
+});
+
+describe("isConstraintViolation", () => {
+  it("detects known constraint SQLSTATEs", () => {
+    expect(isConstraintViolation({ code: "23503" })).toBe(true);
+    expect(isConstraintViolation({ code: "23505" })).toBe(true);
+    expect(isConstraintViolation({ code: "23502" })).toBe(true);
+    expect(isConstraintViolation({ code: "23514" })).toBe(true);
+    expect(isConstraintViolation({ code: "22P02" })).toBe(true);
+  });
+
+  it("returns false for everything else", () => {
+    expect(isConstraintViolation({ code: "42501" })).toBe(false);
+    expect(isConstraintViolation({ code: "08006" })).toBe(false);
+    expect(isConstraintViolation({ code: "99999" })).toBe(false);
+    expect(isConstraintViolation({})).toBe(false);
+    expect(isConstraintViolation({ code: "" })).toBe(false);
+    expect(isConstraintViolation({ code: 23503 })).toBe(false);
+    expect(isConstraintViolation(null)).toBe(false);
+    expect(isConstraintViolation(undefined)).toBe(false);
+    expect(isConstraintViolation("23503")).toBe(false);
+    expect(isConstraintViolation(new ValidationError("x"))).toBe(false);
   });
 });

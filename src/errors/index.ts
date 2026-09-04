@@ -114,11 +114,100 @@ export function errorToResponse(error: unknown): {
     };
   }
 
+  // pg constraint / invalid-input errors — caused by client input, not by the
+  // infrastructure. Must stay AFTER isDbConnectionError so a connection-state
+  // SQLSTATE is never reinterpreted as a client error.
+  const constraint = toConstraintViolationResponse(error);
+  if (constraint) {
+    return constraint;
+  }
+
   // Unknown error — don't leak internals
   return {
     status: 500,
     body: { error: "Internal server error", code: "INTERNAL" },
   };
+}
+
+/**
+ * SQLSTATE → HTTP mapping for constraint violations and invalid input.
+ *
+ * These are all caused by user-supplied data reaching the database, so they are
+ * reported as 4xx with a fixed, user-safe message. Nothing that Postgres
+ * reports (`detail`, `constraint`, `table`, `column`, raw `message`) is ever
+ * copied into the response body.
+ *
+ * NOTE: 42501 (insufficient_privilege / RLS violation) is deliberately absent.
+ * RLS failures are security-relevant and must keep surfacing as 500 until they
+ * are handled explicitly by the owning route.
+ */
+const CONSTRAINT_VIOLATION_MAP: Record<
+  string,
+  { status: number; code: string; error: string }
+> = {
+  // foreign_key_violation — referenced row does not exist
+  "23503": {
+    status: 422,
+    code: "FOREIGN_KEY_VIOLATION",
+    error: "Referenced resource does not exist.",
+  },
+  // unique_violation — duplicate / already-present row
+  "23505": {
+    status: 409,
+    code: "CONFLICT",
+    error: "Resource already exists.",
+  },
+  // not_null_violation — required field missing
+  "23502": {
+    status: 400,
+    code: "NOT_NULL_VIOLATION",
+    error: "Required field is missing.",
+  },
+  // check_violation — value rejected by a CHECK constraint
+  "23514": {
+    status: 400,
+    code: "CHECK_VIOLATION",
+    error: "Value is not allowed.",
+  },
+  // invalid_text_representation — e.g. malformed uuid / bad enum literal
+  "22P02": {
+    status: 400,
+    code: "INVALID_INPUT",
+    error: "Invalid input format.",
+  },
+};
+
+/** True when the error is a database constraint / invalid-input violation. */
+export function isConstraintViolation(error: unknown): boolean {
+  return getConstraintViolationSpec(error) !== null;
+}
+
+/**
+ * Build the HTTP response for a constraint violation, or null when the error is
+ * not one. Response body never contains database internals.
+ */
+function toConstraintViolationResponse(error: unknown): {
+  status: number;
+  body: { error: string; code: string; details?: unknown };
+} | null {
+  const spec = getConstraintViolationSpec(error);
+  if (!spec) return null;
+  return { status: spec.status, body: { error: spec.error, code: spec.code } };
+}
+
+/** Look up the mapping entry for the error's SQLSTATE, if any. */
+function getConstraintViolationSpec(
+  error: unknown,
+): { status: number; code: string; error: string } | null {
+  if (typeof error !== "object" || error === null) return null;
+  const code = (error as Record<string, unknown>).code;
+  if (typeof code !== "string" || code.length === 0) return null;
+  // Own-property check: a plain lookup would resolve inherited Object.prototype
+  // keys ("constructor", "toString", "__proto__", ...) and produce a malformed
+  // response instead of falling through to the 500 branch.
+  return Object.hasOwn(CONSTRAINT_VIOLATION_MAP, code)
+    ? CONSTRAINT_VIOLATION_MAP[code]
+    : null;
 }
 
 /** SQLSTATE codes and errno patterns indicating connection failures. */
