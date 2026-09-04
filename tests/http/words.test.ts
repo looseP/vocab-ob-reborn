@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createApp } from "@/http/server";
 import { Word } from "@/domain/word.entity";
 import type { WordRow } from "@/domain";
@@ -90,6 +90,34 @@ const WORD_ROW: WordRow = {
   is_deleted: false,
   created_at: "2026-07-13T00:00:00.000Z",
   updated_at: "2026-07-13T00:00:00.000Z",
+  collocations: [
+    {
+      phrase: "abound in/with",
+      gloss: "充满",
+      tone: "neutral",
+      example: "The region abounds in coal.",
+      exampleTranslation: "该地区盛产煤炭。",
+      provenance: { source: "dictionary", dictionaryName: "Datamuse" },
+    },
+  ],
+  corpus_items: [
+    {
+      text: "Opportunities abound for those who persist.",
+      translation: "坚持者机会遍地。",
+      source: "llm",
+    },
+  ],
+  synonym_items: [
+    {
+      word: "teem",
+      semanticDiff: "teem 强调密集涌动，abound 强调数量充足",
+      tone: "neutral",
+      usage: "teem with fish",
+      delta: "teem 更生动，abound 更中性",
+      object: "多用于生物/事物",
+    },
+  ],
+  antonym_items: [{ word: "lack", semanticDiff: "lack 表示缺乏", tone: "neutral", usage: "lack resources", delta: "反义", object: "通用" }],
 };
 
 // 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -154,12 +182,61 @@ describe("GET /api/words/:slug", () => {
       prototype_text: null,
       examples: [{ text: "Fish abound in the lake." }],
       metadata: { word_freq: "C1", semantic_field: "quantity" },
+      l2_content: {
+        collocations: [
+          {
+            phrase: "abound in/with",
+            gloss: "充满",
+            tone: "neutral",
+            example: "The region abounds in coal.",
+            exampleTranslation: "该地区盛产煤炭。",
+            provenance: { source: "dictionary", dictionaryName: "Datamuse" },
+          },
+        ],
+        corpus_items: [
+          {
+            text: "Opportunities abound for those who persist.",
+            translation: "坚持者机会遍地。",
+            source: "llm",
+          },
+        ],
+        synonym_items: [
+          {
+            word: "teem",
+            semanticDiff: "teem 强调密集涌动，abound 强调数量充足",
+            tone: "neutral",
+            usage: "teem with fish",
+            delta: "teem 更生动，abound 更中性",
+            object: "多用于生物/事物",
+          },
+        ],
+        antonym_items: [{ word: "lack", semanticDiff: "lack 表示缺乏", tone: "neutral", usage: "lack resources", delta: "反义", object: "通用" }],
+      },
     });
+    // v1 溯源字段必须原样透传（溯源徽标依赖），不得被契约剥离
+    expect(rawBody.l2_content.collocations[0]).toHaveProperty("provenance");
     expect(rawBody).not.toHaveProperty("row");
     expect(rawBody).not.toHaveProperty("content_hash");
     expect(rawBody).not.toHaveProperty("source_path");
     expect(rawBody).not.toHaveProperty("is_deleted");
     expect(services.words.getWordBySlug).toHaveBeenCalledWith("abound");
+  });
+
+  it("returns empty l2_content arrays when the row omits the JSONB caches", async () => {
+    const services = makeMockServices();
+    services.words.getWordBySlug = vi
+      .fn()
+      .mockResolvedValue({ word: new Word({ ...WORD_ROW, collocations: undefined, corpus_items: undefined, synonym_items: undefined, antonym_items: undefined }) });
+    const app = createApp(services);
+    const res = await app.request("/api/words/abound", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = wordDetailResponseSchema.parse(await res.json());
+    expect(body.l2_content).toEqual({
+      collocations: [],
+      corpus_items: [],
+      synonym_items: [],
+      antonym_items: [],
+    });
   });
 
   it("returns 404 when not found", async () => {

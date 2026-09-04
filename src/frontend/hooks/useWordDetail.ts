@@ -1,6 +1,50 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/frontend/api/client";
 
+/** L2 内容条目的溯源信息（v1 wrapper passthrough，可能缺省）。 */
+export interface L2Provenance {
+  source?: string;
+  dictionaryName?: string;
+  [key: string]: unknown;
+}
+
+export interface L2CollocationItem {
+  phrase: string;
+  gloss: string;
+  tone: "formal" | "neutral" | "informal";
+  example: string;
+  exampleTranslation: string;
+  provenance?: L2Provenance;
+  [key: string]: unknown;
+}
+
+export interface L2CorpusItem {
+  text: string;
+  translation: string;
+  source: string;
+  provenance?: L2Provenance;
+  [key: string]: unknown;
+}
+
+export interface L2DiscriminationItem {
+  word: string;
+  semanticDiff: string;
+  tone: "formal" | "neutral" | "informal";
+  usage: string;
+  delta: string;
+  object: string;
+  provenance?: L2Provenance;
+  [key: string]: unknown;
+}
+
+/** L2 enrichment 展示结构（来自 word detail 的 l2_content，四数组恒存在）。 */
+export interface WordDetailL2Content {
+  collocations: L2CollocationItem[];
+  corpus_items: L2CorpusItem[];
+  synonym_items: L2DiscriminationItem[];
+  antonym_items: L2DiscriminationItem[];
+}
+
 export interface WordDetail {
   id: string;
   slug: string;
@@ -15,6 +59,7 @@ export interface WordDetail {
   examples: Array<{ text: string; translation?: string }>;
   prototype_text?: string | null;
   aliases: string[];
+  l2_content?: WordDetailL2Content | null;
   metadata?: {
     morphology_prefix?: string;
     morphology_root?: string;

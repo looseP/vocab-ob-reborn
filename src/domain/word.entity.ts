@@ -5,7 +5,12 @@
  * and content hash comparison. Zero DB/framework dependencies.
  */
 
-import type { WordDetail, WordRow } from "./index";
+import type { Json, WordDetail, WordRow } from "./index";
+
+/** L2 JSONB 缓存列 → 数组（列恒为 JSON 数组；对非数组脏值/缺省兜底为空数组）。 */
+function l2CacheArray(value: Json | undefined): Json[] {
+  return Array.isArray(value) ? value : [];
+}
 
 export class Word {
   constructor(private readonly row: WordRow) {}
@@ -36,6 +41,12 @@ export class Word {
       examples: this.row.examples,
       prototype_text: this.row.prototype_text,
       metadata: this.row.metadata,
+      l2_content: {
+        collocations: l2CacheArray(this.row.collocations),
+        corpus_items: l2CacheArray(this.row.corpus_items),
+        synonym_items: l2CacheArray(this.row.synonym_items),
+        antonym_items: l2CacheArray(this.row.antonym_items),
+      },
     };
   }
 

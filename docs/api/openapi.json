@@ -2686,6 +2686,161 @@
                     },
                     "metadata": {
                       "$ref": "#/components/schemas/JsonValue"
+                    },
+                    "l2_content": {
+                      "type": "object",
+                      "properties": {
+                        "collocations": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "phrase": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "gloss": {
+                                "type": "string"
+                              },
+                              "tone": {
+                                "type": "string",
+                                "enum": [
+                                  "formal",
+                                  "neutral",
+                                  "informal"
+                                ]
+                              },
+                              "example": {
+                                "type": "string"
+                              },
+                              "exampleTranslation": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "phrase",
+                              "gloss",
+                              "tone",
+                              "example",
+                              "exampleTranslation"
+                            ],
+                            "additionalProperties": {}
+                          }
+                        },
+                        "corpus_items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "text": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "translation": {
+                                "type": "string"
+                              },
+                              "source": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "text",
+                              "translation",
+                              "source"
+                            ],
+                            "additionalProperties": {}
+                          }
+                        },
+                        "synonym_items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "word": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "semanticDiff": {
+                                "type": "string"
+                              },
+                              "tone": {
+                                "type": "string",
+                                "enum": [
+                                  "formal",
+                                  "neutral",
+                                  "informal"
+                                ]
+                              },
+                              "usage": {
+                                "type": "string"
+                              },
+                              "delta": {
+                                "type": "string"
+                              },
+                              "object": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "word",
+                              "semanticDiff",
+                              "tone",
+                              "usage",
+                              "delta",
+                              "object"
+                            ],
+                            "additionalProperties": {}
+                          }
+                        },
+                        "antonym_items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "word": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "semanticDiff": {
+                                "type": "string"
+                              },
+                              "tone": {
+                                "type": "string",
+                                "enum": [
+                                  "formal",
+                                  "neutral",
+                                  "informal"
+                                ]
+                              },
+                              "usage": {
+                                "type": "string"
+                              },
+                              "delta": {
+                                "type": "string"
+                              },
+                              "object": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "word",
+                              "semanticDiff",
+                              "tone",
+                              "usage",
+                              "delta",
+                              "object"
+                            ],
+                            "additionalProperties": {}
+                          }
+                        }
+                      },
+                      "required": [
+                        "collocations",
+                        "corpus_items",
+                        "synonym_items",
+                        "antonym_items"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -2702,7 +2857,8 @@
                     "body_md",
                     "examples",
                     "prototype_text",
-                    "metadata"
+                    "metadata",
+                    "l2_content"
                   ],
                   "additionalProperties": false
                 }

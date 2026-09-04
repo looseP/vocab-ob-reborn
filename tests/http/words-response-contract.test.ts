@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   wordDetailResponseSchema,
   wordListResponseSchema,
@@ -34,14 +34,67 @@ describe("Words response contracts", () => {
       body_md: "# abound",
       prototype_text: null,
       examples: [{ text: "Fish abound in the lake." }],
+      l2_content: {
+        collocations: [
+          {
+            phrase: "abound in/with",
+            gloss: "充满",
+            tone: "neutral" as const,
+            example: "The region abounds in coal.",
+            exampleTranslation: "该地区盛产煤炭。",
+            provenance: { source: "dictionary", dictionaryName: "Datamuse" },
+          },
+        ],
+        corpus_items: [],
+        synonym_items: [],
+        antonym_items: [],
+      },
     };
 
-    expect(wordDetailResponseSchema.parse(detail)).toEqual(detail);
+    const parsed = wordDetailResponseSchema.parse(detail);
+    expect(parsed).toEqual(detail);
+    // v1 溯源字段（provenance/evidence）必须 passthrough 保留
+    expect((parsed.l2_content.collocations[0] as { provenance?: unknown }).provenance).toEqual({
+      source: "dictionary",
+      dictionaryName: "Datamuse",
+    });
     expect(() => wordDetailResponseSchema.parse({ ...detail, aliases: [123] })).toThrow();
     expect(() => wordDetailResponseSchema.parse({ ...detail, row: detail })).toThrow();
     expect(() => wordDetailResponseSchema.parse({ ...detail, content_hash: "secret" })).toThrow();
     const { examples: _examples, ...missing } = detail;
     expect(() => wordDetailResponseSchema.parse(missing)).toThrow();
+  });
+
+  it("requires l2_content on WordDetail and validates item shapes", () => {
+    const base = {
+      ...summary,
+      aliases: [],
+      definition_md: "x",
+      body_md: "y",
+      prototype_text: null,
+      examples: [],
+    };
+    // 缺少 l2_content → 400 语义（契约拒绝）
+    expect(() => wordDetailResponseSchema.parse(base)).toThrow();
+    // 搭配条目缺必填字段（phrase）→ 拒绝
+    expect(() =>
+      wordDetailResponseSchema.parse({
+        ...base,
+        l2_content: { collocations: [{ gloss: "缺 phrase" }], corpus_items: [], synonym_items: [], antonym_items: [] },
+      }),
+    ).toThrow();
+    // 辨析条目 tone 非法 → 拒绝
+    expect(() =>
+      wordDetailResponseSchema.parse({
+        ...base,
+        l2_content: {
+          collocations: [],
+          corpus_items: [],
+          synonym_items: [{ word: "teem", semanticDiff: "d", tone: "loud", usage: "u", delta: "δ", object: "o" }],
+          antonym_items: [],
+        },
+      }),
+    ).toThrow();
   });
 
   it("parses the exact listWords paginated response", () => {

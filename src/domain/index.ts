@@ -136,6 +136,11 @@ export interface WordRow {
   is_deleted: boolean;
   created_at: string;
   updated_at: string;
+  /** L2 enrichment JSONB caches（NOT NULL DEFAULT '[]'，SELECT * 必返；旧测试 mock 可省略）。 */
+  collocations?: Json;
+  corpus_items?: Json;
+  synonym_items?: Json;
+  antonym_items?: Json;
 }
 
 export interface WordSummary {
@@ -150,6 +155,14 @@ export interface WordSummary {
   metadata: Json;
 }
 
+/** L2 enrichment 内容展示结构（来自 words 表四列 JSONB 缓存，恒为对象，缺省为空数组）。 */
+export interface WordDetailL2Content {
+  collocations: Json[];
+  corpus_items: Json[];
+  synonym_items: Json[];
+  antonym_items: Json[];
+}
+
 /** Public wire-safe word detail. Internal ingestion and lifecycle fields are excluded. */
 export interface WordDetail extends WordSummary {
   aliases: string[];
@@ -157,6 +170,7 @@ export interface WordDetail extends WordSummary {
   body_md: string;
   examples: Json;
   prototype_text: string | null;
+  l2_content: WordDetailL2Content;
 }
 
 export interface WordFilters {

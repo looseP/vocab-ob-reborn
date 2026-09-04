@@ -2309,6 +2309,47 @@ export interface operations {
                         examples: components["schemas"]["JsonValue"];
                         prototype_text: string | null;
                         metadata: components["schemas"]["JsonValue"];
+                        l2_content: {
+                            collocations: ({
+                                phrase: string;
+                                gloss: string;
+                                /** @enum {string} */
+                                tone: "formal" | "neutral" | "informal";
+                                example: string;
+                                exampleTranslation: string;
+                            } & {
+                                [key: string]: unknown;
+                            })[];
+                            corpus_items: ({
+                                text: string;
+                                translation: string;
+                                source: string;
+                            } & {
+                                [key: string]: unknown;
+                            })[];
+                            synonym_items: ({
+                                word: string;
+                                semanticDiff: string;
+                                /** @enum {string} */
+                                tone: "formal" | "neutral" | "informal";
+                                usage: string;
+                                delta: string;
+                                object: string;
+                            } & {
+                                [key: string]: unknown;
+                            })[];
+                            antonym_items: ({
+                                word: string;
+                                semanticDiff: string;
+                                /** @enum {string} */
+                                tone: "formal" | "neutral" | "informal";
+                                usage: string;
+                                delta: string;
+                                object: string;
+                            } & {
+                                [key: string]: unknown;
+                            })[];
+                        };
                     };
                 };
             };

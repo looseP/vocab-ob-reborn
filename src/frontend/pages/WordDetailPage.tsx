@@ -7,6 +7,7 @@ import { Spinner } from "@/frontend/components/ui/Spinner";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
+import { WordL2Content } from "@/frontend/components/words/WordL2Content";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
 import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
 import { deriveWordCollections } from "@/frontend/utils/plazaSlugs";
@@ -82,6 +83,13 @@ export function WordDetailPage() {
   // aliases 列的 DB 默认值是 ['']（含一个空串），必须过滤掉，否则 stub 词会被
   // 误判为“有内容”，并渲染出空的别名区块。
   const aliases = (word.aliases ?? []).filter((alias) => alias.trim().length > 0);
+  // L2 enrichment（搭配/语料/辨析）任一存在也算有内容，避免 stub 空态与 L2 区块同时出现。
+  const l2 = word.l2_content ?? null;
+  const hasL2Content =
+    (l2?.collocations ?? []).length > 0 ||
+    (l2?.corpus_items ?? []).length > 0 ||
+    (l2?.synonym_items ?? []).length > 0 ||
+    (l2?.antonym_items ?? []).length > 0;
 
   // Stub words (e.g. created via batch import with only a lemma) have no
   // displayable content — render an explicit empty state instead of a bare page.
@@ -95,7 +103,8 @@ export function WordDetailPage() {
     (meta.semantic_chain ?? "").trim().length > 0 ||
     (meta.etymology_narrative ?? "").trim().length > 0 ||
     (word.examples ?? []).length > 0 ||
-    aliases.length > 0;
+    aliases.length > 0 ||
+    hasL2Content;
 
   return (
     <div className="space-y-6">
@@ -254,7 +263,7 @@ export function WordDetailPage() {
         </SectionCard>
       )}
 
-      {word.examples && word.examples.length > 0 && (
+      {(word.examples && word.examples.length > 0) && (
         <SectionCard title="例句">
           <div className="space-y-3">
             {word.examples.map((ex, i) => (
@@ -268,6 +277,9 @@ export function WordDetailPage() {
           </div>
         </SectionCard>
       )}
+
+      {/* L2 enrichment：搭配 / 语料例句 / 同义辨析 / 反义（仅已扩展词渲染） */}
+      <WordL2Content l2={l2} />
 
       {aliases.length > 0 && (
         <SectionCard title="别名">

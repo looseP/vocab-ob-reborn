@@ -1,6 +1,11 @@
 import { z } from "zod";
-import type { PaginatedResult, WordDetail, WordSummary } from "../domain";
+import type { PaginatedResult, WordDetail, WordDetailL2Content, WordSummary } from "../domain";
 import { jsonValueSchema } from "./l3-response-contract";
+import {
+  l2CollocationItemSchema,
+  l2CorpusItemSchema,
+  l2SynonymItemSchema,
+} from "@/schemas/service";
 
 export const wordSummaryResponseSchema: z.ZodType<WordSummary> = z.object({
   id: z.string(),
@@ -13,6 +18,19 @@ export const wordSummaryResponseSchema: z.ZodType<WordSummary> = z.object({
   short_definition: z.string().nullable(),
   metadata: jsonValueSchema,
 }).strict();
+
+/**
+ * L2 enrichment 展示项。缓存条目可能是 v1 形态（带 provenance/evidence 溯源），
+ * passthrough() 保留这些字段用于前端溯源徽标；沿用 service 层字段合同做结构校验。
+ * cast 桥接：zod passthrough 的 unknown 索引签名与 Json 静态类型之间的差异由
+ * 运行时 item schema 校验兜底。
+ */
+const wordDetailL2ContentSchema = z.object({
+  collocations: z.array(l2CollocationItemSchema.passthrough()),
+  corpus_items: z.array(l2CorpusItemSchema.passthrough()),
+  synonym_items: z.array(l2SynonymItemSchema.passthrough()),
+  antonym_items: z.array(l2SynonymItemSchema.passthrough()),
+}).strict() as z.ZodType<WordDetailL2Content>;
 
 export const wordDetailResponseSchema: z.ZodType<WordDetail> = z.object({
   id: z.string(),
@@ -29,6 +47,7 @@ export const wordDetailResponseSchema: z.ZodType<WordDetail> = z.object({
   examples: jsonValueSchema,
   prototype_text: z.string().nullable(),
   metadata: jsonValueSchema,
+  l2_content: wordDetailL2ContentSchema,
 }).strict();
 
 export const wordListResponseSchema: z.ZodType<PaginatedResult<WordSummary>> = z.object({
