@@ -42,9 +42,24 @@ function errorMessage(err: unknown): string {
 /**
  * L2 扩展内容管理面板（Phase G 管理套件）：
  * 行级列出生效/退休内容，支持停用（转存档）与硬删；所有写操作触发缓存重算。
+ * 可嵌入 Composer 的 Agent 候选 tab（defaultOpen + fieldFilter 跟随字段 tab），
+ * refreshKey 变化时重新拉取（采纳候选后同步生效内容列表）。
  */
-export function WordL2Manager({ slug, onChanged }: { slug: string; onChanged: () => void }) {
-  const [open, setOpen] = useState(false);
+export function WordL2Manager({
+  slug,
+  onChanged,
+  fieldFilter,
+  defaultOpen = false,
+  refreshKey = 0,
+}: {
+  slug: string;
+  onChanged: () => void;
+  /** 提供时按字段筛选行（跟随 Composer 的字段 tab）；缺省显示全部。 */
+  fieldFilter?: string;
+  defaultOpen?: boolean;
+  refreshKey?: number;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const [rows, setRows] = useState<{ active: ContentRow[]; retired: ContentRow[] } | null>(null);
   const [showRetired, setShowRetired] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -67,7 +82,12 @@ export function WordL2Manager({ slug, onChanged }: { slug: string; onChanged: ()
 
   useEffect(() => {
     if (open) void load();
-  }, [open, load]);
+  }, [open, load, refreshKey]);
+
+  const visibleActive = rows ? rows.active.filter((r) => !fieldFilter || r.field === fieldFilter) : [];
+  const visibleRetired = rows ? rows.retired.filter((r) => !fieldFilter || r.field === fieldFilter) : [];
+  const totalActive = rows?.active.length ?? 0;
+  const totalRetired = rows?.retired.length ?? 0;
 
   const deactivate = async (row: ContentRow) => {
     setBusy(row.id);
@@ -114,7 +134,7 @@ export function WordL2Manager({ slug, onChanged }: { slug: string; onChanged: ()
           管理生效内容
           {rows && (
             <span className="text-xs text-[var(--color-ink-soft)]">
-              （生效 {rows.active.length} 条{rows.retired.length > 0 ? ` · 存档 ${rows.retired.length} 条` : ""}）
+              （生效 {visibleActive.length} 条 · 存档 {visibleRetired.length} 条{fieldFilter && (totalActive !== visibleActive.length || totalRetired !== visibleRetired.length) ? ` · 全部生效 ${totalActive}` : ""}）
             </span>
           )}
         </span>
@@ -133,12 +153,14 @@ export function WordL2Manager({ slug, onChanged }: { slug: string; onChanged: ()
               <Spinner />
             </div>
           )}
-          {rows !== null && rows.active.length === 0 && (
+          {rows !== null && visibleActive.length === 0 && (
             <p className="rounded-lg border border-dashed border-[var(--color-border)] px-3 py-4 text-center text-sm text-[var(--color-ink-soft)]">
-              暂无生效内容行——采纳候选或确认草稿后会出现在这里。
+              {fieldFilter
+                ? `「${FIELD_LABELS[fieldFilter] ?? fieldFilter}」暂无生效内容行${totalActive > 0 ? `（其他字段共 ${totalActive} 条，切换字段查看）` : ""}。`
+                : "暂无生效内容行——采纳候选或确认草稿后会出现在这里。"}
             </p>
           )}
-          {rows?.active.map((row) => (
+          {visibleActive.map((row) => (
             <div key={row.id} className="space-y-1.5 rounded-lg border border-[var(--color-border)] p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
@@ -182,17 +204,17 @@ export function WordL2Manager({ slug, onChanged }: { slug: string; onChanged: ()
               </div>
             </div>
           ))}
-          {rows !== null && rows.retired.length > 0 && (
+          {visibleRetired.length > 0 && (
             <div className="space-y-2">
               <button
                 type="button"
                 className="text-xs text-[var(--color-ink-soft)] underline transition-colors hover:text-[var(--color-ink)]"
                 onClick={() => setShowRetired((v) => !v)}
               >
-                {showRetired ? "收起存档" : `展开存档（${rows.retired.length} 条已被替换/停用的内容）`}
+                {showRetired ? "收起存档" : `展开存档（${visibleRetired.length} 条已被替换/停用的内容）`}
               </button>
               {showRetired &&
-                rows.retired.map((row) => (
+                visibleRetired.map((row) => (
                   <div
                     key={row.id}
                     className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-[var(--color-border)] p-2.5 opacity-75"

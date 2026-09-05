@@ -224,8 +224,11 @@ describe("WordL2Composer", () => {
         },
       ],
     });
+    // 切到 Agent 候选 tab → 同面板的管理区拉取生效内容行
+    apiFetchMock.mockResolvedValueOnce({ active: [], retired: [] });
     apiFetchMock.mockResolvedValueOnce({ ok: true, itemCount: 1 }); // 采纳
-    apiFetchMock.mockResolvedValueOnce({ items: [] }); // 采纳后刷新
+    apiFetchMock.mockResolvedValueOnce({ items: [] }); // 采纳后刷新候选
+    apiFetchMock.mockResolvedValueOnce({ active: [], retired: [] }); // 管理区刷新
     const onConfirmed = vi.fn();
 
     const container = render(
@@ -238,7 +241,7 @@ describe("WordL2Composer", () => {
     // Agent 候选是独立顶层视图：默认生成视图下不渲染候选条目
     expect(container.textContent).toContain("Agent 候选");
     expect(container.querySelectorAll("input[type='checkbox']")).toHaveLength(0);
-    // 切到 Agent 候选 tab → 候选区渲染 + 默认全选
+    // 切到 Agent 候选 tab → 候选区渲染 + 默认全选 + 管理区同屏
     const agentTab = Array.from(container.querySelectorAll("button")).find(
       (b) => b.textContent?.includes("Agent 候选") && !b.textContent?.includes("扩展内容"),
     );
@@ -246,81 +249,29 @@ describe("WordL2Composer", () => {
       fireEvent.click(agentTab as HTMLButtonElement);
     });
     expect(container.textContent).toContain("external_chat");
+    expect(container.textContent).toContain("管理生效内容");
     const checkboxes = Array.from(container.querySelectorAll("input[type='checkbox']"));
     expect(checkboxes).toHaveLength(2);
 
-    // 取消勾选第一条 → 只采纳第二条（itemIndexes=[1]，追加模式）
+    // 取消勾选第一条 → 只采纳第二条（itemIndexes=[1]）
     act(() => {
       fireEvent.click(checkboxes[0]);
     });
     const acceptButton = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent?.includes("追加（1）"),
+      (b) => b.textContent?.includes("采纳（1）"),
     );
     expect(acceptButton).toBeDefined();
     await act(async () => {
       fireEvent.click(acceptButton as HTMLButtonElement);
     });
 
-    const [acceptPath, acceptInit] = apiFetchMock.mock.calls[1];
+    const [acceptPath, acceptInit] = apiFetchMock.mock.calls[2];
     expect(acceptPath).toBe("/l2/abound/candidates/cand-1/accept");
-    expect(JSON.parse(String(acceptInit?.body ?? "{}"))).toEqual({ itemIndexes: [1], mode: "append" });
-    // 采纳成功 → 通知父级刷新详情 + 重新拉取候选
+    expect(JSON.parse(String(acceptInit?.body ?? "{}"))).toEqual({ itemIndexes: [1] });
+    // 采纳成功 → 通知父级刷新详情 + 重拉候选 + 管理区刷新
     expect(onConfirmed).toHaveBeenCalledTimes(1);
-    expect(apiFetchMock.mock.calls[2][0]).toBe("/l2/abound/candidates");
-  });
-
-  it("replace mode confirms and forwards mode=replace", async () => {
-    apiFetchMock.mockResolvedValueOnce({
-      items: [
-        {
-          id: "cand-3",
-          field: "collocation",
-          itemCount: 1,
-          items: [{ phrase: "abound in", gloss: "充满", tone: "neutral", example: "e1", exampleTranslation: "t1" }],
-          source: "external_chat",
-          createdAt: "2026-09-05T00:00:00.000Z",
-        },
-      ],
-    });
-    apiFetchMock.mockResolvedValueOnce({ ok: true, itemCount: 1, replacedCount: 2 }); // 替换采纳
-    apiFetchMock.mockResolvedValueOnce({ items: [] }); // 替换后刷新
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-
-    const container = render(
-      createElement(WordL2Composer, { slug: "abound", onConfirmed: vi.fn() }),
-    );
-    await act(async () => {
-      fireEvent.click(container.querySelector("button") as HTMLButtonElement);
-    });
-    const agentTab = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent?.includes("Agent 候选") && !b.textContent?.includes("扩展内容"),
-    );
-    await act(async () => {
-      fireEvent.click(agentTab as HTMLButtonElement);
-    });
-
-    const replaceButton = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "替换",
-    );
-    expect(replaceButton).toBeDefined();
-    await act(async () => {
-      fireEvent.click(replaceButton as HTMLButtonElement);
-    });
-
-    // 替换前先确认（警示停用旧行）
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    const [, replaceInit] = apiFetchMock.mock.calls[1];
-    expect(JSON.parse(String(replaceInit?.body ?? "{}"))).toEqual({ mode: "replace" });
-
-    // confirm 拒绝时不发请求
-    confirmSpy.mockReturnValue(false);
-    apiFetchMock.mockClear();
-    apiFetchMock.mockResolvedValueOnce({ items: [] });
-    await act(async () => {
-      fireEvent.click(replaceButton as HTMLButtonElement);
-    });
-    expect(apiFetchMock.mock.calls.every(([path]) => String(path).includes("/candidates"))).toBe(true);
-    confirmSpy.mockRestore();
+    expect(apiFetchMock.mock.calls[3][0]).toBe("/l2/abound/candidates");
+    expect(apiFetchMock.mock.calls[4][0]).toBe("/l2/abound/l2-rows");
   });
 
   it("rejects an Agent candidate via the ignore button", async () => {
@@ -336,8 +287,9 @@ describe("WordL2Composer", () => {
         },
       ],
     });
-    apiFetchMock.mockResolvedValueOnce({ ok: true }); // 拒绝
-    apiFetchMock.mockResolvedValueOnce({ items: [] }); // 拒绝后刷新
+    apiFetchMock.mockResolvedValueOnce({ active: [], retired: [] }); // 切 agent tab → 管理区拉取
+    apiFetchMock.mockResolvedValueOnce({ ok: true }); // 驳回
+    apiFetchMock.mockResolvedValueOnce({ items: [] }); // 驳回后刷新候选
     const onConfirmed = vi.fn();
 
     const container = render(
@@ -362,20 +314,21 @@ describe("WordL2Composer", () => {
     });
 
     const rejectButton = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent?.includes("忽略"),
+      (b) => b.textContent?.includes("驳回"),
     );
     expect(rejectButton).toBeDefined();
     await act(async () => {
       fireEvent.click(rejectButton as HTMLButtonElement);
     });
 
-    expect(apiFetchMock.mock.calls[1][0]).toBe("/l2/abound/candidates/cand-2/reject");
-    // 拒绝不触发详情刷新
+    expect(apiFetchMock.mock.calls[2][0]).toBe("/l2/abound/candidates/cand-2/reject");
+    // 驳回不触发详情刷新（管理区也不刷新——行未变）
     expect(onConfirmed).not.toHaveBeenCalled();
   });
 
   it("shows an empty inbox hint when no Agent candidates exist", async () => {
     apiFetchMock.mockResolvedValueOnce({ items: [] });
+    apiFetchMock.mockResolvedValueOnce({ active: [], retired: [] }); // 管理区拉取
     const container = render(
       createElement(WordL2Composer, { slug: "abound", onConfirmed: vi.fn() }),
     );

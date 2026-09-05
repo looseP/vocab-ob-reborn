@@ -10,7 +10,6 @@ import { Markdown } from "@/frontend/components/ui/Markdown";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { WordL2Content, ProvenanceBadge } from "@/frontend/components/words/WordL2Content";
 import { WordL2Composer } from "@/frontend/components/words/WordL2Composer";
-import { WordL2Manager } from "@/frontend/components/words/WordL2Manager";
 import { PromoteL2Button } from "@/frontend/components/words/PromoteL2Button";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
 import { SpeakButton } from "@/frontend/components/words/SpeakButton";
@@ -423,10 +422,10 @@ export function WordDetailPage() {
         </SectionCard>
       )}
 
-      {/* L2 enrichment：搭配 / 同义辨析 / 反义（语料例句已并入上方统一例句池）+ 行级内容管理 */}
-      <div id="sec-l2" className="scroll-mt-32 space-y-4">
+      {/* L2 enrichment：搭配 / 同义辨析 / 反义（语料例句已并入上方统一例句池）；
+          生效内容的管理并入下方 Composer 的 Agent 候选 tab */}
+      <div id="sec-l2" className="scroll-mt-32">
         <WordL2Content l2={l2} exclude={["corpus_items"]} />
-        <WordL2Manager slug={word.slug} onChanged={refresh} />
       </div>
 
       {aliases.length > 0 && (

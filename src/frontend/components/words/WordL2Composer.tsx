@@ -3,6 +3,7 @@ import { Sparkles, ClipboardPaste, Copy, Check, Inbox } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Spinner } from "@/frontend/components/ui/Spinner";
+import { WordL2Manager } from "@/frontend/components/words/WordL2Manager";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { STYLE_PROFILES } from "@/domain/l2-style-profile";
@@ -123,6 +124,9 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
   const [candSelected, setCandSelected] = useState<Record<string, Set<number>>>({});
   const [candBusy, setCandBusy] = useState<string | null>(null);
   const [candError, setCandError] = useState<string | null>(null);
+  // 管理区刷新信号（采纳候选后生效内容列表同步）
+  const [managerKey, setManagerKey] = useState(0);
+  const refreshRows = () => setManagerKey((k) => k + 1);
   // 顶层视图：字段 tab 只筛选"AI 生成"视图；Agent 候选是独立收件箱
   const [view, setView] = useState<"generate" | "agent">("generate");
 
@@ -168,26 +172,20 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
     });
   };
 
-  const acceptCandidate = async (cand: AgentCandidate, mode: "append" | "replace") => {
+  const acceptCandidate = async (cand: AgentCandidate) => {
     setCandBusy(cand.id);
     setCandError(null);
     try {
       const sel = candSelected[cand.id];
       const partial = sel && sel.size > 0 && sel.size < cand.items.length ? [...sel].sort((a, b) => a - b) : undefined;
-      if (mode === "replace") {
-        const fieldLabel = candidateFieldLabel(cand.field);
-        if (!window.confirm(`替换模式：将停用「${fieldLabel}」字段的现有内容（转为存档），用勾选的 ${sel?.size ?? cand.items.length} 条替代。继续？`)) {
-          setCandBusy(null);
-          return;
-        }
-      }
       await apiFetch(`/l2/${encodedSlug}/candidates/${encodeURIComponent(cand.id)}/accept`, {
         method: "POST",
-        body: JSON.stringify({ ...(partial ? { itemIndexes: partial } : {}), mode }),
+        body: JSON.stringify(partial ? { itemIndexes: partial } : {}),
         timeoutMs: 60_000,
       });
       onConfirmed(); // 内容已写入并触发软重卡，刷新词条详情
       await refreshCandidates();
+      await refreshRows(); // 同面板的生效内容列表同步刷新
     } catch (err) {
       setCandError(errorMessage(err));
     } finally {
@@ -593,20 +591,11 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
                       <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
-                          onClick={() => acceptCandidate(cand, "append")}
+                          onClick={() => acceptCandidate(cand)}
                           disabled={candBusy !== null || sel.size === 0}
                         >
                           {candBusy === cand.id ? <Spinner /> : null}
-                          追加（{sel.size}）
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => acceptCandidate(cand, "replace")}
-                          disabled={candBusy !== null || sel.size === 0}
-                          title="停用该字段现有内容，用勾选条目替代"
-                        >
-                          替换
+                          采纳（{sel.size}）
                         </Button>
                         <Button
                           size="sm"
@@ -614,13 +603,24 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
                           onClick={() => rejectCandidate(cand)}
                           disabled={candBusy !== null}
                         >
-                          忽略
+                          驳回
                         </Button>
                       </div>
                     </div>
                   );
                 })}
             </div>
+          )}
+
+          {/* 同面板内的生效内容管理（跟随字段筛选；采纳/驳回后同步刷新） */}
+          {view === "agent" && (
+            <WordL2Manager
+              slug={slug}
+              fieldFilter={field}
+              defaultOpen
+              refreshKey={managerKey}
+              onChanged={onConfirmed}
+            />
           )}
         </div>
       )}
