@@ -123,6 +123,8 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
   const [candSelected, setCandSelected] = useState<Record<string, Set<number>>>({});
   const [candBusy, setCandBusy] = useState<string | null>(null);
   const [candError, setCandError] = useState<string | null>(null);
+  // 顶层视图：字段 tab 只筛选"AI 生成"视图；Agent 候选是独立收件箱
+  const [view, setView] = useState<"generate" | "agent">("generate");
 
   const scopedProfiles = useMemo(() => {
     const scope: typeof EXAMPLE_FIELD | typeof COLLOCATION_FIELD | null =
@@ -336,12 +338,57 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
         <span className="section-title flex items-center gap-2 text-lg font-semibold text-[var(--color-ink)]">
           <Sparkles className="h-4 w-4 text-[var(--color-accent)]" />
           扩展内容（AI 生成）
+          {candidates !== null && candidates.length > 0 && (
+            <span className="rounded-full bg-[var(--color-accent)] px-2 py-0.5 text-xs font-medium text-[var(--color-accent-contrast,var(--color-surface))]">
+              Agent 候选 {candidates.length}
+            </span>
+          )}
         </span>
         <span className="text-sm text-[var(--color-ink-soft)]">{open ? "收起" : "展开"}</span>
       </button>
 
       {open && (
         <div className="mt-4 space-y-4">
+          {/* 顶层视图切换：字段 tab 只作用于"AI 生成"；Agent 候选是独立收件箱 */}
+          <div className="flex flex-wrap gap-2 border-b border-[var(--color-border)] pb-3">
+            <button
+              type="button"
+              onClick={() => setView("generate")}
+              className={`rounded-full px-3 py-1 text-sm transition-colors ${
+                view === "generate"
+                  ? "bg-[var(--color-ink)] text-[var(--color-surface)]"
+                  : "border border-[var(--color-border)] text-[var(--color-ink-soft)] hover:border-[var(--color-accent)]"
+              }`}
+            >
+              AI 生成
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("agent")}
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-sm transition-colors ${
+                view === "agent"
+                  ? "bg-[var(--color-ink)] text-[var(--color-surface)]"
+                  : "border border-[var(--color-border)] text-[var(--color-ink-soft)] hover:border-[var(--color-accent)]"
+              }`}
+            >
+              <Inbox className="h-3.5 w-3.5" />
+              Agent 候选
+              {candidates !== null && candidates.length > 0 && (
+                <span
+                  className={`rounded-full px-1.5 text-xs font-medium ${
+                    view === "agent"
+                      ? "bg-[var(--color-surface)] text-[var(--color-ink)]"
+                      : "bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]"
+                  }`}
+                >
+                  {candidates.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {view === "generate" && (
+            <>
           {/* 字段选择 */}
           <div className="flex flex-wrap gap-2">
             {FIELDS.map((f) => (
@@ -406,76 +453,6 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
             <p className="rounded-lg border border-[var(--color-accent-2)] bg-[var(--color-surface-muted)] px-3 py-2 text-sm text-[var(--color-accent-2)]">
               {error}
             </p>
-          )}
-
-          {/* Phase G：Agent 候选区——外部 Agent 经 MCP 送来的待选内容 */}
-          {candError && (
-            <p className="rounded-lg border border-[var(--color-accent-2)] bg-[var(--color-surface-muted)] px-3 py-2 text-sm text-[var(--color-accent-2)]">
-              {candError}
-            </p>
-          )}
-          {candidates !== null && candidates.length > 0 && (
-            <div className="space-y-3 rounded-lg border border-[var(--color-border)] p-3">
-              <p className="flex items-center gap-2 text-sm font-medium text-[var(--color-ink)]">
-                <Inbox className="h-4 w-4 text-[var(--color-accent)]" />
-                Agent 候选（{candidates.length}）——外部 Agent 送来的待选内容，勾选后采纳
-              </p>
-              <div className="space-y-3">
-                {candidates.map((cand) => {
-                  const cField = candidateComposerField(cand.field);
-                  const sel = candSelected[cand.id] ?? new Set<number>();
-                  return (
-                    <div key={cand.id} className="space-y-2 rounded-lg border border-[var(--color-border)] p-2">
-                      <p className="text-xs text-[var(--color-ink-soft)]">
-                        {candidateFieldLabel(cand.field)} · 来源 {cand.source} ·{" "}
-                        {new Date(cand.createdAt).toLocaleString()}
-                      </p>
-                      <div className="space-y-1">
-                        {cand.items.map((item, i) => (
-                          <label
-                            key={i}
-                            className="flex cursor-pointer items-start gap-2 rounded-lg border border-transparent p-1 transition-colors hover:border-[var(--color-border)]"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={sel.has(i)}
-                              onChange={() => toggleCandidateItem(cand.id, i)}
-                              className="mt-1"
-                            />
-                            <span className="min-w-0">
-                              <span className="block font-mono text-sm font-semibold text-[var(--color-ink)]">
-                                {itemLabel(item, cField)}
-                              </span>
-                              <span className="block text-xs text-[var(--color-ink-soft)]">
-                                {itemDetail(item, cField)}
-                              </span>
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => acceptCandidate(cand)}
-                          disabled={candBusy !== null || sel.size === 0}
-                        >
-                          {candBusy === cand.id ? <Spinner /> : null}
-                          采纳（{sel.size}）
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => rejectCandidate(cand)}
-                          disabled={candBusy !== null}
-                        >
-                          忽略
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           )}
 
           {/* 外部提示词通道 */}
@@ -547,6 +524,79 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
                   丢弃
                 </Button>
               </div>
+            </div>
+          )}
+            </>
+          )}
+
+          {view === "agent" && (
+            <div className="space-y-3">
+              {candError && (
+                <p className="rounded-lg border border-[var(--color-accent-2)] bg-[var(--color-surface-muted)] px-3 py-2 text-sm text-[var(--color-accent-2)]">
+                  {candError}
+                </p>
+              )}
+              {candidates !== null && candidates.length === 0 && (
+                <p className="rounded-lg border border-dashed border-[var(--color-border)] px-3 py-6 text-center text-sm text-[var(--color-ink-soft)]">
+                  暂无 Agent 候选——在外部 Agent 对话中调用 propose_l2_content，
+                  内容会送到这里等你勾选采纳。
+                </p>
+              )}
+              {candidates !== null &&
+                candidates.map((cand) => {
+                  const cField = candidateComposerField(cand.field);
+                  const sel = candSelected[cand.id] ?? new Set<number>();
+                  return (
+                    <div key={cand.id} className="space-y-2 rounded-lg border border-[var(--color-border)] p-3">
+                      <p className="flex items-center gap-2 text-xs text-[var(--color-ink-soft)]">
+                        <Inbox className="h-3.5 w-3.5 text-[var(--color-accent)]" />
+                        {candidateFieldLabel(cand.field)} · 来源 {cand.source} ·{" "}
+                        {new Date(cand.createdAt).toLocaleString()}
+                      </p>
+                      <div className="space-y-1">
+                        {cand.items.map((item, i) => (
+                          <label
+                            key={i}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg border border-transparent p-1 transition-colors hover:border-[var(--color-border)]"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={sel.has(i)}
+                              onChange={() => toggleCandidateItem(cand.id, i)}
+                              className="mt-1"
+                            />
+                            <span className="min-w-0">
+                              <span className="block font-mono text-sm font-semibold text-[var(--color-ink)]">
+                                {itemLabel(item, cField)}
+                              </span>
+                              <span className="block text-xs text-[var(--color-ink-soft)]">
+                                {itemDetail(item, cField)}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => acceptCandidate(cand)}
+                          disabled={candBusy !== null || sel.size === 0}
+                        >
+                          {candBusy === cand.id ? <Spinner /> : null}
+                          采纳（{sel.size}）
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => rejectCandidate(cand)}
+                          disabled={candBusy !== null}
+                        >
+                          忽略
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           )}
         </div>

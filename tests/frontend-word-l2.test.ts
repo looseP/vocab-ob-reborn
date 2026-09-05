@@ -219,8 +219,16 @@ describe("WordL2Composer", () => {
       fireEvent.click(container.querySelector("button") as HTMLButtonElement);
     });
 
-    // 候选区渲染 + 默认全选
-    expect(container.textContent).toContain("Agent 候选（1）");
+    // Agent 候选是独立顶层视图：默认生成视图下不渲染候选条目
+    expect(container.textContent).toContain("Agent 候选");
+    expect(container.querySelectorAll("input[type='checkbox']")).toHaveLength(0);
+    // 切到 Agent 候选 tab → 候选区渲染 + 默认全选
+    const agentTab = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Agent 候选") && !b.textContent?.includes("扩展内容"),
+    );
+    await act(async () => {
+      fireEvent.click(agentTab as HTMLButtonElement);
+    });
     expect(container.textContent).toContain("external_chat");
     const checkboxes = Array.from(container.querySelectorAll("input[type='checkbox']"));
     expect(checkboxes).toHaveLength(2);
@@ -268,6 +276,12 @@ describe("WordL2Composer", () => {
     await act(async () => {
       fireEvent.click(container.querySelector("button") as HTMLButtonElement);
     });
+    const agentTab = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Agent 候选") && !b.textContent?.includes("扩展内容"),
+    );
+    await act(async () => {
+      fireEvent.click(agentTab as HTMLButtonElement);
+    });
 
     const rejectButton = Array.from(container.querySelectorAll("button")).find(
       (b) => b.textContent?.includes("忽略"),
@@ -280,5 +294,22 @@ describe("WordL2Composer", () => {
     expect(apiFetchMock.mock.calls[1][0]).toBe("/l2/abound/candidates/cand-2/reject");
     // 拒绝不触发详情刷新
     expect(onConfirmed).not.toHaveBeenCalled();
+  });
+
+  it("shows an empty inbox hint when no Agent candidates exist", async () => {
+    apiFetchMock.mockResolvedValueOnce({ items: [] });
+    const container = render(
+      createElement(WordL2Composer, { slug: "abound", onConfirmed: vi.fn() }),
+    );
+    await act(async () => {
+      fireEvent.click(container.querySelector("button") as HTMLButtonElement);
+    });
+    const agentTab = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Agent 候选") && !b.textContent?.includes("扩展内容"),
+    );
+    await act(async () => {
+      fireEvent.click(agentTab as HTMLButtonElement);
+    });
+    expect(container.textContent).toContain("暂无 Agent 候选");
   });
 });
