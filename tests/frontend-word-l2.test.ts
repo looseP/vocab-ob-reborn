@@ -276,6 +276,14 @@ describe("WordL2Composer", () => {
     await act(async () => {
       fireEvent.click(container.querySelector("button") as HTMLButtonElement);
     });
+    // 候选是 synonym 字段 → 先切到「同义辨析」字段 tab（收件箱按字段筛选）
+    const synonymTab = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "同义辨析",
+    );
+    await act(async () => {
+      fireEvent.click(synonymTab as HTMLButtonElement);
+    });
+    // 再切到 Agent 候选收件箱（动作行子 tab）
     const agentTab = Array.from(container.querySelectorAll("button")).find(
       (b) => b.textContent?.includes("Agent 候选") && !b.textContent?.includes("扩展内容"),
     );
