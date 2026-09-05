@@ -634,11 +634,21 @@ export interface NewL2Content {
   source: string;
   source_ref?: string | null;
   approved_by?: string | null;
+  /** Phase G 候选池：false = Agent 提案待选（不入缓存）。缺省 true。 */
+  is_active?: boolean;
 }
 
 export interface IL2ContentRepository {
   insert(data: NewL2Content): Promise<L2ContentRow>;
   findByWord(wordId: string, field?: string): Promise<L2ContentRow[]>;
+  /** Phase G 候选池：待选提案（is_active=false）。 */
+  findCandidatesByWord(wordId: string): Promise<L2ContentRow[]>;
+  findById(id: string): Promise<L2ContentRow | null>;
+  setActive(id: string, isActive: boolean): Promise<void>;
+  /** Phase G：采纳时可选裁剪 content（按用户勾选的条目子集重写）。 */
+  setActiveAndContent(id: string, isActive: boolean, content: unknown): Promise<void>;
+  /** Phase G：拒绝候选 = 硬删。 */
+  deleteById(id: string): Promise<void>;
   softDelete(id: string): Promise<void>;
   /** Aggregate active L2 content rows into the words JSONB cache columns. */
   refreshL2Cache(wordId: string): Promise<void>;

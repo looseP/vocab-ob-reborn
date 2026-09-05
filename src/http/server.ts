@@ -25,6 +25,7 @@ import { noteRoutes } from "./routes/notes";
 import { l2Routes } from "./routes/l2";
 import { l2LlmStatusRoutes } from "./routes/l2-llm-status";
 import { l2PromotionRoutes } from "./routes/l2-promotion";
+import { l2CandidateRoutes } from "./routes/l2-candidates";
 import { l2DrillRoutes } from "./routes/l2-drill";
 import { l3Routes } from "./routes/l3";
 import { authRoutes } from "./routes/auth";
@@ -113,6 +114,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l2", l2LlmStatusRoutes(services));
   // Phase F：主动晋升入口（独立薄路由，同上）
   app.route("/api/l2", l2PromotionRoutes(services));
+  // Phase G：Agent 候选池（独立薄路由，同上）
+  app.route("/api/l2", l2CandidateRoutes(services));
   app.route("/api/l2-drill", l2DrillRoutes(services));
   app.route("/api/l3", l3Routes(services));
 

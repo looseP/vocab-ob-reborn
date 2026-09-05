@@ -17,6 +17,18 @@ import { createRepositories } from "@/index";
 
 beforeEach(() => mock.reset());
 
+function progressRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "p1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+    state: "review", stability: 1.5, difficulty: 0.3, retrievability: 0.9,
+    desired_retention: 0.9, due_at: "2026-01-01T00:00:00Z", last_reviewed_at: null,
+    last_rating: "good", review_count: 3, lapse_count: 0, again_count: 0,
+    hard_count: 0, good_count: 3, easy_count: 0, interval_days: 7,
+    scheduler_payload: {},
+    ...overrides,
+  };
+}
+
 function dueCardRow(overrides: Record<string, unknown> = {}) {
   return {
     id: "p1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
@@ -342,6 +354,28 @@ describe("NoteRepository 鈥?listByUser", () => {
     mock.setRows([]);
     const repos = createRepositories();
     await expect(repos.notes.upsert("u1", "w1", "wb1", "content")).rejects.toThrow("note upsert returned no row");
+  });
+
+  it("findByUserWordbookWord reads the L1 progress row by (user, wordbook, word)", async () => {
+    mock.setRows([progressRow({ id: "p9", stability: 25 })]);
+    const repos = createRepositories();
+
+    const row = await repos.reviews.findByUserWordbookWord("u1", "wb1", "w1");
+
+    expect(row?.id).toBe("p9");
+    expect(Number(row?.stability)).toBe(25);
+    const q = mock.lastQuery!;
+    expect(q.text).toContain("FROM user_word_progress");
+    expect(q.text).toContain("user_id = $1");
+    expect(q.text).toContain("wordbook_id = $2::uuid");
+    expect(q.text).toContain("word_id = $3::uuid");
+    expect(q.params).toEqual(["u1", "wb1", "w1"]);
+  });
+
+  it("findByUserWordbookWord returns null when no row matches", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+    await expect(repos.reviews.findByUserWordbookWord("u1", "wb1", "w1")).resolves.toBeNull();
   });
 });
 

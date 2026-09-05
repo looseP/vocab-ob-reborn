@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Sparkles, ClipboardPaste, Copy, Check } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Sparkles, ClipboardPaste, Copy, Check, Inbox } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Spinner } from "@/frontend/components/ui/Spinner";
@@ -39,6 +39,27 @@ function extractDraftItems(draft: unknown): DraftItem[] {
     return (draft as { items: DraftItem[] }).items;
   }
   throw new Error("草稿格式无法识别");
+}
+
+/** Phase G：Agent 候选（GET /l2/:slug/candidates 返回的待选提案行）。 */
+interface AgentCandidate {
+  id: string;
+  field: string;
+  itemCount: number;
+  items: DraftItem[];
+  source: string;
+  createdAt: string;
+}
+
+/** storage field → 展示名（corpus 是例句的存储名）。 */
+function candidateFieldLabel(field: string): string {
+  if (field === "corpus") return FIELD_LABELS.example;
+  return FIELD_LABELS[field as ComposerField] ?? field;
+}
+
+/** storage field → itemLabel/itemDetail 的 ComposerField 形参。 */
+function candidateComposerField(field: string): ComposerField {
+  return field === "corpus" ? "example" : (field as ComposerField);
 }
 
 function errorMessage(err: unknown): string {
@@ -97,6 +118,11 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
   const [externalPrompt, setExternalPrompt] = useState<string | null>(null);
   const [pasted, setPasted] = useState("");
   const [copied, setCopied] = useState(false);
+  // Phase G：Agent 候选区（外部 Agent 经 MCP propose 的待选内容）
+  const [candidates, setCandidates] = useState<AgentCandidate[] | null>(null);
+  const [candSelected, setCandSelected] = useState<Record<string, Set<number>>>({});
+  const [candBusy, setCandBusy] = useState<string | null>(null);
+  const [candError, setCandError] = useState<string | null>(null);
 
   const scopedProfiles = useMemo(() => {
     const scope: typeof EXAMPLE_FIELD | typeof COLLOCATION_FIELD | null =
@@ -106,6 +132,75 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
   }, [field]);
 
   const encodedSlug = encodeURIComponent(slug);
+
+  // Phase G：拉取 Agent 候选（面板展开时 + 采纳/拒绝后刷新）
+  const refreshCandidates = useCallback(async () => {
+    try {
+      const data = await apiFetch<{ items: AgentCandidate[] }>(`/l2/${encodedSlug}/candidates`, {
+        timeoutMs: 30_000,
+      });
+      setCandidates(Array.isArray(data?.items) ? data.items : []);
+      const sel: Record<string, Set<number>> = {};
+      for (const cand of data?.items ?? []) {
+        sel[cand.id] = new Set(cand.items.map((_, i) => i));
+      }
+      setCandSelected(sel);
+      setCandError(null);
+    } catch (err) {
+      setCandError(errorMessage(err));
+    }
+  }, [encodedSlug]);
+
+  useEffect(() => {
+    if (open) void refreshCandidates();
+  }, [open, refreshCandidates]);
+
+  const toggleCandidateItem = (candId: string, index: number) => {
+    setCandSelected((prev) => {
+      const next = { ...prev };
+      const set = new Set(next[candId] ?? []);
+      if (set.has(index)) set.delete(index);
+      else set.add(index);
+      next[candId] = set;
+      return next;
+    });
+  };
+
+  const acceptCandidate = async (cand: AgentCandidate) => {
+    setCandBusy(cand.id);
+    setCandError(null);
+    try {
+      const sel = candSelected[cand.id];
+      const partial = sel && sel.size > 0 && sel.size < cand.items.length ? [...sel].sort((a, b) => a - b) : undefined;
+      await apiFetch(`/l2/${encodedSlug}/candidates/${encodeURIComponent(cand.id)}/accept`, {
+        method: "POST",
+        body: JSON.stringify(partial ? { itemIndexes: partial } : {}),
+        timeoutMs: 60_000,
+      });
+      onConfirmed(); // 内容已写入并触发软重卡，刷新词条详情
+      await refreshCandidates();
+    } catch (err) {
+      setCandError(errorMessage(err));
+    } finally {
+      setCandBusy(null);
+    }
+  };
+
+  const rejectCandidate = async (cand: AgentCandidate) => {
+    setCandBusy(cand.id);
+    setCandError(null);
+    try {
+      await apiFetch(`/l2/${encodedSlug}/candidates/${encodeURIComponent(cand.id)}/reject`, {
+        method: "POST",
+        timeoutMs: 30_000,
+      });
+      await refreshCandidates();
+    } catch (err) {
+      setCandError(errorMessage(err));
+    } finally {
+      setCandBusy(null);
+    }
+  };
 
   const resetDraft = () => {
     setDraft(null);
@@ -311,6 +406,76 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
             <p className="rounded-lg border border-[var(--color-accent-2)] bg-[var(--color-surface-muted)] px-3 py-2 text-sm text-[var(--color-accent-2)]">
               {error}
             </p>
+          )}
+
+          {/* Phase G：Agent 候选区——外部 Agent 经 MCP 送来的待选内容 */}
+          {candError && (
+            <p className="rounded-lg border border-[var(--color-accent-2)] bg-[var(--color-surface-muted)] px-3 py-2 text-sm text-[var(--color-accent-2)]">
+              {candError}
+            </p>
+          )}
+          {candidates !== null && candidates.length > 0 && (
+            <div className="space-y-3 rounded-lg border border-[var(--color-border)] p-3">
+              <p className="flex items-center gap-2 text-sm font-medium text-[var(--color-ink)]">
+                <Inbox className="h-4 w-4 text-[var(--color-accent)]" />
+                Agent 候选（{candidates.length}）——外部 Agent 送来的待选内容，勾选后采纳
+              </p>
+              <div className="space-y-3">
+                {candidates.map((cand) => {
+                  const cField = candidateComposerField(cand.field);
+                  const sel = candSelected[cand.id] ?? new Set<number>();
+                  return (
+                    <div key={cand.id} className="space-y-2 rounded-lg border border-[var(--color-border)] p-2">
+                      <p className="text-xs text-[var(--color-ink-soft)]">
+                        {candidateFieldLabel(cand.field)} · 来源 {cand.source} ·{" "}
+                        {new Date(cand.createdAt).toLocaleString()}
+                      </p>
+                      <div className="space-y-1">
+                        {cand.items.map((item, i) => (
+                          <label
+                            key={i}
+                            className="flex cursor-pointer items-start gap-2 rounded-lg border border-transparent p-1 transition-colors hover:border-[var(--color-border)]"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={sel.has(i)}
+                              onChange={() => toggleCandidateItem(cand.id, i)}
+                              className="mt-1"
+                            />
+                            <span className="min-w-0">
+                              <span className="block font-mono text-sm font-semibold text-[var(--color-ink)]">
+                                {itemLabel(item, cField)}
+                              </span>
+                              <span className="block text-xs text-[var(--color-ink-soft)]">
+                                {itemDetail(item, cField)}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => acceptCandidate(cand)}
+                          disabled={candBusy !== null || sel.size === 0}
+                        >
+                          {candBusy === cand.id ? <Spinner /> : null}
+                          采纳（{sel.size}）
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => rejectCandidate(cand)}
+                          disabled={candBusy !== null}
+                        >
+                          忽略
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
           {/* 外部提示词通道 */}

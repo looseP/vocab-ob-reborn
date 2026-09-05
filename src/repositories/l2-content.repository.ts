@@ -42,8 +42,8 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
   async insert(data: NewL2Content): Promise<L2ContentRow> {
     const row = await this.queryOne<L2ContentRow>(
       `INSERT INTO word_l2_content
-         (word_id, field, content, source, source_ref, approved_by)
-       VALUES ($1::uuid, $2, $3, $4, $5, $6)
+         (word_id, field, content, source, source_ref, approved_by, is_active)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
         data.word_id,
@@ -52,6 +52,7 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
         data.source,
         data.source_ref ?? null,
         data.approved_by ?? "user",
+        data.is_active ?? true,
       ],
     );
     if (!row) throw new Error("L2 content insert returned no row");
@@ -75,11 +76,51 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
     );
   }
 
-  async softDelete(id: string): Promise<void> {
-    await this.query(
-      `UPDATE word_l2_content SET is_active = false WHERE id = $1::uuid`,
+  /**
+   * Phase G 候选池：待选提案（is_active=false 的行）。
+   * 这些行不进 words JSONB 缓存（refresh_l2_cache 只聚合 active 行），
+   * 因此不出题、不展示，直到用户采纳。
+   */
+  async findCandidatesByWord(wordId: string): Promise<L2ContentRow[]> {
+    return this.query<L2ContentRow>(
+      `SELECT * FROM word_l2_content
+       WHERE word_id = $1::uuid AND is_active = false
+       ORDER BY created_at`,
+      [wordId],
+    );
+  }
+
+  async findById(id: string): Promise<L2ContentRow | null> {
+    return this.queryOne<L2ContentRow>(
+      `SELECT * FROM word_l2_content WHERE id = $1::uuid`,
       [id],
     );
+  }
+
+  async setActive(id: string, isActive: boolean): Promise<void> {
+    await this.query(
+      `UPDATE word_l2_content SET is_active = $2 WHERE id = $1::uuid`,
+      [id, isActive],
+    );
+  }
+
+  async setActiveAndContent(id: string, isActive: boolean, content: unknown): Promise<void> {
+    await this.query(
+      `UPDATE word_l2_content SET is_active = $2, content = $3::jsonb WHERE id = $1::uuid`,
+      [id, isActive, JSON.stringify(content)],
+    );
+  }
+
+  /** Phase G：拒绝候选 = 硬删（agent 可重新 propose，无需保留墓碑）。 */
+  async deleteById(id: string): Promise<void> {
+    await this.query(
+      `DELETE FROM word_l2_content WHERE id = $1::uuid`,
+      [id],
+    );
+  }
+
+  async softDelete(id: string): Promise<void> {
+    await this.setActive(id, false);
   }
 
   /** Refresh the four words L2 JSONB caches through the migration-owned RPC. */

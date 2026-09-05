@@ -51,3 +51,32 @@ export const l2PromoteResponseSchema = z.object({
   alreadyPromoted: z.boolean(),
   l2DueAt: z.string().nullable(),
 }).strict();
+
+/** Phase G：Agent 候选池。 */
+export const l2CandidateSchema = z.object({
+  id: z.string(),
+  field: z.string(),
+  itemCount: z.number().int().nonnegative(),
+  items: z.array(jsonValueSchema),
+  source: z.string(),
+  createdAt: z.string(),
+}).strict();
+
+export const l2CandidatesResponseSchema = z.object({
+  items: z.array(l2CandidateSchema),
+}).strict();
+
+export const l2CandidateAcceptResponseSchema = z.object({
+  ok: z.literal(true),
+  itemCount: z.number().int().nonnegative(),
+}).strict();
+
+export const l2CandidateRejectResponseSchema = z.object({
+  ok: z.literal(true),
+}).strict();
+
+/** Phase G：MCP propose 入口响应（写入 is_active=false 候选行）。 */
+export const l2CandidateProposeResponseSchema = z.object({
+  candidateId: z.string(),
+  itemCount: z.number().int().nonnegative(),
+}).strict();

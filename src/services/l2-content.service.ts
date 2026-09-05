@@ -40,6 +40,32 @@ import {
   L2_USER_INSTRUCTION_MAX_LENGTH,
 } from "../schemas/resource-budget";
 import { createHash } from "node:crypto";
+import { extractL2Items } from "../repositories/l2-content.repository";
+
+/** Phase G：候选条数（legacy 数组 / v1 wrapper / 单对象统一展开）。 */
+function extractL2ItemCount(content: unknown): number {
+  if (Array.isArray(content)) return content.length;
+  if (content && typeof content === "object") {
+    const maybe = content as { items?: unknown };
+    if (Array.isArray(maybe.items)) return maybe.items.length;
+    return 1;
+  }
+  return 0;
+}
+
+/** Phase G：把候选行 content 重写为采纳子集，保持原形态（数组 / v1 wrapper / 单对象）。 */
+function rewriteContentWithItems(original: unknown, items: unknown[]): unknown {
+  if (Array.isArray(original)) return items;
+  if (original && typeof original === "object" && Array.isArray((original as { items?: unknown }).items)) {
+    return { ...(original as Record<string, unknown>), items };
+  }
+  return items;
+}
+
+/** Phase G：候选归属校验失败时的字段占位。 */
+function fieldOf(row: { field?: string } | null | undefined): string {
+  return row?.field ?? "candidate";
+}
 
 /**
  * Dependencies injected into {@link L2ContentService}.
@@ -986,6 +1012,125 @@ ${provenanceSourceHint}`;
       // 4. The migration-owned RPC atomically persists both word hashes and
       //    re-triggers only changed, non-paused L2 snapshots (L1 untouched).
       await repos.l2Progress.finalizeL2ContentHash(wordId, l2Hash, contentHash);
+    }, { actorId });
+  }
+
+  /**
+   * Phase G 候选池：把（通常是外部 agent 生成的）内容写入候选池。
+   * 候选行 is_active=false——不进 words JSONB 缓存、不出题、不展示，
+   * 直到用户在词条详情页逐条采纳（acceptCandidate）或拒绝（rejectCandidate）。
+   * 校验与 confirmDraft 完全一致（尺寸预算 + parseL2Content）。
+   */
+  async proposeCandidates(
+    wordId: string,
+    field: L2Field,
+    content: unknown,
+    opts?: { source?: string; sourceRef?: string | null; approvedBy?: string; actorId?: string },
+  ): Promise<{ candidateId: string; itemCount: number }> {
+    try {
+      assertJsonResourceBudget(content, {
+        maxBytes: L2_CONTENT_MAX_BYTES,
+        maxDepth: JSON_MAX_DEPTH,
+      });
+    } catch (err) {
+      throw new ValidationError(`L2 candidate exceeds serialized size or depth budget`, field, err);
+    }
+    const parsed = (() => {
+      try {
+        return parseL2Content(field, content);
+      } catch (err) {
+        throw new ValidationError(`Invalid L2 candidate content for field "${field}"`, field, err);
+      }
+    })();
+    const itemCount = extractL2ItemCount(parsed);
+
+    const candidateId = await withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const row = await repos.l2Content.insert({
+        word_id: wordId,
+        field,
+        content: parsed as never,
+        source: opts?.source ?? "external_chat",
+        source_ref: opts?.sourceRef ?? null,
+        approved_by: opts?.approvedBy ?? "agent",
+        is_active: false,
+      });
+      return row.id;
+    }, { actorId: opts?.actorId });
+    return { candidateId, itemCount };
+  }
+
+  /** Phase G：列出某词的全部待选候选（is_active=false，owner-RLS 表走 actor 事务）。 */
+  async listCandidates(
+    wordId: string,
+    actorId: string,
+  ): Promise<
+    Array<{ id: string; field: L2Field; items: unknown[]; source: string; createdAt: string }>
+  > {
+    return withTransaction(async (tx) => {
+      const rows = await createRepositories(tx).l2Content.findCandidatesByWord(wordId);
+      return rows.map((row) => ({
+        id: row.id,
+        field: row.field as L2Field,
+        items: extractL2Items(row.content),
+        source: row.source,
+        createdAt: row.created_at,
+      }));
+    }, { actorId });
+  }
+
+  /**
+   * Phase G：采纳候选（可传 itemIndexes 只采纳勾选子集）。
+   * 级联与 confirmDraft 完全一致：激活 → 刷缓存 → 重算双 hash → finalize。
+   */
+  async acceptCandidate(
+    wordId: string,
+    candidateId: string,
+    itemIndexes?: number[],
+    actorId?: string,
+  ): Promise<{ itemCount: number }> {
+    return withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const row = await repos.l2Content.findById(candidateId);
+      if (!row || row.word_id !== wordId) {
+        throw new ValidationError("Candidate not found for this word", fieldOf(row));
+      }
+      if (row.is_active) {
+        // 幂等：已采纳的候选重复提交 → 直接返回当前条数
+        return { itemCount: extractL2Items(row.content).length };
+      }
+      const allItems = extractL2Items(row.content);
+      let items = allItems;
+      if (itemIndexes && itemIndexes.length > 0) {
+        const picked = itemIndexes.map((i) => allItems[i]);
+        if (picked.some((item) => item === undefined)) {
+          throw new ValidationError("itemIndexes out of range", row.field);
+        }
+        items = picked;
+      }
+      const contentToStore = rewriteContentWithItems(row.content, items);
+      await repos.l2Content.setActiveAndContent(candidateId, true, contentToStore);
+      await repos.l2Content.refreshL2Cache(wordId);
+      const word = await repos.words.findById(wordId);
+      if (!word) throw new Error("Candidate accept: word disappeared before hash finalization");
+      await repos.l2Progress.finalizeL2ContentHash(
+        wordId,
+        computeL2Hash(word as never),
+        computeFullHash(word as never),
+      );
+      return { itemCount: items.length };
+    }, { actorId });
+  }
+
+  /** Phase G：拒绝候选（硬删）。wordId 用于归属校验。 */
+  async rejectCandidate(wordId: string, candidateId: string, actorId?: string): Promise<void> {
+    await withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const row = await repos.l2Content.findById(candidateId);
+      if (!row || row.word_id !== wordId) {
+        throw new ValidationError("Candidate not found for this word", fieldOf(row));
+      }
+      await repos.l2Content.deleteById(candidateId);
     }, { actorId });
   }
 }

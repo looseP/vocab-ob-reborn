@@ -31,6 +31,7 @@ function makeRepos() {
     getTimeline: vi.fn(async () => []),
     getHeatmap: vi.fn(async () => []),
     markL1WeakSignal: vi.fn(async () => 1),
+    findByUserWordbookWord: vi.fn(async () => null),
   };
   const sessions = {
     getOrCreateToday: vi.fn(async () => ({ id: "s1", mode: "cram", cards_seen: 0 })),
@@ -120,5 +121,34 @@ describe("createServices wiring", () => {
     expect(sessions.getOrCreateToday).toHaveBeenCalled();
     expect(result.items).toEqual([]);
     expect(result.session.mode).toBe("cram");
+  });
+
+  it("wires getProgressSnapshot and the l2Transition actor txRunner closures", async () => {
+    const { repos, reviews, l2Progress } = makeRepos();
+    reviews.findByUserWordbookWord = vi.fn(async () => ({
+      id: "p1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+      state: "review", stability: 25, difficulty: 5, review_count: 6,
+      last_rating: "good", skip_count: 0,
+    }));
+    l2Progress.findByWordbookWordAndUser = vi.fn(async () => null);
+    l2Progress.insert = vi.fn(async () => ({ id: "l2-1" }));
+    mockCreateRepositories.mockReturnValue(repos);
+    const services = createServices({
+      fsrsAdapter: vi.fn(),
+      loadWeights: vi.fn(async () => null),
+    });
+
+    // getProgressSnapshot → reviews.findByUserWordbookWord 闭包（actorId 事务）
+    const snapshot = await services.reviews.getProgressSnapshot("u1", "wb1", "w1");
+    expect(reviews.findByUserWordbookWord).toHaveBeenCalledWith("u1", "wb1", "w1");
+    expect(snapshot?.stability).toBe(25);
+
+    // l2Transition txRunner 闭包：promoteNow 经 withTransaction(createRepositories(tx).l2Progress)
+    const result = await services.l2Transition.promoteNow({
+      user_id: "u1", wordbook_id: "wb1", word_id: "w1",
+      stability: 25, difficulty: 5, review_count: 6, last_rating: "good",
+    });
+    expect(result.alreadyPromoted).toBe(false);
+    expect(l2Progress.insert).toHaveBeenCalled();
   });
 });

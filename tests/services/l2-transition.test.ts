@@ -316,4 +316,92 @@ describe("L2TransitionService.promoteNow", () => {
     await service.checkAndTransition(makeProgress({ stability: 2, review_count: 1, last_rating: "again" }), { force: true });
     expect(mockL2Repo.insert).toHaveBeenCalled();
   });
+
+  it("treats a null last_rating as not-allowed on the auto path", async () => {
+    // ?? 的右臂（last_rating == null → ""）必须被覆盖
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn(),
+      insert: vi.fn(),
+    };
+    const service = new L2TransitionService(mockL2Repo as any);
+    await service.checkAndTransition(makeProgress({ last_rating: null }));
+    expect(mockL2Repo.insert).not.toHaveBeenCalled();
+    expect(mockL2Repo.findByWordbookWordAndUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("L2TransitionService — actor txRunner（HTTP 主动晋升注入路径）", () => {
+  it("checkAndTransition force routes the insert through the injected txRunner with actorId", async () => {
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn().mockResolvedValue(null),
+      insert: vi.fn().mockResolvedValue({ id: "l2-1" }),
+    };
+    const txRunner = vi.fn(async (run: (repo: unknown) => Promise<void>, opts: { actorId: string }) => {
+      expect(opts.actorId).toBe("user-1");
+      return run(mockL2Repo);
+    });
+    const service = new L2TransitionService({} as any, txRunner as any);
+
+    await service.checkAndTransition(makeProgress({ stability: 2, review_count: 1, last_rating: "again" }), { force: true });
+
+    expect(txRunner).toHaveBeenCalledTimes(1);
+    expect(mockL2Repo.insert).toHaveBeenCalled();
+  });
+
+  it("promoteNow routes through the txRunner and returns ISO l2DueAt after insert", async () => {
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn()
+        .mockResolvedValueOnce(null) // promoteNow 幂等预检
+        .mockResolvedValueOnce(null) // transitionInto 内部幂等检查
+        .mockResolvedValueOnce({ id: "l2-new", l2_due_at: "2026-09-08 23:33:12.275+00" }), // 插入后回读（PG 原生格式）
+      insert: vi.fn().mockResolvedValue({ id: "l2-new" }),
+    };
+    const txRunner = vi.fn(async (run: (repo: unknown) => Promise<{ alreadyPromoted: boolean; l2DueAt: string | null }>, opts: { actorId: string }) =>
+      run(mockL2Repo));
+    const service = new L2TransitionService({} as any, txRunner as any);
+
+    const result = await service.promoteNow(makeProgress({ stability: 2, review_count: 1, last_rating: "again" }));
+
+    expect(txRunner).toHaveBeenCalledTimes(1);
+    expect(result.alreadyPromoted).toBe(false);
+    // PG timestamp → ISO 8601
+    expect(result.l2DueAt).toBe("2026-09-08T23:33:12.275Z");
+  });
+
+  it("promoteNow idempotent hit with a null l2_due_at returns l2DueAt null", async () => {
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn().mockResolvedValue({ id: "l2-existing", l2_due_at: null }),
+      insert: vi.fn(),
+    };
+    const service = new L2TransitionService(mockL2Repo as any);
+
+    const result = await service.promoteNow(makeProgress());
+
+    expect(result).toEqual({ alreadyPromoted: true, l2DueAt: null });
+    expect(mockL2Repo.insert).not.toHaveBeenCalled();
+  });
+
+  it("promoteNow idempotent hit with a malformed l2_due_at returns l2DueAt null (fails soft)", async () => {
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn().mockResolvedValue({ id: "l2-existing", l2_due_at: "not-a-date" }),
+      insert: vi.fn(),
+    };
+    const service = new L2TransitionService(mockL2Repo as any);
+
+    const result = await service.promoteNow(makeProgress());
+
+    expect(result).toEqual({ alreadyPromoted: true, l2DueAt: null });
+  });
+
+  it("promoteNow fresh insert whose post-read row is null returns l2DueAt null", async () => {
+    const mockL2Repo = {
+      findByWordbookWordAndUser: vi.fn().mockResolvedValue(null), // 预检与回读都为 null
+      insert: vi.fn().mockResolvedValue({ id: "l2-new" }),
+    };
+    const service = new L2TransitionService(mockL2Repo as any);
+
+    const result = await service.promoteNow(makeProgress({ stability: 2, review_count: 1, last_rating: "again" }));
+
+    expect(result).toEqual({ alreadyPromoted: false, l2DueAt: null });
+  });
 });

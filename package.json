@@ -87,6 +87,7 @@
     "db:script:backfill-hashes": "tsx scripts/backfill-content-hash.ts",
     "db:script:backfill-pinyin": "tsx scripts/backfill-word-pinyin.ts",
     "dev": "tsx watch src/server.ts",
+    "mcp:server": "node scripts/run-mcp-server.mjs",
     "frontend:dev": "vite --host 127.0.0.1",
     "frontend:build": "tsc --noEmit -p tsconfig.frontend.json && vite build",
     "arch:check": "depcruise src --config .dependency-cruiser.cjs",

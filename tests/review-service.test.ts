@@ -610,6 +610,25 @@ describe("ReviewService — rebuild read methods", () => {
       /clearL1WeakSignal dependency not configured/,
     );
   });
+
+  it("getProgressSnapshot passes through the dependency and fails closed without it", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findProgressByUserWordbookWord = vi.fn(async () => ({
+      id: "p1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+      state: "review", stability: 25, difficulty: 5, review_count: 6,
+      last_rating: "good", skip_count: 0,
+    }));
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null, findProgressByUserWordbookWord });
+
+    const snapshot = await service.getProgressSnapshot("u1", "wb1", "w1");
+    expect(snapshot?.stability).toBe(25);
+    expect(findProgressByUserWordbookWord).toHaveBeenCalledWith("u1", "wb1", "w1");
+
+    const bare = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+    await expect(bare.getProgressSnapshot("u1", "wb1", "w1")).rejects.toThrow(
+      "findProgressByUserWordbookWord not configured",
+    );
+  });
 });
 
 // ── P0: practice modes (cram / preview) side-effect boundaries ──────────

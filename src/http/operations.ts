@@ -60,6 +60,10 @@ import {
   l2ExternalPromptResponseSchema,
   l2LlmStatusResponseSchema,
   l2PromoteResponseSchema,
+  l2CandidatesResponseSchema,
+  l2CandidateAcceptResponseSchema,
+  l2CandidateRejectResponseSchema,
+  l2CandidateProposeResponseSchema,
 } from "./l2-response-contract";
 import {
   l2DrillQueueResponseSchema,
@@ -233,6 +237,7 @@ const l2ConfirmRequestSchema = l2FieldRequestSchema.extend({
   source: z.string().optional(),
   sourceRef: z.string().nullable().optional(),
 });
+const l2CandidateProposeRequestSchema = l2ConfirmRequestSchema;
 
 function operation(
   method: HttpMethod,
@@ -305,6 +310,10 @@ export const apiOperations = [
   operation("post", "/api/imports/vocab-notes", "importVocabNotes", "owner", "sessionMutation", { body: vocabNotesImportRequestSchema }, 200, vocabNotesImportResponseSchema),
   operation("get", "/api/l2/llm-status", "getL2LlmStatus", "owner", "none", undefined, 200, l2LlmStatusResponseSchema),
   operation("post", "/api/l2/:slug/promote", "promoteL2", "owner", "sessionMutation", undefined, 200, l2PromoteResponseSchema),
+  operation("get", "/api/l2/:slug/candidates", "listL2Candidates", "owner", "none", undefined, 200, l2CandidatesResponseSchema),
+  operation("post", "/api/l2/:slug/candidates", "proposeL2Candidate", "owner", "sessionMutation", { body: l2CandidateProposeRequestSchema }, 200, l2CandidateProposeResponseSchema),
+  operation("post", "/api/l2/:slug/candidates/:candidateId/accept", "acceptL2Candidate", "owner", "sessionMutation", { body: z.object({ itemIndexes: z.array(z.coerce.number().int().min(0)).optional() }).optional() }, 200, l2CandidateAcceptResponseSchema),
+  operation("post", "/api/l2/:slug/candidates/:candidateId/reject", "rejectL2Candidate", "owner", "sessionMutation", undefined, 200, l2CandidateRejectResponseSchema),
   operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),
   operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
   operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }, 200, l2ConfirmResponseSchema),

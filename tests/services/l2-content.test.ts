@@ -1477,3 +1477,243 @@ describe("L2ContentService.buildExternalPrompt — P3 v1-first output format", (
     expect(result.promptHash).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+describe("L2ContentService — Phase G candidate pool", () => {
+  beforeEach(() => {
+    Object.keys(mockRepos).forEach((k) => delete (mockRepos as Record<string, unknown>)[k]);
+  });
+
+  /** Wire up mock repos for candidate-pool tests; returns them for assertions. */
+  function setupRepos() {
+    const l2ContentRepo = {
+      insert: vi.fn(async () => ({ id: "cand-1" })),
+      findCandidatesByWord: vi.fn(async () => []),
+      findById: vi.fn(async () => null),
+      setActive: vi.fn(async () => {}),
+      setActiveAndContent: vi.fn(async () => {}),
+      deleteById: vi.fn(async () => {}),
+      refreshL2Cache: vi.fn(async () => {}),
+      findByWord: vi.fn(),
+      softDelete: vi.fn(),
+    };
+    const l2ProgressRepo = {
+      finalizeL2ContentHash: vi.fn(async () => 1),
+    };
+    const wordsRepo = {
+      findById: vi.fn(async () => ({ id: "word-1" })),
+    };
+    mockRepos.l2Content = l2ContentRepo as never;
+    mockRepos.l2Progress = l2ProgressRepo as never;
+    mockRepos.words = wordsRepo as never;
+    return { l2ContentRepo, l2ProgressRepo, wordsRepo };
+  }
+
+  describe("proposeCandidates", () => {
+    it("inserts an is_active=false row with agent provenance defaults", async () => {
+      const { l2ContentRepo } = setupRepos();
+      const service = new L2ContentService({});
+
+      const result = await service.proposeCandidates("word-1", "collocation", VALID_COLLOCATION, {
+        actorId: "user-1",
+      });
+
+      expect(result).toEqual({ candidateId: "cand-1", itemCount: 1 });
+      expect(l2ContentRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          word_id: "word-1",
+          field: "collocation",
+          content: VALID_COLLOCATION,
+          source: "external_chat",
+          source_ref: null,
+          approved_by: "agent",
+          is_active: false,
+        }),
+      );
+    });
+
+    it("counts items inside a v1 wrapper document", async () => {
+      setupRepos();
+      const service = new L2ContentService({});
+      const document = {
+        schemaVersion: "l2-content-v1",
+        field: "example",
+        items: [
+          {
+            text: "They had to abandon the project.",
+            translation: "他们不得不放弃这个项目。",
+            provenance: { source: "external_chat" },
+          },
+        ],
+      };
+
+      const result = await service.proposeCandidates("word-1", "corpus", document);
+
+      expect(result.itemCount).toBe(1);
+    });
+
+    it("throws ValidationError on invalid content (no insert)", async () => {
+      const { l2ContentRepo } = setupRepos();
+      const service = new L2ContentService({});
+
+      await expect(
+        service.proposeCandidates("word-1", "collocation", [{ phrase: 123 }]),
+      ).rejects.toThrow(ValidationError);
+      expect(l2ContentRepo.insert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("listCandidates", () => {
+    it("maps inactive rows to flattened items with provenance", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findCandidatesByWord = vi.fn(async () => [
+        {
+          id: "cand-1",
+          field: "collocation",
+          content: VALID_COLLOCATION,
+          source: "external_chat",
+          created_at: "2026-09-05T00:00:00.000Z",
+        },
+      ]);
+      const service = new L2ContentService({});
+
+      const items = await service.listCandidates("word-1", "user-1");
+
+      expect(l2ContentRepo.findCandidatesByWord).toHaveBeenCalledWith("word-1");
+      expect(items).toEqual([
+        {
+          id: "cand-1",
+          field: "collocation",
+          items: VALID_COLLOCATION,
+          source: "external_chat",
+          createdAt: "2026-09-05T00:00:00.000Z",
+        },
+      ]);
+    });
+  });
+
+  describe("acceptCandidate", () => {
+    it("activates the full candidate and runs the confirm cascade", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async () => ({
+        id: "cand-1",
+        word_id: "word-1",
+        field: "collocation",
+        content: VALID_COLLOCATION,
+        is_active: false,
+      }));
+      const service = new L2ContentService({});
+
+      const result = await service.acceptCandidate("word-1", "cand-1", undefined, "user-1");
+
+      expect(result).toEqual({ itemCount: 1 });
+      expect(l2ContentRepo.setActiveAndContent).toHaveBeenCalledWith("cand-1", true, VALID_COLLOCATION);
+      expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
+      expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledWith(
+        "word-1",
+        expect.stringMatching(/^[0-9a-f]{64}$/),
+        expect.stringMatching(/^[0-9a-f]{64}$/),
+      );
+    });
+
+    it("rewrites content to the picked subset for a partial accept", async () => {
+      const { l2ContentRepo } = setupRepos();
+      const twoItems = [
+        { ...VALID_COLLOCATION[0] },
+        { phrase: "abandon hope", gloss: "放弃希望", tone: "neutral", example: "e", exampleTranslation: "t" },
+      ];
+      l2ContentRepo.findById = vi.fn(async () => ({
+        id: "cand-1",
+        word_id: "word-1",
+        field: "collocation",
+        content: twoItems,
+        is_active: false,
+      }));
+      const service = new L2ContentService({});
+
+      const result = await service.acceptCandidate("word-1", "cand-1", [1], "user-1");
+
+      expect(result).toEqual({ itemCount: 1 });
+      expect(l2ContentRepo.setActiveAndContent).toHaveBeenCalledWith("cand-1", true, [twoItems[1]]);
+    });
+
+    it("rejects out-of-range itemIndexes", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async () => ({
+        id: "cand-1",
+        word_id: "word-1",
+        field: "collocation",
+        content: VALID_COLLOCATION,
+        is_active: false,
+      }));
+      const service = new L2ContentService({});
+
+      await expect(
+        service.acceptCandidate("word-1", "cand-1", [5], "user-1"),
+      ).rejects.toThrow(ValidationError);
+      expect(l2ContentRepo.setActiveAndContent).not.toHaveBeenCalled();
+    });
+
+    it("is idempotent when the candidate is already active", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async () => ({
+        id: "cand-1",
+        word_id: "word-1",
+        field: "collocation",
+        content: VALID_COLLOCATION,
+        is_active: true,
+      }));
+      const service = new L2ContentService({});
+
+      const result = await service.acceptCandidate("word-1", "cand-1", undefined, "user-1");
+
+      expect(result).toEqual({ itemCount: 1 });
+      expect(l2ContentRepo.setActiveAndContent).not.toHaveBeenCalled();
+      expect(l2ContentRepo.refreshL2Cache).not.toHaveBeenCalled();
+      expect(l2ProgressRepo.finalizeL2ContentHash).not.toHaveBeenCalled();
+    });
+
+    it("throws ValidationError when the candidate belongs to another word", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async () => ({
+        id: "cand-1",
+        word_id: "word-999",
+        field: "collocation",
+        content: VALID_COLLOCATION,
+        is_active: false,
+      }));
+      const service = new L2ContentService({});
+
+      await expect(
+        service.acceptCandidate("word-1", "cand-1", undefined, "user-1"),
+      ).rejects.toThrow(ValidationError);
+      expect(l2ContentRepo.setActiveAndContent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("rejectCandidate", () => {
+    it("hard-deletes the candidate after ownership check", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async () => ({
+        id: "cand-1",
+        word_id: "word-1",
+        field: "collocation",
+        content: VALID_COLLOCATION,
+        is_active: false,
+      }));
+      const service = new L2ContentService({});
+
+      await service.rejectCandidate("word-1", "cand-1", "user-1");
+
+      expect(l2ContentRepo.deleteById).toHaveBeenCalledWith("cand-1");
+    });
+
+    it("throws ValidationError for an unknown candidate id", async () => {
+      setupRepos(); // findById returns null
+      const service = new L2ContentService({});
+
+      await expect(
+        service.rejectCandidate("word-1", "nope", "user-1"),
+      ).rejects.toThrow(ValidationError);
+    });
+  });
+});

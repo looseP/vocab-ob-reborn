@@ -56,13 +56,13 @@ describe("L2ContentRepository", () => {
     expect(params).toEqual(["w-1", "collocation"]);
   });
 
-  it("softDelete sets is_active=false", async () => {
+  it("softDelete sets is_active=false (delegates to parameterized setActive)", async () => {
     const repo = new L2ContentRepository();
     vi.spyOn(repo as any, "query").mockResolvedValue([]);
     await repo.softDelete("lc-1");
     const [sql, params] = (repo as any).query.mock.calls[0];
-    expect(sql).toContain("UPDATE word_l2_content SET is_active = false");
-    expect(params).toEqual(["lc-1"]);
+    expect(sql).toContain("UPDATE word_l2_content SET is_active = $2");
+    expect(params).toEqual(["lc-1", false]);
   });
 
   it("refreshL2Cache delegates cache aggregation to the migration-owned RPC", async () => {
