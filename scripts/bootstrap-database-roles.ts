@@ -289,7 +289,9 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
           FOR UPDATE TO vocab_batch_import USING (true) WITH CHECK (true);
       END IF;
     END $$;
-    GRANT SELECT, INSERT ON TABLE public.word_l2_content TO vocab_app;
+    -- Phase G：候选池采纳走 UPDATE（is_active=true）、拒绝走 DELETE——
+    -- 两种写路径都必须对 vocab_app 可用，否则候选池 500。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.word_l2_content TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.user_word_progress TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.user_word_l2_progress TO vocab_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l2_drill_session_steps TO vocab_app;

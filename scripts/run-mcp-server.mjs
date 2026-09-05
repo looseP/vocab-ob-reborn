@@ -110,6 +110,21 @@ async function apiCall(method, path, body) {
 
 const JSON_SCHEMA = { type: "object", properties: {}, additionalProperties: true };
 
+/**
+ * v1 条目的 provenance 必填；外部 Agent 通常不带。注入默认溯源，让调用方
+ * 无需感知 provenance 契约（collocation 的词典锚定 superRefine 规则仍然
+ * 生效——400 会返回首个 issue 提示补 evidence）。
+ */
+function withDefaultProvenance(items) {
+  return Array.isArray(items)
+    ? items.map((item) =>
+        item && typeof item === "object" && !Array.isArray(item) && item.provenance === undefined
+          ? { ...item, provenance: { source: "external_chat" } }
+          : item,
+      )
+    : items;
+}
+
 function stringProp(description, required = true) {
   return { type: "string", description, ...(required ? {} : { minLength: 0 }) };
 }
@@ -193,7 +208,7 @@ const TOOLS = [
       additionalProperties: false,
     },
     async run(args) {
-      const body = { field: String(args.field), items: args.items };
+      const body = { field: String(args.field), items: withDefaultProvenance(args.items) };
       if (args.document !== undefined) body.document = args.document;
       if (args.source !== undefined) body.source = args.source;
       if (args.sourceRef !== undefined) body.sourceRef = args.sourceRef;
@@ -218,7 +233,7 @@ const TOOLS = [
       additionalProperties: false,
     },
     async run(args) {
-      const body = { field: String(args.field), items: args.items };
+      const body = { field: String(args.field), items: withDefaultProvenance(args.items) };
       if (args.document !== undefined) body.document = args.document;
       if (args.source !== undefined) body.source = args.source;
       if (args.sourceRef !== undefined) body.sourceRef = args.sourceRef;

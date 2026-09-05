@@ -340,7 +340,7 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.login_rate_limits": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.profiles": ["SELECT", "UPDATE"],
       "public.words": ["SELECT"],
-      "public.word_l2_content": ["SELECT", "INSERT"],
+      "public.word_l2_content": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.user_word_progress": ["SELECT", "INSERT", "UPDATE"],
       "public.user_word_l2_progress": ["SELECT", "INSERT", "UPDATE"],
       "public.l2_drill_session_steps": ["SELECT", "INSERT", "UPDATE", "DELETE"],
