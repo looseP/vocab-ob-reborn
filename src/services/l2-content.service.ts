@@ -41,6 +41,7 @@ import {
 } from "../schemas/resource-budget";
 import { createHash } from "node:crypto";
 import { extractL2Items } from "../repositories/l2-content.repository";
+import { toIsoNullable } from "./l2-transition.service";
 
 /** Phase G：候选条数（legacy 数组 / v1 wrapper / 单对象统一展开）。 */
 function extractL2ItemCount(content: unknown): number {
@@ -1074,7 +1075,8 @@ ${provenanceSourceHint}`;
         field: row.field as L2Field,
         items: extractL2Items(row.content),
         source: row.source,
-        createdAt: row.created_at,
+        // PG 原生 timestamp 字符串 → ISO 8601（与 l2DueAt 同一契约形态）
+        createdAt: toIsoNullable(row.created_at ?? null) ?? String(row.created_at),
       }));
     }, { actorId });
   }

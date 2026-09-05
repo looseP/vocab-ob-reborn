@@ -1563,15 +1563,15 @@ describe("L2ContentService — Phase G candidate pool", () => {
   });
 
   describe("listCandidates", () => {
-    it("maps inactive rows to flattened items with provenance", async () => {
+    it("maps inactive rows to flattened items with provenance (PG timestamp → ISO)", async () => {
       const { l2ContentRepo } = setupRepos();
-      l2ContentRepo.findCandidatesByWord = vi.fn(async () => [
+      l2ContentRepo.findCandidatesByWord = vi.fn(async (): Promise<unknown[]> => [
         {
           id: "cand-1",
           field: "collocation",
           content: VALID_COLLOCATION,
           source: "external_chat",
-          created_at: "2026-09-05T00:00:00.000Z",
+          created_at: "2026-09-05 00:00:00.000+00",
         },
       ]);
       const service = new L2ContentService({});

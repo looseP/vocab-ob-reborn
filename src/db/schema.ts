@@ -837,7 +837,7 @@ export const wordL2Content = pgTable("word_l2_content", {
 	field: text("field").notNull(),
 	content: jsonb("content").notNull(),
 	source: text("source").notNull(),
-	sourceRef: uuid("source_ref"),
+	sourceRef: text("source_ref"),
 	approvedBy: text("approved_by").default("user"),
 	approvedAt: timestamp("approved_at", { withTimezone: true, mode: 'string' }),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),

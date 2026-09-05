@@ -45,9 +45,10 @@ const MS_PER_DAY = 86_400_000;
 
 /**
  * PG timestamp 字符串（如 "2026-09-08 23:33:12.275+00"）→ ISO 8601。
- * 契约里 l2DueAt 与其他 datetime 字段保持同一形态，前端 new Date() 可直接解析。
+ * 契约里 datetime 字段保持同一形态，前端 new Date() 可直接解析。
+ * 导出供 L2ContentService（候选池 createdAt）复用。
  */
-function toIsoNullable(value: string | null): string | null {
+export function toIsoNullable(value: string | null): string | null {
   if (!value) return null;
   const normalized = value.trim().replace(" ", "T").replace(/([+-]\d\d)$/, "$1:00");
   const date = new Date(normalized);
