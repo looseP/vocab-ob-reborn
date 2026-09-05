@@ -14,6 +14,8 @@ import {
   l2CandidatesResponseSchema,
   l2CandidateAcceptResponseSchema,
   l2CandidateRejectResponseSchema,
+  l2ContentRowsResponseSchema,
+  l2ContentRowMutateResponseSchema,
 } from "@/http/l2-response-contract";
 
 // ── Auth env setup（同 tests/http/l2.test.ts）────────────────────────────
@@ -187,7 +189,7 @@ describe("GET /api/l2/:slug/candidates", () => {
 
 describe("POST /api/l2/:slug/candidates/:candidateId/accept", () => {
   it("forwards the full accept and returns the item count", async () => {
-    const l2content = { acceptCandidate: vi.fn(async () => ({ itemCount: 2 })) };
+    const l2content = { acceptCandidate: vi.fn(async () => ({ itemCount: 2, replacedCount: 0 })) };
     const app = createApp(makeMockServices(l2content));
 
     const res = await app.request("/api/l2/abandon/candidates/c0a80101-0000-4000-8000-000000000001/accept", {
@@ -197,12 +199,12 @@ describe("POST /api/l2/:slug/candidates/:candidateId/accept", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(l2CandidateAcceptResponseSchema.parse(await res.json())).toEqual({ ok: true, itemCount: 2 });
-    expect(l2content.acceptCandidate).toHaveBeenCalledWith("word-1", "c0a80101-0000-4000-8000-000000000001", undefined, "user-123");
+    expect(l2CandidateAcceptResponseSchema.parse(await res.json())).toEqual({ ok: true, itemCount: 2, replacedCount: 0 });
+    expect(l2content.acceptCandidate).toHaveBeenCalledWith("word-1", "c0a80101-0000-4000-8000-000000000001", undefined, "user-123", "append");
   });
 
   it("forwards itemIndexes for a picked-subset accept", async () => {
-    const l2content = { acceptCandidate: vi.fn(async () => ({ itemCount: 1 })) };
+    const l2content = { acceptCandidate: vi.fn(async () => ({ itemCount: 1, replacedCount: 0 })) };
     const app = createApp(makeMockServices(l2content));
 
     await app.request("/api/l2/abandon/candidates/c0a80101-0000-4000-8000-000000000001/accept", {
@@ -211,7 +213,22 @@ describe("POST /api/l2/:slug/candidates/:candidateId/accept", () => {
       body: JSON.stringify({ itemIndexes: [1] }),
     });
 
-    expect(l2content.acceptCandidate).toHaveBeenCalledWith("word-1", "c0a80101-0000-4000-8000-000000000001", [1], "user-123");
+    expect(l2content.acceptCandidate).toHaveBeenCalledWith("word-1", "c0a80101-0000-4000-8000-000000000001", [1], "user-123", "append");
+  });
+
+  it("forwards mode=replace when the body asks for it", async () => {
+    const l2content = { acceptCandidate: vi.fn(async () => ({ itemCount: 1, replacedCount: 3 })) };
+    const app = createApp(makeMockServices(l2content));
+
+    const res = await app.request("/api/l2/abandon/candidates/c0a80101-0000-4000-8000-000000000001/accept", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ mode: "replace" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(l2CandidateAcceptResponseSchema.parse(await res.json())).toEqual({ ok: true, itemCount: 1, replacedCount: 3 });
+    expect(l2content.acceptCandidate).toHaveBeenCalledWith("word-1", "c0a80101-0000-4000-8000-000000000001", undefined, "user-123", "replace");
   });
 
   it("returns 400 for a malformed candidate id", async () => {
@@ -252,5 +269,72 @@ describe("POST /api/l2/:slug/candidates/:candidateId/reject", () => {
     expect(res.status).toBe(200);
     expect(l2CandidateRejectResponseSchema.parse(await res.json())).toEqual({ ok: true });
     expect(l2content.rejectCandidate).toHaveBeenCalledWith("word-1", "c0a80101-0000-4000-8000-000000000002", "user-123");
+  });
+});
+
+describe("L2 content row management (l2-rows)", () => {
+  const ROW = {
+    id: "row-1",
+    field: "corpus",
+    itemCount: 1,
+    items: [{ text: "Abound in coal." }],
+    source: "external_chat",
+    sourceRef: "agent-demo-001",
+    approvedBy: "user",
+    approvedAt: "2026-09-05T09:40:00.000Z",
+    createdAt: "2026-09-05T08:50:03.295Z",
+  };
+
+  it("lists active and retired rows", async () => {
+    const l2content = {
+      listContentRows: vi.fn(async () => ({ active: [ROW], retired: [{ ...ROW, id: "row-2" }] })),
+    };
+    const app = createApp(makeMockServices(l2content));
+
+    const res = await app.request("/api/l2/abandon/l2-rows", { headers: AUTH_HEADERS });
+
+    expect(res.status).toBe(200);
+    const body = l2ContentRowsResponseSchema.parse(await res.json());
+    expect(body.active).toHaveLength(1);
+    expect(body.retired).toHaveLength(1);
+    expect(l2content.listContentRows).toHaveBeenCalledWith("word-1", "user-123");
+  });
+
+  it("deactivates an active row", async () => {
+    const l2content = { deactivateContentRow: vi.fn(async () => {}) };
+    const app = createApp(makeMockServices(l2content));
+
+    const res = await app.request("/api/l2/abandon/l2-rows/c0a80101-0000-4000-8000-00000000000a/deactivate", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    expect(l2ContentRowMutateResponseSchema.parse(await res.json())).toEqual({ ok: true });
+    expect(l2content.deactivateContentRow).toHaveBeenCalledWith("word-1", "c0a80101-0000-4000-8000-00000000000a", "user-123");
+  });
+
+  it("hard-deletes a row", async () => {
+    const l2content = { deleteContentRow: vi.fn(async () => {}) };
+    const app = createApp(makeMockServices(l2content));
+
+    const res = await app.request("/api/l2/abandon/l2-rows/c0a80101-0000-4000-8000-00000000000a", {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    expect(l2content.deleteContentRow).toHaveBeenCalledWith("word-1", "c0a80101-0000-4000-8000-00000000000a", "user-123");
+  });
+
+  it("returns 400 for a malformed row id", async () => {
+    const app = createApp(makeMockServices({ deactivateContentRow: vi.fn() }));
+
+    const res = await app.request("/api/l2/abandon/l2-rows/nope/deactivate", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(400);
   });
 });

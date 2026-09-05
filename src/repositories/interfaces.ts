@@ -641,12 +641,16 @@ export interface NewL2Content {
 export interface IL2ContentRepository {
   insert(data: NewL2Content): Promise<L2ContentRow>;
   findByWord(wordId: string, field?: string): Promise<L2ContentRow[]>;
-  /** Phase G 候选池：待选提案（is_active=false）。 */
+  /** Phase G 候选池：待选提案（is_active=false 且从未采纳，approved_at IS NULL）。 */
   findCandidatesByWord(wordId: string): Promise<L2ContentRow[]>;
+  /** Phase G 管理面板：已退休行（被替换/停用，approved_at 有值）。 */
+  findRetiredByWord(wordId: string): Promise<L2ContentRow[]>;
+  /** Phase G 管理面板：某字段的全部生效行（替换模式批量停用用）。 */
+  findActiveByField(wordId: string, field: string): Promise<L2ContentRow[]>;
+  /** Phase G 管理模型：采纳候选 = 激活 + 记录 approved_at/approved_by（与 proposal 永久区分）。 */
+  approveAndActivate(id: string, content: unknown): Promise<void>;
   findById(id: string): Promise<L2ContentRow | null>;
   setActive(id: string, isActive: boolean): Promise<void>;
-  /** Phase G：采纳时可选裁剪 content（按用户勾选的条目子集重写）。 */
-  setActiveAndContent(id: string, isActive: boolean, content: unknown): Promise<void>;
   /** Phase G：拒绝候选 = 硬删。 */
   deleteById(id: string): Promise<void>;
   softDelete(id: string): Promise<void>;

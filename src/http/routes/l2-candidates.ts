@@ -104,7 +104,7 @@ export function l2CandidateRoutes(services: Services) {
     });
   });
 
-  // POST /:slug/candidates/:candidateId/accept — 采纳（可传 itemIndexes 只采纳勾选子集）
+  // POST /:slug/candidates/:candidateId/accept — 采纳（可传 itemIndexes 只采纳勾选子集；mode=replace 时停用同字段旧行）
   app.post("/:slug/candidates/:candidateId/accept", async (c) => {
     const userId = c.get("userId");
     const slug = c.req.param("slug");
@@ -121,9 +121,10 @@ export function l2CandidateRoutes(services: Services) {
       }
       itemIndexes = parsed;
     }
+    const mode = body?.mode === "replace" ? "replace" : "append";
     const { word } = await services.words.getWordBySlug(slug);
-    const result = await services.l2content.acceptCandidate(word.id, candidateId, itemIndexes, userId);
-    return c.json({ ok: true, itemCount: result.itemCount });
+    const result = await services.l2content.acceptCandidate(word.id, candidateId, itemIndexes, userId, mode);
+    return c.json({ ok: true, itemCount: result.itemCount, replacedCount: result.replacedCount });
   });
 
   // POST /:slug/candidates/:candidateId/reject — 拒绝（硬删）
@@ -136,6 +137,38 @@ export function l2CandidateRoutes(services: Services) {
     }
     const { word } = await services.words.getWordBySlug(slug);
     await services.l2content.rejectCandidate(word.id, candidateId, userId);
+    return c.json({ ok: true });
+  });
+
+  // GET /:slug/l2-rows — 管理面板：行列出（active + retired，候选不在此列）
+  app.get("/:slug/l2-rows", async (c) => {
+    const userId = c.get("userId");
+    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
+    const rows = await services.l2content.listContentRows(word.id, userId);
+    return c.json(rows);
+  });
+
+  // POST /:slug/l2-rows/:rowId/deactivate — 停用生效行（转 retired 留档，重算缓存）
+  app.post("/:slug/l2-rows/:rowId/deactivate", async (c) => {
+    const userId = c.get("userId");
+    const rowId = parseUuid(c.req.param("rowId"));
+    if (!rowId) {
+      return validationError(c, { fieldErrors: { rowId: ["Invalid uuid"] } });
+    }
+    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
+    await services.l2content.deactivateContentRow(word.id, rowId, userId);
+    return c.json({ ok: true });
+  });
+
+  // DELETE /:slug/l2-rows/:rowId — 硬删内容行（active 或 retired），active 需重算缓存
+  app.delete("/:slug/l2-rows/:rowId", async (c) => {
+    const userId = c.get("userId");
+    const rowId = parseUuid(c.req.param("rowId"));
+    if (!rowId) {
+      return validationError(c, { fieldErrors: { rowId: ["Invalid uuid"] } });
+    }
+    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
+    await services.l2content.deleteContentRow(word.id, rowId, userId);
     return c.json({ ok: true });
   });
 

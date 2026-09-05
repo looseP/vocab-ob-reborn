@@ -84,9 +84,43 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
   async findCandidatesByWord(wordId: string): Promise<L2ContentRow[]> {
     return this.query<L2ContentRow>(
       `SELECT * FROM word_l2_content
-       WHERE word_id = $1::uuid AND is_active = false
+       WHERE word_id = $1::uuid AND is_active = false AND approved_at IS NULL
        ORDER BY created_at`,
       [wordId],
+    );
+  }
+
+  /** Phase G 管理面板：已退休行（曾是 active，被替换/停用；approved_at 有值）。 */
+  async findRetiredByWord(wordId: string): Promise<L2ContentRow[]> {
+    return this.query<L2ContentRow>(
+      `SELECT * FROM word_l2_content
+       WHERE word_id = $1::uuid AND is_active = false AND approved_at IS NOT NULL
+       ORDER BY created_at DESC`,
+      [wordId],
+    );
+  }
+
+  /** Phase G 管理面板：某字段的全部生效行（替换模式需要停用它们）。 */
+  async findActiveByField(wordId: string, field: string): Promise<L2ContentRow[]> {
+    return this.query<L2ContentRow>(
+      `SELECT * FROM word_l2_content
+       WHERE word_id = $1::uuid AND field = $2 AND is_active = true
+       ORDER BY created_at`,
+      [wordId, field],
+    );
+  }
+
+  /**
+   * Phase G 管理模型：采纳候选 = 激活 + 记录采纳时间/人。
+   * approved_at 有值把该行与"待选 proposal"（approved_at IS NULL）区分开，
+   * 之后被替换/停用时不会再混入收件箱。
+   */
+  async approveAndActivate(id: string, content: unknown): Promise<void> {
+    await this.query(
+      `UPDATE word_l2_content
+       SET is_active = true, content = $2::jsonb, approved_at = now(), approved_by = 'user'
+       WHERE id = $1::uuid`,
+      [id, JSON.stringify(content)],
     );
   }
 
@@ -101,13 +135,6 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
     await this.query(
       `UPDATE word_l2_content SET is_active = $2 WHERE id = $1::uuid`,
       [id, isActive],
-    );
-  }
-
-  async setActiveAndContent(id: string, isActive: boolean, content: unknown): Promise<void> {
-    await this.query(
-      `UPDATE word_l2_content SET is_active = $2, content = $3::jsonb WHERE id = $1::uuid`,
-      [id, isActive, JSON.stringify(content)],
     );
   }
 

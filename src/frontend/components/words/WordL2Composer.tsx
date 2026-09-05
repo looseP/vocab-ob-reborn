@@ -168,15 +168,22 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
     });
   };
 
-  const acceptCandidate = async (cand: AgentCandidate) => {
+  const acceptCandidate = async (cand: AgentCandidate, mode: "append" | "replace") => {
     setCandBusy(cand.id);
     setCandError(null);
     try {
       const sel = candSelected[cand.id];
       const partial = sel && sel.size > 0 && sel.size < cand.items.length ? [...sel].sort((a, b) => a - b) : undefined;
+      if (mode === "replace") {
+        const fieldLabel = candidateFieldLabel(cand.field);
+        if (!window.confirm(`替换模式：将停用「${fieldLabel}」字段的现有内容（转为存档），用勾选的 ${sel?.size ?? cand.items.length} 条替代。继续？`)) {
+          setCandBusy(null);
+          return;
+        }
+      }
       await apiFetch(`/l2/${encodedSlug}/candidates/${encodeURIComponent(cand.id)}/accept`, {
         method: "POST",
-        body: JSON.stringify(partial ? { itemIndexes: partial } : {}),
+        body: JSON.stringify({ ...(partial ? { itemIndexes: partial } : {}), mode }),
         timeoutMs: 60_000,
       });
       onConfirmed(); // 内容已写入并触发软重卡，刷新词条详情
@@ -583,14 +590,23 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
                           </label>
                         ))}
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
-                          onClick={() => acceptCandidate(cand)}
+                          onClick={() => acceptCandidate(cand, "append")}
                           disabled={candBusy !== null || sel.size === 0}
                         >
                           {candBusy === cand.id ? <Spinner /> : null}
-                          采纳（{sel.size}）
+                          追加（{sel.size}）
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => acceptCandidate(cand, "replace")}
+                          disabled={candBusy !== null || sel.size === 0}
+                          title="停用该字段现有内容，用勾选条目替代"
+                        >
+                          替换
                         </Button>
                         <Button
                           size="sm"

@@ -1488,9 +1488,11 @@ describe("L2ContentService — Phase G candidate pool", () => {
     const l2ContentRepo = {
       insert: vi.fn(async () => ({ id: "cand-1" })),
       findCandidatesByWord: vi.fn(async (): Promise<unknown[]> => []),
+      findRetiredByWord: vi.fn(async (): Promise<unknown[]> => []),
+      findActiveByField: vi.fn(async (): Promise<unknown[]> => []),
       findById: vi.fn(async (): Promise<unknown> => null),
+      approveAndActivate: vi.fn(async () => {}),
       setActive: vi.fn(async () => {}),
-      setActiveAndContent: vi.fn(async () => {}),
       deleteById: vi.fn(async () => {}),
       refreshL2Cache: vi.fn(async () => {}),
       findByWord: vi.fn(),
@@ -1605,8 +1607,8 @@ describe("L2ContentService — Phase G candidate pool", () => {
 
       const result = await service.acceptCandidate("word-1", "cand-1", undefined, "user-1");
 
-      expect(result).toEqual({ itemCount: 1 });
-      expect(l2ContentRepo.setActiveAndContent).toHaveBeenCalledWith("cand-1", true, VALID_COLLOCATION);
+      expect(result).toEqual({ itemCount: 1, replacedCount: 0 });
+      expect(l2ContentRepo.approveAndActivate).toHaveBeenCalledWith("cand-1", VALID_COLLOCATION);
       expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
       expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledWith(
         "word-1",
@@ -1621,7 +1623,7 @@ describe("L2ContentService — Phase G candidate pool", () => {
         { ...VALID_COLLOCATION[0] },
         { phrase: "abandon hope", gloss: "放弃希望", tone: "neutral", example: "e", exampleTranslation: "t" },
       ];
-      l2ContentRepo.findById = vi.fn(async () => ({
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => ({
         id: "cand-1",
         word_id: "word-1",
         field: "collocation",
@@ -1632,8 +1634,8 @@ describe("L2ContentService — Phase G candidate pool", () => {
 
       const result = await service.acceptCandidate("word-1", "cand-1", [1], "user-1");
 
-      expect(result).toEqual({ itemCount: 1 });
-      expect(l2ContentRepo.setActiveAndContent).toHaveBeenCalledWith("cand-1", true, [twoItems[1]]);
+      expect(result).toEqual({ itemCount: 1, replacedCount: 0 });
+      expect(l2ContentRepo.approveAndActivate).toHaveBeenCalledWith("cand-1", [twoItems[1]]);
     });
 
     it("rejects out-of-range itemIndexes", async () => {
@@ -1650,12 +1652,12 @@ describe("L2ContentService — Phase G candidate pool", () => {
       await expect(
         service.acceptCandidate("word-1", "cand-1", [5], "user-1"),
       ).rejects.toThrow(ValidationError);
-      expect(l2ContentRepo.setActiveAndContent).not.toHaveBeenCalled();
+      expect(l2ContentRepo.approveAndActivate).not.toHaveBeenCalled();
     });
 
     it("is idempotent when the candidate is already active", async () => {
       const { l2ContentRepo, l2ProgressRepo } = setupRepos();
-      l2ContentRepo.findById = vi.fn(async () => ({
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => ({
         id: "cand-1",
         word_id: "word-1",
         field: "collocation",
@@ -1666,15 +1668,39 @@ describe("L2ContentService — Phase G candidate pool", () => {
 
       const result = await service.acceptCandidate("word-1", "cand-1", undefined, "user-1");
 
-      expect(result).toEqual({ itemCount: 1 });
-      expect(l2ContentRepo.setActiveAndContent).not.toHaveBeenCalled();
+      expect(result).toEqual({ itemCount: 1, replacedCount: 0 });
+      expect(l2ContentRepo.approveAndActivate).not.toHaveBeenCalled();
       expect(l2ContentRepo.refreshL2Cache).not.toHaveBeenCalled();
       expect(l2ProgressRepo.finalizeL2ContentHash).not.toHaveBeenCalled();
     });
 
+    it("replace mode retires sibling active rows of the same field before activation", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => ({
+        id: "cand-2",
+        word_id: "word-1",
+        field: "corpus",
+        content: VALID_CORPUS,
+        is_active: false,
+      }));
+      l2ContentRepo.findActiveByField = vi.fn(async (): Promise<unknown[]> => [
+        { id: "old-1", word_id: "word-1", field: "corpus", is_active: true },
+        { id: "cand-2", word_id: "word-1", field: "corpus", is_active: false }, // 自身跳过
+      ]);
+      const service = new L2ContentService({});
+
+      const result = await service.acceptCandidate("word-1", "cand-2", undefined, "user-1", "replace");
+
+      expect(result).toEqual({ itemCount: 1, replacedCount: 1 });
+      expect(l2ContentRepo.softDelete).toHaveBeenCalledTimes(1);
+      expect(l2ContentRepo.softDelete).toHaveBeenCalledWith("old-1");
+      expect(l2ContentRepo.approveAndActivate).toHaveBeenCalled();
+      expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledTimes(1);
+    });
+
     it("throws ValidationError when the candidate belongs to another word", async () => {
       const { l2ContentRepo } = setupRepos();
-      l2ContentRepo.findById = vi.fn(async () => ({
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => ({
         id: "cand-1",
         word_id: "word-999",
         field: "collocation",
@@ -1686,7 +1712,7 @@ describe("L2ContentService — Phase G candidate pool", () => {
       await expect(
         service.acceptCandidate("word-1", "cand-1", undefined, "user-1"),
       ).rejects.toThrow(ValidationError);
-      expect(l2ContentRepo.setActiveAndContent).not.toHaveBeenCalled();
+      expect(l2ContentRepo.approveAndActivate).not.toHaveBeenCalled();
     });
   });
 

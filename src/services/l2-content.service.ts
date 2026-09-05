@@ -25,6 +25,7 @@ import { buildPromptForField } from "../llm/prompts";
 import { logger } from "../observability/logger";
 import { parseL2Content } from "../schemas/service";
 import type { L2Field } from "../schemas/service";
+import type { L2ContentRow } from "../domain";
 import {
   getStyleProfile,
   validateStyleProfileField,
@@ -1082,15 +1083,19 @@ ${provenanceSourceHint}`;
   }
 
   /**
-   * Phase G：采纳候选（可传 itemIndexes 只采纳勾选子集）。
-   * 级联与 confirmDraft 完全一致：激活 → 刷缓存 → 重算双 hash → finalize。
+   * Phase G：采纳候选。
+   * mode="append"（默认）：激活候选，与该字段现有 active 行共存。
+   * mode="replace"：先停用该字段全部其他 active 行（转 retired，留档），
+   *   再激活候选——用于"这批内容替换旧的"。
+   * 级联与 confirmDraft 一致：激活 → 刷缓存 → 重算双 hash → finalize。
    */
   async acceptCandidate(
     wordId: string,
     candidateId: string,
     itemIndexes?: number[],
     actorId?: string,
-  ): Promise<{ itemCount: number }> {
+    mode: "append" | "replace" = "append",
+  ): Promise<{ itemCount: number; replacedCount: number }> {
     return withTransaction(async (tx) => {
       const repos = createRepositories(tx);
       const row = await repos.l2Content.findById(candidateId);
@@ -1099,7 +1104,7 @@ ${provenanceSourceHint}`;
       }
       if (row.is_active) {
         // 幂等：已采纳的候选重复提交 → 直接返回当前条数
-        return { itemCount: extractL2Items(row.content).length };
+        return { itemCount: extractL2Items(row.content).length, replacedCount: 0 };
       }
       const allItems = extractL2Items(row.content);
       let items = allItems;
@@ -1111,7 +1116,19 @@ ${provenanceSourceHint}`;
         items = picked;
       }
       const contentToStore = rewriteContentWithItems(row.content, items);
-      await repos.l2Content.setActiveAndContent(candidateId, true, contentToStore);
+
+      // 替换模式：停用同字段全部其他 active 行（approved_at 已有值 → 转 retired，不回收件箱）
+      let replacedCount = 0;
+      if (mode === "replace") {
+        const siblings = await repos.l2Content.findActiveByField(wordId, row.field);
+        for (const sibling of siblings) {
+          if (sibling.id === candidateId) continue;
+          await repos.l2Content.softDelete(sibling.id);
+          replacedCount += 1;
+        }
+      }
+
+      await repos.l2Content.approveAndActivate(candidateId, contentToStore);
       await repos.l2Content.refreshL2Cache(wordId);
       const word = await repos.words.findById(wordId);
       if (!word) throw new Error("Candidate accept: word disappeared before hash finalization");
@@ -1120,7 +1137,82 @@ ${provenanceSourceHint}`;
         computeL2Hash(word as never),
         computeFullHash(word as never),
       );
-      return { itemCount: items.length };
+      return { itemCount: items.length, replacedCount };
+    }, { actorId });
+  }
+
+  /**
+   * Phase G 管理面板：停用一条生效行（转 retired 留档，可重新查看/硬删）。
+   * 停用后重算缓存与 hash——与采纳同一套级联。
+   */
+  async deactivateContentRow(wordId: string, rowId: string, actorId?: string): Promise<void> {
+    await withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const row = await repos.l2Content.findById(rowId);
+      if (!row || row.word_id !== wordId) {
+        throw new ValidationError("Content row not found for this word", fieldOf(row));
+      }
+      if (!row.is_active) return; // 幂等
+      await repos.l2Content.softDelete(rowId);
+      await repos.l2Content.refreshL2Cache(wordId);
+      const word = await repos.words.findById(wordId);
+      if (!word) throw new Error("Content deactivate: word disappeared before hash finalization");
+      await repos.l2Progress.finalizeL2ContentHash(
+        wordId,
+        computeL2Hash(word as never),
+        computeFullHash(word as never),
+      );
+    }, { actorId });
+  }
+
+  /** Phase G 管理面板：硬删一条内容行（active 或 retired 均可）。 */
+  async deleteContentRow(wordId: string, rowId: string, actorId?: string): Promise<void> {
+    await withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const row = await repos.l2Content.findById(rowId);
+      if (!row || row.word_id !== wordId) {
+        throw new ValidationError("Content row not found for this word", fieldOf(row));
+      }
+      const wasActive = row.is_active;
+      await repos.l2Content.deleteById(rowId);
+      if (!wasActive) return; // retired 行不参与聚合，无需重算
+      await repos.l2Content.refreshL2Cache(wordId);
+      const word = await repos.words.findById(wordId);
+      if (!word) throw new Error("Content delete: word disappeared before hash finalization");
+      await repos.l2Progress.finalizeL2ContentHash(
+        wordId,
+        computeL2Hash(word as never),
+        computeFullHash(word as never),
+      );
+    }, { actorId });
+  }
+
+  /** Phase G 管理面板：行列出（active + retired，候选走 listCandidates）。 */
+  async listContentRows(
+    wordId: string,
+    actorId: string,
+  ): Promise<{
+    active: Array<{ id: string; field: L2Field; items: unknown[]; source: string; sourceRef: string | null; approvedBy: string | null; approvedAt: string | null; createdAt: string }>;
+    retired: Array<{ id: string; field: L2Field; items: unknown[]; source: string; sourceRef: string | null; approvedBy: string | null; approvedAt: string | null; createdAt: string }>;
+  }> {
+    return withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const mapRow = (row: L2ContentRow) => ({
+        id: row.id,
+        field: row.field as L2Field,
+        items: extractL2Items(row.content),
+        source: row.source,
+        sourceRef: row.source_ref ?? null,
+        approvedBy: row.approved_by ?? null,
+        approvedAt: toIsoNullable(row.approved_at ?? null),
+        createdAt: toIsoNullable(row.created_at ?? null) ?? String(row.created_at),
+      });
+      const activeRows = await repos.l2Content.findByWord(wordId);
+      const retiredRows = await repos.l2Content.findRetiredByWord(wordId);
+      return {
+        active: activeRows.map(mapRow),
+        retired: retiredRows.map(mapRow),
+      };
     }, { actorId });
   }
 

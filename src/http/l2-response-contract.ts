@@ -69,9 +69,33 @@ export const l2CandidatesResponseSchema = z.object({
 export const l2CandidateAcceptResponseSchema = z.object({
   ok: z.literal(true),
   itemCount: z.number().int().nonnegative(),
+  /** replace 模式下被停用的旧行数；append 为 0。 */
+  replacedCount: z.number().int().nonnegative().optional(),
 }).strict();
 
 export const l2CandidateRejectResponseSchema = z.object({
+  ok: z.literal(true),
+}).strict();
+
+/** Phase G 管理面板：行级内容管理（active + retired）。 */
+export const l2ContentRowSchema = z.object({
+  id: z.string(),
+  field: z.string(),
+  itemCount: z.number().int().nonnegative(),
+  items: z.array(jsonValueSchema),
+  source: z.string(),
+  sourceRef: z.string().nullable(),
+  approvedBy: z.string().nullable(),
+  approvedAt: z.string().nullable(),
+  createdAt: z.string(),
+}).strict();
+
+export const l2ContentRowsResponseSchema = z.object({
+  active: z.array(l2ContentRowSchema),
+  retired: z.array(l2ContentRowSchema),
+}).strict();
+
+export const l2ContentRowMutateResponseSchema = z.object({
   ok: z.literal(true),
 }).strict();
 
