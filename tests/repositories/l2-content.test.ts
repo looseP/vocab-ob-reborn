@@ -65,6 +65,53 @@ describe("L2ContentRepository", () => {
     expect(params).toEqual(["lc-1", false]);
   });
 
+  // ── Phase G 管理模型：候选/退休/生效行的判别式与写路径 ────────────────
+
+  it("findCandidatesByWord lists only unapproved proposals (approved_at IS NULL)", async () => {
+    const repo = new L2ContentRepository();
+    vi.spyOn(repo as any, "query").mockResolvedValue([]);
+    await repo.findCandidatesByWord("w-1");
+    const [sql, params] = (repo as any).query.mock.calls[0];
+    expect(sql).toContain("is_active = false");
+    // 关键判别式：退休行（approved_at 有值）不得混入收件箱
+    expect(sql).toContain("approved_at IS NULL");
+    expect(params).toEqual(["w-1"]);
+  });
+
+  it("findRetiredByWord lists retired rows (approved_at NOT NULL), newest first", async () => {
+    const repo = new L2ContentRepository();
+    vi.spyOn(repo as any, "query").mockResolvedValue([{ id: "r-1" }]);
+    const rows = await repo.findRetiredByWord("w-1");
+    expect(rows).toEqual([{ id: "r-1" }]);
+    const [sql, params] = (repo as any).query.mock.calls[0];
+    expect(sql).toContain("is_active = false");
+    expect(sql).toContain("approved_at IS NOT NULL");
+    expect(sql).toContain("ORDER BY created_at DESC");
+    expect(params).toEqual(["w-1"]);
+  });
+
+  it("findActiveByField scopes to one field's active rows (replace-mode input)", async () => {
+    const repo = new L2ContentRepository();
+    vi.spyOn(repo as any, "query").mockResolvedValue([]);
+    await repo.findActiveByField("w-1", "corpus");
+    const [sql, params] = (repo as any).query.mock.calls[0];
+    expect(sql).toContain("field = $2");
+    expect(sql).toContain("is_active = true");
+    expect(params).toEqual(["w-1", "corpus"]);
+  });
+
+  it("approveAndActivate activates, rewrites content, and stamps approved_at/approved_by", async () => {
+    const repo = new L2ContentRepository();
+    vi.spyOn(repo as any, "query").mockResolvedValue([]);
+    const content = { schemaVersion: "l2-content-v1", items: [{ phrase: "strong accent" }] };
+    await repo.approveAndActivate("lc-1", content);
+    const [sql, params] = (repo as any).query.mock.calls[0];
+    expect(sql).toContain("is_active = true");
+    expect(sql).toContain("approved_at = now()");
+    expect(sql).toContain("approved_by = 'user'");
+    expect(params).toEqual(["lc-1", JSON.stringify(content)]);
+  });
+
   it("refreshL2Cache delegates cache aggregation to the migration-owned RPC", async () => {
     const repo = new L2ContentRepository();
     const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);

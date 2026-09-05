@@ -472,4 +472,41 @@ describe("WordL2Manager（行级内容管理面板）", () => {
     expect(apiFetchMock.mock.calls[1][1]?.method).toBe("DELETE");
     confirmSpy.mockRestore();
   });
+
+  it("shows a readable error when loading rows fails", async () => {
+    apiFetchMock.mockRejectedValueOnce(
+      new BrowserApiError(500, { code: "INTERNAL", message: "Internal server error" }),
+    );
+    const container = render(createElement(WordL2Manager, { slug: "accent", onChanged: vi.fn() }));
+    const toggle = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("管理生效内容"),
+    );
+    await act(async () => {
+      fireEvent.click(toggle as HTMLButtonElement);
+    });
+    expect(container.textContent).toContain("Internal server error");
+  });
+
+  it("does not call DELETE when the user cancels the confirm dialog", async () => {
+    apiFetchMock.mockResolvedValueOnce(ROWS_RESPONSE);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    const container = render(createElement(WordL2Manager, { slug: "accent", onChanged: vi.fn() }));
+    const toggle = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("管理生效内容"),
+    );
+    await act(async () => {
+      fireEvent.click(toggle as HTMLButtonElement);
+    });
+    const deleteButton = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("删除"),
+    );
+    await act(async () => {
+      fireEvent.click(deleteButton as HTMLButtonElement);
+    });
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(apiFetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "DELETE")).toHaveLength(0);
+    confirmSpy.mockRestore();
+  });
 });

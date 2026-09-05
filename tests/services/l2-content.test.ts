@@ -1495,14 +1495,14 @@ describe("L2ContentService — Phase G candidate pool", () => {
       setActive: vi.fn(async () => {}),
       deleteById: vi.fn(async () => {}),
       refreshL2Cache: vi.fn(async () => {}),
-      findByWord: vi.fn(),
+      findByWord: vi.fn(async (): Promise<unknown[]> => []),
       softDelete: vi.fn(),
     };
     const l2ProgressRepo = {
       finalizeL2ContentHash: vi.fn(async () => 1),
     };
     const wordsRepo = {
-      findById: vi.fn(async () => ({ id: "word-1" })),
+      findById: vi.fn(async (): Promise<unknown> => ({ id: "word-1" })),
     };
     mockRepos.l2Content = l2ContentRepo as never;
     mockRepos.l2Progress = l2ProgressRepo as never;
@@ -1740,6 +1740,185 @@ describe("L2ContentService — Phase G candidate pool", () => {
       await expect(
         service.rejectCandidate("word-1", "nope", "user-1"),
       ).rejects.toThrow(ValidationError);
+    });
+  });
+
+  describe("deactivateContentRow（管理面板：停用生效行）", () => {
+    function activeRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "row-1",
+        word_id: "word-1",
+        field: "corpus",
+        content: VALID_CORPUS,
+        is_active: true,
+        ...overrides,
+      };
+    }
+
+    it("deactivates the row and runs the cache/hash cascade", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => activeRow());
+      const service = new L2ContentService({});
+
+      await service.deactivateContentRow("word-1", "row-1", "user-1");
+
+      expect(l2ContentRepo.softDelete).toHaveBeenCalledWith("row-1");
+      expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
+      expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledWith(
+        "word-1",
+        expect.stringMatching(/^[0-9a-f]{64}$/),
+        expect.stringMatching(/^[0-9a-f]{64}$/),
+      );
+    });
+
+    it("is idempotent for an already-inactive row (no cascade)", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => activeRow({ is_active: false }));
+      const service = new L2ContentService({});
+
+      await service.deactivateContentRow("word-1", "row-1", "user-1");
+
+      expect(l2ContentRepo.softDelete).not.toHaveBeenCalled();
+      expect(l2ContentRepo.refreshL2Cache).not.toHaveBeenCalled();
+      expect(l2ProgressRepo.finalizeL2ContentHash).not.toHaveBeenCalled();
+    });
+
+    it("throws ValidationError for a row belonging to another word", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => activeRow({ word_id: "word-999" }));
+      const service = new L2ContentService({});
+
+      await expect(
+        service.deactivateContentRow("word-1", "row-1", "user-1"),
+      ).rejects.toThrow(ValidationError);
+      expect(l2ContentRepo.softDelete).not.toHaveBeenCalled();
+    });
+
+    it("rolls back cleanly when the word disappears (softDelete done, no finalize)", async () => {
+      const { l2ContentRepo, l2ProgressRepo, wordsRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => activeRow());
+      wordsRepo.findById = vi.fn(async (): Promise<unknown> => null);
+      const service = new L2ContentService({});
+
+      await expect(
+        service.deactivateContentRow("word-1", "row-1", "user-1"),
+      ).rejects.toThrow("Content deactivate: word disappeared before hash finalization");
+      expect(l2ContentRepo.softDelete).toHaveBeenCalled();
+      expect(l2ProgressRepo.finalizeL2ContentHash).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("deleteContentRow（管理面板：硬删内容行）", () => {
+    it("deletes an active row and runs the cascade", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => ({
+        id: "row-1",
+        word_id: "word-1",
+        field: "corpus",
+        content: VALID_CORPUS,
+        is_active: true,
+      }));
+      const service = new L2ContentService({});
+
+      await service.deleteContentRow("word-1", "row-1", "user-1");
+
+      expect(l2ContentRepo.deleteById).toHaveBeenCalledWith("row-1");
+      expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
+      expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledTimes(1);
+    });
+
+    it("deletes a retired row WITHOUT the cascade (not part of aggregation)", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => ({
+        id: "row-2",
+        word_id: "word-1",
+        field: "corpus",
+        content: VALID_CORPUS,
+        is_active: false,
+      }));
+      const service = new L2ContentService({});
+
+      await service.deleteContentRow("word-1", "row-2", "user-1");
+
+      expect(l2ContentRepo.deleteById).toHaveBeenCalledWith("row-2");
+      expect(l2ContentRepo.refreshL2Cache).not.toHaveBeenCalled();
+      expect(l2ProgressRepo.finalizeL2ContentHash).not.toHaveBeenCalled();
+    });
+
+    it("throws ValidationError for an unknown row id", async () => {
+      const { l2ContentRepo } = setupRepos(); // findById returns null
+      const service = new L2ContentService({});
+
+      await expect(
+        service.deleteContentRow("word-1", "nope", "user-1"),
+      ).rejects.toThrow(ValidationError);
+      expect(l2ContentRepo.deleteById).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("listContentRows（管理面板：行列出）", () => {
+    it("maps active and retired rows with ISO datetimes and provenance", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findByWord = vi.fn(async (): Promise<unknown[]> => [
+        {
+          id: "row-1",
+          word_id: "word-1",
+          field: "corpus",
+          content: VALID_CORPUS,
+          source: "external_chat",
+          source_ref: "agent-demo-001",
+          approved_by: "user",
+          approved_at: "2026-09-05 09:40:00.5+00",
+          created_at: "2026-09-05 08:50:03.295+00",
+          is_active: true,
+        },
+      ]);
+      l2ContentRepo.findRetiredByWord = vi.fn(async (): Promise<unknown[]> => [
+        {
+          id: "row-2",
+          word_id: "word-1",
+          field: "collocation",
+          content: VALID_COLLOCATION,
+          source: "external_chat",
+          source_ref: null,
+          approved_by: "user",
+          approved_at: "2026-09-05 10:00:00+00",
+          created_at: "2026-09-05 09:00:00+00",
+          is_active: false,
+        },
+      ]);
+      const service = new L2ContentService({});
+
+      const rows = await service.listContentRows("word-1", "user-1");
+
+      expect(l2ContentRepo.findByWord).toHaveBeenCalledWith("word-1");
+      expect(l2ContentRepo.findRetiredByWord).toHaveBeenCalledWith("word-1");
+      expect(rows.active).toHaveLength(1);
+      expect(rows.active[0]).toMatchObject({
+        id: "row-1",
+        field: "corpus",
+        items: VALID_CORPUS,
+        source: "external_chat",
+        sourceRef: "agent-demo-001",
+        approvedBy: "user",
+        approvedAt: "2026-09-05T09:40:00.500Z", // PG 原生 → ISO
+        createdAt: "2026-09-05T08:50:03.295Z",
+      });
+      expect(rows.retired[0]).toMatchObject({
+        id: "row-2",
+        field: "collocation",
+        sourceRef: null,
+        approvedAt: "2026-09-05T10:00:00.000Z",
+      });
+    });
+
+    it("returns empty lists when nothing exists", async () => {
+      setupRepos();
+      const service = new L2ContentService({});
+
+      const rows = await service.listContentRows("word-1", "user-1");
+
+      expect(rows).toEqual({ active: [], retired: [] });
     });
   });
 });

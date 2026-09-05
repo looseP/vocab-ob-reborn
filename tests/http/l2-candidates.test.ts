@@ -337,4 +337,21 @@ describe("L2 content row management (l2-rows)", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it("maps service ValidationError (unknown row) to 422 via the global handler", async () => {
+    const { ValidationError } = await import("@/errors");
+    const l2content = {
+      deactivateContentRow: vi.fn(async () => {
+        throw new ValidationError("Content row not found for this word", "corpus");
+      }),
+    };
+    const app = createApp(makeMockServices(l2content));
+
+    const res = await app.request("/api/l2/abandon/l2-rows/c0a80101-0000-4000-8000-00000000000a/deactivate", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(422);
+  });
 });
