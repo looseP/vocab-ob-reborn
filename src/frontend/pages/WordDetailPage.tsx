@@ -328,10 +328,11 @@ export function WordDetailPage() {
 
       {(word.prototype_text ?? "").trim().length > 0 && (
         <SectionCard title="原型意象" id="sec-prototype">
-          <p className="flex items-start gap-2 text-[var(--color-ink)]">
+          <div className="flex items-start gap-2 text-[var(--color-ink)]">
             <Lightbulb className="mt-1 h-4 w-4 shrink-0 text-[var(--color-accent)]" />
-            {word.prototype_text}
-          </p>
+            {/* L1 收藏集里 prototype 字段是 Markdown（画面锚加粗记号、词根反引号记号） */}
+            <Markdown content={word.prototype_text ?? ""} />
+          </div>
         </SectionCard>
       )}
 
@@ -369,10 +370,11 @@ export function WordDetailPage() {
 
       {(meta.mnemonic_text ?? "").trim().length > 0 && (
         <SectionCard title={`记忆锚点${meta.mnemonic_type ? ` · ${meta.mnemonic_type}` : ""}`} id="sec-mnemonic">
-          <p className="flex items-start gap-2 italic text-[var(--color-ink)]">
+          <div className="flex items-start gap-2 text-[var(--color-ink)]">
             <Quote className="mt-1 h-4 w-4 shrink-0 text-[var(--color-blockquote-border)]" />
-            {meta.mnemonic_text}
-          </p>
+            {/* mnemonic_text 是 Markdown（词源锚/画面锚加粗记号、词根反引号记号），不能用纯文本渲染 */}
+            <Markdown content={meta.mnemonic_text as string} />
+          </div>
         </SectionCard>
       )}
 
