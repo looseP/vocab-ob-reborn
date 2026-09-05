@@ -76,6 +76,43 @@ const FINALIZE_L2_HASH_FUNCTION_CONTRACT = [
   "REVOKE ALL ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) FROM PUBLIC",
 ] as const;
 
+/**
+ * 0018 override contracts — Phase G candidate pool supports "content-first"
+ * (adopt candidates for words not yet in any L2 track), so the per-word
+ * L2-progress requirement is dropped; an authenticated actor still required.
+ */
+const REFRESH_L2_CACHE_OVERRIDE_CONTRACT = [
+  "CREATE OR REPLACE FUNCTION public.refresh_l2_cache(p_word_id uuid)",
+  "RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public",
+  "DECLARE v_actor_id uuid := auth.uid(); BEGIN IF v_actor_id IS NULL THEN RAISE EXCEPTION 'actor cannot refresh L2 cache for word' USING ERRCODE = '42501'; END IF; WITH expanded",
+  "FROM public.word_l2_content AS content",
+  "WHERE content.word_id = p_word_id AND content.is_active = true",
+  "UPDATE public.words AS word",
+  "SET collocations = aggregated.collocations, corpus_items = aggregated.corpus_items, synonym_items = aggregated.synonym_items, antonym_items = aggregated.antonym_items",
+  "WHERE word.id = p_word_id",
+  "ALTER FUNCTION public.refresh_l2_cache(uuid) OWNER TO vocab_migration",
+  "REVOKE ALL ON FUNCTION public.refresh_l2_cache(uuid) FROM PUBLIC",
+] as const;
+
+const FINALIZE_L2_HASH_OVERRIDE_CONTRACT = [
+  "CREATE OR REPLACE FUNCTION public.finalize_l2_content_hash(p_word_id uuid, p_new_l2_hash text, p_new_content_hash text)",
+  "RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public",
+  "DECLARE v_actor_id uuid := auth.uid(); v_updated_count integer; BEGIN IF v_actor_id IS NULL THEN RAISE EXCEPTION 'actor cannot finalize L2 content hash for word' USING ERRCODE = '42501'; END IF",
+  "IF p_new_l2_hash !~ '^[0-9a-f]{64}$' OR p_new_content_hash !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'invalid content hash'",
+  "FROM public.words AS word",
+  "WHERE word.id = p_word_id AND word.is_deleted = false AND word.is_published = true",
+  "FROM public.word_l2_content AS content WHERE content.word_id = word.id AND content.is_active = true",
+  "FOR UPDATE",
+  "SET l2_content_hash = p_new_l2_hash, content_hash = p_new_content_hash, updated_at = pg_catalog.now()",
+  "UPDATE public.user_word_l2_progress",
+  "SET l2_content_hash_snapshot = p_new_l2_hash, l2_due_at = pg_catalog.now()",
+  "WHERE word_id = p_word_id AND l2_content_hash_snapshot IS NOT NULL AND l2_content_hash_snapshot <> p_new_l2_hash AND l2_paused = false",
+  "GET DIAGNOSTICS v_updated_count = ROW_COUNT",
+  "RETURN v_updated_count",
+  "ALTER FUNCTION public.finalize_l2_content_hash(uuid, text, text) OWNER TO vocab_migration",
+  "REVOKE ALL ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) FROM PUBLIC",
+] as const;
+
 /** Collapse whitespace and drop trailing statement punctuation for stable comparison. */
 export function normalizeSql(sql: string): string {
   return sql
@@ -116,10 +153,17 @@ export function compareOwnerRlsContract(generatedSql: string): boolean {
   ].every((contract) => normalized.includes(normalizeSql(contract)));
 }
 
-/** Compare hand-authored SECURITY DEFINER migration contracts. */
+/** Compare hand-authored SECURITY DEFINER migration contracts (0012 baseline). */
 export function compareSecurityDefinerContract(migrationSql: string): boolean {
   const normalized = normalizeSql(migrationSql);
   return [...REFRESH_L2_CACHE_FUNCTION_CONTRACT, ...FINALIZE_L2_HASH_FUNCTION_CONTRACT]
+    .every((contract) => normalized.includes(normalizeSql(contract)));
+}
+
+/** Compare the 0018 relaxed-guard override (Phase G content-first candidates). */
+export function compareSecurityDefinerOverrideContract(overrideSql: string): boolean {
+  const normalized = normalizeSql(overrideSql);
+  return [...REFRESH_L2_CACHE_OVERRIDE_CONTRACT, ...FINALIZE_L2_HASH_OVERRIDE_CONTRACT]
     .every((contract) => normalized.includes(normalizeSql(contract)));
 }
 
@@ -213,6 +257,15 @@ export default defineConfig({
     const securityFunctionSql = readFileSync(securityFunctionMigration, "utf8");
     if (!compareSecurityDefinerContract(securityFunctionSql)) {
       throw new Error("Schema drift detected: SECURITY DEFINER function contract changed");
+    }
+
+    const securityFunctionOverride = path.join(projectRoot, "drizzle-release", "0018_witty_longhorn.sql");
+    if (!existsSync(securityFunctionOverride)) {
+      throw new Error("Schema drift detected: SECURITY DEFINER override migration (0018) is missing");
+    }
+    const overrideSql = readFileSync(securityFunctionOverride, "utf8");
+    if (!compareSecurityDefinerOverrideContract(overrideSql)) {
+      throw new Error("Schema drift detected: SECURITY DEFINER relaxed-guard override contract changed");
     }
 
     console.log(`[schema-drift] OK — ${result.detail}; SECURITY DEFINER functions match authoritative contracts`);

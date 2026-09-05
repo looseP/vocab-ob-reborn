@@ -127,6 +127,13 @@
       "when": 1788595655079,
       "tag": "0017_nappy_warbird",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788625200000,
+      "tag": "0018_witty_longhorn",
+      "breakpoints": true
     }
   ]
 }

@@ -13,6 +13,7 @@ import {
   compareL2ProgressRlsContract,
   compareOwnerRlsContract,
   compareSecurityDefinerContract,
+  compareSecurityDefinerOverrideContract,
   compareSearchVectorContract,
 } from "../../scripts/verify-schema-drift";
 
@@ -154,6 +155,64 @@ describe("compareSecurityDefinerContract", () => {
     expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("FOR UPDATE", ""))).toBe(false);
     expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("'^[0-9a-f]{64}$'", "'.*'"))).toBe(false);
     expect(compareSecurityDefinerContract(SECURITY_FUNCTION_SQL.replace("FROM PUBLIC", "FROM vocab_worker"))).toBe(false);
+  });
+});
+
+const RELAXED_OVERRIDE_SQL = `
+CREATE OR REPLACE FUNCTION public.refresh_l2_cache(p_word_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+AS $$
+DECLARE v_actor_id uuid := auth.uid();
+BEGIN
+IF v_actor_id IS NULL THEN RAISE EXCEPTION 'actor cannot refresh L2 cache for word' USING ERRCODE = '42501'; END IF;
+WITH expanded AS (
+  SELECT content.field FROM public.word_l2_content AS content
+  WHERE content.word_id = p_word_id AND content.is_active = true
+), aggregated AS (SELECT 1)
+UPDATE public.words AS word
+SET collocations = aggregated.collocations, corpus_items = aggregated.corpus_items, synonym_items = aggregated.synonym_items, antonym_items = aggregated.antonym_items
+FROM aggregated WHERE word.id = p_word_id;
+END;
+$$;
+ALTER FUNCTION public.refresh_l2_cache(uuid) OWNER TO vocab_migration;
+REVOKE ALL ON FUNCTION public.refresh_l2_cache(uuid) FROM PUBLIC;
+CREATE OR REPLACE FUNCTION public.finalize_l2_content_hash(p_word_id uuid, p_new_l2_hash text, p_new_content_hash text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+AS $$
+DECLARE v_actor_id uuid := auth.uid(); v_updated_count integer;
+BEGIN
+IF v_actor_id IS NULL THEN RAISE EXCEPTION 'actor cannot finalize L2 content hash for word' USING ERRCODE = '42501'; END IF;
+IF p_new_l2_hash !~ '^[0-9a-f]{64}$' OR p_new_content_hash !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'invalid content hash'; END IF;
+PERFORM 1 FROM public.words AS word
+WHERE word.id = p_word_id AND word.is_deleted = false AND word.is_published = true
+AND EXISTS (SELECT 1 FROM public.word_l2_content AS content WHERE content.word_id = word.id AND content.is_active = true)
+FOR UPDATE;
+UPDATE public.words
+SET l2_content_hash = p_new_l2_hash, content_hash = p_new_content_hash, updated_at = pg_catalog.now()
+WHERE id = p_word_id;
+UPDATE public.user_word_l2_progress
+SET l2_content_hash_snapshot = p_new_l2_hash, l2_due_at = pg_catalog.now()
+WHERE word_id = p_word_id AND l2_content_hash_snapshot IS NOT NULL AND l2_content_hash_snapshot <> p_new_l2_hash AND l2_paused = false;
+GET DIAGNOSTICS v_updated_count = ROW_COUNT;
+RETURN v_updated_count;
+END; $$;
+ALTER FUNCTION public.finalize_l2_content_hash(uuid, text, text) OWNER TO vocab_migration;
+REVOKE ALL ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) FROM PUBLIC;
+`;
+
+describe("compareSecurityDefinerOverrideContract (0018 relaxed guard)", () => {
+  it("accepts the authenticated-actor-only override and rejects weakening", () => {
+    expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL)).toBe(true);
+    // 认证检查必须保留：删掉 NULL 检查 = 匿名可调用 → 拒绝
+    expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("v_actor_id IS NULL", "false"))).toBe(false);
+    expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("USING ERRCODE = '42501'", ""))).toBe(false);
+    // 原始逐词守卫不允许回流（override 必须是放宽形态）
+    expect(compareSecurityDefinerOverrideContract(SECURITY_FUNCTION_SQL)).toBe(false);
+    expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("SECURITY DEFINER", "SECURITY INVOKER"))).toBe(false);
+    expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("OWNER TO vocab_migration", "OWNER TO vocab_app"))).toBe(false);
+    expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("FROM PUBLIC", "FROM vocab_worker"))).toBe(false);
+    expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("'^[0-9a-f]{64}$'", "'.*'"))).toBe(false);
+    expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("l2_paused = false", "true"))).toBe(false);
   });
 });
 
