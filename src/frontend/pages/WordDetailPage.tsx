@@ -1,5 +1,6 @@
+import { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Volume2, Lightbulb, Network, Puzzle, Quote, Undo2, Layers, Users, Sparkles } from "lucide-react";
+import { ArrowLeft, Lightbulb, Network, Puzzle, Quote, Undo2, Layers, Users, Sparkles } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -7,22 +8,123 @@ import { Spinner } from "@/frontend/components/ui/Spinner";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
-import { WordL2Content } from "@/frontend/components/words/WordL2Content";
+import { WordL2Content, ProvenanceBadge } from "@/frontend/components/words/WordL2Content";
 import { WordL2Composer } from "@/frontend/components/words/WordL2Composer";
 import { PromoteL2Button } from "@/frontend/components/words/PromoteL2Button";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
-import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
+import { SpeakButton } from "@/frontend/components/words/SpeakButton";
+import { useWordDetail, type L2Provenance, type WordDetail } from "@/frontend/hooks/useWordDetail";
 import { deriveWordCollections } from "@/frontend/utils/plazaSlugs";
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+function SectionCard({ title, id, children }: { title: string; id?: string; children: React.ReactNode }) {
   return (
-    <Card>
-      <h2 className="section-title mb-3 flex items-center gap-2 text-lg font-semibold text-[var(--color-ink)]">
-        {title}
-      </h2>
-      {children}
-    </Card>
+    <section id={id} className="scroll-mt-32">
+      <Card>
+        <h2 className="section-title mb-3 flex items-center gap-2 text-lg font-semibold text-[var(--color-ink)]">
+          {title}
+        </h2>
+        {children}
+      </Card>
+    </section>
   );
+}
+
+/** 默认折叠的内容区（低频阅读：词源故事 / 笔记原文）。 */
+function CollapsibleSection({
+  title,
+  id,
+  children,
+}: {
+  title: string;
+  id?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <details id={id} className="group scroll-mt-32 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
+      <summary className="cursor-pointer list-none px-5 py-4 text-lg font-semibold text-[var(--color-ink)] transition-colors group-open:text-[var(--color-accent)]">
+        {title}
+      </summary>
+      <div className="px-5 pb-5">{children}</div>
+    </details>
+  );
+}
+
+interface AnchorItem {
+  id: string;
+  label: string;
+}
+
+/** 页内锚点导航条（sticky，滚动高亮当前节）。 */
+function AnchorNav({ items, active }: { items: AnchorItem[]; active: string | null }) {
+  if (items.length === 0) return null;
+  return (
+    <nav
+      aria-label="页内导航"
+      className="sticky top-[76px] z-30 flex gap-1.5 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-2 shadow-sm backdrop-blur"
+    >
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() => document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          className={`shrink-0 rounded-full px-3 py-1 text-sm transition-colors ${
+            active === item.id
+              ? "bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]"
+              : "text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]"
+          }`}
+        >
+          {item.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+/** IntersectionObserver 滚动监听（jsdom / 不支持环境的守卫在内部）。 */
+function useScrollSpy(ids: string[]): string | null {
+  const [active, setActive] = useState<string | null>(null);
+  const key = ids.join("|");
+  useEffect(() => {
+    const list = key ? key.split("|") : [];
+    if (list.length === 0 || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) setActive(entry.target.id);
+        }
+      },
+      { rootMargin: "-15% 0px -75% 0px" },
+    );
+    for (const id of list) {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, [key]);
+  return active;
+}
+
+/** 例句统一池条目：L1 收藏 + L2 生成合并，带来源区分。 */
+interface UnifiedExample {
+  text: string;
+  translation?: string;
+  origin: "l1" | "l2";
+  provenance?: L2Provenance;
+}
+
+function buildUnifiedExamples(word: WordDetail): UnifiedExample[] {
+  const l1Items: UnifiedExample[] = (word.examples ?? []).map((ex) => ({
+    text: ex.text,
+    translation: ex.translation,
+    origin: "l1",
+  }));
+  const l2Items: UnifiedExample[] = (word.l2_content?.corpus_items ?? []).map((item) => ({
+    text: item.text,
+    translation: item.translation,
+    origin: "l2",
+    provenance: item.provenance,
+  }));
+  return [...l1Items, ...l2Items];
 }
 
 export function WordDetailPage() {
@@ -53,6 +155,63 @@ export function WordDetailPage() {
     navigate(to, { replace: false });
   };
 
+  const meta = word?.metadata ?? {};
+  const morphologyParts = [
+    ["前缀", meta.morphology_prefix],
+    ["词根", meta.morphology_root],
+    ["后缀", meta.morphology_suffix],
+  ].filter(([, v]) => typeof v === "string" && v.length > 0) as Array<[string, string]>;
+  const family = meta.morphology_family ?? [];
+  // aliases 列的 DB 默认值是 ['']（含一个空串），必须过滤掉，否则 stub 词会被
+  // 误判为“有内容”，并渲染出空的别名区块。
+  const aliases = (word?.aliases ?? []).filter((alias) => alias.trim().length > 0);
+  // L2 enrichment（搭配/语料/辨析）任一存在也算有内容，避免 stub 空态与 L2 区块同时出现。
+  const l2 = word?.l2_content ?? null;
+  const hasL2Content =
+    (l2?.collocations ?? []).length > 0 ||
+    (l2?.corpus_items ?? []).length > 0 ||
+    (l2?.synonym_items ?? []).length > 0 ||
+    (l2?.antonym_items ?? []).length > 0;
+
+  // Stub words (e.g. created via batch import with only a lemma) have no
+  // displayable content — render an explicit empty state instead of a bare page.
+  const hasContent =
+    (word?.definition_md ?? "").trim().length > 0 ||
+    (word?.body_md ?? "").trim().length > 0 ||
+    (word?.prototype_text ?? "").trim().length > 0 ||
+    morphologyParts.length > 0 ||
+    family.length > 0 ||
+    (meta.mnemonic_text ?? "").trim().length > 0 ||
+    (meta.semantic_chain ?? "").trim().length > 0 ||
+    (meta.etymology_narrative ?? "").trim().length > 0 ||
+    (word?.examples ?? []).length > 0 ||
+    aliases.length > 0 ||
+    hasL2Content;
+
+  // 例句统一池：L1 收藏 + L2 生成的语料合并（L2 区块内不再重复渲染 corpus）
+  const unifiedExamples = useMemo(
+    () => (word ? buildUnifiedExamples(word) : []),
+    [word],
+  );
+
+  // 页内锚点：只为实际渲染的区块生成导航项
+  const anchorItems = useMemo<AnchorItem[]>(() => {
+    if (!word) return [];
+    const items: AnchorItem[] = [];
+    if ((word.definition_md ?? "").trim().length > 0) items.push({ id: "sec-definition", label: "释义" });
+    if ((word.prototype_text ?? "").trim().length > 0) items.push({ id: "sec-prototype", label: "原型" });
+    if (morphologyParts.length > 0 || family.length > 0) items.push({ id: "sec-morphology", label: "形态" });
+    if ((meta.mnemonic_text ?? "").trim().length > 0) items.push({ id: "sec-mnemonic", label: "记忆" });
+    if ((meta.semantic_chain ?? "").trim().length > 0) items.push({ id: "sec-chain", label: "语义链" });
+    if ((meta.etymology_narrative ?? "").trim().length > 0) items.push({ id: "sec-etymology", label: "词源" });
+    if (unifiedExamples.length > 0) items.push({ id: "sec-examples", label: "例句" });
+    if (hasL2Content) items.push({ id: "sec-l2", label: "L2 扩展" });
+    if ((word.body_md ?? "").trim().length > 0) items.push({ id: "sec-notes", label: "笔记" });
+    return items;
+  }, [word, unifiedExamples.length, hasL2Content, morphologyParts.length, family.length, meta]);
+
+  const activeAnchor = useScrollSpy(anchorItems.map((item) => item.id));
+
   if (loading) {
     return (
       <Card className="flex items-center justify-center py-20">
@@ -74,39 +233,6 @@ export function WordDetailPage() {
   }
 
   if (!word) return null;
-
-  const meta = word.metadata ?? {};
-  const morphologyParts = [
-    ["前缀", meta.morphology_prefix],
-    ["词根", meta.morphology_root],
-    ["后缀", meta.morphology_suffix],
-  ].filter(([, v]) => typeof v === "string" && v.length > 0) as Array<[string, string]>;
-  const family = meta.morphology_family ?? [];
-  // aliases 列的 DB 默认值是 ['']（含一个空串），必须过滤掉，否则 stub 词会被
-  // 误判为“有内容”，并渲染出空的别名区块。
-  const aliases = (word.aliases ?? []).filter((alias) => alias.trim().length > 0);
-  // L2 enrichment（搭配/语料/辨析）任一存在也算有内容，避免 stub 空态与 L2 区块同时出现。
-  const l2 = word.l2_content ?? null;
-  const hasL2Content =
-    (l2?.collocations ?? []).length > 0 ||
-    (l2?.corpus_items ?? []).length > 0 ||
-    (l2?.synonym_items ?? []).length > 0 ||
-    (l2?.antonym_items ?? []).length > 0;
-
-  // Stub words (e.g. created via batch import with only a lemma) have no
-  // displayable content — render an explicit empty state instead of a bare page.
-  const hasContent =
-    (word.definition_md ?? "").trim().length > 0 ||
-    (word.body_md ?? "").trim().length > 0 ||
-    (word.prototype_text ?? "").trim().length > 0 ||
-    morphologyParts.length > 0 ||
-    family.length > 0 ||
-    (meta.mnemonic_text ?? "").trim().length > 0 ||
-    (meta.semantic_chain ?? "").trim().length > 0 ||
-    (meta.etymology_narrative ?? "").trim().length > 0 ||
-    (word.examples ?? []).length > 0 ||
-    aliases.length > 0 ||
-    hasL2Content;
 
   return (
     <div className="space-y-6">
@@ -150,10 +276,10 @@ export function WordDetailPage() {
               {word.l2_promoted && <Badge tone="accent">已晋升 L2</Badge>}
               {word.ipa && (
                 <span className="flex items-center gap-1 font-mono text-sm text-[var(--color-ink-soft)]">
-                  <Volume2 className="h-3 w-3" />
                   {word.ipa}
                 </span>
               )}
+              <SpeakButton text={word.lemma} />
             </div>
             {/* E2：广场集合反链——语义场 / 词根家族徽标，点击跳回对应集合 */}
             {deriveWordCollections(meta).map((ref) => (
@@ -192,14 +318,16 @@ export function WordDetailPage() {
         </Card>
       )}
 
+      {anchorItems.length >= 2 && <AnchorNav items={anchorItems} active={activeAnchor} />}
+
       {(word.definition_md ?? "").trim().length > 0 && (
-        <SectionCard title="核心释义">
+        <SectionCard title="核心释义" id="sec-definition">
           <Markdown content={word.definition_md} />
         </SectionCard>
       )}
 
       {(word.prototype_text ?? "").trim().length > 0 && (
-        <SectionCard title="原型意象">
+        <SectionCard title="原型意象" id="sec-prototype">
           <p className="flex items-start gap-2 text-[var(--color-ink)]">
             <Lightbulb className="mt-1 h-4 w-4 shrink-0 text-[var(--color-accent)]" />
             {word.prototype_text}
@@ -208,7 +336,7 @@ export function WordDetailPage() {
       )}
 
       {(morphologyParts.length > 0 || family.length > 0) && (
-        <SectionCard title="词源形态">
+        <SectionCard title="词源形态" id="sec-morphology">
           <div className="space-y-3">
             {morphologyParts.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -240,7 +368,7 @@ export function WordDetailPage() {
       )}
 
       {(meta.mnemonic_text ?? "").trim().length > 0 && (
-        <SectionCard title={`记忆锚点${meta.mnemonic_type ? ` · ${meta.mnemonic_type}` : ""}`}>
+        <SectionCard title={`记忆锚点${meta.mnemonic_type ? ` · ${meta.mnemonic_type}` : ""}`} id="sec-mnemonic">
           <p className="flex items-start gap-2 italic text-[var(--color-ink)]">
             <Quote className="mt-1 h-4 w-4 shrink-0 text-[var(--color-blockquote-border)]" />
             {meta.mnemonic_text}
@@ -249,8 +377,8 @@ export function WordDetailPage() {
       )}
 
       {(meta.semantic_chain ?? "").trim().length > 0 && (
-        <SectionCard title="语义链">
-          <p className="flex items-center gap-2 font-mono text-sm text-[var(--color-ink)]">
+        <SectionCard title="语义链" id="sec-chain">
+          <p className="flex flex-wrap items-center gap-2 font-mono text-sm text-[var(--color-ink)]">
             <Network className="h-4 w-4 shrink-0 text-[var(--color-accent)]" />
             {meta.semantic_chain?.split("->").map((s, i, arr) => (
               <span key={i} className="flex items-center gap-2">
@@ -263,28 +391,39 @@ export function WordDetailPage() {
       )}
 
       {(meta.etymology_narrative ?? "").trim().length > 0 && (
-        <SectionCard title="词源故事">
+        <CollapsibleSection title="词源故事" id="sec-etymology">
           <Markdown content={meta.etymology_narrative as string} />
-        </SectionCard>
+        </CollapsibleSection>
       )}
 
-      {(word.examples && word.examples.length > 0) && (
-        <SectionCard title="例句">
+      {unifiedExamples.length > 0 && (
+        <SectionCard title={`例句（${unifiedExamples.length}）`} id="sec-examples">
           <div className="space-y-3">
-            {word.examples.map((ex, i) => (
-              <div key={i} className="border-l-2 border-[var(--color-blockquote-border)] pl-4">
+            {unifiedExamples.map((ex, i) => (
+              <div key={`${ex.text.slice(0, 24)}-${i}`} className="border-l-2 border-[var(--color-blockquote-border)] pl-4">
                 <p className="text-[var(--color-ink)]">{ex.text}</p>
                 {ex.translation && (
                   <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{ex.translation}</p>
                 )}
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  {ex.origin === "l1" ? (
+                    <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2 py-0.5 text-[11px] text-[var(--color-ink-soft)]">
+                      L1 收藏
+                    </span>
+                  ) : (
+                    <ProvenanceBadge item={{ provenance: ex.provenance }} />
+                  )}
+                </div>
               </div>
             ))}
           </div>
         </SectionCard>
       )}
 
-      {/* L2 enrichment：搭配 / 语料例句 / 同义辨析 / 反义（仅已扩展词渲染） */}
-      <WordL2Content l2={l2} />
+      {/* L2 enrichment：搭配 / 同义辨析 / 反义（语料例句已并入上方统一例句池） */}
+      <div id="sec-l2" className="scroll-mt-32">
+        <WordL2Content l2={l2} exclude={["corpus_items"]} />
+      </div>
 
       {aliases.length > 0 && (
         <SectionCard title="别名">
@@ -302,14 +441,9 @@ export function WordDetailPage() {
       )}
 
       {(word.body_md ?? "").trim().length > 0 && (
-        <details className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]">
-          <summary className="cursor-pointer list-none px-5 py-4 text-lg font-semibold text-[var(--color-ink)] transition-colors group-open:text-[var(--color-accent)]">
-            笔记原文（L1 收藏集）
-          </summary>
-          <div className="px-5 pb-5">
-            <Markdown content={word.body_md} />
-          </div>
-        </details>
+        <CollapsibleSection title="笔记原文（L1 收藏集）" id="sec-notes">
+          <Markdown content={word.body_md} />
+        </CollapsibleSection>
       )}
 
       {/* C2 业务联动：已晋升 L2 但尚无扩展内容 → 待扩展提示，指向下方 Composer */}

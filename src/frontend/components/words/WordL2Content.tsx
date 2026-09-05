@@ -29,7 +29,8 @@ function provenanceOf(item: { provenance?: L2Provenance; [key: string]: unknown 
   return p && typeof p === "object" ? p : null;
 }
 
-function ProvenanceBadge({ item }: { item: { provenance?: L2Provenance; [key: string]: unknown } }) {
+/** v1 溯源徽标（导出供例句统一池复用）。 */
+export function ProvenanceBadge({ item }: { item: { provenance?: L2Provenance; [key: string]: unknown } }) {
   const provenance = provenanceOf(item);
   if (!provenance) return null;
   const source = typeof provenance.source === "string" ? provenance.source : null;
@@ -152,16 +153,27 @@ function DiscriminationList({ items, title, icon }: { items: L2DiscriminationIte
   );
 }
 
+/** 可按需排除的 L2 展示区块（例句统一池场景排除 corpus，由详情页合并渲染）。 */
+export type WordL2SectionKey = "collocations" | "corpus_items" | "synonym_items" | "antonym_items";
+
 /**
  * 词条详情的 L2 enrichment 展示区（搭配 / 语料例句 / 同义辨析 / 反义）。
  * 仅在存在内容时渲染；条目自 v1 wrapper 携带溯源时显示来源徽标。
+ * `exclude` 用于父级把某区块合并进其他展示形态（如例句统一池）时去重。
  */
-export function WordL2Content({ l2 }: { l2?: WordDetailL2Content | null }) {
+export function WordL2Content({
+  l2,
+  exclude = [],
+}: {
+  l2?: WordDetailL2Content | null;
+  exclude?: WordL2SectionKey[];
+}) {
   if (!l2) return null;
-  const hasCollocations = (l2.collocations ?? []).length > 0;
-  const hasCorpus = (l2.corpus_items ?? []).length > 0;
-  const hasSynonyms = (l2.synonym_items ?? []).length > 0;
-  const hasAntonyms = (l2.antonym_items ?? []).length > 0;
+  const excluded = new Set<string>(exclude);
+  const hasCollocations = !excluded.has("collocations") && (l2.collocations ?? []).length > 0;
+  const hasCorpus = !excluded.has("corpus_items") && (l2.corpus_items ?? []).length > 0;
+  const hasSynonyms = !excluded.has("synonym_items") && (l2.synonym_items ?? []).length > 0;
+  const hasAntonyms = !excluded.has("antonym_items") && (l2.antonym_items ?? []).length > 0;
   if (!hasCollocations && !hasCorpus && !hasSynonyms && !hasAntonyms) return null;
 
   return (

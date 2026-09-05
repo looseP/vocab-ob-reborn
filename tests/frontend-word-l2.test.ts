@@ -81,6 +81,21 @@ describe("WordL2Content", () => {
     // v1 provenance 徽标：词典来源 + 词典名
     expect(container.textContent).toContain("词典 · Datamuse");
   });
+
+  it("exclude 剔除对应区块：仅剩 corpus 时整块消失（例句统一池场景）", () => {
+    expect(
+      render(createElement(WordL2Content, { l2: L2_FIXTURE, exclude: ["collocations"] })).innerHTML,
+    ).toBe("");
+    // 多区块存在时只剔除指定区块
+    const partial = render(
+      createElement(WordL2Content, {
+        l2: { ...L2_FIXTURE, corpus_items: [{ text: "Abound in coal.", translation: "盛产煤炭。", source: "generated" }] },
+        exclude: ["collocations"],
+      }),
+    );
+    expect(partial.textContent).not.toContain("搭配");
+    expect(partial.textContent).toContain("语料例句");
+  });
 });
 
 describe("WordL2Composer", () => {
