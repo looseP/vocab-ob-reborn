@@ -1,4 +1,4 @@
-﻿/**
+/**
  * L2 candidate-pool HTTP routes — Phase G（Agent 候选流）.
  *
  * Split file to honor the route-complexity ratchet. Mounted at /api/l2.
@@ -9,7 +9,7 @@
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import { uuidSchema } from "@/schemas/http";
-import { mapToStorageField, isValidL2Content } from "@/schemas/service";
+import { mapToStorageField, safeParseL2Content } from "@/schemas/service";
 import { jsonError, validationError } from "../error-response";
 import type { AppEnv } from "./words";
 
@@ -38,17 +38,34 @@ export function l2CandidateRoutes(services: Services) {
     if (body.document !== undefined && body.document !== null) {
       content = body.document;
     } else if (body.items !== undefined && body.items !== null) {
+      // v1 条目的 provenance 必填；外部 Agent 通常不带——注入默认溯源，
+      // 免得 MCP 调用方必须感知 provenance 细节（document 形态则原样尊重）。
+      const items = Array.isArray(body.items) ? body.items : [];
       content = {
         schemaVersion: "l2-content-v1",
         field: body.field,
-        items: body.items,
+        items: items.map((item: unknown) =>
+          item && typeof item === "object" && !Array.isArray(item) && (item as { provenance?: unknown }).provenance === undefined
+            ? { ...(item as Record<string, unknown>), provenance: { source: "external_chat" } }
+            : item,
+        ),
       };
     } else {
       content = body.content;
     }
 
-    if (!isValidL2Content(storageField, content)) {
-      return jsonError(c, 400, "VALIDATION_ERROR", `Invalid content for field "${storageField}"`);
+    const parsedContent = safeParseL2Content(storageField, content);
+    if (!parsedContent.success) {
+      // 附带首个 zod issue，外部 Agent 可以据此自纠（如 collocation 缺
+      // evidence.rawPhrase 时直接指出）。
+      const issues = (parsedContent.error as { issues?: Array<{ message: string }> } | null)?.issues;
+      const issue = issues?.[0];
+      return jsonError(
+        c,
+        400,
+        "VALIDATION_ERROR",
+        `Invalid content for field "${storageField}"${issue ? `: ${issue.message}` : ""}`,
+      );
     }
 
     const source = typeof body.source === "string" && body.source.length > 0 ? body.source : "external_chat";

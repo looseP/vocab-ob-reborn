@@ -613,14 +613,14 @@ describe("ReviewService — rebuild read methods", () => {
 
   it("getProgressSnapshot passes through the dependency and fails closed without it", async () => {
     const { adapter } = makeMockFsrsAdapter();
-    const findProgressByUserWordbookWord = vi.fn(async () => ({
+    const findProgressByUserWordbookWord = vi.fn(async (): Promise<unknown> => ({
       id: "p1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
       state: "review", stability: 25, difficulty: 5, review_count: 6,
       last_rating: "good", skip_count: 0,
     }));
-    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null, findProgressByUserWordbookWord });
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null, findProgressByUserWordbookWord } as never);
 
-    const snapshot = await service.getProgressSnapshot("u1", "wb1", "w1");
+    const snapshot = (await service.getProgressSnapshot("u1", "wb1", "w1")) as { stability: number } | null;
     expect(snapshot?.stability).toBe(25);
     expect(findProgressByUserWordbookWord).toHaveBeenCalledWith("u1", "wb1", "w1");
 

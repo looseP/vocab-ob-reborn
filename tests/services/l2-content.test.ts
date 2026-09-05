@@ -1487,8 +1487,8 @@ describe("L2ContentService — Phase G candidate pool", () => {
   function setupRepos() {
     const l2ContentRepo = {
       insert: vi.fn(async () => ({ id: "cand-1" })),
-      findCandidatesByWord: vi.fn(async () => []),
-      findById: vi.fn(async () => null),
+      findCandidatesByWord: vi.fn(async (): Promise<unknown[]> => []),
+      findById: vi.fn(async (): Promise<unknown> => null),
       setActive: vi.fn(async () => {}),
       setActiveAndContent: vi.fn(async () => {}),
       deleteById: vi.fn(async () => {}),
