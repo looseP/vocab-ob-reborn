@@ -346,6 +346,8 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.l2_drill_session_steps": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.notes": ["SELECT", "INSERT", "UPDATE"],
       "public.note_revisions": ["SELECT", "INSERT"],
+      // 笔记条目(条目制):DELETE 用于详情页硬删(确认保护)
+      "public.note_entries": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.sessions": ["SELECT", "INSERT", "UPDATE"],
       "public.review_logs": ["SELECT", "INSERT", "UPDATE"],
       "public.outbox_events": ["SELECT", "INSERT", "UPDATE"],

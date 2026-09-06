@@ -134,6 +134,13 @@
       "when": 1788625200000,
       "tag": "0018_witty_longhorn",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788697984808,
+      "tag": "0019_open_mandrill",
+      "breakpoints": true
     }
   ]
 }

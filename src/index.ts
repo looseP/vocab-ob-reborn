@@ -24,7 +24,7 @@ export type { IRepositories } from "./repositories/interfaces";
 export { BaseRepository } from "./repositories/base";
 export { WordRepository } from "./repositories/word.repository";
 export { ReviewRepository } from "./repositories/review.repository";
-export { NoteRepository } from "./repositories/note.repository";
+export { NoteEntryRepository } from "./repositories/note-entry.repository";
 export { WordbookRepository } from "./repositories/wordbook.repository";
 export { HighlightRepository } from "./repositories/highlight.repository";
 export { AnnotationRepository } from "./repositories/annotation.repository";
@@ -44,7 +44,6 @@ export { DISPLAY_TIMEZONE, todayKeyInDisplayTz, dayKeyInDisplayTz, startOfTodayI
 // ── Domain layer exports ────────────────────────────────────────────────
 export { Word } from "./domain/word.entity";
 export { ReviewCard, type WordRef } from "./domain/review.entity";
-export { Note } from "./domain/note.entity";
 export { Wordbook } from "./domain/wordbook.entity";
 export type * from "./domain";
 
@@ -70,7 +69,7 @@ export type * from "./schemas/service";
 export { createServices, type Services, type ServiceDeps } from "./services";
 export { WordService } from "./services/word.service";
 export { ReviewService, type FsrsAdapterFn } from "./services/review.service";
-export { NoteService } from "./services/note.service";
+export { NoteEntryService } from "./services/note-entry.service";
 export { WordbookService } from "./services/wordbook.service";
 export { StatsService } from "./services/stats.service";
 export { L3ContextService } from "./services/l3-context.service";

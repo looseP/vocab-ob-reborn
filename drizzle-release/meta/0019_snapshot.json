@@ -1,6 +1,6 @@
 {
-  "id": "7c1e4f2a-93b5-4d68-a1c2-5e8f0b9d4a77",
-  "prevId": "d62021b0-6079-4f14-a321-6ee1c620b9f7",
+  "id": "f690b1e4-6cf7-4cfb-aa3b-56b231345b72",
+  "prevId": "7c1e4f2a-93b5-4d68-a1c2-5e8f0b9d4a77",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3058,6 +3058,170 @@
           "value": "window_expires_at > window_started_at"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.note_entries": {
+      "name": "note_entries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "word_id": {
+          "name": "word_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wordbook_id": {
+          "name": "wordbook_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content_md": {
+          "name": "content_md",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hidden_at": {
+          "name": "hidden_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "idx_note_entries_wordbook": {
+          "name": "idx_note_entries_wordbook",
+          "columns": [
+            {
+              "expression": "wordbook_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_note_entries_user_word": {
+          "name": "idx_note_entries_user_word",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "word_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "hidden_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "note_entries_user_id_fkey": {
+          "name": "note_entries_user_id_fkey",
+          "tableFrom": "note_entries",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "note_entries_word_id_fkey": {
+          "name": "note_entries_word_id_fkey",
+          "tableFrom": "note_entries",
+          "tableTo": "words",
+          "columnsFrom": [
+            "word_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fk_note_entries_wordbook": {
+          "name": "fk_note_entries_wordbook",
+          "tableFrom": "note_entries",
+          "tableTo": "wordbooks",
+          "columnsFrom": [
+            "wordbook_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "note_entries_own_all": {
+          "name": "note_entries_own_all",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "public"
+          ],
+          "using": "(auth.uid() = user_id)",
+          "withCheck": "(auth.uid() = user_id)"
+        }
+      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.note_revisions": {

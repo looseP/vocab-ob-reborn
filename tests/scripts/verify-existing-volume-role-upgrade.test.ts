@@ -23,7 +23,8 @@ describe("existing local volume role upgrade", () => {
   it("derives the expected migration count from the authoritative journal", () => {
     // 0017: word_l2_content.source_ref uuid→text（候选池 sourceRef 自由文本契约）
     // 0018: refresh_l2_cache / finalize_l2_content_hash 守卫放宽为已认证 actor（候选池 content-first）
-    expect(authoritativeMigrationCount()).toBe(19);
+    // 0019: note_entries 条目制笔记（建表 + RLS + 文档笔记迁移为条目）
+    expect(authoritativeMigrationCount()).toBe(20);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

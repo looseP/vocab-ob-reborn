@@ -53,7 +53,7 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
           [userId, wordbookId],
         ),
         this.queryOne<{ count: string }>(
-          `SELECT count(*) FROM notes
+          `SELECT count(*) FROM note_entries
            WHERE user_id = $1 AND wordbook_id = $2::uuid`,
           [userId, wordbookId],
         ),

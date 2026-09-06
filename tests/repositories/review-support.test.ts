@@ -328,32 +328,33 @@ describe("SessionRepository 鈥?lifecycle helpers", () => {
   });
 });
 
-describe("NoteRepository 鈥?listByUser", () => {
-  it("lists a user's notes joined with word slugs, newest first", async () => {
+describe("NoteEntryRepository — listByUser", () => {
+  it("lists a user's visible note entries joined with word slugs, newest first", async () => {
     const row = {
-      id: "n1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
-      content_md: "note", version: 2,
+      id: "e1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+      content_md: "note", hidden_at: null,
       created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-02T00:00:00Z",
       word_slug: "abound", word_lemma: "abound", word_title: "Abound",
     };
     mock.setRows([row]);
     const repos = createRepositories();
 
-    const notes = await repos.notes.listByUser!("u1", 50, 10);
+    const entries = await repos.noteEntries.listByUser("u1", 50, 10);
 
-    expect(notes).toEqual([row]);
+    expect(entries).toEqual([row]);
     const q = mock.lastQuery!;
     expect(q.text).toContain("JOIN words w ON w.id = n.word_id");
     expect(q.text).toContain("WHERE n.user_id = $1");
-    expect(q.text).toContain("ORDER BY n.updated_at DESC");
+    expect(q.text).toContain("hidden_at IS NULL");
+    expect(q.text).toContain("ORDER BY n.created_at DESC");
     expect(q.text).toContain("LIMIT $2 OFFSET $3");
     expect(q.params).toEqual(["u1", 50, 10]);
   });
 
-  it("upsert fails closed when the CTE returns no row", async () => {
+  it("updateContent resolves null when the entry is missing or not owned", async () => {
     mock.setRows([]);
     const repos = createRepositories();
-    await expect(repos.notes.upsert("u1", "w1", "wb1", "content")).rejects.toThrow("note upsert returned no row");
+    await expect(repos.noteEntries.updateContent("u1", "missing", "new")).resolves.toBeNull();
   });
 
   it("findByUserWordbookWord reads the L1 progress row by (user, wordbook, word)", async () => {

@@ -1,9 +1,8 @@
 import { describe, it, expect, expectTypeOf } from "vitest";
 import { Word } from "@/domain/word.entity";
 import { ReviewCard } from "@/domain/review.entity";
-import { Note } from "@/domain/note.entity";
 import { Wordbook } from "@/domain/wordbook.entity";
-import type { WordRow, UserWordProgressRow, NoteRow, WordbookRow, UserWordL2ProgressRow } from "@/domain";
+import type { WordRow, UserWordProgressRow, WordbookRow, UserWordL2ProgressRow } from "@/domain";
 
 function makeWordRow(overrides: Partial<WordRow> = {}): WordRow {
   return {
@@ -130,26 +129,6 @@ describe("ReviewCard entity", () => {
       { id: "w1", slug: "aboard", title: "aboard", lemma: "aboard" });
     expect(card.needsRecheck("new")).toBe(true);
     expect(card.needsRecheck("old")).toBe(false);
-  });
-});
-
-describe("Note entity", () => {
-  it("shouldCreateRevision when content differs", () => {
-    const note = new Note({
-      id: "n1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
-      content_md: "old", version: 1, created_at: "", updated_at: "",
-    } as NoteRow);
-    expect(note.shouldCreateRevision("new")).toBe(true);
-    expect(note.shouldCreateRevision("old")).toBe(false);
-  });
-
-  it("nextVersion increments only on change", () => {
-    const note = new Note({
-      id: "n1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
-      content_md: "same", version: 5, created_at: "", updated_at: "",
-    } as NoteRow);
-    expect(note.nextVersion("same")).toBe(5);
-    expect(note.nextVersion("different")).toBe(6);
   });
 });
 

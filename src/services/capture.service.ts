@@ -99,7 +99,12 @@ export class CaptureService {
 
       await repos.wordbooks.addWords(input.wordbookId, [wordRow.id]);
 
-      const note = await repos.notes.findByWord(input.userId, input.wordbookId, wordRow.id);
+      // 条目制笔记(2026-09-06):可见条目按行拼接,作为既有批注上下文返回
+      const noteEntriesRows = await repos.noteEntries.listVisibleByWordIds(
+        input.userId,
+        input.wordbookId,
+        [wordRow.id],
+      );
 
       return {
         result: {
@@ -112,7 +117,9 @@ export class CaptureService {
             lemma: wordRow.lemma,
             shortDefinition: wordRow.short_definition,
           },
-          noteContentMd: note?.content_md ?? null,
+          noteContentMd: noteEntriesRows.length
+            ? noteEntriesRows.map((entry) => entry.content_md).join("\n")
+            : null,
           l3Status: CAPTURE_L3_STATUS.deferred,
           sourceId: null,
           contextId: null,

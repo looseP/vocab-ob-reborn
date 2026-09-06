@@ -28,7 +28,7 @@ function mapStandardQueries(l2Row: unknown[] | null) {
     "interval '30 days'": [{ count: "40" }],
     "FROM user_word_progress": [{ count: "25" }],
     "FROM review_logs": [{ count: "5" }],
-    "FROM notes": [{ count: "7" }],
+    "FROM note_entries": [{ count: "7" }],
     "FROM words WHERE": [{ count: "1000" }],
   });
   mock.setRows([]);

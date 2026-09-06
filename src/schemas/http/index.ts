@@ -163,15 +163,10 @@ export const captureRequestSchema = z.object({
   wordbookId: uuidSchema.optional(),
 });
 
-// ── Notes ───────────────────────────────────────────────────────────────
-export const noteSchema = z.object({
-  contentMd: z.string().max(20_000),
-  wordbookId: uuidSchema.optional(),
-});
-
-export const noteRestoreSchema = z.object({
-  revisionId: uuidSchema,
-  wordbookId: uuidSchema.optional(),
+// ── Note entries(条目制笔记,2026-09-06)────────────────────────────────
+// 追加式写入:1 请求 = 1 条;无乐观锁/无快照语义(文档模型的 expected_version/snapshot 已随版本链退场)。
+export const noteEntryUpsertRequestSchema = z.object({
+  content_md: z.string().trim().min(1, "笔记内容不能为空").max(20_000),
 });
 
 // ── Wordbooks ───────────────────────────────────────────────────────────

@@ -14,7 +14,6 @@ import {
   reviewSuspendSchema,
   reviewUndoSchema,
   reviewSettingsSchema,
-  noteSchema,
   wordbookCreateSchema,
   wordsQuerySchema,
   batchAddFromContentSchema,
@@ -38,13 +37,10 @@ export interface SubmitAnswerResult {
   state?: string;
 }
 
-// ── Note service ────────────────────────────────────────────────────────
-export type UpsertNoteInput = z.infer<typeof noteSchema>;
-
-export interface UpsertNoteResult {
+// ── Note entry service(条目制)─────────────────────────────────────────
+export interface NoteEntryMutationResult {
   ok: boolean;
-  updatedAt: string;
-  version: number;
+  entryId: string;
 }
 
 // ── Wordbook service ────────────────────────────────────────────────────

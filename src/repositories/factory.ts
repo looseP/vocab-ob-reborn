@@ -11,7 +11,7 @@ import type { PoolClient } from "pg";
 import type { IRepositories } from "./interfaces";
 import { WordRepository } from "./word.repository";
 import { ReviewRepository } from "./review.repository";
-import { NoteRepository } from "./note.repository";
+import { NoteEntryRepository } from "./note-entry.repository";
 import { WordbookRepository } from "./wordbook.repository";
 import { HighlightRepository } from "./highlight.repository";
 import { AnnotationRepository } from "./annotation.repository";
@@ -29,7 +29,7 @@ export function createRepositories(tx?: PoolClient): IRepositories {
   return {
     words: new WordRepository(tx),
     reviews: new ReviewRepository(tx),
-    notes: new NoteRepository(tx),
+    noteEntries: new NoteEntryRepository(tx),
     wordbooks: new WordbookRepository(tx),
     highlights: new HighlightRepository(tx),
     annotations: new AnnotationRepository(tx),

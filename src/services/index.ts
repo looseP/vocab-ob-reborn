@@ -15,7 +15,7 @@ import { PlazaService } from "./plaza.service";
 import { ReviewService, type FsrsAdapterFn, type FsrsScheduling } from "./review.service";
 import { CaptureService } from "./capture.service";
 import { VocabImportService } from "./vocab-import.service";
-import { NoteService } from "./note.service";
+import { NoteEntryService } from "./note-entry.service";
 import { WordbookService } from "./wordbook.service";
 import { StatsService } from "./stats.service";
 import { L2TransitionService } from "./l2-transition.service";
@@ -202,7 +202,7 @@ export function createServices(deps: ServiceDeps) {
           { actorId: userId },
         ),
     }),
-    notes: new NoteService(repos.notes, repos.wordbooks),
+    noteEntries: new NoteEntryService(repos.noteEntries, repos.wordbooks),
     wordbooks: new WordbookService(repos.wordbooks),
     stats: new StatsService(repos.stats),
     l2Transition,

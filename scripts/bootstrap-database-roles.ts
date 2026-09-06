@@ -297,6 +297,9 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l2_drill_session_steps TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.notes TO vocab_app;
     GRANT SELECT, INSERT ON TABLE public.note_revisions TO vocab_app;
+    -- 笔记条目(条目制 2026-09-06):DELETE 用于详情页硬删(确认保护);
+    -- notes/note_revisions 为文档模型遗留,只读保留(迁移后不再有写入路径)。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.note_entries TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.sessions TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.review_logs TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.outbox_events TO vocab_app;

@@ -31,8 +31,7 @@ import type {
   L3SourceSpace,
   L3WordSpace,
   L3WordContextListItem,
-  NoteRow,
-  NoteRevisionRow,
+  NoteEntryRow,
   WordbookRow,
   HighlightRow,
   AnnotationRow,
@@ -347,17 +346,27 @@ export interface IOutboxRepository {
   getMetrics(): Promise<OutboxMetrics>;
 }
 
-// ── Note ────────────────────────────────────────────────────────────────
-export interface INoteRepository {
-  findByWord(userId: string, wordbookId: string, wordId: string): Promise<NoteRow | null>;
-  upsert(
+// ── Note entry(条目制笔记)──────────────────────────────────────────────
+export interface INoteEntryRepository {
+  /** 词的全部条目(含已隐藏),按创建时间正序。 */
+  listByWord(userId: string, wordbookId: string, wordId: string): Promise<NoteEntryRow[]>;
+  /** 复习队列附带:批量取多个词的可见条目(hidden_at IS NULL)。 */
+  listVisibleByWordIds(
     userId: string,
     wordbookId: string,
-    wordId: string,
-    contentMd: string,
-  ): Promise<{ note: NoteRow; created: boolean }>;
-  findRevisions(userId: string, wordbookId: string, wordId: string): Promise<NoteRevisionRow[]>;
-  listByUser?(userId: string, limit: number, offset: number): Promise<Array<NoteRow & { word_slug: string; word_lemma: string; word_title: string }>>;
+    wordIds: string[],
+  ): Promise<Array<NoteEntryRow>>;
+  insert(userId: string, wordbookId: string, wordId: string, contentMd: string): Promise<NoteEntryRow>;
+  /** 编辑单条内容;条目不存在或非本人 → null。 */
+  updateContent(userId: string, entryId: string, contentMd: string): Promise<NoteEntryRow | null>;
+  /** 非破坏隐藏:置 hidden_at;幂等。 */
+  hide(userId: string, entryId: string): Promise<NoteEntryRow | null>;
+  /** 恢复:清 hidden_at;幂等。 */
+  restore(userId: string, entryId: string): Promise<NoteEntryRow | null>;
+  /** 硬删除(破坏性,详情页专属);返回是否删除了行。 */
+  remove(userId: string, entryId: string): Promise<boolean>;
+  /** 笔记列表页:可见条目 + 词信息,按创建时间倒序分页。 */
+  listByUser(userId: string, limit: number, offset: number): Promise<Array<NoteEntryRow & { word_slug: string; word_lemma: string; word_title: string }>>;
 }
 
 // ── Wordbook ────────────────────────────────────────────────────────────
@@ -651,6 +660,8 @@ export interface IL2ContentRepository {
   approveAndActivate(id: string, content: unknown): Promise<void>;
   findById(id: string): Promise<L2ContentRow | null>;
   setActive(id: string, isActive: boolean): Promise<void>;
+  /** 条目化管理：重写生效行 content（保持原 JSON 形态由调用方负责）。 */
+  updateContent(id: string, content: unknown): Promise<void>;
   /** Phase G：拒绝候选 = 硬删。 */
   deleteById(id: string): Promise<void>;
   softDelete(id: string): Promise<void>;
@@ -1037,7 +1048,7 @@ export interface IStatsRepository {
 export interface IRepositories {
   words: IWordRepository;
   reviews: IReviewRepository;
-  notes: INoteRepository;
+  noteEntries: INoteEntryRepository;
   wordbooks: IWordbookRepository;
   highlights: IHighlightRepository;
   annotations: IAnnotationRepository;

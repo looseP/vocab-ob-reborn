@@ -373,6 +373,38 @@ export const noteRevisions = pgTable("note_revisions", {
 	pgPolicy("note_revisions_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)`  }),
 ]);
 
+// 笔记条目(2026-09-06 条目化):1 行/条,追加式写入;hidden_at 非空 = 已隐藏(非破坏)。
+// notes/note_revisions 为文档模型遗留,只读保留至 P4 清理,不再有代码写入路径。
+export const noteEntries = pgTable("note_entries", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull(),
+	wordId: uuid("word_id").notNull(),
+	wordbookId: uuid("wordbook_id").notNull(),
+	contentMd: text("content_md").notNull(),
+	hiddenAt: timestamp("hidden_at", { withTimezone: true, mode: 'string' }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_note_entries_wordbook").using("btree", table.wordbookId.asc().nullsLast(), table.createdAt.desc().nullsFirst()),
+	index("idx_note_entries_user_word").using("btree", table.userId.asc().nullsLast(), table.wordId.asc().nullsLast(), table.hiddenAt.asc().nullsFirst()),
+	foreignKey({
+			columns: [table.userId],
+			foreignColumns: [profiles.id],
+			name: "note_entries_user_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.wordId],
+			foreignColumns: [words.id],
+			name: "note_entries_word_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.wordbookId],
+			foreignColumns: [wordbooks.id],
+			name: "fk_note_entries_wordbook"
+		}).onDelete("cascade"),
+	pgPolicy("note_entries_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)`  }),
+]);
+
 export const importRuns = pgTable("import_runs", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	source: text().notNull(),

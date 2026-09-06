@@ -1,17 +1,32 @@
 {
   "version": 1,
-  "baseSha256": "3794f38e056fa5b451a1a60abe026aa4e6cd92e4bdd05be8e8fe5f870e20269b",
-  "currentSha256": "fbf6deeba0ab547ccf0bd9aeee1ccb0a3dc6505c7a5af509463b5c16ae5914ad",
+  "baseSha256": "7be0ee4f821611bcc5203a0ea04ae1ca1184c03105b9c3714a4006e79b505632",
+  "currentSha256": "960d7cc4af6f52f3dd70b936d60e884673757b23b188c866a081bed29984d4d9",
   "issues": [
     {
       "kind": "breaking",
-      "location": "paths./api/words.get.parameters.query:freq",
-      "message": "删除 request parameter"
+      "location": "paths./api/words/{slug}/notes.get.responses.200.content.application/json.schema.properties.content_md",
+      "message": "删除 required response field"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/words.get.parameters.query:semantic",
-      "message": "删除 request parameter"
+      "location": "paths./api/words/{slug}/notes.get.responses.200.content.application/json.schema.properties.updated_at",
+      "message": "删除 required response field"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/words/{slug}/notes.get.responses.200.content.application/json.schema.properties.version",
+      "message": "删除 required response field"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/words/{slug}/notes.put",
+      "message": "HTTP method 被删除"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/notes.get.responses.200.content.application/json.schema.properties.items.items.properties.version",
+      "message": "删除 required response field"
     }
   ]
 }

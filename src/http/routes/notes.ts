@@ -11,15 +11,15 @@ import type { AppEnv } from "./words";
 export function noteRoutes(services: Services) {
   const app = new Hono<AppEnv>();
 
-  // GET / — list user's notes
+  // GET / — list user's note entries (visible only, newest first)
   app.get("/", async (c) => {
     const userId = c.get("userId");
     const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
-    const notes = await services.notes.listNotes(userId, limit, offset);
+    const entries = await services.noteEntries.listEntries(userId, limit, offset);
     return c.json({
-      items: notes,
-      total: notes.length,
+      items: entries,
+      total: entries.length,
     });
   });
 

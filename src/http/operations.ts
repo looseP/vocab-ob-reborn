@@ -35,9 +35,10 @@ import {
   reviewTimelineResponseSchema,
 } from "./review-response-contract";
 import {
+  noteEntryDeleteResponseSchema,
+  noteEntryMutationResponseSchema,
   noteListResponseSchema,
-  wordNoteResponseSchema,
-  wordNoteUpsertResponseSchema,
+  wordNoteEntriesResponseSchema,
   wordbookDefaultResponseSchema,
   wordbookListResponseSchema,
 } from "./note-wordbook-response-contract";
@@ -66,6 +67,9 @@ import {
   l2CandidateProposeResponseSchema,
   l2ContentRowsResponseSchema,
   l2ContentRowMutateResponseSchema,
+  l2ContentRowItemRemoveResponseSchema,
+  l2ContentRowItemHideResponseSchema,
+  l2ContentRowItemRestoreResponseSchema,
 } from "./l2-response-contract";
 import {
   l2DrillQueueResponseSchema,
@@ -110,6 +114,7 @@ import {
   l2TaskAnswerSchema,
   l2SelfAssessSchema,
   l2UndoSchema,
+  noteEntryUpsertRequestSchema,
 } from "../schemas/http";
 
 export type HttpMethod = "delete" | "get" | "patch" | "post" | "put";
@@ -229,9 +234,6 @@ const noteListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).optional(),
 });
-const wordNoteUpsertRequestSchema = z.object({
-  content_md: z.string().optional(),
-});
 const l2ConfirmRequestSchema = l2FieldRequestSchema.extend({
   content: z.unknown().optional(),
   items: z.array(z.unknown()).optional(),
@@ -284,8 +286,14 @@ export const apiOperations = [
   operation("get", "/api/words/suggest", "suggestWords", "owner", "none", { query: wordSuggestQuerySchema }, 200, wordSuggestResponseSchema),
   operation("get", "/api/words/:slug", "getWord", "owner", "none", undefined, 200, wordDetailResponseSchema),
   operation("post", "/api/words/batch", "batchCreateWords", "owner", "sessionMutation", { body: wordBatchCreateSchema }, 200, wordBatchCreateResponseSchema),
-  operation("get", "/api/words/:slug/notes", "getWordNote", "owner", "none", undefined, 200, wordNoteResponseSchema),
-  operation("put", "/api/words/:slug/notes", "upsertWordNote", "owner", "sessionMutation", { body: wordNoteUpsertRequestSchema }, 200, wordNoteUpsertResponseSchema),
+  // 笔记条目(条目制 2026-09-06):GET 词条目列表;POST 新增;PUT 编辑;
+  // DELETE 硬删(详情页专属);hide/restore 非破坏管理。
+  operation("get", "/api/words/:slug/notes", "getWordNoteEntries", "owner", "none", undefined, 200, wordNoteEntriesResponseSchema),
+  operation("post", "/api/words/:slug/notes/entries", "createWordNoteEntry", "owner", "sessionMutation", { body: noteEntryUpsertRequestSchema }, 201, noteEntryMutationResponseSchema),
+  operation("put", "/api/words/:slug/notes/entries/:entryId", "updateWordNoteEntry", "owner", "sessionMutation", { body: noteEntryUpsertRequestSchema }, 200, noteEntryMutationResponseSchema),
+  operation("delete", "/api/words/:slug/notes/entries/:entryId", "deleteWordNoteEntry", "owner", "sessionMutation", undefined, 200, noteEntryDeleteResponseSchema),
+  operation("post", "/api/words/:slug/notes/entries/:entryId/hide", "hideWordNoteEntry", "owner", "sessionMutation", undefined, 200, noteEntryMutationResponseSchema),
+  operation("post", "/api/words/:slug/notes/entries/:entryId/restore", "restoreWordNoteEntry", "owner", "sessionMutation", undefined, 200, noteEntryMutationResponseSchema),
   operation("get", "/api/plaza", "getPlazaOverview", "owner", "none", { query: plazaQuerySchema }, 200, plazaOverviewResponseSchema),
   operation("get", "/api/plaza/collections/:slug", "getPlazaCollection", "owner", "none", undefined, 200, plazaCollectionResponseSchema),
   operation("get", "/api/plaza/roots", "getPlazaRootsOverview", "owner", "none", { query: plazaRootsQuerySchema }, 200, plazaRootsResponseSchema),
@@ -319,6 +327,9 @@ export const apiOperations = [
   operation("get", "/api/l2/:slug/l2-rows", "listL2ContentRows", "owner", "none", undefined, 200, l2ContentRowsResponseSchema),
   operation("post", "/api/l2/:slug/l2-rows/:rowId/deactivate", "deactivateL2ContentRow", "owner", "sessionMutation", undefined, 200, l2ContentRowMutateResponseSchema),
   operation("delete", "/api/l2/:slug/l2-rows/:rowId", "deleteL2ContentRow", "owner", "sessionMutation", undefined, 200, l2ContentRowMutateResponseSchema),
+  operation("delete", "/api/l2/:slug/l2-rows/:rowId/items/:index", "removeL2ContentRowItem", "owner", "sessionMutation", undefined, 200, l2ContentRowItemRemoveResponseSchema),
+  operation("post", "/api/l2/:slug/l2-rows/:rowId/items/:index/hide", "hideL2ContentRowItem", "owner", "sessionMutation", undefined, 200, l2ContentRowItemHideResponseSchema),
+  operation("post", "/api/l2/:slug/l2-rows/:rowId/hidden/:index/restore", "restoreL2ContentRowItem", "owner", "sessionMutation", undefined, 200, l2ContentRowItemRestoreResponseSchema),
   operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),
   operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
   operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }, 200, l2ConfirmResponseSchema),

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type {
-  INoteRepository,
+  INoteEntryRepository,
   IRepositories,
   IWordRepository,
   IWordbookRepository,
@@ -44,7 +44,7 @@ interface CaptureMocks {
     insertMany: ReturnType<typeof vi.fn>;
   };
   wordbooks: { addWords: ReturnType<typeof vi.fn> };
-  notes: { findByWord: ReturnType<typeof vi.fn> };
+  noteEntries: { listVisibleByWordIds: ReturnType<typeof vi.fn> };
 }
 
 function makeRepos(wordBySlug: WordRow | null): CaptureMocks {
@@ -53,11 +53,11 @@ function makeRepos(wordBySlug: WordRow | null): CaptureMocks {
     insertMany: vi.fn(async () => 1),
   };
   const wordbooks = { addWords: vi.fn(async () => undefined) };
-  const notes = { findByWord: vi.fn(async () => null) };
+  const noteEntries = { listVisibleByWordIds: vi.fn(async () => []) };
   mockRepos.words = words as unknown as IWordRepository;
   mockRepos.wordbooks = wordbooks as unknown as IWordbookRepository;
-  mockRepos.notes = notes as unknown as INoteRepository;
-  return { words, wordbooks, notes };
+  mockRepos.noteEntries = noteEntries as unknown as INoteEntryRepository;
+  return { words, wordbooks, noteEntries };
 }
 
 function makeService(words: CaptureMocks["words"]): CaptureService {
@@ -142,14 +142,20 @@ describe("CaptureService.capture — existing word", () => {
     expect(mocks.wordbooks.addWords).toHaveBeenCalledWith("wb1", ["w-1"]);
   });
 
-  it("surfaces the existing note content when one exists", async () => {
+  it("surfaces the existing note entries joined when one exists", async () => {
     const mocks = makeRepos(makeWordRow());
-    mocks.notes.findByWord.mockResolvedValue({ content_md: "# note" });
+    mocks.noteEntries.listVisibleByWordIds.mockResolvedValue([
+      {
+        id: "e1", user_id: "u1", word_id: "w-1", wordbook_id: "wb1",
+        content_md: "# note", hidden_at: null,
+        created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
+      },
+    ]);
 
     const result = await makeService(mocks.words).capture(BASE_INPUT);
 
     expect(result.noteContentMd).toBe("# note");
-    expect(mocks.notes.findByWord).toHaveBeenCalledWith("u1", "wb1", "w-1");
+    expect(mocks.noteEntries.listVisibleByWordIds).toHaveBeenCalledWith("u1", "wb1", ["w-1"]);
   });
 });
 

@@ -257,27 +257,18 @@ export interface ReviewQueueItem {
   word: { id: string; slug: string; title: string; lemma: string };
 }
 
-// ── Note ────────────────────────────────────────────────────────────────
-export interface NoteRow {
+// ── Note entry(条目制笔记,2026-09-06)──────────────────────────────────
+// notes/note_revisions(单文档+版本链)为遗留模型,只读保留;新写入路径全部走 note_entries。
+export interface NoteEntryRow {
   id: string;
   user_id: string;
   word_id: string;
   wordbook_id: string;
   content_md: string;
-  version: number;
+  /** 非空 = 已隐藏(非破坏管理);恢复时置回 NULL。 */
+  hidden_at: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface NoteRevisionRow {
-  id: string;
-  note_id: string;
-  user_id: string;
-  word_id: string;
-  wordbook_id: string;
-  content_md: string;
-  version: number;
-  created_at: string;
 }
 
 // ── Wordbook ────────────────────────────────────────────────────────────

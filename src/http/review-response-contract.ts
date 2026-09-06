@@ -45,6 +45,15 @@ export const reviewQueueResponseSchema = z.object({
     reviewCount: z.number().int().nonnegative(),
     /** Phase E 晋升可视化：L1 stability（天），晋升门 S≥21d ∧ reviewCount≥5。 */
     stability: z.number().nullable(),
+    /**
+     * P3-① 复习卡附带「我的笔记」(条目制 2026-09-06):可见笔记条目列表
+     * (hidden_at IS NULL),创建时间正序;无笔记为空数组。
+     */
+    note_entries: z.array(z.object({
+      id: z.string(),
+      content_md: z.string(),
+      created_at: z.string(),
+    }).strict()),
   }).strict()),
   session: z.object({
     id: z.string(),

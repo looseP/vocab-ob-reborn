@@ -21,6 +21,7 @@
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AppEnv } from "./words";
+import type { NoteEntryRow } from "@/domain";
 import {
   addToReviewSchema,
   batchAddToReviewSchema,
@@ -46,7 +47,24 @@ export function reviewRoutes(services: Services) {
     const wordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
     const wordbook = await services.wordbooks.getOrCreateDefault(userId);
     const queue = await services.reviews.getQueue(userId, wordbook.id, limit, mode, wordIds, offset);
-    return c.json(queue);
+    // 复习卡附带「我的笔记」(P3-①,条目制 2026-09-06):批量取可见笔记条目,
+    // 有条目的卡在背面提供折叠入口(逐条展开 + 快记)
+    const wordIdsInQueue = queue.items.map((item) => item.word.id).filter(Boolean);
+    const entriesMap: Map<string, NoteEntryRow[]> = wordIdsInQueue.length
+      ? await services.noteEntries.getVisibleByWordIds(userId, wordbook.id, wordIdsInQueue)
+      : new Map();
+    return c.json({
+      ...queue,
+      items: queue.items.map((item) => ({
+        ...item,
+        note_entries: (entriesMap.get(item.word.id) ?? []).map((entry) => ({
+          id: entry.id,
+          content_md: entry.content_md,
+          // pg 驱动对 timestamptz 返回 Date 对象(类型标注为 string),new Date 两者兼容
+          created_at: new Date(entry.created_at).toISOString(),
+        })),
+      })),
+    });
   });
 
   // GET /drill/queue — cram 练习变体候选（cloze/definition 自测），纯读无副作用
