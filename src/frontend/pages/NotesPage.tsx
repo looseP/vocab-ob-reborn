@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Notebook, Clock, FileText } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
-import { Badge } from "@/frontend/components/ui/Badge";
 import { Skeleton, SkeletonCard } from "@/frontend/components/ui/Skeleton";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { apiFetch } from "@/frontend/api/client";
@@ -13,8 +12,8 @@ interface NoteItem {
   wordLemma: string;
   wordTitle: string;
   contentMd: string;
-  version: number;
-  updatedAt: string;
+  createdAt: string;
+  updatedAt: string | null;
 }
 
 interface NotesResponse {
@@ -98,14 +97,13 @@ export function NotesPage() {
                       <h3 className="section-title text-lg font-semibold text-[var(--color-ink)]">
                         {note.wordLemma}
                       </h3>
-                      <Badge tone="accent">v{note.version}</Badge>
                     </div>
                     <p className="mt-1 line-clamp-2 text-sm text-[var(--color-ink-soft)]">
                       {note.contentMd || "(空笔记)"}
                     </p>
                     <div className="mt-2 flex items-center gap-1 text-xs text-[var(--color-ink-soft)]">
                       <Clock className="h-3 w-3" />
-                      {formatDate(note.updatedAt)}
+                      {formatDate(note.createdAt)}
                     </div>
                   </div>
                   <FileText className="h-5 w-5 shrink-0 text-[var(--color-ink-soft)]" />

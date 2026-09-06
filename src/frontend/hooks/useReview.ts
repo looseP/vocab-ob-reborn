@@ -2,6 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/frontend/api/client";
 import { useToast } from "@/frontend/components/ui/Toast";
 
+export interface ReviewNoteEntry {
+  id: string;
+  content_md: string;
+  created_at: string;
+}
+
 export interface ReviewCard {
   progressId: string;
   word: {
@@ -21,6 +27,11 @@ export interface ReviewCard {
   l1WeakSignal?: boolean;
   /** Phase E 晋升可视化：L1 stability（天），晋升门 S≥21d ∧ reviewCount≥5。 */
   stability?: number | null;
+  /**
+   * P3-①(条目制 2026-09-06):复习卡附带可见笔记条目,创建时间正序;
+   * 无笔记为空数组。卡背提供折叠入口 + 快记。
+   */
+  note_entries: ReviewNoteEntry[];
   /** 队列优先级元数据（review/zen 模式，P1）。 */
   queueBucket?: string;
   queueLabel?: string;
