@@ -4,7 +4,7 @@
 import { act } from "react";
 import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { screen, waitFor } from "@testing-library/dom";
+import { fireEvent, screen, waitFor } from "@testing-library/dom";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WordL3Contexts } from "@/frontend/components/words/WordL3Contexts";
@@ -13,6 +13,10 @@ import { WordL3Contexts } from "@/frontend/components/words/WordL3Contexts";
 // 用 createRoot + act 手动挂载，queries 用 @testing-library/dom。
 
 vi.mock("@/frontend/api/client", () => ({ apiFetch: vi.fn() }));
+// useToast 依赖 ToastProvider 上下文，直接 mock 掉。addToast 引用必须跨渲染稳定
+// （参照 tests/frontend/l3-bookshelf.test.tsx 的 vi.hoisted 手法，避免无限 refetch）。
+const { addToastMock } = vi.hoisted(() => ({ addToastMock: vi.fn() }));
+vi.mock("@/frontend/components/ui/Toast", () => ({ useToast: () => ({ addToast: addToastMock }) }));
 import { apiFetch } from "@/frontend/api/client";
 
 const PAGE = {
@@ -58,7 +62,10 @@ afterEach(() => {
 });
 
 describe("WordL3Contexts", () => {
-  beforeEach(() => { (apiFetch as ReturnType<typeof vi.fn>).mockReset(); });
+  beforeEach(() => {
+    (apiFetch as ReturnType<typeof vi.fn>).mockReset();
+    addToastMock.mockReset();
+  });
 
   it("loads and renders contexts with per-item source deep links", async () => {
     await renderContexts("ephemeral", PAGE);
@@ -71,5 +78,28 @@ describe("WordL3Contexts", () => {
   it("renders empty hint when no contexts", async () => {
     await renderContexts("ephemeral", { items: [], limit: 10, cursor: null, nextCursor: null });
     await waitFor(() => expect(screen.getByText("暂无语境记录")).toBeTruthy());
+  });
+
+  it("submits quick capture and prepends the new context", async () => {
+    (apiFetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(PAGE)
+      .mockResolvedValueOnce({ ok: true, sourceId: "s", contextId: "c2", occurrenceId: "o" })
+      .mockResolvedValueOnce({
+        items: [
+          { context: { id: "c2", text: "新造的句子 ephemeral here.", created_at: "2026-09-07T01:00:00Z" }, source: { id: "s2", title: "手动记录" } },
+          ...PAGE.items,
+        ],
+        limit: 10, cursor: null, nextCursor: null,
+      });
+    await renderContexts("ephemeral", PAGE);
+    await waitFor(() => expect(screen.getByText(/ephemeral beauty/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText(/粘贴句子/), { target: { value: "新造的句子 ephemeral here." } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("快记"));
+    });
+    await screen.findByText(/新造的句子/);
+    expect((apiFetch as ReturnType<typeof vi.fn>).mock.calls[1][0]).toBe("/l3/quick-context");
   });
 });

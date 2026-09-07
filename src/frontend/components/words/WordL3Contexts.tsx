@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "@/frontend/api/client";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
+import { useToast } from "@/frontend/components/ui/Toast";
 
 export interface WordL3ListItem {
   context: { id: string; text: string; created_at: string };
@@ -15,6 +17,9 @@ export interface WordL3ListItem {
 export function WordL3Contexts({ slug }: { slug: string }) {
   const [items, setItems] = useState<WordL3ListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const { addToast } = useToast();
 
   const reload = useCallback(async () => {
     try {
@@ -29,8 +34,36 @@ export function WordL3Contexts({ slug }: { slug: string }) {
 
   useEffect(() => { void reload(); }, [reload]);
 
+  const quickAdd = async () => {
+    const text = draft.trim();
+    if (!text || saving) return;
+    setSaving(true);
+    try {
+      await apiFetch("/l3/quick-context", { method: "POST", body: JSON.stringify({ slug, text }), timeoutMs: 20_000 });
+      setDraft("");
+      addToast("success", "已记录一条语境");
+      await reload();
+    } catch (err) {
+      addToast("error", err instanceof BrowserApiError ? err.message : "快记失败，请重试");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-2">
+      <div className="flex gap-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void quickAdd(); }}
+          placeholder="粘贴句子/长难句，Ctrl+Enter 快记"
+          rows={2}
+          className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13px]"
+        />
+        <button type="button" onClick={() => void quickAdd()} disabled={saving || !draft.trim()}
+          className="shrink-0 self-end rounded-lg bg-[var(--color-accent)] px-3 py-2 text-xs text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50">快记</button>
+      </div>
       {error && <p className="text-sm text-red-500">{error}</p>}
       {items === null && <p className="text-sm text-[var(--color-ink-soft)]">加载中…</p>}
       {items !== null && items.length === 0 && !error && (
