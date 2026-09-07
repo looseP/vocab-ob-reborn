@@ -10,7 +10,7 @@ export default defineConfig({
   test: {
     testTimeout: 30000,
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     exclude: ["tests/**/*.integration.test.ts", "node_modules/**"],
     setupFiles: ["./tests/setup.ts"],
     coverage: {
