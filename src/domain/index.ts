@@ -530,6 +530,7 @@ export interface L3SourceSpace {
   contexts: L3ContextRow[];
   occurrences: L3OccurrenceRow[];
   links: L3ContextLinkRow[];
+  words: Array<{ id: string; slug: string; title: string }>;
   stats: L3ReadStats;
   limit: number;
   cursor: string | null;

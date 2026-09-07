@@ -1799,6 +1799,7 @@ function sourceSpace(overrides: Partial<L3SourceSpace> = {}): L3SourceSpace {
     contexts: [contextRow()],
     occurrences: [occurrenceRow()],
     links: [linkRow()],
+    words: [],
     stats: { sourceCount: 1, contextCount: 1, occurrenceCount: 1, linkCount: 1 },
     limit: 50,
     cursor: null,

@@ -28202,6 +28202,29 @@
                         "additionalProperties": false
                       }
                     },
+                    "words": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "slug": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "slug",
+                          "title"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "stats": {
                       "type": "object",
                       "properties": {
@@ -28265,6 +28288,7 @@
                     "contexts",
                     "occurrences",
                     "links",
+                    "words",
                     "stats",
                     "limit",
                     "cursor",

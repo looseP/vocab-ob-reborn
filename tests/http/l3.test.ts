@@ -2,7 +2,19 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createApp } from "@/http/server";
 import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import { L3ContextService } from "@/services/l3-context.service";
+import { L3ReadService } from "@/services/l3-read.service";
+import { createRepositories } from "@/index";
 import type { Services } from "@/services";
+import { createMockPool } from "../helpers/mock-db";
+
+const mockDb = createMockPool();
+vi.mock("@/db/connection", () => ({
+  getPool: () => mockDb.pool,
+  getBatchImportPool: () => mockDb.pool,
+  checkPoolHealth: vi.fn(),
+  resetPool: vi.fn(),
+  pool: () => mockDb.pool,
+}));
 
 const ORIGINAL_OWNER_TOKEN = process.env.OWNER_API_TOKEN;
 const ORIGINAL_LOCAL_OWNER = process.env.LOCAL_OWNER_ID;
@@ -25,6 +37,7 @@ const AUTH_HEADERS = {
 const SOURCE_ID = "00000000-0000-4000-8000-000000000001";
 const CONTEXT_ID = "00000000-0000-4000-8000-000000000002";
 const WORD_ID = "00000000-0000-4000-8000-000000000003";
+const WORD_B_ID = "00000000-0000-4000-8000-000000000013";
 const OCCURRENCE_ID = "00000000-0000-4000-8000-000000000011";
 const CONTEXT_LINK_ID = "00000000-0000-4000-8000-000000000012";
 const L3_SERVICE_GROUPS = ["l3Context", "l3Import", "l3Proposal", "l3Read", "l3Recommendation"] as const;
@@ -287,6 +300,125 @@ describe("L3 HTTP routes", () => {
       limit: 25,
       cursor: null,
     });
+  });
+
+  it("GET /api/l3/sources/:id/space returns words covering deduped occurrence word_ids", async () => {
+    mockDb.reset();
+    mockDb.setRowMap({
+      "SELECT * FROM l3_sources WHERE id": [{
+        id: SOURCE_ID,
+        user_id: "user-123",
+        wordbook_id: null,
+        source_type: "article",
+        title: "Essay",
+        author: null,
+        url: null,
+        language: "en",
+        metadata: {},
+        content_text: null,
+        content_hash: null,
+        created_at: "2026-07-08T00:00:00Z",
+        updated_at: "2026-07-08T00:00:00Z",
+      }],
+      "FROM l3_contexts c": [{
+        context_id: CONTEXT_ID,
+        source_id: SOURCE_ID,
+        user_id: "user-123",
+        context_type: "sentence",
+        text: "A vivid context.",
+        normalized_text: null,
+        context_language: "en",
+        position: {},
+        context_metadata: {},
+        context_created_at: "2026-07-08T00:00:00Z",
+        context_updated_at: "2026-07-08T00:00:00Z",
+        source_user_id: "user-123",
+        wordbook_id: null,
+        source_type: "article",
+        title: "Essay",
+        author: null,
+        url: null,
+        source_language: "en",
+        source_metadata: {},
+        source_created_at: "2026-07-08T00:00:00Z",
+        source_updated_at: "2026-07-08T00:00:00Z",
+        occurrences: [
+          {
+            id: "00000000-0000-4000-8000-000000000021",
+            context_id: CONTEXT_ID,
+            word_id: WORD_ID,
+            user_id: "user-123",
+            surface: "vivid",
+            lemma: "vivid",
+            start_offset: 2,
+            end_offset: 7,
+            confidence: null,
+            evidence: {},
+            created_at: "2026-07-08T00:00:00Z",
+          },
+          {
+            id: "00000000-0000-4000-8000-000000000022",
+            context_id: CONTEXT_ID,
+            word_id: WORD_ID,
+            user_id: "user-123",
+            surface: "vivid",
+            lemma: "vivid",
+            start_offset: 20,
+            end_offset: 25,
+            confidence: null,
+            evidence: {},
+            created_at: "2026-07-08T00:00:01Z",
+          },
+          {
+            id: "00000000-0000-4000-8000-000000000023",
+            context_id: CONTEXT_ID,
+            word_id: WORD_B_ID,
+            user_id: "user-123",
+            surface: "keen",
+            lemma: "keen",
+            start_offset: 30,
+            end_offset: 34,
+            confidence: null,
+            evidence: {},
+            created_at: "2026-07-08T00:00:02Z",
+          },
+        ],
+        links: [],
+      }],
+      "FROM words WHERE id = ANY": [
+        { id: WORD_ID, slug: "vivid", title: "vivid" },
+        { id: WORD_B_ID, slug: "keen", title: "keen" },
+      ],
+    });
+    const repos = createRepositories();
+    const services = {
+      ...makeServices(),
+      l3Read: new L3ReadService(
+        repos.l3Context,
+        async <T,>(run: (tx: never) => Promise<T>, _options?: { actorId?: string }): Promise<T> => run({} as never),
+        () => ({ l3Context: repos.l3Context }) as never,
+      ),
+    } as unknown as Services;
+    const app = createApp(services);
+
+    const res = await app.request(`/api/l3/sources/${SOURCE_ID}/space?limit=25`, {
+      method: "GET",
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      occurrences: Array<{ word_id: string }>;
+      words: Array<{ id: string; slug: string; title: string }>;
+    };
+    expect(body.words).toEqual([
+      { id: WORD_ID, slug: "vivid", title: "vivid" },
+      { id: WORD_B_ID, slug: "keen", title: "keen" },
+    ]);
+    const dedupedOccurrenceWordIds = [...new Set(body.occurrences.map((o) => o.word_id))].sort();
+    expect(body.words.map((w) => w.id).sort()).toEqual(dedupedOccurrenceWordIds);
+    expect(mockDb.lastQuery?.text).toContain("FROM words WHERE id = ANY");
+    expect(mockDb.lastQuery?.params).toEqual([[WORD_ID, WORD_B_ID]]);
   });
 
   it("GET /api/l3/graph succeeds for the supported one-hop depth", async () => {

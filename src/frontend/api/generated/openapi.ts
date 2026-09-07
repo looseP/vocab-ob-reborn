@@ -13723,6 +13723,11 @@ export interface operations {
                             provenance: components["schemas"]["JsonValue"];
                             created_at: string;
                         }[];
+                        words: {
+                            id: string;
+                            slug: string;
+                            title: string;
+                        }[];
                         stats: {
                             sourceCount: number;
                             contextCount: number;

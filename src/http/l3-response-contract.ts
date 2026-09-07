@@ -297,6 +297,11 @@ export const l3SourceSpaceResponseSchema: z.ZodType<L3SourceSpace> = z.object({
   contexts: z.array(l3ContextRowResponseSchema),
   occurrences: z.array(l3OccurrenceRowResponseSchema),
   links: z.array(l3ContextLinkRowResponseSchema),
+  words: z.array(z.object({
+    id: z.string(),
+    slug: z.string(),
+    title: z.string(),
+  }).strict()),
   stats: l3ReadStatsResponseSchema,
   limit: z.number().int().positive(),
   cursor: z.string().nullable(),

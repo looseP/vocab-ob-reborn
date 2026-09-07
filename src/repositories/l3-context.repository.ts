@@ -996,11 +996,19 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     const contexts = page.items.map((item) => item.context);
     const occurrences = uniqueById(page.items.flatMap((item) => item.occurrences));
     const links = uniqueById(page.items.flatMap((item) => item.links));
+    const wordIds = [...new Set(occurrences.map((o) => o.word_id))];
+    const words = wordIds.length
+      ? await this.query<{ id: string; slug: string; title: string }>(
+          `SELECT id, slug, title FROM words WHERE id = ANY($1::uuid[])`,
+          [wordIds],
+        )
+      : [];
     return {
       source,
       contexts,
       occurrences,
       links,
+      words,
       stats: buildStats([source], contexts, occurrences, links),
       limit: page.limit,
       cursor: page.cursor,
