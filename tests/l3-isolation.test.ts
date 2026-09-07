@@ -43,7 +43,9 @@ describe("L3 isolation", () => {
     expect(sql).not.toContain("word_l2_content");
     expect(sql).not.toContain("user_word_progress");
     expect(sql).not.toContain("user_word_l2_progress");
-    expect(sql).not.toContain("content_hash");
+    // migration 0020 adds a l3_sources-owned content_hash column; only the
+    // L1/L2-side hash columns on words are forbidden here.
+    expect(sql).not.toContain("l1_content_hash");
     expect(sql).not.toContain("l2_content_hash");
     expect(sql).not.toContain("UPDATE words");
   });
