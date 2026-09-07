@@ -1,6 +1,9 @@
 import { pgTable, foreignKey, unique, pgPolicy, check, uuid, text, jsonb, timestamp, index, boolean, numeric, integer, uniqueIndex, primaryKey, date, pgEnum, customType } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
+// L3 坐标空间约定（2026-09-07 计划）：content_text 导入后只读（修订=新版本）；
+// 偏移一律 UTF-16 码元、producer/consumer 均为 JS 单运行时（计划文档「坐标空间约定」）。
+
 // Drizzle doesn't natively support tsvector; define a custom type so the
 // generated column can be typed correctly instead of falling back to `unknown`.
 const tsvector = customType<{ data: string }>({
@@ -889,11 +892,14 @@ export const l3Sources = pgTable("l3_sources", {
 	url: text("url"),
 	language: text("language"),
 	metadata: jsonb("metadata").default({}).notNull(),
+	contentText: text("content_text"),
+	contentHash: text("content_hash"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 }, (table) => [
 	index("idx_l3_sources_user_created").on(table.userId, table.createdAt),
 	unique("l3_sources_id_user_id_unique").on(table.id, table.userId),
+	uniqueIndex("l3_sources_user_content_hash_unique").on(table.userId, table.contentHash).where(sql`content_hash IS NOT NULL`),
 	foreignKey({
 			columns: [table.wordbookId, table.userId],
 			foreignColumns: [wordbooks.id, wordbooks.userId],

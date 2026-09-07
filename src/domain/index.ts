@@ -417,6 +417,8 @@ export interface L3SourceRow {
   url: string | null;
   language: string | null;
   metadata: Json;
+  content_text: string | null;
+  content_hash: string | null;
   created_at: string;
   updated_at: string;
 }

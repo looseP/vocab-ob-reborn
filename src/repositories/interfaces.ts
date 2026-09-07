@@ -679,6 +679,8 @@ export interface NewL3Source {
   url?: string | null;
   language?: string | null;
   metadata?: Json;
+  content_text?: string | null;
+  content_hash?: string | null;
 }
 
 export interface NewL3Context {

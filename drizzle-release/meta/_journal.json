@@ -141,6 +141,13 @@
       "when": 1788697984808,
       "tag": "0019_open_mandrill",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1788799024992,
+      "tag": "0020_kind_nebula",
+      "breakpoints": true
     }
   ]
 }
