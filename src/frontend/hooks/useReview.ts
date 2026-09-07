@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/frontend/api/client";
 import { useToast } from "@/frontend/components/ui/Toast";
+import type { ReviewL3ContextItem } from "@/frontend/components/review/L3ContextsFold";
 
 export interface ReviewNoteEntry {
   id: string;
@@ -32,6 +33,8 @@ export interface ReviewCard {
    * 无笔记为空数组。卡背提供折叠入口 + 快记。
    */
   note_entries: ReviewNoteEntry[];
+  /** L3 语境条目（Tier 2 折叠，grill 2026-09-07）。无语境为空数组。 */
+  l3_contexts?: ReviewL3ContextItem[];
   /** 队列优先级元数据（review/zen 模式，P1）。 */
   queueBucket?: string;
   queueLabel?: string;

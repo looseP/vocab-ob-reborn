@@ -22,6 +22,7 @@ import { labelReviewState } from "@/frontend/hooks/useReview";
 import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
+import { L3ContextsFold } from "@/frontend/components/review/L3ContextsFold";
 
 const ratings = [
   { value: "again", label: "重来", variant: "danger" as const, key: "1" },
@@ -519,6 +520,9 @@ export function ReviewCardView({
 
             {/* ── Tier 2 网络:词源 / 语义链 / 词根词族(默认收起)── */}
             <NetworkFold detail={detailWord} />
+
+            {/* ── Tier 2 语境:L3 素材空间圈记条目(默认收起,深链阅读视图)── */}
+            <L3ContextsFold slug={card.word.slug} items={card?.l3_contexts ?? []} />
 
             {/* ── 我的笔记(条目制):折叠 + 快记 ── */}
             <NoteEntriesFold
