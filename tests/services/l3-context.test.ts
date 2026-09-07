@@ -237,6 +237,7 @@ function makeService(
 ): L3ContextService {
   return new L3ContextService(
     repository,
+    undefined,
     txRunner,
     () => ({ l3Context: txRepository } as unknown as IRepositories),
   );

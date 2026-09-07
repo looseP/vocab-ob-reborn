@@ -291,6 +291,15 @@ export const l3ContextLinkCreateSchema = z.object({
   path: ["contextId"],
 });
 
+export const l3SelectionCaptureSchema = z.object({
+  text: z.string().trim().min(1),
+  anchorStart: z.number().int().min(0),
+  anchorEnd: z.number().int().min(0),
+  surface: z.string().trim().min(1),
+  wordSlug: z.string().trim().min(1),
+  contextType: z.enum(["sentence", "excerpt"]).optional(),
+}).refine((v) => v.anchorEnd > v.anchorStart, { message: "anchorEnd must be > anchorStart", path: ["anchorEnd"] });
+
 export const l3LimitCursorQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().min(1).optional(),

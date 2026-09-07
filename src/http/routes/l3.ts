@@ -20,6 +20,7 @@ import {
   l3RecommendationGenerateSchema,
   l3RecommendationListQuerySchema,
   l3RecommendationRejectSchema,
+  l3SelectionCaptureSchema,
   l3SourceSpaceQuerySchema,
   l3SourceCreateSchema,
   l3StructuredImportCreateSchema,
@@ -54,6 +55,22 @@ export function l3Routes(services: Services) {
       url: parsed.data.url ?? null,
       language: parsed.data.language ?? null,
       metadata: asJson(parsed.data.metadata ?? {}),
+    });
+    return c.json(result, 201);
+  });
+
+  app.post("/sources/:id/captures", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const parsed = l3SelectionCaptureSchema.safeParse(body);
+    if (!parsed.success) {
+      return validationError(c, parsed.error.flatten());
+    }
+    const sourceId = parseRouteUuid(c.req.param("id"));
+    if (!sourceId) return validationError(c, { fieldErrors: { id: ["invalid uuid"] } });
+    const result = await services.l3Context.createSelectionCapture({
+      userId: c.get("userId"),
+      sourceId,
+      ...parsed.data,
     });
     return c.json(result, 201);
   });

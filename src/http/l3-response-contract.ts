@@ -194,6 +194,17 @@ export const l3ContextLinkCreateResponseSchema = z.object({
   link: l3ContextLinkRowResponseSchema,
 }).strict();
 
+export const l3SelectionCaptureResponseSchema = z.object({
+  contextId: z.string(),
+  occurrenceId: z.string(),
+  word: z.object({
+    id: z.string(),
+    slug: z.string(),
+    title: z.string(),
+  }).strict(),
+  created: z.boolean(),
+}).strict();
+
 export const l3ImportJobRowResponseSchema: z.ZodType<L3ImportJobRow> = z.object({
   id: z.string(),
   user_id: z.string(),

@@ -24,6 +24,7 @@ import type {
 import type {
   IL3ContextRepository,
   IRepositories,
+  IWordRepository,
   L3ContextDeleteBlockers,
   L3SourceDeleteBlockers,
   NewL3Context,
@@ -32,6 +33,7 @@ import type {
   NewL3Occurrence,
   NewL3Source,
 } from "../repositories/interfaces";
+import { slugifyHeadword } from "./capture.service";
 import {
   L3_CONTEXT_LINK_TARGET_TYPES,
   L3_CONTEXT_LINK_TYPES,
@@ -42,6 +44,7 @@ import {
   type CreateL3ContextLinkInput,
   type CreateL3ImportJobInput,
   type CreateL3OccurrenceInput,
+  type CreateL3SelectionCaptureInput,
   type CreateL3SourceInput,
   type DeleteL3ContextInput,
   type DeleteL3ContextLinkInput,
@@ -150,6 +153,7 @@ function deleteConflict(
 export class L3ContextService {
   constructor(
     private readonly l3Context: IL3ContextRepository,
+    private readonly words?: IWordRepository,
     private readonly txRunner: TxRunner = withTransaction,
     private readonly repositoryFactory: RepositoryFactory = createRepositories,
   ) {}
@@ -263,6 +267,83 @@ export class L3ContextService {
         evidence: input.evidence ?? {},
       } satisfies NewL3Occurrence);
       return { occurrence };
+    });
+  }
+
+  /**
+   * 圈记（grill 定案 2026-09-07）：阅读视图选中文本 → 记录语境条目。
+   * 锚点 = position{start,end}（全文 UTF-16 偏移）；occurrence 偏移相对 text。
+   * 词不在库 → 先经 words.insertMany（batch-pool 角色）建 stub 再绑（capture-first）。
+   * owner 直写 = trusted foundation-write（ADR-0007），不走提案队列。
+   */
+  async createSelectionCapture(input: CreateL3SelectionCaptureInput): Promise<{
+    contextId: string; occurrenceId: string; word: { id: string; slug: string; title: string }; created: boolean;
+  }> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.text, "text");
+    requireNonEmpty(input.surface, "surface");
+    requireNonEmpty(input.wordSlug, "wordSlug");
+    if (!(Number.isInteger(input.anchorStart) && Number.isInteger(input.anchorEnd) && input.anchorEnd > input.anchorStart)) {
+      throw new ValidationError("anchor range is invalid", "anchor");
+    }
+    const contextType = input.contextType ?? "sentence";
+    requireEnum(contextType, ["sentence", "excerpt"], "contextType");
+
+    // ① 词解析/stub —— words INSERT 仅 batch_import 角色可执行，必须在 app 事务外（capture.service 同款）
+    const slug = slugifyHeadword(input.wordSlug);
+    if (!slug) throw new ValidationError("wordSlug must contain word characters", "wordSlug");
+    let word = await this.l3Context.findWordBySlug(slug);
+    let created = false;
+    if (!word) {
+      if (!this.words?.insertMany) throw new Error("words repository with insertMany is required for selection capture");
+      await this.words.insertMany([
+        { slug, title: slug, lemma: slug, pos: null, cefr: null, ipa: null, short_definition: null },
+      ]);
+      created = true;
+    }
+    word = await this.l3Context.findWordBySlug(slug);
+    if (!word) throw new Error(`capture word upsert failed for slug "${slug}"`);
+
+    // ② 语境 + occurrence 同事务（RLS actor）
+    return this.withActorRepository(input.userId, async (repository) => {
+      const source = await repository.lockSourceByIdForUser(input.userId, input.sourceId);
+      if (!source) throw new NotFoundError("L3Source", input.sourceId);
+      const fullText = source.content_text;
+      if (fullText == null) throw new ValidationError("source has no content text", "contentText");
+      if (input.anchorEnd > fullText.length || fullText.slice(input.anchorStart, input.anchorEnd).length === 0) {
+        throw new ValidationError("anchor range out of content bounds", "anchor");
+      }
+
+      const context = await repository.createContext({
+        user_id: input.userId,
+        source_id: input.sourceId,
+        context_type: contextType,
+        text: input.text,
+        normalized_text: null,
+        language: source.language,
+        position: { start: input.anchorStart, end: input.anchorEnd },
+        metadata: {},
+      } satisfies NewL3Context);
+
+      const rel = input.text.toLowerCase().indexOf(input.surface.toLowerCase());
+      const occurrence = await repository.createOccurrence({
+        user_id: input.userId,
+        context_id: context.id,
+        word_id: word!.id,
+        surface: input.surface,
+        lemma: word!.lemma,
+        start_offset: rel >= 0 ? rel : null,
+        end_offset: rel >= 0 ? rel + input.surface.length : null,
+        confidence: null,
+        evidence: { via: "selection_capture" },
+      } satisfies NewL3Occurrence);
+
+      return {
+        contextId: context.id,
+        occurrenceId: occurrence.id,
+        word: { id: word!.id, slug: word!.slug, title: word!.title },
+        created,
+      };
     });
   }
 

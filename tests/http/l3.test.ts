@@ -1540,6 +1540,7 @@ describe("POST /api/l3/sources content import (S1)", () => {
   }) {
     return new L3ContextService(
       repository as never,
+      undefined,
       async <T,>(run: (tx: never) => Promise<T>, _options?: { actorId?: string }): Promise<T> => run({} as never),
       () => ({ l3Context: repository }) as never,
     );
@@ -1585,5 +1586,67 @@ describe("POST /api/l3/sources content import (S1)", () => {
     expect(res.status).toBe(409);
     const body = await res.json() as { details?: { existingId?: string } };
     expect(body.details?.existingId).toBe("src-exist");
+  });
+});
+
+describe("POST /api/l3/sources/:id/captures (S3 selection capture)", () => {
+  const CAPTURE_BODY = {
+    text: "Gamma delta epsilon.",
+    anchorStart: 12,
+    anchorEnd: 32,
+    surface: "delta",
+    wordSlug: "delta",
+  };
+
+  it("creates a selection capture and returns 201 with the capture result", async () => {
+    const services = makeServices({
+      createSelectionCapture: vi.fn(async () => ({
+        contextId: "ctx-1",
+        occurrenceId: "occ-1",
+        word: { id: "w-1", slug: "delta", title: "delta" },
+        created: false,
+      })),
+    });
+    const app = createApp(services);
+
+    const res = await app.request(`/api/l3/sources/${SOURCE_ID}/captures`, {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify(CAPTURE_BODY),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json() as {
+      contextId: string;
+      occurrenceId: string;
+      word: { id: string; slug: string; title: string };
+      created: boolean;
+    };
+    expect(body).toEqual({
+      contextId: "ctx-1",
+      occurrenceId: "occ-1",
+      word: { id: "w-1", slug: "delta", title: "delta" },
+      created: false,
+    });
+    expect(services.l3Context.createSelectionCapture).toHaveBeenCalledWith({
+      userId: "user-123",
+      sourceId: SOURCE_ID,
+      ...CAPTURE_BODY,
+    });
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
+  });
+
+  it("rejects empty text with a validation error before any service call", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request(`/api/l3/sources/${SOURCE_ID}/captures`, {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ ...CAPTURE_BODY, text: "" }),
+    });
+
+    await expectRouteValidationError(res);
+    expectNoL3ServiceGroupCalled(services);
   });
 });

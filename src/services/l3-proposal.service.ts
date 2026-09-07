@@ -319,6 +319,7 @@ export class L3ProposalService {
 
       const l3Service = new L3ContextService(
         repos.l3Context,
+        undefined,
         async (callback) => callback(tx),
         () => repos,
       );

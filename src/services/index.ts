@@ -114,7 +114,7 @@ export function createServices(deps: ServiceDeps) {
     providerInfo: deps.providerInfo,
   });
 
-  const l3Context = new L3ContextService(repos.l3Context);
+  const l3Context = new L3ContextService(repos.l3Context, repos.words);
   const l3Proposal = new L3ProposalService(repos.l3Proposal, repos.l3Context);
   const l3Read = new L3ReadService(repos.l3Context);
   const l3Recommendation = new L3RecommendationService(repos.l3Recommendation, repos.l3Context);

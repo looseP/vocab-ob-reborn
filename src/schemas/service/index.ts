@@ -477,6 +477,19 @@ export interface CreateL3ContextLinkInput {
   provenance?: Json;
 }
 
+export type CreateL3SelectionCaptureInput = {
+  userId: string;
+  sourceId: string;
+  /** 记录文本：整句分支 = 扩展后的句子；搭配分支 = 选中片段。 */
+  text: string;
+  /** 全文锚点（UTF-16 码元，content_text 内）——阅读视图高亮用。 */
+  anchorStart: number;
+  anchorEnd: number;
+  surface: string;
+  wordSlug: string;
+  contextType?: "sentence" | "excerpt";
+};
+
 export interface DeleteL3OccurrenceInput {
   userId: string;
   occurrenceId: string;
