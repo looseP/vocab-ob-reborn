@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { L3FrontendClient } from "@/l3/frontend/contract";
+import { L3Bookshelf } from "@/frontend/components/l3/L3Bookshelf";
+import { L3ReadingView } from "@/frontend/components/l3/L3ReadingView";
 import { L3Shell, type L3ShellSection } from "@/frontend/components/L3Shell";
 import { L3ContextPage } from "@/frontend/pages/L3ContextPage";
 import { L3GraphPage } from "@/frontend/pages/L3GraphPage";
@@ -51,6 +53,21 @@ export function L3Page() {
     setContextHandoff({ contextId: deepLinkContextId, nonce: Date.now() });
     setSection("context");
   }, [deepLinkContextId]);
+
+  // 书架/阅读视图深链（Task 12）：/l3?sourceId=xxx 直达来源阅读视图（复习卡 Tier 2、
+  // 详情页语境区回流入口）；/l3?wordSlug=xxx 直达词空间。与 contextId 深链同款 handoff 模式。
+  const deepLinkSourceId = searchParams.get("sourceId");
+  const deepLinkWordSlug = searchParams.get("wordSlug");
+  useEffect(() => {
+    if (!deepLinkSourceId) return;
+    setSourceHandoff({ sourceId: deepLinkSourceId, nonce: Date.now() });
+    setSection("source");
+  }, [deepLinkSourceId]);
+  useEffect(() => {
+    if (!deepLinkWordSlug) return;
+    setWordHandoff({ slug: deepLinkWordSlug, nonce: Date.now() });
+    setSection("word");
+  }, [deepLinkWordSlug]);
 
   const openProposal = (proposalId: string) => {
     setSelectedProposalId(proposalId);
@@ -109,7 +126,15 @@ export function L3Page() {
     graph: <L3GraphPage client={l3Client} handoff={graphHandoff} staleState={activeReadStale} onGraphRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     context: <L3ContextPage client={l3Client} handoff={contextHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     word: <L3WordSpacePage client={l3Client} handoff={wordHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
-    source: <L3SourceSpacePage client={l3Client} handoff={sourceHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
+    // source section：书架为前门；handoff 存在时在其下条件渲染阅读视图（Task 8 组件，
+    // sourceId 变化即切换正文），既有 L3SourceSpacePage inspect 视图保持原样不动。
+    source: (
+      <>
+        <L3Bookshelf onOpen={(sourceId) => { setSourceHandoff({ sourceId, nonce: Date.now() }); }} />
+        {sourceHandoff ? <L3ReadingView sourceId={sourceHandoff.sourceId} /> : null}
+        <L3SourceSpacePage client={l3Client} handoff={sourceHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />
+      </>
+    ),
   }[section];
 
   return (
