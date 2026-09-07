@@ -8,6 +8,7 @@ import { Spinner } from "@/frontend/components/ui/Spinner";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
+import { WordL3Contexts } from "@/frontend/components/words/WordL3Contexts";
 import { WordL2Content, ProvenanceBadge } from "@/frontend/components/words/WordL2Content";
 import { WordL2Composer } from "@/frontend/components/words/WordL2Composer";
 import { PromoteL2Button } from "@/frontend/components/words/PromoteL2Button";
@@ -207,6 +208,8 @@ export function WordDetailPage() {
     if (unifiedExamples.length > 0) items.push({ id: "sec-examples", label: "例句" });
     if (hasL2Content) items.push({ id: "sec-l2", label: "L2 扩展" });
     if ((word.body_md ?? "").trim().length > 0) items.push({ id: "sec-notes", label: "笔记" });
+    // L3 语境区恒渲染，锚点恒可用
+    items.push({ id: "l3-contexts", label: "语境" });
     return items;
   }, [word, unifiedExamples.length, hasL2Content, morphologyParts.length, family.length, meta]);
 
@@ -466,6 +469,11 @@ export function WordDetailPage() {
       <WordL2Composer slug={word.slug} onConfirmed={refresh} />
 
       <WordNotes slug={word.slug} />
+
+      {/* L3 语境：素材空间中含该词的语境记录，每条深链直达阅读视图 */}
+      <SectionCard title="L3 语境" id="l3-contexts">
+        <WordL3Contexts slug={slug} />
+      </SectionCard>
     </div>
   );
 }
