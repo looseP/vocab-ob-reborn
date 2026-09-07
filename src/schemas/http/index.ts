@@ -300,6 +300,14 @@ export const l3SelectionCaptureSchema = z.object({
   contextType: z.enum(["sentence", "excerpt"]).optional(),
 }).refine((v) => v.anchorEnd > v.anchorStart, { message: "anchorEnd must be > anchorStart", path: ["anchorEnd"] });
 
+export const quickL3ContextSchema = z.object({
+  slug: z.string().min(1),
+  text: z.string().trim().min(1),
+  sourceTitle: z.string().trim().optional(),
+  sourceUrl: z.string().trim().optional(),
+  obsidianRef: z.string().trim().optional(),
+});
+
 export const l3LimitCursorQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().min(1).optional(),

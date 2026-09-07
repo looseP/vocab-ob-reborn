@@ -26,6 +26,7 @@ import {
   l3SourceCreateSchema,
   l3StructuredImportCreateSchema,
   l3WordSpaceQuerySchema,
+  quickL3ContextSchema,
   uuidSchema,
 } from "@/schemas/http";
 import { validationError } from "../error-response";
@@ -91,6 +92,16 @@ export function l3Routes(services: Services) {
       metadata: asJson(parsed.data.metadata ?? {}),
     });
     return c.json(result, 201);
+  });
+
+  app.post("/quick-context", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const parsed = quickL3ContextSchema.safeParse(body);
+    if (!parsed.success) {
+      return validationError(c, parsed.error.flatten());
+    }
+    const result = await services.l3Context.createWordContextTrio({ userId: c.get("userId"), ...parsed.data });
+    return c.json({ ok: true, ...result }, 201);
   });
 
   app.post("/occurrences", async (c) => {

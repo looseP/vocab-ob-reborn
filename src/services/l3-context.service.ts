@@ -35,6 +35,7 @@ import type {
   NewL3Source,
 } from "../repositories/interfaces";
 import { slugifyHeadword } from "./capture.service";
+import { buildL3TrioInputs } from "./l3-trio";
 import {
   L3_CONTEXT_LINK_TARGET_TYPES,
   L3_CONTEXT_LINK_TYPES,
@@ -47,6 +48,7 @@ import {
   type CreateL3OccurrenceInput,
   type CreateL3SelectionCaptureInput,
   type CreateL3SourceInput,
+  type CreateWordContextTrioInput,
   type DeleteL3ContextInput,
   type DeleteL3ContextLinkInput,
   type DeleteL3OccurrenceInput,
@@ -346,6 +348,41 @@ export class L3ContextService {
         word: { id: word!.id, slug: word!.slug, title: word!.title },
         created,
       };
+    });
+  }
+
+  /** golden 快记（grill 定案 2026-09-07）：粘贴即建 mini-source 三件套，单事务。 */
+  async createWordContextTrio(input: CreateWordContextTrioInput): Promise<{
+    sourceId: string; contextId: string; occurrenceId: string;
+  }> {
+    return this.withActorRepository(input.userId, async (repository) => {
+      const word = await repository.findWordBySlug(input.slug);
+      if (!word) throw new NotFoundError("Word", input.slug);
+      const trio = buildL3TrioInputs({
+        userId: input.userId,
+        wordId: word.id,
+        lemma: word.lemma,
+        sentence: input.text,
+        sourceTitle: input.sourceTitle,
+        sourceUrl: input.sourceUrl,
+        obsidianRef: input.obsidianRef,
+      });
+      const source = await repository.createSource({
+        ...trio.source,
+        metadata: trio.source.metadata as Json,
+      });
+      const context = await repository.createContext({
+        ...trio.context,
+        source_id: source.id,
+        position: trio.context.position as Json,
+        metadata: trio.context.metadata as Json,
+      });
+      const occurrence = await repository.createOccurrence({
+        ...trio.occurrence,
+        context_id: context.id,
+        evidence: trio.occurrence.evidence as Json,
+      });
+      return { sourceId: source.id, contextId: context.id, occurrenceId: occurrence.id };
     });
   }
 

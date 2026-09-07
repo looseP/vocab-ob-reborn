@@ -490,6 +490,16 @@ export type CreateL3SelectionCaptureInput = {
   contextType?: "sentence" | "excerpt";
 };
 
+export type CreateWordContextTrioInput = {
+  userId: string;
+  slug: string;
+  /** 快记文本：粘贴即建 mini-source 三件套（grill 2026-09-07）。 */
+  text: string;
+  sourceTitle?: string;
+  sourceUrl?: string;
+  obsidianRef?: string;
+};
+
 export interface ListL3SourcesInput {
   userId: string;
   sourceType?: L3ServiceSourceType;

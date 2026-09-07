@@ -1670,3 +1670,44 @@ describe("GET /api/l3/sources (S4 bookshelf)", () => {
     }));
   });
 });
+
+describe("POST /api/l3/quick-context", () => {
+  it("creates trio in one call and returns ids", async () => {
+    const services = makeServices({
+      createWordContextTrio: vi.fn(async () => ({
+        sourceId: "src-1",
+        contextId: "ctx-1",
+        occurrenceId: "occ-1",
+      })),
+    });
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/quick-context", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ slug: "ephemeral", text: "The ephemeral beauty of cherry blossoms." }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json() as { ok: boolean; sourceId: string; contextId: string; occurrenceId: string };
+    expect(body).toEqual({ ok: true, sourceId: "src-1", contextId: "ctx-1", occurrenceId: "occ-1" });
+    expect(services.l3Context.createWordContextTrio).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-123", slug: "ephemeral" }),
+    );
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
+  });
+
+  it("rejects empty text with a validation error before any service call", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/quick-context", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ slug: "ephemeral", text: "   " }),
+    });
+
+    await expectRouteValidationError(res);
+    expectNoL3ServiceGroupCalled(services);
+  });
+});

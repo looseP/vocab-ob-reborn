@@ -207,6 +207,13 @@ export const l3SelectionCaptureResponseSchema = z.object({
   created: z.boolean(),
 }).strict();
 
+export const l3QuickContextResponseSchema = z.object({
+  ok: z.literal(true),
+  sourceId: z.string(),
+  contextId: z.string(),
+  occurrenceId: z.string(),
+}).strict();
+
 export const l3ImportJobRowResponseSchema: z.ZodType<L3ImportJobRow> = z.object({
   id: z.string(),
   user_id: z.string(),
