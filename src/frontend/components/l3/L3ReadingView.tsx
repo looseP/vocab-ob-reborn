@@ -4,10 +4,12 @@
  * 不做同形匹配（Q7 定案 A）。点击高亮 → 词卡详情（"从素材访问词卡"）。
  * 选区圈记交互（S3）通过 onSelectionAvailable 挂到同一容器。
  */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
+import { findSentenceRange } from "@/services/l3-segmentation";
+import { useToast } from "@/frontend/components/ui/Toast";
 
 export interface L3ReadingWord { id: string; slug: string; title: string }
 export interface L3ReadingContext { id: string; text: string; position: { start?: number; end?: number } }
@@ -40,9 +42,31 @@ function buildRanges(space: L3ReadingSpace): AnchorRange[] {
     .sort((a, b) => a.start - b.start);
 }
 
+/** 选区 → 正文全局 UTF-16 偏移：TreeWalker 累计各文本节点长度。抽为纯函数便于绕过 jsdom Range 限制直测。 */
+export function computeGlobalOffsets(container: HTMLElement, startNode: Node, startOffset: number, endNode: Node, endOffset: number): { start: number; end: number } | null {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let total = 0;
+  let start: number | null = null;
+  let end: number | null = null;
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const len = node.textContent?.length ?? 0;
+    if (node === startNode) start = total + startOffset;
+    if (node === endNode) { end = total + endOffset; break; }
+    total += len;
+  }
+  if (start == null || end == null || end <= start) return null;
+  return { start, end };
+}
+
 export function L3ReadingView({ sourceId }: { sourceId: string }) {
   const [space, setSpace] = useState<L3ReadingSpace | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const textRef = useRef<HTMLDivElement>(null);
+  const [capture, setCapture] = useState<{ start: number; end: number; text: string } | null>(null);
+  const [target, setTarget] = useState("");
+  const [saving, setSaving] = useState(false);
+  const { addToast } = useToast();
 
   const reload = useCallback(async () => {
     try {
@@ -61,6 +85,51 @@ export function L3ReadingView({ sourceId }: { sourceId: string }) {
   if (!space) return <p className="text-sm text-[var(--color-ink-soft)]">加载中…</p>;
   const text = space.source.content_text;
   if (!text) return <p className="text-sm text-[var(--color-ink-soft)]">该来源无正文</p>;
+
+  const onMouseUp = () => {
+    const sel = window.getSelection();
+    const container = textRef.current;
+    if (!sel || sel.rangeCount === 0 || !container) return setCapture(null);
+    const range = sel.getRangeAt(0);
+    if (!container.contains(range.commonAncestorContainer)) return setCapture(null);
+    const off = computeGlobalOffsets(container, range.startContainer, range.startOffset, range.endContainer, range.endOffset);
+    if (!off) return setCapture(null);
+    const selected = text.slice(off.start, off.end);
+    if (!selected.trim()) return setCapture(null);
+    setCapture({ ...off, text: selected });
+    setTarget(selected.trim().split(/\s+/)[0] ?? "");
+  };
+
+  const submitCapture = async (mode: "sentence" | "excerpt") => {
+    if (!capture || saving) return;
+    const surface = target.trim();
+    if (!surface) { addToast("error", "请填写目标词"); return; }
+    let record = capture.text;
+    let anchor = { start: capture.start, end: capture.end };
+    if (mode === "sentence" && space?.source.content_text) {
+      const seg = findSentenceRange(space.source.content_text, capture.start, capture.end);
+      record = seg.text;
+      anchor = { start: seg.start, end: seg.end };
+    }
+    setSaving(true);
+    try {
+      await apiFetch(`/l3/sources/${encodeURIComponent(sourceId)}/captures`, {
+        method: "POST",
+        body: JSON.stringify({
+          text: record, anchorStart: anchor.start, anchorEnd: anchor.end,
+          surface, wordSlug: surface.toLowerCase(), contextType: mode === "sentence" ? "sentence" : "excerpt",
+        }),
+        timeoutMs: 20_000,
+      });
+      addToast("success", "已圈记，词卡与语境已关联");
+      setCapture(null);
+      await reload();
+    } catch (err) {
+      addToast("error", err instanceof BrowserApiError ? err.message : "圈记失败，请重试");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const ranges = buildRanges(space);
   const pieces: ReactNode[] = [];
@@ -87,7 +156,25 @@ export function L3ReadingView({ sourceId }: { sourceId: string }) {
         <h3 className="text-lg font-semibold text-[var(--color-ink)]">{space.source.title}</h3>
         <p className="text-[11px] text-[var(--color-ink-soft)]">{space.source.source_type} · {space.source.language ?? "?"} · 圈记 {ranges.length} 处</p>
       </div>
-      <div className="whitespace-pre-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[13.5px] leading-relaxed text-[var(--color-ink)]" data-reading-text>
+      {capture && (
+        <div className="rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] p-3 text-[12.5px]" data-no-flip>
+          <p className="mb-1.5">已选中：<span className="font-mono">{capture.text.slice(0, 80)}{capture.text.length > 80 ? "…" : ""}</span></p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder="目标词"
+              className="w-40 rounded border border-[var(--color-border)] px-2 py-1"
+            />
+            <button type="button" disabled={saving} onClick={() => void submitCapture("sentence")}
+              className="rounded bg-[var(--color-accent)] px-3 py-1 text-xs text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50">记录整句</button>
+            <button type="button" disabled={saving} onClick={() => void submitCapture("excerpt")}
+              className="rounded border border-[var(--color-accent)] px-3 py-1 text-xs text-[var(--color-accent)] disabled:opacity-50">记录搭配</button>
+            <button type="button" onClick={() => setCapture(null)} className="text-xs text-[var(--color-ink-soft)]">取消</button>
+          </div>
+        </div>
+      )}
+      <div ref={textRef} onMouseUp={onMouseUp} className="whitespace-pre-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[13.5px] leading-relaxed text-[var(--color-ink)]" data-reading-text>
         {pieces}
       </div>
       <Link to="/l3" className="inline-block text-xs text-[var(--color-accent)] hover:underline">返回书架</Link>

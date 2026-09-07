@@ -7,12 +7,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { L3ReadingView } from "@/frontend/components/l3/L3ReadingView";
+import { L3ReadingView, computeGlobalOffsets } from "@/frontend/components/l3/L3ReadingView";
 
 // 仓库无 @testing-library/react，按 tests/l3-manual-editor-page.test.ts 惯例
 // 用 createRoot + act 手动挂载，queries 用 @testing-library/dom。
 
 vi.mock("@/frontend/api/client", () => ({ apiFetch: vi.fn() }));
+// useToast 依赖 ToastProvider 上下文；圈记用例只关心提交流程，直接 mock 掉。
+vi.mock("@/frontend/components/ui/Toast", () => ({ useToast: () => ({ addToast: vi.fn() }) }));
 import { apiFetch } from "@/frontend/api/client";
 
 const SPACE = {
@@ -60,7 +62,11 @@ async function renderView(sourceId: string, space: unknown): Promise<void> {
   });
 }
 
+// 圈记用例会 stub window.getSelection（jsdom Range 支持有限），用后恢复避免污染同文件其他用例。
+const realGetSelection = window.getSelection.bind(window);
+
 afterEach(() => {
+  Object.defineProperty(window, "getSelection", { value: realGetSelection, configurable: true, writable: true });
   act(() => {
     for (const { root } of mountedRoots.splice(0)) {
       root.unmount();
@@ -95,5 +101,90 @@ describe("L3ReadingView", () => {
       ...SPACE, source: { ...SPACE.source, content_text: null },
     });
     await waitFor(() => expect(screen.getByText("该来源无正文")).toBeTruthy());
+  });
+
+  describe("computeGlobalOffsets", () => {
+    it("accumulates UTF-16 offsets across sibling text nodes", () => {
+      const host = document.createElement("div");
+      const a = document.createTextNode("Alpha beta. ");
+      const mark = document.createElement("mark");
+      mark.appendChild(document.createTextNode("Gamma delta epsilon."));
+      const c = document.createTextNode(" Zeta.");
+      host.append(a, mark, c);
+      expect(computeGlobalOffsets(host, a, 0, c, 4)).toEqual({ start: 0, end: 36 });
+      expect(computeGlobalOffsets(host, mark.firstChild!, 6, c, 2)).toEqual({ start: 18, end: 34 });
+    });
+
+    it("returns null for collapsed or out-of-container ranges", () => {
+      const host = document.createElement("div");
+      const a = document.createTextNode("Alpha");
+      host.append(a);
+      expect(computeGlobalOffsets(host, a, 3, a, 3)).toBeNull();
+      const outsider = document.createTextNode("outside");
+      expect(computeGlobalOffsets(host, outsider, 0, a, 2)).toBeNull();
+    });
+  });
+
+  it("captures selection as sentence and reloads highlights", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock
+      .mockResolvedValueOnce(SPACE) // 初始 load
+      .mockResolvedValueOnce({ contextId: "c9", occurrenceId: "o9", word: { id: "w-1", slug: "delta", title: "delta" }, created: false }) // POST /captures
+      .mockResolvedValueOnce({       // 圈记成功后 reload
+        ...SPACE,
+        contexts: [...SPACE.contexts, { id: "c9", text: "Zeta.", position: { start: 34, end: 39 } }],
+      });
+    await renderView("s1", SPACE);
+    await screen.findByText(/Gamma delta epsilon/);
+    const container = document.querySelector("[data-reading-text]") as HTMLElement;
+    expect(container).toBeTruthy();
+    // 模拟选区：stub window.getSelection 返回固定区间。注意 startContainer/endContainer
+    // 必须给文本节点（TreeWalker 只遍历文本节点），计划脚注允许按 jsdom 支持度调整。
+    const startNode = container.firstChild!.firstChild!;
+    const endNode = container.lastChild!.firstChild!;
+    Object.defineProperty(window, "getSelection", {
+      value: () => ({
+        rangeCount: 1,
+        getRangeAt: () => ({
+          startContainer: startNode,
+          startOffset: 0,
+          endContainer: endNode,
+          endOffset: 4,
+          collapsed: false,
+          commonAncestorContainer: container,
+        }),
+      }),
+      configurable: true,
+    });
+    await act(async () => {
+      fireEvent.mouseUp(container);
+    });
+    // 圈记条渲染：已选中预览 + 目标词预填首词 + 三个操作
+    await screen.findByText(/已选中/);
+    const targetInput = screen.getByPlaceholderText("目标词") as HTMLInputElement;
+    expect(targetInput.value).toBe("Alpha");
+    expect(screen.getByText("记录整句")).toBeTruthy();
+    expect(screen.getByText("记录搭配")).toBeTruthy();
+    expect(screen.getByText("取消")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByText("记录整句"));
+      await waitFor(() =>
+        expect(apiFetchMock.mock.calls.some(([url]) => String(url).includes("/captures"))).toBe(true),
+      );
+      // POST 成功后 reload() 刷新高亮：初始 load + POST + reload 共 3 次
+      await waitFor(() => expect(apiFetchMock.mock.calls).toHaveLength(3));
+    });
+    const captureCall = apiFetchMock.mock.calls.find(([url]) => String(url).includes("/captures"))!;
+    const init = captureCall[1] as { method?: string; body?: string };
+    expect(init.method).toBe("POST");
+    // sentence 分支：锚点被 findSentenceRange 扩展为覆盖完整句子的区间
+    expect(JSON.parse(init.body ?? "{}")).toEqual({
+      text: "Alpha beta. Gamma delta epsilon. Zeta.",
+      anchorStart: 0,
+      anchorEnd: 38,
+      surface: "Alpha",
+      wordSlug: "alpha",
+      contextType: "sentence",
+    });
   });
 });
