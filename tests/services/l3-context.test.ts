@@ -14,6 +14,8 @@ const SOURCE_ROW: L3SourceRow = {
   url: null,
   language: "en",
   metadata: {},
+  content_text: null,
+  content_hash: null,
   created_at: "2026-07-08T00:00:00Z",
   updated_at: "2026-07-08T00:00:00Z",
 };
@@ -83,6 +85,8 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
       url: input.url ?? null,
       language: input.language ?? null,
       metadata: input.metadata ?? {},
+      content_text: input.content_text ?? null,
+      content_hash: input.content_hash ?? null,
       created_at: "2026-07-08T00:00:00Z",
       updated_at: "2026-07-08T00:00:00Z",
     })),

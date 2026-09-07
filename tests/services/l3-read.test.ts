@@ -58,6 +58,8 @@ const SOURCE_ROW: L3SourceRow = {
   url: null,
   language: "en",
   metadata: {},
+  content_text: null,
+  content_hash: null,
   created_at: "2026-07-08T00:00:00Z",
   updated_at: "2026-07-08T00:00:00Z",
 };

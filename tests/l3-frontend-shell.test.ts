@@ -1709,6 +1709,8 @@ function sourceRow(overrides: Partial<L3SourceRow> = {}): L3SourceRow {
     url: null,
     language: "en",
     metadata: {},
+    content_text: null,
+    content_hash: null,
     created_at: "now",
     updated_at: "now",
     ...overrides,

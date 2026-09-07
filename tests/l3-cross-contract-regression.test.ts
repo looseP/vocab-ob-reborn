@@ -261,6 +261,8 @@ class L3CrossContractHarness {
       url: null,
       language: "en",
       metadata: {},
+      content_text: null,
+      content_hash: null,
       created_at: "2026-07-08T00:00:00Z",
       updated_at: "2026-07-08T00:00:00Z",
     };
@@ -342,6 +344,8 @@ class L3CrossContractHarness {
           url: input.url ?? null,
           language: input.language ?? null,
           metadata: input.metadata ?? {},
+          content_text: input.content_text ?? null,
+          content_hash: input.content_hash ?? null,
           created_at: "2026-07-08T00:00:00Z",
           updated_at: "2026-07-08T00:00:00Z",
         };

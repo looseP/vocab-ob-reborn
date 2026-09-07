@@ -115,6 +115,8 @@ export const l3SourceRowResponseSchema: z.ZodType<L3SourceRow> = z.object({
   url: z.string().nullable(),
   language: z.string().nullable(),
   metadata: jsonValueSchema,
+  content_text: z.string().nullable(),
+  content_hash: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 }).strict();

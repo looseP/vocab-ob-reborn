@@ -52,6 +52,8 @@ function makeSourceRow(): L3SourceRow {
     url: null,
     language: "en",
     metadata: {},
+    content_text: null,
+    content_hash: null,
     created_at: "2026-08-25T00:00:00Z",
     updated_at: "2026-08-25T00:00:00Z",
   };
