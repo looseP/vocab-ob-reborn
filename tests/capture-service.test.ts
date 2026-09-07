@@ -45,6 +45,11 @@ interface CaptureMocks {
   };
   wordbooks: { addWords: ReturnType<typeof vi.fn> };
   noteEntries: { listVisibleByWordIds: ReturnType<typeof vi.fn> };
+  l3Context: {
+    createSource: ReturnType<typeof vi.fn>;
+    createContext: ReturnType<typeof vi.fn>;
+    createOccurrence: ReturnType<typeof vi.fn>;
+  };
 }
 
 function makeRepos(wordBySlug: WordRow | null): CaptureMocks {
@@ -54,10 +59,28 @@ function makeRepos(wordBySlug: WordRow | null): CaptureMocks {
   };
   const wordbooks = { addWords: vi.fn(async () => undefined) };
   const noteEntries = { listVisibleByWordIds: vi.fn(async () => []) };
+  const l3Context = {
+    createSource: vi.fn(async (input: { user_id: string }) => ({
+      id: "src-1", user_id: input.user_id, source_type: "manual", title: "t",
+      author: null, url: null, language: null, metadata: {}, content_text: null, content_hash: null,
+      created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
+    })),
+    createContext: vi.fn(async (input: { user_id: string; source_id: string; text: string }) => ({
+      id: "ctx-1", user_id: input.user_id, source_id: input.source_id, context_type: "sentence",
+      text: input.text, normalized_text: null, language: null, position: {}, metadata: {},
+      created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
+    })),
+    createOccurrence: vi.fn(async (input: { user_id: string; context_id: string; word_id: string }) => ({
+      id: "occ-1", user_id: input.user_id, context_id: input.context_id, word_id: input.word_id,
+      surface: "ephemeral", lemma: "ephemeral", start_offset: 0, end_offset: 9,
+      confidence: null, evidence: {}, created_at: "2026-09-07T00:00:00Z",
+    })),
+  };
   mockRepos.words = words as unknown as IWordRepository;
   mockRepos.wordbooks = wordbooks as unknown as IWordbookRepository;
   mockRepos.noteEntries = noteEntries as unknown as INoteEntryRepository;
-  return { words, wordbooks, noteEntries };
+  mockRepos.l3Context = l3Context as never;
+  return { words, wordbooks, noteEntries, l3Context };
 }
 
 function makeService(words: CaptureMocks["words"]): CaptureService {
@@ -159,17 +182,16 @@ describe("CaptureService.capture — existing word", () => {
   });
 });
 
-describe("CaptureService.capture — L3 reservation (deferred)", () => {
+describe("CaptureService.capture — L3 deferred without sentence", () => {
   beforeEach(() => {
     withTransactionMock.mockClear();
   });
 
-  it("never persists L3 data even when source material is provided", async () => {
+  it("does not persist L3 rows when only url/ref metadata is provided (no sentence)", async () => {
     const mocks = makeRepos(makeWordRow());
 
     const result = await makeService(mocks.words).capture({
       ...BASE_INPUT,
-      sentence: "The ephemeral beauty of spring.",
       sourceUrl: "https://example.com/post/42",
       obsidianRef: "obsidian://open?vault=notes&file=reading",
     });
@@ -178,9 +200,10 @@ describe("CaptureService.capture — L3 reservation (deferred)", () => {
     expect(result.sourceId).toBeNull();
     expect(result.contextId).toBeNull();
     expect(result.occurrenceId).toBeNull();
-    // No L3 repository surface exists on the tx repos in this round; the
-    // service must not attempt any write beyond membership + note read.
-    expect(mockRepos.l3Context).toBeUndefined();
+    // capture-first（grill 2026-09-07）：无 sentence 即不尝试三件套写入。
+    expect(mocks.l3Context.createSource).not.toHaveBeenCalled();
+    expect(mocks.l3Context.createContext).not.toHaveBeenCalled();
+    expect(mocks.l3Context.createOccurrence).not.toHaveBeenCalled();
     expect(withTransactionMock).toHaveBeenCalledTimes(1);
   });
 });
@@ -228,5 +251,52 @@ describe("CaptureService.capture — validation", () => {
 
     expect(mocks.words.insertMany).not.toHaveBeenCalled();
     expect(withTransactionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("L3 capture-first (grill 2026-09-07)", () => {
+  beforeEach(() => {
+    withTransactionMock.mockClear();
+  });
+
+  it("persists source/context/occurrence trio in one tx when sentence provided", async () => {
+    const mocks = makeRepos(makeWordRow());
+    const service = makeService(mocks.words);
+    const result = await service.capture({
+      userId: "u1", wordbookId: "wb1", headword: "ephemeral",
+      sentence: "The ephemeral beauty of cherry blossoms.",
+      sourceUrl: "https://example.com/a",
+    });
+    expect(mocks.l3Context.createSource).toHaveBeenCalledTimes(1);
+    expect(mocks.l3Context.createContext).toHaveBeenCalledWith(
+      expect.objectContaining({ source_id: "src-1", context_type: "sentence" }),
+    );
+    expect(mocks.l3Context.createOccurrence).toHaveBeenCalledWith(
+      expect.objectContaining({ context_id: "ctx-1", word_id: "w-1", start_offset: 4 }),
+    );
+    expect(result.l3Status).toBe("captured");
+    expect(result.sourceId).toBe("src-1");
+    expect(result.contextId).toBe("ctx-1");
+    expect(result.occurrenceId).toBe("occ-1");
+  });
+
+  it("keeps deferred status and writes no l3 rows when no sentence", async () => {
+    const mocks = makeRepos(makeWordRow());
+    const service = makeService(mocks.words);
+    const result = await service.capture({ userId: "u1", wordbookId: "wb1", headword: "ephemeral" });
+    expect(mocks.l3Context.createSource).not.toHaveBeenCalled();
+    expect(result.l3Status).toBe("deferred");
+    expect(result.sourceId).toBeNull();
+  });
+
+  it("capture survives l3 trio failure (best-effort)", async () => {
+    const mocks = makeRepos(makeWordRow());
+    mocks.l3Context.createSource.mockRejectedValue(new Error("l3 down"));
+    const service = makeService(mocks.words);
+    const result = await service.capture({
+      userId: "u1", wordbookId: "wb1", headword: "ephemeral", sentence: "The ephemeral beauty.",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.l3Status).toBe("deferred");
   });
 });
