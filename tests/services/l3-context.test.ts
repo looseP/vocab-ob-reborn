@@ -213,6 +213,7 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
     findImportJobByInputHash: vi.fn(async () => null),
     findWordbookByIdForUser: vi.fn(async () => WORDBOOK_ROW),
     findSourceById: vi.fn(async () => SOURCE_ROW),
+    findSourceByContentHash: vi.fn(async () => null),
     findContextById: vi.fn(async () => CONTEXT_ROW),
     findContextWithSourceById: vi.fn(async () => ({ context: CONTEXT_ROW, source: SOURCE_ROW })),
     findWordById: vi.fn(async () => WORD_ROW),

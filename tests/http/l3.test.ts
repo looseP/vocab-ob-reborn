@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createApp } from "@/http/server";
 import { ConflictError, NotFoundError, ValidationError } from "@/errors";
+import { L3ContextService } from "@/services/l3-context.service";
 import type { Services } from "@/services";
 
 const ORIGINAL_OWNER_TOKEN = process.env.OWNER_API_TOKEN;
@@ -1397,5 +1398,60 @@ describe("L3 HTTP routes", () => {
       method: "GET",
       headers: AUTH_HEADERS,
     }), 500, "INTERNAL");
+  });
+});
+
+describe("POST /api/l3/sources content import (S1)", () => {
+  function makeL3ContextService(repository: {
+    createSource: ReturnType<typeof vi.fn>;
+    findSourceByContentHash: ReturnType<typeof vi.fn>;
+  }) {
+    return new L3ContextService(
+      repository as never,
+      async <T,>(run: (tx: never) => Promise<T>, _options?: { actorId?: string }): Promise<T> => run({} as never),
+      () => ({ l3Context: repository }) as never,
+    );
+  }
+
+  it("creates source with content_text and returns 201", async () => {
+    const l3Context = {
+      createSource: vi.fn().mockResolvedValue({
+        id: "src-9", user_id: "user-123", source_type: "article", title: "The Economist",
+        author: null, url: null, language: "en", metadata: {},
+        content_text: "Full article body...", content_hash: "abc",
+        created_at: "2026-09-07T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
+      }),
+      findSourceByContentHash: vi.fn().mockResolvedValue(null),
+    };
+    const services = { ...makeServices(), l3Context: makeL3ContextService(l3Context) } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request("/api/l3/sources", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ sourceType: "article", title: "The Economist", contentText: "Full article body..." }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json() as { source: { content_text: string | null } };
+    expect(body.source.content_text).toBe("Full article body...");
+    expect(l3Context.createSource).toHaveBeenCalledWith(
+      expect.objectContaining({ content_text: "Full article body...", content_hash: expect.any(String) }),
+    );
+  });
+
+  it("returns 409 with existingId when content hash already exists", async () => {
+    const l3Context = {
+      createSource: vi.fn(),
+      findSourceByContentHash: vi.fn().mockResolvedValue({ id: "src-exist", title: "dup" }),
+    };
+    const services = { ...makeServices(), l3Context: makeL3ContextService(l3Context) } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request("/api/l3/sources", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ sourceType: "article", title: "dup import", contentText: "same body" }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json() as { details?: { existingId?: string } };
+    expect(body.details?.existingId).toBe("src-exist");
   });
 });

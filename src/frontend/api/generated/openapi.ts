@@ -11741,6 +11741,7 @@ export interface operations {
                     /** @enum {string} */
                     sourceType: "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
                     title: string;
+                    contentText?: string;
                     author?: string | null;
                     url?: string | null;
                     language?: string | null;
@@ -11770,6 +11771,8 @@ export interface operations {
                             url: string | null;
                             language: string | null;
                             metadata: components["schemas"]["JsonValue"];
+                            content_text: string | null;
+                            content_hash: string | null;
                             created_at: string;
                             updated_at: string;
                         };
@@ -13042,6 +13045,8 @@ export interface operations {
                             url: string | null;
                             language: string | null;
                             metadata: components["schemas"]["JsonValue"];
+                            content_text: string | null;
+                            content_hash: string | null;
                             created_at: string;
                             updated_at: string;
                         };
@@ -13454,6 +13459,8 @@ export interface operations {
                             url: string | null;
                             language: string | null;
                             metadata: components["schemas"]["JsonValue"];
+                            content_text: string | null;
+                            content_hash: string | null;
                             created_at: string;
                             updated_at: string;
                         }[];
@@ -13669,6 +13676,8 @@ export interface operations {
                             url: string | null;
                             language: string | null;
                             metadata: components["schemas"]["JsonValue"];
+                            content_text: string | null;
+                            content_hash: string | null;
                             created_at: string;
                             updated_at: string;
                         };

@@ -806,6 +806,7 @@ export interface IL3ContextRepository {
   ): Promise<L3ImportJobRow>;
   findWordbookByIdForUser(userId: string, wordbookId: string): Promise<WordbookRow | null>;
   findSourceById(userId: string, sourceId: string): Promise<L3SourceRow | null>;
+  findSourceByContentHash(userId: string, contentHash: string): Promise<L3SourceRow | null>;
   findContextById(userId: string, contextId: string): Promise<L3ContextRow | null>;
   findContextWithSourceById(
     userId: string,

@@ -434,6 +434,7 @@ export interface CreateL3SourceInput {
   wordbookId?: string | null;
   sourceType: L3ServiceSourceType;
   title: string;
+  contentText?: string;
   author?: string | null;
   url?: string | null;
   language?: string | null;

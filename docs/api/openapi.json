@@ -22802,6 +22802,10 @@
                     "minLength": 1,
                     "maxLength": 500
                   },
+                  "contentText": {
+                    "type": "string",
+                    "minLength": 1
+                  },
                   "author": {
                     "anyOf": [
                       {
@@ -22930,6 +22934,26 @@
                         "metadata": {
                           "$ref": "#/components/schemas/JsonValue"
                         },
+                        "content_text": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "content_hash": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
                         },
@@ -22947,6 +22971,8 @@
                         "url",
                         "language",
                         "metadata",
+                        "content_text",
+                        "content_hash",
                         "created_at",
                         "updated_at"
                       ],
@@ -26255,6 +26281,26 @@
                         "metadata": {
                           "$ref": "#/components/schemas/JsonValue"
                         },
+                        "content_text": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "content_hash": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
                         },
@@ -26272,6 +26318,8 @@
                         "url",
                         "language",
                         "metadata",
+                        "content_text",
+                        "content_hash",
                         "created_at",
                         "updated_at"
                       ],
@@ -27113,6 +27161,26 @@
                           "metadata": {
                             "$ref": "#/components/schemas/JsonValue"
                           },
+                          "content_text": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "content_hash": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "created_at": {
                             "type": "string"
                           },
@@ -27130,6 +27198,8 @@
                           "url",
                           "language",
                           "metadata",
+                          "content_text",
+                          "content_hash",
                           "created_at",
                           "updated_at"
                         ],
@@ -27809,6 +27879,26 @@
                         "metadata": {
                           "$ref": "#/components/schemas/JsonValue"
                         },
+                        "content_text": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "content_hash": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
                         },
@@ -27826,6 +27916,8 @@
                         "url",
                         "language",
                         "metadata",
+                        "content_text",
+                        "content_hash",
                         "created_at",
                         "updated_at"
                       ],

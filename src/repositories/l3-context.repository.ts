@@ -154,6 +154,8 @@ function mapSource(row: JoinedContextWithSourceRow | JoinedContextRow): L3Source
       url: row.url,
       language: row.source_language,
       metadata: row.source_metadata as never,
+      content_text: null,
+      content_hash: null,
       created_at: row.source_created_at,
       updated_at: row.source_updated_at,
   };
@@ -336,8 +338,8 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
   async createSource(input: NewL3Source): Promise<L3SourceRow> {
     const row = await this.queryOne<L3SourceRow>(
       `INSERT INTO l3_sources
-         (user_id, wordbook_id, source_type, title, author, url, language, metadata)
-       VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::jsonb)
+         (user_id, wordbook_id, source_type, title, author, url, language, metadata, content_text, content_hash)
+       VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
        RETURNING *`,
       [
         input.user_id,
@@ -348,6 +350,8 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
         input.url ?? null,
         input.language ?? null,
         JSON.stringify(input.metadata ?? {}),
+        input.content_text ?? null,
+        input.content_hash ?? null,
       ],
     );
     if (!row) throw new Error("L3 source insert returned no row");
@@ -628,6 +632,13 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     return this.queryOne<L3SourceRow>(
       `SELECT * FROM l3_sources WHERE id = $1::uuid AND user_id = $2::uuid`,
       [sourceId, userId],
+    );
+  }
+
+  async findSourceByContentHash(userId: string, contentHash: string): Promise<L3SourceRow | null> {
+    return this.queryOne<L3SourceRow>(
+      `SELECT * FROM l3_sources WHERE user_id = $1::uuid AND content_hash = $2 LIMIT 1`,
+      [userId, contentHash],
     );
   }
 

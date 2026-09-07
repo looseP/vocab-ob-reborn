@@ -5,6 +5,7 @@
  * does not import LLM, dictionary, FSRS, L2 content, or review progress code.
  */
 
+import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import { ConflictError, NotFoundError, ValidationError } from "../errors";
 import { withTransaction } from "../db/transaction";
@@ -157,12 +158,26 @@ export class L3ContextService {
     requireNonEmpty(input.userId, "userId");
     requireNonEmpty(input.title, "title");
     requireEnum(input.sourceType, L3_SOURCE_TYPES, "sourceType");
+    const contentText = input.contentText?.trim() || null;
 
     return this.withActorRepository(input.userId, async (repository) => {
       if (input.wordbookId) {
         const wordbook = await repository.findWordbookByIdForUser(input.userId, input.wordbookId);
         if (!wordbook) {
           throw new NotFoundError("Wordbook", input.wordbookId);
+        }
+      }
+
+      // content_hash 去重（历史 FR-1.7）：同 hash 提示已存在而非新建。
+      let contentHash: string | null = null;
+      if (contentText) {
+        contentHash = createHash("sha256").update(contentText).digest("hex");
+        const existing = await repository.findSourceByContentHash(input.userId, contentHash);
+        if (existing) {
+          throw new ConflictError("L3 source with identical content already exists", undefined, {
+            existingId: existing.id,
+            title: existing.title,
+          });
         }
       }
 
@@ -175,6 +190,8 @@ export class L3ContextService {
         url: input.url ?? null,
         language: input.language ?? null,
         metadata: input.metadata ?? {},
+        content_text: contentText,
+        content_hash: contentHash,
       } satisfies NewL3Source);
       return { source };
     });

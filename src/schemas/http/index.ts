@@ -235,6 +235,7 @@ export const l3SourceCreateSchema = z.object({
   wordbookId: uuidSchema.nullish(),
   sourceType: z.enum(["article", "book", "video", "audio", "chat", "manual", "web", "other"]),
   title: z.string().trim().min(1).max(500),
+  contentText: z.string().min(1).optional(),
   author: z.string().max(300).nullish(),
   url: z.string().url().max(2_000).nullish(),
   language: z.string().max(50).nullish(),
