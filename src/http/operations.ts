@@ -19,6 +19,7 @@ import {
   l3RecommendationListResponseSchema,
   l3SelectionCaptureResponseSchema,
   l3SourceCreateResponseSchema,
+  l3SourceListResponseSchema,
   l3SourceSpaceResponseSchema,
   l3WordSpaceResponseSchema,
 } from "./l3-response-contract";
@@ -96,6 +97,7 @@ import {
   l3RecommendationRejectSchema,
   l3SourceCreateSchema,
   l3SelectionCaptureSchema,
+  l3SourceListQuerySchema,
   l3SourceSpaceQuerySchema,
   l3StructuredImportCreateSchema,
   l3WordSpaceQuerySchema,
@@ -350,6 +352,7 @@ export const apiOperations = [
   operation("delete", "/api/l3/contexts/:id", "deleteL3Context", "owner", "sessionMutation", undefined, 200, l3DeleteResponseSchema),
   operation("get", "/api/l3/contexts/:id", "getL3Context", "owner", "none", undefined, 200, l3ContextDetailResponseSchema),
   operation("get", "/api/l3/words/:slug/space", "getL3WordSpace", "owner", "none", { query: l3WordSpaceQuerySchema }, 200, l3WordSpaceResponseSchema),
+  operation("get", "/api/l3/sources", "listL3Sources", "owner", "none", { query: l3SourceListQuerySchema }, 200, l3SourceListResponseSchema),
   operation("get", "/api/l3/sources/:id/space", "getL3SourceSpace", "owner", "none", { query: l3SourceSpaceQuerySchema }, 200, l3SourceSpaceResponseSchema),
   operation("get", "/api/l3/graph", "getL3Graph", "owner", "none", { query: l3GraphQuerySchema }, 200, l3GraphResponseSchema),
   operation("get", "/api/l3/words/:slug/contexts", "listL3WordContexts", "owner", "none", { query: l3LimitCursorQuerySchema }, 200, l3ContextListResponseSchema),

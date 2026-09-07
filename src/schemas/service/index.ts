@@ -490,6 +490,15 @@ export type CreateL3SelectionCaptureInput = {
   contextType?: "sentence" | "excerpt";
 };
 
+export interface ListL3SourcesInput {
+  userId: string;
+  sourceType?: L3ServiceSourceType;
+  q?: string;
+  sort: "recent" | "captures";
+  limit: number;
+  offset: number;
+}
+
 export interface DeleteL3OccurrenceInput {
   userId: string;
   occurrenceId: string;

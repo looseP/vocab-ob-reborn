@@ -305,6 +305,14 @@ export const l3LimitCursorQuerySchema = z.object({
   cursor: z.string().min(1).optional(),
 });
 
+export const l3SourceListQuerySchema = z.object({
+  sourceType: z.enum(["article", "book", "video", "audio", "chat", "manual", "web", "other"]).optional(),
+  q: z.string().trim().max(200).optional(),
+  sort: z.enum(["recent", "captures"]).default("recent"),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
 export const l3WordSpaceQuerySchema = z.object({
   wordbookId: uuidSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),

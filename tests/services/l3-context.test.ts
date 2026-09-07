@@ -214,6 +214,7 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
     findWordbookByIdForUser: vi.fn(async () => WORDBOOK_ROW),
     findSourceById: vi.fn(async () => SOURCE_ROW),
     findSourceByContentHash: vi.fn(async () => null),
+    listSources: vi.fn(async () => ({ items: [], total: 0, limit: 20, offset: 0 })),
     findContextById: vi.fn(async () => CONTEXT_ROW),
     findContextWithSourceById: vi.fn(async () => ({ context: CONTEXT_ROW, source: SOURCE_ROW })),
     findWordById: vi.fn(async () => WORD_ROW),

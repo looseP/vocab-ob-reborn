@@ -19,6 +19,8 @@ import type {
   L3RecommendationItemRow,
   L3RecommendationRunRow,
   L3SourceRow,
+  L3SourceListItem,
+  L3SourceListPage,
   L3SourceSpace,
   L3WordSpace,
   WordRow,
@@ -317,6 +319,22 @@ export const l3SourceSpaceResponseSchema: z.ZodType<L3SourceSpace> = z.object({
   limit: z.number().int().positive(),
   cursor: z.string().nullable(),
   nextCursor: z.string().nullable(),
+}).strict();
+
+export const l3SourceListItemResponseSchema: z.ZodType<L3SourceListItem> = z.object({
+  id: z.string(),
+  title: z.string(),
+  source_type: z.enum(["article", "book", "video", "audio", "chat", "manual", "web", "other"]),
+  url: z.string().nullable(),
+  created_at: z.string(),
+  context_count: z.number().int().nonnegative(),
+}).strict();
+
+export const l3SourceListResponseSchema: z.ZodType<L3SourceListPage> = z.object({
+  items: z.array(l3SourceListItemResponseSchema),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
 }).strict();
 
 const l3GraphNodeResponseSchema = z.object({

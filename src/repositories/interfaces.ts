@@ -28,6 +28,7 @@ import type {
   L3RecommendationRunRow,
   L3SourceContextListItem,
   L3SourceRow,
+  L3SourceListPage,
   L3SourceSpace,
   L3WordSpace,
   L3WordContextListItem,
@@ -807,6 +808,14 @@ export interface IL3ContextRepository {
   findWordbookByIdForUser(userId: string, wordbookId: string): Promise<WordbookRow | null>;
   findSourceById(userId: string, sourceId: string): Promise<L3SourceRow | null>;
   findSourceByContentHash(userId: string, contentHash: string): Promise<L3SourceRow | null>;
+  listSources(input: {
+    userId: string;
+    sourceType?: string;
+    q?: string;
+    sort: "recent" | "captures";
+    limit: number;
+    offset: number;
+  }): Promise<L3SourceListPage>;
   findContextById(userId: string, contextId: string): Promise<L3ContextRow | null>;
   findContextWithSourceById(
     userId: string,

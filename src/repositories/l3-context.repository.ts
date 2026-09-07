@@ -15,6 +15,7 @@ import type {
   L3PaginatedList,
   L3SourceContextListItem,
   L3SourceRow,
+  L3SourceListPage,
   L3SourceSpace,
   L3WordSpace,
   L3WordContextListItem,
@@ -640,6 +641,43 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
       `SELECT * FROM l3_sources WHERE user_id = $1::uuid AND content_hash = $2 LIMIT 1`,
       [userId, contentHash],
     );
+  }
+
+  async listSources(input: {
+    userId: string; sourceType?: string; q?: string; sort: "recent" | "captures"; limit: number; offset: number;
+  }): Promise<L3SourceListPage> {
+    const params: unknown[] = [input.userId];
+    let where = `WHERE s.user_id = $1::uuid`;
+    if (input.sourceType) {
+      params.push(input.sourceType);
+      where += ` AND s.source_type = $${params.length}`;
+    }
+    if (input.q && input.q.trim().length > 0) {
+      params.push(`%${input.q.trim().replace(/[\\%_]/g, "\\$&")}%`);
+      where += ` AND (s.title ILIKE $${params.length} ESCAPE '\\' OR s.content_text ILIKE $${params.length} ESCAPE '\\')`;
+    }
+    const orderBy = input.sort === "captures"
+      ? `context_count DESC NULLS LAST, s.created_at DESC`
+      : `s.created_at DESC`;
+    const rows = await this.query<{ id: string; title: string; source_type: string; url: string | null; created_at: string; context_count: string }>(
+      `SELECT s.id, s.title, s.source_type, s.url, s.created_at,
+              (SELECT count(*) FROM l3_contexts c WHERE c.source_id = s.id AND c.user_id = s.user_id) AS context_count
+         FROM l3_sources s
+         ${where}
+        ORDER BY ${orderBy}
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, input.limit, input.offset],
+    );
+    const totalRow = await this.queryOne<{ total: string }>(
+      `SELECT count(*) AS total FROM l3_sources s ${where}`,
+      params,
+    );
+    return {
+      items: rows.map((r) => ({ ...r, context_count: Number(r.context_count) })),
+      total: Number(totalRow?.total ?? 0),
+      limit: input.limit,
+      offset: input.offset,
+    };
   }
 
   async findWordbookByIdForUser(userId: string, wordbookId: string): Promise<WordbookRow | null> {

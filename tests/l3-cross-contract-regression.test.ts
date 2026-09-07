@@ -509,6 +509,7 @@ class L3CrossContractHarness {
         return source?.user_id === userId ? source : null;
       }),
       findSourceByContentHash: vi.fn(async () => null),
+      listSources: vi.fn(async () => ({ items: [], total: 0, limit: 20, offset: 0 })),
       findContextById: vi.fn(async (userId, contextId) => {
         const context = this.contexts.get(contextId);
         return context?.user_id === userId ? context : null;

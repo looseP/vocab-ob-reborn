@@ -18,6 +18,7 @@ import type {
   L3OccurrenceRow,
   L3PaginatedList,
   L3SourceContextListItem,
+  L3SourceListPage,
   L3SourceRow,
   L3WordContextListItem,
 } from "../domain";
@@ -51,6 +52,7 @@ import {
   type DeleteL3OccurrenceInput,
   type DeleteL3SourceInput,
   type L3DeleteResult,
+  type ListL3SourcesInput,
 } from "../schemas/service";
 
 type TxRunner = typeof withTransaction;
@@ -606,6 +608,20 @@ export class L3ContextService {
       }
       return repository.listContextsForSource(input);
     });
+  }
+
+  async listSources(input: ListL3SourcesInput): Promise<L3SourceListPage> {
+    requireNonEmpty(input.userId, "userId");
+    return this.withActorRepository(input.userId, (repository) =>
+      repository.listSources({
+        userId: input.userId,
+        sourceType: input.sourceType,
+        q: input.q,
+        sort: input.sort,
+        limit: Math.min(input.limit, 50),
+        offset: Math.max(input.offset, 0),
+      }),
+    );
   }
 
   private withActorRepository<T>(

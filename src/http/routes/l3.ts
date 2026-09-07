@@ -21,6 +21,7 @@ import {
   l3RecommendationListQuerySchema,
   l3RecommendationRejectSchema,
   l3SelectionCaptureSchema,
+  l3SourceListQuerySchema,
   l3SourceSpaceQuerySchema,
   l3SourceCreateSchema,
   l3StructuredImportCreateSchema,
@@ -197,6 +198,21 @@ export function l3Routes(services: Services) {
       limit: parsed.data.limit,
       cursor: parsed.data.cursor ?? null,
     });
+    return c.json(result);
+  });
+
+  app.get("/sources", async (c) => {
+    const parsed = l3SourceListQuerySchema.safeParse({
+      sourceType: c.req.query("sourceType") || undefined,
+      q: c.req.query("q") || undefined,
+      sort: c.req.query("sort") || undefined,
+      limit: c.req.query("limit") || undefined,
+      offset: c.req.query("offset") || undefined,
+    });
+    if (!parsed.success) {
+      return validationError(c, parsed.error.flatten());
+    }
+    const result = await services.l3Context.listSources({ userId: c.get("userId"), ...parsed.data });
     return c.json(result);
   });
 

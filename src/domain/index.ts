@@ -537,6 +537,22 @@ export interface L3SourceSpace {
   nextCursor: string | null;
 }
 
+export interface L3SourceListItem {
+  id: string;
+  title: string;
+  source_type: string;
+  url: string | null;
+  created_at: string;
+  context_count: number;
+}
+
+export interface L3SourceListPage {
+  items: L3SourceListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export type L3GraphNodeType = "word" | "context" | "source" | "l2_item" | "topic" | "external";
 
 export interface L3GraphNode {

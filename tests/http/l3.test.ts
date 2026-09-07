@@ -1650,3 +1650,23 @@ describe("POST /api/l3/sources/:id/captures (S3 selection capture)", () => {
     expectNoL3ServiceGroupCalled(services);
   });
 });
+
+describe("GET /api/l3/sources (S4 bookshelf)", () => {
+  it("lists sources with context counts, filter, search and sort", async () => {
+    const l3Context = {
+      listSources: vi.fn().mockResolvedValue({
+        items: [{ id: "s1", title: "The Economist", source_type: "web", created_at: "2026-09-07T00:00:00Z", context_count: 12 }],
+        total: 1, limit: 20, offset: 0,
+      }),
+    };
+    const services = { ...makeServices(), l3Context } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request("/api/l3/sources?sourceType=web&q=econ&sort=captures", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { items: Array<{ context_count: number }> };
+    expect(body.items[0].context_count).toBe(12);
+    expect(l3Context.listSources).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-123", sourceType: "web", q: "econ", sort: "captures",
+    }));
+  });
+});
