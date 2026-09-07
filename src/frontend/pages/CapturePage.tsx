@@ -49,7 +49,7 @@ interface CaptureResponse {
     shortDefinition: string | null;
   };
   noteContentMd: string | null;
-  l3Status: "deferred";
+  l3Status: "captured" | "deferred";
 }
 
 type Phase =
@@ -213,7 +213,12 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
         body: JSON.stringify({ headword, ...sourceMaterial }),
       });
       setPhase({ kind: "captured", wordId: result.word.id, title: result.word.title });
-      addToast("success", `${result.word.title} 已加入生词本`);
+      addToast(
+        "success",
+        result.l3Status === "captured"
+          ? `${result.word.title} 已加入生词本，并绑定 L3 语境`
+          : `${result.word.title} 已加入生词本`,
+      );
       if (Object.keys(sourceMaterial).length > 0 && result.l3Status === "deferred") {
         addToast("info", "来源记录将在 L3 功能启用后生效保存");
       }

@@ -88,6 +88,7 @@ function findButtonByText(container: HTMLElement, text: string): HTMLButtonEleme
 
 interface RouteOptions {
   found?: boolean;
+  l3Status?: "captured" | "deferred";
 }
 
 function routeApi(options: RouteOptions = {}): void {
@@ -103,7 +104,7 @@ function routeApi(options: RouteOptions = {}): void {
       return { content_md: "# my note" };
     }
     if (method === "POST" && path === "/capture") {
-      return CAPTURE_RESPONSE;
+      return { ...CAPTURE_RESPONSE, l3Status: options.l3Status ?? "deferred" };
     }
     if (method === "POST" && path === "/review/cards") {
       return { ok: true, progressId: "p-1" };
@@ -265,5 +266,53 @@ describe("CapturePage", () => {
     expect(body.sentence).toBeUndefined();
     expect(body.sourceUrl).toBeUndefined();
     expect(body.obsidianRef).toBeUndefined();
+  });
+
+  it("toasts L3 context binding when capture responds captured", async () => {
+    routeApi({ found: false, l3Status: "captured" });
+    const container = renderPage();
+
+    typeAndQuery("ephemeral");
+    await waitFor(() => {
+      expect(container.textContent).toContain("词库中没有「ephemeral」");
+    });
+
+    const captureButton = findButtonByText(container, "加入生词本")!;
+    await act(async () => {
+      fireEvent.click(captureButton);
+    });
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(
+        "success",
+        expect.stringContaining("已加入生词本，并绑定 L3 语境"),
+      );
+    });
+  });
+
+  it("keeps the plain capture toast when capture responds deferred", async () => {
+    routeApi({ found: false, l3Status: "deferred" });
+    const container = renderPage();
+
+    typeAndQuery("ephemeral");
+    await waitFor(() => {
+      expect(container.textContent).toContain("词库中没有「ephemeral」");
+    });
+
+    const captureButton = findButtonByText(container, "加入生词本")!;
+    await act(async () => {
+      fireEvent.click(captureButton);
+    });
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith(
+        "success",
+        expect.stringContaining("已加入生词本"),
+      );
+    });
+    const boundToasts = addToast.mock.calls.filter(
+      ([, message]) => typeof message === "string" && message.includes("并绑定 L3 语境"),
+    );
+    expect(boundToasts).toHaveLength(0);
   });
 });
