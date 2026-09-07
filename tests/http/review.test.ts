@@ -36,7 +36,12 @@ function makeMockServices(): Services {
       undo: vi.fn().mockResolvedValue({ ok: true }),
     },
     notes: {} as never,
-    wordbooks: {} as never,
+    wordbooks: {
+      getOrCreateDefault: vi.fn().mockResolvedValue({ id: "wb-1" }),
+    },
+    noteEntries: {
+      getVisibleByWordIds: vi.fn().mockResolvedValue(new Map()),
+    },
     stats: {} as never,
   } as unknown as Services;
 }
@@ -209,5 +214,47 @@ describe("POST /api/review/undo", () => {
     });
     expect(res.status).toBe(400);
     expect(services.reviews.undo).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/review/queue l3 injection", () => {
+  it("injects l3_contexts per card (best-effort, limit 2)", async () => {
+    const l3Context = {
+      listContextsForWord: vi.fn(async (input: { slug: string }) => ({
+        items: input.slug === "ephemeral" ? [{
+          context: { id: "ctx-1", text: "The ephemeral beauty of cherry blossoms.", position: {} },
+          source: { id: "src-1", title: "阅读 Text B" },
+        }] : [],
+        limit: 2, cursor: null, nextCursor: null,
+      })),
+    };
+    const reviews = {
+      getQueue: vi.fn().mockResolvedValue({
+        items: [
+          { word: { id: "w-1", slug: "ephemeral" }, note_entries: [] },
+          { word: { id: "w-2", slug: "absent" }, note_entries: [] },
+        ],
+      }),
+    };
+    const services = { ...makeMockServices(), reviews, l3Context } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request("/api/review/queue", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.items[0].l3_contexts).toEqual([
+      { context_id: "ctx-1", source_id: "src-1", text: "The ephemeral beauty of cherry blossoms.", source_title: "阅读 Text B" },
+    ]);
+    expect(body.items[1].l3_contexts).toEqual([]);
+  });
+
+  it("degrades to empty arrays when l3 service throws (best-effort)", async () => {
+    const reviews = { getQueue: vi.fn().mockResolvedValue({ items: [{ word: { id: "w-1", slug: "ephemeral" }, note_entries: [] }] }) };
+    const l3Context = { listContextsForWord: vi.fn().mockRejectedValue(new Error("l3 down")) };
+    const services = { ...makeMockServices(), reviews, l3Context } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request("/api/review/queue", { headers: AUTH_HEADERS });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.items[0].l3_contexts).toEqual([]);
   });
 });

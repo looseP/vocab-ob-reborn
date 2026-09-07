@@ -5364,6 +5364,12 @@ export interface operations {
                                 content_md: string;
                                 created_at: string;
                             }[];
+                            l3_contexts: {
+                                context_id: string;
+                                source_id: string;
+                                text: string;
+                                source_title: string;
+                            }[];
                         }[];
                         session: {
                             id: string;

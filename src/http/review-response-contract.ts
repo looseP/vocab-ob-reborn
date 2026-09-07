@@ -54,6 +54,16 @@ export const reviewQueueResponseSchema = z.object({
       content_md: z.string(),
       created_at: z.string(),
     }).strict()),
+    /**
+     * Task 13（2026-09-07）：每卡注入的 L3 语境（Tier 2 折叠条目，best-effort，
+     * 每卡 limit 2）。source_id 供前端深链 ?sourceId= 直达阅读视图。
+     */
+    l3_contexts: z.array(z.object({
+      context_id: z.string(),
+      source_id: z.string(),
+      text: z.string(),
+      source_title: z.string(),
+    }).strict()),
   }).strict()),
   session: z.object({
     id: z.string(),

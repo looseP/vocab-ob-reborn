@@ -8909,6 +8909,33 @@
                               ],
                               "additionalProperties": false
                             }
+                          },
+                          "l3_contexts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "context_id": {
+                                  "type": "string"
+                                },
+                                "source_id": {
+                                  "type": "string"
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "source_title": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "context_id",
+                                "source_id",
+                                "text",
+                                "source_title"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -8919,7 +8946,8 @@
                           "lastRating",
                           "reviewCount",
                           "stability",
-                          "note_entries"
+                          "note_entries",
+                          "l3_contexts"
                         ],
                         "additionalProperties": false
                       }

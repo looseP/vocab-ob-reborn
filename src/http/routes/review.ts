@@ -53,6 +53,35 @@ export function reviewRoutes(services: Services) {
     const entriesMap: Map<string, NoteEntryRow[]> = wordIdsInQueue.length
       ? await services.noteEntries.getVisibleByWordIds(userId, wordbook.id, wordIdsInQueue)
       : new Map();
+    // L3 语境注入（grill 定案 2026-09-07）：Tier 2 折叠条目，只读 best-effort，
+    // L3 故障不阻塞队列（与 ADR-0016 ContextSource 的 best-effort 哲学一致）。
+    // 每卡独立小查询（带 RLS actor 事务），limit=2 —— 批量方法留作后续优化。
+    const l3Results = await Promise.all(
+      wordIdsInQueue.map(async (wordId): Promise<readonly [string, {
+        context_id: string;
+        source_id: string;
+        text: string;
+        source_title: string;
+      }[]]> => {
+        const item = queue.items.find((q) => q.word.id === wordId);
+        if (!item?.word.slug) return [wordId, []] as const;
+        try {
+          const page = await services.l3Context.listContextsForWord({ userId, slug: item.word.slug, limit: 2 });
+          return [
+            wordId,
+            page.items.map((entry) => ({
+              context_id: entry.context.id,
+              source_id: entry.source.id,
+              text: entry.context.text,
+              source_title: entry.source.title,
+            })),
+          ] as const;
+        } catch {
+          return [wordId, []] as const;
+        }
+      }),
+    );
+    const l3Map = new Map(l3Results);
     return c.json({
       ...queue,
       items: queue.items.map((item) => ({
@@ -63,6 +92,7 @@ export function reviewRoutes(services: Services) {
           // pg 驱动对 timestamptz 返回 Date 对象(类型标注为 string),new Date 两者兼容
           created_at: new Date(entry.created_at).toISOString(),
         })),
+        l3_contexts: l3Map.get(item.word.id) ?? [],
       })),
     });
   });
