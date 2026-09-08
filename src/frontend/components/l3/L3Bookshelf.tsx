@@ -61,7 +61,11 @@ export function L3Bookshelf({ onOpen }: { onOpen: (sourceId: string) => void }) 
       await load();
       onOpen(res.source.id);
     } catch (err) {
-      addToast("error", err instanceof BrowserApiError ? err.message : "导入失败，请重试");
+      if (err instanceof BrowserApiError && err.status === 409) {
+        addToast("error", "书架中已存在相同内容的文章，未重复导入");
+      } else {
+        addToast("error", err instanceof BrowserApiError ? err.message : "导入失败，请重试");
+      }
     } finally {
       setSaving(false);
     }
