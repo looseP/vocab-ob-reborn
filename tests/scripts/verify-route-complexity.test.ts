@@ -52,6 +52,10 @@ describe("route complexity ratchet", () => {
   });
 
   it("keeps L2/L3 at or below the real git base", async () => {
-    await expect(verifyRouteComplexity(root)).resolves.toEqual([]);
+    // Pin the dedicated base ref so the ratchet stays on its per-commit default
+    // (HEAD^) even when the gate session exports API_CONTRACT_BASE_REF=main for
+    // the OpenAPI contract checks — branch-approved route growth (L3 MVP) must
+    // not be judged against the stale main snapshot.
+    await expect(verifyRouteComplexity(root, { ROUTE_COMPLEXITY_BASE_REF: "HEAD^" })).resolves.toEqual([]);
   });
 });

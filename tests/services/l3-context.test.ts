@@ -235,10 +235,11 @@ function makeService(
   repository: IL3ContextRepository,
   txRepository = repository,
   txRunner: typeof import("@/db/transaction").withTransaction = async (callback) => callback({} as never),
+  words?: IWordRepository,
 ): L3ContextService {
   return new L3ContextService(
     repository,
-    undefined,
+    words,
     txRunner,
     () => ({ l3Context: txRepository } as unknown as IRepositories),
   );
@@ -814,6 +815,241 @@ describe("L3ContextService", () => {
       sourceId: "src-1",
       limit: 10,
       cursor: null,
+    });
+  });
+
+  it("creates a selection capture with anchored context and occurrence offsets", async () => {
+    repo = makeRepo({
+      lockSourceByIdForUser: vi.fn(async () => ({
+        ...SOURCE_ROW,
+        content_text: "A vivid context.",
+      })),
+    });
+    service = makeService(repo);
+
+    await expect(service.createSelectionCapture({
+      userId: "u1",
+      sourceId: "src-1",
+      text: "A vivid context.",
+      anchorStart: 0,
+      anchorEnd: 16,
+      surface: "vivid",
+      wordSlug: "vivid",
+    })).resolves.toEqual({
+      contextId: "ctx-1",
+      occurrenceId: "occ-1",
+      word: { id: "w1", slug: "vivid", title: "vivid" },
+      created: false,
+    });
+
+    expect(repo.findWordBySlug).toHaveBeenCalledWith("vivid");
+    expect(repo.createContext).toHaveBeenCalledWith(expect.objectContaining({
+      user_id: "u1",
+      source_id: "src-1",
+      context_type: "sentence",
+      text: "A vivid context.",
+      language: "en",
+      position: { start: 0, end: 16 },
+    }));
+    expect(repo.createOccurrence).toHaveBeenCalledWith(expect.objectContaining({
+      context_id: "ctx-1",
+      word_id: "w1",
+      surface: "vivid",
+      lemma: "vivid",
+      start_offset: 2,
+      end_offset: 7,
+      evidence: { via: "selection_capture" },
+    }));
+  });
+
+  it("records null occurrence offsets when the surface is absent from the context text", async () => {
+    repo = makeRepo({
+      lockSourceByIdForUser: vi.fn(async () => ({
+        ...SOURCE_ROW,
+        content_text: "A vivid context.",
+      })),
+    });
+    service = makeService(repo);
+
+    await expect(service.createSelectionCapture({
+      userId: "u1",
+      sourceId: "src-1",
+      text: "A vivid context.",
+      anchorStart: 0,
+      anchorEnd: 16,
+      surface: "missing",
+      wordSlug: "vivid",
+    })).resolves.toMatchObject({ occurrenceId: "occ-1" });
+
+    expect(repo.createOccurrence).toHaveBeenCalledWith(expect.objectContaining({
+      start_offset: null,
+      end_offset: null,
+    }));
+  });
+
+  it("creates a stub word outside the transaction when the capture slug is new", async () => {
+    repo = makeRepo({
+      findWordBySlug: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(WORD_ROW),
+      lockSourceByIdForUser: vi.fn(async () => ({
+        ...SOURCE_ROW,
+        content_text: "A vivid context.",
+      })),
+    });
+    const insertMany = vi.fn(async () => undefined);
+    service = makeService(repo, repo, undefined, { insertMany } as unknown as IWordRepository);
+
+    await expect(service.createSelectionCapture({
+      userId: "u1",
+      sourceId: "src-1",
+      text: "A vivid context.",
+      anchorStart: 0,
+      anchorEnd: 16,
+      surface: "vivid",
+      wordSlug: "vivid",
+    })).resolves.toMatchObject({ created: true });
+
+    expect(insertMany).toHaveBeenCalledWith([expect.objectContaining({
+      slug: "vivid",
+      title: "vivid",
+      lemma: "vivid",
+    })]);
+  });
+
+  it("requires a words repository with insertMany before stubbing a new capture word", async () => {
+    repo = makeRepo({ findWordBySlug: vi.fn(async () => null) });
+    service = makeService(repo);
+
+    await expect(service.createSelectionCapture({
+      userId: "u1",
+      sourceId: "src-1",
+      text: "A vivid context.",
+      anchorStart: 0,
+      anchorEnd: 16,
+      surface: "vivid",
+      wordSlug: "vivid",
+    })).rejects.toThrow(/words repository with insertMany is required/);
+    expect(repo.lockSourceByIdForUser).not.toHaveBeenCalled();
+  });
+
+  it("fails the capture when the stubbed word still cannot be found", async () => {
+    repo = makeRepo({ findWordBySlug: vi.fn(async () => null) });
+    service = makeService(repo, repo, undefined, { insertMany: vi.fn(async () => undefined) } as unknown as IWordRepository);
+
+    await expect(service.createSelectionCapture({
+      userId: "u1",
+      sourceId: "src-1",
+      text: "A vivid context.",
+      anchorStart: 0,
+      anchorEnd: 16,
+      surface: "vivid",
+      wordSlug: "vivid",
+    })).rejects.toThrow(/capture word upsert failed/);
+    expect(repo.findWordBySlug).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects selection captures with a degenerate anchor range", async () => {
+    await expect(service.createSelectionCapture({
+      userId: "u1",
+      sourceId: "src-1",
+      text: "A vivid context.",
+      anchorStart: 7,
+      anchorEnd: 7,
+      surface: "vivid",
+      wordSlug: "vivid",
+    })).rejects.toBeInstanceOf(ValidationError);
+    expect(repo.findWordBySlug).not.toHaveBeenCalled();
+  });
+
+  it("rejects selection capture anchors outside the source content", async () => {
+    repo = makeRepo({
+      lockSourceByIdForUser: vi.fn(async () => ({
+        ...SOURCE_ROW,
+        content_text: "short",
+      })),
+    });
+    service = makeService(repo);
+
+    await expect(service.createSelectionCapture({
+      userId: "u1",
+      sourceId: "src-1",
+      text: "A vivid context.",
+      anchorStart: 0,
+      anchorEnd: 16,
+      surface: "vivid",
+      wordSlug: "vivid",
+    })).rejects.toThrow(/anchor range out of content bounds/);
+    expect(repo.createContext).not.toHaveBeenCalled();
+  });
+
+  it("creates the quick-capture word context trio in one transaction", async () => {
+    const txRunner = vi.fn(async (callback: (tx: never) => Promise<never>) => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const txRepo = makeRepo();
+    service = makeService(makeRepo(), txRepo, txRunner);
+
+    await expect(service.createWordContextTrio({
+      userId: "u1",
+      slug: "vivid",
+      text: "A vivid context.",
+    })).resolves.toEqual({ sourceId: "src-1", contextId: "ctx-1", occurrenceId: "occ-1" });
+
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(txRepo.findWordBySlug).toHaveBeenCalledWith("vivid");
+    expect(txRepo.createSource).toHaveBeenCalledWith(expect.objectContaining({
+      user_id: "u1",
+      wordbook_id: null,
+      source_type: "manual",
+      title: "手动记录",
+      content_text: null,
+    }));
+    expect(txRepo.createContext).toHaveBeenCalledWith(expect.objectContaining({
+      source_id: "src-1",
+      text: "A vivid context.",
+      context_type: "sentence",
+      position: {},
+    }));
+    expect(txRepo.createOccurrence).toHaveBeenCalledWith(expect.objectContaining({
+      context_id: "ctx-1",
+      word_id: "w1",
+      surface: "vivid",
+      start_offset: 2,
+      end_offset: 7,
+    }));
+  });
+
+  it("rejects the quick-capture trio for an unknown word slug", async () => {
+    repo = makeRepo({ findWordBySlug: vi.fn(async () => null) });
+    service = makeService(repo);
+
+    await expect(service.createWordContextTrio({
+      userId: "u1",
+      slug: "missing",
+      text: "A vivid context.",
+    })).rejects.toBeInstanceOf(NotFoundError);
+    expect(repo.createSource).not.toHaveBeenCalled();
+  });
+
+  it("lists sources through the actor-scoped repository with clamped paging", async () => {
+    const txRepo = makeRepo({
+      listSources: vi.fn(async () => ({ items: [], total: 0, limit: 50, offset: 0 })),
+    });
+    service = makeService(makeRepo(), txRepo);
+
+    await expect(service.listSources({
+      userId: "u1",
+      sort: "recent",
+      limit: 100,
+      offset: -5,
+    })).resolves.toEqual({ items: [], total: 0, limit: 50, offset: 0 });
+
+    expect(txRepo.listSources).toHaveBeenCalledWith({
+      userId: "u1",
+      sourceType: undefined,
+      q: undefined,
+      sort: "recent",
+      limit: 50,
+      offset: 0,
     });
   });
 });

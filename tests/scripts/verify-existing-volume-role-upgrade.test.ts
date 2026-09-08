@@ -24,7 +24,8 @@ describe("existing local volume role upgrade", () => {
     // 0017: word_l2_content.source_ref uuid→text（候选池 sourceRef 自由文本契约）
     // 0018: refresh_l2_cache / finalize_l2_content_hash 守卫放宽为已认证 actor（候选池 content-first）
     // 0019: note_entries 条目制笔记（建表 + RLS + 文档笔记迁移为条目）
-    expect(authoritativeMigrationCount()).toBe(20);
+    // 0020: l3_sources 素材正文捕获（content_text/content_hash + 用户内唯一索引，L3 素材空间 MVP）
+    expect(authoritativeMigrationCount()).toBe(21);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
