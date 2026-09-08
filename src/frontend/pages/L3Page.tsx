@@ -126,7 +126,7 @@ export function L3Page() {
     context: <L3ContextPage client={l3Client} handoff={contextHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     word: <L3WordSpacePage client={l3Client} handoff={wordHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     // source section：书架为前门；选中来源后整屏切换为阅读视图（返回书架清除
-    // handoff 回到书架）。工程检查面板（L3SourceSpacePage）退出正常流。
+    // handoff 回到书架）。原工程检查面板（L3SourceSpacePage）已删除。
     source: sourceHandoff ? (
       <L3ReadingView sourceId={sourceHandoff.sourceId} onBack={() => setSourceHandoff(null)} />
     ) : (

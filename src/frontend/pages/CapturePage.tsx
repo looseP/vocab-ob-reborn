@@ -219,8 +219,10 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
           ? `${result.word.title} 已加入生词本，并绑定 L3 语境`
           : `${result.word.title} 已加入生词本`,
       );
-      if (Object.keys(sourceMaterial).length > 0 && result.l3Status === "deferred") {
-        addToast("info", "来源记录将在 L3 功能启用后生效保存");
+      // capture-first：提供了原句却返回 deferred = 三件套写入失败（best-effort 吞错），
+      // 明确告知用户可在详情页补记；仅提供 url/obsidianRef 时本就不写 L3，不额外打扰。
+      if (sentence.trim() && result.l3Status === "deferred") {
+        addToast("info", "语境绑定失败——可在词条详情页「L3 语境」区粘贴原句重试快记");
       }
     } catch (error) {
       addToast("error", apiErrorMessage(error, "加入生词本失败"));
@@ -473,7 +475,7 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
                     {sourceFilled && <Check className="h-3.5 w-3.5 text-[var(--color-accent)]" />}
                     {sourceFilled ? "已填写来源信息" : "未记录来源（可选）"}
                   </span>
-                  <Badge tone="accent">L3 预留</Badge>
+                  {sourceFilled && <Badge tone="accent">含原句时绑定 L3 语境</Badge>}
                 </button>
                 <div
                   className={`grid transition-all duration-200 ease-out ${
