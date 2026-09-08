@@ -103,10 +103,36 @@ export function proposalIdFromRecommendationAccept(result: L3RecommendationAccep
   return result?.proposal?.proposal.id ?? null;
 }
 
+export interface RecommendationAcceptActionView {
+  action: string;
+  route: string | null;
+  hint: string | null;
+}
+
+/**
+ * 非 link_gap accept 的可执行动作（2026-09-08 执行器补全）：actionPayload 现在是
+ * 类型化可路由契约 { action, route, hint, ... }。无有效 action（旧数据/none）返回 null。
+ */
+export function recommendationAcceptAction(result: L3RecommendationAcceptResult | null): RecommendationAcceptActionView | null {
+  const payload = result?.actionPayload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  const action = typeof record.action === "string" && record.action !== "none" ? record.action : null;
+  if (!action) return null;
+  return {
+    action,
+    route: typeof record.route === "string" && record.route.startsWith("/") ? record.route : null,
+    hint: typeof record.hint === "string" && record.hint.trim() ? record.hint : null,
+  };
+}
+
 export function recommendationAcceptMessage(result: L3RecommendationAcceptResult | null): string | null {
   if (!result) return null;
   if (result.proposal) return "Proposal created; review required before active L3 link exists.";
-  if (result.actionPayload) return "This acceptance records a future action; it does not create active L3 rows.";
+  const action = recommendationAcceptAction(result);
+  if (action) {
+    return `Accepted — the change happens in its own track; follow the action: ${action.hint ?? action.action}`;
+  }
   if (result.item.recommendation_type === "link_gap") return "Link gap accepted without a proposal bridge. Refresh before assuming any active link exists.";
   return "Recommendation accepted. No active L3 rows were written.";
 }

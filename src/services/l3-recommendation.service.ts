@@ -340,11 +340,70 @@ export class L3RecommendationService {
         actionPayload: {
           recommendationId: item.id,
           recommendationType: item.recommendation_type,
-          action: "future_consumer",
-          payload: item.payload,
+          ...this.buildAcceptActionPayload(item),
         },
       };
     }, { actorId: input.userId });
+  }
+
+  /**
+   * 非 link_gap 类型的 accept 执行器（2026-09-08 补全）。
+   *
+   * 三轨隔离红线：L3 只写 l3_* 表，绝不写 L1/L2/FSRS——所以复习/学习/补记
+   * 的状态变更必须由用户沿 action 前往对应轨道完成（复习走 /review，语境
+   * 补记走词详情语境区/素材空间圈记，L2 补全走词详情内容区）。执行器只
+   * 产出类型化、可路由的 action 契约；前端据此渲染跳转按钮。
+   */
+  private buildAcceptActionPayload(item: L3RecommendationItemRow): Record<string, unknown> {
+    const payload = (item.payload ?? {}) as Record<string, unknown>;
+    const slug = typeof payload.slug === "string" && payload.slug.trim() ? payload.slug : null;
+    const wordId = typeof payload.wordId === "string" ? payload.wordId : null;
+    const wordRoute = slug ? `/words/${encodeURIComponent(slug)}` : null;
+    switch (item.recommendation_type) {
+      case "review_pack":
+        return {
+          action: "start_review",
+          route: "/review",
+          hint: "前往复习队列完成这组到期/薄弱词",
+          words: Array.isArray(payload.words) ? payload.words : [],
+        };
+      case "weak_word":
+        return {
+          action: "start_review",
+          route: "/review",
+          hint: "前往复习队列进行聚焦复习",
+          wordId,
+          slug,
+        };
+      case "learn_next":
+        return {
+          action: "open_word_detail",
+          route: wordRoute ?? "/words",
+          hint: "打开词条详情开始学习",
+          wordId,
+          slug,
+        };
+      case "context_gap":
+        return {
+          action: "capture_context",
+          route: wordRoute ?? "/l3",
+          hint: "在词条详情语境区快记，或到素材空间圈记真实用例",
+          wordId,
+          slug,
+          suggestedAction: typeof payload.suggestedAction === "string" ? payload.suggestedAction : null,
+        };
+      case "l2_gap":
+        return {
+          action: "open_word_detail",
+          route: wordRoute ?? "/words",
+          hint: "在词条详情内容区补全缺失的 L2 字段",
+          wordId,
+          slug,
+          missingFields: Array.isArray(payload.missingFields) ? payload.missingFields : [],
+        };
+      default:
+        return { action: "none", hint: "该类型暂无自动动作" };
+    }
   }
 
   private buildCandidates(

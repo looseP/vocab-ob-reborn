@@ -65,6 +65,7 @@ import {
   applyRecommendationRejectUiResult,
   buildRecommendationGeneratePayload,
   proposalIdFromRecommendationAccept,
+  recommendationAcceptAction,
   recommendationAcceptMessage,
   recommendationActionsForStatus,
 } from "@/frontend/viewModels/l3RecommendationViewModel";
@@ -840,7 +841,11 @@ describe("Phase 4B L3 frontend shell", () => {
       recommendation_type: "learn_next",
       status: "accepted",
     });
-    const acceptResult = applyRecommendationAcceptUiResult({ item: accepted, actionPayload: { next: "learn" } });
+    // 2026-09-08 执行器补全：actionPayload 为类型化可路由契约（action/route/hint）
+    const acceptResult = applyRecommendationAcceptUiResult({
+      item: accepted,
+      actionPayload: { recommendationId: "rec-future", recommendationType: "learn_next", action: "open_word_detail", route: "/words/vivid", hint: "打开词条详情开始学习" },
+    });
 
     expect(acceptResult.nextState).toBe("futureAction");
     expect(acceptResult.refreshGraph).toBe(false);
@@ -851,8 +856,20 @@ describe("Phase 4B L3 frontend shell", () => {
       recommendationInvalidation: true,
       reason: "recommendation_accept_future_action",
     });
+    expect(recommendationAcceptAction({
+      item: accepted,
+      actionPayload: { action: "open_word_detail", route: "/words/vivid", hint: "打开词条详情开始学习" },
+    })).toEqual({ action: "open_word_detail", route: "/words/vivid", hint: "打开词条详情开始学习" });
+    expect(recommendationAcceptMessage({
+      item: accepted,
+      actionPayload: { action: "open_word_detail", route: "/words/vivid", hint: "打开词条详情开始学习" },
+    })).toBe(
+      "Accepted — the change happens in its own track; follow the action: 打开词条详情开始学习",
+    );
+    // 旧数据/无 action 形状：回退默认消息（不渲染跳转）
+    expect(recommendationAcceptAction({ item: accepted, actionPayload: { next: "learn" } })).toBeNull();
     expect(recommendationAcceptMessage({ item: accepted, actionPayload: { next: "learn" } })).toBe(
-      "This acceptance records a future action; it does not create active L3 rows.",
+      "Recommendation accepted. No active L3 rows were written.",
     );
 
     const rejected = applyRecommendationRejectUiResult(recommendationItem({
@@ -1746,6 +1763,7 @@ function occurrenceRow(overrides: Partial<L3OccurrenceRow> = {}): L3OccurrenceRo
     end_offset: null,
     confidence: null,
     evidence: {},
+    bound_sense: null,
     created_at: "now",
     ...overrides,
   };

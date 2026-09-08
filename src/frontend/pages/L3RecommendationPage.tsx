@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type { L3RecommendationAcceptResult, L3RecommendationBundle, L3RecommendationItemRow, L3RecommendationStatus, L3RecommendationType } from "@/domain";
 import { L3ErrorMessage } from "../components/L3ErrorMessage";
 import { L3NavigationActions } from "../components/L3NavigationActions";
@@ -16,6 +17,7 @@ import {
   buildRecommendationGeneratePayload,
   compactJson,
   proposalIdFromRecommendationAccept,
+  recommendationAcceptAction,
   recommendationAcceptMessage,
   recommendationActionsForStatus,
   recommendationEvidencePreview,
@@ -34,6 +36,18 @@ import {
 interface L3RecommendationPageProps {
   client: L3FrontendClient;
   onNavigate(intent: L3NavigationIntent): void;
+}
+
+/** 非 link_gap accept 的跳转按钮：route 指向主应用轨道（/review、/words/:slug）。 */
+function AcceptActionLink({ result }: { result: L3RecommendationAcceptResult }) {
+  const navigate = useNavigate();
+  const action = recommendationAcceptAction(result);
+  if (!action?.route) return null;
+  return (
+    <button type="button" onClick={() => navigate(action.route!)}>
+      {action.hint ? `执行：${action.hint}` : `执行动作：${action.action}`} →
+    </button>
+  );
 }
 
 type RecommendationFilter = L3RecommendationStatus | "all";
@@ -324,11 +338,10 @@ export function L3RecommendationPage({ client, onNavigate }: L3RecommendationPag
                   <button disabled={isBusy} onClick={() => void refreshSelected()} type="button">
                     {status === "refreshing" ? "Refreshing..." : "Refresh item"}
                   </button>
-                  {/* P0-4：仅 link_gap 有真实消费者（自动建提案）；其余类型 accept 只落
-                      future_consumer 占位——禁用按钮，避免"接受了却什么都没发生"。 */}
+                  {/* 2026-09-08 执行器补全：所有类型 accept 均有消费者——link_gap 走提案桥，
+                      其余类型返回类型化 action（复习/词详情跳转），前端据此渲染跳转。 */}
                   <button
-                    disabled={!itemActions.canAccept || isBusy || selectedItem.recommendation_type !== "link_gap"}
-                    title={selectedItem.recommendation_type === "link_gap" ? undefined : "Accept is only wired for link_gap recommendations"}
+                    disabled={!itemActions.canAccept || isBusy}
                     onClick={() => void accept()}
                     type="button"
                   >
@@ -373,9 +386,9 @@ export function L3RecommendationPage({ client, onNavigate }: L3RecommendationPag
                 </div>
               </dl>
 
-              <div className="validation-panel invalid">
-                <strong>{selectedItem.recommendation_type === "link_gap" ? "Accept creates a proposal bridge." : "Accept is disabled for this recommendation type."}</strong>
-                <span>{selectedItem.recommendation_type === "link_gap" ? "Open Proposal Review and confirm before an active link exists." : "Only link_gap accepts have a real consumer today; other types have no automatic action yet. Use Reject instead."}</span>
+              <div className="validation-panel">
+                <strong>{selectedItem.recommendation_type === "link_gap" ? "Accept creates a proposal bridge." : "Accept records a typed follow-up action."}</strong>
+                <span>{selectedItem.recommendation_type === "link_gap" ? "Open Proposal Review and confirm before an active link exists." : "After accepting, follow the action to complete the change in its own track (review / word detail). L3 never writes L1/L2/FSRS state."}</span>
               </div>
 
               {acceptResult ? (
@@ -387,7 +400,10 @@ export function L3RecommendationPage({ client, onNavigate }: L3RecommendationPag
                       <L3NavigationActions actions={[proposalReviewNavigationAction(proposalId)]} onNavigate={onNavigate} />
                     </>
                   ) : (
-                    <code>{compactJson(acceptResult.actionPayload ?? acceptResult.item, 300)}</code>
+                    <>
+                      <AcceptActionLink result={acceptResult} />
+                      <code>{compactJson(acceptResult.actionPayload ?? acceptResult.item, 300)}</code>
+                    </>
                   )}
                 </div>
               ) : null}

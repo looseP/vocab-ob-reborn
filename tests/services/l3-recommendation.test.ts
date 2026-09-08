@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConflictError, NotFoundError } from "@/errors";
 import type {
   IL3ContextRepository,
@@ -349,9 +349,12 @@ describe("L3RecommendationService", () => {
     expect(result.proposal?.proposal.id).toBe("prop-1");
   });
 
-  it("accepts context/l2 gaps as future action payloads only", async () => {
+  it("accepts context/l2 gaps with typed routable action payloads", async () => {
     recommendationRepo = makeRecommendationRepo({
-      lockItemByIdForUser: vi.fn(async () => recItem({ recommendation_type: "context_gap", payload: { suggestedAction: "import_or_search_context" } })),
+      lockItemByIdForUser: vi.fn(async () => recItem({
+        recommendation_type: "context_gap",
+        payload: { wordId: "w-1", slug: "vivid", suggestedAction: "import_or_search_context" },
+      })),
     });
     service = new L3RecommendationService(
       recommendationRepo,
@@ -362,8 +365,40 @@ describe("L3RecommendationService", () => {
 
     const result = await service.acceptRecommendation({ userId: "u1", recommendationId: "rec-1" });
 
+    // 执行器补全（2026-09-08）：不再落 future_consumer 占位——产出类型化可路由 action。
+    // 三轨隔离不变：不写任何 active L3 / L1/L2 状态。
     expect(proposalRepo.createProposal).not.toHaveBeenCalled();
-    expect(result.actionPayload).toMatchObject({ action: "future_consumer" });
+    expect(contextRepo.createContextLink).not.toHaveBeenCalled();
+    expect(result.actionPayload).toMatchObject({
+      action: "capture_context",
+      route: "/words/vivid",
+      hint: "在词条详情语境区快记，或到素材空间圈记真实用例",
+      wordId: "w-1",
+      slug: "vivid",
+    });
+  });
+
+  it("routes review pack accepts to the review queue", async () => {
+    recommendationRepo = makeRecommendationRepo({
+      lockItemByIdForUser: vi.fn(async () => recItem({
+        recommendation_type: "review_pack",
+        payload: { suggestedMode: "quick_review", words: [{ wordId: "w-1", slug: "vivid" }] },
+      })),
+    });
+    service = new L3RecommendationService(
+      recommendationRepo,
+      contextRepo,
+      async (cb) => cb({} as never),
+      () => ({ l3Recommendation: recommendationRepo, l3Context: contextRepo, l3Proposal: proposalRepo } as unknown as IRepositories),
+    );
+
+    const result = await service.acceptRecommendation({ userId: "u1", recommendationId: "rec-1" });
+
+    expect(result.actionPayload).toMatchObject({
+      action: "start_review",
+      route: "/review",
+      words: [{ wordId: "w-1", slug: "vivid" }],
+    });
   });
 
   it("rejects non-pending accept/reject transitions", async () => {
