@@ -155,6 +155,13 @@
       "when": 1788833759633,
       "tag": "0021_l3_update_grant",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788853224657,
+      "tag": "0022_shiny_wallow",
+      "breakpoints": true
     }
   ]
 }

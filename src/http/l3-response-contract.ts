@@ -148,6 +148,7 @@ export const l3OccurrenceRowResponseSchema: z.ZodType<L3OccurrenceRow> = z.objec
   end_offset: z.number().int().nullable(),
   confidence: z.union([z.number(), z.string()]).nullable(),
   evidence: jsonValueSchema,
+  bound_sense: z.string().nullable(),
   created_at: z.string(),
 }).strict();
 
@@ -321,6 +322,7 @@ export const l3SourceSpaceResponseSchema: z.ZodType<L3SourceSpace> = z.object({
     id: z.string(),
     slug: z.string(),
     title: z.string(),
+    short_definition: z.string().nullable(),
   }).strict()),
   stats: l3ReadStatsResponseSchema,
   limit: z.number().int().positive(),

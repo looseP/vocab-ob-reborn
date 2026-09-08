@@ -1,0 +1,1 @@
+ALTER TABLE "l3_occurrences" ADD COLUMN "bound_sense" text;

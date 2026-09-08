@@ -282,7 +282,8 @@ describe("L3ReadingView", () => {
     const captureCall = apiFetchMock.mock.calls.find(([url]) => String(url).includes("/captures"))!;
     const init = captureCall[1] as { method?: string; body?: string };
     expect(init.method).toBe("POST");
-    // sentence 分支：锚点被 findSentenceRange 扩展为覆盖完整句子的区间
+    // sentence 分支：锚点被 findSentenceRange 扩展为覆盖完整句子的区间；
+    // 释义行未填 → boundSense 归一为 null（语境义快照契约）
     expect(JSON.parse(init.body ?? "{}")).toEqual({
       text: "Alpha beta. Gamma delta epsilon. Zeta.",
       anchorStart: 0,
@@ -290,6 +291,7 @@ describe("L3ReadingView", () => {
       surface: "Alpha",
       wordSlug: "alpha",
       contextType: "sentence",
+      boundSense: null,
     });
   });
 

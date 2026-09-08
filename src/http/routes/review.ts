@@ -62,6 +62,7 @@ export function reviewRoutes(services: Services) {
         source_id: string;
         text: string;
         source_title: string;
+        bound_sense: string | null;
       }[]]> => {
         const item = queue.items.find((q) => q.word.id === wordId);
         if (!item?.word.slug) return [wordId, []] as const;
@@ -74,6 +75,8 @@ export function reviewRoutes(services: Services) {
               source_id: entry.source.id,
               text: entry.context.text,
               source_title: entry.source.title,
+              // 语境义快照：Tier 2 优先展示绑定释义，fallback 短释义（前端处理）
+              bound_sense: entry.occurrence?.bound_sense ?? null,
             })),
           ] as const;
         } catch {

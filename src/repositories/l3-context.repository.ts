@@ -40,6 +40,7 @@ import type {
   NewL3Source,
 } from "./interfaces";
 import { BaseRepository } from "./base";
+import { decodeCursor, encodeCursor } from "./l3-cursor";
 
 interface JoinedContextRow {
   context_id: string;
@@ -73,6 +74,7 @@ interface JoinedContextRow {
   end_offset: number | null;
   confidence: number | string | null;
   evidence: unknown;
+  bound_sense: string | null;
   occurrence_created_at: string | null;
   links: L3ContextLinkRow[] | null;
 }
@@ -101,31 +103,48 @@ interface JoinedContextWithSourceRow {
   source_updated_at: string;
 }
 
-function encodeCursor(createdAt: string, id: string): string {
-  return Buffer.from(JSON.stringify({ createdAt, id }), "utf8").toString("base64url");
-}
+// ── 共享 SQL 片段（2026-09-08 去重：6 处读模型查询共用）──────────────────
+// 行首缩进与原内联 SQL 逐字一致——最终发送到 PG 的文本保持字节级不变，
+// 测试与日志中的 SQL 断言不受影响。新增列时改这里一处即可。
+/** context+source 联查列清单（无尾逗号；调用方按需补逗号）。 */
+const CONTEXT_SOURCE_COLUMNS = `         c.id AS context_id, c.source_id, c.user_id, c.context_type, c.text,
+         c.normalized_text, c.language AS context_language, c.position,
+         c.metadata AS context_metadata, c.created_at AS context_created_at,
+         c.updated_at AS context_updated_at,
+         s.user_id AS source_user_id, s.wordbook_id, s.source_type, s.title,
+         s.author, s.url, s.language AS source_language, s.metadata AS source_metadata,
+         s.created_at AS source_created_at, s.updated_at AS source_updated_at`;
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** 该语境全部 occurrence 聚合（无尾逗号）。user_id 走 c.user_id（同表 self-join 语义）。 */
+const OCCURRENCES_AGG = `         COALESCE(
+           (
+             SELECT jsonb_agg(to_jsonb(o) ORDER BY o.created_at)
+             FROM l3_occurrences o
+             WHERE o.context_id = c.id AND o.user_id = c.user_id
+           ),
+           '[]'::jsonb
+         ) AS occurrences`;
 
-function decodeCursor(cursor: string | null | undefined): { createdAt: string; id: string } | null {
-  if (!cursor) return null;
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
-      createdAt?: unknown;
-      id?: unknown;
-    };
-    if (
-      typeof parsed.createdAt === "string" &&
-      typeof parsed.id === "string" &&
-      UUID_RE.test(parsed.id) &&
-      !Number.isNaN(Date.parse(parsed.createdAt))
-    ) {
-      return { createdAt: parsed.createdAt, id: parsed.id };
-    }
-  } catch {
-    throw new ValidationError("Invalid pagination cursor", "cursor");
-  }
-  throw new ValidationError("Invalid pagination cursor", "cursor");
+/** 该语境全部 context_links 聚合（无尾逗号；含按语境 occurrence 词的 IN 子查询）。 */
+const LINKS_AGG = `         COALESCE(
+           (
+             SELECT jsonb_agg(to_jsonb(l) ORDER BY l.created_at)
+             FROM l3_context_links l
+             WHERE l.user_id = c.user_id
+               AND (
+                 l.context_id = c.id
+                 OR l.word_id IN (
+                   SELECT o.word_id FROM l3_occurrences o
+                   WHERE o.context_id = c.id AND o.user_id = c.user_id
+                 )
+               )
+           ),
+           '[]'::jsonb
+         ) AS links`;
+
+/** 游标谓词（(created_at, id) 双列比较；n = 当前已入参个数）。 */
+function cursorPredicate(paramCount: number): string {
+  return `AND (c.created_at, c.id) < ($${paramCount - 1}::timestamptz, $${paramCount}::uuid)`;
 }
 
 function mapContext(row: JoinedContextWithSourceRow | JoinedContextRow): L3ContextRow {
@@ -175,6 +194,7 @@ function mapOccurrence(row: JoinedContextRow): L3OccurrenceRow | null {
         end_offset: row.end_offset,
         confidence: row.confidence,
         evidence: (row.evidence ?? {}) as never,
+        bound_sense: row.bound_sense ?? null,
         created_at: row.occurrence_created_at ?? row.context_created_at,
       }
     : null;
@@ -383,8 +403,8 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
   async createOccurrence(input: NewL3Occurrence): Promise<L3OccurrenceRow> {
     const row = await this.queryOne<L3OccurrenceRow>(
       `INSERT INTO l3_occurrences
-         (context_id, word_id, user_id, surface, lemma, start_offset, end_offset, confidence, evidence)
-       VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9::jsonb)
+         (context_id, word_id, user_id, surface, lemma, start_offset, end_offset, confidence, evidence, bound_sense)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9::jsonb, $10)
        RETURNING *`,
       [
         input.context_id,
@@ -396,6 +416,7 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
         input.end_offset ?? null,
         input.confidence ?? null,
         JSON.stringify(input.evidence ?? {}),
+        input.bound_sense ?? null,
       ],
     );
     if (!row) throw new Error("L3 occurrence insert returned no row");
@@ -723,13 +744,7 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
   ): Promise<{ context: L3ContextRow; source: L3SourceRow } | null> {
     const row = await this.queryOne<JoinedContextWithSourceRow>(
       `SELECT
-         c.id AS context_id, c.source_id, c.user_id, c.context_type, c.text,
-         c.normalized_text, c.language AS context_language, c.position,
-         c.metadata AS context_metadata, c.created_at AS context_created_at,
-         c.updated_at AS context_updated_at,
-         s.user_id AS source_user_id, s.wordbook_id, s.source_type, s.title,
-         s.author, s.url, s.language AS source_language, s.metadata AS source_metadata,
-         s.created_at AS source_created_at, s.updated_at AS source_updated_at
+${CONTEXT_SOURCE_COLUMNS}
        FROM l3_contexts c
        JOIN l3_sources s ON s.id = c.source_id AND s.user_id = c.user_id
        WHERE c.id = $1::uuid AND c.user_id = $2::uuid`,
@@ -790,7 +805,7 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     let cursorFilter = "";
     if (cursor) {
       params.push(cursor.createdAt, cursor.id);
-      cursorFilter = `AND (c.created_at, c.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+      cursorFilter = cursorPredicate(params.length);
     }
 
     const rows = await this.query<JoinedContextRow>(
@@ -813,16 +828,11 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
          LIMIT $2
        )
        SELECT
-         c.id AS context_id, c.source_id, c.user_id, c.context_type, c.text,
-         c.normalized_text, c.language AS context_language, c.position,
-         c.metadata AS context_metadata, c.created_at AS context_created_at,
-         c.updated_at AS context_updated_at,
-         s.user_id AS source_user_id, s.wordbook_id, s.source_type, s.title,
-         s.author, s.url, s.language AS source_language, s.metadata AS source_metadata,
-         s.created_at AS source_created_at, s.updated_at AS source_updated_at,
+${CONTEXT_SOURCE_COLUMNS},
          o.id AS occurrence_id, o.context_id AS occurrence_context_id, o.word_id,
          o.user_id AS occurrence_user_id, o.surface, o.lemma, o.start_offset,
-         o.end_offset, o.confidence, o.evidence, o.created_at AS occurrence_created_at,
+         o.end_offset, o.confidence, o.evidence, o.bound_sense,
+         o.created_at AS occurrence_created_at,
          COALESCE(
            (
              SELECT jsonb_agg(to_jsonb(l) ORDER BY l.created_at)
@@ -858,42 +868,14 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     let cursorFilter = "";
     if (cursor) {
       params.push(cursor.createdAt, cursor.id);
-      cursorFilter = `AND (c.created_at, c.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+      cursorFilter = cursorPredicate(params.length);
     }
 
     const rows = await this.query<SourceContextRow>(
       `SELECT
-         c.id AS context_id, c.source_id, c.user_id, c.context_type, c.text,
-         c.normalized_text, c.language AS context_language, c.position,
-         c.metadata AS context_metadata, c.created_at AS context_created_at,
-         c.updated_at AS context_updated_at,
-         s.user_id AS source_user_id, s.wordbook_id, s.source_type, s.title,
-         s.author, s.url, s.language AS source_language, s.metadata AS source_metadata,
-         s.created_at AS source_created_at, s.updated_at AS source_updated_at,
-         COALESCE(
-           (
-             SELECT jsonb_agg(to_jsonb(o) ORDER BY o.created_at)
-             FROM l3_occurrences o
-             WHERE o.context_id = c.id AND o.user_id = c.user_id
-           ),
-           '[]'::jsonb
-         ) AS occurrences,
-         COALESCE(
-           (
-             SELECT jsonb_agg(to_jsonb(l) ORDER BY l.created_at)
-             FROM l3_context_links l
-             WHERE l.user_id = c.user_id
-               AND (
-                 l.context_id = c.id
-                 OR l.word_id IN (
-                   SELECT o.word_id
-                   FROM l3_occurrences o
-                   WHERE o.context_id = c.id AND o.user_id = c.user_id
-                 )
-               )
-           ),
-           '[]'::jsonb
-         ) AS links
+${CONTEXT_SOURCE_COLUMNS},
+${OCCURRENCES_AGG},
+${LINKS_AGG}
        FROM l3_contexts c
        JOIN l3_sources s ON s.id = c.source_id AND s.user_id = c.user_id
        WHERE c.user_id = $1::uuid
@@ -911,36 +893,9 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
   async getContextDetail(userId: string, contextId: string): Promise<L3ContextDetail | null> {
     const row = await this.queryOne<ContextDetailRow>(
       `SELECT
-         c.id AS context_id, c.source_id, c.user_id, c.context_type, c.text,
-         c.normalized_text, c.language AS context_language, c.position,
-         c.metadata AS context_metadata, c.created_at AS context_created_at,
-         c.updated_at AS context_updated_at,
-         s.user_id AS source_user_id, s.wordbook_id, s.source_type, s.title,
-         s.author, s.url, s.language AS source_language, s.metadata AS source_metadata,
-         s.created_at AS source_created_at, s.updated_at AS source_updated_at,
-         COALESCE(
-           (
-             SELECT jsonb_agg(to_jsonb(o) ORDER BY o.created_at)
-             FROM l3_occurrences o
-             WHERE o.context_id = c.id AND o.user_id = c.user_id
-           ),
-           '[]'::jsonb
-         ) AS occurrences,
-         COALESCE(
-           (
-             SELECT jsonb_agg(to_jsonb(l) ORDER BY l.created_at)
-             FROM l3_context_links l
-             WHERE l.user_id = c.user_id
-               AND (
-                 l.context_id = c.id
-                 OR l.word_id IN (
-                   SELECT o.word_id FROM l3_occurrences o
-                   WHERE o.context_id = c.id AND o.user_id = c.user_id
-                 )
-               )
-           ),
-           '[]'::jsonb
-         ) AS links
+${CONTEXT_SOURCE_COLUMNS},
+${OCCURRENCES_AGG},
+${LINKS_AGG}
        FROM l3_contexts c
        JOIN l3_sources s ON s.id = c.source_id AND s.user_id = c.user_id
        WHERE c.id = $1::uuid AND c.user_id = $2::uuid`,
@@ -970,17 +925,11 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     let cursorFilter = "";
     if (cursor) {
       params.push(cursor.createdAt, cursor.id);
-      cursorFilter = `AND (c.created_at, c.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+      cursorFilter = cursorPredicate(params.length);
     }
     const rows = await this.query<WordSpaceRow>(
       `SELECT
-         c.id AS context_id, c.source_id, c.user_id, c.context_type, c.text,
-         c.normalized_text, c.language AS context_language, c.position,
-         c.metadata AS context_metadata, c.created_at AS context_created_at,
-         c.updated_at AS context_updated_at,
-         s.user_id AS source_user_id, s.wordbook_id, s.source_type, s.title,
-         s.author, s.url, s.language AS source_language, s.metadata AS source_metadata,
-         s.created_at AS source_created_at, s.updated_at AS source_updated_at,
+${CONTEXT_SOURCE_COLUMNS},
          w.id AS word_id, w.slug AS word_slug, w.title AS word_title,
          w.lemma AS word_lemma, w.pos AS word_pos, w.cefr AS word_cefr,
          w.ipa AS word_ipa, w.aliases AS word_aliases,
@@ -992,29 +941,8 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
          w.content_hash AS word_content_hash, w.is_published AS word_is_published,
          w.is_deleted AS word_is_deleted, w.created_at AS word_created_at,
          w.updated_at AS word_updated_at,
-         COALESCE(
-           (
-             SELECT jsonb_agg(to_jsonb(o) ORDER BY o.created_at)
-             FROM l3_occurrences o
-             WHERE o.context_id = c.id AND o.user_id = c.user_id
-           ),
-           '[]'::jsonb
-         ) AS occurrences,
-         COALESCE(
-           (
-             SELECT jsonb_agg(to_jsonb(l) ORDER BY l.created_at)
-             FROM l3_context_links l
-             WHERE l.user_id = c.user_id
-               AND (
-                 l.context_id = c.id
-                 OR l.word_id IN (
-                   SELECT o.word_id FROM l3_occurrences o
-                   WHERE o.context_id = c.id AND o.user_id = c.user_id
-                 )
-               )
-           ),
-           '[]'::jsonb
-         ) AS links
+${OCCURRENCES_AGG},
+${LINKS_AGG}
        FROM l3_occurrences anchor
        JOIN words w ON w.id = anchor.word_id
        JOIN l3_contexts c ON c.id = anchor.context_id AND c.user_id = anchor.user_id
@@ -1059,8 +987,8 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     const links = uniqueById(page.items.flatMap((item) => item.links));
     const wordIds = [...new Set(occurrences.map((o) => o.word_id))];
     const words = wordIds.length
-      ? await this.query<{ id: string; slug: string; title: string }>(
-          `SELECT id, slug, title FROM words WHERE id = ANY($1::uuid[])`,
+      ? await this.query<{ id: string; slug: string; title: string; short_definition: string | null }>(
+          `SELECT id, slug, title, short_definition FROM words WHERE id = ANY($1::uuid[])`,
           [wordIds],
         )
       : [];
@@ -1105,41 +1033,14 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     let cursorFilter = "";
     if (cursor) {
       params.push(cursor.createdAt, cursor.id);
-      cursorFilter = `AND (c.created_at, c.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+      cursorFilter = cursorPredicate(params.length);
     }
 
     const rows = await this.query<GraphContextRow>(
       `SELECT
-         c.id AS context_id, c.source_id, c.user_id, c.context_type, c.text,
-         c.normalized_text, c.language AS context_language, c.position,
-         c.metadata AS context_metadata, c.created_at AS context_created_at,
-         c.updated_at AS context_updated_at,
-         s.user_id AS source_user_id, s.wordbook_id, s.source_type, s.title,
-         s.author, s.url, s.language AS source_language, s.metadata AS source_metadata,
-         s.created_at AS source_created_at, s.updated_at AS source_updated_at,
-         COALESCE(
-           (
-             SELECT jsonb_agg(to_jsonb(o) ORDER BY o.created_at)
-             FROM l3_occurrences o
-             WHERE o.context_id = c.id AND o.user_id = c.user_id
-           ),
-           '[]'::jsonb
-         ) AS occurrences,
-         COALESCE(
-           (
-             SELECT jsonb_agg(to_jsonb(l) ORDER BY l.created_at)
-             FROM l3_context_links l
-             WHERE l.user_id = c.user_id
-               AND (
-                 l.context_id = c.id
-                 OR l.word_id IN (
-                   SELECT o.word_id FROM l3_occurrences o
-                   WHERE o.context_id = c.id AND o.user_id = c.user_id
-                 )
-               )
-           ),
-           '[]'::jsonb
-         ) AS links
+${CONTEXT_SOURCE_COLUMNS},
+${OCCURRENCES_AGG},
+${LINKS_AGG}
        FROM l3_contexts c
        JOIN l3_sources s ON s.id = c.source_id AND s.user_id = c.user_id
        WHERE c.user_id = $1::uuid

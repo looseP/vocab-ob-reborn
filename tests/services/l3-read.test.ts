@@ -89,6 +89,7 @@ const OCCURRENCE_ROW: L3OccurrenceRow = {
   end_offset: 7,
   confidence: "0.9000",
   evidence: { method: "manual" },
+  bound_sense: null,
   created_at: "2026-07-08T00:00:00Z",
 };
 

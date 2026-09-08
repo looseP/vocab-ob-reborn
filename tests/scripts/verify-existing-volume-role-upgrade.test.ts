@@ -26,7 +26,8 @@ describe("existing local volume role upgrade", () => {
     // 0019: note_entries 条目制笔记（建表 + RLS + 文档笔记迁移为条目）
     // 0020: l3_sources 素材正文捕获（content_text/content_hash + 用户内唯一索引，L3 素材空间 MVP）
     // 0021: l3_sources/l3_contexts UPDATE grant (FOR UPDATE row locks)
-    expect(authoritativeMigrationCount()).toBe(22);
+    // 0022: l3_occurrences.bound_sense（语境义快照，Bound sense 列）
+    expect(authoritativeMigrationCount()).toBe(23);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

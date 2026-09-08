@@ -12,6 +12,8 @@ import { useToast } from "@/frontend/components/ui/Toast";
 export interface WordL3ListItem {
   context: { id: string; text: string; created_at: string };
   source: { id: string; title: string };
+  /** 语境义快照（Bound sense）：圈记时绑定的释义/搭配文本，旧数据为 null。 */
+  occurrence?: { bound_sense: string | null } | null;
 }
 
 export function WordL3Contexts({ slug }: { slug: string }) {
@@ -90,6 +92,10 @@ export function WordL3Contexts({ slug }: { slug: string }) {
         <ul className="space-y-2">
           {items.map((item) => (
             <li key={item.context.id} className="rounded-lg border border-[var(--color-border)] px-3 py-2">
+              {/* Bound sense（grill 2026-09-08）：绑定释义优先显示，无则正文即语境 */}
+              {item.occurrence?.bound_sense && (
+                <p className="mb-0.5 text-[11.5px] text-[var(--color-accent)]">绑定释义：{item.occurrence.bound_sense}</p>
+              )}
               <p className="text-[13px] leading-relaxed">{item.context.text}</p>
               <p className="mt-1 flex items-center gap-3 text-[11px] text-[var(--color-ink-soft)]">
                 <Link to={`/l3?sourceId=${encodeURIComponent(item.source.id)}&contextId=${encodeURIComponent(item.context.id)}`} className="hover:text-[var(--color-accent)]">

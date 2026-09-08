@@ -14,15 +14,33 @@ import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { findSentenceRange } from "@/services/l3-segmentation";
 import { useToast } from "@/frontend/components/ui/Toast";
 
-export interface L3ReadingWord { id: string; slug: string; title: string }
+export interface L3ReadingWord { id: string; slug: string; title: string; short_definition?: string | null }
+export interface L3ReadingOccurrence { context_id: string; word_id: string; bound_sense?: string | null }
 export interface L3ReadingContext { id: string; text: string; position: { start?: number; end?: number } }
 export interface L3ReadingSpace {
   source: { id: string; title: string; source_type: string; language: string | null; content_text: string | null };
   contexts: L3ReadingContext[];
-  occurrences: unknown[];
+  occurrences: L3ReadingOccurrence[];
   links: unknown[];
   words: L3ReadingWord[];
   stats: Record<string, unknown>;
+}
+
+/** 面板词卡条目（2026-09-08 Bound sense）：释义 = bound_sense 优先，fallback 短释义。 */
+export interface L3PanelWordEntry { slug: string; boundSense: string | null; shortDefinition: string | null }
+
+/** 组装面板词卡：语境绑定全部词 + 各自的 bound_sense（该语境 occurrence）与 short_definition。 */
+export function buildPanelEntries(space: L3ReadingSpace, contextId: string, slugs: string[]): L3PanelWordEntry[] {
+  const contextOccs = space.occurrences.filter((o) => o.context_id === contextId);
+  return slugs.map((slug) => {
+    const word = space.words.find((w) => w.slug === slug);
+    const occ = word ? contextOccs.find((o) => o.word_id === word.id) : undefined;
+    return {
+      slug,
+      boundSense: occ?.bound_sense ?? null,
+      shortDefinition: word?.short_definition ?? null,
+    };
+  });
 }
 
 interface AnchorRange { start: number; end: number; contextId: string; slugs: string[] }
@@ -74,15 +92,20 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
   const [capture, setCapture] = useState<{ start: number; end: number; text: string } | null>(null);
   const [target, setTarget] = useState("");
   const [saving, setSaving] = useState(false);
+  // 语境义快照（Bound sense，grill 定案 2026-09-08）：圈记时绑定释义/搭配文本。
+  // 在库词预填 short_definition，可从 core_definitions 下拉选择或手动改写；stub 词手动录入。
+  const [boundSense, setBoundSense] = useState("");
+  // 搭配分支可编辑文本框：预填选区原文，允许微调（处理不连续搭配，删掉中间无关词）。
+  const [excerptText, setExcerptText] = useState("");
   const [targetInfo, setTargetInfo] = useState<
     | { state: "idle" }
     | { state: "loading" }
-    | { state: "found"; word: { slug: string; title: string; pos: string | null; ipa: string | null; short_definition: string | null } }
+    | { state: "found"; word: { slug: string; title: string; pos: string | null; ipa: string | null; short_definition: string | null; core_definitions?: Array<{ sense: string; en: string | null; priority: number | null; tags: string[] }> } }
     | { state: "miss" }
   >({ state: "idle" });
   const lookupSeq = useRef(0);
   // 交互隔离（2026-09-08 用户反馈）：跳转入品收敛到句尾小标号——右侧相关词汇面板
-  const [wordPanel, setWordPanel] = useState<{ contextId: string; slugs: string[]; text: string } | null>(null);
+  const [wordPanel, setWordPanel] = useState<{ contextId: string; slugs: string[]; text: string; entries: L3PanelWordEntry[] } | null>(null);
   const { addToast } = useToast();
 
   const reload = useCallback(async () => {
@@ -130,18 +153,22 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
 
   // 目标词词库回显（用户反馈 2026-09-08）：在库 → 显示基本信息（绑定已有词条）；
   // 不在库 → 提示将自动创建生词条目。300ms 防抖 + seq 忽略过期响应。
+  // Bound sense 预填（2026-09-08）：在库 → 释义行自动填 short_definition（换词跟随，
+  // 手动改写后改词会被覆盖——释义跟着目标词走，可再手动微调）；stub 词留空手动录入。
   useEffect(() => {
     const slug = target.trim().toLowerCase();
     if (!slug) { setTargetInfo({ state: "idle" }); return; }
     const seq = ++lookupSeq.current;
     setTargetInfo({ state: "loading" });
     const timer = setTimeout(() => {
-      apiFetch<{ slug: string; title: string; pos: string | null; ipa: string | null; short_definition: string | null }>(
+      apiFetch<{ slug: string; title: string; pos: string | null; ipa: string | null; short_definition: string | null; core_definitions?: Array<{ sense: string; en: string | null; priority: number | null; tags: string[] }> }>(
         `/words/${encodeURIComponent(slug)}`, { timeoutMs: 10_000 })
         .then((word) => {
           if (lookupSeq.current !== seq) return;
-          if (word && word.slug) setTargetInfo({ state: "found", word });
-          else setTargetInfo({ state: "miss" });
+          if (word && word.slug) {
+            setTargetInfo({ state: "found", word });
+            setBoundSense(word.short_definition ?? "");
+          } else setTargetInfo({ state: "miss" });
         })
         .catch(() => {
           if (lookupSeq.current === seq) setTargetInfo({ state: "miss" });
@@ -166,6 +193,7 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
     const selected = text.slice(off.start, off.end);
     if (!selected.trim()) return setCapture(null);
     setCapture({ ...off, text: selected });
+    setExcerptText(selected);
     setTarget(selected.trim().split(/\s+/)[0] ?? "");
   };
 
@@ -179,6 +207,9 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
       const seg = findSentenceRange(space.source.content_text, capture.start, capture.end);
       record = seg.text;
       anchor = { start: seg.start, end: seg.end };
+    } else {
+      // 搭配分支：可微调文本（删掉不连续部分）；清空则回退选区原文。
+      record = excerptText.trim() || capture.text;
     }
     setSaving(true);
     try {
@@ -187,11 +218,15 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
         body: JSON.stringify({
           text: record, anchorStart: anchor.start, anchorEnd: anchor.end,
           surface, wordSlug: surface.toLowerCase(), contextType: mode === "sentence" ? "sentence" : "excerpt",
+          // 语境义快照：空串归一为 null（未绑定）
+          boundSense: boundSense.trim() || null,
         }),
         timeoutMs: 20_000,
       });
       addToast("success", "已圈记，词卡与语境已关联");
       setCapture(null);
+      setBoundSense("");
+      setExcerptText("");
       await reload();
     } catch (err) {
       addToast("error", err instanceof BrowserApiError ? err.message : "圈记失败，请重试");
@@ -226,7 +261,12 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
           data-context-badge={r.contextId}
           title="查看这句关联的词汇"
           aria-label={`查看第 ${i + 1} 处圈记关联的词汇`}
-          onClick={() => setWordPanel({ contextId: r.contextId, slugs: r.slugs, text: text.slice(r.start, r.end) })}
+          onClick={() => setWordPanel({
+            contextId: r.contextId,
+            slugs: r.slugs,
+            text: text.slice(r.start, r.end),
+            entries: buildPanelEntries(space, r.contextId, r.slugs),
+          })}
           className="mx-0.5 inline-flex h-4 w-4 -translate-y-2 cursor-pointer items-center justify-center rounded-full bg-[var(--color-accent)] align-super text-[9px] font-semibold leading-none text-[var(--color-accent-contrast,var(--color-surface))] transition-transform hover:scale-110"
         >
           {i + 1}
@@ -265,17 +305,28 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
             </p>
             <p className="mt-3 mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-soft)]">跳转到词条</p>
             <ul className="space-y-2">
-              {wordPanel.slugs.map((slug) => (
-                <li key={slug}>
-                  <Link
-                    to={`/words/${encodeURIComponent(slug)}`}
-                    className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2 text-[13px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]"
-                  >
-                    <span className="font-medium">{slug}</span>
-                    <span className="text-[11px] text-[var(--color-ink-soft)]">查看词条 →</span>
-                  </Link>
-                </li>
-              ))}
+              {wordPanel.entries.map((entry) => {
+                // Bound sense 显示优先级（grill 2026-09-08）：绑定释义优先，无则回退词表短释义
+                const senseLine = entry.boundSense ?? entry.shortDefinition;
+                return (
+                  <li key={entry.slug}>
+                    <Link
+                      to={`/words/${encodeURIComponent(entry.slug)}`}
+                      className="block rounded-lg border border-[var(--color-border)] px-3 py-2 text-[13px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]"
+                    >
+                      <span className="flex items-center justify-between">
+                        <span className="font-medium">{entry.slug}</span>
+                        <span className="text-[11px] text-[var(--color-ink-soft)]">查看词条 →</span>
+                      </span>
+                      {senseLine && (
+                        <span className="mt-0.5 block whitespace-nowrap text-[11px] leading-snug text-[var(--color-ink-soft)]">
+                          {entry.boundSense ? `绑定：${senseLine}` : senseLine}
+                        </span>
+                      )}
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </div>
@@ -294,7 +345,45 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
               className="rounded bg-[var(--color-accent)] px-3 py-1 text-xs text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50">记录整句</button>
             <button type="button" disabled={saving} onClick={() => void submitCapture("excerpt")}
               className="rounded border border-[var(--color-accent)] px-3 py-1 text-xs text-[var(--color-accent)] disabled:opacity-50">记录搭配</button>
-            <button type="button" onClick={() => setCapture(null)} className="text-xs text-[var(--color-ink-soft)]">取消</button>
+            <button type="button" onClick={() => { setCapture(null); setBoundSense(""); setExcerptText(""); }} className="text-xs text-[var(--color-ink-soft)]">取消</button>
+          </div>
+          {/* 释义行（Bound sense，2026-09-08）：预填 short_definition，可下拉换义项或手动改写/清空。
+              该快照跟随这条圈记永久保存，不随 L1 词义更新变化。 */}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="whitespace-nowrap text-[11px] font-medium text-[var(--color-ink-soft)]">绑定释义</span>
+            <input
+              value={boundSense}
+              onChange={(e) => setBoundSense(e.target.value)}
+              placeholder="这句里它的意思（可留空）"
+              className="w-56 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1"
+            />
+            {targetInfo.state === "found" && targetInfo.word.core_definitions && targetInfo.word.core_definitions.length > 0 && (
+              <select
+                value={targetInfo.word.core_definitions.some((d) => d.sense === boundSense) ? boundSense : ""}
+                onChange={(e) => { if (e.target.value) setBoundSense(e.target.value); }}
+                className="max-w-56 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-1 text-[12px]"
+                aria-label="从核心释义义项选择"
+              >
+                <option value="">从义项选择…</option>
+                {targetInfo.word.core_definitions.map((d, i) => (
+                  <option key={`${d.sense}-${i}`} value={d.sense}>{d.sense}</option>
+                ))}
+              </select>
+            )}
+            {boundSense && (
+              <button type="button" onClick={() => setBoundSense("")} className="whitespace-nowrap text-[11px] text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]">清空</button>
+            )}
+          </div>
+          {/* 搭配分支文本框（2026-09-08）：预填选区原文，可微调（删除不连续的无关部分）；
+              仅「记录搭配」使用该文本，整句分支自动扩展取整句。 */}
+          <div className="mt-2">
+            <span className="mb-1 block text-[11px] font-medium text-[var(--color-ink-soft)]">搭配文本（可微调，仅「记录搭配」使用）</span>
+            <textarea
+              value={excerptText}
+              onChange={(e) => setExcerptText(e.target.value)}
+              rows={2}
+              className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 font-mono text-[12px]"
+            />
           </div>
           {targetInfo.state === "loading" && (
             <p className="mt-1.5 text-[11px] text-[var(--color-ink-soft)]">查询词库…</p>

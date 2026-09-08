@@ -13,6 +13,8 @@ export interface ReviewL3ContextItem {
   source_id: string;
   text: string;
   source_title: string;
+  /** 语境义快照（Bound sense）：绑定释义/搭配文本，未绑定为 null。 */
+  bound_sense: string | null;
 }
 
 export function L3ContextsFold({ items }: { items: ReviewL3ContextItem[]; slug: string }) {
@@ -27,6 +29,10 @@ export function L3ContextsFold({ items }: { items: ReviewL3ContextItem[]; slug: 
         <div className="space-y-2 border-t border-[var(--color-border)] px-3 py-2.5 text-left text-[12.5px] leading-relaxed text-[var(--color-ink)]">
           {items.map((item) => (
             <div key={item.context_id}>
+              {/* Bound sense（grill 2026-09-08）：圈记时绑定的语境义快照，有则显示 */}
+              {item.bound_sense && (
+                <p className="text-[11px] text-[var(--color-accent)]">绑定释义：{item.bound_sense}</p>
+              )}
               <p>{item.text}</p>
               <p className="text-[11px] text-[var(--color-ink-soft)]">
                 {/* P0-2：逐条携带 contextId——深链直达阅读视图并滚动+闪高亮该语境 */}

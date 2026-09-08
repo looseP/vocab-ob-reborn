@@ -33,6 +33,7 @@ describe("Words response contracts", () => {
       definition_md: "To exist in large numbers.",
       body_md: "# abound",
       prototype_text: null,
+      core_definitions: [{ sense: "大量存在", en: null, priority: 1, tags: [] }],
       examples: [{ text: "Fish abound in the lake." }],
       l2_content: {
         collocations: [

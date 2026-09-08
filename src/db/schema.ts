@@ -945,10 +945,13 @@ export const l3Occurrences = pgTable("l3_occurrences", {
 	startOffset: integer("start_offset"),
 	endOffset: integer("end_offset"),
 	confidence: numeric("confidence", { precision: 5, scale: 4 }),
-	evidence: jsonb("evidence").default({}).notNull(),
-	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+    evidence: jsonb("evidence").default({}).notNull(),
+    // 语境义快照（2026-09-08）：圈记时绑定的释义/搭配文本，不引用 L1 义项下标（快照语义，
+    // L1 词义重审不回写 L3——三轨隔离）。
+    boundSense: text("bound_sense"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_l3_occurrences_word_created").on(table.wordId, table.createdAt),
+    index("idx_l3_occurrences_word_created").on(table.wordId, table.createdAt),
 	index("idx_l3_occurrences_context").on(table.contextId),
 	foreignKey({
 			columns: [table.contextId, table.userId],

@@ -63,6 +63,8 @@ export const reviewQueueResponseSchema = z.object({
       source_id: z.string(),
       text: z.string(),
       source_title: z.string(),
+      /** 语境义快照（Bound sense）：绑定释义/搭配文本，未绑定为 null。 */
+      bound_sense: z.string().nullable(),
     }).strict()),
   }).strict()),
   session: z.object({

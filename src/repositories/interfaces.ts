@@ -705,6 +705,8 @@ export interface NewL3Occurrence {
   end_offset?: number | null;
   confidence?: number | null;
   evidence?: Json;
+  /** 语境义快照：选自 core_definitions 或手动录入的释义/搭配文本 */
+  bound_sense?: string | null;
 }
 
 export interface NewL3ContextLink {

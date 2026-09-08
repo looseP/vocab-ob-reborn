@@ -271,6 +271,7 @@ export class L3ContextService {
         end_offset: input.endOffset ?? null,
         confidence: input.confidence ?? null,
         evidence: input.evidence ?? {},
+        bound_sense: input.boundSense ?? null,
       } satisfies NewL3Occurrence);
       return { occurrence };
     });
@@ -363,6 +364,7 @@ export class L3ContextService {
         end_offset: rel >= 0 ? rel + input.surface.length : null,
         confidence: null,
         evidence: { via: "selection_capture" },
+        bound_sense: input.boundSense || null,
       } satisfies NewL3Occurrence);
 
       return {
@@ -404,6 +406,7 @@ export class L3ContextService {
         ...trio.occurrence,
         context_id: context.id,
         evidence: trio.occurrence.evidence as Json,
+        bound_sense: input.boundSense || null,
       });
       return { sourceId: source.id, contextId: context.id, occurrenceId: occurrence.id };
     });

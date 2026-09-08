@@ -81,6 +81,7 @@ const WORD_ROW: WordRow = {
   definition_md: "To exist in large numbers.",
   body_md: "# abound",
       prototype_text: null,
+  core_definitions: [{ sense: "大量存在", en: null, priority: 1, tags: [] }],
   examples: [{ text: "Fish abound in the lake." }],
   metadata: { word_freq: "C1", semantic_field: "quantity" },
   source_path: "private/content/abound.md",
@@ -180,6 +181,7 @@ describe("GET /api/words/:slug", () => {
       definition_md: "To exist in large numbers.",
       body_md: "# abound",
       prototype_text: null,
+      core_definitions: [{ sense: "大量存在", en: null, priority: 1, tags: [] }],
       examples: [{ text: "Fish abound in the lake." }],
       metadata: { word_freq: "C1", semantic_field: "quantity" },
       l2_content: {

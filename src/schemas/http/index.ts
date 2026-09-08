@@ -298,6 +298,8 @@ export const l3SelectionCaptureSchema = z.object({
   surface: z.string().trim().min(1),
   wordSlug: z.string().trim().min(1),
   contextType: z.enum(["sentence", "excerpt"]).optional(),
+  /** 语境义快照（Bound sense）：圈记时绑定的释义/搭配文本，空串归一为 null。 */
+  boundSense: z.string().trim().max(2_000).nullish(),
 }).refine((v) => v.anchorEnd > v.anchorStart, { message: "anchorEnd must be > anchorStart", path: ["anchorEnd"] });
 
 export const quickL3ContextSchema = z.object({
@@ -306,6 +308,8 @@ export const quickL3ContextSchema = z.object({
   sourceTitle: z.string().trim().optional(),
   sourceUrl: z.string().trim().optional(),
   obsidianRef: z.string().trim().optional(),
+  /** 语境义快照（Bound sense）：快记时绑定的释义/搭配文本，空串归一为 null。 */
+  boundSense: z.string().trim().max(2_000).nullish(),
 });
 
 export const l3LimitCursorQuerySchema = z.object({

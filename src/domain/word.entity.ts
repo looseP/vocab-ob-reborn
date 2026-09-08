@@ -40,6 +40,8 @@ export class Word {
       body_md: this.row.body_md,
       examples: this.row.examples,
       prototype_text: this.row.prototype_text,
+      // DB 列 NOT NULL DEFAULT '[]'；旧测试 mock 可省略 → 数组兜底。
+      core_definitions: Array.isArray(this.row.core_definitions) ? this.row.core_definitions : [],
       metadata: this.row.metadata,
       l2_content: {
         collocations: l2CacheArray(this.row.collocations),

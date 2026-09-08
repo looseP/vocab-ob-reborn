@@ -1,5 +1,7 @@
 /** Domain types — pure, zero DB/runtime dependencies. */
 
+import type { ParsedCoreDefinition } from "./ingest/types";
+
 // ── Common ──────────────────────────────────────────────────────────────
 export type Json =
   | string
@@ -141,6 +143,8 @@ export interface WordRow {
   corpus_items?: Json;
   synonym_items?: Json;
   antonym_items?: Json;
+  /** 核心释义义项列表（NOT NULL DEFAULT '[]'；旧测试 mock 可省略）。 */
+  core_definitions?: ParsedCoreDefinition[];
 }
 
 export interface WordSummary {
@@ -170,6 +174,8 @@ export interface WordDetail extends WordSummary {
   body_md: string;
   examples: Json;
   prototype_text: string | null;
+  /** 核心释义义项列表（Bound sense 圈记条下拉数据源）。 */
+  core_definitions: ParsedCoreDefinition[];
   l2_content: WordDetailL2Content;
   /** 当前用户是否已为该词晋升 L2 行（待扩展提示；未带用户语义时为 false）。 */
   l2_promoted: boolean;
@@ -448,6 +454,8 @@ export interface L3OccurrenceRow {
   end_offset: number | null;
   confidence: number | string | null;
   evidence: Json;
+  /** 语境义快照（圈记时绑定的释义/搭配文本；快照语义，不随 L1 词义更新） */
+  bound_sense: string | null;
   created_at: string;
 }
 
@@ -530,7 +538,8 @@ export interface L3SourceSpace {
   contexts: L3ContextRow[];
   occurrences: L3OccurrenceRow[];
   links: L3ContextLinkRow[];
-  words: Array<{ id: string; slug: string; title: string }>;
+  /** 素材空间相关词卡片（short_definition 供 Bound sense 预填/兜底显示）。 */
+  words: Array<{ id: string; slug: string; title: string; short_definition: string | null }>;
   stats: L3ReadStats;
   limit: number;
   cursor: string | null;

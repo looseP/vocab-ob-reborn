@@ -242,7 +242,7 @@ describe("GET /api/review/queue l3 injection", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.items[0].l3_contexts).toEqual([
-      { context_id: "ctx-1", source_id: "src-1", text: "The ephemeral beauty of cherry blossoms.", source_title: "阅读 Text B" },
+      { context_id: "ctx-1", source_id: "src-1", text: "The ephemeral beauty of cherry blossoms.", source_title: "阅读 Text B", bound_sense: null },
     ]);
     expect(body.items[1].l3_contexts).toEqual([]);
   });

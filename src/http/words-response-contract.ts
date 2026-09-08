@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PaginatedResult, WordDetail, WordDetailL2Content, WordSummary } from "../domain";
+import type { ParsedCoreDefinition } from "@/domain/ingest/types";
 import { jsonValueSchema } from "./l3-response-contract";
 import {
   l2CollocationItemSchema,
@@ -32,6 +33,14 @@ const wordDetailL2ContentSchema = z.object({
   antonym_items: z.array(l2SynonymItemSchema.passthrough()),
 }).strict() as z.ZodType<WordDetailL2Content>;
 
+/** 核心释义义项（Bound sense 圈记条下拉数据源；parse 阶段已保证 sense 非空）。 */
+const coreDefinitionSchema: z.ZodType<ParsedCoreDefinition> = z.object({
+  sense: z.string(),
+  en: z.string().nullable(),
+  priority: z.number().nullable(),
+  tags: z.array(z.string()),
+}).strict();
+
 export const wordDetailResponseSchema: z.ZodType<WordDetail> = z.object({
   id: z.string(),
   slug: z.string(),
@@ -46,6 +55,7 @@ export const wordDetailResponseSchema: z.ZodType<WordDetail> = z.object({
   body_md: z.string(),
   examples: jsonValueSchema,
   prototype_text: z.string().nullable(),
+  core_definitions: z.array(coreDefinitionSchema),
   metadata: jsonValueSchema,
   l2_content: wordDetailL2ContentSchema,
   l2_promoted: z.boolean(),

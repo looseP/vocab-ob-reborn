@@ -292,6 +292,7 @@ class L3CrossContractHarness {
       end_offset: 9,
       confidence: "0.9000",
       evidence: {},
+      bound_sense: null,
       created_at: "2026-07-08T00:00:00Z",
     });
     this.occurrences.set("seed-occ-2", {
@@ -305,6 +306,7 @@ class L3CrossContractHarness {
       end_offset: 19,
       confidence: "0.9000",
       evidence: {},
+      bound_sense: null,
       created_at: "2026-07-08T00:00:00Z",
     });
   }
@@ -383,6 +385,7 @@ class L3CrossContractHarness {
           end_offset: input.end_offset ?? null,
           confidence: input.confidence ?? null,
           evidence: input.evidence ?? {},
+          bound_sense: input.bound_sense ?? null,
           created_at: "2026-07-08T00:00:00Z",
         };
         this.occurrences.set(occurrence.id, occurrence);

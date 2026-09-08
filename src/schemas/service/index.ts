@@ -463,6 +463,8 @@ export interface CreateL3OccurrenceInput {
   endOffset?: number | null;
   confidence?: number | null;
   evidence?: Json;
+  /** 语境义快照（Bound sense）：绑定释义/搭配文本快照。 */
+  boundSense?: string | null;
 }
 
 export interface CreateL3ContextLinkInput {
@@ -488,6 +490,8 @@ export type CreateL3SelectionCaptureInput = {
   surface: string;
   wordSlug: string;
   contextType?: "sentence" | "excerpt";
+  /** 语境义快照（Bound sense）：圈记时绑定的释义/搭配文本，空串视为未绑定。 */
+  boundSense?: string | null;
 };
 
 export type CreateWordContextTrioInput = {
@@ -498,6 +502,8 @@ export type CreateWordContextTrioInput = {
   sourceTitle?: string;
   sourceUrl?: string;
   obsidianRef?: string;
+  /** 语境义快照（Bound sense）：快记时绑定的释义/搭配文本，空串视为未绑定。 */
+  boundSense?: string | null;
 };
 
 export interface ListL3SourcesInput {

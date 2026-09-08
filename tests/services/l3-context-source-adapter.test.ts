@@ -71,6 +71,7 @@ function makeOccurrenceRow(): L3OccurrenceRow {
     end_offset: null,
     confidence: null,
     evidence: {},
+    bound_sense: null,
     created_at: "2026-08-25T00:00:00Z",
   };
 }

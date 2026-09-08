@@ -114,8 +114,9 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
       end_offset: input.end_offset ?? null,
       confidence: input.confidence ?? null,
       evidence: input.evidence ?? {},
+      bound_sense: input.bound_sense ?? null,
       created_at: "2026-07-08T00:00:00Z",
-    })),
+})),
     createContextLink: vi.fn(async (input) => ({
       id: "link-1",
       user_id: input.user_id,
@@ -140,6 +141,7 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
       end_offset: null,
       confidence: null,
       evidence: {},
+      bound_sense: null,
       created_at: "2026-07-08T00:00:00Z",
     })),
     deleteContextLink: vi.fn(async (userId, contextLinkId) => ({
