@@ -1,9 +1,10 @@
 import { Link, useLocation } from "react-router-dom";
-import { Repeat, BookOpen, LayoutGrid, Notebook, Settings } from "lucide-react";
+import { Repeat, BookOpen, LayoutGrid, Library, Notebook, Settings } from "lucide-react";
 
 const tabs = [
   { href: "/review", label: "复习", icon: Repeat },
   { href: "/words", label: "词条库", icon: BookOpen },
+  { href: "/l3", label: "素材", icon: Library },
   { href: "/dashboard", label: "仪表盘", icon: LayoutGrid },
   { href: "/notes", label: "笔记", icon: Notebook },
   { href: "/settings", label: "设置", icon: Settings },

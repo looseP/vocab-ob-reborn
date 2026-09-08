@@ -1,7 +1,7 @@
 ﻿import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import type { L3ContextRow, L3SourceRow, WordbookRow, WordRow } from "@/domain";
-import type { IL3ContextRepository, IRepositories } from "@/repositories/interfaces";
+import type { IL3ContextRepository, IRepositories, IWordRepository } from "@/repositories/interfaces";
 import { L3ContextService } from "@/services/l3-context.service";
 
 const SOURCE_ROW: L3SourceRow = {

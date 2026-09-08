@@ -37,7 +37,7 @@ import type {
 export function L3Page() {
   const [searchParams] = useSearchParams();
   const deepLinkContextId = searchParams.get("contextId");
-  const [section, setSection] = useState<L3ShellSection>("home");
+  const [section, setSection] = useState<L3ShellSection>("source");
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [graphHandoff, setGraphHandoff] = useState<L3GraphHandoff | null>(null);
   const [contextHandoff, setContextHandoff] = useState<L3ContextHandoff | null>(null);

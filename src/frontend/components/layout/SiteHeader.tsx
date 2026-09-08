@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, ClipboardType, LayoutGrid, Repeat, Notebook, Settings, Upload, Users, Zap } from "lucide-react";
+import { BookOpen, ClipboardType, LayoutGrid, Library, Repeat, Notebook, Settings, Upload, Users, Zap } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { WordbookSwitcher } from "@/frontend/components/wordbook/WordbookSwitcher";
 import { useCaptureFloatingWindow } from "@/frontend/hooks/useCaptureFloatingWindow";
@@ -10,6 +10,7 @@ const navItems = [
   { href: "/plaza", label: "广场", icon: Users },
   { href: "/review", label: "复习", icon: Repeat },
   { href: "/l2-drill", label: "辨析", icon: Zap },
+  { href: "/l3", label: "素材", icon: Library },
   { href: "/dashboard", label: "仪表盘", icon: LayoutGrid },
   { href: "/notes", label: "笔记", icon: Notebook },
   { href: "/import", label: "导入", icon: Upload },

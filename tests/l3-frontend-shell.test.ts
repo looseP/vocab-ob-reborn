@@ -155,15 +155,15 @@ describe("Phase 4B L3 frontend shell", () => {
 
   it("locks the Phase 4I shell navigation matrix to every read/review surface", () => {
     expect(L3_SHELL_SECTIONS).toEqual([
-      { id: "home", label: "L3 Home" },
-      { id: "manual", label: "Manual Editor" },
-      { id: "import", label: "Import" },
-      { id: "proposals", label: "Proposals" },
-      { id: "recommendations", label: "Recommendations" },
-      { id: "graph", label: "Graph" },
-      { id: "context", label: "Context" },
-      { id: "word", label: "Word Space" },
-      { id: "source", label: "Source Space" },
+      { id: "home", label: "空间首页" },
+      { id: "source", label: "来源书架" },
+      { id: "word", label: "词空间" },
+      { id: "context", label: "语境条目" },
+      { id: "graph", label: "关联图" },
+      { id: "import", label: "批量导入" },
+      { id: "manual", label: "手动编辑" },
+      { id: "proposals", label: "提议审查" },
+      { id: "recommendations", label: "推荐" },
     ]);
     expect(frontendRuntimeSmokeMatrix().map((row) => row.surface)).toEqual([
       "manual",
