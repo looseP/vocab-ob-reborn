@@ -1,7 +1,7 @@
 {
   "version": 1,
   "baseSha256": "7be0ee4f821611bcc5203a0ea04ae1ca1184c03105b9c3714a4006e79b505632",
-  "currentSha256": "8b396528827fef66163636afb58d42a653545a0ce7368671c4f108df62905e1c",
+  "currentSha256": "0c18ce036ce75e0b80909f94fa958709dbf95467da510108189114a3d46fb92f",
   "issues": [
     {
       "kind": "breaking",
@@ -27,6 +27,26 @@
       "kind": "breaking",
       "location": "paths./api/notes.get.responses.200.content.application/json.schema.properties.items.items.properties.version",
       "message": "删除 required response field"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/occurrences/{id}.delete.responses.200.content.application/json.schema.properties.deleted.properties.entityType",
+      "message": "response enum 新增未声明值"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/context-links/{id}.delete.responses.200.content.application/json.schema.properties.deleted.properties.entityType",
+      "message": "response enum 新增未声明值"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/sources/{id}.delete.responses.200.content.application/json.schema.properties.deleted.properties.entityType",
+      "message": "response enum 新增未声明值"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/contexts/{id}.delete.responses.200.content.application/json.schema.properties.deleted.properties.entityType",
+      "message": "response enum 新增未声明值"
     }
   ]
 }

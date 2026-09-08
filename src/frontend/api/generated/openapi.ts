@@ -137,7 +137,7 @@ export interface paths {
         get: operations["getWord"];
         put?: never;
         post?: never;
-        delete?: never;
+        delete: operations["deleteStubWord"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2629,6 +2629,174 @@ export interface operations {
                             })[];
                         };
                         l2_promoted: boolean;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    deleteStubWord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted: {
+                            /** @enum {string} */
+                            entityType: "source" | "context" | "occurrence" | "context_link" | "word";
+                            id: string;
+                        };
+                        /** @constant */
+                        activeReadInvalidation: true;
                     };
                 };
             };
@@ -13098,7 +13266,7 @@ export interface operations {
                     "application/json": {
                         deleted: {
                             /** @enum {string} */
-                            entityType: "source" | "context" | "occurrence" | "context_link";
+                            entityType: "source" | "context" | "occurrence" | "context_link" | "word";
                             id: string;
                         };
                         /** @constant */
@@ -13266,7 +13434,7 @@ export interface operations {
                     "application/json": {
                         deleted: {
                             /** @enum {string} */
-                            entityType: "source" | "context" | "occurrence" | "context_link";
+                            entityType: "source" | "context" | "occurrence" | "context_link" | "word";
                             id: string;
                         };
                         /** @constant */
@@ -13434,7 +13602,7 @@ export interface operations {
                     "application/json": {
                         deleted: {
                             /** @enum {string} */
-                            entityType: "source" | "context" | "occurrence" | "context_link";
+                            entityType: "source" | "context" | "occurrence" | "context_link" | "word";
                             id: string;
                         };
                         /** @constant */
@@ -13822,7 +13990,7 @@ export interface operations {
                     "application/json": {
                         deleted: {
                             /** @enum {string} */
-                            entityType: "source" | "context" | "occurrence" | "context_link";
+                            entityType: "source" | "context" | "occurrence" | "context_link" | "word";
                             id: string;
                         };
                         /** @constant */
