@@ -694,6 +694,26 @@ describe("L3ContextService", () => {
     expect(repo.deleteContext).not.toHaveBeenCalled();
   });
 
+  // P0 语境管理出口（2026-09-08）：occurrences 与同 context 的 context_links 的 FK 均
+  // ON DELETE CASCADE，不应阻断 context 删除——圈记三件套必带 occurrence，若计入
+  // blockers，用户圈记的语境将永远无法删除。真正的 blocker 仅剩软引用 inbound。
+  it("allows context delete when only cascaded references exist (no soft inbound links)", async () => {
+    repo = makeRepo({
+      getContextDeleteBlockers: vi.fn(async () => ({
+        occurrenceCount: 3,
+        contextLinkCount: 2,
+        inboundContextLinkCount: 0,
+      })),
+    });
+    service = makeService(repo);
+
+    await expect(service.deleteContext({ userId: "u1", contextId: "ctx-1" })).resolves.toEqual({
+      deleted: { entityType: "context", id: "ctx-1" },
+      activeReadInvalidation: true,
+    });
+    expect(repo.deleteContext).toHaveBeenCalledWith("u1", "ctx-1");
+  });
+
   it("maps concurrent parent delete misses to NotFoundError after blocker checks pass", async () => {
     repo = makeRepo({
       deleteSource: vi.fn(async () => null),

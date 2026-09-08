@@ -152,4 +152,18 @@ describe("WordL3Contexts", () => {
       await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", "删除失败，请重试"));
     });
   });
+
+  it("explains delete blockers in Chinese on 409", async () => {
+    const { BrowserApiError } = await import("@/frontend/api/browserRequest");
+    (apiFetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(PAGE)
+      .mockRejectedValueOnce(new BrowserApiError(409, { error: "CONFLICT" }));
+    Object.defineProperty(window, "confirm", { value: () => true, configurable: true, writable: true });
+    await renderContexts("ephemeral", PAGE);
+    await waitFor(() => expect(screen.getByText(/ephemeral beauty/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByText("删除"));
+      await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", expect.stringContaining("关联引用")));
+    });
+  });
 });

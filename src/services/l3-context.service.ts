@@ -136,10 +136,12 @@ function hasSourceDeleteBlockers(blockers: L3SourceDeleteBlockers): boolean {
     blockers.importJobCount > 0;
 }
 
+// P0 语境管理出口（2026-09-08 评估修正）：occurrences（圈记三件套必带）与同 context 的
+// context_links 的 FK 均 ON DELETE CASCADE，随 context 一并删除，不构成删除阻断——若计入，
+// 用户圈记的语境将永远无法删除（occurrenceCount 恒 > 0）。真正的 blocker 仅剩
+// inboundContextLinkCount：target_type='context' 的软引用（target_id 为 text，无 FK 级联）。
 function hasContextDeleteBlockers(blockers: L3ContextDeleteBlockers): boolean {
-  return blockers.occurrenceCount > 0 ||
-    blockers.contextLinkCount > 0 ||
-    blockers.inboundContextLinkCount > 0;
+  return blockers.inboundContextLinkCount > 0;
 }
 
 function deleteConflict(

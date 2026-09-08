@@ -59,7 +59,11 @@ export function WordL3Contexts({ slug }: { slug: string }) {
       addToast("success", "已删除该语境记录");
       await reload();
     } catch (err) {
-      addToast("error", err instanceof BrowserApiError ? err.message : "删除失败，请重试");
+      if (err instanceof BrowserApiError && err.status === 409) {
+        addToast("error", "该语境存在关联引用（如语境链接），暂不能删除——可先在工程工具中解除关联");
+      } else {
+        addToast("error", err instanceof BrowserApiError ? err.message : "删除失败，请重试");
+      }
     }
   };
 
