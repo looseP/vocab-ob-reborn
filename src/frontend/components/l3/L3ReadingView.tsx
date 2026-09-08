@@ -251,9 +251,9 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
         <div
           data-word-panel
           data-no-flip
-          className="l3-word-panel fixed right-4 top-20 z-30 flex max-h-[calc(100vh-6rem)] w-80 max-w-[85vw] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl"
+          className="l3-word-panel fixed right-4 top-20 z-30 flex max-h-[calc(100vh-6rem)] w-80 max-w-[85vw] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] shadow-xl"
         >
-          <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5">
+          <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2.5">
             <h4 className="text-[13px] font-semibold text-[var(--color-ink)]">
               相关词汇 <span className="ml-1 rounded-full bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-[10px] font-normal text-[var(--color-accent)]">{wordPanel.slugs.length}</span>
             </h4>
