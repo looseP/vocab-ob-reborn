@@ -59,7 +59,7 @@ export function computeGlobalOffsets(container: HTMLElement, startNode: Node, st
   return { start, end };
 }
 
-export function L3ReadingView({ sourceId }: { sourceId: string }) {
+export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?: () => void }) {
   const [space, setSpace] = useState<L3ReadingSpace | null>(null);
   const [error, setError] = useState<string | null>(null);
   const textRef = useRef<HTMLDivElement>(null);
@@ -177,7 +177,11 @@ export function L3ReadingView({ sourceId }: { sourceId: string }) {
       <div ref={textRef} onMouseUp={onMouseUp} className="whitespace-pre-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[13.5px] leading-relaxed text-[var(--color-ink)]" data-reading-text>
         {pieces}
       </div>
-      <Link to="/l3" className="inline-block text-xs text-[var(--color-accent)] hover:underline">返回书架</Link>
+      {onBack ? (
+        <button type="button" onClick={onBack} className="inline-block text-xs text-[var(--color-accent)] hover:underline">返回书架</button>
+      ) : (
+        <Link to="/l3" className="inline-block text-xs text-[var(--color-accent)] hover:underline">返回书架</Link>
+      )}
     </div>
   );
 }

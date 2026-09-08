@@ -11,7 +11,6 @@ import { L3ImportPage } from "@/frontend/pages/L3ImportPage";
 import { L3ManualEditorPage } from "@/frontend/pages/L3ManualEditorPage";
 import { L3ProposalPage } from "@/frontend/pages/L3ProposalPage";
 import { L3RecommendationPage } from "@/frontend/pages/L3RecommendationPage";
-import { L3SourceSpacePage } from "@/frontend/pages/L3SourceSpacePage";
 import { L3WordSpacePage } from "@/frontend/pages/L3WordSpacePage";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
 import {
@@ -126,14 +125,12 @@ export function L3Page() {
     graph: <L3GraphPage client={l3Client} handoff={graphHandoff} staleState={activeReadStale} onGraphRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     context: <L3ContextPage client={l3Client} handoff={contextHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     word: <L3WordSpacePage client={l3Client} handoff={wordHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
-    // source section：书架为前门；handoff 存在时在其下条件渲染阅读视图（Task 8 组件，
-    // sourceId 变化即切换正文），既有 L3SourceSpacePage inspect 视图保持原样不动。
-    source: (
-      <>
-        <L3Bookshelf onOpen={(sourceId) => { setSourceHandoff({ sourceId, nonce: Date.now() }); }} />
-        {sourceHandoff ? <L3ReadingView sourceId={sourceHandoff.sourceId} /> : null}
-        <L3SourceSpacePage client={l3Client} handoff={sourceHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />
-      </>
+    // source section：书架为前门；选中来源后整屏切换为阅读视图（返回书架清除
+    // handoff 回到书架）。工程检查面板（L3SourceSpacePage）退出正常流。
+    source: sourceHandoff ? (
+      <L3ReadingView sourceId={sourceHandoff.sourceId} onBack={() => setSourceHandoff(null)} />
+    ) : (
+      <L3Bookshelf onOpen={(sourceId) => { setSourceHandoff({ sourceId, nonce: Date.now() }); }} />
     ),
   }[section];
 
