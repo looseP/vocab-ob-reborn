@@ -120,22 +120,33 @@ describe("L3ReadingView", () => {
     expect(mark).toBeTruthy();
   });
 
-  // 用户反馈 2026-09-08：高亮词渲染为 <a href> 后，Chromium 从链接上起手 mousedown
-  // 不启动文本选择（拖动被当成点击导航）——即使 draggable=false 也无效。
-  // 修复 = 已绑定高亮改为 <span> + onClick 编程式跳转：拖动必然产生选区，普通点击仍跳词卡。
-  it("renders bound highlights as clickable spans (not anchors) so drag selects text", async () => {
-    await renderView("s1", SPACE_WITH_LINK);
+  // 交互隔离（2026-09-08 用户反馈）：高亮文本回归纯标记（可随意划词选中），
+  // 跳转入口移到句尾小标号——点击标号从右侧弹出相关词汇面板。
+  it("renders highlights as plain marks with a numbered badge that opens the words panel", async () => {
+    await renderView("s1", SPACE_MULTI_WORD);
     await screen.findByText(/Gamma delta epsilon/);
     const container = document.querySelector("[data-reading-text]") as HTMLElement;
     expect(container.querySelector("a")).toBeNull();
-    const span = screen.getByText(/Gamma delta epsilon/).closest("span");
-    expect(span?.className).toContain("cursor-pointer");
+    // 高亮本身不可点击跳转（无 pointer 光标）
+    const mark = screen.getByText(/Gamma delta epsilon/).closest("mark");
+    expect(mark?.className).not.toContain("cursor-pointer");
+    // 句尾小标号：点击打开右侧面板
+    const badge = container.querySelector("[data-context-badge='c1']") as HTMLElement;
+    expect(badge?.textContent).toBe("1");
+    await act(async () => { fireEvent.click(badge); });
+    const panel = document.querySelector("[data-word-panel]") as HTMLElement;
+    expect(panel).toBeTruthy();
+    const links = [...panel.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(links).toContain("/words/delta");
+    expect(links).toContain("/words/epsilon");
+    // 面板可关闭
+    await act(async () => { fireEvent.click(screen.getByText("关闭")); });
+    expect(document.querySelector("[data-word-panel]")).toBeNull();
   });
 
-  it("navigates on plain highlight click but not while a selection is active", async () => {
+  it("keeps highlighted text inert on click — no navigation, no panel", async () => {
     const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
     apiFetchMock.mockResolvedValue(SPACE_WITH_LINK);
-    // 用真实路由断言导航结果
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -156,20 +167,14 @@ describe("L3ReadingView", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    const span = screen.getByText(/Gamma delta epsilon/).closest("span") as HTMLElement;
-    // 非折叠选区（划词中/刚划完）→ 点击不跳词卡，圈记条不被导航打断
-    Object.defineProperty(window, "getSelection", {
-      value: () => ({ isCollapsed: false }),
-      configurable: true,
-    });
-    await act(async () => { fireEvent.click(span); });
+    // 点高亮文本：不导航、不弹面板（标记与跳转隔离）
+    await act(async () => { fireEvent.click(screen.getByText(/Gamma delta epsilon/)); });
     expect(screen.queryByText("WORD-PAGE")).toBeNull();
-    // 折叠选区（普通点击）→ 正常跳词卡
-    Object.defineProperty(window, "getSelection", {
-      value: () => ({ isCollapsed: true }),
-      configurable: true,
-    });
-    await act(async () => { fireEvent.click(span); });
+    expect(document.querySelector("[data-word-panel]")).toBeNull();
+    // 经标号面板跳词卡仍然可用（单词语境也走面板）
+    const badge = document.querySelector("[data-context-badge='c1']") as HTMLElement;
+    await act(async () => { fireEvent.click(badge); });
+    await act(async () => { fireEvent.click(document.querySelector("[data-word-panel] a")!); });
     await screen.findByText("WORD-PAGE");
   });
 
@@ -178,58 +183,6 @@ describe("L3ReadingView", () => {
       ...SPACE, source: { ...SPACE.source, content_text: null },
     });
     await waitFor(() => expect(screen.getByText("该来源无正文")).toBeTruthy());
-  });
-
-  // ② 多词语境跳转（2026-09-08 用户反馈）：一句话绑多个词时，点击高亮弹出
-  // 选词菜单（而非单项绑定直跳）；单词语境保持直跳。
-  it("shows a word picker when clicking a multi-word highlight", async () => {
-    await renderView("s1", SPACE_MULTI_WORD);
-    await screen.findByText(/Gamma delta epsilon/);
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Gamma delta epsilon/));
-    });
-    // 菜单列出该语境绑定的全部词
-    const menu = document.querySelector("[data-word-picker]") as HTMLElement;
-    expect(menu).toBeTruthy();
-    const links = [...menu.querySelectorAll("a")].map((a) => a.getAttribute("href"));
-    expect(links).toContain("/words/delta");
-    expect(links).toContain("/words/epsilon");
-    // 菜单可关闭
-    await act(async () => {
-      fireEvent.click(screen.getByText("取消"));
-    });
-    expect(document.querySelector("[data-word-picker]")).toBeNull();
-  });
-
-  it("navigates directly for a single-word highlight without a picker", async () => {
-    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
-    apiFetchMock.mockResolvedValue(SPACE_WITH_LINK);
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    mountedRoots.push({ root, container });
-    await act(async () => {
-      root.render(
-        createElement(
-          MemoryRouter,
-          null,
-          createElement(
-            Routes,
-            null,
-            createElement(Route, { path: "/", element: createElement(L3ReadingView, { sourceId: "s1" }) as ReactElement }),
-            createElement(Route, { path: "/words/:slug", element: createElement("div", null, "WORD-PAGE") as ReactElement }),
-          ),
-        ) as ReactElement,
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(document.querySelector("[data-word-picker]")).toBeNull();
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Gamma delta epsilon/));
-    });
-    await screen.findByText("WORD-PAGE");
-    expect(document.querySelector("[data-word-picker]")).toBeNull();
   });
 
   // P0 深链落点（2026-09-08 评估）：?contextId= 不再落工程检查器，而是落阅读视图

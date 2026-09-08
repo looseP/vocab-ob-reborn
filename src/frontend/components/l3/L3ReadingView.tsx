@@ -1,11 +1,14 @@
 /**
  * 阅读视图（grill 定案 2026-09-07）：渲染来源正文，高亮 = 该来源全部 context
  * 锚点（position.{start,end}，UTF-16 码元）的并集——只亮用户亲手圈过的位置，
- * 不做同形匹配（Q7 定案 A）。点击高亮 → 词卡详情（"从素材访问词卡"）。
- * 选区圈记交互（S3）通过 onSelectionAvailable 挂到同一容器。
+ * 不做同形匹配（Q7 定案 A）。
+ * 交互隔离（2026-09-08 用户反馈）：高亮文本是纯标记（无点击行为，保证划词/选中
+ * 不被劫持）；跳转入口 = 每处圈记句尾的小标号，点击从右侧弹出相关词汇面板，
+ * 面板内链接到各绑定词的详情页（单词/多词统一）。
+ * 选区圈记交互（S3）通过 mouseup 挂在同一容器。
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { findSentenceRange } from "@/services/l3-segmentation";
@@ -78,9 +81,8 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
     | { state: "miss" }
   >({ state: "idle" });
   const lookupSeq = useRef(0);
-  const navigate = useNavigate();
-  // ② 多词语境选词菜单（2026-09-08）：记录待选语境的词列表
-  const [wordPicker, setWordPicker] = useState<{ contextId: string; slugs: string[] } | null>(null);
+  // 交互隔离（2026-09-08 用户反馈）：跳转入品收敛到句尾小标号——右侧相关词汇面板
+  const [wordPanel, setWordPanel] = useState<{ contextId: string; slugs: string[]; text: string } | null>(null);
   const { addToast } = useToast();
 
   const reload = useCallback(async () => {
@@ -182,35 +184,36 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
   let cursor = 0;
   ranges.forEach((r, i) => {
     if (r.start > cursor) pieces.push(<span key={`t${i}`}>{text.slice(cursor, r.start)}</span>);
-    const slugs = r.slugs;
+    // 交互隔离（2026-09-08 用户反馈）：高亮文本 = 纯标记（无 onClick，可随意划词选中）；
+    // 跳转入口 = 句尾小标号，点击打开右侧相关词汇面板（单词/多词统一走面板）。
     // 深链聚焦：与 ?contextId= 匹配的高亮携带闪高亮类（P0-2）
     const focus = focusContextId != null && r.contextId === focusContextId ? " l3-focus-flash" : "";
-    if (slugs.length === 0) {
+    if (r.slugs.length > 0) {
       pieces.push(
-        <mark key={`m${i}`} data-context-id={r.contextId} className={`rounded bg-[var(--color-accent-soft)] px-0.5${focus}`}>{text.slice(r.start, r.end)}</mark>,
+        <mark
+          key={`m${i}`}
+          data-context-id={r.contextId}
+          className={`rounded bg-[var(--color-accent-soft)] px-0.5 text-[var(--color-accent)]${focus}`}
+        >
+          {text.slice(r.start, r.end)}
+        </mark>,
+      );
+      pieces.push(
+        <button
+          key={`b${i}`}
+          type="button"
+          data-context-badge={r.contextId}
+          title="查看这句关联的词汇"
+          aria-label={`查看第 ${i + 1} 处圈记关联的词汇`}
+          onClick={() => setWordPanel({ contextId: r.contextId, slugs: r.slugs, text: text.slice(r.start, r.end) })}
+          className="mx-0.5 inline-flex h-4 w-4 -translate-y-2 cursor-pointer items-center justify-center rounded-full bg-[var(--color-accent)] align-super text-[9px] font-semibold leading-none text-[var(--color-accent-contrast,var(--color-surface))] transition-transform hover:scale-110"
+        >
+          {i + 1}
+        </button>,
       );
     } else {
       pieces.push(
-        // 已绑定高亮用 span 而非 <a>：Chromium 从链接上起手 mousedown 不启动文本选择
-        // （拖动被当成点击导航，draggable=false 也无效）；span 保证划词可用。
-        // 多词语境（一句话绑多词）点击弹选词菜单；单词直跳词卡（FR-6.2）。
-        <span
-          key={`m${i}`}
-          data-context-id={r.contextId}
-          className={`cursor-pointer rounded bg-[var(--color-accent-soft)] px-0.5 text-[var(--color-accent)] hover:underline${focus}`}
-          title={slugs.length > 1 ? `绑定 ${slugs.length} 个词，点击选择` : "点击查看词卡"}
-          onClick={() => {
-            const sel = window.getSelection();
-            if (sel && !sel.isCollapsed) return;
-            if (slugs.length === 1) {
-              navigate(`/words/${encodeURIComponent(slugs[0])}`);
-              return;
-            }
-            setWordPicker({ contextId: r.contextId, slugs });
-          }}
-        >
-          {text.slice(r.start, r.end)}
-        </span>,
+        <mark key={`m${i}`} data-context-id={r.contextId} className={`rounded bg-[var(--color-accent-soft)] px-0.5${focus}`}>{text.slice(r.start, r.end)}</mark>,
       );
     }
     cursor = r.end;
@@ -223,25 +226,32 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
         <h3 className="text-lg font-semibold text-[var(--color-ink)]">{space.source.title}</h3>
         <p className="text-[11px] text-[var(--color-ink-soft)]">{space.source.source_type} · {space.source.language ?? "?"} · 圈记 {ranges.length} 处</p>
       </div>
-      {wordPicker && (
+      {wordPanel && (
         <div
-          data-word-picker
+          data-word-panel
           data-no-flip
-          className="rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] p-3 text-[12.5px]"
+          className="fixed inset-y-0 right-0 z-30 w-80 overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl"
         >
-          <p className="mb-1.5 text-[var(--color-ink-soft)]">这句绑定了 {wordPicker.slugs.length} 个词——选择要查看的词卡：</p>
-          <div className="flex flex-wrap items-center gap-2">
-            {wordPicker.slugs.map((slug) => (
-              <Link
-                key={slug}
-                to={`/words/${encodeURIComponent(slug)}`}
-                className="rounded border border-[var(--color-accent)] px-2.5 py-1 text-xs text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-contrast,var(--color-surface))]"
-              >
-                {slug}
-              </Link>
-            ))}
-            <button type="button" onClick={() => setWordPicker(null)} className="text-xs text-[var(--color-ink-soft)]">取消</button>
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-[var(--color-ink)]">相关词汇（{wordPanel.slugs.length}）</h4>
+            <button type="button" onClick={() => setWordPanel(null)} className="text-xs text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]">关闭</button>
           </div>
+          <p className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted,var(--color-surface))] p-2.5 text-[12px] leading-relaxed text-[var(--color-ink-soft)]">
+            {wordPanel.text.slice(0, 140)}{wordPanel.text.length > 140 ? "…" : ""}
+          </p>
+          <ul className="mt-3 space-y-2">
+            {wordPanel.slugs.map((slug) => (
+              <li key={slug}>
+                <Link
+                  to={`/words/${encodeURIComponent(slug)}`}
+                  className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2 text-[13px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)]"
+                >
+                  <span>{slug}</span>
+                  <span className="text-[11px] text-[var(--color-ink-soft)]">查看词条 →</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {capture && (
