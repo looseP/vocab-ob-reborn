@@ -172,5 +172,55 @@ export function l2CandidateRoutes(services: Services) {
     return c.json({ ok: true });
   });
 
+  // DELETE /:slug/l2-rows/:rowId/items/:index — 条目化管理：移除单个生成单元
+  // （一句话/一个搭配/一个词）。行内条目清空后整行自动转存档。active 需重算缓存。
+  app.delete("/:slug/l2-rows/:rowId/items/:index", async (c) => {
+    const userId = c.get("userId");
+    const rowId = parseUuid(c.req.param("rowId"));
+    const index = Number(c.req.param("index"));
+    if (!rowId) {
+      return validationError(c, { fieldErrors: { rowId: ["Invalid uuid"] } });
+    }
+    if (!Number.isInteger(index) || index < 0) {
+      return validationError(c, { fieldErrors: { index: ["Invalid item index"] } });
+    }
+    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
+    const result = await services.l2content.removeContentRowItem(word.id, rowId, index, userId);
+    return c.json({ ok: true, remaining: result.remaining, rowDeactivated: result.rowDeactivated });
+  });
+
+  // POST /:slug/l2-rows/:rowId/items/:index/hide — 条目化管理：隐藏单个生成单元
+  // （数据保留在行内可恢复，退出展示与出题）。active 需重算缓存。
+  app.post("/:slug/l2-rows/:rowId/items/:index/hide", async (c) => {
+    const userId = c.get("userId");
+    const rowId = parseUuid(c.req.param("rowId"));
+    const index = Number(c.req.param("index"));
+    if (!rowId) {
+      return validationError(c, { fieldErrors: { rowId: ["Invalid uuid"] } });
+    }
+    if (!Number.isInteger(index) || index < 0) {
+      return validationError(c, { fieldErrors: { index: ["Invalid item index"] } });
+    }
+    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
+    const result = await services.l2content.hideContentRowItem(word.id, rowId, index, userId);
+    return c.json({ ok: true, remaining: result.remaining, hiddenCount: result.hiddenCount });
+  });
+
+  // POST /:slug/l2-rows/:rowId/hidden/:index/restore — 条目化管理：恢复已隐藏的生成单元
+  app.post("/:slug/l2-rows/:rowId/hidden/:index/restore", async (c) => {
+    const userId = c.get("userId");
+    const rowId = parseUuid(c.req.param("rowId"));
+    const index = Number(c.req.param("index"));
+    if (!rowId) {
+      return validationError(c, { fieldErrors: { rowId: ["Invalid uuid"] } });
+    }
+    if (!Number.isInteger(index) || index < 0) {
+      return validationError(c, { fieldErrors: { index: ["Invalid hidden index"] } });
+    }
+    const { word } = await services.words.getWordBySlug(c.req.param("slug"));
+    const result = await services.l2content.restoreContentRowItem(word.id, rowId, index, userId);
+    return c.json({ ok: true, remaining: result.remaining, hiddenCount: result.hiddenCount });
+  });
+
   return app;
 }

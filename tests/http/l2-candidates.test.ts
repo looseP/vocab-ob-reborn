@@ -278,6 +278,8 @@ describe("L2 content row management (l2-rows)", () => {
     field: "corpus",
     itemCount: 1,
     items: [{ text: "Abound in coal." }],
+    hiddenItems: [],
+    hiddenCount: 0,
     source: "external_chat",
     sourceRef: "agent-demo-001",
     approvedBy: "user",

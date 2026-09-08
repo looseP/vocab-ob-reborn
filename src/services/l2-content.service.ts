@@ -64,6 +64,34 @@ function rewriteContentWithItems(original: unknown, items: unknown[]): unknown {
   return items;
 }
 
+/**
+ * 条目化管理：content 内的"已隐藏条目"存放在 v1 wrapper 的 `hiddenItems` 键。
+ * refresh_l2_cache 的 SQL 只聚合 `content->'items'`，因此 hiddenItems 天然
+ * 退出展示与出题，且数据保留在行内可随时恢复。
+ */
+function extractL2HiddenItems(content: unknown): unknown[] {
+  if (content && typeof content === "object" && Array.isArray((content as { hiddenItems?: unknown }).hiddenItems)) {
+    return (content as { hiddenItems: unknown[] }).hiddenItems;
+  }
+  return [];
+}
+
+/**
+ * 条目化写的统一入口：把 items + hiddenItems 写回 content。
+ * legacy 裸数组 / 单对象形态升格为 v1 wrapper（RPC 对非数组 wrapper 取
+ * `content->'items'`，升格后聚合语义不变）。hiddenItems 为空时不写该键。
+ */
+function writeContentSplit(original: unknown, field: string, items: unknown[], hiddenItems: unknown[]): unknown {
+  const base: Record<string, unknown> =
+    original && typeof original === "object" && !Array.isArray(original)
+      ? { ...(original as Record<string, unknown>) }
+      : { schemaVersion: "l2-content-v1", field };
+  base.items = items;
+  if (hiddenItems.length > 0) base.hiddenItems = hiddenItems;
+  else delete base.hiddenItems;
+  return base;
+}
+
 /** Phase G：候选归属校验失败时的字段占位。 */
 function fieldOf(row: { field?: string } | null | undefined): string {
   return row?.field ?? "candidate";
@@ -1108,14 +1136,19 @@ ${provenanceSourceHint}`;
       }
       const allItems = extractL2Items(row.content);
       let items = allItems;
+      let hiddenItems = extractL2HiddenItems(row.content);
       if (itemIndexes && itemIndexes.length > 0) {
+        const pickedSet = new Set(itemIndexes);
         const picked = itemIndexes.map((i) => allItems[i]);
         if (picked.some((item) => item === undefined)) {
           throw new ValidationError("itemIndexes out of range", row.field);
         }
         items = picked;
+        // 部分保存：未选条目不丢弃 → 转入 hiddenItems，保存后可在管理区
+        // "已隐藏"中恢复，支持对同一候选多次分段保存。
+        hiddenItems = [...hiddenItems, ...allItems.filter((_, i) => !pickedSet.has(i))];
       }
-      const contentToStore = rewriteContentWithItems(row.content, items);
+      const contentToStore = writeContentSplit(row.content, row.field, items, hiddenItems);
 
       // 替换模式：停用同字段全部其他 active 行（approved_at 已有值 → 转 retired，不回收件箱）
       let replacedCount = 0;
@@ -1187,20 +1220,144 @@ ${provenanceSourceHint}`;
     }, { actorId });
   }
 
+  /**
+   * 条目化管理：从生效行移除单个生成单元（一句话/一个搭配/一个词）。
+   * 仅移除语义：条目从 content 数组剔除、不可恢复（UI 主入口是"隐藏"）；
+   * 行内条目全部移除后整行自动转存档（softDelete，可追溯）。级联与行级停用一致。
+   */
+  async removeContentRowItem(
+    wordId: string,
+    rowId: string,
+    itemIndex: number,
+    actorId?: string,
+  ): Promise<{ remaining: number; rowDeactivated: boolean }> {
+    return withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const row = await repos.l2Content.findById(rowId);
+      if (!row || row.word_id !== wordId) {
+        throw new ValidationError("Content row not found for this word", fieldOf(row));
+      }
+      if (!row.is_active) {
+        throw new ValidationError("Only active content rows support item management", row.field);
+      }
+      const items = extractL2Items(row.content);
+      if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= items.length) {
+        throw new ValidationError("itemIndex out of range", row.field);
+      }
+      const remainingItems = items.filter((_, i) => i !== itemIndex);
+      let rowDeactivated = false;
+      if (remainingItems.length === 0 && extractL2HiddenItems(row.content).length === 0) {
+        // 最后一条被移除且没有隐藏条目 → 整行转存档（retired 留档，不回收件箱：approved_at 有值）
+        await repos.l2Content.softDelete(rowId);
+        rowDeactivated = true;
+      } else {
+        await repos.l2Content.updateContent(
+          rowId,
+          writeContentSplit(row.content, row.field, remainingItems, extractL2HiddenItems(row.content)),
+        );
+      }
+      await repos.l2Content.refreshL2Cache(wordId);
+      const word = await repos.words.findById(wordId);
+      if (!word) throw new Error("Content item remove: word disappeared before hash finalization");
+      await repos.l2Progress.finalizeL2ContentHash(
+        wordId,
+        computeL2Hash(word as never),
+        computeFullHash(word as never),
+      );
+      return { remaining: remainingItems.length, rowDeactivated };
+    }, { actorId });
+  }
+
+  /**
+   * 条目化管理：把行内单个生成单元移入"已隐藏"（数据保留在行内，可恢复）。
+   * 隐藏后条目退出展示与出题（refresh_l2_cache 只聚合 content->'items'）。
+   */
+  async hideContentRowItem(
+    wordId: string,
+    rowId: string,
+    itemIndex: number,
+    actorId?: string,
+  ): Promise<{ remaining: number; hiddenCount: number }> {
+    return withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const row = await repos.l2Content.findById(rowId);
+      if (!row || row.word_id !== wordId) {
+        throw new ValidationError("Content row not found for this word", fieldOf(row));
+      }
+      if (!row.is_active) {
+        throw new ValidationError("Only active content rows support item management", row.field);
+      }
+      const items = extractL2Items(row.content);
+      if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= items.length) {
+        throw new ValidationError("itemIndex out of range", row.field);
+      }
+      const remainingItems = items.filter((_, i) => i !== itemIndex);
+      const hiddenItems = [...extractL2HiddenItems(row.content), items[itemIndex]];
+      await repos.l2Content.updateContent(rowId, writeContentSplit(row.content, row.field, remainingItems, hiddenItems));
+      await repos.l2Content.refreshL2Cache(wordId);
+      const word = await repos.words.findById(wordId);
+      if (!word) throw new Error("Content item hide: word disappeared before hash finalization");
+      await repos.l2Progress.finalizeL2ContentHash(
+        wordId,
+        computeL2Hash(word as never),
+        computeFullHash(word as never),
+      );
+      return { remaining: remainingItems.length, hiddenCount: hiddenItems.length };
+    }, { actorId });
+  }
+
+  /** 条目化管理：把已隐藏的生成单元恢复为生效（回到展示与出题）。 */
+  async restoreContentRowItem(
+    wordId: string,
+    rowId: string,
+    hiddenIndex: number,
+    actorId?: string,
+  ): Promise<{ remaining: number; hiddenCount: number }> {
+    return withTransaction(async (tx) => {
+      const repos = createRepositories(tx);
+      const row = await repos.l2Content.findById(rowId);
+      if (!row || row.word_id !== wordId) {
+        throw new ValidationError("Content row not found for this word", fieldOf(row));
+      }
+      if (!row.is_active) {
+        throw new ValidationError("Only active content rows support item management", row.field);
+      }
+      const hiddenItems = extractL2HiddenItems(row.content);
+      if (!Number.isInteger(hiddenIndex) || hiddenIndex < 0 || hiddenIndex >= hiddenItems.length) {
+        throw new ValidationError("hiddenIndex out of range", row.field);
+      }
+      const restored = hiddenItems.filter((_, i) => i !== hiddenIndex);
+      const items = [...extractL2Items(row.content), hiddenItems[hiddenIndex]];
+      await repos.l2Content.updateContent(rowId, writeContentSplit(row.content, row.field, items, restored));
+      await repos.l2Content.refreshL2Cache(wordId);
+      const word = await repos.words.findById(wordId);
+      if (!word) throw new Error("Content item restore: word disappeared before hash finalization");
+      await repos.l2Progress.finalizeL2ContentHash(
+        wordId,
+        computeL2Hash(word as never),
+        computeFullHash(word as never),
+      );
+      return { remaining: items.length, hiddenCount: restored.length };
+    }, { actorId });
+  }
+
   /** Phase G 管理面板：行列出（active + retired，候选走 listCandidates）。 */
   async listContentRows(
     wordId: string,
     actorId: string,
   ): Promise<{
-    active: Array<{ id: string; field: L2Field; items: unknown[]; source: string; sourceRef: string | null; approvedBy: string | null; approvedAt: string | null; createdAt: string }>;
-    retired: Array<{ id: string; field: L2Field; items: unknown[]; source: string; sourceRef: string | null; approvedBy: string | null; approvedAt: string | null; createdAt: string }>;
+    active: Array<{ id: string; field: L2Field; itemCount: number; items: unknown[]; hiddenItems: unknown[]; hiddenCount: number; source: string; sourceRef: string | null; approvedBy: string | null; approvedAt: string | null; createdAt: string }>;
+    retired: Array<{ id: string; field: L2Field; itemCount: number; items: unknown[]; hiddenItems: unknown[]; hiddenCount: number; source: string; sourceRef: string | null; approvedBy: string | null; approvedAt: string | null; createdAt: string }>;
   }> {
     return withTransaction(async (tx) => {
       const repos = createRepositories(tx);
       const mapRow = (row: L2ContentRow) => ({
         id: row.id,
         field: row.field as L2Field,
+        itemCount: extractL2ItemCount(row.content),
         items: extractL2Items(row.content),
+        hiddenItems: extractL2HiddenItems(row.content),
+        hiddenCount: extractL2HiddenItems(row.content).length,
         source: row.source,
         sourceRef: row.source_ref ?? null,
         approvedBy: row.approved_by ?? null,

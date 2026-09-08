@@ -45,6 +45,14 @@ export interface WordDetailL2Content {
   antonym_items: L2DiscriminationItem[];
 }
 
+/** 核心释义义项（Bound sense 圈记条下拉数据源）。 */
+export interface CoreDefinition {
+  sense: string;
+  en: string | null;
+  priority: number | null;
+  tags: string[];
+}
+
 export interface WordDetail {
   id: string;
   slug: string;
@@ -59,6 +67,8 @@ export interface WordDetail {
   examples: Array<{ text: string; translation?: string }>;
   prototype_text?: string | null;
   aliases: string[];
+  /** 核心释义义项列表（圈记条释义行下拉）。 */
+  core_definitions?: CoreDefinition[];
   l2_content?: WordDetailL2Content | null;
   /** 当前用户是否已为该词晋升 L2 行（待扩展提示）。 */
   l2_promoted?: boolean;
@@ -137,7 +147,10 @@ export function useWordDetail(slug?: string) {
       return;
     }
     const controller = new AbortController();
-    setLoading(true);
+    // 静默重取：由 refresh() 触发（保存/隐藏等管理操作后）时已有数据在屏，
+    // 不置 loading —— 整页闪烁会卸载扩展内容面板并丢失其展开/勾选状态，
+    // 导致无法连续操作。仅首次加载（无数据）才显示 loading。
+    if (refreshNonce === 0) setLoading(true);
     setError(null);
     apiFetch<WordDetail>(`/words/${slug}`, { signal: controller.signal })
       .then((data) => {
@@ -147,11 +160,14 @@ export function useWordDetail(slug?: string) {
       })
       .catch((err) => {
         if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : "加载单词详情失败");
+          // 静默重取失败时保留屏上旧数据，不打断当前管理操作
+          if (refreshNonce === 0) {
+            setError(err instanceof Error ? err.message : "加载单词详情失败");
+          }
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted && refreshNonce === 0) setLoading(false);
       });
     return () => controller.abort();
   }, [slug, refreshNonce]);

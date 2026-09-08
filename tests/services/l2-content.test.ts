@@ -1493,6 +1493,7 @@ describe("L2ContentService — Phase G candidate pool", () => {
       findById: vi.fn(async (): Promise<unknown> => null),
       approveAndActivate: vi.fn(async () => {}),
       setActive: vi.fn(async () => {}),
+      updateContent: vi.fn(async () => {}),
       deleteById: vi.fn(async () => {}),
       refreshL2Cache: vi.fn(async () => {}),
       findByWord: vi.fn(async (): Promise<unknown[]> => []),
@@ -1608,7 +1609,12 @@ describe("L2ContentService — Phase G candidate pool", () => {
       const result = await service.acceptCandidate("word-1", "cand-1", undefined, "user-1");
 
       expect(result).toEqual({ itemCount: 1, replacedCount: 0 });
-      expect(l2ContentRepo.approveAndActivate).toHaveBeenCalledWith("cand-1", VALID_COLLOCATION);
+      // 全量保存同样升格为 v1 wrapper（条目级管理需要稳定形态）
+      expect(l2ContentRepo.approveAndActivate).toHaveBeenCalledWith("cand-1", {
+        schemaVersion: "l2-content-v1",
+        field: "collocation",
+        items: VALID_COLLOCATION,
+      });
       expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
       expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledWith(
         "word-1",
@@ -1635,7 +1641,39 @@ describe("L2ContentService — Phase G candidate pool", () => {
       const result = await service.acceptCandidate("word-1", "cand-1", [1], "user-1");
 
       expect(result).toEqual({ itemCount: 1, replacedCount: 0 });
-      expect(l2ContentRepo.approveAndActivate).toHaveBeenCalledWith("cand-1", [twoItems[1]]);
+      // 保存选中条目；未选条目转入 hiddenItems 保留（可恢复），不随保存丢弃
+      expect(l2ContentRepo.approveAndActivate).toHaveBeenCalledWith("cand-1", {
+        schemaVersion: "l2-content-v1",
+        field: "collocation",
+        items: [twoItems[1]],
+        hiddenItems: [twoItems[0]],
+      });
+    });
+
+    it("keeps prior hiddenItems when accepting without itemIndexes", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => ({
+        id: "cand-1",
+        word_id: "word-1",
+        field: "collocation",
+        content: {
+          schemaVersion: "l2-content-v1",
+          field: "collocation",
+          items: [VALID_COLLOCATION[0]],
+          hiddenItems: [{ phrase: "previously hidden" }],
+        },
+        is_active: false,
+      }));
+      const service = new L2ContentService({});
+
+      await service.acceptCandidate("word-1", "cand-1", undefined, "user-1");
+
+      expect(l2ContentRepo.approveAndActivate).toHaveBeenCalledWith("cand-1", {
+        schemaVersion: "l2-content-v1",
+        field: "collocation",
+        items: [VALID_COLLOCATION[0]],
+        hiddenItems: [{ phrase: "previously hidden" }],
+      });
     });
 
     it("rejects out-of-range itemIndexes", async () => {
@@ -1853,6 +1891,225 @@ describe("L2ContentService — Phase G candidate pool", () => {
         service.deleteContentRow("word-1", "nope", "user-1"),
       ).rejects.toThrow(ValidationError);
       expect(l2ContentRepo.deleteById).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("removeContentRowItem（条目化管理：移除单个生成单元）", () => {
+    function corpusRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "row-1",
+        word_id: "word-1",
+        field: "corpus",
+        content: [
+          { text: "Sentence one.", translation: "第一句。" },
+          { text: "Sentence two.", translation: "第二句。" },
+        ],
+        is_active: true,
+        ...overrides,
+      };
+    }
+
+    it("removes one item, rewrites content, and runs the cascade", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => corpusRow());
+      const service = new L2ContentService({});
+
+      const result = await service.removeContentRowItem("word-1", "row-1", 1, "user-1");
+
+      expect(result).toEqual({ remaining: 1, rowDeactivated: false });
+      // 裸数组 content 在条目级写时升格为 v1 wrapper
+      expect(l2ContentRepo.updateContent).toHaveBeenCalledWith("row-1", {
+        schemaVersion: "l2-content-v1",
+        field: "corpus",
+        items: [{ text: "Sentence one.", translation: "第一句。" }],
+      });
+      expect(l2ContentRepo.softDelete).not.toHaveBeenCalled();
+      expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
+      expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledWith(
+        "word-1",
+        expect.stringMatching(/^[0-9a-f]{64}$/),
+        expect.stringMatching(/^[0-9a-f]{64}$/),
+      );
+    });
+
+    it("deactivates the whole row when the LAST item is removed (no hidden items)", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> =>
+        corpusRow({ content: [{ text: "Only one." }] }),
+      );
+      const service = new L2ContentService({});
+
+      const result = await service.removeContentRowItem("word-1", "row-1", 0, "user-1");
+
+      expect(result).toEqual({ remaining: 0, rowDeactivated: true });
+      expect(l2ContentRepo.softDelete).toHaveBeenCalledWith("row-1");
+      expect(l2ContentRepo.updateContent).not.toHaveBeenCalled();
+      // 级联照常：内容从聚合中移除需要重算
+      expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
+      expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the row active when removing the last item but hidden items exist", async () => {
+      const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> =>
+        corpusRow({
+          content: {
+            schemaVersion: "l2-content-v1",
+            field: "corpus",
+            items: [{ text: "Last visible." }],
+            hiddenItems: [{ text: "Hidden one." }],
+          },
+        }),
+      );
+      const service = new L2ContentService({});
+
+      const result = await service.removeContentRowItem("word-1", "row-1", 0, "user-1");
+
+      expect(result).toEqual({ remaining: 0, rowDeactivated: false });
+      // 行保持 active（还有隐藏条目可恢复），items 清空、hiddenItems 保留
+      expect(l2ContentRepo.softDelete).not.toHaveBeenCalled();
+      expect(l2ContentRepo.updateContent).toHaveBeenCalledWith("row-1", {
+        schemaVersion: "l2-content-v1",
+        field: "corpus",
+        items: [],
+        hiddenItems: [{ text: "Hidden one." }],
+      });
+      expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledTimes(1);
+    });
+
+    describe("hideContentRowItem / restoreContentRowItem（条目隐藏与恢复）", () => {
+      it("hides one item into hiddenItems and runs the cascade", async () => {
+        const { l2ContentRepo, l2ProgressRepo } = setupRepos();
+        l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => corpusRow());
+        const service = new L2ContentService({});
+
+        const result = await service.hideContentRowItem("word-1", "row-1", 0, "user-1");
+
+        expect(result).toEqual({ remaining: 1, hiddenCount: 1 });
+        expect(l2ContentRepo.updateContent).toHaveBeenCalledWith("row-1", {
+          schemaVersion: "l2-content-v1",
+          field: "corpus",
+          items: [{ text: "Sentence two.", translation: "第二句。" }],
+          hiddenItems: [{ text: "Sentence one.", translation: "第一句。" }],
+        });
+        expect(l2ContentRepo.softDelete).not.toHaveBeenCalled();
+        expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
+        expect(l2ProgressRepo.finalizeL2ContentHash).toHaveBeenCalledWith(
+          "word-1",
+          expect.stringMatching(/^[0-9a-f]{64}$/),
+          expect.stringMatching(/^[0-9a-f]{64}$/),
+        );
+      });
+
+      it("restores a hidden item back to items", async () => {
+        const { l2ContentRepo } = setupRepos();
+        l2ContentRepo.findById = vi.fn(async (): Promise<unknown> =>
+          corpusRow({
+            content: {
+              schemaVersion: "l2-content-v1",
+              field: "corpus",
+              items: [{ text: "Sentence two.", translation: "第二句。" }],
+              hiddenItems: [{ text: "Sentence one.", translation: "第一句。" }],
+            },
+          }),
+        );
+        const service = new L2ContentService({});
+
+        const result = await service.restoreContentRowItem("word-1", "row-1", 0, "user-1");
+
+        expect(result).toEqual({ remaining: 2, hiddenCount: 0 });
+        expect(l2ContentRepo.updateContent).toHaveBeenCalledWith("row-1", {
+          schemaVersion: "l2-content-v1",
+          field: "corpus",
+          items: [
+            { text: "Sentence two.", translation: "第二句。" },
+            { text: "Sentence one.", translation: "第一句。" },
+          ],
+        });
+      });
+
+      it("upgrades a legacy bare-array row to a wrapper on hide", async () => {
+        const { l2ContentRepo } = setupRepos();
+        l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => corpusRow()); // 裸数组 content
+        const service = new L2ContentService({});
+
+        await service.hideContentRowItem("word-1", "row-1", 1, "user-1");
+
+        expect(l2ContentRepo.updateContent).toHaveBeenCalledWith("row-1", {
+          schemaVersion: "l2-content-v1",
+          field: "corpus",
+          items: [{ text: "Sentence one.", translation: "第一句。" }],
+          hiddenItems: [{ text: "Sentence two.", translation: "第二句。" }],
+        });
+      });
+
+      it("throws ValidationError for out-of-range indexes and inactive rows", async () => {
+        const { l2ContentRepo } = setupRepos();
+        l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => corpusRow());
+        const service = new L2ContentService({});
+
+        await expect(
+          service.hideContentRowItem("word-1", "row-1", 9, "user-1"),
+        ).rejects.toThrow(ValidationError);
+        await expect(
+          service.restoreContentRowItem("word-1", "row-1", 0, "user-1"), // 无隐藏条目
+        ).rejects.toThrow(ValidationError);
+
+        l2ContentRepo.findById = vi.fn(async (): Promise<unknown> =>
+          corpusRow({ is_active: false }),
+        );
+        await expect(
+          service.hideContentRowItem("word-1", "row-1", 0, "user-1"),
+        ).rejects.toThrow(ValidationError);
+        expect(l2ContentRepo.updateContent).not.toHaveBeenCalled();
+      });
+    });
+
+    it("rewrites v1 wrapper content preserving the wrapper shape", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> =>
+        corpusRow({
+          field: "collocation",
+          content: {
+            schemaVersion: "l2-content-v1",
+            field: "collocation",
+            items: [{ phrase: "a" }, { phrase: "b" }],
+          },
+        }),
+      );
+      const service = new L2ContentService({});
+
+      await service.removeContentRowItem("word-1", "row-1", 0, "user-1");
+
+      expect(l2ContentRepo.updateContent).toHaveBeenCalledWith("row-1", {
+        schemaVersion: "l2-content-v1",
+        field: "collocation",
+        items: [{ phrase: "b" }],
+      });
+    });
+
+    it("throws ValidationError for an out-of-range index", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> => corpusRow());
+      const service = new L2ContentService({});
+
+      await expect(
+        service.removeContentRowItem("word-1", "row-1", 5, "user-1"),
+      ).rejects.toThrow(ValidationError);
+      expect(l2ContentRepo.updateContent).not.toHaveBeenCalled();
+    });
+
+    it("throws ValidationError for an inactive (retired) row", async () => {
+      const { l2ContentRepo } = setupRepos();
+      l2ContentRepo.findById = vi.fn(async (): Promise<unknown> =>
+        corpusRow({ is_active: false }),
+      );
+      const service = new L2ContentService({});
+
+      await expect(
+        service.removeContentRowItem("word-1", "row-1", 0, "user-1"),
+      ).rejects.toThrow(ValidationError);
+      expect(l2ContentRepo.updateContent).not.toHaveBeenCalled();
     });
   });
 

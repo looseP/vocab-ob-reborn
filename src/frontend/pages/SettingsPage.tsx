@@ -182,7 +182,7 @@ export function SettingsPage() {
         ) : (
           <p className="text-sm text-[var(--color-ink-soft)]">
             服务端尚未接入 AI 供应商。你仍可在词条详情页使用「外部生成」通道（复制提示词到任意外部 AI 工具，
-            再粘贴结果采纳），该通道不消耗任何预算。
+            再粘贴结果保存），该通道不消耗任何预算。
           </p>
         )}
       </Card>

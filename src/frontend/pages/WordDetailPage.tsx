@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Lightbulb, Network, Puzzle, Quote, Undo2, Layers, Users, Sparkles } from "lucide-react";
+import { ArrowLeft, Lightbulb, Network, Puzzle, Quote, Undo2, Layers, Users, Sparkles, Eye, EyeOff } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Spinner } from "@/frontend/components/ui/Spinner";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { Markdown } from "@/frontend/components/ui/Markdown";
+import { Reveal, RevealMarkdown } from "@/frontend/components/ui/Reveal";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { WordL3Contexts } from "@/frontend/components/words/WordL3Contexts";
 import { WordL2Content, ProvenanceBadge } from "@/frontend/components/words/WordL2Content";
@@ -134,6 +135,9 @@ export function WordDetailPage() {
   const navigate = useNavigate();
   const { word, loading, error, refresh } = useWordDetail(slug);
 
+  // 自测模式：答案字段（释义/例句翻译/L2 辨析结论）模糊化，点击逐个揭示
+  const [quizMode, setQuizMode] = useState(false);
+
   // 来自复习队列：state 的字段由 ReviewCardView 注入。
   const reviewBack = (location.state as null | { from?: string; mode?: string; wordIds?: string[]; reviewed?: number; total?: number })?.from === "review"
     ? (location.state as { from: string; mode?: string; wordIds?: string[]; reviewed?: number; total?: number })
@@ -207,7 +211,8 @@ export function WordDetailPage() {
     if ((meta.etymology_narrative ?? "").trim().length > 0) items.push({ id: "sec-etymology", label: "词源" });
     if (unifiedExamples.length > 0) items.push({ id: "sec-examples", label: "例句" });
     if (hasL2Content) items.push({ id: "sec-l2", label: "L2 扩展" });
-    if ((word.body_md ?? "").trim().length > 0) items.push({ id: "sec-notes", label: "笔记" });
+    // 笔记区（教材+批注整合）恒渲染，锚点恒可用
+    items.push({ id: "sec-notes", label: "笔记" });
     // L3 语境区恒渲染，锚点恒可用
     items.push({ id: "l3-contexts", label: "语境" });
     return items;
@@ -300,6 +305,15 @@ export function WordDetailPage() {
             ))}
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant={quizMode ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => setQuizMode((v) => !v)}
+              title="自测模式：隐藏释义与翻译等答案字段，先回忆再点击揭示"
+            >
+              {quizMode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              自测{quizMode ? "开" : "关"}
+            </Button>
             <PromoteL2Button slug={word.slug} promoted={Boolean(word.l2_promoted)} onPromoted={refresh} />
             <AddToReviewButton wordId={word.id} slug={word.slug} />
           </div>
@@ -307,7 +321,7 @@ export function WordDetailPage() {
 
         {word.short_definition && (
           <p className="mt-4 border-l-2 border-[var(--color-accent)] pl-3 text-lg text-[var(--color-ink)]">
-            {word.short_definition}
+            {quizMode ? <Reveal>{word.short_definition}</Reveal> : word.short_definition}
           </p>
         )}
       </Card>
@@ -325,7 +339,12 @@ export function WordDetailPage() {
 
       {(word.definition_md ?? "").trim().length > 0 && (
         <SectionCard title="核心释义" id="sec-definition">
-          <Markdown content={word.definition_md} />
+          {quizMode ? (
+            // 仅模糊加粗答案片段（如「口音，腔调」），括号解释/搭配保持可见
+            <RevealMarkdown content={word.definition_md} />
+          ) : (
+            <Markdown content={word.definition_md} />
+          )}
         </SectionCard>
       )}
 
@@ -408,7 +427,9 @@ export function WordDetailPage() {
               <div key={`${ex.text.slice(0, 24)}-${i}`} className="border-l-2 border-[var(--color-blockquote-border)] pl-4">
                 <p className="text-[var(--color-ink)]">{ex.text}</p>
                 {ex.translation && (
-                  <p className="mt-1 text-sm text-[var(--color-ink-soft)]">{ex.translation}</p>
+                  <p className="mt-1 text-sm text-[var(--color-ink-soft)]">
+                    {quizMode ? <Reveal>{ex.translation}</Reveal> : ex.translation}
+                  </p>
                 )}
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   {ex.origin === "l1" ? (
@@ -428,7 +449,7 @@ export function WordDetailPage() {
       {/* L2 enrichment：搭配 / 同义辨析 / 反义（语料例句已并入上方统一例句池）；
           生效内容的管理并入下方 Composer 的 Agent 候选 tab */}
       <div id="sec-l2" className="scroll-mt-32">
-        <WordL2Content l2={l2} exclude={["corpus_items"]} />
+        <WordL2Content l2={l2} exclude={["corpus_items"]} quizMode={quizMode} />
       </div>
 
       {aliases.length > 0 && (
@@ -446,12 +467,6 @@ export function WordDetailPage() {
         </SectionCard>
       )}
 
-      {(word.body_md ?? "").trim().length > 0 && (
-        <CollapsibleSection title="笔记原文（L1 收藏集）" id="sec-notes">
-          <Markdown content={word.body_md} />
-        </CollapsibleSection>
-      )}
-
       {/* C2 业务联动：已晋升 L2 但尚无扩展内容 → 待扩展提示，指向下方 Composer */}
       {word.l2_promoted && !hasL2Content && (
         <Card className="border-[var(--color-accent)]">
@@ -465,14 +480,17 @@ export function WordDetailPage() {
         </Card>
       )}
 
-      {/* L2 enrichment 扩展面板：AI 生成草稿 → 勾选采纳 → 入库并刷新 L2 缓存 */}
+      {/* L2 enrichment 扩展面板：AI 生成草稿 → 勾选保存 → 入库并刷新 L2 缓存 */}
       <WordL2Composer slug={word.slug} onConfirmed={refresh} />
 
-      <WordNotes slug={word.slug} />
+      {/* 双笔记并排：教材笔记（L1 收藏集 body_md，只读）+ 我的批注（notes，可编辑） */}
+      <div id="sec-notes" className="scroll-mt-32">
+        <WordNotes slug={word.slug} textbookMd={word.body_md} />
+      </div>
 
-      {/* L3 语境：素材空间中含该词的语境记录，每条深链直达阅读视图 */}
+      {/* L3 语境：素材空间中含该词的语境记录，每条深链直达阅读视图（词卡↔素材双向跳转） */}
       <SectionCard title="L3 语境" id="l3-contexts">
-        <WordL3Contexts slug={slug} />
+        <WordL3Contexts slug={word.slug} />
       </SectionCard>
     </div>
   );

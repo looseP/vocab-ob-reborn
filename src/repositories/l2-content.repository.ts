@@ -42,8 +42,8 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
   async insert(data: NewL2Content): Promise<L2ContentRow> {
     const row = await this.queryOne<L2ContentRow>(
       `INSERT INTO word_l2_content
-         (word_id, field, content, source, source_ref, approved_by, is_active)
-       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
+         (word_id, field, content, source, source_ref, approved_by, is_active, approved_at)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, CASE WHEN $7::boolean THEN now() ELSE NULL END)
        RETURNING *`,
       [
         data.word_id,
@@ -135,6 +135,14 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
     await this.query(
       `UPDATE word_l2_content SET is_active = $2 WHERE id = $1::uuid`,
       [id, isActive],
+    );
+  }
+
+  /** 条目化管理：重写生效行 content（保持 v1 wrapper 形态由调用方负责）。 */
+  async updateContent(id: string, content: unknown): Promise<void> {
+    await this.query(
+      `UPDATE word_l2_content SET content = $2::jsonb WHERE id = $1::uuid`,
+      [id, JSON.stringify(content)],
     );
   }
 

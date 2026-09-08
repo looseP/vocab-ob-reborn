@@ -83,6 +83,9 @@ export const l2ContentRowSchema = z.object({
   field: z.string(),
   itemCount: z.number().int().nonnegative(),
   items: z.array(jsonValueSchema),
+  /** 条目化管理：已隐藏（保留可恢复）的生成单元。 */
+  hiddenItems: z.array(jsonValueSchema),
+  hiddenCount: z.number().int().nonnegative(),
   source: z.string(),
   sourceRef: z.string().nullable(),
   approvedBy: z.string().nullable(),
@@ -97,6 +100,27 @@ export const l2ContentRowsResponseSchema = z.object({
 
 export const l2ContentRowMutateResponseSchema = z.object({
   ok: z.literal(true),
+}).strict();
+
+/** 条目化管理：从生效行移除单个生成单元。rowDeactivated=行内条目清空后整行转存档。 */
+export const l2ContentRowItemRemoveResponseSchema = z.object({
+  ok: z.literal(true),
+  remaining: z.number().int().nonnegative(),
+  rowDeactivated: z.boolean(),
+}).strict();
+
+/** 条目化管理：隐藏单个生成单元（数据保留可恢复）。 */
+export const l2ContentRowItemHideResponseSchema = z.object({
+  ok: z.literal(true),
+  remaining: z.number().int().nonnegative(),
+  hiddenCount: z.number().int().nonnegative(),
+}).strict();
+
+/** 条目化管理：恢复单个已隐藏的生成单元。 */
+export const l2ContentRowItemRestoreResponseSchema = z.object({
+  ok: z.literal(true),
+  remaining: z.number().int().nonnegative(),
+  hiddenCount: z.number().int().nonnegative(),
 }).strict();
 
 /** Phase G：MCP propose 入口响应（写入 is_active=false 候选行）。 */

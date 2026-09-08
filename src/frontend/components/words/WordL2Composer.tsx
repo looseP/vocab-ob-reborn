@@ -63,6 +63,11 @@ function candidateComposerField(field: string): ComposerField {
   return field === "corpus" ? "example" : (field as ComposerField);
 }
 
+/** ComposerField（UI 名）→ 存储字段名（example 的存储名是 corpus，用于行过滤）。 */
+function storageFieldOf(field: ComposerField): string {
+  return field === "example" ? "corpus" : field;
+}
+
 function errorMessage(err: unknown): string {
   if (err instanceof BrowserApiError) {
     switch (err.code) {
@@ -104,7 +109,7 @@ function itemDetail(item: DraftItem, field: ComposerField): string {
 
 /**
  * L2 内容扩展面板（Composer UI）：
- * 选字段 →（选风格/数量）→ AI 生成草稿 或 外部提示词通道 → 勾选采纳 → 确认入库。
+ * 选字段 →（选风格/数量）→ AI 生成草稿 或 外部提示词通道 → 勾选保存 → 确认入库。
  * 确认是纯 DB 级联（insert + 刷新缓存 + L2 软重卡），不依赖 LLM 配置。
  */
 export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirmed: () => void }) {
@@ -124,7 +129,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
   const [candSelected, setCandSelected] = useState<Record<string, Set<number>>>({});
   const [candBusy, setCandBusy] = useState<string | null>(null);
   const [candError, setCandError] = useState<string | null>(null);
-  // 管理区刷新信号（采纳候选后生效内容列表同步）
+  // 管理区刷新信号（保存候选后生效内容列表同步）
   const [managerKey, setManagerKey] = useState(0);
   const refreshRows = () => setManagerKey((k) => k + 1);
   // 顶层视图：字段 tab 只筛选"AI 生成"视图；Agent 候选是独立收件箱
@@ -139,7 +144,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
 
   const encodedSlug = encodeURIComponent(slug);
 
-  // Phase G：拉取 Agent 候选（面板展开时 + 采纳/拒绝后刷新）
+  // Phase G：拉取 Agent 候选（面板展开时 + 保存/驳回后刷新）
   const refreshCandidates = useCallback(async () => {
     try {
       const data = await apiFetch<{ items: AgentCandidate[] }>(`/l2/${encodedSlug}/candidates`, {
@@ -280,7 +285,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
       const parsed: unknown = JSON.parse(pasted);
       const items = extractDraftItems(parsed);
       if (items.length === 0) {
-        setError("粘贴内容没有可采纳的条目。");
+        setError("粘贴内容没有可保存的条目。");
         return;
       }
       setDraft({ items, origin: "external" });
@@ -470,7 +475,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
           {externalPrompt && !draft && (
             <div className="space-y-2 rounded-lg border border-[var(--color-border)] p-3">
               <p className="text-sm text-[var(--color-ink-soft)]">
-                把提示词粘贴到任意外部 AI 工具，将其返回的 JSON 粘贴到下方并采纳：
+                把提示词粘贴到任意外部 AI 工具，将其返回的 JSON 粘贴到下方并保存：
               </p>
               <textarea
                 readOnly
@@ -503,7 +508,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
             <div className="space-y-3 rounded-lg border border-[var(--color-border)] p-3">
               <p className="text-sm text-[var(--color-ink-soft)]">
                 草稿预览（{draft.origin === "external" ? "来自外部工具" : `来源：${draft.sourceMode ?? "LLM"}`}）——
-                勾选要采纳的条目，确认后写入并安排复习：
+                勾选要保存的条目，确认后写入并安排复习（保存后可条目级调整）：
               </p>
               <div className="space-y-2">
                 {draft.items.map((item, i) => (
@@ -529,7 +534,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" onClick={confirmSelected} disabled={busy !== null || selected.size === 0}>
                   {busy === "confirm" ? <Spinner /> : null}
-                  采纳选中项（{selected.size}）
+                  保存选中项（{selected.size}）
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => resetDraft()} disabled={busy !== null}>
                   丢弃
@@ -552,7 +557,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
                   「{FIELD_LABELS[field]}」暂无 Agent 候选
                   {totalCandidateCount > 0
                     ? `——其他字段还有 ${totalCandidateCount} 条，切换上方字段查看。`
-                    : "——在外部 Agent 对话中调用 propose_l2_content，内容会送到这里等你勾选采纳。"}
+                    : "——在外部 Agent 对话中调用 propose_l2_content，内容会送到这里等你勾选保存。"}
                 </p>
               )}
               {fieldCandidates.map((cand) => {
@@ -595,7 +600,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
                           disabled={candBusy !== null || sel.size === 0}
                         >
                           {candBusy === cand.id ? <Spinner /> : null}
-                          采纳（{sel.size}）
+                          保存（{sel.size}）
                         </Button>
                         <Button
                           size="sm"
@@ -612,11 +617,11 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
             </div>
           )}
 
-          {/* 同面板内的生效内容管理（跟随字段筛选；采纳/驳回后同步刷新） */}
+          {/* 同面板内的生效内容管理（跟随字段筛选；保存/驳回后同步刷新） */}
           {view === "agent" && (
             <WordL2Manager
               slug={slug}
-              fieldFilter={field}
+              fieldFilter={storageFieldOf(field)}
               defaultOpen
               refreshKey={managerKey}
               onChanged={onConfirmed}

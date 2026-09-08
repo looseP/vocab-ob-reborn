@@ -9,10 +9,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WordL2Content } from "@/frontend/components/words/WordL2Content";
 import { WordL2Composer } from "@/frontend/components/words/WordL2Composer";
 import { WordL2Manager } from "@/frontend/components/words/WordL2Manager";
+import { RevealMarkdown } from "@/frontend/components/ui/Reveal";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import type { WordDetailL2Content } from "@/frontend/hooks/useWordDetail";
 
 vi.mock("@/frontend/api/client", () => ({ apiFetch: vi.fn() }));
+
+// RevealMarkdown 的单元测试只关注事件委托逻辑，不测 marked/dompurify 集成
+// （jsdom 下懒加载超时不稳定）：用最小 strong 转换替身。
+vi.mock("@/frontend/components/ui/Markdown", () => ({
+  Markdown: (props: { content: string }) =>
+    createElement("div", {
+      className: "prose-obsidian",
+      dangerouslySetInnerHTML: {
+        __html: props.content.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"),
+      },
+    }),
+}));
 
 import { apiFetch } from "@/frontend/api/client";
 const apiFetchMock = vi.mocked(apiFetch);
@@ -97,6 +110,72 @@ describe("WordL2Content", () => {
     expect(partial.textContent).not.toContain("搭配");
     expect(partial.textContent).toContain("语料例句");
   });
+
+  it("quizMode 默认关闭：答案字段直接展示，无揭示组件", () => {
+    const container = render(createElement(WordL2Content, { l2: L2_FIXTURE }));
+    expect(container.querySelectorAll("[data-testid='reveal']")).toHaveLength(0);
+    expect(container.textContent).toContain("充满");
+  });
+
+  it("quizMode 开启：答案字段（释义/例句翻译）模糊化，点击揭示", async () => {
+    const container = render(createElement(WordL2Content, { l2: L2_FIXTURE, quizMode: true }));
+    const reveals = Array.from(container.querySelectorAll("[data-testid='reveal']"));
+    // gloss + exampleTranslation 两个答案字段被 Reveal 包裹
+    expect(reveals).toHaveLength(2);
+    // 词面（phrase）与例句本体不属于答案，保持可见
+    expect(container.textContent).toContain("abound in/with");
+    expect(container.textContent).toContain("The region abounds in coal.");
+
+    // 初始隐藏：data-shown=false
+    expect(reveals.every((el) => el.getAttribute("data-shown") === "false")).toBe(true);
+    // 点击第一个 Reveal → 揭示该字段
+    await act(async () => {
+      fireEvent.click(reveals[0]);
+    });
+    const after = Array.from(container.querySelectorAll("[data-testid='reveal']"));
+    expect(after[0].getAttribute("data-shown")).toBe("true");
+    expect(after[1].getAttribute("data-shown")).toBe("false");
+    // 再点一次 → 重新隐藏
+    await act(async () => {
+      fireEvent.click(after[0]);
+    });
+    expect(
+      Array.from(container.querySelectorAll("[data-testid='reveal']"))[0].getAttribute("data-shown"),
+    ).toBe("false");
+  });
+});
+
+describe("RevealMarkdown", () => {
+  it("仅模糊加粗片段：点击揭示单个 strong，再点恢复模糊，非加粗点击无副作用", async () => {
+    const container = render(
+      createElement(
+        RevealMarkdown,
+        { content: "1. **口音，腔调** （发音特征） speak with an accent" },
+      ),
+    );
+    // Markdown 替身同步渲染 strong
+    const strong = container.querySelector("strong") as HTMLElement;
+    expect(strong).not.toBeNull();
+    // 初始：无 inline style（模糊由 CSS 类提供）
+    expect(strong.style.filter).toBe("");
+    // 点击加粗 → 揭示（inline filter:none 覆盖 CSS blur）
+    await act(async () => {
+      fireEvent.click(strong);
+    });
+    expect(strong.style.filter).toBe("none");
+    expect(strong.style.opacity).toBe("1");
+    // 再点 → 恢复模糊
+    await act(async () => {
+      fireEvent.click(strong);
+    });
+    expect(strong.style.filter).toBe("");
+    expect(strong.style.opacity).toBe("");
+    // 点击非加粗文字不改变状态
+    await act(async () => {
+      fireEvent.click(container.querySelector("[data-testid='reveal-markdown']") as HTMLElement);
+    });
+    expect(strong.style.filter).toBe("");
+  });
 });
 
 describe("WordL2Composer", () => {
@@ -164,7 +243,7 @@ describe("WordL2Composer", () => {
     });
 
     const confirmButton = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent?.includes("采纳选中项"),
+      (b) => b.textContent?.includes("保存选中项"),
     );
     await act(async () => {
       fireEvent.click(confirmButton as HTMLButtonElement);
@@ -226,8 +305,8 @@ describe("WordL2Composer", () => {
     });
     // 切到 Agent 候选 tab → 同面板的管理区拉取生效内容行
     apiFetchMock.mockResolvedValueOnce({ active: [], retired: [] });
-    apiFetchMock.mockResolvedValueOnce({ ok: true, itemCount: 1 }); // 采纳
-    apiFetchMock.mockResolvedValueOnce({ items: [] }); // 采纳后刷新候选
+    apiFetchMock.mockResolvedValueOnce({ ok: true, itemCount: 1 }); // 保存
+    apiFetchMock.mockResolvedValueOnce({ items: [] }); // 保存后刷新候选
     apiFetchMock.mockResolvedValueOnce({ active: [], retired: [] }); // 管理区刷新
     const onConfirmed = vi.fn();
 
@@ -253,12 +332,12 @@ describe("WordL2Composer", () => {
     const checkboxes = Array.from(container.querySelectorAll("input[type='checkbox']"));
     expect(checkboxes).toHaveLength(2);
 
-    // 取消勾选第一条 → 只采纳第二条（itemIndexes=[1]）
+    // 取消勾选第一条 → 只保存第二条（itemIndexes=[1]）
     act(() => {
       fireEvent.click(checkboxes[0]);
     });
     const acceptButton = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent?.includes("采纳（1）"),
+      (b) => b.textContent?.includes("保存（1）"),
     );
     expect(acceptButton).toBeDefined();
     await act(async () => {
@@ -268,10 +347,74 @@ describe("WordL2Composer", () => {
     const [acceptPath, acceptInit] = apiFetchMock.mock.calls[2];
     expect(acceptPath).toBe("/l2/abound/candidates/cand-1/accept");
     expect(JSON.parse(String(acceptInit?.body ?? "{}"))).toEqual({ itemIndexes: [1] });
-    // 采纳成功 → 通知父级刷新详情 + 重拉候选 + 管理区刷新
+    // 保存成功 → 通知父级刷新详情 + 重拉候选 + 管理区刷新
     expect(onConfirmed).toHaveBeenCalledTimes(1);
     expect(apiFetchMock.mock.calls[3][0]).toBe("/l2/abound/candidates");
     expect(apiFetchMock.mock.calls[4][0]).toBe("/l2/abound/l2-rows");
+  });
+
+  it("管理区按存储字段过滤：已保存的例句行（corpus）在「例句」字段下可见", async () => {
+    // 展开时拉取候选 → 空（例句候选已全部保存）
+    apiFetchMock.mockResolvedValueOnce({ items: [] });
+    // 切到 Agent 候选 tab → 管理区拉取生效内容行：一条已保存的例句（存储名 corpus）
+    apiFetchMock.mockResolvedValueOnce({
+      active: [
+        {
+          id: "row-corpus-1",
+          field: "corpus",
+          itemCount: 2,
+          items: [
+            { text: "She speaks English with a noticeable French accent.", translation: "她说英语时带着明显的法国口音。" },
+          ],
+          hiddenItems: [],
+          hiddenCount: 0,
+          source: "external_chat",
+          sourceRef: null,
+          approvedBy: "owner",
+          approvedAt: "2026-09-05T00:00:00.000Z",
+          createdAt: "2026-09-05T00:00:00.000Z",
+        },
+      ],
+      retired: [],
+    });
+
+    const container = render(
+      createElement(WordL2Composer, { slug: "abound", onConfirmed: vi.fn() }),
+    );
+    await act(async () => {
+      fireEvent.click(container.querySelector("button") as HTMLButtonElement);
+    });
+    const agentTab = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Agent 候选") && !b.textContent?.includes("扩展内容"),
+    );
+    await act(async () => {
+      fireEvent.click(agentTab as HTMLButtonElement);
+    });
+
+    // 默认字段是「搭配」→ corpus 行被过滤，显示空态
+    expect(container.textContent).toContain("「搭配」暂无生效内容行");
+
+    // 切到「例句」字段 → fieldFilter 归一化为存储名 corpus → 行可见
+    const exampleTab = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "例句",
+    );
+    await act(async () => {
+      fireEvent.click(exampleTab as HTMLButtonElement);
+    });
+    expect(container.textContent).toContain("She speaks English with a noticeable French accent.");
+    expect(container.textContent).toContain("例句");
+    expect(container.textContent).toContain("生效 1 条");
+    expect(container.textContent).not.toContain("暂无生效内容行");
+
+    // 切回「搭配」→ 再次被过滤
+    const collocationTab = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "搭配",
+    );
+    await act(async () => {
+      fireEvent.click(collocationTab as HTMLButtonElement);
+    });
+    expect(container.textContent).not.toContain("She speaks English with a noticeable French accent.");
+    expect(container.textContent).toContain("「搭配」暂无生效内容行");
   });
 
   it("rejects an Agent candidate via the ignore button", async () => {
@@ -352,7 +495,12 @@ describe("WordL2Manager（行级内容管理面板）", () => {
         id: "row-1",
         field: "corpus",
         itemCount: 2,
-        items: [{ text: "She speaks with an accent.", provenance: { source: "external_chat" } }],
+        items: [
+          { text: "She speaks with an accent.", translation: "她说英语时带着明显的法国口音。", provenance: { source: "external_chat" } },
+          { text: "In the word \"record\", the accent falls on the first syllable.", translation: "在 record 一词中，重音落在第一个音节。", provenance: { source: "external_chat" } },
+        ],
+        hiddenItems: [],
+        hiddenCount: 0,
         source: "external_chat",
         sourceRef: "agent-demo-001",
         approvedBy: "user",
@@ -362,6 +510,63 @@ describe("WordL2Manager（行级内容管理面板）", () => {
     ],
     retired: [],
   };
+
+  it("条目化管理：完整详情展示，隐藏/恢复按条目精简保留（不删数据）", async () => {
+    apiFetchMock.mockResolvedValueOnce(ROWS_RESPONSE); // 展开 → GET l2-rows
+    apiFetchMock.mockResolvedValueOnce({ ok: true, remaining: 1, hiddenCount: 1 }); // 隐藏条目 0
+    apiFetchMock.mockResolvedValueOnce({
+      active: [
+        {
+          ...ROWS_RESPONSE.active[0],
+          itemCount: 1,
+          items: [ROWS_RESPONSE.active[0].items[1]],
+          hiddenItems: [ROWS_RESPONSE.active[0].items[0]],
+          hiddenCount: 1,
+        },
+      ],
+      retired: [],
+    }); // 重载
+
+    const onChanged = vi.fn();
+    const container = render(createElement(WordL2Manager, { slug: "accent", onChanged }));
+    const toggle = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("管理生效内容"),
+    );
+    await act(async () => {
+      fireEvent.click(toggle as HTMLButtonElement);
+    });
+
+    // 两条生成单元各自有独立的隐藏按钮（完整详情视图）
+    const hideButtons = Array.from(container.querySelectorAll("[data-testid^='hide-item-']"));
+    expect(hideButtons).toHaveLength(2);
+    expect(container.textContent).toContain("She speaks with an accent.");
+    expect(container.textContent).toContain("她说英语时带着明显的法国口音。");
+
+    // 隐藏第一条 → POST items/0/hide → 父级刷新 + 重载
+    await act(async () => {
+      fireEvent.click(hideButtons[0]);
+    });
+    expect(apiFetchMock.mock.calls[1][0]).toBe("/l2/accent/l2-rows/row-1/items/0/hide");
+    expect(apiFetchMock.mock.calls[1][1]?.method).toBe("POST");
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    await act(async () => {});
+    // 重载后：生效区只剩第二条，已隐藏区渲染第一条并带恢复按钮
+    const hidesAfter = Array.from(container.querySelectorAll("[data-testid^='hide-item-']"));
+    expect(hidesAfter).toHaveLength(1);
+    expect(container.textContent).toContain("已隐藏 1 条");
+    const restoreButton = container.querySelector("[data-testid='restore-item-0']");
+    expect(restoreButton).not.toBeNull();
+    expect(container.textContent).toContain("She speaks with an accent.");
+
+    // 恢复 → POST hidden/0/restore
+    apiFetchMock.mockResolvedValueOnce({ ok: true, remaining: 2, hiddenCount: 0 });
+    apiFetchMock.mockResolvedValueOnce(ROWS_RESPONSE);
+    await act(async () => {
+      fireEvent.click(restoreButton as HTMLElement);
+    });
+    expect(apiFetchMock.mock.calls[3][0]).toBe("/l2/accent/l2-rows/row-1/hidden/0/restore");
+    expect(apiFetchMock.mock.calls[3][1]?.method).toBe("POST");
+  });
 
   it("expands, lists active rows with deactivate, and reloads after mutating", async () => {
     apiFetchMock.mockResolvedValueOnce(ROWS_RESPONSE); // 展开 → GET l2-rows
