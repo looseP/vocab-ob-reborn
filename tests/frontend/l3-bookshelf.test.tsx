@@ -18,6 +18,7 @@ vi.mock("@/frontend/api/client", () => ({ apiFetch: vi.fn() }));
 const { addToastMock } = vi.hoisted(() => ({ addToastMock: vi.fn() }));
 vi.mock("@/frontend/components/ui/Toast", () => ({ useToast: () => ({ addToast: addToastMock }) }));
 import { apiFetch } from "@/frontend/api/client";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
 
 const PAGE = {
   items: [{ id: "s1", title: "The Economist", source_type: "web", url: null, created_at: "2026-09-07T00:00:00Z", context_count: 12 }],
@@ -112,5 +113,64 @@ describe("L3Bookshelf", () => {
       expect(body.title).toBe("New article");
       expect(body.contentText).toBe("New article\nBody here...");
     });
+  });
+
+  it("deletes a source after confirm and reloads the shelf", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    apiFetchMock
+      .mockResolvedValueOnce(PAGE) // 初始 load
+      .mockResolvedValueOnce({ deleted: true }) // DELETE /l3/sources/s1
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 20, offset: 0 }); // 删除后 reload
+    await renderBookshelf(vi.fn());
+    await waitFor(() => expect(screen.getByText(/The Economist/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("删除来源 The Economist"));
+    });
+    await waitFor(() => {
+      const del = apiFetchMock.mock.calls.find(([, init]) => (init as RequestInit).method === "DELETE");
+      expect(del?.[0]).toBe("/l3/sources/s1");
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("success", "已删除该来源"));
+    confirmSpy.mockRestore();
+  });
+
+  it("surfaces a friendly blocker message when delete is rejected with 409", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    apiFetchMock
+      .mockResolvedValueOnce(PAGE) // 初始 load
+      .mockRejectedValueOnce(new BrowserApiError(409, {
+        error: "CONFLICT",
+        message: "Cannot delete L3 source with active dependencies",
+        details: { entityType: "source", id: "s1", blockers: { contextCount: 2, inboundContextLinkCount: 0, importJobCount: 0 } },
+      }));
+    await renderBookshelf(vi.fn());
+    await waitFor(() => expect(screen.getByText(/The Economist/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("删除来源 The Economist"));
+    });
+    await waitFor(() =>
+      expect(addToastMock).toHaveBeenCalledWith("error", "先清理该来源的 2 条语境，再删除来源"),
+    );
+    // 409 后不应 reload（列表保持原样）
+    expect(apiFetchMock.mock.calls.filter(([, init]) => (init as RequestInit).method === "DELETE")).toHaveLength(1);
+    expect(apiFetchMock.mock.calls.filter(([url]) => String(url).startsWith("/l3/sources?"))).toHaveLength(1);
+    confirmSpy.mockRestore();
+  });
+
+  it("does not call the delete endpoint when confirm is dismissed", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    apiFetchMock.mockResolvedValue(PAGE);
+    await renderBookshelf(vi.fn());
+    await waitFor(() => expect(screen.getByText(/The Economist/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("删除来源 The Economist"));
+    });
+    expect(apiFetchMock.mock.calls.filter(([, init]) => (init as RequestInit).method === "DELETE")).toHaveLength(0);
+    expect(addToastMock).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 });

@@ -1,8 +1,11 @@
 /**
  * 书架（grill 定案 c 完整版，2026-09-07）：空间前门。重度使用（2-3 篇/天）
  * → 类型筛选 + 标题/正文搜索 + 排序是核心。导入表单零摩擦：标题默认取首行。
+ * 来源删除出口（2026-09-08 评估）：语境删除后来源壳会残留，书架提供逐条删除；
+ * 409 阻塞（还有语境/引用/导入任务）翻译成可读提示引导先清理。
  */
 import { useCallback, useEffect, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { useToast } from "@/frontend/components/ui/Toast";
@@ -16,6 +19,17 @@ const TYPE_LABELS: Record<string, string> = {
   book: "书", video: "视频", audio: "音频", chat: "对话", other: "其他",
 };
 const FILTERABLE = ["web", "article", "manual", "book", "other"];
+
+/** 来源删除 409 阻塞详情 → 可读文案（blockers 计数字段 → 中文标签）。 */
+export function sourceDeleteBlockerMessage(details: unknown): string {
+  const blockers = (details as { blockers?: Record<string, unknown> } | undefined)?.blockers;
+  if (!blockers) return "该来源存在关联数据，暂不能删除";
+  const parts: string[] = [];
+  if (typeof blockers.contextCount === "number" && blockers.contextCount > 0) parts.push(`${blockers.contextCount} 条语境`);
+  if (typeof blockers.inboundContextLinkCount === "number" && blockers.inboundContextLinkCount > 0) parts.push(`${blockers.inboundContextLinkCount} 条语境链接引用`);
+  if (typeof blockers.importJobCount === "number" && blockers.importJobCount > 0) parts.push(`${blockers.importJobCount} 个导入任务`);
+  return parts.length > 0 ? `先清理该来源的 ${parts.join("和 ")}，再删除来源` : "该来源存在关联数据，暂不能删除";
+}
 
 export function L3Bookshelf({ onOpen }: { onOpen: (sourceId: string) => void }) {
   const [items, setItems] = useState<L3SourceListItem[] | null>(null);
@@ -45,6 +59,23 @@ export function L3Bookshelf({ onOpen }: { onOpen: (sourceId: string) => void }) 
   }, [sourceType, q, sort, addToast]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // 来源删除（2026-09-08）：confirm 后走既有 DELETE /l3/sources/:id；
+  // 服务端 blockers 409 保护（语境/入站引用/导入任务），occurrences 随 FK cascade。
+  const deleteSource = async (item: L3SourceListItem) => {
+    if (!window.confirm(`删除来源「${item.title.slice(0, 40)}」？对应高亮将一并移除，此操作不可恢复。`)) return;
+    try {
+      await apiFetch(`/l3/sources/${encodeURIComponent(item.id)}`, { method: "DELETE", timeoutMs: 20_000 });
+      addToast("success", "已删除该来源");
+      await load();
+    } catch (err) {
+      if (err instanceof BrowserApiError && err.status === 409) {
+        addToast("error", sourceDeleteBlockerMessage(err.details));
+      } else {
+        addToast("error", err instanceof BrowserApiError ? err.message : "删除失败，请重试");
+      }
+    }
+  };
 
   const submitImport = async () => {
     const text = importText.trim();
@@ -108,14 +139,20 @@ export function L3Bookshelf({ onOpen }: { onOpen: (sourceId: string) => void }) 
       )}
       <ul className="space-y-2">
         {(items ?? []).map((item) => (
-          <li key={item.id}>
+          <li key={item.id} className="flex items-center gap-2">
             <button type="button" onClick={() => onOpen(item.id)}
-              className="w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-left transition-colors hover:border-[var(--color-accent)]">
+              className="min-w-0 flex-1 rounded-lg border border-[var(--color-border)] px-3 py-2 text-left transition-colors hover:border-[var(--color-accent)]">
               <div className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate text-[13.5px] text-[var(--color-ink)]">{item.title}</span>
                 <span className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] text-[var(--color-ink-soft)]">{TYPE_LABELS[item.source_type] ?? item.source_type}</span>
                 <span className="shrink-0 rounded-full bg-[var(--color-accent-soft)] px-2 py-0.5 text-[10px] text-[var(--color-accent)]">{item.context_count} 语境</span>
               </div>
+            </button>
+            {/* 删除按钮与卡片为兄弟节点（button 不可嵌套），天然不触发 onOpen */}
+            <button type="button" aria-label={`删除来源 ${item.title}`} title="删除来源"
+              onClick={() => void deleteSource(item)}
+              className="shrink-0 rounded-lg border border-[var(--color-border)] p-2 text-[var(--color-ink-soft)] transition-colors hover:border-red-400 hover:text-red-500">
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           </li>
         ))}
