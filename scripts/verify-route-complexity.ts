@@ -8,7 +8,16 @@ export type GitRunner = (args: string[], root: string) => GitResult;
 
 export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   { file: "src/http/routes/l2.ts", maxLines: 300, maxRoutes: 5 },
-  { file: "src/http/routes/l3.ts", maxLines: 500, maxRoutes: 30 },
+  // L3 路由 2026-09-08 自单文件 l3.ts（499/500 触顶）拆分为资源域子文件；
+  // 各子文件 bootstrap 限额按拆分实测规模留有增长余量（基线无该文件时生效）。
+  { file: "src/http/routes/l3/index.ts", maxLines: 60, maxRoutes: 0 },
+  { file: "src/http/routes/l3/sources.ts", maxLines: 160, maxRoutes: 8 },
+  { file: "src/http/routes/l3/contexts.ts", maxLines: 220, maxRoutes: 10 },
+  { file: "src/http/routes/l3/reads.ts", maxLines: 110, maxRoutes: 4 },
+  { file: "src/http/routes/l3/imports.ts", maxLines: 130, maxRoutes: 3 },
+  { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
+  { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
+  { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },
 ];
 
 export function measureRouteComplexity(source: string) {

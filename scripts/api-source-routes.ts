@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import ts from "typescript";
@@ -11,6 +12,8 @@ export interface SourceRoute {
 const ROUTE_METHODS = new Set<HttpMethod>(["get", "post", "put", "patch", "delete"]);
 const MOUNT = /app\.route\(\s*["']([^"']+)["']\s*,\s*(\w+)\(/g;
 const IMPORT = /import\s*\{([^}]+)\}\s*from\s*["']\.\/routes\/([^"']+)["']/g;
+/** 组合器模块内的相对导入（./contexts 等），用于递归解析嵌套挂载。 */
+const RELATIVE_IMPORT = /import\s*\{([^}]+)\}\s*from\s*["'](\.[^"']+)["']/g;
 
 function joinRoute(prefix: string, route: string): string {
   const joined = `${prefix}/${route}`.replace(/\/{2,}/g, "/");
@@ -64,8 +67,45 @@ export function extractStaticRoutes(source: string, fileName: string, prefix = "
   return routes;
 }
 
+/**
+ * 解析单个路由模块（或组合器目录 index.ts），并递归下钻其 app.route 挂载的
+ * 子模块。治理规则不变：app 不得别名/传参、方法与路径必须是静态字面量。
+ */
+async function extractModuleRoutes(
+  routesRoot: string,
+  fileName: string,
+  prefix: string,
+  seen: Set<string>,
+): Promise<SourceRoute[]> {
+  const source = await readFile(fileName, "utf8");
+  const relName = path.relative(routesRoot, fileName).replace(/\\/g, "/");
+  const routes = extractStaticRoutes(source, `src/http/routes/${relName}`, prefix);
+
+  // 组合器：app.route("/prefix", childFactory()) → 递归解析相对导入的子模块
+  const dir = path.dirname(fileName);
+  const imports = new Map<string, string>();
+  for (const match of source.matchAll(RELATIVE_IMPORT)) {
+    const resolved = path.relative(routesRoot, path.resolve(dir, match[2])).replace(/\\/g, "/").replace(/\.ts$/, "");
+    for (const name of match[1].split(",").map((value) => value.trim().split(/\s+/)[0])) {
+      if (name) imports.set(name, resolved);
+    }
+  }
+  for (const mount of source.matchAll(MOUNT)) {
+    const child = imports.get(mount[2]);
+    if (!child) throw new Error(`src/http/routes/${relName}: cannot resolve nested route factory ${mount[2]}`);
+    if (seen.has(child)) continue;
+    seen.add(child);
+    const childFile = path.join(routesRoot, `${child}.ts`);
+    const childIndex = path.join(routesRoot, child, "index.ts");
+    const target = existsSync(childFile) ? childFile : childIndex;
+    routes.push(...await extractModuleRoutes(routesRoot, target, joinRoute(prefix, mount[1]), seen));
+  }
+  return routes;
+}
+
 export async function extractApiSourceRoutes(root = process.cwd()): Promise<SourceRoute[]> {
   const httpRoot = path.join(root, "src", "http");
+  const routesRoot = path.join(httpRoot, "routes");
   const server = await readFile(path.join(httpRoot, "server.ts"), "utf8");
   const routes = extractStaticRoutes(server, "src/http/server.ts");
   const modules = new Map<string, string>();
@@ -79,11 +119,16 @@ export async function extractApiSourceRoutes(root = process.cwd()): Promise<Sour
   if (mounts.length !== mountCallCount) {
     throw new Error("src/http/server.ts: every app.route mount must use a static prefix and imported route factory call");
   }
+  const seen = new Set<string>();
   for (const mount of mounts) {
     const module = modules.get(mount[2]);
     if (!module) throw new Error(`Cannot resolve route factory ${mount[2]}`);
-    const source = await readFile(path.join(httpRoot, "routes", `${module}.ts`), "utf8");
-    routes.push(...extractStaticRoutes(source, `src/http/routes/${module}.ts`, mount[1]));
+    seen.add(module);
+    // 模块可以是平文件（routes/l2.ts）或目录组合器（routes/l3/index.ts）
+    const flatFile = path.join(routesRoot, `${module}.ts`);
+    const indexFile = path.join(routesRoot, module, "index.ts");
+    const target = existsSync(flatFile) ? flatFile : indexFile;
+    routes.push(...await extractModuleRoutes(routesRoot, target, mount[1], seen));
   }
   return routes.sort((left, right) => `${left.path} ${left.method}`.localeCompare(`${right.path} ${right.method}`));
 }
