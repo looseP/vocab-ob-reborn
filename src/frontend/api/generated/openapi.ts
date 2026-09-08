@@ -2580,6 +2580,12 @@ export interface operations {
                         body_md: string;
                         examples: components["schemas"]["JsonValue"];
                         prototype_text: string | null;
+                        core_definitions: {
+                            sense: string;
+                            en: string | null;
+                            priority: number | null;
+                            tags: string[];
+                        }[];
                         metadata: components["schemas"]["JsonValue"];
                         l2_content: {
                             collocations: ({
@@ -5385,6 +5391,7 @@ export interface operations {
                                 source_id: string;
                                 text: string;
                                 source_title: string;
+                                bound_sense: string | null;
                             }[];
                         }[];
                         session: {
@@ -12153,6 +12160,7 @@ export interface operations {
                     wordSlug: string;
                     /** @enum {string} */
                     contextType?: "sentence" | "excerpt";
+                    boundSense?: string | null;
                 };
             };
         };
@@ -12523,6 +12531,7 @@ export interface operations {
                     sourceTitle?: string;
                     sourceUrl?: string;
                     obsidianRef?: string;
+                    boundSense?: string | null;
                 };
             };
         };
@@ -12728,6 +12737,7 @@ export interface operations {
                             end_offset: number | null;
                             confidence: (number | string) | null;
                             evidence: components["schemas"]["JsonValue"];
+                            bound_sense: string | null;
                             created_at: string;
                         };
                     };
@@ -13631,6 +13641,7 @@ export interface operations {
                             end_offset: number | null;
                             confidence: (number | string) | null;
                             evidence: components["schemas"]["JsonValue"];
+                            bound_sense: string | null;
                             created_at: string;
                         }[];
                         links: {
@@ -14045,6 +14056,7 @@ export interface operations {
                             end_offset: number | null;
                             confidence: (number | string) | null;
                             evidence: components["schemas"]["JsonValue"];
+                            bound_sense: string | null;
                             created_at: string;
                         }[];
                         links: {
@@ -14276,6 +14288,7 @@ export interface operations {
                             end_offset: number | null;
                             confidence: (number | string) | null;
                             evidence: components["schemas"]["JsonValue"];
+                            bound_sense: string | null;
                             created_at: string;
                         }[];
                         links: {
@@ -14297,6 +14310,7 @@ export interface operations {
                             id: string;
                             slug: string;
                             title: string;
+                            short_definition: string | null;
                         }[];
                         stats: {
                             sourceCount: number;

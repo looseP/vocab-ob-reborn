@@ -2684,6 +2684,50 @@
                         }
                       ]
                     },
+                    "core_definitions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sense": {
+                            "type": "string"
+                          },
+                          "en": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "priority": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "sense",
+                          "en",
+                          "priority",
+                          "tags"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "metadata": {
                       "$ref": "#/components/schemas/JsonValue"
                     },
@@ -2860,6 +2904,7 @@
                     "body_md",
                     "examples",
                     "prototype_text",
+                    "core_definitions",
                     "metadata",
                     "l2_content",
                     "l2_promoted"
@@ -8926,13 +8971,24 @@
                                 },
                                 "source_title": {
                                   "type": "string"
+                                },
+                                "bound_sense": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
                                 }
                               },
                               "required": [
                                 "context_id",
                                 "source_id",
                                 "text",
-                                "source_title"
+                                "source_title",
+                                "bound_sense"
                               ],
                               "additionalProperties": false
                             }
@@ -23792,6 +23848,17 @@
                       "sentence",
                       "excerpt"
                     ]
+                  },
+                  "boundSense": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -24626,6 +24693,17 @@
                   },
                   "obsidianRef": {
                     "type": "string"
+                  },
+                  "boundSense": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -25133,6 +25211,16 @@
                         "evidence": {
                           "$ref": "#/components/schemas/JsonValue"
                         },
+                        "bound_sense": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
                         }
@@ -25148,6 +25236,7 @@
                         "end_offset",
                         "confidence",
                         "evidence",
+                        "bound_sense",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -27625,6 +27714,16 @@
                           "evidence": {
                             "$ref": "#/components/schemas/JsonValue"
                           },
+                          "bound_sense": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "created_at": {
                             "type": "string"
                           }
@@ -27640,6 +27739,7 @@
                           "end_offset",
                           "confidence",
                           "evidence",
+                          "bound_sense",
                           "created_at"
                         ],
                         "additionalProperties": false
@@ -28506,6 +28606,16 @@
                           "evidence": {
                             "$ref": "#/components/schemas/JsonValue"
                           },
+                          "bound_sense": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "created_at": {
                             "type": "string"
                           }
@@ -28521,6 +28631,7 @@
                           "end_offset",
                           "confidence",
                           "evidence",
+                          "bound_sense",
                           "created_at"
                         ],
                         "additionalProperties": false
@@ -29299,6 +29410,16 @@
                           "evidence": {
                             "$ref": "#/components/schemas/JsonValue"
                           },
+                          "bound_sense": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "created_at": {
                             "type": "string"
                           }
@@ -29314,6 +29435,7 @@
                           "end_offset",
                           "confidence",
                           "evidence",
+                          "bound_sense",
                           "created_at"
                         ],
                         "additionalProperties": false
@@ -29441,12 +29563,23 @@
                           },
                           "title": {
                             "type": "string"
+                          },
+                          "short_definition": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
                           "id",
                           "slug",
-                          "title"
+                          "title",
+                          "short_definition"
                         ],
                         "additionalProperties": false
                       }
