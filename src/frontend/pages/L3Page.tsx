@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { apiFetch } from "@/frontend/api/client";
 import type { L3FrontendClient } from "@/l3/frontend/contract";
 import { L3Bookshelf } from "@/frontend/components/l3/L3Bookshelf";
 import { L3ReadingView } from "@/frontend/components/l3/L3ReadingView";
@@ -42,15 +43,30 @@ export function L3Page() {
   const [contextHandoff, setContextHandoff] = useState<L3ContextHandoff | null>(null);
   const [wordHandoff, setWordHandoff] = useState<L3WordHandoff | null>(null);
   const [sourceHandoff, setSourceHandoff] = useState<L3SourceHandoff | null>(null);
+  const [focusContext, setFocusContext] = useState<{ contextId: string; nonce: number } | null>(null);
   const [activeReadStale, setActiveReadStale] = useState<L3ActiveReadStaleState | null>(null);
   const l3Client = useMemo<L3FrontendClient>(() => createBrowserL3Client(), []);
 
-  // P3-9：支持 /l3?contextId=xxx 深链——挂载时与 URL 参数变化时自动定位到语境详情。
-  // L2 产出步「查看原文」→ 直达对应语境，闭环 L3 溯源链路（L2ProductionTask 跳转）。
+  // P0-2（2026-09-08 评估）：?contextId= 深链不再落工程检查器——先解析 context→source，
+  // 落到对应来源的阅读视图并滚动+闪高亮该语境。这是 L2 Drill「查看原文」与复习卡
+  // Tier 2 逐条语境深链的用户落点；解析失败（404 等）回退到工程检查器（contextHandoff）。
   useEffect(() => {
     if (!deepLinkContextId) return;
-    setContextHandoff({ contextId: deepLinkContextId, nonce: Date.now() });
-    setSection("context");
+    let cancelled = false;
+    apiFetch<{ context: { source_id: string } }>(`/l3/contexts/${encodeURIComponent(deepLinkContextId)}`, { timeoutMs: 10_000 })
+      .then((detail) => {
+        if (cancelled || !detail?.context?.source_id) return;
+        const sourceId = detail.context.source_id;
+        setFocusContext({ contextId: deepLinkContextId, nonce: Date.now() });
+        setSection("source");
+        setSourceHandoff((prev) => (prev?.sourceId === sourceId ? prev : { sourceId, nonce: Date.now() }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setContextHandoff({ contextId: deepLinkContextId, nonce: Date.now() });
+        setSection("context");
+      });
+    return () => { cancelled = true; };
   }, [deepLinkContextId]);
 
   // 书架/阅读视图深链（Task 12）：/l3?sourceId=xxx 直达来源阅读视图（复习卡 Tier 2、
@@ -128,9 +144,13 @@ export function L3Page() {
     // source section：书架为前门；选中来源后整屏切换为阅读视图（返回书架清除
     // handoff 回到书架）。原工程检查面板（L3SourceSpacePage）已删除。
     source: sourceHandoff ? (
-      <L3ReadingView sourceId={sourceHandoff.sourceId} onBack={() => setSourceHandoff(null)} />
+      <L3ReadingView
+        sourceId={sourceHandoff.sourceId}
+        focusContextId={focusContext?.contextId}
+        onBack={() => { setSourceHandoff(null); setFocusContext(null); }}
+      />
     ) : (
-      <L3Bookshelf onOpen={(sourceId) => { setSourceHandoff({ sourceId, nonce: Date.now() }); }} />
+      <L3Bookshelf onOpen={(sourceId) => { setSourceHandoff({ sourceId, nonce: Date.now() }); setFocusContext(null); }} />
     ),
   }[section];
 

@@ -17,7 +17,6 @@ export interface ReviewL3ContextItem {
 
 export function L3ContextsFold({ items }: { items: ReviewL3ContextItem[]; slug: string }) {
   if (!items || items.length === 0) return null;
-  const sourceId = items[0]?.source_id;
   return (
     <div className="mt-3 w-full text-left" onClick={(e) => e.stopPropagation()}>
       <details className="group w-full rounded-xl border border-dashed border-[var(--color-border)]" data-no-flip>
@@ -29,15 +28,18 @@ export function L3ContextsFold({ items }: { items: ReviewL3ContextItem[]; slug: 
           {items.map((item) => (
             <div key={item.context_id}>
               <p>{item.text}</p>
-              <p className="text-[11px] text-[var(--color-ink-soft)]">—— {item.source_title}</p>
+              <p className="text-[11px] text-[var(--color-ink-soft)]">
+                {/* P0-2：逐条携带 contextId——深链直达阅读视图并滚动+闪高亮该语境 */}
+                <Link
+                  to={`/l3?sourceId=${encodeURIComponent(item.source_id)}&contextId=${encodeURIComponent(item.context_id)}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="hover:text-[var(--color-accent)]"
+                >
+                  —— {item.source_title} · 在素材空间查看
+                </Link>
+              </p>
             </div>
           ))}
-          {sourceId && (
-            <Link to={`/l3?sourceId=${encodeURIComponent(sourceId)}`} onClick={(e) => e.stopPropagation()}
-              className="inline-block text-[11px] text-[var(--color-accent)] hover:underline">
-              在素材空间查看
-            </Link>
-          )}
         </div>
       </details>
     </div>

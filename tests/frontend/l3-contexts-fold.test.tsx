@@ -67,7 +67,8 @@ describe("L3ContextsFold", () => {
     });
     expect(screen.getByText(/ephemeral beauty/)).toBeTruthy();
     expect(screen.getByText(/阅读 Text B/)).toBeTruthy();
-    const link = screen.getByText("在素材空间查看").closest("a");
-    expect(link?.getAttribute("href")).toContain("sourceId=s1");
+    // P0-2：逐条语境深链携带 sourceId + contextId（阅读视图滚动+闪高亮落点）
+    const link = screen.getByText(/在素材空间查看/).closest("a");
+    expect(link?.getAttribute("href")).toBe("/l3?sourceId=s1&contextId=c1");
   });
 });

@@ -42,7 +42,7 @@ reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
-async function renderView(sourceId: string, space: unknown): Promise<void> {
+async function renderView(sourceId: string, space: unknown, focusContextId?: string): Promise<void> {
   const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
   apiFetchMock.mockResolvedValue(space);
   const container = document.createElement("div");
@@ -54,7 +54,7 @@ async function renderView(sourceId: string, space: unknown): Promise<void> {
       createElement(
         MemoryRouter,
         null,
-        createElement(L3ReadingView, { sourceId }) as ReactElement,
+        createElement(L3ReadingView, { sourceId, focusContextId }) as ReactElement,
       ),
     );
     await Promise.resolve();
@@ -165,6 +165,23 @@ describe("L3ReadingView", () => {
       ...SPACE, source: { ...SPACE.source, content_text: null },
     });
     await waitFor(() => expect(screen.getByText("该来源无正文")).toBeTruthy());
+  });
+
+  // P0 深链落点（2026-09-08 评估）：?contextId= 不再落工程检查器，而是落阅读视图
+  // 并滚动+闪高亮对应语境（L2 Drill「查看原文」、复习卡 Tier 2 的精确落点）。
+  it("focuses and flashes the requested context after load", async () => {
+    const scrollSpy = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", { value: scrollSpy, configurable: true, writable: true });
+    try {
+      await renderView("s1", SPACE, "c1");
+      await screen.findByText(/Gamma delta epsilon/);
+      const mark = screen.getByText(/Gamma delta epsilon/).closest("mark") as HTMLElement;
+      expect(mark.getAttribute("data-context-id")).toBe("c1");
+      expect(mark.className).toContain("l3-focus-flash");
+      expect(scrollSpy).toHaveBeenCalled();
+    } finally {
+      delete (Element.prototype as unknown as Record<string, unknown>).scrollIntoView;
+    }
   });
 
   describe("computeGlobalOffsets", () => {
@@ -280,7 +297,8 @@ describe("L3ReadingView", () => {
     await waitFor(() =>
       expect(apiFetchMock.mock.calls.some(([url]) => String(url).includes("/words/alpha"))).toBe(true),
     );
-    expect(screen.getByText(/词库中还没有/)).toBeTruthy();
+    // findByText 轮询等待 miss 状态提交（waitFor 命中调用注册与 rejection 微任务落账之间有竞态）
+    await screen.findByText(/词库中还没有/);
     expect(screen.getByText(/自动创建生词条目/)).toBeTruthy();
     expect(screen.queryByText("✓ 词库已有")).toBeNull();
   });

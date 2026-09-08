@@ -88,7 +88,7 @@ export function WordL3Contexts({ slug }: { slug: string }) {
             <li key={item.context.id} className="rounded-lg border border-[var(--color-border)] px-3 py-2">
               <p className="text-[13px] leading-relaxed">{item.context.text}</p>
               <p className="mt-1 flex items-center gap-3 text-[11px] text-[var(--color-ink-soft)]">
-                <Link to={`/l3?sourceId=${encodeURIComponent(item.source.id)}`} className="hover:text-[var(--color-accent)]">
+                <Link to={`/l3?sourceId=${encodeURIComponent(item.source.id)}&contextId=${encodeURIComponent(item.context.id)}`} className="hover:text-[var(--color-accent)]">
                   —— {item.source.title} · 在素材空间查看
                 </Link>
                 <button

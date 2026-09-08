@@ -59,7 +59,7 @@ export function computeGlobalOffsets(container: HTMLElement, startNode: Node, st
   return { start, end };
 }
 
-export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?: () => void }) {
+export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: string; onBack?: () => void; focusContextId?: string }) {
   const [space, setSpace] = useState<L3ReadingSpace | null>(null);
   const [error, setError] = useState<string | null>(null);
   const textRef = useRef<HTMLDivElement>(null);
@@ -88,6 +88,15 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
   }, [sourceId]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  // P0 深链聚焦（2026-09-08 评估）：?contextId= 落地后滚动至对应高亮（闪高亮样式由
+  // l3-focus-flash 类的 CSS animation 完成）。hooks 须在 early return 之前声明。
+  useEffect(() => {
+    if (!space || !focusContextId) return;
+    const el = textRef.current?.querySelector(`[data-context-id="${focusContextId}"]`);
+    if (!el) return;
+    if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [space, focusContextId]);
 
   // 目标词词库回显（用户反馈 2026-09-08）：在库 → 显示基本信息（绑定已有词条）；
   // 不在库 → 提示将自动创建生词条目。300ms 防抖 + seq 忽略过期响应。
@@ -167,6 +176,8 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
   ranges.forEach((r, i) => {
     if (r.start > cursor) pieces.push(<span key={`t${i}`}>{text.slice(cursor, r.start)}</span>);
     const slug = r.slug;
+    // 深链聚焦：与 ?contextId= 匹配的高亮携带闪高亮类（P0-2）
+    const focus = focusContextId != null && r.contextId === focusContextId ? " l3-focus-flash" : "";
     pieces.push(
       slug ? (
         // 已绑定高亮用 span 而非 <a>：Chromium 从链接上起手 mousedown 不启动文本选择
@@ -174,7 +185,8 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
         // onClick（无活动选区时）编程式跳词卡，保留"点击高亮跳词卡"交互（FR-6.2）。
         <span
           key={`m${i}`}
-          className="cursor-pointer rounded bg-[var(--color-accent-soft)] px-0.5 text-[var(--color-accent)] hover:underline"
+          data-context-id={r.contextId}
+          className={`cursor-pointer rounded bg-[var(--color-accent-soft)] px-0.5 text-[var(--color-accent)] hover:underline${focus}`}
           title="点击查看词卡"
           onClick={() => {
             const sel = window.getSelection();
@@ -185,7 +197,7 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
           {text.slice(r.start, r.end)}
         </span>
       ) : (
-        <mark key={`m${i}`} className="rounded bg-[var(--color-accent-soft)] px-0.5">{text.slice(r.start, r.end)}</mark>
+        <mark key={`m${i}`} data-context-id={r.contextId} className={`rounded bg-[var(--color-accent-soft)] px-0.5${focus}`}>{text.slice(r.start, r.end)}</mark>
       ),
     );
     cursor = r.end;

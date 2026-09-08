@@ -72,7 +72,7 @@ describe("WordL3Contexts", () => {
     await waitFor(() => expect(screen.getByText(/ephemeral beauty/)).toBeTruthy());
     expect(screen.getByText(/阅读 Text B/)).toBeTruthy();
     const link = screen.getAllByText(/素材空间/)[0].closest("a");
-    expect(link?.getAttribute("href")).toBe("/l3?sourceId=s1");
+    expect(link?.getAttribute("href")).toBe("/l3?sourceId=s1&contextId=c1");
   });
 
   it("renders empty hint when no contexts", async () => {

@@ -886,3 +886,20 @@ body.zen-mode main {
 .l3-nav-tools-list {
   margin-top: 0.35rem;
 }
+
+/* P0-2 深链聚焦闪高亮：?contextId= 命中的高亮滚动至视野中央后脉冲两次 */
+@keyframes l3-focus-pulse {
+  0%, 100% {
+    background-color: var(--color-accent-soft);
+    box-shadow: none;
+  }
+  50% {
+    background-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-accent-soft);
+  }
+}
+
+.l3-focus-flash {
+  animation: l3-focus-pulse 0.9s ease-in-out 2;
+  border-radius: 3px;
+}
