@@ -402,6 +402,33 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     return row;
   }
 
+  // 圈记幂等复用（2026-09-08）：position JSONB 存 {start,end} 全文锚点，取 int 键比对。
+  async findContextByAnchor(
+    userId: string,
+    sourceId: string,
+    anchorStart: number,
+    anchorEnd: number,
+  ): Promise<L3ContextRow | null> {
+    return this.queryOne<L3ContextRow>(
+      `SELECT * FROM l3_contexts
+       WHERE user_id = $1::uuid AND source_id = $2::uuid
+         AND (position->>'start')::int = $3::int
+         AND (position->>'end')::int = $4::int
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [userId, sourceId, anchorStart, anchorEnd],
+    );
+  }
+
+  async listOccurrencesForContext(userId: string, contextId: string): Promise<L3OccurrenceRow[]> {
+    return this.query<L3OccurrenceRow>(
+      `SELECT * FROM l3_occurrences
+       WHERE user_id = $1::uuid AND context_id = $2::uuid
+       ORDER BY created_at ASC`,
+      [userId, contextId],
+    );
+  }
+
   async createContextLink(input: NewL3ContextLink): Promise<L3ContextLinkRow> {
     const row = await this.queryOne<L3ContextLinkRow>(
       `INSERT INTO l3_context_links

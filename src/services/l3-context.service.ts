@@ -310,7 +310,9 @@ export class L3ContextService {
     word = await this.l3Context.findWordBySlug(slug);
     if (!word) throw new Error(`capture word upsert failed for slug "${slug}"`);
 
-    // ② 语境 + occurrence 同事务（RLS actor）
+    // ② 语境 + occurrence 同事务（RLS actor）。圈记幂等复用（2026-09-08 用户反馈）：
+    // 一句话常涉及多个词——同来源同锚点已存在语境时复用它、只追加 occurrence；
+    // 同词重复圈记幂等返回既有 occurrence。数据模型天然支持一语境多 occurrence。
     return this.withActorRepository(input.userId, async (repository) => {
       const source = await repository.lockSourceByIdForUser(input.userId, input.sourceId);
       if (!source) throw new NotFoundError("L3Source", input.sourceId);
@@ -320,7 +322,25 @@ export class L3ContextService {
         throw new ValidationError("anchor range out of content bounds", "anchor");
       }
 
-      const context = await repository.createContext({
+      const existingContext = await repository.findContextByAnchor(
+        input.userId, input.sourceId, input.anchorStart, input.anchorEnd,
+      );
+      let contextId: string;
+      if (existingContext) {
+        contextId = existingContext.id;
+        const siblings = await repository.listOccurrencesForContext(input.userId, contextId);
+        const sameWord = siblings.find((o) => o.word_id === word!.id);
+        if (sameWord) {
+          return {
+            contextId,
+            occurrenceId: sameWord.id,
+            word: { id: word!.id, slug: word!.slug, title: word!.title },
+            created,
+          };
+        }
+      }
+
+      const context = existingContext ?? await repository.createContext({
         user_id: input.userId,
         source_id: input.sourceId,
         context_type: contextType,
@@ -330,11 +350,12 @@ export class L3ContextService {
         position: { start: input.anchorStart, end: input.anchorEnd },
         metadata: {},
       } satisfies NewL3Context);
+      contextId = context.id;
 
       const rel = input.text.toLowerCase().indexOf(input.surface.toLowerCase());
       const occurrence = await repository.createOccurrence({
         user_id: input.userId,
-        context_id: context.id,
+        context_id: contextId,
         word_id: word!.id,
         surface: input.surface,
         lemma: word!.lemma,
@@ -345,7 +366,7 @@ export class L3ContextService {
       } satisfies NewL3Occurrence);
 
       return {
-        contextId: context.id,
+        contextId,
         occurrenceId: occurrence.id,
         word: { id: word!.id, slug: word!.slug, title: word!.title },
         created,

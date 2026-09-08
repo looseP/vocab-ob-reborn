@@ -817,6 +817,15 @@ export interface IL3ContextRepository {
     offset: number;
   }): Promise<L3SourceListPage>;
   findContextById(userId: string, contextId: string): Promise<L3ContextRow | null>;
+  /** 圈记幂等复用（2026-09-08）：按全文锚点定位既有语境——一句话多词共用一条语境。 */
+  findContextByAnchor(
+    userId: string,
+    sourceId: string,
+    anchorStart: number,
+    anchorEnd: number,
+  ): Promise<L3ContextRow | null>;
+  /** 圈记幂等：同语境同词的既有 occurrence（重复圈记返回既有行，不重复写入）。 */
+  listOccurrencesForContext(userId: string, contextId: string): Promise<L3OccurrenceRow[]>;
   findContextWithSourceById(
     userId: string,
     contextId: string,

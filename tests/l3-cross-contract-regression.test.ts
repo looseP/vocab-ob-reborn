@@ -514,6 +514,19 @@ class L3CrossContractHarness {
         const context = this.contexts.get(contextId);
         return context?.user_id === userId ? context : null;
       }),
+      findContextByAnchor: vi.fn(async (userId, sourceId, anchorStart, anchorEnd) => {
+        for (const context of this.contexts.values()) {
+          if (context.user_id !== userId || context.source_id !== sourceId) continue;
+          const pos = context.position as { start?: number; end?: number };
+          if (pos?.start === anchorStart && pos?.end === anchorEnd) return context;
+        }
+        return null;
+      }),
+      listOccurrencesForContext: vi.fn(async (userId, contextId) => {
+        return [...this.occurrences.values()].filter(
+          (o) => o.user_id === userId && o.context_id === contextId,
+        );
+      }),
       findContextWithSourceById: vi.fn(async (userId, contextId) => {
         const context = this.contexts.get(contextId);
         const source = context ? this.sources.get(context.source_id) : null;
