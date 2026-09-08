@@ -95,11 +95,13 @@ describe.skipIf(!adminDatabaseUrl || !appDatabaseUrl)("L3 RLS isolation (integra
         ACTOR_B, `l3-rls-b-${ACTOR_B.slice(0, 8)}@example.test`,
       ],
     );
-    // 目标词（l3_occurrences.word_id FK → words）；content_hash 受 64 位 sha256 CHECK 约束
+    // 目标词（l3_occurrences.word_id FK → words）；content_hash 受 64 位 sha256 CHECK 约束。
+    // 0023 起触发器强制仅 stub（definition_md=''）可删——fixture 播种为 stub 形态
+    // （与 capture-first 采集语义一致），afterAll 的 admin 清理才能通过触发器。
     const contentHash = createHash("sha256").update(WORD_ID).digest("hex");
     await adminPool.query(
       `INSERT INTO words (id, slug, title, lemma, definition_md, body_md, content_hash, source_path)
-       VALUES ($1, $2, 'enduring', 'enduring', 'def', 'body', $3, 'test/l3-rls')`,
+       VALUES ($1, $2, 'enduring', 'enduring', '', '', $3, 'test/l3-rls')`,
       [WORD_ID, `l3rls-${WORD_ID.slice(0, 8)}`, contentHash],
     );
 

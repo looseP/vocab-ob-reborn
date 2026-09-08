@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { PaginatedResult, WordDetail, WordDetailL2Content, WordSummary } from "../domain";
 import type { ParsedCoreDefinition } from "@/domain/ingest/types";
-import { jsonValueSchema } from "./l3-response-contract";
+import { jsonValueSchema, l3DeleteResponseSchema } from "./l3-response-contract";
 import {
   l2CollocationItemSchema,
   l2CorpusItemSchema,
@@ -77,3 +77,6 @@ export const wordSuggestResponseSchema = z.object({
 export const wordBatchCreateResponseSchema = z.object({
   inserted: z.number().int().nonnegative(),
 }).strict();
+
+// 详情页硬删 stub 词条（0023）：删除结果形状与 L3 删除一致，域内命名复用。
+export const wordDeleteResponseSchema = l3DeleteResponseSchema;

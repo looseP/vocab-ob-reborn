@@ -173,7 +173,8 @@ export const l3ContextLinkRowResponseSchema: z.ZodType<L3ContextLinkRow> = z.obj
 
 export const l3DeleteResponseSchema = z.object({
   deleted: z.object({
-    entityType: z.enum(["source", "context", "occurrence", "context_link"]),
+    // "word"：详情页硬删 stub 词条（0023），复用同一删除响应形状
+    entityType: z.enum(["source", "context", "occurrence", "context_link", "word"]),
     id: z.string(),
   }).strict(),
   activeReadInvalidation: z.literal(true),

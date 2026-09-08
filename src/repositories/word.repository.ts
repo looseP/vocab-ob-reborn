@@ -20,7 +20,7 @@ import type {
   WordRow,
   WordSummary,
 } from "../domain";
-import type { IWordRepository, UpsertFullWordInput } from "./interfaces";
+import type { IWordRepository, UpsertFullWordInput, WordDeleteBlockers } from "./interfaces";
 import { BaseRepository } from "./base";
 
 const SUMMARY_COLUMNS = `w.id, w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, w.short_definition, w.metadata`;
@@ -542,4 +542,85 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     );
     return rows.length > 0 ? "imported" : "unchanged";
   }
+
+  // ── Stub 生命周期（0023）：详情页硬删 stub 词条 ─────────────────────────
+  // words 全局无 user_id，stub 谓词 definition_md='' 是唯一安全护栏；
+  // DB 侧由迁移 0023 的触发器 enforce_word_stub_delete 强制 stub-only。
+
+  async lockStubWordById(wordId: string): Promise<WordRow | null> {
+    this.requireTx();
+    return this.queryOne<WordRow>(
+      `SELECT * FROM words
+       WHERE id = $1::uuid AND is_deleted = false AND definition_md = ''
+       FOR UPDATE`,
+      [wordId],
+    );
+  }
+
+  async getWordDeleteBlockers(userId: string, wordId: string): Promise<WordDeleteBlockers> {
+    const row = await this.queryOne<WordDeleteBlockerRow>(
+      `SELECT
+         (
+           SELECT COUNT(*)::int
+           FROM l3_occurrences
+           WHERE word_id = $1::uuid AND user_id = $2::uuid
+         ) AS l3_occurrence_count,
+         (
+           SELECT COUNT(*)::int
+           FROM note_entries
+           WHERE word_id = $1::uuid AND user_id = $2::uuid
+         ) AS note_entry_count,
+         (
+           SELECT COUNT(*)::int
+           FROM l3_context_links
+           WHERE target_type = 'word'
+             AND lower(target_id) = lower($1::text)
+             AND user_id = $2::uuid
+         ) AS inbound_word_link_count`,
+      [wordId, userId],
+    );
+    return {
+      l3OccurrenceCount: countWordValue(row?.l3_occurrence_count),
+      noteEntryCount: countWordValue(row?.note_entry_count),
+      inboundWordLinkCount: countWordValue(row?.inbound_word_link_count),
+    };
+  }
+
+  async deleteWordById(userId: string, wordId: string): Promise<WordRow | null> {
+    // 守卫式删除（镜像 deleteSource）：NOT EXISTS 与 blockers 同源，
+    // 并发插入的关联数据会让 DELETE 落空（返回 null → service 二读消歧）。
+    return this.queryOne<WordRow>(
+      `DELETE FROM words
+       WHERE id = $1::uuid AND definition_md = ''
+         AND NOT EXISTS (
+           SELECT 1 FROM l3_occurrences o
+           WHERE o.word_id = words.id AND o.user_id = $2::uuid
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM note_entries n
+           WHERE n.word_id = words.id AND n.user_id = $2::uuid
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM l3_context_links l
+           WHERE l.target_type = 'word'
+             AND lower(l.target_id) = words.id::text
+             AND l.user_id = $2::uuid
+         )
+       RETURNING *`,
+      [wordId, userId],
+    );
+  }
+}
+
+interface WordDeleteBlockerRow {
+  l3_occurrence_count: number | string | null;
+  note_entry_count: number | string | null;
+  inbound_word_link_count: number | string | null;
+}
+
+/** pg 对 int8 返回 string；与 l3-context.repository 的 countValue 同一归一化语义。 */
+function countWordValue(value: number | string | null | undefined): number {
+  if (value === null || value === undefined) return 0;
+  const parsed = typeof value === "number" ? value : Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
 }

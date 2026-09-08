@@ -162,6 +162,13 @@
       "when": 1788853224657,
       "tag": "0022_shiny_wallow",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788875000000,
+      "tag": "0023_word_stub_delete_grant",
+      "breakpoints": true
     }
   ]
 }

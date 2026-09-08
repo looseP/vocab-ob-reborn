@@ -8,6 +8,7 @@
  * Routes:
  *   GET  /              list words (validated via wordsQuerySchema)
  *   GET  /:slug         fetch a single word by slug
+ *   DELETE /:slug       hard-delete a stub word (definition_md='', 0023)
  */
 import { Hono } from "hono";
 import type { Services } from "@/services";
@@ -178,6 +179,18 @@ export function wordRoutes(services: Services) {
         updated_at: new Date(entry.updated_at).toISOString(),
       },
     });
+  });
+
+  // DELETE /:slug — 详情页硬删 stub 词条（0023，stub 生命周期）。
+  // 仅 definition_md='' 可删（service 预检 + 守卫 DELETE + DB 触发器三层兜底）；
+  // 409 携带 blockers（绑定语境/笔记/入站语境链接），详情页空态专属出口。
+  app.delete("/:slug", async (c) => {
+    const userId = c.get("userId");
+    const result = await services.words.deleteStubWord({
+      slug: c.req.param("slug"),
+      userId,
+    });
+    return c.json(result);
   });
 
   return app;

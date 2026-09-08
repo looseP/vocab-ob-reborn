@@ -418,7 +418,8 @@ export class L3ContextService {
     requireEnum(input.targetType, L3_CONTEXT_LINK_TARGET_TYPES, "targetType");
     validateConfidence(input.confidence);
 
-    const needsSoftTargetLock = input.targetType === "source" || input.targetType === "context";
+    const needsSoftTargetLock =
+      input.targetType === "source" || input.targetType === "context" || input.targetType === "word";
     if (needsSoftTargetLock) {
       return this.txRunner(async (tx) => {
         const repos = this.repositoryFactory(tx);
@@ -459,6 +460,11 @@ export class L3ContextService {
     if (input.targetType === "word") {
       const targetId = requireUuidTargetId(input.targetId, "word");
       targetIdForInsert = targetId;
+      // word 目标同样是 text 软引用（无 FK 级联）：与删词的 advisory lock
+      // 互斥（0023 stub 删除走同一把 l3:active-target 锁），防建链-删词竞态。
+      if (lockSoftTarget) {
+        await repository.lockActiveL3TargetReference(input.userId, "word", targetId);
+      }
       const word = contextWithSource?.source.wordbook_id
         ? await repository.findWordInWordbookById(contextWithSource.source.wordbook_id, targetId)
         : await repository.findWordById(targetId);

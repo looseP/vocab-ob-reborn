@@ -377,3 +377,65 @@ describe("WordRepository.suggest", () => {
     expect(query.params).toEqual(["%cour%", "%cour%", "%cour%", "cour%", "%cour%", "%cour%", 8]);
   });
 });
+
+describe("WordRepository stub delete (0023)", () => {
+  const WORD_ID = "0b9a2df8-1111-4222-8333-444455556666";
+  const USER_ID = "u-1";
+
+  it("lockStubWordById locks the row with the stub predicate (tx-only)", async () => {
+    mock.setRows([{ id: WORD_ID }]);
+    // FOR UPDATE 必须 requireTx：用 mock pool 的 query 伪装 tx client（镜像 l3-context 仓库测试）
+    const repository = new WordRepository({ query: mock.pool.query } as never);
+
+    const row = await repository.lockStubWordById(WORD_ID);
+
+    expect(row).toEqual({ id: WORD_ID });
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("FOR UPDATE");
+    expect(query.text).toContain("is_deleted = false");
+    expect(query.text).toContain("definition_md = ''");
+    expect(query.params).toEqual([WORD_ID]);
+  });
+
+  it("getWordDeleteBlockers counts occurrences, note entries, and inbound word-links in one round-trip", async () => {
+    mock.setRows([{ l3_occurrence_count: "2", note_entry_count: "0", inbound_word_link_count: "3" }]);
+    const repository = new WordRepository();
+
+    const blockers = await repository.getWordDeleteBlockers(USER_ID, WORD_ID);
+
+    expect(blockers).toEqual({ l3OccurrenceCount: 2, noteEntryCount: 0, inboundWordLinkCount: 3 });
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("FROM l3_occurrences");
+    expect(query.text).toContain("FROM note_entries");
+    expect(query.text).toContain("target_type = 'word'");
+    expect(query.text).toContain("lower(target_id) = lower($1::text)");
+    expect(query.params).toEqual([WORD_ID, USER_ID]);
+  });
+
+  it("deleteWordById guards on the stub predicate and the three blockers", async () => {
+    mock.setRowMap({
+      "DELETE FROM words": [{ id: WORD_ID, slug: "foo" }],
+    });
+    const repository = new WordRepository();
+
+    const deleted = await repository.deleteWordById(USER_ID, WORD_ID);
+
+    expect(deleted).toEqual({ id: WORD_ID, slug: "foo" });
+    const query = mock.calls.find((c) => c.text.startsWith("DELETE FROM words"))!;
+    expect(query.text).toContain("definition_md = ''");
+    expect(query.text).toContain("NOT EXISTS");
+    expect(query.text).toContain("FROM l3_occurrences o");
+    expect(query.text).toContain("FROM note_entries n");
+    expect(query.text).toContain("FROM l3_context_links l");
+    expect(query.text).toContain("lower(l.target_id) = words.id::text");
+    expect(query.text).toContain("RETURNING *");
+    expect(query.params).toEqual([WORD_ID, USER_ID]);
+  });
+
+  it("deleteWordById resolves null when the guard trips or the row is missing", async () => {
+    mock.setRows([]);
+    const repository = new WordRepository();
+
+    await expect(repository.deleteWordById(USER_ID, WORD_ID)).resolves.toBeNull();
+  });
+});

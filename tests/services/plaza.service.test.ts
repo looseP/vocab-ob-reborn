@@ -26,6 +26,9 @@ function makeMockWordRepo(overrides: Partial<IWordRepository> = {}): IWordReposi
     countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 0, due: 0 })),
     count: vi.fn(async () => 0),
     findSlugs: vi.fn(async () => []),
+    lockStubWordById: vi.fn(async () => null),
+    getWordDeleteBlockers: vi.fn(async () => ({ l3OccurrenceCount: 0, noteEntryCount: 0, inboundWordLinkCount: 0 })),
+    deleteWordById: vi.fn(async () => null),
     ...overrides,
   };
 }

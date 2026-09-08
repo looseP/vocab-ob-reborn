@@ -291,6 +291,8 @@ export const apiOperations = [
   operation("get", "/api/words", "listWords", "owner", "none", { query: wordsQuerySchema }, 200, wordListResponseSchema),
   operation("get", "/api/words/suggest", "suggestWords", "owner", "none", { query: wordSuggestQuerySchema }, 200, wordSuggestResponseSchema),
   operation("get", "/api/words/:slug", "getWord", "owner", "none", undefined, 200, wordDetailResponseSchema),
+  // 详情页硬删 stub 词条（0023）：sessionMutation + owner，409 blockers 由 service 层抛出
+  operation("delete", "/api/words/:slug", "deleteStubWord", "owner", "sessionMutation", undefined, 200, l3DeleteResponseSchema),
   operation("post", "/api/words/batch", "batchCreateWords", "owner", "sessionMutation", { body: wordBatchCreateSchema }, 200, wordBatchCreateResponseSchema),
   // 笔记条目(条目制 2026-09-06):GET 词条目列表;POST 新增;PUT 编辑;
   // DELETE 硬删(详情页专属);hide/restore 非破坏管理。

@@ -85,6 +85,24 @@ export interface IWordRepository {
    * transaction (uses its own pool); each call is atomic on its own.
    */
   upsertFullWord?(input: UpsertFullWordInput): Promise<"imported" | "unchanged">;
+  /**
+   * 详情页硬删 stub 词条（0023，stub 生命周期）：锁定 + 阻塞检查 + 守卫删除。
+   * words 全局无 user_id，stub 谓词 definition_md='' 是唯一安全护栏
+   * （DB 触发器 enforce_word_stub_delete 双重兜底）。
+   */
+  lockStubWordById(wordId: string): Promise<WordRow | null>;
+  getWordDeleteBlockers(userId: string, wordId: string): Promise<WordDeleteBlockers>;
+  deleteWordById(userId: string, wordId: string): Promise<WordRow | null>;
+}
+
+/** 详情页删除 stub 词条的 409 阻塞详情（三项；复习进度/词单成员随 FK 级联，不阻塞）。 */
+export interface WordDeleteBlockers {
+  /** 绑定的 L3 语境（occurrence）——引导先到素材空间删除语境。 */
+  l3OccurrenceCount: number;
+  /** 用户笔记条目——真实用户数据，不可静默级联。 */
+  noteEntryCount: number;
+  /** 入站语境链接软引用（target_type='word'，target_id 为 text 无 FK，防悬挂）。 */
+  inboundWordLinkCount: number;
 }
 
 /** Payload for the rich-note import upsert (all words-table content fields). */
@@ -792,7 +810,7 @@ export interface IL3ContextRepository {
   deleteContextLink(userId: string, contextLinkId: string): Promise<L3ContextLinkRow | null>;
   lockSourceByIdForUser(userId: string, sourceId: string): Promise<L3SourceRow | null>;
   lockContextByIdForUser(userId: string, contextId: string): Promise<L3ContextRow | null>;
-  lockActiveL3TargetReference(userId: string, targetType: "source" | "context", targetId: string): Promise<void>;
+  lockActiveL3TargetReference(userId: string, targetType: "source" | "context" | "word", targetId: string): Promise<void>;
   getSourceDeleteBlockers(userId: string, sourceId: string): Promise<L3SourceDeleteBlockers>;
   getContextDeleteBlockers(userId: string, contextId: string): Promise<L3ContextDeleteBlockers>;
   deleteSource(userId: string, sourceId: string): Promise<L3SourceRow | null>;

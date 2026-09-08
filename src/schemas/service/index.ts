@@ -537,7 +537,8 @@ export interface DeleteL3ContextInput {
 
 export interface L3DeleteResult {
   deleted: {
-    entityType: "source" | "context" | "occurrence" | "context_link";
+    // "word"：详情页硬删 stub 词条（0023，stub 生命周期），复用同一删除结果形状
+    entityType: "source" | "context" | "occurrence" | "context_link" | "word";
     id: string;
   };
   activeReadInvalidation: true;

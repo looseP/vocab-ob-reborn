@@ -2,10 +2,11 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createApp } from "@/http/server";
 import { Word } from "@/domain/word.entity";
 import type { WordRow } from "@/domain";
-import { NotFoundError } from "@/errors";
+import { NotFoundError, ConflictError } from "@/errors";
 import type { Services } from "@/services";
 import {
   wordBatchCreateResponseSchema,
+  wordDeleteResponseSchema,
   wordDetailResponseSchema,
   wordListResponseSchema,
 } from "@/http/words-response-contract";
@@ -53,6 +54,10 @@ function makeMockServices(): Services {
       getWordCount: vi.fn().mockResolvedValue(1),
       getAllSlugs: vi.fn().mockResolvedValue(["abound"]),
       batchCreate: vi.fn().mockResolvedValue({ inserted: 0 }),
+      deleteStubWord: vi.fn().mockResolvedValue({
+        deleted: { entityType: "word", id: "word-1" },
+        activeReadInvalidation: true,
+      }),
     },
     reviews: {
       submitAnswer: vi.fn(),
@@ -366,5 +371,53 @@ describe("POST /api/words/batch", () => {
     });
     expect(res.status).toBe(401);
     expect(services.words.batchCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ── 0023 stub 生命周期：详情页硬删 stub 词条 ────────────────────────────────
+describe("DELETE /api/words/:slug (stub delete)", () => {
+  it("deletes a stub and returns the shared delete result shape", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/words/wibble", { method: "DELETE", headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = wordDeleteResponseSchema.parse(await res.json());
+    expect(body).toEqual({
+      deleted: { entityType: "word", id: "word-1" },
+      activeReadInvalidation: true,
+    });
+    expect(services.words.deleteStubWord).toHaveBeenCalledWith({ slug: "wibble", userId: "user-123" });
+  });
+
+  it("maps a missing slug to 404 NOT_FOUND", async () => {
+    const services = makeMockServices();
+    services.words.deleteStubWord = vi.fn().mockRejectedValue(new NotFoundError("Word", "missing"));
+    const app = createApp(services);
+    const res = await app.request("/api/words/missing", { method: "DELETE", headers: AUTH_HEADERS });
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("NOT_FOUND");
+  });
+
+  it("maps blockers to 409 CONFLICT with the details.blockers wire contract", async () => {
+    const services = makeMockServices();
+    services.words.deleteStubWord = vi.fn().mockRejectedValue(
+      new ConflictError("Cannot delete word with active dependencies", undefined, {
+        entityType: "word",
+        id: "word-1",
+        blockers: { l3OccurrenceCount: 2, noteEntryCount: 1, inboundWordLinkCount: 3 },
+      }),
+    );
+    const app = createApp(services);
+    const res = await app.request("/api/words/wibble", { method: "DELETE", headers: AUTH_HEADERS });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      code: "CONFLICT",
+      details: {
+        entityType: "word",
+        id: "word-1",
+        blockers: { l3OccurrenceCount: 2, noteEntryCount: 1, inboundWordLinkCount: 3 },
+      },
+    });
   });
 });

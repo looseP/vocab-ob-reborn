@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeft, Lightbulb, Network, Puzzle, Quote, Undo2, Layers, Users, Sparkles, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, Lightbulb, Network, Puzzle, Quote, Undo2, Layers, Users, Sparkles, Eye, EyeOff, Trash2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -8,6 +8,9 @@ import { Spinner } from "@/frontend/components/ui/Spinner";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { Reveal, RevealMarkdown } from "@/frontend/components/ui/Reveal";
+import { useToast } from "@/frontend/components/ui/Toast";
+import { apiFetch } from "@/frontend/api/client";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { WordL3Contexts } from "@/frontend/components/words/WordL3Contexts";
 import { WordL2Content, ProvenanceBadge } from "@/frontend/components/words/WordL2Content";
@@ -17,6 +20,26 @@ import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton
 import { SpeakButton } from "@/frontend/components/words/SpeakButton";
 import { useWordDetail, type L2Provenance, type WordDetail } from "@/frontend/hooks/useWordDetail";
 import { deriveWordCollections } from "@/frontend/utils/plazaSlugs";
+
+/**
+ * Stub 删除 409 阻塞详情 → 可读中文提示（镜像 L3Bookshelf.sourceDeleteBlockerMessage）。
+ * blockers 三项：绑定 L3 语境 / 用户笔记 / 入站语境链接（复习进度与词单成员随 FK 级联，不阻塞）。
+ */
+export function wordDeleteBlockerMessage(details: unknown): string {
+  const blockers = (details as { blockers?: Record<string, unknown> } | undefined)?.blockers;
+  if (!blockers) return "该词条存在关联数据，暂不能删除";
+  const parts: string[] = [];
+  if (typeof blockers.l3OccurrenceCount === "number" && blockers.l3OccurrenceCount > 0) {
+    parts.push(`先到素材空间删除该词绑定的 ${blockers.l3OccurrenceCount} 条语境`);
+  }
+  if (typeof blockers.noteEntryCount === "number" && blockers.noteEntryCount > 0) {
+    parts.push(`先删除该词下的 ${blockers.noteEntryCount} 条笔记`);
+  }
+  if (typeof blockers.inboundWordLinkCount === "number" && blockers.inboundWordLinkCount > 0) {
+    parts.push(`先删除引用该词的 ${blockers.inboundWordLinkCount} 条语境链接`);
+  }
+  return parts.length > 0 ? `暂不能删除：${parts.join("；")}` : "该词条存在关联数据，暂不能删除";
+}
 
 function SectionCard({ title, id, children }: { title: string; id?: string; children: React.ReactNode }) {
   return (
@@ -137,6 +160,30 @@ export function WordDetailPage() {
 
   // 自测模式：答案字段（释义/例句翻译/L2 辨析结论）模糊化，点击逐个揭示
   const [quizMode, setQuizMode] = useState(false);
+
+  // 0023 stub 生命周期：definition_md='' 即生词条目，空态区提供删除出口
+  const isStub = (word?.definition_md ?? "") === "";
+  const [deleting, setDeleting] = useState(false);
+  const { addToast } = useToast();
+
+  const deleteStub = async () => {
+    if (!slug || !word || deleting) return;
+    if (!window.confirm(`删除生词条目「${word.title.slice(0, 40)}」？其复习进度与收藏将一并移除，此操作不可恢复。`)) return;
+    setDeleting(true);
+    try {
+      await apiFetch(`/words/${encodeURIComponent(slug)}`, { method: "DELETE", timeoutMs: 20_000 });
+      addToast("success", "已删除该词条");
+      navigate("/words");
+    } catch (err) {
+      if (err instanceof BrowserApiError && err.status === 409) {
+        addToast("error", wordDeleteBlockerMessage(err.details));
+      } else {
+        addToast("error", err instanceof Error ? err.message : "删除失败，请稍后重试");
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // 来自复习队列：state 的字段由 ReviewCardView 注入。
   const reviewBack = (location.state as null | { from?: string; mode?: string; wordIds?: string[]; reviewed?: number; total?: number })?.from === "review"
@@ -331,6 +378,17 @@ export function WordDetailPage() {
           <EmptyState
             title="该词条暂无详细内容"
             description="此词条可能由批量导入或捕获创建，尚未补充释义、词源等资料。你仍可以在这里添加自己的笔记。"
+            action={isStub ? (
+              <Button
+                variant="ghost"
+                onClick={deleteStub}
+                disabled={deleting}
+                title="仅空词条（stub）可删除；绑定了语境或笔记时会提示先清理"
+              >
+                <Trash2 className="h-4 w-4" />
+                删除此空词条
+              </Button>
+            ) : undefined}
           />
         </Card>
       )}

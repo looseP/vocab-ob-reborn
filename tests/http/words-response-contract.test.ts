@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  wordDeleteResponseSchema,
   wordDetailResponseSchema,
   wordListResponseSchema,
   wordSummaryResponseSchema,
@@ -111,6 +112,15 @@ describe("Words response contracts", () => {
     expect(() => wordListResponseSchema.parse({ ...response, offset: -1 })).toThrow();
     expect(() => wordListResponseSchema.parse({ ...response, hasMore: "yes" })).toThrow();
     expect(() => wordListResponseSchema.parse({ ...response, items: [{ ...summary, id: 123 }] })).toThrow();
+  });
+
+  // 0023 stub 生命周期：删除结果与 L3 删除同形，entityType 联合含 "word"
+  it("parses the wordDelete response reusing the L3 delete shape", () => {
+    const response = { deleted: { entityType: "word", id: "word-1" }, activeReadInvalidation: true };
+    expect(wordDeleteResponseSchema.parse(response)).toEqual(response);
+    expect(() => wordDeleteResponseSchema.parse({ ...response, deleted: { entityType: "galaxy", id: "x" } })).toThrow();
+    expect(() => wordDeleteResponseSchema.parse({ ...response, activeReadInvalidation: false })).toThrow();
+    expect(() => wordDeleteResponseSchema.parse({ deleted: { entityType: "word" }, activeReadInvalidation: true })).toThrow();
   });
 });
 

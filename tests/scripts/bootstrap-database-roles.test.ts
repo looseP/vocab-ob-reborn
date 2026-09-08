@@ -130,6 +130,9 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(verifier).toContain("[\"vocab_backup\", new Set()]");
     expect(bootstrap).toContain("GRANT SELECT ON ALL TABLES IN SCHEMA public, auth, vocab_migrations TO vocab_backup");
     expect(bootstrap).toContain("GRANT SELECT ON ALL SEQUENCES IN SCHEMA public, auth, vocab_migrations TO vocab_backup");
+    // 0023: 详情页硬删 stub 词条 — vocab_app 获得 words DELETE（RLS DELETE policy
+    // words_stub_delete_app 由迁移提供，触发器 enforce_word_stub_delete 强制 stub-only）
+    expect(bootstrap).toContain("GRANT SELECT, DELETE ON TABLE public.words TO vocab_app");
   });
 
   it("grants and verifies only the actor-authorized L2 cache and hash functions", () => {

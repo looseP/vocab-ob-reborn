@@ -541,7 +541,7 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
 
   async lockActiveL3TargetReference(
     userId: string,
-    targetType: "source" | "context",
+    targetType: "source" | "context" | "word",
     targetId: string,
   ): Promise<void> {
     this.requireTx();

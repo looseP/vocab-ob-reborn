@@ -11,8 +11,9 @@ import type { PaginatedResult, WordSummary } from "../domain";
 import { Word } from "../domain/word.entity";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
-import { NotFoundError } from "../errors";
+import { ConflictError, NotFoundError, ValidationError } from "../errors";
 import { plazaCache } from "./plaza-cache";
+import type { L3DeleteResult } from "../schemas/service";
 
 type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
@@ -90,5 +91,73 @@ export class WordService {
     // P4 性能：批量写词后清空广场聚合缓存。
     plazaCache.invalidateAll();
     return { inserted: count };
+  }
+
+  /**
+   * 详情页硬删 stub 词条（0023，stub 生命周期）。
+   * 阻塞（409 + blockers）：绑定 L3 语境 / 用户笔记 / 入站语境链接；
+   * 随删（FK 级联）：复习进度（无移除出口且本就是待清理的污染）、词单成员、高亮批注。
+   * stub 谓词 definition_md='' 由锁行查询、守卫 DELETE 与 DB 触发器三层兜底。
+   */
+  async deleteStubWord(input: { slug: string; userId: string }): Promise<L3DeleteResult> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.slug, "slug");
+
+    const row = await this.words.findBySlug(input.slug);
+    if (!row) {
+      throw new NotFoundError("Word", input.slug);
+    }
+    if (row.definition_md !== "") {
+      throw new ConflictError("仅生词 stub（无释义内容）可删除");
+    }
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const word = await repos.words.lockStubWordById(row.id);
+      if (!word) {
+        // 预检后行被并发补全内容或下架 → 与 404 同语义
+        throw new NotFoundError("Word", input.slug);
+      }
+
+      // 与建链（createContextLink word 目标）共用 l3:active-target 锁，防建链-删词竞态
+      await repos.l3Context.lockActiveL3TargetReference(input.userId, "word", word.id);
+      const blockers = await repos.words.getWordDeleteBlockers(input.userId, word.id);
+      if (
+        blockers.l3OccurrenceCount > 0 ||
+        blockers.noteEntryCount > 0 ||
+        blockers.inboundWordLinkCount > 0
+      ) {
+        throw new ConflictError("Cannot delete word with active dependencies", undefined, {
+          entityType: "word",
+          id: word.id,
+          blockers,
+        });
+      }
+
+      const deleted = await repos.words.deleteWordById(input.userId, word.id);
+      if (!deleted) {
+        const current = await repos.words.findById(word.id);
+        if (!current) {
+          throw new NotFoundError("Word", input.slug);
+        }
+        const latestBlockers = await repos.words.getWordDeleteBlockers(input.userId, word.id);
+        throw new ConflictError("Cannot delete word with active dependencies", undefined, {
+          entityType: "word",
+          id: word.id,
+          blockers: latestBlockers,
+        });
+      }
+
+      return {
+        deleted: { entityType: "word", id: deleted.id },
+        activeReadInvalidation: true,
+      };
+    }, { actorId: input.userId });
+  }
+}
+
+function requireNonEmpty(value: string, field: string): void {
+  if (!value || value.trim().length === 0) {
+    throw new ValidationError(`${field} is required`, field);
   }
 }
