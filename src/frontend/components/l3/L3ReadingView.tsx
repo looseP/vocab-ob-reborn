@@ -66,6 +66,13 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
   const [capture, setCapture] = useState<{ start: number; end: number; text: string } | null>(null);
   const [target, setTarget] = useState("");
   const [saving, setSaving] = useState(false);
+  const [targetInfo, setTargetInfo] = useState<
+    | { state: "idle" }
+    | { state: "loading" }
+    | { state: "found"; word: { slug: string; title: string; pos: string | null; ipa: string | null; short_definition: string | null } }
+    | { state: "miss" }
+  >({ state: "idle" });
+  const lookupSeq = useRef(0);
   const { addToast } = useToast();
 
   const reload = useCallback(async () => {
@@ -80,6 +87,28 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
   }, [sourceId]);
 
   useEffect(() => { void reload(); }, [reload]);
+
+  // 目标词词库回显（用户反馈 2026-09-08）：在库 → 显示基本信息（绑定已有词条）；
+  // 不在库 → 提示将自动创建生词条目。300ms 防抖 + seq 忽略过期响应。
+  useEffect(() => {
+    const slug = target.trim().toLowerCase();
+    if (!slug) { setTargetInfo({ state: "idle" }); return; }
+    const seq = ++lookupSeq.current;
+    setTargetInfo({ state: "loading" });
+    const timer = setTimeout(() => {
+      apiFetch<{ slug: string; title: string; pos: string | null; ipa: string | null; short_definition: string | null }>(
+        `/words/${encodeURIComponent(slug)}`, { timeoutMs: 10_000 })
+        .then((word) => {
+          if (lookupSeq.current !== seq) return;
+          if (word && word.slug) setTargetInfo({ state: "found", word });
+          else setTargetInfo({ state: "miss" });
+        })
+        .catch(() => {
+          if (lookupSeq.current === seq) setTargetInfo({ state: "miss" });
+        });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [target]);
 
   if (error) return <p className="text-sm text-red-500">{error}</p>;
   if (!space) return <p className="text-sm text-[var(--color-ink-soft)]">加载中…</p>;
@@ -172,6 +201,30 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
               className="rounded border border-[var(--color-accent)] px-3 py-1 text-xs text-[var(--color-accent)] disabled:opacity-50">记录搭配</button>
             <button type="button" onClick={() => setCapture(null)} className="text-xs text-[var(--color-ink-soft)]">取消</button>
           </div>
+          {targetInfo.state === "loading" && (
+            <p className="mt-1.5 text-[11px] text-[var(--color-ink-soft)]">查询词库…</p>
+          )}
+          {targetInfo.state === "found" && targetInfo.word && (
+            <p className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--color-ink)]">
+              <span className="font-semibold text-[var(--color-accent)]">✓ 词库已有</span>
+              <Link
+                to={`/words/${encodeURIComponent(targetInfo.word.slug)}`}
+                className="mx-1 underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {targetInfo.word.title}
+              </Link>
+              {targetInfo.word.ipa && <span className="mr-1 font-mono">{targetInfo.word.ipa}</span>}
+              {targetInfo.word.pos && <span className="mr-1 italic">{targetInfo.word.pos}.</span>}
+              {targetInfo.word.short_definition && <span>— {targetInfo.word.short_definition} </span>}
+              <span className="text-[var(--color-ink-soft)]">（圈记将绑定到该词条）</span>
+            </p>
+          )}
+          {targetInfo.state === "miss" && (
+            <p className="mt-1.5 text-[11px] text-[var(--color-ink-soft)]">
+              词库中还没有「{target.trim()}」——提交后会自动创建生词条目并绑定
+            </p>
+          )}
         </div>
       )}
       <div ref={textRef} onMouseUp={onMouseUp} className="whitespace-pre-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-[13.5px] leading-relaxed text-[var(--color-ink)]" data-reading-text>

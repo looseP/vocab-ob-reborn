@@ -62,7 +62,28 @@ async function renderView(sourceId: string, space: unknown): Promise<void> {
   });
 }
 
-// 圈记用例会 stub window.getSelection（jsdom Range 支持有限），用后恢复避免污染同文件其他用例。
+// 圈记用例统一 stub：选中 "Gamm"（跨首尾文本节点，offset 0-4），jsdom Range 支持有限。
+// startContainer/endContainer 必须给文本节点（TreeWalker 只遍历文本节点）。
+function stubRangeSelection(container: HTMLElement): void {
+  const startNode = container.firstChild!.firstChild!;
+  const endNode = container.lastChild!.firstChild!;
+  Object.defineProperty(window, "getSelection", {
+    value: () => ({
+      rangeCount: 1,
+      getRangeAt: () => ({
+        startContainer: startNode,
+        startOffset: 0,
+        endContainer: endNode,
+        endOffset: 4,
+        collapsed: false,
+        commonAncestorContainer: container,
+      }),
+    }),
+    configurable: true,
+  });
+}
+
+// 用后恢复避免污染同文件其他用例。
 const realGetSelection = window.getSelection.bind(window);
 
 afterEach(() => {
@@ -138,24 +159,7 @@ describe("L3ReadingView", () => {
     await screen.findByText(/Gamma delta epsilon/);
     const container = document.querySelector("[data-reading-text]") as HTMLElement;
     expect(container).toBeTruthy();
-    // 模拟选区：stub window.getSelection 返回固定区间。注意 startContainer/endContainer
-    // 必须给文本节点（TreeWalker 只遍历文本节点），计划脚注允许按 jsdom 支持度调整。
-    const startNode = container.firstChild!.firstChild!;
-    const endNode = container.lastChild!.firstChild!;
-    Object.defineProperty(window, "getSelection", {
-      value: () => ({
-        rangeCount: 1,
-        getRangeAt: () => ({
-          startContainer: startNode,
-          startOffset: 0,
-          endContainer: endNode,
-          endOffset: 4,
-          collapsed: false,
-          commonAncestorContainer: container,
-        }),
-      }),
-      configurable: true,
-    });
+    stubRangeSelection(container);
     await act(async () => {
       fireEvent.mouseUp(container);
     });
@@ -171,8 +175,11 @@ describe("L3ReadingView", () => {
       await waitFor(() =>
         expect(apiFetchMock.mock.calls.some(([url]) => String(url).includes("/captures"))).toBe(true),
       );
-      // POST 成功后 reload() 刷新高亮：初始 load + POST + reload 共 3 次
-      await waitFor(() => expect(apiFetchMock.mock.calls).toHaveLength(3));
+      // POST 成功后 reload() 刷新高亮：初始 load + POST + reload 共 3 次。
+      // 排除 /words/ 词库回显调用——目标词 300ms 防抖查询在慢环境下可能在断言前触发。
+      await waitFor(() =>
+        expect(apiFetchMock.mock.calls.filter(([url]) => !String(url).includes("/words/"))).toHaveLength(3),
+      );
     });
     const captureCall = apiFetchMock.mock.calls.find(([url]) => String(url).includes("/captures"))!;
     const init = captureCall[1] as { method?: string; body?: string };
@@ -186,5 +193,52 @@ describe("L3ReadingView", () => {
       wordSlug: "alpha",
       contextType: "sentence",
     });
+  });
+
+  // 词库回显（用户反馈 2026-09-08）：目标词在库 → 显示词条基本信息 + 绑定提示；
+  // 不在库（404）→ 提示将自动创建生词条目。防抖 300ms，real timers + waitFor 轮询。
+  it("echoes library word info when target word exists", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    await renderView("s1", SPACE); // 初始 load 走默认 mock；词库查询的 Once 必须在其后入队
+    apiFetchMock.mockResolvedValueOnce({
+      slug: "alpha", title: "alpha", pos: "noun", ipa: "/ˈælfə/", short_definition: "the first Greek letter",
+    });
+    await screen.findByText(/Gamma delta epsilon/);
+    const container = document.querySelector("[data-reading-text]") as HTMLElement;
+    stubRangeSelection(container);
+    await act(async () => {
+      fireEvent.mouseUp(container);
+    });
+    // 防抖窗口内：立即显示查询中
+    expect(screen.getByText("查询词库…")).toBeTruthy();
+    await waitFor(() =>
+      expect(apiFetchMock.mock.calls.some(([url]) => String(url).includes("/words/alpha"))).toBe(true),
+    );
+    await screen.findByText("✓ 词库已有");
+    const echoLink = screen.getByText("alpha").closest("a");
+    expect(echoLink?.getAttribute("href")).toBe("/words/alpha");
+    expect(screen.getByText("/ˈælfə/")).toBeTruthy();
+    expect(screen.getByText("noun.")).toBeTruthy();
+    expect(screen.getByText(/the first Greek letter/)).toBeTruthy();
+    expect(screen.getByText(/圈记将绑定到该词条/)).toBeTruthy();
+    expect(screen.queryByText(/自动创建生词条目/)).toBeNull();
+  });
+
+  it("hints stub creation when target word is not in the library", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    await renderView("s1", SPACE); // 初始 load 走默认 mock；404 的 Once 在其后入队
+    apiFetchMock.mockRejectedValueOnce(new Error("not found"));
+    await screen.findByText(/Gamma delta epsilon/);
+    const container = document.querySelector("[data-reading-text]") as HTMLElement;
+    stubRangeSelection(container);
+    await act(async () => {
+      fireEvent.mouseUp(container);
+    });
+    await waitFor(() =>
+      expect(apiFetchMock.mock.calls.some(([url]) => String(url).includes("/words/alpha"))).toBe(true),
+    );
+    expect(screen.getByText(/词库中还没有/)).toBeTruthy();
+    expect(screen.getByText(/自动创建生词条目/)).toBeTruthy();
+    expect(screen.queryByText("✓ 词库已有")).toBeNull();
   });
 });
