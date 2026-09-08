@@ -144,6 +144,26 @@ describe("L3ReadingView", () => {
     expect(document.querySelector("[data-word-panel]")).toBeNull();
   });
 
+  // 视觉/交互优化（2026-09-08 用户反馈）：面板是悬浮卡片（不再通天全高），
+  // 且支持 Esc 与点击面板外区域关闭。
+  it("closes the panel on Escape and on outside click", async () => {
+    await renderView("s1", SPACE_MULTI_WORD);
+    await screen.findByText(/Gamma delta epsilon/);
+    const badge = document.querySelector("[data-context-badge='c1']") as HTMLElement;
+    await act(async () => { fireEvent.click(badge); });
+    expect(document.querySelector("[data-word-panel]")).toBeTruthy();
+    // Esc 关闭
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "Escape" });
+    });
+    expect(document.querySelector("[data-word-panel]")).toBeNull();
+    // 重新打开后，点击面板外区域关闭
+    await act(async () => { fireEvent.click(badge); });
+    expect(document.querySelector("[data-word-panel]")).toBeTruthy();
+    await act(async () => { fireEvent.click(document.body); });
+    expect(document.querySelector("[data-word-panel]")).toBeNull();
+  });
+
   it("keeps highlighted text inert on click — no navigation, no panel", async () => {
     const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
     apiFetchMock.mockResolvedValue(SPACE_WITH_LINK);

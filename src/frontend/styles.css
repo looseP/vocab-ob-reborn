@@ -903,3 +903,19 @@ body.zen-mode main {
   animation: l3-focus-pulse 0.9s ease-in-out 2;
   border-radius: 3px;
 }
+
+/* 相关词汇面板：右侧滑入（交互优化 2026-09-08） */
+@keyframes l3-panel-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.l3-word-panel {
+  animation: l3-panel-slide-in 0.22s ease-out;
+}

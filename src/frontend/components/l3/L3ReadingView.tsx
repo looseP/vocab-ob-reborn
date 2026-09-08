@@ -98,6 +98,27 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
 
   useEffect(() => { void reload(); }, [reload]);
 
+  // 相关词汇面板：Esc / 点击面板外关闭（交互优化 2026-09-08）。
+  // 徽标点击被排除——点另一个标号只切换面板内容，不闪关。
+  useEffect(() => {
+    if (!wordPanel) return;
+    const onDocClick = (e: MouseEvent) => {
+      const t = e.target;
+      if (!(t instanceof Element)) return;
+      if (t.closest("[data-word-panel]") || t.closest("[data-context-badge]")) return;
+      setWordPanel(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setWordPanel(null);
+    };
+    document.addEventListener("click", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [wordPanel !== null]);
+
   // P0 深链聚焦（2026-09-08 评估）：?contextId= 落地后滚动至对应高亮（闪高亮样式由
   // l3-focus-flash 类的 CSS animation 完成）。hooks 须在 early return 之前声明。
   useEffect(() => {
@@ -230,28 +251,33 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
         <div
           data-word-panel
           data-no-flip
-          className="fixed inset-y-0 right-0 z-30 w-80 overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl"
+          className="l3-word-panel fixed right-4 top-20 z-30 flex max-h-[calc(100vh-6rem)] w-80 max-w-[85vw] flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl"
         >
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-semibold text-[var(--color-ink)]">相关词汇（{wordPanel.slugs.length}）</h4>
-            <button type="button" onClick={() => setWordPanel(null)} className="text-xs text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]">关闭</button>
+          <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5">
+            <h4 className="text-[13px] font-semibold text-[var(--color-ink)]">
+              相关词汇 <span className="ml-1 rounded-full bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-[10px] font-normal text-[var(--color-accent)]">{wordPanel.slugs.length}</span>
+            </h4>
+            <button type="button" onClick={() => setWordPanel(null)} className="text-xs text-[var(--color-ink-soft)] transition-colors hover:text-[var(--color-ink)]">关闭</button>
           </div>
-          <p className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted,var(--color-surface))] p-2.5 text-[12px] leading-relaxed text-[var(--color-ink-soft)]">
-            {wordPanel.text.slice(0, 140)}{wordPanel.text.length > 140 ? "…" : ""}
-          </p>
-          <ul className="mt-3 space-y-2">
-            {wordPanel.slugs.map((slug) => (
-              <li key={slug}>
-                <Link
-                  to={`/words/${encodeURIComponent(slug)}`}
-                  className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2 text-[13px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)]"
-                >
-                  <span>{slug}</span>
-                  <span className="text-[11px] text-[var(--color-ink-soft)]">查看词条 →</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <div className="overflow-y-auto px-4 py-3">
+            <p className="border-l-2 border-[var(--color-accent)] pl-2.5 text-[12px] leading-relaxed text-[var(--color-ink-soft)]">
+              {wordPanel.text.slice(0, 140)}{wordPanel.text.length > 140 ? "…" : ""}
+            </p>
+            <p className="mt-3 mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-soft)]">跳转到词条</p>
+            <ul className="space-y-2">
+              {wordPanel.slugs.map((slug) => (
+                <li key={slug}>
+                  <Link
+                    to={`/words/${encodeURIComponent(slug)}`}
+                    className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2 text-[13px] text-[var(--color-accent)] transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]"
+                  >
+                    <span className="font-medium">{slug}</span>
+                    <span className="text-[11px] text-[var(--color-ink-soft)]">查看词条 →</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
       {capture && (
