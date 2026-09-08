@@ -722,3 +722,131 @@ body.zen-mode main {
 /* 说明：早前的 .zen-review-container（全屏 fixed z-30）与 .backface-hidden（3D 翻转）
    从未被组件使用，属遗留死代码。禅模式实际为页内布局（SiteFrame 内 pb-24 为底部
    导航留白），因此不存在与移动端底部导航的层级冲突，这里一并移除。 */
+
+
+/* ── L3 素材空间外壳（Phase 4B 工程壳样式补齐，2026-09-08）────────────────
+   L3Shell 使用的 l3-* 类此前从未定义，侧栏/导航以裸文本渲染。 */
+.l3-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+@media (min-width: 768px) {
+  .l3-shell {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 1.25rem;
+  }
+}
+
+.l3-sidebar {
+  flex-shrink: 0;
+  width: 100%;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.9rem;
+  background: var(--color-panel);
+}
+
+@media (min-width: 768px) {
+  .l3-sidebar {
+    position: sticky;
+    top: 84px;
+    width: 200px;
+  }
+}
+
+.l3-sidebar .eyebrow {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+
+.l3-sidebar h1 {
+  font-family: var(--font-heading), serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+  margin: 0.15rem 0 0.8rem;
+}
+
+.l3-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+@media (min-width: 768px) {
+  .l3-nav {
+    flex-direction: column;
+    flex-wrap: nowrap;
+  }
+}
+
+.l3-nav button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.82rem;
+  color: var(--color-ink-soft);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.l3-nav button:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-ink);
+}
+
+.l3-nav button.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-contrast, #ffffff);
+  font-weight: 600;
+}
+
+.l3-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.l3-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.l3-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.l3-status-grid > div {
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: var(--color-panel);
+  padding: 0.75rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.l3-status-grid span {
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+
+.l3-status-grid strong {
+  font-size: 0.85rem;
+  color: var(--color-ink);
+}
