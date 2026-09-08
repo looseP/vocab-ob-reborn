@@ -37,6 +37,19 @@ const SPACE_WITH_LINK = {
   occurrences: [{ context_id: "c1", word_id: "w-1" }],
 };
 
+// ② 多词语境（2026-09-08 用户反馈）：同一句圈了两个词——点击高亮应弹选词菜单。
+const SPACE_MULTI_WORD = {
+  ...SPACE,
+  words: [
+    { id: "w-1", slug: "delta", title: "delta" },
+    { id: "w-2", slug: "epsilon", title: "epsilon" },
+  ],
+  occurrences: [
+    { context_id: "c1", word_id: "w-1" },
+    { context_id: "c1", word_id: "w-2" },
+  ],
+};
+
 const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -165,6 +178,58 @@ describe("L3ReadingView", () => {
       ...SPACE, source: { ...SPACE.source, content_text: null },
     });
     await waitFor(() => expect(screen.getByText("该来源无正文")).toBeTruthy());
+  });
+
+  // ② 多词语境跳转（2026-09-08 用户反馈）：一句话绑多个词时，点击高亮弹出
+  // 选词菜单（而非单项绑定直跳）；单词语境保持直跳。
+  it("shows a word picker when clicking a multi-word highlight", async () => {
+    await renderView("s1", SPACE_MULTI_WORD);
+    await screen.findByText(/Gamma delta epsilon/);
+    await act(async () => {
+      fireEvent.click(screen.getByText(/Gamma delta epsilon/));
+    });
+    // 菜单列出该语境绑定的全部词
+    const menu = document.querySelector("[data-word-picker]") as HTMLElement;
+    expect(menu).toBeTruthy();
+    const links = [...menu.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(links).toContain("/words/delta");
+    expect(links).toContain("/words/epsilon");
+    // 菜单可关闭
+    await act(async () => {
+      fireEvent.click(screen.getByText("取消"));
+    });
+    expect(document.querySelector("[data-word-picker]")).toBeNull();
+  });
+
+  it("navigates directly for a single-word highlight without a picker", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock.mockResolvedValue(SPACE_WITH_LINK);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(
+            Routes,
+            null,
+            createElement(Route, { path: "/", element: createElement(L3ReadingView, { sourceId: "s1" }) as ReactElement }),
+            createElement(Route, { path: "/words/:slug", element: createElement("div", null, "WORD-PAGE") as ReactElement }),
+          ),
+        ) as ReactElement,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-word-picker]")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByText(/Gamma delta epsilon/));
+    });
+    await screen.findByText("WORD-PAGE");
+    expect(document.querySelector("[data-word-picker]")).toBeNull();
   });
 
   // P0 深链落点（2026-09-08 评估）：?contextId= 不再落工程检查器，而是落阅读视图

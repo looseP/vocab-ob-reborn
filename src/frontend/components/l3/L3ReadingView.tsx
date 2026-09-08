@@ -22,21 +22,26 @@ export interface L3ReadingSpace {
   stats: Record<string, unknown>;
 }
 
-interface AnchorRange { start: number; end: number; contextId: string; slug: string | null }
+interface AnchorRange { start: number; end: number; contextId: string; slugs: string[] }
 
 function buildRanges(space: L3ReadingSpace): AnchorRange[] {
   const slugById = new Map(space.words.map((w) => [w.id, w.slug]));
-  const wordIdByContext = new Map<string, string>();
+  // 一句话可绑多个词（2026-09-08 修正）：收集该语境的全部 occurrence 对应词
+  const slugsByContext = new Map<string, string[]>();
   for (const occ of space.occurrences as Array<{ context_id: string; word_id: string }>) {
-    if (!wordIdByContext.has(occ.context_id)) wordIdByContext.set(occ.context_id, occ.word_id);
+    const slug = slugById.get(occ.word_id);
+    if (!slug) continue;
+    const list = slugsByContext.get(occ.context_id) ?? [];
+    if (!list.includes(slug)) list.push(slug);
+    slugsByContext.set(occ.context_id, list);
   }
   return space.contexts
     .map((c) => {
       const start = typeof c.position?.start === "number" ? c.position.start : null;
       const end = typeof c.position?.end === "number" ? c.position.end : null;
       if (start == null || end == null || end <= start) return null;
-      const wordId = wordIdByContext.get(c.id);
-      return { start, end, contextId: c.id, slug: wordId ? slugById.get(wordId) ?? null : null } satisfies AnchorRange;
+      const slugs = slugsByContext.get(c.id) ?? [];
+      return { start, end, contextId: c.id, slugs } satisfies AnchorRange;
     })
     .filter((r): r is AnchorRange => r !== null)
     .sort((a, b) => a.start - b.start);
@@ -74,6 +79,8 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
   >({ state: "idle" });
   const lookupSeq = useRef(0);
   const navigate = useNavigate();
+  // ② 多词语境选词菜单（2026-09-08）：记录待选语境的词列表
+  const [wordPicker, setWordPicker] = useState<{ contextId: string; slugs: string[] } | null>(null);
   const { addToast } = useToast();
 
   const reload = useCallback(async () => {
@@ -175,31 +182,37 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
   let cursor = 0;
   ranges.forEach((r, i) => {
     if (r.start > cursor) pieces.push(<span key={`t${i}`}>{text.slice(cursor, r.start)}</span>);
-    const slug = r.slug;
+    const slugs = r.slugs;
     // 深链聚焦：与 ?contextId= 匹配的高亮携带闪高亮类（P0-2）
     const focus = focusContextId != null && r.contextId === focusContextId ? " l3-focus-flash" : "";
-    pieces.push(
-      slug ? (
+    if (slugs.length === 0) {
+      pieces.push(
+        <mark key={`m${i}`} data-context-id={r.contextId} className={`rounded bg-[var(--color-accent-soft)] px-0.5${focus}`}>{text.slice(r.start, r.end)}</mark>,
+      );
+    } else {
+      pieces.push(
         // 已绑定高亮用 span 而非 <a>：Chromium 从链接上起手 mousedown 不启动文本选择
-        // （拖动被当成点击导航，draggable=false 也无效）；span 保证划词可用，
-        // onClick（无活动选区时）编程式跳词卡，保留"点击高亮跳词卡"交互（FR-6.2）。
+        // （拖动被当成点击导航，draggable=false 也无效）；span 保证划词可用。
+        // 多词语境（一句话绑多词）点击弹选词菜单；单词直跳词卡（FR-6.2）。
         <span
           key={`m${i}`}
           data-context-id={r.contextId}
           className={`cursor-pointer rounded bg-[var(--color-accent-soft)] px-0.5 text-[var(--color-accent)] hover:underline${focus}`}
-          title="点击查看词卡"
+          title={slugs.length > 1 ? `绑定 ${slugs.length} 个词，点击选择` : "点击查看词卡"}
           onClick={() => {
             const sel = window.getSelection();
             if (sel && !sel.isCollapsed) return;
-            navigate(`/words/${encodeURIComponent(slug)}`);
+            if (slugs.length === 1) {
+              navigate(`/words/${encodeURIComponent(slugs[0])}`);
+              return;
+            }
+            setWordPicker({ contextId: r.contextId, slugs });
           }}
         >
           {text.slice(r.start, r.end)}
-        </span>
-      ) : (
-        <mark key={`m${i}`} data-context-id={r.contextId} className={`rounded bg-[var(--color-accent-soft)] px-0.5${focus}`}>{text.slice(r.start, r.end)}</mark>
-      ),
-    );
+        </span>,
+      );
+    }
     cursor = r.end;
   });
   if (cursor < text.length) pieces.push(<span key="tail">{text.slice(cursor)}</span>);
@@ -210,6 +223,27 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
         <h3 className="text-lg font-semibold text-[var(--color-ink)]">{space.source.title}</h3>
         <p className="text-[11px] text-[var(--color-ink-soft)]">{space.source.source_type} · {space.source.language ?? "?"} · 圈记 {ranges.length} 处</p>
       </div>
+      {wordPicker && (
+        <div
+          data-word-picker
+          data-no-flip
+          className="rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] p-3 text-[12.5px]"
+        >
+          <p className="mb-1.5 text-[var(--color-ink-soft)]">这句绑定了 {wordPicker.slugs.length} 个词——选择要查看的词卡：</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {wordPicker.slugs.map((slug) => (
+              <Link
+                key={slug}
+                to={`/words/${encodeURIComponent(slug)}`}
+                className="rounded border border-[var(--color-accent)] px-2.5 py-1 text-xs text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-contrast,var(--color-surface))]"
+              >
+                {slug}
+              </Link>
+            ))}
+            <button type="button" onClick={() => setWordPicker(null)} className="text-xs text-[var(--color-ink-soft)]">取消</button>
+          </div>
+        </div>
+      )}
       {capture && (
         <div className="rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] p-3 text-[12.5px]" data-no-flip>
           <p className="mb-1.5">已选中：<span className="font-mono">{capture.text.slice(0, 80)}{capture.text.length > 80 ? "…" : ""}</span></p>
