@@ -904,7 +904,7 @@ body.zen-mode main {
   border-radius: 3px;
 }
 
-/* 相关词汇面板：右侧滑入 + 毛玻璃（视觉优化 2026-09-08 用户反馈） */
+/* 相关词汇面板：右侧滑入（交互优化 2026-09-08） */
 @keyframes l3-panel-slide-in {
   from {
     opacity: 0;
@@ -918,14 +918,7 @@ body.zen-mode main {
 
 .l3-word-panel {
   animation: l3-panel-slide-in 0.22s ease-out;
-  /* 毛玻璃：半透明表面 + 背景虚化；不支持 backdrop-filter 时退化为高不透明度纯色 */
-  background: color-mix(in srgb, var(--color-surface) 78%, transparent);
-  backdrop-filter: blur(16px) saturate(1.4);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
-}
-
-@supports not (backdrop-filter: blur(1px)) {
-  .l3-word-panel {
-    background: color-mix(in srgb, var(--color-surface) 96%, transparent);
-  }
+  /* 实心不透明表面：backdrop-filter 在部分环境（祖先含 filter/transform 的堆叠上下文）
+     会静默失效，半透明会导致背景文字透出重叠——可读性优先，不用玻璃材质 */
+  background: var(--color-surface);
 }
