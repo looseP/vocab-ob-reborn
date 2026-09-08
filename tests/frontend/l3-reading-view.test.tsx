@@ -5,7 +5,7 @@ import { act } from "react";
 import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { L3ReadingView, computeGlobalOffsets } from "@/frontend/components/l3/L3ReadingView";
 
@@ -115,6 +115,57 @@ describe("L3ReadingView", () => {
     });
     // 深链断言：跳词卡由 Link to=/words/delta 完成
     expect(screen.getByText(/Gamma delta epsilon/).closest("a")).toBeTruthy();
+  });
+
+  // 用户反馈 2026-09-08：高亮词渲染为 <a href> 后，浏览器把从链接上起手的拖动
+  // 当作"拖链接"（原生 drag source），划词选择被劫持。修复 = draggable=false +
+  // 存在非折叠选区时点击不跳转（否则选择刚完成就导航走，圈记条永远出不来）。
+  it("keeps highlight links non-draggable so drag starts text selection", async () => {
+    await renderView("s1", SPACE_WITH_LINK);
+    await screen.findByText(/Gamma delta epsilon/);
+    const link = screen.getByText(/Gamma delta epsilon/).closest("a") as HTMLAnchorElement;
+    expect(link.getAttribute("draggable")).toBe("false");
+  });
+
+  it("suppresses highlight navigation while a text selection is active", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock.mockResolvedValue(SPACE_WITH_LINK);
+    // 用真实路由断言导航结果（Link 自身也会 preventDefault，spy 无法区分拦截者）
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push({ root, container });
+    await act(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(
+            Routes,
+            null,
+            createElement(Route, { path: "/", element: createElement(L3ReadingView, { sourceId: "s1" }) as ReactElement }),
+            createElement(Route, { path: "/words/:slug", element: createElement("div", null, "WORD-PAGE") as ReactElement }),
+          ),
+        ) as ReactElement,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const link = screen.getByText(/Gamma delta epsilon/).closest("a") as HTMLAnchorElement;
+    // 非折叠选区（划词中/刚划完）→ 点击不跳词卡，圈记条不被导航打断
+    Object.defineProperty(window, "getSelection", {
+      value: () => ({ isCollapsed: false }),
+      configurable: true,
+    });
+    await act(async () => { fireEvent.click(link); });
+    expect(screen.queryByText("WORD-PAGE")).toBeNull();
+    // 折叠选区（普通点击）→ 正常跳词卡
+    Object.defineProperty(window, "getSelection", {
+      value: () => ({ isCollapsed: true }),
+      configurable: true,
+    });
+    await act(async () => { fireEvent.click(link); });
+    await screen.findByText("WORD-PAGE");
   });
 
   it("shows empty state when source has no content_text", async () => {

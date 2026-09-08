@@ -168,7 +168,18 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
     const slug = r.slug;
     pieces.push(
       slug ? (
-        <Link key={`m${i}`} to={`/words/${encodeURIComponent(slug)}`} className="rounded bg-[var(--color-accent-soft)] px-0.5 text-[var(--color-accent)] hover:underline">
+        <Link
+          key={`m${i}`}
+          to={`/words/${encodeURIComponent(slug)}`}
+          className="rounded bg-[var(--color-accent-soft)] px-0.5 text-[var(--color-accent)] hover:underline"
+          draggable={false}
+          onClick={(e) => {
+            // 链接原生是拖拽源，从高亮词起手拖动会被劫持为"拖链接"；draggable=false 恢复划词。
+            // 划词产生的非折叠选区下点击也不跳转，否则选择刚完成就导航走、圈记条出不来。
+            const sel = window.getSelection();
+            if (sel && !sel.isCollapsed) e.preventDefault();
+          }}
+        >
           {text.slice(r.start, r.end)}
         </Link>
       ) : (
