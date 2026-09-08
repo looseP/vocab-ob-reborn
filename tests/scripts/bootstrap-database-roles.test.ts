@@ -77,8 +77,9 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(packageJson.scripts["rls:acceptance:up"]).toContain("--wait --wait-timeout 60 postgres");
     expect(packageJson.scripts["rls:acceptance:migrate"]).toContain("vocab_migration");
     expect(packageJson.scripts["rls:acceptance:migrate"]).not.toContain("vocab_rls_admin:vocab_rls_admin_local_only");
+    // 2026-09-08：验收链尾部追加 rls:acceptance:test:l3（L3 素材空间真实库 RLS 隔离）
     expect(packageJson.scripts["rls:acceptance:verify"]).toBe(
-      "npm run rls:acceptance:roles:prepare && npm run rls:acceptance:migrate && npm run rls:acceptance:roles:converge && npm run rls:acceptance:bootstrap && npm run rls:acceptance:test",
+      "npm run rls:acceptance:roles:prepare && npm run rls:acceptance:migrate && npm run rls:acceptance:roles:converge && npm run rls:acceptance:bootstrap && npm run rls:acceptance:test && npm run rls:acceptance:test:l3",
     );
   });
 
