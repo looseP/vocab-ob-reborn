@@ -50,6 +50,19 @@ export function WordL3Contexts({ slug }: { slug: string }) {
     }
   };
 
+  // P0 语境管理出口（2026-09-08 评估）：capture-first 无门控，噪音靠随手清理而非门控。
+  // 复用既有 DELETE /api/l3/contexts/:id（服务端 blockers 409 保护）；occurrences 随 FK cascade。
+  const deleteContext = async (contextId: string) => {
+    if (!window.confirm("删除这条语境记录？阅读视图中的对应高亮将一并移除，此操作不可恢复。")) return;
+    try {
+      await apiFetch(`/l3/contexts/${encodeURIComponent(contextId)}`, { method: "DELETE", timeoutMs: 20_000 });
+      addToast("success", "已删除该语境记录");
+      await reload();
+    } catch (err) {
+      addToast("error", err instanceof BrowserApiError ? err.message : "删除失败，请重试");
+    }
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex gap-2">
@@ -74,9 +87,18 @@ export function WordL3Contexts({ slug }: { slug: string }) {
           {items.map((item) => (
             <li key={item.context.id} className="rounded-lg border border-[var(--color-border)] px-3 py-2">
               <p className="text-[13px] leading-relaxed">{item.context.text}</p>
-              <Link to={`/l3?sourceId=${encodeURIComponent(item.source.id)}`} className="mt-1 inline-block text-[11px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]">
-                —— {item.source.title} · 在素材空间查看
-              </Link>
+              <p className="mt-1 flex items-center gap-3 text-[11px] text-[var(--color-ink-soft)]">
+                <Link to={`/l3?sourceId=${encodeURIComponent(item.source.id)}`} className="hover:text-[var(--color-accent)]">
+                  —— {item.source.title} · 在素材空间查看
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => void deleteContext(item.context.id)}
+                  className="transition-colors hover:text-red-500"
+                >
+                  删除
+                </button>
+              </p>
             </li>
           ))}
         </ul>

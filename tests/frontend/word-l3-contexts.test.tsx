@@ -102,4 +102,54 @@ describe("WordL3Contexts", () => {
     await screen.findByText(/新造的句子/);
     expect((apiFetch as ReturnType<typeof vi.fn>).mock.calls[1][0]).toBe("/l3/quick-context");
   });
+
+  // P0 语境管理出口（2026-09-08 评估）：capture-first 无门控必然产生噪音，
+  // 用户面必须有删除出口（复用 DELETE /api/l3/contexts/:id + 服务端 blockers）。
+  const realConfirm = window.confirm.bind(window);
+  afterEach(() => {
+    Object.defineProperty(window, "confirm", { value: realConfirm, configurable: true, writable: true });
+  });
+
+  it("deletes a context after confirmation and reloads the list", async () => {
+    (apiFetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(PAGE) // 初始加载
+      .mockResolvedValueOnce({ deleted: { entityType: "context", id: "c1" }, activeReadInvalidation: true }) // DELETE
+      .mockResolvedValueOnce({ items: [], limit: 10, cursor: null, nextCursor: null }); // reload
+    Object.defineProperty(window, "confirm", { value: () => true, configurable: true, writable: true });
+    await renderContexts("ephemeral", PAGE);
+    await waitFor(() => expect(screen.getByText(/ephemeral beauty/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByText("删除"));
+    });
+    await screen.findByText("暂无语境记录");
+    const calls = (apiFetch as ReturnType<typeof vi.fn>).mock.calls;
+    const deleteCall = calls.find(([url]) => String(url) === "/l3/contexts/c1");
+    expect(deleteCall).toBeTruthy();
+    expect((deleteCall![1] as { method?: string }).method).toBe("DELETE");
+  });
+
+  it("keeps the context when confirmation is dismissed", async () => {
+    (apiFetch as ReturnType<typeof vi.fn>).mockResolvedValue(PAGE);
+    Object.defineProperty(window, "confirm", { value: () => false, configurable: true, writable: true });
+    await renderContexts("ephemeral", PAGE);
+    await waitFor(() => expect(screen.getByText(/ephemeral beauty/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByText("删除"));
+    });
+    await waitFor(() => expect(screen.getByText(/ephemeral beauty/)).toBeTruthy());
+    expect((apiFetch as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url) === "/l3/contexts/c1")).toBe(false);
+  });
+
+  it("toasts a friendly error when delete fails", async () => {
+    (apiFetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(PAGE)
+      .mockRejectedValueOnce(new Error("conflict"));
+    Object.defineProperty(window, "confirm", { value: () => true, configurable: true, writable: true });
+    await renderContexts("ephemeral", PAGE);
+    await waitFor(() => expect(screen.getByText(/ephemeral beauty/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByText("删除"));
+      await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", "删除失败，请重试"));
+    });
+  });
 });
