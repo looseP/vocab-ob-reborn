@@ -258,7 +258,6 @@ describe("L3ContextRepository", () => {
     expect(sql).toContain("WHERE id = $1::uuid AND user_id = $2::uuid");
     expect(sql).toContain("NOT EXISTS");
     expect(sql).toContain("FROM l3_contexts");
-    expect(sql).toContain("FROM l3_occurrences");
     expect(sql).toContain("FROM l3_context_links");
     expect(sql).toContain("FROM l3_import_jobs");
     expect(sql).toContain("target_type = 'source'");
@@ -266,6 +265,8 @@ describe("L3ContextRepository", () => {
     expect(sql).toContain("lower(l.target_id) = l3_sources.id::text");
     expect(sql).toContain("lower(inbound.target_id) = l3_contexts.id::text");
     expect(sql).toContain("RETURNING *");
+    // P0 语境管理出口（2026-09-08）：occurrences 随 FK cascade，context 删除 SQL 不再守卫
+    expect(sql).not.toContain("FROM l3_occurrences");
     expect(mock.calls[0].params).toEqual(["src-1", "u1"]);
     expect(mock.calls[1].params).toEqual(["ctx-1", "u1"]);
   });

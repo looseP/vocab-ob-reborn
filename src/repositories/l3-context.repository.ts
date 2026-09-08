@@ -556,17 +556,13 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
   }
 
   async deleteContext(userId: string, contextId: string): Promise<L3ContextRow | null> {
+    // P0 语境管理出口（2026-09-08 评估修正）：occurrences 与同 context 的 context_links
+    // 的 FK 均 ON DELETE CASCADE，随本行一并删除，不设守卫；唯一守卫是 inbound 软引用
+    // （target_type='context' 且 target_id 指向本行——无 FK，删源会留悬空引用）。
+    // 与 services 层 hasContextDeleteBlockers 的语义保持一致。
     return this.queryOne<L3ContextRow>(
       `DELETE FROM l3_contexts
        WHERE id = $1::uuid AND user_id = $2::uuid
-         AND NOT EXISTS (
-           SELECT 1 FROM l3_occurrences o
-           WHERE o.context_id = l3_contexts.id AND o.user_id = l3_contexts.user_id
-         )
-         AND NOT EXISTS (
-           SELECT 1 FROM l3_context_links l
-           WHERE l.context_id = l3_contexts.id AND l.user_id = l3_contexts.user_id
-         )
          AND NOT EXISTS (
            SELECT 1 FROM l3_context_links inbound
            WHERE inbound.target_type = 'context'
