@@ -25,7 +25,8 @@ describe("existing local volume role upgrade", () => {
     // 0018: refresh_l2_cache / finalize_l2_content_hash 守卫放宽为已认证 actor（候选池 content-first）
     // 0019: note_entries 条目制笔记（建表 + RLS + 文档笔记迁移为条目）
     // 0020: l3_sources 素材正文捕获（content_text/content_hash + 用户内唯一索引，L3 素材空间 MVP）
-    expect(authoritativeMigrationCount()).toBe(21);
+    // 0021: l3_sources/l3_contexts UPDATE grant (FOR UPDATE row locks)
+    expect(authoritativeMigrationCount()).toBe(22);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

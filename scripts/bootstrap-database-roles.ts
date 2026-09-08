@@ -310,6 +310,9 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
       public.word_filter_facets, public.word_tags TO vocab_app;
     GRANT SELECT, INSERT, DELETE ON TABLE public.l3_sources, public.l3_contexts,
       public.l3_occurrences, public.l3_context_links TO vocab_app;
+    -- 圈记/上下文写入路径用 SELECT ... FOR UPDATE 行锁（lockSourceByIdForUser 等），
+    -- PG 要求 FOR UPDATE 具备表级 UPDATE 权限，缺省会 500（permission denied for table l3_sources）。
+    GRANT UPDATE ON TABLE public.l3_sources, public.l3_contexts TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_import_jobs, public.l3_proposals,
       public.l3_proposal_items TO vocab_app;
     GRANT SELECT, INSERT ON TABLE public.l3_recommendation_runs TO vocab_app;

@@ -358,8 +358,9 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.tags": ["SELECT"],
       "public.word_filter_facets": ["SELECT"],
       "public.word_tags": ["SELECT"],
-      "public.l3_sources": ["SELECT", "INSERT", "DELETE"],
-      "public.l3_contexts": ["SELECT", "INSERT", "DELETE"],
+      // UPDATE 供 SELECT ... FOR UPDATE 行锁使用（圈记/上下文锁定路径）
+      "public.l3_sources": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      "public.l3_contexts": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.l3_occurrences": ["SELECT", "INSERT", "DELETE"],
       "public.l3_context_links": ["SELECT", "INSERT", "DELETE"],
       "public.l3_import_jobs": ["SELECT", "INSERT", "UPDATE"],
