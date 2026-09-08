@@ -339,8 +339,8 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.auth_sessions": ["SELECT", "INSERT", "UPDATE"],
       "public.login_rate_limits": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.profiles": ["SELECT", "UPDATE"],
-      // 0023: DELETE 用于详情页硬删 stub 词条（触发器强制 stub-only）
-      "public.words": ["SELECT", "DELETE"],
+      // 0023/0024: DELETE 用于守卫删除；UPDATE 仅用于 FOR UPDATE 行锁（无 UPDATE policy，实际更新被 RLS 拦截）
+      "public.words": ["SELECT", "DELETE", "UPDATE"],
       "public.word_l2_content": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.user_word_progress": ["SELECT", "INSERT", "UPDATE"],
       "public.user_word_l2_progress": ["SELECT", "INSERT", "UPDATE"],

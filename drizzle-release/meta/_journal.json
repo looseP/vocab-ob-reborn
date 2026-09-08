@@ -169,6 +169,20 @@
       "when": 1788875000000,
       "tag": "0023_word_stub_delete_grant",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788879500000,
+      "tag": "0024_word_stub_rowlock_update",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788880000000,
+      "tag": "0025_word_stub_rowlock_policy",
+      "breakpoints": true
     }
   ]
 }

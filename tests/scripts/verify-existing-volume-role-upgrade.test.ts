@@ -27,8 +27,10 @@ describe("existing local volume role upgrade", () => {
     // 0020: l3_sources 素材正文捕获（content_text/content_hash + 用户内唯一索引，L3 素材空间 MVP）
     // 0021: l3_sources/l3_contexts UPDATE grant (FOR UPDATE row locks)
     // 0022: l3_occurrences.bound_sense（语境义快照，Bound sense 列）
-    // 0023: words DELETE grant + stub-only 触发器/DELETE policy（详情页 stub 词条硬删除）
-    expect(authoritativeMigrationCount()).toBe(24);
+    // 0023: words DELETE grant + RLS DELETE policy（详情页 stub 词条硬删除）
+    // 0024: words UPDATE grant（仅用于 FOR UPDATE 行锁，0021 同一陷阱）
+    // 0025: words stub-only UPDATE policy（RLS 下 FOR UPDATE 要求行同时通过 UPDATE policy）
+    expect(authoritativeMigrationCount()).toBe(26);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

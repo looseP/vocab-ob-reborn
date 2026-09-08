@@ -269,9 +269,11 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     GRANT SELECT, INSERT, UPDATE ON TABLE public.auth_sessions TO vocab_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.login_rate_limits TO vocab_app;
     GRANT SELECT ON TABLE public.profiles TO vocab_app;
-    -- 0023: 详情页硬删除 stub 词条（definition_md=''，DB 触发器强制 stub-only；
-    -- RLS DELETE policy words_stub_delete_app 由迁移 0023 提供，缺 policy 会静默 0 行）。
-    GRANT SELECT, DELETE ON TABLE public.words TO vocab_app;
+    -- 0023/0024: 详情页硬删 stub 词条（definition_md=''，RLS DELETE policy
+    -- words_stub_delete_app 由迁移提供）。DELETE 用于守卫删除；UPDATE 仅用于
+    -- FOR UPDATE 行锁（0021 同一陷阱），words 无 vocab_app 的 UPDATE policy，
+    -- 实际 UPDATE 仍被 RLS 静默拦截。
+    GRANT SELECT, DELETE, UPDATE ON TABLE public.words TO vocab_app;
 
     -- vocab_batch_import: dedicated minimal-privilege role for bulk word import.
     -- Writes words (INSERT/UPDATE) via a dedicated connection pool, decoupled
