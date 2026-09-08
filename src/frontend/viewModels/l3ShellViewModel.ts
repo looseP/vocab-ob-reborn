@@ -11,3 +11,6 @@ export const L3_SHELL_SECTIONS: Array<{ id: L3ShellSection; label: string }> = [
   { id: "proposals", label: "提议审查" },
   { id: "recommendations", label: "推荐" },
 ];
+
+/** 用户主流程入口（侧栏一级项）；其余 section 归入侧栏底部「工程工具」折叠组。 */
+export const L3_SHELL_CORE_SECTIONS: L3ShellSection[] = ["source", "graph"];

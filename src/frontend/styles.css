@@ -850,3 +850,39 @@ body.zen-mode main {
   font-size: 0.85rem;
   color: var(--color-ink);
 }
+
+.l3-nav-tools {
+  margin-top: 0.6rem;
+  border-top: 1px dashed var(--color-border);
+  padding-top: 0.5rem;
+}
+
+.l3-nav-tools summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: var(--color-ink-soft);
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.5rem;
+  list-style: none;
+}
+
+.l3-nav-tools summary::-webkit-details-marker {
+  display: none;
+}
+
+.l3-nav-tools summary::before {
+  content: "▸ ";
+}
+
+.l3-nav-tools[open] summary::before {
+  content: "▾ ";
+}
+
+.l3-nav-tools summary:hover {
+  color: var(--color-ink);
+  background: var(--color-surface-muted);
+}
+
+.l3-nav-tools-list {
+  margin-top: 0.35rem;
+}
