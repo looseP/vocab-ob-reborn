@@ -5,7 +5,7 @@
  * 选区圈记交互（S3）通过 onSelectionAvailable 挂到同一容器。
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { findSentenceRange } from "@/services/l3-segmentation";
@@ -73,6 +73,7 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
     | { state: "miss" }
   >({ state: "idle" });
   const lookupSeq = useRef(0);
+  const navigate = useNavigate();
   const { addToast } = useToast();
 
   const reload = useCallback(async () => {
@@ -168,20 +169,21 @@ export function L3ReadingView({ sourceId, onBack }: { sourceId: string; onBack?:
     const slug = r.slug;
     pieces.push(
       slug ? (
-        <Link
+        // 已绑定高亮用 span 而非 <a>：Chromium 从链接上起手 mousedown 不启动文本选择
+        // （拖动被当成点击导航，draggable=false 也无效）；span 保证划词可用，
+        // onClick（无活动选区时）编程式跳词卡，保留"点击高亮跳词卡"交互（FR-6.2）。
+        <span
           key={`m${i}`}
-          to={`/words/${encodeURIComponent(slug)}`}
-          className="rounded bg-[var(--color-accent-soft)] px-0.5 text-[var(--color-accent)] hover:underline"
-          draggable={false}
-          onClick={(e) => {
-            // 链接原生是拖拽源，从高亮词起手拖动会被劫持为"拖链接"；draggable=false 恢复划词。
-            // 划词产生的非折叠选区下点击也不跳转，否则选择刚完成就导航走、圈记条出不来。
+          className="cursor-pointer rounded bg-[var(--color-accent-soft)] px-0.5 text-[var(--color-accent)] hover:underline"
+          title="点击查看词卡"
+          onClick={() => {
             const sel = window.getSelection();
-            if (sel && !sel.isCollapsed) e.preventDefault();
+            if (sel && !sel.isCollapsed) return;
+            navigate(`/words/${encodeURIComponent(slug)}`);
           }}
         >
           {text.slice(r.start, r.end)}
-        </Link>
+        </span>
       ) : (
         <mark key={`m${i}`} className="rounded bg-[var(--color-accent-soft)] px-0.5">{text.slice(r.start, r.end)}</mark>
       ),
