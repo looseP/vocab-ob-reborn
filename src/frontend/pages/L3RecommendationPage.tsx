@@ -324,7 +324,14 @@ export function L3RecommendationPage({ client, onNavigate }: L3RecommendationPag
                   <button disabled={isBusy} onClick={() => void refreshSelected()} type="button">
                     {status === "refreshing" ? "Refreshing..." : "Refresh item"}
                   </button>
-                  <button disabled={!itemActions.canAccept || isBusy} onClick={() => void accept()} type="button">
+                  {/* P0-4：仅 link_gap 有真实消费者（自动建提案）；其余类型 accept 只落
+                      future_consumer 占位——禁用按钮，避免"接受了却什么都没发生"。 */}
+                  <button
+                    disabled={!itemActions.canAccept || isBusy || selectedItem.recommendation_type !== "link_gap"}
+                    title={selectedItem.recommendation_type === "link_gap" ? undefined : "Accept is only wired for link_gap recommendations"}
+                    onClick={() => void accept()}
+                    type="button"
+                  >
                     {status === "accepting" ? "Accepting..." : "Accept"}
                   </button>
                   <button className="danger-button" disabled={!itemActions.canReject || isBusy} onClick={() => void reject()} type="button">
@@ -367,8 +374,8 @@ export function L3RecommendationPage({ client, onNavigate }: L3RecommendationPag
               </dl>
 
               <div className="validation-panel invalid">
-                <strong>{selectedItem.recommendation_type === "link_gap" ? "Accept creates a proposal bridge." : "Accept records a future action payload."}</strong>
-                <span>{selectedItem.recommendation_type === "link_gap" ? "Open Proposal Review and confirm before an active link exists." : "No active L3 rows are created by accepting this item."}</span>
+                <strong>{selectedItem.recommendation_type === "link_gap" ? "Accept creates a proposal bridge." : "Accept is disabled for this recommendation type."}</strong>
+                <span>{selectedItem.recommendation_type === "link_gap" ? "Open Proposal Review and confirm before an active link exists." : "Only link_gap accepts have a real consumer today; other types have no automatic action yet. Use Reject instead."}</span>
               </div>
 
               {acceptResult ? (
