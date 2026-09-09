@@ -546,9 +546,10 @@ export function WordDetailPage() {
         <WordNotes slug={word.slug} textbookMd={word.body_md} />
       </div>
 
-      {/* L3 语境：素材空间中含该词的语境记录，每条深链直达阅读视图（词卡↔素材双向跳转） */}
+      {/* L3 语境：素材空间中含该词的语境记录，每条深链直达阅读视图（词卡↔素材双向跳转）；
+          fallbackSense 供语境自测（Context quiz）在 bound_sense 为空时兜底测试 */}
       <SectionCard title="L3 语境" id="l3-contexts">
-        <WordL3Contexts slug={word.slug} />
+        <WordL3Contexts slug={word.slug} fallbackSense={word.short_definition ?? null} />
       </SectionCard>
     </div>
   );

@@ -5,9 +5,11 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { useToast } from "@/frontend/components/ui/Toast";
+import { Reveal } from "@/frontend/components/ui/Reveal";
 
 export interface WordL3ListItem {
   context: { id: string; text: string; created_at: string };
@@ -16,11 +18,15 @@ export interface WordL3ListItem {
   occurrence?: { bound_sense: string | null } | null;
 }
 
-export function WordL3Contexts({ slug }: { slug: string }) {
+export function WordL3Contexts({ slug, fallbackSense }: { slug: string; fallbackSense?: string | null }) {
   const [items, setItems] = useState<WordL3ListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  // Context quiz（grill 定案 2026-09-09）：无状态检索练习——盖 bound_sense 看原句
+  // 回忆"这个词在这句话里的意思"。零记录、无自评按钮（援引 Preview mode 先例）；
+  // bound_sense 为空时 fallback 到词条 short_definition，UI 不区分。
+  const [quizMode, setQuizMode] = useState(false);
   const { addToast } = useToast();
 
   const reload = useCallback(async () => {
@@ -71,6 +77,23 @@ export function WordL3Contexts({ slug }: { slug: string }) {
 
   return (
     <div className="space-y-2">
+      {items !== null && items.length > 0 && (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] text-[var(--color-ink-soft)]">
+            {quizMode ? "先回忆：这个词在这句话里是什么意思？再点击揭示。" : "自测：遮住释义，看原句回忆。"}
+          </p>
+          <button
+            type="button"
+            data-testid="context-quiz-toggle"
+            onClick={() => setQuizMode((v) => !v)}
+            title="语境自测：遮住绑定释义，先回忆再点击揭示"
+            className="flex shrink-0 items-center gap-1 rounded-lg border border-[var(--color-border)] px-2 py-1 text-[11px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          >
+            {quizMode ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            自测{quizMode ? "开" : "关"}
+          </button>
+        </div>
+      )}
       <div className="flex gap-2">
         <textarea
           value={draft}
@@ -90,11 +113,16 @@ export function WordL3Contexts({ slug }: { slug: string }) {
       )}
       {items !== null && items.length > 0 && (
         <ul className="space-y-2">
-          {items.map((item) => (
+          {items.map((item) => {
+            // Context quiz：自测态下释义（bound_sense，空则 fallback 词条短释义）被
+            // Reveal 遮盖，先回忆再点击揭示；非自测态维持既有展示（仅 bound_sense）。
+            const sense = item.occurrence?.bound_sense ?? (quizMode ? fallbackSense ?? null : null);
+            return (
             <li key={item.context.id} className="rounded-lg border border-[var(--color-border)] px-3 py-2">
-              {/* Bound sense（grill 2026-09-08）：绑定释义优先显示，无则正文即语境 */}
-              {item.occurrence?.bound_sense && (
-                <p className="mb-0.5 text-[11.5px] text-[var(--color-accent)]">绑定释义：{item.occurrence.bound_sense}</p>
+              {sense && (
+                <p className="mb-0.5 text-[11.5px] text-[var(--color-accent)]">
+                  绑定释义：{quizMode ? <Reveal>{sense}</Reveal> : sense}
+                </p>
               )}
               <p className="text-[13px] leading-relaxed">{item.context.text}</p>
               <p className="mt-1 flex items-center gap-3 text-[11px] text-[var(--color-ink-soft)]">
@@ -110,7 +138,8 @@ export function WordL3Contexts({ slug }: { slug: string }) {
                 </button>
               </p>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>

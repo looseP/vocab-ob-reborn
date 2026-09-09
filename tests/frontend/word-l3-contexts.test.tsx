@@ -32,7 +32,7 @@ reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
-async function renderContexts(slug: string, page: unknown): Promise<void> {
+async function renderContexts(slug: string, page: unknown, fallbackSense?: string | null): Promise<void> {
   const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
   apiFetchMock.mockResolvedValue(page);
   const container = document.createElement("div");
@@ -44,7 +44,7 @@ async function renderContexts(slug: string, page: unknown): Promise<void> {
       createElement(
         MemoryRouter,
         null,
-        createElement(WordL3Contexts, { slug }) as ReactElement,
+        createElement(WordL3Contexts, { slug, fallbackSense }) as ReactElement,
       ),
     );
     await Promise.resolve();
@@ -165,5 +165,59 @@ describe("WordL3Contexts", () => {
       fireEvent.click(screen.getByText("删除"));
       await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", expect.stringContaining("关联引用")));
     });
+  });
+
+  // ── Context quiz（grill 2026-09-09）：无状态语境自测 ──────────────────────
+
+  const QUIZ_PAGE = {
+    items: [
+      {
+        context: { id: "q1", text: "The ephemeral beauty of cherry blossoms.", created_at: "2026-09-07T00:00:00Z" },
+        source: { id: "s1", title: "阅读 Text B" },
+        occurrence: { bound_sense: "转瞬即逝的" },
+      },
+      {
+        context: { id: "q2", text: "An enduring friendship.", created_at: "2026-09-08T00:00:00Z" },
+        source: { id: "s2", title: "阅读 Text C" },
+      },
+    ],
+    limit: 10, cursor: null, nextCursor: null,
+  };
+
+  it("hides the quiz toggle when there are no contexts", async () => {
+    await renderContexts("ephemeral", { items: [], limit: 10, cursor: null, nextCursor: null });
+    await waitFor(() => expect(screen.getByText("暂无语境记录")).toBeTruthy());
+    expect(screen.queryByTestId("context-quiz-toggle")).toBeNull();
+  });
+
+  it("keeps bound sense plain outside quiz mode and reveals it inside", async () => {
+    await renderContexts("ephemeral", QUIZ_PAGE);
+    await waitFor(() => expect(screen.getByText(/ephemeral beauty/)).toBeTruthy());
+    // 非自测态：绑定释义平铺可见，无 Reveal 元素
+    expect(screen.getByText("绑定释义：转瞬即逝的")).toBeTruthy();
+    expect(screen.queryByTestId("reveal")).toBeNull();
+
+    await act(async () => { fireEvent.click(screen.getByTestId("context-quiz-toggle")); });
+    // 自测态：释义进 Reveal（初始遮盖），点击揭示
+    const reveals = screen.getAllByTestId("reveal");
+    expect(reveals.length).toBe(1);
+    expect(reveals[0].getAttribute("data-shown")).toBe("false");
+    expect(reveals[0].textContent).toContain("转瞬即逝的");
+    await act(async () => { fireEvent.click(reveals[0]); });
+    expect(reveals[0].getAttribute("data-shown")).toBe("true");
+  });
+
+  it("falls back to the word short definition in quiz mode when bound sense is empty", async () => {
+    await renderContexts("ephemeral", QUIZ_PAGE, "易消逝的；短促的");
+    await waitFor(() => expect(screen.getByText(/enduring friendship/)).toBeTruthy());
+    // 非自测态：无 bound_sense 的条目不渲染释义行（维持既有展示）
+    expect(screen.queryByText(/绑定释义：易消逝的/)).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByTestId("context-quiz-toggle")); });
+    // 自测态：fallback 短释义出现且被遮盖，UI 与 bound_sense 不区分
+    const reveals = screen.getAllByTestId("reveal");
+    expect(reveals.length).toBe(2);
+    const fallbackReveal = reveals.find((r) => r.textContent?.includes("易消逝的"));
+    expect(fallbackReveal).toBeTruthy();
+    expect(fallbackReveal!.getAttribute("data-shown")).toBe("false");
   });
 });
