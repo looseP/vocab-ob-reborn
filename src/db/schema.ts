@@ -897,8 +897,12 @@ export const l3Sources = pgTable("l3_sources", {
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 }, (table) => [
-	index("idx_l3_sources_user_created").on(table.userId, table.createdAt),
-	unique("l3_sources_id_user_id_unique").on(table.id, table.userId),
+        index("idx_l3_sources_user_created").on(table.userId, table.createdAt),
+        // 0026：书架搜索 pg_trgm GIN 索引（ILIKE %q% 全表扫描 → Bitmap Index Scan；
+        // 同 words 表 idx_words_*_trgm 先例，扩展由 0000 baseline 创建）
+        index("idx_l3_sources_title_trgm").using("gin", table.title.asc().nullsLast().op("gin_trgm_ops")),
+        index("idx_l3_sources_content_trgm").using("gin", table.contentText.asc().nullsLast().op("gin_trgm_ops")),
+        unique("l3_sources_id_user_id_unique").on(table.id, table.userId),
 	uniqueIndex("l3_sources_user_content_hash_unique").on(table.userId, table.contentHash).where(sql`content_hash IS NOT NULL`),
 	foreignKey({
 			columns: [table.wordbookId, table.userId],

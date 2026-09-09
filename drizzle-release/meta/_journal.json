@@ -183,6 +183,13 @@
       "when": 1788880000000,
       "tag": "0025_word_stub_rowlock_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788882652823,
+      "tag": "0026_mature_multiple_man",
+      "breakpoints": true
     }
   ]
 }

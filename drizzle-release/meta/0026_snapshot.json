@@ -1,6 +1,6 @@
 {
-  "id": "aa9531a4-5e35-476b-97e1-dba0ff614045",
-  "prevId": "4e8acaa6-b12b-48ca-b8e7-69fbb3c0d3c5",
+  "id": "48e62a03-7ae9-467b-85e3-0f2a92ea5338",
+  "prevId": "6a18524c-c127-4a71-811d-2dab0c6f5945",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2787,6 +2787,38 @@
           "isUnique": false,
           "concurrently": false,
           "method": "btree",
+          "with": {}
+        },
+        "idx_l3_sources_title_trgm": {
+          "name": "idx_l3_sources_title_trgm",
+          "columns": [
+            {
+              "expression": "title",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last",
+              "opclass": "gin_trgm_ops"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
+          "with": {}
+        },
+        "idx_l3_sources_content_trgm": {
+          "name": "idx_l3_sources_content_trgm",
+          "columns": [
+            {
+              "expression": "content_text",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last",
+              "opclass": "gin_trgm_ops"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
           "with": {}
         },
         "l3_sources_user_content_hash_unique": {

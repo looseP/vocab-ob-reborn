@@ -30,7 +30,8 @@ describe("existing local volume role upgrade", () => {
     // 0023: words DELETE grant + RLS DELETE policy（详情页 stub 词条硬删除）
     // 0024: words UPDATE grant（仅用于 FOR UPDATE 行锁，0021 同一陷阱）
     // 0025: words stub-only UPDATE policy（RLS 下 FOR UPDATE 要求行同时通过 UPDATE policy）
-    expect(authoritativeMigrationCount()).toBe(26);
+    // 0026: l3_sources 书架搜索 pg_trgm GIN 索引（title + content_text，ILIKE 加速）
+    expect(authoritativeMigrationCount()).toBe(27);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
