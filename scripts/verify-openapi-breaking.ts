@@ -336,7 +336,11 @@ export interface GitResult {
 export type GitRunner = (args: string[], cwd: string) => GitResult;
 
 const runGit: GitRunner = (args, cwd) => {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  // The OpenAPI snapshot is a single-line-ish document that already exceeds
+  // 1.2 MB, so the 1 MiB spawnSync default silently truncates it and surfaces
+  // as ENOBUFS with status=null — which reads like "git is broken" rather than
+  // "the buffer is too small". Give every git read 64 MiB of headroom.
+  const result = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   return {
     status: result.status,
     stdout: result.stdout ?? "",
