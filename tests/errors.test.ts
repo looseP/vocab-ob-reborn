@@ -10,6 +10,7 @@ import {
   DbConnectionError,
   errorToResponse,
   isDbConnectionError,
+  isConstraintViolation,
 } from "@/errors";
 
 describe("Error hierarchy", () => {
@@ -85,6 +86,74 @@ describe("errorToResponse", () => {
     const { status, body } = errorToResponse(dbErr);
     expect(status).toBe(503);
     expect(body.code).toBe("DB_UNAVAILABLE");
+  });
+});
+
+describe("isConstraintViolation", () => {
+  it("returns true for every mapped SQLSTATE", () => {
+    expect(isConstraintViolation({ code: "23503" })).toBe(true);
+    expect(isConstraintViolation({ code: "23505" })).toBe(true);
+    expect(isConstraintViolation({ code: "23502" })).toBe(true);
+    expect(isConstraintViolation({ code: "23514" })).toBe(true);
+    expect(isConstraintViolation({ code: "22P02" })).toBe(true);
+  });
+
+  it("returns false for non-constraint errors", () => {
+    expect(isConstraintViolation({ code: "42501" })).toBe(false); // RLS — deliberately unmapped
+    expect(isConstraintViolation({ code: "08006" })).toBe(false); // connection, not constraint
+    expect(isConstraintViolation({ code: "" })).toBe(false);
+    expect(isConstraintViolation({})).toBe(false);
+    expect(isConstraintViolation({ code: 23505 })).toBe(false); // non-string code
+    expect(isConstraintViolation(null)).toBe(false);
+    expect(isConstraintViolation("23505")).toBe(false);
+    expect(isConstraintViolation(undefined)).toBe(false);
+  });
+
+  it("does not resolve Object.prototype keys as SQLSTATEs", () => {
+    // A plain MAP lookup would resolve inherited Object.prototype members
+    // ("constructor", "toString", ...) and produce a malformed response;
+    // the own-property guard must fall through to the 500 branch instead.
+    expect(isConstraintViolation({ code: "toString" })).toBe(false);
+    expect(isConstraintViolation({ code: "constructor" })).toBe(false);
+    expect(isConstraintViolation({ code: "__proto__" })).toBe(false);
+  });
+});
+
+describe("errorToResponse — SQLSTATE constraint mapping", () => {
+  it.each([
+    ["23503", 422, "FOREIGN_KEY_VIOLATION", "Referenced resource does not exist."],
+    ["23505", 409, "CONFLICT", "Resource already exists."],
+    ["23502", 400, "NOT_NULL_VIOLATION", "Required field is missing."],
+    ["23514", 400, "CHECK_VIOLATION", "Value is not allowed."],
+    ["22P02", 400, "INVALID_INPUT", "Invalid input format."],
+  ])("maps %s to %i %s", (sqlstate, status, code, error) => {
+    const pgError = Object.assign(new Error("db internals: detail / table / column"), {
+      code: sqlstate,
+      detail: "secret detail",
+      constraint: "secret_constraint_name",
+    });
+    const res = errorToResponse(pgError);
+    expect(res.status).toBe(status);
+    expect(res.body).toEqual({ error, code });
+    expect(JSON.stringify(res.body)).not.toContain("secret");
+  });
+
+  it("keeps connection-state SQLSTATEs on the 503 branch, never as client errors", () => {
+    // Order guard: isDbConnectionError must win over constraint mapping.
+    const res = errorToResponse(Object.assign(new Error("connection terminated"), { code: "08003" }));
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("DB_UNAVAILABLE");
+  });
+
+  it("falls through to 500 for unmapped SQLSTATEs and Object.prototype key names", () => {
+    const unmapped = errorToResponse(Object.assign(new Error("rls denied"), { code: "42501" }));
+    expect(unmapped.status).toBe(500);
+    expect(unmapped.body.code).toBe("INTERNAL");
+    expect(unmapped.body.error).toBe("Internal server error");
+
+    const inherited = errorToResponse({ code: "toString" });
+    expect(inherited.status).toBe(500);
+    expect(inherited.body.code).toBe("INTERNAL");
   });
 });
 
