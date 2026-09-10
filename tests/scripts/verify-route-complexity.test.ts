@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   measureRouteComplexity,
   readBaseRouteSource,
+  readBaseRouteSources,
   resolveBaseRef,
+  ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS,
   verifyRouteComplexity,
   type GitRunner,
 } from "../../scripts/verify-route-complexity";
@@ -20,14 +22,50 @@ describe("route complexity ratchet", () => {
   });
 
   it("compares current files against sources read from the base ref", async () => {
+    const allBaseFiles = `${ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS.map((bootstrap) => bootstrap.file).join("\n")}\n`;
     const git: GitRunner = (args) => {
       if (args[0] === "cat-file" && args[2].endsWith("^{commit}")) return { status: 0, stdout: "", stderr: "" };
-      if (args[0] === "ls-tree") return { status: 0, stdout: `${args.at(-1)}\n`, stderr: "" };
+      if (args[0] === "ls-tree") return { status: 0, stdout: allBaseFiles, stderr: "" };
       if (args[0] === "show") return { status: 0, stdout: "app.get('/only', handler);\n", stderr: "" };
       throw new Error(`unexpected git call: ${args.join(" ")}`);
     };
     const failures = await verifyRouteComplexity(root, { ROUTE_COMPLEXITY_BASE_REF: "base" }, git);
     expect(failures).toEqual(expect.arrayContaining([expect.stringContaining("routes > 1 (base)")]));
+  });
+
+  it("batches git inspection instead of spawning per file inside the loop", async () => {
+    // 30s-timeout guard: one cat-file + one ls-tree for the whole batch, then
+    // exactly one show per bootstrap file — never 3 subprocesses × N files.
+    const allBaseFiles = `${ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS.map((bootstrap) => bootstrap.file).join("\n")}\n`;
+    const git = vi.fn((args: string[]) => {
+      if (args[0] === "cat-file") return { status: 0, stdout: "", stderr: "" };
+      if (args[0] === "ls-tree") return { status: 0, stdout: allBaseFiles, stderr: "" };
+      if (args[0] === "show") return { status: 0, stdout: "", stderr: "" };
+      throw new Error(`unexpected git call: ${args.join(" ")}`);
+    }) as unknown as GitRunner;
+    await verifyRouteComplexity(root, { ROUTE_COMPLEXITY_BASE_REF: "base" }, git);
+    // Each mock.calls entry is the invocation arg list [args, root].
+    const calls = (git as unknown as ReturnType<typeof vi.fn>).mock.calls as Array<[string[], string]>;
+    expect(calls.filter(([args]) => args[0] === "cat-file")).toHaveLength(1);
+    expect(calls.filter(([args]) => args[0] === "ls-tree")).toHaveLength(1);
+    expect(calls.filter(([args]) => args[0] === "show")).toHaveLength(
+      ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS.length,
+    );
+  });
+
+  it("yields null for files absent from the base tree (batched read)", () => {
+    const git: GitRunner = (args) => {
+      if (args[0] === "cat-file") return { status: 0, stdout: "", stderr: "" };
+      if (args[0] === "ls-tree") return { status: 0, stdout: "src/http/routes/review.ts\n", stderr: "" };
+      if (args[0] === "show") return { status: 0, stdout: "app.get('/x', h);\n", stderr: "" };
+      throw new Error(`unexpected git call: ${args.join(" ")}`);
+    };
+    const sources = readBaseRouteSources(root, "base", [
+      "src/http/routes/review.ts",
+      "src/http/routes/words.ts",
+    ], git);
+    expect(sources[0]).toBe("app.get('/x', h);\n");
+    expect(sources[1]).toBeNull();
   });
 
   it("uses bootstrap limits only when the base commit has no route file", () => {

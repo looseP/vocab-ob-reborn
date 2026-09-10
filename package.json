@@ -11,7 +11,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "npm run test:unit",
-    "test:unit": "vitest run --coverage && npm run coverage:layered",
+    "test:unit": "vitest run --coverage && npm run coverage:layered && npm run test:collection",
+    "test:collection": "tsx scripts/verify-test-collection.ts",
     "coverage:layered": "tsx scripts/report-layered-coverage.ts",
     "complexity:routes": "cross-env ROUTE_COMPLEXITY_BASE_REF=HEAD~1 tsx scripts/verify-route-complexity.ts",
     "test:watch": "vitest",

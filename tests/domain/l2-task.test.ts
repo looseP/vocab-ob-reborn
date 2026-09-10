@@ -130,8 +130,6 @@ describe("l2-task payload carries stepIndex (H4 regression)", () => {
     })!;
     expect(task).not.toBeNull();
     expect(task.stepIndex).toBe(0);
-    expect(Number.isInteger(task.stepIndex)).toBe(true);
-    expect(task.stepIndex).toBeGreaterThanOrEqual(0);
   });
 
   it("discrimination task reflects explicit stepIndex", () => {

@@ -82,6 +82,10 @@ describeCorpus("corpus acceptance — real migration package", () => {
           .map(([slug, count]) => `${slug}×${count}`)
           .join(", ")}`,
     );
-    expect(duplicates.length).toBeGreaterThanOrEqual(0);
+    // 情报断言（非失败门，与本用例"重复仅作情报"的定位一致）：统计本身必须
+    // 良构——语料解析出非空 slug 集合，且重复条目的计数确实 ≥ 2（防止上面的
+    // 计数逻辑被悄悄改坏后仍输出失真的情报）。
+    expect(seen.size).toBeGreaterThan(0);
+    expect(duplicates.every(([slug, count]) => slug.length > 0 && count >= 2)).toBe(true);
   });
 });

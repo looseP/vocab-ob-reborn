@@ -46,8 +46,22 @@ describe("normalizeDesiredRetention", () => {
 });
 
 describe("getScheduler cache", () => {
-  it("getSchedulerCacheSize returns a non-negative number", () => {
-    expect(getSchedulerCacheSize()).toBeGreaterThanOrEqual(0);
+  it("caches per (retention, weights) key: repeat calls reuse, distinct keys grow", () => {
+    // Unique weight signatures make the cache keys independent of test order.
+    const weightsA = [0.11, 0.22, 0.33, 0.44, 0.55];
+    const weightsB = [0.66, 0.77, 0.88, 0.99, 0.12];
+    const before = getSchedulerCacheSize();
+
+    applyReviewAnswer(SAMPLE_CARD, "good", FIXED_NOW, 0.85, weightsA);
+    expect(getSchedulerCacheSize()).toBe(before + 1);
+
+    // Same (retention, weights) pair → LRU refresh, no new entry.
+    applyReviewAnswer(SAMPLE_CARD, "good", FIXED_NOW, 0.85, weightsA);
+    expect(getSchedulerCacheSize()).toBe(before + 1);
+
+    // Distinct weights → a new cache entry.
+    applyReviewAnswer(SAMPLE_CARD, "good", FIXED_NOW, 0.85, weightsB);
+    expect(getSchedulerCacheSize()).toBe(before + 2);
   });
 });
 

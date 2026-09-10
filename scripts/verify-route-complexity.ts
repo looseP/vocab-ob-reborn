@@ -18,6 +18,11 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
   { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },
+  // 2026-09-09 棘轮扩容：把剩余三个最大路由文件按实测现状钉进棘轮
+  // （bootstrap 限额 = 实测值，只许经基线比较上行，不许静默膨胀）。
+  { file: "src/http/routes/review.ts", maxLines: 259, maxRoutes: 14 },
+  { file: "src/http/routes/l2-candidates.ts", maxLines: 226, maxRoutes: 10 },
+  { file: "src/http/routes/words.ts", maxLines: 197, maxRoutes: 11 },
 ];
 
 export function measureRouteComplexity(source: string) {
@@ -36,17 +41,40 @@ export function resolveBaseRef(environment: NodeJS.ProcessEnv = process.env): st
   return environment.ROUTE_COMPLEXITY_BASE_REF ?? environment.API_CONTRACT_BASE_REF ?? "HEAD^";
 }
 
-export function readBaseRouteSource(root: string, ref: string, file: string, git: GitRunner = runGit): string | null {
+/**
+ * Read the base-ref sources for a batch of route files.
+ *
+ * Git subprocesses are batched: one `cat-file -e` and one recursive
+ * `ls-tree` for the whole batch, then one `show` per file that exists in the
+ * base tree. The previous per-file implementation spawned 3 subprocesses × N
+ * files inside the ratchet loop, which pushed CI past the 30s step timeout on
+ * loaded runners. Missing files yield `null` so callers can fall back to
+ * bootstrap limits.
+ */
+export function readBaseRouteSources(
+  root: string,
+  ref: string,
+  files: readonly string[],
+  git: GitRunner = runGit,
+): (string | null)[] {
   const commit = git(["cat-file", "-e", `${ref}^{commit}`], root);
   if (commit.status !== 0) throw new Error(`Invalid route complexity base ref ${ref}: ${commit.stderr.trim()}`);
 
-  const tree = git(["ls-tree", "--name-only", ref, "--", file], root);
-  if (tree.status !== 0) throw new Error(`Unable to inspect ${file} in ${ref}: ${tree.stderr.trim()}`);
-  if (tree.stdout.trim() === "") return null;
+  const tree = git(["ls-tree", "-r", "--name-only", ref], root);
+  if (tree.status !== 0) throw new Error(`Unable to inspect route files in ${ref}: ${tree.stderr.trim()}`);
+  const present = new Set(tree.stdout.split(/\r?\n/).filter((line) => line.length > 0));
 
-  const result = git(["show", `${ref}:${file}`], root);
-  if (result.status !== 0) throw new Error(`Unable to read ${file} from ${ref}: ${result.stderr.trim()}`);
-  return result.stdout;
+  return files.map((file) => {
+    if (!present.has(file)) return null;
+    const result = git(["show", `${ref}:${file}`], root);
+    if (result.status !== 0) throw new Error(`Unable to read ${file} from ${ref}: ${result.stderr.trim()}`);
+    return result.stdout;
+  });
+}
+
+/** Single-file convenience wrapper around readBaseRouteSources. */
+export function readBaseRouteSource(root: string, ref: string, file: string, git: GitRunner = runGit): string | null {
+  return readBaseRouteSources(root, ref, [file], git)[0];
 }
 
 export async function verifyRouteComplexity(
@@ -56,10 +84,16 @@ export async function verifyRouteComplexity(
 ) {
   const failures: string[] = [];
   const ref = resolveBaseRef(environment);
-  for (const bootstrap of ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS) {
+  const baseSources = readBaseRouteSources(
+    root,
+    ref,
+    ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS.map((bootstrap) => bootstrap.file),
+    git,
+  );
+  for (const [index, bootstrap] of ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS.entries()) {
     const source = await readFile(`${root}/${bootstrap.file}`, "utf8");
     const actual = measureRouteComplexity(source);
-    const baseSource = readBaseRouteSource(root, ref, bootstrap.file, git);
+    const baseSource = baseSources[index];
     const limit = baseSource ? measureRouteComplexity(baseSource) : { lines: bootstrap.maxLines, routes: bootstrap.maxRoutes };
     if (actual.lines > limit.lines) failures.push(`${bootstrap.file}: ${actual.lines} lines > ${limit.lines} (${baseSource ? ref : "bootstrap"})`);
     if (actual.routes > limit.routes) failures.push(`${bootstrap.file}: ${actual.routes} routes > ${limit.routes} (${baseSource ? ref : "bootstrap"})`);

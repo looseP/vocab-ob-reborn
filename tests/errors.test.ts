@@ -145,6 +145,19 @@ describe("errorToResponse — SQLSTATE constraint mapping", () => {
     expect(res.body.code).toBe("DB_UNAVAILABLE");
   });
 
+  it("resolves a constraint SQLSTATE carrying a connection-failure message as 503", () => {
+    // True order probe. The two branches' code sets are disjoint, so the 08003
+    // case above cannot detect a swapped branch order (the constraint map never
+    // matches a connection code regardless of sequence). A constraint SQLSTATE
+    // whose message matches the connection detector is only resolved to 503
+    // when the connection branch runs first; under the opposite order it would
+    // surface as 409 CONFLICT.
+    const hybrid = Object.assign(new Error("connection terminated"), { code: "23505" });
+    const res = errorToResponse(hybrid);
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("DB_UNAVAILABLE");
+  });
+
   it("falls through to 500 for unmapped SQLSTATEs and Object.prototype key names", () => {
     const unmapped = errorToResponse(Object.assign(new Error("rls denied"), { code: "42501" }));
     expect(unmapped.status).toBe(500);

@@ -196,3 +196,19 @@ describeDocker("Compose rendered database role routing", () => {
     expect(config.services.postgres).toBeUndefined();
   });
 });
+
+// ── 显式告警：docker 不可用 ≠ 静默跳过 ──────────────────────────────────────
+// CI（ubuntu-latest verify job，同 job 后续步骤即用 docker）必须真实运行上面
+// 5 条渲染断言；本地无 docker 时，这条告警用例保证 skip 在测试报告与日志中
+// 可见——绿色但携带该告警的运行 = 此门禁未生效，不得当作已验证。
+if (!dockerAvailable) {
+  describe("compose-database-role-routing — gate availability", () => {
+    it("WARNs loudly: docker compose unavailable, the 5 render assertions did NOT run", () => {
+      console.warn(
+        "[compose-database-role-routing] docker compose unavailable — " +
+          "the 5 compose render assertions are SKIPPED (gate void, not verified). " +
+          "CI (ubuntu-latest 'verify' job) must execute them; a green run carrying this warning must not be trusted as compose verification.",
+      );
+    });
+  });
+}
