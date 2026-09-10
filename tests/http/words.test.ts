@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { createApp } from "@/http/server";
 import { Word } from "@/domain/word.entity";
-import type { WordRow } from "@/domain";
+import type { NoteEntryRow, WordRow } from "@/domain";
 import { NotFoundError, ConflictError } from "@/errors";
 import type { Services } from "@/services";
 import {
@@ -65,8 +65,18 @@ function makeMockServices(): Services {
       suspend: vi.fn(),
       undo: vi.fn(),
     },
+    noteEntries: {
+      getEntries: vi.fn().mockResolvedValue([]),
+      addEntry: vi.fn(),
+      editEntry: vi.fn(),
+      deleteEntry: vi.fn().mockResolvedValue({ ok: true }),
+      hideEntry: vi.fn(),
+      restoreEntry: vi.fn(),
+    },
     notes: {} as never,
-    wordbooks: {} as never,
+    wordbooks: {
+      getOrCreateDefault: vi.fn().mockResolvedValue({ id: "wordbook-1" }),
+    } as unknown as never,
     stats: {} as never,
   } as unknown as Services;
 }
@@ -419,5 +429,265 @@ describe("DELETE /api/words/:slug (stub delete)", () => {
         blockers: { l3OccurrenceCount: 2, noteEntryCount: 1, inboundWordLinkCount: 3 },
       },
     });
+  });
+});
+
+// ── 条目制笔记端点（2026-09-06）：notes / entries 管理 ─────────────────────
+const NOTE_WORD = { id: "word-1" };
+const ISO_CREATED = "2026-09-06T00:00:00.000Z";
+const ISO_UPDATED = "2026-09-06T01:00:00.000Z";
+const ISO_HIDDEN = "2026-09-06T02:00:00.000Z";
+
+function noteEntryRow(overrides: Partial<NoteEntryRow> = {}): NoteEntryRow {
+  return {
+    id: "entry-1",
+    user_id: "user-123",
+    word_id: "word-1",
+    wordbook_id: "wordbook-1",
+    content_md: "first note",
+    hidden_at: null,
+    created_at: ISO_CREATED,
+    updated_at: ISO_UPDATED,
+    ...overrides,
+  };
+}
+
+describe("GET /api/words/:slug/notes", () => {
+  it("maps entries to ISO timestamps and counts hidden entries (both toIso arms)", async () => {
+    const services = makeMockServices();
+    services.words.getWordBySlug = vi.fn().mockResolvedValue({ word: NOTE_WORD, l2Promoted: false });
+    // one visible entry (hidden_at null → exercise the null arm) and one hidden
+    // entry (hidden_at set → exercise the ISO arm), so the hidden_count filter
+    // and both branches of `toIso`'s ternary are hit.
+    services.noteEntries.getEntries = vi.fn().mockResolvedValue([
+      noteEntryRow({ id: "entry-visible", hidden_at: null }),
+      noteEntryRow({ id: "entry-hidden", content_md: "hidden note", hidden_at: ISO_HIDDEN }),
+    ]);
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(services.words.getWordBySlug).toHaveBeenCalledWith("abound");
+    expect(services.wordbooks.getOrCreateDefault).toHaveBeenCalledWith("user-123");
+    expect(services.noteEntries.getEntries).toHaveBeenCalledWith("user-123", "word-1", "wordbook-1");
+    expect(body.hidden_count).toBe(1);
+    expect(body.entries).toEqual([
+      {
+        id: "entry-visible",
+        content_md: "first note",
+        hidden_at: null,
+        created_at: ISO_CREATED,
+        updated_at: ISO_UPDATED,
+      },
+      {
+        id: "entry-hidden",
+        content_md: "hidden note",
+        hidden_at: ISO_HIDDEN,
+        created_at: ISO_CREATED,
+        updated_at: ISO_UPDATED,
+      },
+    ]);
+  });
+
+  it("returns an empty list with hidden_count=0 when there are no entries", async () => {
+    const services = makeMockServices();
+    services.words.getWordBySlug = vi.fn().mockResolvedValue({ word: NOTE_WORD, l2Promoted: false });
+    services.noteEntries.getEntries = vi.fn().mockResolvedValue([]);
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ entries: [], hidden_count: 0 });
+  });
+});
+
+describe("POST /api/words/:slug/notes/entries", () => {
+  it("creates an entry and returns 201 with hidden_at=null", async () => {
+    const services = makeMockServices();
+    services.words.getWordBySlug = vi.fn().mockResolvedValue({ word: NOTE_WORD, l2Promoted: false });
+    services.noteEntries.addEntry = vi.fn().mockResolvedValue(
+      noteEntryRow({ id: "entry-new", content_md: "brand new" }),
+    );
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({ content_md: "brand new" }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(services.noteEntries.addEntry).toHaveBeenCalledWith("user-123", "word-1", "brand new");
+    expect(body).toEqual({
+      entry: {
+        id: "entry-new",
+        content_md: "brand new",
+        hidden_at: null,
+        created_at: ISO_CREATED,
+        updated_at: ISO_UPDATED,
+      },
+    });
+  });
+
+  it("rejects an empty content body with 400 VALIDATION_ERROR", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({ content_md: "" }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    expect(services.noteEntries.addEntry).not.toHaveBeenCalled();
+  });
+});
+
+describe("PUT /api/words/:slug/notes/entries/:entryId", () => {
+  it("edits content and returns hidden_at=null for a visible entry", async () => {
+    const services = makeMockServices();
+    services.noteEntries.editEntry = vi.fn().mockResolvedValue(
+      noteEntryRow({ id: "entry-1", content_md: "edited", hidden_at: null }),
+    );
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries/entry-1", {
+      method: "PUT",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({ content_md: "edited" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(services.noteEntries.editEntry).toHaveBeenCalledWith("user-123", "entry-1", "edited");
+    expect(body.entry).toEqual({
+      id: "entry-1",
+      content_md: "edited",
+      hidden_at: null,
+      created_at: ISO_CREATED,
+      updated_at: ISO_UPDATED,
+    });
+  });
+
+  it("preserves hidden_at as ISO when editing a hidden entry", async () => {
+    const services = makeMockServices();
+    services.noteEntries.editEntry = vi.fn().mockResolvedValue(
+      noteEntryRow({ id: "entry-2", content_md: "edited hidden", hidden_at: ISO_HIDDEN }),
+    );
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries/entry-2", {
+      method: "PUT",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({ content_md: "edited hidden" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.entry.hidden_at).toBe(ISO_HIDDEN);
+    expect(body.entry.content_md).toBe("edited hidden");
+  });
+
+  it("rejects an empty content body with 400 VALIDATION_ERROR", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries/entry-1", {
+      method: "PUT",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({ content_md: "" }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("VALIDATION_ERROR");
+    expect(services.noteEntries.editEntry).not.toHaveBeenCalled();
+  });
+});
+
+describe("DELETE /api/words/:slug/notes/entries/:entryId", () => {
+  it("hard-deletes an entry and returns {ok:true}", async () => {
+    const services = makeMockServices();
+    services.noteEntries.deleteEntry = vi.fn().mockResolvedValue({ ok: true });
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries/entry-1", {
+      method: "DELETE",
+      headers: AUTH_HEADERS,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(services.noteEntries.deleteEntry).toHaveBeenCalledWith("user-123", "entry-1");
+  });
+});
+
+describe("POST /api/words/:slug/notes/entries/:entryId/hide", () => {
+  it("hides an entry and returns hidden_at as ISO", async () => {
+    const services = makeMockServices();
+    services.noteEntries.hideEntry = vi.fn().mockResolvedValue(
+      noteEntryRow({ id: "entry-1", content_md: "hidden now", hidden_at: ISO_HIDDEN }),
+    );
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries/entry-1/hide", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(services.noteEntries.hideEntry).toHaveBeenCalledWith("user-123", "entry-1");
+    expect(body.entry.hidden_at).toBe(ISO_HIDDEN);
+    expect(body.entry.content_md).toBe("hidden now");
+  });
+
+  it("returns hidden_at=null when the service reports no hidden timestamp", async () => {
+    const services = makeMockServices();
+    services.noteEntries.hideEntry = vi.fn().mockResolvedValue(
+      noteEntryRow({ id: "entry-1", hidden_at: null }),
+    );
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries/entry-1/hide", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.entry.hidden_at).toBeNull();
+  });
+});
+
+describe("POST /api/words/:slug/notes/entries/:entryId/restore", () => {
+  it("restores an entry and returns hidden_at=null", async () => {
+    const services = makeMockServices();
+    services.noteEntries.restoreEntry = vi.fn().mockResolvedValue(
+      noteEntryRow({ id: "entry-1", content_md: "restored", hidden_at: null }),
+    );
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries/entry-1/restore", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(services.noteEntries.restoreEntry).toHaveBeenCalledWith("user-123", "entry-1");
+    expect(body.entry.hidden_at).toBeNull();
+    expect(body.entry.content_md).toBe("restored");
+  });
+
+  it("returns hidden_at as ISO when the service reports a still-hidden entry", async () => {
+    const services = makeMockServices();
+    services.noteEntries.restoreEntry = vi.fn().mockResolvedValue(
+      noteEntryRow({ id: "entry-1", hidden_at: ISO_HIDDEN }),
+    );
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries/entry-1/restore", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.entry.hidden_at).toBe(ISO_HIDDEN);
   });
 });
