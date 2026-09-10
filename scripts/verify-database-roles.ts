@@ -783,7 +783,14 @@ async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fi
   const invalidL2Hash = "not-a-sha256";
   const invalidContentHash = "also-not-a-sha256";
 
-  for (const [actorId, label] of [[undefined, "without actor"], [fixture.users[2], "wrong actor"]] as const) {
+  // 0018 relaxed both RPCs from "the actor must hold a user_word_l2_progress row
+  // for the word" to "any authenticated actor", so that the Phase G
+  // content-first flow can adopt candidates for words not yet in an L2 track.
+  // The DB layer therefore only guarantees the unauthenticated case below; the
+  // owner-only guarantee lives in the HTTP layer
+  // (src/http/server.ts mounts authMiddleware(..., "owner") on /api/* before the
+  // L2 routes) and is asserted by tests/http/route-authorization.test.ts.
+  for (const [actorId, label] of [[undefined, "without actor"]] as const) {
     await expectActorFunctionDenied(
       app,
       actorId,
@@ -799,13 +806,10 @@ async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fi
       `finalize_l2_content_hash ${label}`,
     );
   }
-  await expectActorFunctionDenied(
-    app,
-    fixture.users[0],
-    "SELECT public.refresh_l2_cache($1::uuid)",
-    [otherWord],
-    "refresh_l2_cache for actor-ineligible word",
-  );
+  // 0018 removed refresh_l2_cache's word-eligibility predicate entirely (it has
+  // no per-actor or per-word precondition beyond an authenticated actor), so
+  // there is nothing left to deny here. Word-scoping is still covered below:
+  // refreshing the target word must leave every other word's cache columns empty.
   await expectActorFunctionRejected(
     app,
     fixture.users[0],

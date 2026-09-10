@@ -147,12 +147,14 @@ describe("database role bootstrap least-privilege contract", () => {
     expect(bootstrap).toContain("GRANT EXECUTE ON FUNCTION public.refresh_l2_cache(uuid) TO vocab_app");
     expect(bootstrap).toContain("GRANT EXECUTE ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) TO vocab_app");
     expect(verifier).toContain("verifyL2SecurityFunctions(app, admin, fixture)");
-    expect(verifier).toContain("[[undefined, \"without actor\"], [fixture.users[2], \"wrong actor\"]]");
+    // 0018 relaxed both RPCs to authenticated-only, so the verifier now denies
+    // only the unauthenticated actor; the owner-only guarantee lives in the HTTP
+    // layer and is asserted by tests/http/route-authorization.test.ts.
+    expect(verifier).toContain("[[undefined, \"without actor\"]]");
     expect(verifier).toContain("`refresh_l2_cache ${label}`");
     expect(verifier).toContain("`finalize_l2_content_hash ${label}`");
     expect(verifier).toContain("finalize_l2_content_hash with invalid hash format");
     expect(verifier).toContain("finalize_l2_content_hash for non-published word");
-    expect(verifier).toContain("refresh_l2_cache for actor-ineligible word");
     expect(verifier).toContain("updated_count !== 2");
     expect(verifier).toContain("l2_due_at <> $2::timestamptz AS due_changed");
     expect(verifier).toContain("l2SecurityFunctions: true");
