@@ -109,6 +109,9 @@ jobs:
         env:
           DATABASE_URL: "${{ env.MIGRATION_DATABASE_URL }}"
           TEST_DATABASE_URL: "${{ env.DATABASE_ADMIN_URL }}"
+          # tests/l3-rls.integration.test.ts fails closed without this: its
+          # restricted session asserts isolation as the real vocab_app role.
+          TEST_APP_DATABASE_URL: "${{ env.APP_DATABASE_URL }}"
         run: npm run verify:db
 
   publish:
