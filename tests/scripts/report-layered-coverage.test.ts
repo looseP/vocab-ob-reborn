@@ -7,6 +7,7 @@ import {
   evaluateLayerGate,
   findUnknownSourceDirectories,
   parseChangedSourceLines,
+  selectCoverageBaseRef,
   type IstanbulFileCoverage,
 } from "../../scripts/report-layered-coverage";
 
@@ -231,6 +232,30 @@ describe("baseline ratchet", () => {
       ...base,
       service: { ...base.service, branches: 74 },
     }, base)).toThrow(/service\.branches 74 < 75/);
+  });
+});
+
+describe("coverage base selection", () => {
+  it("prefers an explicitly supplied base ref", () => {
+    expect(selectCoverageBaseRef("refs/pull/42/merge", [
+      { ref: "origin/main", hasMergeBase: true },
+      { ref: "main", hasMergeBase: true },
+    ])).toBe("refs/pull/42/merge");
+  });
+
+  it("selects the first default candidate that shares history with HEAD", () => {
+    expect(selectCoverageBaseRef(undefined, [
+      { ref: "origin/main", hasMergeBase: false },
+      { ref: "main", hasMergeBase: true },
+      { ref: "HEAD~1", hasMergeBase: true },
+    ])).toBe("main");
+  });
+
+  it("fails closed when no base candidate is parseable", () => {
+    expect(() => selectCoverageBaseRef(undefined, [
+      { ref: "origin/main", hasMergeBase: false },
+      { ref: "main", hasMergeBase: false },
+    ])).toThrow(/coverage base/i);
   });
 });
 

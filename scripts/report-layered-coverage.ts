@@ -43,6 +43,11 @@ interface DiffCoverage {
   ok: boolean;
 }
 
+export interface CoverageBaseCandidate {
+  ref: string;
+  hasMergeBase: boolean;
+}
+
 interface TestEvidence {
   category: "http-contract" | "db-integration" | "script-workflow" | "e2e-journey";
   files: string[];
@@ -217,8 +222,32 @@ export function parseChangedSourceLines(diff: string): Record<string, number[]> 
   return changed;
 }
 
-function collectDiffCoverage(projectRoot: string, coverage: Record<string, IstanbulFileCoverage>): DiffCoverage {
-  const baseRef = process.env.COVERAGE_BASE_REF ?? "origin/main";
+export function selectCoverageBaseRef(
+  explicitRef: string | undefined,
+  candidates: CoverageBaseCandidate[],
+): string {
+  if (explicitRef?.trim()) return explicitRef.trim();
+  const selected = candidates.find((candidate) => candidate.hasMergeBase);
+  if (!selected) {
+    throw new Error("Unable to resolve a parseable coverage base ref; set COVERAGE_BASE_REF explicitly");
+  }
+  return selected.ref;
+}
+
+function resolveCoverageBaseRef(projectRoot: string): string {
+  const candidates = ["origin/main", "main", "HEAD~1"].map((ref) => ({
+    ref,
+    hasMergeBase:
+      spawnSync("git", ["merge-base", ref, "HEAD"], { cwd: projectRoot, encoding: "utf8" }).status === 0,
+  }));
+  return selectCoverageBaseRef(process.env.COVERAGE_BASE_REF, candidates);
+}
+
+function collectDiffCoverage(
+  projectRoot: string,
+  coverage: Record<string, IstanbulFileCoverage>,
+  baseRef: string,
+): DiffCoverage {
   const result = spawnSync("git", ["diff", "--unified=0", `${baseRef}...HEAD`, "--", "src"], {
     cwd: projectRoot,
     encoding: "utf8",
@@ -252,13 +281,11 @@ export function assertBaselineNonRegression(current: CoverageThresholds, base: C
   if (regressions.length > 0) throw new Error(`Coverage baseline thresholds decreased: ${regressions.join(", ")}`);
 }
 
-function loadAndValidateBaseline(projectRoot: string): CoverageThresholds {
+function loadAndValidateBaseline(projectRoot: string, baseRef: string): CoverageThresholds {
   const relativePath = "config/coverage-baseline.json";
   const current = parseBaseline(readFileSync(path.join(projectRoot, relativePath), "utf8"), relativePath);
   assertBaselineNonRegression(current, BOOTSTRAP_BASELINE);
 
-  const baseRef = process.env.COVERAGE_BASE_REF;
-  if (!baseRef) return current;
   const baseFile = spawnSync("git", ["show", `${baseRef}:${relativePath}`], { cwd: projectRoot, encoding: "utf8" });
   if (baseFile.status === 0) {
     assertBaselineNonRegression(current, parseBaseline(baseFile.stdout, `${baseRef}:${relativePath}`));
@@ -406,11 +433,12 @@ function run(): void {
   const inputPath = path.join(coverageDir, "coverage-final.json");
   if (!existsSync(inputPath)) throw new Error(`Coverage input not found: ${inputPath}`);
   const coverage = JSON.parse(readFileSync(inputPath, "utf8")) as Record<string, IstanbulFileCoverage>;
+  const baseRef = resolveCoverageBaseRef(projectRoot);
   const summary = buildLayeredSummary(
     coverage,
     collectEvidence(projectRoot),
-    collectDiffCoverage(projectRoot, coverage),
-    loadAndValidateBaseline(projectRoot),
+    collectDiffCoverage(projectRoot, coverage, baseRef),
+    loadAndValidateBaseline(projectRoot, baseRef),
   );
   mkdirSync(coverageDir, { recursive: true });
   writeFileSync(path.join(coverageDir, "layered-summary.json"), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
