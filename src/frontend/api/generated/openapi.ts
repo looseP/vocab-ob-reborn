@@ -8006,8 +8006,8 @@ export interface operations {
                             shortDefinition: string | null;
                         };
                         noteContentMd: string | null;
-                        /** @constant */
-                        l3Status: "deferred";
+                        /** @enum {string} */
+                        l3Status: "captured" | "deferred";
                         sourceId: string | null;
                         contextId: string | null;
                         occurrenceId: string | null;

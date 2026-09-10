@@ -542,6 +542,88 @@ describe("L3 HTTP routes", () => {
     }));
   });
 
+  it("POST /api/l3/context-links succeeds", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/context-links", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({
+        contextId: CONTEXT_ID,
+        linkType: "illustrates",
+        targetType: "word",
+        targetId: WORD_ID,
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toEqual({ link: { id: "link-1", context_id: "ctx-1" } });
+    expect(services.l3Context.createContextLink).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-123",
+      contextId: CONTEXT_ID,
+      linkType: "illustrates",
+      targetType: "word",
+    }));
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
+  });
+
+  it("POST /api/l3/context-links requires contextId or wordId", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/context-links", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ linkType: "illustrates", targetType: "word", targetId: WORD_ID }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(services.l3Context.createContextLink).not.toHaveBeenCalled();
+    expectNoL3ServiceGroupCalled(services);
+  });
+
+  it("POST /api/l3/context-links rejects an unknown linkType", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/context-links", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ contextId: CONTEXT_ID, linkType: "bogus", targetType: "word" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(services.l3Context.createContextLink).not.toHaveBeenCalled();
+    expectNoL3ServiceGroupCalled(services);
+  });
+
+  it("POST /api/l3/context-links accepts an external target that is not a uuid", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/context-links", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({
+        contextId: CONTEXT_ID,
+        linkType: "manual_link",
+        targetType: "external",
+        targetId: "https://example.com/notes/orbit",
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(services.l3Context.createContextLink).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-123",
+      contextId: CONTEXT_ID,
+      linkType: "manual_link",
+      targetType: "external",
+      targetId: "https://example.com/notes/orbit",
+    }));
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
+  });
+
   it("DELETE /api/l3/occurrences/:id succeeds with the frozen command shape", async () => {
     const services = makeServices();
     const app = createApp(services);

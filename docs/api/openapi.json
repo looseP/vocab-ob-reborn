@@ -14559,7 +14559,10 @@
                     },
                     "l3Status": {
                       "type": "string",
-                      "const": "deferred"
+                      "enum": [
+                        "captured",
+                        "deferred"
+                      ]
                     },
                     "sourceId": {
                       "anyOf": [
