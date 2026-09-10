@@ -33,6 +33,17 @@ describe("splitSentences", () => {
       { text: "no terminator here", start: 0, end: 18 },
     ]);
   });
+
+  it("bounds the backward abbreviation scan on a long word before a period", () => {
+    // Drives the wordBeforeDot length guard: without the break the scan would
+    // walk back to the start of the text looking for an abbreviation.
+    const text = "Supercalifragilisticexpialidocious. Next one.";
+    const segs = splitSentences(text);
+    expect(segs.map((s) => s.text.trim())).toEqual([
+      "Supercalifragilisticexpialidocious.",
+      "Next one.",
+    ]);
+  });
 });
 
 describe("findSentenceRange", () => {
@@ -44,6 +55,31 @@ describe("findSentenceRange", () => {
     // 另计划原文 toEqual 漏掉返回值中的 text 键，改用 objectContaining 只断言偏移。
     expect(findSentenceRange(text, sel, sel + 5)).toEqual(
       expect.objectContaining({ start: 11, end: 32 }),
+    );
+  });
+
+  it("falls back to a paragraph-level range when the selection spans sentences", () => {
+    // Selection runs from inside "beta" into "Gamma": no single segment contains
+    // it, so the fallback takes the first sentence ending after selStart and the
+    // last sentence starting before selEnd.
+    const selStart = text.indexOf("beta");
+    const selEnd = text.indexOf("Gamma") + 5;
+    expect(findSentenceRange(text, selStart, selEnd)).toEqual(
+      expect.objectContaining({ start: 0, end: 32 }),
+    );
+  });
+
+  it("falls back to the first/last segment when the selection has no match at either end", () => {
+    // Selection entirely past the end: no segment ends after selStart, so the
+    // first-segment fallback arm of the `??` is taken. It still pairs with the
+    // last segment that starts before selEnd, hence the whole-text range.
+    expect(findSentenceRange(text, text.length + 10, text.length + 20)).toEqual(
+      expect.objectContaining({ start: 0, end: text.length }),
+    );
+    // Selection entirely before the start (and before every segment): no segment
+    // starts before selEnd, so the last-segment fallback arm is taken.
+    expect(findSentenceRange(text, -1, -1)).toEqual(
+      expect.objectContaining({ start: 0, end: text.length }),
     );
   });
 });
