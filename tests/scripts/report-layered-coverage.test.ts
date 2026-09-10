@@ -35,6 +35,7 @@ describe("classifySourceFile", () => {
     ["src/errors/index.ts", "domain"],
     ["src/services/review.ts", "service"],
     ["src/repositories/review.ts", "repository"],
+    ["src/http/review.ts", "http"],
   ])("maps %s to %s", (file, layer) => {
     expect(classifySourceFile(file)).toBe(layer);
   });
@@ -45,7 +46,7 @@ describe("classifySourceFile", () => {
   });
 
   it("rejects files outside the governed core layers", () => {
-    expect(() => classifySourceFile("src/http/review.ts")).toThrow(/unclassified/i);
+    expect(() => classifySourceFile("src/llm/prompt.ts")).toThrow(/unclassified/i);
   });
 });
 
@@ -220,6 +221,7 @@ describe("baseline ratchet", () => {
     domain: { lines: 85, statements: 85, branches: 79 },
     service: { lines: 87, statements: 85, branches: 75 },
     repository: { lines: 90, statements: 86, branches: 75 },
+    http: { lines: 60, statements: 60, branches: 50 },
   };
 
   it("accepts equal or higher thresholds and rejects any decrease", () => {
@@ -232,6 +234,23 @@ describe("baseline ratchet", () => {
       ...base,
       service: { ...base.service, branches: 74 },
     }, base)).toThrow(/service\.branches 74 < 75/);
+  });
+
+  it("treats the http layer as a first-class ratcheted layer", () => {
+    // Guards against the http layer being added to the union but left out of
+    // the regression loop, which would make it a display-only pseudo-gate.
+    expect(() => assertBaselineNonRegression({
+      ...base,
+      http: { ...base.http, lines: 61 },
+    }, base)).not.toThrow();
+    expect(() => assertBaselineNonRegression({
+      ...base,
+      http: { ...base.http, lines: 59 },
+    }, base)).toThrow(/http\.lines 59 < 60/);
+    expect(() => assertBaselineNonRegression({
+      ...base,
+      http: { ...base.http, branches: 49 },
+    }, base)).toThrow(/http\.branches 49 < 50/);
   });
 });
 

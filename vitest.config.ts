@@ -17,10 +17,10 @@ export default defineConfig({
       provider: "v8",
       reportsDirectory: "coverage",
       reporter: ["text", "html", "json", "json-summary"],
-      // Govern each core business layer independently. HTTP, DB integration,
+      // Govern each core business layer independently. DB integration,
       // scripts/workflows and E2E are represented by the functional evidence
       // matrix produced by scripts/report-layered-coverage.ts.
-      include: ["src/repositories/**/*.ts", "src/services/**/*.ts", "src/domain/**/*.ts", "src/errors/**/*.ts"],
+      include: ["src/repositories/**/*.ts", "src/services/**/*.ts", "src/domain/**/*.ts", "src/errors/**/*.ts", "src/http/**/*.ts"],
       exclude: ["src/**/types.ts"],
       // The layer-aware 85/85/75 gates run after Vitest. Keep only a low global
       // floor here so a strong layer cannot hide a weak one in one aggregate.

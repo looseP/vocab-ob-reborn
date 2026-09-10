@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-type CoreLayer = "domain" | "service" | "repository";
+const CORE_LAYERS = ["domain", "service", "repository", "http"] as const;
+type CoreLayer = typeof CORE_LAYERS[number];
 type MetricName = "lines" | "statements" | "functions" | "branches";
 type CoverageThresholds = Record<CoreLayer, { lines: number; statements: number; branches: number }>;
 
@@ -75,6 +76,10 @@ const BOOTSTRAP_BASELINE: CoverageThresholds = {
   domain: { lines: 85, statements: 85, branches: 79 },
   service: { lines: 87, statements: 85, branches: 75 },
   repository: { lines: 90, statements: 86, branches: 75 },
+  // Seeded from the measured http floor (38 files / 1,083 lines: lines 82.92%,
+  // statements 81.41%, branches 71.75%), floored to whole numbers. The ratchet
+  // may only move upward from here.
+  http: { lines: 82, statements: 81, branches: 71 },
 };
 const KNOWN_SOURCE_DIRECTORIES = new Set([
   "config", "db", "dictionary", "domain", "errors", "frontend", "fsrs", "http",
@@ -98,6 +103,7 @@ export function classifySourceFile(file: string): CoreLayer {
   if (/^src\/(domain|errors)\//.test(normalized)) return "domain";
   if (/^src\/services\//.test(normalized)) return "service";
   if (/^src\/repositories\//.test(normalized)) return "repository";
+  if (/^src\/http\//.test(normalized)) return "http";
   throw new Error(`Unclassified governed source file: ${normalized}`);
 }
 
@@ -191,7 +197,7 @@ export function parseChangedSourceLines(diff: string): Record<string, number[]> 
   for (const line of diff.split(/\r?\n/)) {
     if (line.startsWith("+++ b/")) {
       currentFile = line.slice(6).replaceAll("\\", "/");
-      if (!/^src\/(domain|errors|services|repositories)\/.*\.ts$/.test(currentFile)) currentFile = null;
+      if (!/^src\/(domain|errors|services|repositories|http)\/.*\.ts$/.test(currentFile)) currentFile = null;
       inInterfaceBlock = false;
       continue;
     }
@@ -256,22 +262,42 @@ function collectDiffCoverage(
   return calculateDiffCoverage(parseChangedSourceLines(result.stdout), coverage, baseRef);
 }
 
-function parseBaseline(raw: string, source: string): CoverageThresholds {
+/**
+ * Parse a baseline document.
+ *
+ * `requireAllLayers` is true for the on-disk baseline, which is the ratchet's
+ * source of truth and must name every layer. It is false for the historical
+ * base-ref copy: a layer introduced after that ref simply did not exist yet, so
+ * treating its absence as a zero threshold is the correct non-regression
+ * baseline for a newly governed layer (its on-disk floor is still enforced by
+ * the BOOTSTRAP_MINIMUMS check in loadAndValidateBaseline).
+ */
+function parseBaseline(raw: string, source: string, requireAllLayers = true): CoverageThresholds {
   const parsed = JSON.parse(raw) as Partial<CoverageThresholds>;
-  for (const layer of ["domain", "service", "repository"] as const) {
+  const result = {} as CoverageThresholds;
+  for (const layer of CORE_LAYERS) {
+    const entry = parsed[layer];
+    if (!entry) {
+      if (requireAllLayers) {
+        throw new Error(`Invalid coverage baseline ${source}: ${layer} is missing`);
+      }
+      result[layer] = { lines: 0, statements: 0, branches: 0 };
+      continue;
+    }
     for (const metric of ["lines", "statements", "branches"] as const) {
-      const value = parsed[layer]?.[metric];
+      const value = entry[metric];
       if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
         throw new Error(`Invalid coverage baseline ${source}: ${layer}.${metric}`);
       }
     }
+    result[layer] = { lines: entry.lines, statements: entry.statements, branches: entry.branches };
   }
-  return parsed as CoverageThresholds;
+  return result;
 }
 
 export function assertBaselineNonRegression(current: CoverageThresholds, base: CoverageThresholds): void {
   const regressions: string[] = [];
-  for (const layer of ["domain", "service", "repository"] as const) {
+  for (const layer of CORE_LAYERS) {
     for (const metric of ["lines", "statements", "branches"] as const) {
       if (current[layer][metric] < base[layer][metric]) {
         regressions.push(`${layer}.${metric} ${current[layer][metric]} < ${base[layer][metric]}`);
@@ -288,7 +314,7 @@ function loadAndValidateBaseline(projectRoot: string, baseRef: string): Coverage
 
   const baseFile = spawnSync("git", ["show", `${baseRef}:${relativePath}`], { cwd: projectRoot, encoding: "utf8" });
   if (baseFile.status === 0) {
-    assertBaselineNonRegression(current, parseBaseline(baseFile.stdout, `${baseRef}:${relativePath}`));
+    assertBaselineNonRegression(current, parseBaseline(baseFile.stdout, `${baseRef}:${relativePath}`, false));
   } else if (!/exists on disk, but not in|does not exist in|Path .* does not exist/.test(baseFile.stderr)) {
     throw new Error(`Unable to read coverage baseline from ${baseRef}: ${baseFile.stderr.trim()}`);
   }
@@ -305,6 +331,7 @@ export function buildLayeredSummary(
     domain: EMPTY_COUNTERS(),
     service: EMPTY_COUNTERS(),
     repository: EMPTY_COUNTERS(),
+    http: EMPTY_COUNTERS(),
   };
 
   for (const [coveragePath, fileCoverage] of Object.entries(coverage)) {
