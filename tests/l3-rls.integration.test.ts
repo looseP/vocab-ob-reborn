@@ -23,16 +23,24 @@ import { withTransaction } from "@/db/transaction";
 const adminDatabaseUrl = process.env.TEST_DATABASE_URL;
 const appDatabaseUrl = process.env.TEST_APP_DATABASE_URL;
 
-if (!adminDatabaseUrl || !appDatabaseUrl) {
-  console.log("SKIP tests/l3-rls.integration.test.ts — 需要 TEST_DATABASE_URL 与 TEST_APP_DATABASE_URL");
+// Fail closed, matching tests/db/transaction-rls.integration.test.ts. This file
+// is collected unconditionally by `npm run test:integration`; a silent skip
+// would let the L3 isolation guarantees go unverified while the suite still
+// exits 0. Missing wiring must break the run, not disappear from it.
+if (!adminDatabaseUrl) {
+  throw new Error("TEST_DATABASE_URL is required to seed the L3 RLS fixture");
 }
-describe.skipIf(!adminDatabaseUrl || !appDatabaseUrl)("L3 RLS isolation (integration)", () => {
+if (!appDatabaseUrl) {
+  throw new Error("TEST_APP_DATABASE_URL is required for the restricted L3 RLS session");
+}
+
+describe("L3 RLS isolation (integration)", () => {
   const ACTOR_A = randomUUID();
   const ACTOR_B = randomUUID();
   const WORD_ID = randomUUID();
   const ORIGINAL_DATABASE_URL = process.env.DATABASE_URL;
   const ORIGINAL_POOL_MAX = process.env.DB_POOL_MAX;
-  const adminPool = new Pool({ connectionString: adminDatabaseUrl!, max: 1 });
+  const adminPool = new Pool({ connectionString: adminDatabaseUrl, max: 1 });
 
   /** 在指定 actor 的 RLS 事务里构造 repository（生产同款：factory(tx) 注入 tx client）。 */
   async function inTx<T>(actorId: string, fn: (repo: L3ContextRepository, tx: PoolClient) => Promise<T>): Promise<T> {
