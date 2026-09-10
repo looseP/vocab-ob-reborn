@@ -76,6 +76,39 @@ async function expectDenied(client: Client, sql: string, params: unknown[], labe
   throw new Error(`unexpectedly allowed: ${label}`);
 }
 
+// A least-privilege denial can surface two ways and both are valid:
+//   * SQLSTATE 42501 when the role lacks the table privilege, or
+//   * a silent 0-row result when the privilege exists but no RLS policy matches
+//     the row. 0024 grants UPDATE on words for FOR UPDATE row locks; 0025 only
+//     adds a stub-row policy, so content-bearing rows are still filtered out
+//     rather than rejected. Asserting the outcome keeps the invariant testable
+//     under either shape instead of pinning it to one mechanism.
+async function expectNoRowsAffected(
+  client: Client,
+  actorId: string,
+  sql: string,
+  params: unknown[],
+  label: string,
+): Promise<void> {
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT set_config('request.jwt.claim.sub', $1, true)", [actorId]);
+    const result = await client.query(sql, params);
+    if (result.rowCount !== 0) {
+      throw new Error(`unexpectedly modified ${result.rowCount} row(s): ${label}`);
+    }
+    await client.query("ROLLBACK");
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], "actor query and rollback failed");
+    }
+    if ((error as { code?: string }).code === "42501") return;
+    throw error;
+  }
+}
+
 async function actorQuery<T extends QueryResultRow>(
   client: Client,
   actorId: string | undefined,
@@ -339,7 +372,8 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.auth_sessions": ["SELECT", "INSERT", "UPDATE"],
       "public.login_rate_limits": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.profiles": ["SELECT", "UPDATE"],
-      // 0023/0024: DELETE 用于守卫删除；UPDATE 仅用于 FOR UPDATE 行锁（无 UPDATE policy，实际更新被 RLS 拦截）
+      // 0023/0024: DELETE 守卫删除；UPDATE 仅供 FOR UPDATE 行锁。0025 另加 stub-only
+      // UPDATE policy，故内容行无匹配策略 → 实际更新被 RLS 静默过滤为 0 行（不报错）
       "public.words": ["SELECT", "DELETE", "UPDATE"],
       "public.word_l2_content": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.user_word_progress": ["SELECT", "INSERT", "UPDATE"],
@@ -650,9 +684,32 @@ async function verifyOwnership(admin: Client): Promise<void> {
   }
 }
 
-async function verifyAppRls(app: Client, fixture: Fixture): Promise<void> {
+async function verifyAppRls(app: Client, admin: Client, fixture: Fixture): Promise<void> {
   await expectDenied(app, "SELECT id FROM import_runs LIMIT 1", [], "vocab_app privileged import audit read");
-  await expectDenied(app, "UPDATE words SET title = title WHERE id = $1", [fixture.words[0]], "vocab_app catalog administration write");
+  // Positive control: the probe below can only prove something if the rows it
+  // targets actually exist. An UPDATE against missing ids also reports 0 rows,
+  // and an empty fixture.words would skip the loop entirely, so assert the
+  // fixture is intact under the admin (owner) connection first. The app
+  // connection cannot serve as the control here: words[2] is unpublished and
+  // words_public_read only exposes is_published = true rows.
+  const seeded = await admin.query<{ present: number }>(
+    "SELECT count(*)::int AS present FROM words WHERE id = ANY($1::uuid[])",
+    [fixture.words],
+  );
+  if (seeded.rows[0]?.present !== fixture.words.length) {
+    throw new Error(
+      `fixture words missing before the app write probe: ${seeded.rows[0]?.present ?? 0}/${fixture.words.length}`,
+    );
+  }
+  for (const wordId of fixture.words) {
+    await expectNoRowsAffected(
+      app,
+      fixture.users[0],
+      "UPDATE words SET title = title WHERE id = $1",
+      [wordId],
+      "vocab_app catalog administration write",
+    );
+  }
   const own = await actorQuery<{ id: string }>(
     app,
     fixture.users[0],
@@ -947,7 +1004,7 @@ async function main(): Promise<void> {
     const worker = clients.get("worker")!;
     const backup = clients.get("backup")!;
     const migration = clients.get("migration")!;
-    await verifyAppRls(app, fixture);
+    await verifyAppRls(app, admin, fixture);
     await verifyL2SecurityFunctions(app, admin, fixture);
     await verifyWorker(worker, fixture);
     await verifyBackup(backup, fixture);
