@@ -115,6 +115,12 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     markStaleForRecheck: vi.fn(async () => 0),
     markL1StaleForRecheck: vi.fn(async () => 0),
     markL1WeakSignal: vi.fn(async () => 0),
+    // ADR-0020：一键遗忘读/写方法（队列测试不触达，接口对齐需补全 mock）
+    findForgettingPreviewRows: vi.fn(async () => []),
+    countBulkSuspendCandidates: vi.fn(async () => 0),
+    bulkSuspendByWordbook: vi.fn(async () => 0),
+    findBulkForgetBatch: vi.fn(async () => false),
+    restoreBulkForget: vi.fn(async () => 0),
     ...overrides,
   };
 }

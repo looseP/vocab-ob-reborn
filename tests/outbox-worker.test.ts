@@ -93,6 +93,9 @@ beforeEach(() => {
     finalizeL2ContentHash: vi.fn(async () => 0),
     pause: vi.fn(async () => undefined),
     unpauseByReason: vi.fn(async () => undefined),
+    // ADR-0020：一键遗忘书级批量暂停/恢复（worker 不触达，接口对齐需补全 mock）
+    batchPauseByWordbook: vi.fn(async () => 0),
+    batchUnpauseManual: vi.fn(async () => 0),
   };
   mockRepos.reviews = {
     findProgressForOutbox: vi.fn(async () => ({

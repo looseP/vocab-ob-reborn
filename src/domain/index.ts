@@ -1,6 +1,9 @@
 /** Domain types — pure, zero DB/runtime dependencies. */
 
 import type { ParsedCoreDefinition } from "./ingest/types";
+import type { L3PracticeType } from "./l3-practice-task";
+
+export type { L3PracticeType };
 
 // ── Common ──────────────────────────────────────────────────────────────
 export type Json =
@@ -525,6 +528,89 @@ export interface L3ImportJobRow {
   error: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ── L3 practice attempts（ADR-0019 §1/§3）───────────────────────────────
+/**
+ * 子空间（能力域轴，ADR-0019 §4）：固定枚举，与 Direction（考试轴）正交。
+ * 落在 l3_source_spaces junction（多对多），DB CHECK 同值。
+ */
+export type L3SubSpace = "语法" | "阅读" | "作文" | "翻译" | "通用";
+
+/** 练习判定结果（l3_practice_attempts.outcome CHECK 同值）。 */
+export type L3PracticeOutcome = "correct" | "wrong" | "skip";
+
+/** L3 练习记录行（l3_practice_attempts，0028）。零 FSRS 列：有记录、无调度。 */
+export interface L3PracticeAttemptRow {
+  id: string;
+  user_id: string;
+  context_id: string;
+  occurrence_id: string | null;
+  session_id: string | null;
+  practice_type: L3PracticeType;
+  outcome: L3PracticeOutcome;
+  payload: Json;
+  created_at: string;
+}
+
+/** 练习记录分页（offset 口径，对齐 l3-context.listSources 的既有 L3 列表惯例）。 */
+export interface L3PracticeAttemptPage {
+  items: L3PracticeAttemptRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// ── L3 sessions（ADR-0019 §2：慢学习容器）─────────────────────────────
+export type L3SessionType = "l2_upgrade" | "l3_practice" | "cram_pack" | "knowledge";
+export type L3SessionStatus = "active" | "completed" | "abandoned";
+
+/** L3 会话行（l3_sessions，0028）。plan 只存实体 id 引用 + version，不存产物。 */
+export interface L3SessionRow {
+  id: string;
+  user_id: string;
+  type: L3SessionType;
+  title: string | null;
+  plan: Json;
+  version: number;
+  status: L3SessionStatus;
+  started_at: string;
+  ended_at: string | null;
+  created_at: string;
+}
+
+/** 会话计划的一天：只存 context id 引用（不存文本）。 */
+export interface L3SessionPlanItem {
+  day: number;
+  contextIds: string[];
+}
+
+/** 会话计划（plan jsonb）：实体引用 + version（借 TypeWords flow version 思路）。 */
+export interface L3SessionPlan {
+  version: number;
+  days: number;
+  seed: string;
+  items: L3SessionPlanItem[];
+}
+
+/** 会话渲染用的语境投影（现拉现渲染，非冻结产物）。 */
+export interface L3SessionContextSummary {
+  id: string;
+  text: string;
+  context_type: L3ContextType;
+  source_id: string;
+  source_title: string;
+}
+
+/** 渲染描述的一天：plan 的 id 引用 + 当次现拉的语境数据。 */
+export interface L3SessionRenderItem {
+  day: number;
+  contexts: L3SessionContextSummary[];
+}
+
+export interface L3SessionRenderDescription {
+  session: L3SessionRow;
+  items: L3SessionRenderItem[];
 }
 
 export interface L3WordContextListItem {

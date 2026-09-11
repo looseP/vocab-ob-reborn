@@ -23,15 +23,24 @@ import type {
   L3ImportJobRow,
   L3OccurrenceRow,
   L3PaginatedList,
+  L3PracticeAttemptPage,
+  L3PracticeAttemptRow,
+  L3PracticeOutcome,
+  L3PracticeType,
   L3ProposalBundle,
   L3ProposalItemRow,
   L3ProposalRow,
   L3RecommendationItemRow,
   L3RecommendationRunRow,
+  L3SessionContextSummary,
+  L3SessionRow,
+  L3SessionStatus,
+  L3SessionType,
   L3SourceContextListItem,
   L3SourceRow,
   L3SourceListPage,
   L3SourceSpace,
+  L3SubSpace,
   L3WordSpace,
   L3WordContextListItem,
   NoteEntryRow,
@@ -167,6 +176,43 @@ export type InsertNewCardStatus =
   | { status: "word_not_found"; progressId: null }
   | { status: "wordbook_invalid"; progressId: null };
 
+/**
+ * 一键遗忘预览行（ADR-0020）：该书每条 L1 进度 + 词条锚点元数据（词根/助记/语义链/别名）。
+ * 纯读，喂 computeAnchorCandidates 的入参形状；numeric 列已在仓库层归一为 number|null。
+ */
+export interface ForgettingPreviewRow {
+  wordId: string;
+  state: string;
+  stability: number | null;
+  retrievability: number | null;
+  recentRatings: string[];
+  lapseCount: number;
+  /** words.metadata->>'morphology_root'（如 "pre+dict"）。 */
+  morphology: string | null;
+  /** words.metadata->>'mnemonic_text'（回退 metadata->>'mnemonic'）。 */
+  mnemonic: string | null;
+  /** words.metadata->>'semantic_chain'。 */
+  semanticChain: string | null;
+  /** words.aliases（屈折/变体形）。 */
+  aliases: string[];
+}
+
+/** 一键遗忘批量挂起入参（keepWordIds = 锚点保留集，永不挂起）。 */
+export interface BulkSuspendByWordbookInput {
+  userId: string;
+  wordbookId: string;
+  keepWordIds: string[];
+  /** 服务生成；写入每条 review_logs.metadata.batchId，供 restore 精确回溯。 */
+  batchId: string;
+}
+
+/** 一键遗忘批量恢复入参（只回溯本批次日志）。 */
+export interface BulkForgetBatchInput {
+  userId: string;
+  wordbookId: string;
+  batchId: string;
+}
+
 export interface SaveAnswerInput {
   progressId: string;
   userId: string;
@@ -278,6 +324,40 @@ export interface IReviewRepository {
 
   /** UPDATE state=suspended + INSERT review_log (action=suspend). MUST be in a transaction. */
   suspendCard(progress: ProgressForAction, userId: string, sessionId: string | null, idempotencyKey: string | null): Promise<{ reviewLogId: string }>;
+
+  // ── 一键遗忘（ADR-0020，书级批量挂起/恢复）────────────────────────────
+  /**
+   * 该书预览行（L1 进度 + 词条锚点元数据），只读。owner-RLS 表，
+   * 调用方必须在携带 actorId 的事务内执行。
+   */
+  findForgettingPreviewRows(userId: string, wordbookId: string): Promise<ForgettingPreviewRow[]>;
+
+  /**
+   * 预览计数：与 {@link bulkSuspendByWordbook} **完全同条件**的可挂起行数
+   * （state NOT IN ('suspended','new') AND word_id <> ALL(keepWordIds)）。
+   */
+  countBulkSuspendCandidates(input: {
+    userId: string;
+    wordbookId: string;
+    keepWordIds: string[];
+  }): Promise<number>;
+
+  /**
+   * 一键遗忘批量挂起（单条 set-based 写）：非锚点、非 suspended/new 的 L1 行置
+   * state='suspended' + 单条 INSERT…SELECT 写 review_logs（rating=NULL、metadata
+   * action='bulk_forget'、previous_progress_snapshot 保真旧 state）。**不删、不改
+   * stability、不推 due**。返回受影响（挂起）行数。MUST be in a transaction。
+   */
+  bulkSuspendByWordbook(input: BulkSuspendByWordbookInput): Promise<number>;
+
+  /** restore 前置校验：该 (user, wordbook, batchId) 是否存在 bulk_forget 日志。 */
+  findBulkForgetBatch(input: BulkForgetBatchInput): Promise<boolean>;
+
+  /**
+   * 只按本批次日志回写 user_word_progress.state（取 previous_progress_snapshot->>'state'）。
+   * 不触碰 stability/due_at。返回受影响行数。MUST be in a transaction。
+   */
+  restoreBulkForget(input: BulkForgetBatchInput): Promise<number>;
 
   /** Resolve the owner-scoped wordbook for an undoable review log. MUST be in a transaction. */
   findReviewLogWordbookForUndo(reviewLogId: string, userId: string): Promise<string | null>;
@@ -703,6 +783,22 @@ export interface IL2ProgressRepository {
   pause(userId: string, wordbookId: string, wordId: string, reason: string): Promise<void>;
   /** Unpause L2 progress scoped to (user, wordbook, word) by reason. */
   unpauseByReason(userId: string, wordbookId: string, wordId: string, reason: string): Promise<void>;
+  /**
+   * 一键遗忘 · 书级批量暂停 L2（ADR-0020）：该书全部非锚点 L2 行
+   * l2_paused=true / l2_paused_at=now() / l2_paused_reason='manual'，排除 keepWordIds。
+   * 不触碰 l2_stability / l2_due_at。返回受影响行数。MUST be in a transaction。
+   */
+  batchPauseByWordbook(input: {
+    userId: string;
+    wordbookId: string;
+    keepWordIds: string[];
+  }): Promise<number>;
+  /**
+   * 一键遗忘 · 书级恢复 L2（ADR-0020）：仅 unpause 本功能的 manual 暂停
+   * （l2_paused_reason='manual'），回到 l2_due_at=now()。返回受影响行数。
+   * MUST be in a transaction。
+   */
+  batchUnpauseManual(userId: string, wordbookId: string): Promise<number>;
 }
 
 // ── L2 Content ─────────────────────────────────────────────────────────
@@ -1101,6 +1197,84 @@ export interface IL3RecommendationRepository {
   findLinkGapCandidates(input: L3RecommendationSignalLookup): Promise<L3RecommendationLinkGapCandidate[]>;
 }
 
+// ── L3 Practice Attempts (ADR-0019 §1/§3) ──────────────────────────────
+/** 插入一条练习记录（INSERT ... RETURNING *）。payload 必带 taskId 幂等身份。 */
+export interface NewL3PracticeAttempt {
+  user_id: string;
+  context_id: string;
+  occurrence_id: string | null;
+  session_id: string | null;
+  practice_type: L3PracticeType;
+  outcome: L3PracticeOutcome;
+  payload: Json;
+}
+
+/** 练习记录/错题库查询（offset 口径；space/direction 两轴过滤）。 */
+export interface L3AttemptLookup {
+  userId: string;
+  practiceType?: L3PracticeType | null;
+  outcome?: L3PracticeOutcome | null;
+  /** 子空间过滤：走 l3_source_spaces junction（EXISTS）。 */
+  space?: L3SubSpace | null;
+  /** 方向过滤：走 l3_sources.direction。 */
+  direction?: Direction | null;
+  limit: number;
+  offset: number;
+}
+
+export interface IL3PracticeRepository {
+  insertAttempt(input: NewL3PracticeAttempt): Promise<L3PracticeAttemptRow>;
+  /**
+   * 幂等身份锁（taskId 维度）：pg_advisory_xact_lock(hashtext(userId), hashtext(taskId))。
+   * MUST be in a transaction（先例 review.repository.checkIdempotency）。
+   */
+  lockAttemptIdentity(userId: string, taskId: string): Promise<void>;
+  /** 幂等查找：payload->>'taskId' 命中即返回既有行。 */
+  findAttemptByTaskId(userId: string, taskId: string): Promise<L3PracticeAttemptRow | null>;
+  /** 练习记录列表（可选 practiceType/outcome/space/direction 过滤）。 */
+  listAttempts(input: L3AttemptLookup): Promise<L3PracticeAttemptPage>;
+  /** 错题库 = attempts(outcome='wrong') 派生查询（不建第二真相源）。 */
+  listWrongAttempts(input: L3AttemptLookup): Promise<L3PracticeAttemptPage>;
+}
+
+// ── L3 Sessions (ADR-0019 §2) ──────────────────────────────────────────
+/** 建会话输入：plan 只存实体 id 引用 + version。 */
+export interface NewL3Session {
+  user_id: string;
+  type: L3SessionType;
+  title: string | null;
+  plan: Json;
+  version: number;
+}
+
+/** 确定性抽样入参（space/direction 两轴；seed 决定顺序 → 同 seed 恒同结果）。 */
+export interface L3SessionContextLookup {
+  userId: string;
+  space?: L3SubSpace | null;
+  direction?: Direction | null;
+  limit: number;
+  seed: string;
+}
+
+export interface IL3SessionRepository {
+  insertSession(input: NewL3Session): Promise<L3SessionRow>;
+  findSessionByIdForUser(userId: string, sessionId: string): Promise<L3SessionRow | null>;
+  /** ended=true → ended_at=now()；否则保留原值。 */
+  updateStatus(
+    userId: string,
+    sessionId: string,
+    status: L3SessionStatus,
+    options: { ended: boolean },
+  ): Promise<L3SessionRow | null>;
+  /**
+   * 确定性抽样 context id：ORDER BY md5(c.id::text || seed) LIMIT n。
+   * 同 (userId, space, direction, limit, seed) 恒同结果（getSession re-render 稳定）。
+   */
+  sampleContextIds(input: L3SessionContextLookup): Promise<string[]>;
+  /** 按 id 批量取语境投影（现拉现渲染；供 getSession 组描述）。 */
+  findContextsByIds(userId: string, contextIds: string[]): Promise<L3SessionContextSummary[]>;
+}
+
 // ── LLM Usage ──────────────────────────────────────────────────────────
 /**
  * LLM token usage persistence — backs the UsageTracker budget enforcement.
@@ -1203,6 +1377,8 @@ export interface IRepositories {
   l3Context: IL3ContextRepository;
   l3Proposal: IL3ProposalRepository;
   l3Recommendation: IL3RecommendationRepository;
+  l3Practice: IL3PracticeRepository;
+  l3Sessions: IL3SessionRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }
