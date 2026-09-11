@@ -170,7 +170,10 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0021](./0021-needs-recheck-derivation.md) | needs_recheck 读时派生（"内容已更新"标记的懒计算，零写入） | 2026-09-11 |
 | [0022](./0022-single-owner-self-hosted-deployment.md) | 自托管单 owner 形态与首次自举（部署 smoke 必须断言登录） | 2026-09-12 |
 | [0023](./0023-online-first-server-authority-no-offline-sync.md) | 多设备 = 在线优先、服务器权威、不做离线同步 | 2026-09-12 |
-| [0024](./0024-public-exposure-trust-boundary.md) | 公网暴露信任边界（强制 Cloudflare Access + 设备会话管理） | 2026-09-12 |
+| [0024](./0024-public-exposure-trust-boundary.md) | 公网暴露信任边界（强制 Cloudflare Access + 源站锁定 + 设备会话管理） | 2026-09-12 |
+| [0025](./0025-portable-export-contract.md) | 可携带导出契约（版本化 schema + 单一代码路径 + manifest 留痕） | 2026-09-12 |
+| [0026](./0026-single-host-observability.md) | 单机自托管可观测性（日志落盘轮转 + 轻量 watcher，否决全家桶） | 2026-09-12 |
+| [0027](./0027-backup-failure-contract.md) | 备份失败契约（失败不删本地 + 清理按"已异地校验"推进） | 2026-09-12 |
 
 ## 并行 agent 必读
 
