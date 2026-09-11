@@ -9,6 +9,7 @@
  */
 
 import type { ReviewState, UserWordProgressRow } from "./index";
+import { deriveContentStaleness } from "./content-staleness";
 
 export interface WordRef {
   id: string;
@@ -60,12 +61,20 @@ export class ReviewCard {
     return this.lapseCount >= LEECH_LAPSE_THRESHOLD;
   }
 
-  /** Has the word's content changed since this card was last reviewed? */
-  needsRecheck(currentContentHash: string): boolean {
-    return (
-      this.contentHashSnapshot !== null &&
-      this.contentHashSnapshot !== currentContentHash
-    );
+  /**
+   * Has the word's content changed since this card was last reviewed?
+   *
+   * 委托给 `deriveContentStaleness`（单一真相，ADR-0021）：L1 专属 hash 对可用时
+   * 优先比 L1，否则降级比全量 hash；被判定的那一对里任一侧缺失 → false
+   * （未作答的新卡不得被标为"需重新核对"）。
+   */
+  needsRecheck(currentContentHash: string, currentL1ContentHash?: string | null): boolean {
+    return deriveContentStaleness({
+      contentHash: currentContentHash,
+      l1ContentHash: currentL1ContentHash,
+      contentHashSnapshot: this.contentHashSnapshot,
+      l1ContentHashSnapshot: this.progress.l1_content_hash_snapshot,
+    });
   }
 
   /** Can the user answer this card right now? */

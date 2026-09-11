@@ -202,9 +202,13 @@ export interface IReviewRepository {
     Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
   >;
 
-  /** Due candidate pool (with needs_recheck) consumed by the P1 queue-priority builder. */
+  /**
+   * Due candidate pool consumed by the P1 queue-priority builder. Carries the
+   * row-level needs_recheck mark plus the words-side hashes, so the service can
+   * derive "content changed" at read time (ADR-0021).
+   */
   findDueCandidates(userId: string, wordbookId: string, limit: number): Promise<
-    Array<{ progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
+    Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
   >;
 
   /** All active (non-suspended) cards regardless of due_at — used by cram/preview practice modes. */

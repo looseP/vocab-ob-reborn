@@ -88,7 +88,14 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
   });
 
   it("findDueCandidates returns the due candidate pool with needs_recheck", async () => {
-    mock.setRows([dueCardRow({ id: "p3", needs_recheck: true })]);
+    mock.setRows([
+      dueCardRow({
+        id: "p3",
+        needs_recheck: true,
+        content_hash: "full-hash-v1",
+        l1_content_hash: "l1-hash-v1",
+      }),
+    ]);
     const repos = createRepositories();
 
     const cards = await repos.reviews.findDueCandidates!("u1", "wb1", 200);
@@ -96,9 +103,15 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0].progress.id).toBe("p3");
     expect(cards[0].progress.needs_recheck).toBe(true);
+    // ADR-0021：候选池额外带 words 侧两个 hash，供 service 读时派生 needs_recheck
+    expect(cards[0].progress.content_hash).toBe("full-hash-v1");
+    expect(cards[0].progress.l1_content_hash).toBe("l1-hash-v1");
+    expect(cards[0].progress).not.toHaveProperty("slug");
     const q = mock.lastQuery!;
     expect(q.text).toContain("uwp.state != 'suspended'");
     expect(q.text).toContain("(uwp.due_at IS NULL OR uwp.due_at <= now())");
+    expect(q.text).toContain("w.content_hash");
+    expect(q.text).toContain("w.l1_content_hash");
     expect(q.params).toEqual(["u1", "wb1", 200]);
   });
 

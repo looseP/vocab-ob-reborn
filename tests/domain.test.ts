@@ -130,6 +130,21 @@ describe("ReviewCard entity", () => {
     expect(card.needsRecheck("new")).toBe(true);
     expect(card.needsRecheck("old")).toBe(false);
   });
+
+  it("needsRecheck delegates to deriveContentStaleness (ADR-0021)", () => {
+    const card = new ReviewCard(
+      makeProgressRow({ content_hash_snapshot: "full-v1", l1_content_hash_snapshot: "l1-v1" }),
+      { id: "w1", slug: "aboard", title: "aboard", lemma: "aboard" });
+
+    // L1 对可用 → 只比 L1：L2-only 变更（全量 hash 变化）不触发重新核对
+    expect(card.needsRecheck("full-v9", "l1-v1")).toBe(false);
+    // L1 变化 → 触发
+    expect(card.needsRecheck("full-v9", "l1-v2")).toBe(true);
+    // 缺 L1 快照 → 降级比全量对；快照缺失（新卡）→ 不派生
+    const fresh = new ReviewCard(makeProgressRow({ content_hash_snapshot: null }),
+      { id: "w1", slug: "aboard", title: "aboard", lemma: "aboard" });
+    expect(fresh.needsRecheck("full-v9")).toBe(false);
+  });
 });
 
 describe("Wordbook entity", () => {

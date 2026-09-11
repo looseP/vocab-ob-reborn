@@ -46,14 +46,23 @@
 | `drizzle-release/0018_witty_longhorn.sql:109-121`（`finalize_l2_content_hash`） | 新 L2 hash vs `user_word_l2_progress.l2_content_hash_snapshot` | 不等 → 写 snapshot + `l2_due_at = now()`（L2 重卡，按 `l2_paused = false` 过滤） | 仅上表 7 个编辑路径 |
 | `src/repositories/review.repository.ts:635-647` `findStaleCards` | `uwp.content_hash_snapshot` vs `words.content_hash` | 只读 | **无生产调用方**（仅测试/文档） |
 | `src/repositories/review.repository.ts:658-676` `markStaleForRecheck` / `:684-702` `markL1StaleForRecheck` | — | 写 `needs_recheck = true` + 推 due | **无生产调用方**（仅测试/文档） |
-| `src/domain/review.entity.ts:64-69` `needsRecheck(currentContentHash)` | snapshot vs 传入 hash | 纯查询 | **无生产调用方** |
-| `src/services/review-queue.ts:34,104,179` | 读 `needs_recheck` 做优先级分桶 | 排序 | 依赖上面的写入——而写入者不存在 |
+| `src/domain/review.entity.ts` `needsRecheck` | 委托 `deriveContentStaleness`（L1 对优先，降级全量对） | 纯查询 | 仍无生产调用方（队列走 §1.2b 的服务侧派生） |
+| `src/services/review-queue.ts:34,104,179` | 读 `needs_recheck` 做优先级分桶 | 排序 | **已修复**：值由 `toQueueCandidate` 读时派生（ADR-0021），不再依赖不存在的写入者 |
 | `src/repositories/l2-progress.repository.ts:86-107` `findDueCards` | 不比较 hash | — | — |
 | `src/services/l2-review.service.ts:150-151` | snapshot 仅作 fallback key | — | — |
 | `src/services/review.service.ts:489-496` + `review.repository.ts:373-395` | 答题时把**当前** `words.content_hash` 写回两个 snapshot 列 | snapshot 自愈 | 用户答题 |
 
 **`needs_recheck` 在本仓没有任何运行时写入者**（全仓 grep：仅列定义、索引、
 两个未被调用的 mark 方法、队列读取与类型）；0027 之前就是如此，与 direction 无关。
+
+#### 1.2b 2026-09-11 更新（ADR-0021）：消费端改为**读时派生**，不再等写入端
+
+上表的结论（"写入者不存在"）仍然成立，但队列读取侧已改为**懒计算**：
+`ReviewService.toQueueCandidate` 用 `deriveContentStaleness`（`src/domain/content-staleness.ts`）
+在读取时比较 `words` 侧 hash 与进度快照，并 `||` 行上的人工标记 → 队列立即能打出
+「重新核对」。**零写入、零迁移、零 FSRS 影响**；当前因缺 L1 hash 产出链而降级用全量 hash
+比对（L2 内容变更也会触发 L1 卡重核，暂接受），补齐后同一行代码自动升级为 L1 专属判定。
+权威决策见 `docs/adr/0021-needs-recheck-derivation.md`。
 
 ## 2. 影响面量化
 
@@ -119,7 +128,8 @@
 1. **读取层**：T10/T11 按方向过滤缓存条目时必须 `item.direction ?? '通用'`——迁移后
    尚未编辑过的存量缓存没有该键（此约定与方案选择无关）。
 2. **既有事实**：`needs_recheck` 全链路无写入者（`markL1StaleForRecheck` 等为死代码）。
-   这是 0027 之前就存在的状态，建议另立任务决定"接线或删除"。
+   这是 0027 之前就存在的状态。**2026-09-11 部分收口**：读取侧已改为读时派生
+   （ADR-0021，零写入），写入端仍为死代码，是否接线/删除另立任务决定。
 3. 若未来确需方案 B，最小改动集已明确：0027 条件键、`REFRESH_L2_CACHE_DIRECTION_CONTRACT`
    增"通用不挂键"断言、`scripts/verify-database-roles.ts` 期望回退为裸条目 + 新增一条
    非通用行锁方向键、`tests/db/content-hash.test.ts` 相应用例反转。

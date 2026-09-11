@@ -167,6 +167,7 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0018](./0018-user-initiated-early-l2-upgrade.md) | 用户主动提前升级（豁免晋升门）+ 一次性种子继承 | 2026-09-11 |
 | [0019](./0019-l3-practice-records-and-sessions.md) | L3 练习记录与会话容器（有记录、无调度）+ 子空间两轴 | 2026-09-11 |
 | [0020](./0020-one-click-forgetting-suspension-reset.md) | 一键遗忘——非破坏性挂起重置 + 锚点词保留 | 2026-09-11 |
+| [0021](./0021-needs-recheck-derivation.md) | needs_recheck 读时派生（"内容已更新"标记的懒计算，零写入） | 2026-09-11 |
 
 ## 并行 agent 必读
 

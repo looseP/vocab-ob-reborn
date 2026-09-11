@@ -799,7 +799,13 @@ describe("ReviewService — P0 practice-mode behavior", () => {
 
 // ── P1: queue-priority routing (review/zen candidate builder) ────────────
 describe("ReviewService — P1 queue-priority routing", () => {
-  function makeProgressRow(overrides: Partial<UserWordProgressRow> = {}): UserWordProgressRow & { needs_recheck: boolean } {
+  type QueueProgressRow = UserWordProgressRow & {
+    needs_recheck: boolean;
+    content_hash: string;
+    l1_content_hash: string | null;
+  };
+
+  function makeProgressRow(overrides: Partial<QueueProgressRow> = {}): QueueProgressRow {
     return {
       id: "p1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
       state: "review", stability: 1.5, difficulty: 0.3, retrievability: 0.9,
@@ -815,6 +821,9 @@ describe("ReviewService — P1 queue-priority routing", () => {
       created_at: "2025-01-01T00:00:00Z",
       updated_at: "2025-01-02T00:00:00Z",
       needs_recheck: false,
+      // ADR-0021：词条 hash 默认与快照一致 → 派生为 false（不影响既有分桶断言）
+      content_hash: "old-hash",
+      l1_content_hash: null,
       ...overrides,
     };
   }
@@ -918,6 +927,104 @@ describe("ReviewService — P1 queue-priority routing", () => {
     expect(page2.items.length).toBe(5);
     expect(page2.hasMore).toBe(false);
     expect(page2.stats.total).toBe(25);
+  });
+
+  // ── ADR-0021：needs_recheck 读时派生（零写入）────────────────────────────
+  it("derives needs_recheck from the word hash when the row mark is false", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findDueCandidates = vi.fn(async () => [
+      { progress: makeProgressRow({ content_hash: "hash-v2" }), word: makeWord("w-1") },
+    ]);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findDueCandidates,
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "review");
+
+    // 快照 old-hash ≠ 词条 hash-v2 → 派生为"内容已更新"并提权
+    expect(queue.items[0].queueBucket).toBe("learning");
+    expect(queue.items[0].queueLabel).toBe("重新核对");
+    expect(queue.items[0].queueReason).toBe("内容已更新，请重看");
+  });
+
+  it("keeps the row-level needs_recheck mark even when the hashes match", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findDueCandidates = vi.fn(async () => [
+      { progress: makeProgressRow({ needs_recheck: true }), word: makeWord("w-1") },
+    ]);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findDueCandidates,
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "review");
+
+    expect(queue.items[0].queueLabel).toBe("重新核对");
+  });
+
+  it("does not derive recheck for an unanswered new card (snapshot null)", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const findDueCandidates = vi.fn(async () => [
+      {
+        progress: makeProgressRow({ state: "new", content_hash: "hash-v9", content_hash_snapshot: null }),
+        word: makeWord("w-1"),
+      },
+    ]);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findDueCandidates,
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "review");
+
+    expect(queue.items[0].queueBucket).toBe("new");
+    expect(queue.items[0].queueLabel).toBe("新卡片");
+  });
+
+  it("prefers the L1 hash pair over the full hash pair when both are available", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const makeService = (
+      progress: ReturnType<typeof makeProgressRow>,
+    ) =>
+      new ReviewService({
+        fsrsAdapter: adapter,
+        loadWeights: async () => null,
+        findDueCards: vi.fn(async () => []),
+        findDueCandidates: vi.fn(async () => [{ progress, word: makeWord("w-1") }]),
+        getOrCreateTodaySession: makeSession("review"),
+      });
+
+    // L1 对相等、全量对不等 → L1 优先 → 不派生
+    const l1Quiet = await makeService(
+      makeProgressRow({
+        l1_content_hash: "l1-v1",
+        l1_content_hash_snapshot: "l1-v1",
+        content_hash: "full-v9",
+        content_hash_snapshot: "full-v1",
+      }),
+    ).getQueue("u1", "wb1", 20, "review");
+    expect(l1Quiet.items[0].queueLabel).toBe("到期复习");
+
+    // L1 对不等、全量对相等 → L1 优先 → 派生
+    const l1Drift = await makeService(
+      makeProgressRow({
+        l1_content_hash: "l1-v2",
+        l1_content_hash_snapshot: "l1-v1",
+        content_hash: "full-v1",
+        content_hash_snapshot: "full-v1",
+      }),
+    ).getQueue("u1", "wb1", 20, "review");
+    expect(l1Drift.items[0].queueLabel).toBe("重新核对");
   });
 });
 

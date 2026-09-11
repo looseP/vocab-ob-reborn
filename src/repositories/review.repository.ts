@@ -61,6 +61,14 @@ type ReviewCardQueryRow = UserWordProgressRow & {
   pos: string | null;
   cefr: string | null;
   needs_recheck: boolean;
+  /**
+   * words 侧的两个 hash，供 needs_recheck 读时派生（ADR-0021）：
+   * 只有 findDueCandidates 选择它们，其余 JOIN 查询不选 → 可选。
+   * 经 mapReviewCardRows 的 rest-spread 落在 progress 侧（与
+   * ProgressWithContentHash 的既有约定一致）。
+   */
+  content_hash?: string;
+  l1_content_hash?: string | null;
 };
 
 export class ReviewRepository extends BaseRepository implements IReviewRepository {
@@ -121,18 +129,20 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
    * Unlike findDueCards this is used as the *candidate pool* for the P1
    * queue-priority builder (review/zen): a larger pool is fetched and the
    * service layer applies priority bucketing + the new-card quota before
-   * returning the final batch. Carries needs_recheck so the builder can
-   * promote content-changed cards to the front.
+   * returning the final batch. Carries needs_recheck (人工标记) plus the
+   * words-side hashes so the service can derive "content changed" at read
+   * time (ADR-0021: 读时派生，零写入).
    */
   async findDueCandidates(
     userId: string,
     wordbookId: string,
     limit: number,
-  ): Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>> {
+  ): Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>> {
     const rows = await this.query<ReviewCardQueryRow>(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
               w.id AS w_id, w.slug, w.title, w.lemma,
-              w.short_definition, w.ipa, w.pos, w.cefr
+              w.short_definition, w.ipa, w.pos, w.cefr,
+              w.content_hash, w.l1_content_hash
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
@@ -143,7 +153,9 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       [userId, wordbookId, limit],
     );
 
-    return this.mapReviewCardRows<UserWordProgressRow & { needs_recheck: boolean }>(rows);
+    return this.mapReviewCardRows<
+      UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }
+    >(rows);
   }
 
   /**
