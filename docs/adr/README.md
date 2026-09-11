@@ -174,6 +174,7 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0025](./0025-portable-export-contract.md) | 可携带导出契约（版本化 schema + 单一代码路径 + manifest 留痕） | 2026-09-12 |
 | [0026](./0026-single-host-observability.md) | 单机自托管可观测性（日志落盘轮转 + 轻量 watcher，否决全家桶） | 2026-09-12 |
 | [0027](./0027-backup-failure-contract.md) | 备份失败契约（失败不删本地 + 清理按"已异地校验"推进） | 2026-09-12 |
+| [0028](./0028-word-l3-reference-integrity-and-deletion.md) | 词–L3 引用完整性（阻塞式删除 + RESTRICT 兜底，不建 orphan 池） | 2026-09-12 |
 
 ## 并行 agent 必读
 
