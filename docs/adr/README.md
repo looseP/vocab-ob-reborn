@@ -168,6 +168,9 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0019](./0019-l3-practice-records-and-sessions.md) | L3 练习记录与会话容器（有记录、无调度）+ 子空间两轴 | 2026-09-11 |
 | [0020](./0020-one-click-forgetting-suspension-reset.md) | 一键遗忘——非破坏性挂起重置 + 锚点词保留 | 2026-09-11 |
 | [0021](./0021-needs-recheck-derivation.md) | needs_recheck 读时派生（"内容已更新"标记的懒计算，零写入） | 2026-09-11 |
+| [0022](./0022-single-owner-self-hosted-deployment.md) | 自托管单 owner 形态与首次自举（部署 smoke 必须断言登录） | 2026-09-12 |
+| [0023](./0023-online-first-server-authority-no-offline-sync.md) | 多设备 = 在线优先、服务器权威、不做离线同步 | 2026-09-12 |
+| [0024](./0024-public-exposure-trust-boundary.md) | 公网暴露信任边界（强制 Cloudflare Access + 设备会话管理） | 2026-09-12 |
 
 ## 并行 agent 必读
 

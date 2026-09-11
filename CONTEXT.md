@@ -164,6 +164,20 @@ _Avoid_: remove, delete (those are destructive)
 **Note delete (笔记删除)**: Hard-delete a note entry. Destructive and irreversible; detail page only, behind a confirmation — the review card never performs irreversible operations.
 _Avoid_: using delete where hide suffices
 
+### Deployment & access
+
+**Owner (owner 身份)**: The single human identity a deployment serves (2026-09-12, ADR-0022). Every actor — browser session, agent token — resolves to this one owner; there is no signup and no second owner. The `users` / `profiles` tables are multi-tenant-shaped, but the product is not.
+_Avoid_: user / account (implies registration and multiple tenants); confusing the `owner` **role** with a second person (agent tokens carry role `agent` but the same owner identity)
+
+**Device (设备)**: A browser client holding its own session (one `auth_sessions` row each, revocable individually). Multiple devices share one owner and one authoritative data set (2026-09-12, ADR-0023). A device is a session-layer notion only.
+_Avoid_: per-device progress (progress is per (user, word, wordbook), never per device); device as a scope, partition or sync replica
+
+**Server authority (服务器权威)**: The server's rows are the only source of truth; clients hold derived views and nothing authoritative (2026-09-12, ADR-0023). There is no offline queue, no background sync and no conflict resolution, so an unreachable server means the app is unusable (and must say so).
+_Avoid_: local-first; treating a client cache as truth; promising offline reading
+
+**Portable export (可携带导出)**: The owner-facing capability to take their data out as a structured artifact — wordbooks, L3 material, progress, notes — independent of a database dump, with a versioned schema that agents can consume (2026-09-12). **Import** is its inverse.
+_Avoid_: treating pg_dump as the export story (a backup is disaster recovery, an export is portability); one-off ad-hoc formats per export
+
 ## Relationships
 
 - A **Word** has exactly one **Textbook note** (imported, read-only) and zero or more **note entries** (its Annotation set)
