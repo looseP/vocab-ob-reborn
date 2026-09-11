@@ -278,13 +278,30 @@ export interface NoteEntryRow {
 }
 
 // ── Wordbook ────────────────────────────────────────────────────────────
+
+/**
+ * Direction（方向，ADR-0017）：考试/用途风味轴，挂在词书、L2 内容行与 L3 来源上。
+ * `通用` 是方向无关桶——方向专属界面先展示本方向，再回退 `通用`。
+ * 词书方向不建列，落在 `wordbooks.settings` jsonb（见 WordbookSettings）。
+ */
+export type Direction = "通用" | "考研" | "雅思";
+
+/** `wordbooks.settings` jsonb 的形状（0 迁移；direction 缺省视为 `通用`）。 */
+export type WordbookSettings = {
+  direction?: Direction;
+  review?: {
+    desired_retention?: number;
+    fsrs_weights?: number[];
+  };
+};
+
 export interface WordbookRow {
   id: string;
   user_id: string;
   name: string;
   description: string | null;
   is_default: boolean;
-  settings: Json;
+  settings: WordbookSettings | null;
   created_at: string;
   updated_at: string;
 }

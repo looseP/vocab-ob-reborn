@@ -870,6 +870,9 @@ export const wordL2Content = pgTable("word_l2_content", {
 	id: uuid("id").defaultRandom().primaryKey().notNull(),
 	wordId: uuid("word_id").notNull().references(() => words.id, { onDelete: "cascade" }),
 	field: text("field").notNull(),
+	// ADR-0017 方向变体：默认 '通用'（方向无关桶）。候选行（is_active=false）
+	// 天然携带 direction，无需单独改候选池表结构。
+	direction: text("direction").default('通用').notNull(),
 	content: jsonb("content").notNull(),
 	source: text("source").notNull(),
 	sourceRef: text("source_ref"),
@@ -880,6 +883,10 @@ export const wordL2Content = pgTable("word_l2_content", {
 }, (table) => [
 	index("idx_l2_content_word_field").on(table.wordId, table.field),
 	index("idx_l2_content_source").on(table.source),
+	// ADR-0017：每个 (word, field, direction) 至多一条生效行；partial 限定
+	// is_active = true，候选行（is_active=false）与退役行不参与，互不阻塞。
+	uniqueIndex("word_l2_content_word_field_direction_active_unique").on(table.wordId, table.field, table.direction).where(sql`is_active = true`),
+	check("word_l2_content_direction_check", sql`direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
 ]);
 
 export const l3Sources = pgTable("l3_sources", {
@@ -887,6 +894,8 @@ export const l3Sources = pgTable("l3_sources", {
 	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
 	wordbookId: uuid("wordbook_id"),
 	sourceType: text("source_type").notNull(),
+	// ADR-0017 方向轴（正交于子空间）：默认 '通用'。
+	direction: text("direction").default('通用').notNull(),
 	title: text("title").notNull(),
 	author: text("author"),
 	url: text("url"),
@@ -911,6 +920,7 @@ export const l3Sources = pgTable("l3_sources", {
 		}).onDelete("cascade"),
 	pgPolicy("l3_sources_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 	check("l3_sources_source_type_check", sql`source_type = ANY (ARRAY['article'::text, 'book'::text, 'video'::text, 'audio'::text, 'chat'::text, 'manual'::text, 'web'::text, 'other'::text])`),
+	check("l3_sources_direction_check", sql`direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
 ]);
 
 // L3 owner isolation: composite foreign keys below ensure scoped rows cannot
@@ -1135,4 +1145,80 @@ export const l3RecommendationItems = pgTable("l3_recommendation_items", {
 	check("l3_recommendation_items_status_check", sql`status = ANY (ARRAY['pending'::text, 'accepted'::text, 'rejected'::text, 'dismissed'::text, 'expired'::text])`),
 	check("l3_recommendation_items_priority_check", sql`priority_score >= 0`),
 	check("l3_recommendation_items_confidence_check", sql`confidence >= 0 AND confidence <= 1`),
+]);
+
+// ── 增量升级 / L3 慢学习（ADR-0018 / ADR-0019，2026-09-11）────────────────
+// 边界（ADR-0004 §6 / ADR-0005）：这三张表都不参与 FSRS——无 stability /
+// difficulty / retrievability / due 列。L3 练习"有记录、无调度"；错题库 =
+// attempts(outcome='wrong') 的派生视图，不建第二真相源。
+
+export const l3Sessions = pgTable("l3_sessions", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	type: text("type").notNull(),
+	title: text("title"),
+	// 服务端计划 = 实体引用 + version（ADR-0019 §2）。DB 只存 JSONB、不校验
+	// 内容；渲染描述现拉现造，不存冻结 HTML 产物。非法 version 由服务层拒绝。
+	plan: jsonb("plan").notNull(),
+	version: integer("version").default(1).notNull(),
+	status: text("status").default('active').notNull(),
+	startedAt: timestamp("started_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	endedAt: timestamp("ended_at", { withTimezone: true, mode: "string" }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	pgPolicy("l3_sessions_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_sessions_type_check", sql`type = ANY (ARRAY['l2_upgrade'::text, 'l3_practice'::text, 'cram_pack'::text, 'knowledge'::text])`),
+	check("l3_sessions_status_check", sql`status = ANY (ARRAY['active'::text, 'completed'::text, 'abandoned'::text])`),
+]);
+
+export const upgradeWorkOrders = pgTable("upgrade_work_orders", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	wordId: uuid("word_id").notNull().references(() => words.id, { onDelete: "cascade" }),
+	wordbookId: uuid("wordbook_id").notNull(),
+	// 方向由工单指定（ADR-0017/0018）：升级产出进入该方向的变体行。
+	direction: text("direction").notNull(),
+	status: text("status").default('标记中').notNull(),
+	// 升级建议三档快照（ADR-0018 §2）：标记时刻的建议，纯提示、零 FSRS 写入。
+	suggestionSnapshot: jsonb("suggestion_snapshot"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	completedAt: timestamp("completed_at", { withTimezone: true, mode: "string" }),
+}, (table) => [
+	// 同一 (user, word, wordbook) 至多一张进行中工单；已完结/已取消不阻塞重开。
+	uniqueIndex("idx_upgrade_work_orders_one_active").on(table.userId, table.wordId, table.wordbookId).where(sql`status IN ('标记中', '升级中')`),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "upgrade_work_orders_wordbook_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("upgrade_work_orders_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("upgrade_work_orders_direction_check", sql`direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
+	check("upgrade_work_orders_status_check", sql`status = ANY (ARRAY['标记中'::text, '升级中'::text, '已完成'::text, '已取消'::text])`),
+]);
+
+export const l3PracticeAttempts = pgTable("l3_practice_attempts", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	// target = context（句子），不是裸词（ADR-0019 §Tradeoffs）；复合 FK 保证
+	// 不能挂到他人语境上。
+	contextId: uuid("context_id").notNull().references(() => l3Contexts.id, { onDelete: "cascade" }),
+	// 可选 occurrence 指向：occurrence 被删时保留记录本身（指针置空）。
+	occurrenceId: uuid("occurrence_id").references(() => l3Occurrences.id, { onDelete: "set null" }),
+	// 可空会话归属（自由练习无会话）；会话删除不销毁错题记录。
+	sessionId: uuid("session_id").references(() => l3Sessions.id, { onDelete: "set null" }),
+	practiceType: text("practice_type").notNull(),
+	outcome: text("outcome").notNull(),
+	payload: jsonb("payload").default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_practice_attempts_user_outcome_created").on(table.userId, table.outcome, table.createdAt),
+	foreignKey({
+			columns: [table.contextId, table.userId],
+			foreignColumns: [l3Contexts.id, l3Contexts.userId],
+			name: "l3_practice_attempts_context_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_practice_attempts_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_practice_attempts_practice_type_check", sql`practice_type = ANY (ARRAY['essay_dictation'::text, 'context_quiz'::text])`),
+	check("l3_practice_attempts_outcome_check", sql`outcome = ANY (ARRAY['correct'::text, 'wrong'::text, 'skip'::text])`),
 ]);

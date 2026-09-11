@@ -150,6 +150,30 @@ describe("Wordbook entity", () => {
     } as WordbookRow);
     expect(wb.reviewSettings).toEqual({});
   });
+
+  // ADR-0017：词书方向落 settings jsonb（0 迁移），缺省/非法值回退 '通用'。
+  it("direction reads settings.direction when present", () => {
+    const wb = new Wordbook({
+      id: "wb1", user_id: "u1", name: "Global", description: null, is_default: true,
+      settings: { direction: "考研" }, created_at: "", updated_at: "",
+    } as WordbookRow);
+    expect(wb.direction).toBe("考研");
+  });
+
+  it("direction defaults to 通用 when settings are absent or unrecognized", () => {
+    const withoutSettings = new Wordbook({
+      id: "wb1", user_id: "u1", name: "Global", description: null, is_default: true,
+      settings: null, created_at: "", updated_at: "",
+    } as WordbookRow);
+    expect(withoutSettings.direction).toBe("通用");
+
+    const unknownDirection = new Wordbook({
+      id: "wb1", user_id: "u1", name: "Global", description: null, is_default: true,
+      // 模拟 DB jsonb 中的未识别值：类型收窄不成立，但运行期必须回退 '通用'。
+      settings: { direction: "雅思A类" } as unknown as WordbookRow["settings"], created_at: "", updated_at: "",
+    } as WordbookRow);
+    expect(unknownDirection.direction).toBe("通用");
+  });
 });
 
 describe("UserWordL2ProgressRow", () => {

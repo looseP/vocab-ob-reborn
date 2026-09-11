@@ -321,6 +321,12 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
       public.l3_proposal_items TO vocab_app;
     GRANT SELECT, INSERT ON TABLE public.l3_recommendation_runs TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_recommendation_items TO vocab_app;
+    -- 0028（ADR-0018/0019）：升级工单（标记/推进/完成/取消 = 状态 UPDATE）、
+    -- L3 会话（建计划/读/结束）、L3 练习记录（写入/错题库读取，无删除路径——
+    -- 记录是错题库真相源，归档策略另议）。
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.upgrade_work_orders TO vocab_app;
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_sessions TO vocab_app;
+    GRANT SELECT, INSERT ON TABLE public.l3_practice_attempts TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;

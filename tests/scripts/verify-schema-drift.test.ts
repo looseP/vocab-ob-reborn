@@ -14,6 +14,7 @@ import {
   compareOwnerRlsContract,
   compareSecurityDefinerContract,
   compareSecurityDefinerOverrideContract,
+  compareSecurityDefinerDirectionContract,
   compareSearchVectorContract,
 } from "../../scripts/verify-schema-drift";
 
@@ -213,6 +214,50 @@ describe("compareSecurityDefinerOverrideContract (0018 relaxed guard)", () => {
     expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("FROM PUBLIC", "FROM vocab_worker"))).toBe(false);
     expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("'^[0-9a-f]{64}$'", "'.*'"))).toBe(false);
     expect(compareSecurityDefinerOverrideContract(RELAXED_OVERRIDE_SQL.replace("l2_paused = false", "true"))).toBe(false);
+  });
+});
+
+const DIRECTION_OVERRIDE_SQL = `
+CREATE OR REPLACE FUNCTION public.refresh_l2_cache(p_word_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+AS $$
+DECLARE v_actor_id uuid := auth.uid();
+BEGIN
+IF v_actor_id IS NULL THEN RAISE EXCEPTION 'actor cannot refresh L2 cache for word' USING ERRCODE = '42501'; END IF;
+WITH expanded AS (
+  SELECT content.field,
+    CASE WHEN pg_catalog.jsonb_typeof(item.value) = 'object'
+      THEN item.value || pg_catalog.jsonb_build_object('direction', content.direction)
+      ELSE item.value END AS value
+  FROM public.word_l2_content AS content
+  WHERE content.word_id = p_word_id AND content.is_active = true
+), aggregated AS (SELECT 1)
+UPDATE public.words AS word
+SET collocations = aggregated.collocations, corpus_items = aggregated.corpus_items, synonym_items = aggregated.synonym_items, antonym_items = aggregated.antonym_items
+FROM aggregated WHERE word.id = p_word_id;
+END;
+$$;
+ALTER FUNCTION public.refresh_l2_cache(uuid) OWNER TO vocab_migration;
+REVOKE ALL ON FUNCTION public.refresh_l2_cache(uuid) FROM PUBLIC;
+`;
+
+describe("compareSecurityDefinerDirectionContract (0027 direction preservation)", () => {
+  it("accepts the direction-preserving override and rejects weakening", () => {
+    expect(compareSecurityDefinerDirectionContract(DIRECTION_OVERRIDE_SQL)).toBe(true);
+    // 丢 direction 键 = 回退到 0018 缓存形态 → 拒绝
+    expect(compareSecurityDefinerDirectionContract(
+      DIRECTION_OVERRIDE_SQL.replace("item.value || pg_catalog.jsonb_build_object('direction', content.direction)", "item.value"),
+    )).toBe(false);
+    // 回归 0018 之前的逐词 progress 守卫 → 拒绝
+    expect(compareSecurityDefinerDirectionContract(
+      DIRECTION_OVERRIDE_SQL.replace(
+        "END IF;\nWITH expanded AS",
+        "END IF;\nIF NOT EXISTS (SELECT 1 FROM public.user_word_l2_progress AS progress WHERE progress.user_id = v_actor_id AND progress.word_id = p_word_id) THEN RAISE EXCEPTION 'actor cannot refresh L2 cache for word'; END IF;\nWITH expanded AS",
+      ),
+    )).toBe(false);
+    expect(compareSecurityDefinerDirectionContract(DIRECTION_OVERRIDE_SQL.replace("SECURITY DEFINER", "SECURITY INVOKER"))).toBe(false);
+    expect(compareSecurityDefinerDirectionContract(DIRECTION_OVERRIDE_SQL.replace("OWNER TO vocab_migration", "OWNER TO vocab_app"))).toBe(false);
+    expect(compareSecurityDefinerDirectionContract(DIRECTION_OVERRIDE_SQL.replace("FROM PUBLIC", "FROM vocab_worker"))).toBe(false);
   });
 });
 

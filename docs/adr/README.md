@@ -163,6 +163,10 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0006](./0006-l2-composer-contract-freeze.md) | L2 Composer 合同冻结（not chat / collocation 必词典落地 / external-prompt 非持久 / Phase 2E 不引入 L3） | Phase 2E |
 | [0015](./0015-l2-review-outbox-track-routing.md) | L2 复习闭环 Outbox track='l2' 事件路由（FR-12 接线1） | Phase 2E→FR-12 |
 | [0016](./0016-l3-context-source-adapter-for-l2-drill.md) | L3 语境源适配器接入 L2 Drill 产出自评（FR-12 接线2） | Phase 2E→FR-12 |
+| [0017](./0017-l2-content-direction-variant-key.md) | L2 内容方向变体键（word_l2_content 按 direction 扩展；进度键不变） | 2026-09-11 |
+| [0018](./0018-user-initiated-early-l2-upgrade.md) | 用户主动提前升级（豁免晋升门）+ 一次性种子继承 | 2026-09-11 |
+| [0019](./0019-l3-practice-records-and-sessions.md) | L3 练习记录与会话容器（有记录、无调度）+ 子空间两轴 | 2026-09-11 |
+| [0020](./0020-one-click-forgetting-suspension-reset.md) | 一键遗忘——非破坏性挂起重置 + 锚点词保留 | 2026-09-11 |
 
 ## 并行 agent 必读
 
