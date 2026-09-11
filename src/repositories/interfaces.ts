@@ -6,12 +6,14 @@
  */
 
 import type {
+  Direction,
   WordRow,
   WordSummary,
   PaginatedResult,
   GetPublicWordsOptions,
   UserWordProgressRow,
   UserWordL2ProgressRow,
+  UpgradeWorkOrderRow,
   L2DrillStepRow,
   L2ContentRow,
   L3ContextLinkRow,
@@ -44,6 +46,7 @@ import type {
   RootFamilyGroupRow,
   Json,
 } from "../domain";
+import type { OtherBookL2Signal } from "../domain/upgrade-suggestion";
 
 // ── Word ────────────────────────────────────────────────────────────────
 export interface IWordRepository {
@@ -535,6 +538,51 @@ export interface IL2ProgressRepository {
    * 是否已为该词晋升出 L2 行（跨词书 EXISTS）。供词条详情"待扩展"提示使用。
    */
   existsByUserAndWord(userId: string, wordId: string): Promise<boolean>;
+  /**
+   * 他书该词的"最佳"L2 行（ADR-0018 §3 提前升级 seed 来源，只读）。
+   *
+   * 排序键**写死在此处**，避免各调用方各自重解释"最佳"：
+   *   1. l2_state 优先级：review > relearning > learning > new > 其他；
+   *   2. l2_stability DESC（NULL 视为 -1，排最后）；
+   *   3. l2_due_at DESC（NULLS LAST —— 越晚到期视作越新近的掌握状态）；
+   *   4. id ASC（稳定 tie-break，保证同输入恒同输出）。
+   *
+   * 只返回单行；excludeWordbookId 排除当前书（seed 只许取"他书"）。
+   */
+  findBestByWordAndUser(
+    userId: string,
+    wordId: string,
+    excludeWordbookId: string,
+  ): Promise<UserWordL2ProgressRow | null>;
+  /**
+   * 他书 L2 掌握信号（只读最小投影），直接喂
+   * {@link computeUpgradeSuggestion} 的 otherBooksL2 入参（ADR-0018 §2）。
+   * 已由 SQL 排除当前书；一行 = 一本他书的 L2 状态。
+   */
+  findOtherBookSignals(
+    userId: string,
+    wordId: string,
+    excludeWordbookId: string,
+  ): Promise<OtherBookL2Signal[]>;
+  /**
+   * ADR-0018 §3 提前升级（seed）审计行：track='l2'、rating=NULL，
+   * metadata 记 seeded_from（来源 progress id / wordbook id）。仅 seed 路径写。
+   * MUST be in a transaction（actor RLS）。
+   */
+  insertL2SeedAuditLog(input: {
+    userId: string;
+    wordId: string;
+    wordbookId: string;
+    /** 新建 L2 行的 progress id。 */
+    progressId: string;
+    /** seed 来源（他书最佳行）。 */
+    seededFromProgressId: string;
+    seededFromWordbookId: string;
+    state: string;
+    dueAt: string;
+    stability: number;
+    difficulty: number;
+  }): Promise<void>;
     insert(data: NewL2Progress): Promise<UserWordL2ProgressRow>;
     /** L2 到期口径队列（l2_drill spec §一）：未暂停且 l2_due_at <= now，按到期升序。 */
     findDueCards(
@@ -662,6 +710,11 @@ export interface IL2ProgressRepository {
 export interface NewL2Content {
   word_id: string;
   field: string;
+  /**
+   * ADR-0017 §2：内容行方向。缺省 `通用`（既有调用方零改动；
+   * 升级工单/候选池在生成时指定 `考研`/`雅思` 等）。
+   */
+  direction?: Direction;
   content: Json;
   source: string;
   source_ref?: string | null;
@@ -690,6 +743,49 @@ export interface IL2ContentRepository {
   softDelete(id: string): Promise<void>;
   /** Aggregate active L2 content rows into the words JSONB cache columns. */
   refreshL2Cache(wordId: string): Promise<void>;
+}
+
+// ── Upgrade Work Order ─────────────────────────────────────────────────
+/** 建工单输入（ADR-0018 §1）。 */
+export interface NewUpgradeWorkOrder {
+  user_id: string;
+  word_id: string;
+  wordbook_id: string;
+  /** 方向由工单指定（ADR-0017 §2）。 */
+  direction: Direction;
+  status?: string;
+  suggestion_snapshot?: Json | null;
+}
+
+export interface IUpgradeWorkOrderRepository {
+  /** 插入工单。同 (user,word,wordbook) 已有进行中工单时由 23505 暴露给调用方。 */
+  insert(data: NewUpgradeWorkOrder): Promise<UpgradeWorkOrderRow>;
+  /** 重复标记：刷新既有工单的 direction + suggestion_snapshot（不动 status）。 */
+  updateSuggestion(
+    userId: string,
+    workOrderId: string,
+    direction: Direction,
+    suggestionSnapshot: Json,
+  ): Promise<UpgradeWorkOrderRow | null>;
+  /** 进行中工单（标记中 / 升级中）；无则 null。 */
+  findActiveByScope(
+    userId: string,
+    wordbookId: string,
+    wordId: string,
+  ): Promise<UpgradeWorkOrderRow | null>;
+  findByIdForUser(userId: string, workOrderId: string): Promise<UpgradeWorkOrderRow | null>;
+  /** 待升级清单：进行中工单，按创建时间倒序。 */
+  listPending(userId: string, wordbookId: string, limit: number): Promise<UpgradeWorkOrderRow[]>;
+  /**
+   * 状态推进。`completed: true` 时写 completed_at=now()（其余状态保留原值）。
+   * 返回更新行；不存在 / 非本人 → null。
+   */
+  updateStatus(
+    userId: string,
+    workOrderId: string,
+    status: string,
+    options?: { completed?: boolean },
+  ): Promise<UpgradeWorkOrderRow | null>;
 }
 
 // ── L3 Context Space ───────────────────────────────────────────────────
@@ -1101,6 +1197,7 @@ export interface IRepositories {
   stats: IStatsRepository;
   l2Progress: IL2ProgressRepository;
   l2Content: IL2ContentRepository;
+  upgradeWorkOrders: IUpgradeWorkOrderRepository;
   l3Context: IL3ContextRepository;
   l3Proposal: IL3ProposalRepository;
   l3Recommendation: IL3RecommendationRepository;

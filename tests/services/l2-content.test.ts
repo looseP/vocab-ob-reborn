@@ -351,6 +351,8 @@ describe("L2ContentService.confirmDraft", () => {
       source: "manual",
       source_ref: null,
       approved_by: "user",
+      // ADR-0017 §2 契约变更：直接确认路径显式写 `通用`（无方向上下文）。
+      direction: "通用",
     });
     // 2. cache refreshed
     expect(l2ContentRepo.refreshL2Cache).toHaveBeenCalledWith("word-1");
@@ -1531,6 +1533,31 @@ describe("L2ContentService — Phase G candidate pool", () => {
           approved_by: "agent",
           is_active: false,
         }),
+      );
+    });
+
+    it("passes an explicit direction through to the candidate insert (ADR-0017 §2)", async () => {
+      const { l2ContentRepo } = setupRepos();
+      const service = new L2ContentService({});
+
+      await service.proposeCandidates("word-1", "collocation", VALID_COLLOCATION, {
+        actorId: "user-1",
+        direction: "考研",
+      });
+
+      expect(l2ContentRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ word_id: "word-1", is_active: false, direction: "考研" }),
+      );
+    });
+
+    it("defaults the candidate direction to 通用 when omitted", async () => {
+      const { l2ContentRepo } = setupRepos();
+      const service = new L2ContentService({});
+
+      await service.proposeCandidates("word-1", "collocation", VALID_COLLOCATION);
+
+      expect(l2ContentRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ word_id: "word-1", direction: "通用" }),
       );
     });
 

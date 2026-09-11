@@ -14,6 +14,7 @@
  */
 
 import type { Json, L2DrillStepRow, ReviewRating, UserWordL2ProgressRow } from "../domain";
+import type { OtherBookL2Signal } from "../domain/upgrade-suggestion";
 import type {
   IL2ProgressRepository,
   L2ProgressForUpdate,
@@ -23,6 +24,13 @@ import type {
   SaveL2AnswerInput,
 } from "./interfaces";
 import { BaseRepository } from "./base";
+
+/** numeric 列（pg 返回字符串）→ number|null；非有限值一律 null。 */
+function toNullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 const RATING_COUNTER: Record<ReviewRating, string> = {
   again: "l2_again_count",
@@ -56,6 +64,100 @@ export class L2ProgressRepository extends BaseRepository implements IL2ProgressR
       `SELECT * FROM user_word_l2_progress
         WHERE user_id = $1 AND wordbook_id = $2::uuid AND word_id = $3::uuid`,
       [userId, wordbookId, wordId],
+    );
+  }
+
+  /**
+   * 他书该词的"最佳"L2 行（ADR-0018 §3 seed 来源，只读）。
+   * 排序键写死在此（见 IL2ProgressRepository.findBestByWordAndUser 接口注释）。
+   * numeric 列经 pg 返回为字符串，映射时统一转 number。
+   */
+  async findBestByWordAndUser(
+    userId: string,
+    wordId: string,
+    excludeWordbookId: string,
+  ): Promise<UserWordL2ProgressRow | null> {
+    return this.queryOne<UserWordL2ProgressRow>(
+      `SELECT * FROM user_word_l2_progress
+        WHERE user_id = $1 AND word_id = $2::uuid AND wordbook_id <> $3::uuid
+        ORDER BY
+          CASE l2_state
+            WHEN 'review' THEN 0
+            WHEN 'relearning' THEN 1
+            WHEN 'learning' THEN 2
+            WHEN 'new' THEN 3
+            ELSE 4
+          END,
+          COALESCE(l2_stability, -1) DESC,
+          l2_due_at DESC NULLS LAST,
+          id ASC
+        LIMIT 1`,
+      [userId, wordId, excludeWordbookId],
+    );
+  }
+
+  /** 他书 L2 掌握信号（只读最小投影）——喂 computeUpgradeSuggestion 的 otherBooksL2。 */
+  async findOtherBookSignals(
+    userId: string,
+    wordId: string,
+    excludeWordbookId: string,
+  ): Promise<OtherBookL2Signal[]> {
+    const rows = await this.query<{
+      state: string | null;
+      retrievability: number | string | null;
+      l2_production_status: string | null;
+    }>(
+      `SELECT l2_state AS state,
+              l2_retrievability AS retrievability,
+              l2_production_status AS l2_production_status
+         FROM user_word_l2_progress
+        WHERE user_id = $1 AND word_id = $2::uuid AND wordbook_id <> $3::uuid
+        ORDER BY created_at ASC, id ASC`,
+      [userId, wordId, excludeWordbookId],
+    );
+    return rows.map((row) => ({
+      state: row.state ?? "new",
+      retrievability: toNullableNumber(row.retrievability),
+      l2ProductionStatus: row.l2_production_status ?? null,
+    }));
+  }
+
+  /** ADR-0018 §3 seed 审计行（metadata.seeded_from = 来源 progress / wordbook）。 */
+  async insertL2SeedAuditLog(input: {
+    userId: string;
+    wordId: string;
+    wordbookId: string;
+    progressId: string;
+    seededFromProgressId: string;
+    seededFromWordbookId: string;
+    state: string;
+    dueAt: string;
+    stability: number;
+    difficulty: number;
+  }): Promise<void> {
+    await this.query(
+      `INSERT INTO review_logs
+         (user_id, word_id, session_id, rating, state, due_at, reviewed_at,
+          stability, difficulty, metadata, progress_id, wordbook_id, track)
+       VALUES ($1::uuid, $2::uuid, NULL, NULL, $3, $4::timestamptz, now(),
+               $5, $6, $7::jsonb, $8::uuid, $9::uuid, 'l2')`,
+      [
+        input.userId,
+        input.wordId,
+        input.state,
+        input.dueAt,
+        input.stability,
+        input.difficulty,
+        JSON.stringify({
+          action: "seed",
+          seeded_from: {
+            progress_id: input.seededFromProgressId,
+            wordbook_id: input.seededFromWordbookId,
+          },
+        }),
+        input.progressId,
+        input.wordbookId,
+      ],
     );
   }
 

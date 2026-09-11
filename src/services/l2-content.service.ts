@@ -25,7 +25,7 @@ import { buildPromptForField } from "../llm/prompts";
 import { logger } from "../observability/logger";
 import { parseL2Content } from "../schemas/service";
 import type { L2Field } from "../schemas/service";
-import type { L2ContentRow } from "../domain";
+import type { Direction, L2ContentRow } from "../domain";
 import {
   getStyleProfile,
   validateStyleProfileField,
@@ -1026,6 +1026,9 @@ ${provenanceSourceHint}`;
         source,
         source_ref: sourceRef,
         approved_by: approvedBy,
+        // 直接确认路径无方向上下文 → 显式写 `通用`（ADR-0017 §2 默认桶）；
+        // 方向化内容一律走 proposeCandidates（由升级工单指定 direction）。
+        direction: "通用",
       });
 
       // 2. Refresh the words JSONB cache columns from all active rows.
@@ -1055,7 +1058,17 @@ ${provenanceSourceHint}`;
     wordId: string,
     field: L2Field,
     content: unknown,
-    opts?: { source?: string; sourceRef?: string | null; approvedBy?: string; actorId?: string },
+    opts?: {
+      source?: string;
+      sourceRef?: string | null;
+      approvedBy?: string;
+      actorId?: string;
+      /**
+       * ADR-0017 §2：候选行方向（升级工单在生成时指定 `考研`/`雅思` 等）。
+       * 缺省 `通用` —— 既有调用方零改动（HTTP 路由 / 外部 agent 不传即通用桶）。
+       */
+      direction?: Direction;
+    },
   ): Promise<{ candidateId: string; itemCount: number }> {
     try {
       assertJsonResourceBudget(content, {
@@ -1084,6 +1097,7 @@ ${provenanceSourceHint}`;
         source_ref: opts?.sourceRef ?? null,
         approved_by: opts?.approvedBy ?? "agent",
         is_active: false,
+        direction: opts?.direction ?? "通用",
       });
       return row.id;
     }, { actorId: opts?.actorId });

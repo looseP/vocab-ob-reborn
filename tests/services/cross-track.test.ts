@@ -10,6 +10,10 @@ function makeMockL2Repo(overrides: Partial<IL2ProgressRepository> = {}): IL2Prog
       findByWordbookWordAndUser: vi.fn(async () => null),
       // Phase C：详情页"待扩展"标记（跨轨测试不触达，stub false）
       existsByUserAndWord: vi.fn(async () => false),
+      // ADR-0018：提前升级 seed 读路径（跨轨测试不触达，接口对齐需补全 mock）
+      findBestByWordAndUser: vi.fn(async () => null),
+      findOtherBookSignals: vi.fn(async () => []),
+      insertL2SeedAuditLog: vi.fn(async () => undefined),
       insert: vi.fn(async () => ({}) as never),
       findDueCards: vi.fn(async () => []),
       findForUpdate: vi.fn(async () => null),

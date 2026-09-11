@@ -19,6 +19,7 @@ import { SessionRepository } from "./session.repository";
 import { StatsRepository } from "./stats.repository";
 import { L2ProgressRepository } from "./l2-progress.repository";
 import { L2ContentRepository } from "./l2-content.repository";
+import { UpgradeWorkOrderRepository } from "./upgrade-work-order.repository";
 import { LlmUsageRepository } from "./llm-usage.repository";
 import { L3ContextRepository } from "./l3-context.repository";
 import { L3ProposalRepository } from "./l3-proposal.repository";
@@ -37,6 +38,7 @@ export function createRepositories(tx?: PoolClient): IRepositories {
     stats: new StatsRepository(tx),
     l2Progress: new L2ProgressRepository(tx),
     l2Content: new L2ContentRepository(tx),
+    upgradeWorkOrders: new UpgradeWorkOrderRepository(tx),
     l3Context: new L3ContextRepository(tx),
     l3Proposal: new L3ProposalRepository(tx),
     l3Recommendation: new L3RecommendationRepository(tx),

@@ -404,6 +404,8 @@ export interface L2ContentRow {
   id: string;
   word_id: string;
   field: string;
+  /** ADR-0017 §2：内容行方向（默认 `通用`）。读取侧按"当前方向 + 通用兜底"过滤。 */
+  direction: Direction;
   content: Json;
   source: string;
   source_ref: string | null;
@@ -413,8 +415,30 @@ export interface L2ContentRow {
   is_active: boolean;
 }
 
-// ── L3 Context Space ────────────────────────────────────────────────────
+// ── Upgrade Work Order ───────────────────────────────────────────────────
+/**
+ * 升级工单状态机（ADR-0018 §1；DB CHECK 同值）：
+ *   标记中 → 升级中 → 已完成；任意进行中态可 → 已取消。
+ * 部分唯一索引保证同一 (user, word, wordbook) 至多一张进行中工单。
+ */
+export type UpgradeWorkOrderStatus = "标记中" | "升级中" | "已完成" | "已取消";
 
+/** 升级工单行（upgrade_work_orders，0028）。direction 由工单指定（ADR-0017 §2）。 */
+export interface UpgradeWorkOrderRow {
+  id: string;
+  user_id: string;
+  word_id: string;
+  wordbook_id: string;
+  direction: Direction;
+  status: UpgradeWorkOrderStatus;
+  /** 标记时刻的升级建议快照（三档 + 输入证据）；纯提示、零 FSRS 写入。 */
+  suggestion_snapshot: Json | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+// ── L3 Context Space ────────────────────────────────────────────────────
 export type L3SourceType = "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
 export type L3ContextType = "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
 export type L3ContextLinkType =
