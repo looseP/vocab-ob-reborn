@@ -27,6 +27,8 @@ function mapStandardQueries(l2Row: unknown[] | null) {
     "interval '7 days'": [{ count: "10" }],
     "interval '30 days'": [{ count: "40" }],
     "FROM user_word_progress": [{ count: "25" }],
+    // streak 查询返回 streak_days（而非 count）；先于通用 review_logs 键匹配。
+    "streak_days": [{ streak_days: 5 }],
     "FROM review_logs": [{ count: "5" }],
     "FROM note_entries": [{ count: "7" }],
     "FROM words WHERE": [{ count: "1000" }],
@@ -56,5 +58,84 @@ describe("StatsRepository.getDashboardSummary", () => {
     const summary = await repos.stats.getDashboardSummary("u1", "wb1");
 
     expect(summary.l2).toEqual({ promoted: 0, dueNow: 0, weakSignal: 0 });
+  });
+
+  it("maps the three review-window answer counters", async () => {
+    // reviewedToday 走通用 "FROM review_logs" 键；7d/30d 先命中 interval 键。
+    mapStandardQueries([{ promoted: "12", due_now: "3", weak_signal: "4" }]);
+    const repos = createRepositories();
+
+    const summary = await repos.stats.getDashboardSummary("u1", "wb1");
+
+    expect(summary.reviewedToday).toBe(5);
+    expect(summary.reviewed7d).toBe(10);
+    expect(summary.reviewed30d).toBe(40);
+    // 活动口径：streak 仍按"有日志的天数"计（同 row-map 命中 5）
+    expect(summary.streakDays).toBe(5);
+  });
+
+  it("falls back to zeros when every dashboard query returns no row", async () => {
+    // 覆盖 8 条 queryOne 的 `? parseInt(...) : 0` 空行回退臂（含 streak 的 false 臂）。
+    mock.setRowMap({});
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    const summary = await repos.stats.getDashboardSummary("u1", "wb1");
+
+    expect(summary).toEqual({
+      totalWords: 0,
+      trackedWords: 0,
+      dueToday: 0,
+      reviewedToday: 0,
+      reviewed7d: 0,
+      reviewed30d: 0,
+      streakDays: 0,
+      notesCount: 0,
+      l2: { promoted: 0, dueNow: 0, weakSignal: 0 },
+    });
+  });
+
+  it("locks the answer/activity split: window counters filter rating, streak does not", async () => {
+    mapStandardQueries([{ promoted: "12", due_now: "3", weak_signal: "4" }]);
+    const repos = createRepositories();
+
+    await repos.stats.getDashboardSummary("u1", "wb1");
+
+    const logQueries = mock.calls
+      .map((call) => call.text)
+      .filter((text) => text.includes("FROM review_logs"));
+
+    // 作答口径：三个窗口计数各带 rating IS NOT NULL（非作答事件如 L2 seed 不计入）
+    const counterQueries = logQueries.filter((text) => text.includes("count(*) FROM review_logs"));
+    expect(counterQueries).toHaveLength(3);
+    for (const sql of counterQueries) {
+      expect(sql).toContain("rating IS NOT NULL");
+    }
+
+    // 活动口径（streakDays）：按显示时区切日，且**故意不过滤** rating
+    const streakQueries = logQueries.filter((text) => text.includes("review_day"));
+    expect(streakQueries).toHaveLength(1);
+    expect(streakQueries[0]).toContain("AT TIME ZONE");
+    expect(streakQueries[0]).not.toContain("rating IS NOT NULL");
+  });
+});
+
+describe("StatsRepository.getRatingDistribution", () => {
+  it("maps the four known ratings and ignores unknown / NULL rating rows", async () => {
+    const repos = createRepositories();
+    mock.setRows([
+      { rating: "again", count: "1" },
+      { rating: "good", count: "4" },
+      { rating: "unknown", count: "2" },
+      { rating: null, count: "1" },
+    ]);
+
+    await expect(repos.stats.getRatingDistribution("u1", "wb1")).resolves.toEqual({
+      again: 1, hard: 0, good: 4, easy: 0,
+    });
+
+    const q = mock.lastQuery!;
+    expect(q.text).toContain("AND rating IS NOT NULL");
+    expect(q.text).toContain("GROUP BY rating");
   });
 });

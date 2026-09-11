@@ -34,22 +34,27 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
              AND due_at IS NOT NULL AND due_at <= now()`,
           [userId, wordbookId],
         ),
+        // 作答口径（CONTEXT.md「Event log semantics」）：reviewedToday/7d/30d 只计
+        // 作答事件，rating IS NULL 的非作答事件（L2 seed 审计行）不计入。
         this.queryOne<{ count: string }>(
           `SELECT count(*) FROM review_logs
            WHERE user_id = $1 AND wordbook_id = $2::uuid
-             AND reviewed_at >= $3`,
+             AND reviewed_at >= $3
+             AND rating IS NOT NULL`,
           [userId, wordbookId, todayIso],
         ),
         this.queryOne<{ count: string }>(
           `SELECT count(*) FROM review_logs
            WHERE user_id = $1 AND wordbook_id = $2::uuid
-             AND reviewed_at >= now() - interval '7 days'`,
+             AND reviewed_at >= now() - interval '7 days'
+             AND rating IS NOT NULL`,
           [userId, wordbookId],
         ),
         this.queryOne<{ count: string }>(
           `SELECT count(*) FROM review_logs
            WHERE user_id = $1 AND wordbook_id = $2::uuid
-             AND reviewed_at >= now() - interval '30 days'`,
+             AND reviewed_at >= now() - interval '30 days'
+             AND rating IS NOT NULL`,
           [userId, wordbookId],
         ),
         this.queryOne<{ count: string }>(
@@ -124,6 +129,9 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     userId: string,
     wordbookId: string,
   ): Promise<number> {
+    // streakDays = 活动口径（CONTEXT.md「Event log semantics」Activity counter）：
+    // 只问"当天是否学习过"，故**故意不过滤 rating** —— 任何写入的日志事件（含
+    // 非作答的 seed 行）都代表一次学习活动，升级日也是学习日。
     const row = await this.queryOne<{ streak_days: number | string }>(
       `WITH review_days AS (
          SELECT DISTINCT (reviewed_at AT TIME ZONE 'Asia/Shanghai')::date AS review_day

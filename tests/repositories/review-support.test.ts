@@ -201,6 +201,9 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     expect(q.text).toContain("(rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date::text AS date");
     expect(q.text).toContain("COUNT(*)::text AS count");
     expect(q.text).toContain("GROUP BY (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date");
+    // 作答口径（CONTEXT.md「Event log semantics」）：趋势按日计的是作答次数，
+    // 显式过滤 rating IS NOT NULL，不依赖 track='l1' 的间接排除。
+    expect(q.text).toContain("rl.rating IS NOT NULL");
     expect(q.params).toEqual(["u1", "wb1", 365]);
   });
 

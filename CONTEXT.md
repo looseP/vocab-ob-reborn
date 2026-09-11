@@ -78,6 +78,20 @@ _Avoid_: storing generated HTML (frozen artifacts go stale); unifying L1 review 
 
 **FSRS fields**: stability, difficulty, retrievability, state — writable only by L1/L2 flows; L3 reads are forbidden.
 
+### Event log semantics
+
+**Answer counter (作答口径)**: Any count that means "the user answered a card" must filter `rating IS NOT NULL`. Applies to reviewedToday / reviewed7d / reviewed30d, the rating distribution, the L1 daily rating counts, the review history list, and the review trend.
+_Avoid_: counting every review_logs row as an answer (the log also carries non-answer events)
+
+**Activity counter (活动口径)**: Any count that means "the user studied today" must NOT filter on rating, so every logged event counts. Currently streakDays only.
+_Avoid_: deriving a streak from answer counters alone (a day spent upgrading is still a study day)
+
+**Non-answer event (非作答事件)**: A `review_logs` row with `rating IS NULL` — a state-establishing event, not an answer. Today: the L2 seed row (`metadata.action = 'seed'`, written when an early upgrade inherits another book's L2 state).
+_Avoid_: metadata-based filtering as the predicate (`rating IS NULL` is the structural test; metadata names may change)
+
+**Event log admission (事件日志准入)**: Only events that establish or advance scheduling state may write `review_logs` (L1 answer, L2 answer, L2 seed). Practice without scheduling — L3 practice attempts, knowledge sorting, cram sessions — never writes `review_logs`; it lives in its own record.
+_Avoid_: treating review_logs as a generic activity feed
+
 ### Incremental upgrade (增量升级)
 
 **Upgrade marker (升级标记)**: The user's recorded intent to **early-upgrade** a word into L2 in the current wordbook (2026-09-11). Every new book restarts the word at L1, but right after the word's first learn/review in the new book the user may mark it for early upgrade — skipping the full L1→L2 cycle (the stability/review-count gate does not apply to a user-initiated upgrade). The marker is intent only; the upgrade itself is never automatic: it runs in the agent-interactive upgrade workspace (content 校准 + self-selection) — an independent learning process outside review-card mode — tracked as a work order (标记中/升级中/已完成/已取消) with a 待升级清单 view. After the first-learn moment passes, upgrading stays possible but is no longer *recommended*; the user initiates it from the word detail page.

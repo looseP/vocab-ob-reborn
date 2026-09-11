@@ -813,11 +813,14 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   async getHeatmap(userId: string, wordbookId: string, days: number) {
     // 统一口径：按显示时区(Asia/Shanghai)切日分组（对齐原项目 streak 的
     // Asia/Shanghai 日界），时间字段统一用 reviewed_at。
+    // 作答口径（CONTEXT.md「Event log semantics」）：趋势按日计的是"作答次数"，
+    // 显式加 rating IS NOT NULL —— 不再依赖"track='l1' 永不含非作答事件"这一假设。
     return this.query<{ date: string; count: string }>(
       `SELECT (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date::text AS date,
               COUNT(*)::text AS count
        FROM review_logs rl
        WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'
+         AND rl.rating IS NOT NULL
          AND rl.reviewed_at >= now() - ($3 || ' days')::interval
        GROUP BY (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date
        ORDER BY date`,
