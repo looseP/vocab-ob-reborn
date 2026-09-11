@@ -5921,6 +5921,7 @@ export interface operations {
                             promoted: number;
                             dueNow: number;
                             weakSignal: number;
+                            reviewedToday: number;
                         };
                     };
                 };

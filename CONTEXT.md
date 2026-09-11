@@ -83,6 +83,9 @@ _Avoid_: storing generated HTML (frozen artifacts go stale); unifying L1 review 
 **Answer counter (作答口径)**: Any count that means "the user answered a card" must filter `rating IS NOT NULL`. Applies to reviewedToday / reviewed7d / reviewed30d, the rating distribution, the L1 daily rating counts, the review history list, and the review trend.
 _Avoid_: counting every review_logs row as an answer (the log also carries non-answer events)
 
+**Counter scope (口径范围)**: Every counter must declare its scope, and the UI label must match it (2026-09-11). Supported scopes: **all-track answers** (`rating IS NOT NULL`, no track filter) — the dashboard review counters (reviewedToday / reviewed7d / reviewed30d) and the heatmap; **L1-only answers** (`track = 'l1'` AND `rating IS NOT NULL`) — the 速刷 surfaces: the stats panel (todayCount / totalCount / ratingDist) and the review timeline; **L2-only answers** (`track = 'l2'` AND `rating IS NOT NULL`) — l2.reviewedToday on the dashboard. Every one of these is wordbook-scoped; inside the dashboard `l2` object note that promoted and dueNow are cross-book while weakSignal and reviewedToday are book-scoped.
+_Avoid_: an unqualified "复习" number (two same-page numbers labelled alike will contradict each other); counting skip/suspend as reviews (they are non-answer events); labelling an L1-only surface as if it were all-track
+
 **Activity counter (活动口径)**: Any count that means "the user studied today" must NOT filter on rating, so every logged event counts. Currently streakDays only.
 _Avoid_: deriving a streak from answer counters alone (a day spent upgrading is still a study day)
 

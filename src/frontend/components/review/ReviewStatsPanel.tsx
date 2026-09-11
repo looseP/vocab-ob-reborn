@@ -37,7 +37,7 @@ export function ReviewStatsPanel() {
     <Card>
       <div className="mb-4 flex items-center gap-2">
         <TrendingUp className="h-5 w-5 text-[var(--color-accent)]" />
-        <h2 className="section-title text-lg font-semibold text-[var(--color-ink)]">复习统计</h2>
+        <h2 className="section-title text-lg font-semibold text-[var(--color-ink)]">L1 速刷统计</h2>
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4">
@@ -46,7 +46,7 @@ export function ReviewStatsPanel() {
             <CheckCircle2 className="h-5 w-5 text-[var(--color-accent)]" />
           </div>
           <div>
-            <p className="text-xs text-[var(--color-ink-soft)]">今日复习</p>
+            <p className="text-xs text-[var(--color-ink-soft)]">L1 今日复习</p>
             <p className="text-xl font-bold text-[var(--color-ink)]">{stats.todayCount}</p>
           </div>
         </div>
@@ -55,7 +55,7 @@ export function ReviewStatsPanel() {
             <Target className="h-5 w-5 text-[var(--color-accent-2)]" />
           </div>
           <div>
-            <p className="text-xs text-[var(--color-ink-soft)]">累计复习</p>
+            <p className="text-xs text-[var(--color-ink-soft)]">L1 累计复习</p>
             <p className="text-xl font-bold text-[var(--color-ink)]">{stats.totalCount}</p>
           </div>
         </div>
@@ -63,7 +63,7 @@ export function ReviewStatsPanel() {
 
       {total > 0 ? (
         <div>
-          <p className="mb-3 text-sm font-medium text-[var(--color-ink-soft)]">评分分布</p>
+          <p className="mb-3 text-sm font-medium text-[var(--color-ink-soft)]">L1 评分分布</p>
           <div className="space-y-2">
             {ratings.map((r) => (
               <div key={r.label} className="flex items-center gap-3">
@@ -82,7 +82,7 @@ export function ReviewStatsPanel() {
       ) : (
         <div className="flex items-center gap-2 py-4 text-sm text-[var(--color-ink-soft)]">
           <AlertCircle className="h-4 w-4" />
-          暂无复习记录
+          暂无 L1 复习记录
         </div>
       )}
     </Card>

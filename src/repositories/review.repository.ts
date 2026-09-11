@@ -739,6 +739,12 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   async getStats(userId: string, wordbookId: string) {
     // 统一口径：以显示时区(Asia/Shanghai)的当日零点为"今天"边界（对齐原项目
     // StatsRepository 的 startOfTodayIsoInDisplayTz），时间字段统一用 reviewed_at。
+    //
+    // L1 速刷口径（CONTEXT.md「Counter scope」）：本面板是 L1-only 速刷面，故
+    // todayTotal / totalCount / 四档 FILTER 都只计**作答事件**（rating IS NOT NULL），
+    // skip/suspend/undo（rating=NULL）不再计入"今日复习/累计复习"。
+    // **故意**保留 track='l1'：速刷面板只看 L1 轨，L2 慢复习不混入；全轨口径
+    // （不限 track）在 stats.repository.ts 的 reviewedToday/7d/30d，那是另一处，勿动。
     const todayStart = startOfTodayIsoInDisplayTz();
     const rows = await this.query<{
       today_count: string;
@@ -756,7 +762,8 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         COUNT(*) FILTER (WHERE rl.rating = 'good')::text AS good_count,
         COUNT(*) FILTER (WHERE rl.rating = 'easy')::text AS easy_count
        FROM review_logs rl
-       WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'`,
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'
+         AND rl.rating IS NOT NULL`,
       [userId, wordbookId, todayStart],
     );
     const r = rows[0] ?? {};
@@ -813,13 +820,14 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
   async getHeatmap(userId: string, wordbookId: string, days: number) {
     // 统一口径：按显示时区(Asia/Shanghai)切日分组（对齐原项目 streak 的
     // Asia/Shanghai 日界），时间字段统一用 reviewed_at。
-    // 作答口径（CONTEXT.md「Event log semantics」）：趋势按日计的是"作答次数"，
-    // 显式加 rating IS NOT NULL —— 不再依赖"track='l1' 永不含非作答事件"这一假设。
+    // 全轨作答口径（CONTEXT.md「Counter scope」）：热力图计的是**所有轨**的作答次数
+    // （L1 + L2），与 dashboard 卡片 reviewedToday/7d/30d 同口径 —— 故只加
+    // rating IS NOT NULL，**不过滤 track**（skip/suspend/seed 等非作答事件仍排除）。
     return this.query<{ date: string; count: string }>(
       `SELECT (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date::text AS date,
               COUNT(*)::text AS count
        FROM review_logs rl
-       WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2
          AND rl.rating IS NOT NULL
          AND rl.reviewed_at >= now() - ($3 || ' days')::interval
        GROUP BY (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date

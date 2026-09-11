@@ -1158,6 +1158,8 @@ export interface DashboardL2Stats {
   dueNow: number;
   /** L1 弱信号词数（l2 连败标记，词书 scope）。 */
   weakSignal: number;
+  /** 今日 L2 作答数（L2-only：`track = 'l2'` AND `rating IS NOT NULL`；按书、今日）。 */
+  reviewedToday: number;
 }
 
 export interface DashboardSummary {

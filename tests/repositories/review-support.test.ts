@@ -201,9 +201,11 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     expect(q.text).toContain("(rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date::text AS date");
     expect(q.text).toContain("COUNT(*)::text AS count");
     expect(q.text).toContain("GROUP BY (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date");
-    // 作答口径（CONTEXT.md「Event log semantics」）：趋势按日计的是作答次数，
-    // 显式过滤 rating IS NOT NULL，不依赖 track='l1' 的间接排除。
+    // 全轨作答口径（CONTEXT.md「Counter scope」）：热力图 = 全轨（L1+L2）作答，
+    // 与 dashboard 卡片 reviewedToday/7d/30d 同口径 —— 过滤 rating IS NOT NULL，
+    // 但**不过滤 track**（skip/suspend/seed 等非作答事件仍排除）。
     expect(q.text).toContain("rl.rating IS NOT NULL");
+    expect(q.text).not.toContain("rl.track = 'l1'");
     expect(q.params).toEqual(["u1", "wb1", 365]);
   });
 
@@ -223,6 +225,11 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     expect(q.text).not.toContain("rl.created_at");
     expect(typeof q.params[2]).toBe("string");
     expect(q.params[2]).toMatch(/^\d{4}-\d{2}-\d{2}T16:00:00\.000Z$/);
+
+    // L1 速刷口径（CONTEXT.md「Counter scope」）：速刷面板为 L1-only 作答面，
+    // 显式锁定两个谓词 —— rating IS NOT NULL（只计作答）且 track = 'l1'（不含 L2 慢复习）。
+    expect(q.text).toContain("rl.rating IS NOT NULL");
+    expect(q.text).toContain("rl.track = 'l1'");
 
     mock.setRows([]);
     await expect(repos.reviews.getStats!("u1", "wb1")).resolves.toEqual({
