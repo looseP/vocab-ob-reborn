@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { IRepositories } from "@/repositories/interfaces";
 import type { UpgradeWorkOrderRow, UserWordL2ProgressRow, UserWordProgressRow } from "@/domain";
 import type { OtherBookL2Signal } from "@/domain/upgrade-suggestion";
-import { BusinessRuleError, NotFoundError } from "@/errors";
+import { BusinessRuleError, NotFoundError, ValidationError } from "@/errors";
 
 // Mock transaction + repository factory: the service never touches a real DB.
 const mockRepos: Partial<IRepositories> = {};
@@ -192,6 +192,28 @@ describe("UpgradeWorkOrderService.mark", () => {
     expect(result.workOrder.id).toBe("wo-raced");
     expect(upgradeWorkOrders.updateSuggestion).toHaveBeenCalled();
   });
+
+  it("rethrows the original 23505 when the raced order cannot be re-read", async () => {
+    const { service, upgradeWorkOrders } = setup();
+    upgradeWorkOrders.findActiveByScope.mockResolvedValue(null);
+    upgradeWorkOrders.insert.mockRejectedValueOnce(Object.assign(new Error("dup"), { code: "23505" }));
+
+    await expect(service.mark(USER, WB, WORD)).rejects.toThrow("dup");
+  });
+
+  it("rejects an empty userId before touching the database", async () => {
+    const { service, upgradeWorkOrders } = setup();
+
+    await expect(service.mark("", WB, WORD)).rejects.toThrow(ValidationError);
+    expect(upgradeWorkOrders.insert).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unknown direction", async () => {
+    const { service, upgradeWorkOrders } = setup();
+
+    await expect(service.mark(USER, WB, WORD, "法语" as never)).rejects.toThrow(ValidationError);
+    expect(upgradeWorkOrders.insert).not.toHaveBeenCalled();
+  });
 });
 
 describe("UpgradeWorkOrderService.list", () => {
@@ -207,6 +229,14 @@ describe("UpgradeWorkOrderService.list", () => {
     const { service, upgradeWorkOrders } = setup();
 
     await service.list(USER, WB, 0);
+
+    expect(upgradeWorkOrders.listPending).toHaveBeenCalledWith(USER, WB, 50);
+  });
+
+  it("falls back to the default limit for a non-finite limit", async () => {
+    const { service, upgradeWorkOrders } = setup();
+
+    await service.list(USER, WB, Number.NaN);
 
     expect(upgradeWorkOrders.listPending).toHaveBeenCalledWith(USER, WB, 50);
   });
@@ -274,6 +304,13 @@ describe("UpgradeWorkOrderService.cancel", () => {
     upgradeWorkOrders.findByIdForUser.mockResolvedValueOnce(order({ status: "已完成" }));
 
     await expect(service.cancel(USER, "wo-1")).rejects.toThrow(BusinessRuleError);
+  });
+
+  it("throws NotFound for an unknown order", async () => {
+    const { service, upgradeWorkOrders } = setup();
+    upgradeWorkOrders.findByIdForUser.mockResolvedValueOnce(null);
+
+    await expect(service.cancel(USER, "missing")).rejects.toThrow(NotFoundError);
   });
 });
 

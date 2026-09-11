@@ -496,6 +496,46 @@ describe("L2TransitionService.promoteWithSeed", () => {
     expect(repo.insertL2SeedAuditLog).not.toHaveBeenCalled();
   });
 
+  it("falls back to L1-derived values when seed scalars are non-numeric", async () => {
+    const repo = makeSeededRepo();
+    const service = new L2TransitionService(repo as any);
+
+    await service.promoteWithSeed(makeProgress({ stability: 25, difficulty: 5 }), {
+      progressId: "src-l2",
+      wordbookId: "wb-old",
+      stability: "abc",
+      difficulty: "abc",
+      schedulerPayload: null,
+    });
+
+    const inserted = repo.insert.mock.calls[0]![0] as Record<string, any>;
+    // 非法 S → L1 派生：max(25 × 0.5×25/46, 1.0) ≈ 6.79
+    expect(inserted.l2_stability).toBeCloseTo(6.79, 1);
+    // 非法 D → L1 派生：min(10, 5 + 2) = 7
+    expect(inserted.l2_difficulty).toBe(7);
+    expect(inserted.l2_scheduler_payload.reps).toBe(0);
+  });
+
+  it("falls back to L1-derived values when seed scalars are null", async () => {
+    const repo = makeSeededRepo();
+    const service = new L2TransitionService(repo as any);
+
+    await service.promoteWithSeed(makeProgress({ stability: 25, difficulty: 5 }), {
+      progressId: "src-l2",
+      wordbookId: "wb-old",
+      stability: null,
+      difficulty: null,
+      schedulerPayload: { due: "not-a-date" },
+    });
+
+    const inserted = repo.insert.mock.calls[0]![0] as Record<string, any>;
+    expect(inserted.l2_stability).toBeCloseTo(6.79, 1);
+    expect(inserted.l2_difficulty).toBe(7);
+    // 不可解析的 seed payload → 重建 base payload（state=Review, reps=0）
+    expect(inserted.l2_scheduler_payload.state).toBe(2);
+    expect(inserted.l2_scheduler_payload.reps).toBe(0);
+  });
+
   it("is idempotent: an existing L2 row short-circuits without inserting or auditing", async () => {
     const repo = {
       findByWordbookWordAndUser: vi.fn().mockResolvedValue({ id: "l2-existing", l2_due_at: "2026-09-20T00:00:00.000Z" }),

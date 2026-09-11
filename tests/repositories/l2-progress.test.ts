@@ -753,4 +753,113 @@ describe("L2ProgressRepository", () => {
       expect(params).toEqual(["step-1", "user-1"]);
     });
   });
+
+  // ── ADR-0018 §3 提前升级 seed 读路径 ───────────────────────────────────
+  describe("findBestByWordAndUser (ADR-0018 seed 来源)", () => {
+    it("encodes the documented best-row ordering and excludes the current wordbook", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: "best-l2" });
+
+      const result = await repo.findBestByWordAndUser("user-1", "word-1", "wb-current");
+
+      expect(result).toEqual({ id: "best-l2" });
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("user_id = $1");
+      expect(sql).toContain("word_id = $2::uuid");
+      // 只取"他书"：排除当前词书
+      expect(sql).toContain("wordbook_id <> $3::uuid");
+      // 排序键：state CASE 优先级 → stability DESC → due_at DESC NULLS LAST → id ASC
+      expect(sql).toContain("WHEN 'review' THEN 0");
+      expect(sql).toContain("WHEN 'relearning' THEN 1");
+      expect(sql).toContain("WHEN 'learning' THEN 2");
+      expect(sql).toContain("WHEN 'new' THEN 3");
+      expect(sql).toContain("COALESCE(l2_stability, -1) DESC");
+      expect(sql).toContain("l2_due_at DESC NULLS LAST");
+      expect(sql).toContain("id ASC");
+      expect(sql).toContain("LIMIT 1");
+      expect(params).toEqual(["user-1", "word-1", "wb-current"]);
+    });
+
+    it("returns null when the word has no other-book L2 row", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+
+      await expect(repo.findBestByWordAndUser("user-1", "word-1", "wb-current")).resolves.toBeNull();
+    });
+  });
+
+  describe("findOtherBookSignals (ADR-0018 建议输入)", () => {
+    it("maps numeric strings to numbers, nulls to null, and a blank state to 'new'", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([
+        { state: "review", retrievability: "0.950000", l2_production_status: "passed" },
+        { state: null, retrievability: null, l2_production_status: null },
+        { state: "relearning", retrievability: "not-a-number", l2_production_status: "weak" },
+        { state: "review" },
+      ]);
+
+      const signals = await repo.findOtherBookSignals("user-1", "word-1", "wb-current");
+
+      expect(signals).toEqual([
+        { state: "review", retrievability: 0.95, l2ProductionStatus: "passed" },
+        { state: "new", retrievability: null, l2ProductionStatus: null },
+        { state: "relearning", retrievability: null, l2ProductionStatus: "weak" },
+        { state: "review", retrievability: null, l2ProductionStatus: null },
+      ]);
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("l2_retrievability AS retrievability");
+      expect(sql).toContain("l2_production_status AS l2_production_status");
+      expect(sql).toContain("wordbook_id <> $3::uuid");
+      expect(sql).toContain("ORDER BY created_at ASC, id ASC");
+      expect(params).toEqual(["user-1", "word-1", "wb-current"]);
+    });
+
+    it("returns an empty array when there is no other-book history", async () => {
+      const repo = new L2ProgressRepository();
+      vi.spyOn(repo as any, "query").mockResolvedValue([]);
+
+      await expect(repo.findOtherBookSignals("user-1", "word-1", "wb-current")).resolves.toEqual([]);
+    });
+  });
+
+  describe("insertL2SeedAuditLog (ADR-0018 §3)", () => {
+    it("writes a track='l2' audit row with rating NULL and metadata.seeded_from", async () => {
+      const repo = new L2ProgressRepository();
+      const spy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+
+      await repo.insertL2SeedAuditLog({
+        userId: "user-1",
+        wordId: "word-1",
+        wordbookId: "wb-1",
+        progressId: "new-l2",
+        seededFromProgressId: "src-l2",
+        seededFromWordbookId: "wb-old",
+        state: "review",
+        dueAt: "2026-10-01T00:00:00.000Z",
+        stability: 40,
+        difficulty: 4.5,
+      });
+
+      const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
+      expect(sql).toContain("INSERT INTO review_logs");
+      // 审计行：无 session、无 rating
+      expect(sql).toContain("session_id, rating");
+      expect(sql).toContain("NULL, NULL");
+      expect(sql).toContain("track");
+      expect(sql).toContain("'l2'");
+      expect(params.slice(0, 6)).toEqual([
+        "user-1",
+        "word-1",
+        "review",
+        "2026-10-01T00:00:00.000Z",
+        40,
+        4.5,
+      ]);
+      expect(JSON.parse(String(params[6]))).toEqual({
+        action: "seed",
+        seeded_from: { progress_id: "src-l2", wordbook_id: "wb-old" },
+      });
+      expect(params.slice(7)).toEqual(["new-l2", "wb-1"]);
+    });
+  });
 });
