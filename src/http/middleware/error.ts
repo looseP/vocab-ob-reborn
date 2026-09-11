@@ -17,8 +17,7 @@ export function handleError(err: Error, c: Context) {
     return jsonError(c, status as Parameters<typeof jsonError>[1], body.code, body.error, body.details);
   }
 
-  logger.error("http", "Unhandled error", {
-    requestId,
+  logger.withMeta({ requestId }).error("http", "Unhandled error", {
     message: err.message,
     stack: err.stack,
   });

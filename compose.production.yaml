@@ -1,5 +1,15 @@
 name: vocab-observatory-production
 
+# ADR-0026: bound container log growth at the runtime layer. stdout/stderr stay
+# the single source of truth (the app never dual-writes to a file); Docker's
+# json-file driver rotates and caps retention. 10m x 5 = 50 MB per service,
+# which at this workload's log rate comfortably covers the required >=24h window.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 x-app-base: &app-base
   image: ${APP_IMAGE:?APP_IMAGE is required for production}
   init: true
@@ -28,6 +38,7 @@ services:
       MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required for production}
       DB_SSLMODE: verify-full
     command: ["./node_modules/.bin/tsx", "scripts/bootstrap-database-roles.ts", "prepare"]
+    logging: *default-logging
 
   migrate:
     image: ${MIGRATION_IMAGE:?MIGRATION_IMAGE is required for production}
@@ -42,6 +53,7 @@ services:
       database-role-bootstrap:
         condition: service_completed_successfully
     command: ["./node_modules/.bin/drizzle-kit", "migrate", "--config", "drizzle.config.ts"]
+    logging: *default-logging
 
   database-role-converge:
     image: ${MIGRATION_IMAGE:?MIGRATION_IMAGE is required for production}
@@ -58,6 +70,7 @@ services:
       migrate:
         condition: service_completed_successfully
     command: ["./node_modules/.bin/tsx", "scripts/bootstrap-database-roles.ts", "converge"]
+    logging: *default-logging
 
   web:
     <<: *app-base
@@ -94,6 +107,7 @@ services:
       timeout: 2s
       retries: 6
       start_period: 10s
+    logging: *default-logging
 
   review-outbox-worker:
     <<: *app-base
@@ -108,6 +122,7 @@ services:
       OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-60}
       OUTBOX_SHUTDOWN_GRACE_SECONDS: ${OUTBOX_SHUTDOWN_GRACE_SECONDS:-75}
     stop_grace_period: ${OUTBOX_STOP_GRACE_PERIOD:-75s}
+    logging: *default-logging
 
   llm-reservation-reaper:
     <<: *app-base
@@ -120,6 +135,7 @@ services:
       LLM_REAPER_POLL_INTERVAL_MS: ${LLM_REAPER_POLL_INTERVAL_MS:-5000}
       LLM_REAPER_BATCH_SIZE: ${LLM_REAPER_BATCH_SIZE:-100}
     stop_grace_period: 30s
+    logging: *default-logging
 
   backup-scheduler:
     <<: *app-base
@@ -144,3 +160,4 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    logging: *default-logging

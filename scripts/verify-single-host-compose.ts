@@ -1,11 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyComposeLogRotation } from "./verify-compose-logging";
 
 export function verifySingleHostCompose(compose: string, caddyfile: string, environment: string): void {
   const requirePattern = (source: string, pattern: RegExp, label: string): void => {
     if (!pattern.test(source)) throw new Error(`${label} is missing or malformed`);
   };
+
+  verifyComposeLogRotation(compose, "Single-host Compose");
 
   requirePattern(compose, /^name: vocab-observatory$/m, "Single-host Compose project name");
   requirePattern(compose, /^  caddy:$/m, "Caddy service");

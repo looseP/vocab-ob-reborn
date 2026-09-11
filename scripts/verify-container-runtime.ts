@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { verifyComposeLogRotation } from "./verify-compose-logging";
 
 const root = resolve(import.meta.dirname, "..");
 const dockerfile = readFileSync(resolve(root, "Dockerfile"), "utf8");
@@ -49,6 +50,8 @@ requirePattern(dockerfile, /^RUN npm ci --omit=dev --ignore-scripts/m, "Producti
 requirePattern(dockerfile, /FROM node:22\.22\.2-bookworm-slim AS runtime[\s\S]*?^USER node$/m, "Non-root final runtime");
 requirePattern(dockerfile, /^RUN npm run frontend:build$/m, "Frontend build");
 
+verifyComposeLogRotation(compose, "Compose");
+verifyComposeLogRotation(productionCompose, "Production Compose");
 for (const service of ["migrate", "web", "review-outbox-worker", "llm-reservation-reaper", "backup-scheduler", "data-lifecycle"]) {
   requirePattern(compose, new RegExp(`^  ${service}:$`, "m"), `Compose service ${service}`);
 }
