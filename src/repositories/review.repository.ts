@@ -15,6 +15,9 @@ import type {
   UserWordProgressRow,
 } from "../domain";
 import type {
+  BulkForgetBatchInput,
+  BulkSuspendByWordbookInput,
+  ForgettingPreviewRow,
   IReviewRepository,
   InsertNewCardInput,
   InsertNewCardStatus,
@@ -49,6 +52,13 @@ const PROGRESS_COLUMNS_PREFIXED = `
 
 // Bare columns for single-table queries (no JOIN ambiguity)
 const PROGRESS_COLUMNS = PROGRESS_COLUMNS_PREFIXED.replace(/uwp\./g, "");
+
+/** numeric/int 列（pg 可能返回字符串）→ number|null；非有限值一律 null。 */
+function toNullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 /** Joined progress + word row shape returned by the queue queries. */
 type ReviewCardQueryRow = UserWordProgressRow & {
@@ -550,6 +560,158 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
 
     if (!logRow) throw new Error("suspend review_log insert returned no row");
     return { reviewLogId: logRow.id };
+  }
+
+  // ── 一键遗忘（ADR-0020）：书级非破坏挂起 / 精确批次恢复 ──────────────────
+  //
+  // 语义红线（ADR-0020）：遗忘 = 挂起。这些方法**永不删除进度行、永不重置
+  // stability、永不推 due_at**——只改 state（挂起）或从批次快照回写 state（恢复）。
+  //
+  // 与 suspendCard 的**有意偏离**：suspendCard 把 review_logs.state 写成**新**状态
+  // （'suspended'）；批量挂起把 review_logs.state 写成**旧**状态，并在
+  // previous_progress_snapshot 里冗余保存 `{state}`——因为 restore 要求仅凭本批次
+  // 日志就能把每一行精确还原到遗忘前的状态，必须有旧 state 的保真快照。
+  // 两者都是 rating=NULL 的非作答事件（CONTEXT.md「Non-answer event」）。
+
+  /**
+   * 该书预览行：L1 进度（state/stability/retrievability/recent_ratings/lapse_count）
+   * + 词条锚点元数据（morphology_root / mnemonic_text / semantic_chain / aliases）。
+   * 只读；numeric 列归一为 number|null。
+   */
+  async findForgettingPreviewRows(userId: string, wordbookId: string): Promise<ForgettingPreviewRow[]> {
+    const rows = await this.query<{
+      word_id: string;
+      state: string;
+      stability: number | string | null;
+      retrievability: number | string | null;
+      recent_ratings: Json;
+      lapse_count: number | string | null;
+      morphology: string | null;
+      mnemonic: string | null;
+      semantic_chain: string | null;
+      aliases: string[] | null;
+    }>(
+      `SELECT uwp.word_id AS word_id,
+              uwp.state, uwp.stability, uwp.retrievability,
+              uwp.recent_ratings, uwp.lapse_count,
+              w.metadata->>'morphology_root' AS morphology,
+              COALESCE(w.metadata->>'mnemonic_text', w.metadata->>'mnemonic') AS mnemonic,
+              w.metadata->>'semantic_chain' AS semantic_chain,
+              w.aliases
+       FROM user_word_progress uwp
+       JOIN words w ON w.id = uwp.word_id
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+       ORDER BY uwp.word_id ASC`,
+      [userId, wordbookId],
+    );
+    return rows.map((row) => ({
+      wordId: row.word_id,
+      state: row.state,
+      stability: toNullableNumber(row.stability),
+      retrievability: toNullableNumber(row.retrievability),
+      recentRatings: Array.isArray(row.recent_ratings) ? (row.recent_ratings as string[]) : [],
+      lapseCount: toNullableNumber(row.lapse_count) ?? 0,
+      morphology: row.morphology,
+      mnemonic: row.mnemonic,
+      semanticChain: row.semantic_chain,
+      aliases: row.aliases ?? [],
+    }));
+  }
+
+  /** 与 bulkSuspendByWordbook 完全同条件的可挂起行计数（preview 用，零写入）。 */
+  async countBulkSuspendCandidates(input: {
+    userId: string;
+    wordbookId: string;
+    keepWordIds: string[];
+  }): Promise<number> {
+    const row = await this.queryOne<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM user_word_progress
+       WHERE user_id = $1 AND wordbook_id = $2::uuid
+         AND state NOT IN ('suspended', 'new')
+         AND word_id <> ALL($3::uuid[])`,
+      [input.userId, input.wordbookId, input.keepWordIds],
+    );
+    return row ? parseInt(row.count, 10) : 0;
+  }
+
+  /**
+   * 单条 set-based 写：把非锚点、非 suspended/new 的 L1 行置为 suspended，并
+   * 逐行写 review_logs（rating=NULL，metadata.action='bulk_forget' + batchId，
+   * previous_progress_snapshot={'state': 旧 state}）。
+   *
+   * 采用「candidates CTE 读旧值 → suspended CTE 更新 → INSERT SELECT 写日志」
+   * 的单语句形态：PostgreSQL 保证 WITH 中的数据修改语句必定执行到完成（即使
+   * 主查询未读取其输出），因此挂起与写日志原子发生，且日志拿到的是**更新前**的
+   * state。返回挂起行数。
+   */
+  async bulkSuspendByWordbook(input: BulkSuspendByWordbookInput): Promise<number> {
+    const rows = await this.query<{ id: string }>(
+      `WITH candidates AS (
+         SELECT id, user_id, word_id, wordbook_id, state AS previous_state
+         FROM user_word_progress
+         WHERE user_id = $1 AND wordbook_id = $2::uuid
+           AND state NOT IN ('suspended', 'new')
+           AND word_id <> ALL($3::uuid[])
+       ),
+       suspended AS (
+         UPDATE user_word_progress uwp
+         SET state = 'suspended', updated_at = now()
+         FROM candidates c
+         WHERE uwp.id = c.id
+         RETURNING uwp.id
+       )
+       INSERT INTO review_logs (
+         user_id, word_id, wordbook_id, progress_id, session_id,
+         rating, state, metadata, previous_progress_snapshot, reviewed_at, track
+       )
+       SELECT c.user_id, c.word_id, c.wordbook_id, c.id, NULL,
+              NULL, c.previous_state,
+              jsonb_build_object('action', 'bulk_forget', 'batchId', $4::text),
+              jsonb_build_object('state', c.previous_state),
+              now(), 'l1'
+       FROM candidates c
+       RETURNING id`,
+      [input.userId, input.wordbookId, input.keepWordIds, input.batchId],
+    );
+    return rows.length;
+  }
+
+  /** restore 前置校验：该 (user, wordbook, batchId) 是否已有 bulk_forget 日志。 */
+  async findBulkForgetBatch(input: BulkForgetBatchInput): Promise<boolean> {
+    const row = await this.queryOne<{ id: string }>(
+      `SELECT id
+       FROM review_logs
+       WHERE user_id = $1 AND wordbook_id = $2::uuid
+         AND metadata->>'action' = 'bulk_forget'
+         AND metadata->>'batchId' = $3
+       LIMIT 1`,
+      [input.userId, input.wordbookId, input.batchId],
+    );
+    return row !== null;
+  }
+
+  /**
+   * 只按本批次日志回写 state（previous_progress_snapshot->>'state'），scope 同时
+   * 钉死 (user, wordbook) 以防跨书/跨用户误写。不触碰 stability / due_at。
+   * 可重复调用（无 gone 标记）：在无中间写入的前提下幂等，重复 restore 会再次写入
+   * 同一快照 state 并返回相同行数。
+   */
+  async restoreBulkForget(input: BulkForgetBatchInput): Promise<number> {
+    const rows = await this.query<{ id: string }>(
+      `UPDATE user_word_progress uwp
+       SET state = rl.previous_progress_snapshot->>'state', updated_at = now()
+       FROM review_logs rl
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2::uuid
+         AND rl.metadata->>'action' = 'bulk_forget'
+         AND rl.metadata->>'batchId' = $3
+         AND uwp.id = rl.progress_id
+         AND uwp.user_id = $1
+         AND uwp.wordbook_id = $2::uuid
+       RETURNING uwp.id`,
+      [input.userId, input.wordbookId, input.batchId],
+    );
+    return rows.length;
   }
 
   async findReviewLogWordbookForUndo(reviewLogId: string, userId: string): Promise<string | null> {

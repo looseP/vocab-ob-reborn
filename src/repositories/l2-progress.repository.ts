@@ -740,4 +740,46 @@ export class L2ProgressRepository extends BaseRepository implements IL2ProgressR
       [userId, wordbookId, wordId, reason],
     );
   }
+
+  // ── 一键遗忘（ADR-0020）：书级 L2 批量暂停 / 恢复 ────────────────────────
+  //
+  // 与 L1 批量挂起同属一次「按书遗忘」：非锚点 L2 行统一 reason='manual'
+  // （死枚举之外的既有值，schema CHECK 已含）。不触碰 l2_stability / l2_due_at，
+  // 只改暂停三列——符合「遗忘=挂起，永不重置、永不推 due」的红线。
+
+  /**
+   * 书级批量暂停：该书全部非锚点 L2 行 l2_paused=true / l2_paused_at=now() /
+   * l2_paused_reason='manual'。返回受影响行数。
+   */
+  async batchPauseByWordbook(input: {
+    userId: string;
+    wordbookId: string;
+    keepWordIds: string[];
+  }): Promise<number> {
+    const rows = await this.query<{ id: string }>(
+      `UPDATE user_word_l2_progress
+       SET l2_paused = true, l2_paused_at = now(), l2_paused_reason = 'manual'
+       WHERE user_id = $1 AND wordbook_id = $2::uuid
+         AND word_id <> ALL($3::uuid[])
+       RETURNING id`,
+      [input.userId, input.wordbookId, input.keepWordIds],
+    );
+    return rows.length;
+  }
+
+  /**
+   * 书级恢复：仅 unpause 本功能产生的 manual 暂停（l2_paused_reason='manual'），
+   * 回到 l2_due_at=now()。返回受影响行数。
+   */
+  async batchUnpauseManual(userId: string, wordbookId: string): Promise<number> {
+    const rows = await this.query<{ id: string }>(
+      `UPDATE user_word_l2_progress
+       SET l2_paused = false, l2_paused_at = NULL, l2_paused_reason = NULL, l2_due_at = now()
+       WHERE user_id = $1 AND wordbook_id = $2::uuid
+         AND l2_paused_reason = 'manual'
+       RETURNING id`,
+      [userId, wordbookId],
+    );
+    return rows.length;
+  }
 }
