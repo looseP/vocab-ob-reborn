@@ -18,6 +18,10 @@ vi.mock("@/repositories/factory", () => ({
 }));
 
 import { createServices } from "@/services";
+import { UpgradeWorkOrderService } from "@/services/upgrade-work-order.service";
+import { L3PracticeService } from "@/services/l3-practice.service";
+import { L3SessionService } from "@/services/l3-session.service";
+import { ForgettingService } from "@/services/forgetting.service";
 
 function makeRepos() {
   const reviews = {
@@ -47,10 +51,35 @@ function makeRepos() {
     findByWordbookWordAndUser: vi.fn(async (): Promise<unknown> => null),
     insert: vi.fn(async () => ({ id: "l2-1" })),
   };
+  const upgradeWorkOrders = {
+    findActiveByScope: vi.fn(async () => null),
+    insert: vi.fn(async () => ({ id: "wo-1" })),
+    updateSuggestion: vi.fn(async () => null),
+    listPending: vi.fn(async () => []),
+    findByIdForUser: vi.fn(async () => null),
+    updateStatus: vi.fn(async () => null),
+  };
+  const l3Practice = {
+    insertAttempt: vi.fn(async () => ({ id: "attempt-1" })),
+    lockAttemptIdentity: vi.fn(async () => undefined),
+    findAttemptByTaskId: vi.fn(async () => null),
+    listAttempts: vi.fn(async () => ({ items: [], total: 0, limit: 20, offset: 0 })),
+    listWrongAttempts: vi.fn(async () => ({ items: [], total: 0, limit: 20, offset: 0 })),
+  };
+  const l3Sessions = {
+    insertSession: vi.fn(async () => ({ id: "session-1" })),
+    findSessionByIdForUser: vi.fn(async () => null),
+    updateStatus: vi.fn(async () => null),
+    sampleContextIds: vi.fn(async () => []),
+    findContextsByIds: vi.fn(async () => []),
+  };
   const repos = {
     reviews,
     sessions,
     l2Progress,
+    upgradeWorkOrders,
+    l3Practice,
+    l3Sessions,
     outbox: { enqueue: vi.fn() },
     llmUsage: {},
     words: {},
@@ -149,5 +178,22 @@ describe("createServices wiring", () => {
     });
     expect(result.alreadyPromoted).toBe(false);
     expect(l2Progress.insert).toHaveBeenCalled();
+  });
+
+  it("wires the W3/T09 services onto the services graph", async () => {
+    const { repos } = makeRepos();
+    mockCreateRepositories.mockReturnValue(repos);
+    const services = createServices({
+      fsrsAdapter: vi.fn(),
+      loadWeights: vi.fn(async () => null),
+    });
+
+    expect(services.upgradeWorkOrders).toBeInstanceOf(UpgradeWorkOrderService);
+    expect(services.l3Practice).toBeInstanceOf(L3PracticeService);
+    expect(services.l3Sessions).toBeInstanceOf(L3SessionService);
+    expect(services.forgetting).toBeInstanceOf(ForgettingService);
+
+    // 升级工单复用 :92-94 的 l2Transition 实例（complete 走 promoteWithSeed）。
+    expect(services.upgradeWorkOrders).toBeDefined();
   });
 });

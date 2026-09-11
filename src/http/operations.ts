@@ -25,6 +25,25 @@ import {
   l3WordSpaceResponseSchema,
 } from "./l3-response-contract";
 import {
+  upgradeWorkOrderCompleteResponseSchema,
+  upgradeWorkOrderListResponseSchema,
+  upgradeWorkOrderMarkResponseSchema,
+  upgradeWorkOrderRowResponseSchema,
+} from "./upgrade-work-order-response-contract";
+import {
+  l3PracticeAttemptPageResponseSchema,
+  l3PracticeAttemptRowResponseSchema,
+} from "./l3-practice-response-contract";
+import {
+  l3SessionRenderDescriptionResponseSchema,
+  l3SessionRowResponseSchema,
+} from "./l3-session-response-contract";
+import {
+  forgettingApplyResponseSchema,
+  forgettingPreviewResponseSchema,
+  forgettingRestoreResponseSchema,
+} from "./forgetting-response-contract";
+import {
   reviewAnswerResponseSchema,
   reviewDashboardStatsResponseSchema,
   reviewDrillQueueResponseSchema,
@@ -121,6 +140,16 @@ import {
   l2SelfAssessSchema,
   l2UndoSchema,
   noteEntryUpsertRequestSchema,
+  upgradeWorkOrderCreateSchema,
+  upgradeWorkOrderListQuerySchema,
+  l3PracticeAttemptCreateSchema,
+  l3PracticeAttemptListQuerySchema,
+  l3PracticeErrorBookQuerySchema,
+  l3SessionCreateSchema,
+  l3SessionEndSchema,
+  forgettingPreviewQuerySchema,
+  forgettingApplySchema,
+  forgettingRestoreSchema,
 } from "../schemas/http";
 
 export type HttpMethod = "delete" | "get" | "patch" | "post" | "put";
@@ -375,4 +404,22 @@ export const apiOperations = [
   operation("post", "/api/l3/proposals/:id/validate", "validateL3Proposal", "owner", "sessionMutation", undefined, 200, l3ProposalValidationResponseSchema),
   operation("post", "/api/l3/proposals/:id/confirm", "confirmL3Proposal", "owner", "sessionMutation", undefined, 200, l3ProposalConfirmResponseSchema),
   operation("post", "/api/l3/proposals/:id/reject", "rejectL3Proposal", "owner", "sessionMutation", { body: l3ProposalRejectSchema }, 200, l3ProposalBundleResponseSchema),
+  // ── Upgrade work orders (ADR-0018) ──────────────────────────────────────
+  operation("post", "/api/upgrade-work-orders", "markUpgradeWorkOrder", "owner", "sessionMutation", { body: upgradeWorkOrderCreateSchema }, 201, upgradeWorkOrderMarkResponseSchema),
+  operation("get", "/api/upgrade-work-orders", "listUpgradeWorkOrders", "owner", "none", { query: upgradeWorkOrderListQuerySchema }, 200, upgradeWorkOrderListResponseSchema),
+  operation("post", "/api/upgrade-work-orders/:id/start", "startUpgradeWorkOrder", "owner", "sessionMutation", undefined, 200, upgradeWorkOrderRowResponseSchema),
+  operation("post", "/api/upgrade-work-orders/:id/cancel", "cancelUpgradeWorkOrder", "owner", "sessionMutation", undefined, 200, upgradeWorkOrderRowResponseSchema),
+  operation("post", "/api/upgrade-work-orders/:id/complete", "completeUpgradeWorkOrder", "owner", "sessionMutation", undefined, 200, upgradeWorkOrderCompleteResponseSchema),
+  // ── L3 practice attempts / error book (ADR-0019 §1/§3) ──────────────────
+  operation("post", "/api/l3-practice/attempts", "recordL3PracticeAttempt", "owner", "sessionMutation", { body: l3PracticeAttemptCreateSchema }, 201, l3PracticeAttemptRowResponseSchema),
+  operation("get", "/api/l3-practice/attempts", "listL3PracticeAttempts", "owner", "none", { query: l3PracticeAttemptListQuerySchema }, 200, l3PracticeAttemptPageResponseSchema),
+  operation("get", "/api/l3-practice/error-book", "listL3PracticeErrorBook", "owner", "none", { query: l3PracticeErrorBookQuerySchema }, 200, l3PracticeAttemptPageResponseSchema),
+  // ── L3 sessions (ADR-0019 §2) ───────────────────────────────────────────
+  operation("post", "/api/l3-sessions", "createL3Session", "owner", "sessionMutation", { body: l3SessionCreateSchema }, 201, l3SessionRowResponseSchema),
+  operation("get", "/api/l3-sessions/:id", "getL3Session", "owner", "none", undefined, 200, l3SessionRenderDescriptionResponseSchema),
+  operation("post", "/api/l3-sessions/:id/end", "endL3Session", "owner", "sessionMutation", { body: l3SessionEndSchema }, 200, l3SessionRowResponseSchema),
+  // ── One-click forgetting (ADR-0020) ─────────────────────────────────────
+  operation("get", "/api/forgetting/preview", "previewForgetting", "owner", "none", { query: forgettingPreviewQuerySchema }, 200, forgettingPreviewResponseSchema),
+  operation("post", "/api/forgetting/apply", "applyForgetting", "owner", "sessionMutation", { body: forgettingApplySchema }, 200, forgettingApplyResponseSchema),
+  operation("post", "/api/forgetting/restore", "restoreForgetting", "owner", "sessionMutation", { body: forgettingRestoreSchema }, 200, forgettingRestoreResponseSchema),
 ] as const satisfies readonly ApiOperation[];

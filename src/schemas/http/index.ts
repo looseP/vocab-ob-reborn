@@ -18,6 +18,18 @@ import {
   VOCAB_IMPORT_MAX_FILES,
   VOCAB_IMPORT_PATH_MAX_LENGTH,
 } from "../resource-budget";
+import {
+  L3_PRACTICE_OUTCOMES,
+  L3_PRACTICE_TYPES,
+  L3_SUB_SPACES,
+} from "../../services/l3-practice.service";
+import {
+  L3_SESSION_DEFAULT_CONTEXTS,
+  L3_SESSION_END_STATUSES,
+  L3_SESSION_MAX_CONTEXTS,
+  L3_SESSION_MAX_DAYS,
+  L3_SESSION_TYPES,
+} from "../../services/l3-session.service";
 
 // ── Primitives ──────────────────────────────────────────────────────────
 export const reviewRatingSchema = z.enum(["again", "hard", "good", "easy"]);
@@ -505,3 +517,88 @@ export const l3StructuredImportCreateSchema = z.object({
     path: ["contexts"],
   },
 );
+
+// ── Shared vocabulary (ADR-0017) ────────────────────────────────────────
+/** 学习方向三值（ADR-0017；wordbooks/l2/l3 表 CHECK 同值）。 */
+export const directionSchema = z.enum(["通用", "考研", "雅思"]);
+
+// ── Upgrade work orders (ADR-0018) ──────────────────────────────────────
+// wordbookId 必须显式传入：工单归属错书是脏写，禁止回退到默认词书。
+export const upgradeWorkOrderCreateSchema = z.object({
+  wordbookId: uuidSchema,
+  wordId: uuidSchema,
+  direction: directionSchema.optional(),
+});
+
+export const upgradeWorkOrderListQuerySchema = z.object({
+  wordbookId: uuidSchema,
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+// ── L3 practice attempts / error book (ADR-0019 §1/§3) ──────────────────
+// payload.taskId 必填（T04 deterministicTaskId 幂等身份）；缺失即 400。
+const l3PracticePayloadSchema = z.object({
+  taskId: z.string().trim().min(1, "payload.taskId is required"),
+}).passthrough();
+
+export const l3PracticeAttemptCreateSchema = z.object({
+  contextId: uuidSchema,
+  occurrenceId: uuidSchema.nullish(),
+  sessionId: uuidSchema.nullish(),
+  practiceType: z.enum(L3_PRACTICE_TYPES),
+  outcome: z.enum(L3_PRACTICE_OUTCOMES),
+  payload: l3PracticePayloadSchema,
+});
+
+export const l3PracticeAttemptListQuerySchema = z.object({
+  practiceType: z.enum(L3_PRACTICE_TYPES).optional(),
+  outcome: z.enum(L3_PRACTICE_OUTCOMES).optional(),
+  space: z.enum(L3_SUB_SPACES).optional(),
+  direction: directionSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+
+export const l3PracticeErrorBookQuerySchema = z.object({
+  space: z.enum(L3_SUB_SPACES).optional(),
+  direction: directionSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+
+// ── L3 sessions (ADR-0019 §2) ───────────────────────────────────────────
+export const l3SessionCreateSchema = z.object({
+  type: z.enum(L3_SESSION_TYPES),
+  title: z.string().trim().min(1).max(500).nullish(),
+  space: z.enum(L3_SUB_SPACES).nullish(),
+  direction: directionSchema.nullish(),
+  contextCount: z.number().int().min(1).max(L3_SESSION_MAX_CONTEXTS)
+    .nullish()
+    .describe(`defaults to ${L3_SESSION_DEFAULT_CONTEXTS}`),
+  days: z.number().int().min(1).max(L3_SESSION_MAX_DAYS).nullish(),
+  seed: z.string().trim().min(1).max(200).nullish(),
+});
+
+// L3_SESSION_END_STATUSES 声明为 readonly L3SessionStatus[]（全量联合），
+// 这里按运行时值收窄为两个结束态，输出类型才能喂给 endSession 的 Extract 入参。
+const l3SessionEndStatuses = L3_SESSION_END_STATUSES as readonly ["completed", "abandoned"];
+
+export const l3SessionEndSchema = z.object({
+  status: z.enum(l3SessionEndStatuses),
+});
+
+// ── One-click forgetting (ADR-0020) ─────────────────────────────────────
+export const forgettingPreviewQuerySchema = z.object({
+  bookId: uuidSchema,
+});
+
+export const forgettingApplySchema = z.object({
+  bookId: uuidSchema,
+  /** 用户确认保留的锚点 wordId；陈旧清单由 service 抛 422。 */
+  confirmedAnchorIds: z.array(uuidSchema),
+});
+
+export const forgettingRestoreSchema = z.object({
+  bookId: uuidSchema,
+  batchId: z.string().trim().min(1).max(200),
+});

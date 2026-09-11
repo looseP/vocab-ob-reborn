@@ -28,6 +28,10 @@ import { l2PromotionRoutes } from "./routes/l2-promotion";
 import { l2CandidateRoutes } from "./routes/l2-candidates";
 import { l2DrillRoutes } from "./routes/l2-drill";
 import { l3Routes } from "./routes/l3";
+import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
+import { l3PracticeRoutes } from "./routes/l3-practice";
+import { l3SessionsRoutes } from "./routes/l3-sessions";
+import { forgettingRoutes } from "./routes/forgetting";
 import { authRoutes } from "./routes/auth";
 import { requestTelemetry, isMetricsAuthorized } from "./middleware/telemetry";
 import { jsonError } from "./error-response";
@@ -118,6 +122,13 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l2", l2CandidateRoutes(services));
   app.route("/api/l2-drill", l2DrillRoutes(services));
   app.route("/api/l3", l3Routes(services));
+
+  // W3/T09：升级工单 / L3 练习记录 / L3 会话计划 / 一键遗忘（独立薄路由，
+  // 全部位于 owner 鉴权挂载之后）。
+  app.route("/api/upgrade-work-orders", upgradeWorkOrdersRoutes(services));
+  app.route("/api/l3-practice", l3PracticeRoutes(services));
+  app.route("/api/l3-sessions", l3SessionsRoutes(services));
+  app.route("/api/forgetting", forgettingRoutes(services));
 
   return app;
 }
