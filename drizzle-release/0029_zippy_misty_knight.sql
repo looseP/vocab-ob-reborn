@@ -1,0 +1,22 @@
+-- 0029: 删除旧版 0027 遗留的 partial UNIQUE 索引（P0 修正，2026-09-11）。
+--
+-- 背景：旧版 0027 曾创建
+--   word_l2_content_word_field_direction_active_unique
+--     ON word_l2_content (word_id, field, direction) WHERE is_active = true
+-- 并附带 fail-closed preflight 守卫。两者与既有写入语义冲突：
+--   * confirmDraft 直接 insert（is_active 默认 true）不退休同字段旧行
+--     （src/services/l2-content.service.ts:1019 + l2-content.repository.ts:55）；
+--   * acceptCandidate 默认 mode='append' 的语义就是与 active 兄弟行共存
+--     （l2-content.service.ts:1115,1153-1164）；
+--   * refresh_l2_cache 按 created_at/ordinality 聚合多条 active 行（0018 起的模型）。
+-- 且守卫会阻断"同键多条 active"的合法存量库升级。
+--
+-- 裁决：direction 只作维度，不设唯一约束（替代索引不补：既有查询由
+-- idx_l2_content_word_field 覆盖，未来真有按方向查行的查询再补）。
+-- 0027 本体已同步删除索引与守卫；本迁移为**已应用过旧版 0027** 的库兜底，
+-- 在从未建过该索引的库上是 no-op。
+--
+-- 幂等/回滚：DROP INDEX IF EXISTS（重复执行不报错）；本项目无自动 down。
+-- 若需回滚，重放旧版 0027 的建索引语句即可——不推荐，它会重新引入上述 P0 冲突。
+
+DROP INDEX IF EXISTS "word_l2_content_word_field_direction_active_unique";

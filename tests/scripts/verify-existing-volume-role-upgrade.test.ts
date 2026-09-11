@@ -31,9 +31,10 @@ describe("existing local volume role upgrade", () => {
     // 0024: words UPDATE grant（仅用于 FOR UPDATE 行锁，0021 同一陷阱）
     // 0025: words stub-only UPDATE policy（RLS 下 FOR UPDATE 要求行同时通过 UPDATE policy）
     // 0026: l3_sources 书架搜索 pg_trgm GIN 索引（title + content_text，ILIKE 加速）
-    // 0027: word_l2_content/l3_sources direction 方向列 + 生效行唯一索引（ADR-0017）
+    // 0027: word_l2_content/l3_sources direction 方向列 + CHECK（ADR-0017；方向只作维度，无唯一约束）
     // 0028: upgrade_work_orders/l3_sessions/l3_practice_attempts 三张新表（ADR-0018/0019）
-    expect(authoritativeMigrationCount()).toBe(29);
+    // 0029: 兜底删除旧版 0027 的 partial UNIQUE 索引（P0 修正，2026-09-11；新库 no-op）
+    expect(authoritativeMigrationCount()).toBe(30);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

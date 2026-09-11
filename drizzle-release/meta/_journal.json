@@ -204,6 +204,13 @@
       "when": 1789106604938,
       "tag": "0028_black_ironclad",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1789113082170,
+      "tag": "0029_zippy_misty_knight",
+      "breakpoints": true
     }
   ]
 }

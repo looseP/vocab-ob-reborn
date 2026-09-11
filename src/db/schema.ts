@@ -883,9 +883,9 @@ export const wordL2Content = pgTable("word_l2_content", {
 }, (table) => [
 	index("idx_l2_content_word_field").on(table.wordId, table.field),
 	index("idx_l2_content_source").on(table.source),
-	// ADR-0017：每个 (word, field, direction) 至多一条生效行；partial 限定
-	// is_active = true，候选行（is_active=false）与退役行不参与，互不阻塞。
-	uniqueIndex("word_l2_content_word_field_direction_active_unique").on(table.wordId, table.field, table.direction).where(sql`is_active = true`),
+	// ADR-0017 修正（2026-09-11）：direction 只作维度，不设唯一约束——同一
+	// (word, field, direction) 的 active 行可 0..n 条（confirmDraft 追加式写入、
+	// acceptCandidate(append) 共存是既有语义），缓存按 created_at 聚合。
 	check("word_l2_content_direction_check", sql`direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
 ]);
 

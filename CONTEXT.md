@@ -152,7 +152,7 @@ _Avoid_: using delete where hide suffices
 - A **Word** has exactly one **Textbook note** (imported, read-only) and zero or more **note entries** (its Annotation set)
 - A **Word** is in at most one track (**L1** or **L2**) at a time; L1→L2 promotion is one-way
 - A **Word** is marked in zero or more **L3 sources**; an **L3 source** marks one or more words (many-to-many via L3 contexts)
-- A **Word** has zero or more **Candidate pool** entries and zero or more active **L2 content** rows (one per field **per direction**, 2026-09-11; candidate entries carry a direction assigned at generation time)
+- A **Word** has zero or more **Candidate pool** entries and zero or more active **L2 content** rows — **0..n per (word, field, direction)**: active rows are not unique (confirm is append-only, adopt defaults to append), and the cache aggregates them by `created_at` (2026-09-11; candidate entries carry a direction assigned at generation time)
 - An **L2 content** row contains items; **Save** selects a subset, **Hide** removes items from display non-destructively
 - **Cram**/**Preview** read the **Practice deck**; **review**/**zen** read the **Due deck**
 

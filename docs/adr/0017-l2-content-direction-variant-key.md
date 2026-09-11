@@ -53,3 +53,27 @@ needs_recheck / 重卡抖动"这一推断：
   新增回归锁）。
 - **读取层约定（与方案无关）**：迁移后尚未被编辑过的存量缓存没有 direction 键，
   方向过滤一律 `item.direction ?? '通用'`。
+
+## 修正（2026-09-11）：方向不设唯一约束
+
+§Decision 1 曾落地为 `(word_id, field, direction)` 的 partial UNIQUE 索引
+（`WHERE is_active = true`）外加 fail-closed preflight 守卫。**该约束被撤销**：
+
+- **唯一约束会阻断既有合法写入路径**：`confirmDraft` 直接 insert（`is_active` 默认
+  true）不退休同字段旧行（`src/services/l2-content.service.ts:1019` +
+  `l2-content.repository.ts:55`），同 `(word, field)` 第二次确认必撞 23505；
+  `acceptCandidate` 默认 `mode='append'` 的**文档语义就是共存**
+  （`l2-content.service.ts:1115,1153-1164`），存在 active 兄弟行时必撞。
+- **守卫会阻断存量升级**：同键多条 active 行是 0018 以来
+  `refresh_l2_cache`（按 `created_at, ordinality` 聚合多行）的既有模型产物，
+  在真实数据上属合法状态；旧版 0027 的 preflight 会对这种库 RAISE，迁移无法应用。
+- **修正内容**：0027 删除唯一索引与守卫（保留 `direction` 列 + CHECK + 幂等 backfill，
+  `refresh_l2_cache` 函数体一字不改）；新增 **0029** 迁移 `DROP INDEX IF EXISTS
+  word_l2_content_word_field_direction_active_unique`，为"已应用过旧版 0027"的库兜底
+  （新库 no-op）。**不补替代索引**：既有查询由 `idx_l2_content_word_field` 覆盖，
+  未来若出现按方向查行的真实查询再补。
+- **语义定稿**：direction 是**内容维度**，不是唯一键——同一 `(word, field, direction)`
+  的 active 行可 0..n 条；"同一方向多行如何取舍/合并"属于读取层与后续服务决策，
+  不在 schema 层用约束替用户做决定（CONTEXT.md Relationships 已同步）。
+- **回归守护**：`tests/l2-content.integration.test.ts` 覆盖连续两次 confirmDraft、
+  append 采纳共存、replace 采纳留档兄弟行、refresh 聚合顺序与 direction 键行为。

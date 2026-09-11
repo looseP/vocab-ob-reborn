@@ -6349,34 +6349,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "word_l2_content_word_field_direction_active_unique": {
-          "name": "word_l2_content_word_field_direction_active_unique",
-          "columns": [
-            {
-              "expression": "word_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "field",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "direction",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "is_active = true",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
