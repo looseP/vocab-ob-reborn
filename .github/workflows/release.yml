@@ -82,6 +82,13 @@ jobs:
         run: npm run security:verify
 
       - name: Verify engineering gates
+        env:
+          # The layered coverage gate fails closed when its base ref is HEAD.
+          # At release time origin/main is either HEAD or an ancestor of HEAD
+          # (the previous step asserts the release sha is reachable from main),
+          # so the only meaningful diff is the release commit's own delta
+          # against its first parent. See docs/operations/layered-coverage-gate.md.
+          COVERAGE_BASE_REF: HEAD^
         run: npm run verify:engineering
 
       - name: Prepare real database LOGIN roles

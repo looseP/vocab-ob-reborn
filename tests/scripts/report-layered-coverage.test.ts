@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   assertBaselineNonRegression,
+  assertDiffBaseIsCalculable,
   buildLayeredSummary,
   calculateDiffCoverage,
   classifySourceFile,
   evaluateLayerGate,
   findUnknownSourceDirectories,
   parseChangedSourceLines,
+  resolveDiffCoverage,
   selectCoverageBaseRef,
+  toMarkdown,
+  type DiffScopeFacts,
   type IstanbulFileCoverage,
 } from "../../scripts/report-layered-coverage";
 
@@ -213,6 +217,115 @@ describe("diff coverage", () => {
       pct: 100,
       ok: true,
     });
+  });
+});
+
+describe("diff coverage fail-closed contract", () => {
+  const scope = (overrides: Partial<DiffScopeFacts> = {}): DiffScopeFacts => ({
+    baseRef: "HEAD^",
+    baseSha: "1111111",
+    headSha: "2222222",
+    changedSrcFiles: [],
+    uncommittedSrcFiles: [],
+    ...overrides,
+  });
+  const statementOnlyFile = (file: string, counts: number[]): IstanbulFileCoverage => {
+    const coverage = fileCoverage(file, counts);
+    coverage.fnMap = {};
+    coverage.f = {};
+    coverage.branchMap = {};
+    coverage.b = {};
+    return coverage;
+  };
+
+  it("fails closed when the resolved base ref is HEAD", () => {
+    // Regression under test: a clone without origin/main resolved `main`, and
+    // main == HEAD made base...HEAD empty, so the gate printed N/A and passed.
+    const headBase = { baseRef: "main", baseSha: "abc1234", headSha: "abc1234" };
+    expect(() => assertDiffBaseIsCalculable(scope(headBase))).toThrow(/COVERAGE_BASE_REF/);
+    expect(() => assertDiffBaseIsCalculable(scope(headBase))).toThrow(/origin\/main/);
+    expect(() => assertDiffBaseIsCalculable(scope(headBase))).toThrow(/HEAD\^/);
+    // An unresolvable base ref is the same class of failure, not an N/A.
+    expect(() => assertDiffBaseIsCalculable(scope({ baseRef: "origin/main", baseSha: null }))).toThrow(/COVERAGE_BASE_REF/);
+    expect(() => assertDiffBaseIsCalculable(scope())).not.toThrow();
+  });
+
+  it("refuses N/A while src has uncommitted changes", () => {
+    // base == HEAD + uncommitted src edits: still fails closed.
+    expect(() => assertDiffBaseIsCalculable(scope({
+      baseSha: "abc1234",
+      headSha: "abc1234",
+    }))).toThrow(/COVERAGE_BASE_REF/);
+    // base != HEAD + uncommitted src edits + nothing committed to measure: the
+    // "changed but not committed" masquerade must not report N/A.
+    const measured = calculateDiffCoverage({}, {}, "HEAD^");
+    expect(() => resolveDiffCoverage(measured, scope({ uncommittedSrcFiles: ["src/services/wip.ts"] })))
+      .toThrow(/COVERAGE_BASE_REF/);
+    expect(() => resolveDiffCoverage(measured, scope({ uncommittedSrcFiles: ["src/services/wip.ts"] })))
+      .toThrow(/src\/services\/wip\.ts/);
+    // Same verdict when the committed part only carries non-executable lines.
+    expect(() => resolveDiffCoverage(measured, scope({
+      changedSrcFiles: ["src/domain/index.ts"],
+      uncommittedSrcFiles: ["src/services/wip.ts"],
+    }))).toThrow(/COVERAGE_BASE_REF/);
+  });
+
+  it("allows the N/A that names src changes outside the governed layers", () => {
+    const resolved = resolveDiffCoverage(
+      calculateDiffCoverage({}, {}, "HEAD^"),
+      scope({ changedSrcFiles: ["src/db/schema.ts"] }),
+    );
+    expect(resolved).toMatchObject({ status: "outside-governed-layers", pct: null, ok: true, executableLines: 0 });
+    expect(resolved.note).toBe("changed src files exist outside governed layers: src/db/schema.ts");
+    // The report must not fall back to the old blanket wording.
+    const markdown = toMarkdown(buildLayeredSummary({ "src/domain/a.ts": fileCoverage("src/domain/a.ts", [1]) }, [], resolved));
+    expect(markdown).toContain("N/A — changed src files exist outside governed layers: src/db/schema.ts");
+    expect(markdown).not.toContain("no executable core changes");
+  });
+
+  it("allows the N/A for an unchanged src tree and names the base ref", () => {
+    const resolved = resolveDiffCoverage(calculateDiffCoverage({}, {}, "HEAD^"), scope());
+    expect(resolved).toMatchObject({ status: "no-src-changes", pct: null, ok: true });
+    expect(resolved.note).toContain("HEAD^");
+    const markdown = toMarkdown(buildLayeredSummary({ "src/domain/a.ts": fileCoverage("src/domain/a.ts", [1]) }, [], resolved));
+    expect(markdown).toContain("N/A — no src changes in HEAD^...HEAD");
+    expect(markdown).toContain("base ref `HEAD^`");
+  });
+
+  it("keeps the executable-line verdict and the 85 percent threshold", () => {
+    const coverage = { "src/services/a.ts": statementOnlyFile("src/services/a.ts", [1, 0]) };
+    const failing = resolveDiffCoverage(
+      calculateDiffCoverage({ "src/services/a.ts": [1, 2] }, coverage, "origin/main"),
+      scope({ baseRef: "origin/main", changedSrcFiles: ["src/services/a.ts"] }),
+    );
+    expect(failing).toMatchObject({ status: "computed", pct: 50, ok: false, executableLines: 2, coveredLines: 1 });
+    const passing = resolveDiffCoverage(
+      calculateDiffCoverage({ "src/services/a.ts": [1] }, coverage, "origin/main"),
+      scope({ baseRef: "origin/main", changedSrcFiles: ["src/services/a.ts"] }),
+    );
+    expect(passing).toMatchObject({ status: "computed", pct: 100, ok: true });
+  });
+
+  it("reports the base ref, the governed split, and changed executable lines", () => {
+    const coverage = { "src/services/a.ts": statementOnlyFile("src/services/a.ts", [1]) };
+    const resolved = resolveDiffCoverage(
+      calculateDiffCoverage({ "src/services/a.ts": [1] }, coverage, "HEAD^"),
+      scope({ changedSrcFiles: ["src/services/a.ts", "src/db/schema.ts"] }),
+    );
+    const markdown = toMarkdown(buildLayeredSummary(coverage, [], resolved));
+    expect(markdown).toContain("Diff coverage (>=85%): **100% (PASS)**");
+    expect(markdown).toContain("base ref `HEAD^`");
+    expect(markdown).toContain("changed src files 2 (governed 1 / outside governed layers 1)");
+    expect(markdown).toContain("changed executable lines 1 (covered 1); uncommitted src files 0");
+  });
+
+  it("names a governed diff that carries no executable line", () => {
+    const resolved = resolveDiffCoverage(
+      calculateDiffCoverage({}, {}, "HEAD^"),
+      scope({ changedSrcFiles: ["src/domain/index.ts"] }),
+    );
+    expect(resolved).toMatchObject({ status: "no-executable-changes", pct: null, ok: true });
+    expect(resolved.note).toBe("changed governed files carry no executable lines: src/domain/index.ts");
   });
 });
 

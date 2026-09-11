@@ -1,3 +1,28 @@
+/**
+ * Layered coverage gate: per-layer baseline ratchet + governed-diff coverage.
+ *
+ * Diff coverage is fail-closed by design (D-1 hardening, 2026-09-11):
+ *   1. the resolved base ref must not be HEAD — a HEAD base makes the
+ *      `base...HEAD` diff empty by construction, so the gate would print "N/A"
+ *      for work it never looked at;
+ *   2. an N/A verdict is refused while `git status --porcelain -- src` is
+ *      non-empty: uncommitted src files are invisible to a committed diff, so
+ *      that combination is the "changed but not committed" masquerade;
+ *   3. N/A is allowed — and must name its evidence — only when the committed
+ *      src diff genuinely carries nothing to measure: either no src change at
+ *      all, or src changes outside the governed layers (for example a
+ *      src/db/schema.ts migration).
+ *
+ * How to pick the base ref locally:
+ *   COVERAGE_BASE_REF=HEAD^ npm run test:unit        # what the last commit changed
+ *   COVERAGE_BASE_REF=origin/main npm run test:unit  # what the whole branch adds
+ * Without COVERAGE_BASE_REF the gate falls back to origin/main, then main, then
+ * HEAD~1. A clone without remote-tracking refs resolves `main`, which is
+ * normally HEAD, so the gate fails with actionable guidance instead of passing
+ * silently. That failure is intentional: commit the work (or point the base ref
+ * at a ref that already contains it) and re-run. See
+ * docs/operations/layered-coverage-gate.md.
+ */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -36,12 +61,45 @@ interface LayerGate {
   failures: string[];
 }
 
+/**
+ * Why the diff verdict is N/A (or that it was computed). Every non-`computed`
+ * status is an allowed N/A only after the fail-closed guards in
+ * `resolveDiffCoverage` have seen a clean `src` worktree.
+ */
+export type DiffCoverageStatus =
+  | "computed"
+  /** Governed files changed, but none of the changed lines is executable. */
+  | "no-executable-changes"
+  /** Nothing under src changed between the base ref and HEAD. */
+  | "no-src-changes"
+  /** src changed, but only outside domain/errors/services/repositories/http. */
+  | "outside-governed-layers";
+
 interface DiffCoverage {
   baseRef: string;
   executableLines: number;
   coveredLines: number;
   pct: number | null;
   ok: boolean;
+  status: DiffCoverageStatus;
+  /** Human-readable basis for the verdict; always names the deciding evidence. */
+  note: string;
+  /** src files in `baseRef...HEAD` (committed content only). */
+  changedSrcFiles: string[];
+  governedFiles: string[];
+  ungovernedFiles: string[];
+  /** src files edited but not committed: never visible to a committed diff. */
+  uncommittedSrcFiles: string[];
+}
+
+/** Git facts the fail-closed diff-coverage contract is decided on. */
+export interface DiffScopeFacts {
+  baseRef: string;
+  /** Resolved commit sha of the base ref, or null when it does not resolve. */
+  baseSha: string | null;
+  headSha: string;
+  changedSrcFiles: string[];
+  uncommittedSrcFiles: string[];
 }
 
 export interface CoverageBaseCandidate {
@@ -91,11 +149,29 @@ const EMPTY_COUNTERS = (): Record<MetricName, { covered: number; total: number }
   functions: { covered: 0, total: 0 },
   branches: { covered: 0, total: 0 },
 });
+/**
+ * Actionable remedy appended to every fail-closed diff-coverage error. It must
+ * stay executable guidance: which variable to set, which values are valid, and
+ * why the gate cannot see the work otherwise.
+ */
+const BASE_REF_GUIDANCE =
+  "set COVERAGE_BASE_REF to a non-HEAD ref that contains the work you want measured (for example origin/main, or HEAD^ after committing it) and re-run; " +
+  "the diff gate only measures committed changes between the base ref and HEAD";
 
 function normalizePath(file: string): string {
   const normalized = file.replaceAll("\\", "/");
   const srcIndex = normalized.lastIndexOf("/src/");
   return srcIndex >= 0 ? normalized.slice(srcIndex + 1) : normalized.replace(/^src\//, "src/");
+}
+
+/**
+ * A src file is governed when one of the core layers claims it. The diff gate
+ * measures only repo-relative `.ts` files that classifySourceFile can map to a
+ * layer; other src files (db, frontend, l3, ...) are reported by name but carry
+ * no diff-coverage obligation.
+ */
+function isGovernedSourceFile(file: string): boolean {
+  return /^src\/(domain|errors|services|repositories|http)\/.*\.ts$/.test(normalizePath(file));
 }
 
 export function classifySourceFile(file: string): CoreLayer {
@@ -186,7 +262,95 @@ export function calculateDiffCoverage(
     }
   }
   const percentage = executableLines === 0 ? null : Number(((coveredLines / executableLines) * 100).toFixed(2));
-  return { baseRef, executableLines, coveredLines, pct: percentage, ok: percentage == null || percentage >= 85 };
+  // This layer only sees governed changed lines; ungoverned src changes are
+  // classified by resolveDiffCoverage, which owns the final status/note.
+  const governedFiles = Object.keys(changedLines).map((file) => normalizePath(file)).sort();
+  return {
+    baseRef,
+    executableLines,
+    coveredLines,
+    pct: percentage,
+    ok: percentage == null || percentage >= 85,
+    status: percentage == null ? "no-executable-changes" : "computed",
+    note: percentage == null
+      ? `no executable line among ${governedFiles.length} changed governed src file(s)`
+      : `${coveredLines}/${executableLines} changed executable lines covered`,
+    changedSrcFiles: governedFiles,
+    governedFiles,
+    ungovernedFiles: [],
+    uncommittedSrcFiles: [],
+  };
+}
+
+/**
+ * Fail-closed guard 1: a base ref that resolves to HEAD cannot produce a diff,
+ * so it must fail loudly with a remedy instead of reporting "N/A".
+ */
+export function assertDiffBaseIsCalculable(
+  facts: Pick<DiffScopeFacts, "baseRef" | "baseSha" | "headSha">,
+): void {
+  if (facts.baseSha == null) {
+    throw new Error(
+      `Unable to resolve coverage base ref "${facts.baseRef}" to a commit; ${BASE_REF_GUIDANCE}`,
+    );
+  }
+  if (facts.baseSha === facts.headSha) {
+    throw new Error(
+      `Resolved coverage base ref "${facts.baseRef}" is HEAD (${facts.headSha.slice(0, 7)}), so the base...HEAD diff is empty by construction ` +
+      `and diff coverage cannot be computed; ${BASE_REF_GUIDANCE}`,
+    );
+  }
+}
+
+/**
+ * Fail-closed guard 2 + N/A classification.
+ *
+ * `measured` comes from calculateDiffCoverage and already carries the governed
+ * percentage (or null). This function decides why a null percentage is null,
+ * and refuses to let that N/A stand while src has uncommitted edits - those
+ * files are exactly the ones a committed diff cannot see.
+ */
+export function resolveDiffCoverage(measured: DiffCoverage, scope: DiffScopeFacts): DiffCoverage {
+  const governedFiles = scope.changedSrcFiles.filter(isGovernedSourceFile);
+  const ungovernedFiles = scope.changedSrcFiles.filter((file) => !isGovernedSourceFile(file));
+  const resolved: DiffCoverage = {
+    ...measured,
+    baseRef: scope.baseRef,
+    changedSrcFiles: [...scope.changedSrcFiles],
+    governedFiles,
+    ungovernedFiles,
+    uncommittedSrcFiles: [...scope.uncommittedSrcFiles],
+    ok: measured.pct == null || measured.pct >= 85,
+  };
+  if (measured.pct != null) {
+    return {
+      ...resolved,
+      status: "computed",
+      note: `${measured.coveredLines}/${measured.executableLines} changed executable lines covered`,
+    };
+  }
+
+  const outsideGoverned = ungovernedFiles.length > 0
+    ? `changed src files exist outside governed layers: ${ungovernedFiles.join(", ")}`
+    : null;
+  const nonExecutable = governedFiles.length > 0
+    ? `changed governed files carry no executable lines: ${governedFiles.join(", ")}`
+    : null;
+  const status: DiffCoverageStatus = outsideGoverned != null
+    ? "outside-governed-layers"
+    : nonExecutable != null
+      ? "no-executable-changes"
+      : "no-src-changes";
+  const note = [outsideGoverned, nonExecutable].filter((entry): entry is string => entry != null).join("; ")
+    || `no src changes in ${scope.baseRef}...HEAD`;
+
+  if (scope.uncommittedSrcFiles.length > 0) {
+    throw new Error(
+      `Diff coverage is unavailable (${note}) while src has uncommitted changes (${scope.uncommittedSrcFiles.join(", ")}); ` +
+      `the committed diff cannot see them, so the gate would silently pass; ${BASE_REF_GUIDANCE}`,
+    );
+  }
+  return { ...resolved, status, note };
 }
 
 export function parseChangedSourceLines(diff: string): Record<string, number[]> {
@@ -197,7 +361,7 @@ export function parseChangedSourceLines(diff: string): Record<string, number[]> 
   for (const line of diff.split(/\r?\n/)) {
     if (line.startsWith("+++ b/")) {
       currentFile = line.slice(6).replaceAll("\\", "/");
-      if (!/^src\/(domain|errors|services|repositories|http)\/.*\.ts$/.test(currentFile)) currentFile = null;
+      if (!isGovernedSourceFile(currentFile)) currentFile = null;
       inInterfaceBlock = false;
       continue;
     }
@@ -249,17 +413,57 @@ function resolveCoverageBaseRef(projectRoot: string): string {
   return selectCoverageBaseRef(process.env.COVERAGE_BASE_REF, candidates);
 }
 
+function runGit(projectRoot: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync("git", args, { cwd: projectRoot, encoding: "utf8" });
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+function gitOutput(projectRoot: string, args: string[]): string {
+  const result = runGit(projectRoot, args);
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${(result.stderr || result.stdout).trim()}; ${BASE_REF_GUIDANCE}`);
+  }
+  return result.stdout;
+}
+
+/** Parse `git status --porcelain=v1` output into repo-relative paths. */
+function parsePorcelainPaths(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0)
+    .map((line) => {
+      const entry = line.slice(3).trim();
+      const renamed = entry.split(" -> ");
+      return renamed[renamed.length - 1];
+    })
+    .sort();
+}
+
+/** Collect the git facts the fail-closed diff-coverage contract decides on. */
+function probeDiffScope(projectRoot: string, baseRef: string): DiffScopeFacts {
+  const headSha = gitOutput(projectRoot, ["rev-parse", "HEAD"]).trim();
+  const baseProbe = runGit(projectRoot, ["rev-parse", `${baseRef}^{commit}`]);
+  return {
+    baseRef,
+    baseSha: baseProbe.status === 0 ? baseProbe.stdout.trim() : null,
+    headSha,
+    changedSrcFiles: gitOutput(projectRoot, ["diff", "--name-only", `${baseRef}...HEAD`, "--", "src"])
+      .split(/\r?\n/)
+      .filter((file) => file.trim().length > 0)
+      .sort(),
+    uncommittedSrcFiles: parsePorcelainPaths(gitOutput(projectRoot, ["status", "--porcelain=v1", "--", "src"])),
+  };
+}
+
 function collectDiffCoverage(
   projectRoot: string,
   coverage: Record<string, IstanbulFileCoverage>,
   baseRef: string,
 ): DiffCoverage {
-  const result = spawnSync("git", ["diff", "--unified=0", `${baseRef}...HEAD`, "--", "src"], {
-    cwd: projectRoot,
-    encoding: "utf8",
-  });
-  if (result.status !== 0) throw new Error(`git diff failed for coverage base ${baseRef}: ${(result.stderr || result.stdout).trim()}`);
-  return calculateDiffCoverage(parseChangedSourceLines(result.stdout), coverage, baseRef);
+  const scope = probeDiffScope(projectRoot, baseRef);
+  assertDiffBaseIsCalculable(scope);
+  const diff = gitOutput(projectRoot, ["diff", "--unified=0", `${baseRef}...HEAD`, "--", "src"]);
+  return resolveDiffCoverage(calculateDiffCoverage(parseChangedSourceLines(diff), coverage, baseRef), scope);
 }
 
 /**
@@ -321,10 +525,27 @@ function loadAndValidateBaseline(projectRoot: string, baseRef: string): Coverage
   return current;
 }
 
+/** Neutral diff verdict for callers that do not collect git facts (tests, tooling). */
+function emptyDiffCoverage(baseRef = "test"): DiffCoverage {
+  return {
+    baseRef,
+    executableLines: 0,
+    coveredLines: 0,
+    pct: null,
+    ok: true,
+    status: "no-src-changes",
+    note: `no src changes in ${baseRef}...HEAD`,
+    changedSrcFiles: [],
+    governedFiles: [],
+    ungovernedFiles: [],
+    uncommittedSrcFiles: [],
+  };
+}
+
 export function buildLayeredSummary(
   coverage: Record<string, IstanbulFileCoverage>,
   evidence: TestEvidence[] = [],
-  diffCoverage: DiffCoverage = { baseRef: "test", executableLines: 0, coveredLines: 0, pct: null, ok: true },
+  diffCoverage: DiffCoverage = emptyDiffCoverage(),
   baselineThresholds: CoverageThresholds = BOOTSTRAP_BASELINE,
 ): LayeredCoverageSummary {
   const counters: Record<CoreLayer, ReturnType<typeof EMPTY_COUNTERS>> = {
@@ -422,18 +643,25 @@ function collectEvidence(projectRoot: string): TestEvidence[] {
   return evidence;
 }
 
-function toMarkdown(summary: LayeredCoverageSummary): string {
+export function toMarkdown(summary: LayeredCoverageSummary): string {
   const rows = (Object.keys(summary.layers) as CoreLayer[]).map((layer) => {
     const m = summary.layers[layer];
     return `| ${layer} | ${m.lines.pct}% | ${m.statements.pct}% | ${m.branches.pct}% | ${m.functions.pct}% | ${summary.baselineGates[layer].ok ? "PASS" : "FAIL"} | ${summary.targetGates[layer].ok ? "PASS" : "GAP"} |`;
   });
   const evidenceRows = summary.evidence.map((item) => `| ${item.category} | ${item.count} | \`${item.enforcedBy}\` (${item.executionScope}) | ${item.files.join("<br>") || "—"} |`);
+  const diff = summary.diffCoverage;
+  // An N/A verdict must carry its evidence: "no executable core changes" alone
+  // hides whether the diff was empty by accident (uncommitted work, HEAD base).
+  const diffVerdict = diff.pct == null
+    ? `N/A — ${diff.note}`
+    : `${diff.pct}% (${diff.ok ? "PASS" : "FAIL"})`;
   return [
     "# Layered Coverage Summary",
     "",
     `Baseline ratchet gate: **${summary.baselineOk ? "PASS" : "FAIL"}**`,
     `Final target status: **${summary.targetOk ? "PASS" : "GAPS REMAIN"}**`,
-    `Diff coverage (>=85%): **${summary.diffCoverage.pct == null ? "N/A — no executable core changes" : `${summary.diffCoverage.pct}% (${summary.diffCoverage.ok ? "PASS" : "FAIL"})`}**`,
+    `Diff coverage (>=85%): **${diffVerdict}**`,
+    `Diff coverage scope: base ref \`${diff.baseRef}\`; changed src files ${diff.changedSrcFiles.length} (governed ${diff.governedFiles.length} / outside governed layers ${diff.ungovernedFiles.length}); changed executable lines ${diff.executableLines} (covered ${diff.coveredLines}); uncommitted src files ${diff.uncommittedSrcFiles.length}`,
     "",
     "Final target: lines/statements >= 85%, branches >= 75% per layer. The baseline ratchet is the enforced non-regression gate; it may only move upward.",
     "",

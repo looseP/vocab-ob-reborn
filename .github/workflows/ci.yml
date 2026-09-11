@@ -71,6 +71,11 @@ jobs:
 
       - name: Engineering verification
         env:
+          # Mandatory for the layered coverage gate: it fails closed when the
+          # resolved base ref is HEAD. CI passes the exact base sha of the PR or
+          # push here; origin/main would be HEAD on a push to main, and a bare
+          # checkout without remote-tracking refs resolves `main`, which is HEAD.
+          # See docs/operations/layered-coverage-gate.md.
           COVERAGE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
           API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
           ROUTE_COMPLEXITY_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
