@@ -15,7 +15,7 @@
 
 ## Decision
 
-1. **日志轮转 + 落盘**：Docker json-file 配 `max-size`/`max-file` 轮转，并把日志落盘到宿主目录（便于 grep，且能随备份一起带走）。
+1. **日志轮转（已落地）**：所有可部署 compose 的服务**显式** pin `json-file` + `max-size: "10m"` / `max-file: "5"`，由 `scripts/verify-compose-logging.ts` 的共享契约断言（`verify-container-runtime` / `verify-single-host-compose` / `verify-cloudflare-tunnel-compose` 三个脚本调用它）——规则在门禁里，不在散文里。**窗口是体积制、不是时间制**（Docker json-file 不支持按时间保留）；"≥24h 可检索"是**按当前日志量的容量推算**，日志量激增会压缩窗口，**不得当作时间保证**。
 2. **告警用轻量 watcher 容器**：读 `/metrics` 或 `/api/operations/metrics`，超阈值（outbox 积压、`/readyz` 失败等）POST 到 owner 的 webhook。
 3. **否决**引入 Prometheus + Grafana 全家桶，也**否决**日志双写（两份日志必然漂移）。
 4. **告警疲劳控制是核心，不是附加项**：连续 k 次超阈才发（吸收尖刺）+ 同告警 N 小时去重；没有它，两周后告警就被忽略，等于没做。
@@ -30,7 +30,11 @@
 
 ## Consequences
 
-- ✅ 出问题查得到（日志落盘 + 轮转），且日志可随备份带走。
+- ✅ 出问题查得到：轮转窗口内可检索，且日志行与响应头 `X-Request-ID` 用**同一个 id**（`requestId` 为顶层字段）——可 grep 关联。
+
+- ⚠️ **日志不离机（残余风险，2026-09-12 裁决）**：容器日志留在宿主机本地轮转窗口内，**不随备份带走**。理由：`backup-scheduler` 只挂 `${BACKUP_HOST_DIR}`（`compose.yaml:177`），无 docker socket、读不到 Docker data root（Windows Docker Desktop 下在 WSL2 VM 内）；而应用层双写已被本 ADR 否决。
+- ⚠️ **docker socket 方案预先否决**：挂 socket 等于给容器宿主 docker 控制权（≈root），与本仓库加固姿态（`read_only` / `cap_drop: ALL` / `no-new-privileges`）冲突。若将来确需离机日志，**唯一可接受的形态是 Docker log driver → 外部 sink（不是 docker socket）**，且必须另做威胁评审。
+- ⚠️ 轮转窗口的体积制含义（见 Decision §1）必须在运行手册中如实表述，不得写成时间承诺。
 - ✅ 出事有人叫（webhook），且不会两天内被噪音淹没。
 - ⚠️ 残余风险明示：宿主整体失联无外部告警；watcher 自身是被监控对象之外的单点。
 - ⚠️ watcher 的阈值与 `slo-runbook.md` 必须同源（避免两处各写一套数字）。
