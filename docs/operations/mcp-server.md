@@ -10,7 +10,7 @@
 | 环境变量 | 说明 | 默认值 |
 | --- | --- | --- |
 | `VOCAB_MCP_BASE_URL` | API 基地址 | `http://127.0.0.1:3001` |
-| `VOCAB_MCP_TOKEN` | Bearer 令牌（**必填**），取 `OWNER_API_TOKEN` 或 `AGENT_API_TOKENS` 中的一项（⚠️ 见文末「现状限制」：agent token 目前对 `/api/*` 全部 403） | 无 |
+| `VOCAB_MCP_TOKEN` | Bearer 令牌（**必填**），取 `OWNER_API_TOKEN` 或 `AGENT_API_TOKENS` 中某个 token（agent token 现可读全量 + 写 proposal，升级动作 403；见文末「现状限制」） | 无 |
 | `VOCAB_MCP_TIMEOUT_MS` | 单请求超时 | `60000` |
 
 本地开发默认 Owner Token 见 `compose.yaml`（`local-owner-api-token-only-0001`），仅限本地使用。
@@ -63,14 +63,15 @@
 
 - 候选（`is_active=false`）不进 words JSONB 缓存、不参与出题与展示；只有采纳后才激活。
 - 拒绝候选为硬删，Agent 可重新 propose。
-- 所有写操作在服务端以单一 owner 身份（`LOCAL_OWNER_ID`）执行，RLS 隔离不变。**当前不存在 JWT**：owner token 与 agent token 解析出的是**同一个 actorId**（`src/http/middleware/auth.ts:33-42`），因此数据层无法区分某次写入来自 agent 还是 owner。
+- 所有写操作在服务端以单一 owner 身份（`LOCAL_OWNER_ID`）执行，RLS 隔离不变。**当前不存在 JWT**：owner token 与 agent token 解析出的是**同一个 actorId**；agent bearer 额外在 `Principal.agentId` 上带出服务端认定的 agentId，但 T13a 尚未落库（见文末「现状限制」4）。
 - 工具执行失败以 `isError: true` 的结果返回（MCP 约定），调用方 Agent 可读取消息自行纠正。
 
-## 现状限制（2026-09-12 实测，待决策）
+## 现状限制（2026-09-12 T13a 后）
 
-1. **agent token 目前不可用**：`/api/*` 整体挂在 owner 门禁上（`src/http/server.ts:101` + `roleRank` 的 `agent=1 < owner=2`，`src/http/middleware/auth.ts:19-23,87-89`）⇒ 用 `AGENT_API_TOKENS` 里的任一项调用本桥 6 个工具，**全部 403 FORBIDDEN**。本桥当前实际只能用 owner token。
-2. **代价**：用 owner token 时，agent 可以调到 `confirm_l2_content`（`POST /api/l2/:slug/confirm`，直接写 `is_active=true`，跳过候选池）——ADR-0004 §6「agent 写入必须 pending review」在 L2 侧**没有代码强制**，只靠调用方自觉。
-3. **MCP 工具集目前只有 L2 的 6 个**，没有任何 L3 工具（`scripts/run-mcp-server.mjs:136-256`）。
-4. 服务端目前**没有任何按 role 的业务分支**（grep `role === "agent"` 零命中）：红线靠"agent 够不着"间接成立，不是资源级规则。
-
-⇒ agent 门禁分级、MCP 工具边界、以及写入来源可追溯，是三项待拍板的设计决策（见拷问会话记录）。
+1. **agent token 可用（读 + 写 proposal）**：`/api/*` 已从"整体 owner 门禁"升级为**按端点最小角色**（注册表 `src/http/operations.ts` 的 `minRole` + 查找表 `src/http/middleware/api-authorization.ts`）。
+   - agent token（`AGENT_API_TOKENS` 的 `agentId:token`，见 `docs/operations/secret-rotation.md`）可：读全量语料（GET；例外见下）；写 proposal（`POST /api/l3/proposals`、`POST /api/l2/:slug/candidates`）。
+   - **升级动作对 agent 一律 403**：L2 confirm、L2 candidates accept/reject、L3 proposal validate/confirm/reject、L3 recommendation accept/reject、forgetting apply/restore、l3-sessions end、upgrade-work-orders 全部写、l2-rows deactivate/delete/hide/restore 等；owner token 仍全量放行。
+   - `GET /api/operations/metrics` 等少数读保持 owner-only；`/api/auth` 是唯一豁免组（会话兑换/登出）。
+2. **MCP 工具边界尚未收敛（属 T13c）**：本桥 6 个工具仍共用 `VOCAB_MCP_TOKEN`（可为 owner 或 agent）。用 owner token 时 `confirm_l2_content` 仍可直达；用 agent token 时它会被服务端 403 拦下。ADR-0029 要求 MCP 工具面**下线** `confirm_l2_content` 并补 L3 工具——该工作属 T13c，本文档未改工具面。
+3. **MCP 工具集目前只有 L2 的 6 个**，没有任何 L3 工具（`scripts/run-mcp-server.mjs:136-256`；属 T13c）。
+4. **agentId 只到 Principal，未落库**：T13a 只做到中间件按 `id:token` 映射解析并注入 `Principal.agentId`；把 agentId 落 `proposal.provenance.agentId` 属 T13c（0 迁移）。因此数据层仍无法区分某次写入来自 agent 还是 owner，`source_type` / `provenance` 仍是调用方自述。

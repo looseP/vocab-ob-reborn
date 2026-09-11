@@ -15,6 +15,7 @@ import type { Services } from "../services";
 import { API_JSON_BODY_MAX_BYTES } from "../schemas/resource-budget";
 import { handleError } from "./middleware/error";
 import { authMiddleware } from "./middleware/auth";
+import { resolveMinRole } from "./middleware/api-authorization";
 import { wordRoutes, type AppEnv } from "./routes/words";
 import { plazaRoutes } from "./routes/plaza";
 import { reviewRoutes } from "./routes/review";
@@ -97,8 +98,11 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   // Browser sessions are exchanged here before the protected /api middleware.
   app.route("/api/auth", authRoutes(services));
 
-  // /api/* 需 owner 角色；支持服务端 Bearer 或浏览器 HttpOnly Session。
-  app.use("/api/*", authMiddleware(services.authSessions, "owner"));
+  // /api/* 按端点最小角色鉴权（ADR-0029 决策 1/2）：由注册表编译的 method+模板查找表
+  // 决定每条路由所需角色（读 → agent，写 proposal → agent，其余写/升级动作 → owner）。
+  // 查找表查不到的路由 fail-closed 按 owner（见 middleware/api-authorization.ts）。
+  // 支持服务端 Bearer 或浏览器 HttpOnly Session；agent 走 bearer。
+  app.use("/api/*", authMiddleware(services.authSessions, (c) => resolveMinRole(c.req.method, c.req.path)));
 
   app.get("/api/operations/metrics", async (c) => {
     c.header("Cache-Control", "no-store");

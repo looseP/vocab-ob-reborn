@@ -24,6 +24,7 @@ describe("runtime configuration", () => {
       ...base,
       APP_DATABASE_URL: "",
       METRICS_BEARER_TOKEN: "",
+      AGENT_API_TOKENS: "",
       LLM_PROVIDER: "",
       LLM_MODEL: "",
       LLM_API_KEY: "",
@@ -31,6 +32,7 @@ describe("runtime configuration", () => {
     })).toMatchObject({
       APP_DATABASE_URL: undefined,
       METRICS_BEARER_TOKEN: undefined,
+      AGENT_API_TOKENS: undefined,
       LLM_PROVIDER: undefined,
       LLM_MODEL: undefined,
       LLM_API_KEY: undefined,
@@ -86,6 +88,18 @@ describe("runtime configuration", () => {
       APP_DATABASE_URL: "postgresql://user:password@external-db.example:5432/vocab",
       DB_SSLMODE: "disable",
     })).toThrow(/internal postgres service/);
+  });
+
+  it("fails fast on malformed AGENT_API_TOKENS (ADR-0029 decision 5)", () => {
+    expect(loadRuntimeConfig({ ...base, AGENT_API_TOKENS: "ci-runner:agent-secret-1" }))
+      .toMatchObject({ AGENT_API_TOKENS: "ci-runner:agent-secret-1" });
+    // legacy bare token：必须拒绝并提示迁移格式
+    expect(() => loadRuntimeConfig({ ...base, AGENT_API_TOKENS: "legacy-bare-token" })).toThrow(/agentId:token/);
+    expect(() => loadRuntimeConfig({ ...base, AGENT_API_TOKENS: "bot:1,bot:2" })).toThrow(/duplicate agentId/);
+    expect(() => loadRuntimeConfig({ ...base, AGENT_API_TOKENS: `bot:${base.OWNER_API_TOKEN}` }))
+      .toThrow(/must differ from OWNER_API_TOKEN/);
+    expect(() => loadRuntimeConfig({ ...base, AGENT_API_TOKENS: "Bad_Id:token" })).toThrow(/AGENT_API_TOKENS/);
+    expect(() => loadRuntimeConfig({ ...base, AGENT_API_TOKENS: "bot:" })).toThrow(/empty token/);
   });
 
   it("rejects invalid bounds and partial LLM configuration", () => {
