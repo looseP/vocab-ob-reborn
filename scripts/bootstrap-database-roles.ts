@@ -327,6 +327,12 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     GRANT SELECT, INSERT, UPDATE ON TABLE public.upgrade_work_orders TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_sessions TO vocab_app;
     GRANT SELECT, INSERT ON TABLE public.l3_practice_attempts TO vocab_app;
+    -- 0030（ADR-0019 §4）：L3 子空间 junction（source ↔ 语法/阅读/作文/翻译/通用）。
+    --   SELECT：按 (user_id, space) 过滤取源（T06 错题库 / T07 攻坚包）与展示子空间标记；
+    --   INSERT：把 source 挂到某个子空间；
+    --   DELETE：取消挂载（改归属 = DELETE + INSERT，不做原地 UPDATE，故不授 UPDATE；
+    --           对齐 l3_occurrences / l3_context_links 等 junction 的既有授权口径）。
+    GRANT SELECT, INSERT, DELETE ON TABLE public.l3_source_spaces TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;

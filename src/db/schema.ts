@@ -923,6 +923,33 @@ export const l3Sources = pgTable("l3_sources", {
 	check("l3_sources_direction_check", sql`direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
 ]);
 
+// ADR-0019 §4 / CONTEXT.md「Sub-space (子空间)」：L3 能力域轴（语法/阅读/作文/
+// 翻译/通用），与 direction（考试轴，ADR-0017）正交。一个 source 可同时属于多个
+// 子空间 → 多对多 junction（对齐 word_tags 先例），非 array 列：过滤走普通
+// btree 索引、多值唯一性由 (source_id, space) 约束保证（见迁移 0030 说明）。
+// 供 T06 错题库过滤与 T07 攻坚包按子空间取源。
+export const l3SourceSpaces = pgTable("l3_source_spaces", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	sourceId: uuid("source_id").notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	space: text("space").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	// 支撑"按子空间筛选"：给定 (user, space) → 该域下全部 source。
+	index("idx_l3_source_spaces_user_space").on(table.userId, table.space),
+	// 同一 source 对同一子空间至多一条（多值唯一性；source_id 已由复合 FK 绑定单一 owner）。
+	unique("l3_source_spaces_source_space_unique").on(table.sourceId, table.space),
+	// 复合 owner FK：source_id 必须属于同一 user（防越权把子空间挂到他人 source），
+	// 与 l3_occurrences/l3_contexts 的 L3 owner 隔离先例一致。
+	foreignKey({
+			columns: [table.sourceId, table.userId],
+			foreignColumns: [l3Sources.id, l3Sources.userId],
+			name: "l3_source_spaces_source_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_source_spaces_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_source_spaces_space_check", sql`space = ANY (ARRAY['语法'::text, '阅读'::text, '作文'::text, '翻译'::text, '通用'::text])`),
+]);
+
 // L3 owner isolation: composite foreign keys below ensure scoped rows cannot
 // point at parent rows owned by a different user, even outside service code.
 export const l3Contexts = pgTable("l3_contexts", {

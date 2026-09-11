@@ -34,7 +34,8 @@ describe("existing local volume role upgrade", () => {
     // 0027: word_l2_content/l3_sources direction 方向列 + CHECK（ADR-0017；方向只作维度，无唯一约束）
     // 0028: upgrade_work_orders/l3_sessions/l3_practice_attempts 三张新表（ADR-0018/0019）
     // 0029: 兜底删除旧版 0027 的 partial UNIQUE 索引（P0 修正，2026-09-11；新库 no-op）
-    expect(authoritativeMigrationCount()).toBe(30);
+    // 0030: l3_source_spaces 子空间 junction 表（ADR-0019 §4 能力域轴；复合 owner FK + RLS）
+    expect(authoritativeMigrationCount()).toBe(31);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

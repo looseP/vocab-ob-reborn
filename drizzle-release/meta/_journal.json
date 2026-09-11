@@ -211,6 +211,13 @@
       "when": 1789113082170,
       "tag": "0029_zippy_misty_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1789119694760,
+      "tag": "0030_loving_jigsaw",
+      "breakpoints": true
     }
   ]
 }
