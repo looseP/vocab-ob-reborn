@@ -178,6 +178,20 @@ _Avoid_: local-first; treating a client cache as truth; promising offline readin
 **Portable export (可携带导出)**: The owner-facing capability to take their data out as a structured artifact — wordbooks, L3 material, progress, notes — independent of a database dump, with a versioned schema that agents can consume (2026-09-12). **Import** is its inverse.
 _Avoid_: treating pg_dump as the export story (a backup is disaster recovery, an export is portability); one-off ad-hoc formats per export
 
+### Agent access
+
+**Agent**: A non-human client — MCP bridge, external chat tool, CLI — acting on the owner's data under role `agent` (2026-09-12, ADR-0029). An agent may read everything and may only write proposals; it never performs an upgrade action (confirm / accept / validate).
+_Avoid_: treating an agent as a second user (there is exactly one owner); handing an agent the owner token
+
+**Proposal-only write (仅提案写入)**: The rule that non-owner producers — agents, imports, external tools — reach durable state only by writing proposals, with owner confirm as the single upgrade path (ADR-0008; restated for agents in ADR-0029). It must be enforced by route-level minimum-role guards, not by token-distribution discipline.
+_Avoid_: "an agent may write if it is careful" (no role branch means no rule); any automated producer writing active rows directly
+
+**Agent token / agentId (agent 身份)**: A bearer token drawn from the server-held `id:token` map, resolving to a recorded `agentId` (2026-09-12, ADR-0029). The agentId is **server-asserted**, standing above any self-declared `provenance` field, and is what makes "which agent proposed this" answerable and revocable (revocation = edit env and restart).
+_Avoid_: self-declared provenance as identity; one shared anonymous agent token
+
+**Trusted transport (可信传输层)**: Passing through MCP changes nothing about what may be written — it is a transport, not a trust level; the trust boundary stays at the proposal (ADR-0029). A channel that would grant more is a channel that must not exist.
+_Avoid_: "MCP may confirm because it is local"; treating a local bridge as privileged
+
 ## Relationships
 
 - A **Word** has exactly one **Textbook note** (imported, read-only) and zero or more **note entries** (its Annotation set)
