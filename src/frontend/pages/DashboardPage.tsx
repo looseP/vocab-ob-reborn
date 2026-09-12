@@ -11,6 +11,7 @@ import { MasteryHeatmap } from "@/frontend/components/review/MasteryHeatmap";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Skeleton } from "@/frontend/components/ui/Skeleton";
 import { apiFetch } from "@/frontend/api/client";
+import { OneClickForgettingCard } from "@/frontend/components/forgetting/OneClickForgettingCard";
 
 interface QueueData {
   stats: { total: number; remaining: number };
@@ -261,6 +262,9 @@ export function DashboardPage() {
           <p className="text-sm">暂无笔记</p>
         </div>
       </Card>
+
+      {/* 一键遗忘（ADR-0020 / T12）：低显著性入口，置于页面最底部 */}
+      <OneClickForgettingCard />
     </div>
   );
 }
