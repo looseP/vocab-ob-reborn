@@ -7,7 +7,8 @@
  * 2) 每个工具 description 都标注"产物进 proposal、需人工确认"（ADR-0029 §8①）；
  * 3) 新增 L3 工具可调：space/direction 过滤经桥转发到真实路由（§6①/②）；
  * 4) agent token 经 MCP 提交的提案进 pending（source_type=agent、agentId 由
- *    服务端认定），升级动作对 agent 403。
+ *    服务端认定），升级动作对 agent 403；提交后可经 list_l3_proposals /
+ *    get_l3_proposal 只读自查提案状态（T13c-2 收尾）。
  *
  * 桥本身是零依赖 stdio 进程：直接 spawn scripts/run-mcp-server.mjs，
  * VOCAB_MCP_BASE_URL 指向本测试启动的真实 Hono app（getRequestListener）。
@@ -57,6 +58,17 @@ function makeServices() {
     createProposal: vi.fn(async (_input: ProposalInput) => ({
       proposal: { id: "prop-smoke", status: "pending", source_type: "agent" },
       items: [],
+    })),
+    listProposals: vi.fn(async (input: Record<string, unknown>) => ({
+      items: [{ id: "prop-smoke", status: "pending", source_type: "agent" }],
+      limit: 50,
+      cursor: null,
+      nextCursor: null,
+      echo: input,
+    })),
+    getProposal: vi.fn(async (_input: { userId: string; proposalId: string }) => ({
+      proposal: { id: "prop-smoke", status: "pending", source_type: "agent" },
+      items: [{ id: "item-1", item_type: "context", ordinal: 1, status: "pending" }],
     })),
   };
   const l3Context = {
@@ -179,6 +191,8 @@ describe("MCP tools/list (T13c 工具面)", () => {
       "list_l3_word_contexts",
       "list_l3_occurrences",
       "list_l3_context_links",
+      "list_l3_proposals",
+      "get_l3_proposal",
       "submit_l3_proposal",
       "get_capabilities",
     ]);
@@ -226,6 +240,29 @@ describe("MCP L3 tool calls", () => {
     expect(echo).toMatchObject({ userId: "user-123", slug: "orbit", space: "阅读" });
   });
 
+  it("forwards proposal list filters through list_l3_proposals (default status=pending)", async () => {
+    const filtered = await mcpRequest("tools/call", {
+      name: "list_l3_proposals",
+      arguments: { status: "rejected", limit: 5, cursor: "cursor-1" },
+    });
+    expect(filtered.result).toBeDefined();
+    expect(toolResultText(filtered).echo).toMatchObject({
+      userId: "user-123",
+      status: "rejected",
+      limit: 5,
+      cursor: "cursor-1",
+    });
+
+    // 省略 status 时不带参数 → 服务端 schema 默认 pending（经真实路由闭环）。
+    const defaults = await mcpRequest("tools/call", { name: "list_l3_proposals", arguments: {} });
+    expect(toolResultText(defaults).echo).toMatchObject({
+      userId: "user-123",
+      status: "pending",
+      limit: 50,
+      cursor: null,
+    });
+  });
+
   it("reads the capability envelope through get_capabilities", async () => {
     const message = await mcpRequest("tools/call", { name: "get_capabilities", arguments: {} });
     const body = toolResultText(message);
@@ -263,6 +300,41 @@ describe("MCP proposal channel (agent token)", () => {
     // 桥返回服务端 bundle：写入一律 pending（人工确认前不进入权威数据）。
     const bundle = toolResultText(message) as { proposal?: { status?: string } };
     expect(bundle.proposal?.status).toBe("pending");
+  });
+
+  it("closes the loop: submit → get_l3_proposal reads pending status", async () => {
+    const submitted = await mcpRequest("tools/call", {
+      name: "submit_l3_proposal",
+      arguments: {
+        title: "Loop probe",
+        inputHash: "smoke-loop-1",
+        items: [
+          {
+            itemType: "context",
+            clientRef: "ctx-loop",
+            payload: { contextType: "sentence", text: "Loop probe.", sourceRef: "src-loop" },
+          },
+        ],
+      },
+    });
+    const proposalId = (toolResultText(submitted) as { proposal?: { id?: string } }).proposal?.id;
+    expect(proposalId).toBe("prop-smoke");
+
+    const read = await mcpRequest("tools/call", {
+      name: "get_l3_proposal",
+      arguments: { proposalId },
+    });
+    const bundle = toolResultText(read) as {
+      proposal?: { status?: string };
+      items?: Array<Record<string, unknown>>;
+    };
+    expect(bundle.proposal?.status).toBe("pending");
+    expect(bundle.items?.[0]).toMatchObject({ item_type: "context", status: "pending" });
+    // proposalId 经桥原样转发到服务端读面（无本地缓存）。
+    expect(firstCallArg<{ userId: string; proposalId: string }>(services.l3Proposal.getProposal)).toEqual({
+      userId: "user-123",
+      proposalId: "prop-smoke",
+    });
   });
 
   it("keeps upgrade actions unreachable for agent tokens (403)", async () => {

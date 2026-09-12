@@ -18,6 +18,8 @@
  *   list_l3_word_contexts list a word's L3 contexts by sub-space / direction
  *   list_l3_occurrences   list L3 occurrence evidence by word/context/space
  *   list_l3_context_links list L3 context links by type/word/context/space
+ *   list_l3_proposals     list L3 proposals by status (default: pending)
+ *   get_l3_proposal       read one proposal's status and items
  *   submit_l3_proposal    write a PENDING L3 proposal (agent path, 需人工确认)
  *   get_capabilities      read the capability envelope (budgets / error codes)
  *
@@ -352,6 +354,41 @@ const TOOLS = [
     },
   },
   {
+    name: "list_l3_proposals",
+    description:
+      "列出 L3 提案（agent 提交后自查）：按 status（pending / confirmed / rejected / canceled，默认 pending）、" +
+      "limit 上限（1-100）与 cursor 分页过滤。" + READ_ONLY_NOTE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "提案状态（默认 pending）", enum: ["pending", "confirmed", "rejected", "canceled"] },
+        limit: { type: "number", description: "返回条数上限 1-100（默认 50）", minimum: 1, maximum: 100 },
+        cursor: { type: "string", description: "分页游标（上一页返回的 nextCursor）" },
+      },
+      additionalProperties: false,
+    },
+    async run(args) {
+      return apiCall("GET", `/api/l3/proposals${toQuery(args)}`);
+    },
+  },
+  {
+    name: "get_l3_proposal",
+    description:
+      "按 proposalId 读取单个 L3 提案（bundle：proposal + items）：响应体现 status 与 items 概览，" +
+      "供 agent 提交后自查审阅进度。" + READ_ONLY_NOTE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        proposalId: stringProp("提案 id（submit_l3_proposal 返回的 proposal.id，或 list_l3_proposals 的行 id）"),
+      },
+      required: ["proposalId"],
+      additionalProperties: false,
+    },
+    async run(args) {
+      return apiCall("GET", `/api/l3/proposals/${encodeURIComponent(String(args.proposalId))}`);
+    },
+  },
+  {
     name: "submit_l3_proposal",
     description:
       "把 agent 生成的 L3 素材条目（source / context / occurrence / context_link）提交为 pending 提案：" +
@@ -407,8 +444,8 @@ const TOOLS = [
   {
     name: "get_capabilities",
     description:
-      "读取服务器能力清单（能力发现）：可读面 / 可写面（仅 proposal）、升级动作不可用、" +
-      "预算上限（提案条目数与字节数、JSON 深度）与 error code 词表。" + READ_ONLY_NOTE,
+      "读取服务器能力清单（能力发现）：含调用者 role 与 access 事实——可读面 / 可写面（仅 proposal）、" +
+      "升级动作不可用、预算上限（提案条目数与字节数、JSON 深度）与 error code 词表。" + READ_ONLY_NOTE,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     async run() {
       return apiCall("GET", "/api/l3/capabilities");

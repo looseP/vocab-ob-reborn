@@ -36,7 +36,7 @@
 
 也可用 `npm run mcp:server`（从仓库根目录继承环境变量）。
 
-## 工具一览（11 个）
+## 工具一览（13 个）
 
 | 工具 | 作用 | 对应 API |
 | --- | --- | --- |
@@ -49,6 +49,8 @@
 | `list_l3_word_contexts` | 某词条的 L3 语境列表（可按子空间/方向过滤） | `GET /api/l3/words/:slug/contexts` |
 | `list_l3_occurrences` | L3 词形出现记录（圈词划词的证据行） | `GET /api/l3/occurrences` |
 | `list_l3_context_links` | L3 语境关联列表 | `GET /api/l3/context-links` |
+| `list_l3_proposals` | 列出 L3 提案（只读；可按 status 过滤，默认 `pending`） | `GET /api/l3/proposals` |
+| `get_l3_proposal` | 读取单个提案的状态与条目概览（只读） | `GET /api/l3/proposals/:id` |
 | `submit_l3_proposal` | **送提案**：提交 pending 提案（`source_type=agent`），等 owner 审阅 | `POST /api/l3/proposals` |
 | `get_capabilities` | 能力发现：可读/可写面、预算上限、error code 词表 | `GET /api/l3/capabilities` |
 
@@ -68,8 +70,8 @@
    **Agent 候选区**勾选条目后点「采纳」（可只采纳子集）或「忽略」。
    采纳 = 激活内容 + 刷新缓存 + L2 软重卡排期。
 4. L3 侧：`list_l3_sources` / `list_l3_word_contexts` 按子空间/方向取料 →
-   生成关联建议（occurrence / context_link 等）→ `submit_l3_proposal` 送 pending 提案，
-   owner 在提案界面 validate/confirm。
+   生成关联建议（occurrence / context_link 等）→ `submit_l3_proposal` 送 pending 提案 →
+   `get_l3_proposal` 自查提案状态（或 `list_l3_proposals` 列出全部），owner 在提案界面 validate/confirm。
 5. 需要「直接生效/固定」类升级动作时，MCP 不提供——用 owner token 走 HTTP
    （如 `POST /api/l2/:slug/confirm`），或请在浏览器界面操作。
 
@@ -86,7 +88,6 @@
    - agent token（`AGENT_API_TOKENS` 的 `agentId:token`，见 `docs/operations/secret-rotation.md`）可：读全量语料（GET；例外见下）；写 proposal（`POST /api/l3/proposals`、`POST /api/l2/:slug/candidates`）；构建提案载荷（`POST /api/l2/:slug/external-prompt`，即 `build_l2_prompt`，纯组装、不写库、不耗预算）；发起 L3 导入（`POST /api/l3/imports/raw-text|structured`，产出 proposal bundle，不写 active L3、不耗预算）。推荐流 `search_words → get_word_detail → build_l2_prompt → propose_l2_content` 在 agent token 下全程可用。
    - **升级动作对 agent 一律 403**：L2 confirm、L2 candidates accept/reject、L3 proposal validate/confirm/reject、L3 recommendation accept/reject、forgetting apply/restore、l3-sessions end、upgrade-work-orders 全部写、l2-rows deactivate/delete/hide/restore 等；owner token 仍全量放行。这些动作**也不在任何 MCP 工具里暴露**。
    - `GET /api/operations/metrics` 等少数读保持 owner-only；`/api/auth` 是唯一豁免组（会话兑换/登出）。
-2. **MCP 工具面已收敛（T13c）**：共 11 个工具——5 个 L2 + 5 个 L3（读 + 送提案）+ 1 个能力发现；`confirm_l2_content` 已下线；升级动作（confirm / accept / validate / apply / cancel）不暴露；每个工具 description 标注"产物进 proposal、需人工确认"。行为由 `tests/scripts/run-mcp-server.test.ts` 冒烟钉住（真实子进程 + 真实 app）。
+2. **MCP 工具面已收敛（T13c / T13c-2）**：共 13 个工具——5 个 L2 + 7 个 L3（6 读 + 1 送提案）+ 1 个能力发现；`confirm_l2_content` 已下线；升级动作（confirm / accept / validate / apply / cancel）不暴露；每个工具 description 标注"产物进 proposal、需人工确认"；提案提交后可用 `list_l3_proposals` / `get_l3_proposal` 只读自查状态。行为由 `tests/scripts/run-mcp-server.test.ts` 冒烟钉住（真实子进程 + 真实 app）。
 3. **agentId 已落库**：agent bearer 的 `proposal.provenance.agentId` 由服务端按 `AGENT_API_TOKENS` 映射认定、覆盖客户端自述（ADR-0029 §5）；提案幂等由 `inputHash` 查重 + 迁移 0031 的 partial unique index 保障。
 4. **能力发现**：`GET /api/l3/capabilities`（MCP `get_capabilities`）返回可读/可写面、预算上限与 error code 词表；数字引用 `src/schemas/resource-budget.ts`、词表引用 `src/errors/codes.ts` 单一真源。
-5. **已知缺口**：MCP 未暴露提案状态查询（`GET /api/l3/proposals` 不在工具面）——agent 提交后需由 owner 在服务端/界面侧查看提案状态。
