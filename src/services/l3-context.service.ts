@@ -23,6 +23,7 @@ import type {
   L3SourceContextListItem,
   L3SourceListPage,
   L3SourceRow,
+  L3SpaceSummary,
   L3SubSpace,
   L3WordContextListItem,
 } from "../domain";
@@ -60,6 +61,7 @@ import {
   type DeleteL3ContextLinkInput,
   type DeleteL3OccurrenceInput,
   type DeleteL3SourceInput,
+  type GetL3SpaceSummaryInput,
   type L3DeleteResult,
   type ListL3ContextLinksInput,
   type ListL3OccurrencesInput,
@@ -768,6 +770,21 @@ export class L3ContextService {
         if (!context) throw new NotFoundError("L3Context", input.contextId);
       }
       return repository.listContextLinks({ ...input, direction, space });
+    });
+  }
+
+  /**
+   * B1 素材宇宙：空间汇总（四类实体全量计数 + 近 N 天每日新增）。
+   * 只读、user-scoped；同 actorId 读事务内顺序执行两次查询（pg 单连接不并发）。
+   * windowDays 在此夹紧到 [1, 90]（与 HTTP schema 双保险，便于非 HTTP 调用方）。
+   */
+  async getSpaceSummary(input: GetL3SpaceSummaryInput): Promise<L3SpaceSummary> {
+    requireNonEmpty(input.userId, "userId");
+    const windowDays = Math.min(Math.max(Math.trunc(input.windowDays), 1), 90);
+    return this.withActorRepository(input.userId, async (repository) => {
+      const counts = await repository.getSpaceSummaryCounts(input.userId);
+      const byDay = await repository.getSpaceGrowth(input.userId, windowDays);
+      return { counts, growth: { windowDays, byDay } };
     });
   }
 

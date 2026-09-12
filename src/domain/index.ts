@@ -764,6 +764,30 @@ export interface L3GraphReadModel {
   metadata?: Json;
 }
 
+/** 空间汇总的每日新增行（B1 素材宇宙 / 生长趋势）：显示时区（Asia/Shanghai）自然日。 */
+export interface L3SpaceSummaryDay {
+  /** YYYY-MM-DD（显示时区切日，对齐 review/stats 的日界口径）。 */
+  day: string;
+  sourceCount: number;
+  contextCount: number;
+  occurrenceCount: number;
+  linkCount: number;
+}
+
+/**
+ * 空间汇总（B1 素材宇宙）：全量计数 + 生长趋势。
+ * - counts：四类实体全量计数（与 L3ReadStats 同语义，不随任何过滤器变化）；
+ * - growth.byDay：窗口内**每日新增**，升序、稀疏（仅含产生过新增的日期；
+ *   展示端按 windowDays 补零并自行累加出累计曲线）。
+ */
+export interface L3SpaceSummary {
+  counts: L3ReadStats;
+  growth: {
+    windowDays: number;
+    byDay: L3SpaceSummaryDay[];
+  };
+}
+
 export type L3ProposalSourceType = "agent" | "import" | "external_tool" | "manual_draft" | "other";
 export type L3ProposalStatus = "pending" | "confirmed" | "rejected" | "canceled";
 export type L3ProposalItemType = "source" | "context" | "occurrence" | "context_link";

@@ -214,7 +214,7 @@ const AGENT_READS = [
   "getReviewQueue", "getReviewStats", "getReviewDashboardStats", "listReviewLeeches", "listReviewTimeline", "getReviewHeatmap", "getReviewDrillQueue",
   "getL2LlmStatus", "listL2Candidates", "listL2ContentRows", "getL2DrillQueue",
   "getL3Context", "getL3WordSpace", "listL3Sources", "getL3SourceSpace", "getL3Graph", "listL3WordContexts", "listL3SourceContexts",
-  "listL3Occurrences", "listL3ContextLinks", "getL3Capabilities",
+  "listL3Occurrences", "listL3ContextLinks", "getL3Capabilities", "getL3SpaceSummary",
   "listL3Recommendations", "getL3Recommendation", "listL3Proposals", "getL3Proposal",
   "listUpgradeWorkOrders", "listL3PracticeAttempts", "listL3PracticeErrorBook", "getL3Session",
   "previewForgetting",

@@ -35,6 +35,7 @@ import type {
   L3ProposalBundle,
   L3ProposalItemRow,
   L3ProposalRow,
+  L3ReadStats,
   L3RecommendationItemRow,
   L3RecommendationRunRow,
   L3SessionContextSummary,
@@ -45,6 +46,7 @@ import type {
   L3SourceRow,
   L3SourceListPage,
   L3SourceSpace,
+  L3SpaceSummaryDay,
   L3SubSpace,
   L3WordSpace,
   L3WordContextListItem,
@@ -1104,6 +1106,13 @@ export interface IL3ContextRepository {
   getWordSpace(input: L3WordSpaceLookup): Promise<L3WordSpace | null>;
   getSourceSpace(input: L3SourceSpaceLookup): Promise<L3SourceSpace | null>;
   getGraph(input: L3GraphLookup): Promise<L3GraphReadModel>;
+  /** B1 素材宇宙：四类 L3 实体的全量计数（user-scoped，无任何过滤轴）。 */
+  getSpaceSummaryCounts(userId: string): Promise<L3ReadStats>;
+  /**
+   * B1 素材宇宙：近 windowDays 天每日新增（显示时区 Asia/Shanghai 切日，
+   * 升序、稀疏——仅含产生过新增的日期）。
+   */
+  getSpaceGrowth(userId: string, windowDays: number): Promise<L3SpaceSummaryDay[]>;
 }
 
 export interface NewL3Proposal {

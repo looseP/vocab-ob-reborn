@@ -397,6 +397,11 @@ export const l3GraphQuerySchema = z.object({
   cursor: z.string().min(1).optional(),
 });
 
+// B1 空间汇总（素材宇宙）：生长趋势窗口天数（1-90，默认 30）。
+export const l3SpaceSummaryQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(90).optional().default(30),
+});
+
 export const l3ProposalItemCreateSchema = z.object({
   itemType: z.enum(["source", "context", "occurrence", "context_link"]),
   clientRef: z.string().trim().min(1).max(200).nullish(),

@@ -544,6 +544,13 @@ export interface ListL3ContextLinksInput {
   cursor?: string | null;
 }
 
+/** 空间汇总（B1 素材宇宙）：全量计数 + 近 windowDays 天生长趋势。 */
+export interface GetL3SpaceSummaryInput {
+  userId: string;
+  /** 生长趋势窗口（自然日；HTTP 层已约束 1-90）。 */
+  windowDays: number;
+}
+
 export interface DeleteL3OccurrenceInput {
   userId: string;
   occurrenceId: string;

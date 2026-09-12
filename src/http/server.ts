@@ -31,6 +31,7 @@ import { l2DrillRoutes } from "./routes/l2-drill";
 import { l3Routes } from "./routes/l3";
 import { l3ListsRoutes } from "./routes/l3/lists";
 import { l3CapabilitiesRoutes } from "./routes/l3/capabilities";
+import { l3SummaryRoutes } from "./routes/l3/summary";
 import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
 import { l3PracticeRoutes } from "./routes/l3-practice";
 import { l3SessionsRoutes } from "./routes/l3-sessions";
@@ -133,6 +134,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3", l3ListsRoutes(services));
   // ADR-0029 §8② 能力发现读面（独立薄路由——l3/index.ts 受复杂度棘轮冻结）。
   app.route("/api/l3", l3CapabilitiesRoutes());
+  // B1 素材宇宙：空间汇总读面（独立薄路由——l3/index.ts 受复杂度棘轮冻结）。
+  app.route("/api/l3", l3SummaryRoutes(services));
 
   // W3/T09：升级工单 / L3 练习记录 / L3 会话计划 / 一键遗忘（独立薄路由，
   // 全部位于 owner 鉴权挂载之后）。

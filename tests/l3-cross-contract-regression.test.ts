@@ -577,6 +577,13 @@ class L3CrossContractHarness {
           links: [...this.links.values()],
         } as unknown as Json,
       })),
+      getSpaceSummaryCounts: vi.fn(async () => ({
+        sourceCount: this.sources.size,
+        contextCount: this.contexts.size,
+        occurrenceCount: this.occurrences.size,
+        linkCount: this.links.size,
+      })),
+      getSpaceGrowth: vi.fn(async () => []),
     } as IL3ContextRepository;
   }
 

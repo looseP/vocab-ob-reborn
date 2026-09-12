@@ -27,6 +27,7 @@ import {
   l3SourceSpaceResponseSchema,
   l3WordSpaceResponseSchema,
 } from "./l3-response-contract";
+import { l3SpaceSummaryResponseSchema } from "./l3-summary-response-contract";
 import {
   upgradeWorkOrderCompleteResponseSchema,
   upgradeWorkOrderListResponseSchema,
@@ -125,6 +126,7 @@ import {
   l3SelectionCaptureSchema,
   l3SourceListQuerySchema,
   l3SourceSpaceQuerySchema,
+  l3SpaceSummaryQuerySchema,
   l3StructuredImportCreateSchema,
   l3WordContextListQuerySchema,
   l3WordSpaceQuerySchema,
@@ -439,6 +441,8 @@ export const apiOperations = [
   operation("get", "/api/l3/context-links", "listL3ContextLinks", "owner", "agent", "none", { query: l3ContextLinkListQuerySchema }, 200, l3ContextLinkListResponseSchema),
   // ADR-0029 §8②：能力发现——agent 可读面/预算上限/error code 词表（单一真源引用）。
   operation("get", "/api/l3/capabilities", "getL3Capabilities", "owner", "agent", "none", undefined, 200, l3CapabilitiesResponseSchema),
+  // B1 素材宇宙：空间汇总读面（全量计数 + 生长趋势；只读，与 graph/sources 同族 agent 可读）。
+  operation("get", "/api/l3/space-summary", "getL3SpaceSummary", "owner", "agent", "none", { query: l3SpaceSummaryQuerySchema }, 200, l3SpaceSummaryResponseSchema),
   // import 落 job 后产出 proposal bundle（响应即 ProposalBundle），不写 active L3、不耗 LLM →
   // 与 proposal 入口同族，对 agent 开放（2026-09-12 裁决）。
   operation("post", "/api/l3/imports/raw-text", "createL3RawTextImport", "owner", "agent", "sessionMutation", { body: l3RawTextImportCreateSchema }, 201, l3ImportProposalResponseSchema),

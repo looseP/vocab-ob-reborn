@@ -38,6 +38,12 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // （split(/\r?\n/) 去尾换行）→ 43。校验方式：ROUTE_COMPLEXITY_BASE_REF=<本
   // 文件新增前的 ref> 时走 bootstrap 分支，才能真正验到这个上限。
   { file: "src/http/routes/l3/capabilities.ts", maxLines: 43, maxRoutes: 1 },
+  // 2026-09-12 B1：空间汇总薄路由（素材宇宙的全量计数 + 生长趋势；l3/index.ts 受
+  // 棘轮冻结，沿 l3/lists.ts + capabilities.ts 的 server.ts 直挂先例）。上限 = 冻结
+  // 时的**实际总行数**，取数口径与 measureRouteComplexity 相同：含空行
+  // （split(/\r?\n/) 去尾换行）→ 29。校验方式：ROUTE_COMPLEXITY_BASE_REF=<本
+  // 文件新增前的 ref> 时走 bootstrap 分支，才能真正验到这个上限。
+  { file: "src/http/routes/l3/summary.ts", maxLines: 29, maxRoutes: 1 },
 ];
 
 export function measureRouteComplexity(source: string) {

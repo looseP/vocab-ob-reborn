@@ -861,4 +861,51 @@ describe("L3ContextRepository", () => {
     });
     expect(mock.lastQuery?.text).toContain("(l.created_at, l.id) <");
   });
+
+  it("space summary counts aggregate every L3 entity under the caller scope", async () => {
+    mock.setRows([{ source_count: "2", context_count: "5", occurrence_count: "7", link_count: "1" }]);
+    const repos = createRepositories();
+
+    const counts = await repos.l3Context.getSpaceSummaryCounts("u1");
+
+    expect(counts).toEqual({ sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 });
+    const sql = mock.lastQuery?.text ?? "";
+    expect(sql).toContain("l3_sources");
+    expect(sql).toContain("l3_contexts");
+    expect(sql).toContain("l3_occurrences");
+    expect(sql).toContain("l3_context_links");
+    expect(mock.lastQuery?.params).toEqual(["u1"]);
+  });
+
+  // 覆盖率纪律：新增的 ?? 回退必须有测试真实行使（空库/聚合行缺失时回退为 0）。
+  it("space summary counts fall back to zeroes when the aggregate row is missing", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    await expect(repos.l3Context.getSpaceSummaryCounts("u1")).resolves.toEqual({
+      sourceCount: 0,
+      contextCount: 0,
+      occurrenceCount: 0,
+      linkCount: 0,
+    });
+  });
+
+  it("space growth groups by the display timezone day and passes the window through", async () => {
+    mock.setRows([
+      { day: "2026-09-08", source_count: "1", context_count: "2", occurrence_count: "2", link_count: "0" },
+      { day: "2026-09-12", source_count: "0", context_count: "1", occurrence_count: "3", link_count: "1" },
+    ]);
+    const repos = createRepositories();
+
+    const byDay = await repos.l3Context.getSpaceGrowth("u1", 30);
+
+    expect(byDay).toEqual([
+      { day: "2026-09-08", sourceCount: 1, contextCount: 2, occurrenceCount: 2, linkCount: 0 },
+      { day: "2026-09-12", sourceCount: 0, contextCount: 1, occurrenceCount: 3, linkCount: 1 },
+    ]);
+    const sql = mock.lastQuery?.text ?? "";
+    expect(sql).toContain("AT TIME ZONE 'Asia/Shanghai'");
+    expect(sql).toContain("GROUP BY day");
+    expect(mock.lastQuery?.params).toEqual(["u1", 30]);
+  });
 });

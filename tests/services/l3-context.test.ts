@@ -233,6 +233,8 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
     getWordSpace: vi.fn(),
     getSourceSpace: vi.fn(),
     getGraph: vi.fn(),
+    getSpaceSummaryCounts: vi.fn(async () => ({ sourceCount: 0, contextCount: 0, occurrenceCount: 0, linkCount: 0 })),
+    getSpaceGrowth: vi.fn(async () => []),
     ...overrides,
   };
 }
@@ -1134,5 +1136,49 @@ describe("L3ContextService", () => {
       .rejects.toBeInstanceOf(ValidationError);
     expect(repo.listOccurrences).not.toHaveBeenCalled();
     expect(repo.listContextLinks).not.toHaveBeenCalled();
+  });
+
+  it("assembles the space summary and clamps the growth window to [1, 90]", async () => {
+    repo = makeRepo({
+      getSpaceSummaryCounts: vi.fn(async () => ({ sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 })),
+      getSpaceGrowth: vi.fn(async () => [{ day: "2026-09-08", sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 }]),
+    });
+    service = makeService(repo);
+
+    const summary = await service.getSpaceSummary({ userId: "u1", windowDays: 30 });
+    expect(summary).toEqual({
+      counts: { sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 },
+      growth: {
+        windowDays: 30,
+        byDay: [{ day: "2026-09-08", sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 }],
+      },
+    });
+    expect(repo.getSpaceGrowth).toHaveBeenCalledWith("u1", 30);
+
+    await service.getSpaceSummary({ userId: "u1", windowDays: 200 });
+    expect(repo.getSpaceGrowth).toHaveBeenLastCalledWith("u1", 90);
+
+    await service.getSpaceSummary({ userId: "u1", windowDays: -5 });
+    expect(repo.getSpaceGrowth).toHaveBeenLastCalledWith("u1", 1);
+  });
+
+  it("runs the space summary read under the actor and never writes", async () => {
+    const txRunner = vi.fn(async (callback: (tx: never) => Promise<never>) => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    service = makeService(repo, repo, txRunner);
+
+    await service.getSpaceSummary({ userId: "u1", windowDays: 30 });
+
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(repo.getSpaceSummaryCounts).toHaveBeenCalledWith("u1");
+    expect(repo.createSource).not.toHaveBeenCalled();
+    expect(repo.createContext).not.toHaveBeenCalled();
+    expect(repo.createOccurrence).not.toHaveBeenCalled();
+    expect(repo.createContextLink).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty userId for the space summary read", async () => {
+    await expect(service.getSpaceSummary({ userId: " ", windowDays: 30 }))
+      .rejects.toBeInstanceOf(ValidationError);
+    expect(repo.getSpaceSummaryCounts).not.toHaveBeenCalled();
   });
 });

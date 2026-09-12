@@ -16,10 +16,12 @@ import type {
   L3OccurrenceListItem,
   L3OccurrenceRow,
   L3PaginatedList,
+  L3ReadStats,
   L3SourceContextListItem,
   L3SourceRow,
   L3SourceListPage,
   L3SourceSpace,
+  L3SpaceSummaryDay,
   L3SubSpace,
   L3WordSpace,
   L3WordContextListItem,
@@ -1335,5 +1337,75 @@ ${LINKS_AGG}
         : null,
       metadata: { sources, contexts, occurrences, links } as unknown as Json,
     };
+  }
+
+  /** B1 素材宇宙：四类实体全量计数（单往返四条 count，user-scoped，无过滤轴）。 */
+  async getSpaceSummaryCounts(userId: string): Promise<L3ReadStats> {
+    const row = await this.queryOne<{
+      source_count: string;
+      context_count: string;
+      occurrence_count: string;
+      link_count: string;
+    }>(
+      `SELECT
+         (SELECT count(*) FROM l3_sources s WHERE s.user_id = $1::uuid) AS source_count,
+         (SELECT count(*) FROM l3_contexts c WHERE c.user_id = $1::uuid) AS context_count,
+         (SELECT count(*) FROM l3_occurrences o WHERE o.user_id = $1::uuid) AS occurrence_count,
+         (SELECT count(*) FROM l3_context_links l WHERE l.user_id = $1::uuid) AS link_count`,
+      [userId],
+    );
+    return {
+      sourceCount: Number(row?.source_count ?? 0),
+      contextCount: Number(row?.context_count ?? 0),
+      occurrenceCount: Number(row?.occurrence_count ?? 0),
+      linkCount: Number(row?.link_count ?? 0),
+    };
+  }
+
+  /**
+   * B1 素材宇宙：近 windowDays 天每日新增。
+   *
+   * 日界口径对齐 review/stats（Asia/Shanghai 显示时区，`db/timezone.ts`；
+   * 沿用 `review.repository.getHeatmap` 的 `AT TIME ZONE` + `::date::text`
+   * 先例）。窗口为滚动 N 天（now() - N days）——趋势图对首日边界精度不敏感。
+   * 结果为稀疏行（仅含产生过新增的日期），升序；展示端按窗口补零。
+   */
+  async getSpaceGrowth(userId: string, windowDays: number): Promise<L3SpaceSummaryDay[]> {
+    const rows = await this.query<{
+      day: string;
+      source_count: string;
+      context_count: string;
+      occurrence_count: string;
+      link_count: string;
+    }>(
+      `SELECT day,
+              sum(src)::text AS source_count,
+              sum(ctx)::text AS context_count,
+              sum(occ)::text AS occurrence_count,
+              sum(lnk)::text AS link_count
+         FROM (
+           SELECT (created_at AT TIME ZONE 'Asia/Shanghai')::date::text AS day, 1 AS src, 0 AS ctx, 0 AS occ, 0 AS lnk
+             FROM l3_sources WHERE user_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval
+           UNION ALL
+           SELECT (created_at AT TIME ZONE 'Asia/Shanghai')::date::text, 0, 1, 0, 0
+             FROM l3_contexts WHERE user_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval
+           UNION ALL
+           SELECT (created_at AT TIME ZONE 'Asia/Shanghai')::date::text, 0, 0, 1, 0
+             FROM l3_occurrences WHERE user_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval
+           UNION ALL
+           SELECT (created_at AT TIME ZONE 'Asia/Shanghai')::date::text, 0, 0, 0, 1
+             FROM l3_context_links WHERE user_id = $1::uuid AND created_at >= now() - ($2 || ' days')::interval
+         ) t
+        GROUP BY day
+        ORDER BY day`,
+      [userId, windowDays],
+    );
+    return rows.map((r) => ({
+      day: r.day,
+      sourceCount: Number(r.source_count),
+      contextCount: Number(r.context_count),
+      occurrenceCount: Number(r.occurrence_count),
+      linkCount: Number(r.link_count),
+    }));
   }
 }
