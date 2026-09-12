@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import {
   AppError,
@@ -8,6 +10,8 @@ import {
   ForbiddenError,
   BusinessRuleError,
   DbConnectionError,
+  ERROR_CODES,
+  type ErrorCode,
   errorToResponse,
   isDbConnectionError,
   isConstraintViolation,
@@ -191,5 +195,47 @@ describe("isDbConnectionError", () => {
     expect(isDbConnectionError({ message: "syntax error" })).toBe(false);
     expect(isDbConnectionError(null)).toBe(false);
     expect(isDbConnectionError("string")).toBe(false);
+  });
+});
+
+// ── ADR-0029 §6③: single error-code export (src/errors/codes.ts) ───────
+
+const CODE_VALUES = new Set(Object.values(ERROR_CODES));
+
+describe("single error-code export", () => {
+  it("every error class code comes from the ERROR_CODES export", () => {
+    const instances = [
+      new NotFoundError("Word", "aboard"),
+      new ValidationError("Invalid input", "rating"),
+      new ConflictError("Duplicate key"),
+      new UnauthorizedError("Unauthorized"),
+      new ForbiddenError("Forbidden"),
+      new BusinessRuleError("Cannot answer a suspended card"),
+      new DbConnectionError("database down"),
+    ];
+    for (const instance of instances) {
+      expect(CODE_VALUES.has(instance.code), instance.code).toBe(true);
+    }
+  });
+
+  it("errorToResponse only emits codes from the single export", () => {
+    const constraint = errorToResponse(Object.assign(new Error("fk"), { code: "23503" }));
+    expect(constraint.body.code).toBe(ERROR_CODES.FOREIGN_KEY_VIOLATION);
+    const fallback = errorToResponse(new Error("boom"));
+    expect(fallback.body.code).toBe(ERROR_CODES.INTERNAL);
+    const notFound = errorToResponse(new NotFoundError("Word", "aboard"));
+    expect(notFound.body.code).toBe(ERROR_CODES.NOT_FOUND);
+    for (const code of [constraint.body.code, fallback.body.code, notFound.body.code]) {
+      expect(CODE_VALUES.has(code as ErrorCode), code).toBe(true);
+    }
+  });
+
+  it("keeps every code literal inside codes.ts (no stray literals in errors/)", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/errors/index.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(source).not.toMatch(/code: "[A-Z_]+"/);
+    expect(source).not.toMatch(/code = "[A-Z_]+"/);
   });
 });

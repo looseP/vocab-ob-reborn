@@ -29,6 +29,7 @@ import { l2PromotionRoutes } from "./routes/l2-promotion";
 import { l2CandidateRoutes } from "./routes/l2-candidates";
 import { l2DrillRoutes } from "./routes/l2-drill";
 import { l3Routes } from "./routes/l3";
+import { l3ListsRoutes } from "./routes/l3/lists";
 import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
 import { l3PracticeRoutes } from "./routes/l3-practice";
 import { l3SessionsRoutes } from "./routes/l3-sessions";
@@ -126,6 +127,9 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l2", l2CandidateRoutes(services));
   app.route("/api/l2-drill", l2DrillRoutes(services));
   app.route("/api/l3", l3Routes(services));
+  // ADR-0029 §6 读面补缺：带 space/direction 两轴过滤的列表读 + occurrences /
+  // context-links list（独立薄路由——sources.ts / reads.ts 受复杂度棘轮约束）。
+  app.route("/api/l3", l3ListsRoutes(services));
 
   // W3/T09：升级工单 / L3 练习记录 / L3 会话计划 / 一键遗忘（独立薄路由，
   // 全部位于 owner 鉴权挂载之后）。

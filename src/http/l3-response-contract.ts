@@ -2,10 +2,12 @@ import { z } from "zod";
 import type {
   Json,
   L3ContextDetail,
+  L3ContextLinkListItem,
   L3ContextLinkRow,
   L3ContextRow,
   L3GraphReadModel,
   L3ImportJobRow,
+  L3OccurrenceListItem,
   L3OccurrenceRow,
   L3PaginatedList,
   L3ProposalBundle,
@@ -168,6 +170,33 @@ export const l3ContextLinkRowResponseSchema: z.ZodType<L3ContextLinkRow> = z.obj
   provenance: jsonValueSchema,
   created_at: z.string(),
 }).strict();
+
+// ── L3 evidence list responses (ADR-0029 §6①) ──────────────────────────
+
+/** 词摘要（列料时的最小词指针；详情走 /api/words/:slug）。 */
+const l3WordSummaryResponseSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  title: z.string(),
+}).strict();
+
+export const l3OccurrenceListItemResponseSchema: z.ZodType<L3OccurrenceListItem> = z.object({
+  occurrence: l3OccurrenceRowResponseSchema,
+  word: l3WordSummaryResponseSchema,
+  context: l3ContextRowResponseSchema,
+  source: l3SourceRowResponseSchema,
+}).strict();
+
+export const l3ContextLinkListItemResponseSchema: z.ZodType<L3ContextLinkListItem> = z.object({
+  link: l3ContextLinkRowResponseSchema,
+  word: l3WordSummaryResponseSchema.nullable(),
+  context: l3ContextRowResponseSchema.nullable(),
+  source: l3SourceRowResponseSchema.nullable(),
+}).strict();
+
+export const l3OccurrenceListResponseSchema = cursorPageResponseSchema(l3OccurrenceListItemResponseSchema);
+
+export const l3ContextLinkListResponseSchema = cursorPageResponseSchema(l3ContextLinkListItemResponseSchema);
 
 // ── L3 delete response ────────────────────────────────────────────────────
 

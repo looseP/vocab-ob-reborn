@@ -16,11 +16,15 @@ import type {
   UpgradeWorkOrderRow,
   L2DrillStepRow,
   L2ContentRow,
+  L3ContextLinkListItem,
   L3ContextLinkRow,
+  L3ContextLinkTargetType,
+  L3ContextLinkType,
   L3ContextRow,
   L3ContextDetail,
   L3GraphReadModel,
   L3ImportJobRow,
+  L3OccurrenceListItem,
   L3OccurrenceRow,
   L3PaginatedList,
   L3PracticeAttemptPage,
@@ -949,6 +953,9 @@ export interface L3WordLookup {
   userId: string;
   wordId?: string;
   slug?: string;
+  /** 两轴过滤（ADR-0029 §6②）：方向 × 子空间（与练习线同语义）。 */
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
   limit: number;
   cursor?: string | null;
 }
@@ -956,6 +963,30 @@ export interface L3WordLookup {
 export interface L3SourceLookup {
   userId: string;
   sourceId: string;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface L3OccurrenceLookup {
+  userId: string;
+  slug?: string;
+  wordId?: string;
+  contextId?: string;
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface L3ContextLinkLookup {
+  userId: string;
+  slug?: string;
+  wordId?: string;
+  contextId?: string;
+  linkType?: L3ContextLinkType;
+  targetType?: L3ContextLinkTargetType;
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
   limit: number;
   cursor?: string | null;
 }
@@ -1029,6 +1060,9 @@ export interface IL3ContextRepository {
     sourceType?: string;
     q?: string;
     sort: "recent" | "captures";
+    /** 两轴过滤（ADR-0029 §6②）：方向 × 子空间。 */
+    direction?: Direction | null;
+    space?: L3SubSpace | null;
     limit: number;
     offset: number;
   }): Promise<L3SourceListPage>;
@@ -1052,6 +1086,9 @@ export interface IL3ContextRepository {
   findWordInWordbookBySlug(wordbookId: string, slug: string): Promise<WordRow | null>;
   listContextsForWord(input: L3WordLookup): Promise<L3PaginatedList<L3WordContextListItem>>;
   listContextsForSource(input: L3SourceLookup): Promise<L3PaginatedList<L3SourceContextListItem>>;
+  /** ADR-0029 §6①：证据列表（cursor 分页 + 词 / 语境 / 两轴过滤）。 */
+  listOccurrences(input: L3OccurrenceLookup): Promise<L3PaginatedList<L3OccurrenceListItem>>;
+  listContextLinks(input: L3ContextLinkLookup): Promise<L3PaginatedList<L3ContextLinkListItem>>;
   getContextDetail(userId: string, contextId: string): Promise<L3ContextDetail | null>;
   getWordSpace(input: L3WordSpaceLookup): Promise<L3WordSpace | null>;
   getSourceSpace(input: L3SourceSpaceLookup): Promise<L3SourceSpace | null>;

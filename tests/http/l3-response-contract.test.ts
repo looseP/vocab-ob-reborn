@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  l3ContextLinkListResponseSchema,
+  l3OccurrenceListResponseSchema,
   l3ProposalBundleResponseSchema,
   l3ProposalListResponseSchema,
   l3RecommendationDetailResponseSchema,
@@ -104,5 +106,55 @@ describe("L3 response contracts", () => {
     expect(() => l3RecommendationDetailResponseSchema.parse({ ...response, status: "unknown" })).toThrow();
     const { payload: _payload, ...missingPayload } = response;
     expect(() => l3RecommendationDetailResponseSchema.parse(missingPayload)).toThrow();
+  });
+
+  it("parses the exact listL3Occurrences cursor page", () => {
+    const item = {
+      occurrence: {
+        id: "occ-1", context_id: "ctx-1", word_id: "word-1", user_id: "user-1",
+        surface: "orbits", lemma: "orbit", start_offset: 4, end_offset: 10,
+        confidence: 0.9, evidence: { parsed: true }, bound_sense: "沿轨道运行",
+        created_at: "2026-07-13T00:00:00.000Z",
+      },
+      word: { id: "word-1", slug: "orbit", title: "orbit" },
+      context: {
+        id: "ctx-1", source_id: "src-1", user_id: "user-1", context_type: "sentence",
+        text: "The moon orbits the earth.", normalized_text: null, language: "en",
+        position: {}, metadata: {},
+        created_at: "2026-07-13T00:00:00.000Z", updated_at: "2026-07-13T00:00:00.000Z",
+      },
+      source: {
+        id: "src-1", user_id: "user-1", wordbook_id: null, source_type: "article",
+        title: "Astronomy 101", author: null, url: null, language: "en", metadata: {},
+        content_text: null, content_hash: null,
+        created_at: "2026-07-13T00:00:00.000Z", updated_at: "2026-07-13T00:00:00.000Z",
+      },
+    };
+    const response = { items: [item], limit: 20, cursor: null, nextCursor: "occ-1" };
+
+    expect(l3OccurrenceListResponseSchema.parse(response)).toEqual(response);
+    expect(() => l3OccurrenceListResponseSchema.parse({ ...response, next_cursor: response.nextCursor })).toThrow();
+    expect(() => l3OccurrenceListResponseSchema.parse({ ...response, items: [{ ...item, word: { ...item.word, slug: 7 } }] })).toThrow();
+    const { bound_sense: _boundSense, ...occurrenceMissing } = item.occurrence;
+    expect(() => l3OccurrenceListResponseSchema.parse({ ...response, items: [{ ...item, occurrence: occurrenceMissing }] })).toThrow();
+  });
+
+  it("parses the exact listL3ContextLinks cursor page", () => {
+    const item = {
+      link: {
+        id: "link-1", user_id: "user-1", context_id: "ctx-1", word_id: "word-1",
+        link_type: "supports", target_type: "external", target_id: "https://example.com/a",
+        target_ref: {}, confidence: "0.75", provenance: { source: "agent" },
+        created_at: "2026-07-13T00:00:00.000Z",
+      },
+      word: { id: "word-1", slug: "orbit", title: "orbit" },
+      context: null,
+      source: null,
+    };
+    const response = { items: [item], limit: 50, cursor: "prev", nextCursor: null };
+
+    expect(l3ContextLinkListResponseSchema.parse(response)).toEqual(response);
+    expect(() => l3ContextLinkListResponseSchema.parse({ ...response, items: [{ ...item, link: { ...item.link, link_type: "unknown" } }] })).toThrow();
+    expect(() => l3ContextLinkListResponseSchema.parse({ ...response, items: [{ ...item, link: { ...item.link, target_type: "nope" } }] })).toThrow();
   });
 });

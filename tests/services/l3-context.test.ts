@@ -227,6 +227,8 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
     findWordInWordbookBySlug: vi.fn(async () => WORD_ROW),
     listContextsForWord: vi.fn(async () => ({ items: [], limit: 10, cursor: null, nextCursor: null })),
     listContextsForSource: vi.fn(async () => ({ items: [], limit: 10, cursor: null, nextCursor: null })),
+    listOccurrences: vi.fn(async () => ({ items: [], limit: 10, cursor: null, nextCursor: null })),
+    listContextLinks: vi.fn(async () => ({ items: [], limit: 10, cursor: null, nextCursor: null })),
     getContextDetail: vi.fn(),
     getWordSpace: vi.fn(),
     getSourceSpace: vi.fn(),
@@ -830,6 +832,8 @@ describe("L3ContextService", () => {
     expect(repo.listContextsForWord).toHaveBeenCalledWith({
       userId: "u1",
       slug: "vivid",
+      direction: null,
+      space: null,
       limit: 10,
       cursor: null,
     });
@@ -1072,8 +1076,63 @@ describe("L3ContextService", () => {
       sourceType: undefined,
       q: undefined,
       sort: "recent",
+      direction: null,
+      space: null,
       limit: 50,
       offset: 0,
     });
+  });
+
+  it("lists occurrences and links through actor-scoped repositories with resolved filters", async () => {
+    await service.listOccurrences({
+      userId: "u1",
+      slug: "vivid",
+      direction: "雅思",
+      space: "阅读",
+      limit: 10,
+    });
+    expect(repo.findWordBySlug).toHaveBeenCalledWith("vivid");
+    expect(repo.listOccurrences).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "u1",
+      slug: "vivid",
+      direction: "雅思",
+      space: "阅读",
+    }));
+
+    await service.listContextLinks({
+      userId: "u1",
+      wordId: "w1",
+      linkType: "supports",
+      limit: 10,
+    });
+    expect(repo.findWordById).toHaveBeenCalledWith("w1");
+    expect(repo.listContextLinks).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "u1",
+      wordId: "w1",
+      linkType: "supports",
+    }));
+  });
+
+  it("rejects evidence list reads that point at missing words or contexts", async () => {
+    service = makeService(makeRepo({ findWordBySlug: vi.fn(async () => null) }));
+    await expect(service.listOccurrences({ userId: "u1", slug: "missing", limit: 10 }))
+      .rejects.toBeInstanceOf(NotFoundError);
+
+    service = makeService(makeRepo({ findWordById: vi.fn(async () => null) }));
+    await expect(service.listContextLinks({ userId: "u1", wordId: "missing", limit: 10 }))
+      .rejects.toBeInstanceOf(NotFoundError);
+
+    service = makeService(makeRepo({ findContextById: vi.fn(async () => null) }));
+    await expect(service.listOccurrences({ userId: "u1", contextId: "missing", limit: 10 }))
+      .rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("rejects unknown two-axis values before any repository call", async () => {
+    await expect(service.listOccurrences({ userId: "u1", space: "no-such" as never, limit: 10 }))
+      .rejects.toBeInstanceOf(ValidationError);
+    await expect(service.listContextLinks({ userId: "u1", direction: "no-such" as never, limit: 10 }))
+      .rejects.toBeInstanceOf(ValidationError);
+    expect(repo.listOccurrences).not.toHaveBeenCalled();
+    expect(repo.listContextLinks).not.toHaveBeenCalled();
   });
 });

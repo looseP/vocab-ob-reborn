@@ -7,7 +7,7 @@
  */
 
 import { z } from "zod";
-import type { Json } from "@/domain";
+import type { Direction, Json, L3SubSpace } from "@/domain";
 import {
   reviewAnswerSchema,
   reviewSkipSchema,
@@ -511,8 +511,37 @@ export interface ListL3SourcesInput {
   sourceType?: L3ServiceSourceType;
   q?: string;
   sort: "recent" | "captures";
+  /** 两轴过滤（ADR-0029 §6②）：方向（考试轴）× 子空间（能力域轴）。 */
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
   limit: number;
   offset: number;
+}
+
+/** L3 证据列表（ADR-0029 §6①）：occurrences 的 cursor 分页查询（"按空间方向列料"）。 */
+export interface ListL3OccurrencesInput {
+  userId: string;
+  slug?: string;
+  wordId?: string;
+  contextId?: string;
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
+  limit: number;
+  cursor?: string | null;
+}
+
+/** L3 证据列表（ADR-0029 §6①）：context-links 的 cursor 分页查询。 */
+export interface ListL3ContextLinksInput {
+  userId: string;
+  slug?: string;
+  wordId?: string;
+  contextId?: string;
+  linkType?: L3ServiceContextLinkType;
+  targetType?: L3ServiceContextLinkTargetType;
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
+  limit: number;
+  cursor?: string | null;
 }
 
 export interface DeleteL3OccurrenceInput {

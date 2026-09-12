@@ -3,11 +3,13 @@ import {
   l3ContextCreateResponseSchema,
   l3ContextDetailResponseSchema,
   l3ContextLinkCreateResponseSchema,
+  l3ContextLinkListResponseSchema,
   l3ContextListResponseSchema,
   l3DeleteResponseSchema,
   l3GraphResponseSchema,
   l3ImportProposalResponseSchema,
   l3OccurrenceCreateResponseSchema,
+  l3OccurrenceListResponseSchema,
   l3ProposalBundleResponseSchema,
   l3ProposalConfirmResponseSchema,
   l3ProposalListResponseSchema,
@@ -105,9 +107,11 @@ import { operationMetricsResponseSchema } from "./operation-metrics-response-con
 import {
   l3ContextCreateSchema,
   l3ContextLinkCreateSchema,
+  l3ContextLinkListQuerySchema,
   l3GraphQuerySchema,
   l3LimitCursorQuerySchema,
   l3OccurrenceCreateSchema,
+  l3OccurrenceListQuerySchema,
   l3ProposalCreateSchema,
   l3ProposalListQuerySchema,
   l3ProposalRejectSchema,
@@ -120,6 +124,7 @@ import {
   l3SourceListQuerySchema,
   l3SourceSpaceQuerySchema,
   l3StructuredImportCreateSchema,
+  l3WordContextListQuerySchema,
   l3WordSpaceQuerySchema,
   quickL3ContextSchema,
   reviewAnswerSchema,
@@ -420,8 +425,12 @@ export const apiOperations = [
   operation("get", "/api/l3/sources", "listL3Sources", "owner", "agent", "none", { query: l3SourceListQuerySchema }, 200, l3SourceListResponseSchema),
   operation("get", "/api/l3/sources/:id/space", "getL3SourceSpace", "owner", "agent", "none", { query: l3SourceSpaceQuerySchema }, 200, l3SourceSpaceResponseSchema),
   operation("get", "/api/l3/graph", "getL3Graph", "owner", "agent", "none", { query: l3GraphQuerySchema }, 200, l3GraphResponseSchema),
-  operation("get", "/api/l3/words/:slug/contexts", "listL3WordContexts", "owner", "agent", "none", { query: l3LimitCursorQuerySchema }, 200, l3ContextListResponseSchema),
+  operation("get", "/api/l3/words/:slug/contexts", "listL3WordContexts", "owner", "agent", "none", { query: l3WordContextListQuerySchema }, 200, l3ContextListResponseSchema),
   operation("get", "/api/l3/sources/:id/contexts", "listL3SourceContexts", "owner", "agent", "none", { query: l3LimitCursorQuerySchema }, 200, l3ContextListResponseSchema),
+  // ADR-0029 §6①：读面补缺——occurrences / context-links 的只读列表（cursor 分页，
+  // 可按词、语境与空间/方向两轴过滤；路由实现在 routes/l3/lists.ts）。
+  operation("get", "/api/l3/occurrences", "listL3Occurrences", "owner", "agent", "none", { query: l3OccurrenceListQuerySchema }, 200, l3OccurrenceListResponseSchema),
+  operation("get", "/api/l3/context-links", "listL3ContextLinks", "owner", "agent", "none", { query: l3ContextLinkListQuerySchema }, 200, l3ContextLinkListResponseSchema),
   // import 落 job 后产出 proposal bundle（响应即 ProposalBundle），不写 active L3、不耗 LLM →
   // 与 proposal 入口同族，对 agent 开放（2026-09-12 裁决）。
   operation("post", "/api/l3/imports/raw-text", "createL3RawTextImport", "owner", "agent", "sessionMutation", { body: l3RawTextImportCreateSchema }, 201, l3ImportProposalResponseSchema),

@@ -36,6 +36,10 @@ export const reviewRatingSchema = z.enum(["again", "hard", "good", "easy"]);
 
 export const uuidSchema = z.string().uuid();
 
+// ── Shared vocabulary (ADR-0017) ────────────────────────────────────────
+/** 学习方向三值（ADR-0017；wordbooks/l2/l3 表 CHECK 同值）。 */
+export const directionSchema = z.enum(["通用", "考研", "雅思"]);
+
 // ── Words ───────────────────────────────────────────────────────────────
 export const wordsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(60),
@@ -279,21 +283,25 @@ export const l3OccurrenceCreateSchema = z.object({
   path: ["wordId"],
 });
 
+// link 类型 / 目标类型的单一词表（create 校验与 list 过滤共用；与 l3 表 CHECK 同值）。
+const l3ContextLinkTypeSchema = z.enum([
+  "supports",
+  "illustrates",
+  "contrasts",
+  "collocates_with",
+  "synonym_of",
+  "antonym_of",
+  "derived_from",
+  "topic_related",
+  "manual_link",
+]);
+const l3ContextLinkTargetTypeSchema = z.enum(["word", "l2_item", "context", "source", "topic", "external"]);
+
 export const l3ContextLinkCreateSchema = z.object({
   contextId: uuidSchema.nullish(),
   wordId: uuidSchema.nullish(),
-  linkType: z.enum([
-    "supports",
-    "illustrates",
-    "contrasts",
-    "collocates_with",
-    "synonym_of",
-    "antonym_of",
-    "derived_from",
-    "topic_related",
-    "manual_link",
-  ]),
-  targetType: z.enum(["word", "l2_item", "context", "source", "topic", "external"]),
+  linkType: l3ContextLinkTypeSchema,
+  targetType: l3ContextLinkTargetTypeSchema,
   targetId: z.string().max(500).nullish(),
   targetRef: jsonRecordSchema.optional(),
   confidence: z.number().min(0).max(1).nullish(),
@@ -329,10 +337,40 @@ export const l3LimitCursorQuerySchema = z.object({
   cursor: z.string().min(1).optional(),
 });
 
+// ADR-0029 §6②：词语境列表按方向 / 子空间过滤（与 sources 书架同一过滤轴）。
+export const l3WordContextListQuerySchema = l3LimitCursorQuerySchema.extend({
+  direction: directionSchema.optional(),
+  space: z.enum(L3_SUB_SPACES).optional(),
+});
+
+// ── L3 evidence lists (ADR-0029 §6①) ───────────────────────────────────
+// occurrences / context-links 的只读列表：cursor 分页沿用 l3LimitCursorQuerySchema，
+// 可按词（slug / wordId）、语境与空间 / 方向两轴过滤（"按空间方向列料"）。
+export const l3OccurrenceListQuerySchema = l3LimitCursorQuerySchema.extend({
+  slug: z.string().trim().min(1).max(200).optional(),
+  wordId: uuidSchema.optional(),
+  contextId: uuidSchema.optional(),
+  direction: directionSchema.optional(),
+  space: z.enum(L3_SUB_SPACES).optional(),
+});
+
+export const l3ContextLinkListQuerySchema = l3LimitCursorQuerySchema.extend({
+  slug: z.string().trim().min(1).max(200).optional(),
+  wordId: uuidSchema.optional(),
+  contextId: uuidSchema.optional(),
+  linkType: l3ContextLinkTypeSchema.optional(),
+  targetType: l3ContextLinkTargetTypeSchema.optional(),
+  direction: directionSchema.optional(),
+  space: z.enum(L3_SUB_SPACES).optional(),
+});
+
 export const l3SourceListQuerySchema = z.object({
   sourceType: z.enum(["article", "book", "video", "audio", "chat", "manual", "web", "other"]).optional(),
   q: z.string().trim().max(200).optional(),
   sort: z.enum(["recent", "captures"]).default("recent"),
+  // ADR-0029 §6②：按方向 / 子空间过滤（"按空间方向列料"，与练习线两轴同义）。
+  direction: directionSchema.optional(),
+  space: z.enum(L3_SUB_SPACES).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -517,10 +555,6 @@ export const l3StructuredImportCreateSchema = z.object({
     path: ["contexts"],
   },
 );
-
-// ── Shared vocabulary (ADR-0017) ────────────────────────────────────────
-/** 学习方向三值（ADR-0017；wordbooks/l2/l3 表 CHECK 同值）。 */
-export const directionSchema = z.enum(["通用", "考研", "雅思"]);
 
 // ── Upgrade work orders (ADR-0018) ──────────────────────────────────────
 // wordbookId 必须显式传入：工单归属错书是脏写，禁止回退到默认词书。

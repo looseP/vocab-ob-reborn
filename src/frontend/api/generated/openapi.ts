@@ -982,7 +982,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["listL3Occurrences"];
         put?: never;
         post: operations["createL3Occurrence"];
         delete?: never;
@@ -998,7 +998,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["listL3ContextLinks"];
         put?: never;
         post: operations["createL3ContextLink"];
         delete?: never;
@@ -12136,11 +12136,13 @@ export interface operations {
     listL3Sources: {
         parameters: {
             query?: {
+                direction?: "通用" | "考研" | "雅思";
                 limit?: number;
                 offset?: number;
                 q?: string;
                 sort?: "recent" | "captures";
                 sourceType?: "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
+                space?: "语法" | "阅读" | "作文" | "翻译" | "通用";
             };
             header?: never;
             path?: never;
@@ -13052,6 +13054,227 @@ export interface operations {
             };
         };
     };
+    listL3Occurrences: {
+        parameters: {
+            query?: {
+                contextId?: string;
+                cursor?: string;
+                direction?: "通用" | "考研" | "雅思";
+                limit?: number;
+                slug?: string;
+                space?: "语法" | "阅读" | "作文" | "翻译" | "通用";
+                wordId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            occurrence: {
+                                id: string;
+                                context_id: string;
+                                word_id: string;
+                                user_id: string;
+                                surface: string;
+                                lemma: string | null;
+                                start_offset: number | null;
+                                end_offset: number | null;
+                                confidence: (number | string) | null;
+                                evidence: components["schemas"]["JsonValue"];
+                                bound_sense: string | null;
+                                created_at: string;
+                            };
+                            word: {
+                                id: string;
+                                slug: string;
+                                title: string;
+                            };
+                            context: {
+                                id: string;
+                                source_id: string;
+                                user_id: string;
+                                /** @enum {string} */
+                                context_type: "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
+                                text: string;
+                                normalized_text: string | null;
+                                language: string | null;
+                                position: components["schemas"]["JsonValue"];
+                                metadata: components["schemas"]["JsonValue"];
+                                created_at: string;
+                                updated_at: string;
+                            };
+                            source: {
+                                id: string;
+                                user_id: string;
+                                wordbook_id: string | null;
+                                /** @enum {string} */
+                                source_type: "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
+                                title: string;
+                                author: string | null;
+                                url: string | null;
+                                language: string | null;
+                                metadata: components["schemas"]["JsonValue"];
+                                content_text: string | null;
+                                content_hash: string | null;
+                                created_at: string;
+                                updated_at: string;
+                            };
+                        }[];
+                        limit: number;
+                        cursor: string | null;
+                        nextCursor: string | null;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     createL3Occurrence: {
         parameters: {
             query?: never;
@@ -13101,6 +13324,230 @@ export interface operations {
                             bound_sense: string | null;
                             created_at: string;
                         };
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listL3ContextLinks: {
+        parameters: {
+            query?: {
+                contextId?: string;
+                cursor?: string;
+                direction?: "通用" | "考研" | "雅思";
+                limit?: number;
+                linkType?: "supports" | "illustrates" | "contrasts" | "collocates_with" | "synonym_of" | "antonym_of" | "derived_from" | "topic_related" | "manual_link";
+                slug?: string;
+                space?: "语法" | "阅读" | "作文" | "翻译" | "通用";
+                targetType?: "word" | "l2_item" | "context" | "source" | "topic" | "external";
+                wordId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            link: {
+                                id: string;
+                                user_id: string;
+                                context_id: string | null;
+                                word_id: string | null;
+                                /** @enum {string} */
+                                link_type: "supports" | "illustrates" | "contrasts" | "collocates_with" | "synonym_of" | "antonym_of" | "derived_from" | "topic_related" | "manual_link";
+                                /** @enum {string} */
+                                target_type: "word" | "l2_item" | "context" | "source" | "topic" | "external";
+                                target_id: string | null;
+                                target_ref: components["schemas"]["JsonValue"];
+                                confidence: (number | string) | null;
+                                provenance: components["schemas"]["JsonValue"];
+                                created_at: string;
+                            };
+                            word: {
+                                id: string;
+                                slug: string;
+                                title: string;
+                            } | null;
+                            context: {
+                                id: string;
+                                source_id: string;
+                                user_id: string;
+                                /** @enum {string} */
+                                context_type: "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
+                                text: string;
+                                normalized_text: string | null;
+                                language: string | null;
+                                position: components["schemas"]["JsonValue"];
+                                metadata: components["schemas"]["JsonValue"];
+                                created_at: string;
+                                updated_at: string;
+                            } | null;
+                            source: {
+                                id: string;
+                                user_id: string;
+                                wordbook_id: string | null;
+                                /** @enum {string} */
+                                source_type: "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
+                                title: string;
+                                author: string | null;
+                                url: string | null;
+                                language: string | null;
+                                metadata: components["schemas"]["JsonValue"];
+                                content_text: string | null;
+                                content_hash: string | null;
+                                created_at: string;
+                                updated_at: string;
+                            } | null;
+                        }[];
+                        limit: number;
+                        cursor: string | null;
+                        nextCursor: string | null;
                     };
                 };
             };
@@ -15025,7 +15472,9 @@ export interface operations {
         parameters: {
             query?: {
                 cursor?: string;
+                direction?: "通用" | "考研" | "雅思";
                 limit?: number;
+                space?: "语法" | "阅读" | "作文" | "翻译" | "通用";
             };
             header?: never;
             path: {

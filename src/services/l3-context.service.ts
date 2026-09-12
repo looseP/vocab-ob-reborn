@@ -11,15 +11,19 @@ import { ConflictError, NotFoundError, ValidationError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import type {
+  Direction,
   Json,
+  L3ContextLinkListItem,
   L3ContextLinkRow,
   L3ContextRow,
   L3ImportJobRow,
+  L3OccurrenceListItem,
   L3OccurrenceRow,
   L3PaginatedList,
   L3SourceContextListItem,
   L3SourceListPage,
   L3SourceRow,
+  L3SubSpace,
   L3WordContextListItem,
 } from "../domain";
 import type {
@@ -27,6 +31,8 @@ import type {
   IRepositories,
   IWordRepository,
   L3ContextDeleteBlockers,
+  L3ContextLinkLookup,
+  L3OccurrenceLookup,
   L3SourceDeleteBlockers,
   NewL3Context,
   NewL3ContextLink,
@@ -34,6 +40,7 @@ import type {
   NewL3Occurrence,
   NewL3Source,
 } from "../repositories/interfaces";
+import { L3_SUB_SPACES } from "./l3-practice.service";
 import { slugifyHeadword } from "./capture.service";
 import { buildL3TrioInputs } from "./l3-trio";
 import {
@@ -54,6 +61,8 @@ import {
   type DeleteL3OccurrenceInput,
   type DeleteL3SourceInput,
   type L3DeleteResult,
+  type ListL3ContextLinksInput,
+  type ListL3OccurrencesInput,
   type ListL3SourcesInput,
 } from "../schemas/service";
 
@@ -64,6 +73,21 @@ function requireEnum(value: string, allowed: readonly string[], field: string): 
   if (!allowed.includes(value)) {
     throw new ValidationError(`Invalid ${field}: ${value}`, field);
   }
+}
+
+const DIRECTIONS: readonly Direction[] = ["通用", "考研", "雅思"];
+
+/** 可选枚举校验：缺省 → null；非法 → ValidationError（对齐练习线同名助手）。 */
+function resolveOptionalEnum<T extends string>(
+  value: T | null | undefined,
+  allowed: readonly string[],
+  field: string,
+): T | null {
+  if (value == null) return null;
+  if (!allowed.includes(value)) {
+    throw new ValidationError(`Invalid ${field}: ${value}`, field);
+  }
+  return value;
 }
 
 function requireNonEmpty(value: string, field: string): void {
@@ -643,6 +667,9 @@ export class L3ContextService {
     userId: string;
     wordId?: string;
     slug?: string;
+    /** 两轴过滤（ADR-0029 §6②）：方向 × 子空间。 */
+    direction?: Direction | null;
+    space?: L3SubSpace | null;
     limit: number;
     cursor?: string | null;
   }): Promise<L3PaginatedList<L3WordContextListItem>> {
@@ -650,6 +677,8 @@ export class L3ContextService {
     if (!input.wordId && !input.slug) {
       throw new ValidationError("wordId or slug is required", "word");
     }
+    const direction = resolveOptionalEnum(input.direction, DIRECTIONS, "direction");
+    const space = resolveOptionalEnum(input.space, L3_SUB_SPACES, "space");
     return this.withActorRepository(input.userId, async (repository) => {
       if (input.slug) {
         const word = await repository.findWordBySlug(input.slug);
@@ -659,7 +688,7 @@ export class L3ContextService {
         const word = await repository.findWordById(input.wordId);
         if (!word) throw new NotFoundError("Word", input.wordId);
       }
-      return repository.listContextsForWord(input);
+      return repository.listContextsForWord({ ...input, direction, space });
     });
   }
 
@@ -681,16 +710,65 @@ export class L3ContextService {
 
   async listSources(input: ListL3SourcesInput): Promise<L3SourceListPage> {
     requireNonEmpty(input.userId, "userId");
+    const direction = resolveOptionalEnum(input.direction, DIRECTIONS, "direction");
+    const space = resolveOptionalEnum(input.space, L3_SUB_SPACES, "space");
     return this.withActorRepository(input.userId, (repository) =>
       repository.listSources({
         userId: input.userId,
         sourceType: input.sourceType,
         q: input.q,
         sort: input.sort,
+        direction,
+        space,
         limit: Math.min(input.limit, 50),
         offset: Math.max(input.offset, 0),
       }),
     );
+  }
+
+
+  /** ADR-0029 §6①：occurrence 只读列表（词 / 语境 / 两轴过滤 + cursor 分页）。 */
+  async listOccurrences(input: ListL3OccurrencesInput): Promise<L3PaginatedList<L3OccurrenceListItem>> {
+    requireNonEmpty(input.userId, "userId");
+    const direction = resolveOptionalEnum(input.direction, DIRECTIONS, "direction");
+    const space = resolveOptionalEnum(input.space, L3_SUB_SPACES, "space");
+    return this.withActorRepository(input.userId, async (repository) => {
+      if (input.slug) {
+        const word = await repository.findWordBySlug(input.slug);
+        if (!word) throw new NotFoundError("Word", input.slug);
+      }
+      if (input.wordId) {
+        const word = await repository.findWordById(input.wordId);
+        if (!word) throw new NotFoundError("Word", input.wordId);
+      }
+      if (input.contextId) {
+        const context = await repository.findContextById(input.userId, input.contextId);
+        if (!context) throw new NotFoundError("L3Context", input.contextId);
+      }
+      return repository.listOccurrences({ ...input, direction, space });
+    });
+  }
+
+  /** ADR-0029 §6①：context-link 只读列表（词 / 语境 / 类型 / 两轴过滤 + cursor 分页）。 */
+  async listContextLinks(input: ListL3ContextLinksInput): Promise<L3PaginatedList<L3ContextLinkListItem>> {
+    requireNonEmpty(input.userId, "userId");
+    const direction = resolveOptionalEnum(input.direction, DIRECTIONS, "direction");
+    const space = resolveOptionalEnum(input.space, L3_SUB_SPACES, "space");
+    return this.withActorRepository(input.userId, async (repository) => {
+      if (input.slug) {
+        const word = await repository.findWordBySlug(input.slug);
+        if (!word) throw new NotFoundError("Word", input.slug);
+      }
+      if (input.wordId) {
+        const word = await repository.findWordById(input.wordId);
+        if (!word) throw new NotFoundError("Word", input.wordId);
+      }
+      if (input.contextId) {
+        const context = await repository.findContextById(input.userId, input.contextId);
+        if (!context) throw new NotFoundError("L3Context", input.contextId);
+      }
+      return repository.listContextLinks({ ...input, direction, space });
+    });
   }
 
   private withActorRepository<T>(

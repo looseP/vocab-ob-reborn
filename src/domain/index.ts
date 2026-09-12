@@ -689,6 +689,22 @@ export interface L3SourceListPage {
   offset: number;
 }
 
+/** L3 证据列表项（ADR-0029 §6①）：occurrence 主行 + 词 / 语境 / 来源三件套（一屏够用）。 */
+export interface L3OccurrenceListItem {
+  occurrence: L3OccurrenceRow;
+  word: { id: string; slug: string; title: string };
+  context: L3ContextRow;
+  source: L3SourceRow;
+}
+
+/** L3 证据列表项（ADR-0029 §6①）：context-link 主行 + 其词 / 语境 / 来源（随 link 挂点可空）。 */
+export interface L3ContextLinkListItem {
+  link: L3ContextLinkRow;
+  word: { id: string; slug: string; title: string } | null;
+  context: L3ContextRow | null;
+  source: L3SourceRow | null;
+}
+
 export type L3GraphNodeType = "word" | "context" | "source" | "l2_item" | "topic" | "external";
 
 export interface L3GraphNode {

@@ -6,17 +6,21 @@
  */
 
 import type {
+  Direction,
+  L3ContextLinkListItem,
   L3ContextLinkRow,
   L3ContextRow,
   L3ContextDetail,
   L3GraphReadModel,
   L3ImportJobRow,
+  L3OccurrenceListItem,
   L3OccurrenceRow,
   L3PaginatedList,
   L3SourceContextListItem,
   L3SourceRow,
   L3SourceListPage,
   L3SourceSpace,
+  L3SubSpace,
   L3WordSpace,
   L3WordContextListItem,
   Json,
@@ -27,7 +31,9 @@ import { ValidationError } from "../errors";
 import type {
   IL3ContextRepository,
   L3ContextDeleteBlockers,
+  L3ContextLinkLookup,
   L3GraphLookup,
+  L3OccurrenceLookup,
   L3SourceDeleteBlockers,
   L3SourceLookup,
   L3SourceSpaceLookup,
@@ -250,6 +256,39 @@ interface GraphContextRow extends JoinedContextWithSourceRow {
   links: L3ContextLinkRow[] | null;
 }
 
+interface OccurrenceEvidenceRow extends JoinedContextWithSourceRow {
+  occ_id: string;
+  occ_context_id: string;
+  occ_word_id: string;
+  occ_user_id: string;
+  occ_surface: string;
+  occ_lemma: string | null;
+  occ_start_offset: number | null;
+  occ_end_offset: number | null;
+  occ_confidence: number | string | null;
+  occ_evidence: unknown;
+  occ_bound_sense: string | null;
+  occ_created_at: string;
+  word_slug: string;
+  word_title: string;
+}
+
+interface ContextLinkEvidenceRow extends JoinedContextWithSourceRow {
+  link_id: string;
+  link_user_id: string;
+  link_context_id: string | null;
+  link_word_id: string | null;
+  link_type: string;
+  target_type: string;
+  target_id: string | null;
+  target_ref: unknown;
+  link_confidence: number | string | null;
+  link_provenance: unknown;
+  link_created_at: string;
+  word_slug: string | null;
+  word_title: string | null;
+}
+
 interface SourceDeleteBlockerRow {
   context_count: number | string | null;
   inbound_context_link_count: number | string | null;
@@ -352,6 +391,84 @@ function buildSourcePage(
     nextCursor: rows.length > limit && last
       ? encodeCursor(last.context_created_at, last.context_id)
       : null,
+  };
+}
+
+function mapOccurrenceEvidenceRow(row: OccurrenceEvidenceRow): L3OccurrenceListItem {
+  return {
+    occurrence: {
+      id: row.occ_id,
+      context_id: row.occ_context_id,
+      word_id: row.occ_word_id,
+      user_id: row.occ_user_id,
+      surface: row.occ_surface,
+      lemma: row.occ_lemma,
+      start_offset: row.occ_start_offset,
+      end_offset: row.occ_end_offset,
+      confidence: row.occ_confidence,
+      evidence: (row.occ_evidence ?? {}) as never,
+      bound_sense: row.occ_bound_sense,
+      created_at: row.occ_created_at,
+    },
+    word: { id: row.occ_word_id, slug: row.word_slug, title: row.word_title },
+    context: mapContext(row),
+    source: mapSource(row),
+  };
+}
+
+function buildOccurrencePage(
+  rows: OccurrenceEvidenceRow[],
+  limit: number,
+  cursor: string | null | undefined,
+): L3PaginatedList<L3OccurrenceListItem> {
+  const pageRows = rows.slice(0, limit);
+  const items = pageRows.map(mapOccurrenceEvidenceRow);
+  const last = pageRows[pageRows.length - 1];
+  return {
+    items,
+    limit,
+    cursor: cursor ?? null,
+    nextCursor: rows.length > limit && last ? encodeCursor(last.occ_created_at, last.occ_id) : null,
+  };
+}
+
+function mapContextLinkEvidenceRow(row: ContextLinkEvidenceRow): L3ContextLinkListItem {
+  const context = row.link_context_id != null ? mapContext(row) : null;
+  return {
+    link: {
+      id: row.link_id,
+      user_id: row.link_user_id,
+      context_id: row.link_context_id,
+      word_id: row.link_word_id,
+      link_type: row.link_type as never,
+      target_type: row.target_type as never,
+      target_id: row.target_id,
+      target_ref: (row.target_ref ?? {}) as never,
+      confidence: row.link_confidence,
+      provenance: (row.link_provenance ?? {}) as never,
+      created_at: row.link_created_at,
+    },
+    word: row.link_word_id != null
+      ? { id: row.link_word_id, slug: row.word_slug ?? "", title: row.word_title ?? "" }
+      : null,
+    context,
+    source: context ? mapSource(row) : null,
+  };
+}
+
+function buildContextLinkPage(
+  rows: ContextLinkEvidenceRow[],
+  limit: number,
+  cursor: string | null | undefined,
+): L3PaginatedList<L3ContextLinkListItem> {
+  const pageRows = rows.slice(0, limit);
+  const items = pageRows.map(mapContextLinkEvidenceRow);
+  const last = pageRows[pageRows.length - 1];
+  return {
+    items,
+    limit,
+    cursor: cursor ?? null,
+    nextCursor: rows.length > limit && last ? encodeCursor(last.link_created_at, last.link_id) : null,
   };
 }
 
@@ -688,7 +805,8 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
   }
 
   async listSources(input: {
-    userId: string; sourceType?: string; q?: string; sort: "recent" | "captures"; limit: number; offset: number;
+    userId: string; sourceType?: string; q?: string; sort: "recent" | "captures";
+    direction?: Direction | null; space?: L3SubSpace | null; limit: number; offset: number;
   }): Promise<L3SourceListPage> {
     const params: unknown[] = [input.userId];
     let where = `WHERE s.user_id = $1::uuid`;
@@ -699,6 +817,16 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     if (input.q && input.q.trim().length > 0) {
       params.push(`%${input.q.trim().replace(/[\\%_]/g, "\\$&")}%`);
       where += ` AND (s.title ILIKE $${params.length} ESCAPE '\\' OR s.content_text ILIKE $${params.length} ESCAPE '\\')`;
+    }
+    // ADR-0029 §6②：两轴过滤（与练习线 errorBook 同款 SQL 模式）。
+    if (input.direction) {
+      params.push(input.direction);
+      where += ` AND s.direction = $${params.length}`;
+    }
+    if (input.space) {
+      params.push(input.space);
+      where += ` AND EXISTS (SELECT 1 FROM l3_source_spaces sp
+                              WHERE sp.source_id = s.id AND sp.user_id = s.user_id AND sp.space = $${params.length})`;
     }
     const orderBy = input.sort === "captures"
       ? `context_count DESC NULLS LAST, s.created_at DESC`
@@ -807,6 +935,16 @@ ${CONTEXT_SOURCE_COLUMNS}
       params.push(cursor.createdAt, cursor.id);
       cursorFilter = cursorPredicate(params.length);
     }
+    // ADR-0029 §6②：两轴过滤（尾随缩进与 cursorFilter 行对齐，空串时 SQL 字节不变）。
+    let axisFilter = "";
+    if (input.direction) {
+      params.push(input.direction);
+      axisFilter += `AND s.direction = $${params.length}\n           `;
+    }
+    if (input.space) {
+      params.push(input.space);
+      axisFilter += `AND EXISTS (SELECT 1 FROM l3_source_spaces sp\n             WHERE sp.source_id = s.id AND sp.user_id = s.user_id AND sp.space = $${params.length})\n           `;
+    }
 
     const rows = await this.query<JoinedContextRow>(
       `WITH selected_contexts AS (
@@ -823,7 +961,7 @@ ${CONTEXT_SOURCE_COLUMNS}
                AND o.user_id = $1::uuid
                ${wordFilter}
            )
-           ${cursorFilter}
+           ${axisFilter}${cursorFilter}
          ORDER BY c.created_at DESC, c.id DESC
          LIMIT $2
        )
@@ -888,6 +1026,133 @@ ${LINKS_AGG}
     );
 
     return buildSourcePage(rows, input.limit, input.cursor);
+  }
+
+  /** ADR-0029 §6①：occurrence 只读列表（cursor 分页 + 词 / 语境 / 两轴过滤）。 */
+  async listOccurrences(input: L3OccurrenceLookup): Promise<L3PaginatedList<L3OccurrenceListItem>> {
+    const cursor = decodeCursor(input.cursor);
+    const params: unknown[] = [input.userId, input.limit + 1];
+    let wordFilter = "";
+    if (input.wordId) {
+      params.push(input.wordId);
+      wordFilter = ` AND o.word_id = $${params.length}::uuid`;
+    } else if (input.slug) {
+      params.push(input.slug);
+      wordFilter = ` AND w.slug = $${params.length}`;
+    }
+    let contextFilter = "";
+    if (input.contextId) {
+      params.push(input.contextId);
+      contextFilter = ` AND o.context_id = $${params.length}::uuid`;
+    }
+    let axisFilter = "";
+    if (input.direction) {
+      params.push(input.direction);
+      axisFilter += ` AND s.direction = $${params.length}`;
+    }
+    if (input.space) {
+      params.push(input.space);
+      axisFilter += ` AND EXISTS (SELECT 1 FROM l3_source_spaces sp
+                              WHERE sp.source_id = s.id AND sp.user_id = s.user_id AND sp.space = $${params.length})`;
+    }
+    let cursorFilter = "";
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      cursorFilter = ` AND (o.created_at, o.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+    }
+
+    const rows = await this.query<OccurrenceEvidenceRow>(
+      `SELECT
+         o.id AS occ_id, o.context_id AS occ_context_id, o.word_id AS occ_word_id,
+         o.user_id AS occ_user_id, o.surface AS occ_surface, o.lemma AS occ_lemma,
+         o.start_offset AS occ_start_offset, o.end_offset AS occ_end_offset,
+         o.confidence AS occ_confidence, o.evidence AS occ_evidence,
+         o.bound_sense AS occ_bound_sense, o.created_at AS occ_created_at,
+         w.slug AS word_slug, w.title AS word_title,
+${CONTEXT_SOURCE_COLUMNS}
+       FROM l3_occurrences o
+       JOIN words w ON w.id = o.word_id
+       JOIN l3_contexts c ON c.id = o.context_id AND c.user_id = o.user_id
+       JOIN l3_sources s ON s.id = c.source_id AND s.user_id = c.user_id
+       WHERE o.user_id = $1::uuid
+         ${wordFilter}
+         ${contextFilter}
+         ${axisFilter}
+         ${cursorFilter}
+       ORDER BY o.created_at DESC, o.id DESC
+       LIMIT $2`,
+      params,
+    );
+
+    return buildOccurrencePage(rows, input.limit, input.cursor);
+  }
+
+  /** ADR-0029 §6①：context-link 只读列表（cursor 分页 + 词 / 语境 / 类型 / 两轴过滤）。 */
+  async listContextLinks(input: L3ContextLinkLookup): Promise<L3PaginatedList<L3ContextLinkListItem>> {
+    const cursor = decodeCursor(input.cursor);
+    const params: unknown[] = [input.userId, input.limit + 1];
+    let wordFilter = "";
+    if (input.wordId) {
+      params.push(input.wordId);
+      wordFilter = ` AND l.word_id = $${params.length}::uuid`;
+    } else if (input.slug) {
+      params.push(input.slug);
+      wordFilter = ` AND w.slug = $${params.length}`;
+    }
+    let contextFilter = "";
+    if (input.contextId) {
+      params.push(input.contextId);
+      contextFilter = ` AND l.context_id = $${params.length}::uuid`;
+    }
+    let typeFilter = "";
+    if (input.linkType) {
+      params.push(input.linkType);
+      typeFilter += ` AND l.link_type = $${params.length}`;
+    }
+    if (input.targetType) {
+      params.push(input.targetType);
+      typeFilter += ` AND l.target_type = $${params.length}`;
+    }
+    let axisFilter = "";
+    if (input.direction) {
+      params.push(input.direction);
+      axisFilter += ` AND s.direction = $${params.length}`;
+    }
+    if (input.space) {
+      params.push(input.space);
+      axisFilter += ` AND EXISTS (SELECT 1 FROM l3_source_spaces sp
+                              WHERE sp.source_id = s.id AND sp.user_id = s.user_id AND sp.space = $${params.length})`;
+    }
+    let cursorFilter = "";
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      cursorFilter = ` AND (l.created_at, l.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+    }
+
+    const rows = await this.query<ContextLinkEvidenceRow>(
+      `SELECT
+         l.id AS link_id, l.user_id AS link_user_id, l.context_id AS link_context_id,
+         l.word_id AS link_word_id, l.link_type, l.target_type, l.target_id,
+         l.target_ref, l.confidence AS link_confidence, l.provenance AS link_provenance,
+         l.created_at AS link_created_at,
+         w.slug AS word_slug, w.title AS word_title,
+${CONTEXT_SOURCE_COLUMNS}
+       FROM l3_context_links l
+       LEFT JOIN words w ON w.id = l.word_id
+       LEFT JOIN l3_contexts c ON c.id = l.context_id AND c.user_id = l.user_id
+       LEFT JOIN l3_sources s ON s.id = c.source_id AND s.user_id = c.user_id
+       WHERE l.user_id = $1::uuid
+         ${wordFilter}
+         ${contextFilter}
+         ${typeFilter}
+         ${axisFilter}
+         ${cursorFilter}
+       ORDER BY l.created_at DESC, l.id DESC
+       LIMIT $2`,
+      params,
+    );
+
+    return buildContextLinkPage(rows, input.limit, input.cursor);
   }
 
   async getContextDetail(userId: string, contextId: string): Promise<L3ContextDetail | null> {

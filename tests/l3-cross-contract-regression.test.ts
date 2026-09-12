@@ -541,6 +541,8 @@ class L3CrossContractHarness {
       findWordInWordbookBySlug: vi.fn(async (wordbookId, slug) => wordbookId === WORDBOOK_ID ? this.findWordBySlug(slug) : null),
       listContextsForWord: vi.fn(),
       listContextsForSource: vi.fn(),
+      listOccurrences: vi.fn(),
+      listContextLinks: vi.fn(),
       getContextDetail: vi.fn(async (userId, contextId) => {
         const context = this.contexts.get(contextId);
         const source = context ? this.sources.get(context.source_id) : null;
