@@ -1,4 +1,5 @@
 import type {
+  Direction,
   Json,
   L3ContextDetail,
   L3ContextLinkRow,
@@ -7,16 +8,27 @@ import type {
   L3ContextRow,
   L3ContextType,
   L3GraphReadModel,
+  L3OccurrenceListItem,
   L3OccurrenceRow,
+  L3PaginatedList,
+  L3PracticeAttemptPage,
+  L3PracticeAttemptRow,
+  L3PracticeOutcome,
+  L3PracticeType,
   L3ProposalBundle,
   L3ProposalConfirmResult,
   L3ProposalValidationResult,
   L3RecommendationAcceptResult,
   L3RecommendationBundle,
   L3RecommendationItemRow,
+  L3SessionRenderDescription,
+  L3SessionRow,
+  L3SessionStatus,
+  L3SessionType,
   L3SourceRow,
   L3SourceSpace,
   L3SourceType,
+  L3SubSpace,
   L3WordSpace,
 } from "@/domain";
 
@@ -229,6 +241,57 @@ export interface L3SourceSpaceParams {
   cursor?: string | null;
 }
 
+// ── L3 practice attempts / error book (ADR-0019 §1/§3) ──────────────────
+// payload.taskId 是幂等身份（T04 deterministicTaskId 形状 `<type>:<hash16>`）；
+// 前端用 Web Crypto 按同一算法派生（见 viewModels/l3PracticeViewModel）。
+
+export interface L3PracticeAttemptCreateInput {
+  contextId: string;
+  occurrenceId?: string | null;
+  sessionId?: string | null;
+  practiceType: L3PracticeType;
+  outcome: L3PracticeOutcome;
+  payload: Record<string, Json>;
+}
+
+export interface L3PracticeAttemptListParams {
+  practiceType?: L3PracticeType | null;
+  outcome?: L3PracticeOutcome | null;
+  space?: L3SubSpace | null;
+  direction?: Direction | null;
+  limit?: number | null;
+  offset?: number | null;
+}
+
+export interface L3ErrorBookParams {
+  space?: L3SubSpace | null;
+  direction?: Direction | null;
+  limit?: number | null;
+  offset?: number | null;
+}
+
+export interface L3OccurrenceListParams {
+  slug?: string | null;
+  wordId?: string | null;
+  contextId?: string | null;
+  space?: L3SubSpace | null;
+  direction?: Direction | null;
+  limit?: number | null;
+  cursor?: string | null;
+}
+
+// ── L3 sessions (ADR-0019 §2) ───────────────────────────────────────────
+
+export interface L3SessionCreateInput {
+  type: L3SessionType;
+  title?: string | null;
+  space?: L3SubSpace | null;
+  direction?: Direction | null;
+  contextCount?: number | null;
+  days?: number | null;
+  seed?: string | null;
+}
+
 export interface L3ManualSourceCreateInput {
   wordbookId?: string | null;
   sourceType: L3SourceType;
@@ -330,6 +393,13 @@ export interface L3FrontendClient {
   getWordSpace(slug: string, params?: L3SpaceParams): Promise<L3WordSpace>;
   getSourceSpace(sourceId: string, params?: L3SourceSpaceParams): Promise<L3SourceSpace>;
   getGraph(params?: L3GraphParams): Promise<L3GraphReadModel>;
+  listOccurrences(params?: L3OccurrenceListParams): Promise<L3PaginatedList<L3OccurrenceListItem>>;
+  recordAttempt(input: L3PracticeAttemptCreateInput): Promise<L3PracticeAttemptRow>;
+  listAttempts(params?: L3PracticeAttemptListParams): Promise<L3PracticeAttemptPage>;
+  listErrorBook(params?: L3ErrorBookParams): Promise<L3PracticeAttemptPage>;
+  createSession(input: L3SessionCreateInput): Promise<L3SessionRow>;
+  getSession(id: string): Promise<L3SessionRenderDescription>;
+  endSession(id: string, status: Extract<L3SessionStatus, "completed" | "abandoned">): Promise<L3SessionRow>;
 }
 
 export interface L3CacheSignal {
@@ -616,6 +686,13 @@ export function createL3FrontendClient(transport: L3ClientTransport): L3Frontend
     getWordSpace: (slug, params) => requestJson(transport, "GET", appendQuery(`/api/l3/words/${encodeURIComponent(slug)}/space`, validateSpaceParams(params))),
     getSourceSpace: (sourceId, params) => requestJson(transport, "GET", appendQuery(`/api/l3/sources/${encodeURIComponent(sourceId)}/space`, validateSourceSpaceParams(params))),
     getGraph: (params) => requestJson(transport, "GET", appendQuery("/api/l3/graph", validateGraphParams(params))),
+    listOccurrences: (params) => requestJson(transport, "GET", appendQuery("/api/l3/occurrences", validateOccurrenceListParams(params))),
+    recordAttempt: (input) => requestJson(transport, "POST", "/api/l3-practice/attempts", validatePracticeAttemptCreateInput(input)),
+    listAttempts: (params) => requestJson(transport, "GET", appendQuery("/api/l3-practice/attempts", validatePracticeAttemptListParams(params))),
+    listErrorBook: (params) => requestJson(transport, "GET", appendQuery("/api/l3-practice/error-book", validateErrorBookParams(params))),
+    createSession: (input) => requestJson(transport, "POST", "/api/l3-sessions", validateSessionCreateInput(input)),
+    getSession: (id) => requestJson(transport, "GET", `/api/l3-sessions/${encodeURIComponent(validateExplicitId(id))}`),
+    endSession: (id, status) => requestJson(transport, "POST", `/api/l3-sessions/${encodeURIComponent(validateExplicitId(id))}/end`, validateSessionEndInput({ status })),
   };
 }
 
@@ -739,6 +816,113 @@ export function validateGraphParams(params: L3GraphParams = {}): L3GraphParams {
   }
   validateLimit(params.limit, GRAPH_LIMIT_MAX);
   return params;
+}
+
+// ── L3 practice / sessions validation (ADR-0019) ─────────────────────────
+// 枚举与服务端 CHECK 约束同值；前端校验只做快速失败，服务端 schema 仍是权威。
+const PRACTICE_LIMIT_MAX = 100;
+const SESSION_MAX_CONTEXTS = 200;
+const SESSION_MAX_DAYS = 90;
+
+export const L3_PRACTICE_TYPE_VALUES = ["essay_dictation", "context_quiz"] as const satisfies readonly L3PracticeType[];
+export const L3_PRACTICE_OUTCOME_VALUES = ["correct", "wrong", "skip"] as const satisfies readonly L3PracticeOutcome[];
+export const L3_SUB_SPACE_VALUES = ["语法", "阅读", "作文", "翻译", "通用"] as const satisfies readonly L3SubSpace[];
+export const L3_DIRECTION_VALUES = ["通用", "考研", "雅思"] as const satisfies readonly Direction[];
+export const L3_SESSION_TYPE_VALUES = ["l2_upgrade", "l3_practice", "cram_pack", "knowledge"] as const satisfies readonly L3SessionType[];
+
+function requireEnumChoice<T extends string>(value: T, allowed: readonly string[], field: string): void {
+  if (!allowed.includes(value)) throw frontendValidationError(field, `${field} is not a supported value.`);
+}
+
+function validateOptionalEnumChoice<T extends string>(value: T | null | undefined, allowed: readonly string[], field: string): void {
+  if (value === undefined || value === null) return;
+  requireEnumChoice(value, allowed, field);
+}
+
+function validateOffset(value: number | null | undefined): void {
+  if (value === undefined || value === null) return;
+  if (!Number.isInteger(value) || value < 0) {
+    throw frontendValidationError("offset", "offset must be a non-negative integer.");
+  }
+}
+
+function validateOptionalBoundedInt(value: number | null | undefined, max: number, field: string): void {
+  if (value === undefined || value === null) return;
+  if (!Number.isInteger(value) || value < 1 || value > max) {
+    throw frontendValidationError(field, `${field} must be between 1 and ${max}.`);
+  }
+}
+
+function validateOptionalCappedText(value: string | null | undefined, max: number, field: string): void {
+  if (value === undefined || value === null) return;
+  requireNonEmptyText(value, field);
+  if (value.trim().length > max) {
+    throw frontendValidationError(field, `${field} must be at most ${max} characters.`);
+  }
+}
+
+export function validatePracticeAttemptCreateInput(input: L3PracticeAttemptCreateInput): L3PracticeAttemptCreateInput {
+  requireNonEmptyText(input.contextId, "contextId");
+  requireEnumChoice(input.practiceType, L3_PRACTICE_TYPE_VALUES, "practiceType");
+  requireEnumChoice(input.outcome, L3_PRACTICE_OUTCOME_VALUES, "outcome");
+  if (input.occurrenceId !== undefined && input.occurrenceId !== null) requireNonEmptyText(input.occurrenceId, "occurrenceId");
+  if (input.sessionId !== undefined && input.sessionId !== null) requireNonEmptyText(input.sessionId, "sessionId");
+  const payload: unknown = input.payload;
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw frontendValidationError("payload", "payload must be an object carrying taskId.");
+  }
+  const taskId = (payload as Record<string, unknown>).taskId;
+  if (typeof taskId !== "string" || taskId.trim().length === 0) {
+    throw frontendValidationError("payload.taskId", "payload.taskId is required.");
+  }
+  return input;
+}
+
+export function validatePracticeAttemptListParams(params: L3PracticeAttemptListParams = {}): L3PracticeAttemptListParams {
+  validateOptionalEnumChoice(params.practiceType, L3_PRACTICE_TYPE_VALUES, "practiceType");
+  validateOptionalEnumChoice(params.outcome, L3_PRACTICE_OUTCOME_VALUES, "outcome");
+  validateOptionalEnumChoice(params.space, L3_SUB_SPACE_VALUES, "space");
+  validateOptionalEnumChoice(params.direction, L3_DIRECTION_VALUES, "direction");
+  validateLimit(params.limit, PRACTICE_LIMIT_MAX);
+  validateOffset(params.offset);
+  return params;
+}
+
+export function validateErrorBookParams(params: L3ErrorBookParams = {}): L3ErrorBookParams {
+  validateOptionalEnumChoice(params.space, L3_SUB_SPACE_VALUES, "space");
+  validateOptionalEnumChoice(params.direction, L3_DIRECTION_VALUES, "direction");
+  validateLimit(params.limit, PRACTICE_LIMIT_MAX);
+  validateOffset(params.offset);
+  return params;
+}
+
+export function validateOccurrenceListParams(params: L3OccurrenceListParams = {}): L3OccurrenceListParams {
+  if (params.slug !== undefined && params.slug !== null) requireNonEmptyText(params.slug, "slug");
+  if (params.wordId !== undefined && params.wordId !== null) requireNonEmptyText(params.wordId, "wordId");
+  if (params.contextId !== undefined && params.contextId !== null) requireNonEmptyText(params.contextId, "contextId");
+  validateOptionalEnumChoice(params.space, L3_SUB_SPACE_VALUES, "space");
+  validateOptionalEnumChoice(params.direction, L3_DIRECTION_VALUES, "direction");
+  validateLimit(params.limit, PRACTICE_LIMIT_MAX);
+  if (params.cursor !== undefined && params.cursor !== null) requireNonEmptyText(params.cursor, "cursor");
+  return params;
+}
+
+export function validateSessionCreateInput(input: L3SessionCreateInput): L3SessionCreateInput {
+  requireEnumChoice(input.type, L3_SESSION_TYPE_VALUES, "type");
+  validateOptionalCappedText(input.title, 500, "title");
+  validateOptionalCappedText(input.seed, 200, "seed");
+  validateOptionalEnumChoice(input.space, L3_SUB_SPACE_VALUES, "space");
+  validateOptionalEnumChoice(input.direction, L3_DIRECTION_VALUES, "direction");
+  validateOptionalBoundedInt(input.contextCount, SESSION_MAX_CONTEXTS, "contextCount");
+  validateOptionalBoundedInt(input.days, SESSION_MAX_DAYS, "days");
+  return input;
+}
+
+export function validateSessionEndInput(input: { status: "completed" | "abandoned" }): { status: "completed" | "abandoned" } {
+  if (input.status !== "completed" && input.status !== "abandoned") {
+    throw frontendValidationError("status", "status must be completed or abandoned.");
+  }
+  return input;
 }
 
 export function applyImportSuccess<T extends L3ImportProposalResponse>(data: T): L3CommandResult<T> {

@@ -161,6 +161,9 @@ describe("Phase 4B L3 frontend shell", () => {
       { id: "word", label: "词空间" },
       { id: "context", label: "语境条目" },
       { id: "graph", label: "关联图" },
+      { id: "practice", label: "练习" },
+      { id: "errorBook", label: "错题库" },
+      { id: "session", label: "会话" },
       { id: "import", label: "批量导入" },
       { id: "manual", label: "手动编辑" },
       { id: "proposals", label: "提议审查" },
@@ -175,6 +178,9 @@ describe("Phase 4B L3 frontend shell", () => {
       "context",
       "word",
       "source",
+      "practice",
+      "errorBook",
+      "session",
     ]);
   });
 
@@ -1540,6 +1546,27 @@ describe("Phase 4B L3 frontend shell", () => {
         clientMethods: ["getSourceSpace"],
         readOnly: true,
         clearsActiveReadStale: true,
+        marksActiveReadStale: false,
+      },
+      {
+        surface: "practice",
+        clientMethods: ["listOccurrences", "recordAttempt"],
+        readOnly: false,
+        clearsActiveReadStale: false,
+        marksActiveReadStale: false,
+      },
+      {
+        surface: "errorBook",
+        clientMethods: ["listErrorBook", "listAttempts"],
+        readOnly: true,
+        clearsActiveReadStale: false,
+        marksActiveReadStale: false,
+      },
+      {
+        surface: "session",
+        clientMethods: ["createSession", "getSession", "endSession"],
+        readOnly: false,
+        clearsActiveReadStale: false,
         marksActiveReadStale: false,
       },
     ]);

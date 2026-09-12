@@ -6,12 +6,15 @@ import { L3Bookshelf } from "@/frontend/components/l3/L3Bookshelf";
 import { L3ReadingView } from "@/frontend/components/l3/L3ReadingView";
 import { L3Shell, type L3ShellSection } from "@/frontend/components/L3Shell";
 import { L3ContextPage } from "@/frontend/pages/L3ContextPage";
+import { L3ErrorBookPage } from "@/frontend/pages/L3ErrorBookPage";
 import { L3GraphPage } from "@/frontend/pages/L3GraphPage";
 import { L3HomePage } from "@/frontend/pages/L3HomePage";
 import { L3ImportPage } from "@/frontend/pages/L3ImportPage";
 import { L3ManualEditorPage } from "@/frontend/pages/L3ManualEditorPage";
+import { L3PracticePage } from "@/frontend/pages/L3PracticePage";
 import { L3ProposalPage } from "@/frontend/pages/L3ProposalPage";
 import { L3RecommendationPage } from "@/frontend/pages/L3RecommendationPage";
+import { L3SessionPage } from "@/frontend/pages/L3SessionPage";
 import { L3WordSpacePage } from "@/frontend/pages/L3WordSpacePage";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
 import {
@@ -141,6 +144,10 @@ export function L3Page() {
     graph: <L3GraphPage client={l3Client} handoff={graphHandoff} staleState={activeReadStale} onGraphRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     context: <L3ContextPage client={l3Client} handoff={contextHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     word: <L3WordSpacePage client={l3Client} handoff={wordHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
+    // T11（ADR-0019）：练习 / 错题库 / 会话 —— 输出闭环的三个用户表面。
+    practice: <L3PracticePage client={l3Client} onNavigate={navigateL3} />,
+    errorBook: <L3ErrorBookPage client={l3Client} onNavigate={navigateL3} />,
+    session: <L3SessionPage client={l3Client} onNavigate={navigateL3} />,
     // source section：书架为前门；选中来源后整屏切换为阅读视图（返回书架清除
     // handoff 回到书架）。原工程检查面板（L3SourceSpacePage）已删除。
     source: sourceHandoff ? (

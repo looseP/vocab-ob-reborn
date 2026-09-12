@@ -21,7 +21,18 @@ import {
 import type { L3GraphStaleState } from "../state/l3CacheSignals";
 
 export interface L3RuntimeSurfaceSmokeRow {
-  surface: "manual" | "import" | "proposals" | "recommendations" | "graph" | "context" | "word" | "source";
+  surface:
+    | "manual"
+    | "import"
+    | "proposals"
+    | "recommendations"
+    | "graph"
+    | "context"
+    | "word"
+    | "source"
+    | "practice"
+    | "errorBook"
+    | "session";
   clientMethods: string[];
   readOnly: boolean;
   clearsActiveReadStale: boolean;
@@ -155,6 +166,30 @@ export function frontendRuntimeSmokeMatrix(): L3RuntimeSurfaceSmokeRow[] {
       clientMethods: ["getSourceSpace"],
       readOnly: true,
       clearsActiveReadStale: true,
+      marksActiveReadStale: false,
+    },
+    {
+      // T11（ADR-0019）：素材读（occurrences）→ 作答记录（attempts，零 FSRS）。
+      surface: "practice",
+      clientMethods: ["listOccurrences", "recordAttempt"],
+      readOnly: false,
+      clearsActiveReadStale: false,
+      marksActiveReadStale: false,
+    },
+    {
+      // 错题库：attempts(outcome=wrong) 的派生只读视图（附 attempts 回看窗口）。
+      surface: "errorBook",
+      clientMethods: ["listErrorBook", "listAttempts"],
+      readOnly: true,
+      clearsActiveReadStale: false,
+      marksActiveReadStale: false,
+    },
+    {
+      // 会话：创建 / 现拉现渲染 / 结束；渲染产物不落库。
+      surface: "session",
+      clientMethods: ["createSession", "getSession", "endSession"],
+      readOnly: false,
+      clearsActiveReadStale: false,
       marksActiveReadStale: false,
     },
   ];
