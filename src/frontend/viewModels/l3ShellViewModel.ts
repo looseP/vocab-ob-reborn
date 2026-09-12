@@ -30,5 +30,7 @@ export const L3_SHELL_SECTIONS: Array<{ id: L3ShellSection; label: string }> = [
 /**
  * 用户主流程入口（侧栏一级项）；其余 section 归入侧栏底部「工程工具」折叠组。
  * T11（ADR-0019）：练习 / 错题库 / 会话是输出闭环的用户表面，随读取面一并入主流程。
+ * B1（体验层）：「空间首页」= 素材宇宙，是 /l3 的默认落地与"开门第一眼"，
+ * 因此从工具组提为一级并置于首位（设计基线 §2 IA-1 / IA-2）。
  */
-export const L3_SHELL_CORE_SECTIONS: L3ShellSection[] = ["source", "graph", "practice", "errorBook", "session"];
+export const L3_SHELL_CORE_SECTIONS: L3ShellSection[] = ["home", "source", "graph", "practice", "errorBook", "session"];

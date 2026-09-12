@@ -18,7 +18,6 @@ import { L3SessionPage } from "@/frontend/pages/L3SessionPage";
 import { L3WordSpacePage } from "@/frontend/pages/L3WordSpacePage";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
 import {
-  PHASE_4C_CACHE_POLICY,
   markActiveReadStaleAfterManualCommand,
   markActiveReadStaleAfterProposalConfirm,
   type L3ActiveReadStaleState,
@@ -40,7 +39,9 @@ import type {
 export function L3Page() {
   const [searchParams] = useSearchParams();
   const deepLinkContextId = searchParams.get("contextId");
-  const [section, setSection] = useState<L3ShellSection>("source");
+  // B1（体验层）：默认落地 = 素材宇宙（设计基线 §2 IA-1）；深链（?sourceId=/
+  // ?wordSlug=/?contextId=）仍会在挂载后把视图切到对应 section。
+  const [section, setSection] = useState<L3ShellSection>("home");
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [graphHandoff, setGraphHandoff] = useState<L3GraphHandoff | null>(null);
   const [contextHandoff, setContextHandoff] = useState<L3ContextHandoff | null>(null);
@@ -128,7 +129,18 @@ export function L3Page() {
   };
 
   const page = {
-    home: <L3HomePage cachePolicy={PHASE_4C_CACHE_POLICY} />,
+    // B1 素材宇宙：默认落地（设计基线 IA-1）；从这里可直接打开某篇来源的阅读视图
+    // （带 contextId 时深链聚焦该圈记）。
+    home: (
+      <L3HomePage
+        onOpenSource={(sourceId, contextId) => {
+          setSourceHandoff({ sourceId, nonce: Date.now() });
+          setFocusContext(contextId ? { contextId, nonce: Date.now() } : null);
+          setSection("source");
+        }}
+        onNavigate={setSection}
+      />
+    ),
     manual: <L3ManualEditorPage client={l3Client} onManualChanged={(reason) => setActiveReadStale(markActiveReadStaleAfterManualCommand(reason))} onNavigate={navigateL3} />,
     import: <L3ImportPage client={l3Client} onOpenProposal={openProposal} onOpenProposalQueue={openProposalQueue} />,
     proposals: (

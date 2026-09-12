@@ -14,7 +14,8 @@ export interface L3SourceListItem {
   id: string; title: string; source_type: string; url: string | null; created_at: string; context_count: number;
 }
 
-const TYPE_LABELS: Record<string, string> = {
+/** 来源类型标签（单一真源）：书架行与素材宇宙的「最近导入」共用。 */
+export const TYPE_LABELS: Record<string, string> = {
   web: "公众号/网页", article: "文章/真题", manual: "手动/作文",
   book: "书", video: "视频", audio: "音频", chat: "对话", other: "其他",
 };
