@@ -594,14 +594,17 @@ export const l3PracticeAttemptListQuerySchema = z.object({
 });
 
 // 错题库查询（T11 加固）：space/direction 两轴语义不变；cursor 纯新增（复用
-// l3LimitCursorQuerySchema 的 cursor 范式），offset 至少保留一个契约窗口不删。
+// l3LimitCursorQuerySchema 的 cursor 范式）。
 // cursor 与 offset 同时给出时以 cursor 为准（offset 被忽略，响应 offset 恒 0）。
+// ⏳ DEPRECATED(offset)：保留至 **0.2.0 契约窗口**——到期必须删除 offset 参数
+//    （以及响应里的 offset 字段）。删除属 breaking change，必须走 api:breaking 审批窗口，
+//    不得静默退役、也不得无限期保留。检索锚点：grep "DEPRECATED(offset)"。
 export const l3PracticeErrorBookQuerySchema = z.object({
   space: z.enum(L3_SUB_SPACES).optional(),
   direction: directionSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   offset: z.coerce.number().int().min(0).optional()
-    .describe("Offset pagination window; ignored when cursor is present (cursor takes precedence)."),
+    .describe("DEPRECATED (remove in 0.2.0): offset pagination window; ignored when cursor is present (cursor takes precedence)."),
   cursor: z.string().min(1).optional()
     .describe("Keyset cursor over (created_at,id) from the previous page's nextCursor. Takes precedence over offset."),
 });
