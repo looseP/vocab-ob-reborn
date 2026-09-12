@@ -13,6 +13,11 @@
   --color-accent: #0f6f62;
   --color-accent-rgb: 15, 111, 98;
   --color-accent-subtle: rgba(200, 160, 80, 0.18);
+  /* accent 派生面（2026-09-12 补定义：此前只被使用、从未定义，导致全站
+     bg-[var(--color-accent-soft)] 静态解析为透明——L3 圈记高亮、深链闪高亮
+     等一律不可见。与 2026-09-08 补 --color-surface 同型缺陷。） */
+  --color-accent-soft: rgba(15, 111, 98, 0.14);
+  --color-accent-contrast: #fffdf8;
   --color-accent-2: #b2572f;
   --color-highlight: #f3dca2;
 
@@ -102,6 +107,9 @@
   --color-accent: #3ec9b4;
   --color-accent-rgb: 62, 201, 180;
   --color-accent-subtle: rgba(200, 160, 80, 0.12);
+  --color-accent-soft: rgba(62, 201, 180, 0.18);
+  /* 暗色下 accent 是亮青，其上的文字须为深色才有对比度 */
+  --color-accent-contrast: #10201c;
   --color-accent-2: #e09060;
   --color-highlight: rgba(243, 220, 162, 0.2);
 

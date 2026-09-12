@@ -242,6 +242,37 @@ describe("L3ReadingView", () => {
       const outsider = document.createTextNode("outside");
       expect(computeGlobalOffsets(host, outsider, 0, a, 2)).toBeNull();
     });
+
+    // P0-2（2026-09-12 走查）：句尾跳转标号自带文本节点，若计入累计长度，
+    // 每个前置标号都会让选区整体右移 +1（实测选 "enduring" 存成 "nduring"）。
+    it("does not count injected badge labels toward the offset", () => {
+      const host = document.createElement("div");
+      const a = document.createTextNode("Alpha beta. ");
+      const mark = document.createElement("mark");
+      mark.appendChild(document.createTextNode("Gamma delta epsilon."));
+      const badge = document.createElement("button");
+      badge.setAttribute("data-context-badge", "c1");
+      badge.appendChild(document.createTextNode("1"));
+      const b = document.createTextNode(" Enduring freedom.");
+      host.append(a, mark, badge, b);
+      // 12 + 20 = 32：标号 "1" 不占位，故 32+1=33 起算
+      expect(computeGlobalOffsets(host, b, 1, b, 9)).toEqual({ start: 33, end: 41 });
+    });
+
+    it("ignores injected badges nested one level below the badge element", () => {
+      const host = document.createElement("div");
+      const badge = document.createElement("button");
+      badge.setAttribute("data-context-badge", "c1");
+      const inner = document.createElement("span");
+      const label = document.createTextNode("12");
+      inner.appendChild(label);
+      badge.appendChild(inner);
+      const head = document.createTextNode("Alpha ");
+      const tail = document.createTextNode("beta");
+      host.append(head, badge, tail);
+      // "12" 两个字符也不占位：Alpha_ = 6，故 tail 起点为 6
+      expect(computeGlobalOffsets(host, tail, 0, tail, 4)).toEqual({ start: 6, end: 10 });
+    });
   });
 
   it("captures selection as sentence and reloads highlights", async () => {
