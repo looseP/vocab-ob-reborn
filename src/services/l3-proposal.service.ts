@@ -78,6 +78,16 @@ function isRecord(value: Json | unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/** pg 唯一约束冲突（23505）；幂等竞态回读的判定，与 l3-import.service 的同名工具一致。 */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    error != null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code: unknown }).code === "23505"
+  );
+}
+
 function stringField(payload: Record<string, unknown>, field: string): string | null {
   const value = payload[field];
   return typeof value === "string" && value.trim().length > 0 ? value : null;
@@ -179,17 +189,45 @@ export class L3ProposalService {
         );
       }
     }
+    // ADR-0029 §7①：幂等键命中即返回既有 bundle（复刻 l3-import 的查→建→竞态回读范式）。
+    if (input.inputHash) {
+      const existing = await this.findExistingProposalByInputHash(input.userId, input.inputHash);
+      if (existing) return existing;
+    }
+
+    try {
+      return await this.txRunner(async (tx) => {
+        const repos = this.repositoryFactory(tx);
+        if (input.wordbookId) {
+          const wordbook = await repos.l3Context.findWordbookByIdForUser(
+            input.userId,
+            input.wordbookId,
+          );
+          if (!wordbook) throw new NotFoundError("Wordbook", input.wordbookId);
+        }
+        return this.createProposalInTx(tx, input);
+      }, { actorId: input.userId });
+    } catch (error) {
+      // 竞态：并发请求已按同一 (user_id, input_hash) 插入（0031 partial unique index）。
+      if (input.inputHash && isUniqueViolation(error)) {
+        const existing = await this.findExistingProposalByInputHash(input.userId, input.inputHash);
+        if (existing) return existing;
+      }
+      throw error;
+    }
+  }
+
+  /** 按 (userId, inputHash) 回读既有 proposal bundle；无命中或 bundle 缺失时返回 null。 */
+  private async findExistingProposalByInputHash(
+    userId: string,
+    inputHash: string,
+  ): Promise<L3ProposalBundle | null> {
     return this.txRunner(async (tx) => {
       const repos = this.repositoryFactory(tx);
-      if (input.wordbookId) {
-        const wordbook = await repos.l3Context.findWordbookByIdForUser(
-          input.userId,
-          input.wordbookId,
-        );
-        if (!wordbook) throw new NotFoundError("Wordbook", input.wordbookId);
-      }
-      return this.createProposalInTx(tx, input);
-    }, { actorId: input.userId });
+      const proposal = await repos.l3Proposal.findProposalByInputHash(userId, inputHash);
+      if (!proposal) return null;
+      return repos.l3Proposal.getProposalBundle(userId, proposal.id);
+    }, { actorId: userId });
   }
 
   /**
@@ -199,6 +237,12 @@ export class L3ProposalService {
    */
   async createProposalInTx(tx: PoolClient, input: CreateL3ProposalInput): Promise<L3ProposalBundle> {
     const repos = this.repositoryFactory(tx);
+    // ADR-0029 §5：agentId 是服务端认定的信任锚。仅 agent 调用（agentId 非空）
+    // 注入 provenance，且覆盖客户端自述（原 provenance 展开在前、agentId 在后）；
+    // owner/import 等无锚调用不传 agentId，provenance 原样透传、不注入不动。
+    const provenance: Json = input.agentId
+      ? { ...(isRecord(input.provenance) ? input.provenance : {}), agentId: input.agentId } as Json
+      : input.provenance ?? {};
     const proposal = await repos.l3Proposal.createProposal({
       user_id: input.userId,
       wordbook_id: input.wordbookId ?? null,
@@ -207,7 +251,7 @@ export class L3ProposalService {
       summary: input.summary ?? null,
       input_hash: input.inputHash ?? null,
       proposed_by: input.proposedBy ?? null,
-      provenance: input.provenance ?? {},
+      provenance,
     });
 
     const items: L3ProposalItemRow[] = [];

@@ -738,7 +738,7 @@ export interface L3GraphReadModel {
   metadata?: Json;
 }
 
-export type L3ProposalSourceType = "agent" | "import" | "external_tool" | "manual_draft" | "mcp_future" | "other";
+export type L3ProposalSourceType = "agent" | "import" | "external_tool" | "manual_draft" | "other";
 export type L3ProposalStatus = "pending" | "confirmed" | "rejected" | "canceled";
 export type L3ProposalItemType = "source" | "context" | "occurrence" | "context_link";
 export type L3ProposalItemStatus = "pending" | "confirmed" | "rejected";
@@ -748,7 +748,13 @@ export interface L3ProposalRow {
   id: string;
   user_id: string;
   wordbook_id: string | null;
-  source_type: L3ProposalSourceType;
+  /**
+   * 契约桥接：写路径已收敛（L3_PROPOSAL_SOURCE_TYPES / 0031 CHECK 均无
+   * mcp_future），但 HTTP 响应契约冻结窗口未到（l3-response-contract /
+   * generated client 仍保留该字面量），读模型类型与之保持一致；service 层
+   * requireEnum 保证新写入不可能出现 mcp_future。
+   */
+  source_type: L3ProposalSourceType | "mcp_future";
   status: L3ProposalStatus;
   title: string | null;
   summary: string | null;

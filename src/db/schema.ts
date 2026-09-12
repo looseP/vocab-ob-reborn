@@ -1066,6 +1066,7 @@ export const l3Proposals = pgTable("l3_proposals", {
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 }, (table) => [
 	index("idx_l3_proposals_user_status_created").on(table.userId, table.status, table.createdAt),
+	uniqueIndex("idx_l3_proposals_user_input_hash").on(table.userId, table.inputHash).where(sql`input_hash IS NOT NULL`),
 	unique("l3_proposals_id_user_id_unique").on(table.id, table.userId),
 	foreignKey({
 			columns: [table.wordbookId, table.userId],
@@ -1073,7 +1074,7 @@ export const l3Proposals = pgTable("l3_proposals", {
 			name: "l3_proposals_wordbook_owner_fk"
 		}).onDelete("cascade"),
 	pgPolicy("l3_proposals_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
-	check("l3_proposals_source_type_check", sql`source_type = ANY (ARRAY['agent'::text, 'import'::text, 'external_tool'::text, 'manual_draft'::text, 'mcp_future'::text, 'other'::text])`),
+	check("l3_proposals_source_type_check", sql`source_type = ANY (ARRAY['agent'::text, 'import'::text, 'external_tool'::text, 'manual_draft'::text, 'other'::text])`),
 	check("l3_proposals_status_check", sql`status = ANY (ARRAY['pending'::text, 'confirmed'::text, 'rejected'::text, 'canceled'::text])`),
 ]);
 

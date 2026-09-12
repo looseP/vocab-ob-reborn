@@ -390,7 +390,7 @@ export const L3_CONTEXT_LINK_TYPES = [
 ] as const;
 export const L3_CONTEXT_LINK_TARGET_TYPES = ["word", "l2_item", "context", "source", "topic", "external"] as const;
 export const L3_IMPORT_JOB_STATUSES = ["pending", "processing", "completed", "failed"] as const;
-export const L3_PROPOSAL_SOURCE_TYPES = ["agent", "import", "external_tool", "manual_draft", "mcp_future", "other"] as const;
+export const L3_PROPOSAL_SOURCE_TYPES = ["agent", "import", "external_tool", "manual_draft", "other"] as const;
 export const L3_PROPOSAL_STATUSES = ["pending", "confirmed", "rejected", "canceled"] as const;
 export const L3_PROPOSAL_ITEM_TYPES = ["source", "context", "occurrence", "context_link"] as const;
 export const L3_PROPOSAL_ITEM_STATUSES = ["pending", "confirmed", "rejected"] as const;
@@ -598,6 +598,12 @@ export interface CreateL3ProposalInput {
   inputHash?: string | null;
   proposedBy?: string | null;
   provenance?: Json;
+  /**
+   * ADR-0029 §5：agent 调用的服务端信任锚（来自 Principal.agentId，仅 agent
+   * bearer 路径有值）。service 在插入时把非空 agentId 并入 provenance 并覆盖
+   * 客户端自述；owner/import 调用不传（不注入、不动原 provenance）。
+   */
+  agentId?: string | null;
   items: CreateL3ProposalItemInput[];
 }
 
@@ -646,6 +652,8 @@ export interface CreateL3RawTextImportProposalInput {
   targetWords?: L3ImportTargetWordInput[];
   options?: L3RawTextImportOptionsInput;
   provenance?: Json;
+  /** ADR-0029 §5：agent bearer 调用的服务端信任锚；无锚调用不传（见 CreateL3ProposalInput.agentId）。 */
+  agentId?: string | null;
 }
 
 export interface L3StructuredImportOccurrenceInput {
@@ -687,6 +695,8 @@ export interface CreateL3StructuredImportProposalInput {
   source: L3ImportSourceInput;
   contexts: L3StructuredImportContextInput[];
   provenance?: Json;
+  /** ADR-0029 §5：agent bearer 调用的服务端信任锚；无锚调用不传（见 CreateL3ProposalInput.agentId）。 */
+  agentId?: string | null;
 }
 
 export interface GenerateL3RecommendationsInput {
