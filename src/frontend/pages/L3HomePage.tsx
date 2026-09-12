@@ -16,9 +16,11 @@ import { useCallback, useEffect, useState } from "react";
 import type { L3OccurrenceListItem } from "@/domain";
 import { apiFetch } from "@/frontend/api/client";
 import { TYPE_LABELS, type L3SourceListItem } from "@/frontend/components/l3/L3Bookshelf";
+import { L3GrowthChart } from "@/frontend/components/l3/L3GrowthChart";
 import { Skeleton } from "@/frontend/components/ui/Skeleton";
 import type { L3ShellSection } from "@/frontend/viewModels/l3ShellViewModel";
 import {
+  buildGrowthSeries,
   buildRecentCaptureGroups,
   formatUniverseCount,
   formatUniverseWhen,
@@ -38,6 +40,11 @@ interface UniverseCounts {
   linkCount: number;
 }
 
+interface UniverseGrowth {
+  windowDays: number;
+  byDay: Array<{ day: string; occurrenceCount: number }>;
+}
+
 const COUNT_CARDS: Array<{ key: keyof UniverseCounts; label: string; hint: string }> = [
   { key: "sourceCount", label: "素材", hint: "导入的文章与笔记" },
   { key: "contextCount", label: "语境", hint: "圈记下来的句子与搭配" },
@@ -47,6 +54,7 @@ const COUNT_CARDS: Array<{ key: keyof UniverseCounts; label: string; hint: strin
 
 export function L3HomePage({ onOpenSource, onNavigate }: L3HomePageProps) {
   const [counts, setCounts] = useState<UniverseCounts | null>(null);
+  const [growth, setGrowth] = useState<UniverseGrowth | null>(null);
   const [sources, setSources] = useState<L3SourceListItem[] | null>(null);
   const [captures, setCaptures] = useState<L3OccurrenceListItem[] | null>(null);
   const [failures, setFailures] = useState<string[]>([]);
@@ -55,14 +63,16 @@ export function L3HomePage({ onOpenSource, onNavigate }: L3HomePageProps) {
   const load = useCallback(async () => {
     setFailures([]);
     const [summaryResult, sourcesResult, capturesResult] = await Promise.allSettled([
-      apiFetch<{ counts: UniverseCounts }>("/l3/space-summary", { timeoutMs: 15_000 }),
+      apiFetch<{ counts: UniverseCounts; growth: UniverseGrowth }>("/l3/space-summary", { timeoutMs: 15_000 }),
       apiFetch<{ items: L3SourceListItem[] }>("/l3/sources?sort=recent&limit=5", { timeoutMs: 15_000 }),
       apiFetch<{ items: L3OccurrenceListItem[] }>("/l3/occurrences?limit=20", { timeoutMs: 15_000 }),
     ]);
 
     const failed: string[] = [];
-    if (summaryResult.status === "fulfilled") setCounts(summaryResult.value.counts);
-    else failed.push("生长计数");
+    if (summaryResult.status === "fulfilled") {
+      setCounts(summaryResult.value.counts);
+      setGrowth(summaryResult.value.growth);
+    } else failed.push("生长计数");
     if (sourcesResult.status === "fulfilled") setSources(sourcesResult.value.items ?? []);
     else failed.push("最近导入");
     if (capturesResult.status === "fulfilled") setCaptures(capturesResult.value.items ?? []);
@@ -112,6 +122,15 @@ export function L3HomePage({ onOpenSource, onNavigate }: L3HomePageProps) {
           </div>
         ))}
       </div>
+
+      {/* ② 生长趋势（B2）：累计圈词曲线——"看到自己的知识网络在长大"。
+          空态不渲染（基线 §4：不显示尴尬的空坐标）。 */}
+      {counts && growth && !empty && (
+        <L3GrowthChart
+          series={buildGrowthSeries(growth.byDay, growth.windowDays, counts.occurrenceCount)}
+          label={`圈词累计 · 近 ${growth.windowDays} 天`}
+        />
+      )}
 
       {empty ? (
         /* 空态：积累型导向——不上筛选器、不显示"0 条"的空壳列表 */

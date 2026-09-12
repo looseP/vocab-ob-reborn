@@ -86,3 +86,57 @@ export function formatUniverseWhen(iso: string, now: Date = new Date()): string 
   if (months < 12) return `${months} 个月前`;
   return `${Math.floor(months / 12)} 年前`;
 }
+
+// ── B2 生长趋势（生长感可视化：累计曲线，形态定稿见基线 §6） ────────────────
+
+export interface GrowthSeriesPoint {
+  /** YYYY-MM-DD（展示端本地时区的自然日）。 */
+  day: string;
+  /** 当日新增（窗口内无新增的日子为 0）。 */
+  daily: number;
+  /** 截至当日的累计量（起点 = 窗口前存量）。 */
+  cumulative: number;
+}
+
+/** 本地时区的 YYYY-MM-DD 日键（与后端 Asia/Shanghai 切日在展示上对齐）。 */
+function localDayKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * 稀疏的每日新增（服务端 Asia/Shanghai 切日）→ 连续窗口的累计序列。
+ *
+ * - 起点 = currentTotal − 窗口内新增合计（clamp 0，容忍数据边界不一致）；
+ * - 末点累计 == currentTotal（口径自洽，图上最后一个点就是计数卡数字）。
+ */
+export function buildGrowthSeries(
+  byDay: ReadonlyArray<{ day: string; occurrenceCount: number }>,
+  windowDays: number,
+  currentTotal: number,
+  now: Date = new Date(),
+): GrowthSeriesPoint[] {
+  const days = Math.max(2, Math.trunc(windowDays));
+  const dailyByDay = new Map<string, number>();
+  let windowTotal = 0;
+  for (const entry of byDay) {
+    const daily = Number.isFinite(entry.occurrenceCount) ? Math.max(0, Math.trunc(entry.occurrenceCount)) : 0;
+    dailyByDay.set(entry.day, daily);
+    windowTotal += daily;
+  }
+  const baseTotal = Math.max(0, Math.trunc(currentTotal) - windowTotal);
+
+  const points: GrowthSeriesPoint[] = [];
+  let cumulative = baseTotal;
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - offset);
+    const day = localDayKey(date);
+    const daily = dailyByDay.get(day) ?? 0;
+    cumulative += daily;
+    points.push({ day, daily, cumulative });
+  }
+  return points;
+}

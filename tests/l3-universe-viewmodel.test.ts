@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type { L3ContextRow, L3OccurrenceListItem, L3OccurrenceRow, L3SourceRow } from "@/domain";
 import {
+  buildGrowthSeries,
   buildRecentCaptureGroups,
   formatUniverseCount,
   formatUniverseWhen,
@@ -105,5 +106,44 @@ describe("trimUniverseExcerpt", () => {
     const long = "a".repeat(200);
     expect(trimUniverseExcerpt(long)).toHaveLength(121);
     expect(trimUniverseExcerpt(long).endsWith("…")).toBe(true);
+  });
+});
+
+describe("buildGrowthSeries", () => {
+  const now = new Date("2026-09-12T12:00:00Z");
+
+  it("fills the sparse daily additions into a continuous cumulative series", () => {
+    const series = buildGrowthSeries(
+      [
+        { day: "2026-09-10", occurrenceCount: 3 },
+        { day: "2026-09-12", occurrenceCount: 2 },
+      ],
+      30,
+      10,
+      now,
+    );
+    expect(series).toHaveLength(30);
+    expect(series[0].day).toBe("2026-08-14");
+    expect(series[0].cumulative).toBe(5); // 10 − 5（窗口内合计）为起点
+    const byDay = new Map(series.map((point) => [point.day, point]));
+    expect(byDay.get("2026-09-10")?.daily).toBe(3);
+    expect(byDay.get("2026-09-10")?.cumulative).toBe(8);
+    expect(byDay.get("2026-09-11")?.daily).toBe(0);
+    const last = series[series.length - 1];
+    expect(last.day).toBe("2026-09-12");
+    expect(last.cumulative).toBe(10); // 末点口径 == 计数卡数字
+  });
+
+  it("clamps a negative baseline when the window additions exceed the current total", () => {
+    const series = buildGrowthSeries([{ day: "2026-09-12", occurrenceCount: 5 }], 7, 2, now);
+    expect(series[0].cumulative).toBe(0);
+    const last = series[series.length - 1];
+    expect(last.cumulative).toBe(5);
+  });
+
+  it("renders a flat line from zero when nothing has been captured yet", () => {
+    const series = buildGrowthSeries([], 7, 0, now);
+    expect(series).toHaveLength(7);
+    expect(series.every((point) => point.cumulative === 0 && point.daily === 0)).toBe(true);
   });
 });
