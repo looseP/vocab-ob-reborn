@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { IRepositories } from "@/repositories/interfaces";
+import type { IRepositories, UpgradeWorkOrderPendingRow } from "@/repositories/interfaces";
 import type { UpgradeWorkOrderRow, UserWordL2ProgressRow, UserWordProgressRow } from "@/domain";
 import type { OtherBookL2Signal } from "@/domain/upgrade-suggestion";
 import { BusinessRuleError, NotFoundError, ValidationError } from "@/errors";
@@ -68,6 +68,16 @@ function order(overrides: Partial<UpgradeWorkOrderRow> = {}): UpgradeWorkOrderRo
   };
 }
 
+/** 待升级清单行：工单行 + LEFT JOIN words 的词面。 */
+function pendingOrder(overrides: Partial<UpgradeWorkOrderPendingRow> = {}): UpgradeWorkOrderPendingRow {
+  return {
+    ...order(),
+    word_slug: "comprehend",
+    word_text: "comprehend",
+    ...overrides,
+  };
+}
+
 function seedRow(): UserWordL2ProgressRow {
   return {
     id: "old-l2",
@@ -86,7 +96,7 @@ function setup(options: { l1?: UserWordProgressRow | null } = {}) {
     updateSuggestion: vi.fn(async () => order()),
     findActiveByScope: vi.fn(async (): Promise<UpgradeWorkOrderRow | null> => null),
     findByIdForUser: vi.fn(async (): Promise<UpgradeWorkOrderRow | null> => order()),
-    listPending: vi.fn(async () => [order()]),
+    listPending: vi.fn(async () => [pendingOrder()]),
     updateStatus: vi.fn(async (_u: string, _id: string, status: string, opts?: { completed?: boolean }) =>
       order({ status: status as UpgradeWorkOrderRow["status"], completed_at: opts?.completed ? "2026-09-11T00:00:00.000Z" : null })),
   };
@@ -239,6 +249,57 @@ describe("UpgradeWorkOrderService.list", () => {
     await service.list(USER, WB, Number.NaN);
 
     expect(upgradeWorkOrders.listPending).toHaveBeenCalledWith(USER, WB, 50);
+  });
+
+  it("enriches pending orders with the word surface and snapshot level", async () => {
+    const { service, upgradeWorkOrders } = setup();
+    upgradeWorkOrders.listPending.mockResolvedValueOnce([
+      pendingOrder({ suggestion_snapshot: { level: "strong" } }),
+    ]);
+
+    const items = await service.list(USER, WB);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: "wo-1",
+      wordSlug: "comprehend",
+      wordText: "comprehend",
+      suggestion: "strong",
+    });
+    // 平面 word_slug/word_text 不外泄到 item（HTTP 层组装 word 嵌套）。
+    expect(items[0]).not.toHaveProperty("word_slug");
+    expect(items[0]).not.toHaveProperty("word_text");
+  });
+
+  it("passes a missing word surface through as null", async () => {
+    const { service, upgradeWorkOrders } = setup();
+    upgradeWorkOrders.listPending.mockResolvedValueOnce([
+      pendingOrder({ word_slug: null, word_text: null }),
+    ]);
+
+    const items = await service.list(USER, WB);
+
+    expect(items[0]).toMatchObject({ wordSlug: null, wordText: null });
+  });
+
+  it.each([
+    [{ level: "strong" }, "strong"],
+    [{ level: "normal" }, "normal"],
+    [{ level: "needs_settling" }, "needs_settling"],
+    [{ level: "bogus" }, "needs_settling"],
+    [{ level: 7 }, "needs_settling"],
+    [[], "needs_settling"],
+    ["not-a-snapshot", "needs_settling"],
+    [null, "needs_settling"],
+  ] as Array<[unknown, string]>)("maps snapshot %j to level %s", async (snapshot, expected) => {
+    const { service, upgradeWorkOrders } = setup();
+    upgradeWorkOrders.listPending.mockResolvedValueOnce([
+      pendingOrder({ suggestion_snapshot: snapshot as never }),
+    ]);
+
+    const items = await service.list(USER, WB);
+
+    expect(items[0]!.suggestion).toBe(expected);
   });
 });
 

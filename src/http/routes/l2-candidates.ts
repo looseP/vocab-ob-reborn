@@ -8,15 +8,10 @@
  */
 import { Hono } from "hono";
 import type { Services } from "@/services";
-import { uuidSchema } from "@/schemas/http";
+import { parseDirection, parseUuid } from "./l2-shared";
 import { mapToStorageField, safeParseL2Content } from "@/schemas/service";
 import { jsonError, validationError } from "../error-response";
 import type { AppEnv } from "./words";
-
-function parseUuid(value: string): string | null {
-  const parsed = uuidSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
-}
 
 export function l2CandidateRoutes(services: Services) {
   const app = new Hono<AppEnv>();
@@ -70,6 +65,9 @@ export function l2CandidateRoutes(services: Services) {
 
     const source = typeof body.source === "string" && body.source.length > 0 ? body.source : "external_chat";
     const sourceRef = typeof body.sourceRef === "string" ? body.sourceRef : null;
+    // ADR-0017 §2：候选行方向（升级工单生成时指定）；非法值 → 400。
+    const direction = body.direction === undefined ? undefined : parseDirection(body.direction);
+    if (direction === null) return jsonError(c, 400, "VALIDATION_ERROR", "Invalid direction");
 
     const { word } = await services.words.getWordBySlug(slug);
     try {
@@ -77,6 +75,7 @@ export function l2CandidateRoutes(services: Services) {
         source,
         sourceRef,
         actorId: userId,
+        ...(direction !== undefined ? { direction } : {}),
       });
       return c.json({ candidateId: result.candidateId, itemCount: result.itemCount });
     } catch (err) {

@@ -145,6 +145,7 @@ import {
   l2SelfAssessSchema,
   l2UndoSchema,
   noteEntryUpsertRequestSchema,
+  directionSchema,
   upgradeWorkOrderCreateSchema,
   upgradeWorkOrderListQuerySchema,
   l3PracticeAttemptCreateSchema,
@@ -271,6 +272,9 @@ const l2FieldRequestSchema = z.object({
   field: z.enum(["collocation", "example", "corpus", "synonym", "antonym"]),
   styleProfileId: z.string().optional(),
   userInstruction: z.string().optional(),
+  // ADR-0017 §2：方向变体（升级工作台从工单注入）。显式声明是为了
+  // openapi 可见——运行时路由层自行解析校验（l2.ts parseDraftOptions）。
+  direction: directionSchema.optional(),
 }).passthrough();
 const reviewQueueQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),

@@ -486,6 +486,118 @@ describe("WordL2Composer", () => {
     });
     expect(container.textContent).toContain("暂无 Agent 候选");
   });
+
+  // ── ADR-0017/0018: direction threading ─────────────────────────────────
+  it("sends the default direction 通用 with draft and confirm requests", async () => {
+    const draftResponse = {
+      draft: {
+        schemaVersion: "l2-content-v1",
+        field: "collocation",
+        items: [{ phrase: "abound in", gloss: "充满", tone: "neutral", example: "e1", exampleTranslation: "t1" }],
+      },
+      sourceMode: "dictionary_llm_refined",
+    };
+    apiFetchMock.mockResolvedValueOnce({ items: [] }); // 展开时拉取候选
+    apiFetchMock.mockResolvedValueOnce(draftResponse);
+    apiFetchMock.mockResolvedValueOnce({ ok: true });
+
+    const container = render(
+      createElement(WordL2Composer, { slug: "abound", onConfirmed: vi.fn() }),
+    );
+    await act(async () => {
+      fireEvent.click(container.querySelector("button") as HTMLButtonElement);
+    });
+
+    // 非锁定态：方向是可选下拉（通用/考研/雅思）。
+    const directionSelect = Array.from(container.querySelectorAll("select")).find(
+      (s) => Array.from(s.options).some((o) => o.value === "考研"),
+    );
+    expect(directionSelect).toBeDefined();
+
+    const genButton = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("AI 生成草稿"),
+    );
+    await act(async () => {
+      fireEvent.click(genButton as HTMLButtonElement);
+    });
+    const draftBody = JSON.parse(String(apiFetchMock.mock.calls[1][1]?.body ?? "{}")) as { direction?: string };
+    expect(draftBody.direction).toBe("通用");
+
+    const confirmButton = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("保存选中项"),
+    );
+    await act(async () => {
+      fireEvent.click(confirmButton as HTMLButtonElement);
+    });
+    const confirmBody = JSON.parse(String(apiFetchMock.mock.calls[2][1]?.body ?? "{}")) as { direction?: string };
+    expect(confirmBody.direction).toBe("通用");
+  });
+
+  it("locks the direction in workbench mode and sends it with the draft request", async () => {
+    const draftResponse = {
+      draft: {
+        schemaVersion: "l2-content-v1",
+        field: "collocation",
+        items: [{ phrase: "abound in", gloss: "充满", tone: "neutral", example: "e1", exampleTranslation: "t1" }],
+      },
+      sourceMode: "dictionary_llm_refined",
+    };
+    apiFetchMock.mockResolvedValueOnce({ items: [] });
+    apiFetchMock.mockResolvedValueOnce(draftResponse);
+
+    const container = render(
+      createElement(WordL2Composer, {
+        slug: "abound",
+        onConfirmed: vi.fn(),
+        direction: "考研",
+        directionLocked: true,
+      }),
+    );
+    await act(async () => {
+      fireEvent.click(container.querySelector("button") as HTMLButtonElement);
+    });
+
+    // 锁定态：方向是只读徽标，不存在方向下拉。
+    expect(container.textContent).toContain("考研");
+    const directionSelect = Array.from(container.querySelectorAll("select")).find(
+      (s) => Array.from(s.options).some((o) => o.value === "考研"),
+    );
+    expect(directionSelect).toBeUndefined();
+
+    const genButton = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("AI 生成草稿"),
+    );
+    await act(async () => {
+      fireEvent.click(genButton as HTMLButtonElement);
+    });
+    const draftBody = JSON.parse(String(apiFetchMock.mock.calls[1][1]?.body ?? "{}")) as { direction?: string };
+    expect(draftBody.direction).toBe("考研");
+  });
+
+  it("sends the locked direction with the external-prompt request", async () => {
+    apiFetchMock.mockResolvedValueOnce({ items: [] });
+    apiFetchMock.mockResolvedValueOnce({ prompt: "## system\n..." });
+
+    const container = render(
+      createElement(WordL2Composer, {
+        slug: "abound",
+        onConfirmed: vi.fn(),
+        direction: "雅思",
+        directionLocked: true,
+      }),
+    );
+    await act(async () => {
+      fireEvent.click(container.querySelector("button") as HTMLButtonElement);
+    });
+    const externalButton = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("外部生成"),
+    );
+    await act(async () => {
+      fireEvent.click(externalButton as HTMLButtonElement);
+    });
+    const externalBody = JSON.parse(String(apiFetchMock.mock.calls[1][1]?.body ?? "{}")) as { direction?: string };
+    expect(externalBody.direction).toBe("雅思");
+  });
 });
 
 describe("WordL2Manager（行级内容管理面板）", () => {

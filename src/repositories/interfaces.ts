@@ -857,6 +857,16 @@ export interface NewUpgradeWorkOrder {
   suggestion_snapshot?: Json | null;
 }
 
+/**
+ * 待升级清单行：工单行 + words 词面（LEFT JOIN）。
+ * `word_slug` / `word_text` 为 null 仅当词行缺失——FK cascade 下理论不可达，
+ * 类型上仍如实为 nullable（不假装 join 必然命中）。
+ */
+export interface UpgradeWorkOrderPendingRow extends UpgradeWorkOrderRow {
+  word_slug: string | null;
+  word_text: string | null;
+}
+
 export interface IUpgradeWorkOrderRepository {
   /** 插入工单。同 (user,word,wordbook) 已有进行中工单时由 23505 暴露给调用方。 */
   insert(data: NewUpgradeWorkOrder): Promise<UpgradeWorkOrderRow>;
@@ -874,8 +884,8 @@ export interface IUpgradeWorkOrderRepository {
     wordId: string,
   ): Promise<UpgradeWorkOrderRow | null>;
   findByIdForUser(userId: string, workOrderId: string): Promise<UpgradeWorkOrderRow | null>;
-  /** 待升级清单：进行中工单，按创建时间倒序。 */
-  listPending(userId: string, wordbookId: string, limit: number): Promise<UpgradeWorkOrderRow[]>;
+  /** 待升级清单：进行中工单（含词面，LEFT JOIN words），按创建时间倒序。 */
+  listPending(userId: string, wordbookId: string, limit: number): Promise<UpgradeWorkOrderPendingRow[]>;
   /**
    * 状态推进。`completed: true` 时写 completed_at=now()（其余状态保留原值）。
    * 返回更新行；不存在 / 非本人 → null。

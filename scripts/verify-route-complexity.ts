@@ -23,6 +23,15 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   { file: "src/http/routes/review.ts", maxLines: 259, maxRoutes: 14 },
   { file: "src/http/routes/l2-candidates.ts", maxLines: 226, maxRoutes: 10 },
   { file: "src/http/routes/words.ts", maxLines: 197, maxRoutes: 11 },
+  // 2026-09-12 T10：l2 路由族共享解析器（parseDraftOptions / parseDirection /
+  // parseUuid）拆出 l2.ts 与 l2-candidates.ts，保持两个路由文件不超过基线；
+  // 本文件纯解析、零路由注册。
+  // 上限 = 冻结时的**实际总行数**，取数口径必须与 measureRouteComplexity 相同：
+  // 含空行（split(/\r?\n/) 去尾换行）→ 62。非空行数是 58，曾因用编辑器口径设成 58，
+  // 在 base 早于本文件新增时（bootstrap 分支）判为 62 > 58 而红。
+  // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支，
+  // 才能真正验到这个上限。
+  { file: "src/http/routes/l2-shared.ts", maxLines: 62, maxRoutes: 0 },
 ];
 
 export function measureRouteComplexity(source: string) {

@@ -2,7 +2,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "@/http/server";
 import { BusinessRuleError, NotFoundError } from "@/errors";
 import type { Services } from "@/services";
-import { upgradeWorkOrderRowResponseSchema } from "@/http/upgrade-work-order-response-contract";
+import {
+  upgradeWorkOrderListItemResponseSchema,
+  upgradeWorkOrderRowResponseSchema,
+} from "@/http/upgrade-work-order-response-contract";
 
 const ORIGINAL_OWNER_TOKEN = process.env.OWNER_API_TOKEN;
 const ORIGINAL_LOCAL_OWNER = process.env.LOCAL_OWNER_ID;
@@ -36,6 +39,14 @@ const ORDER_ROW = {
   completed_at: null,
 };
 
+/** 清单 service item（行 + 词面 + 档位）；HTTP 响应再组装为 word 嵌套。 */
+const ORDER_LIST_ITEM = {
+  ...ORDER_ROW,
+  wordSlug: "comprehend" as string | null,
+  wordText: "comprehend" as string | null,
+  suggestion: "normal",
+};
+
 const SNAPSHOT = {
   level: "normal",
   currentBookL1: { recentRatings: ["good"], state: "review" },
@@ -58,7 +69,7 @@ async function expectServiceError(response: Response, status: number, code: stri
 function makeMockServices() {
   const upgradeWorkOrders = {
     mark: vi.fn(async () => ({ workOrder: ORDER_ROW, suggestion: "normal", suggestionSnapshot: SNAPSHOT })),
-    list: vi.fn(async () => [ORDER_ROW]),
+    list: vi.fn(async () => [ORDER_LIST_ITEM]),
     start: vi.fn(async () => ({ ...ORDER_ROW, status: "升级中" })),
     cancel: vi.fn(async () => ({ ...ORDER_ROW, status: "已取消" })),
     complete: vi.fn(async () => ({
@@ -128,8 +139,32 @@ describe("upgrade work order HTTP routes", () => {
     });
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ items: [ORDER_ROW] });
+    const body = await res.json();
+    // 清单 item：行字段 + word 嵌套 + suggestion（契约见 response-contract）。
+    expect(body).toEqual({
+      items: [upgradeWorkOrderListItemResponseSchema.parse({
+        ...ORDER_ROW,
+        word: { slug: "comprehend", text: "comprehend" },
+        suggestion: "normal",
+      })],
+    });
     expect(upgradeWorkOrders.list).toHaveBeenCalledWith("user-123", WORDBOOK_ID, 5);
+  });
+
+  it("GET / passes a missing word join through as null surfaces", async () => {
+    const { services, upgradeWorkOrders } = makeMockServices();
+    upgradeWorkOrders.list.mockResolvedValueOnce([
+      { ...ORDER_LIST_ITEM, wordSlug: null, wordText: null },
+    ]);
+    const app = createApp(services);
+
+    const res = await app.request(`/api/upgrade-work-orders?wordbookId=${WORDBOOK_ID}`, {
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { items: Array<{ word: unknown }> };
+    expect(body.items[0]!.word).toEqual({ slug: null, text: null });
   });
 
   it("GET / requires wordbookId instead of falling back to the default wordbook", async () => {

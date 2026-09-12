@@ -10,7 +10,7 @@
  */
 
 import type { Direction, Json, UpgradeWorkOrderRow } from "../domain";
-import type { IUpgradeWorkOrderRepository, NewUpgradeWorkOrder } from "./interfaces";
+import type { IUpgradeWorkOrderRepository, NewUpgradeWorkOrder, UpgradeWorkOrderPendingRow } from "./interfaces";
 import { BaseRepository } from "./base";
 
 const ACTIVE_STATUSES = ["标记中", "升级中"] as const;
@@ -77,13 +77,15 @@ export class UpgradeWorkOrderRepository extends BaseRepository implements IUpgra
     );
   }
 
-  async listPending(userId: string, wordbookId: string, limit: number): Promise<UpgradeWorkOrderRow[]> {
-    return this.query<UpgradeWorkOrderRow>(
-      `SELECT * FROM upgrade_work_orders
-        WHERE user_id = $1::uuid
-          AND wordbook_id = $2::uuid
-          AND status = ANY($3::text[])
-        ORDER BY created_at DESC, id
+  async listPending(userId: string, wordbookId: string, limit: number): Promise<UpgradeWorkOrderPendingRow[]> {
+    return this.query<UpgradeWorkOrderPendingRow>(
+      `SELECT o.*, w.slug AS word_slug, w.title AS word_text
+         FROM upgrade_work_orders o
+         LEFT JOIN words w ON w.id = o.word_id
+        WHERE o.user_id = $1::uuid
+          AND o.wordbook_id = $2::uuid
+          AND o.status = ANY($3::text[])
+        ORDER BY o.created_at DESC, o.id
         LIMIT $4`,
       [userId, wordbookId, [...ACTIVE_STATUSES], limit],
     );

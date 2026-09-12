@@ -13,6 +13,8 @@ interface ExamplePromptConfig {
   domains: string[];
   difficulty: string;
   count: number;
+  /** ADR-0017/0018 方向指令行（已渲染）；缺省空串 = 与方向化前逐字节一致。 */
+  directionRule?: string;
 }
 
 /**
@@ -70,6 +72,7 @@ export function buildExamplePrompt(
   const styleHeader = profile
     ? `\n当前风格配置（styleProfile="${profile.id}"）：\n${styleBlock}`
     : "";
+  const directionRule = config.directionRule ?? "";
 
   const translationInstruction = includeTranslation
     ? "- 每句配中文翻译"
@@ -87,7 +90,7 @@ export function buildExamplePrompt(
 要求：
 - 领域偏好：见 user 消息
 - 难度：${difficulty}
-${translationInstruction}
+${directionRule}${translationInstruction}
 - 优先使用真实语境（不要教科书式无聊例句，要有信息密度）
 - 严格只输出 JSON 数组：
 [{"text":"英文例句","translation":"中文翻译","source":"generated"${usageNoteField}}]${styleHeader}`,

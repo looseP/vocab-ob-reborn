@@ -11,6 +11,7 @@ import type {
   MarkUpgradeResult,
   UpgradeSuggestionSnapshot,
 } from "../services/upgrade-work-order.service";
+import type { UpgradeSuggestionLevel } from "../domain/upgrade-suggestion";
 import { jsonValueSchema } from "./l3-response-contract";
 
 export const upgradeSuggestionSnapshotResponseSchema: z.ZodType<UpgradeSuggestionSnapshot> = z.object({
@@ -27,7 +28,7 @@ export const upgradeSuggestionSnapshotResponseSchema: z.ZodType<UpgradeSuggestio
   capturedAt: z.string(),
 }).strict();
 
-export const upgradeWorkOrderRowResponseSchema: z.ZodType<UpgradeWorkOrderRow> = z.object({
+const upgradeWorkOrderRowObjectSchema = z.object({
   id: z.string(),
   user_id: z.string(),
   word_id: z.string(),
@@ -40,6 +41,30 @@ export const upgradeWorkOrderRowResponseSchema: z.ZodType<UpgradeWorkOrderRow> =
   completed_at: z.string().nullable(),
 }).strict();
 
+export const upgradeWorkOrderRowResponseSchema: z.ZodType<UpgradeWorkOrderRow> =
+  upgradeWorkOrderRowObjectSchema;
+
+/**
+ * 待升级清单 item 的 HTTP 形状（ADR-0018 §1）：行字段 + `word` 词面 +
+ * `suggestion` 档位。**只扩 list 响应**——mark/start/cancel/complete 继续
+ * 返回纯行（行契约不动，避免下游 fixture 连锁改动）。
+ * `word.slug / word.text` 如实为 nullable（LEFT JOIN words；FK cascade 下
+ * 理论不可达，但不假装必然命中）。
+ */
+export interface UpgradeWorkOrderListItemResponse extends UpgradeWorkOrderRow {
+  word: { slug: string | null; text: string | null };
+  suggestion: UpgradeSuggestionLevel;
+}
+
+export const upgradeWorkOrderListItemResponseSchema: z.ZodType<UpgradeWorkOrderListItemResponse> =
+  upgradeWorkOrderRowObjectSchema.extend({
+    word: z.object({
+      slug: z.string().nullable(),
+      text: z.string().nullable(),
+    }).strict(),
+    suggestion: z.enum(["strong", "normal", "needs_settling"]),
+  }).strict();
+
 export const upgradeWorkOrderMarkResponseSchema: z.ZodType<MarkUpgradeResult> = z.object({
   workOrder: upgradeWorkOrderRowResponseSchema,
   suggestion: z.enum(["strong", "normal", "needs_settling"]),
@@ -47,7 +72,7 @@ export const upgradeWorkOrderMarkResponseSchema: z.ZodType<MarkUpgradeResult> = 
 }).strict();
 
 export const upgradeWorkOrderListResponseSchema = z.object({
-  items: z.array(upgradeWorkOrderRowResponseSchema),
+  items: z.array(upgradeWorkOrderListItemResponseSchema),
 }).strict();
 
 export const upgradeWorkOrderCompleteResponseSchema: z.ZodType<CompleteUpgradeResult> = z.object({

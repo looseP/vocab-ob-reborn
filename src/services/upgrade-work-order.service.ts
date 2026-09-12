@@ -85,6 +85,18 @@ export interface CompleteUpgradeResult {
   seeded: boolean;
 }
 
+/**
+ * 待升级清单 item：工单行 + 词面（LEFT JOIN words）+ 档位。
+ * 档位从 suggestion_snapshot.level 读出；快照缺失/损坏时保守回退
+ * `needs_settling`（宁可"先沉淀"也不误导升级）。HTTP 层再把词面组装为
+ * `word: { slug, text }`（契约见 upgrade-work-order-response-contract.ts）。
+ */
+export interface UpgradeWorkOrderListItem extends UpgradeWorkOrderRow {
+  wordSlug: string | null;
+  wordText: string | null;
+  suggestion: UpgradeSuggestionLevel;
+}
+
 function requireNonEmpty(value: string, field: string): void {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new ValidationError(`${field} cannot be empty`, field);
@@ -106,6 +118,20 @@ function isUniqueViolation(error: unknown): boolean {
     "code" in error &&
     (error as { code: unknown }).code === "23505"
   );
+}
+
+/** 三档建议枚举（与契约层 z.enum 同值）。 */
+const SUGGESTION_LEVELS: readonly UpgradeSuggestionLevel[] = ["strong", "normal", "needs_settling"];
+
+/** 从 suggestion_snapshot（jsonb）读档位；缺失/损坏 → 保守档。 */
+function readSuggestionLevel(snapshot: Json | null): UpgradeSuggestionLevel {
+  if (snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)) {
+    const level = (snapshot as { level?: unknown }).level;
+    if (typeof level === "string" && (SUGGESTION_LEVELS as readonly string[]).includes(level)) {
+      return level as UpgradeSuggestionLevel;
+    }
+  }
+  return "needs_settling";
 }
 
 function toL1Snapshot(row: UserWordProgressRow): L1ProgressSnapshot {
@@ -216,22 +242,31 @@ export class UpgradeWorkOrderService {
     }, { actorId: userId });
   }
 
-  /** 待升级清单：该词书进行中工单（标记中 + 升级中），创建时间倒序。 */
+  /** 待升级清单：该词书进行中工单（标记中 + 升级中）+ 词面 + 档位，创建时间倒序。 */
   async list(
     userId: string,
     wordbookId: string,
     limit: number = UPGRADE_WORK_ORDER_DEFAULT_LIMIT,
-  ): Promise<UpgradeWorkOrderRow[]> {
+  ): Promise<UpgradeWorkOrderListItem[]> {
     requireNonEmpty(userId, "userId");
     requireNonEmpty(wordbookId, "wordbookId");
     const bounded = Number.isFinite(limit) && limit > 0
       ? Math.min(Math.floor(limit), UPGRADE_WORK_ORDER_MAX_LIMIT)
       : UPGRADE_WORK_ORDER_DEFAULT_LIMIT;
-    return this.txRunner(
+    const rows = await this.txRunner(
       async (tx) =>
         this.repositoryFactory(tx).upgradeWorkOrders.listPending(userId, wordbookId, bounded),
       { actorId: userId },
     );
+    return rows.map((row) => {
+      const { word_slug, word_text, ...workOrder } = row;
+      return {
+        ...workOrder,
+        wordSlug: word_slug,
+        wordText: word_text,
+        suggestion: readSuggestionLevel(row.suggestion_snapshot),
+      };
+    });
   }
 
   /** 开始升级：标记中 → 升级中（幂等；已完成/已取消拒绝）。 */

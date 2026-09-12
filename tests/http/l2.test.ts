@@ -312,6 +312,47 @@ describe("POST /api/l2/:slug/draft", () => {
     );
   });
 
+  // ── ADR-0017 §2: direction in the draft body ──────────────────────────
+  it("passes a valid direction from the body to generateDraft options", async () => {
+    const l2content = {
+      generateDraft: vi.fn(async () => ({ draft: [{ text: "x" }], raw: "[]" })),
+      confirmDraft: vi.fn(),
+    };
+    const services = makeMockServices(l2content);
+    const app = createApp(services);
+
+    const res = await app.request("/api/l2/abandon/draft", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ field: "example", direction: "考研" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(l2content.generateDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ lemma: "abandon" }),
+      "corpus",
+      expect.objectContaining({ direction: "考研" }),
+    );
+  });
+
+  it("returns 400 for an invalid direction without calling the service", async () => {
+    const l2content = {
+      generateDraft: vi.fn(async () => ({ draft: [], raw: "[]" })),
+      confirmDraft: vi.fn(),
+    };
+    const services = makeMockServices(l2content);
+    const app = createApp(services);
+
+    const res = await app.request("/api/l2/abandon/draft", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ field: "example", direction: "法语" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(l2content.generateDraft).not.toHaveBeenCalled();
+  });
+
   it("maps a mismatched styleProfileId to 400 (collocation profile for example)", async () => {
     // The service throws ValidationError on scope mismatch; the route catches
     // it and returns 400. Here the mock simulates that throw so the route's
@@ -657,6 +698,42 @@ describe("POST /api/l2/:slug/external-prompt", () => {
     );
   });
 
+  // ── ADR-0017 §2: direction in the external-prompt body ────────────────
+  it("passes a valid direction through and rejects an invalid one with 400", async () => {
+    const l2content = {
+      generateDraft: vi.fn(),
+      confirmDraft: vi.fn(),
+      buildExternalPrompt: vi.fn(async () => ({
+        storageField: "corpus",
+        styleProfileId: "default",
+        promptVersion: "l2-example-external-v1",
+        promptHash: "0".repeat(64),
+        prompt: "## system\n...",
+      })),
+    };
+    const services = makeMockServices(l2content);
+    const app = createApp(services);
+
+    const ok = await app.request("/api/l2/abandon/external-prompt", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ field: "example", direction: "雅思" }),
+    });
+    expect(ok.status).toBe(200);
+    expect(l2content.buildExternalPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ lemma: "abandon" }),
+      "corpus",
+      expect.objectContaining({ direction: "雅思" }),
+    );
+
+    const bad = await app.request("/api/l2/abandon/external-prompt", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ field: "example", direction: "法语" }),
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it("works without an LLM provider configured (real service, empty deps)", async () => {
     // A real L2ContentService constructed with no llmProvider/usageTracker must
     // still build an external prompt — proving the endpoint doesn't need the
@@ -971,6 +1048,49 @@ describe("POST /api/l2/:slug/confirm — body compatibility (B6)", () => {
         sourceRef: "chatgpt://conv/abc-123",
       }),
     );
+  });
+
+  // ── ADR-0017 §2: direction reaches the confirm handoff ────────────────
+  it("forwards a valid direction to the service confirmDraft options", async () => {
+    const l2content = {
+      generateDraft: vi.fn(),
+      confirmDraft: vi.fn(async () => {}),
+    };
+    const services = makeMockServices(l2content);
+    const app = createApp(services);
+
+    const content = VALID_CONTENT.collocation;
+    const res = await app.request("/api/l2/abandon/confirm", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ field: "collocation", content, direction: "考研" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(l2content.confirmDraft).toHaveBeenCalledWith(
+      "word-1",
+      "collocation",
+      content,
+      expect.objectContaining({ direction: "考研" }),
+    );
+  });
+
+  it("rejects an invalid confirm direction with 400 (no service call)", async () => {
+    const l2content = {
+      generateDraft: vi.fn(),
+      confirmDraft: vi.fn(async () => {}),
+    };
+    const services = makeMockServices(l2content);
+    const app = createApp(services);
+
+    const res = await app.request("/api/l2/abandon/confirm", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ field: "collocation", content: VALID_CONTENT.collocation, direction: "法语" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(l2content.confirmDraft).not.toHaveBeenCalled();
   });
 
   it("field=example confirms with storage field corpus", async () => {

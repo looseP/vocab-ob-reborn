@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   upgradeWorkOrderCompleteResponseSchema,
+  upgradeWorkOrderListItemResponseSchema,
   upgradeWorkOrderListResponseSchema,
   upgradeWorkOrderMarkResponseSchema,
   upgradeWorkOrderRowResponseSchema,
@@ -56,11 +57,25 @@ describe("upgrade work order response contracts", () => {
     expect(() => upgradeWorkOrderMarkResponseSchema.parse(missingSnapshot)).toThrow();
   });
 
-  it("parses the exact list envelope", () => {
-    const response = { items: [workOrder()] };
+  it("parses the exact list envelope with word surface and suggestion", () => {
+    const item = {
+      ...workOrder(),
+      word: { slug: "comprehend", text: "comprehend" },
+      suggestion: "normal" as const,
+    };
+    const response = { items: [item] };
     expect(upgradeWorkOrderListResponseSchema.parse(response)).toEqual(response);
+    expect(upgradeWorkOrderListItemResponseSchema.parse(item)).toEqual(item);
     expect(() => upgradeWorkOrderListResponseSchema.parse({ ...response, total: 1 })).toThrow();
     expect(() => upgradeWorkOrderListResponseSchema.parse({ rows: response.items })).toThrow();
+    // 词面如实为 nullable（LEFT JOIN 语义），且是必填键而非可选。
+    const nullWord = { ...item, word: { slug: null, text: null } };
+    expect(upgradeWorkOrderListItemResponseSchema.parse(nullWord)).toEqual(nullWord);
+    expect(() => upgradeWorkOrderListItemResponseSchema.parse({ ...item, suggestion: "bogus" })).toThrow();
+    expect(() => upgradeWorkOrderListItemResponseSchema.parse({ ...item, word: undefined })).toThrow();
+    // 行契约不受 list 扩展影响（mark/start/cancel/complete 仍返回纯行）。
+    expect(upgradeWorkOrderRowResponseSchema.parse(workOrder())).toEqual(workOrder());
+    expect(() => upgradeWorkOrderRowResponseSchema.parse({ ...workOrder(), word: item.word })).toThrow();
   });
 
   it("parses the exact complete response", () => {

@@ -9124,6 +9124,8 @@ export interface operations {
                     field: "collocation" | "example" | "corpus" | "synonym" | "antonym";
                     styleProfileId?: string;
                     userInstruction?: string;
+                    /** @enum {string} */
+                    direction?: "通用" | "考研" | "雅思";
                     content?: unknown;
                     items?: unknown[];
                     document?: unknown;
@@ -10810,6 +10812,8 @@ export interface operations {
                     field: "collocation" | "example" | "corpus" | "synonym" | "antonym";
                     styleProfileId?: string;
                     userInstruction?: string;
+                    /** @enum {string} */
+                    direction?: "通用" | "考研" | "雅思";
                 } & {
                     [key: string]: unknown;
                 };
@@ -11002,6 +11006,8 @@ export interface operations {
                     field: "collocation" | "example" | "corpus" | "synonym" | "antonym";
                     styleProfileId?: string;
                     userInstruction?: string;
+                    /** @enum {string} */
+                    direction?: "通用" | "考研" | "雅思";
                 } & {
                     [key: string]: unknown;
                 };
@@ -11200,6 +11206,8 @@ export interface operations {
                     field: "collocation" | "example" | "corpus" | "synonym" | "antonym";
                     styleProfileId?: string;
                     userInstruction?: string;
+                    /** @enum {string} */
+                    direction?: "通用" | "考研" | "雅思";
                     content?: unknown;
                     items?: unknown[];
                     document?: unknown;
@@ -18607,6 +18615,12 @@ export interface operations {
                             created_at: string;
                             updated_at: string;
                             completed_at: string | null;
+                            word: {
+                                slug: string | null;
+                                text: string | null;
+                            };
+                            /** @enum {string} */
+                            suggestion: "strong" | "normal" | "needs_settling";
                         }[];
                     };
                 };

@@ -145,7 +145,7 @@ describe("UpgradeWorkOrderRepository", () => {
     await expect(repo.findByIdForUser("u-1", "missing")).resolves.toBeNull();
   });
 
-  it("listPending returns active rows with a bounded limit", async () => {
+  it("listPending returns active rows with the joined word surface and a bounded limit", async () => {
     const repo = new UpgradeWorkOrderRepository();
     const spy = vi.spyOn(repo as any, "query").mockResolvedValue([workOrder(), workOrder({ id: "wo-2" })]);
 
@@ -153,9 +153,13 @@ describe("UpgradeWorkOrderRepository", () => {
 
     expect(rows).toHaveLength(2);
     const [sql, params] = spy.mock.calls[0];
-    expect(sql).toContain("FROM upgrade_work_orders");
+    expect(sql).toContain("FROM upgrade_work_orders o");
+    // LEFT JOIN words 取词面（slug/title）——工单行本身不含词面。
+    expect(sql).toContain("LEFT JOIN words w ON w.id = o.word_id");
+    expect(sql).toContain("w.slug AS word_slug");
+    expect(sql).toContain("w.title AS word_text");
     expect(sql).toContain("status = ANY($3::text[])");
-    expect(sql).toContain("ORDER BY created_at DESC, id");
+    expect(sql).toContain("ORDER BY o.created_at DESC, o.id");
     expect(sql).toContain("LIMIT $4");
     expect(params).toEqual(["u-1", "wb-1", ["标记中", "升级中"], 25]);
   });

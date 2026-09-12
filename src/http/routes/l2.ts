@@ -21,44 +21,13 @@ import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AppEnv } from "./words";
 import { isValidL2Content, mapToStorageField } from "@/schemas/service";
+import { parseDraftOptions, parseDirection } from "./l2-shared";
 import {
   assertJsonResourceBudget,
   JSON_MAX_DEPTH,
   L2_CONTENT_MAX_BYTES,
-  L2_DRAFT_MAX_COUNT,
-  L2_OPTION_STRING_MAX_LENGTH,
-  L2_USER_INSTRUCTION_MAX_LENGTH,
 } from "@/schemas/resource-budget";
 import { jsonError } from "../error-response";
-
-function parseDraftOptions(body: Record<string, unknown>, includeSource: boolean): Record<string, unknown> | null {
-  const options: Record<string, unknown> = includeSource
-    ? { source: body.source ?? "manual" }
-    : {};
-
-  if (body.source !== undefined && (typeof body.source !== "string" || body.source.length > L2_OPTION_STRING_MAX_LENGTH)) {
-    return null;
-  }
-  if (body.styleProfileId !== undefined) {
-    if (typeof body.styleProfileId !== "string" || body.styleProfileId.length === 0 || body.styleProfileId.length > L2_OPTION_STRING_MAX_LENGTH) {
-      return null;
-    }
-    options.styleProfileId = body.styleProfileId;
-  }
-  if (body.count !== undefined) {
-    if (!Number.isInteger(body.count) || (body.count as number) < 1 || (body.count as number) > L2_DRAFT_MAX_COUNT) {
-      return null;
-    }
-    options.count = body.count;
-  }
-  if (body.userInstruction !== undefined) {
-    if (typeof body.userInstruction !== "string" || body.userInstruction.length > L2_USER_INSTRUCTION_MAX_LENGTH) {
-      return null;
-    }
-    options.userInstruction = body.userInstruction;
-  }
-  return options;
-}
 
 export function l2Routes(services: Services) {
   const app = new Hono<AppEnv>();
@@ -254,6 +223,12 @@ export function l2Routes(services: Services) {
       confirmOptions.sourceRef = body.sourceRef;
     } else if (body.sourceRef === null) {
       confirmOptions.sourceRef = null;
+    }
+    // ADR-0017 §2：确认写入的方向（升级工单注入）；非法值 → 400（不静默降级）。
+    if (body.direction !== undefined) {
+      const direction = parseDirection(body.direction);
+      if (direction === null) return jsonError(c, 400, "VALIDATION_ERROR", "Invalid direction");
+      confirmOptions.direction = direction;
     }
 
     const { word } = await services.words.getWordBySlug(slug);

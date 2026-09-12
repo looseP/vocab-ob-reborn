@@ -14,7 +14,7 @@
     "test:unit": "vitest run --coverage && npm run coverage:layered && npm run test:collection",
     "test:collection": "tsx scripts/verify-test-collection.ts",
     "coverage:layered": "tsx scripts/report-layered-coverage.ts",
-    "complexity:routes": "cross-env ROUTE_COMPLEXITY_BASE_REF=HEAD~1 tsx scripts/verify-route-complexity.ts",
+    "complexity:routes": "tsx scripts/verify-route-complexity.ts",
     "test:watch": "vitest",
     "api:openapi": "tsx scripts/generate-openapi.ts",
     "api:client:generate": "tsx scripts/generate-openapi-client.ts",

@@ -11,6 +11,7 @@ import { ReviewProgressBar } from "@/frontend/components/review/ReviewProgressBa
 import { CompletionCelebration } from "@/frontend/components/review/CompletionCelebration";
 import { ReviewHistoryDrawer, type ReviewHistoryEntry } from "@/frontend/components/review/ReviewHistoryDrawer";
 import { useReview } from "@/frontend/hooks/useReview";
+import { useUpgradeHints } from "@/frontend/hooks/useUpgradeHints";
 
 const reviewModes = [
   { key: "review", icon: Repeat, title: "标准复习", desc: "按 FSRS 间隔重复算法安排的到期卡片", variant: "primary" as const },
@@ -89,6 +90,11 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
   const apiMode = isFreeSelection ? "preview" : reviewMode === "zen" ? "review" : reviewMode;
   const isZen = reviewMode === "zen";
   const isPreview = reviewMode === "preview" || isFreeSelection;
+
+  // ADR-0018 首学徽标：会话初始化时【一次】批量取当前词书的进行中工单，
+  // 建 wordId→档位映射；卡片只读映射（作答链路零新增网络请求）。
+  // preview / 自由复习不写数据，也不取升级提示。
+  const { hints: upgradeHints, mark: markUpgrade } = useUpgradeHints({ enabled: !isPreview });
 
   // 历史记录抽屉：快捷键 H 切换。
   // 注意：preview / 自由复习 / 选词浏览 会话不产生评分日志，但仍然允许查看历史（入口 UX 一致）；
@@ -214,6 +220,8 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
             onClearWeakSignal={clearWeakSignal}
             reviewContext={{ mode: apiMode, wordIds }}
             reviewProgress={{ reviewed: stats.reviewed, total: queue.length }}
+            upgradeHint={!isPreview ? (upgradeHints[currentCard?.word.id ?? ""] ?? null) : null}
+            onMarkUpgrade={!isPreview ? markUpgrade : undefined}
           />
           {loadingMore && (
             <p className="text-center text-xs text-[var(--color-ink-soft)]">

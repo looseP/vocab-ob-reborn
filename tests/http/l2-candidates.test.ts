@@ -108,6 +108,43 @@ describe("POST /api/l2/:slug/candidates (propose)", () => {
     expect(content.items[0]).toEqual(item);
   });
 
+  // ── ADR-0017 §2: direction from the upgrade work order ────────────────
+  it("passes a valid direction through to the candidate pool", async () => {
+    const l2content = {
+      proposeCandidates: vi.fn(async () => ({ candidateId: "cand-1", itemCount: 1 })),
+    };
+    const app = createApp(makeMockServices(l2content));
+
+    const res = await app.request("/api/l2/abandon/candidates", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ field: "example", items: [VALID_CORPUS_ITEM], direction: "雅思" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(l2content.proposeCandidates).toHaveBeenCalledWith(
+      "word-1",
+      "corpus",
+      expect.anything(),
+      { source: "external_chat", sourceRef: null, actorId: "user-123", direction: "雅思" },
+    );
+  });
+
+  it("rejects an invalid direction with 400 before any service call", async () => {
+    const l2content = { proposeCandidates: vi.fn() };
+    const app = createApp(makeMockServices(l2content));
+
+    const res = await app.request("/api/l2/abandon/candidates", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ field: "example", items: [VALID_CORPUS_ITEM], direction: "法语" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as Record<string, unknown>).code).toBe("VALIDATION_ERROR");
+    expect(l2content.proposeCandidates).not.toHaveBeenCalled();
+  });
+
   it("returns 400 with the first zod issue when a collocation lacks evidence.rawPhrase", async () => {
     const l2content = { proposeCandidates: vi.fn() };
     const app = createApp(makeMockServices(l2content));

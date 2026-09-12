@@ -16670,6 +16670,14 @@
                   "userInstruction": {
                     "type": "string"
                   },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "通用",
+                      "考研",
+                      "雅思"
+                    ]
+                  },
                   "content": {},
                   "items": {
                     "type": "array",
@@ -20242,6 +20250,14 @@
                   },
                   "userInstruction": {
                     "type": "string"
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "通用",
+                      "考研",
+                      "雅思"
+                    ]
                   }
                 },
                 "required": [
@@ -20637,6 +20653,14 @@
                   },
                   "userInstruction": {
                     "type": "string"
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "通用",
+                      "考研",
+                      "雅思"
+                    ]
                   }
                 },
                 "required": [
@@ -21065,6 +21089,14 @@
                   },
                   "userInstruction": {
                     "type": "string"
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "通用",
+                      "考研",
+                      "雅思"
+                    ]
                   },
                   "content": {},
                   "items": {
@@ -42097,6 +42129,44 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "word": {
+                            "type": "object",
+                            "properties": {
+                              "slug": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "text": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "slug",
+                              "text"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "suggestion": {
+                            "type": "string",
+                            "enum": [
+                              "strong",
+                              "normal",
+                              "needs_settling"
+                            ]
                           }
                         },
                         "required": [
@@ -42109,7 +42179,9 @@
                           "suggestion_snapshot",
                           "created_at",
                           "updated_at",
-                          "completed_at"
+                          "completed_at",
+                          "word",
+                          "suggestion"
                         ],
                         "additionalProperties": false
                       }

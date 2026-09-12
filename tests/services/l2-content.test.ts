@@ -2206,3 +2206,90 @@ describe("L2ContentService — Phase G candidate pool", () => {
     });
   });
 });
+
+describe("L2ContentService — direction threading (ADR-0017/0018)", () => {
+  beforeEach(() => {
+    Object.keys(mockRepos).forEach((k) => delete (mockRepos as Record<string, unknown>)[k]);
+  });
+
+  function setupConfirmRepos() {
+    const l2ContentRepo = {
+      insert: vi.fn(async () => ({ id: "l2-1" })),
+      refreshL2Cache: vi.fn(async () => {}),
+    };
+    const l2ProgressRepo = { finalizeL2ContentHash: vi.fn(async () => 1) };
+    const wordsRepo = { findById: vi.fn(async () => ({ id: "word-1" })) };
+    mockRepos.l2Content = l2ContentRepo as never;
+    mockRepos.l2Progress = l2ProgressRepo as never;
+    mockRepos.words = wordsRepo as never;
+    return { l2ContentRepo };
+  }
+
+  it("generateDraft threads the direction into the field prompt (考研)", async () => {
+    const provider = makeProvider({
+      generate: vi.fn(async () => makeLlmResult({ content: JSON.stringify(VALID_CORPUS) })),
+    });
+    const service = new L2ContentService({ llmProvider: provider, usageTracker: makeUsageTracker() as never });
+
+    const result = await service.generateDraft(WORD, "corpus", { direction: "考研" });
+
+    expect(result.error).toBeUndefined();
+    const messages = vi.mocked(provider.generate).mock.calls[0]![0];
+    const system = messages.find((m) => m.role === "system")!;
+    expect(system.content).toContain("内容方向：考研");
+  });
+
+  it("keeps the prompt byte-identical when direction is absent or 通用", async () => {
+    const capturePrompt = async (direction?: "通用") => {
+      const provider = makeProvider({
+        generate: vi.fn(async () => makeLlmResult({ content: JSON.stringify(VALID_CORPUS) })),
+      });
+      const service = new L2ContentService({ llmProvider: provider, usageTracker: makeUsageTracker() as never });
+      await service.generateDraft(WORD, "corpus", direction ? { direction } : undefined);
+      return vi.mocked(provider.generate).mock.calls[0]![0]
+        .map((m) => `${m.role}:${m.content}`)
+        .join("\n\n");
+    };
+
+    const absent = await capturePrompt();
+    const generic = await capturePrompt("通用");
+
+    expect(absent).toBe(generic);
+    expect(absent).not.toContain("内容方向");
+  });
+
+  it("rejects an unknown direction before any LLM call", async () => {
+    const provider = makeProvider();
+    const service = new L2ContentService({ llmProvider: provider, usageTracker: makeUsageTracker() as never });
+
+    await expect(
+      service.generateDraft(WORD, "corpus", { direction: "法语" as never }),
+    ).rejects.toThrow(ValidationError);
+    expect(provider.generate).not.toHaveBeenCalled();
+  });
+
+  it("buildExternalPrompt threads the direction and keeps the legacy default text", async () => {
+    const service = new L2ContentService({});
+
+    const withDirection = await service.buildExternalPrompt(WORD, "corpus", { direction: "雅思" });
+    const withoutDirection = await service.buildExternalPrompt(WORD, "corpus");
+
+    expect(withDirection.prompt).toContain("内容方向：雅思");
+    expect(withoutDirection.prompt).not.toContain("内容方向");
+    expect(withDirection.promptHash).not.toBe(withoutDirection.promptHash);
+  });
+
+  it("confirmDraft writes the requested direction to the inserted row", async () => {
+    const { l2ContentRepo } = setupConfirmRepos();
+    const service = new L2ContentService({});
+
+    await service.confirmDraft("word-1", "collocation", VALID_COLLOCATION, {
+      source: "manual",
+      direction: "考研",
+    });
+
+    expect(l2ContentRepo.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ word_id: "word-1", direction: "考研" }),
+    );
+  });
+});

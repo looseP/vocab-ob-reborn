@@ -38,6 +38,8 @@ export function upgradeWorkOrdersRoutes(services: Services) {
   });
 
   // GET / — 待升级清单（wordbookId 必填，limit 可选）。
+  // 响应 item = 行字段 + `word`（词面）+ `suggestion`（档位）；
+  // 契约见 upgrade-work-order-response-contract.ts（只扩 list，不动行契约）。
   app.get("/", async (c) => {
     const parsed = upgradeWorkOrderListQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
@@ -48,7 +50,12 @@ export function upgradeWorkOrdersRoutes(services: Services) {
       parsed.data.wordbookId,
       parsed.data.limit,
     );
-    return c.json({ items });
+    return c.json({
+      items: items.map((item) => {
+        const { wordSlug, wordText, suggestion, ...workOrder } = item;
+        return { ...workOrder, word: { slug: wordSlug, text: wordText }, suggestion };
+      }),
+    });
   });
 
   // POST /:id/start — 标记中 → 升级中（幂等）。

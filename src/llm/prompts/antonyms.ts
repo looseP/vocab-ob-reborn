@@ -10,6 +10,8 @@ interface WordContext {
 
 interface AntonymPromptConfig {
   count: number;
+  /** ADR-0017/0018 方向指令行（已渲染）；缺省空串 = 与方向化前逐字节一致。 */
+  directionRule?: string;
 }
 
 /**
@@ -30,12 +32,13 @@ export function buildAntonymPrompt(
   word: WordContext,
   config: AntonymPromptConfig,
 ): LlmMessage[] {
+  const directionRule = config.directionRule ?? "";
   return [
     {
       role: "system",
       content: `你是一个英语词汇教学专家。为给定单词生成 ${config.count} 个最值得辨析的反义词/对立词。
 要求：
-- 反义词必须与原词构成真正的语义对立（不是任意无关词），优先选学习者易混淆的高频词
+${directionRule}- 反义词必须与原词构成真正的语义对立（不是任意无关词），优先选学习者易混淆的高频词
 - 每条提供五维辨析：
   · semanticDiff：该反义词与原词的语义对立点（一句话）
   · tone：语感 formal|neutral|informal
