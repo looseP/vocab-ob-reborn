@@ -33339,6 +33339,410 @@
         }
       }
     },
+    "/api/l3/capabilities": {
+      "get": {
+        "operationId": "getL3Capabilities",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-auth-policy": "owner",
+        "x-csrf-policy": "none",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "owner",
+                        "agent"
+                      ]
+                    },
+                    "access": {
+                      "type": "object",
+                      "properties": {
+                        "read": {
+                          "type": "string",
+                          "const": "all"
+                        },
+                        "write": {
+                          "type": "string",
+                          "const": "proposal_only"
+                        },
+                        "upgrade": {
+                          "type": "string",
+                          "const": "owner_only"
+                        }
+                      },
+                      "required": [
+                        "read",
+                        "write",
+                        "upgrade"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "limits": {
+                      "type": "object",
+                      "properties": {
+                        "apiJsonBodyMaxBytes": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "jsonRecordMaxBytes": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "jsonMaxDepth": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "proposalMaxItems": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "proposalPayloadMaxBytes": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "proposalTotalPayloadMaxBytes": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "apiJsonBodyMaxBytes",
+                        "jsonRecordMaxBytes",
+                        "jsonMaxDepth",
+                        "proposalMaxItems",
+                        "proposalPayloadMaxBytes",
+                        "proposalTotalPayloadMaxBytes"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "errorCodes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "NOT_FOUND",
+                          "VALIDATION_ERROR",
+                          "CONFLICT",
+                          "UNAUTHORIZED",
+                          "FORBIDDEN",
+                          "BUSINESS_RULE",
+                          "DB_UNAVAILABLE",
+                          "INTERNAL",
+                          "FOREIGN_KEY_VIOLATION",
+                          "NOT_NULL_VIOLATION",
+                          "CHECK_VIOLATION",
+                          "INVALID_INPUT"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "role",
+                    "access",
+                    "limits",
+                    "errorCodes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer authentication challenge.",
+                "x-required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Business rule rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "requestId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code",
+                    "message",
+                    "requestId"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/l3/imports/raw-text": {
       "post": {
         "operationId": "createL3RawTextImport",
@@ -44571,6 +44975,16 @@
         "parameters": [
           {
             "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "description": "Keyset cursor over (created_at,id) from the previous page's nextCursor. Takes precedence over offset.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "in": "query",
             "name": "direction",
             "required": false,
             "schema": {
@@ -44597,6 +45011,7 @@
             "name": "offset",
             "required": false,
             "schema": {
+              "description": "Offset pagination window; ignored when cursor is present (cursor takes precedence).",
               "type": "integer",
               "minimum": 0,
               "maximum": 9007199254740991
@@ -44681,6 +45096,22 @@
                           },
                           "created_at": {
                             "type": "string"
+                          },
+                          "wrongCount": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "latestOutcome": {
+                            "type": "string",
+                            "enum": [
+                              "correct",
+                              "wrong",
+                              "skip"
+                            ]
+                          },
+                          "latestAt": {
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -44692,7 +45123,10 @@
                           "practice_type",
                           "outcome",
                           "payload",
-                          "created_at"
+                          "created_at",
+                          "wrongCount",
+                          "latestOutcome",
+                          "latestAt"
                         ],
                         "additionalProperties": false
                       }
@@ -44711,13 +45145,24 @@
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   },
                   "required": [
                     "items",
                     "total",
                     "limit",
-                    "offset"
+                    "offset",
+                    "nextCursor"
                   ],
                   "additionalProperties": false
                 }

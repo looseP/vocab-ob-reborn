@@ -1,10 +1,10 @@
 /**
  * L3 错题库（ADR-0019 §1/§3）：attempts(outcome=wrong) 的派生视图 + 两轴筛选。
  *
- * - 列表：GET error-book（space/direction 双筛选；服务端为 offset 分页
- *   items/total/limit/offset，UI 以「加载更多」增量拉取）；
+ * - 列表：GET error-book（space/direction 双筛选；cursor 分页——首屏不带 cursor
+ *   （服务端 offset 兼容口径亦返回 nextCursor），「加载更多」以 nextCursor 续页）；
  * - 行：原句 + 目标词（来自作答时的 payload 快照）+ 最近作答结果 + 错误次数
- *   （服务端无聚合端点：最近结果与计数来自同筛选下 attempts 的回看窗口）；
+ *   （聚合字段全部由服务端给出：跨分页窗口正确，不再回看 ≤100 条 attempts 窗口）；
  * - 只读面：不发任何写请求，也不消费 FSRS 概念。
  */
 import { useCallback, useEffect, useState } from "react";
@@ -22,7 +22,6 @@ import {
 import { navigationAction, type L3NavigationIntent } from "../viewModels/l3NavigationViewModel";
 import {
   buildErrorBookRows,
-  L3_ATTEMPT_INDEX_LIMIT,
   outcomeLabel,
   type ErrorBookDisplayRow,
 } from "../viewModels/l3PracticeViewModel";
@@ -56,21 +55,20 @@ export function L3ErrorBookPage({ client, onNavigate }: L3ErrorBookPageProps) {
   const [rows, setRows] = useState<ErrorBookDisplayRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loadedCount, setLoadedCount] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<NormalizedL3Error | null>(null);
 
-  const load = useCallback(async (offset: number) => {
+  const load = useCallback(async (cursor: string | null) => {
     setLoading(true);
     setError(null);
     try {
-      const [errorBook, attemptIndex] = await Promise.all([
-        client.listErrorBook({ space, direction, limit: PAGE_SIZE, offset }),
-        client.listAttempts({ space, direction, limit: L3_ATTEMPT_INDEX_LIMIT }),
-      ]);
-      const nextRows = buildErrorBookRows(errorBook.items, attemptIndex.items);
-      setTotal(errorBook.total);
-      setLoadedCount(offset + errorBook.items.length);
-      setRows((prev) => (offset === 0 ? nextRows : mergeRows(prev, nextRows)));
+      const page = await client.listErrorBook({ space, direction, limit: PAGE_SIZE, cursor });
+      const nextRows = buildErrorBookRows(page.items);
+      setTotal(page.total);
+      setNextCursor(page.nextCursor);
+      setLoadedCount((prev) => (cursor === null ? page.items.length : prev + page.items.length));
+      setRows((prev) => (cursor === null ? nextRows : mergeRows(prev, nextRows)));
     } catch (caught) {
       setError(normalizeUnknownError(caught));
     } finally {
@@ -79,7 +77,7 @@ export function L3ErrorBookPage({ client, onNavigate }: L3ErrorBookPageProps) {
   }, [client, space, direction]);
 
   useEffect(() => {
-    void load(0);
+    void load(null);
   }, [load]);
 
   return (
@@ -87,7 +85,7 @@ export function L3ErrorBookPage({ client, onNavigate }: L3ErrorBookPageProps) {
       <p className="eyebrow">L3 Error Book</p>
       <h2>错题库：练错的语境在这里回看</h2>
       <p className="lede">
-        错题库是练习记录中「答错」的派生视图（非独立存储）。可按子空间 / 方向筛选；每行给出原句、目标词、最近作答与错误次数。
+        错题库是练习记录中「答错」的派生视图（非独立存储）。可按子空间 / 方向筛选；每行给出原句、目标词、最近作答与错误次数（服务端全量聚合，跨分页窗口）。
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -137,7 +135,6 @@ export function L3ErrorBookPage({ client, onNavigate }: L3ErrorBookPageProps) {
               <p className="text-[13px] leading-relaxed">{row.text || "（该记录未含原句快照）"}</p>
               <p className="text-[11px] text-[var(--color-ink-soft)]">
                 目标词：{row.target || "—"} · 错误 {row.wrongCount} 次
-                {row.fallbackOnly ? "（按本页可见记录计数）" : ""}
               </p>
               <p className="text-[11px] text-[var(--color-ink-soft)]">
                 最近作答：{outcomeLabel(row.latestOutcome)}
@@ -152,10 +149,10 @@ export function L3ErrorBookPage({ client, onNavigate }: L3ErrorBookPageProps) {
         </ul>
       )}
 
-      {!loading && loadedCount < total && (
+      {!loading && nextCursor !== null && (
         <button
           className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-ink-soft)]"
-          onClick={() => void load(loadedCount)}
+          onClick={() => void load(nextCursor)}
           type="button"
         >
           加载更多

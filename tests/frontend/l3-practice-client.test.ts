@@ -92,6 +92,18 @@ describe("L3 client: practice methods", () => {
     );
   });
 
+  it("lists the error book with a cursor for the next page", async () => {
+    const { transport, fetchImpl } = makeTransport();
+    const client = createL3FrontendClient(transport);
+
+    await client.listErrorBook({ limit: 20, cursor: "cursor-2" });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/l3-practice/error-book?limit=20&cursor=cursor-2",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("lists occurrences with cursor pagination", async () => {
     const { transport, fetchImpl } = makeTransport();
     const client = createL3FrontendClient(transport);
@@ -183,6 +195,7 @@ describe("L3 client: validators", () => {
     expect(fieldNames(() => validateErrorBookParams({ space: "nope" as never }))).toEqual(["space"]);
     expect(fieldNames(() => validateErrorBookParams({ limit: 0 }))).toEqual(["limit"]);
     expect(fieldNames(() => validateErrorBookParams({ offset: 1.5 }))).toEqual(["offset"]);
+    expect(fieldNames(() => validateErrorBookParams({ cursor: " " }))).toEqual(["cursor"]);
   });
 
   it("bounds occurrence list params", () => {

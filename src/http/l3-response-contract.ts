@@ -28,6 +28,7 @@ import type {
   WordRow,
 } from "../domain";
 import type { L3ImportProposalResult, L3ImportParseStats } from "../services/l3-import.service";
+import { ERROR_CODES, type ErrorCode } from "../errors/codes";
 
 export const jsonValueSchema: z.ZodType<Json> = z.json();
 
@@ -450,3 +451,29 @@ export const l3ProposalConfirmResponseSchema: z.ZodType<L3ProposalConfirmResult>
     activeEntityId: z.string(),
   }).strict()),
 }).strict();
+
+// ── Capability discovery（ADR-0029 §8② / T13c）────────────────────────────
+// 预算数字来自 resource-budget.ts、error code 词表来自 errors/codes.ts 的单一
+// 真源；本文件不复制字面值（「禁止第二套真源」由 l3-capabilities 的等值断言钉住）。
+
+const ERROR_CODE_VALUES = Object.values(ERROR_CODES) as [ErrorCode, ...ErrorCode[]];
+
+export const l3CapabilitiesResponseSchema = z.object({
+  role: z.enum(["owner", "agent"]),
+  access: z.object({
+    read: z.literal("all"),
+    write: z.literal("proposal_only"),
+    upgrade: z.literal("owner_only"),
+  }).strict(),
+  limits: z.object({
+    apiJsonBodyMaxBytes: z.number().int().positive(),
+    jsonRecordMaxBytes: z.number().int().positive(),
+    jsonMaxDepth: z.number().int().positive(),
+    proposalMaxItems: z.number().int().positive(),
+    proposalPayloadMaxBytes: z.number().int().positive(),
+    proposalTotalPayloadMaxBytes: z.number().int().positive(),
+  }).strict(),
+  errorCodes: z.array(z.enum(ERROR_CODE_VALUES)),
+}).strict();
+
+export type L3Capabilities = z.infer<typeof l3CapabilitiesResponseSchema>;

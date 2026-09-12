@@ -13,6 +13,7 @@ import type {
   L3PaginatedList,
   L3PracticeAttemptPage,
   L3PracticeAttemptRow,
+  L3PracticeErrorBookPage,
   L3PracticeOutcome,
   L3PracticeType,
   L3ProposalBundle,
@@ -267,7 +268,10 @@ export interface L3ErrorBookParams {
   space?: L3SubSpace | null;
   direction?: Direction | null;
   limit?: number | null;
+  /** offset 兼容窗口参数；给出 cursor 时被忽略（cursor 优先）。 */
   offset?: number | null;
+  /** cursor 分页：传上一页 nextCursor 续页；与 offset 同时给出时以 cursor 为准。 */
+  cursor?: string | null;
 }
 
 export interface L3OccurrenceListParams {
@@ -396,7 +400,7 @@ export interface L3FrontendClient {
   listOccurrences(params?: L3OccurrenceListParams): Promise<L3PaginatedList<L3OccurrenceListItem>>;
   recordAttempt(input: L3PracticeAttemptCreateInput): Promise<L3PracticeAttemptRow>;
   listAttempts(params?: L3PracticeAttemptListParams): Promise<L3PracticeAttemptPage>;
-  listErrorBook(params?: L3ErrorBookParams): Promise<L3PracticeAttemptPage>;
+  listErrorBook(params?: L3ErrorBookParams): Promise<L3PracticeErrorBookPage>;
   createSession(input: L3SessionCreateInput): Promise<L3SessionRow>;
   getSession(id: string): Promise<L3SessionRenderDescription>;
   endSession(id: string, status: Extract<L3SessionStatus, "completed" | "abandoned">): Promise<L3SessionRow>;
@@ -893,6 +897,7 @@ export function validateErrorBookParams(params: L3ErrorBookParams = {}): L3Error
   validateOptionalEnumChoice(params.direction, L3_DIRECTION_VALUES, "direction");
   validateLimit(params.limit, PRACTICE_LIMIT_MAX);
   validateOffset(params.offset);
+  if (params.cursor !== undefined && params.cursor !== null) requireNonEmptyText(params.cursor, "cursor");
   return params;
 }
 

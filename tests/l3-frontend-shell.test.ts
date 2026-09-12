@@ -1557,7 +1557,7 @@ describe("Phase 4B L3 frontend shell", () => {
       },
       {
         surface: "errorBook",
-        clientMethods: ["listErrorBook", "listAttempts"],
+        clientMethods: ["listErrorBook"],
         readOnly: true,
         clearsActiveReadStale: false,
         marksActiveReadStale: false,

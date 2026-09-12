@@ -10,7 +10,8 @@ vi.mock("@/db/connection", () => ({
 }));
 
 import { createRepositories, withTransaction } from "@/index";
-import { BusinessRuleError } from "@/errors";
+import { decodeCursor, encodeCursor } from "@/repositories/l3-cursor";
+import { BusinessRuleError, ValidationError } from "@/errors";
 
 const ATTEMPT_ROW = {
   id: "att-1",
@@ -22,6 +23,14 @@ const ATTEMPT_ROW = {
   outcome: "wrong",
   payload: { taskId: "essay_dictation:aaaaaaaaaaaaaaaa" },
   created_at: "2026-09-11T00:00:00Z",
+};
+
+/** 错题库 SQL 行：attempt 行 + 语境级聚合列（snake_case 透出，仓库映射为 camelCase）。 */
+const WRONG_ROW_ENRICHED = {
+  ...ATTEMPT_ROW,
+  wrong_count: 2,
+  latest_outcome: "correct",
+  latest_at: "2026-09-12T03:00:00Z",
 };
 
 beforeEach(() => mock.reset());
@@ -198,24 +207,150 @@ describe("L3PracticeRepository", () => {
     expect(page).toEqual({ items: [], total: 0, limit: 20, offset: 0 });
   });
 
-  it("derives the error book by forcing outcome='wrong' (no second source of truth)", async () => {
+  it("derives the error book by forcing outcome='wrong' with server-side context aggregation", async () => {
     mock.setRowMap({
-      "SELECT a.*": [ATTEMPT_ROW],
+      "SELECT a.*, agg.wrong_count": [WRONG_ROW_ENRICHED],
       "SELECT count(*)": [{ total: "1" }],
     });
     const repos = createRepositories();
 
-    await repos.l3Practice.listWrongAttempts({
+    const page = await repos.l3Practice.listWrongAttempts({
       userId: "u1",
       outcome: "correct",
       limit: 10,
       offset: 0,
     });
 
+    // 入参 outcome='correct' 被忽略（错题口径唯一）；聚合字段由服务端给出。
+    expect(page.items[0]).toEqual({
+      ...ATTEMPT_ROW,
+      wrongCount: 2,
+      latestOutcome: "correct",
+      latestAt: "2026-09-12T03:00:00Z",
+    });
+    expect(page.nextCursor).toBeNull();
     const listCall = mock.calls.find((call) => call.text.includes("SELECT a.*"));
     expect(listCall?.text).toContain("AND a.outcome = $2");
     expect(listCall?.params[1]).toBe("wrong");
+    expect(listCall?.text).toContain("JOIN LATERAL");
+    expect(listCall?.text).toContain("count(*) FILTER (WHERE w.outcome = 'wrong')");
+    expect(listCall?.text).toContain("array_agg(w.outcome ORDER BY w.created_at DESC, w.id DESC)");
+    expect(listCall?.text).toContain("array_agg(w.created_at ORDER BY w.created_at DESC, w.id DESC)");
+    expect(listCall?.text).toContain("w.user_id = a.user_id AND w.context_id = a.context_id");
     expect(mock.calls.map((call) => call.text).join("\n")).not.toContain("INSERT");
+  });
+
+  it("aggregates wrongCount over the whole context history, beyond any page window", async () => {
+    // 语境历史 130 条 wrong（远超任何回看窗口）：条目 wrongCount/total 必须为 130。
+    mock.setRowMap({
+      "SELECT a.*, agg.wrong_count": [{ ...WRONG_ROW_ENRICHED, wrong_count: 130 }],
+      "SELECT count(*)": [{ total: "130" }],
+    });
+    const repos = createRepositories();
+
+    const page = await repos.l3Practice.listWrongAttempts({ userId: "u1", limit: 20, offset: 0 });
+
+    expect(page.items[0].wrongCount).toBe(130);
+    expect(page.total).toBe(130);
+    const fetchCall = mock.calls.find((call) => call.text.includes("SELECT a.*, agg.wrong_count"));
+    expect(fetchCall?.text).toContain("LIMIT $3");
+    const countCall = mock.calls.find((call) => call.text.includes("SELECT count(*) AS total"));
+    expect(countCall?.text).not.toContain("LIMIT");
+    expect(countCall?.text).not.toContain("OFFSET");
+  });
+
+  it("keeps the offset compatibility path and probes one extra row for nextCursor", async () => {
+    const pageRows = [
+      { ...WRONG_ROW_ENRICHED, id: "00000000-0000-4000-8000-000000000003" },
+      { ...WRONG_ROW_ENRICHED, id: "00000000-0000-4000-8000-000000000002" },
+      WRONG_ROW_ENRICHED,
+    ];
+    mock.setRowMap({
+      "SELECT a.*, agg.wrong_count": pageRows,
+      "SELECT count(*)": [{ total: "3" }],
+    });
+    const repos = createRepositories();
+
+    const page = await repos.l3Practice.listWrongAttempts({ userId: "u1", limit: 2, offset: 0 });
+
+    expect(page.items).toHaveLength(2);
+    expect(page.offset).toBe(0);
+    expect(page.total).toBe(3);
+    expect(decodeCursor(page.nextCursor)).toEqual({ createdAt: pageRows[1].created_at, id: "00000000-0000-4000-8000-000000000002" });
+    const listCall = mock.calls.find((call) => call.text.includes("SELECT a.*, agg.wrong_count"));
+    expect(listCall?.text).toContain("LIMIT $3 OFFSET $4");
+    expect(listCall?.params).toEqual(["u1", "wrong", 3, 0]);
+  });
+
+  it("pages with the cursor keyset (offset ignored) and reports the end of the list", async () => {
+    const cursor = encodeCursor("2026-09-11T00:00:00Z", "00000000-0000-4000-8000-000000000002");
+    mock.setRowMap({
+      "SELECT a.*, agg.wrong_count": [{ ...WRONG_ROW_ENRICHED, id: "att-9" }],
+      "SELECT count(*)": [{ total: "5" }],
+    });
+    const repos = createRepositories();
+
+    const page = await repos.l3Practice.listWrongAttempts({ userId: "u1", limit: 1, offset: 4, cursor });
+
+    expect(page.offset).toBe(0);
+    expect(page.items).toHaveLength(1);
+    expect(page.nextCursor).toBeNull();
+    const listCall = mock.calls.find((call) => call.text.includes("SELECT a.*, agg.wrong_count"));
+    expect(listCall?.text).toContain("AND (a.created_at, a.id) < ($3::timestamptz, $4::uuid)");
+    expect(listCall?.text).not.toContain("OFFSET");
+    expect(listCall?.params).toEqual([
+      "u1",
+      "wrong",
+      "2026-09-11T00:00:00Z",
+      "00000000-0000-4000-8000-000000000002",
+      2,
+    ]);
+  });
+
+  it("rejects a malformed cursor before querying", async () => {
+    const repos = createRepositories();
+
+    await expect(
+      repos.l3Practice.listWrongAttempts({ userId: "u1", limit: 10, offset: 0, cursor: "bm90LWEtY3Vyc29y" }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  it("applies the two-axis filters to the aggregated error-book query", async () => {
+    mock.setRowMap({
+      "SELECT a.*, agg.wrong_count": [WRONG_ROW_ENRICHED],
+      "SELECT count(*)": [{ total: "1" }],
+    });
+    const repos = createRepositories();
+
+    await repos.l3Practice.listWrongAttempts({
+      userId: "u1",
+      space: "阅读",
+      direction: "考研",
+      limit: 5,
+      offset: 2,
+    });
+
+    const listCall = mock.calls.find((call) => call.text.includes("SELECT a.*, agg.wrong_count"));
+    expect(listCall?.text).toContain("AND EXISTS (SELECT 1 FROM l3_source_spaces sp");
+    expect(listCall?.text).toContain("sp.space = $3");
+    expect(listCall?.text).toContain("AND s.direction = $4");
+    expect(listCall?.text).toContain("LIMIT $5 OFFSET $6");
+    expect(listCall?.params).toEqual(["u1", "wrong", "阅读", "考研", 6, 2]);
+    const countCall = mock.calls.find((call) => call.text.includes("SELECT count(*) AS total"));
+    expect(countCall?.params).toEqual(["u1", "wrong", "阅读", "考研"]);
+  });
+
+  it("reports zero total when the aggregated count query returns no row", async () => {
+    mock.setRowMap({
+      "SELECT a.*, agg.wrong_count": [],
+      "SELECT count(*)": [],
+    });
+    const repos = createRepositories();
+
+    const page = await repos.l3Practice.listWrongAttempts({ userId: "u1", limit: 20, offset: 0 });
+
+    expect(page).toEqual({ items: [], total: 0, limit: 20, offset: 0, nextCursor: null });
   });
 
   it("exposes the registered l3Practice repository through the factory", () => {

@@ -26,6 +26,7 @@ import type {
   Json,
   L3PracticeAttemptPage,
   L3PracticeAttemptRow,
+  L3PracticeErrorBookPage,
   L3PracticeOutcome,
   L3PracticeType,
   L3SubSpace,
@@ -75,6 +76,8 @@ export interface L3ErrorBookInput {
   direction?: Direction | null;
   limit?: number | null;
   offset?: number | null;
+  /** cursor 分页（T11 加固）；与 offset 同时给出时以 cursor 为准（offset 被忽略）。 */
+  cursor?: string | null;
 }
 
 export interface L3PracticeServiceDeps {
@@ -196,13 +199,18 @@ export class L3PracticeService {
     );
   }
 
-  /** 错题库：attempts(outcome='wrong') 派生查询，按子空间/方向两轴过滤。 */
-  async errorBook(input: L3ErrorBookInput): Promise<L3PracticeAttemptPage> {
+  /**
+   * 错题库：attempts(outcome='wrong') 派生查询，按子空间/方向两轴过滤；条目附
+   * 语境级聚合（服务端）。分页：给出 cursor 时以 cursor 为准（offset 被忽略，
+   * 响应 offset 恒 0），否则保留 offset 兼容口径。
+   */
+  async errorBook(input: L3ErrorBookInput): Promise<L3PracticeErrorBookPage> {
     requireNonEmpty(input.userId, "userId");
     const space = resolveOptionalEnum(input.space, L3_SUB_SPACES, "space");
     const direction = resolveOptionalEnum(input.direction, DIRECTIONS, "direction");
     const limit = normalizeLimit(input.limit);
-    const offset = normalizeOffset(input.offset);
+    const cursor = input.cursor ?? null;
+    const offset = cursor ? 0 : normalizeOffset(input.offset);
 
     return this.txRunner(
       async (tx) =>
@@ -212,6 +220,7 @@ export class L3PracticeService {
           direction,
           limit,
           offset,
+          cursor,
         }),
       { actorId: input.userId },
     );

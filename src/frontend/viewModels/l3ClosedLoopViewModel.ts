@@ -177,9 +177,10 @@ export function frontendRuntimeSmokeMatrix(): L3RuntimeSurfaceSmokeRow[] {
       marksActiveReadStale: false,
     },
     {
-      // 错题库：attempts(outcome=wrong) 的派生只读视图（附 attempts 回看窗口）。
+      // 错题库：attempts(outcome=wrong) 的派生只读视图（聚合字段由服务端给出，
+      // cursor 分页；不再拉 attempts 回看窗口）。
       surface: "errorBook",
-      clientMethods: ["listErrorBook", "listAttempts"],
+      clientMethods: ["listErrorBook"],
       readOnly: true,
       clearsActiveReadStale: false,
       marksActiveReadStale: false,

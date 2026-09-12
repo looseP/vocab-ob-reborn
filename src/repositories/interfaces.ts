@@ -29,6 +29,7 @@ import type {
   L3PaginatedList,
   L3PracticeAttemptPage,
   L3PracticeAttemptRow,
+  L3PracticeErrorBookPage,
   L3PracticeOutcome,
   L3PracticeType,
   L3ProposalBundle,
@@ -1267,6 +1268,11 @@ export interface L3AttemptLookup {
   direction?: Direction | null;
   limit: number;
   offset: number;
+  /**
+   * 错题库 cursor 分页（T11 加固；null/缺省 = offset 模式）。与 offset 同时
+   * 给出时以 cursor 为准（offset 被忽略）。练习记录列表不使用本字段。
+   */
+  cursor?: string | null;
 }
 
 export interface IL3PracticeRepository {
@@ -1280,8 +1286,11 @@ export interface IL3PracticeRepository {
   findAttemptByTaskId(userId: string, taskId: string): Promise<L3PracticeAttemptRow | null>;
   /** 练习记录列表（可选 practiceType/outcome/space/direction 过滤）。 */
   listAttempts(input: L3AttemptLookup): Promise<L3PracticeAttemptPage>;
-  /** 错题库 = attempts(outcome='wrong') 派生查询（不建第二真相源）。 */
-  listWrongAttempts(input: L3AttemptLookup): Promise<L3PracticeAttemptPage>;
+  /**
+   * 错题库 = attempts(outcome='wrong') 派生查询（不建第二真相源）；条目附语境级
+   * 聚合（wrongCount/latestOutcome/latestAt），支持 cursor 分页（cursor 为准）。
+   */
+  listWrongAttempts(input: L3AttemptLookup): Promise<L3PracticeErrorBookPage>;
 }
 
 // ── L3 Sessions (ADR-0019 §2) ──────────────────────────────────────────

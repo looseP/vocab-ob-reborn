@@ -7,15 +7,25 @@
  * HTTP API with Bearer auth. All business rules (RLS actor, content budgets,
  * candidate pool semantics) stay server-side; this process holds no DB access.
  *
- * Tools (Phase G):
- *   search_words        find words by lemma/slug prefix (suggest endpoint)
- *   get_word_detail     full word detail incl. current L2 content
- *   build_l2_prompt     assemble the canonical external-generation prompt
- *   propose_l2_content  write an is_active=false candidate → user reviews it
- *                       in the word detail composer panel (采纳/忽略)
- *   confirm_l2_content  write content directly as ACTIVE (固定：缓存刷新 +
- *                       L2 软重卡)，跳过候选池
- *   list_l2_candidates  list pending candidates for a word
+ * Tools (T13c):
+ *   search_words          find words by lemma/slug prefix (suggest endpoint)
+ *   get_word_detail       full word detail incl. current L2 content
+ *   build_l2_prompt       assemble the canonical external-generation prompt
+ *   propose_l2_content    write an is_active=false candidate → user reviews it
+ *                         in the word detail composer panel (采纳/忽略)
+ *   list_l2_candidates    list pending candidates for a word
+ *   list_l3_sources       browse L3 sources by sub-space / direction (书架列料)
+ *   list_l3_word_contexts list a word's L3 contexts by sub-space / direction
+ *   list_l3_occurrences   list L3 occurrence evidence by word/context/space
+ *   list_l3_context_links list L3 context links by type/word/context/space
+ *   submit_l3_proposal    write a PENDING L3 proposal (agent path, 需人工确认)
+ *   get_capabilities      read the capability envelope (budgets / error codes)
+ *
+ * Trust boundary (ADR-0029 §3): MCP is a transport, not a trust level — every
+ * write goes to the candidate / proposal pool and requires human confirmation,
+ * and upgrade actions (confirm / accept / validate / apply / cancel) are NOT
+ * exposed here. `confirm_l2_content` was removed with T13c (the HTTP endpoint
+ * itself stays for humans in WordL2Composer).
  *
  * Configuration (env):
  *   VOCAB_MCP_BASE_URL   API base URL           (default http://127.0.0.1:3001)
@@ -133,10 +143,34 @@ const FIELD_DESCRIPTION =
   "内容字段：collocation（搭配）/ example（例句）/ synonym（同义辨析）/ antonym（反义）。" +
   "example 在存储层映射为 corpus。";
 
+// ── L3 tooling helpers (T13c) ─────────────────────────────────────────────
+
+// 统一尾注（ADR-0029 §8①）：每个工具的 description 都必须标注"产物进
+// proposal、需人工确认"，并声明升级动作不进 MCP 工具面。
+const READ_ONLY_NOTE =
+  "只读；本桥一切写入产物进 proposal、需人工确认，升级动作（confirm / accept / validate / apply / cancel）不暴露。";
+
+// 词表与 src/services/l3-practice.service.ts 的 L3_SUB_SPACES / 服务端 schema
+// 的枚举同值；此处仅作 inputSchema 提示，服务端校验仍是唯一真源。
+const L3_DIRECTIONS = ["通用", "考研", "雅思"];
+const L3_SPACES = ["语法", "阅读", "作文", "翻译", "通用"];
+const L3_SOURCE_TYPES = ["article", "book", "video", "audio", "chat", "manual", "web", "other"];
+const L3_LINK_TYPES = ["supports", "illustrates", "contrasts", "collocates_with", "synonym_of", "antonym_of", "derived_from", "topic_related", "manual_link"];
+const L3_LINK_TARGET_TYPES = ["word", "l2_item", "context", "source", "topic", "external"];
+
+function toQuery(params) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
+  const encoded = search.toString();
+  return encoded ? `?${encoded}` : "";
+}
+
 const TOOLS = [
   {
     name: "search_words",
-    description: "按词元（lemma）/标题前缀搜索词库中的词条，返回候选列表（slug、词元、词性、CEFR、短释义）。",
+    description: "按词元（lemma）/标题前缀搜索词库中的词条，返回候选列表（slug、词元、词性、CEFR、短释义）。只读；本桥一切写入产物进 proposal、需人工确认，升级动作（confirm / accept / validate / apply / cancel）不暴露。",
     inputSchema: {
       type: "object",
       properties: {
@@ -155,7 +189,7 @@ const TOOLS = [
   },
   {
     name: "get_word_detail",
-    description: "取词条完整详情：释义、正文、原型、例句、当前已生效的 L2 扩展内容（l2_content）与是否已晋升 L2。",
+    description: "取词条完整详情：释义、正文、原型、例句、当前已生效的 L2 扩展内容（l2_content）与是否已晋升 L2。只读；本桥一切写入产物进 proposal、需人工确认，升级动作不暴露。",
     inputSchema: {
       type: "object",
       properties: { slug: stringProp("词条 slug（search_words 返回的 slug）") },
@@ -168,7 +202,7 @@ const TOOLS = [
   },
   {
     name: "build_l2_prompt",
-    description: "为某词条某字段组装规范化的外部生成提示词（不消耗 LLM 预算）。把返回的 prompt 交给任意 LLM，将其 JSON 返回作为 propose_l2_content / confirm_l2_content 的 items。",
+    description: "为某词条某字段组装规范化的外部生成提示词（不消耗 LLM 预算）。把返回的 prompt 交给任意 LLM，将其 JSON 返回作为 propose_l2_content 的 items。只读组装；本桥一切写入产物进 proposal、需人工确认，升级动作不暴露。",
     inputSchema: {
       type: "object",
       properties: {
@@ -193,7 +227,7 @@ const TOOLS = [
     name: "propose_l2_content",
     description:
       "把生成内容写入候选池（is_active=false）：不出题、不展示，等用户在词条详情页「扩展内容」面板中勾选采纳或忽略。" +
-      "这是默认推荐通道——内容先经用户确认再生效。",
+      "产物进 proposal、需人工确认——这是默认推荐通道，内容先经用户确认再生效；升级动作不在本桥暴露。",
     inputSchema: {
       type: "object",
       properties: {
@@ -216,33 +250,8 @@ const TOOLS = [
     },
   },
   {
-    name: "confirm_l2_content",
-    description:
-      "直接固定内容为已生效（跳过候选池）：立即写入缓存、触发 L2 软重卡排期。仅在用户明确要求「直接生效/固定」时使用。",
-    inputSchema: {
-      type: "object",
-      properties: {
-        slug: stringProp("词条 slug"),
-        field: { type: "string", description: FIELD_DESCRIPTION, enum: ["collocation", "example", "synonym", "antonym"] },
-        items: { type: "array", description: "条目数组", items: JSON_SCHEMA },
-        document: { description: "可选：完整 v1 文档（优先于 items）", ...JSON_SCHEMA },
-        source: { type: "string", description: "来源标识（默认 external_chat）" },
-        sourceRef: { type: "string", description: "来源引用（可选）" },
-      },
-      required: ["slug", "field", "items"],
-      additionalProperties: false,
-    },
-    async run(args) {
-      const body = { field: String(args.field), items: withDefaultProvenance(args.items) };
-      if (args.document !== undefined) body.document = args.document;
-      if (args.source !== undefined) body.source = args.source;
-      if (args.sourceRef !== undefined) body.sourceRef = args.sourceRef;
-      return apiCall("POST", `/api/l2/${encodeURIComponent(String(args.slug))}/confirm`, body);
-    },
-  },
-  {
     name: "list_l2_candidates",
-    description: "列出某词条候选池中的全部待选内容（供用户在 UI 中采纳/忽略之前由 Agent 复查）。",
+    description: "列出某词条候选池中的全部待选内容（供用户在 UI 中采纳/忽略之前由 Agent 复查）。" + READ_ONLY_NOTE,
     inputSchema: {
       type: "object",
       properties: { slug: stringProp("词条 slug") },
@@ -251,6 +260,158 @@ const TOOLS = [
     },
     async run(args) {
       return apiCall("GET", `/api/l2/${encodeURIComponent(String(args.slug))}/candidates`);
+    },
+  },
+  {
+    name: "list_l3_sources",
+    description:
+      "按子空间（语法/阅读/作文/翻译/通用）与方向（通用/考研/雅思）浏览 L3 素材来源书架（书架列料）：" +
+      "按类型过滤、标题/内容搜索、按最近（recent）或圈记次数（captures）排序。" + READ_ONLY_NOTE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        sourceType: { type: "string", description: "来源类型（可选）", enum: L3_SOURCE_TYPES },
+        q: { type: "string", description: "标题/内容搜索词（可选）" },
+        sort: { type: "string", description: "排序（默认 recent）", enum: ["recent", "captures"] },
+        direction: { type: "string", description: "考试方向（可选）", enum: L3_DIRECTIONS },
+        space: { type: "string", description: "子空间（可选）", enum: L3_SPACES },
+        limit: { type: "number", description: "返回条数上限 1-50（默认 20）", minimum: 1, maximum: 50 },
+        offset: { type: "number", description: "偏移分页（默认 0）", minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    async run(args) {
+      return apiCall("GET", `/api/l3/sources${toQuery(args)}`);
+    },
+  },
+  {
+    name: "list_l3_word_contexts",
+    description:
+      "列出某词条在 L3 素材空间中的语境条目（词语境列表），可按子空间/方向过滤，cursor 分页。" + READ_ONLY_NOTE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: stringProp("词条 slug"),
+        direction: { type: "string", description: "考试方向（可选）", enum: L3_DIRECTIONS },
+        space: { type: "string", description: "子空间（可选）", enum: L3_SPACES },
+        limit: { type: "number", description: "返回条数上限 1-100（默认 50）", minimum: 1, maximum: 100 },
+        cursor: { type: "string", description: "分页游标（上一页返回的 nextCursor）" },
+      },
+      required: ["slug"],
+      additionalProperties: false,
+    },
+    async run(args) {
+      const { slug, ...rest } = args;
+      return apiCall("GET", `/api/l3/words/${encodeURIComponent(String(slug))}/contexts${toQuery(rest)}`);
+    },
+  },
+  {
+    name: "list_l3_occurrences",
+    description:
+      "列出 L3 词形出现记录（occurrences，圈词划词的证据行）：可按词（slug / wordId）、语境（contextId）" +
+      "与子空间/方向过滤，cursor 分页。" + READ_ONLY_NOTE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", description: "词条 slug（可选）" },
+        wordId: { type: "string", description: "词条 uuid（可选）" },
+        contextId: { type: "string", description: "语境 uuid（可选）" },
+        direction: { type: "string", description: "考试方向（可选）", enum: L3_DIRECTIONS },
+        space: { type: "string", description: "子空间（可选）", enum: L3_SPACES },
+        limit: { type: "number", description: "返回条数上限 1-100（默认 50）", minimum: 1, maximum: 100 },
+        cursor: { type: "string", description: "分页游标（可选）" },
+      },
+      additionalProperties: false,
+    },
+    async run(args) {
+      return apiCall("GET", `/api/l3/occurrences${toQuery(args)}`);
+    },
+  },
+  {
+    name: "list_l3_context_links",
+    description:
+      "列出 L3 语境关联（context-links）：可按关联类型（supports / illustrates / contrasts / collocates_with / …）、" +
+      "目标类型、词（slug / wordId）、语境与子空间/方向过滤，cursor 分页。" + READ_ONLY_NOTE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", description: "词条 slug（可选）" },
+        wordId: { type: "string", description: "词条 uuid（可选）" },
+        contextId: { type: "string", description: "语境 uuid（可选）" },
+        linkType: { type: "string", description: "关联类型（可选）", enum: L3_LINK_TYPES },
+        targetType: { type: "string", description: "目标类型（可选）", enum: L3_LINK_TARGET_TYPES },
+        direction: { type: "string", description: "考试方向（可选）", enum: L3_DIRECTIONS },
+        space: { type: "string", description: "子空间（可选）", enum: L3_SPACES },
+        limit: { type: "number", description: "返回条数上限 1-100（默认 50）", minimum: 1, maximum: 100 },
+        cursor: { type: "string", description: "分页游标（可选）" },
+      },
+      additionalProperties: false,
+    },
+    async run(args) {
+      return apiCall("GET", `/api/l3/context-links${toQuery(args)}`);
+    },
+  },
+  {
+    name: "submit_l3_proposal",
+    description:
+      "把 agent 生成的 L3 素材条目（source / context / occurrence / context_link）提交为 pending 提案：" +
+      "产物进 proposal、需人工确认——owner 在提案审阅界面 validate/confirm 后才进入权威数据；" +
+      "写入一律 pending（source_type=agent），相同 inputHash 重复提交幂等返回既有提案；升级动作不在本桥暴露。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "提案标题（可选）" },
+        summary: { type: "string", description: "提案摘要（可选）" },
+        wordbookId: { type: "string", description: "词书 uuid（可选）" },
+        inputHash: { type: "string", description: "幂等键（可选）：相同 hash 重复提交返回既有提案" },
+        provenance: { description: "溯源补充（可选；agentId 由服务端认定并覆盖自述值）", ...JSON_SCHEMA },
+        items: {
+          type: "array",
+          description:
+            "提案条目（至少 1 条）。itemType：source / context / occurrence / context_link；payload 用 camelCase 的 " +
+            "service 形状：context 用 sourceId 或引用先序条目的 sourceRef；occurrence 用 contextId 或 contextRef；" +
+            "context_link 用 contextId/contextRef（可带 wordId）。",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              itemType: { type: "string", enum: ["source", "context", "occurrence", "context_link"] },
+              clientRef: { type: "string", description: "本提案内的局部引用名（可选）" },
+              payload: JSON_SCHEMA,
+            },
+            required: ["itemType", "payload"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["items"],
+      additionalProperties: false,
+    },
+    async run(args) {
+      const body = {
+        sourceType: "agent",
+        items: args.items.map((item) => ({
+          itemType: item.itemType,
+          ...(item.clientRef !== undefined ? { clientRef: item.clientRef } : {}),
+          payload: item.payload,
+        })),
+      };
+      if (args.title !== undefined) body.title = args.title;
+      if (args.summary !== undefined) body.summary = args.summary;
+      if (args.wordbookId !== undefined) body.wordbookId = args.wordbookId;
+      if (args.inputHash !== undefined) body.inputHash = args.inputHash;
+      if (args.provenance !== undefined) body.provenance = args.provenance;
+      return apiCall("POST", "/api/l3/proposals", body);
+    },
+  },
+  {
+    name: "get_capabilities",
+    description:
+      "读取服务器能力清单（能力发现）：可读面 / 可写面（仅 proposal）、升级动作不可用、" +
+      "预算上限（提案条目数与字节数、JSON 深度）与 error code 词表。" + READ_ONLY_NOTE,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async run() {
+      return apiCall("GET", "/api/l3/capabilities");
     },
   },
 ];

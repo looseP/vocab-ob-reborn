@@ -593,11 +593,17 @@ export const l3PracticeAttemptListQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).optional(),
 });
 
+// 错题库查询（T11 加固）：space/direction 两轴语义不变；cursor 纯新增（复用
+// l3LimitCursorQuerySchema 的 cursor 范式），offset 至少保留一个契约窗口不删。
+// cursor 与 offset 同时给出时以 cursor 为准（offset 被忽略，响应 offset 恒 0）。
 export const l3PracticeErrorBookQuerySchema = z.object({
   space: z.enum(L3_SUB_SPACES).optional(),
   direction: directionSchema.optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
-  offset: z.coerce.number().int().min(0).optional(),
+  offset: z.coerce.number().int().min(0).optional()
+    .describe("Offset pagination window; ignored when cursor is present (cursor takes precedence)."),
+  cursor: z.string().min(1).optional()
+    .describe("Keyset cursor over (created_at,id) from the previous page's nextCursor. Takes precedence over offset."),
 });
 
 // ── L3 sessions (ADR-0019 §2) ───────────────────────────────────────────

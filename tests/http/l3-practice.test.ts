@@ -2,7 +2,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "@/http/server";
 import { ValidationError } from "@/errors";
 import type { Services } from "@/services";
-import { l3PracticeAttemptPageResponseSchema } from "@/http/l3-practice-response-contract";
+import {
+  l3PracticeAttemptPageResponseSchema,
+  l3PracticeErrorBookPageResponseSchema,
+} from "@/http/l3-practice-response-contract";
 
 const ORIGINAL_OWNER_TOKEN = process.env.OWNER_API_TOKEN;
 const ORIGINAL_LOCAL_OWNER = process.env.LOCAL_OWNER_ID;
@@ -36,6 +39,15 @@ const ATTEMPT_ROW = {
 
 const PAGE = { items: [ATTEMPT_ROW], total: 1, limit: 20, offset: 0 };
 
+const ERROR_BOOK_ITEM = {
+  ...ATTEMPT_ROW,
+  wrongCount: 2,
+  latestOutcome: "wrong",
+  latestAt: "2026-09-11T00:00:00.000Z",
+};
+
+const ERROR_BOOK_PAGE = { items: [ERROR_BOOK_ITEM], total: 1, limit: 20, offset: 0, nextCursor: null };
+
 async function expectRouteValidationError(response: Response) {
   expect(response.status).toBe(400);
   const body = await response.json() as { code: string };
@@ -52,7 +64,7 @@ function makeMockServices() {
   const l3Practice = {
     recordAttempt: vi.fn(async () => ATTEMPT_ROW),
     listAttempts: vi.fn(async () => PAGE),
-    errorBook: vi.fn(async () => PAGE),
+    errorBook: vi.fn(async () => ERROR_BOOK_PAGE),
   };
   return { services: { l3Practice } as unknown as Services, l3Practice };
 }
@@ -201,7 +213,7 @@ describe("L3 practice HTTP routes", () => {
     expect(l3Practice.listAttempts).not.toHaveBeenCalled();
   });
 
-  it("GET /error-book returns the wrong-answer page", async () => {
+  it("GET /error-book returns the aggregated page and forwards the two axes", async () => {
     const { services, l3Practice } = makeMockServices();
     const app = createApp(services);
 
@@ -211,14 +223,61 @@ describe("L3 practice HTTP routes", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(l3PracticeAttemptPageResponseSchema.parse(body)).toEqual(PAGE);
+    expect(l3PracticeErrorBookPageResponseSchema.parse(body)).toEqual(ERROR_BOOK_PAGE);
     expect(l3Practice.errorBook).toHaveBeenCalledWith({
       userId: "user-123",
       space: "语法",
       direction: "雅思",
       limit: 3,
       offset: 1,
+      cursor: null,
     });
+  });
+
+  it("GET /error-book accepts a cursor and forwards it alongside offset (precedence: service)", async () => {
+    const { services, l3Practice } = makeMockServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3-practice/error-book?cursor=abc123&offset=5&limit=2", {
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    expect(l3Practice.errorBook).toHaveBeenCalledWith({
+      userId: "user-123",
+      space: null,
+      direction: null,
+      limit: 2,
+      offset: 5,
+      cursor: "abc123",
+    });
+  });
+
+  it("GET /error-book works without pagination params (defaults forwarded as null)", async () => {
+    const { services, l3Practice } = makeMockServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3-practice/error-book", { headers: AUTH_HEADERS });
+
+    expect(res.status).toBe(200);
+    expect(l3Practice.errorBook).toHaveBeenCalledWith({
+      userId: "user-123",
+      space: null,
+      direction: null,
+      limit: null,
+      offset: null,
+      cursor: null,
+    });
+  });
+
+  it("GET /error-book rejects an empty cursor", async () => {
+    const { services, l3Practice } = makeMockServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3-practice/error-book?cursor=", { headers: AUTH_HEADERS });
+
+    await expectRouteValidationError(res);
+    expect(l3Practice.errorBook).not.toHaveBeenCalled();
   });
 
   it("GET /error-book rejects an invalid space", async () => {

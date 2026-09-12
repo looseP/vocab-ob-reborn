@@ -561,6 +561,32 @@ export interface L3PracticeAttemptPage {
   offset: number;
 }
 
+// ── L3 error book（T11 加固：服务端聚合 + cursor 纯新增）───────────────────
+/**
+ * 错题库条目：wrong attempt 行 + **服务端聚合**的语境级统计。
+ * wrongCount = 该语境全量 outcome='wrong' 计数；latestOutcome / latestAt 取自
+ * 该语境最近一次作答（不限 outcome）——三者均不受任何分页窗口/页大小限制。
+ */
+export interface L3PracticeErrorBookItem extends L3PracticeAttemptRow {
+  wrongCount: number;
+  latestOutcome: L3PracticeOutcome;
+  /** 与该 latestOutcome 同源的最近作答时间（ISO 字符串）。 */
+  latestAt: string;
+}
+
+/**
+ * 错题库分页：offset 参数保留（兼容窗口不删），cursor 纯新增；两者同时出现
+ * 时以 cursor 为准（offset 被忽略，响应 offset 恒 0）。`nextCursor` 在两种
+ * 模式下均给出：null = 已到末页（当前 items 已含过滤条件下全部记录）。
+ */
+export interface L3PracticeErrorBookPage {
+  items: L3PracticeErrorBookItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  nextCursor: string | null;
+}
+
 // ── L3 sessions（ADR-0019 §2：慢学习容器）─────────────────────────────
 export type L3SessionType = "l2_upgrade" | "l3_practice" | "cram_pack" | "knowledge";
 export type L3SessionStatus = "active" | "completed" | "abandoned";

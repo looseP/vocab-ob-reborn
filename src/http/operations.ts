@@ -1,5 +1,6 @@
 import { z, type ZodType } from "zod";
 import {
+  l3CapabilitiesResponseSchema,
   l3ContextCreateResponseSchema,
   l3ContextDetailResponseSchema,
   l3ContextLinkCreateResponseSchema,
@@ -35,6 +36,7 @@ import {
 import {
   l3PracticeAttemptPageResponseSchema,
   l3PracticeAttemptRowResponseSchema,
+  l3PracticeErrorBookPageResponseSchema,
 } from "./l3-practice-response-contract";
 import {
   l3SessionRenderDescriptionResponseSchema,
@@ -435,6 +437,8 @@ export const apiOperations = [
   // 可按词、语境与空间/方向两轴过滤；路由实现在 routes/l3/lists.ts）。
   operation("get", "/api/l3/occurrences", "listL3Occurrences", "owner", "agent", "none", { query: l3OccurrenceListQuerySchema }, 200, l3OccurrenceListResponseSchema),
   operation("get", "/api/l3/context-links", "listL3ContextLinks", "owner", "agent", "none", { query: l3ContextLinkListQuerySchema }, 200, l3ContextLinkListResponseSchema),
+  // ADR-0029 §8②：能力发现——agent 可读面/预算上限/error code 词表（单一真源引用）。
+  operation("get", "/api/l3/capabilities", "getL3Capabilities", "owner", "agent", "none", undefined, 200, l3CapabilitiesResponseSchema),
   // import 落 job 后产出 proposal bundle（响应即 ProposalBundle），不写 active L3、不耗 LLM →
   // 与 proposal 入口同族，对 agent 开放（2026-09-12 裁决）。
   operation("post", "/api/l3/imports/raw-text", "createL3RawTextImport", "owner", "agent", "sessionMutation", { body: l3RawTextImportCreateSchema }, 201, l3ImportProposalResponseSchema),
@@ -461,7 +465,9 @@ export const apiOperations = [
   // ── L3 practice attempts / error book (ADR-0019 §1/§3) ──────────────────
   operation("post", "/api/l3-practice/attempts", "recordL3PracticeAttempt", "owner", "owner", "sessionMutation", { body: l3PracticeAttemptCreateSchema }, 201, l3PracticeAttemptRowResponseSchema),
   operation("get", "/api/l3-practice/attempts", "listL3PracticeAttempts", "owner", "agent", "none", { query: l3PracticeAttemptListQuerySchema }, 200, l3PracticeAttemptPageResponseSchema),
-  operation("get", "/api/l3-practice/error-book", "listL3PracticeErrorBook", "owner", "agent", "none", { query: l3PracticeErrorBookQuerySchema }, 200, l3PracticeAttemptPageResponseSchema),
+  // 错题库（T11 加固）：条目附服务端聚合（wrongCount/latestOutcome/latestAt），
+  // cursor 纯新增、offset 保留（共存时 cursor 为准）→ 专属响应页 schema。
+  operation("get", "/api/l3-practice/error-book", "listL3PracticeErrorBook", "owner", "agent", "none", { query: l3PracticeErrorBookQuerySchema }, 200, l3PracticeErrorBookPageResponseSchema),
   // ── L3 sessions (ADR-0019 §2) ───────────────────────────────────────────
   operation("post", "/api/l3-sessions", "createL3Session", "owner", "owner", "sessionMutation", { body: l3SessionCreateSchema }, 201, l3SessionRowResponseSchema),
   operation("get", "/api/l3-sessions/:id", "getL3Session", "owner", "agent", "none", undefined, 200, l3SessionRenderDescriptionResponseSchema),

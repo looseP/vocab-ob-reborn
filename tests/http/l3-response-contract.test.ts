@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  l3CapabilitiesResponseSchema,
   l3ContextLinkListResponseSchema,
   l3OccurrenceListResponseSchema,
   l3ProposalBundleResponseSchema,
@@ -7,6 +8,15 @@ import {
   l3RecommendationDetailResponseSchema,
   l3RecommendationListResponseSchema,
 } from "../../src/http/l3-response-contract";
+import { ERROR_CODES } from "../../src/errors/codes";
+import {
+  API_JSON_BODY_MAX_BYTES,
+  JSON_MAX_DEPTH,
+  JSON_RECORD_MAX_BYTES,
+  L3_PROPOSAL_MAX_ITEMS,
+  L3_PROPOSAL_PAYLOAD_MAX_BYTES,
+  L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES,
+} from "../../src/schemas/resource-budget";
 
 const proposal = {
   id: "proposal-1",
@@ -156,5 +166,29 @@ describe("L3 response contracts", () => {
     expect(l3ContextLinkListResponseSchema.parse(response)).toEqual(response);
     expect(() => l3ContextLinkListResponseSchema.parse({ ...response, items: [{ ...item, link: { ...item.link, link_type: "unknown" } }] })).toThrow();
     expect(() => l3ContextLinkListResponseSchema.parse({ ...response, items: [{ ...item, link: { ...item.link, target_type: "nope" } }] })).toThrow();
+  });
+
+  it("parses the exact getL3Capabilities payload and rejects drift", () => {
+    // 数字与词表引用单一真源（resource-budget / errors/codes）构造期望值。
+    const response = {
+      role: "agent" as const,
+      access: { read: "all" as const, write: "proposal_only" as const, upgrade: "owner_only" as const },
+      limits: {
+        apiJsonBodyMaxBytes: API_JSON_BODY_MAX_BYTES,
+        jsonRecordMaxBytes: JSON_RECORD_MAX_BYTES,
+        jsonMaxDepth: JSON_MAX_DEPTH,
+        proposalMaxItems: L3_PROPOSAL_MAX_ITEMS,
+        proposalPayloadMaxBytes: L3_PROPOSAL_PAYLOAD_MAX_BYTES,
+        proposalTotalPayloadMaxBytes: L3_PROPOSAL_TOTAL_PAYLOAD_MAX_BYTES,
+      },
+      errorCodes: [...Object.values(ERROR_CODES)],
+    };
+
+    expect(l3CapabilitiesResponseSchema.parse(response)).toEqual(response);
+    expect(() => l3CapabilitiesResponseSchema.parse({ ...response, role: "public" })).toThrow();
+    expect(() => l3CapabilitiesResponseSchema.parse({ ...response, access: { ...response.access, write: "direct" } })).toThrow();
+    expect(() => l3CapabilitiesResponseSchema.parse({ ...response, errorCodes: [...response.errorCodes, "NOT_A_CODE"] })).toThrow();
+    const { limits: _limits, ...missingLimits } = response;
+    expect(() => l3CapabilitiesResponseSchema.parse(missingLimits)).toThrow();
   });
 });

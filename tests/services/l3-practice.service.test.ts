@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { ValidationError } from "@/errors";
-import type { L3PracticeAttemptRow } from "@/domain";
+import type { L3PracticeAttemptRow, L3PracticeErrorBookItem } from "@/domain";
 import type { IL3PracticeRepository, IRepositories } from "@/repositories/interfaces";
 import { L3PracticeService } from "@/services/l3-practice.service";
 
@@ -16,6 +16,14 @@ const ATTEMPT_ROW: L3PracticeAttemptRow = {
   outcome: "wrong",
   payload: { taskId: "essay_dictation:aaaaaaaaaaaaaaaa" },
   created_at: "2026-09-11T00:00:00Z",
+};
+
+/** 错题库条目（仓库映射后的形状：attempt 行 + 服务端聚合字段）。 */
+const ERROR_BOOK_ITEM: L3PracticeErrorBookItem = {
+  ...ATTEMPT_ROW,
+  wrongCount: 2,
+  latestOutcome: "wrong",
+  latestAt: "2026-09-11T00:00:00Z",
 };
 
 /** FSRS/L1/L2 写方法的间谍：断言零调用（"L3 有记录、无调度"红线）。 */
@@ -51,7 +59,7 @@ function makePracticeRepo(overrides: Partial<IL3PracticeRepository> = {}): IL3Pr
     lockAttemptIdentity: vi.fn(async () => {}),
     findAttemptByTaskId: vi.fn(async () => null),
     listAttempts: vi.fn(async () => ({ items: [ATTEMPT_ROW], total: 1, limit: 20, offset: 0 })),
-    listWrongAttempts: vi.fn(async () => ({ items: [ATTEMPT_ROW], total: 1, limit: 20, offset: 0 })),
+    listWrongAttempts: vi.fn(async () => ({ items: [ERROR_BOOK_ITEM], total: 1, limit: 20, offset: 0, nextCursor: null })),
     ...overrides,
   };
 }
@@ -323,9 +331,10 @@ describe("L3PracticeService.errorBook", () => {
       direction: null,
       limit: 20,
       offset: 0,
+      cursor: null,
     });
     expect(repo.listAttempts).not.toHaveBeenCalled();
-    expect(page.items).toEqual([ATTEMPT_ROW]);
+    expect(page.items).toEqual([ERROR_BOOK_ITEM]);
     expectNoFsrsWrites(fsrs);
   });
 
@@ -341,7 +350,19 @@ describe("L3PracticeService.errorBook", () => {
       direction: "雅思",
       limit: 5,
       offset: 10,
+      cursor: null,
     });
+  });
+
+  it("gives cursor precedence: offset is zeroed when a cursor is present", async () => {
+    const repo = makePracticeRepo();
+    const service = makeService(repo, makeFsrsSpies(), makeTxRunner());
+
+    await service.errorBook({ userId: "u1", offset: 10, cursor: "cursor-abc" });
+
+    expect(repo.listWrongAttempts).toHaveBeenCalledWith(
+      expect.objectContaining({ offset: 0, cursor: "cursor-abc" }),
+    );
   });
 
   it("rejects invalid axes and empty userId", async () => {

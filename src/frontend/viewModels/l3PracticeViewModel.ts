@@ -17,7 +17,7 @@
 import type {
   Json,
   L3OccurrenceListItem,
-  L3PracticeAttemptRow,
+  L3PracticeErrorBookItem,
   L3PracticeOutcome,
   L3PracticeType,
 } from "@/domain";
@@ -27,9 +27,6 @@ export const L3_DICTATION_BLANK_MARKER = "____";
 
 /** 练习素材每次拉取条数（服务端 limit 上限 100）。 */
 export const L3_PRACTICE_MATERIAL_LIMIT = 20;
-
-/** 错题库聚合时回看 attempts 的窗口条数（服务端 limit 上限 100）。 */
-export const L3_ATTEMPT_INDEX_LIMIT = 100;
 
 export interface PracticeMaterialTask {
   practiceType: L3PracticeType;
@@ -248,53 +245,39 @@ export function buildPracticeSnapshot(input: {
   };
 }
 
-// ── 错题库聚合 ───────────────────────────────────────────────────────────
+// ── 错题库展示行（聚合口径：服务端） ─────────────────────────────────────
 
 export interface ErrorBookDisplayRow {
   contextId: string;
   text: string;
   target: string;
-  /** 该语境在回看窗口内的错误次数（服务端无聚合端点，前端按窗口计数）。 */
+  /** 该语境全量错误次数（服务端聚合，跨分页窗口）。 */
   wrongCount: number;
-  /** 该语境最近一次作答结果（来自 attempts 全量窗口，含已答对的语境）。 */
-  latestOutcome: L3PracticeOutcome | null;
-  latestAt: string | null;
-  /** true = 该语境不在回看窗口内，计数与最近结果仅取本页可见数据。 */
-  fallbackOnly: boolean;
+  /** 该语境最近一次作答结果（服务端聚合，含已答对的语境）。 */
+  latestOutcome: L3PracticeOutcome;
+  /** 与该 latestOutcome 同源的最近作答时间（服务端聚合）。 */
+  latestAt: string;
 }
 
 /**
- * 把错题页（outcome=wrong 的派生列表）与 attempts 回看窗口合并成展示行。
- * 每个语境一行（错题页按 created_at DESC，取首个 = 最近一条 wrong 行）。
+ * 错题库条目 → 展示行：每个语境一行（同语境多条 wrong 行时取列表首条 =
+ * 最近一条 wrong 行；聚合字段由服务端给出，同语境各行取值一致）。
+ * 计数与最近结果不再依赖前端 ≤100 条回看窗口。
  */
-export function buildErrorBookRows(
-  errorBookItems: L3PracticeAttemptRow[],
-  attemptIndex: L3PracticeAttemptRow[],
-): ErrorBookDisplayRow[] {
-  const latestByContext = new Map<string, L3PracticeAttemptRow>();
-  const wrongCountByContext = new Map<string, number>();
-  for (const row of attemptIndex) {
-    if (!latestByContext.has(row.context_id)) latestByContext.set(row.context_id, row);
-    if (row.outcome === "wrong") {
-      wrongCountByContext.set(row.context_id, (wrongCountByContext.get(row.context_id) ?? 0) + 1);
-    }
-  }
-
+export function buildErrorBookRows(items: L3PracticeErrorBookItem[]): ErrorBookDisplayRow[] {
   const rows: ErrorBookDisplayRow[] = [];
   const seen = new Set<string>();
-  for (const wrong of errorBookItems) {
-    if (seen.has(wrong.context_id)) continue;
-    seen.add(wrong.context_id);
-    const snapshot = readPracticeSnapshot(wrong.payload);
-    const latest = latestByContext.get(wrong.context_id) ?? wrong;
+  for (const item of items) {
+    if (seen.has(item.context_id)) continue;
+    seen.add(item.context_id);
+    const snapshot = readPracticeSnapshot(item.payload);
     rows.push({
-      contextId: wrong.context_id,
+      contextId: item.context_id,
       text: snapshot.text ?? "",
       target: snapshot.target ?? "",
-      wrongCount: wrongCountByContext.get(wrong.context_id) ?? 1,
-      latestOutcome: latest.outcome,
-      latestAt: latest.created_at,
-      fallbackOnly: !latestByContext.has(wrong.context_id),
+      wrongCount: item.wrongCount,
+      latestOutcome: item.latestOutcome,
+      latestAt: item.latestAt,
     });
   }
   return rows;

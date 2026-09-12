@@ -58,7 +58,8 @@ export function l3PracticeRoutes(services: Services) {
     return c.json(page);
   });
 
-  // GET /error-book — 错题库（attempts(outcome='wrong') 派生查询）。
+  // GET /error-book — 错题库（attempts(outcome='wrong') 派生查询，条目附服务端
+  // 聚合）。分页：cursor 纯新增，offset 保留；两者同时给出时以 cursor 为准。
   app.get("/error-book", async (c) => {
     const parsed = l3PracticeErrorBookQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
@@ -70,6 +71,7 @@ export function l3PracticeRoutes(services: Services) {
       direction: parsed.data.direction ?? null,
       limit: parsed.data.limit ?? null,
       offset: parsed.data.offset ?? null,
+      cursor: parsed.data.cursor ?? null,
     });
     return c.json(page);
   });
