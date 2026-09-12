@@ -396,8 +396,9 @@ export const apiOperations = [
   // draft 消耗 LLM 预算并落草稿，非 proposal-only 写入 → owner（T13a 取 fail-closed；若后续
   // 确认草稿不进权威数据，可在 T13b 复核为 agent）。
   operation("post", "/api/l2/:slug/draft", "createL2Draft", "owner", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2DraftResponseSchema),
-  // external-prompt 是纯提示词组装（不耗预算、不写库），但为 POST。T13a 按"其余写"归 owner；见报告残余风险。
-  operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "owner", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
+  // external-prompt 是纯提示词组装（不耗预算、不写库），语义上是"提案载荷的准备阶段"，
+  // 属 ADR-0029 的 agent 可写面 → agent（T13a-fix）。auth 保持 owner（仅 OpenAPI 描述）。
+  operation("post", "/api/l2/:slug/external-prompt", "createL2ExternalPrompt", "owner", "agent", "sessionMutation", { body: l2FieldRequestSchema }, 200, l2ExternalPromptResponseSchema),
   // L2 confirm：直接写 is_active=true，跳过候选池（ADR-0029 决策 2 点名的空档）→ owner。
   operation("post", "/api/l2/:slug/confirm", "confirmL2Draft", "owner", "owner", "sessionMutation", { body: l2ConfirmRequestSchema }, 200, l2ConfirmResponseSchema),
   operation("get", "/api/l2-drill/queue", "getL2DrillQueue", "owner", "agent", "none", { query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional().default(20) }) }, 200, l2DrillQueueResponseSchema),
@@ -421,10 +422,10 @@ export const apiOperations = [
   operation("get", "/api/l3/graph", "getL3Graph", "owner", "agent", "none", { query: l3GraphQuerySchema }, 200, l3GraphResponseSchema),
   operation("get", "/api/l3/words/:slug/contexts", "listL3WordContexts", "owner", "agent", "none", { query: l3LimitCursorQuerySchema }, 200, l3ContextListResponseSchema),
   operation("get", "/api/l3/sources/:id/contexts", "listL3SourceContexts", "owner", "agent", "none", { query: l3LimitCursorQuerySchema }, 200, l3ContextListResponseSchema),
-  // import 落 job 后产出 proposal（响应即 ProposalBundle），非权威直写 → owner（fail-closed，
-  // 是否放开给 agent 见报告残余风险；本卡未把它记为 proposal-only）。
-  operation("post", "/api/l3/imports/raw-text", "createL3RawTextImport", "owner", "owner", "sessionMutation", { body: l3RawTextImportCreateSchema }, 201, l3ImportProposalResponseSchema),
-  operation("post", "/api/l3/imports/structured", "createL3StructuredImport", "owner", "owner", "sessionMutation", { body: l3StructuredImportCreateSchema }, 201, l3ImportProposalResponseSchema),
+  // import 落 job 后产出 proposal bundle（响应即 ProposalBundle），不写 active L3、不耗 LLM →
+  // 与 proposal 入口同族，对 agent 开放（2026-09-12 裁决）。
+  operation("post", "/api/l3/imports/raw-text", "createL3RawTextImport", "owner", "agent", "sessionMutation", { body: l3RawTextImportCreateSchema }, 201, l3ImportProposalResponseSchema),
+  operation("post", "/api/l3/imports/structured", "createL3StructuredImport", "owner", "agent", "sessionMutation", { body: l3StructuredImportCreateSchema }, 201, l3ImportProposalResponseSchema),
   // ★ Proposal-only write：L3 proposal 三件套的创造入口；validate/confirm/reject 是升级动作 → owner。
   operation("post", "/api/l3/proposals", "createL3Proposal", "owner", "agent", "sessionMutation", { body: l3ProposalCreateSchema }, 201, l3ProposalBundleResponseSchema),
   // generate 消耗 LLM 预算产出推荐集；非 proposal-only 写入 → owner（见报告残余风险）。

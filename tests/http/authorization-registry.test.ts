@@ -139,7 +139,6 @@ const OTHER_OWNER_WRITES = [
   "enqueueReviewCardsBatch",
   // L2 组装 / 导入 / 练习
   "createL2Draft",
-  "createL2ExternalPrompt",
   "submitL2TaskAnswer",
   "submitL2SelfAssessment",
   "undoL2Drill",
@@ -157,9 +156,8 @@ const OTHER_OWNER_WRITES = [
   "deleteL3ContextLink",
   "deleteL3Source",
   "deleteL3Context",
-  // L3 import / recommendation generate（非 proposal-only 写入）
-  "createL3RawTextImport",
-  "createL3StructuredImport",
+  // L3 recommendation generate（消耗预算产出推荐集，非 proposal-only 写入）；
+  // l3 imports 两个入口已按 2026-09-12 裁决归 agent（属提案包生产路径）。
   "generateL3Recommendations",
   // L3 practice / sessions
   "recordL3PracticeAttempt",
@@ -191,11 +189,19 @@ describe("owner-only write inventory (D5 + D6 guard)", () => {
     expect(registryOwnerWrites).toEqual(OWNER_WRITE_OPERATION_IDS);
   });
 
-  it("the only agent-writable /api/* writes are the two proposal entry points", () => {
+  it("the only agent-writable /api/* writes are the proposal path: entry points, prompt preparation and imports", () => {
     const agentWrites = idsWhere(
       (operation) => operation.path.startsWith("/api/") && operation.method !== "get" && operation.minRole === "agent",
     );
-    expect(agentWrites).toEqual(["createL3Proposal", "proposeL2Candidate"]);
+    // 全部属提案路径：proposal 入口 2（createL3Proposal / proposeL2Candidate）+ 载荷准备 1
+    // （external-prompt）+ 提案包生产 2（l3 imports）——2026-09-12 裁决（T13a-fix）。
+    expect(agentWrites).toEqual([
+      "createL2ExternalPrompt",
+      "createL3Proposal",
+      "createL3RawTextImport",
+      "createL3StructuredImport",
+      "proposeL2Candidate",
+    ]);
   });
 });
 

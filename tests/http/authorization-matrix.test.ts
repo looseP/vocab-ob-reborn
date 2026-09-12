@@ -159,6 +159,11 @@ describe("acceptance spot checks", () => {
     expect(await agent("GET", "/api/l3/proposals")).toBe(200);
     expect(await agent("POST", "/api/l3/proposals")).toBe(200);
     expect(await agent("POST", "/api/l2/sample/candidates")).toBe(200);
+    // T13a-fix：提案载荷的准备阶段（MCP build_l2_prompt）必须对 agent 放行。
+    expect(await agent("POST", "/api/l2/sample/external-prompt")).toBe(200);
+    // T13a-fix：L3 导入是提案包生产路径（不写 active L3、不耗预算），同样对 agent 放行。
+    expect(await agent("POST", "/api/l3/imports/raw-text")).toBe(200);
+    expect(await agent("POST", "/api/l3/imports/structured")).toBe(200);
     expect(await agent("POST", "/api/l3/proposals/sample/confirm")).toBe(403);
     expect(await agent("POST", "/api/forgetting/apply")).toBe(403);
     expect(await agent("POST", "/api/upgrade-work-orders/sample/cancel")).toBe(403);

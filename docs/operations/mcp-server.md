@@ -66,12 +66,12 @@
 - 所有写操作在服务端以单一 owner 身份（`LOCAL_OWNER_ID`）执行，RLS 隔离不变。**当前不存在 JWT**：owner token 与 agent token 解析出的是**同一个 actorId**；agent bearer 额外在 `Principal.agentId` 上带出服务端认定的 agentId，但 T13a 尚未落库（见文末「现状限制」4）。
 - 工具执行失败以 `isError: true` 的结果返回（MCP 约定），调用方 Agent 可读取消息自行纠正。
 
-## 现状限制（2026-09-12 T13a 后）
+## 现状限制（2026-09-12 T13a / T13a-fix 后）
 
-1. **agent token 可用（读 + 写 proposal）**：`/api/*` 已从"整体 owner 门禁"升级为**按端点最小角色**（注册表 `src/http/operations.ts` 的 `minRole` + 查找表 `src/http/middleware/api-authorization.ts`）。
-   - agent token（`AGENT_API_TOKENS` 的 `agentId:token`，见 `docs/operations/secret-rotation.md`）可：读全量语料（GET；例外见下）；写 proposal（`POST /api/l3/proposals`、`POST /api/l2/:slug/candidates`）。
+1. **agent token 可用（读 + 写 proposal + 构建提示词 + 发起导入）**：`/api/*` 已从"整体 owner 门禁"升级为**按端点最小角色**（注册表 `src/http/operations.ts` 的 `minRole` + 查找表 `src/http/middleware/api-authorization.ts`）。
+   - agent token（`AGENT_API_TOKENS` 的 `agentId:token`，见 `docs/operations/secret-rotation.md`）可：读全量语料（GET；例外见下）；写 proposal（`POST /api/l3/proposals`、`POST /api/l2/:slug/candidates`）；构建提案载荷（`POST /api/l2/:slug/external-prompt`，即 `build_l2_prompt`，纯组装、不写库、不耗预算）；发起 L3 导入（`POST /api/l3/imports/raw-text|structured`，产出 proposal bundle，不写 active L3、不耗预算）。推荐流 `search_words → get_word_detail → build_l2_prompt → propose_l2_content` 在 agent token 下全程可用。
    - **升级动作对 agent 一律 403**：L2 confirm、L2 candidates accept/reject、L3 proposal validate/confirm/reject、L3 recommendation accept/reject、forgetting apply/restore、l3-sessions end、upgrade-work-orders 全部写、l2-rows deactivate/delete/hide/restore 等；owner token 仍全量放行。
    - `GET /api/operations/metrics` 等少数读保持 owner-only；`/api/auth` 是唯一豁免组（会话兑换/登出）。
-2. **MCP 工具边界尚未收敛（属 T13c）**：本桥 6 个工具仍共用 `VOCAB_MCP_TOKEN`（可为 owner 或 agent）。用 owner token 时 `confirm_l2_content` 仍可直达；用 agent token 时它会被服务端 403 拦下。ADR-0029 要求 MCP 工具面**下线** `confirm_l2_content` 并补 L3 工具——该工作属 T13c，本文档未改工具面。
+2. **MCP 工具边界尚未收敛（见 ADR-0029 §8，另行派发）**：本桥 6 个工具仍共用 `VOCAB_MCP_TOKEN`（可为 owner 或 agent）。用 owner token 时 `confirm_l2_content` 仍可直达；用 agent token 时它会被服务端 403 拦下。ADR-0029 要求 MCP 工具面**下线** `confirm_l2_content` 并补 L3 工具——该工作另行派发，本文档未改工具面。
 3. **MCP 工具集目前只有 L2 的 6 个**，没有任何 L3 工具（`scripts/run-mcp-server.mjs:136-256`；属 T13c）。
 4. **agentId 只到 Principal，未落库**：T13a 只做到中间件按 `id:token` 映射解析并注入 `Principal.agentId`；把 agentId 落 `proposal.provenance.agentId` 属 T13c（0 迁移）。因此数据层仍无法区分某次写入来自 agent 还是 owner，`source_type` / `provenance` 仍是调用方自述。
