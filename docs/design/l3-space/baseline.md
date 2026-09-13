@@ -7,7 +7,7 @@
 >
 > **上游依据**：梳理文档 §三层拆解（L532-552，第 2 层标题原文「空间 = 一种体验（缺失，真正要设计的）」）、
 > §书架形态决策（L701-798）与 Q7/Q8 裁决（L816-823）；requirements v2.2 FR-1~FR-15；self-growing 构想
-> （`l3-context-space-player-design.md`）；`deliverables/software-company/l3-experience-layer-direct-brief-2026-09-12.md`（本任务书）；
+> （`l3-context-space-player-design.md`）；`docs/plan/l3-experience-layer-direct-brief-2026-09-12.md`（本任务书）；
 > 任务拆分 §0 外派通用约束全文（逐条继承）。
 
 ---
