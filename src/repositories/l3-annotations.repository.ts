@@ -78,7 +78,7 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
     if (questionIds.length === 0) return [];
     const rows = await this.query<AnnotationDbRow>(
       `SELECT * FROM l3_question_annotations
-        WHERE user_id = $1::uuid AND status = 'active' AND id = ANY($2::uuid[])
+        WHERE user_id = $1::uuid AND status = 'active' AND question_id = ANY($2::uuid[])
         ORDER BY question_id, ordinal, created_at, id`,
       [userId, questionIds as string[]],
     );

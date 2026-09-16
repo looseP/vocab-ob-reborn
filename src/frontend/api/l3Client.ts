@@ -88,10 +88,11 @@ const ANNOTATION_ID_BATCH_LIMIT = 200;
 export async function fetchQuestionAnnotations(questionIds: readonly string[]): Promise<QuestionAnnotation[]> {
   const ids = [...new Set(questionIds)].slice(0, ANNOTATION_ID_BATCH_LIMIT);
   if (ids.length === 0) return [];
-  const body = await apiFetch<{ items: QuestionAnnotation[] }>(
+  const body = await apiFetch<{ items?: QuestionAnnotation[] } | null>(
     `/l3/question-annotations?questionIds=${ids.map(encodeURIComponent).join(",")}`,
   );
-  return body.items;
+  // 防御：代理/旧后端/HTML 回退等异常形状不得让调用方崩溃（契约漂移只做空结果处理）。
+  return Array.isArray(body?.items) ? body.items : [];
 }
 
 /** 新建条目；同题同锚点幂等命中时服务端返回既有行（200/201 对调用方等价）。 */
@@ -122,13 +123,21 @@ export async function deleteQuestionAnnotation(id: string): Promise<void> {
 
 /** 标签字典首次读取由服务端 lazy-seed 预置集。 */
 export async function fetchAnnotationTags(): Promise<AnnotationTagDict> {
-  return apiFetch<AnnotationTagDict>("/l3/annotation-tags");
+  const body = await apiFetch<Partial<AnnotationTagDict> | null>("/l3/annotation-tags");
+  return {
+    entry: Array.isArray(body?.entry) ? body.entry : [],
+    option: Array.isArray(body?.option) ? body.option : [],
+  };
 }
 
 /** 整存替换标签字典（服务端事务内软删旧行 + 插新行）。 */
 export async function saveAnnotationTags(dict: AnnotationTagDict): Promise<AnnotationTagDict> {
-  return apiFetch<AnnotationTagDict>("/l3/annotation-tags", {
+  const body = await apiFetch<Partial<AnnotationTagDict> | null>("/l3/annotation-tags", {
     method: "PUT",
     body: JSON.stringify(dict),
   });
+  return {
+    entry: Array.isArray(body?.entry) ? body.entry : dict.entry,
+    option: Array.isArray(body?.option) ? body.option : dict.option,
+  };
 }

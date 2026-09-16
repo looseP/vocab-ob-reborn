@@ -585,7 +585,8 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () =>
       fetchAnnotationTags(),
     ]).then(([items, dict]) => {
       if (cancelled) return;
-      setAnnotations(items);
+      // 双保险：l3Client 已做形状归一，这里再保证 state 恒为数组（防止任何脏数据进迭代）。
+      setAnnotations(Array.isArray(items) ? items : []);
       setTagDict(dict);
     }).catch(() => {
       if (!cancelled) addToast("error", "做题注记加载失败，稍后重试");

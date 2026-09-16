@@ -61,7 +61,7 @@ describe("L3AnnotationRepository.listForQuestions", () => {
     expect(result).toHaveLength(2);
     const [sql, params] = (repo as any).query.mock.calls[0];
     expect(sql).toContain("status = 'active'");
-    expect(sql).toContain("id = ANY($2::uuid[])");
+    expect(sql).toContain("question_id = ANY($2::uuid[])");
     expect(sql).toContain("ORDER BY question_id, ordinal, created_at, id");
     expect(params).toEqual([USER, [QUESTION]]);
   });
