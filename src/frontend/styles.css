@@ -942,6 +942,13 @@ body.zen-mode main {
   75% { transform: translateX(3px); }
 }
 
+/* 试卷台：做题注记定位脉冲（批次一，题卡定位钮 → 文栏锚点） */
+@keyframes exam-locate-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 55%, transparent); }
+  70% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-accent) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent); }
+}
+
 /* ─── L3 工具页共享基元（B4 视觉收敛 2026-09-13） ───────────────────────
    走查实锤：.l3-form/.stats-grid 等约 50 个类被 import/manual/proposal/
    recommendation/graph/space 页使用却从未定义——整层无样式（与 2026-09-08

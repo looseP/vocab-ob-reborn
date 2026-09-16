@@ -1,8 +1,19 @@
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo, useRef, useState, useEffect, useCallback, type ReactNode } from "react";
+import { buildPassageSpans, enclosingSentence, type PassageSpan } from "./examPassageSpans";
+import { L3QuestionAnalysis } from "./L3QuestionAnalysis";
+import { apiFetch } from "@/frontend/api/client";
+import { useToast } from "@/frontend/components/ui/Toast";
+import type {
+  AnnotationTagDict,
+  CreateQuestionAnnotationRequest,
+  QuestionAnnotation,
+  QuestionAnnotationPatchRequest,
+} from "@/frontend/api/l3Client";
 
 /**
  * 拟真卷面（ADR-0030 V1 展示面）：左文右题 + 即点即判 + 解析模式 + 翻译/作文书写区。
- * V2 会在同一数据上叠加三模式/自动草稿/证据层；这里只做做题与核对，不写 submissions。
+ * 批次一（2026-09-16）：文栏三通道（空位角标 / 官方 evidence 仅解析模式 /
+ * 用户注记锚点全程）、划词分叉（建原文分析条目 / 圈词入笔记）、题卡原文分析子区。
  */
 
 export interface ExamQuestion {
@@ -12,6 +23,8 @@ export interface ExamQuestion {
   options: Array<{ key: string; text: string }>;
   answer: { choice?: string; choices?: string[]; text?: string; sample?: string; points?: string[] };
   explanation: string | null;
+  /** 官方 evidence 锚点（start/end 为 content UTF-16 偏移；仅解析模式渲染）。 */
+  evidence?: Array<{ start: number; end: number; label: string }>;
 }
 export interface ExamSection {
   key: string;
@@ -36,6 +49,23 @@ export interface ExamPaper {
   sections: ExamSection[];
 }
 
+/** 注记/标签通道（Task 9 由装配层传入；缺省时文栏仅保留做题与划词圈词）。 */
+export interface ExamPaperAnnotationProps {
+  annotationsByQuestion: Record<string, QuestionAnnotation[]>;
+  tagDict: AnnotationTagDict;
+  onCreateAnnotation: (input: CreateQuestionAnnotationRequest) => Promise<void>;
+  onPatchAnnotation: (id: string, patch: QuestionAnnotationPatchRequest) => Promise<void>;
+  onDeleteAnnotation: (id: string) => Promise<void>;
+  onSaveTagDict: (dict: AnnotationTagDict) => Promise<void>;
+}
+
+interface LocateTarget {
+  sectionKey: string;
+  start: number;
+  end: number;
+  nonce: number;
+}
+
 const TYPE_SHORT: Record<ExamSection["questionType"], string> = {
   cloze: "完型",
   reading_choice: "阅读",
@@ -46,7 +76,6 @@ const TYPE_SHORT: Record<ExamSection["questionType"], string> = {
   grammar_blank: "语法填空",
 };
 
-const BLANK_RE = /〖(\d+)〗/g;
 const OBJECTIVE_TYPES = new Set(["cloze", "reading_choice", "new_question", "grammar_blank"]);
 const SECTION_POINTS: Record<string, number> = {
   cloze: 10,
@@ -57,28 +86,365 @@ const SECTION_POINTS: Record<string, number> = {
   long_essay: 15,
 };
 
-function renderPassage(content: string, activeBlank: number | null, onJump: (n: number) => void) {
-  const parts = content.split(BLANK_RE);
-  return parts.map((part, i) => {
-    if (i % 2 === 0) return <span key={i}>{part}</span>;
-    const n = Number(part);
-    const active = activeBlank === n;
-    return (
-      <button
-        key={i}
-        type="button"
-        onClick={() => onJump(n)}
-        className={`mx-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[11px] font-semibold align-middle transition-all ${
-          active
-            ? "scale-110 bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]"
-            : "bg-[var(--color-accent-soft,var(--color-surface))] text-[var(--color-accent)] ring-1 ring-[var(--color-border)] hover:ring-[var(--color-accent)]"
-        }`}
-        title={`跳到第 ${n} 空`}
-      >
-        {n}
-      </button>
+/** 浏览器选区 → content 偏移：text 节点上溯最近的 [data-content-off] 文本段。 */
+function selectionToContentOffsets(container: HTMLElement): { start: number; end: number } | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const startNode = range.startContainer;
+  const endNode = range.endContainer;
+  if (startNode.nodeType !== Node.TEXT_NODE || endNode.nodeType !== Node.TEXT_NODE) return null;
+  if (!container.contains(startNode) || !container.contains(endNode)) return null;
+  const offsetOf = (node: Node): number | null => {
+    const span = node.parentElement?.closest<HTMLElement>("[data-content-off]");
+    if (!span) return null;
+    const value = Number(span.dataset.contentOff);
+    return Number.isFinite(value) ? value : null;
+  };
+  const startBase = offsetOf(startNode);
+  const endBase = offsetOf(endNode);
+  if (startBase == null || endBase == null) return null;
+  const start = startBase + range.startOffset;
+  const end = endBase + range.endOffset;
+  return end > start ? { start, end } : null;
+}
+
+interface CaptureState {
+  x: number;
+  y: number;
+  start: number;
+  end: number;
+  excerpt: string;
+  mode: "menu" | "annotate" | "capture";
+}
+
+function PassageBody({
+  section,
+  content,
+  revealAll,
+  activeBlank,
+  annotations,
+  locate,
+  questionDisplayNo,
+  onJumpQuestion,
+  onCreateAnnotation,
+}: {
+  section: ExamSection;
+  content: string;
+  revealAll: boolean;
+  activeBlank: number | null;
+  annotations: QuestionAnnotation[];
+  locate: LocateTarget | null;
+  questionDisplayNo: Map<string, number>;
+  onJumpQuestion: (questionId: string) => void;
+  onCreateAnnotation?: (input: CreateQuestionAnnotationRequest) => Promise<void>;
+}) {
+  const passageRef = useRef<HTMLDivElement>(null);
+  const [capture, setCapture] = useState<CaptureState | null>(null);
+  const [pulseNonce, setPulseNonce] = useState(0);
+  const [wordSlug, setWordSlug] = useState("");
+  const [boundSense, setBoundSense] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { addToast } = useToast();
+
+  const evidence = useMemo(
+    () => section.questions.flatMap((q) => q.evidence ?? []),
+    [section.questions],
+  );
+
+  const spans = useMemo(
+    () => buildPassageSpans(content, {
+      evidence,
+      annotations: annotations
+        .filter((a) => a.anchor_start != null && a.anchor_end != null)
+        .map((a) => ({ id: a.id, anchorStart: a.anchor_start, anchorEnd: a.anchor_end })),
+      showEvidence: revealAll,
+    }),
+    [content, evidence, annotations, revealAll],
+  );
+
+  // 题卡定位钮 → 滚动到锚点并脉冲（nonce 保证重复点击同一锚点也重播动画）。
+  useEffect(() => {
+    if (!locate || locate.sectionKey !== section.key) return;
+    const target = passageRef.current?.querySelector<HTMLElement>(
+      `[data-ann-start="${locate.start}"][data-ann-end="${locate.end}"]`,
     );
-  });
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    setPulseNonce(locate.nonce);
+    const timer = setTimeout(() => setPulseNonce(0), 1400);
+    return () => clearTimeout(timer);
+  }, [locate, section.key]);
+
+  // 浮条外点关闭 / Esc 关闭。
+  useEffect(() => {
+    if (!capture) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest("[data-exam-capture-bar]")) return;
+      setCapture(null);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setCapture(null);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [capture !== null]);
+
+  const handleMouseUp = useCallback(() => {
+    const container = passageRef.current;
+    if (!container) return;
+    const offsets = selectionToContentOffsets(container);
+    if (!offsets) {
+      setCapture(null);
+      return;
+    }
+    const rect = window.getSelection()?.getRangeAt(0).getBoundingClientRect();
+    setCapture({
+      x: rect ? rect.left + rect.width / 2 : 120,
+      y: rect ? rect.top : 120,
+      start: offsets.start,
+      end: offsets.end,
+      excerpt: content.slice(offsets.start, offsets.end),
+      mode: "menu",
+    });
+  }, [content]);
+
+  const clearSelection = () => {
+    window.getSelection()?.removeAllRanges();
+    setCapture(null);
+  };
+
+  const createAnnotatedEntry = async (questionId: string) => {
+    if (!capture || !onCreateAnnotation) return;
+    setBusy(true);
+    try {
+      await onCreateAnnotation({
+        questionId,
+        anchorStart: capture.start,
+        anchorEnd: capture.end,
+        excerpt: capture.excerpt,
+        note: "",
+        entryTags: [],
+        optionTags: {},
+      });
+      addToast("已建原文分析条目，可在题卡补充标签与笔记");
+      clearSelection();
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : "创建失败");
+      setBusy(false);
+    }
+  };
+
+  const submitCaptureNote = async () => {
+    if (!capture || !section.sourceId || !wordSlug.trim()) return;
+    setBusy(true);
+    try {
+      await apiFetch(`/l3/sources/${section.sourceId}/captures`, {
+        method: "POST",
+        body: JSON.stringify({
+          text: enclosingSentence(content, capture.start, capture.end),
+          anchorStart: capture.start,
+          anchorEnd: capture.end,
+          surface: capture.excerpt,
+          wordSlug: wordSlug.trim(),
+          boundSense: boundSense.trim() || null,
+        }),
+      });
+      addToast("已圈入素材笔记，可在素材空间回访处理");
+      setWordSlug("");
+      setBoundSense("");
+      clearSelection();
+    } catch (error) {
+      addToast(error instanceof Error ? error.message : "圈记失败");
+      setBusy(false);
+    }
+  };
+
+  const renderedBadges = new Set<string>();
+
+  return (
+    <div>
+      <div
+        ref={passageRef}
+        data-ann-passage
+        onMouseUp={handleMouseUp}
+        className="text-sm leading-8 [text-align:justify]"
+      >
+        {spans.map((span: PassageSpan) => {
+          if (span.kind === "blank") {
+            const isActiveBlank = activeBlank === span.blankNo;
+            return (
+              <button
+                key={`${span.start}-${span.end}`}
+                type="button"
+                data-blank-no={span.blankNo}
+                onClick={() => onJumpQuestion(section.questions.find((q) =>
+                  section.questionType === "new_question" ? q.ordinal + 41 === span.blankNo : questionDisplayNo.get(q.id) === span.blankNo,
+                )?.id ?? "")}
+                className={`mx-0.5 inline-flex h-5 min-w-5 select-none items-center justify-center rounded px-1 text-[11px] font-semibold align-middle transition-all ${
+                  isActiveBlank
+                    ? "scale-110 bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]"
+                    : "bg-[var(--color-accent-soft,var(--color-surface))] text-[var(--color-accent)] ring-1 ring-[var(--color-border)] hover:ring-[var(--color-accent)]"
+                }`}
+                title={`跳到第 ${span.blankNo} 空`}
+              >
+                {span.blankNo}
+              </button>
+            );
+          }
+          const text = content.slice(span.start, span.end);
+          if (span.kind === "evidence") {
+            return (
+              <mark
+                key={`${span.start}-${span.end}`}
+                data-content-off={span.start}
+                data-evidence
+                className="rounded bg-amber-200/70 px-0.5 text-inherit dark:bg-amber-400/30"
+              >
+                {text}
+              </mark>
+            );
+          }
+          if (span.kind === "annotation") {
+            const annotationId = span.annotationId!;
+            const isPulsing = pulseNonce > 0
+              && locate?.start === span.start && locate?.end === span.end;
+            const showBadge = !renderedBadges.has(annotationId);
+            if (showBadge) renderedBadges.add(annotationId);
+            return (
+              <span key={`${span.start}-${span.end}`} className="whitespace-nowrap">
+                <mark
+                  data-content-off={span.start}
+                  data-ann-id={annotationId}
+                  data-ann-start={span.start}
+                  data-ann-end={span.end}
+                  className={`rounded-sm border-b-2 border-[var(--color-accent)] px-0.5 text-inherit ${
+                    isPulsing ? "[animation:exam-locate-pulse_1.2s_ease-out] rounded" : ""
+                  }`}
+                >
+                  {text}
+                </mark>
+                {showBadge && (
+                  <button
+                    type="button"
+                    data-ann-jump={annotationId}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const owner = annotations.find((a) => a.id === annotationId);
+                      if (owner) onJumpQuestion(owner.question_id);
+                    }}
+                    title="查看该题的原文分析"
+                    className="ml-0.5 inline-flex h-4 min-w-4 select-none items-center justify-center rounded-full bg-[var(--color-accent)] px-1 text-[9px] font-bold leading-none text-[var(--color-accent-contrast,var(--color-surface))] align-middle"
+                  >
+                    {(() => {
+                      const owner = annotations.find((a) => a.id === annotationId);
+                      return owner ? (questionDisplayNo.get(owner.question_id) ?? "•") : "•";
+                    })()}
+                  </button>
+                )}
+              </span>
+            );
+          }
+          return (
+            <span key={`${span.start}-${span.end}`} data-content-off={span.start}>
+              {text}
+            </span>
+          );
+        })}
+      </div>
+
+      {capture && (
+        <div
+          data-exam-capture-bar
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            position: "fixed",
+            left: Math.min(Math.max(capture.x, 140), window.innerWidth - 140),
+            top: Math.max(capture.y - 8, 72),
+            transform: "translateX(-50%) translateY(-100%)",
+          }}
+          className="z-50 w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-xl"
+        >
+          <p className="mb-2 line-clamp-2 rounded-md bg-[var(--color-accent-soft,var(--color-surface))] p-1.5 text-[11px] italic text-[var(--color-ink-soft)]">
+            「{capture.excerpt}」
+          </p>
+          {capture.mode === "menu" && (
+            <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                disabled={!onCreateAnnotation || busy}
+                onClick={() => setCapture((c) => (c ? { ...c, mode: "annotate" } : c))}
+                className="rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-xs font-semibold text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50"
+              >
+                建原文分析条目
+              </button>
+              <button
+                type="button"
+                disabled={!section.sourceId || busy}
+                onClick={() => {
+                  setWordSlug(capture.excerpt.trim().split(/\s+/)[0]?.slice(0, 30) ?? "");
+                  setCapture((c) => (c ? { ...c, mode: "capture" } : c));
+                }}
+                className="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs text-[var(--color-ink)] hover:border-[var(--color-accent)] disabled:opacity-50"
+              >
+                圈词入笔记
+              </button>
+            </div>
+          )}
+          {capture.mode === "annotate" && (
+            <div className="max-h-48 space-y-1 overflow-y-auto">
+              <p className="text-[10px] text-[var(--color-ink-soft)]">挂到哪道题？（锚点已自动带入）</p>
+              {section.questions.map((q) => (
+                <button
+                  key={q.id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void createAnnotatedEntry(q.id)}
+                  className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] hover:bg-[var(--color-accent-soft,var(--color-surface))] disabled:opacity-50"
+                >
+                  第 {questionDisplayNo.get(q.id)} 题 · {q.stem}
+                </button>
+              ))}
+              <button type="button" onClick={() => setCapture(null)} className="text-[10px] text-[var(--color-ink-soft)]">取消</button>
+            </div>
+          )}
+          {capture.mode === "capture" && (
+            <div className="space-y-2">
+              <input
+                value={wordSlug}
+                onChange={(e) => setWordSlug(e.target.value)}
+                placeholder="目标词（slug）"
+                className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[11px] focus:border-[var(--color-accent)] focus:outline-none"
+              />
+              <input
+                value={boundSense}
+                onChange={(e) => setBoundSense(e.target.value)}
+                placeholder="语境义（可选）"
+                className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[11px] focus:border-[var(--color-accent)] focus:outline-none"
+              />
+              <span className="flex justify-end gap-2">
+                <button type="button" onClick={() => setCapture(null)} className="text-[11px] text-[var(--color-ink-soft)]">取消</button>
+                <button
+                  type="button"
+                  disabled={busy || !wordSlug.trim()}
+                  onClick={() => void submitCaptureNote()}
+                  className="rounded-md bg-[var(--color-accent)] px-2.5 py-1 text-[11px] font-semibold text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50"
+                >
+                  存入笔记
+                </button>
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function OptionRow({
@@ -118,12 +484,14 @@ function ChoiceQuestion({
   revealAll,
   picked,
   onPick,
+  analysis,
 }: {
   question: ExamQuestion;
   index: number;
   revealAll: boolean;
   picked?: string;
   onPick: (key: string) => void;
+  analysis?: ReactNode;
 }) {
   const correct = question.answer.choice;
   const answered = Boolean(picked);
@@ -132,7 +500,7 @@ function ChoiceQuestion({
     <div className="rounded-xl border border-[var(--color-border)] p-3.5 transition-shadow hover:shadow-sm">
       <div className="mb-2.5 flex items-start gap-2">
         <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-soft,var(--color-surface))] text-xs font-bold text-[var(--color-accent)]">
-          {index + 1}
+          {index}
         </span>
         <p className="text-sm font-medium leading-relaxed">{question.stem}</p>
       </div>
@@ -153,6 +521,7 @@ function ChoiceQuestion({
           <p className="mt-1.5 whitespace-pre-wrap">{question.explanation}</p>
         </details>
       )}
+      {analysis}
     </div>
   );
 }
@@ -161,10 +530,12 @@ function WrittenQuestion({
   question,
   kind,
   placeholder,
+  analysis,
 }: {
   question: ExamQuestion;
   kind: "translation" | "essay";
   placeholder: string;
+  analysis?: ReactNode;
 }) {
   const reference = kind === "translation" ? question.answer.text : question.answer.sample;
   return (
@@ -186,16 +557,33 @@ function WrittenQuestion({
           {question.explanation && <p className="mt-2 text-xs leading-relaxed text-emerald-700/80 dark:text-emerald-300/70">{question.explanation}</p>}
         </details>
       )}
+      {analysis}
     </div>
   );
 }
 
-export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () => void }) {
+export function L3ExamPaper({
+  paper,
+  onBack,
+  annotationsByQuestion,
+  tagDict,
+  onCreateAnnotation,
+  onPatchAnnotation,
+  onDeleteAnnotation,
+  onSaveTagDict,
+}: {
+  paper: ExamPaper;
+  onBack: () => void;
+} & Partial<ExamPaperAnnotationProps>) {
   const [revealAll, setRevealAll] = useState(false);
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [activeBlank, setActiveBlank] = useState<number | null>(null);
   const [activeSection, setActiveSection] = useState(paper.sections[0]?.key ?? "");
+  const [locate, setLocate] = useState<LocateTarget | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
+  const annotationsEnabled = Boolean(
+    annotationsByQuestion && tagDict && onCreateAnnotation && onPatchAnnotation && onDeleteAnnotation && onSaveTagDict,
+  );
 
   const pickQuestion = (questionId: string, key: string) =>
     setPicks((prev) => ({ ...prev, [questionId]: key }));
@@ -236,6 +624,22 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () =>
   const scrollToQuestion = (sectionKey: string, domId: string) => {
     scrollToSection(sectionKey);
     setTimeout(() => document.getElementById(domId)?.scrollIntoView({ behavior: "smooth", block: "center" }), 250);
+  };
+
+  const renderAnalysis = (sectionKey: string, q: ExamQuestion) => {
+    if (!annotationsEnabled) return null;
+    return (
+      <L3QuestionAnalysis
+        question={q}
+        annotations={annotationsByQuestion?.[q.id] ?? []}
+        tagDict={tagDict!}
+        onLocate={(anchor) => setLocate({ sectionKey, ...anchor, nonce: Date.now() })}
+        onCreate={onCreateAnnotation!}
+        onPatch={onPatchAnnotation!}
+        onDelete={onDeleteAnnotation!}
+        onSaveTagDict={onSaveTagDict!}
+      />
+    );
   };
 
   return (
@@ -284,6 +688,15 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () =>
         {paper.sections.map((section, sectionIndex) => {
           const hasPassage = Boolean(section.source_content) && ["cloze", "reading_choice", "new_question"].includes(section.questionType);
           const isWritten = ["sentence_translation", "short_essay", "long_essay"].includes(section.questionType);
+          const sectionAnnotations = annotationsEnabled
+            ? section.questions.flatMap((q) => annotationsByQuestion?.[q.id] ?? [])
+            : [];
+          const questionDisplayNo = new Map(
+            section.questions.map((q, qi) => [
+              q.id,
+              section.questionType === "new_question" ? q.ordinal + 41 : qi + 1,
+            ]),
+          );
           return (
             <section
               key={section.key}
@@ -304,14 +717,17 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () =>
               )}
 
               {isWritten ? (
-                section.questions.map((q) => (
-                  <WrittenQuestion
-                    key={q.id}
-                    question={q}
-                    kind={section.questionType === "sentence_translation" ? "translation" : "essay"}
-                    placeholder={section.questionType === "sentence_translation" ? "在这里写下你的译文…" : "在这里写作文（约 100/150 词）…"}
-                  />
-                ))
+                <div className="space-y-3">
+                  {section.questions.map((q) => (
+                    <WrittenQuestion
+                      key={q.id}
+                      question={q}
+                      kind={section.questionType === "sentence_translation" ? "translation" : "essay"}
+                      placeholder={section.questionType === "sentence_translation" ? "在这里写下你的译文…" : "在这里写作文（约 100/150 词）…"}
+                      analysis={renderAnalysis(section.key, q)}
+                    />
+                  ))}
+                </div>
               ) : hasPassage ? (
                 <div className="grid gap-4 lg:grid-cols-2">
                   <div className="lg:sticky lg:top-20 lg:self-start">
@@ -321,15 +737,17 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () =>
                           {section.source_title}
                         </p>
                       )}
-                      <div className="text-sm leading-8 [text-align:justify]">
-                        {renderPassage(section.source_content ?? "", activeBlank, (n) => {
-                          // 完型空号 1–20 对应 ordinal 0–19；新题型空号为全局题号 41–45。
-                          const ordinal = section.questionType === "new_question" ? n - 41 : n - 1;
-                          const q = section.questions.find((candidate) => candidate.ordinal === ordinal);
-                          setActiveBlank(n);
-                          if (q) scrollToQuestion(section.key, `q-${q.id}`);
-                        })}
-                      </div>
+                      <PassageBody
+                        section={section}
+                        content={section.source_content ?? ""}
+                        revealAll={revealAll}
+                        activeBlank={activeBlank}
+                        annotations={sectionAnnotations}
+                        locate={locate}
+                        questionDisplayNo={questionDisplayNo}
+                        onJumpQuestion={(questionId) => scrollToQuestion(section.key, `q-${questionId}`)}
+                        onCreateAnnotation={onCreateAnnotation}
+                      />
                     </div>
                   </div>
                   <div className="space-y-3">
@@ -348,6 +766,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () =>
                             if (section.questionType === "cloze") setActiveBlank(qi + 1);
                             if (section.questionType === "new_question") setActiveBlank(q.ordinal + 41);
                           }}
+                          analysis={renderAnalysis(section.key, q)}
                         />
                       </div>
                     ))}
@@ -363,6 +782,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () =>
                       revealAll={revealAll}
                       picked={picks[q.id]}
                       onPick={(key) => pickQuestion(q.id, key)}
+                      analysis={renderAnalysis(section.key, q)}
                     />
                   ))}
                 </div>
