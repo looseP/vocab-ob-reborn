@@ -27,6 +27,7 @@ import { L3RecommendationRepository } from "./l3-recommendation.repository";
 import { L3PracticeRepository } from "./l3-practice.repository";
 import { L3SessionRepository } from "./l3-session.repository";
 import { L3PaperRepository } from "./l3-paper.repository";
+import { L3AnnotationRepository } from "./l3-annotations.repository";
 import { OutboxRepository } from "./outbox.repository";
 
 export function createRepositories(tx?: PoolClient): IRepositories {
@@ -48,6 +49,7 @@ export function createRepositories(tx?: PoolClient): IRepositories {
     l3Practice: new L3PracticeRepository(tx),
     l3Sessions: new L3SessionRepository(tx),
     l3Paper: new L3PaperRepository(tx),
+    l3Annotations: new L3AnnotationRepository(tx),
     llmUsage: new LlmUsageRepository(tx),
     outbox: new OutboxRepository(tx),
   };

@@ -668,6 +668,39 @@ export interface L3PaperDetail extends Omit<L3PaperRow, "payload"> {
   sections: L3AssembledSection[];
 }
 
+// ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ────────────────
+export type L3AnnotationTagKind = "entry" | "option";
+export type L3AnnotationOptionKey = "A" | "B" | "C" | "D";
+
+/** l3_question_annotations 行（jsonb 列由 repository 反序列化收窄）。 */
+export interface L3QuestionAnnotationRow {
+  id: string;
+  user_id: string;
+  question_id: string;
+  ordinal: number;
+  anchor_start: number | null;
+  anchor_end: number | null;
+  excerpt: string | null;
+  note: string;
+  entry_tags: string[];
+  option_tags: Partial<Record<L3AnnotationOptionKey, string[]>>;
+  status: "active" | "deleted";
+  created_at: string;
+  updated_at: string;
+}
+
+/** l3_annotation_tags 行（预置 + 用户增删改，按用户隔离）。 */
+export interface L3AnnotationTagRow {
+  id: string;
+  user_id: string;
+  kind: L3AnnotationTagKind;
+  label: string;
+  ordinal: number;
+  status: "active" | "deleted";
+  created_at: string;
+  updated_at: string;
+}
+
 // ── L3 error book（T11 加固：服务端聚合 + cursor 纯新增）───────────────────
 /**
  * 错题库条目：wrong attempt 行 + **服务端聚合**的语境级统计。

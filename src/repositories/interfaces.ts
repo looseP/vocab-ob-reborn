@@ -29,6 +29,9 @@ import type {
   L3PaginatedList,
   L3PaperListPage,
   L3PaperRow,
+  L3AnnotationOptionKey,
+  L3AnnotationTagRow,
+  L3QuestionAnnotationRow,
   L3PracticeAttemptPage,
   L3PracticeFilePage,
   L3QuestionRow,
@@ -1509,6 +1512,58 @@ export interface IL3PaperRepository {
   listPapers(input: L3PaperLookup): Promise<L3PaperListPage>;
 }
 
+// ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ─────────────────
+export interface NewL3QuestionAnnotation {
+  user_id: string;
+  question_id: string;
+  /** 缺省由库内题内 max(ordinal)+1 分配。 */
+  ordinal?: number | null;
+  anchor_start: number | null;
+  anchor_end: number | null;
+  excerpt: string | null;
+  note: string;
+  entry_tags: string[];
+  option_tags: Partial<Record<L3AnnotationOptionKey, string[]>>;
+}
+
+/** PATCH 的库列形状（snake_case；只含可改列，question_id 永不可改）。 */
+export interface L3QuestionAnnotationPatchDb {
+  anchor_start?: number | null;
+  anchor_end?: number | null;
+  excerpt?: string | null;
+  note?: string;
+  entry_tags?: string[];
+  option_tags?: Partial<Record<L3AnnotationOptionKey, string[]>>;
+}
+
+export interface IL3AnnotationRepository {
+  /** 批量取多题的 active 条目（题内按 ordinal/created_at 排序）。 */
+  listForQuestions(userId: string, questionIds: readonly string[]): Promise<L3QuestionAnnotationRow[]>;
+  /** 锚点幂等查询：同题同锚点 active 行。 */
+  findByAnchor(
+    userId: string,
+    questionId: string,
+    anchorStart: number,
+    anchorEnd: number,
+  ): Promise<L3QuestionAnnotationRow | null>;
+  insertAnnotation(input: NewL3QuestionAnnotation): Promise<L3QuestionAnnotationRow>;
+  /** 动态 SET 仅改提交列（显式 null 落库，用于去除锚点）；未命中返回 null。 */
+  updateAnnotation(
+    userId: string,
+    id: string,
+    patch: L3QuestionAnnotationPatchDb,
+  ): Promise<L3QuestionAnnotationRow | null>;
+  /** 软删（status→deleted），非 active/非属主零行。 */
+  softDeleteAnnotation(userId: string, id: string): Promise<boolean>;
+  /** 整取 active 标签行（调用方按 kind 分组）。 */
+  listTags(userId: string): Promise<L3AnnotationTagRow[]>;
+  /** 整存：事务内软删全部旧行再插新行，返回新行。 */
+  replaceTags(
+    userId: string,
+    dict: { entry: readonly string[]; option: readonly string[] },
+  ): Promise<L3AnnotationTagRow[]>;
+}
+
 // ── Aggregate ───────────────────────────────────────────────────────────
 export interface IRepositories {
   words: IWordRepository;
@@ -1528,6 +1583,7 @@ export interface IRepositories {
   l3Practice: IL3PracticeRepository;
   l3Sessions: IL3SessionRepository;
   l3Paper: IL3PaperRepository;
+  l3Annotations: IL3AnnotationRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }
