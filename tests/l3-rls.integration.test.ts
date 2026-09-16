@@ -10,7 +10,9 @@
  *                           vocab_app NOBYPASSRLS 非属主 → auth.uid() 策略强制生效
  *
  * 覆盖：三件套写入（RLS WITH CHECK）、跨用户读隔离、跨用户写无操作、
- * 冒名插入被 RLS 拒绝、双用户互不可见、删除级联 + bound_sense 落库。
+ * 冒名插入被 RLS 拒绝、双用户互不可见、删除级联 + bound_sense 落库；
+ * 0033 批次一：做题注记/标签字典隔离（读不可见、冒名 WITH CHECK、update/软删
+ * 无操作）与题删除经 vocab_app 级联清理注记。
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -121,11 +123,15 @@ describe("L3 RLS isolation (integration)", () => {
 
   afterAll(async () => {
     try {
-      // pg 扩展协议不允许带参多语句——逐条执行清理
+      // 逐条执行清理
       await adminPool.query("DELETE FROM l3_occurrences WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_context_links WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_contexts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_sources WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      // 0033 批次一：做题注记/标签字典（题删除已级联注记，这里兜底显式清理）
+      await adminPool.query("DELETE FROM l3_question_annotations WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      await adminPool.query("DELETE FROM l3_annotation_tags WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      await adminPool.query("DELETE FROM l3_questions WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM words WHERE id = $1", [WORD_ID]);
       await adminPool.query("DELETE FROM profiles WHERE id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
@@ -272,6 +278,120 @@ describe("L3 RLS isolation (integration)", () => {
 
     const remaining = await adminPool.query<{ count: number }>(
       "SELECT count(*)::int AS count FROM l3_sources",
+    );
+    expect(remaining.rows[0]!.count).toBe(0);
+  });
+
+  // ── 0033 批次一：做题注记（原文分析条目）与规律标签字典的行级隔离 ──
+  let aQuestionId = "";
+
+  it("actor A attaches anchored/loose annotations and tag-dict rows to its question", async () => {
+    aQuestionId = randomUUID();
+    // file_key 题组（无 source 也满足 l3_questions 的身份 CHECK）
+    await adminPool.query(
+      `INSERT INTO l3_questions (id, user_id, file_key, space, question_type, stem)
+       VALUES ($1, $2, $3, '阅读', 'reading_choice', 'RLS fixture question')`,
+      [aQuestionId, ACTOR_A, `rls-file-${aQuestionId.slice(0, 8)}`],
+    );
+
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_annotations
+           (id, user_id, question_id, ordinal, anchor_start, anchor_end, excerpt, note, entry_tags, option_tags)
+         VALUES ($1, $2, $3, 0, 12, 20, $4, 'evidence anchors the trap', $5::jsonb, $6::jsonb)`,
+        [randomUUID(), ACTOR_A, aQuestionId, "trap phrase",
+          JSON.stringify(["推断题"]), JSON.stringify({ B: ["偷换概念"] })],
+      );
+      await tx.query(
+        `INSERT INTO l3_question_annotations (id, user_id, question_id, ordinal, note)
+         VALUES ($1, $2, $3, 1, '题型归因，无锚点')`,
+        [randomUUID(), ACTOR_A, aQuestionId],
+      );
+      await tx.query(
+        `INSERT INTO l3_annotation_tags (id, user_id, kind, label, ordinal)
+         VALUES ($1, $2, 'entry', '细节题', 0), ($3, $4, 'option', '无中生有', 0)`,
+        [randomUUID(), ACTOR_A, randomUUID(), ACTOR_A],
+      );
+      const counts = await tx.query<{ annotations: number; tags: number }>(
+        `SELECT
+           (SELECT count(*)::int FROM l3_question_annotations) AS annotations,
+           (SELECT count(*)::int FROM l3_annotation_tags) AS tags`,
+      );
+      expect(counts.rows[0]).toEqual({ annotations: 2, tags: 2 });
+    });
+  });
+
+  it("actor B cannot read actor A's annotations or tags", async () => {
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const counts = await tx.query<{ annotations: number; tags: number }>(
+        `SELECT
+           (SELECT count(*)::int FROM l3_question_annotations) AS annotations,
+           (SELECT count(*)::int FROM l3_annotation_tags) AS tags`,
+      );
+      expect(counts.rows[0]).toEqual({ annotations: 0, tags: 0 });
+      const onQuestion = await tx.query(
+        "SELECT id FROM l3_question_annotations WHERE question_id = $1",
+        [aQuestionId],
+      );
+      expect(onQuestion.rows).toHaveLength(0);
+    });
+  });
+
+  it("rejects actor B inserting annotations/tags attributed to actor A (RLS WITH CHECK)", async () => {
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_annotations (id, user_id, question_id, note)
+         VALUES ($1, $2, $3, 'spoofed owner annotation')`,
+        [randomUUID(), ACTOR_A, aQuestionId],
+      );
+    })).rejects.toThrow(/row-level security/i);
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_annotation_tags (id, user_id, kind, label)
+         VALUES ($1, $2, 'entry', 'spoofed owner tag')`,
+        [randomUUID(), ACTOR_A],
+      );
+    })).rejects.toThrow(/row-level security/i);
+  });
+
+  it("actor B update/soft-delete against actor A's annotations are no-ops", async () => {
+    const before = await adminPool.query<{ note: string; status: string }>(
+      "SELECT note, status FROM l3_question_annotations WHERE question_id = $1 ORDER BY ordinal",
+      [aQuestionId],
+    ).then((r) => r.rows);
+
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const updated = await tx.query(
+        `UPDATE l3_question_annotations SET note = 'hijacked', updated_at = now()
+         WHERE question_id = $1 RETURNING id`,
+        [aQuestionId],
+      );
+      expect(updated.rows).toHaveLength(0);
+      const softDeleted = await tx.query(
+        "UPDATE l3_question_annotations SET status = 'deleted' WHERE question_id = $1 RETURNING id",
+        [aQuestionId],
+      );
+      expect(softDeleted.rows).toHaveLength(0);
+    });
+
+    const after = await adminPool.query<{ note: string; status: string }>(
+      "SELECT note, status FROM l3_question_annotations WHERE question_id = $1 ORDER BY ordinal",
+      [aQuestionId],
+    ).then((r) => r.rows);
+    expect(after).toEqual(before);
+  });
+
+  it("cascades annotations when actor A deletes its question through the vocab_app path", async () => {
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      const deleted = await tx.query(
+        "DELETE FROM l3_questions WHERE id = $1 RETURNING id",
+        [aQuestionId],
+      );
+      expect(deleted.rows).toHaveLength(1);
+    });
+    const remaining = await adminPool.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM l3_question_annotations WHERE question_id = $1",
+      [aQuestionId],
     );
     expect(remaining.rows[0]!.count).toBe(0);
   });
