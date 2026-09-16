@@ -231,10 +231,10 @@ function PassageBody({
         entryTags: [],
         optionTags: {},
       });
-      addToast("已建原文分析条目，可在题卡补充标签与笔记");
+      addToast("success", "已建原文分析条目，可在题卡补充标签与笔记");
       clearSelection();
     } catch (error) {
-      addToast(error instanceof Error ? error.message : "创建失败");
+      addToast("error", error instanceof Error ? error.message : "创建失败");
       setBusy(false);
     }
   };
@@ -255,12 +255,12 @@ function PassageBody({
         }),
       });
       if (result.contextId) onContextBuffered?.(result.contextId);
-      addToast("已圈入素材笔记，可在素材空间回访处理");
+      addToast("success", "已圈入素材笔记，可在素材空间回访处理");
       setWordSlug("");
       setBoundSense("");
       clearSelection();
     } catch (error) {
-      addToast(error instanceof Error ? error.message : "圈记失败");
+      addToast("error", error instanceof Error ? error.message : "圈记失败");
       setBusy(false);
     }
   };
@@ -588,7 +588,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () =>
       setAnnotations(items);
       setTagDict(dict);
     }).catch(() => {
-      if (!cancelled) addToast("做题注记加载失败，稍后重试");
+      if (!cancelled) addToast("error", "做题注记加载失败，稍后重试");
     });
     return () => { cancelled = true; };
   }, [paper.id, paper.sections, addToast]);

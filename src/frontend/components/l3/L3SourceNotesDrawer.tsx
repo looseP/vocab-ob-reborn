@@ -59,7 +59,7 @@ export function L3SourceNotesDrawer({
           })),
         );
       } catch (error) {
-        if (!cancelled) addToast(error instanceof Error ? error.message : "素材笔记加载失败");
+        if (!cancelled) addToast("error", error instanceof Error ? error.message : "素材笔记加载失败");
       } finally {
         if (!cancelled) setLoading(false);
       }
