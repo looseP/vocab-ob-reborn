@@ -1,4 +1,4 @@
-﻿import type { PoolClient } from "pg";
+import type { PoolClient } from "pg";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Json,
@@ -354,6 +354,8 @@ class L3CrossContractHarness {
         this.sources.set(source.id, source);
         return source;
       }),
+      replaceSourceSpaces: vi.fn(async () => undefined),
+      ensureSourceSpaces: vi.fn(async () => undefined),
       createContext: vi.fn(async (input: NewL3Context) => {
         this.record("l3_contexts", "insert");
         const context: L3ContextRow = {

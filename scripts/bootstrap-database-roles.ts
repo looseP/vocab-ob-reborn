@@ -333,6 +333,10 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     --   DELETE：取消挂载（改归属 = DELETE + INSERT，不做原地 UPDATE，故不授 UPDATE；
     --           对齐 l3_occurrences / l3_context_links 等 junction 的既有授权口径）。
     GRANT SELECT, INSERT, DELETE ON TABLE public.l3_source_spaces TO vocab_app;
+    -- 0032（ADR-0030）：题目与试卷实体。题：录入/读/硬删（active 卷面引用由服务层
+    -- 409 护栏拦截）；卷：建卷/读（编辑/归档端点后续波次再授 UPDATE/DELETE）。
+    GRANT SELECT, INSERT, DELETE ON TABLE public.l3_questions TO vocab_app;
+    GRANT SELECT, INSERT ON TABLE public.l3_papers TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;

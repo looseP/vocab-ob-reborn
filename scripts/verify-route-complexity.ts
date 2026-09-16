@@ -12,9 +12,15 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // 各子文件 bootstrap 限额按拆分实测规模留有增长余量（基线无该文件时生效）。
   { file: "src/http/routes/l3/index.ts", maxLines: 60, maxRoutes: 0 },
   { file: "src/http/routes/l3/sources.ts", maxLines: 160, maxRoutes: 8 },
+  // 2026-09-16 V0：能力域标签全量替换（PUT /sources/:id/spaces 自受棘轮冻结的
+  // sources.ts 迁出；独立薄路由，server.ts 直挂，同 capabilities/summary 先例）。
+  { file: "src/http/routes/l3/spaces.ts", maxLines: 45, maxRoutes: 1 },
   { file: "src/http/routes/l3/contexts.ts", maxLines: 220, maxRoutes: 10 },
   { file: "src/http/routes/l3/reads.ts", maxLines: 110, maxRoutes: 4 },
   { file: "src/http/routes/l3/imports.ts", maxLines: 130, maxRoutes: 3 },
+  // 2026-09-16 ADR-0030：题目/试卷域路由（建卷/录题/文件列表/卷详情/删题护栏）。
+  // bootstrap 限额按建文件时实测规模留一档余量；文件新增前以 bootstrap 分支取证。
+  { file: "src/http/routes/l3/papers.ts", maxLines: 110, maxRoutes: 7 },
   { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
   { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },

@@ -433,6 +433,9 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       // 0030（ADR-0019 §4）：子空间 junction。挂载/取消走 INSERT/DELETE（无原地 UPDATE
       // 语义，故不授 UPDATE），过滤读走 SELECT；与 l3_occurrences/l3_context_links 同口径。
       "public.l3_source_spaces": ["SELECT", "INSERT", "DELETE"],
+      // 0032（ADR-0030）：题目可硬删（服务层 409 护栏），试卷 V1 仅建/读。
+      "public.l3_questions": ["SELECT", "INSERT", "DELETE"],
+      "public.l3_papers": ["SELECT", "INSERT"],
     }).map(([relation, privileges]) => [relation, new Set(privileges)]))],
     ["vocab_worker", new Map(Object.entries({
       "public.outbox_events": ["SELECT", "UPDATE"],

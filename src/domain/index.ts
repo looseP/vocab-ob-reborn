@@ -561,6 +561,113 @@ export interface L3PracticeAttemptPage {
   offset: number;
 }
 
+// ── L3 题目 / 试卷（ADR-0030：题与 context 严格分离，文件为派生视图）────────
+import type {
+  L3EvidenceAnchor,
+  L3PaperPayload,
+  L3PaperSection,
+  L3PaperStatus,
+  L3QuestionAnswer,
+  L3QuestionOption,
+  L3QuestionStatus,
+  L3QuestionType,
+} from "./l3-question-types";
+export type {
+  L3EvidenceAnchor,
+  L3PaperPayload,
+  L3PaperSection,
+  L3PaperStatus,
+  L3QuestionAnswer,
+  L3QuestionOption,
+  L3QuestionStatus,
+  L3QuestionType,
+};
+
+/** l3_questions 行（jsonb 列以结构化形态读出，由 repository 负责反序列化收窄）。 */
+export interface L3QuestionRow {
+  id: string;
+  user_id: string;
+  source_id: string | null;
+  file_key: string | null;
+  space: L3SubSpace;
+  question_type: L3QuestionType;
+  ordinal: number;
+  stem: string;
+  options: L3QuestionOption[];
+  answer: L3QuestionAnswer;
+  explanation: string | null;
+  evidence: L3EvidenceAnchor[];
+  status: L3QuestionStatus;
+  created_by: string;
+  input_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** l3_papers 行（卷面 sections 存 payload 引用，不建 sections 表）。 */
+export interface L3PaperRow {
+  id: string;
+  user_id: string;
+  title: string;
+  direction: Direction | null;
+  metadata: Json;
+  payload: L3PaperPayload;
+  payload_version: number;
+  status: L3PaperStatus;
+  created_by: string;
+  input_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 做题文件列表项：文件 = (source_id, question_type) 或 file_key 上的题组聚合。 */
+export interface L3PracticeFileListItem {
+  question_type: L3QuestionType;
+  source_id: string | null;
+  file_key: string | null;
+  /** 有正文文件取材料标题；无正文取题组键。 */
+  title: string;
+  direction: Direction | null;
+  question_count: number;
+  latest_created_at: string;
+}
+
+export interface L3PracticeFilePage {
+  items: L3PracticeFileListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** 试卷列表项（不含 payload）。 */
+export interface L3PaperListItem {
+  id: string;
+  title: string;
+  direction: Direction | null;
+  status: L3PaperStatus;
+  section_count: number;
+  question_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface L3PaperListPage {
+  items: L3PaperListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** 卷面组装后的 section：引用缺失时降级 missing 占位而不是 500（ADR-0030 §2 护栏②）。 */
+export type L3AssembledSection =
+  | (L3PaperSection & { missing: false; source_title: string | null; source_content: string | null; questions: L3QuestionRow[] })
+  | (L3PaperSection & { missing: true; missing_reason: string; source_title: string | null; source_content: string | null; questions: L3QuestionRow[] });
+
+export interface L3PaperDetail extends Omit<L3PaperRow, "payload"> {
+  payload: L3PaperPayload;
+  sections: L3AssembledSection[];
+}
+
 // ── L3 error book（T11 加固：服务端聚合 + cursor 纯新增）───────────────────
 /**
  * 错题库条目：wrong attempt 行 + **服务端聚合**的语境级统计。
@@ -706,6 +813,8 @@ export interface L3SourceListItem {
   url: string | null;
   created_at: string;
   context_count: number;
+  /** 能力域标签（l3_source_spaces，ADR-0019 §4；V0 接通写入；V0 前历史数据可能为空数组，新建恒至少含「通用」）。 */
+  spaces: L3SubSpace[];
 }
 
 export interface L3SourceListPage {

@@ -11,6 +11,7 @@ import { L3GraphPage } from "@/frontend/pages/L3GraphPage";
 import { L3HomePage } from "@/frontend/pages/L3HomePage";
 import { L3ImportPage } from "@/frontend/pages/L3ImportPage";
 import { L3ManualEditorPage } from "@/frontend/pages/L3ManualEditorPage";
+import { L3PapersPage } from "@/frontend/components/l3/L3PapersPage";
 import { L3PracticePage } from "@/frontend/pages/L3PracticePage";
 import { L3ProposalPage } from "@/frontend/pages/L3ProposalPage";
 import { L3RecommendationPage } from "@/frontend/pages/L3RecommendationPage";
@@ -157,6 +158,8 @@ export function L3Page() {
     context: <L3ContextPage client={l3Client} handoff={contextHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     word: <L3WordSpacePage client={l3Client} handoff={wordHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     // T11（ADR-0019）：练习 / 错题库 / 会话 —— 输出闭环的三个用户表面。
+    // ADR-0030：试卷台（题型空间文件 + 我的试卷 + 粘贴建卷，V1 owner 入库面）。
+    papers: <L3PapersPage />,
     practice: <L3PracticePage client={l3Client} onNavigate={navigateL3} />,
     errorBook: <L3ErrorBookPage client={l3Client} onNavigate={navigateL3} />,
     session: <L3SessionPage client={l3Client} onNavigate={navigateL3} />,

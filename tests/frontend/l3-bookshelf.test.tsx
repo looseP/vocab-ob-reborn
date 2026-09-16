@@ -21,7 +21,7 @@ import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 
 const PAGE = {
-  items: [{ id: "s1", title: "The Economist", source_type: "web", url: null, created_at: "2026-09-07T00:00:00Z", context_count: 12 }],
+  items: [{ id: "s1", title: "The Economist", source_type: "web", url: null, created_at: "2026-09-07T00:00:00Z", context_count: 12, spaces: ["阅读"] }],
   total: 1, limit: 20, offset: 0,
 };
 
@@ -88,6 +88,44 @@ describe("L3Bookshelf", () => {
     });
   });
 
+  it("space filter chip refetches with the space query param", async () => {
+    (apiFetch as ReturnType<typeof vi.fn>).mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 });
+    await renderBookshelf(vi.fn());
+    await waitFor(() => expect(apiFetch).toHaveBeenCalled());
+    await act(async () => {
+      fireEvent.click(screen.getByText("阅读"));
+    });
+    await waitFor(() => {
+      const last = (apiFetch as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0] as string;
+      expect(last).toContain("space=%E9%98%85%E8%AF%BB"); // encodeURIComponent("阅读")
+    });
+  });
+
+  it("renders the source space badge and replaces spaces via the inline tag editor", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock
+      .mockResolvedValueOnce(PAGE)
+      .mockResolvedValueOnce({ sourceId: "s1", spaces: ["阅读", "翻译"] }) // PUT
+      .mockResolvedValueOnce({ items: [], total: 0, limit: 20, offset: 0 }); // reload
+    await renderBookshelf(vi.fn());
+    await waitFor(() => expect(screen.getByText(/The Economist/)).toBeTruthy());
+    expect(screen.getAllByText("阅读").length).toBeGreaterThan(0);
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("编辑能力域标签 The Economist"));
+    });
+    const translation = screen.getByLabelText("翻译") as HTMLInputElement;
+    await act(async () => {
+      fireEvent.click(translation);
+      fireEvent.click(screen.getByText("保存"));
+    });
+    await waitFor(() => {
+      const put = apiFetchMock.mock.calls.find(([, init]) => (init as RequestInit).method === "PUT");
+      expect(put?.[0]).toBe("/l3/sources/s1/spaces");
+      expect(JSON.parse((put![1] as RequestInit).body as string)).toEqual({ spaces: ["阅读", "翻译"] });
+    });
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("success", "能力域标签已更新"));
+  });
+
   it("import form defaults title from first line and posts contentText", async () => {
     const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
     apiFetchMock
@@ -103,7 +141,9 @@ describe("L3Bookshelf", () => {
       fireEvent.change(textarea, { target: { value: "New article\nBody here..." } });
       fireEvent.blur(textarea);
     });
+    // 默认勾选「通用」；再勾「阅读」随导入提交（toggleIn 追加到末尾）。
     await act(async () => {
+      fireEvent.click(screen.getByLabelText("阅读"));
       fireEvent.click(screen.getByText("导入"));
     });
     await waitFor(() => {
@@ -112,6 +152,7 @@ describe("L3Bookshelf", () => {
       const body = JSON.parse((post![1] as RequestInit).body as string);
       expect(body.title).toBe("New article");
       expect(body.contentText).toBe("New article\nBody here...");
+      expect(body.spaces).toEqual(["通用", "阅读"]);
     });
   });
 

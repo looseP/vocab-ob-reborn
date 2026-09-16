@@ -368,6 +368,14 @@ export const l3SourceListItemResponseSchema: z.ZodType<L3SourceListItem> = z.obj
   url: z.string().nullable(),
   created_at: z.string(),
   context_count: z.number().int().nonnegative(),
+  // 能力域标签（V0）：V0 前历史数据可能为空数组。
+  spaces: z.array(z.enum(["语法", "阅读", "作文", "翻译", "通用"])),
+}).strict();
+
+/** PUT /l3/sources/:id/spaces 响应（V0）。 */
+export const l3SourceSpacesReplaceResponseSchema = z.object({
+  sourceId: z.string().uuid(),
+  spaces: z.array(z.enum(["语法", "阅读", "作文", "翻译", "通用"])).min(1),
 }).strict();
 
 export const l3SourceListResponseSchema: z.ZodType<L3SourceListPage> = z.object({

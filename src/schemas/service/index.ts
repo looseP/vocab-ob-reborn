@@ -7,7 +7,15 @@
  */
 
 import { z } from "zod";
-import type { Direction, Json, L3SubSpace } from "@/domain";
+import type {
+  Direction,
+  Json,
+  L3EvidenceAnchor,
+  L3QuestionAnswer,
+  L3QuestionOption,
+  L3QuestionType,
+  L3SubSpace,
+} from "@/domain";
 import {
   reviewAnswerSchema,
   reviewSkipSchema,
@@ -439,6 +447,15 @@ export interface CreateL3SourceInput {
   url?: string | null;
   language?: string | null;
   metadata?: Json;
+  /** 能力域标签（ADR-0019 §4）；省略/空数组归一为 ['通用']，service 负责去重与枚举校验。 */
+  spaces?: L3SubSpace[] | null;
+}
+
+/** 全量替换来源能力域标签（V0 接通 l3_source_spaces 写入）。 */
+export interface ReplaceL3SourceSpacesInput {
+  userId: string;
+  sourceId: string;
+  spaces: L3SubSpace[];
 }
 
 export interface CreateL3ContextInput {
@@ -731,4 +748,77 @@ export interface L3RecommendationIdInput {
 
 export interface RejectL3RecommendationInput extends L3RecommendationIdInput {
   reviewNote?: string | null;
+}
+
+// ── ADR-0030：L3 题目 / 试卷（owner 入库面；agent 双级随后续波次）──────────
+
+export interface CreateL3QuestionInput {
+  userId: string;
+  questionType: L3QuestionType;
+  /** 有正文文件：挂到材料；与 fileKey 二选一（翻译/作文可只给 fileKey）。 */
+  sourceId?: string | null;
+  fileKey?: string | null;
+  ordinal?: number;
+  stem: string;
+  options?: L3QuestionOption[];
+  answer?: L3QuestionAnswer;
+  explanation?: string | null;
+  evidence?: L3EvidenceAnchor[];
+}
+
+export interface CreateL3PaperQuestionInput {
+  ordinal?: number;
+  stem: string;
+  options?: L3QuestionOption[];
+  answer?: L3QuestionAnswer;
+  explanation?: string | null;
+  evidence?: L3EvidenceAnchor[];
+}
+
+export interface CreateL3PaperSectionInput {
+  /** 卷面 section 标题（如 "Section I Use of English" / "Text 1"）。 */
+  title: string;
+  questionType: L3QuestionType;
+  /** 阅读类 section 挂已有材料；无正文 section 可空（由 fileKey 定界）。 */
+  sourceId?: string | null;
+  /** 无正文题组的组键；省略时服务端按 paper/section 生成稳定键。 */
+  fileKey?: string | null;
+  questions: CreateL3PaperQuestionInput[];
+}
+
+export interface CreateL3PaperInput {
+  userId: string;
+  title: string;
+  direction?: Direction | null;
+  metadata?: Json;
+  sections: CreateL3PaperSectionInput[];
+}
+
+export interface ListL3PracticeFilesInput {
+  userId: string;
+  questionType?: L3QuestionType | null;
+  direction?: Direction | null;
+  q?: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface ListL3PapersInput {
+  userId: string;
+  status?: "draft" | "active" | "archived" | null;
+  q?: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface GetL3PracticeFileInput {
+  userId: string;
+  questionType: L3QuestionType;
+  sourceId?: string | null;
+  fileKey?: string | null;
+}
+
+export interface DeleteL3QuestionInput {
+  userId: string;
+  questionId: string;
 }

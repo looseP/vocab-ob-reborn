@@ -235,6 +235,7 @@ export function L3HomePage({ onOpenSource, onNavigate }: L3HomePageProps) {
         {(
           [
             ["source", "来源书架"],
+            ["papers", "试卷台"],
             ["word", "词空间"],
             ["graph", "关联图"],
           ] as Array<[L3ShellSection, string]>

@@ -27,7 +27,11 @@ import type {
   L3OccurrenceListItem,
   L3OccurrenceRow,
   L3PaginatedList,
+  L3PaperListPage,
+  L3PaperRow,
   L3PracticeAttemptPage,
+  L3PracticeFilePage,
+  L3QuestionRow,
   L3PracticeAttemptRow,
   L3PracticeErrorBookPage,
   L3PracticeOutcome,
@@ -1042,7 +1046,15 @@ export interface L3ContextDeleteBlockers {
 }
 
 export interface IL3ContextRepository {
-  createSource(input: NewL3Source): Promise<L3SourceRow>;
+  /**
+   * 建来源；spaces 非空时同事务写入 l3_source_spaces junction（V0 接通死轴）。
+   * 调用方负责枚举校验/去重/默认值（见 L3ContextService.normalizeSourceSpaces）。
+   */
+  createSource(input: NewL3Source, spaces?: readonly string[]): Promise<L3SourceRow>;
+  /** 全量替换来源的能力域标签（事务内 delete+insert）；调用方须先做所有权校验。 */
+  replaceSourceSpaces(userId: string, sourceId: string, spaces: readonly string[]): Promise<void>;
+  /** 增量挂载能力域标签（只增不删，ON CONFLICT DO NOTHING）；录题自动打标用。 */
+  ensureSourceSpaces(userId: string, sourceId: string, spaces: readonly string[]): Promise<void>;
   createContext(input: NewL3Context): Promise<L3ContextRow>;
   createOccurrence(input: NewL3Occurrence): Promise<L3OccurrenceRow>;
   createContextLink(input: NewL3ContextLink): Promise<L3ContextLinkRow>;
@@ -1426,6 +1438,77 @@ export interface IStatsRepository {
   getRatingDistribution(userId: string, wordbookId: string, days?: number): Promise<RatingDistribution>;
 }
 
+// ── ADR-0030：L3 题目 / 试卷（题与 context 分离；卷面存 payload 引用）──────
+export interface NewL3Question {
+  user_id: string;
+  source_id: string | null;
+  file_key: string | null;
+  space: string;
+  question_type: string;
+  ordinal: number;
+  stem: string;
+  options?: Json;
+  answer?: Json;
+  explanation?: string | null;
+  evidence?: Json;
+  status?: string;
+  created_by?: string;
+  input_hash?: string | null;
+}
+
+export interface NewL3Paper {
+  user_id: string;
+  title: string;
+  direction: string | null;
+  metadata: Json;
+  payload: Json;
+  payload_version: number;
+  status: string;
+  created_by?: string;
+  input_hash?: string | null;
+}
+
+export interface L3PracticeFileLookup {
+  userId: string;
+  questionType?: string | null;
+  direction?: string | null;
+  q?: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface L3PaperLookup {
+  userId: string;
+  status?: string | null;
+  q?: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface L3PaperRef {
+  id: string;
+  title: string;
+}
+
+export interface IL3PaperRepository {
+  insertQuestion(input: NewL3Question): Promise<L3QuestionRow>;
+  findQuestionById(userId: string, questionId: string): Promise<L3QuestionRow | null>;
+  /** 按 id 批量取 active 题（保持传入顺序由调用方处理）；只返回属于该 user 的行。 */
+  findActiveQuestionsByIds(userId: string, questionIds: readonly string[]): Promise<L3QuestionRow[]>;
+  /** 文件题组：(source_id, question_type) 或 (file_key, question_type)，按 ordinal/创建序。 */
+  listActiveQuestionsForFile(
+    userId: string,
+    identity: { sourceId?: string | null; fileKey?: string | null; questionType: string },
+  ): Promise<L3QuestionRow[]>;
+  listPracticeFiles(input: L3PracticeFileLookup): Promise<L3PracticeFilePage>;
+  deleteQuestion(userId: string, questionId: string): Promise<boolean>;
+  /** 拉全部 active 卷的轻量引用（单 owner 数据量小；引用匹配在 service 纯算）。 */
+  listActivePaperRefsWithPayload(userId: string): Promise<Array<L3PaperRef & { payload: unknown }>>;
+  insertPaper(input: NewL3Paper): Promise<L3PaperRow>;
+  findPaperById(userId: string, paperId: string): Promise<L3PaperRow | null>;
+  listPapers(input: L3PaperLookup): Promise<L3PaperListPage>;
+}
+
 // ── Aggregate ───────────────────────────────────────────────────────────
 export interface IRepositories {
   words: IWordRepository;
@@ -1444,6 +1527,7 @@ export interface IRepositories {
   l3Recommendation: IL3RecommendationRepository;
   l3Practice: IL3PracticeRepository;
   l3Sessions: IL3SessionRepository;
+  l3Paper: IL3PaperRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }

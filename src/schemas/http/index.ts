@@ -23,6 +23,7 @@ import {
   L3_PRACTICE_TYPES,
   L3_SUB_SPACES,
 } from "../../services/l3-practice.service";
+import { L3_QUESTION_TYPES, questionTypeAllowsSourceless } from "../../domain/l3-question-types";
 import {
   L3_SESSION_DEFAULT_CONTEXTS,
   L3_SESSION_END_STATUSES,
@@ -256,6 +257,107 @@ export const l3SourceCreateSchema = z.object({
   url: z.string().url().max(2_000).nullish(),
   language: z.string().max(50).nullish(),
   metadata: jsonRecordSchema.optional(),
+  // 能力域标签（V0 接通 l3_source_spaces 写入）：1–5 个固定枚举；省略由服务端归一为「通用」。
+  spaces: z.array(z.enum(L3_SUB_SPACES)).min(1).max(5).optional(),
+});
+
+/** PUT /l3/sources/:id/spaces：全量替换能力域标签（非空、去重由服务层归一）。 */
+export const l3SourceSpacesReplaceSchema = z.object({
+  spaces: z.array(z.enum(L3_SUB_SPACES)).min(1).max(5),
+});
+
+// ── L3 题目 / 试卷（ADR-0030：题与 context 分离；卷面 payload 引用）────────
+export const l3QuestionTypeSchema = z.enum(L3_QUESTION_TYPES);
+
+const l3QuestionOptionSchema = z.object({
+  key: z.string().trim().min(1).max(4),
+  text: z.string().trim().min(1).max(8_000),
+});
+
+const l3EvidenceAnchorSchema = z.object({
+  start: z.number().int().min(0),
+  end: z.number().int().min(1),
+  label: z.string().trim().min(1).max(40),
+}).refine((anchor) => anchor.end > anchor.start, { message: "evidence end must be greater than start", path: ["end"] });
+
+const l3QuestionAnswerSchema = z.object({
+  choice: z.string().trim().min(1).max(20).optional(),
+  choices: z.array(z.string().trim().min(1).max(20)).max(30).optional(),
+  text: z.string().max(20_000).optional(),
+  sample: z.string().max(20_000).optional(),
+  points: z.array(z.string().max(2_000)).max(50).optional(),
+});
+
+/** 题目主体（散题录入与建卷内嵌共用）。 */
+const l3QuestionBodySchema = z.object({
+  ordinal: z.number().int().min(0).max(500).optional(),
+  stem: z.string().trim().min(1).max(30_000),
+  options: z.array(l3QuestionOptionSchema).max(12).optional(),
+  answer: l3QuestionAnswerSchema.optional(),
+  explanation: z.string().max(30_000).nullish(),
+  evidence: z.array(l3EvidenceAnchorSchema).max(60).optional(),
+});
+
+/** POST /l3/questions：散题录入到文件（source 题组或 fileKey 题组，二选一）。 */
+export const l3QuestionCreateSchema = l3QuestionBodySchema.extend({
+  questionType: l3QuestionTypeSchema,
+  sourceId: uuidSchema.nullish(),
+  fileKey: z.string().trim().min(1).max(200).nullish(),
+}).refine((body) => Boolean(body.sourceId) || Boolean(body.fileKey), {
+  message: "sourceId 或 fileKey 至少提供一个",
+  path: ["sourceId"],
+});
+
+/** POST /l3/papers：粘贴建卷（单事务建题 + 组 payload 引用）。 */
+const l3PaperSectionSchema = z.object({
+  title: z.string().trim().min(1).max(300),
+  questionType: l3QuestionTypeSchema,
+  sourceId: uuidSchema.nullish(),
+  fileKey: z.string().trim().min(1).max(200).nullish(),
+  questions: z.array(l3QuestionBodySchema).min(1).max(60),
+}).superRefine((section, ctx) => {
+  // 文件身份（与 service.resolveSectionIdentity 同规则）：阅读类必须挂材料；
+  // 翻译/作文无正文题组必须显式给 fileKey。
+  if (section.sourceId) return;
+  if (!questionTypeAllowsSourceless(section.questionType)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["sourceId"], message: "该题型必须挂阅读材料 sourceId" });
+  } else if (!section.fileKey) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["fileKey"], message: "无正文题组必须提供 fileKey" });
+  }
+});
+
+export const l3PaperCreateSchema = z.object({
+  title: z.string().trim().min(1).max(300),
+  direction: directionSchema.nullish(),
+  metadata: jsonRecordSchema.optional(),
+  sections: z.array(l3PaperSectionSchema).min(1).max(20),
+});
+
+/** GET /l3/practice-files：题型空间的文件管理列表（派生视图）。 */
+export const l3PracticeFileListQuerySchema = z.object({
+  questionType: l3QuestionTypeSchema.optional(),
+  direction: directionSchema.optional(),
+  q: z.string().trim().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+/** GET /l3/practice-files/detail：单文件题组（source 题组或 fileKey 题组）。 */
+export const l3PracticeFileDetailQuerySchema = z.object({
+  questionType: l3QuestionTypeSchema,
+  sourceId: uuidSchema.optional(),
+  fileKey: z.string().trim().min(1).max(200).optional(),
+}).refine((q) => Boolean(q.sourceId) || Boolean(q.fileKey), {
+  message: "sourceId 或 fileKey 至少提供一个",
+  path: ["sourceId"],
+});
+
+/** GET /l3/papers：试卷列表。 */
+export const l3PaperListQuerySchema = z.object({
+  status: z.enum(["draft", "active", "archived"]).optional(),
+  q: z.string().trim().max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 
 export const l3ContextCreateSchema = z.object({

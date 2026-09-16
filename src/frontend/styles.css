@@ -935,6 +935,13 @@ body.zen-mode main {
   background: var(--color-surface);
 }
 
+/* 试卷台：答错选项轻晃反馈（ADR-0030 卷面） */
+@keyframes exam-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
 /* ─── L3 工具页共享基元（B4 视觉收敛 2026-09-13） ───────────────────────
    走查实锤：.l3-form/.stats-grid 等约 50 个类被 import/manual/proposal/
    recommendation/graph/space 页使用却从未定义——整层无样式（与 2026-09-08

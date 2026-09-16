@@ -147,6 +147,7 @@ const OTHER_OWNER_WRITES = [
   "importVocabNotes",
   // L3 语料直写（权威数据）
   "createL3Source",
+  "replaceL3SourceSpaces", // V0 子空间接通：来源能力域标签全量替换（语料元数据直写）
   "createL3SelectionCapture",
   "createL3Context",
   "createL3QuickContext",
@@ -156,6 +157,10 @@ const OTHER_OWNER_WRITES = [
   "deleteL3ContextLink",
   "deleteL3Source",
   "deleteL3Context",
+  // ADR-0030：题/卷 owner 直写面（试卷工作台 V1；agent trusted 直写后续波次再分类）。
+  "createL3Paper",
+  "createL3Question",
+  "deleteL3Question",
   // L3 recommendation generate（消耗预算产出推荐集，非 proposal-only 写入）；
   // l3 imports 两个入口已按 2026-09-12 裁决归 agent（属提案包生产路径）。
   "generateL3Recommendations",
@@ -216,6 +221,8 @@ const AGENT_READS = [
   "getL3Context", "getL3WordSpace", "listL3Sources", "getL3SourceSpace", "getL3Graph", "listL3WordContexts", "listL3SourceContexts",
   "listL3Occurrences", "listL3ContextLinks", "getL3Capabilities", "getL3SpaceSummary",
   "listL3Recommendations", "getL3Recommendation", "listL3Proposals", "getL3Proposal",
+  // ADR-0030：题/卷/做题文件读面对 agent 开放（拆卷评卷取料；写入仍 owner-only）。
+  "listL3Papers", "getL3Paper", "listL3PracticeFiles", "getL3PracticeFile",
   "listUpgradeWorkOrders", "listL3PracticeAttempts", "listL3PracticeErrorBook", "getL3Session",
   "previewForgetting",
 ] as const;

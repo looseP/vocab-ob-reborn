@@ -1250,3 +1250,72 @@ export const l3PracticeAttempts = pgTable("l3_practice_attempts", {
 	check("l3_practice_attempts_practice_type_check", sql`practice_type = ANY (ARRAY['essay_dictation'::text, 'context_quiz'::text])`),
 	check("l3_practice_attempts_outcome_check", sql`outcome = ANY (ARRAY['correct'::text, 'wrong'::text, 'skip'::text])`),
 ]);
+
+// ADR-0030 §1：题目实体，与 l3_contexts（词的用法）严格分离。真题题干/选项/
+// 标准答案不进 context，避免污染图、词空间高亮等读模型。做题文件是派生视图：
+// 有正文的阅读类文件 = (source_id, question_type) 题组聚合；无正文题组
+// （翻译/作文）由 file_key 定界。CHECK 保证二者至少居其一。
+export const l3Questions = pgTable("l3_questions", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	sourceId: uuid("source_id"),
+	fileKey: text("file_key"),
+	// 能力域由题型自动映射（ADR-0030 §3），录入时写入，venue 过滤直接点查。
+	space: text("space").notNull(),
+	questionType: text("question_type").notNull(),
+	ordinal: integer("ordinal").default(0).notNull(),
+	stem: text("stem").notNull(),
+	options: jsonb("options").default([]).notNull(),
+	answer: jsonb("answer").default({}).notNull(),
+	explanation: text("explanation"),
+	evidence: jsonb("evidence").default([]).notNull(),
+	// pending（agent 提案，后续波次启用）/ active（owner/trusted 直写）/ rejected。
+	status: text("status").default('active').notNull(),
+	// 服务端认定的写入者：'owner' 或 agentId（ADR-0029 信任锚，非调用方自报）。
+	createdBy: text("created_by").default('owner').notNull(),
+	inputHash: text("input_hash"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_questions_source_type_ordinal").on(table.userId, table.sourceId, table.questionType, table.ordinal),
+	index("idx_l3_questions_file_key").on(table.userId, table.fileKey),
+	index("idx_l3_questions_user_type_status").on(table.userId, table.questionType, table.status),
+	unique("l3_questions_id_user_id_unique").on(table.id, table.userId),
+	uniqueIndex("l3_questions_user_input_hash_unique").on(table.userId, table.inputHash).where(sql`input_hash IS NOT NULL`),
+	foreignKey({
+			columns: [table.sourceId, table.userId],
+			foreignColumns: [l3Sources.id, l3Sources.userId],
+			name: "l3_questions_source_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_questions_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_questions_identity_check", sql`source_id IS NOT NULL OR file_key IS NOT NULL`),
+	check("l3_questions_space_check", sql`space = ANY (ARRAY['语法'::text, '阅读'::text, '作文'::text, '翻译'::text, '通用'::text])`),
+	check("l3_questions_question_type_check", sql`question_type = ANY (ARRAY['cloze'::text, 'reading_choice'::text, 'new_question'::text, 'sentence_translation'::text, 'short_essay'::text, 'long_essay'::text, 'grammar_blank'::text])`),
+	check("l3_questions_status_check", sql`status = ANY (ARRAY['pending'::text, 'active'::text, 'rejected'::text])`),
+]);
+
+// ADR-0030 §2：试卷 = 文件的有序串联。卷面结构存 payload（学 l3_sessions.plan
+// 的「计划存引用、现拉现渲染」），不建 sections 表；payload_version + 服务层
+// 写入校验 + 渲染降级 + 删题 409 构成引用完整性的三道护栏。
+export const l3Papers = pgTable("l3_papers", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	title: text("title").notNull(),
+	direction: text("direction"),
+	metadata: jsonb("metadata").default({}).notNull(),
+	payload: jsonb("payload").notNull(),
+	payloadVersion: integer("payload_version").default(1).notNull(),
+	status: text("status").default('active').notNull(),
+	createdBy: text("created_by").default('owner').notNull(),
+	inputHash: text("input_hash"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_papers_user_created").on(table.userId, table.createdAt),
+	index("idx_l3_papers_user_status").on(table.userId, table.status),
+	unique("l3_papers_id_user_id_unique").on(table.id, table.userId),
+	uniqueIndex("l3_papers_user_input_hash_unique").on(table.userId, table.inputHash).where(sql`input_hash IS NOT NULL`),
+	pgPolicy("l3_papers_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_papers_direction_check", sql`direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
+	check("l3_papers_status_check", sql`status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])`),
+]);

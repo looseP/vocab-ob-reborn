@@ -475,7 +475,7 @@ function buildContextLinkPage(
 }
 
 export class L3ContextRepository extends BaseRepository implements IL3ContextRepository {
-  async createSource(input: NewL3Source): Promise<L3SourceRow> {
+  async createSource(input: NewL3Source, spaces?: readonly string[]): Promise<L3SourceRow> {
     const row = await this.queryOne<L3SourceRow>(
       `INSERT INTO l3_sources
          (user_id, wordbook_id, source_type, title, author, url, language, metadata, content_text, content_hash)
@@ -495,7 +495,51 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
       ],
     );
     if (!row) throw new Error("L3 source insert returned no row");
+    // V0 接通子空间死轴：与来源插入同一事务（调用方 txRunner），junction 唯一约束防重复。
+    if (spaces && spaces.length > 0) {
+      await this.query(
+        `INSERT INTO l3_source_spaces (source_id, user_id, space)
+         SELECT $2::uuid, $1::uuid, sp FROM unnest($3::text[]) AS sp
+         ON CONFLICT (source_id, space) DO NOTHING`,
+        [input.user_id, row.id, spaces],
+      );
+    }
     return row;
+  }
+
+  async replaceSourceSpaces(
+    userId: string,
+    sourceId: string,
+    spaces: readonly string[],
+  ): Promise<void> {
+    // 全量替换：事务内先删后插（调用方须已校验来源归属）；空数组 = 清空标签。
+    await this.query(
+      `DELETE FROM l3_source_spaces WHERE source_id = $1::uuid AND user_id = $2::uuid`,
+      [sourceId, userId],
+    );
+    if (spaces.length > 0) {
+      await this.query(
+        `INSERT INTO l3_source_spaces (source_id, user_id, space)
+         SELECT $1::uuid, $2::uuid, sp FROM unnest($3::text[]) AS sp
+         ON CONFLICT (source_id, space) DO NOTHING`,
+        [sourceId, userId, [...new Set(spaces)]],
+      );
+    }
+  }
+
+  async ensureSourceSpaces(
+    userId: string,
+    sourceId: string,
+    spaces: readonly string[],
+  ): Promise<void> {
+    if (spaces.length === 0) return;
+    // 只增不删：录题/建卷按题型自动补能力域标签，保留来源既有标签（幂等）。
+    await this.query(
+      `INSERT INTO l3_source_spaces (source_id, user_id, space)
+       SELECT $1::uuid, $2::uuid, sp FROM unnest($3::text[]) AS sp
+       ON CONFLICT (source_id, space) DO NOTHING`,
+      [sourceId, userId, [...new Set(spaces)]],
+    );
   }
 
   async createContext(input: NewL3Context): Promise<L3ContextRow> {
@@ -833,9 +877,12 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     const orderBy = input.sort === "captures"
       ? `context_count DESC NULLS LAST, s.created_at DESC`
       : `s.created_at DESC`;
-    const rows = await this.query<{ id: string; title: string; source_type: string; url: string | null; created_at: string; context_count: string }>(
+    const rows = await this.query<{ id: string; title: string; source_type: string; url: string | null; created_at: string; context_count: string; spaces: string[] | null }>(
       `SELECT s.id, s.title, s.source_type, s.url, s.created_at,
-              (SELECT count(*) FROM l3_contexts c WHERE c.source_id = s.id AND c.user_id = s.user_id) AS context_count
+              (SELECT count(*) FROM l3_contexts c WHERE c.source_id = s.id AND c.user_id = s.user_id) AS context_count,
+              COALESCE((SELECT array_agg(sp.space ORDER BY sp.space)
+                          FROM l3_source_spaces sp
+                         WHERE sp.source_id = s.id AND sp.user_id = s.user_id), ARRAY[]::text[]) AS spaces
          FROM l3_sources s
          ${where}
         ORDER BY ${orderBy}
@@ -847,7 +894,12 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
       params,
     );
     return {
-      items: rows.map((r) => ({ ...r, context_count: Number(r.context_count) })),
+      items: rows.map((r) => ({
+        ...r,
+        context_count: Number(r.context_count),
+        // CHECK 已约束枚举；pg 驱动仅给 string[]，此处收窄到 L3SubSpace。
+        spaces: (Array.isArray(r.spaces) ? r.spaces : []) as L3SubSpace[],
+      })),
       total: Number(totalRow?.total ?? 0),
       limit: input.limit,
       offset: input.offset,

@@ -1652,7 +1652,44 @@ describe("POST /api/l3/sources content import (S1)", () => {
     expect(body.source.content_text).toBe("Full article body...");
     expect(l3Context.createSource).toHaveBeenCalledWith(
       expect.objectContaining({ content_text: "Full article body...", content_hash: expect.any(String) }),
+      ["通用"],
     );
+  });
+
+  it("passes selected spaces through to the service on create", async () => {
+    const l3Context = {
+      createSource: vi.fn().mockResolvedValue({
+        id: "src-10", user_id: "user-123", source_type: "article", title: "真题",
+        author: null, url: null, language: null, metadata: {},
+        content_text: "body", content_hash: "hash",
+        created_at: "2026-09-16T00:00:00Z", updated_at: "2026-09-16T00:00:00Z",
+      }),
+      findSourceByContentHash: vi.fn().mockResolvedValue(null),
+    };
+    const services = { ...makeServices(), l3Context: makeL3ContextService(l3Context) } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request("/api/l3/sources", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ sourceType: "article", title: "真题", contentText: "body", spaces: ["阅读", "作文"] }),
+    });
+    expect(res.status).toBe(201);
+    expect(l3Context.createSource).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "真题" }),
+      ["阅读", "作文"],
+    );
+  });
+
+  it("rejects a spaces payload containing an unknown enum value", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+    const res = await app.request("/api/l3/sources", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ sourceType: "article", title: "bad", contentText: "body", spaces: ["火星"] }),
+    });
+    await expectRouteValidationError(res);
+    expectNoL3ServiceGroupCalled(services);
   });
 
   it("returns 409 with existingId when content hash already exists", async () => {
@@ -1670,6 +1707,39 @@ describe("POST /api/l3/sources content import (S1)", () => {
     expect(res.status).toBe(409);
     const body = await res.json() as { details?: { existingId?: string } };
     expect(body.details?.existingId).toBe("src-exist");
+  });
+});
+
+describe("PUT /api/l3/sources/:id/spaces (V0 sub-space tagging)", () => {
+  it("replaces spaces and returns the normalized set", async () => {
+    const sourceId = "00000000-0000-4000-8000-000000000301";
+    const l3Context = {
+      replaceSourceSpaces: vi.fn().mockResolvedValue({ sourceId, spaces: ["阅读", "翻译"] }),
+    };
+    const services = { ...makeServices(), l3Context } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request(`/api/l3/sources/${sourceId}/spaces`, {
+      method: "PUT",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ spaces: ["阅读", "翻译"] }),
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ sourceId, spaces: ["阅读", "翻译"] });
+    expect(l3Context.replaceSourceSpaces).toHaveBeenCalledWith({
+      userId: "user-123", sourceId, spaces: ["阅读", "翻译"],
+    });
+  });
+
+  it("rejects an empty spaces array", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+    const res = await app.request("/api/l3/sources/00000000-0000-4000-8000-000000000301/spaces", {
+      method: "PUT",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ spaces: [] }),
+    });
+    await expectRouteValidationError(res);
+    expectNoL3ServiceGroupCalled(services);
   });
 });
 
