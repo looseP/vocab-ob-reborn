@@ -21,6 +21,9 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // 2026-09-16 ADR-0030：题目/试卷域路由（建卷/录题/文件列表/卷详情/删题护栏）。
   // bootstrap 限额按建文件时实测规模留一档余量；文件新增前以 bootstrap 分支取证。
   { file: "src/http/routes/l3/papers.ts", maxLines: 110, maxRoutes: 7 },
+  // 2026-09-16 批次一：做题注记 CRUD + 规律标签字典整取/整存（6 端点薄路由，
+  // server.ts 直挂；bootstrap 限额留一档余量）。
+  { file: "src/http/routes/l3/annotations.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
   { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },

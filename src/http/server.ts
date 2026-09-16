@@ -34,6 +34,7 @@ import { l3CapabilitiesRoutes } from "./routes/l3/capabilities";
 import { l3SummaryRoutes } from "./routes/l3/summary";
 import { l3SourceSpacesRoutes } from "./routes/l3/spaces";
 import { papersRoutes } from "./routes/l3/papers";
+import { annotationsRoutes } from "./routes/l3/annotations";
 import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
 import { l3PracticeRoutes } from "./routes/l3-practice";
 import { l3SessionsRoutes } from "./routes/l3-sessions";
@@ -142,6 +143,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3", l3SourceSpacesRoutes(services));
   // ADR-0030：题目/试卷（试卷工作台 V1，独立薄路由——同 lists/summary 直挂先例）。
   app.route("/api/l3", papersRoutes(services));
+  // 批次一：做题注记（原文分析）与规律标签字典（独立薄路由——index.ts 棘轮冻结）。
+  app.route("/api/l3", annotationsRoutes(services));
 
   // W3/T09：升级工单 / L3 练习记录 / L3 会话计划 / 一键遗忘（独立薄路由，
   // 全部位于 owner 鉴权挂载之后）。

@@ -161,6 +161,11 @@ const OTHER_OWNER_WRITES = [
   "createL3Paper",
   "createL3Question",
   "deleteL3Question",
+  // 批次一：做题注记（原文分析）与规律标签字典——个人做题工作台数据，纯 owner。
+  "createQuestionAnnotation",
+  "patchQuestionAnnotation",
+  "deleteQuestionAnnotation",
+  "replaceAnnotationTags",
   // L3 recommendation generate（消耗预算产出推荐集，非 proposal-only 写入）；
   // l3 imports 两个入口已按 2026-09-12 裁决归 agent（属提案包生产路径）。
   "generateL3Recommendations",
@@ -230,6 +235,9 @@ const AGENT_READS = [
 const OWNER_READS = [
   "getOperationMetrics", // F2：运营指标可能含敏感计数，保持 owner
   "getAuthSession", // /api/auth 豁免组内的 auth 态探针（非语料读面）
+  // 批次一：做题注记与个人标签字典是做题台面私人数据，不对 agent 开放。
+  "listQuestionAnnotations",
+  "getAnnotationTags",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {

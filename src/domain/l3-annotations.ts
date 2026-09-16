@@ -39,9 +39,10 @@ type AnnotationShape = {
 
 /**
  * 锚点三元组 + 空条目校验。undefined（PATCH 未提交）与 null（显式无锚点）
- * 统一归一——前端编辑表单按整组提交，未提交锚点即按无锚点参与一致性判断。
+ * 统一归一参与一致性判断；空条目规则只对 create 整体生效——PATCH 可只提交
+ * 单列（如仅清空 entryTags），不评判条目整体是否为空。
  */
-function refineAnnotation(v: AnnotationShape, ctx: RefinementCtx): void {
+function refineAnnotation(v: AnnotationShape, ctx: RefinementCtx, requireContent: boolean): void {
   const start = v.anchorStart ?? null;
   const end = v.anchorEnd ?? null;
   const excerpt = v.excerpt ?? null;
@@ -55,6 +56,7 @@ function refineAnnotation(v: AnnotationShape, ctx: RefinementCtx): void {
   if (anchored !== (excerpt != null)) {
     ctx.addIssue({ code: "custom", message: "有锚点必须带原文摘录，无锚点不得带摘录" });
   }
+  if (!requireContent) return;
   const noteLength = (v.note ?? "").length;
   const optionTagKeys = Object.keys(v.optionTags ?? {}).length;
   const entryTagCount = v.entryTags?.length ?? 0;
@@ -73,19 +75,25 @@ const annotationObjectSchema = z.object({
   optionTags: optionTagsSchema.default({}),
 });
 
-export const questionAnnotationInputSchema = annotationObjectSchema.superRefine(refineAnnotation);
+export const questionAnnotationInputSchema = annotationObjectSchema.superRefine((v, ctx) =>
+  refineAnnotation(v, ctx, true),
+);
 
 export type QuestionAnnotationInput = z.infer<typeof questionAnnotationInputSchema>;
 
 /**
- * PATCH 局部更新：questionId 不可改（条目永挂原题）。zod 4 不允许对带
- * refinement 的 schema 直接 partial，故从基础对象派生后挂同一套 refine
- * （调用方按整组提交三元组）。
+ * PATCH 局部更新：questionId 不可改（条目永挂原题）。zod 4 的 .partial() 会
+ * 保留 default（未提交键被填成 null/空数组，将误清空未改列），故独立声明
+ * 纯 optional（无 default）形状；refine 只保留三元组一致性，不做空条目拦截。
  */
-export const questionAnnotationPatchSchema = annotationObjectSchema
-  .partial()
-  .omit({ questionId: true })
-  .superRefine(refineAnnotation);
+export const questionAnnotationPatchSchema = z.object({
+  anchorStart: z.number().int().nonnegative().nullable().optional(),
+  anchorEnd: z.number().int().nonnegative().nullable().optional(),
+  excerpt: z.string().trim().min(1).max(500).nullable().optional(),
+  note: z.string().trim().max(2000).optional(),
+  entryTags: z.array(tagSchema).max(8).optional(),
+  optionTags: optionTagsSchema.optional(),
+}).superRefine((v, ctx) => refineAnnotation(v, ctx, false));
 
 export type QuestionAnnotationPatch = z.infer<typeof questionAnnotationPatchSchema>;
 

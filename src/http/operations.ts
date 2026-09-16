@@ -39,6 +39,11 @@ import {
   l3QuestionDeleteResponseSchema,
 } from "./l3-paper-response-contract";
 import {
+  l3AnnotationTagDictResponseSchema,
+  l3QuestionAnnotationItemResponseSchema,
+  l3QuestionAnnotationListResponseSchema,
+} from "./l3-annotation-response-contract";
+import {
   upgradeWorkOrderCompleteResponseSchema,
   upgradeWorkOrderListResponseSchema,
   upgradeWorkOrderMarkResponseSchema,
@@ -130,6 +135,10 @@ import {
   l3PracticeFileDetailQuerySchema,
   l3PracticeFileListQuerySchema,
   l3QuestionCreateSchema,
+  l3QuestionAnnotationCreateSchema,
+  l3QuestionAnnotationListQuerySchema,
+  l3QuestionAnnotationPatchSchema,
+  l3AnnotationTagDictSchema,
   l3ProposalCreateSchema,
   l3ProposalListQuerySchema,
   l3ProposalRejectSchema,
@@ -443,6 +452,13 @@ export const apiOperations = [
   operation("get", "/api/l3/papers/:id", "getL3Paper", "owner", "agent", "none", undefined, 200, l3PaperDetailResponseSchema),
   operation("post", "/api/l3/questions", "createL3Question", "owner", "owner", "sessionMutation", { body: l3QuestionCreateSchema }, 201, l3QuestionCreateResponseSchema),
   operation("delete", "/api/l3/questions/:id", "deleteL3Question", "owner", "owner", "sessionMutation", undefined, 200, l3QuestionDeleteResponseSchema),
+  // 批次一：做题注记（原文分析条目）纯 owner 做题面，锚点幂等命中 200/新建 201；软删 204。
+  operation("get", "/api/l3/question-annotations", "listQuestionAnnotations", "owner", "owner", "none", { query: l3QuestionAnnotationListQuerySchema }, 200, l3QuestionAnnotationListResponseSchema),
+  operation("post", "/api/l3/question-annotations", "createQuestionAnnotation", "owner", "owner", "sessionMutation", { body: l3QuestionAnnotationCreateSchema }, 201, l3QuestionAnnotationItemResponseSchema),
+  operation("patch", "/api/l3/question-annotations/:id", "patchQuestionAnnotation", "owner", "owner", "sessionMutation", { body: l3QuestionAnnotationPatchSchema }, 200, l3QuestionAnnotationItemResponseSchema),
+  operation("delete", "/api/l3/question-annotations/:id", "deleteQuestionAnnotation", "owner", "owner", "sessionMutation", undefined, 204, z.null()),
+  operation("get", "/api/l3/annotation-tags", "getAnnotationTags", "owner", "owner", "none", undefined, 200, l3AnnotationTagDictResponseSchema),
+  operation("put", "/api/l3/annotation-tags", "replaceAnnotationTags", "owner", "owner", "sessionMutation", { body: l3AnnotationTagDictSchema }, 200, l3AnnotationTagDictResponseSchema),
   operation("get", "/api/l3/practice-files", "listL3PracticeFiles", "owner", "agent", "none", { query: l3PracticeFileListQuerySchema }, 200, l3PracticeFileListResponseSchema),
   operation("get", "/api/l3/practice-files/detail", "getL3PracticeFile", "owner", "agent", "none", { query: l3PracticeFileDetailQuerySchema }, 200, l3PracticeFileDetailResponseSchema),
   operation("post", "/api/l3/contexts", "createL3Context", "owner", "owner", "sessionMutation", { body: l3ContextCreateSchema }, 201, l3ContextCreateResponseSchema),

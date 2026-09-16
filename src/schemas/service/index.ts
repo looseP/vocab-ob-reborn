@@ -16,6 +16,11 @@ import type {
   L3QuestionType,
   L3SubSpace,
 } from "@/domain";
+import type {
+  AnnotationTagDict,
+  QuestionAnnotationInput,
+  QuestionAnnotationPatch,
+} from "@/domain/l3-annotations";
 import {
   reviewAnswerSchema,
   reviewSkipSchema,
@@ -822,3 +827,8 @@ export interface DeleteL3QuestionInput {
   userId: string;
   questionId: string;
 }
+
+// ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ─────────────────
+export type CreateQuestionAnnotationInput = { userId: string } & QuestionAnnotationInput;
+export type PatchQuestionAnnotationInput = { userId: string; id: string } & QuestionAnnotationPatch;
+export type ReplaceAnnotationTagsInput = { userId: string } & AnnotationTagDict;

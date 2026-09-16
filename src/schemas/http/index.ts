@@ -752,3 +752,19 @@ export const forgettingRestoreSchema = z.object({
   bookId: uuidSchema,
   batchId: z.string().trim().min(1).max(200),
 });
+
+// ── 批次一：做题注记（原文分析条目）与规律标签字典（2026-09-16）─────────────
+// body 契约直接复用 domain zod（单一真源：锚点三元组/标签上限/A–D 白名单）。
+export {
+  annotationTagDictSchema as l3AnnotationTagDictSchema,
+  questionAnnotationInputSchema as l3QuestionAnnotationCreateSchema,
+  questionAnnotationPatchSchema as l3QuestionAnnotationPatchSchema,
+} from "../../domain/l3-annotations";
+
+/** GET /l3/question-annotations?questionIds=<uuid,uuid,...>：1–200 个 uuid。 */
+export const l3QuestionAnnotationListQuerySchema = z.object({
+  questionIds: z.string().trim().min(1).max(12_000)
+    .transform((raw) => raw.split(",").map((value) => value.trim()).filter(Boolean))
+    .refine((ids) => ids.length >= 1 && ids.length <= 200, { message: "questionIds 需为 1–200 个 uuid" })
+    .refine((ids) => ids.every((id) => uuidSchema.safeParse(id).success), { message: "questionIds 含非法 uuid" }),
+});

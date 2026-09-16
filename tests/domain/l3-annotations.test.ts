@@ -151,6 +151,17 @@ describe("questionAnnotationPatchSchema", () => {
     }) as Record<string, unknown>;
     expect("questionId" in parsed).toBe(false);
   });
+
+  it("keeps unsubmitted patch keys truly absent (defaults must not wipe untouched columns)", () => {
+    const parsed = questionAnnotationPatchSchema.parse({ note: "只改笔记" }) as Record<string, unknown>;
+    expect(Object.keys(parsed).sort()).toEqual(["note"]);
+  });
+
+  it("allows clearing entryTags alone without triggering the empty-entry rule", () => {
+    const parsed = questionAnnotationPatchSchema.parse({ entryTags: [] }) as Record<string, unknown>;
+    expect(parsed.entryTags).toEqual([]);
+    expect("note" in parsed).toBe(false);
+  });
 });
 
 describe("annotationTagDictSchema", () => {
