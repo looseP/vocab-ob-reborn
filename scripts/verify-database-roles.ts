@@ -436,6 +436,10 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       // 0032（ADR-0030）：题目可硬删（服务层 409 护栏），试卷 V1 仅建/读。
       "public.l3_questions": ["SELECT", "INSERT", "DELETE"],
       "public.l3_papers": ["SELECT", "INSERT"],
+      // 0033（批次一）：做题注记 PATCH/软删、标签字典 lazy-seed/PUT 整存；
+      // 行锁与 WITH CHECK 路径要求 UPDATE，故四权齐备。
+      "public.l3_question_annotations": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      "public.l3_annotation_tags": ["SELECT", "INSERT", "UPDATE", "DELETE"],
     }).map(([relation, privileges]) => [relation, new Set(privileges)]))],
     ["vocab_worker", new Map(Object.entries({
       "public.outbox_events": ["SELECT", "UPDATE"],

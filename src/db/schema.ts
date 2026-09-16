@@ -1319,3 +1319,51 @@ export const l3Papers = pgTable("l3_papers", {
 	check("l3_papers_direction_check", sql`direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
 	check("l3_papers_status_check", sql`status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])`),
 ]);
+
+// 批次一（2026-09-16）：做题注记 = 原文分析条目，挂题下、一题多条。
+// 锚点三元组（anchor_start/end/excerpt）同空同非空、end > start 由 CHECK 兜底；
+// 同 (question_id, anchor_start, anchor_end) 的锚点幂等由服务层去重保证。
+// status active/deleted 为软删标记（镜像 l3_questions 的时间戳与 RLS 风格）。
+export const l3QuestionAnnotations = pgTable("l3_question_annotations", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	questionId: uuid("question_id").notNull().references(() => l3Questions.id, { onDelete: "cascade" }),
+	ordinal: integer("ordinal").default(0).notNull(),
+	anchorStart: integer("anchor_start"),
+	anchorEnd: integer("anchor_end"),
+	excerpt: text("excerpt"),
+	note: text("note").default('').notNull(),
+	entryTags: jsonb("entry_tags").default([]).notNull(),
+	optionTags: jsonb("option_tags").default({}).notNull(),
+	status: text("status").default('active').notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_question_annotations_user_question").on(table.userId, table.questionId).where(sql`status = 'active'`),
+	pgPolicy("l3_question_annotations_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_question_annotations_anchor_pair_check", sql`(anchor_start IS NULL) = (anchor_end IS NULL)`),
+	check("l3_question_annotations_anchor_order_check", sql`anchor_start IS NULL OR anchor_end > anchor_start`),
+	check("l3_question_annotations_excerpt_check", sql`(anchor_start IS NULL) = (excerpt IS NULL)`),
+	check("l3_question_annotations_status_check", sql`status = ANY (ARRAY['active'::text, 'deleted'::text])`),
+]);
+
+// 批次一（2026-09-16）：规律标签字典（预置集 + 用户增删改，按用户隔离）。
+// kind=entry 题型标签 / kind=option 错误类型标签；部分唯一索引保证活标签不重名，
+// replaceTags 事务内软删旧行（status→deleted）再插新行不触发唯一冲突。
+export const l3AnnotationTags = pgTable("l3_annotation_tags", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	kind: text("kind").notNull(),
+	label: text("label").notNull(),
+	ordinal: integer("ordinal").default(0).notNull(),
+	status: text("status").default('active').notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_annotation_tags_user_kind_ordinal").on(table.userId, table.kind, table.ordinal),
+	uniqueIndex("l3_annotation_tags_user_kind_label_unique").on(table.userId, table.kind, table.label).where(sql`status = 'active'`),
+	pgPolicy("l3_annotation_tags_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_annotation_tags_kind_check", sql`kind = ANY (ARRAY['entry'::text, 'option'::text])`),
+	check("l3_annotation_tags_status_check", sql`status = ANY (ARRAY['active'::text, 'deleted'::text])`),
+]);
+

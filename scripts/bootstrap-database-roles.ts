@@ -337,6 +337,11 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     -- 409 护栏拦截）；卷：建卷/读（编辑/归档端点后续波次再授 UPDATE/DELETE）。
     GRANT SELECT, INSERT, DELETE ON TABLE public.l3_questions TO vocab_app;
     GRANT SELECT, INSERT ON TABLE public.l3_papers TO vocab_app;
+    -- 0033（批次一）：做题注记（原文分析条目）与规律标签字典。注记建/读/PATCH/软删；
+    -- tags 首次读取 lazy-seed、PUT 整存（事务内软删旧行 + 插新行）。四权齐备——
+    -- SELECT ... FOR UPDATE 行锁要求 UPDATE 权限（0021 同款行锁陷阱）。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_question_annotations,
+      public.l3_annotation_tags TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;

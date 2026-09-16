@@ -37,7 +37,8 @@ describe("existing local volume role upgrade", () => {
     // 0030: l3_source_spaces 子空间 junction 表（ADR-0019 §4 能力域轴；复合 owner FK + RLS）
     // 0031: l3_proposals (user_id, input_hash) partial unique index（ADR-0029 §7②，proposal 幂等收口）
     // 0032: l3_questions/l3_papers 题目与试卷实体（ADR-0030，payload 引用 + RLS + 题型 CHECK）
-    expect(authoritativeMigrationCount()).toBe(33);
+    // 0033: l3_question_annotations/l3_annotation_tags 做题注记与规律标签字典（批次一，锚点 CHECK + 四权 RLS）
+    expect(authoritativeMigrationCount()).toBe(34);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
