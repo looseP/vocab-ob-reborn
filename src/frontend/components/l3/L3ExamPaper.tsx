@@ -1,14 +1,21 @@
 import { useMemo, useRef, useState, useEffect, useCallback, type ReactNode } from "react";
 import { buildPassageSpans, enclosingSentence, type PassageSpan } from "./examPassageSpans";
 import { L3QuestionAnalysis } from "./L3QuestionAnalysis";
+import { L3SourceNotesDrawer } from "./L3SourceNotesDrawer";
 import { apiFetch } from "@/frontend/api/client";
-import { useToast } from "@/frontend/components/ui/Toast";
-import type {
-  AnnotationTagDict,
-  CreateQuestionAnnotationRequest,
-  QuestionAnnotation,
-  QuestionAnnotationPatchRequest,
+import {
+  createQuestionAnnotation,
+  deleteQuestionAnnotation,
+  fetchAnnotationTags,
+  fetchQuestionAnnotations,
+  patchQuestionAnnotation,
+  saveAnnotationTags,
+  type AnnotationTagDict,
+  type CreateQuestionAnnotationRequest,
+  type QuestionAnnotation,
+  type QuestionAnnotationPatchRequest,
 } from "@/frontend/api/l3Client";
+import { useToast } from "@/frontend/components/ui/Toast";
 
 /**
  * 拟真卷面（ADR-0030 V1 展示面）：左文右题 + 即点即判 + 解析模式 + 翻译/作文书写区。
@@ -47,16 +54,6 @@ export interface ExamPaper {
   direction: string | null;
   metadata: Record<string, unknown>;
   sections: ExamSection[];
-}
-
-/** 注记/标签通道（Task 9 由装配层传入；缺省时文栏仅保留做题与划词圈词）。 */
-export interface ExamPaperAnnotationProps {
-  annotationsByQuestion: Record<string, QuestionAnnotation[]>;
-  tagDict: AnnotationTagDict;
-  onCreateAnnotation: (input: CreateQuestionAnnotationRequest) => Promise<void>;
-  onPatchAnnotation: (id: string, patch: QuestionAnnotationPatchRequest) => Promise<void>;
-  onDeleteAnnotation: (id: string) => Promise<void>;
-  onSaveTagDict: (dict: AnnotationTagDict) => Promise<void>;
 }
 
 interface LocateTarget {
@@ -128,6 +125,7 @@ function PassageBody({
   questionDisplayNo,
   onJumpQuestion,
   onCreateAnnotation,
+  onContextBuffered,
 }: {
   section: ExamSection;
   content: string;
@@ -138,6 +136,7 @@ function PassageBody({
   questionDisplayNo: Map<string, number>;
   onJumpQuestion: (questionId: string) => void;
   onCreateAnnotation?: (input: CreateQuestionAnnotationRequest) => Promise<void>;
+  onContextBuffered?: (contextId: string) => void;
 }) {
   const passageRef = useRef<HTMLDivElement>(null);
   const [capture, setCapture] = useState<CaptureState | null>(null);
@@ -244,7 +243,7 @@ function PassageBody({
     if (!capture || !section.sourceId || !wordSlug.trim()) return;
     setBusy(true);
     try {
-      await apiFetch(`/l3/sources/${section.sourceId}/captures`, {
+      const result = await apiFetch<{ contextId: string }>(`/l3/sources/${section.sourceId}/captures`, {
         method: "POST",
         body: JSON.stringify({
           text: enclosingSentence(content, capture.start, capture.end),
@@ -255,6 +254,7 @@ function PassageBody({
           boundSense: boundSense.trim() || null,
         }),
       });
+      if (result.contextId) onContextBuffered?.(result.contextId);
       addToast("已圈入素材笔记，可在素材空间回访处理");
       setWordSlug("");
       setBoundSense("");
@@ -562,28 +562,82 @@ function WrittenQuestion({
   );
 }
 
-export function L3ExamPaper({
-  paper,
-  onBack,
-  annotationsByQuestion,
-  tagDict,
-  onCreateAnnotation,
-  onPatchAnnotation,
-  onDeleteAnnotation,
-  onSaveTagDict,
-}: {
-  paper: ExamPaper;
-  onBack: () => void;
-} & Partial<ExamPaperAnnotationProps>) {
+export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () => void }) {
+  const { addToast } = useToast();
   const [revealAll, setRevealAll] = useState(false);
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [activeBlank, setActiveBlank] = useState<number | null>(null);
   const [activeSection, setActiveSection] = useState(paper.sections[0]?.key ?? "");
   const [locate, setLocate] = useState<LocateTarget | null>(null);
+  const [annotations, setAnnotations] = useState<QuestionAnnotation[]>([]);
+  const [tagDict, setTagDict] = useState<AnnotationTagDict | null>(null);
+  /** 本会话划词「圈词入笔记」新建的 context id（抽屉打缓冲徽标）。 */
+  const [bufferedContextIds, setBufferedContextIds] = useState<ReadonlySet<string>>(new Set());
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
-  const annotationsEnabled = Boolean(
-    annotationsByQuestion && tagDict && onCreateAnnotation && onPatchAnnotation && onDeleteAnnotation && onSaveTagDict,
-  );
+
+  // 卷面加载后按全部 section 的 questionIds 批量拉注记 + 标签字典（首读 lazy-seed）。
+  useEffect(() => {
+    let cancelled = false;
+    const allQuestionIds = [...new Set(paper.sections.flatMap((section) => section.questionIds))];
+    if (allQuestionIds.length === 0) return;
+    Promise.all([
+      fetchQuestionAnnotations(allQuestionIds),
+      fetchAnnotationTags(),
+    ]).then(([items, dict]) => {
+      if (cancelled) return;
+      setAnnotations(items);
+      setTagDict(dict);
+    }).catch(() => {
+      if (!cancelled) addToast("做题注记加载失败，稍后重试");
+    });
+    return () => { cancelled = true; };
+  }, [paper.id, paper.sections, addToast]);
+
+  const upsertAnnotation = useCallback((item: QuestionAnnotation) => {
+    setAnnotations((prev) => {
+      const without = prev.filter((row) => row.id !== item.id);
+      return [...without, item];
+    });
+  }, []);
+
+  const handleCreateAnnotation = useCallback(async (input: CreateQuestionAnnotationRequest) => {
+    upsertAnnotation(await createQuestionAnnotation(input));
+  }, [upsertAnnotation]);
+
+  const handlePatchAnnotation = useCallback(async (id: string, patch: QuestionAnnotationPatchRequest) => {
+    upsertAnnotation(await patchQuestionAnnotation(id, patch));
+  }, [upsertAnnotation]);
+
+  const handleDeleteAnnotation = useCallback(async (id: string) => {
+    await deleteQuestionAnnotation(id);
+    setAnnotations((prev) => prev.filter((row) => row.id !== id));
+  }, []);
+
+  const handleSaveTagDict = useCallback(async (dict: AnnotationTagDict) => {
+    setTagDict(await saveAnnotationTags(dict));
+  }, []);
+
+  const handleContextBuffered = useCallback((contextId: string) => {
+    setBufferedContextIds((prev) => {
+      if (prev.has(contextId)) return prev;
+      const next = new Set(prev);
+      next.add(contextId);
+      return next;
+    });
+  }, []);
+
+  const annotationsByQuestion = useMemo(() => {
+    const grouped: Record<string, QuestionAnnotation[]> = {};
+    for (const annotation of annotations) {
+      (grouped[annotation.question_id] ??= []).push(annotation);
+    }
+    for (const list of Object.values(grouped)) {
+      list.sort((a, b) => a.ordinal - b.ordinal
+        || a.created_at.localeCompare(b.created_at)
+        || a.id.localeCompare(b.id));
+    }
+    return grouped;
+  }, [annotations]);
 
   const pickQuestion = (questionId: string, key: string) =>
     setPicks((prev) => ({ ...prev, [questionId]: key }));
@@ -627,17 +681,17 @@ export function L3ExamPaper({
   };
 
   const renderAnalysis = (sectionKey: string, q: ExamQuestion) => {
-    if (!annotationsEnabled) return null;
+    if (!tagDict) return null;
     return (
       <L3QuestionAnalysis
         question={q}
-        annotations={annotationsByQuestion?.[q.id] ?? []}
-        tagDict={tagDict!}
+        annotations={annotationsByQuestion[q.id] ?? []}
+        tagDict={tagDict}
         onLocate={(anchor) => setLocate({ sectionKey, ...anchor, nonce: Date.now() })}
-        onCreate={onCreateAnnotation!}
-        onPatch={onPatchAnnotation!}
-        onDelete={onDeleteAnnotation!}
-        onSaveTagDict={onSaveTagDict!}
+        onCreate={handleCreateAnnotation}
+        onPatch={handlePatchAnnotation}
+        onDelete={handleDeleteAnnotation}
+        onSaveTagDict={handleSaveTagDict}
       />
     );
   };
@@ -688,9 +742,8 @@ export function L3ExamPaper({
         {paper.sections.map((section, sectionIndex) => {
           const hasPassage = Boolean(section.source_content) && ["cloze", "reading_choice", "new_question"].includes(section.questionType);
           const isWritten = ["sentence_translation", "short_essay", "long_essay"].includes(section.questionType);
-          const sectionAnnotations = annotationsEnabled
-            ? section.questions.flatMap((q) => annotationsByQuestion?.[q.id] ?? [])
-            : [];
+          const sectionAnnotations = section.questions
+            .flatMap((q) => annotationsByQuestion[q.id] ?? []);
           const questionDisplayNo = new Map(
             section.questions.map((q, qi) => [
               q.id,
@@ -746,8 +799,12 @@ export function L3ExamPaper({
                         locate={locate}
                         questionDisplayNo={questionDisplayNo}
                         onJumpQuestion={(questionId) => scrollToQuestion(section.key, `q-${questionId}`)}
-                        onCreateAnnotation={onCreateAnnotation}
+                        onCreateAnnotation={handleCreateAnnotation}
+                        onContextBuffered={handleContextBuffered}
                       />
+                      {section.sourceId && (
+                        <L3SourceNotesDrawer sourceId={section.sourceId} bufferedIds={bufferedContextIds} />
+                      )}
                     </div>
                   </div>
                   <div className="space-y-3">
