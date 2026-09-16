@@ -120,3 +120,58 @@ export function enclosingSentence(content: string, start: number, end: number): 
   if (e < content.length && /[。！？!?]/.test(content[e]!)) e += 1;
   return content.slice(s, e).trim() || content.slice(start, end);
 }
+
+/** 段内渲染片段：坐标仍是 content 全局 UTF-16 偏移（换行符不属于任何 run）。 */
+export interface PassageRun {
+  start: number;
+  end: number;
+  kind: PassageSpanKind;
+  text: string;
+  blankNo?: number;
+  annotationId?: string;
+}
+
+export interface PassageParagraph {
+  /** 该段全部片段（空位角标为无文本 run；其余 run.text 不含换行符）。 */
+  runs: PassageRun[];
+  /** 空段（对应 \n\n 之间的空行，渲染为占位高度以保留段落间距）。 */
+  blank: boolean;
+}
+
+/**
+ * 把连续 span 序列按 content 中的 \n 切成段落组。
+ * 换行符不生成文本 run——每个 run 携带全局 content 偏移，因此拆段不影响
+ * 选区偏移映射；跨段标注（mark 内含 \n）被切成同 annotationId 的多个 run。
+ */
+export function groupSpansIntoParagraphs(spans: readonly PassageSpan[], content: string): PassageParagraph[] {
+  const paragraphs: PassageParagraph[] = [];
+  let runs: PassageRun[] = [];
+  const breakParagraph = () => {
+    paragraphs.push({ runs, blank: runs.length === 0 });
+    runs = [];
+  };
+
+  for (const span of spans) {
+    if (span.kind === "blank") {
+      runs.push({ start: span.start, end: span.end, kind: "blank", text: "", blankNo: span.blankNo });
+      continue;
+    }
+    const raw = content.slice(span.start, span.end);
+    let cursor = span.start;
+    const lines = raw.split("\n");
+    lines.forEach((line, index) => {
+      if (line.length > 0) {
+        const run: PassageRun = { start: cursor, end: cursor + line.length, kind: span.kind, text: line };
+        if (span.annotationId) run.annotationId = span.annotationId;
+        runs.push(run);
+      }
+      cursor += line.length;
+      if (index < lines.length - 1) {
+        breakParagraph();
+        cursor += 1; // 消费该段末尾的 \n（其偏移不属于任何 run）
+      }
+    });
+  }
+  breakParagraph();
+  return paragraphs;
+}

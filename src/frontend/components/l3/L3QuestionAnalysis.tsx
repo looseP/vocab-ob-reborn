@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ExamQuestion } from "./L3ExamPaper";
+import type { ExamQuestion } from "./examTypes";
 import type {
   AnnotationTagDict,
   CreateQuestionAnnotationRequest,

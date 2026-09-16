@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, useEffect, useCallback, type ReactNode } from "react";
-import { buildPassageSpans, enclosingSentence, type PassageSpan } from "./examPassageSpans";
+import { buildPassageSpans, enclosingSentence, groupSpansIntoParagraphs, type PassageRun } from "./examPassageSpans";
+import type { ExamPaper as ExamPaperType, ExamQuestion, ExamSection } from "./examTypes";
 import { L3QuestionAnalysis } from "./L3QuestionAnalysis";
 import { L3SourceNotesDrawer } from "./L3SourceNotesDrawer";
 import { apiFetch } from "@/frontend/api/client";
@@ -23,38 +24,8 @@ import { useToast } from "@/frontend/components/ui/Toast";
  * 用户注记锚点全程）、划词分叉（建原文分析条目 / 圈词入笔记）、题卡原文分析子区。
  */
 
-export interface ExamQuestion {
-  id: string;
-  ordinal: number;
-  stem: string;
-  options: Array<{ key: string; text: string }>;
-  answer: { choice?: string; choices?: string[]; text?: string; sample?: string; points?: string[] };
-  explanation: string | null;
-  /** 官方 evidence 锚点（start/end 为 content UTF-16 偏移；仅解析模式渲染）。 */
-  evidence?: Array<{ start: number; end: number; label: string }>;
-}
-export interface ExamSection {
-  key: string;
-  title: string;
-  questionType:
-    | "cloze" | "reading_choice" | "new_question" | "sentence_translation"
-    | "short_essay" | "long_essay" | "grammar_blank";
-  sourceId: string | null;
-  fileKey: string | null;
-  questionIds: string[];
-  missing: boolean;
-  missing_reason?: string;
-  source_title: string | null;
-  source_content: string | null;
-  questions: ExamQuestion[];
-}
-export interface ExamPaper {
-  id: string;
-  title: string;
-  direction: string | null;
-  metadata: Record<string, unknown>;
-  sections: ExamSection[];
-}
+// 题型从独立类型文件 re-export，保持 L3PapersPage 等既有导入路径不变。
+export type { ExamPaper, ExamQuestion, ExamSection } from "./examTypes";
 
 interface LocateTarget {
   sectionKey: string;
@@ -162,11 +133,15 @@ function PassageBody({
     [content, evidence, annotations, revealAll],
   );
 
+  // 按原文换行分段：每段独立 <p> 带段距，空行占位；run 携带全局偏移，拆段不影响选区坐标。
+  const paragraphs = useMemo(() => groupSpansIntoParagraphs(spans, content), [spans, content]);
+
   // 题卡定位钮 → 滚动到锚点并脉冲（nonce 保证重复点击同一锚点也重播动画）。
+  // 跨段标注会拆成多个 mark 片段，按 data-ann-start（锚点全局起点）取第一个片段即可。
   useEffect(() => {
     if (!locate || locate.sectionKey !== section.key) return;
     const target = passageRef.current?.querySelector<HTMLElement>(
-      `[data-ann-start="${locate.start}"][data-ann-end="${locate.end}"]`,
+      `[data-ann-start="${locate.start}"]`,
     );
     if (!target) return;
     target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -275,85 +250,93 @@ function PassageBody({
         onMouseUp={handleMouseUp}
         className="text-sm leading-8 [text-align:justify]"
       >
-        {spans.map((span: PassageSpan) => {
-          if (span.kind === "blank") {
-            const isActiveBlank = activeBlank === span.blankNo;
-            return (
-              <button
-                key={`${span.start}-${span.end}`}
-                type="button"
-                data-blank-no={span.blankNo}
-                onClick={() => onJumpQuestion(section.questions.find((q) =>
-                  section.questionType === "new_question" ? q.ordinal + 41 === span.blankNo : questionDisplayNo.get(q.id) === span.blankNo,
-                )?.id ?? "")}
-                className={`mx-0.5 inline-flex h-5 min-w-5 select-none items-center justify-center rounded px-1 text-[11px] font-semibold align-middle transition-all ${
-                  isActiveBlank
-                    ? "scale-110 bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]"
-                    : "bg-[var(--color-accent-soft,var(--color-surface))] text-[var(--color-accent)] ring-1 ring-[var(--color-border)] hover:ring-[var(--color-accent)]"
-                }`}
-                title={`跳到第 ${span.blankNo} 空`}
-              >
-                {span.blankNo}
-              </button>
-            );
-          }
-          const text = content.slice(span.start, span.end);
-          if (span.kind === "evidence") {
-            return (
-              <mark
-                key={`${span.start}-${span.end}`}
-                data-content-off={span.start}
-                data-evidence
-                className="rounded bg-amber-200/70 px-0.5 text-inherit dark:bg-amber-400/30"
-              >
-                {text}
-              </mark>
-            );
-          }
-          if (span.kind === "annotation") {
-            const annotationId = span.annotationId!;
-            const isPulsing = pulseNonce > 0
-              && locate?.start === span.start && locate?.end === span.end;
-            const showBadge = !renderedBadges.has(annotationId);
-            if (showBadge) renderedBadges.add(annotationId);
-            return (
-              <span key={`${span.start}-${span.end}`} className="whitespace-nowrap">
-                <mark
-                  data-content-off={span.start}
-                  data-ann-id={annotationId}
-                  data-ann-start={span.start}
-                  data-ann-end={span.end}
-                  className={`rounded-sm border-b-2 border-[var(--color-accent)] px-0.5 text-inherit ${
-                    isPulsing ? "[animation:exam-locate-pulse_1.2s_ease-out] rounded" : ""
-                  }`}
-                >
-                  {text}
-                </mark>
-                {showBadge && (
-                  <button
-                    type="button"
-                    data-ann-jump={annotationId}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const owner = annotations.find((a) => a.id === annotationId);
-                      if (owner) onJumpQuestion(owner.question_id);
-                    }}
-                    title="查看该题的原文分析"
-                    className="ml-0.5 inline-flex h-4 min-w-4 select-none items-center justify-center rounded-full bg-[var(--color-accent)] px-1 text-[9px] font-bold leading-none text-[var(--color-accent-contrast,var(--color-surface))] align-middle"
-                  >
-                    {(() => {
-                      const owner = annotations.find((a) => a.id === annotationId);
-                      return owner ? (questionDisplayNo.get(owner.question_id) ?? "•") : "•";
-                    })()}
-                  </button>
-                )}
-              </span>
-            );
+        {paragraphs.map((paragraph, paragraphIndex) => {
+          if (paragraph.blank) {
+            return <p key={`p-${paragraphIndex}`} aria-hidden className="min-h-[0.75em]" />;
           }
           return (
-            <span key={`${span.start}-${span.end}`} data-content-off={span.start}>
-              {text}
-            </span>
+            <p key={`p-${paragraphIndex}`} className="mb-3 last:mb-0">
+              {paragraph.runs.map((run: PassageRun) => {
+                if (run.kind === "blank") {
+                  const isActiveBlank = activeBlank === run.blankNo;
+                  return (
+                    <button
+                      key={`${run.start}-${run.end}`}
+                      type="button"
+                      data-blank-no={run.blankNo}
+                      onClick={() => onJumpQuestion(section.questions.find((q) =>
+                        section.questionType === "new_question" ? q.ordinal + 41 === run.blankNo : questionDisplayNo.get(q.id) === run.blankNo,
+                      )?.id ?? "")}
+                      className={`mx-0.5 inline-flex h-5 min-w-5 select-none items-center justify-center rounded px-1 text-[11px] font-semibold align-middle transition-all ${
+                        isActiveBlank
+                          ? "scale-110 bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]"
+                          : "bg-[var(--color-accent-soft,var(--color-surface))] text-[var(--color-accent)] ring-1 ring-[var(--color-border)] hover:ring-[var(--color-accent)]"
+                      }`}
+                      title={`跳到第 ${run.blankNo} 空`}
+                    >
+                      {run.blankNo}
+                    </button>
+                  );
+                }
+                if (run.kind === "evidence") {
+                  return (
+                    <mark
+                      key={`${run.start}-${run.end}`}
+                      data-content-off={run.start}
+                      data-evidence
+                      className="rounded bg-amber-200/70 px-0.5 text-inherit dark:bg-amber-400/30"
+                    >
+                      {run.text}
+                    </mark>
+                  );
+                }
+                if (run.kind === "annotation") {
+                  const annotationId = run.annotationId!;
+                  const owner = annotations.find((a) => a.id === annotationId);
+                  const locateStart = locate?.start;
+                  const locateEnd = locate?.end;
+                  const isPulsing = pulseNonce > 0 && owner
+                    && locateStart != null && locateEnd != null
+                    && locateStart <= run.start && run.end <= locateEnd;
+                  const showBadge = !renderedBadges.has(annotationId);
+                  if (showBadge) renderedBadges.add(annotationId);
+                  return (
+                    <span key={`${run.start}-${run.end}`} className="whitespace-nowrap">
+                      <mark
+                        data-content-off={run.start}
+                        data-ann-id={annotationId}
+                        data-ann-start={owner?.anchor_start ?? undefined}
+                        data-ann-end={owner?.anchor_end ?? undefined}
+                        className={`rounded-sm border-b-2 border-[var(--color-accent)] px-0.5 text-inherit ${
+                          isPulsing ? "[animation:exam-locate-pulse_1.2s_ease-out] rounded" : ""
+                        }`}
+                      >
+                        {run.text}
+                      </mark>
+                      {showBadge && (
+                        <button
+                          type="button"
+                          data-ann-jump={annotationId}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (owner) onJumpQuestion(owner.question_id);
+                          }}
+                          title="查看该题的原文分析"
+                          className="ml-0.5 inline-flex h-4 min-w-4 select-none items-center justify-center rounded-full bg-[var(--color-accent)] px-1 text-[9px] font-bold leading-none text-[var(--color-accent-contrast,var(--color-surface))] align-middle"
+                        >
+                          {owner ? (questionDisplayNo.get(owner.question_id) ?? "•") : "•"}
+                        </button>
+                      )}
+                    </span>
+                  );
+                }
+                return (
+                  <span key={`${run.start}-${run.end}`} data-content-off={run.start}>
+                    {run.text}
+                  </span>
+                );
+              })}
+            </p>
           );
         })}
       </div>
@@ -562,7 +545,7 @@ function WrittenQuestion({
   );
 }
 
-export function L3ExamPaper({ paper, onBack }: { paper: ExamPaper; onBack: () => void }) {
+export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: () => void }) {
   const { addToast } = useToast();
   const [revealAll, setRevealAll] = useState(false);
   const [picks, setPicks] = useState<Record<string, string>>({});

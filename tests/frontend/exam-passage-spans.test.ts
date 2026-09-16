@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPassageSpans,
   enclosingSentence,
+  groupSpansIntoParagraphs,
   type PassageAnnotationMarker,
   type PassageSpan,
 } from "@/frontend/components/l3/examPassageSpans";
@@ -117,5 +118,50 @@ describe("enclosingSentence", () => {
   it("falls back to the selection itself when no boundary exists", () => {
     const content = "no boundaries at all";
     expect(enclosingSentence(content, 3, 12)).toBe("no boundaries at all");
+  });
+});
+
+describe("groupSpansIntoParagraphs", () => {
+  it("splits text runs on newlines into separate paragraphs with global offsets", () => {
+    const content = "First paragraph.\nSecond one here.";
+    const paragraphs = groupSpansIntoParagraphs(buildPassageSpans(content, {}), content);
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0]!.runs).toEqual([
+      { start: 0, end: 16, kind: "text", text: "First paragraph." },
+    ]);
+    expect(paragraphs[1]!.runs).toEqual([
+      { start: 17, end: 33, kind: "text", text: "Second one here." },
+    ]);
+    expect(paragraphs.every((p) => !p.blank)).toBe(true);
+  });
+
+  it("represents a blank line as a blank paragraph (paragraph spacing)", () => {
+    const content = "Para one.\n\nPara two.";
+    const paragraphs = groupSpansIntoParagraphs(buildPassageSpans(content, {}), content);
+    expect(paragraphs.map((p) => p.blank)).toEqual([false, true, false]);
+    expect(paragraphs[2]!.runs[0]).toMatchObject({ start: 11, text: "Para two." });
+  });
+
+  it("keeps blank placeholders inside the paragraph where they occur", () => {
+    const content = "A〖1〗B\nC〖2〗D";
+    const paragraphs = groupSpansIntoParagraphs(buildPassageSpans(content, {}), content);
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0]!.runs.map((r) => r.kind)).toEqual(["text", "blank", "text"]);
+    expect(paragraphs[0]!.runs[1]).toMatchObject({ kind: "blank", blankNo: 1 });
+    expect(paragraphs[1]!.runs.map((r) => r.kind)).toEqual(["text", "blank", "text"]);
+    expect(paragraphs[1]!.runs[1]).toMatchObject({ kind: "blank", blankNo: 2 });
+  });
+
+  it("splits a cross-paragraph annotation into runs sharing the annotationId", () => {
+    const content = "abc\nfgh";
+    const annotations: PassageAnnotationMarker[] = [{ id: "a1", anchorStart: 1, anchorEnd: 7 }];
+    const spans = buildPassageSpans(content, { annotations });
+    const paragraphs = groupSpansIntoParagraphs(spans, content);
+    const annotationRuns = paragraphs.flatMap((p) => p.runs).filter((r) => r.kind === "annotation");
+    expect(annotationRuns.map((r) => [r.start, r.end, r.text])).toEqual([
+      [1, 3, "bc"],
+      [4, 7, "fgh"],
+    ]);
+    expect(annotationRuns.every((r) => r.annotationId === "a1")).toBe(true);
   });
 });
