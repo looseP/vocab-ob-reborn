@@ -7,6 +7,7 @@ import type {
 } from "./l3ResponseTypes";
 import { BrowserApiError, createBrowserResponseRequest } from "./browserRequest";
 import { adaptCursorPage } from "./pagination";
+import { apiFetch } from "./client";
 
 const DEFAULT_API_BASE_URL = "";
 
@@ -41,4 +42,93 @@ export function createBrowserL3Client(baseUrl = DEFAULT_API_BASE_URL, fetchImpl:
     ...client,
     ...generatedReadClient,
   };
+}
+
+// ── 批次一：做题注记（原文分析条目）与规律标签字典（纯 owner 做题面）──────────
+// 不走 createL3FrontendClient（那是 agent/owner 共用的 MCP read contract）；
+// 这组函数仅供卷面工作台经通用 apiFetch 调用，响应字段与后端 snake_case 契约对齐。
+
+export type QuestionAnnotationOptionKey = "A" | "B" | "C" | "D";
+
+export interface QuestionAnnotation {
+  id: string;
+  question_id: string;
+  ordinal: number;
+  anchor_start: number | null;
+  anchor_end: number | null;
+  excerpt: string | null;
+  note: string;
+  entry_tags: string[];
+  option_tags: Partial<Record<QuestionAnnotationOptionKey, string[]>>;
+  status: "active" | "deleted";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnnotationTagDict {
+  entry: string[];
+  option: string[];
+}
+
+export interface CreateQuestionAnnotationRequest {
+  questionId: string;
+  anchorStart?: number | null;
+  anchorEnd?: number | null;
+  excerpt?: string | null;
+  note?: string;
+  entryTags?: string[];
+  optionTags?: Partial<Record<QuestionAnnotationOptionKey, string[]>>;
+}
+
+export type QuestionAnnotationPatchRequest = Partial<Omit<CreateQuestionAnnotationRequest, "questionId">>;
+
+const ANNOTATION_ID_BATCH_LIMIT = 200;
+
+/** 卷面加载后按题 id 批量拉注记（服务端去重/上限 200）。 */
+export async function fetchQuestionAnnotations(questionIds: readonly string[]): Promise<QuestionAnnotation[]> {
+  const ids = [...new Set(questionIds)].slice(0, ANNOTATION_ID_BATCH_LIMIT);
+  if (ids.length === 0) return [];
+  const body = await apiFetch<{ items: QuestionAnnotation[] }>(
+    `/l3/question-annotations?questionIds=${ids.map(encodeURIComponent).join(",")}`,
+  );
+  return body.items;
+}
+
+/** 新建条目；同题同锚点幂等命中时服务端返回既有行（200/201 对调用方等价）。 */
+export async function createQuestionAnnotation(
+  input: CreateQuestionAnnotationRequest,
+): Promise<QuestionAnnotation> {
+  const body = await apiFetch<{ item: QuestionAnnotation }>(
+    "/l3/question-annotations",
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return body.item;
+}
+
+export async function patchQuestionAnnotation(
+  id: string,
+  patch: QuestionAnnotationPatchRequest,
+): Promise<QuestionAnnotation> {
+  const body = await apiFetch<{ item: QuestionAnnotation }>(
+    `/l3/question-annotations/${id}`,
+    { method: "PATCH", body: JSON.stringify(patch) },
+  );
+  return body.item;
+}
+
+export async function deleteQuestionAnnotation(id: string): Promise<void> {
+  await apiFetch<null>(`/l3/question-annotations/${id}`, { method: "DELETE" });
+}
+
+/** 标签字典首次读取由服务端 lazy-seed 预置集。 */
+export async function fetchAnnotationTags(): Promise<AnnotationTagDict> {
+  return apiFetch<AnnotationTagDict>("/l3/annotation-tags");
+}
+
+/** 整存替换标签字典（服务端事务内软删旧行 + 插新行）。 */
+export async function saveAnnotationTags(dict: AnnotationTagDict): Promise<AnnotationTagDict> {
+  return apiFetch<AnnotationTagDict>("/l3/annotation-tags", {
+    method: "PUT",
+    body: JSON.stringify(dict),
+  });
 }
