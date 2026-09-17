@@ -22,13 +22,13 @@ const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENV
 reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mountedRoots: Root[] = [];
-async function renderPage(): Promise<void> {
+async function renderPage(props: Record<string, unknown> = {}): Promise<void> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   mountedRoots.push(root);
   await act(async () => {
-    root.render(createElement(L3PapersPage) as ReactElement);
+    root.render(createElement(L3PapersPage, props as never) as ReactElement);
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -150,5 +150,43 @@ describe("L3PapersPage 粘贴建卷", () => {
       expect(body.sections[0].questions[0].answer).toEqual({ choice: "A" });
     });
     expect(addToastMock).toHaveBeenCalledWith("success", expect.stringContaining("已建卷"));
+  });
+});
+
+describe("L3PapersPage 深链（批次二）", () => {
+  it("?venue=&file= 直达题型空间并自动打开目标文件", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/l3/practice-files?")) {
+        return {
+          items: [{
+            question_type: "reading_choice",
+            source_id: SOURCE_ID,
+            file_key: null,
+            title: "2025 英语二 · Text 1 小费文化",
+            direction: "考研",
+            question_count: 5,
+            latest_created_at: "2026-09-16T00:00:00Z",
+          }],
+        };
+      }
+      if (path.startsWith("/l3/practice-files/detail?")) {
+        return {
+          questions: [{
+            id: QUESTION_ID, ordinal: 0, stem: "21. 深链题干",
+            options: [{ key: "A", text: "选项 A" }], answer: { choice: "A" },
+            explanation: null, evidence: [],
+          }],
+        };
+      }
+      return {};
+    });
+
+    await renderPage({ deepLinkVenue: "reading_choice", deepLinkFile: SOURCE_ID });
+    // 深链直达文件题组详情（无需手动切 tab / 点空间 / 点文件）
+    await waitFor(() => expect(screen.getByText("21. 深链题干")).toBeTruthy());
+    const detailCall = apiFetchMock.mock.calls.find(([path]) => String(path).includes("/l3/practice-files/detail?"));
+    expect(String(detailCall![0])).toContain(`sourceId=${SOURCE_ID}`);
+    expect(String(detailCall![0])).toContain("questionType=reading_choice");
   });
 });

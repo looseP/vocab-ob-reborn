@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, within } from "@testing-library/dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { L3QuestionAnalysis } from "@/frontend/components/l3/L3QuestionAnalysis";
-import type { QuestionAnnotation } from "@/frontend/api/l3Client";
+import type { L3Attempt, QuestionAnnotation } from "@/frontend/api/l3Client";
 
 const QUESTION_ID = "00000000-0000-4000-8000-000000000101";
 
@@ -35,6 +35,9 @@ const anchored: QuestionAnnotation = {
   note: "B 项偷换主语",
   entry_tags: ["推断题"],
   option_tags: { B: ["偷换概念"] },
+  stage: "confirmed",
+  sheet_id: null,
+  review: null,
   status: "active",
   created_at: "2026-09-16T00:00:00Z",
   updated_at: "2026-09-16T00:00:00Z",
@@ -50,6 +53,9 @@ const loose: QuestionAnnotation = {
   note: "整题考查主旨归纳",
   entry_tags: ["主旨题"],
   option_tags: {},
+  stage: "confirmed",
+  sheet_id: null,
+  review: null,
   status: "active",
   created_at: "2026-09-16T00:00:00Z",
   updated_at: "2026-09-16T00:00:00Z",
@@ -216,5 +222,45 @@ describe("L3QuestionAnalysis 选项打标浮层", () => {
     expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({
       optionTags: { B: ["以偏概全"] },
     }));
+  });
+});
+
+describe("L3QuestionAnalysis 批次二：历史徽标与覆盖度", () => {
+  const attemptFixture = (overrides: Partial<L3Attempt> = {}): L3Attempt => ({
+    id: "00000000-0000-4000-8000-000000000501",
+    user_id: "00000000-0000-4000-8000-000000000001",
+    question_id: QUESTION_ID,
+    sheet_id: null,
+    venue: "file",
+    answer: { choice: "B" },
+    self_assessment: null,
+    status: "active",
+    deleted_at: null,
+    created_at: "2026-09-17T01:00:00Z",
+    ...overrides,
+  });
+
+  it("显示作答徽标「做过 N 次」，点击触发 onOpenHistory", async () => {
+    const onOpenHistory = vi.fn();
+    await renderAnalysis({ attempts: [attemptFixture(), attemptFixture({ id: "a2" })], onOpenHistory });
+    const badge = screen.getByRole("button", { name: /做过 2 次/ });
+    await userEvent(() => fireEvent.click(badge));
+    expect(onOpenHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("有自评 verdict 时展示「最近 ✓」（批次三评卷接入前优雅降级）", async () => {
+    await renderAnalysis({ attempts: [attemptFixture({ self_assessment: { verdict: "correct" } })] });
+    expect(screen.getByRole("button", { name: /做过 1 次 · 最近 ✓/ })).toBeTruthy();
+  });
+
+  it("无作答历史时不显示徽标", async () => {
+    await renderAnalysis();
+    expect(screen.queryByRole("button", { name: /做过/ })).toBeNull();
+  });
+
+  it("展开后呈现覆盖度「A— B✓ C— D—」（纯函数消费，只呈现不催）", async () => {
+    await renderAnalysis();
+    await expandSection();
+    expect(screen.getByText("A— B✓ C— D—")).toBeTruthy();
   });
 });

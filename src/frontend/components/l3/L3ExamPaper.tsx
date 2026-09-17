@@ -6,9 +6,12 @@ import { L3SourceNotesDrawer } from "./L3SourceNotesDrawer";
 import { apiFetch } from "@/frontend/api/client";
 import {
   createQuestionAnnotation,
+  deleteAttempt,
   deleteQuestionAnnotation,
   fetchAnnotationTags,
+  fetchAttempts,
   fetchQuestionAnnotations,
+  fetchSheet,
   openSheet,
   patchSheet,
   patchQuestionAnnotation,
@@ -16,12 +19,14 @@ import {
   sealSheet,
   type AnnotationTagDict,
   type CreateQuestionAnnotationRequest,
+  type L3Attempt,
   type L3Sheet,
   type QuestionAnnotation,
   type QuestionAnnotationPatchRequest,
   type SealModeValue,
 } from "@/frontend/api/l3Client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
+import { L3AttemptHistoryModal } from "./L3AttemptHistoryModal";
 import { useToast } from "@/frontend/components/ui/Toast";
 
 /**
@@ -491,6 +496,7 @@ function ChoiceQuestion({
   onPick,
   analysis,
   readOnly = false,
+  cleared = false,
 }: {
   question: ExamQuestion;
   index: number;
@@ -499,6 +505,8 @@ function ChoiceQuestion({
   onPick: (key: string) => void;
   analysis?: ReactNode;
   readOnly?: boolean;
+  /** 结果页占位：该题作答记录已清理（内容不展示，尊重删除意图）。 */
+  cleared?: boolean;
 }) {
   const correct = question.answer.choice;
   const answered = Boolean(picked);
@@ -511,6 +519,11 @@ function ChoiceQuestion({
         </span>
         <p className="text-sm font-medium leading-relaxed">{question.stem}</p>
       </div>
+      {cleared && (
+        <p className="mb-2 inline-block rounded-md bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-ink-soft)] ring-1 ring-[var(--color-border)]">
+          作答记录已清理
+        </p>
+      )}
       <div className="grid gap-1.5">
         {question.options.map((opt) => {
           let state: "idle" | "correct" | "wrong" | "muted" = "idle";
@@ -539,12 +552,14 @@ function WrittenQuestion({
   placeholder,
   analysis,
   readOnly = false,
+  cleared = false,
 }: {
   question: ExamQuestion;
   kind: "translation" | "essay";
   placeholder: string;
   analysis?: ReactNode;
   readOnly?: boolean;
+  cleared?: boolean;
 }) {
   const reference = kind === "translation" ? question.answer.text : question.answer.sample;
   return (
@@ -552,6 +567,11 @@ function WrittenQuestion({
       <div className="whitespace-pre-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm leading-7">
         {question.stem}
       </div>
+      {cleared && (
+        <p className="inline-block rounded-md bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-ink-soft)] ring-1 ring-[var(--color-border)]">
+          作答记录已清理
+        </p>
+      )}
       <textarea
         rows={kind === "translation" ? 7 : 12}
         placeholder={placeholder}
@@ -593,6 +613,13 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
   const [sealBusy, setSealBusy] = useState(false);
   /** 「仍要定格」二次确认：第一次 409 后服务端给出的未答计数。 */
   const [sealUnanswered, setSealUnanswered] = useState<number | null>(null);
+  // ── 批次二：作答历史（徽标/modal/派生渲染）──
+  const [attempts, setAttempts] = useState<L3Attempt[]>([]);
+  const [historyQuestionId, setHistoryQuestionId] = useState<string | null>(null);
+  /** 结果页占位：已软删条目的题（内容不展示，统计口径不变）。 */
+  const [clearedQuestions, setClearedQuestions] = useState<ReadonlySet<string>>(new Set());
+  /** 定格档案统计（交卷时口径：total 不因后续删除变化）。 */
+  const [sheetStats, setSheetStats] = useState<{ total: number; cleared: number } | null>(null);
   const pendingAnswers = useRef<Record<string, unknown>>({});
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetRef = useRef<L3Sheet | null>(null);
@@ -623,6 +650,17 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
 
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
 
+  // 批次二：批量拉全部题的作答历史（题卡徽标数据源；跨 venue 同显）。
+  useEffect(() => {
+    let cancelled = false;
+    const allQuestionIds = [...new Set(paper.sections.flatMap((section) => section.questionIds))];
+    if (allQuestionIds.length === 0) return;
+    fetchAttempts(allQuestionIds)
+      .then((rows) => { if (!cancelled) setAttempts(Array.isArray(rows) ? rows : []); })
+      .catch(() => { /* 徽标加载失败静默降级，不打扰做题 */ });
+    return () => { cancelled = true; };
+  }, [paper.id, paper.sections]);
+
   /** 防抖 800ms 逐题 merge：批量 PATCH 到题纸（失败回填待重试）。 */
   const flushAnswers = useCallback(async () => {
     if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
@@ -647,6 +685,30 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
     if (flushTimer.current) clearTimeout(flushTimer.current);
     flushTimer.current = setTimeout(() => { void flushAnswers(); }, 800);
   }, [flushAnswers]);
+
+  /** sealed 派生（批次二）：picks 以 attempts 为准重算 + 结果页占位集合 + 本地历史并入。 */
+  const deriveFromSheet = useCallback(async (sheetId: string) => {
+    try {
+      const { attempts: derived } = await fetchSheet(sheetId);
+      const restored: Record<string, string> = {};
+      const cleared = new Set<string>();
+      for (const row of derived) {
+        if (row.status === "deleted") { cleared.add(row.question_id); continue; }
+        const choice = (row.answer as { choice?: unknown } | null)?.choice;
+        if (typeof choice === "string") restored[row.question_id] = choice;
+      }
+      setPicks(restored);
+      setClearedQuestions(cleared);
+      setSheetStats({ total: derived.length, cleared: cleared.size });
+      setAttempts((prev) => {
+        const byId = new Map(prev.map((row) => [row.id, row]));
+        for (const row of derived) byId.set(row.id, row);
+        return [...byId.values()];
+      });
+    } catch {
+      addToast("error", "定格已保存，但结果明细加载失败，稍后可重试");
+    }
+  }, [addToast]);
 
   // 卸载时把防抖窗口内未发送的作答立即送存（尽力而为，不阻塞卸载）。
   useEffect(() => () => {
@@ -715,6 +777,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
       addToast("success", result.materializedCount > 0
         ? `已定格：${result.materializedCount} 条作答已入库，可打开「显示全部答案与解析」进入解析模式`
         : "已定格，可打开「显示全部答案与解析」进入解析模式");
+      void deriveFromSheet(result.sheet.id);
     } catch (error) {
       if (error instanceof BrowserApiError && error.status === 409) {
         const details = error.details as { unansweredCount?: number } | null;
@@ -727,7 +790,25 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
     } finally {
       setSealBusy(false);
     }
-  }, [sealMode, sealSummary, flushAnswers, addToast]);
+  }, [sealMode, sealSummary, flushAnswers, deriveFromSheet, addToast]);
+
+  /** 单条历史软删（批次二）：只改历史视图与占位，不动成绩统计口径。 */
+  const handleDeleteAttempt = useCallback(async (attemptId: string) => {
+    const target = attempts.find((row) => row.id === attemptId);
+    try {
+      await deleteAttempt(attemptId);
+    } catch {
+      addToast("error", "删除失败，请稍后重试");
+      return;
+    }
+    setAttempts((prev) => prev.filter((row) => row.id !== attemptId));
+    const current = sheetRef.current;
+    if (target && current && target.sheet_id === current.id) {
+      setClearedQuestions((prev) => new Set(prev).add(target.question_id));
+      setSheetStats((prev) => (prev ? { ...prev, cleared: prev.cleared + 1 } : prev));
+    }
+    addToast("success", "已删除该条作答记录");
+  }, [attempts, addToast]);
 
   const handlePatchAnnotation = useCallback(async (id: string, patch: QuestionAnnotationPatchRequest) => {
     upsertAnnotation(await patchQuestionAnnotation(id, patch));
@@ -763,6 +844,33 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
     }
     return grouped;
   }, [annotations]);
+
+  const attemptsByQuestion = useMemo(() => {
+    const grouped: Record<string, L3Attempt[]> = {};
+    for (const row of attempts) {
+      (grouped[row.question_id] ??= []).push(row);
+    }
+    for (const list of Object.values(grouped)) {
+      list.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+    }
+    return grouped;
+  }, [attempts]);
+
+  const allQuestionsById = useMemo(() => {
+    const map = new Map<string, ExamQuestion>();
+    for (const section of paper.sections) for (const question of section.questions) map.set(question.id, question);
+    return map;
+  }, [paper.sections]);
+
+  const historyQuestion = historyQuestionId ? allQuestionsById.get(historyQuestionId) ?? null : null;
+
+  const historyDeepLink = useMemo(() => {
+    if (!historyQuestionId) return null;
+    const section = paper.sections.find((entry) => entry.questionIds.includes(historyQuestionId));
+    const fileKey = section?.sourceId ?? section?.fileKey ?? null;
+    if (!section || !fileKey) return null;
+    return { venue: section.questionType, fileKey };
+  }, [historyQuestionId, paper.sections]);
 
   const pickQuestion = (questionId: string, key: string) => {
     if (sheetRef.current && sheetRef.current.status !== "draft") return; // 定格后只读
@@ -824,6 +932,8 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
         onPatch={handlePatchAnnotation}
         onDelete={handleDeleteAnnotation}
         onSaveTagDict={handleSaveTagDict}
+        attempts={(attemptsByQuestion[q.id] ?? []).filter((row) => row.status === "active")}
+        onOpenHistory={() => setHistoryQuestionId(q.id)}
       />
     );
   };
@@ -848,8 +958,15 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
                     : lastSavedAt ? `草稿 · 已保存 ${formatSavedAt(lastSavedAt)}` : "草稿"}
               </span>
             ) : (
-              <span className="rounded-full bg-[var(--color-ink)] px-2 py-0.5 font-medium text-[var(--color-surface)]">
-                {sheet.status === "sealed" ? "已定格" : "已弃档"}
+              <span className="flex items-center gap-2">
+                <span className="rounded-full bg-[var(--color-ink)] px-2 py-0.5 font-medium text-[var(--color-surface)]">
+                  {sheet.status === "sealed" ? "已定格" : "已弃档"}
+                </span>
+                {sheetStats && sheetStats.total > 0 && (
+                  <span className="text-[var(--color-ink-soft)]">
+                    已录 {sheetStats.total} 条作答{sheetStats.cleared > 0 ? `（含 ${sheetStats.cleared} 条已清理）` : ""}
+                  </span>
+                )}
               </span>
             )}
           </span>
@@ -933,6 +1050,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
                       placeholder={section.questionType === "sentence_translation" ? "在这里写下你的译文…" : "在这里写作文（约 100/150 词）…"}
                       analysis={renderAnalysis(section.key, q)}
                       readOnly={readOnly}
+                      cleared={clearedQuestions.has(q.id)}
                     />
                   ))}
                 </div>
@@ -980,6 +1098,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
                           }}
                           analysis={renderAnalysis(section.key, q)}
                           readOnly={readOnly}
+                          cleared={clearedQuestions.has(q.id)}
                         />
                       </div>
                     ))}
@@ -997,6 +1116,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
                       onPick={(key) => pickQuestion(q.id, key)}
                       analysis={renderAnalysis(section.key, q)}
                       readOnly={readOnly}
+                      cleared={clearedQuestions.has(q.id)}
                     />
                   ))}
                 </div>
@@ -1013,6 +1133,17 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
             定格题纸
           </button>
         </div>
+      )}
+
+      {historyQuestion && (
+        <L3AttemptHistoryModal
+          question={historyQuestion}
+          attempts={(attemptsByQuestion[historyQuestion.id] ?? []).filter((row) => row.status === "active")}
+          annotations={annotationsByQuestion[historyQuestion.id] ?? []}
+          deepLink={historyDeepLink}
+          onClose={() => setHistoryQuestionId(null)}
+          onDelete={(attemptId) => { void handleDeleteAttempt(attemptId); }}
+        />
       )}
 
       {sealOpen && sheet && (

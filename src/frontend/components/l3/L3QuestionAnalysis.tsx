@@ -3,10 +3,12 @@ import type { ExamQuestion } from "./examTypes";
 import type {
   AnnotationTagDict,
   CreateQuestionAnnotationRequest,
+  L3Attempt,
   QuestionAnnotation,
   QuestionAnnotationOptionKey,
   QuestionAnnotationPatchRequest,
 } from "@/frontend/api/l3Client";
+import { annotationCoverage } from "@/domain/l3-annotations";
 
 /**
  * 题卡「原文分析」折叠子区（批次一）。
@@ -29,6 +31,10 @@ interface L3QuestionAnalysisProps {
   onPatch: (id: string, patch: QuestionAnnotationPatchRequest) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onSaveTagDict: (dict: AnnotationTagDict) => Promise<void>;
+  /** 批次二：该题作答历史（徽标数据源；父层已过滤已删条目）。 */
+  attempts?: L3Attempt[];
+  /** 批次二：点徽标打开历史 modal。 */
+  onOpenHistory?: () => void;
 }
 
 interface FormState {
@@ -171,6 +177,8 @@ export function L3QuestionAnalysis({
   onPatch,
   onDelete,
   onSaveTagDict,
+  attempts,
+  onOpenHistory,
 }: L3QuestionAnalysisProps) {
   const [expanded, setExpanded] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -185,6 +193,20 @@ export function L3QuestionAnalysis({
     .filter((key): key is QuestionAnnotationOptionKey =>
       (OPTION_KEYS as readonly string[]).includes(key),
     );
+
+  // 覆盖度视图（批次二，设计卡 §4.4）：按选项键呈现被注记覆盖情况，只呈现不催。
+  const coverage = annotationCoverage(
+    annotations.map((annotation) => ({ optionTags: annotation.option_tags })),
+    optionKeys,
+  );
+
+  // 徽标（批次二）：跨 venue 历史计数 + 最近自评标记（verdict 数据由批次三评卷接入，
+  // 无数据时只显示次数——优雅降级，不造伪标记）。
+  const attemptCount = attempts?.length ?? 0;
+  const latestVerdict = attemptCount > 0
+    ? (attempts![attemptCount - 1]!.self_assessment as { verdict?: unknown } | null)?.verdict
+    : null;
+  const latestMark = latestVerdict === "correct" ? "✓" : latestVerdict === "wrong" ? "✗" : null;
 
   const openComposer = () => {
     setEditingId(null);
@@ -265,18 +287,43 @@ export function L3QuestionAnalysis({
 
   return (
     <div className="mt-2.5 border-t border-dashed border-[var(--color-border)] pt-2">
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
-        aria-expanded={expanded}
-        className="flex w-full items-center justify-between whitespace-nowrap text-xs font-semibold text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
-      >
-        <span>原文分析 · {annotations.length}</span>
-        <span className="text-[10px]">{expanded ? "收起 ▴" : "展开 ▸"}</span>
-      </button>
+      <div className="flex w-full items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          {attemptCount > 0 && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onOpenHistory?.(); }}
+              title="查看作答历史"
+              className="shrink-0 whitespace-nowrap rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-ink-soft)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            >
+              做过 {attemptCount} 次{latestMark ? ` · 最近 ${latestMark}` : ""}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+            aria-expanded={expanded}
+            className="min-w-0 truncate whitespace-nowrap text-xs font-semibold text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+          >
+            原文分析 · {annotations.length}
+          </button>
+        </span>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+          className="shrink-0 text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+        >
+          {expanded ? "收起 ▴" : "展开 ▸"}
+        </button>
+      </div>
 
       {expanded && (
         <div className="mt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+          {coverage.length > 0 && (
+            <p className="text-[11px] text-[var(--color-ink-soft)]" title="选项被注记覆盖的情况（只呈现，不催促）">
+              {coverage.map((entry) => `${entry.key}${entry.covered ? "✓" : "—"}`).join(" ")}
+            </p>
+          )}
           {annotations.map((annotation) => (
             <li
               key={annotation.id}

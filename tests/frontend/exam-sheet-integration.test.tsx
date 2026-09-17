@@ -73,6 +73,8 @@ type MockOptions = {
   sheet?: Record<string, unknown>;
   /** 第一次 seal 抛 409（未答软确认），第二次成功。 */
   sealSoftConfirmOnce?: number;
+  /** GET /l3/sheets/:id 的派生 attempts（sealed 结果页）。 */
+  derivedAttempts?: unknown[];
 };
 
 function setupMock(options: MockOptions = {}) {
@@ -94,9 +96,12 @@ function setupMock(options: MockOptions = {}) {
       return {
         sheet: sheetFixture({ status: "sealed", seal_mode: "full" }),
         unansweredCount: options.sealSoftConfirmOnce ?? 0,
-        materializedCount: 1,
+        materializedCount: options.derivedAttempts?.length ?? 1,
         promotedAnnotationCount: 0,
       };
+    }
+    if (path.startsWith("/l3/sheets/") && !init?.method) {
+      return { sheet: sheetFixture({ status: "sealed", seal_mode: "full" }), attempts: options.derivedAttempts ?? [] };
     }
     if (path.startsWith("/l3/sheets/") && init?.method === "PATCH") {
       return { sheet: sheetFixture({ answers: init.body ? (JSON.parse(init.body) as { answers: unknown }).answers : {} }) };
@@ -283,5 +288,40 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
 
     // Q1 的 B 项被恢复为已选（correct 徽标 ✓）
     await waitFor(() => expect(screen.getByText("✓")).toBeTruthy());
+  });
+
+  it("定格成功后从 attempts 派生渲染：恢复选中 + 清理占位 + 统计口径", async () => {
+    const apiFetchMock = setupMock({
+      derivedAttempts: [
+        {
+          id: "a1", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q1,
+          sheet_id: SHEET_ID, venue: "paper", answer: { choice: "B" }, self_assessment: null,
+          status: "active", deleted_at: null, created_at: "2026-09-17T01:00:00Z",
+        },
+        {
+          id: "a2", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q2,
+          sheet_id: SHEET_ID, venue: "paper", answer: null, self_assessment: null,
+          status: "deleted", deleted_at: "2026-09-17T02:00:00Z", created_at: "2026-09-17T01:30:00Z",
+        },
+      ],
+    });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    expect(screen.getByText(/已录 2 条作答（含 1 条已清理）/)).toBeTruthy();
+    expect(screen.getAllByText("✓").length).toBeGreaterThan(0);
+    expect(screen.getByText("作答记录已清理")).toBeTruthy();
+    const detailCall = apiFetchMock.mock.calls.find(([path, init]) =>
+      String(path) === `/l3/sheets/${SHEET_ID}` && !(init as { method?: string } | undefined)?.method);
+    expect(detailCall).toBeTruthy();
   });
 });

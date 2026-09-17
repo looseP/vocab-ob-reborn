@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { useToast } from "@/frontend/components/ui/Toast";
@@ -158,9 +158,14 @@ function QuestionList({ questions }: { questions: QuestionRow[] }) {
   );
 }
 
-export function L3PapersPage() {
+export function L3PapersPage({ deepLinkVenue, deepLinkFile }: {
+  /** 批次二深链：?venue=<题型>&file=<文件键> 直达题型空间并自动打开目标文件。 */
+  deepLinkVenue?: string | null;
+  deepLinkFile?: string | null;
+} = {}) {
   const { addToast } = useToast();
-  const [tab, setTab] = useState<"files" | "papers" | "build">("papers");
+  const hasFilesDeepLink = Boolean(deepLinkVenue && QUESTION_TYPES.includes(deepLinkVenue as QuestionType));
+  const [tab, setTab] = useState<"files" | "papers" | "build">(hasFilesDeepLink ? "files" : "papers");
 
   return (
     <div className="space-y-3">
@@ -176,18 +181,21 @@ export function L3PapersPage() {
           </button>
         ))}
       </div>
-      {tab === "files" && <FilesTab />}
+      {tab === "files" && (
+        <FilesTab deepLink={hasFilesDeepLink ? { venue: deepLinkVenue as QuestionType, file: deepLinkFile ?? null } : null} />
+      )}
       {tab === "papers" && <PapersTab onToast={addToast} />}
       {tab === "build" && <BuildTab onBuilt={() => setTab("papers")} onToast={addToast} />}
     </div>
   );
 }
 
-function FilesTab() {
+function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string | null } | null } = {}) {
   const { addToast } = useToast();
   const [files, setFiles] = useState<PracticeFile[] | null>(null);
-  const [venue, setVenue] = useState<QuestionType | null>(null);
+  const [venue, setVenue] = useState<QuestionType | null>(deepLink?.venue ?? null);
   const [detail, setDetail] = useState<{ title: string; body: { questions: QuestionRow[] } } | null>(null);
+  const [pendingFileKey, setPendingFileKey] = useState<string | null>(deepLink?.file ?? null);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +216,17 @@ function FilesTab() {
       addToast("error", "文件题组加载失败");
     }
   };
+
+  // 批次二深链：文件列表就绪后自动打开目标文件（?venue=<题型>&file=<source_id|file_key>）。
+  const openFileRef = useRef<typeof openFile | null>(null);
+  useEffect(() => { openFileRef.current = openFile; });
+  useEffect(() => {
+    if (!pendingFileKey || !venue || !files) return;
+    const target = files.find((file) => file.question_type === venue
+      && (file.source_id === pendingFileKey || file.file_key === pendingFileKey));
+    setPendingFileKey(null);
+    if (target) void openFileRef.current?.(target);
+  }, [pendingFileKey, venue, files]);
 
   // 三级：文件题组详情
   if (detail && venue) {
