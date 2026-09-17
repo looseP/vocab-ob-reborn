@@ -117,7 +117,7 @@ agent 评卷后写评析区摘要 = **行为约定**（写入 ADR/工具描述�
 - **grading-context 响应含答案**：响应契约注释 + 前端 import 禁令（arch:check 规则或约定注释）双保险；
 - 事务内跨表写（results + annotations.review）必须 `requireTx` 单事务，部分失败整体回滚；
 - RLS：新表单条 FOR ALL 惯例；service 层 grading-context 读面跨表组装全部 withActor(actorId=userId)；
-- 复杂度棘轮：新路由文件登记基线；api:openapi 再生 + currentSha256 重钉；
+- 复杂度棘轮：新路由文件登记基线；api:openapi 再生 + currentSha256 重钉（⚠️ 勘误见 ADR-0035 §勘误：仅修改 approval 时才需重锚）；
 - 测试重点：越集 422（questionId/annotationId 不属于该题纸）、draft 409、重复提交覆写、sound 流转、questionable 保持、已 confirmed 不降级、RLS 隔离。
 
 ---

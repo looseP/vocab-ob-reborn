@@ -9,7 +9,7 @@
 - 先 ADR 后代码（T1 = ADR-0035 Accepted）；TDD；一任务一提交（conventional + 中文正文）。
 - 门禁：typecheck / arch:check / test:unit / frontend:build / complexity:routes / api:client:check / db:schema:drift / rls:acceptance:test:l3。
 - DDL：schema.ts 同步 + RLS 单条 FOR ALL + converge/verifier 双落点 + 迁移计数断言 **36→37** + 快照链唯一性。
-- API：api:governance 六步；新路由直挂 `src/http/server.ts` + verify-route-complexity 登记；openapi 再生后重钉 currentSha256。
+- API：api:governance 六步；新路由直挂 `src/http/server.ts` + verify-route-complexity 登记；openapi 再生后重钉 currentSha256。⚠️ 勘误（2026-09-17 深测会审）：仅当变更集修改 approval 文件时才需整体重锚，常规再生无须重钉——见 ADR-0035 §勘误。
 - **D8 红线修订**：answerIndex 唯一例外 = grading-context（sealed + agent 面）；做题模式任何响应仍绝不含答案/verdict/analysis。
 - 前端响应 `Array.isArray` 防御；中文文案 + 设计 token；按钮 stopPropagation。
 
@@ -55,7 +55,7 @@
 |---|---|
 | 落点 | `src/http/routes/l3/grading.ts`（新，直挂 server.ts）、operations.ts、响应契约（注明"含答案，禁止接入做题模式前端"） |
 | 端点 | `GET /api/l3/sheets/:id/grading-context`（owner/**agent**）；`POST /api/l3/sheets/:id/grading`（owner/**agent**，sessionMutation）；`POST /api/l3/annotations/:id/confirm`（owner/owner，sessionMutation） |
-| 验收 | http 用例（角色门控 fail-closed/409/201 语义）；api 治理六步 + 复杂度登记 + openapi 再生 + currentSha256 重钉 |
+| 验收 | http 用例（角色门控 fail-closed/409/201 语义）；api 治理六步 + 复杂度登记 + openapi 再生 + currentSha256 重钉（⚠️ 勘误见 ADR-0035 §勘误：仅修改 approval 时才需重锚） |
 
 ## B3①-T6 · RLS 集成测试追加
 

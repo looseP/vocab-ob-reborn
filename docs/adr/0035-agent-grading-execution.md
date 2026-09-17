@@ -90,3 +90,13 @@ agent 评卷后写评析区摘要 = **行为约定**（写入本 ADR 与工具�
 - http：3 个新端点（注册表 + 授权注册表 D5/D6/F1 分类）+ 独立薄路由 `routes/l3/grading.ts` 直挂 server.ts + 复杂度棘轮 bootstrap 登记 + openapi 再生与 currentSha256 重钉。
 - 前端：题卡 verdict 徽标（✓/✗/◐）+ agent 分析折叠区 + 注记 review 对照（sound/questionable/wrong + corrected_tags + comment）+ submitted+review 注记「确认」钮 + sealed 无结果「待评卷」提示；做题模式一字不动。
 - 批次三保留：外部 agent 回灌（不做）、自动触发评卷（不做）、评卷历史版本（不做）、推荐引擎/标签聚合面板（批次三②③）。
+
+## 勘误 · 2026-09-17（批次三①深测会审 P3-1 裁定）
+
+Consequences 中「openapi 再生与 currentSha256 重钉」（任务表与设计卡同述句同此）为**措辞偏差**，与 `scripts/verify-openapi-breaking.ts` 实际机制不符。机制真相（`applyBreakingApproval`；早退分支已有测试锁定，`tests/scripts/verify-openapi-breaking.test.ts:323-336`）：
+
+- approval 文件相对 base **未变更即早退**——既不校验哈希、也不提供豁免（未修改的 approval 不会继续豁免后续 breaking）；
+- 仅当变更集**修改**了 `openapi-breaking-approval.json` 时才强制激活校验，且须**整体重锚三元组**：`baseSha256` ≡ sha256(openapi@PR base)、`currentSha256` ≡ sha256(openapi@HEAD)、`issues` ≡ 相对 base 的实测 breaking 集合（保留任何未在 diff 中的历史条目即拒——2026-09-17 三场景控制实验实测）；
+- 「每次再生都重钉」在机制语义下不可持续：重锚天然以「某次 base/HEAD 对」为有效期，下一批再生即再漂移；且 7e1fd39（锚点语义定稿）之后 18 个 openapi 变更提交零重钉、门禁全绿，即为惯例背书。
+
+**本批裁定**：B3① 未修改 approval（2fe327c→60586c1 实测零 breaking，外派与本地方双渠道复核），无重钉动作、任何门禁行为不受影响。**自本勘误起，「重钉」口径统一为：仅当变更集修改 approval 文件时才需重锚；常规 openapi 再生无须处理。**
