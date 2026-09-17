@@ -411,4 +411,17 @@ describe("getPracticeFile（file venue 数据源）", () => {
     expect(detail.questions).toHaveLength(1);
     expect(detail.file_key).toBeNull();
   });
+
+  it("fileKey 型文件（无 source）返回 source_content: null 与题组键", async () => {
+    const repo = makePaperRepo({ listActiveQuestionsForFile: vi.fn(async () => [questionRow()]) });
+    const detail = await makeService(repo, contextRepo).getPracticeFile({
+      userId: USER_ID,
+      questionType: "sentence_translation",
+      fileKey: "translation-group-1",
+    });
+    expect(detail.source).toBeNull();
+    expect(detail.source_content).toBeNull();
+    expect(detail.file_key).toBe("translation-group-1");
+    expect(detail.questions).toHaveLength(1);
+  });
 });
