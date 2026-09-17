@@ -8,6 +8,7 @@
  */
 
 import type {
+  Json,
   L3AnnotationOptionKey,
   L3AnnotationTagKind,
   L3AnnotationTagRow,
@@ -31,6 +32,9 @@ interface AnnotationDbRow {
   note: string;
   entry_tags: unknown;
   option_tags: unknown;
+  stage: "draft" | "submitted" | "confirmed";
+  sheet_id: string | null;
+  review: unknown;
   status: "active" | "deleted";
   created_at: string;
   updated_at: string;
@@ -45,6 +49,7 @@ function mapAnnotationRow(row: AnnotationDbRow): L3QuestionAnnotationRow {
       row.option_tags && typeof row.option_tags === "object"
         ? (row.option_tags as Partial<Record<L3AnnotationOptionKey, string[]>>)
         : {},
+    review: row.review == null ? null : (row.review as Json),
   };
 }
 

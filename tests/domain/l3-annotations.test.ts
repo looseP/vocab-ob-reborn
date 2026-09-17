@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANNOTATION_STAGES,
+  annotationCoverage,
   annotationTagDictSchema,
+  canConfirmAnnotationStage,
+  canPromoteAnnotationStage,
   PRESET_ENTRY_TAGS,
   PRESET_OPTION_TAGS,
   questionAnnotationInputSchema,
@@ -179,5 +183,65 @@ describe("annotationTagDictSchema", () => {
       entry: Array.from({ length: 51 }, (_, i) => `标签${i}`),
       option: [],
     }).success).toBe(false);
+  });
+});
+
+describe("annotation stage lifecycle (批次二)", () => {
+  it("exposes the three stages in lifecycle order", () => {
+    expect([...ANNOTATION_STAGES]).toEqual(["draft", "submitted", "confirmed"]);
+  });
+
+  it("promotes only draft notes to submitted (the seal transition)", () => {
+    expect(canPromoteAnnotationStage("draft")).toBe(true);
+    expect(canPromoteAnnotationStage("submitted")).toBe(false);
+    expect(canPromoteAnnotationStage("confirmed")).toBe(false);
+  });
+
+  it("confirms only submitted notes (owner confirm / agent review pass)", () => {
+    expect(canConfirmAnnotationStage("submitted")).toBe(true);
+    expect(canConfirmAnnotationStage("draft")).toBe(false);
+    expect(canConfirmAnnotationStage("confirmed")).toBe(false);
+  });
+});
+
+describe("annotationCoverage", () => {
+  it("marks every option key as uncovered when no annotation touches it", () => {
+    expect(annotationCoverage([])).toEqual([
+      { key: "A", covered: false },
+      { key: "B", covered: false },
+      { key: "C", covered: false },
+      { key: "D", covered: false },
+    ]);
+  });
+
+  it("marks a key covered when any annotation carries a non-empty tag list on it", () => {
+    const coverage = annotationCoverage([
+      { optionTags: { A: ["同义替换"] } },
+      { optionTags: { C: ["无中生有", "过度推断"] } },
+    ]);
+    expect(coverage).toEqual([
+      { key: "A", covered: true },
+      { key: "B", covered: false },
+      { key: "C", covered: true },
+      { key: "D", covered: false },
+    ]);
+  });
+
+  it("treats empty tag lists and omitted keys as uncovered", () => {
+    const coverage = annotationCoverage([
+      { optionTags: { A: [] } },
+      { optionTags: {} },
+      { optionTags: { D: ["答非所问"] } },
+    ]);
+    expect(coverage.find((entry) => entry.key === "A")?.covered).toBe(false);
+    expect(coverage.find((entry) => entry.key === "D")?.covered).toBe(true);
+  });
+
+  it("honours a caller-provided option key window", () => {
+    const coverage = annotationCoverage([{ optionTags: { A: ["同义替换"] } }], ["A", "B"]);
+    expect(coverage).toEqual([
+      { key: "A", covered: true },
+      { key: "B", covered: false },
+    ]);
   });
 });

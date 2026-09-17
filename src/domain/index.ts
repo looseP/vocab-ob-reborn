@@ -669,6 +669,9 @@ export interface L3PaperDetail extends Omit<L3PaperRow, "payload"> {
 }
 
 // ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ────────────────
+import type { AnnotationStage } from "./l3-annotations";
+import type { SealMode, SheetScope, SheetStatus } from "./l3-sheets";
+export type { AnnotationStage, SealMode, SheetScope, SheetStatus };
 export type L3AnnotationTagKind = "entry" | "option";
 export type L3AnnotationOptionKey = "A" | "B" | "C" | "D";
 
@@ -684,6 +687,12 @@ export interface L3QuestionAnnotationRow {
   note: string;
   entry_tags: string[];
   option_tags: Partial<Record<L3AnnotationOptionKey, string[]>>;
+  /** 批次二（ADR-0034 §3）：stage 生命周期（draft→submitted→confirmed），与软删 status 正交。 */
+  stage: AnnotationStage;
+  /** 草稿期挂题纸（定格升格后保留溯源；题纸删除 SET NULL）。 */
+  sheet_id: string | null;
+  /** agent 检验产物（批次三写；note/锚点/原判标签不可篡改，订正归 owner）。 */
+  review: Json | null;
   status: "active" | "deleted";
   created_at: string;
   updated_at: string;
@@ -699,6 +708,42 @@ export interface L3AnnotationTagRow {
   status: "active" | "deleted";
   created_at: string;
   updated_at: string;
+}
+
+// ── 批次二（0034）：题纸与作答历史（ADR-0034 §1/§2）─────────────────────
+/** l3_submissions 行（题纸：draft 期含 answers；定格后 answers 清空、明细从 attempts 派生）。 */
+export interface L3SubmissionRow {
+  id: string;
+  user_id: string;
+  scope: SheetScope;
+  /** 'file:<source_id>:<question_type>' 或 'paper:<paper_id>'（domain 构造器单一收口）。 */
+  scope_key: string;
+  source_id: string | null;
+  question_type: L3QuestionType | null;
+  paper_id: string | null;
+  status: SheetStatus;
+  /** 仅 draft 期有效；定格物化 attempts 后清空（attempts 是唯一作答真源）。 */
+  answers: Record<string, Json>;
+  seal_mode: SealMode | null;
+  summary: string | null;
+  sealed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** l3_question_attempts 行（题级作答历史；读取过滤 deleted；无判定列——verdict 真源归一 l3_grading_results）。 */
+export interface L3QuestionAttemptRow {
+  id: string;
+  user_id: string;
+  question_id: string;
+  sheet_id: string | null;
+  venue: SheetScope;
+  answer: Json;
+  /** 当场自评快照（形状宽松，题类型各自定义键）。 */
+  self_assessment: Json | null;
+  status: "active" | "deleted";
+  deleted_at: string | null;
+  created_at: string;
 }
 
 // ── L3 error book（T11 加固：服务端聚合 + cursor 纯新增）───────────────────

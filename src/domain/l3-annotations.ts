@@ -103,3 +103,51 @@ export const annotationTagDictSchema = z.object({
 });
 
 export type AnnotationTagDict = z.infer<typeof annotationTagDictSchema>;
+
+// ── 批次二（ADR-0034 §3）：stage 生命周期与覆盖度视图 ─────────────────────
+
+/**
+ * 注记 stage 生命周期（与软删 status 正交）：draft（做题中，挂题纸）→
+ * submitted（随题纸定格提交，待检验）→ confirmed（owner 确认 / agent 检验通过）。
+ * 存量历史注记默认 confirmed（迁移 ADD COLUMN DEFAULT 回填）。
+ */
+export const ANNOTATION_STAGES = ["draft", "submitted", "confirmed"] as const;
+export type AnnotationStage = (typeof ANNOTATION_STAGES)[number];
+
+/** 定格升格谓词：仅 draft 可升 submitted（批次二唯一实现流转）。 */
+export function canPromoteAnnotationStage(stage: string): boolean {
+  return stage === "draft";
+}
+
+/** 确认谓词：仅 submitted 可确认（owner 确认 / agent 检验通过；批次三接执行面）。 */
+export function canConfirmAnnotationStage(stage: string): boolean {
+  return stage === "submitted";
+}
+
+/** 覆盖度视图输入：只需 option_tags（行结构最小切片，避免 domain 依赖行类型）。 */
+export interface AnnotationCoverageInput {
+  optionTags: Partial<Record<AnnotationOptionKey, string[]>>;
+}
+
+export interface AnnotationCoverageEntry {
+  key: AnnotationOptionKey;
+  covered: boolean;
+}
+
+/**
+ * 覆盖度视图「A✓ B✓ C— D—」（设计卡 §4.4）：按选项键呈现被注记覆盖情况，
+ * 只呈现、不催——不分析一眼错的选项是合法终态。非空标签数组才算覆盖
+ * （空数组 = 清空过的打标，不算）。
+ */
+export function annotationCoverage(
+  annotations: ReadonlyArray<AnnotationCoverageInput>,
+  optionKeys: readonly AnnotationOptionKey[] = OPTION_KEYS,
+): AnnotationCoverageEntry[] {
+  const coveredKeys = new Set<string>();
+  for (const annotation of annotations) {
+    for (const [key, tags] of Object.entries(annotation.optionTags ?? {})) {
+      if (Array.isArray(tags) && tags.length > 0) coveredKeys.add(key);
+    }
+  }
+  return optionKeys.map((key) => ({ key, covered: coveredKeys.has(key) }));
+}
