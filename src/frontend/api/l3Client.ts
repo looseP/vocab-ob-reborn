@@ -287,6 +287,14 @@ export async function saveQuestionAssessment(questionId: string, contentMd: stri
   return body.item;
 }
 
+// ── 批次二增补：导出 v2（ADR-0034 v2 条 12）────────────────────────────────
+
+/** 导出的 Markdown 全文（text/markdown 响应；parseJson:false 取原文）。 */
+export async function fetchSheetExport(sheetId: string, withAnswers?: boolean): Promise<string> {
+  const query = withAnswers == null ? "" : `?withAnswers=${withAnswers ? 1 : 0}`;
+  return apiFetch<string>(`/l3/sheets/${encodeURIComponent(sheetId)}/export${query}`, { parseJson: false });
+}
+
 /** v2 §4.7 撤回：submitted→draft（重挂题纸）；sheetId 缺省时服务端借原纸作用域幂等开纸。 */
 export async function withdrawQuestionAnnotation(id: string, sheetId?: string): Promise<QuestionAnnotation> {
   const body = await apiFetch<{ item?: QuestionAnnotation } | null>(

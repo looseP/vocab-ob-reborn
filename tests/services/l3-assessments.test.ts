@@ -45,6 +45,7 @@ function questionRow(): L3QuestionRow {
 function makeRepo(overrides: Partial<IL3AssessmentRepository> = {}): IL3AssessmentRepository {
   return {
     findByQuestion: vi.fn(async () => null),
+    listByQuestions: vi.fn(async () => []),
     upsert: vi.fn(async () => assessmentRow()),
     ...overrides,
   };

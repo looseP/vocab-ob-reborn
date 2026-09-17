@@ -1603,6 +1603,8 @@ export interface NewL3QuestionAssessment {
 export interface IL3AssessmentRepository {
   /** 一题一条（无则 null——GET 空态数据源）。 */
   findByQuestion(userId: string, questionId: string): Promise<L3QuestionAssessmentRow | null>;
+  /** 批量取多题评析（导出评析段数据源；空数组输入 → 空结果）。 */
+  listByQuestions(userId: string, questionIds: readonly string[]): Promise<L3QuestionAssessmentRow[]>;
   /** upsert（ON CONFLICT (user_id, question_id) DO UPDATE，latest-wins）；last_editor 按 actor。 */
   upsert(input: NewL3QuestionAssessment): Promise<L3QuestionAssessmentRow>;
 }

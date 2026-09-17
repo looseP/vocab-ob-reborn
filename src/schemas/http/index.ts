@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { ValidationError } from "@/errors";
 import {
   assertJsonResourceBudget,
   JSON_MAX_DEPTH,
@@ -784,6 +785,22 @@ export {
 
 /** PUT /l3/questions/:id/assessment：评析区 upsert body（增补批 0035）。 */
 export { assessmentUpsertInputSchema as l3AssessmentUpsertSchema } from "../../domain/l3-assessments";
+
+/** GET /l3/sheets/:id/export?withAnswers=0|1 的 query 契约（v2 §6；文档登记用）。 */
+export const l3SheetExportQuerySchema = z.object({
+  withAnswers: z.enum(["0", "1"]).optional(),
+});
+
+/**
+ * GET /l3/sheets/:id/export?withAnswers=0|1（v2 §6）：缺省按状态（draft=0 /
+ * sealed=1）；非法值抛校验错误（由全局 handleError 转 422，勿宽容吞掉）。
+ */
+export function parseSheetExportWithAnswers(raw: string | undefined): boolean | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  if (raw === "1") return true;
+  if (raw === "0") return false;
+  throw new ValidationError("withAnswers must be 0 or 1", "withAnswers");
+}
 
 /** GET /l3/attempts?questionIds=<uuid,uuid,...>：1–200 个 uuid（对齐注记批量口径）。 */
 export const l3AttemptListQuerySchema = z.object({

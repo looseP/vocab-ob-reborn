@@ -216,13 +216,13 @@ describe("DELETE /api/l3/attempts/:id", () => {
 });
 
 describe("GET /api/l3/sheets/:id/export", () => {
-  it("returns the markdown archive with manifest headers", async () => {
+  it("returns the markdown archive with manifest headers（v2 版本头）", async () => {
     const exportSheet = vi.fn(async () => ({
-      markdown: "# L3 题纸冻结档案\n",
+      markdown: "# L3 题纸档案（v2）\n",
       filename: `l3-sheet-${SHEET_ID.slice(0, 8)}.md`,
       sha256: "a".repeat(64),
-      schemaVersion: 1,
-      stats: { attempts: 1, cleared: 0, annotations: 0 },
+      schemaVersion: 2,
+      stats: { attempts: 1, cleared: 0, annotations: 0, assessments: 0 },
     }));
     const app = createApp({ l3SheetExport: { exportSheet } } as unknown as Services);
     const res = await app.request(`/api/l3/sheets/${SHEET_ID}/export`, { headers: AUTH_HEADERS });
@@ -230,9 +230,32 @@ describe("GET /api/l3/sheets/:id/export", () => {
     expect(res.headers.get("content-type")).toContain("text/markdown");
     expect(res.headers.get("content-disposition")).toContain("attachment");
     expect(res.headers.get("content-disposition")).toContain(".md");
-    expect(res.headers.get("x-export-schema-version")).toBe("1");
+    expect(res.headers.get("x-export-schema-version")).toBe("2");
     expect(res.headers.get("x-export-sha256")).toBe("a".repeat(64));
-    await expect(res.text()).resolves.toContain("# L3 题纸冻结档案");
-    expect(exportSheet).toHaveBeenCalledWith("user-123", SHEET_ID);
+    await expect(res.text()).resolves.toContain("# L3 题纸档案（v2）");
+    // 缺省 withAnswers：路由传 undefined（service 按状态分流）。
+    expect(exportSheet).toHaveBeenCalledWith("user-123", SHEET_ID, { withAnswers: undefined });
+  });
+
+  it("translates the withAnswers query switch（0/1）", async () => {
+    const exportSheet = vi.fn(async () => ({
+      markdown: "x", filename: "x.md", sha256: "b".repeat(64), schemaVersion: 2,
+      stats: { attempts: 0, cleared: 0, annotations: 0, assessments: 0 },
+    }));
+    const app = createApp({ l3SheetExport: { exportSheet } } as unknown as Services);
+    const one = await app.request(`/api/l3/sheets/${SHEET_ID}/export?withAnswers=1`, { headers: AUTH_HEADERS });
+    expect(one.status).toBe(200);
+    expect(exportSheet).toHaveBeenLastCalledWith("user-123", SHEET_ID, { withAnswers: true });
+    const zero = await app.request(`/api/l3/sheets/${SHEET_ID}/export?withAnswers=0`, { headers: AUTH_HEADERS });
+    expect(zero.status).toBe(200);
+    expect(exportSheet).toHaveBeenLastCalledWith("user-123", SHEET_ID, { withAnswers: false });
+  });
+
+  it("rejects an invalid withAnswers value（service ValidationError → 422 惯例，勿宽容吞掉）", async () => {
+    const exportSheet = vi.fn();
+    const app = createApp({ l3SheetExport: { exportSheet } } as unknown as Services);
+    const res = await app.request(`/api/l3/sheets/${SHEET_ID}/export?withAnswers=2`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(422);
+    expect(exportSheet).not.toHaveBeenCalled();
   });
 });

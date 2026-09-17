@@ -17037,7 +17037,9 @@ export interface operations {
     };
     exportL3Sheet: {
         parameters: {
-            query?: never;
+            query?: {
+                withAnswers?: "0" | "1";
+            };
             header?: never;
             path: {
                 id: string;

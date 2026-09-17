@@ -100,6 +100,9 @@ function setupMock(options: MockOptions = {}) {
         promotedAnnotationCount: 0,
       };
     }
+    if (path.startsWith("/l3/sheets/") && path.split("?")[0]!.endsWith("/export")) {
+      return `# L3 题纸档案（v2）\n\n导出路径 ${path}`;
+    }
     if (path.startsWith("/l3/sheets/") && !init?.method) {
       return { sheet: sheetFixture({ status: "sealed", seal_mode: "full" }), attempts: options.derivedAttempts ?? [] };
     }
@@ -634,5 +637,82 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
     await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
     expect(document.querySelector("[data-passage-mark]")).toBeTruthy();
     void apiFetchMock;
+  });
+});
+
+describe("批次二增补：导出 v2 弹层（v2 §6）", () => {
+  it("draft 默认不勾选 withAnswers；勾选后「复制全文」→ 导出 markdown 入剪贴板", async () => {
+    const apiFetchMock = setupMock();
+    const clipboardWrite = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: clipboardWrite }, configurable: true });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "导出" }));
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("dialog", { name: "导出题纸" })).toBeTruthy();
+    expect(screen.getByText(/草稿快照（导出时刻的实时内容/)).toBeTruthy();
+    const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    // 勾选 withAnswers 后复制
+    await act(async () => {
+      fireEvent.click(checkbox);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制全文" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    const exportCall = apiFetchMock.mock.calls.find(([path]) => String(path).endsWith("/export?withAnswers=1"));
+    expect(exportCall).toBeTruthy();
+    expect(clipboardWrite).toHaveBeenCalledWith(expect.stringContaining("# L3 题纸档案（v2）"));
+    expect(addToastMock).toHaveBeenCalledWith("success", "已复制导出全文");
+    // 弹层关闭
+    expect(screen.queryByRole("dialog", { name: "导出题纸" })).toBeNull();
+  });
+
+  it("sealed 默认勾选 withAnswers=true，并可取消（withAnswers=0）", async () => {
+    const apiFetchMock = setupMock({ sheet: sheetFixture({ status: "sealed", seal_mode: "full" }) });
+    const clipboardWrite = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: clipboardWrite }, configurable: true });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "导出" }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/定格档案（从作答记录派生/)).toBeTruthy();
+    const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+
+    await act(async () => {
+      fireEvent.click(checkbox);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制全文" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(apiFetchMock.mock.calls.some(([path]) => String(path).endsWith("/export?withAnswers=0"))).toBe(true);
+  });
+
+  it("剪贴板不可用时给出降级提示（改用下载）", async () => {
+    setupMock();
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "导出" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制全文" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(addToastMock).toHaveBeenCalledWith("error", "当前环境不支持剪贴板，请改用「下载 .md」");
   });
 });

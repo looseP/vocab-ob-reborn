@@ -1,18 +1,18 @@
 /**
- * 题纸冻结导出路由（批次二收官，ADR-0034 §6 / ADR-0025）——独立薄路由：
- * sheets.ts 受复杂度棘轮约束（新增端点会超幅，棘轮不许已登记文件增长），
- * 沿 capabilities/summary 的「新端点独立薄路由 + server.ts 直挂」先例拆分。
- * GET /sheets/:id/export：Markdown 附件（Content-Disposition + 版本/sha256 响应头）。
+ * 题纸导出路由（批次二，ADR-0034 §6 / ADR-0025）——独立薄路由（sheets.ts 受棘轮约束）。
+ * GET /sheets/:id/export?withAnswers=0|1（缺省按状态：draft=0 / sealed=1；discarded→409）。
  */
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AppEnv } from "../words";
+import { parseSheetExportWithAnswers } from "@/schemas/http";
 
 export function sheetsExportRoutes(services: Services) {
   const app = new Hono<AppEnv>();
 
   app.get("/sheets/:id/export", async (c) => {
-    const result = await services.l3SheetExport.exportSheet(c.get("userId"), c.req.param("id"));
+    const withAnswers = parseSheetExportWithAnswers(c.req.query("withAnswers"));
+    const result = await services.l3SheetExport.exportSheet(c.get("userId"), c.req.param("id"), { withAnswers });
     return c.body(result.markdown, 200, {
       "Content-Type": "text/markdown; charset=utf-8",
       "Content-Disposition": `attachment; filename="${result.filename}"`,

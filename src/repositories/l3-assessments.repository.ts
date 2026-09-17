@@ -32,6 +32,17 @@ export class L3AssessmentRepository extends BaseRepository implements IL3Assessm
     return row ? mapAssessmentRow(row) : null;
   }
 
+  async listByQuestions(userId: string, questionIds: readonly string[]): Promise<L3QuestionAssessmentRow[]> {
+    if (questionIds.length === 0) return [];
+    const rows = await this.query<AssessmentDbRow>(
+      `SELECT * FROM l3_question_assessments
+        WHERE user_id = $1::uuid AND question_id = ANY($2::uuid[])
+        ORDER BY question_id`,
+      [userId, questionIds as string[]],
+    );
+    return rows.map(mapAssessmentRow);
+  }
+
   async upsert(input: NewL3QuestionAssessment): Promise<L3QuestionAssessmentRow> {
     const row = await this.queryOne<AssessmentDbRow>(
       `INSERT INTO l3_question_assessments (user_id, question_id, content_md, last_editor)

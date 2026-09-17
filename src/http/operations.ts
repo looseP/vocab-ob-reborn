@@ -152,6 +152,7 @@ import {
   l3SheetSealSchema,
   l3AttemptListQuerySchema,
   l3AssessmentUpsertSchema,
+  l3SheetExportQuerySchema,
   l3ProposalCreateSchema,
   l3ProposalListQuerySchema,
   l3ProposalRejectSchema,
@@ -486,7 +487,7 @@ export const apiOperations = [
   operation("get", "/api/l3/attempts", "listL3Attempts", "owner", "owner", "none", { query: l3AttemptListQuerySchema }, 200, l3AttemptListResponseSchema),
   operation("delete", "/api/l3/attempts/:id", "deleteL3Attempt", "owner", "owner", "sessionMutation", undefined, 204, z.null()),
   // 批次二收官：冻结导出（只出不进；Content-Disposition + 版本/sha256 响应头）。
-  operation("get", "/api/l3/sheets/:id/export", "exportL3Sheet", "owner", "owner", "none", undefined, 200, z.string(), "text/markdown"),
+  operation("get", "/api/l3/sheets/:id/export", "exportL3Sheet", "owner", "owner", "none", { query: l3SheetExportQuerySchema }, 200, z.string(), "text/markdown"),
   operation("get", "/api/l3/practice-files", "listL3PracticeFiles", "owner", "agent", "none", { query: l3PracticeFileListQuerySchema }, 200, l3PracticeFileListResponseSchema),
   operation("get", "/api/l3/practice-files/detail", "getL3PracticeFile", "owner", "agent", "none", { query: l3PracticeFileDetailQuerySchema }, 200, l3PracticeFileDetailResponseSchema),
   operation("post", "/api/l3/contexts", "createL3Context", "owner", "owner", "sessionMutation", { body: l3ContextCreateSchema }, 201, l3ContextCreateResponseSchema),

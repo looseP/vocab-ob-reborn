@@ -12,6 +12,7 @@ import {
   fetchAttempts,
   fetchQuestionAnnotations,
   fetchSheet,
+  fetchSheetExport,
   openSheet,
   patchSheet,
   patchQuestionAnnotation,
@@ -867,6 +868,10 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
   const [sealUnanswered, setSealUnanswered] = useState<number | null>(null);
   /** v2 §10：定格 modal 待复查计数（本地实时口径 + 服务端 409 复述）。 */
   const [sealRecheck, setSealRecheck] = useState(0);
+  // ── 批次二增补：导出 v2（题纸栏按钮 + 选项弹层 + 复制全文/下载）──
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportWithAnswers, setExportWithAnswers] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   // ── 批次二：作答历史（徽标/modal/派生渲染）──
   const [attempts, setAttempts] = useState<L3Attempt[]>([]);
   const [historyQuestionId, setHistoryQuestionId] = useState<string | null>(null);
@@ -1152,6 +1157,60 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     }
   }, [sealMode, sealSummary, flushAnswers, deriveFromSheet, addToast]);
 
+  /** v2 §6：导出弹层开启（withAnswers 缺省按状态：draft=0 / sealed=1）。 */
+  const openExportModal = useCallback(() => {
+    const current = sheetRef.current;
+    if (!current) return;
+    setExportWithAnswers(current.status === "sealed");
+    setExportOpen(true);
+  }, []);
+
+  /** v2 §6：复制全文（吸收 V3-T6 极简形态；受限环境提示改用下载）。 */
+  const copyExport = useCallback(async () => {
+    const current = sheetRef.current;
+    if (!current) return;
+    setExportBusy(true);
+    try {
+      const text = await fetchSheetExport(current.id, exportWithAnswers);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        addToast("success", "已复制导出全文");
+      } else {
+        addToast("error", "当前环境不支持剪贴板，请改用「下载 .md」");
+      }
+      setExportOpen(false);
+    } catch {
+      addToast("error", "导出失败，请稍后重试");
+    } finally {
+      setExportBusy(false);
+    }
+  }, [exportWithAnswers, addToast]);
+
+  /** v2 §6：下载 .md（fetch 文本 → Blob → a[download]）。 */
+  const downloadExport = useCallback(async () => {
+    const current = sheetRef.current;
+    if (!current) return;
+    setExportBusy(true);
+    try {
+      const text = await fetchSheetExport(current.id, exportWithAnswers);
+      const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `l3-题纸-${current.id.slice(0, 8)}.md`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      addToast("success", "已开始下载导出档案");
+      setExportOpen(false);
+    } catch {
+      addToast("error", "导出失败，请稍后重试");
+    } finally {
+      setExportBusy(false);
+    }
+  }, [exportWithAnswers, addToast]);
+
   /** 单条历史软删（批次二）：只改历史视图与占位，不动成绩统计口径。 */
   const handleDeleteAttempt = useCallback(async (attemptId: string) => {
     const target = attempts.find((row) => row.id === attemptId);
@@ -1326,7 +1385,14 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-[var(--color-surface)] px-3.5 py-2 text-xs ring-1 ring-[var(--color-border)]">
           <span className="font-semibold">题纸</span>
           <span className="text-[var(--color-ink-soft)]">{fileVenue ? "文件" : "整卷"} · {paper.title}</span>
-          <span className="ml-auto">
+          <span className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openExportModal}
+              className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 font-medium text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            >
+              导出
+            </button>
             {sheet.status === "draft" ? (
               <span className="rounded-full bg-[var(--color-accent-soft,var(--color-surface))] px-2 py-0.5 font-medium text-[var(--color-accent)]">
                 {saveState === "saving"
@@ -1541,6 +1607,48 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
           onClose={() => setHistoryQuestionId(null)}
           onDelete={(attemptId) => { void handleDeleteAttempt(attemptId); }}
         />
+      )}
+
+      {exportOpen && sheet && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog" aria-modal="true" aria-label="导出题纸">
+          <div className="w-full max-w-md space-y-4 rounded-2xl bg-[var(--color-surface)] p-5 shadow-xl ring-1 ring-[var(--color-border)]">
+            <div>
+              <h3 className="text-base font-bold">导出题纸</h3>
+              <p className="mt-1 text-xs leading-relaxed text-[var(--color-ink-soft)]">
+                {sheet.status === "draft"
+                  ? "当前为草稿快照（导出时刻的实时内容，随题纸继续变化）。"
+                  : "当前为定格档案（从作答记录派生，内容已冻结）。"}
+              </p>
+            </div>
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[var(--color-border)] px-3 py-2.5">
+              <input type="checkbox" className="mt-0.5" checked={exportWithAnswers}
+                onChange={(event) => setExportWithAnswers(event.target.checked)} />
+              <span>
+                <span className="block text-sm font-medium">包含我的作答（withAnswers）</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-[var(--color-ink-soft)]">
+                  {sheet.status === "draft"
+                    ? "默认关闭防自我剧透；发给 agent 解读痕迹时可开启。"
+                    : "默认开启（冻结档案含完整作答）。"}
+                </span>
+              </span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setExportOpen(false)}
+                className="rounded-md px-3 py-1.5 text-xs text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]">
+                取消
+              </button>
+              <button type="button" disabled={exportBusy} onClick={() => void copyExport()}
+                className="rounded-md border border-[var(--color-border)] px-4 py-1.5 text-xs font-semibold text-[var(--color-ink)] hover:border-[var(--color-accent)] disabled:opacity-50">
+                复制全文
+              </button>
+              <button type="button" disabled={exportBusy} onClick={() => void downloadExport()}
+                className="rounded-md bg-[var(--color-accent)] px-4 py-1.5 text-xs font-semibold text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50">
+                下载 .md
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {sealOpen && sheet && (
