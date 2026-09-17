@@ -76,6 +76,9 @@ function makeAnnotationRepo(overrides: Partial<IL3AnnotationRepository> = {}): I
     softDeleteAnnotation: vi.fn(async () => true),
     listTags: vi.fn(async () => []),
     replaceTags: vi.fn(async () => []),
+    listDraftBySheet: vi.fn(async () => []),
+    promoteBySheet: vi.fn(async () => []),
+    insertSummaryAnnotation: vi.fn(async () => annotationRow()),
     ...overrides,
   };
 }

@@ -230,3 +230,65 @@ describe("L3AnnotationRepository tags", () => {
     await expect(repo.replaceTags(USER, { entry: [], option: [] })).rejects.toThrow(/requires an active transaction/);
   });
 });
+
+describe("L3AnnotationRepository batch-2 sheet helpers", () => {
+  const SHEET = "00000000-0000-4000-8000-000000000401";
+
+  it("lists draft annotations of one sheet (promotion candidates)", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "query").mockResolvedValue([
+      annotation({ stage: "draft", sheet_id: SHEET }),
+    ]);
+    const rows = await repo.listDraftBySheet(USER, SHEET);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.stage).toBe("draft");
+    const [sql, params] = (repo as any).query.mock.calls[0];
+    expect(sql).toContain("sheet_id = $2::uuid");
+    expect(sql).toContain("stage = 'draft'");
+    expect(sql).toContain("status = 'active'");
+    expect(params).toEqual([USER, SHEET]);
+  });
+
+  it("promotes draft→submitted behind the sheet+draft+active guard", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "query").mockResolvedValue([
+      annotation({ stage: "submitted", sheet_id: SHEET }),
+    ]);
+    const rows = await repo.promoteBySheet(USER, SHEET);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.stage).toBe("submitted");
+    const [sql, params] = (repo as any).query.mock.calls[0];
+    expect(sql).toContain("SET stage = 'submitted'");
+    expect(sql).toContain("sheet_id = $2::uuid");
+    expect(sql).toContain("stage = 'draft'");
+    expect(sql).toContain("status = 'active'");
+    expect(params).toEqual([USER, SHEET]);
+  });
+
+  it("inserts the summary entry as a submitted no-anchor annotation pinned to the sheet", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(
+      annotation({ stage: "submitted", sheet_id: SHEET, note: "本次全对，只留元认知", anchor_start: null, anchor_end: null, excerpt: null }),
+    );
+    const row = await repo.insertSummaryAnnotation({
+      user_id: USER,
+      question_id: QUESTION,
+      sheet_id: SHEET,
+      note: "本次全对，只留元认知",
+    });
+    expect(row.stage).toBe("submitted");
+    const [sql, params] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("INSERT INTO l3_question_annotations");
+    expect(sql).toContain("'submitted'");
+    expect(sql).toContain("max_ordinal");
+    expect(params).toEqual([USER, QUESTION, SHEET, "本次全对，只留元认知"]);
+  });
+
+  it("fails closed when the summary insert returns no row", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await expect(repo.insertSummaryAnnotation({
+      user_id: USER, question_id: QUESTION, sheet_id: SHEET, note: "总结",
+    })).rejects.toThrow("summary annotation insert returned no row");
+  });
+});

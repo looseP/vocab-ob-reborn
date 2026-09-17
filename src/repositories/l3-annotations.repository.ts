@@ -18,6 +18,7 @@ import type {
   IL3AnnotationRepository,
   L3QuestionAnnotationPatchDb,
   NewL3QuestionAnnotation,
+  NewL3SummaryAnnotation,
 } from "./interfaces";
 import { BaseRepository } from "./base";
 
@@ -215,5 +216,43 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
       params,
     );
     return rows.map(mapTagRow);
+  }
+
+  async listDraftBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]> {
+    const rows = await this.query<AnnotationDbRow>(
+      `SELECT * FROM l3_question_annotations
+        WHERE user_id = $1::uuid AND sheet_id = $2::uuid
+          AND stage = 'draft' AND status = 'active'
+        ORDER BY question_id, ordinal, created_at, id`,
+      [userId, sheetId],
+    );
+    return rows.map(mapAnnotationRow);
+  }
+
+  async promoteBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]> {
+    const rows = await this.query<AnnotationDbRow>(
+      `UPDATE l3_question_annotations
+          SET stage = 'submitted', updated_at = now()
+        WHERE user_id = $1::uuid AND sheet_id = $2::uuid
+          AND stage = 'draft' AND status = 'active'
+        RETURNING *`,
+      [userId, sheetId],
+    );
+    return rows.map(mapAnnotationRow);
+  }
+
+  async insertSummaryAnnotation(input: NewL3SummaryAnnotation): Promise<L3QuestionAnnotationRow> {
+    const row = await this.queryOne<AnnotationDbRow>(
+      `INSERT INTO l3_question_annotations
+         (user_id, question_id, sheet_id, note, stage, ordinal)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'submitted',
+         (SELECT COALESCE(MAX(ordinal) + 1, 0) AS max_ordinal
+            FROM l3_question_annotations
+           WHERE question_id = $2::uuid AND user_id = $1::uuid AND status = 'active'))
+       RETURNING *`,
+      [input.user_id, input.question_id, input.sheet_id, input.note],
+    );
+    if (!row) throw new Error("summary annotation insert returned no row");
+    return mapAnnotationRow(row);
   }
 }

@@ -32,6 +32,10 @@ import type {
   L3AnnotationOptionKey,
   L3AnnotationTagRow,
   L3QuestionAnnotationRow,
+  L3QuestionAttemptRow,
+  L3SubmissionRow,
+  SealMode,
+  SheetScope,
   L3PracticeAttemptPage,
   L3PracticeFilePage,
   L3QuestionRow,
@@ -1536,6 +1540,14 @@ export interface L3QuestionAnnotationPatchDb {
   option_tags?: Partial<Record<L3AnnotationOptionKey, string[]>>;
 }
 
+/** 批次二：「只留总结」档的无锚点总结条（stage='submitted'，挂作用域代表题）。 */
+export interface NewL3SummaryAnnotation {
+  user_id: string;
+  question_id: string;
+  sheet_id: string;
+  note: string;
+}
+
 export interface IL3AnnotationRepository {
   /** 批量取多题的 active 条目（题内按 ordinal/created_at 排序）。 */
   listForQuestions(userId: string, questionIds: readonly string[]): Promise<L3QuestionAnnotationRow[]>;
@@ -1562,6 +1574,64 @@ export interface IL3AnnotationRepository {
     userId: string,
     dict: { entry: readonly string[]; option: readonly string[] },
   ): Promise<L3AnnotationTagRow[]>;
+  /** 批次二：题纸草稿注记（定格升格候选；stage='draft' AND sheet）。 */
+  listDraftBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
+  /** 批次二：定格升格（draft→submitted）批量条件 UPDATE，返回升格行。 */
+  promoteBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
+  /** 批次二：「只留总结」档总结条（无锚点，stage='submitted'）。 */
+  insertSummaryAnnotation(input: NewL3SummaryAnnotation): Promise<L3QuestionAnnotationRow>;
+}
+
+// ── 批次二（0034）：题纸与作答历史（ADR-0034 §1/§2/§5）─────────────────────
+export interface NewL3Submission {
+  user_id: string;
+  scope: SheetScope;
+  scope_key: string;
+  source_id: string | null;
+  question_type: string | null;
+  paper_id: string | null;
+}
+
+/** 定格状态推进（service 事务内调用）：status 由 sheetStatusAfterSeal(mode) 决定。 */
+export interface L3SheetSealUpdate {
+  status: "sealed" | "discarded";
+  seal_mode: SealMode;
+  summary: string | null;
+}
+
+export interface NewL3QuestionAttempt {
+  question_id: string;
+  sheet_id: string | null;
+  venue: SheetScope;
+  answer: unknown;
+  self_assessment: unknown | null;
+}
+
+export interface L3SheetOpenResult {
+  row: L3SubmissionRow;
+  created: boolean;
+}
+
+export interface IL3SheetRepository {
+  /** 幂等开纸查询：该作用域的在写（draft）题纸。 */
+  findDraftByScopeKey(userId: string, scopeKey: string): Promise<L3SubmissionRow | null>;
+  /** 开纸：部分唯一索引 ON CONFLICT 冲突复用既有行（created=false）。 */
+  openSheet(input: NewL3Submission): Promise<L3SheetOpenResult>;
+  /** 条件 UPDATE（WHERE status='draft'）：非 draft/不存在返回 null（service 分派 404/409）。 */
+  patchAnswers(userId: string, sheetId: string, answers: Record<string, unknown>): Promise<L3SubmissionRow | null>;
+  /** 定格（requireTx）：状态流转 + 定格元数据 + answers 清空（attempts 为唯一作答真源）。 */
+  sealSheet(userId: string, sheetId: string, seal: L3SheetSealUpdate): Promise<L3SubmissionRow | null>;
+  getSheet(userId: string, sheetId: string): Promise<L3SubmissionRow | null>;
+  /** 批量物化（seal 事务内）：一批 attempts 单语句插入。 */
+  insertAttempts(userId: string, attempts: readonly NewL3QuestionAttempt[]): Promise<L3QuestionAttemptRow[]>;
+  /** 题历史链（过滤 deleted；批量列名恒为 question_id —— 6665a77 列名 bug 教训）。 */
+  listForQuestions(userId: string, questionIds: readonly string[]): Promise<L3QuestionAttemptRow[]>;
+  /** 软删：非 active/非属主返回 false（再删 → 404）。 */
+  softDeleteAttempt(userId: string, attemptId: string): Promise<boolean>;
+  /** 结果页派生源：含 deleted（结果页占位分流；题历史分流在 listForQuestions）。 */
+  listBySheet(userId: string, sheetId: string): Promise<L3QuestionAttemptRow[]>;
+  /** 该题纸 answers 已答键数（未答 = 作用域题数 - 本值）。 */
+  countAnsweredBySheet(userId: string, sheetId: string): Promise<number>;
 }
 
 // ── Aggregate ───────────────────────────────────────────────────────────
@@ -1584,6 +1654,7 @@ export interface IRepositories {
   l3Sessions: IL3SessionRepository;
   l3Paper: IL3PaperRepository;
   l3Annotations: IL3AnnotationRepository;
+  l3Sheets: IL3SheetRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }
