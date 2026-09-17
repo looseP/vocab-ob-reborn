@@ -270,6 +270,16 @@ describe("renderSheetExportMarkdown（v2）", () => {
     expect(json.answers).toEqual({ [Q1]: { choice: "B", flags: { recheck: true }, optionFlags: ["A"], marks: [{ scope: "stem", start: 4, end: 11 }] } });
   });
 
+  it("draft + withAnswers=true 且无任何作答时显示「（尚无作答）」", () => {
+    const { markdown } = renderSheetExportMarkdown(exportInput({
+      sheet: submissionRow({ status: "draft", seal_mode: null }),
+      attempts: [],
+      answers: {},
+      withAnswers: true,
+    }));
+    expect(markdown).toContain("（尚无作答）");
+  });
+
   it("deleted 作答显示「内容已清理」，统计保持交卷时口径", () => {
     const { markdown } = renderSheetExportMarkdown(exportInput({
       attempts: [
@@ -320,6 +330,7 @@ describe("renderSheetExportMarkdown · 边界臂全覆盖", () => {
       sheet: submissionRow({ seal_mode: null }),
       attempts: [
         attemptRow({ id: "a-str", answer: "free text answer" }),
+        attemptRow({ id: "a-empty", answer: "   " }),
         attemptRow({ id: "a-choices", answer: { choices: ["A", "C"] } }),
         attemptRow({ id: "a-text", answer: { text: "translated text" } }),
         attemptRow({ id: "a-weird", answer: { unknownShape: true } }),

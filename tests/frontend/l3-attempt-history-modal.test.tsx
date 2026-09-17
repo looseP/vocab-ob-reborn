@@ -143,6 +143,7 @@ describe("summarizeAttemptAnswer（口径统一修正：无作答内容 ≠ 已�
     expect(summarizeAttemptAnswer({ marks: [{ scope: "passage", start: 1, end: 4 }] })).toBe("未作答");
     expect(summarizeAttemptAnswer({})).toBe("未作答");
     expect(summarizeAttemptAnswer({ unknownShape: true })).toBe("未作答");
+    expect(summarizeAttemptAnswer("   ")).toBe("未作答");
     expect(summarizeAttemptAnswer({ choice: "B" })).toBe("选 B");
     expect(summarizeAttemptAnswer({ choices: ["A", "C"] })).toBe("多选 AC");
     expect(summarizeAttemptAnswer({ text: "译文" })).toBe("译文");

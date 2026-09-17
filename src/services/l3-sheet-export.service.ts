@@ -129,15 +129,16 @@ export function decorateInline(
 
 function summarizeAnswer(answer: unknown): string {
   if (answer == null) return "内容已清理";
-  if (typeof answer === "string") return answer.trim().length > 0 ? truncate(answer, 80) : "未作答";
+  if (typeof answer === "string") return hasAnswerContent(answer) ? truncate(answer, 80) : "未作答";
   if (typeof answer === "object" && !Array.isArray(answer)) {
     const record = answer as Record<string, unknown>;
     if (typeof record.choice === "string" && record.choice.trim().length > 0) return `选 ${record.choice}`;
     if (Array.isArray(record.choices) && record.choices.length > 0) return `多选 ${record.choices.join("")}`;
     if (typeof record.text === "string" && record.text.trim().length > 0) return truncate(record.text, 80);
   }
-  // 口径统一修正（2026-09-17）：无作答内容（仅主观痕迹/空对象/未知形状）≠ 已作答。
-  return hasAnswerContent(answer) ? "已作答" : "未作答";
+  // 口径统一修正（2026-09-17）：到达此处 = 无作答内容（仅主观痕迹/空对象/未知形状，
+  // 判据与 domain hasAnswerContent 一致）≠ 已作答。
+  return "未作答";
 }
 
 /** 当场主观状态快照摘要（self_assessment v2：flags/optionFlags/marks）。 */
