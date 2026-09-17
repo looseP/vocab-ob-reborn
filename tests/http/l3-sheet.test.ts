@@ -212,3 +212,25 @@ describe("DELETE /api/l3/attempts/:id", () => {
     expect(deleteAttempt).toHaveBeenCalledWith("user-123", ATTEMPT_ID);
   });
 });
+
+describe("GET /api/l3/sheets/:id/export", () => {
+  it("returns the markdown archive with manifest headers", async () => {
+    const exportSheet = vi.fn(async () => ({
+      markdown: "# L3 题纸冻结档案\n",
+      filename: `l3-sheet-${SHEET_ID.slice(0, 8)}.md`,
+      sha256: "a".repeat(64),
+      schemaVersion: 1,
+      stats: { attempts: 1, cleared: 0, annotations: 0 },
+    }));
+    const app = createApp({ l3SheetExport: { exportSheet } } as unknown as Services);
+    const res = await app.request(`/api/l3/sheets/${SHEET_ID}/export`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/markdown");
+    expect(res.headers.get("content-disposition")).toContain("attachment");
+    expect(res.headers.get("content-disposition")).toContain(".md");
+    expect(res.headers.get("x-export-schema-version")).toBe("1");
+    expect(res.headers.get("x-export-sha256")).toBe("a".repeat(64));
+    await expect(res.text()).resolves.toContain("# L3 题纸冻结档案");
+    expect(exportSheet).toHaveBeenCalledWith("user-123", SHEET_ID);
+  });
+});

@@ -246,7 +246,7 @@ export interface ApiOperation {
   readonly response: {
     readonly status: number;
     readonly schema: ZodType;
-    readonly mediaType: "application/json" | "text/plain";
+    readonly mediaType: "application/json" | "text/plain" | "text/markdown";
   };
 }
 
@@ -352,7 +352,7 @@ function operation(
   request?: ApiOperation["request"],
   status = 200,
   responseSchema: ZodType = jsonResponseSchema,
-  mediaType: "application/json" | "text/plain" = "application/json",
+  mediaType: "application/json" | "text/plain" | "text/markdown" = "application/json",
   contract?: Pick<ApiOperation, "requestHeaders" | "responseHeaders">,
 ): ApiOperation {
   return {
@@ -477,6 +477,8 @@ export const apiOperations = [
   operation("post", "/api/l3/sheets/:id/seal", "sealL3Sheet", "owner", "owner", "sessionMutation", { body: l3SheetSealSchema }, 200, l3SheetSealResponseSchema),
   operation("get", "/api/l3/attempts", "listL3Attempts", "owner", "owner", "none", { query: l3AttemptListQuerySchema }, 200, l3AttemptListResponseSchema),
   operation("delete", "/api/l3/attempts/:id", "deleteL3Attempt", "owner", "owner", "sessionMutation", undefined, 204, z.null()),
+  // 批次二收官：冻结导出（只出不进；Content-Disposition + 版本/sha256 响应头）。
+  operation("get", "/api/l3/sheets/:id/export", "exportL3Sheet", "owner", "owner", "none", undefined, 200, z.string(), "text/markdown"),
   operation("get", "/api/l3/practice-files", "listL3PracticeFiles", "owner", "agent", "none", { query: l3PracticeFileListQuerySchema }, 200, l3PracticeFileListResponseSchema),
   operation("get", "/api/l3/practice-files/detail", "getL3PracticeFile", "owner", "agent", "none", { query: l3PracticeFileDetailQuerySchema }, 200, l3PracticeFileDetailResponseSchema),
   operation("post", "/api/l3/contexts", "createL3Context", "owner", "owner", "sessionMutation", { body: l3ContextCreateSchema }, 201, l3ContextCreateResponseSchema),

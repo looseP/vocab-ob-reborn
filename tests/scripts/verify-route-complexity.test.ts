@@ -95,5 +95,7 @@ describe("route complexity ratchet", () => {
     // the OpenAPI contract checks — branch-approved route growth (L3 MVP) must
     // not be judged against the stale main snapshot.
     await expect(verifyRouteComplexity(root, { ROUTE_COMPLEXITY_BASE_REF: "HEAD^" })).resolves.toEqual([]);
-  });
+    // 真实 git 子进程读取全部登记路由文件（~20 次 spawn）；全量并行负载下实测
+    // 可超默认 30s（单独跑 ~8s）——显式放宽防抖，不是放宽判据。
+  }, 60_000);
 });

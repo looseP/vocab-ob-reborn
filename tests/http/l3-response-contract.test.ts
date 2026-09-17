@@ -173,6 +173,8 @@ describe("L3 response contracts", () => {
     const response = {
       role: "agent" as const,
       access: { read: "all" as const, write: "proposal_only" as const, upgrade: "owner_only" as const },
+      // 批次二（ADR-0034 §4）：评卷授权语义段（提交即授权；执行面批次三）。
+      grading: { annotationReadScope: "submitted_sheet_drafts" as const, annotationWriteScope: "review_only" as const },
       limits: {
         apiJsonBodyMaxBytes: API_JSON_BODY_MAX_BYTES,
         jsonRecordMaxBytes: JSON_RECORD_MAX_BYTES,
@@ -190,5 +192,7 @@ describe("L3 response contracts", () => {
     expect(() => l3CapabilitiesResponseSchema.parse({ ...response, errorCodes: [...response.errorCodes, "NOT_A_CODE"] })).toThrow();
     const { limits: _limits, ...missingLimits } = response;
     expect(() => l3CapabilitiesResponseSchema.parse(missingLimits)).toThrow();
+    const { grading: _grading, ...missingGrading } = response;
+    expect(() => l3CapabilitiesResponseSchema.parse(missingGrading)).toThrow();
   });
 });

@@ -246,6 +246,7 @@ const OWNER_READS = [
   // 批次二（ADR-0034）：题纸与作答历史——owner-only 读（个人做题台面）。
   "getL3Sheet",
   "listL3Attempts",
+  "exportL3Sheet",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {

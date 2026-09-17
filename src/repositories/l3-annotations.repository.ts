@@ -231,6 +231,16 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
     return rows.map(mapAnnotationRow);
   }
 
+  async listAnnotationsBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]> {
+    const rows = await this.query<AnnotationDbRow>(
+      `SELECT * FROM l3_question_annotations
+        WHERE user_id = $1::uuid AND sheet_id = $2::uuid AND status = 'active'
+        ORDER BY question_id, ordinal, created_at, id`,
+      [userId, sheetId],
+    );
+    return rows.map(mapAnnotationRow);
+  }
+
   async promoteBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]> {
     const rows = await this.query<AnnotationDbRow>(
       `UPDATE l3_question_annotations

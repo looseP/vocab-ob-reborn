@@ -1579,6 +1579,8 @@ export interface IL3AnnotationRepository {
   ): Promise<L3AnnotationTagRow[]>;
   /** 批次二：题纸草稿注记（定格升格候选；stage='draft' AND sheet）。 */
   listDraftBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
+  /** 批次二：题纸全部注记（含定格升格后的 submitted/confirmed；导出冻结档案用）。 */
+  listAnnotationsBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
   /** 批次二：定格升格（draft→submitted）批量条件 UPDATE，返回升格行。 */
   promoteBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
   /** 批次二：「只留总结」档总结条（无锚点，stage='submitted'）。 */

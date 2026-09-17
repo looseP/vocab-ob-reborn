@@ -27,10 +27,10 @@ import type {
 } from "../repositories/interfaces";
 import type {
   L3QuestionAttemptRow,
-  L3QuestionRow,
   L3SubmissionRow,
 } from "../domain";
 import { buildSheetScopeKey, countUnansweredQuestions, sheetStatusAfterSeal } from "../domain/l3-sheets";
+import { resolveSheetScopedQuestions } from "./l3-sheet-scope";
 import type {
   OpenL3SheetInput,
   PatchL3SheetInput,
@@ -57,29 +57,6 @@ export class L3SheetService {
 
   private withActor<T>(userId: string, callback: (repos: IRepositories) => Promise<T>): Promise<T> {
     return this.txRunner(async (tx) => callback(this.repositoryFactory(tx)), { actorId: userId });
-  }
-
-  /** 作用域题集（有序）：file=题组（ordinal 序）；paper=payload sections 顺序。 */
-  private async resolveScopedQuestions(
-    repos: IRepositories,
-    userId: string,
-    sheet: L3SubmissionRow,
-  ): Promise<L3QuestionRow[]> {
-    if (sheet.scope === "file" && sheet.source_id && sheet.question_type) {
-      return repos.l3Paper.listActiveQuestionsForFile(userId, {
-        sourceId: sheet.source_id,
-        questionType: sheet.question_type,
-      });
-    }
-    if (sheet.scope === "paper" && sheet.paper_id) {
-      const paper = await repos.l3Paper.findPaperById(userId, sheet.paper_id);
-      if (!paper) return [];
-      const ids = paper.payload.sections.flatMap((section) => section.questionIds);
-      const questions = await repos.l3Paper.findActiveQuestionsByIds(userId, ids);
-      const byId = new Map(questions.map((question) => [question.id, question]));
-      return ids.map((id) => byId.get(id)).filter((question): question is L3QuestionRow => Boolean(question));
-    }
-    return [];
   }
 
   /** 开纸：作用域键幂等（冲突复用既有 draft 行），归属校验 404 语义同批次一。 */
@@ -126,7 +103,7 @@ export class L3SheetService {
       if (sheet.status === "draft") return { sheet, attempts: [] };
 
       const rows = await repos.l3Sheets.listBySheet(userId, sheetId);
-      const scoped = await this.resolveScopedQuestions(repos, userId, sheet);
+      const scoped = await resolveSheetScopedQuestions(repos, userId, sheet);
       const orderByQuestion = new Map(scoped.map((question, index) => [question.id, index]));
       const ordered = [...rows].sort((a, b) => {
         const orderA = orderByQuestion.get(a.question_id) ?? Number.MAX_SAFE_INTEGER;
@@ -176,7 +153,7 @@ export class L3SheetService {
         throw new ValidationError("summary is required for the summary mode", "summary");
       }
 
-      const scoped = await this.resolveScopedQuestions(repos, input.userId, sheet);
+      const scoped = await resolveSheetScopedQuestions(repos, input.userId, sheet);
       if (input.mode === "summary" && scoped.length === 0) {
         throw new ValidationError("scoped questions are empty; cannot pin the summary note", "summary");
       }
