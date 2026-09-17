@@ -381,6 +381,13 @@ describe("定格物化辅助纯函数（v2 §4.6/§10）", () => {
     expect(buildAttemptSelfAssessment({ flags: {} })).toBeNull();
   });
 
+  it("recheck 随 flags 整段物化（2026-09-17 复核修订：非剥离；定格后可回看「当时想复查」）", () => {
+    expect(buildAttemptSelfAssessment({ flags: { doubt: true, recheck: true } }))
+      .toEqual({ flags: { doubt: true, recheck: true } });
+    expect(buildAttemptSelfAssessment({ flags: { recheck: true } }))
+      .toEqual({ flags: { recheck: true } });
+  });
+
   it("pruneSheetAnswer 清理空键（全空返回 null=整体清除）", () => {
     expect(pruneSheetAnswer({ choice: "B", flags: {}, optionFlags: [], marks: [] })).toEqual({ choice: "B" });
     expect(pruneSheetAnswer({ flags: { doubt: true } })).toEqual({ flags: { doubt: true } });

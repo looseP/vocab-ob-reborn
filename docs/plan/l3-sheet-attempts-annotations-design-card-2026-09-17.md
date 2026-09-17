@@ -222,7 +222,7 @@ l3_question_attempts（§2）
 - **契约**：题纸 answers 立 zod strict 显式键形状 `{choice?, flags?: {doubt?, recheck?}, optionFlags?: string[], marks?}`——自由 jsonb 必须收口，防三个月腐化；
 - **语义分轨**：
   - **存疑**（题级 `flags.doubt` + 选项级 `optionFlags`）：认知状态，定格物化进 `attempts.self_assessment`——批三评卷对照素材（"当时存疑" vs agent verdict）；
-  - **待复查**（仅题级 `flags.recheck`）：流程状态，进定格软确认（"还有 N 题待复查"与未答题计数并列），不物化；
+  - **待复查**（仅题级 `flags.recheck`）：流程状态，进定格软确认（"还有 N 题待复查"与未答题计数并列）；**随 `flags` 整段物化进 `self_assessment`**（2026-09-17 复核修订：原「不物化」改为保留——「当时想复查」的意图定格后仍可回看，批三评卷多一维对照信号；实现原即整段物化，本条为契约回写对齐）；
 - **UI**：题卡头部旗钮/疑问钮；选项行尾悬停存疑钮；视觉角标；
 - 增量/总结档：旗标随题纸弃（用户已选"答案不值得留"），自洽无需特殊处理。
 

@@ -116,7 +116,7 @@ export function sheetAnswerMarkKey(mark: SheetAnswerMark): string {
   return `${mark.scope}:${optionPart}${mark.start}:${mark.end}`;
 }
 
-/** 旗标（§10）：doubt=存疑（认知状态，物化进 self_assessment）；recheck=待复查（流程状态，不物化）。 */
+/** 旗标（§10）：doubt=存疑（认知状态，物化进 self_assessment）；recheck=待复查（流程状态，进定格软确认计数；2026-09-17 复核修订：随 flags 整段物化）。 */
 export const sheetAnswerFlagsSchema = z.object({
   doubt: z.boolean().optional(),
   recheck: z.boolean().optional(),

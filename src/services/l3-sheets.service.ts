@@ -168,7 +168,7 @@ export class L3SheetService {
 
       const scopedIds = scoped.map((question) => question.id);
       const unansweredCount = countUnansweredQuestions(scopedIds, sheet.answers);
-      // v2 §10：待复查（flags.recheck）为流程状态——进软确认提示，不物化、不阻断。
+      // v2 §10：待复查（flags.recheck）为流程状态——进软确认提示（不阻断）；复核修订：随 flags 整段物化。
       const recheckCount = countRecheckQuestions(scopedIds, sheet.answers);
       if (unansweredCount > 0 && !input.acknowledgeUnanswered) {
         throw new ConflictError("unanswered questions require soft confirmation", undefined, {

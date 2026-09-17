@@ -204,7 +204,7 @@ export interface SealSheetRequest {
 export interface SealSheetResult {
   sheet: L3Sheet;
   unansweredCount: number;
-  /** v2 §10：待复查题数（软确认提示数据源；不物化、不阻断）。 */
+  /** v2 §10：待复查题数（软确认提示数据源；不阻断；复核修订：recheck 随 flags 整段物化）。 */
   recheckCount: number;
   materializedCount: number;
   promotedAnnotationCount: number;

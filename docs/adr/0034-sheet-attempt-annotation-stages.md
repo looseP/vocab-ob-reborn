@@ -1,6 +1,6 @@
 # ADR-0034: 题纸、作答历史题中心化与草稿注记 stage 生命周期（定格三档 + 冻结导出）
 
-- **Status**: Accepted（v2 增补 2026-09-17：设计卡 v2 裁决，钉增补条 7–12，增补批 T11 随行；验收补记条 13：marks scope 扩 option）
+- **Status**: Accepted（v2 增补 2026-09-17：设计卡 v2 裁决，钉增补条 7–12，增补批 T11 随行；验收补记条 13：marks scope 扩 option；条 8 复核修订（2026-09-17）：recheck 随 flags 整段物化）
 - **Date**: 2026-09-17
 - **Amends**: ADR-0030（**仅声明修订，不修改原文**——ADR 不可变）：将其「payload 是引用不是冻结快照」哲学推广到作答侧（attempts 是唯一作答真源，题纸不冻第二份副本）；ADR-0033 §5（注记面从「agent 连读都不开放」修订为「提交即授权、按题纸作用域收口」，见 §4）
 - **References**: ADR-0025（可携带导出契约——冻结导出对齐版本化 + 原子写 + manifest 模式）、ADR-0029（owner/agent 边界与授权注册表）、ADR-0019 §4（子空间/错题派生/计划存引用）、ADR-0004 §6（L3 零 FSRS）、设计卡《L3 题纸与草稿注记设计卡》（2026-09-17，D7–D12 定稿）、任务表《L3 批次二任务分解》（2026-09-17）
@@ -70,7 +70,7 @@
 
 **7. stage 可变矩阵 + 撤回通道**（设计卡 §4.7）：`draft` 可编辑（现状不变）；`submitted` **锁定**（PATCH 409——评审输入不可变，要改走撤回通道）；`confirmed` **owner 可编辑**（保批次三「采纳归 owner」通道；`review` 段永远只读）。撤回通道 `POST /api/l3/annotations/:id/withdraw`（submitted→draft）：入参当前上下文题纸 sheetId（缺省时借原题纸作用域幂等开新纸），注记重挂该题纸、下次定格随新题纸重新升格——缺此通道会逼用户「删了重建」，破坏锚点幂等。
 
-**8. answers 显式键契约 + self_assessment 语义扩**（设计卡 §4.6/§10）：题纸 `answers` 立 zod strict 显式键 `{choice?, flags?: {doubt?, recheck?}, optionFlags?: string[], marks?: [{scope:'passage'|'stem', start, end}]}`——自由 jsonb 必须收口防腐化；PATCH 形状仍**纯 optional 无 default**（未提交键不被填充）；marks 同 scope+start+end 契约层去重（fail-closed）。attempts.self_assessment 语义扩为**当场主观状态快照** `{flags, optionFlags, marks}`：存疑（题级 flags.doubt + 选项级 optionFlags）与标记（marks）属认知状态，随定格物化进 self_assessment；待复查（仅题级 flags.recheck）属流程状态，进定格软确认计数（响应 `recheckCount`），**不物化**。
+**8. answers 显式键契约 + self_assessment 语义扩**（设计卡 §4.6/§10）：题纸 `answers` 立 zod strict 显式键 `{choice?, flags?: {doubt?, recheck?}, optionFlags?: string[], marks?: [{scope:'passage'|'stem', start, end}]}`——自由 jsonb 必须收口防腐化；PATCH 形状仍**纯 optional 无 default**（未提交键不被填充）；marks 同 scope+start+end 契约层去重（fail-closed）。attempts.self_assessment 语义扩为**当场主观状态快照** `{flags, optionFlags, marks}`：存疑（题级 flags.doubt + 选项级 optionFlags）与标记（marks）属认知状态，随定格物化进 self_assessment；待复查（仅题级 flags.recheck）属流程状态，进定格软确认计数（响应 `recheckCount`），**随 `flags` 整段物化进 self_assessment**（2026-09-17 复核修订：原条款「不物化」改为保留——「当时想复查」的意图定格后可回看、导出面向 agent 多一维对照信号；实现原即整段物化，本次为契约回写对齐）。
 
 **9. marks 非资产化**（设计卡 §4.6）：做题中「划重点」是轻痕迹、不是主张——**不进注记表、不立 stage、不升格**（避免资产囤积负担）；随题纸 answers 防抖保存（零迁移）；生命周期随题纸（增量/总结档随题纸弃）；**资产化出口 = 导出**（导出即档案化）；渲染纯底色高亮（无角标无徽标无 cursor，划词铁律），不进覆盖度视图；sealed 结果页从 `self_assessment.marks` 还原。
 
