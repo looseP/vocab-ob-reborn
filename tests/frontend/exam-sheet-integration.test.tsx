@@ -476,3 +476,163 @@ describe("批次二增补：旗标与待复查（v2 §10）", () => {
     void apiFetchMock;
   });
 });
+
+describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
+  /** 带原文材料的最小卷（walks 文栏分支：hasPassage=true）。 */
+  const PASSAGE_TEXT = "The trap phrase hides here.";
+  const passagePaper: ExamPaper = {
+    id: PAPER_ID,
+    title: "2025 英语一 · 阅读",
+    direction: "考研",
+    metadata: {},
+    sections: [{
+      key: "s1",
+      title: "Text 1",
+      questionType: "reading_choice",
+      sourceId: "00000000-0000-4000-8000-000000000901",
+      fileKey: "rlf-file-1",
+      questionIds: [Q1],
+      missing: false,
+      source_title: "Text 1",
+      source_content: PASSAGE_TEXT,
+      questions: [{
+        id: Q1, ordinal: 0, stem: "21. Why did the author?",
+        options: [{ key: "A", text: "甲" }, { key: "B", text: "乙" }],
+        answer: { choice: "B" }, explanation: null, evidence: [],
+      }],
+    }],
+  };
+
+  /** 按全局 content 偏移划选：定位包含 start 的 [data-content-off] 片段（标记后重分片也成立）。 */
+  function selectTextIn(container: Element, start: number, end: number): void {
+    const spans = [...container.querySelectorAll<HTMLElement>("[data-content-off]")];
+    const anchor = spans.find((el) => {
+      const base = Number(el.dataset.contentOff);
+      return base <= start && start < base + (el.textContent?.length ?? 0);
+    })!;
+    const base = Number(anchor.dataset.contentOff);
+    const textNode = anchor.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(textNode, start - base);
+    range.setEnd(textNode, Math.min(end - base, textNode.length));
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function patchBodies(apiFetchMock: ReturnType<typeof vi.fn>): unknown[] {
+    return apiFetchMock.mock.calls
+      .filter(([path, init]) => String(path).startsWith("/l3/sheets/")
+        && (init as { method?: string } | undefined)?.method === "PATCH")
+      .map(([, init]) => JSON.parse((init as { body: string }).body));
+  }
+
+  it("题干划词（scope=stem）：浮动条标记重点 → PATCH 保存 + 高亮渲染", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector(`#q-${Q1}`)).toBeTruthy());
+
+    const stemParagraph = document.querySelector(`#q-${Q1} p`)!;
+    await act(async () => {
+      selectTextIn(stemParagraph, 4, 11); // "Why did"（相对题干文本偏移）
+      fireEvent.mouseUp(stemParagraph);
+      await Promise.resolve();
+    });
+    const markButton = screen.getByRole("button", { name: "标记重点" });
+    await act(async () => {
+      fireEvent.click(markButton);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { marks: [{ scope: "stem", start: 4, end: 11 }] } } },
+    ]);
+    // 高亮渲染：纯底色 mark（无角标）
+    expect(document.querySelector(`#q-${Q1} [data-stem-mark]`)).toBeTruthy();
+  });
+
+  it("文栏划词（scope=passage）：标记重点走题号选择器；再划同区间显示取消标记", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector("[data-ann-passage]")).toBeTruthy());
+
+    // 先选 B（与标记合并保存）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    // 划选文栏 "trap"（[4, 8)）
+    const passage = document.querySelector("[data-ann-passage]")!;
+    await act(async () => {
+      selectTextIn(passage, 4, 8);
+      fireEvent.mouseUp(passage);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "标记重点" }));
+      await Promise.resolve();
+    });
+    // 题号选择器 → 第 1 题
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /第 1 题/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B", marks: [{ scope: "passage", start: 4, end: 8 }] } } },
+    ]);
+    expect(document.querySelector("[data-passage-mark]")).toBeTruthy();
+
+    // 再划同区间 → 浮动条显示「取消标记」→ 撤销后 PATCH 回到纯 choice
+    await act(async () => {
+      selectTextIn(document.querySelector("[data-ann-passage]")!, 4, 8);
+      fireEvent.mouseUp(document.querySelector("[data-ann-passage]")!);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "取消标记" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B", marks: [{ scope: "passage", start: 4, end: 8 }] } } },
+      { answers: { [Q1]: { choice: "B" } } },
+    ]);
+    expect(document.querySelector("[data-passage-mark]")).toBeNull();
+  });
+
+  it("sealed 结果页从 self_assessment.marks 还原高亮（v2 §4.6）", async () => {
+    const apiFetchMock = setupMock({
+      derivedAttempts: [{
+        id: "a1", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q1,
+        sheet_id: SHEET_ID, venue: "paper", answer: { choice: "B" },
+        self_assessment: { marks: [{ scope: "passage", start: 4, end: 8 }] },
+        status: "active", deleted_at: null, created_at: "2026-09-17T01:00:00Z",
+      }],
+    });
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    expect(document.querySelector("[data-passage-mark]")).toBeTruthy();
+    void apiFetchMock;
+  });
+});

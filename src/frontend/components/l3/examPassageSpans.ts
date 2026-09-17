@@ -1,18 +1,21 @@
 /**
  * 卷面文栏三通道分片纯函数（批次一，2026-09-16）。
  *
- * 把 content（含〖n〗空位占位）切成不重叠的连续 span 序列，三个标注通道：
+ * 把 content（含〖n〗空位占位）切成不重叠的连续 span 序列，四个标注通道：
  *   - blank：〖n〗 空位角标（仅展示 + 跳题，不可划词）
  *   - evidence：官方标准答案锚点，仅解析模式渲染（实心底）
+ *   - mark：用户「划重点」轻痕迹（v2 §4.6，纯底色，无角标无交互消费）
  *   - annotation：用户做题注记锚点（下划线/描边，全程可见）
  * 坐标一律为 content 字符串的 UTF-16 偏移（含〖n〗占位字符），与
  * l3_questions.evidence / l3_question_annotations 锚点同一坐标系。
- * 重叠优先级：blank > evidence > annotation；越界/倒挂锚点直接丢弃。
+ * 重叠优先级：blank > evidence > mark > annotation；越界/倒挂锚点直接丢弃。
+ * （mark 高于 annotation：marks 无角标等旁路出口，被吞等于不可见；注记另有
+ *   题卡角标与原文分析列表兜底。evidence 高于 mark：解析模式官方定位优先。）
  */
 
 export const PASSAGE_BLANK_RE = /〖(\d+)〗/g;
 
-export type PassageSpanKind = "text" | "blank" | "evidence" | "annotation";
+export type PassageSpanKind = "text" | "blank" | "evidence" | "mark" | "annotation";
 
 export interface PassageSpan {
   start: number;
@@ -31,8 +34,12 @@ export interface PassageAnnotationMarker {
 export interface PassageMarkerOptions {
   evidence?: ReadonlyArray<{ start: number; end: number }>;
   annotations?: ReadonlyArray<PassageAnnotationMarker>;
+  /** v2 §4.6：passage 划重点标记（纯底色通道）。 */
+  marks?: ReadonlyArray<{ start: number; end: number }>;
   /** 官方 evidence 仅在解析（核对答案）模式显示。 */
   showEvidence?: boolean;
+  /** 是否解析 〖n〗 空位（题干等非材料文本传 false，保持原样文本）。 */
+  parseBlanks?: boolean;
 }
 
 interface Owner {
@@ -42,7 +49,7 @@ interface Owner {
   annotationId?: string;
 }
 
-const PRIORITY = { annotation: 1, evidence: 2, blank: 3 } as const;
+const PRIORITY = { annotation: 1, mark: 2, evidence: 3, blank: 4 } as const;
 
 function validRange(start: number, end: number, length: number): boolean {
   return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start && end <= length;
@@ -60,17 +67,23 @@ export function buildPassageSpans(content: string, options: PassageMarkerOptions
     }
   };
 
-  for (const match of content.matchAll(new RegExp(PASSAGE_BLANK_RE.source, "g"))) {
-    const start = match.index;
-    if (start == null) continue;
-    const end = start + match[0].length;
-    paint(start, end, { priority: PRIORITY.blank, kind: "blank", blankNo: Number(match[1]) });
+  if (options.parseBlanks !== false) {
+    for (const match of content.matchAll(new RegExp(PASSAGE_BLANK_RE.source, "g"))) {
+      const start = match.index;
+      if (start == null) continue;
+      const end = start + match[0].length;
+      paint(start, end, { priority: PRIORITY.blank, kind: "blank", blankNo: Number(match[1]) });
+    }
   }
 
   if (options.showEvidence) {
     for (const marker of options.evidence ?? []) {
       paint(marker.start, marker.end, { priority: PRIORITY.evidence, kind: "evidence" });
     }
+  }
+
+  for (const mark of options.marks ?? []) {
+    paint(mark.start, mark.end, { priority: PRIORITY.mark, kind: "mark" });
   }
 
   for (const marker of options.annotations ?? []) {

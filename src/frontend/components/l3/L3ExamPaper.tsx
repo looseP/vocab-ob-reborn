@@ -27,8 +27,10 @@ import {
 } from "@/frontend/api/l3Client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import {
+  addSheetAnswerMark,
   countRecheckQuestions,
   pruneSheetAnswer,
+  removeSheetAnswerMark,
   type SheetAnswer,
   type SheetAnswerFlags,
 } from "@/domain/l3-sheets";
@@ -119,7 +121,7 @@ interface CaptureState {
   start: number;
   end: number;
   excerpt: string;
-  mode: "menu" | "annotate" | "capture";
+  mode: "menu" | "annotate" | "mark" | "capture";
 }
 
 function PassageBody({
@@ -133,6 +135,9 @@ function PassageBody({
   onJumpQuestion,
   onCreateAnnotation,
   onContextBuffered,
+  passageMarks,
+  onAddPassageMark,
+  onRemovePassageMark,
 }: {
   section: ExamSection;
   content: string;
@@ -144,9 +149,16 @@ function PassageBody({
   onJumpQuestion: (questionId: string) => void;
   onCreateAnnotation?: (input: CreateQuestionAnnotationRequest) => Promise<void>;
   onContextBuffered?: (contextId: string) => void;
+  /** v2 §4.6：本题组文章的划重点标记（含所属题号，取消时反查；纯底色通道）。 */
+  passageMarks?: ReadonlyArray<{ questionId: string; start: number; end: number }>;
+  onAddPassageMark?: (questionId: string, anchor: { start: number; end: number }) => void;
+  onRemovePassageMark?: (anchor: { start: number; end: number }) => void;
 }) {
   const passageRef = useRef<HTMLDivElement>(null);
   const [capture, setCapture] = useState<CaptureState | null>(null);
+  /** 当前划词区间是否已是 passage 标记（v2 §4.6：同区间显示「取消标记」）。 */
+  const captureMarked = capture != null
+    && (passageMarks ?? []).some((mark) => mark.start === capture.start && mark.end === capture.end);
   const [pulseNonce, setPulseNonce] = useState(0);
   const [wordSlug, setWordSlug] = useState("");
   const [boundSense, setBoundSense] = useState("");
@@ -164,9 +176,10 @@ function PassageBody({
       annotations: annotations
         .filter((a) => a.anchor_start != null && a.anchor_end != null)
         .map((a) => ({ id: a.id, anchorStart: a.anchor_start, anchorEnd: a.anchor_end })),
+      marks: (passageMarks ?? []).map((mark) => ({ start: mark.start, end: mark.end })),
       showEvidence: revealAll,
     }),
-    [content, evidence, annotations, revealAll],
+    [content, evidence, annotations, passageMarks, revealAll],
   );
 
   // 按原文换行分段：每段独立 <p> 带段距，空行占位；run 携带全局偏移，拆段不影响选区坐标。
@@ -213,7 +226,8 @@ function PassageBody({
       setCapture(null);
       return;
     }
-    const rect = window.getSelection()?.getRangeAt(0).getBoundingClientRect();
+    // getBoundingClientRect 可选调用：jsdom 等受限环境无此方法（真实浏览器恒在）。
+    const rect = window.getSelection()?.getRangeAt(0).getBoundingClientRect?.();
     setCapture({
       x: rect ? rect.left + rect.width / 2 : 120,
       y: rect ? rect.top : 120,
@@ -326,6 +340,19 @@ function PassageBody({
                     </mark>
                   );
                 }
+                if (run.kind === "mark") {
+                  // v2 §4.6 划词铁律：纯底色高亮——无角标、无徽标、无 cursor、无 onClick。
+                  return (
+                    <mark
+                      key={`${run.start}-${run.end}`}
+                      data-content-off={run.start}
+                      data-passage-mark
+                      className="rounded-sm bg-sky-100 px-0.5 text-inherit dark:bg-sky-900/40"
+                    >
+                      {run.text}
+                    </mark>
+                  );
+                }
                 if (run.kind === "annotation") {
                   const annotationId = run.annotationId!;
                   const owner = annotations.find((a) => a.id === annotationId);
@@ -414,6 +441,29 @@ function PassageBody({
               >
                 圈词入笔记
               </button>
+              {captureMarked ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    onRemovePassageMark?.({ start: capture.start, end: capture.end });
+                    addToast("success", "已取消标记");
+                    clearSelection();
+                  }}
+                  className="rounded-md border border-sky-400 bg-sky-50 px-2 py-1.5 text-xs text-sky-800 hover:border-sky-500 dark:bg-sky-950/40 dark:text-sky-200"
+                >
+                  取消标记
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!onAddPassageMark || busy}
+                  onClick={() => setCapture((c) => (c ? { ...c, mode: "mark" } : c))}
+                  className="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs text-[var(--color-ink)] hover:border-sky-400 disabled:opacity-50"
+                >
+                  标记重点
+                </button>
+              )}
             </div>
           )}
           {capture.mode === "annotate" && (
@@ -426,6 +476,27 @@ function PassageBody({
                   disabled={busy}
                   onClick={() => void createAnnotatedEntry(q.id)}
                   className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] hover:bg-[var(--color-accent-soft,var(--color-surface))] disabled:opacity-50"
+                >
+                  第 {questionDisplayNo.get(q.id)} 题 · {q.stem}
+                </button>
+              ))}
+              <button type="button" onClick={() => setCapture(null)} className="text-[10px] text-[var(--color-ink-soft)]">取消</button>
+            </div>
+          )}
+          {capture.mode === "mark" && (
+            <div className="max-h-48 space-y-1 overflow-y-auto">
+              <p className="text-[10px] text-[var(--color-ink-soft)]">标记关联哪道题？（随该题保存，导出可见）</p>
+              {section.questions.map((q) => (
+                <button
+                  key={q.id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    onAddPassageMark?.(q.id, { start: capture.start, end: capture.end });
+                    addToast("success", "已标记重点");
+                    clearSelection();
+                  }}
+                  className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] hover:bg-sky-50 disabled:opacity-50 dark:hover:bg-sky-950/40"
                 >
                   第 {questionDisplayNo.get(q.id)} 题 · {q.stem}
                 </button>
@@ -536,6 +607,8 @@ function ChoiceQuestion({
   onToggleFlag,
   optionFlags,
   onToggleOptionDoubt,
+  stemMarks,
+  onToggleStemMark,
 }: {
   question: ExamQuestion;
   index: number;
@@ -551,8 +624,59 @@ function ChoiceQuestion({
   onToggleFlag?: (flag: "doubt" | "recheck") => void;
   optionFlags?: string[];
   onToggleOptionDoubt?: (key: string) => void;
+  /** v2 §4.6：题干划重点（scope='stem'，题号天然已知无需选择器）。 */
+  stemMarks?: ReadonlyArray<{ start: number; end: number }>;
+  onToggleStemMark?: (anchor: { start: number; end: number }) => void;
 }) {
   const correct = question.answer.choice;
+
+  // v2 §4.6：题干划词（scope='stem'）——浮动条直接标记/取消，不走题号选择器。
+  const stemRef = useRef<HTMLParagraphElement>(null);
+  const [stemCapture, setStemCapture] = useState<{ x: number; y: number; start: number; end: number; excerpt: string } | null>(null);
+  useEffect(() => {
+    if (!stemCapture) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest("[data-exam-capture-bar]")) return;
+      setStemCapture(null);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setStemCapture(null);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [stemCapture !== null]);
+
+  const handleStemMouseUp = useCallback(() => {
+    if (readOnly || !onToggleStemMark) return;
+    const container = stemRef.current;
+    if (!container) return;
+    const offsets = selectionToContentOffsets(container);
+    if (!offsets) {
+      setStemCapture(null);
+      return;
+    }
+    const rect = window.getSelection()?.getRangeAt(0).getBoundingClientRect?.();
+    setStemCapture({
+      x: rect ? rect.left + rect.width / 2 : 120,
+      y: rect ? rect.top : 120,
+      start: offsets.start,
+      end: offsets.end,
+      excerpt: question.stem.slice(offsets.start, offsets.end),
+    });
+  }, [question.stem, readOnly, onToggleStemMark]);
+
+  const stemMarked = stemCapture != null
+    && (stemMarks ?? []).some((mark) => mark.start === stemCapture.start && mark.end === stemCapture.end);
+  const stemSpans = useMemo(
+    () => buildPassageSpans(question.stem, { marks: stemMarks ?? [], parseBlanks: false }),
+    [question.stem, stemMarks],
+  );
+
   return (
     <div className="rounded-xl border border-[var(--color-border)] p-3.5 transition-shadow hover:shadow-sm">
       <div className="mb-2.5 flex items-start gap-2">
@@ -562,7 +686,22 @@ function ChoiceQuestion({
             <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
           )}
         </span>
-        <p className="text-sm font-medium leading-relaxed">{question.stem}</p>
+        <p ref={stemRef} onMouseUp={handleStemMouseUp} className="min-w-0 flex-1 text-sm font-medium leading-relaxed">
+          {stemSpans.map((span) => span.kind === "mark" ? (
+            <mark
+              key={`${span.start}-${span.end}`}
+              data-content-off={span.start}
+              data-stem-mark
+              className="rounded-sm bg-sky-100 px-0.5 text-inherit dark:bg-sky-900/40"
+            >
+              {question.stem.slice(span.start, span.end)}
+            </mark>
+          ) : (
+            <span key={`${span.start}-${span.end}`} data-content-off={span.start}>
+              {question.stem.slice(span.start, span.end)}
+            </span>
+          ))}
+        </p>
         {!readOnly && onToggleFlag && (
           <span className="ml-auto flex shrink-0 items-center gap-1">
             <button type="button" onClick={(event) => { event.stopPropagation(); onToggleFlag("recheck"); }}
@@ -576,6 +715,37 @@ function ChoiceQuestion({
           </span>
         )}
       </div>
+      {stemCapture && onToggleStemMark && !readOnly && (
+        <div
+          data-exam-capture-bar
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          style={{
+            position: "fixed",
+            left: Math.min(Math.max(stemCapture.x, 140), window.innerWidth - 140),
+            top: Math.max(stemCapture.y - 8, 72),
+            transform: "translateX(-50%) translateY(-100%)",
+          }}
+          className="z-50 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-xl"
+        >
+          <p className="mb-2 line-clamp-2 rounded-md bg-[var(--color-accent-soft,var(--color-surface))] p-1.5 text-[11px] italic text-[var(--color-ink-soft)]">
+            「{stemCapture.excerpt}」
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              onToggleStemMark({ start: stemCapture.start, end: stemCapture.end });
+              setStemCapture(null);
+              window.getSelection()?.removeAllRanges();
+            }}
+            className={stemMarked
+              ? "w-full rounded-md border border-sky-400 bg-sky-50 px-2 py-1.5 text-xs text-sky-800 hover:border-sky-500 dark:bg-sky-950/40 dark:text-sky-200"
+              : "w-full rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-xs font-semibold text-[var(--color-accent-contrast,var(--color-surface))]"}
+          >
+            {stemMarked ? "取消标记" : "标记重点"}
+          </button>
+        </div>
+      )}
       {cleared && (
         <p className="mb-2 inline-block rounded-md bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-ink-soft)] ring-1 ring-[var(--color-border)]">
           作答记录已清理
@@ -827,6 +997,37 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     commitAnswer(questionId, { optionFlags: next });
   }, [commitAnswer]);
 
+  /** v2 §4.6：文栏划重点（挂题号选择器；同区间去重由 addSheetAnswerMark 保证幂等）。 */
+  const addPassageMark = useCallback((questionId: string, anchor: { start: number; end: number }) => {
+    const marks = answersRef.current[questionId]?.marks ?? [];
+    commitAnswer(questionId, {
+      marks: addSheetAnswerMark(marks, { scope: "passage", start: anchor.start, end: anchor.end }),
+    });
+  }, [commitAnswer]);
+
+  /** v2 §4.6：取消文栏标记（同区间可能被多题各标一次——全部清除）。 */
+  const removePassageMark = useCallback((anchor: { start: number; end: number }) => {
+    for (const [questionId, answer] of Object.entries(answersRef.current)) {
+      const marks = answer.marks ?? [];
+      const next = marks.filter(
+        (mark) => !(mark.scope === "passage" && mark.start === anchor.start && mark.end === anchor.end),
+      );
+      if (next.length !== marks.length) commitAnswer(questionId, { marks: next });
+    }
+  }, [commitAnswer]);
+
+  /** v2 §4.6：题干划重点（scope='stem'，题号天然已知——toggle 语义）。 */
+  const toggleStemMark = useCallback((questionId: string, anchor: { start: number; end: number }) => {
+    const marks = answersRef.current[questionId]?.marks ?? [];
+    const exists = marks.some(
+      (mark) => mark.scope === "stem" && mark.start === anchor.start && mark.end === anchor.end,
+    );
+    const next = exists
+      ? removeSheetAnswerMark(marks, { scope: "stem", start: anchor.start, end: anchor.end })
+      : addSheetAnswerMark(marks, { scope: "stem", start: anchor.start, end: anchor.end });
+    commitAnswer(questionId, { marks: next });
+  }, [commitAnswer]);
+
   /** sealed 派生（批次二）：picks 以 attempts 为准重算 + 结果页占位集合 + 本地历史并入。 */
   const deriveFromSheet = useCallback(async (sheetId: string) => {
     try {
@@ -1013,6 +1214,17 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     }
     return grouped;
   }, [attempts]);
+
+  /** v2 §4.6：全文栏 passage 标记汇总（含所属题号——浮动条取消反查；渲染只取区间）。 */
+  const passageMarks = useMemo(() => {
+    const rows: Array<{ questionId: string; start: number; end: number }> = [];
+    for (const [questionId, answer] of Object.entries(answers)) {
+      for (const mark of answer.marks ?? []) {
+        if (mark.scope === "passage") rows.push({ questionId, start: mark.start, end: mark.end });
+      }
+    }
+    return rows;
+  }, [answers]);
 
   const allQuestionsById = useMemo(() => {
     const map = new Map<string, ExamQuestion>();
@@ -1240,6 +1452,9 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                         onJumpQuestion={(questionId) => scrollToQuestion(section.key, `q-${questionId}`)}
                         onCreateAnnotation={handleCreateAnnotation}
                         onContextBuffered={handleContextBuffered}
+                        passageMarks={passageMarks}
+                        onAddPassageMark={addPassageMark}
+                        onRemovePassageMark={removePassageMark}
                       />
                       {section.sourceId && (
                         <L3SourceNotesDrawer sourceId={section.sourceId} bufferedIds={bufferedContextIds} />
@@ -1269,6 +1484,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                           onToggleFlag={(flag) => toggleFlag(q.id, flag)}
                           optionFlags={answers[q.id]?.optionFlags}
                           onToggleOptionDoubt={(key) => toggleOptionDoubt(q.id, key)}
+                          stemMarks={(answers[q.id]?.marks ?? []).filter((mark) => mark.scope === "stem")}
+                          onToggleStemMark={(anchor) => toggleStemMark(q.id, anchor)}
                         />
                       </div>
                     ))}
@@ -1291,6 +1508,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                       onToggleFlag={(flag) => toggleFlag(q.id, flag)}
                       optionFlags={answers[q.id]?.optionFlags}
                       onToggleOptionDoubt={(key) => toggleOptionDoubt(q.id, key)}
+                      stemMarks={(answers[q.id]?.marks ?? []).filter((mark) => mark.scope === "stem")}
+                      onToggleStemMark={(anchor) => toggleStemMark(q.id, anchor)}
                     />
                   ))}
                 </div>

@@ -106,6 +106,58 @@ describe("buildPassageSpans", () => {
   });
 });
 
+describe("buildPassageSpans · marks 通道（v2 §4.6 划重点）", () => {
+  it("emits mark spans for passage marks", () => {
+    const spans = buildPassageSpans("abcdefgh", { marks: [{ start: 2, end: 6 }] });
+    expect(spans.map((s) => [s.kind, s.start, s.end])).toEqual([
+      ["text", 0, 2],
+      ["mark", 2, 6],
+      ["text", 6, 8],
+    ]);
+  });
+
+  it("precedence: blank > evidence > mark > annotation（底色冲突时官方/结构优先）", () => {
+    // blank 覆盖 mark
+    expect(buildPassageSpans("x〖1〗y", { marks: [{ start: 0, end: 5 }] }).map((s) => s.kind))
+      .toEqual(["mark", "blank", "mark"]);
+    // evidence 覆盖 mark（解析模式）
+    expect(buildPassageSpans("abcdefgh", {
+      evidence: [{ start: 2, end: 6 }],
+      marks: [{ start: 4, end: 8 }],
+      showEvidence: true,
+    }).map((s) => [s.kind, s.start, s.end])).toEqual([
+      ["text", 0, 2],
+      ["evidence", 2, 6],
+      ["mark", 6, 8],
+    ]);
+    // mark 覆盖 annotation（marks 无其他出口；注记在题卡列表仍可见）
+    expect(buildPassageSpans("abcdefgh", {
+      marks: [{ start: 2, end: 6 }],
+      annotations: [{ id: "a1", anchorStart: 4, anchorEnd: 8 }],
+    }).map((s) => [s.kind, s.start, s.end])).toEqual([
+      ["text", 0, 2],
+      ["mark", 2, 6],
+      ["annotation", 6, 8],
+    ]);
+  });
+
+  it("parseBlanks: false keeps 〖n〗 as plain text（题干渲染用）", () => {
+    const spans = buildPassageSpans("21. 〖1〗的含义", { parseBlanks: false, marks: [{ start: 4, end: 7 }] });
+    expect(spans.map((s) => [s.kind, s.start, s.end])).toEqual([
+      ["text", 0, 4],
+      ["mark", 4, 7],
+      ["text", 7, 10],
+    ]);
+  });
+
+  it("drops out-of-range or inverted marks", () => {
+    const spans = buildPassageSpans("short", {
+      marks: [{ start: -1, end: 2 }, { start: 3, end: 99 }, { start: 1, end: 1 }],
+    });
+    expect(kinds(spans)).toEqual(["text"]);
+  });
+});
+
 describe("enclosingSentence", () => {
   it("expands to the nearest Chinese/English sentence boundaries", () => {
     const content = "第一句很短。第二句藏着考点词在这里！第三句。";
