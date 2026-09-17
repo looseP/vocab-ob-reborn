@@ -181,6 +181,29 @@ describe("compareOpenApiDocuments", () => {
     expect(compareOpenApiDocuments(base, structuredClone(base))).toEqual([]);
   });
 
+  it("组合键自身未变化时不再整体放弃：常规键照常比较（T11 误报剔除）", () => {
+    // 模拟 answers 场景：propertyNames 未变、常规键 type 变化 → 应出精准 breaking
+    const propertyNames = { type: "string", format: "uuid" };
+    const base = document({ type: "object", propertyNames, additionalProperties: { type: "string" } });
+    const changedType = document({ type: "object", propertyNames, additionalProperties: { type: "string" }, minProperties: 1 });
+    expect(messages(base, changedType)).toContain("request minProperties 收紧");
+    const issues = compareOpenApiDocuments(base, changedType);
+    expect(issues.some((entry) => entry.kind === "unknown")).toBe(false);
+  });
+
+  it("组合键未变化且仅答案值形状变化时不再误报（T11 场景等价重现）", () => {
+    const propertyNames = { type: "string", format: "uuid" };
+    const withAnswers = (value: unknown) => document({
+      type: "object",
+      properties: { answers: { type: "object", propertyNames, additionalProperties: value } },
+    });
+    const base = withAnswers({ $ref: "#/components/schemas/JsonValue" });
+    (base as Record<string, any>).components = { schemas: { JsonValue: { anyOf: [{ type: "string" }, { type: "null" }] } } };
+    const current = withAnswers({ anyOf: [{ type: "object", additionalProperties: false }, { type: "null" }] });
+    (current as Record<string, any>).components = { schemas: { JsonValue: { anyOf: [{ type: "string" }, { type: "null" }] } } };
+    expect(compareOpenApiDocuments(base, current)).toEqual([]);
+  });
+
   it("检测删除 required response header", () => {
     const base = document();
     base.paths["/words"].post.responses["200"].headers = {

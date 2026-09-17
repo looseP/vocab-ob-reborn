@@ -837,6 +837,8 @@ export interface DeleteL3QuestionInput {
 export type CreateQuestionAnnotationInput = { userId: string } & QuestionAnnotationInput;
 export type PatchQuestionAnnotationInput = { userId: string; id: string } & QuestionAnnotationPatch;
 export type ReplaceAnnotationTagsInput = { userId: string } & AnnotationTagDict;
+/** v2 §4.7 撤回：sheetId 缺省时借原题纸作用域幂等开新纸（service 编排收口）。 */
+export type WithdrawQuestionAnnotationInput = { userId: string; id: string; sheetId?: string };
 
 // ── 批次二（0034）：题纸与作答历史（ADR-0034）────────────────────────────
 export type OpenL3SheetInput = { userId: string } & SheetOpenInput;

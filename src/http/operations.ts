@@ -144,6 +144,7 @@ import {
   l3QuestionAnnotationCreateSchema,
   l3QuestionAnnotationListQuerySchema,
   l3QuestionAnnotationPatchSchema,
+  l3QuestionAnnotationWithdrawSchema,
   l3AnnotationTagDictSchema,
   l3SheetOpenSchema,
   l3SheetPatchSchema,
@@ -467,6 +468,8 @@ export const apiOperations = [
   operation("post", "/api/l3/question-annotations", "createQuestionAnnotation", "owner", "owner", "sessionMutation", { body: l3QuestionAnnotationCreateSchema }, 201, l3QuestionAnnotationItemResponseSchema),
   operation("patch", "/api/l3/question-annotations/:id", "patchQuestionAnnotation", "owner", "owner", "sessionMutation", { body: l3QuestionAnnotationPatchSchema }, 200, l3QuestionAnnotationItemResponseSchema),
   operation("delete", "/api/l3/question-annotations/:id", "deleteQuestionAnnotation", "owner", "owner", "sessionMutation", undefined, 204, z.null()),
+  // v2 §4.7 撤回：submitted→draft（重挂题纸；owner-only 做题台面）。
+  operation("post", "/api/l3/question-annotations/:id/withdraw", "withdrawQuestionAnnotation", "owner", "owner", "sessionMutation", { body: l3QuestionAnnotationWithdrawSchema }, 200, l3QuestionAnnotationItemResponseSchema),
   operation("get", "/api/l3/annotation-tags", "getAnnotationTags", "owner", "owner", "none", undefined, 200, l3AnnotationTagDictResponseSchema),
   operation("put", "/api/l3/annotation-tags", "replaceAnnotationTags", "owner", "owner", "sessionMutation", { body: l3AnnotationTagDictSchema }, 200, l3AnnotationTagDictResponseSchema),
   // 批次二：题纸与作答历史（owner-only——做题台面是私人数据，读也不开放给 agent）。

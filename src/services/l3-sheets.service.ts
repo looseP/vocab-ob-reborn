@@ -29,7 +29,14 @@ import type {
   L3QuestionAttemptRow,
   L3SubmissionRow,
 } from "../domain";
-import { buildSheetScopeKey, countUnansweredQuestions, sheetStatusAfterSeal } from "../domain/l3-sheets";
+import {
+  buildAttemptSelfAssessment,
+  buildSheetScopeKey,
+  countRecheckQuestions,
+  countUnansweredQuestions,
+  sheetStatusAfterSeal,
+  stripAnswerSubjectiveFields,
+} from "../domain/l3-sheets";
 import { resolveSheetScopedQuestions } from "./l3-sheet-scope";
 import type {
   OpenL3SheetInput,
@@ -138,6 +145,7 @@ export class L3SheetService {
   async sealSheet(input: SealL3SheetInput): Promise<{
     sheet: L3SubmissionRow;
     unansweredCount: number;
+    recheckCount: number;
     materializedCount: number;
     promotedAnnotationCount: number;
   }> {
@@ -160,9 +168,12 @@ export class L3SheetService {
 
       const scopedIds = scoped.map((question) => question.id);
       const unansweredCount = countUnansweredQuestions(scopedIds, sheet.answers);
+      // v2 §10：待复查（flags.recheck）为流程状态——进软确认提示，不物化、不阻断。
+      const recheckCount = countRecheckQuestions(scopedIds, sheet.answers);
       if (unansweredCount > 0 && !input.acknowledgeUnanswered) {
         throw new ConflictError("unanswered questions require soft confirmation", undefined, {
           unansweredCount,
+          recheckCount,
         });
       }
 
@@ -187,9 +198,10 @@ export class L3SheetService {
               question_id: question.id,
               sheet_id: input.sheetId,
               venue: sheet.scope,
-              answer: sheet.answers[question.id],
-              // 批次二无自评采集路径（列先落库；批次三评卷/自评交互接入时填）。
-              self_assessment: null,
+              // v2 §2.1：attempt 只存作答事实（主观字段剥离，进 self_assessment）。
+              answer: stripAnswerSubjectiveFields(sheet.answers[question.id]),
+              // v2 §4.6/§10：当场主观状态快照（旗标+选项存疑+标记）；三键全空为 null。
+              self_assessment: buildAttemptSelfAssessment(sheet.answers[question.id]),
             })),
           );
           materializedCount = rows.length;
@@ -206,7 +218,7 @@ export class L3SheetService {
         });
       }
 
-      return { sheet: settled, unansweredCount, materializedCount, promotedAnnotationCount };
+      return { sheet: settled, unansweredCount, recheckCount, materializedCount, promotedAnnotationCount };
     });
   }
 

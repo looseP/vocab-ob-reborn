@@ -1,6 +1,6 @@
 # ADR-0034: 题纸、作答历史题中心化与草稿注记 stage 生命周期（定格三档 + 冻结导出）
 
-- **Status**: Accepted
+- **Status**: Accepted（v2 增补 2026-09-17：设计卡 v2 裁决，钉增补条 7–12，增补批 T11 随行）
 - **Date**: 2026-09-17
 - **Amends**: ADR-0030（**仅声明修订，不修改原文**——ADR 不可变）：将其「payload 是引用不是冻结快照」哲学推广到作答侧（attempts 是唯一作答真源，题纸不冻第二份副本）；ADR-0033 §5（注记面从「agent 连读都不开放」修订为「提交即授权、按题纸作用域收口」，见 §4）
 - **References**: ADR-0025（可携带导出契约——冻结导出对齐版本化 + 原子写 + manifest 模式）、ADR-0029（owner/agent 边界与授权注册表）、ADR-0019 §4（子空间/错题派生/计划存引用）、ADR-0004 §6（L3 零 FSRS）、设计卡《L3 题纸与草稿注记设计卡》（2026-09-17，D7–D12 定稿）、任务表《L3 批次二任务分解》（2026-09-17）
@@ -64,6 +64,22 @@
 - 定格后可导出**只出不进**的冻结档案：文章 + 题面 + 答案（attempts）+ 草稿注记（锚点 `==高亮==`）+ 评审 + 统计；**Markdown 起步**（贴 agent 友好），带 `exportSchemaVersion`（起步 1）。
 - 复用 ADR-0025 的原子写 + manifest + sha256 模式与**单一代码路径纪律**；**不回灌**（避免第二真相源），导入语义不在本批。
 
+### 7. v2 增补条款（2026-09-17 增补批，设计卡 §7 必钉 7–12）
+
+> 以下为设计卡 v2（2026-09-17 同学裁决）钉入的增补决策；§1–§6 已实施部分不动，本条为增量约束。
+
+**7. stage 可变矩阵 + 撤回通道**（设计卡 §4.7）：`draft` 可编辑（现状不变）；`submitted` **锁定**（PATCH 409——评审输入不可变，要改走撤回通道）；`confirmed` **owner 可编辑**（保批次三「采纳归 owner」通道；`review` 段永远只读）。撤回通道 `POST /api/l3/annotations/:id/withdraw`（submitted→draft）：入参当前上下文题纸 sheetId（缺省时借原题纸作用域幂等开新纸），注记重挂该题纸、下次定格随新题纸重新升格——缺此通道会逼用户「删了重建」，破坏锚点幂等。
+
+**8. answers 显式键契约 + self_assessment 语义扩**（设计卡 §4.6/§10）：题纸 `answers` 立 zod strict 显式键 `{choice?, flags?: {doubt?, recheck?}, optionFlags?: string[], marks?: [{scope:'passage'|'stem', start, end}]}`——自由 jsonb 必须收口防腐化；PATCH 形状仍**纯 optional 无 default**（未提交键不被填充）；marks 同 scope+start+end 契约层去重（fail-closed）。attempts.self_assessment 语义扩为**当场主观状态快照** `{flags, optionFlags, marks}`：存疑（题级 flags.doubt + 选项级 optionFlags）与标记（marks）属认知状态，随定格物化进 self_assessment；待复查（仅题级 flags.recheck）属流程状态，进定格软确认计数（响应 `recheckCount`），**不物化**。
+
+**9. marks 非资产化**（设计卡 §4.6）：做题中「划重点」是轻痕迹、不是主张——**不进注记表、不立 stage、不升格**（避免资产囤积负担）；随题纸 answers 防抖保存（零迁移）；生命周期随题纸（增量/总结档随题纸弃）；**资产化出口 = 导出**（导出即档案化）；渲染纯底色高亮（无角标无徽标无 cursor，划词铁律），不进覆盖度视图；sealed 结果页从 `self_assessment.marks` 还原。
+
+**10. 评析区三层权限边界**（设计卡 §11，**Amends ADR-0029**）：新建 `l3_question_assessments`（一题一条共建沉淀区）。三层分轨——注记 = 用户原始主张（agent 只读 + review 段，红线不变）；**评析区 = owner/agent 共建**（同一 PUT 端点双身份，`last_editor` 留痕）——**agent 首个可写持久区**，ADR-0029「agent 不写持久数据」在本区显式开口，开口范围严格限于评析区；attempts = 不可变事实（双方都不可写）。
+
+**11. 评析区一题一条 upsert + last_editor 留痕**（设计卡 §11）：`(user_id, question_id)` UNIQUE；latest-wins **无历史版本**（last_editor + updated_at 留痕兜底）；**挂题不挂题纸**（跨题纸、跨 venue 永存）；与总结条双轨并存（总结条管场次、评析区管题目）。
+
+**12. 导出 v2 契约**（设计卡 §6）：三状态分流——draft = 快照语义（数据源 answers 实时读，默认 `withAnswers=0` 防自我剧透，页眉「草稿快照 + 导出时刻」）；sealed = 冻结档案语义（attempts 派生，默认 `withAnswers=1`）；discarded = 409。**单工件双读者**：Markdown 外壳（人读 / agent 直读）+ 尾部 ```json 全量结构化块（备份保真 / agent 解析），`exportSchemaVersion=2`；只出不进红线不变。
+
 ## Tradeoffs
 
 - **题纸信封 vs 作答历史单位**：题纸从「历史管理单位」降为「会话信封」，历史管理下沉到 attempts（题级）。代价是多一层 join（结果页按 sheet_id 派生前需读 sheet 行），收益是「一题一套」的管理粒度和「删单条不改写成绩」的语义自洽。
@@ -79,3 +95,10 @@
 - service/route：题纸开纸（幂等 200/201）/读（sealed 从 attempts 派生）/PATCH merge（非 draft 409）/定格（三档事务）/attempts 批量徽标 + 软删，7 端点 owner-only；`answerIndex`/标准答案绝不出现在做题模式响应（设计卡 D8）。
 - 前端：题纸栏（状态徽标 + 防抖保存）、定格三档 modal、题卡历史徽标 + modal 预览（含「去题型空间打开此文」深链）、draft 注记虚线分轨、覆盖度子区。
 - 批次三保留：agent 评卷执行面（MCP submit_grading）、`stage='submitted'→'confirmed'` 检验回写、标签统计聚合面板、`l3_grading_results` 建表；FSRS/l2/context 圈记体系一字不动。
+
+### v2 增补（2026-09-17 增补批，T11–T14）
+
+- 迁移 0035：`l3_question_assessments`（评析区，一题一条 upsert + last_editor；own_all RLS + vocab_app 四权 + converge/verifier 双落点 + 迁移计数断言 35→36）——**本系列唯一新表**（marks/旗标零迁移，走 answers jsonb）。
+- domain：`sheetAnswerSchema` strict 显式键 + 标记去重/切换纯函数 + `countRecheckQuestions` / `buildAttemptSelfAssessment` / `stripAnswerSubjectiveFields`；注记 stage 守卫谓词（`canEditAnnotation` / `canWithdrawAnnotation`）。
+- service/route：注记 PATCH 409 守卫 + 撤回端点（owner-only）；seal 响应加 `recheckCount`、full 档物化 `self_assessment={flags,optionFlags,marks}`；评析区 GET/PUT（**PUT 为 agent 首个写端点**，last_editor 按 actor 身份）；导出 v2 三状态分流 + withAnswers。
+- 前端：题卡旗钮（待复查/存疑）+ 选项级存疑钮、文栏「标记重点」分支（marks 高亮）、题卡「评析」子区、导出弹层（withAnswers 开关 + 复制全文）。

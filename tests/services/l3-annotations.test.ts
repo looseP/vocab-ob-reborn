@@ -83,6 +83,8 @@ function makeAnnotationRepo(overrides: Partial<IL3AnnotationRepository> = {}): I
     replaceTags: vi.fn(async () => []),
     listDraftBySheet: vi.fn(async () => []),
     listAnnotationsBySheet: vi.fn(async () => []),
+    getAnnotation: vi.fn(async () => null),
+    withdrawAnnotation: vi.fn(async () => null),
     promoteBySheet: vi.fn(async () => []),
     insertSummaryAnnotation: vi.fn(async () => annotationRow()),
     ...overrides,
@@ -369,5 +371,94 @@ describe("L3AnnotationService.createAnnotation · 批次二草稿注记", () => 
     expect(annotationRepo.insertAnnotation).toHaveBeenCalledWith(
       expect.objectContaining({ stage: "confirmed", sheet_id: null }),
     );
+  });
+});
+
+describe("L3AnnotationService（v2 §4.7：stage 守卫与撤回）", () => {
+  const SHEET_ID = "00000000-0000-4000-8000-000000000401";
+  const ORIGIN_SHEET_ID = "00000000-0000-4000-8000-000000000402";
+  const SOURCE_ID = "00000000-0000-4000-8000-000000000302";
+
+  it("409s patching a submitted annotation（评审输入不可变，走撤回）", async () => {
+    const annotationRepo = makeAnnotationRepo({
+      updateAnnotation: vi.fn(async () => null),
+      getAnnotation: vi.fn(async () => annotationRow({ stage: "submitted", sheet_id: SHEET_ID })),
+    });
+    const service = makeService(annotationRepo, makePaperRepo(questionRow()));
+    const rejected = await service.patchAnnotation({ userId: USER_ID, id: ANNOTATION_ID, note: "改文" })
+      .catch((error) => error);
+    expect(rejected).toBeInstanceOf(ConflictError);
+    expect((rejected as ConflictError).meta).toMatchObject({ stage: "submitted" });
+  });
+
+  it("404s patching when the guard misses and the row does not exist", async () => {
+    const annotationRepo = makeAnnotationRepo({
+      updateAnnotation: vi.fn(async () => null),
+      getAnnotation: vi.fn(async () => null),
+    });
+    const service = makeService(annotationRepo, makePaperRepo(questionRow()));
+    await expect(service.patchAnnotation({ userId: USER_ID, id: ANNOTATION_ID, note: "改文" }))
+      .rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("withdraw re-pins the annotation to the provided draft sheet", async () => {
+    const annotationRepo = makeAnnotationRepo({
+      getAnnotation: vi.fn(async () => annotationRow({ stage: "submitted", sheet_id: ORIGIN_SHEET_ID })),
+      withdrawAnnotation: vi.fn(async () => annotationRow({ stage: "draft", sheet_id: SHEET_ID })),
+    });
+    const service = makeService(
+      annotationRepo,
+      makePaperRepo(questionRow()),
+      makeSheetRepo(submissionRow({ id: SHEET_ID, status: "draft" })),
+    );
+    const result = await service.withdrawAnnotation({ userId: USER_ID, id: ANNOTATION_ID, sheetId: SHEET_ID });
+    expect(result.item.stage).toBe("draft");
+    expect(annotationRepo.withdrawAnnotation).toHaveBeenCalledWith(USER_ID, ANNOTATION_ID, SHEET_ID);
+  });
+
+  it("withdraw without a sheetId reopens by the original scope key and re-pins there", async () => {
+    const origin = submissionRow({
+      id: ORIGIN_SHEET_ID, status: "sealed", scope: "file",
+      scope_key: `file:${SOURCE_ID}:reading_choice`, source_id: SOURCE_ID, question_type: "reading_choice",
+    });
+    const reopened = submissionRow({ id: SHEET_ID, status: "draft" });
+    const annotationRepo = makeAnnotationRepo({
+      getAnnotation: vi.fn(async () => annotationRow({ stage: "submitted", sheet_id: ORIGIN_SHEET_ID })),
+      withdrawAnnotation: vi.fn(async () => annotationRow({ stage: "draft" })),
+    });
+    const sheetRepo = makeSheetRepo(null);
+    (sheetRepo.getSheet as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_u: string, id: string) => (id === ORIGIN_SHEET_ID ? origin : null),
+    );
+    (sheetRepo.openSheet as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => ({ row: reopened, created: false }),
+    );
+    const service = makeService(annotationRepo, makePaperRepo(questionRow()), sheetRepo);
+
+    await service.withdrawAnnotation({ userId: USER_ID, id: ANNOTATION_ID });
+    expect(sheetRepo.openSheet).toHaveBeenCalledWith(expect.objectContaining({
+      user_id: USER_ID, scope: "file", scope_key: `file:${SOURCE_ID}:reading_choice`,
+    }));
+    expect(annotationRepo.withdrawAnnotation).toHaveBeenCalledWith(USER_ID, ANNOTATION_ID, SHEET_ID);
+  });
+
+  it("409s withdrawing a draft annotation（只有 submitted 可撤回）", async () => {
+    const annotationRepo = makeAnnotationRepo({
+      getAnnotation: vi.fn(async () => annotationRow({ stage: "draft", sheet_id: SHEET_ID })),
+    });
+    const service = makeService(annotationRepo, makePaperRepo(questionRow()));
+    const rejected = await service.withdrawAnnotation({ userId: USER_ID, id: ANNOTATION_ID })
+      .catch((error) => error);
+    expect(rejected).toBeInstanceOf(ConflictError);
+    expect(annotationRepo.withdrawAnnotation).not.toHaveBeenCalled();
+  });
+
+  it("404s withdrawing a missing annotation", async () => {
+    const annotationRepo = makeAnnotationRepo({
+      getAnnotation: vi.fn(async () => null),
+    });
+    const service = makeService(annotationRepo, makePaperRepo(questionRow()));
+    await expect(service.withdrawAnnotation({ userId: USER_ID, id: ANNOTATION_ID }))
+      .rejects.toBeInstanceOf(NotFoundError);
   });
 });

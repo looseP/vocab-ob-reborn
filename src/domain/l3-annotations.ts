@@ -126,6 +126,20 @@ export function canConfirmAnnotationStage(stage: string): boolean {
   return stage === "submitted";
 }
 
+/**
+ * stage 可变矩阵（v2 §4.7，ADR-0034 增补条 7）：draft 可编辑；submitted 锁定
+ * （PATCH 409——评审输入不可变，要改走撤回通道）；confirmed owner 可编辑
+ * （保「采纳归 owner」通道；review 段永远只读）。
+ */
+export function canEditAnnotation(stage: string): boolean {
+  return stage === "draft" || stage === "confirmed";
+}
+
+/** 撤回谓词（v2 §4.7）：仅 submitted 可撤回到 draft（重挂当前题纸重新升格）。 */
+export function canWithdrawAnnotation(stage: string): boolean {
+  return stage === "submitted";
+}
+
 /** 覆盖度视图输入：只需 option_tags（行结构最小切片，避免 domain 依赖行类型）。 */
 export interface AnnotationCoverageInput {
   optionTags: Partial<Record<AnnotationOptionKey, string[]>>;

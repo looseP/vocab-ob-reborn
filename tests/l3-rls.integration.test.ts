@@ -431,7 +431,7 @@ describe("L3 RLS isolation (integration)", () => {
            (id, user_id, scope, scope_key, source_id, question_type, status, answers)
          VALUES ($1, $2, 'file', $3, $4, 'reading_choice', 'draft', $5::jsonb)`,
         [aSheetId, ACTOR_A, `file:${aSheetSourceId}:reading_choice`, aSheetSourceId,
-          JSON.stringify({ [aSheetQuestionId]: { selected: "B" } })],
+          JSON.stringify({ [aSheetQuestionId]: { choice: "B" } })],
       );
       // 草稿注记挂题纸（stage='draft'）
       await tx.query(
@@ -443,7 +443,7 @@ describe("L3 RLS isolation (integration)", () => {
       await tx.query(
         `INSERT INTO l3_question_attempts (id, user_id, question_id, sheet_id, venue, answer)
          VALUES ($1, $2, $3, $4, 'file', $5::jsonb)`,
-        [aAttemptId, ACTOR_A, aSheetQuestionId, aSheetId, JSON.stringify({ selected: "B" })],
+        [aAttemptId, ACTOR_A, aSheetQuestionId, aSheetId, JSON.stringify({ choice: "B" })],
       );
       const promoted = await tx.query(
         `UPDATE l3_question_annotations SET stage = 'submitted', updated_at = now()
@@ -468,7 +468,7 @@ describe("L3 RLS isolation (integration)", () => {
     const attempt = await adminPool.query<{ answer: unknown }>(
       "SELECT answer FROM l3_question_attempts WHERE id = $1", [aAttemptId],
     );
-    expect(attempt.rows[0]!.answer).toEqual({ selected: "B" });
+    expect(attempt.rows[0]!.answer).toEqual({ choice: "B" });
     const promotedStage = await adminPool.query<{ stage: string }>(
       "SELECT stage FROM l3_question_annotations WHERE id = $1", [aDraftAnnotationId],
     );

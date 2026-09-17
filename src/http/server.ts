@@ -35,6 +35,7 @@ import { l3SummaryRoutes } from "./routes/l3/summary";
 import { l3SourceSpacesRoutes } from "./routes/l3/spaces";
 import { papersRoutes } from "./routes/l3/papers";
 import { annotationsRoutes } from "./routes/l3/annotations";
+import { annotationsWithdrawRoutes } from "./routes/l3/annotations-withdraw";
 import { sheetsRoutes } from "./routes/l3/sheets";
 import { sheetsExportRoutes } from "./routes/l3/sheets-export";
 import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
@@ -147,6 +148,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3", papersRoutes(services));
   // 批次一：做题注记（原文分析）与规律标签字典（独立薄路由——index.ts 棘轮冻结）。
   app.route("/api/l3", annotationsRoutes(services));
+  // v2 §4.7：注记撤回（annotations.ts 受棘轮约束，新端点独立薄路由拆分）。
+  app.route("/api/l3", annotationsWithdrawRoutes(services));
   // 批次二：题纸（开纸/读/merge/定格）与作答历史（批量/软删）（独立薄路由——
   // index.ts 棘轮冻结，同 annotations/papers 先例直挂）。
   app.route("/api/l3", sheetsRoutes(services));

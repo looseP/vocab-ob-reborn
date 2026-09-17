@@ -19,10 +19,12 @@ import type {
 } from "../repositories/interfaces";
 import type { L3AnnotationTagKind, L3AnnotationTagRow, L3QuestionAnnotationRow } from "../domain";
 import { PRESET_ENTRY_TAGS, PRESET_OPTION_TAGS } from "../domain/l3-annotations";
+import { buildSheetScopeKey } from "../domain/l3-sheets";
 import type {
   CreateQuestionAnnotationInput,
   PatchQuestionAnnotationInput,
   ReplaceAnnotationTagsInput,
+  WithdrawQuestionAnnotationInput,
 } from "../schemas/service";
 
 type TxRunner = typeof withTransaction;
@@ -126,7 +128,78 @@ export class L3AnnotationService {
         }
       }
       const item = await repos.l3Annotations.updateAnnotation(input.userId, input.id, dbPatch);
-      if (!item) throw new NotFoundError("L3QuestionAnnotation", input.id);
+      if (item) return { item };
+      // v2 §4.7 守卫判别：条件 UPDATE 空转 → 缺行 404 / submitted 锁定 409（走撤回）。
+      const existing = await repos.l3Annotations.getAnnotation(input.userId, input.id);
+      if (!existing) throw new NotFoundError("L3QuestionAnnotation", input.id);
+      throw new ConflictError("annotation is submitted (locked); withdraw it before editing", undefined, {
+        annotationId: input.id,
+        stage: existing.stage,
+      });
+    });
+  }
+
+  /**
+   * v2 §4.7 撤回通道：submitted→draft + 重挂题纸（下次定格随新题纸重新升格）。
+   * sheetId 缺省时借原题纸作用域幂等开新纸；提供的 sheetId 必须是本人在写 draft。
+   */
+  async withdrawAnnotation(input: WithdrawQuestionAnnotationInput): Promise<{ item: L3QuestionAnnotationRow }> {
+    return this.withActor(input.userId, async (repos) => {
+      const annotation = await repos.l3Annotations.getAnnotation(input.userId, input.id);
+      if (!annotation) throw new NotFoundError("L3QuestionAnnotation", input.id);
+      if (annotation.stage !== "submitted") {
+        throw new ConflictError("only submitted annotations can be withdrawn", undefined, {
+          annotationId: input.id,
+          stage: annotation.stage,
+        });
+      }
+
+      let sheetId: string;
+      if (input.sheetId) {
+        const sheet = await repos.l3Sheets.getSheet(input.userId, input.sheetId);
+        if (!sheet) throw new NotFoundError("L3Sheet", input.sheetId);
+        if (sheet.status !== "draft") {
+          throw new ConflictError("a draft sheet is required to withdraw", undefined, {
+            sheetId: input.sheetId,
+            status: sheet.status,
+          });
+        }
+        sheetId = sheet.id;
+      } else {
+        // 无上下文题纸：借原题纸作用域幂等开新纸（file→source+questionType；paper→paperId）。
+        const origin = annotation.sheet_id
+          ? await repos.l3Sheets.getSheet(input.userId, annotation.sheet_id)
+          : null;
+        if (!origin) {
+          throw new ConflictError("annotation has no sheet context to reopen", undefined, {
+            annotationId: input.id,
+          });
+        }
+        const scopeKey = origin.scope === "file"
+          ? (origin.source_id && origin.question_type
+            ? buildSheetScopeKey({ scope: "file", sourceId: origin.source_id, questionType: origin.question_type })
+            : null)
+          : (origin.paper_id
+            ? buildSheetScopeKey({ scope: "paper", paperId: origin.paper_id })
+            : null);
+        if (!scopeKey) {
+          throw new ConflictError("origin sheet scope is incomplete", undefined, { sheetId: origin.id });
+        }
+        const { row } = await repos.l3Sheets.openSheet({
+          user_id: input.userId,
+          scope: origin.scope,
+          scope_key: scopeKey,
+          source_id: origin.source_id,
+          question_type: origin.question_type,
+          paper_id: origin.paper_id,
+        });
+        sheetId = row.id;
+      }
+
+      const item = await repos.l3Annotations.withdrawAnnotation(input.userId, input.id, sheetId);
+      if (!item) {
+        throw new ConflictError("annotation is no longer withdrawable", undefined, { annotationId: input.id });
+      }
       return { item };
     });
   }

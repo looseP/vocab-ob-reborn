@@ -56,7 +56,7 @@ function attemptItem(overrides: Partial<L3QuestionAttemptRow> = {}): L3QuestionA
     question_id: QUESTION_ID,
     sheet_id: SHEET_ID,
     venue: "file",
-    answer: { selected: "B" },
+    answer: { choice: "B" },
     self_assessment: null,
     status: "active",
     deleted_at: null,
@@ -124,18 +124,18 @@ describe("GET /api/l3/sheets/:id", () => {
 
 describe("PATCH /api/l3/sheets/:id", () => {
   it("merges per-question answers and returns the sheet", async () => {
-    const patchSheet = vi.fn(async () => ({ sheet: sheetItem({ answers: { [QUESTION_ID]: { selected: "C" } } }) }));
+    const patchSheet = vi.fn(async () => ({ sheet: sheetItem({ answers: { [QUESTION_ID]: { choice: "C" } } }) }));
     const app = createApp(makeServices({ patchSheet }));
     const res = await app.request(`/api/l3/sheets/${SHEET_ID}`, {
       method: "PATCH",
       headers: AUTH_HEADERS,
-      body: JSON.stringify({ answers: { [QUESTION_ID]: { selected: "C" }, [PAPER_ID]: null } }),
+      body: JSON.stringify({ answers: { [QUESTION_ID]: { choice: "C" }, [PAPER_ID]: null } }),
     });
     expect(res.status).toBe(200);
     expect(patchSheet).toHaveBeenCalledWith(expect.objectContaining({
       userId: "user-123",
       sheetId: SHEET_ID,
-      answers: { [QUESTION_ID]: { selected: "C" }, [PAPER_ID]: null },
+      answers: { [QUESTION_ID]: { choice: "C" }, [PAPER_ID]: null },
     }));
   });
 
@@ -155,6 +155,7 @@ describe("POST /api/l3/sheets/:id/seal", () => {
     const sealSheet = vi.fn(async () => ({
       sheet: sheetItem({ status: "sealed", seal_mode: "full" }),
       unansweredCount: 0,
+      recheckCount: 1,
       materializedCount: 2,
       promotedAnnotationCount: 1,
     }));
@@ -165,8 +166,9 @@ describe("POST /api/l3/sheets/:id/seal", () => {
       body: JSON.stringify({ mode: "full" }),
     });
     expect(res.status).toBe(200);
-    const body = await res.json() as { materializedCount: number; unansweredCount: number };
+    const body = await res.json() as { materializedCount: number; unansweredCount: number; recheckCount: number };
     expect(body.materializedCount).toBe(2);
+    expect(body.recheckCount).toBe(1);
     expect(sealSheet).toHaveBeenCalledWith(expect.objectContaining({
       userId: "user-123", sheetId: SHEET_ID, mode: "full", acknowledgeUnanswered: false,
     }));

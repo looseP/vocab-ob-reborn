@@ -323,3 +323,61 @@ describe("L3AnnotationRepository batch-2 sheet helpers", () => {
     })).rejects.toThrow("summary annotation insert returned no row");
   });
 });
+
+describe("L3AnnotationRepository（v2 §4.7：stage 守卫与撤回）", () => {
+  const ANNOTATION = "00000000-0000-4000-8000-000000000201";
+  const SHEET_A = "00000000-0000-4000-8000-000000000401";
+  const SHEET_B = "00000000-0000-4000-8000-000000000402";
+
+  it("getAnnotation reads one active row for the owner", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(annotation({ stage: "submitted", sheet_id: SHEET_A }));
+    const row = await repo.getAnnotation(USER, ANNOTATION);
+    expect(row?.stage).toBe("submitted");
+    const [sql, params] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("status = 'active'");
+    expect(sql).toContain("id = $2::uuid");
+    expect(params).toEqual([USER, ANNOTATION]);
+  });
+
+  it("getAnnotation returns null when the row is missing or not owned", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await expect(repo.getAnnotation(USER, ANNOTATION)).resolves.toBeNull();
+  });
+
+  it("updateAnnotation guards stage <> 'submitted' on the SET path", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(annotation({ note: "改文" }));
+    await repo.updateAnnotation(USER, ANNOTATION, { note: "改文" });
+    const [sql] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("stage <> 'submitted'");
+  });
+
+  it("updateAnnotation guards the empty-patch read path too", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(annotation());
+    await repo.updateAnnotation(USER, ANNOTATION, {});
+    const [sql] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("stage <> 'submitted'");
+  });
+
+  it("withdrawAnnotation flips submitted→draft and re-pins the sheet", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(annotation({ stage: "draft", sheet_id: SHEET_B }));
+    const row = await repo.withdrawAnnotation(USER, ANNOTATION, SHEET_B);
+    expect(row?.stage).toBe("draft");
+    const [sql, params] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("SET stage = 'draft'");
+    expect(sql).toContain("sheet_id = $3::uuid");
+    expect(sql).toContain("stage = 'submitted'");
+    expect(sql).toContain("status = 'active'");
+    expect(params).toEqual([USER, ANNOTATION, SHEET_B]);
+  });
+
+  it("withdrawAnnotation returns null when the guard misses (not submitted)", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await expect(repo.withdrawAnnotation(USER, ANNOTATION, SHEET_B)).resolves.toBeNull();
+  });
+});

@@ -125,6 +125,62 @@
 
 ---
 
+## 增补批（T11–T14，设计卡 v2 · 2026-09-17 同学裁决）
+
+前置：T1–T10 已交付；ADR-0034 已存在——T11 含 **ADR-0034 修订**（追加设计卡 v2 增补必钉 7–12 条款，不动已实施部分）。
+
+### B2-T11 · 旗标契约 + 注记 stage 守卫与撤回
+
+| 项 | 内容 |
+|---|---|
+| 落点 | `src/domain/l3-sheets.ts`（answers 契约）、`src/domain/l3-annotations.ts`（stage 谓词）、`l3-annotations.service.ts`、`routes/l3/annotations.ts`（撤回端点）、`l3-sheets.service.ts`（seal 物化扩展）；ADR-0034 修订同提交 |
+| answers 契约 | `sheetAnswerSchema` strict 显式键 `{choice?, flags?: {doubt?, recheck?}, optionFlags?: string[], marks?: [{scope:'passage'\|'stem', start, end}]}`；PATCH 仍纯 optional 无 default；marks 同 scope+start+end 去重 |
+| stage 守卫 | 注记 PATCH：draft 可编辑；**submitted → 409**（提示走撤回）；confirmed owner 可编辑（`review` 段只读） |
+| 撤回端点 | `POST /api/l3/annotations/:id/withdraw`：入参 `{sheetId}`（当前上下文题纸，无则幂等开纸），submitted→draft + 重挂该题纸，下次定格随新题纸重新升格；operations 注册 owner/owner |
+| seal 扩展 | full 档物化 `self_assessment = {flags, optionFlags, marks}`（当场主观状态快照）；软确认加"N 题待复查"计数 |
+| 前端 | 题卡头部旗钮（待复查）+ 存疑钮；选项行尾悬停存疑钮；定格确认 modal 加待复查计数 |
+| 验收 | domain/http 用例（409 语义/撤回重挂/物化形状/去重）；api:governance 六步 |
+
+### B2-T12 · 内容标记 marks（零迁移）
+
+| 项 | 内容 |
+|---|---|
+| 落点 | `L3ExamPaper.tsx`（文栏第三分支 + 题干划词）、`examPassageSpans.ts`（marks 通道）、sealed 结果页还原 |
+| 交互 | 文栏浮动条加「标记重点」分支（与建原文分析/圈词并列，走题号选择器）；题干区划词捕获 `scope='stem'`（题号天然已知，跳过选择器）；点已有高亮 → 取消标记 |
+| 渲染 | 纯底色高亮，无角标无徽标无 cursor-pointer（划词铁律）；不进覆盖度视图；sealed 结果页从 `self_assessment.marks` 还原 |
+| 验收 | 组件测试（划选/去重/取消/还原）；分片纯函数 marks 通道用例 |
+
+### B2-T13 · 评析区（迁移 0035 + agent 首个写端点）
+
+| 项 | 内容 |
+|---|---|
+| 落点 | 迁移 0035 `l3_question_assessments`、`src/domain/l3-assessments.ts`（新）、repository/service/route（新文件直挂 server.ts + 棘轮登记）、operations.ts |
+| 表 | `(user_id, question_id)` UNIQUE；`question_id` FK→l3_questions CASCADE；`content_md`（≤20k）；`last_editor CHECK('owner','agent')`；RLS own_all 单条 FOR ALL；vocab_app 四权双落点；迁移计数断言 35→36 |
+| 端点 | `GET /api/l3/questions/:id/assessment`（无则空态）；`PUT` upsert `{contentMd}`，`last_editor` 按 actor 身份；归属 404 语义 |
+| 权限登记 | owner 读写 + **agent 读写（首个 agent 写端点，ADR-0029 修订同提交）**；注记内容、attempts 不可写红线不变 |
+| 前端 | 题卡「评析」子区：textarea 编辑 + 只读预览切换（不引 Markdown 编辑器依赖）；挂题不挂题纸 |
+| 验收 | RLS 集成追加（actor B 不可读/越权写空转）；service 用例（upsert 幂等/last_editor 覆写） |
+
+### B2-T14 · 导出 v2 收官
+
+| 项 | 内容 |
+|---|---|
+| 落点 | `l3-sheet-export.service.ts`（v2 模板）、路由（状态分流 + withAnswers）、前端题纸栏「导出」弹层 |
+| 模板 v2 | 页眉（`exportSchemaVersion=2` + sha256 + 状态/时间线）→ 原文（marks `==高亮==` + 注记锚点编号）→ 题面 → 作答与痕迹（choice/flags/marks/自评）→ 注记清单（stage+review）→ **评析段** → 统计（sealed）→ 尾部 ` ```json ` 全量块 |
+| 分流 | draft：answers 实时读，默认 withAnswers=0，页眉"草稿快照+导出时刻"；sealed：attempts 派生，默认 1；discarded → 409 |
+| 前端 | 导出按钮 + 选项弹层（withAnswers 开关）+ 复制全文（吸收 V3-T6 极简形态） |
+| 验收 | 三状态导出用例 + sha256 稳定 + json 块可解析 + 中文文案；全门禁收官 |
+
+### 增补批验收主线（收官手工走一遍）
+
+1. 做题中划题干关键词 + 原文重点 → 防抖保存 → 刷新还原；
+2. 题卡打「待复查」+ 选项「存疑」→ 定格软确认出现计数 → full 档定格 → sealed 结果页 marks/flags 还原；
+3. 注记 submitted 后 PATCH → 409；撤回 → 变 draft 重挂新题纸 → 下次定格重新 submitted；
+4. 评析区：owner 写一条 → agent 身份 PUT 覆写 → `last_editor='agent'` 留痕；
+5. draft 中途导出（默认不含答案）→ 模拟粘贴外部 agent；sealed 导出（含答案+评析）→ 尾部 json 块可解析。
+
+---
+
 ## 端到端验收主线（收官手工走一遍）
 
 1. **file venue**：打开 Text 1 → 题纸自动开（draft）→ 作答防抖保存 → 划线建草稿注记（虚线样式）→ 定格「完整记录」→ attempts 物化 + 注记升 submitted → 题卡徽标「做过 1 次」→ modal 预览历史 → 删一条 attempt → 题历史消失 / 结果页占位 / 统计不变。

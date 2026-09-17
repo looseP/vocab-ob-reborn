@@ -26,6 +26,12 @@ import {
   type SealModeValue,
 } from "@/frontend/api/l3Client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
+import {
+  countRecheckQuestions,
+  pruneSheetAnswer,
+  type SheetAnswer,
+  type SheetAnswerFlags,
+} from "@/domain/l3-sheets";
 import { L3AttemptHistoryModal } from "./L3AttemptHistoryModal";
 import { useToast } from "@/frontend/components/ui/Toast";
 
@@ -461,7 +467,7 @@ function PassageBody({
 }
 
 function OptionRow({
-  optionKey, text, state, selected = false, onSelect, readOnly = false,
+  optionKey, text, state, selected = false, onSelect, readOnly = false, doubt = false, onToggleDoubt,
 }: {
   optionKey: string;
   text: string;
@@ -470,6 +476,9 @@ function OptionRow({
   selected?: boolean;
   onSelect: () => void;
   readOnly?: boolean;
+  /** v2 §10：选项级存疑（行尾悬停钮 + 行内小字；随定格物化进 self_assessment）。 */
+  doubt?: boolean;
+  onToggleDoubt?: (key: string) => void;
 }) {
   const styles = selected
     ? "border-[var(--color-accent)] bg-[var(--color-accent-soft,var(--color-surface))]"
@@ -486,15 +495,31 @@ function OptionRow({
     muted: "border-[var(--color-border)] text-[var(--color-ink-soft)]",
   }[state];
   return (
-    <button type="button" onClick={onSelect} disabled={state !== "idle" || readOnly}
-      data-option-key={optionKey}
-      data-selected={selected ? "true" : undefined}
-      className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-all ${styles}`}>
-      <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold ${badge}`}>
-        {state === "correct" ? "✓" : state === "wrong" ? "✕" : optionKey}
-      </span>
-      <span className="leading-relaxed">{text}</span>
-    </button>
+    <div className="group flex items-stretch gap-1">
+      <button type="button" onClick={onSelect} disabled={state !== "idle" || readOnly}
+        data-option-key={optionKey}
+        data-selected={selected ? "true" : undefined}
+        className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-all ${styles}`}>
+        <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold ${badge}`}>
+          {state === "correct" ? "✓" : state === "wrong" ? "✕" : optionKey}
+        </span>
+        <span className="leading-relaxed">{text}</span>
+        {doubt && <span className="ml-auto shrink-0 whitespace-nowrap text-[10px] font-medium text-amber-600 dark:text-amber-400">存疑</span>}
+      </button>
+      {!readOnly && onToggleDoubt && (
+        <span
+          data-doubt-toggle={optionKey}
+          title={doubt ? "取消存疑" : "标记存疑（定格时随作答一起记录）"}
+          onClick={(event) => { event.stopPropagation(); onToggleDoubt(optionKey); }}
+          className={`flex w-6 shrink-0 cursor-pointer items-center justify-center rounded-lg border text-[11px] transition-all ${
+            doubt
+              ? "border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+              : "border-[var(--color-border)] text-[var(--color-ink-soft)] opacity-0 group-hover:opacity-100 hover:border-amber-400 hover:text-amber-600"
+          }`}>
+          ?
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -507,6 +532,10 @@ function ChoiceQuestion({
   analysis,
   readOnly = false,
   cleared = false,
+  flags,
+  onToggleFlag,
+  optionFlags,
+  onToggleOptionDoubt,
 }: {
   question: ExamQuestion;
   index: number;
@@ -517,15 +546,35 @@ function ChoiceQuestion({
   readOnly?: boolean;
   /** 结果页占位：该题作答记录已清理（内容不展示，尊重删除意图）。 */
   cleared?: boolean;
+  /** v2 §10：题级旗标（待复查 / 存疑）与选项级存疑（定格物化进 self_assessment）。 */
+  flags?: SheetAnswerFlags;
+  onToggleFlag?: (flag: "doubt" | "recheck") => void;
+  optionFlags?: string[];
+  onToggleOptionDoubt?: (key: string) => void;
 }) {
   const correct = question.answer.choice;
   return (
     <div className="rounded-xl border border-[var(--color-border)] p-3.5 transition-shadow hover:shadow-sm">
       <div className="mb-2.5 flex items-start gap-2">
-        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-soft,var(--color-surface))] text-xs font-bold text-[var(--color-accent)]">
+        <span className="relative mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-soft,var(--color-surface))] text-xs font-bold text-[var(--color-accent)]">
           {index}
+          {(flags?.doubt || flags?.recheck) && (
+            <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+          )}
         </span>
         <p className="text-sm font-medium leading-relaxed">{question.stem}</p>
+        {!readOnly && onToggleFlag && (
+          <span className="ml-auto flex shrink-0 items-center gap-1">
+            <button type="button" onClick={(event) => { event.stopPropagation(); onToggleFlag("recheck"); }}
+              className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${flags?.recheck ? "border-sky-500 bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300" : "border-[var(--color-border)] text-[var(--color-ink-soft)] hover:border-sky-400 hover:text-sky-600"}`}>
+              待复查
+            </button>
+            <button type="button" onClick={(event) => { event.stopPropagation(); onToggleFlag("doubt"); }}
+              className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${flags?.doubt ? "border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300" : "border-[var(--color-border)] text-[var(--color-ink-soft)] hover:border-amber-400 hover:text-amber-600"}`}>
+              存疑
+            </button>
+          </span>
+        )}
       </div>
       {cleared && (
         <p className="mb-2 inline-block rounded-md bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-ink-soft)] ring-1 ring-[var(--color-border)]">
@@ -549,6 +598,8 @@ function ChoiceQuestion({
               state={state}
               selected={!revealAll && picked === opt.key}
               readOnly={readOnly}
+              doubt={optionFlags?.includes(opt.key) ?? false}
+              onToggleDoubt={onToggleOptionDoubt}
               onSelect={() => onPick(opt.key)}
             />
           );
@@ -623,7 +674,9 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
 }) {
   const { addToast } = useToast();
   const [revealAll, setRevealAll] = useState(false);
-  const [picks, setPicks] = useState<Record<string, string>>({});
+  // v2：答案本地真源 = 完整 answer 对象（choice/flags/optionFlags/marks，ADR-0034
+  // 增补条 8）；picks（choice 投影）由 useMemo 派生，下游渲染与统计契约不变。
+  const [answers, setAnswers] = useState<Record<string, SheetAnswer>>({});
   const [activeBlank, setActiveBlank] = useState<number | null>(null);
   const [activeSection, setActiveSection] = useState(paper.sections[0]?.key ?? "");
   const [locate, setLocate] = useState<LocateTarget | null>(null);
@@ -641,6 +694,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
   const [sealBusy, setSealBusy] = useState(false);
   /** 「仍要定格」二次确认：第一次 409 后服务端给出的未答计数。 */
   const [sealUnanswered, setSealUnanswered] = useState<number | null>(null);
+  /** v2 §10：定格 modal 待复查计数（本地实时口径 + 服务端 409 复述）。 */
+  const [sealRecheck, setSealRecheck] = useState(0);
   // ── 批次二：作答历史（徽标/modal/派生渲染）──
   const [attempts, setAttempts] = useState<L3Attempt[]>([]);
   const [historyQuestionId, setHistoryQuestionId] = useState<string | null>(null);
@@ -651,6 +706,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
   const pendingAnswers = useRef<Record<string, unknown>>({});
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetRef = useRef<L3Sheet | null>(null);
+  const answersRef = useRef<Record<string, SheetAnswer>>({});
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
 
   // 进卷自动开纸（幂等）：paper venue 作用域键 paper:<id>，冲突复用既有 draft 行。
@@ -664,12 +720,17 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
         if (cancelled) return;
         setSheet(row);
         if (row.status === "draft") {
-          const restored: Record<string, string> = {};
+          const restored: Record<string, SheetAnswer> = {};
           for (const [questionId, value] of Object.entries(row.answers ?? {})) {
-            const choice = (value as { choice?: unknown } | null)?.choice;
-            if (typeof choice === "string") restored[questionId] = choice;
+            if (value && typeof value === "object" && !Array.isArray(value)) {
+              restored[questionId] = value as SheetAnswer;
+            }
           }
-          if (Object.keys(restored).length > 0) setPicks((prev) => ({ ...restored, ...prev }));
+          if (Object.keys(restored).length > 0) {
+            const merged = { ...restored, ...answersRef.current };
+            answersRef.current = merged;
+            setAnswers(merged);
+          }
         }
       })
       .catch(() => {
@@ -679,6 +740,16 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
   }, [paper.id, fileVenue?.sourceId, fileVenue?.questionType, addToast]);
 
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
+  useEffect(() => { answersRef.current = answers; }, [answers]);
+
+  /** choice 投影（下游渲染与统计沿用批次二契约，不感知完整对象形态）。 */
+  const picks = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const [questionId, answer] of Object.entries(answers)) {
+      if (typeof answer.choice === "string") map[questionId] = answer.choice;
+    }
+    return map;
+  }, [answers]);
 
   // 批次二：批量拉全部题的作答历史（题卡徽标数据源；跨 venue 同显）。
   useEffect(() => {
@@ -716,18 +787,71 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     flushTimer.current = setTimeout(() => { void flushAnswers(); }, 800);
   }, [flushAnswers]);
 
+  /**
+   * v2 草稿答案状态机：完整对象浅 merge → prune（空键清理）→ 整题入队 pending
+   * → 防抖 PATCH（服务端为题目键级整体替换，必须发送合并后的完整对象）。
+   * 定格后（sheet 非 draft）静默忽略——只读由渲染层与守卫双重收口。
+   */
+  const commitAnswer = useCallback((questionId: string, patch: Partial<SheetAnswer>) => {
+    if (sheetRef.current && sheetRef.current.status !== "draft") return;
+    const merged: SheetAnswer = { ...(answersRef.current[questionId] ?? {}), ...patch };
+    const next = pruneSheetAnswer(merged);
+    const updated = { ...answersRef.current };
+    if (next === null) {
+      delete updated[questionId];
+      pendingAnswers.current = { ...pendingAnswers.current, [questionId]: null };
+    } else {
+      updated[questionId] = next;
+      pendingAnswers.current = { ...pendingAnswers.current, [questionId]: next };
+    }
+    answersRef.current = updated;
+    setAnswers(updated);
+    scheduleSave();
+  }, [scheduleSave]);
+
+  /** v2 §10：题级旗标切换（待复查=流程状态 / 存疑=认知状态；取消即删键）。 */
+  const toggleFlag = useCallback((questionId: string, flag: "doubt" | "recheck") => {
+    const current = answersRef.current[questionId]?.flags ?? {};
+    const next: SheetAnswerFlags = { ...current };
+    if (next[flag]) delete next[flag];
+    else next[flag] = true;
+    commitAnswer(questionId, { flags: next });
+  }, [commitAnswer]);
+
+  /** v2 §10：选项级存疑切换（选项行尾悬停钮）。 */
+  const toggleOptionDoubt = useCallback((questionId: string, optionKey: string) => {
+    const current = answersRef.current[questionId]?.optionFlags ?? [];
+    const next = current.includes(optionKey)
+      ? current.filter((key) => key !== optionKey)
+      : [...current, optionKey];
+    commitAnswer(questionId, { optionFlags: next });
+  }, [commitAnswer]);
+
   /** sealed 派生（批次二）：picks 以 attempts 为准重算 + 结果页占位集合 + 本地历史并入。 */
   const deriveFromSheet = useCallback(async (sheetId: string) => {
     try {
       const { attempts: derived } = await fetchSheet(sheetId);
-      const restored: Record<string, string> = {};
+      const restored: Record<string, SheetAnswer> = {};
       const cleared = new Set<string>();
       for (const row of derived) {
         if (row.status === "deleted") { cleared.add(row.question_id); continue; }
-        const choice = (row.answer as { choice?: unknown } | null)?.choice;
-        if (typeof choice === "string") restored[row.question_id] = choice;
+        const answer = row.answer as { choice?: unknown } | null;
+        const assessment = row.self_assessment as {
+          flags?: SheetAnswerFlags;
+          optionFlags?: string[];
+          marks?: SheetAnswer["marks"];
+        } | null;
+        const next: SheetAnswer = {};
+        if (answer && typeof answer.choice === "string") next.choice = answer.choice;
+        if (assessment?.flags) next.flags = assessment.flags;
+        if (Array.isArray(assessment?.optionFlags) && assessment.optionFlags.length > 0) {
+          next.optionFlags = assessment.optionFlags;
+        }
+        if (Array.isArray(assessment?.marks) && assessment.marks.length > 0) next.marks = assessment.marks;
+        if (Object.keys(next).length > 0) restored[row.question_id] = next;
       }
-      setPicks(restored);
+      answersRef.current = restored;
+      setAnswers(restored);
       setClearedQuestions(cleared);
       setSheetStats({ total: derived.length, cleared: cleared.size });
       setAttempts((prev) => {
@@ -786,8 +910,11 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
 
   const openSealModal = useCallback(() => {
     setSealUnanswered(null);
+    // v2 §10：待复查计数（本地实时口径；服务端 409/定格响应同源复核）。
+    const scopeIds = paper.sections.flatMap((section) => section.questionIds);
+    setSealRecheck(countRecheckQuestions(scopeIds, answersRef.current));
     setSealOpen(true);
-  }, []);
+  }, [paper.sections]);
 
   const submitSeal = useCallback(async (acknowledgeUnanswered: boolean) => {
     const current = sheetRef.current;
@@ -810,9 +937,10 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
       void deriveFromSheet(result.sheet.id);
     } catch (error) {
       if (error instanceof BrowserApiError && error.status === 409) {
-        const details = error.details as { unansweredCount?: number } | null;
+        const details = error.details as { unansweredCount?: number; recheckCount?: number } | null;
         if (typeof details?.unansweredCount === "number") {
           setSealUnanswered(details.unansweredCount);
+          if (typeof details.recheckCount === "number") setSealRecheck(details.recheckCount);
           return;
         }
       }
@@ -904,10 +1032,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
   }, [fileVenue, historyQuestionId, paper.sections]);
 
   const pickQuestion = (questionId: string, key: string) => {
-    if (sheetRef.current && sheetRef.current.status !== "draft") return; // 定格后只读
-    setPicks((prev) => ({ ...prev, [questionId]: key }));
-    pendingAnswers.current = { ...pendingAnswers.current, [questionId]: { choice: key } };
-    scheduleSave();
+    commitAnswer(questionId, { choice: key });
   };
 
   const stats = useMemo(() => {
@@ -1140,6 +1265,10 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                           analysis={renderAnalysis(section.key, q)}
                           readOnly={readOnly}
                           cleared={clearedQuestions.has(q.id)}
+                          flags={answers[q.id]?.flags}
+                          onToggleFlag={(flag) => toggleFlag(q.id, flag)}
+                          optionFlags={answers[q.id]?.optionFlags}
+                          onToggleOptionDoubt={(key) => toggleOptionDoubt(q.id, key)}
                         />
                       </div>
                     ))}
@@ -1158,6 +1287,10 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                       analysis={renderAnalysis(section.key, q)}
                       readOnly={readOnly}
                       cleared={clearedQuestions.has(q.id)}
+                      flags={answers[q.id]?.flags}
+                      onToggleFlag={(flag) => toggleFlag(q.id, flag)}
+                      optionFlags={answers[q.id]?.optionFlags}
+                      onToggleOptionDoubt={(key) => toggleOptionDoubt(q.id, key)}
                     />
                   ))}
                 </div>
@@ -1218,6 +1351,11 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
             {sealUnanswered !== null && (
               <div className="rounded-xl border border-amber-400 bg-amber-50 p-2.5 text-xs leading-relaxed text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
                 还有 {sealUnanswered} 题未作答；继续定格将不会记录这些题。
+              </div>
+            )}
+            {sealRecheck > 0 && (
+              <div className="rounded-xl border border-sky-300 bg-sky-50 p-2.5 text-xs leading-relaxed text-sky-800 dark:bg-sky-950/30 dark:text-sky-200">
+                还有 {sealRecheck} 题标记了「待复查」；仅提示，不影响定格。
               </div>
             )}
             <div className="flex justify-end gap-2">

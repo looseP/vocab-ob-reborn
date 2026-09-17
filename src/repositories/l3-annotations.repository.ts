@@ -152,7 +152,8 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
     if (sets.length === 0) {
       const current = await this.queryOne<AnnotationDbRow>(
         `SELECT * FROM l3_question_annotations
-          WHERE id = $2::uuid AND user_id = $1::uuid AND status = 'active'`,
+          WHERE id = $2::uuid AND user_id = $1::uuid AND status = 'active'
+            AND stage <> 'submitted'`,
         params,
       );
       return current ? mapAnnotationRow(current) : null;
@@ -162,8 +163,30 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
       `UPDATE l3_question_annotations
           SET ${sets.join(", ")}
         WHERE id = $2::uuid AND user_id = $1::uuid AND status = 'active'
+          AND stage <> 'submitted'
         RETURNING *`,
       params,
+    );
+    return row ? mapAnnotationRow(row) : null;
+  }
+
+  async getAnnotation(userId: string, id: string): Promise<L3QuestionAnnotationRow | null> {
+    const row = await this.queryOne<AnnotationDbRow>(
+      `SELECT * FROM l3_question_annotations
+        WHERE id = $2::uuid AND user_id = $1::uuid AND status = 'active'`,
+      [userId, id],
+    );
+    return row ? mapAnnotationRow(row) : null;
+  }
+
+  async withdrawAnnotation(userId: string, id: string, sheetId: string): Promise<L3QuestionAnnotationRow | null> {
+    const row = await this.queryOne<AnnotationDbRow>(
+      `UPDATE l3_question_annotations
+          SET stage = 'draft', sheet_id = $3::uuid, updated_at = now()
+        WHERE user_id = $1::uuid AND id = $2::uuid
+          AND stage = 'submitted' AND status = 'active'
+        RETURNING *`,
+      [userId, id, sheetId],
     );
     return row ? mapAnnotationRow(row) : null;
   }

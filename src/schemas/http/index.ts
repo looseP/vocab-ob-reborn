@@ -761,6 +761,11 @@ export {
   questionAnnotationPatchSchema as l3QuestionAnnotationPatchSchema,
 } from "../../domain/l3-annotations";
 
+/** POST /l3/question-annotations/:id/withdraw：sheetId 可选（缺省借原纸作用域幂等开纸）。 */
+export const l3QuestionAnnotationWithdrawSchema = z.object({
+  sheetId: z.string().uuid().optional(),
+}).strict();
+
 /** GET /l3/question-annotations?questionIds=<uuid,uuid,...>：1–200 个 uuid。 */
 export const l3QuestionAnnotationListQuerySchema = z.object({
   questionIds: z.string().trim().min(1).max(12_000)

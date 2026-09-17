@@ -58,6 +58,8 @@ export const l3SheetDetailResponseSchema = z.object({
 export const l3SheetSealResponseSchema = z.object({
   sheet: l3SubmissionResponseSchema,
   unansweredCount: z.number().int().nonnegative(),
+  /** v2 §10：待复查题数（软确认提示数据源；不物化、不阻断）。 */
+  recheckCount: z.number().int().nonnegative(),
   materializedCount: z.number().int().nonnegative(),
   promotedAnnotationCount: z.number().int().nonnegative(),
 }).strict();

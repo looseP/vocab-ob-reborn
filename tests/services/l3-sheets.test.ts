@@ -67,7 +67,7 @@ function attemptRow(overrides: Partial<L3QuestionAttemptRow> = {}): L3QuestionAt
     question_id: Q1,
     sheet_id: SHEET,
     venue: "file",
-    answer: { selected: "B" },
+    answer: { choice: "B" },
     self_assessment: null,
     status: "active",
     deleted_at: null,
@@ -231,11 +231,11 @@ describe("L3SheetService.getSheet", () => {
 
   it("returns draft sheets with answers and no derived rows", async () => {
     const sheetRepo = makeSheetRepo({
-      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { selected: "B" } } })),
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" } } })),
     });
     const service = makeService(sheetRepo);
     const result = await service.getSheet(USER, SHEET);
-    expect(result.sheet.answers[Q1]).toEqual({ selected: "B" });
+    expect(result.sheet.answers[Q1]).toEqual({ choice: "B" });
     expect(result.attempts).toEqual([]);
     expect(sheetRepo.listBySheet).not.toHaveBeenCalled();
   });
@@ -256,18 +256,18 @@ describe("L3SheetService.getSheet", () => {
     expect(result.attempts.map((row) => row.question_id)).toEqual([Q1, Q2]);
     expect(result.attempts[0]!.status).toBe("deleted");
     expect(result.attempts[0]!.answer).toBeNull();
-    expect(result.attempts[1]!.answer).toEqual({ selected: "B" });
+    expect(result.attempts[1]!.answer).toEqual({ choice: "B" });
   });
 });
 
 describe("L3SheetService.patchSheet", () => {
   it("returns the merged sheet when the conditional update wins", async () => {
     const sheetRepo = makeSheetRepo({
-      patchAnswers: vi.fn(async () => submissionRow({ answers: { [Q1]: { selected: "C" } } })),
+      patchAnswers: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "C" } } })),
     });
     const service = makeService(sheetRepo);
-    const result = await service.patchSheet({ userId: USER, sheetId: SHEET, answers: { [Q1]: { selected: "C" } } });
-    expect(result.sheet.answers[Q1]).toEqual({ selected: "C" });
+    const result = await service.patchSheet({ userId: USER, sheetId: SHEET, answers: { [Q1]: { choice: "C" } } });
+    expect(result.sheet.answers[Q1]).toEqual({ choice: "C" });
   });
 
   it("404s when the sheet is missing and 409s when it is settled", async () => {
@@ -300,7 +300,7 @@ describe("L3SheetService.sealSheet", () => {
 
   it("409s with the unanswered count until the caller confirms", async () => {
     const sheetRepo = makeSheetRepo({
-      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { selected: "B" } } })),
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" } } })),
     });
     const service = makeService(sheetRepo, fileScopedPaperRepo());
     const rejected = await service.sealSheet({
@@ -321,7 +321,7 @@ describe("L3SheetService.sealSheet", () => {
       attempts.map((attempt, index) => attemptRow({ id: `00000000-0000-4000-8000-00000000060${index}`, question_id: attempt.question_id })));
     const promoteBySheet = vi.fn(async () => [{ id: "annotation-1" }]);
     const sheetRepo = makeSheetRepo({
-      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { selected: "B" }, [Q2]: { text: "译文" } } })),
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" }, [Q2]: { text: "译文" } } })),
       sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full", sealed_at: "2026-09-17T04:00:00.000Z" })),
       insertAttempts,
     });
@@ -345,7 +345,7 @@ describe("L3SheetService.sealSheet", () => {
     const insertAttempts = vi.fn(async (_userId: string, attempts: readonly { question_id: string }[]) =>
       attempts.map((attempt) => attemptRow({ question_id: attempt.question_id })));
     const sheetRepo = makeSheetRepo({
-      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { selected: "B" }, [Q2]: null } })),
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" }, [Q2]: null } })),
       insertAttempts,
     });
     const service = makeService(sheetRepo, fileScopedPaperRepo());
@@ -361,7 +361,7 @@ describe("L3SheetService.sealSheet", () => {
 
   it("incremental mode discards the sheet, promotes notes and skips attempts", async () => {
     const sheetRepo = makeSheetRepo({
-      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { selected: "B" } } })),
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" } } })),
       sealSheet: vi.fn(async () => submissionRow({ status: "discarded", seal_mode: "incremental" })),
     });
     const annotationRepo = makeAnnotationRepo({ promoteBySheet: vi.fn(async () => [{ id: "a-1" }, { id: "a-2" }] as never) });
@@ -381,7 +381,7 @@ describe("L3SheetService.sealSheet", () => {
 
   it("summary mode pins the summary note to the first scoped question", async () => {
     const sheetRepo = makeSheetRepo({
-      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { selected: "B" } } })),
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" } } })),
       sealSheet: vi.fn(async () => submissionRow({ status: "discarded", seal_mode: "summary" })),
     });
     const insertSummaryAnnotation = vi.fn(async () => attemptRow());
@@ -403,7 +403,7 @@ describe("L3SheetService.sealSheet", () => {
 
   it("rejects the summary mode without text", async () => {
     const sheetRepo = makeSheetRepo({
-      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { selected: "B" } } })),
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" } } })),
     });
     const service = makeService(sheetRepo, fileScopedPaperRepo());
     await expect(service.sealSheet({
@@ -414,7 +414,7 @@ describe("L3SheetService.sealSheet", () => {
 
   it("409s when the atomic claim loses the race (conditional update misses)", async () => {
     const sheetRepo = makeSheetRepo({
-      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { selected: "B" } } })),
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" } } })),
       sealSheet: vi.fn(async () => null),
     });
     const service = makeService(sheetRepo, fileScopedPaperRepo());
@@ -458,5 +458,68 @@ describe("L3SheetService.deleteAttempt", () => {
     const missing = makeService(makeSheetRepo({ softDeleteAttempt: vi.fn(async () => false) }));
     await expect(missing.deleteAttempt(USER, "00000000-0000-4000-8000-000000000501"))
       .rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("L3SheetService.sealSheet（v2 §4.6/§10：旗标物化与待复查计数）", () => {
+  it("counts recheck questions into the response and 409 details（不阻断，只提示）", async () => {
+    const recheckAnswers = {
+      [Q1]: { choice: "B", flags: { doubt: true, recheck: true } },
+      [Q2]: { choice: "C" },
+    };
+    const fullRepo = makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({ answers: recheckAnswers })),
+      sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full" })),
+    });
+    const full = await makeService(fullRepo, fileScopedPaperRepo()).sealSheet({
+      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false,
+    });
+    expect(full.recheckCount).toBe(1);
+
+    // 有未答时：409 details 同时携带未答与待复查计数（软确认复述数据源）
+    const softRepo = makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B", flags: { recheck: true } } } })),
+    });
+    const rejected = await makeService(softRepo, fileScopedPaperRepo()).sealSheet({
+      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false,
+    }).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(ConflictError);
+    expect((rejected as ConflictError).meta).toMatchObject({ unansweredCount: 1, recheckCount: 1 });
+    expect(softRepo.sealSheet).not.toHaveBeenCalled();
+  });
+
+  it("full mode materializes the subjective snapshot into self_assessment and keeps answer factual", async () => {
+    const insertAttempts = vi.fn(async (_userId: string, attempts: readonly { question_id: string }[]) =>
+      attempts.map((attempt) => attemptRow({ question_id: attempt.question_id })));
+    const sheetRepo = makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({
+        answers: {
+          [Q1]: {
+            choice: "B",
+            flags: { doubt: true, recheck: true },
+            optionFlags: ["A", "C"],
+            marks: [{ scope: "passage", start: 3, end: 12 }],
+          },
+          [Q2]: { choice: "C" },
+        },
+      })),
+      sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full" })),
+      insertAttempts,
+    });
+    const service = makeService(sheetRepo, fileScopedPaperRepo());
+    await service.sealSheet({ userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false });
+
+    expect(insertAttempts).toHaveBeenCalledWith(USER, [
+      expect.objectContaining({
+        question_id: Q1,
+        answer: { choice: "B" },
+        self_assessment: {
+          flags: { doubt: true, recheck: true },
+          optionFlags: ["A", "C"],
+          marks: [{ scope: "passage", start: 3, end: 12 }],
+        },
+      }),
+      expect.objectContaining({ question_id: Q2, answer: { choice: "C" }, self_assessment: null }),
+    ]);
   });
 });

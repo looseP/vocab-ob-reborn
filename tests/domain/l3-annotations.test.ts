@@ -4,7 +4,9 @@ import {
   annotationCoverage,
   annotationTagDictSchema,
   canConfirmAnnotationStage,
+  canEditAnnotation,
   canPromoteAnnotationStage,
+  canWithdrawAnnotation,
   PRESET_ENTRY_TAGS,
   PRESET_OPTION_TAGS,
   questionAnnotationInputSchema,
@@ -253,5 +255,19 @@ describe("annotationCoverage", () => {
       { key: "A", covered: true },
       { key: "B", covered: false },
     ]);
+  });
+});
+
+describe("stage 可变矩阵谓词（v2 §4.7）", () => {
+  it("canEditAnnotation：draft 与 confirmed 可编辑，submitted 锁定", () => {
+    expect(canEditAnnotation("draft")).toBe(true);
+    expect(canEditAnnotation("confirmed")).toBe(true);
+    expect(canEditAnnotation("submitted")).toBe(false);
+  });
+
+  it("canWithdrawAnnotation：仅 submitted 可撤回到 draft", () => {
+    expect(canWithdrawAnnotation("submitted")).toBe(true);
+    expect(canWithdrawAnnotation("draft")).toBe(false);
+    expect(canWithdrawAnnotation("confirmed")).toBe(false);
   });
 });

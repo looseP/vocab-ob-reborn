@@ -81,7 +81,14 @@ function compareSchema(
   // Unchanged schema targets cannot introduce a breaking change — skip before
   // composition keywords (oneOf/anyOf/…) trigger fail-closed UNKNOWN noise.
   if (stable(base) === stable(current)) return;
-  if (UNSUPPORTED_SCHEMA_KEYS.some((key) => key in base || key in current)) {
+  // 组合/条件关键字仅在「自身发生变化」时才无法安全比较；两侧相同的包装键
+  // （如未变化的 propertyNames / anyOf 包裹）不构成变化源，继续按常规键比较。
+  // 2026-09-17（T11）：answers 收窄到显式键契约时，其 propertyNames 未变却被
+  // 旧检查整体放弃（误报 UNKNOWN）；剔除误报、保留“组合键真变即 fail-closed”。
+  const changedUnsupported = UNSUPPORTED_SCHEMA_KEYS.some(
+    (key) => (key in base || key in current) && stable(base[key]) !== stable(current[key]),
+  );
+  if (changedUnsupported) {
     issue(issues, "unknown", location, "受影响 schema 使用了无法安全比较的组合/条件关键字");
     return;
   }

@@ -1581,6 +1581,10 @@ export interface IL3AnnotationRepository {
   listDraftBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
   /** 批次二：题纸全部注记（含定格升格后的 submitted/confirmed；导出冻结档案用）。 */
   listAnnotationsBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
+  /** v2 §4.7：单条 active 注记（stage 守卫判定与撤回前置读取；不存在/非属主 null）。 */
+  getAnnotation(userId: string, id: string): Promise<L3QuestionAnnotationRow | null>;
+  /** v2 §4.7：撤回（submitted→draft + 重挂题纸），条件 UPDATE 空转返回 null。 */
+  withdrawAnnotation(userId: string, id: string, sheetId: string): Promise<L3QuestionAnnotationRow | null>;
   /** 批次二：定格升格（draft→submitted）批量条件 UPDATE，返回升格行。 */
   promoteBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
   /** 批次二：「只留总结」档总结条（无锚点，stage='submitted'）。 */

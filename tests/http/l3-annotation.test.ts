@@ -198,3 +198,48 @@ describe("annotation tag dictionary", () => {
     await expectValidationError(res);
   });
 });
+
+describe("POST /api/l3/question-annotations/:id/withdraw", () => {
+  const SHEET_ID = "00000000-0000-4000-8000-000000000401";
+
+  it("withdraws a submitted annotation to draft on the given sheet", async () => {
+    const withdrawAnnotation = vi.fn(async () => ({
+      item: annotationItem({ stage: "draft", sheet_id: SHEET_ID }),
+    }));
+    const app = createApp(makeServices({ withdrawAnnotation }));
+    const res = await app.request(`/api/l3/question-annotations/${ANNOTATION_ID}/withdraw`, {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ sheetId: SHEET_ID }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { item: { stage: string; sheet_id: string | null } };
+    expect(body.item.stage).toBe("draft");
+    expect(body.item.sheet_id).toBe(SHEET_ID);
+    expect(withdrawAnnotation).toHaveBeenCalledWith({ userId: "user-123", id: ANNOTATION_ID, sheetId: SHEET_ID });
+  });
+
+  it("accepts an empty body (service reopens the sheet by the origin scope)", async () => {
+    const withdrawAnnotation = vi.fn(async () => ({ item: annotationItem({ stage: "draft" }) }));
+    const app = createApp(makeServices({ withdrawAnnotation }));
+    const res = await app.request(`/api/l3/question-annotations/${ANNOTATION_ID}/withdraw`, {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    expect(withdrawAnnotation).toHaveBeenCalledWith({ userId: "user-123", id: ANNOTATION_ID });
+  });
+
+  it("rejects a non-uuid sheetId", async () => {
+    const withdrawAnnotation = vi.fn();
+    const app = createApp(makeServices({ withdrawAnnotation }));
+    const res = await app.request(`/api/l3/question-annotations/${ANNOTATION_ID}/withdraw`, {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ sheetId: "not-a-uuid" }),
+    });
+    await expectValidationError(res);
+    expect(withdrawAnnotation).not.toHaveBeenCalled();
+  });
+});

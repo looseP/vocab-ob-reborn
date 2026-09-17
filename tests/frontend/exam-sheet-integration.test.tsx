@@ -398,3 +398,81 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
     expect(detailCall).toBeTruthy();
   });
 });
+
+describe("批次二增补：旗标与待复查（v2 §10）", () => {
+  it("旗钮/选项存疑/选择合并进同一次防抖 PATCH（完整对象，服务端题目键级替换）", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper();
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "待复查" })[0]!);   // Q1 待复查
+      await Promise.resolve();
+      fireEvent.click(screen.getAllByRole("button", { name: "存疑" })[0]!);     // Q1 存疑
+      await Promise.resolve();
+      fireEvent.click(document.querySelector('[data-doubt-toggle="A"]')!);      // Q1 选项 A 存疑
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));              // Q1 选 B
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    const patchCalls = apiFetchMock.mock.calls.filter(
+      ([path, init]) => String(path).startsWith("/l3/sheets/") && (init as { method?: string } | undefined)?.method === "PATCH",
+    );
+    expect(patchCalls).toHaveLength(1);
+    expect(JSON.parse((patchCalls[0]![1] as { body: string }).body)).toEqual({
+      answers: { [Q1]: { flags: { recheck: true, doubt: true }, optionFlags: ["A"], choice: "B" } },
+    });
+  });
+
+  it("定格 modal 显示待复查计数（本地实时口径，仅提示不阻断）", async () => {
+    vi.useFakeTimers();
+    setupMock();
+    await renderPaper();
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "待复查" })[0]!);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/还有 1 题标记了「待复查」；仅提示，不影响定格/)).toBeTruthy();
+  });
+
+  it("定格后从 self_assessment 派生恢复旗标（题号角标 + 选项存疑小字）", async () => {
+    const apiFetchMock = setupMock({
+      derivedAttempts: [{
+        id: "a1", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q1,
+        sheet_id: SHEET_ID, venue: "paper", answer: { choice: "B" },
+        self_assessment: { flags: { doubt: true, recheck: true }, optionFlags: ["A"] },
+        status: "active", deleted_at: null, created_at: "2026-09-17T01:00:00Z",
+      }],
+    });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+
+    // 恢复的旗标以题号角标小点体现（只读期旗钮隐藏）
+    const dots = [...document.querySelectorAll("span.bg-amber-500")];
+    expect(dots.length).toBeGreaterThan(0);
+    // 选项 A 恢复存疑：行内「存疑」小字渲染
+    expect(screen.getByText("存疑")).toBeTruthy();
+    // 恢复的来源是 GET /l3/sheets/:id 的 self_assessment
+    void apiFetchMock;
+  });
+});

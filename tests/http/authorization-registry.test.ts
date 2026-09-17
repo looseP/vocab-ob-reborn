@@ -166,6 +166,8 @@ const OTHER_OWNER_WRITES = [
   "patchQuestionAnnotation",
   "deleteQuestionAnnotation",
   "replaceAnnotationTags",
+  // v2 §4.7：撤回通道（submitted→draft 重挂题纸）——owner 写端点。
+  "withdrawQuestionAnnotation",
   // 批次二：题纸与作答历史（ADR-0034）——做题台面是私人数据，读也不开放给 agent。
   "openL3Sheet",
   "patchL3Sheet",

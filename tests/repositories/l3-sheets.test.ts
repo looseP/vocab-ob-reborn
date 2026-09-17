@@ -36,7 +36,7 @@ function attempt(overrides: Partial<L3QuestionAttemptRow> = {}): L3QuestionAttem
     question_id: QUESTION,
     sheet_id: SHEET,
     venue: "file",
-    answer: { selected: "B" },
+    answer: { choice: "B" },
     self_assessment: null,
     status: "active",
     deleted_at: null,
@@ -114,15 +114,15 @@ describe("L3SheetRepository.openSheet", () => {
 describe("L3SheetRepository.patchAnswers", () => {
   it("merges answers atomically behind a draft-only status guard", async () => {
     const repo = new L3SheetRepository();
-    const updated = submission({ answers: { [QUESTION]: { selected: "B" } } });
+    const updated = submission({ answers: { [QUESTION]: { choice: "B" } } });
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(updated);
-    const result = await repo.patchAnswers(USER, SHEET, { [QUESTION]: { selected: "B" } });
-    expect(result?.answers).toEqual({ [QUESTION]: { selected: "B" } });
+    const result = await repo.patchAnswers(USER, SHEET, { [QUESTION]: { choice: "B" } });
+    expect(result?.answers).toEqual({ [QUESTION]: { choice: "B" } });
     const [sql, params] = (repo as any).queryOne.mock.calls[0];
     expect(sql).toContain("answers = answers || $3::jsonb");
     expect(sql).toContain("status = 'draft'");
     expect(sql).toContain("updated_at = now()");
-    expect(params).toEqual([USER, SHEET, JSON.stringify({ [QUESTION]: { selected: "B" } })]);
+    expect(params).toEqual([USER, SHEET, JSON.stringify({ [QUESTION]: { choice: "B" } })]);
   });
 
   it("returns null when the conditional update hits a non-draft or missing sheet", async () => {
@@ -180,7 +180,7 @@ describe("L3SheetRepository.insertAttempts", () => {
     ];
     vi.spyOn(repo as any, "query").mockResolvedValue(rows);
     const result = await repo.insertAttempts(USER, [
-      { question_id: QUESTION, sheet_id: SHEET, venue: "file", answer: { selected: "B" }, self_assessment: null },
+      { question_id: QUESTION, sheet_id: SHEET, venue: "file", answer: { choice: "B" }, self_assessment: null },
       { question_id: QUESTION_B, sheet_id: SHEET, venue: "file", answer: { text: "译文" }, self_assessment: null },
     ]);
     expect(result).toHaveLength(2);

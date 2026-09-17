@@ -204,6 +204,8 @@ export interface SealSheetRequest {
 export interface SealSheetResult {
   sheet: L3Sheet;
   unansweredCount: number;
+  /** v2 §10：待复查题数（软确认提示数据源；不物化、不阻断）。 */
+  recheckCount: number;
   materializedCount: number;
   promotedAnnotationCount: number;
 }
@@ -249,9 +251,20 @@ export async function sealSheet(id: string, input: SealSheetRequest): Promise<Se
   return {
     sheet: body.sheet,
     unansweredCount: typeof body.unansweredCount === "number" ? body.unansweredCount : 0,
+    recheckCount: typeof body.recheckCount === "number" ? body.recheckCount : 0,
     materializedCount: typeof body.materializedCount === "number" ? body.materializedCount : 0,
     promotedAnnotationCount: typeof body.promotedAnnotationCount === "number" ? body.promotedAnnotationCount : 0,
   };
+}
+
+/** v2 §4.7 撤回：submitted→draft（重挂题纸）；sheetId 缺省时服务端借原纸作用域幂等开纸。 */
+export async function withdrawQuestionAnnotation(id: string, sheetId?: string): Promise<QuestionAnnotation> {
+  const body = await apiFetch<{ item?: QuestionAnnotation } | null>(
+    `/l3/question-annotations/${encodeURIComponent(id)}/withdraw`,
+    { method: "POST", body: JSON.stringify(sheetId ? { sheetId } : {}) },
+  );
+  if (!body?.item) throw new Error("撤回失败：响应缺少注记行");
+  return body.item;
 }
 
 /** 批量题历史（题卡徽标数据源；服务端过滤已删条目）。 */

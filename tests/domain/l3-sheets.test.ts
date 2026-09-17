@@ -1,20 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
+  addSheetAnswerMark,
   ANNOTATION_AGENT_READABLE_STAGES,
   annotationReviewEntrySchema,
   annotationReviewSchema,
   annotationReviewsSectionSchema,
+  buildAttemptSelfAssessment,
   buildSheetScopeKey,
   canPatchSheet,
+  countRecheckQuestions,
   countUnansweredQuestions,
   isAnnotationAgentReadable,
+  pruneSheetAnswer,
+  removeSheetAnswerMark,
   SHEET_SCOPES,
   SHEET_STATUSES,
   SEAL_MODES,
+  sheetAnswerMarkKey,
+  sheetAnswerSchema,
   sheetOpenInputSchema,
   sheetPatchInputSchema,
   sheetSealInputSchema,
   sheetStatusAfterSeal,
+  stripAnswerSubjectiveFields,
 } from "@/domain/l3-sheets";
 
 const SOURCE_ID = "00000000-0000-4000-8000-000000000301";
@@ -107,9 +115,9 @@ describe("sheetOpenInputSchema", () => {
 describe("sheetPatchInputSchema", () => {
   it("accepts per-question merge payloads including explicit nulls", () => {
     const parsed = sheetPatchInputSchema.parse({
-      answers: { [QUESTION_ID]: { selected: "B" }, [PAPER_ID]: null },
+      answers: { [QUESTION_ID]: { choice: "B" }, [PAPER_ID]: null },
     });
-    expect(parsed.answers[QUESTION_ID]).toEqual({ selected: "B" });
+    expect(parsed.answers[QUESTION_ID]).toEqual({ choice: "B" });
     expect(parsed.answers[PAPER_ID]).toBeNull();
   });
 
@@ -227,5 +235,130 @@ describe("annotation review contract (批次三形状)", () => {
     expect(isAnnotationAgentReadable("submitted")).toBe(true);
     expect(isAnnotationAgentReadable("draft")).toBe(false);
     expect(isAnnotationAgentReadable("confirmed")).toBe(false);
+  });
+});
+
+describe("sheetAnswerSchema（v2 显式键契约，ADR-0034 增补条 8）", () => {
+  it("接受三类显式键与全可选空对象", () => {
+    const full = sheetAnswerSchema.safeParse({
+      choice: "B",
+      flags: { doubt: true, recheck: true },
+      optionFlags: ["A", "C"],
+      marks: [{ scope: "passage", start: 3, end: 12 }],
+    });
+    expect(full.success).toBe(true);
+    expect(sheetAnswerSchema.safeParse({}).success).toBe(true);
+    expect(sheetAnswerSchema.safeParse({ choice: "B" }).success).toBe(true);
+  });
+
+  it("strict 收口未知键（原宽松形状 selected 被拒）", () => {
+    expect(sheetAnswerSchema.safeParse({ selected: "C" }).success).toBe(false);
+    expect(sheetAnswerSchema.safeParse({ choice: "B", extra: 1 }).success).toBe(false);
+    expect(sheetAnswerSchema.safeParse({ flags: { unknown: true } }).success).toBe(false);
+  });
+
+  it("拒绝非法 marks（scope 白名单 / end>start）", () => {
+    expect(sheetAnswerSchema.safeParse({ marks: [{ scope: "note", start: 1, end: 5 }] }).success).toBe(false);
+    expect(sheetAnswerSchema.safeParse({ marks: [{ scope: "stem", start: 5, end: 5 }] }).success).toBe(false);
+    expect(sheetAnswerSchema.safeParse({ marks: [{ scope: "stem", start: 9, end: 3 }] }).success).toBe(false);
+  });
+
+  it("marks 同 scope+start+end 去重（重复即拒，fail-closed）", () => {
+    const dup = sheetAnswerSchema.safeParse({
+      marks: [{ scope: "passage", start: 3, end: 12 }, { scope: "passage", start: 3, end: 12 }],
+    });
+    expect(dup.success).toBe(false);
+    const distinct = sheetAnswerSchema.safeParse({
+      marks: [{ scope: "passage", start: 3, end: 12 }, { scope: "stem", start: 3, end: 12 }],
+    });
+    expect(distinct.success).toBe(true);
+  });
+
+  it("optionFlags 去重（重复选项拒绝）", () => {
+    expect(sheetAnswerSchema.safeParse({ optionFlags: ["A", "A"] }).success).toBe(false);
+    expect(sheetAnswerSchema.safeParse({ optionFlags: ["A", "B"] }).success).toBe(true);
+  });
+
+  it("PATCH 契约收口 answers 值形状（null 清除仍放行）", () => {
+    const ok = sheetPatchInputSchema.safeParse({
+      answers: { [QUESTION_ID]: { choice: "B", flags: { recheck: true } } },
+    });
+    expect(ok.success).toBe(true);
+    const cleared = sheetPatchInputSchema.safeParse({ answers: { [QUESTION_ID]: null } });
+    expect(cleared.success).toBe(true);
+    const loose = sheetPatchInputSchema.safeParse({ answers: { [QUESTION_ID]: { selected: "C" } } });
+    expect(loose.success).toBe(false);
+  });
+});
+
+describe("marks 切换纯函数（v2 §4.6）", () => {
+  const M1 = { scope: "passage" as const, start: 3, end: 12 };
+  const M2 = { scope: "stem" as const, start: 3, end: 12 };
+
+  it("sheetAnswerMarkKey 以 scope+start+end 为键", () => {
+    expect(sheetAnswerMarkKey(M1)).toBe("passage:3:12");
+  });
+
+  it("addSheetAnswerMark 去重添加（重复同键幂等不增）", () => {
+    const once = addSheetAnswerMark([], M1);
+    expect(once).toHaveLength(1);
+    const twice = addSheetAnswerMark(once, M1);
+    expect(twice).toHaveLength(1);
+    const crossScope = addSheetAnswerMark(twice, M2);
+    expect(crossScope).toHaveLength(2);
+  });
+
+  it("removeSheetAnswerMark 存在才删（新数组，原数组不动）", () => {
+    const base = [M1];
+    expect(removeSheetAnswerMark(base, M1)).toHaveLength(0);
+    expect(removeSheetAnswerMark(base, M2)).toHaveLength(1);
+    expect(base).toHaveLength(1);
+  });
+});
+
+describe("定格物化辅助纯函数（v2 §4.6/§10）", () => {
+  it("countRecheckQuestions 只数题级 recheck 为真（脏值不算）", () => {
+    const answers = {
+      [QUESTION_ID]: { flags: { recheck: true } },
+      [SOURCE_ID]: { flags: { recheck: false } },
+      [PAPER_ID]: { choice: "B" },
+      "00000000-0000-4000-8000-000000000304": { flags: "dirty" },
+    };
+    expect(countRecheckQuestions([QUESTION_ID, SOURCE_ID, PAPER_ID, "00000000-0000-4000-8000-000000000304"], answers)).toBe(1);
+  });
+
+  it("buildAttemptSelfAssessment 提取主观状态快照（纯 choice → null）", () => {
+    expect(buildAttemptSelfAssessment({
+      choice: "B",
+      flags: { doubt: true },
+      optionFlags: ["A"],
+      marks: [{ scope: "passage", start: 1, end: 4 }],
+    })).toEqual({
+      flags: { doubt: true },
+      optionFlags: ["A"],
+      marks: [{ scope: "passage", start: 1, end: 4 }],
+    });
+    expect(buildAttemptSelfAssessment({ choice: "B" })).toBeNull();
+    expect(buildAttemptSelfAssessment(null)).toBeNull();
+    expect(buildAttemptSelfAssessment("dirty")).toBeNull();
+    expect(buildAttemptSelfAssessment({ flags: {} })).toBeNull();
+  });
+
+  it("pruneSheetAnswer 清理空键（全空返回 null=整体清除）", () => {
+    expect(pruneSheetAnswer({ choice: "B", flags: {}, optionFlags: [], marks: [] })).toEqual({ choice: "B" });
+    expect(pruneSheetAnswer({ flags: { doubt: true } })).toEqual({ flags: { doubt: true } });
+    expect(pruneSheetAnswer({})).toBeNull();
+    expect(pruneSheetAnswer({ flags: {} })).toBeNull();
+  });
+
+  it("stripAnswerSubjectiveFields 剥离主观字段只留作答事实", () => {
+    expect(stripAnswerSubjectiveFields({
+      choice: "B",
+      flags: { doubt: true },
+      optionFlags: ["A"],
+      marks: [{ scope: "stem", start: 1, end: 4 }],
+    })).toEqual({ choice: "B" });
+    expect(stripAnswerSubjectiveFields({ marks: [{ scope: "stem", start: 1, end: 4 }] })).toEqual({});
+    expect(stripAnswerSubjectiveFields(null)).toEqual({});
   });
 });

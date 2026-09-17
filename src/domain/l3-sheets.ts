@@ -82,12 +82,167 @@ export const sheetOpenInputSchema = z.object({
 
 export type SheetOpenInput = z.infer<typeof sheetOpenInputSchema>;
 
+// ── answers 显式键契约（ADR-0034 增补条 8 / 设计卡 §10/§4.6）─────────────────
+
+/** 标记作用域：passage=原文（材料正文），stem=题干（题面文本）。 */
+export const SHEET_ANSWER_MARK_SCOPES = ["passage", "stem"] as const;
+export type SheetAnswerMarkScope = (typeof SHEET_ANSWER_MARK_SCOPES)[number];
+
+/** 单条标记（轻痕迹，非资产）：正文/题面偏移区间，end>start。 */
+export const sheetAnswerMarkSchema = z.object({
+  scope: z.enum(SHEET_ANSWER_MARK_SCOPES),
+  start: z.number().int().nonnegative(),
+  end: z.number().int().positive(),
+}).strict().superRefine((v, ctx) => {
+  if (v.end <= v.start) ctx.addIssue({ code: "custom", message: "标记 end 必须大于 start" });
+});
+
+export type SheetAnswerMark = z.infer<typeof sheetAnswerMarkSchema>;
+
+/** 标记去重键：同 scope+start+end 视为同一标记（契约层去重判据唯一来源）。 */
+export function sheetAnswerMarkKey(mark: SheetAnswerMark): string {
+  return `${mark.scope}:${mark.start}:${mark.end}`;
+}
+
+/** 旗标（§10）：doubt=存疑（认知状态，物化进 self_assessment）；recheck=待复查（流程状态，不物化）。 */
+export const sheetAnswerFlagsSchema = z.object({
+  doubt: z.boolean().optional(),
+  recheck: z.boolean().optional(),
+}).strict();
+
+export type SheetAnswerFlags = z.infer<typeof sheetAnswerFlagsSchema>;
+
+/**
+ * 题纸 answers 值的显式键契约（strict 收口防腐化）：
+ * choice=选项键（单选起步）；flags=题级旗标；optionFlags=选项级存疑键列；
+ * marks=内容标记（原文/题干）。全部 optional 无 default（PATCH 未提交键不被填充）；
+ * marks 同 scope+start+end、optionFlags 同键重复即拒（fail-closed，前端幂等添加保证不产生）。
+ */
+export const sheetAnswerSchema = z.object({
+  choice: z.string().trim().min(1).max(8).optional(),
+  flags: sheetAnswerFlagsSchema.optional(),
+  optionFlags: z.array(z.string().trim().min(1).max(8)).max(16).optional(),
+  marks: z.array(sheetAnswerMarkSchema).max(200).optional(),
+}).strict().superRefine((v, ctx) => {
+  if (v.marks) {
+    const seen = new Set<string>();
+    for (const mark of v.marks) {
+      const key = sheetAnswerMarkKey(mark);
+      if (seen.has(key)) {
+        ctx.addIssue({ code: "custom", message: "marks 存在重复标记（同 scope+start+end）" });
+        break;
+      }
+      seen.add(key);
+    }
+  }
+  if (v.optionFlags) {
+    const seen = new Set<string>();
+    for (const key of v.optionFlags) {
+      if (seen.has(key)) {
+        ctx.addIssue({ code: "custom", message: "optionFlags 存在重复选项键" });
+        break;
+      }
+      seen.add(key);
+    }
+  }
+});
+
+export type SheetAnswer = z.infer<typeof sheetAnswerSchema>;
+
+/**
+ * 状态归一（前端草稿状态机用）：清理空键——flags 空对象/数组空列删除；
+ * 三键与 choice 全空返回 null（整体清除语义，PATCH 传 null）。
+ */
+export function pruneSheetAnswer(answer: SheetAnswer): SheetAnswer | null {
+  const next: SheetAnswer = {};
+  if (typeof answer.choice === "string" && answer.choice.length > 0) next.choice = answer.choice;
+  if (answer.flags && Object.keys(answer.flags).length > 0) next.flags = answer.flags;
+  if (answer.optionFlags && answer.optionFlags.length > 0) next.optionFlags = answer.optionFlags;
+  if (answer.marks && answer.marks.length > 0) next.marks = answer.marks;
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+/** 去重添加标记（同 scope+start+end 幂等：已存在则原样返回副本，不重复）。 */
+export function addSheetAnswerMark(
+  marks: readonly SheetAnswerMark[],
+  mark: SheetAnswerMark,
+): SheetAnswerMark[] {
+  const key = sheetAnswerMarkKey(mark);
+  if (marks.some((entry) => sheetAnswerMarkKey(entry) === key)) return [...marks];
+  return [...marks, mark];
+}
+
+/** 移除标记（存在才删；返回新数组，原数组不动——点已有高亮取消标记的纯函数）。 */
+export function removeSheetAnswerMark(
+  marks: readonly SheetAnswerMark[],
+  mark: SheetAnswerMark,
+): SheetAnswerMark[] {
+  const key = sheetAnswerMarkKey(mark);
+  return marks.filter((entry) => sheetAnswerMarkKey(entry) !== key);
+}
+
+/** 待复查计数（定格软确认数据源：仅题级 flags.recheck===true，脏值不算）。 */
+export function countRecheckQuestions(
+  questionIds: readonly string[],
+  answers: Readonly<Record<string, unknown>>,
+): number {
+  return questionIds.filter((id) => {
+    const value = answers[id];
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const flags = (value as { flags?: unknown }).flags;
+    if (!flags || typeof flags !== "object" || Array.isArray(flags)) return false;
+    return (flags as { recheck?: unknown }).recheck === true;
+  }).length;
+}
+
+/** 当场主观状态快照（物化进 attempts.self_assessment）：存疑 + 选项存疑 + 标记。 */
+export interface AttemptSelfAssessment {
+  flags?: Record<string, boolean>;
+  optionFlags?: string[];
+  marks?: SheetAnswerMark[];
+}
+
+/**
+ * 从 draft answer 提取主观状态快照（§4.6/§10）：flags/optionFlags/marks 任一非空
+ * 才有值，三键全空返回 null（保持「无采集」语义与批次二历史 null 一致）。
+ */
+export function buildAttemptSelfAssessment(answer: unknown): AttemptSelfAssessment | null {
+  if (!answer || typeof answer !== "object" || Array.isArray(answer)) return null;
+  const value = answer as { flags?: unknown; optionFlags?: unknown; marks?: unknown };
+  const result: AttemptSelfAssessment = {};
+  if (value.flags && typeof value.flags === "object" && !Array.isArray(value.flags)
+    && Object.keys(value.flags).length > 0) {
+    result.flags = value.flags as Record<string, boolean>;
+  }
+  if (Array.isArray(value.optionFlags) && value.optionFlags.length > 0) {
+    result.optionFlags = value.optionFlags as string[];
+  }
+  if (Array.isArray(value.marks) && value.marks.length > 0) {
+    result.marks = value.marks as SheetAnswerMark[];
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
+ * 剥离主观状态字段后的纯作答事实（attempt.answer 物化用，§2.1「attempt 只存
+ * 作答事实」）：flags/optionFlags/marks 不进 answer（它们在 self_assessment）。
+ */
+export function stripAnswerSubjectiveFields(answer: unknown): Record<string, unknown> {
+  if (!answer || typeof answer !== "object" || Array.isArray(answer)) return {};
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(answer as Record<string, unknown>)) {
+    if (key === "flags" || key === "optionFlags" || key === "marks") continue;
+    rest[key] = value;
+  }
+  return rest;
+}
+
 /**
  * PATCH 逐题 merge：`answers: Record<questionId, answer|null>`，null 清除该题。
- * 值为题型无关 JSON（V2-T5「存储与交互解耦」）；至少 1 键、最多 200 键。
+ * 值为 answers 显式键契约（ADR-0034 增补条 8）；至少 1 键、最多 200 键。
  */
 export const sheetPatchInputSchema = z.object({
-  answers: z.record(z.string().uuid(), z.json()),
+  answers: z.record(z.string().uuid(), sheetAnswerSchema.nullable()),
 }).superRefine((v, ctx) => {
   const keyCount = Object.keys(v.answers).length;
   if (keyCount === 0) ctx.addIssue({ code: "custom", message: "answers 至少提交一个题目键" });
