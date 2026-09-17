@@ -253,6 +253,13 @@
       "when": 1789632982611,
       "tag": "0035_parallel_shape",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1789652458785,
+      "tag": "0036_chunky_karma",
+      "breakpoints": true
     }
   ]
 }
