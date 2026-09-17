@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertBaselineNonRegression,
@@ -9,6 +13,7 @@ import {
   findUnknownSourceDirectories,
   parseChangedSourceLines,
   resolveDiffCoverage,
+  runGit,
   selectCoverageBaseRef,
   toMarkdown,
   type DiffScopeFacts,
@@ -396,5 +401,33 @@ describe("evaluateLayerGate", () => {
     const passing = { lines: { covered: 9, total: 10, pct: 90 }, statements: { covered: 9, total: 10, pct: 90 }, functions: { covered: 1, total: 1, pct: 100 }, branches: { covered: 3, total: 4, pct: 75 } };
     expect(evaluateLayerGate(passing).ok).toBe(true);
     expect(evaluateLayerGate({ ...passing, branches: { covered: 2, total: 4, pct: 50 } }).ok).toBe(false);
+  });
+});
+
+describe("runGit large-output contract", () => {
+  it("reads a diff larger than Node's default spawnSync buffer without truncation", () => {
+    const repo = mkdtempSync(join(tmpdir(), "layered-git-"));
+    try {
+      const run = (...args: string[]) =>
+        execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+      const commit = () =>
+        run("-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-q", "-m", "snapshot");
+      run("init", "-q");
+      writeFileSync(join(repo, "big.txt"), "seed\n");
+      run("add", ".");
+      commit();
+      const lines = Array.from({ length: 150 }, (_, index) => `line ${index} ${"x".repeat(12_000)}`);
+      lines.push("TAIL-MARKER-8f3a");
+      writeFileSync(join(repo, "big.txt"), `${lines.join("\n")}\n`);
+      run("add", ".");
+      commit();
+
+      const result = runGit(repo, ["diff", "--unified=0", "HEAD^...HEAD"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout.length).toBeGreaterThan(1_048_576);
+      expect(result.stdout).toContain("TAIL-MARKER-8f3a");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

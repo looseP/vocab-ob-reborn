@@ -413,8 +413,16 @@ function resolveCoverageBaseRef(projectRoot: string): string {
   return selectCoverageBaseRef(process.env.COVERAGE_BASE_REF, candidates);
 }
 
-function runGit(projectRoot: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync("git", args, { cwd: projectRoot, encoding: "utf8" });
+/**
+ * Reads run with a generous stdout cap: the diff-coverage gate parses the full
+ * `git diff base...HEAD` output, and a multi-commit sync (e.g. 75 commits /
+ * ~1.45 MB of src diff) exceeds Node's ~1 MiB spawnSync default — git is killed
+ * mid-stream (ENOBUFS) and the gate fails closed on the truncated read
+ * (encountered by the 2026-09-17 sync PR). 256 MiB stays far above any real
+ * repo diff while still bounding pathological inputs.
+ */
+export function runGit(projectRoot: string, args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync("git", args, { cwd: projectRoot, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
