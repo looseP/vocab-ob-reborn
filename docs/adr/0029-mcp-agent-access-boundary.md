@@ -1,8 +1,9 @@
 # ADR-0029: MCP / agent 接入边界（传输层不新增信任级 + 资源级 role 强制）
 
-- **Status**: Accepted
+- **Status**: Accepted（局部修订 2026-09-17：评析区 = agent 首个可写持久区，见文末 Amendment）
 - **Date**: 2026-09-12
 - **Amends**: ADR-0008 §Non-goals（**仅声明修订，不修改原文**——ADR 不可变）
+- **Amended by**: ADR-0034 v2 条 10/11（评析区开口，2026-09-17 增补批 T13）
 - **References**: ADR-0004 §6.3（agent 不得直接写权威数据）、ADR-0008（proposal 边界）、ADR-0022（单 owner）、ADR-0024（公网信任边界）、CONTEXT.md（Agent / Proposal-only write / Agent token·agentId / Trusted transport）
 - **上游**: 2026-09-12 API 与 MCP 设计拷问会话（第一轮 Q1–Q7）
 
@@ -51,3 +52,12 @@
 - ⚠️ **待跟踪**：第 7 条第二步（`l3_proposals` 的 partial unique index）必须在"下次触及该表"时落地，不得静默蒸发。
 - ⚠️ `docs/operations/secret-rotation.md` 需同步 token 语义（owner vs agent、`id:token` 映射、撤销 = 改 env 重启）。
 - ⚠️ graph `depth>1` 仍为显式拒绝（本决策不变）；若要开放，需先解决 repo 层一跳限制。
+
+## Amendment（2026-09-17，增补批 T13——随 ADR-0034 v2 条 10/11）
+
+**范围**：本 ADR 决策 1「agent 定位 = 读全量 + 写只走 proposal」与决策 6「其余写 → owner only」被**局部修订**——评析区 `l3_question_assessments` 成为 **agent 首个可写持久区**。
+
+- **开口范围严格限于评析区**：`GET/PUT /api/l3/questions/:id/assessment`（minRole=agent；agent 与 owner 同一端点双身份写入，`last_editor` 按服务端认定的 role 留痕）——此外任何持久区不开口。
+- **红线不变**：注记内容（note / 锚点 / 用户原判标签）agent 永不写（只写 review 段，ADR-0034 §4）；attempts 双方不可写（不可变事实）；proposal 路径与其余 owner-only 写面照旧。
+- **开口依据**：评析区是「agent 解读后的结晶沉淀地」（设计卡 v2 §11）——工作流 = 导出题纸 → 外部 agent 解读痕迹 → 直写评析（或用户粘贴，同一端点）。latest-wins 无历史版本（last_editor + updated_at 留痕兜底），覆写可被 owner 随时修正，风险面受控（单 owner 本机语义）。
+- **信任锚不变**：agentId 仍由 `AGENT_API_TOKENS` 映射认定（决策 5）；CSRF 检查仅对 session 路径生效（agent bearer 不受影响，middleware 现状）。

@@ -38,6 +38,7 @@ import { annotationsRoutes } from "./routes/l3/annotations";
 import { annotationsWithdrawRoutes } from "./routes/l3/annotations-withdraw";
 import { sheetsRoutes } from "./routes/l3/sheets";
 import { sheetsExportRoutes } from "./routes/l3/sheets-export";
+import { assessmentsRoutes } from "./routes/l3/assessments";
 import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
 import { l3PracticeRoutes } from "./routes/l3-practice";
 import { l3SessionsRoutes } from "./routes/l3-sessions";
@@ -155,6 +156,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3", sheetsRoutes(services));
   // 批次二收官：题纸冻结导出（sheets.ts 受棘轮约束，新端点独立薄路由拆分）。
   app.route("/api/l3", sheetsExportRoutes(services));
+  // 批次二增补：评析区（agent 首个可写持久区，Amends ADR-0029；独立薄路由）。
+  app.route("/api/l3", assessmentsRoutes(services));
 
   // W3/T09：升级工单 / L3 练习记录 / L3 会话计划 / 一键遗忘（独立薄路由，
   // 全部位于 owner 鉴权挂载之后）。

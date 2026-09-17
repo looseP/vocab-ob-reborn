@@ -49,6 +49,7 @@ import {
   l3SheetItemResponseSchema,
   l3SheetSealResponseSchema,
 } from "./l3-sheet-response-contract";
+import { l3AssessmentItemResponseSchema } from "./l3-assessment-response-contract";
 import {
   upgradeWorkOrderCompleteResponseSchema,
   upgradeWorkOrderListResponseSchema,
@@ -150,6 +151,7 @@ import {
   l3SheetPatchSchema,
   l3SheetSealSchema,
   l3AttemptListQuerySchema,
+  l3AssessmentUpsertSchema,
   l3ProposalCreateSchema,
   l3ProposalListQuerySchema,
   l3ProposalRejectSchema,
@@ -470,6 +472,9 @@ export const apiOperations = [
   operation("delete", "/api/l3/question-annotations/:id", "deleteQuestionAnnotation", "owner", "owner", "sessionMutation", undefined, 204, z.null()),
   // v2 §4.7 撤回：submitted→draft（重挂题纸；owner-only 做题台面）。
   operation("post", "/api/l3/question-annotations/:id/withdraw", "withdrawQuestionAnnotation", "owner", "owner", "sessionMutation", { body: l3QuestionAnnotationWithdrawSchema }, 200, l3QuestionAnnotationItemResponseSchema),
+  // 批次二增补：评析区（agent 首个可写持久区，Amends ADR-0029）——owner/agent 双身份。
+  operation("get", "/api/l3/questions/:id/assessment", "getL3QuestionAssessment", "owner", "agent", "none", undefined, 200, l3AssessmentItemResponseSchema),
+  operation("put", "/api/l3/questions/:id/assessment", "putL3QuestionAssessment", "owner", "agent", "sessionMutation", { body: l3AssessmentUpsertSchema }, 200, l3AssessmentItemResponseSchema),
   operation("get", "/api/l3/annotation-tags", "getAnnotationTags", "owner", "owner", "none", undefined, 200, l3AnnotationTagDictResponseSchema),
   operation("put", "/api/l3/annotation-tags", "replaceAnnotationTags", "owner", "owner", "sessionMutation", { body: l3AnnotationTagDictSchema }, 200, l3AnnotationTagDictResponseSchema),
   // 批次二：题纸与作答历史（owner-only——做题台面是私人数据，读也不开放给 agent）。

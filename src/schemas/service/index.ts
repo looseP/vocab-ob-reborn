@@ -21,6 +21,7 @@ import type {
   QuestionAnnotationInput,
   QuestionAnnotationPatch,
 } from "@/domain/l3-annotations";
+import type { AssessmentUpsertInput } from "@/domain/l3-assessments";
 import type {
   SheetOpenInput,
   SheetPatchInput,
@@ -839,6 +840,14 @@ export type PatchQuestionAnnotationInput = { userId: string; id: string } & Ques
 export type ReplaceAnnotationTagsInput = { userId: string } & AnnotationTagDict;
 /** v2 §4.7 撤回：sheetId 缺省时借原题纸作用域幂等开新纸（service 编排收口）。 */
 export type WithdrawQuestionAnnotationInput = { userId: string; id: string; sheetId?: string };
+
+// ── 批次二增补（0035）：评析区（ADR-0034 v2 条 10/11）────────────────────
+/** editor 由路由层按服务端认定 role 收窄（agent 首个可写持久区）。 */
+export type PutL3AssessmentInput = {
+  userId: string;
+  questionId: string;
+  editor: "owner" | "agent";
+} & AssessmentUpsertInput;
 
 // ── 批次二（0034）：题纸与作答历史（ADR-0034）────────────────────────────
 export type OpenL3SheetInput = { userId: string } & SheetOpenInput;

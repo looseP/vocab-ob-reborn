@@ -32,6 +32,7 @@ import type {
   L3AnnotationOptionKey,
   L3AnnotationTagRow,
   L3QuestionAnnotationRow,
+  L3QuestionAssessmentRow,
   L3QuestionAttemptRow,
   L3SubmissionRow,
   SealMode,
@@ -1591,6 +1592,21 @@ export interface IL3AnnotationRepository {
   insertSummaryAnnotation(input: NewL3SummaryAnnotation): Promise<L3QuestionAnnotationRow>;
 }
 
+// ── 批次二增补（0035）：评析区（ADR-0034 v2 条 10/11）──────────────────────
+export interface NewL3QuestionAssessment {
+  user_id: string;
+  question_id: string;
+  content_md: string;
+  last_editor: "owner" | "agent";
+}
+
+export interface IL3AssessmentRepository {
+  /** 一题一条（无则 null——GET 空态数据源）。 */
+  findByQuestion(userId: string, questionId: string): Promise<L3QuestionAssessmentRow | null>;
+  /** upsert（ON CONFLICT (user_id, question_id) DO UPDATE，latest-wins）；last_editor 按 actor。 */
+  upsert(input: NewL3QuestionAssessment): Promise<L3QuestionAssessmentRow>;
+}
+
 // ── 批次二（0034）：题纸与作答历史（ADR-0034 §1/§2/§5）─────────────────────
 export interface NewL3Submission {
   user_id: string;
@@ -1664,6 +1680,7 @@ export interface IRepositories {
   l3Paper: IL3PaperRepository;
   l3Annotations: IL3AnnotationRepository;
   l3Sheets: IL3SheetRepository;
+  l3Assessments: IL3AssessmentRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }

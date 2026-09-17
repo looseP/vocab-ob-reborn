@@ -206,18 +206,20 @@ describe("owner-only write inventory (D5 + D6 guard)", () => {
     expect(registryOwnerWrites).toEqual(OWNER_WRITE_OPERATION_IDS);
   });
 
-  it("the only agent-writable /api/* writes are the proposal path: entry points, prompt preparation and imports", () => {
+  it("the only agent-writable /api/* writes are the proposal path + the assessment venue（增补批开口）", () => {
     const agentWrites = idsWhere(
       (operation) => operation.path.startsWith("/api/") && operation.method !== "get" && operation.minRole === "agent",
     );
-    // 全部属提案路径：proposal 入口 2（createL3Proposal / proposeL2Candidate）+ 载荷准备 1
-    // （external-prompt）+ 提案包生产 2（l3 imports）——2026-09-12 裁决（T13a-fix）。
+    // 提案路径 5（proposal 入口 2 + 载荷准备 1 + l3 imports 2——2026-09-12 裁决，T13a-fix）+
+    // 评析区 1（putL3QuestionAssessment——增补批 ADR-0034 v2 条 10/11：agent 首个可写
+    // 持久区，Amends ADR-0029，开口严格限于该区）。
     expect(agentWrites).toEqual([
       "createL2ExternalPrompt",
       "createL3Proposal",
       "createL3RawTextImport",
       "createL3StructuredImport",
       "proposeL2Candidate",
+      "putL3QuestionAssessment",
     ]);
   });
 });
@@ -237,6 +239,8 @@ const AGENT_READS = [
   "listL3Papers", "getL3Paper", "listL3PracticeFiles", "getL3PracticeFile",
   "listUpgradeWorkOrders", "listL3PracticeAttempts", "listL3PracticeErrorBook", "getL3Session",
   "previewForgetting",
+  // 增补批：评析区读面（agent 共建工作流需要读既有评析；写入同一端点双身份）。
+  "getL3QuestionAssessment",
 ] as const;
 
 const OWNER_READS = [

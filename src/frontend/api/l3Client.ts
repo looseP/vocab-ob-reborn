@@ -257,6 +257,36 @@ export async function sealSheet(id: string, input: SealSheetRequest): Promise<Se
   };
 }
 
+// ── 批次二增补：评析区（agent 首个可写持久区，ADR-0034 v2 条 10/11）────────
+
+export interface L3Assessment {
+  id: string;
+  user_id: string;
+  question_id: string;
+  content_md: string;
+  last_editor: "owner" | "agent";
+  created_at: string;
+  updated_at: string;
+}
+
+/** 评析（无则 null 空态；题不存在服务端 404）。 */
+export async function fetchQuestionAssessment(questionId: string): Promise<L3Assessment | null> {
+  const body = await apiFetch<{ item?: L3Assessment | null } | null>(
+    `/l3/questions/${encodeURIComponent(questionId)}/assessment`,
+  );
+  return body?.item ?? null;
+}
+
+/** upsert（latest-wins）：owner/agent 同一端点，last_editor 服务端按身份留痕。 */
+export async function saveQuestionAssessment(questionId: string, contentMd: string): Promise<L3Assessment> {
+  const body = await apiFetch<{ item?: L3Assessment } | null>(
+    `/l3/questions/${encodeURIComponent(questionId)}/assessment`,
+    { method: "PUT", body: JSON.stringify({ contentMd }) },
+  );
+  if (!body?.item) throw new Error("评析保存失败：响应缺少评析行");
+  return body.item;
+}
+
 /** v2 §4.7 撤回：submitted→draft（重挂题纸）；sheetId 缺省时服务端借原纸作用域幂等开纸。 */
 export async function withdrawQuestionAnnotation(id: string, sheetId?: string): Promise<QuestionAnnotation> {
   const body = await apiFetch<{ item?: QuestionAnnotation } | null>(

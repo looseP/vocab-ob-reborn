@@ -698,6 +698,17 @@ export interface L3QuestionAnnotationRow {
   updated_at: string;
 }
 
+/** l3_question_assessments 行（评析区，一题一条 latest-wins；增补批 0035）。 */
+export interface L3QuestionAssessmentRow {
+  id: string;
+  user_id: string;
+  question_id: string;
+  content_md: string;
+  last_editor: "owner" | "agent";
+  created_at: string;
+  updated_at: string;
+}
+
 /** l3_annotation_tags 行（预置 + 用户增删改，按用户隔离）。 */
 export interface L3AnnotationTagRow {
   id: string;

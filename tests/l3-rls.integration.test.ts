@@ -128,6 +128,8 @@ describe("L3 RLS isolation (integration)", () => {
       await adminPool.query("DELETE FROM l3_context_links WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_contexts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_sources WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      // 0035 批次二增补：评析区（题删除已级联，这里兜底显式清理）
+      await adminPool.query("DELETE FROM l3_question_assessments WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       // 0034 批次二：作答历史/题纸（attempts 无级联到题纸，先删 attempts 再删 submissions）
       await adminPool.query("DELETE FROM l3_question_attempts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_submissions WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
@@ -541,5 +543,75 @@ describe("L3 RLS isolation (integration)", () => {
       "SELECT answers FROM l3_submissions WHERE id = $1", [aSheetId],
     );
     expect(answers.rows[0]!.answers).toEqual({});
+  });
+
+  // ── 0035 批次二增补：评析区（一题一条 upsert）的行级隔离 ──
+  let aAssessSourceId = "";
+  let aAssessQuestionId = "";
+
+  it("actor A upserts a question assessment via vocab_app (ON CONFLICT path)", async () => {
+    aAssessSourceId = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_sources (id, user_id, source_type, title)
+       VALUES ($1, $2, 'article', 'RLS assessment source')`,
+      [aAssessSourceId, ACTOR_A],
+    );
+    aAssessQuestionId = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_questions (id, user_id, source_id, space, question_type, stem)
+       VALUES ($1, $2, $3, '阅读', 'reading_choice', 'RLS assessment question')`,
+      [aAssessQuestionId, ACTOR_A, aAssessSourceId],
+    );
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_assessments (id, user_id, question_id, content_md, last_editor)
+         VALUES ($1, $2, $3, 'owner 首写', 'owner')
+         ON CONFLICT (user_id, question_id)
+         DO UPDATE SET content_md = EXCLUDED.content_md, last_editor = EXCLUDED.last_editor, updated_at = now()`,
+        [randomUUID(), ACTOR_A, aAssessQuestionId],
+      );
+      // 覆盖写（latest-wins；last_editor 留痕）
+      await tx.query(
+        `INSERT INTO l3_question_assessments (id, user_id, question_id, content_md, last_editor)
+         VALUES ($1, $2, $3, 'agent 覆写', 'agent')
+         ON CONFLICT (user_id, question_id)
+         DO UPDATE SET content_md = EXCLUDED.content_md, last_editor = EXCLUDED.last_editor, updated_at = now()`,
+        [randomUUID(), ACTOR_A, aAssessQuestionId],
+      );
+    });
+    const rows = await adminPool.query<{ content_md: string; last_editor: string }>(
+      "SELECT content_md, last_editor FROM l3_question_assessments WHERE question_id = $1",
+      [aAssessQuestionId],
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]).toEqual({ content_md: "agent 覆写", last_editor: "agent" });
+  });
+
+  it("actor B cannot read or mutate actor A's assessment", async () => {
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const read = await tx.query(
+        "SELECT id FROM l3_question_assessments WHERE question_id = $1", [aAssessQuestionId],
+      );
+      expect(read.rows).toHaveLength(0);
+      const patched = await tx.query(
+        "UPDATE l3_question_assessments SET content_md = 'hijack' WHERE question_id = $1 RETURNING id",
+        [aAssessQuestionId],
+      );
+      expect(patched.rows).toHaveLength(0);
+    });
+    const still = await adminPool.query<{ content_md: string }>(
+      "SELECT content_md FROM l3_question_assessments WHERE question_id = $1", [aAssessQuestionId],
+    );
+    expect(still.rows[0]!.content_md).toBe("agent 覆写");
+  });
+
+  it("rejects actor B inserting an assessment attributed to actor A (RLS WITH CHECK)", async () => {
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_assessments (id, user_id, question_id, content_md, last_editor)
+         VALUES ($1, $2, $3, '越权', 'agent')`,
+        [randomUUID(), ACTOR_A, aAssessQuestionId],
+      );
+    })).rejects.toThrow(/row-level security/i);
   });
 });

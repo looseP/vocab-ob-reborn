@@ -1441,3 +1441,22 @@ export const l3AnnotationTags = pgTable("l3_annotation_tags", {
 	check("l3_annotation_tags_status_check", sql`status = ANY (ARRAY['active'::text, 'deleted'::text])`),
 ]);
 
+// 批次二增补（ADR-0034 v2 条 10/11，2026-09-17）：评析区——一题一条的 owner/agent
+// 共建沉淀。latest-wins 无历史版本（last_editor + updated_at 留痕兜底）；挂题不挂
+// 题纸（跨题纸、跨 venue 永存）；与总结条双轨（总结条管场次、评析区管题目）。
+// agent 首个可写持久区（Amends ADR-0029，开口严格限于本区）；content_md 长度
+// 由契约层收口（≤20k）。
+export const l3QuestionAssessments = pgTable("l3_question_assessments", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	questionId: uuid("question_id").notNull().references(() => l3Questions.id, { onDelete: "cascade" }),
+	contentMd: text("content_md").notNull(),
+	lastEditor: text("last_editor").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	unique("l3_question_assessments_user_question_unique").on(table.userId, table.questionId),
+	pgPolicy("l3_question_assessments_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_question_assessments_last_editor_check", sql`last_editor = ANY (ARRAY['owner'::text, 'agent'::text])`),
+]);
+

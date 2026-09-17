@@ -35,6 +35,7 @@ import {
   type SheetAnswerFlags,
 } from "@/domain/l3-sheets";
 import { L3AttemptHistoryModal } from "./L3AttemptHistoryModal";
+import { L3QuestionAssessment } from "./L3QuestionAssessment";
 import { useToast } from "@/frontend/components/ui/Toast";
 
 /**
@@ -1294,23 +1295,26 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     setTimeout(() => document.getElementById(domId)?.scrollIntoView({ behavior: "smooth", block: "center" }), 250);
   };
 
-  const renderAnalysis = (sectionKey: string, q: ExamQuestion) => {
-    if (!tagDict) return null;
-    return (
-      <L3QuestionAnalysis
-        question={q}
-        annotations={annotationsByQuestion[q.id] ?? []}
-        tagDict={tagDict}
-        onLocate={(anchor) => setLocate({ sectionKey, ...anchor, nonce: Date.now() })}
-        onCreate={handleCreateAnnotation}
-        onPatch={handlePatchAnnotation}
-        onDelete={handleDeleteAnnotation}
-        onSaveTagDict={handleSaveTagDict}
-        attempts={(attemptsByQuestion[q.id] ?? []).filter((row) => row.status === "active")}
-        onOpenHistory={() => setHistoryQuestionId(q.id)}
-      />
-    );
-  };
+  const renderAnalysis = (sectionKey: string, q: ExamQuestion) => (
+    <>
+      {tagDict && (
+        <L3QuestionAnalysis
+          question={q}
+          annotations={annotationsByQuestion[q.id] ?? []}
+          tagDict={tagDict}
+          onLocate={(anchor) => setLocate({ sectionKey, ...anchor, nonce: Date.now() })}
+          onCreate={handleCreateAnnotation}
+          onPatch={handlePatchAnnotation}
+          onDelete={handleDeleteAnnotation}
+          onSaveTagDict={handleSaveTagDict}
+          attempts={(attemptsByQuestion[q.id] ?? []).filter((row) => row.status === "active")}
+          onOpenHistory={() => setHistoryQuestionId(q.id)}
+        />
+      )}
+      {/* 批次二增补：评析子区（v2 §11 挂题不挂题纸；与「原文分析」并列）。 */}
+      <L3QuestionAssessment questionId={q.id} />
+    </>
+  );
 
   return (
     <div className="space-y-4">

@@ -782,6 +782,9 @@ export {
   sheetSealInputSchema as l3SheetSealSchema,
 } from "../../domain/l3-sheets";
 
+/** PUT /l3/questions/:id/assessment：评析区 upsert body（增补批 0035）。 */
+export { assessmentUpsertInputSchema as l3AssessmentUpsertSchema } from "../../domain/l3-assessments";
+
 /** GET /l3/attempts?questionIds=<uuid,uuid,...>：1–200 个 uuid（对齐注记批量口径）。 */
 export const l3AttemptListQuerySchema = z.object({
   questionIds: z.string().trim().min(1).max(12_000)
