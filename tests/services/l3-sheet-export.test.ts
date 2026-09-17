@@ -182,6 +182,44 @@ describe("renderSheetExportMarkdown", () => {
   });
 });
 
+describe("renderSheetExportMarkdown · 边界臂全覆盖", () => {
+  it("答案形状（string/choices/text/未知）与评审边界（非对象/数组/未知 verdict/空注释/空订正）妥善降级", () => {
+    const markdown = renderSheetExportMarkdown({
+      sheet: submissionRow({ seal_mode: null }),
+      questions: [questionRow()],
+      attempts: [
+        attemptRow({ id: "a-str", answer: "free text answer" }),
+        attemptRow({ id: "a-choices", answer: { choices: ["A", "C"] } }),
+        attemptRow({ id: "a-text", answer: { text: "translated text" } }),
+        attemptRow({ id: "a-weird", answer: { unknownShape: true } }),
+      ],
+      annotations: [
+        annotationRow({ id: "ann-1", review: 42 }),
+        annotationRow({ id: "ann-2", review: [] }),
+        annotationRow({ id: "ann-3", review: { verdict: "custom_verdict" } }),
+        annotationRow({ id: "ann-4", review: { verdict: "sound", comment: "   ", corrected_tags: [] } }),
+        annotationRow({ id: "ann-5", review: { verdict: "wrong", corrected_tags: ["X"] } }),
+        annotationRow({ id: "ann-6", excerpt: null, anchor_start: null, anchor_end: null, note: "无锚点注记" }),
+        annotationRow({ id: "ann-7", excerpt: "orphan", anchor_start: null, anchor_end: null, note: "半锚点防御" }),
+      ],
+      articles: [{ title: null, content: null }],
+      exportedAt: "2026-09-17T03:00:00.000Z",
+    });
+    expect(markdown).toContain("free text answer");
+    expect(markdown).toContain("多选 AC");
+    expect(markdown).toContain("translated text");
+    expect(markdown).toContain("已作答");
+    expect(markdown).toContain("（未命名材料）");
+    expect(markdown).toContain("（无正文）");
+    expect(markdown).toContain("无锚点注记");
+    expect(markdown).toContain("半锚点防御");
+    expect(markdown).toContain("评审: 成立");
+    expect(markdown).toContain("评审: custom_verdict");
+    expect(markdown).toContain("评审: 有误（订正建议: X）");
+    expect(markdown).toContain("（待检验）");
+  });
+});
+
 // ── service 编排 ────────────────────────────────────────────────────────────
 
 function makeSheetRepo(overrides: Partial<IL3SheetRepository> = {}): IL3SheetRepository {
@@ -260,7 +298,54 @@ function makeService(
   );
 }
 
+const PAPER_ID = "00000000-0000-4000-8000-000000000303";
+
+function paperRow(): import("@/domain").L3PaperRow {
+  return {
+    id: PAPER_ID,
+    user_id: USER,
+    title: "2025 英语一",
+    direction: null,
+    metadata: {},
+    payload: {
+      version: 1,
+      sections: [
+        { key: "s1", title: "Text 1", questionType: "reading_choice", sourceId: SOURCE, fileKey: null, questionIds: [Q1] },
+        { key: "s2", title: "Text 2", questionType: "reading_choice", sourceId: null, fileKey: "fk-2", questionIds: [] },
+        { key: "s3", title: "Text 1b", questionType: "reading_choice", sourceId: SOURCE, fileKey: null, questionIds: [] },
+      ],
+    },
+    payload_version: 1,
+    status: "active",
+    created_by: "owner",
+    input_hash: null,
+    created_at: "2026-09-17T00:00:00.000Z",
+    updated_at: "2026-09-17T00:00:00.000Z",
+  };
+}
+
 describe("L3SheetExportService.exportSheet", () => {
+  it("paper venue：作用域按 payload 顺序解析，文章去重且跳过无来源 section", async () => {
+    const sheetRepo = makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({
+        scope: "paper", source_id: null, question_type: null, paper_id: PAPER_ID, seal_mode: null,
+      })),
+      listBySheet: vi.fn(async () => []),
+    });
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => paperRow()),
+      findActiveQuestionsByIds: vi.fn(async () => [questionRow()]),
+    });
+    const annotationRepo = makeAnnotationRepo({ listAnnotationsBySheet: vi.fn(async () => []) });
+    const service = makeService(sheetRepo, paperRepo, annotationRepo);
+
+    const result = await service.exportSheet(USER, SHEET);
+    expect(result.markdown).toContain("范围: 整卷");
+    expect(result.markdown).toContain("（无作答记录）");
+    // 文章按 section 去重：同一 source 只出现一次
+    expect(result.markdown.match(/The trap phrase hides here\./g)).toHaveLength(1);
+  });
+
   it("404s for a missing or foreign sheet", async () => {
     const service = makeService(makeSheetRepo({ getSheet: vi.fn(async () => null) }));
     await expect(service.exportSheet(USER, SHEET)).rejects.toBeInstanceOf(NotFoundError);

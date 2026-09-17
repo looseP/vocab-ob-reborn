@@ -266,6 +266,20 @@ describe("L3AnnotationRepository batch-2 sheet helpers", () => {
     expect(params).toEqual([USER, SHEET]);
   });
 
+  it("lists all sheet annotations (settled stages) for the export archive", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "query").mockResolvedValue([
+      annotation({ stage: "submitted", sheet_id: SHEET }),
+    ]);
+    const rows = await repo.listAnnotationsBySheet(USER, SHEET);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.stage).toBe("submitted");
+    const [sql, params] = (repo as any).query.mock.calls[0];
+    expect(sql).toContain("sheet_id = $2::uuid");
+    expect(sql).toContain("status = 'active'");
+    expect(params).toEqual([USER, SHEET]);
+  });
+
   it("promotes draft→submitted behind the sheet+draft+active guard", async () => {
     const repo = new L3AnnotationRepository();
     vi.spyOn(repo as any, "query").mockResolvedValue([
