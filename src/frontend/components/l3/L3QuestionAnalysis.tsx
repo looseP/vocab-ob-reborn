@@ -32,12 +32,41 @@ interface L3QuestionAnalysisProps {
   onDelete: (id: string) => Promise<void>;
   /** v2 §4.7 验收收口：撤回（submitted→草稿，重挂题纸）；缺省不渲染撤回钮。 */
   onWithdraw?: (id: string) => Promise<void>;
+  /** 批次三①（D18）：submitted+有 review 注记的确认（submitted→confirmed）；缺省不渲染确认钮。 */
+  onConfirm?: (id: string) => Promise<void>;
   onSaveTagDict: (dict: AnnotationTagDict) => Promise<void>;
   /** 批次二：该题作答历史（徽标数据源；父层已过滤已删条目）。 */
   attempts?: L3Attempt[];
   /** 批次二：点徽标打开历史 modal。 */
   onOpenHistory?: () => void;
 }
+
+/** 批次三①：注记 review 列收窄视图（0034 形状；脏值返回 null 不渲染）。 */
+interface AnnotationReviewView {
+  verdict: "sound" | "questionable" | "wrong";
+  correctedTags: string[];
+  comment: string | null;
+}
+
+function parseAnnotationReview(raw: unknown): AnnotationReviewView | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as { verdict?: unknown; corrected_tags?: unknown; comment?: unknown };
+  if (value.verdict !== "sound" && value.verdict !== "questionable" && value.verdict !== "wrong") return null;
+  return {
+    verdict: value.verdict,
+    correctedTags: Array.isArray(value.corrected_tags)
+      ? value.corrected_tags.filter((tag): tag is string => typeof tag === "string")
+      : [],
+    comment: typeof value.comment === "string" && value.comment.trim().length > 0 ? value.comment : null,
+  };
+}
+
+/** 评卷判定徽标样式（sound ✓ / questionable ? / wrong ✗）。 */
+const REVIEW_BADGE_CLS: Record<AnnotationReviewView["verdict"], string> = {
+  sound: "rounded-full border border-emerald-500 bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+  questionable: "rounded-full border border-amber-500 bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+  wrong: "rounded-full border border-rose-500 bg-rose-50 px-1.5 py-0.5 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300",
+};
 
 interface FormState {
   note: string;
@@ -179,6 +208,7 @@ export function L3QuestionAnalysis({
   onPatch,
   onDelete,
   onWithdraw,
+  onConfirm,
   onSaveTagDict,
   attempts,
   onOpenHistory,
@@ -192,6 +222,8 @@ export function L3QuestionAnalysis({
   const [popover, setPopover] = useState<PopoverTarget | null>(null);
   /** 撤回请求处理中的条目 id（按钮去抖）。 */
   const [withdrawBusyId, setWithdrawBusyId] = useState<string | null>(null);
+  /** 批次三①：确认请求处理中的条目 id（按钮去抖）。 */
+  const [confirmBusyId, setConfirmBusyId] = useState<string | null>(null);
 
   const optionKeys = question.options
     .map((option) => option.key)
@@ -329,86 +361,144 @@ export function L3QuestionAnalysis({
               {coverage.map((entry) => `${entry.key}${entry.covered ? "✓" : "—"}`).join(" ")}
             </p>
           )}
-          {annotations.map((annotation) => (
-            <li
-              key={annotation.id}
-              className={`list-none rounded-lg bg-[var(--color-surface)] p-2.5 text-xs leading-relaxed ${annotation.stage === "draft" ? "border border-dashed border-[var(--color-accent)]" : "ring-1 ring-[var(--color-border)]"}`}
-            >
-              {annotation.stage === "draft" && (
-                <span className="mr-1 inline-block rounded-full border border-dashed border-[var(--color-accent)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
-                  草稿
-                </span>
-              )}
-              {annotation.stage === "submitted" && (
-                <span className="mr-1 inline-block rounded-full border border-sky-400 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
-                  已提交
-                </span>
-              )}
-              {annotation.excerpt && annotation.anchor_start != null && annotation.anchor_end != null && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onLocate({ start: annotation.anchor_start!, end: annotation.anchor_end! });
-                  }}
-                  className="mb-1 mr-2 rounded-md border border-[var(--color-accent)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft,var(--color-surface))]"
-                >
-                  定位「{annotation.excerpt}」
-                </button>
-              )}
-              {annotation.entry_tags.map((label) => (
-                <span key={label} className="mr-1 inline-block rounded-full bg-[var(--color-accent-soft,var(--color-surface))] px-2 py-0.5 text-[10px] text-[var(--color-accent)]">
-                  {label}
-                </span>
-              ))}
-              {annotation.note && <p className="mt-1 whitespace-pre-wrap text-[var(--color-ink)]">{annotation.note}</p>}
-              {OPTION_KEYS.filter((key) => (annotation.option_tags[key] ?? []).length > 0).map((key) => (
-                <p key={key} className="mt-1 flex flex-wrap items-center gap-1">
-                  <span className="font-semibold text-[var(--color-ink-soft)]">{key}</span>
-                  {(annotation.option_tags[key] ?? []).map((label) => (
-                    <span key={label} className="rounded-full bg-[var(--color-surface)] px-2 py-0.5 text-[10px] ring-1 ring-[var(--color-border)]">
-                      {label}
-                    </span>
-                  ))}
-                </p>
-              ))}
-              <span className="mt-1.5 flex justify-end gap-2">
-                {annotation.stage === "submitted" ? (
+          {annotations.map((annotation) => {
+            const review = parseAnnotationReview(annotation.review);
+            const currentTags = new Set([
+              ...annotation.entry_tags,
+              ...Object.values(annotation.option_tags).flatMap((list) => list ?? []),
+            ]);
+            return (
+              <li
+                key={annotation.id}
+                className={`list-none rounded-lg bg-[var(--color-surface)] p-2.5 text-xs leading-relaxed ${annotation.stage === "draft" ? "border border-dashed border-[var(--color-accent)]" : "ring-1 ring-[var(--color-border)]"}`}
+              >
+                {annotation.stage === "draft" && (
+                  <span className="mr-1 inline-block rounded-full border border-dashed border-[var(--color-accent)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
+                    草稿
+                  </span>
+                )}
+                {annotation.stage === "submitted" && (
+                  <span className="mr-1 inline-block rounded-full border border-sky-400 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                    已提交
+                  </span>
+                )}
+                {annotation.excerpt && annotation.anchor_start != null && annotation.anchor_end != null && (
                   <button
                     type="button"
-                    aria-label="撤回"
-                    disabled={withdrawBusyId === annotation.id}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (!onWithdraw) return;
-                      setWithdrawBusyId(annotation.id);
-                      void onWithdraw(annotation.id).finally(() => setWithdrawBusyId(null));
+                      onLocate({ start: annotation.anchor_start!, end: annotation.anchor_end! });
                     }}
-                    className="text-[10px] text-sky-700 hover:text-sky-900 disabled:opacity-50 dark:text-sky-300"
+                    className="mb-1 mr-2 rounded-md border border-[var(--color-accent)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft,var(--color-surface))]"
                   >
-                    撤回
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    aria-label="编辑"
-                    onClick={(e) => { e.stopPropagation(); openEditor(annotation); }}
-                    className="text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
-                  >
-                    编辑
+                    定位「{annotation.excerpt}」
                   </button>
                 )}
-                <button
-                  type="button"
-                  aria-label="删除"
-                  onClick={(e) => { e.stopPropagation(); void onDelete(annotation.id); }}
-                  className="text-[10px] text-[var(--color-ink-soft)] hover:text-rose-600"
-                >
-                  删除
-                </button>
-              </span>
-            </li>
-          ))}
+                {annotation.entry_tags.map((label) => (
+                  <span key={label} className="mr-1 inline-block rounded-full bg-[var(--color-accent-soft,var(--color-surface))] px-2 py-0.5 text-[10px] text-[var(--color-accent)]">
+                    {label}
+                  </span>
+                ))}
+                {annotation.note && <p className="mt-1 whitespace-pre-wrap text-[var(--color-ink)]">{annotation.note}</p>}
+                {OPTION_KEYS.filter((key) => (annotation.option_tags[key] ?? []).length > 0).map((key) => (
+                  <p key={key} className="mt-1 flex flex-wrap items-center gap-1">
+                    <span className="font-semibold text-[var(--color-ink-soft)]">{key}</span>
+                    {(annotation.option_tags[key] ?? []).map((label) => (
+                      <span key={label} className="rounded-full bg-[var(--color-surface)] px-2 py-0.5 text-[10px] ring-1 ring-[var(--color-border)]">
+                        {label}
+                      </span>
+                    ))}
+                  </p>
+                ))}
+                {/* 批次三①：agent 评卷 review 对照（sound ✓ / questionable ? / wrong ✗ +
+                    corrected_tags 差异 + comment）——只读展示，采纳归 owner。 */}
+                {review && (
+                  <div
+                    data-annotation-review={review.verdict}
+                    className="mt-1 rounded-md bg-[var(--color-surface)] p-1.5 ring-1 ring-[var(--color-border)]"
+                  >
+                    <p className="flex flex-wrap items-center gap-1 text-[10px] font-medium">
+                      <span className={REVIEW_BADGE_CLS[review.verdict]}>
+                        {review.verdict === "sound" ? "✓ 主张成立" : review.verdict === "questionable" ? "? 待商榷" : "✗ 主张有误"}
+                      </span>
+                      <span className="text-[var(--color-ink-soft)]">评卷</span>
+                    </p>
+                    {review.correctedTags.length > 0 && (
+                      <p className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+                        <span className="text-[var(--color-ink-soft)]">建议</span>
+                        {review.correctedTags.filter((tag) => !currentTags.has(tag)).map((tag) => (
+                          <span key={`add-${tag}`} className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                            +{tag}
+                          </span>
+                        ))}
+                        {[...currentTags].filter((tag) => !review.correctedTags.includes(tag)).map((tag) => (
+                          <span key={`rm-${tag}`} className="rounded-full bg-rose-50 px-1.5 py-0.5 text-rose-600 line-through dark:bg-rose-950/40 dark:text-rose-300">
+                            −{tag}
+                          </span>
+                        ))}
+                      </p>
+                    )}
+                    {review.comment && (
+                      <p className="mt-0.5 whitespace-pre-wrap text-[10px] text-[var(--color-ink-soft)]">{review.comment}</p>
+                    )}
+                  </div>
+                )}
+                <span className="mt-1.5 flex justify-end gap-2">
+                  {annotation.stage === "submitted" ? (
+                    <>
+                      {/* D18：submitted + 有 review → 「确认」钮（submitted→confirmed）。 */}
+                      {review && onConfirm && (
+                        <button
+                          type="button"
+                          aria-label="确认"
+                          disabled={confirmBusyId === annotation.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmBusyId(annotation.id);
+                            void onConfirm(annotation.id).finally(() => setConfirmBusyId(null));
+                          }}
+                          className="text-[10px] font-medium text-emerald-700 hover:text-emerald-900 disabled:opacity-50 dark:text-emerald-300"
+                        >
+                          确认
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        aria-label="撤回"
+                        disabled={withdrawBusyId === annotation.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!onWithdraw) return;
+                          setWithdrawBusyId(annotation.id);
+                          void onWithdraw(annotation.id).finally(() => setWithdrawBusyId(null));
+                        }}
+                        className="text-[10px] text-sky-700 hover:text-sky-900 disabled:opacity-50 dark:text-sky-300"
+                      >
+                        撤回
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label="编辑"
+                      onClick={(e) => { e.stopPropagation(); openEditor(annotation); }}
+                      className="text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+                    >
+                      编辑
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label="删除"
+                    onClick={(e) => { e.stopPropagation(); void onDelete(annotation.id); }}
+                    className="text-[10px] text-[var(--color-ink-soft)] hover:text-rose-600"
+                  >
+                    删除
+                  </button>
+                </span>
+              </li>
+            );
+          })}
 
           {composerOpen ? (
             <div className="relative space-y-2 rounded-lg p-2 ring-1 ring-[var(--color-accent)]">

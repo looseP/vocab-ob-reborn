@@ -5,6 +5,7 @@ import { L3QuestionAnalysis } from "./L3QuestionAnalysis";
 import { L3SourceNotesDrawer } from "./L3SourceNotesDrawer";
 import { apiFetch } from "@/frontend/api/client";
 import {
+  confirmQuestionAnnotation,
   createQuestionAnnotation,
   deleteAttempt,
   deleteQuestionAnnotation,
@@ -13,6 +14,7 @@ import {
   fetchQuestionAnnotations,
   fetchSheet,
   fetchSheetExport,
+  fetchSheetGrading,
   openSheet,
   patchSheet,
   patchQuestionAnnotation,
@@ -22,6 +24,7 @@ import {
   type AnnotationTagDict,
   type CreateQuestionAnnotationRequest,
   type L3Attempt,
+  type L3GradingResult,
   type L3Sheet,
   type QuestionAnnotation,
   type QuestionAnnotationPatchRequest,
@@ -897,6 +900,50 @@ function ChoiceQuestion({
   );
 }
 
+/**
+ * 批次三①：解析模式判读子区（verdict 徽标 ✓/✗/◐ + agent 分析折叠区）。
+ * 仅揭示后由题卡渲染（做题模式零变更）；分析为纯文本 pre-wrap（不引 md 依赖）。
+ */
+function L3QuestionGrading({ grading }: { grading: L3GradingResult }) {
+  const [expanded, setExpanded] = useState(false);
+  const badge = grading.verdict === "correct"
+    ? { mark: "✓", label: "评卷：对", cls: "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200" }
+    : grading.verdict === "partial"
+      ? { mark: "◐", label: "评卷：半对", cls: "border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" }
+      : { mark: "✗", label: "评卷：错", cls: "border-rose-500 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" };
+  return (
+    <div
+      data-grading-verdict={grading.verdict}
+      className="mt-2.5 border-t border-dashed border-[var(--color-border)] pt-2 text-xs"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="flex w-full items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badge.cls}`}>
+            {badge.mark} {badge.label}
+          </span>
+          <span className="truncate text-[10px] text-[var(--color-ink-soft)]">agent 评卷 · {grading.graded_by}</span>
+        </span>
+        {grading.analysis_md && (
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); setExpanded((v) => !v); }}
+            aria-expanded={expanded}
+            className="shrink-0 text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+          >
+            {expanded ? "收起分析 ▴" : "展开分析 ▸"}
+          </button>
+        )}
+      </div>
+      {expanded && grading.analysis_md && (
+        <p className="mt-1.5 whitespace-pre-wrap rounded-md bg-[var(--color-surface)] p-2 text-[11px] leading-relaxed text-[var(--color-ink)] ring-1 ring-[var(--color-border)]">
+          {grading.analysis_md}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function WrittenQuestion({
   question,
   kind,
@@ -988,11 +1035,28 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
   const [clearedQuestions, setClearedQuestions] = useState<ReadonlySet<string>>(new Set());
   /** 定格档案统计（交卷时口径：total 不因后续删除变化）。 */
   const [sheetStats, setSheetStats] = useState<{ total: number; cleared: number } | null>(null);
+  // ── 批次三①：评卷结果（解析模式展示；前端只消费 owner 读面，永不消费 grading-context）──
+  const [gradingResults, setGradingResults] = useState<Record<string, L3GradingResult>>({});
+  /** sealed 且结果加载成功：参与「待评卷」提示判定（加载失败不误报）。 */
+  const [gradingLoaded, setGradingLoaded] = useState(false);
   const pendingAnswers = useRef<Record<string, unknown>>({});
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetRef = useRef<L3Sheet | null>(null);
   const answersRef = useRef<Record<string, SheetAnswer>>({});
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  /** 批次三①：拉取解析模式评卷结果（sealed 时；失败静默——不误报「待评卷」也不打断卷面）。 */
+  const loadGradingResults = useCallback(async (sheetId: string) => {
+    try {
+      const rows = await fetchSheetGrading(sheetId);
+      const map: Record<string, L3GradingResult> = {};
+      for (const row of rows) map[row.question_id] = row;
+      setGradingResults(map);
+      setGradingLoaded(true);
+    } catch {
+      /* 静默降级 */
+    }
+  }, []);
 
   // 进卷自动开纸（幂等）：paper venue 作用域键 paper:<id>，冲突复用既有 draft 行。
   // draft 行携带服务端 answers → 本地 picks（重进页面不丢已保存作答）。
@@ -1004,6 +1068,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
       .then((row) => {
         if (cancelled) return;
         setSheet(row);
+        // 批次三①：重进已定格页面时拉取解析模式评卷结果（draft 零变更不加载）。
+        if (row.status === "sealed") void loadGradingResults(row.id);
         if (row.status === "draft") {
           const restored: Record<string, SheetAnswer> = {};
           for (const [questionId, value] of Object.entries(row.answers ?? {})) {
@@ -1022,7 +1088,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
         if (!cancelled) addToast("error", "题纸打开失败，本次作答不会保存");
       });
     return () => { cancelled = true; };
-  }, [paper.id, fileVenue?.sourceId, fileVenue?.questionType, addToast]);
+  }, [paper.id, fileVenue?.sourceId, fileVenue?.questionType, addToast, loadGradingResults]);
 
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
   useEffect(() => { answersRef.current = answers; }, [answers]);
@@ -1230,6 +1296,11 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     });
   }, []);
 
+  /** 批次三①（D18）：owner 确认——submitted+有 review 的注记走确认（终态不回滚）。 */
+  const handleConfirmAnnotation = useCallback(async (id: string) => {
+    upsertAnnotation(await confirmQuestionAnnotation(id));
+  }, [upsertAnnotation]);
+
   const handleCreateAnnotation = useCallback(async (input: CreateQuestionAnnotationRequest) => {
     // 做题中（draft 题纸）：划词注记挂当前题纸为草稿注记；题纸未就绪/已定格回落正式注记。
     const current = sheetRef.current;
@@ -1264,6 +1335,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
         ? `已定格：${result.materializedCount} 条作答已入库，可打开「显示全部答案与解析」进入解析模式`
         : "已定格，可打开「显示全部答案与解析」进入解析模式");
       void deriveFromSheet(result.sheet.id);
+      // 批次三①：定格后刷新解析模式评卷结果（初次为空 → 题纸栏显示「待评卷」引导）。
+      void loadGradingResults(result.sheet.id);
     } catch (error) {
       if (error instanceof BrowserApiError && error.status === 409) {
         const details = error.details as { unansweredCount?: number; recheckCount?: number } | null;
@@ -1494,27 +1567,34 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     setTimeout(() => document.getElementById(domId)?.scrollIntoView({ behavior: "smooth", block: "center" }), 250);
   };
 
-  const renderAnalysis = (sectionKey: string, q: ExamQuestion) => (
-    <>
-      {tagDict && (
-        <L3QuestionAnalysis
-          question={q}
-          annotations={annotationsByQuestion[q.id] ?? []}
-          tagDict={tagDict}
-          onLocate={(anchor) => setLocate({ sectionKey, ...anchor, nonce: Date.now() })}
-          onCreate={handleCreateAnnotation}
-          onPatch={handlePatchAnnotation}
-          onDelete={handleDeleteAnnotation}
-          onWithdraw={handleWithdrawAnnotation}
-          onSaveTagDict={handleSaveTagDict}
-          attempts={(attemptsByQuestion[q.id] ?? []).filter((row) => row.status === "active")}
-          onOpenHistory={() => setHistoryQuestionId(q.id)}
-        />
-      )}
-      {/* 批次二增补：评析子区（v2 §11 挂题不挂题纸；与「原文分析」并列）。 */}
-      <L3QuestionAssessment questionId={q.id} />
-    </>
-  );
+  const renderAnalysis = (sectionKey: string, q: ExamQuestion) => {
+    const grading = gradingResults[q.id];
+    return (
+      <>
+        {/* 批次三①：解析模式判读（verdict 徽标 + agent 分析折叠区）——仅揭示后渲染，
+            做题模式零变更（verdict/analysis 不进做题视图）。 */}
+        {grading && revealAll && <L3QuestionGrading grading={grading} />}
+        {tagDict && (
+          <L3QuestionAnalysis
+            question={q}
+            annotations={annotationsByQuestion[q.id] ?? []}
+            tagDict={tagDict}
+            onLocate={(anchor) => setLocate({ sectionKey, ...anchor, nonce: Date.now() })}
+            onCreate={handleCreateAnnotation}
+            onPatch={handlePatchAnnotation}
+            onDelete={handleDeleteAnnotation}
+            onWithdraw={handleWithdrawAnnotation}
+            onConfirm={handleConfirmAnnotation}
+            onSaveTagDict={handleSaveTagDict}
+            attempts={(attemptsByQuestion[q.id] ?? []).filter((row) => row.status === "active")}
+            onOpenHistory={() => setHistoryQuestionId(q.id)}
+          />
+        )}
+        {/* 批次二增补：评析子区（v2 §11 挂题不挂题纸；与「原文分析」并列）。 */}
+        <L3QuestionAssessment questionId={q.id} />
+      </>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -1547,6 +1627,15 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                 <span className="rounded-full bg-[var(--color-ink)] px-2 py-0.5 font-medium text-[var(--color-surface)]">
                   {sheet.status === "sealed" ? "已定格" : "已弃档"}
                 </span>
+                {/* 批次三①：sealed 且无评卷结果 → 「待评卷」引导（加载失败不误报）。 */}
+                {sheet.status === "sealed" && gradingLoaded && Object.keys(gradingResults).length === 0 && (
+                  <span
+                    title="把题纸导出发给 agent 评卷；评卷后回到本页，解析模式会显示判读与分析"
+                    className="rounded-full border border-dashed border-[var(--color-accent)] px-2 py-0.5 font-medium text-[var(--color-accent)]"
+                  >
+                    待评卷 · 可请 agent 评卷
+                  </span>
+                )}
                 {sheetStats && sheetStats.total > 0 && (
                   <span className="text-[var(--color-ink-soft)]">
                     已录 {sheetStats.total} 条作答{sheetStats.cleared > 0 ? `（含 ${sheetStats.cleared} 条已清理）` : ""}
