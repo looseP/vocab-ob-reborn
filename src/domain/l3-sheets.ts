@@ -51,14 +51,33 @@ export function buildSheetScopeKey(
 }
 
 /**
- * 未答题计数（paper 交卷软确认数据源）：缺少键或显式 null（清除）均计未答。
+ * 作答内容判据（口径统一修正 2026-09-17，单一真源）：choice / choices / text 任一非空
+ * = 已作答；仅主观痕迹（marks/flags/optionFlags）、空对象、未知形状 = 未作答。
+ * 定格软确认与导出/历史摘要共用本判据；物化不受影响（痕迹不丢）。
+ */
+export function hasAnswerContent(answer: unknown): boolean {
+  if (answer == null) return false;
+  if (typeof answer === "string") return answer.trim().length > 0;
+  if (typeof answer === "object" && !Array.isArray(answer)) {
+    const record = answer as { choice?: unknown; choices?: unknown; text?: unknown };
+    if (typeof record.choice === "string" && record.choice.trim().length > 0) return true;
+    if (Array.isArray(record.choices) && record.choices.length > 0) return true;
+    if (typeof record.text === "string" && record.text.trim().length > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * 未答题计数（paper 交卷软确认数据源）：无作答内容（缺键 / 显式 null / 仅主观痕迹 /
+ * 空对象）均计未答——判据见 hasAnswerContent（口径统一修正 2026-09-17：旧实现以
+ * 「answer 非空」判定，只标记未选答案的题会漏过软确认）。
  * 纯函数，计数由调用侧与作用域题集（file=题组；paper=payload sections）对齐。
  */
 export function countUnansweredQuestions(
   questionIds: readonly string[],
   answers: Readonly<Record<string, unknown>>,
 ): number {
-  return questionIds.filter((id) => answers[id] == null).length;
+  return questionIds.filter((id) => !hasAnswerContent(answers[id])).length;
 }
 
 /** 开纸输入：file=sourceId+questionType；paper=paperId；两 scope 字段互斥。 */

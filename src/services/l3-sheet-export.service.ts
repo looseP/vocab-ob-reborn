@@ -37,6 +37,7 @@ import type {
   L3QuestionRow,
   L3SubmissionRow,
 } from "../domain";
+import { hasAnswerContent } from "../domain/l3-sheets";
 import { logger } from "../observability/logger";
 import { resolveSheetScopedQuestions } from "./l3-sheet-scope";
 
@@ -128,14 +129,15 @@ export function decorateInline(
 
 function summarizeAnswer(answer: unknown): string {
   if (answer == null) return "内容已清理";
-  if (typeof answer === "string") return truncate(answer, 80);
+  if (typeof answer === "string") return answer.trim().length > 0 ? truncate(answer, 80) : "未作答";
   if (typeof answer === "object" && !Array.isArray(answer)) {
     const record = answer as Record<string, unknown>;
-    if (typeof record.choice === "string") return `选 ${record.choice}`;
+    if (typeof record.choice === "string" && record.choice.trim().length > 0) return `选 ${record.choice}`;
     if (Array.isArray(record.choices) && record.choices.length > 0) return `多选 ${record.choices.join("")}`;
-    if (typeof record.text === "string") return truncate(record.text, 80);
+    if (typeof record.text === "string" && record.text.trim().length > 0) return truncate(record.text, 80);
   }
-  return "已作答";
+  // 口径统一修正（2026-09-17）：无作答内容（仅主观痕迹/空对象/未知形状）≠ 已作答。
+  return hasAnswerContent(answer) ? "已作答" : "未作答";
 }
 
 /** 当场主观状态快照摘要（self_assessment v2：flags/optionFlags/marks）。 */
@@ -367,14 +369,18 @@ function renderCore(input: L3SheetExportInput, contentSha256: string | null): st
   if (!withAnswers) {
     lines.push("（未包含作答痕迹）", "");
   } else if (sheet.status === "draft") {
-    const answered = Object.keys(answers);
-    if (answered.length === 0) lines.push("（尚无作答）", "");
-    answered.forEach((questionId, index) => {
-      const question = questionById.get(questionId);
-      const answer = answers[questionId];
+    // 卷面序渲染（口径统一修正 2026-09-17）：按作用域题序（questions）而非 answers
+    // 键序——jsonb 键序无语义；序号 = 题在卷面的位置；未作答但有痕迹的题照样列出
+    //（痕迹恒渲染）。
+    const draftRows = questions
+      .map((question, index) => ({ question, index }))
+      .filter(({ question }) => answers[question.id] != null);
+    if (draftRows.length === 0) lines.push("（尚无作答）", "");
+    for (const { question, index } of draftRows) {
+      const answer = answers[question.id];
       const trail = summarizeTrail(answer);
-      lines.push(`- ${index + 1}. ${truncate(question?.stem ?? questionId, 60)}：${summarizeAnswer(answer)}${trail ? ` ｜ ${trail}` : ""}`);
-    });
+      lines.push(`- ${index + 1}. ${truncate(question.stem, 60)}：${summarizeAnswer(answer)}${trail ? ` ｜ ${trail}` : ""}`);
+    }
     lines.push("");
   } else {
     if (attempts.length === 0) lines.push("（无作答记录）", "");

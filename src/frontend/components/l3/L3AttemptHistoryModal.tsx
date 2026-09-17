@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { L3Attempt, QuestionAnnotation } from "@/frontend/api/l3Client";
+import { hasAnswerContent } from "@/domain/l3-sheets";
 
 export interface AttemptHistoryQuestion {
   id: string;
@@ -26,17 +27,18 @@ function formatAttemptTime(iso: string): string {
   return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-/** 题型无关答案的展示摘要（choice/text/choices 约定键；其余退化为「已作答」）。 */
+/** 题型无关答案的展示摘要（choice/text/choices 约定键；无作答内容显示「未作答」）。 */
 export function summarizeAttemptAnswer(answer: unknown): string {
   if (answer == null) return "内容已清理";
-  if (typeof answer === "string") return truncate(answer, 60);
+  if (typeof answer === "string") return answer.trim().length > 0 ? truncate(answer, 60) : "未作答";
   if (typeof answer === "object" && !Array.isArray(answer)) {
     const record = answer as Record<string, unknown>;
-    if (typeof record.choice === "string") return `选 ${record.choice}`;
+    if (typeof record.choice === "string" && record.choice.trim().length > 0) return `选 ${record.choice}`;
     if (Array.isArray(record.choices) && record.choices.length > 0) return `多选 ${record.choices.join("")}`;
-    if (typeof record.text === "string") return truncate(record.text, 60);
+    if (typeof record.text === "string" && record.text.trim().length > 0) return truncate(record.text, 60);
   }
-  return "已作答";
+  // 口径统一修正（2026-09-17）：无作答内容（仅主观痕迹/空对象）≠ 已作答。
+  return hasAnswerContent(answer) ? "已作答" : "未作答";
 }
 
 export function L3AttemptHistoryModal({

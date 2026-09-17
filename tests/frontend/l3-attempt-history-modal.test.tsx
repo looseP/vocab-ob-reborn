@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen } from "@testing-library/dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
-import { L3AttemptHistoryModal } from "@/frontend/components/l3/L3AttemptHistoryModal";
+import { L3AttemptHistoryModal, summarizeAttemptAnswer } from "@/frontend/components/l3/L3AttemptHistoryModal";
 import type { L3Attempt, QuestionAnnotation } from "@/frontend/api/l3Client";
 
 const QUESTION_ID = "00000000-0000-4000-8000-000000000101";
@@ -135,5 +135,17 @@ describe("L3AttemptHistoryModal 作答历史 modal（批次二）", () => {
   it("无文件身份时不渲染深链", async () => {
     await renderModal({ deepLink: null });
     expect(screen.queryByRole("link", { name: /去题型空间/ })).toBeNull();
+  });
+});
+
+describe("summarizeAttemptAnswer（口径统一修正：无作答内容 ≠ 已作答）", () => {
+  it("仅痕迹/空对象/未知形状显示「未作答」；choice/多选/文本正常；null 为「内容已清理」", () => {
+    expect(summarizeAttemptAnswer({ marks: [{ scope: "passage", start: 1, end: 4 }] })).toBe("未作答");
+    expect(summarizeAttemptAnswer({})).toBe("未作答");
+    expect(summarizeAttemptAnswer({ unknownShape: true })).toBe("未作答");
+    expect(summarizeAttemptAnswer({ choice: "B" })).toBe("选 B");
+    expect(summarizeAttemptAnswer({ choices: ["A", "C"] })).toBe("多选 AC");
+    expect(summarizeAttemptAnswer({ text: "译文" })).toBe("译文");
+    expect(summarizeAttemptAnswer(null)).toBe("内容已清理");
   });
 });

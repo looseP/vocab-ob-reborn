@@ -10,6 +10,7 @@ import {
   canPatchSheet,
   countRecheckQuestions,
   countUnansweredQuestions,
+  hasAnswerContent,
   isAnnotationAgentReadable,
   pruneSheetAnswer,
   removeSheetAnswerMark,
@@ -174,18 +175,47 @@ describe("sheetSealInputSchema", () => {
   });
 });
 
-describe("countUnansweredQuestions", () => {
+describe("countUnansweredQuestions（口径统一修正：无作答内容才算未答）", () => {
   it("counts missing keys and explicit nulls as unanswered", () => {
-    expect(countUnansweredQuestions(["a", "b", "c"], { a: { selected: "A" } })).toBe(2);
+    expect(countUnansweredQuestions(["a", "b", "c"], { a: { choice: "A" } })).toBe(2);
     expect(countUnansweredQuestions(["a", "b"], { a: null, b: { text: "译文" } })).toBe(1);
   });
 
-  it("returns zero when every scoped question is answered", () => {
-    expect(countUnansweredQuestions(["a"], { a: 0 })).toBe(0);
+  it("only trace fields (marks/flags/optionFlags) or empty objects still count as unanswered", () => {
+    expect(countUnansweredQuestions(["a"], { a: { marks: [{ scope: "passage", start: 1, end: 2 }] } })).toBe(1);
+    expect(countUnansweredQuestions(["a"], { a: { flags: { recheck: true } } })).toBe(1);
+    expect(countUnansweredQuestions(["a"], { a: {} })).toBe(1);
+  });
+
+  it("choice / choices / text count as answered; blank strings do not", () => {
+    expect(countUnansweredQuestions(["a", "b", "c"], {
+      a: { choice: "B" }, b: { choices: ["A", "C"] }, c: { text: "译文" },
+    })).toBe(0);
+    expect(countUnansweredQuestions(["a"], { a: { choice: "   " } })).toBe(1);
   });
 
   it("returns zero for an empty question scope", () => {
     expect(countUnansweredQuestions([], { a: "x" })).toBe(0);
+  });
+});
+
+describe("hasAnswerContent（作答内容判据，单一真源）", () => {
+  it("accepts non-empty string / choice / choices / text", () => {
+    expect(hasAnswerContent("free text")).toBe(true);
+    expect(hasAnswerContent({ choice: "B" })).toBe(true);
+    expect(hasAnswerContent({ choices: ["A"] })).toBe(true);
+    expect(hasAnswerContent({ text: "译文" })).toBe(true);
+  });
+
+  it("rejects null / empty values / subjective-only shapes / unknown shapes", () => {
+    expect(hasAnswerContent(null)).toBe(false);
+    expect(hasAnswerContent("")).toBe(false);
+    expect(hasAnswerContent({})).toBe(false);
+    expect(hasAnswerContent({ choice: "" })).toBe(false);
+    expect(hasAnswerContent({ choice: "   " })).toBe(false);
+    expect(hasAnswerContent({ marks: [{ scope: "stem", start: 1, end: 2 }] })).toBe(false);
+    expect(hasAnswerContent({ unknownShape: true })).toBe(false);
+    expect(hasAnswerContent([1, 2])).toBe(false);
   });
 });
 

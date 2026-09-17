@@ -522,4 +522,39 @@ describe("L3SheetService.sealSheet（v2 §4.6/§10：旗标物化与待复查计
       expect.objectContaining({ question_id: Q2, answer: { choice: "C" }, self_assessment: null }),
     ]);
   });
+
+  it("仅痕迹题（只标重点未选答案）计入未答软确认；确认后痕迹仍随定格物化（口径统一修正）", async () => {
+    const insertAttempts = vi.fn(async (_userId: string, attempts: readonly { question_id: string }[]) =>
+      attempts.map((attempt) => attemptRow({ question_id: attempt.question_id })));
+    const sheetRepo = makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({
+        answers: {
+          [Q1]: { marks: [{ scope: "passage", start: 3, end: 12 }] },
+          [Q2]: { choice: "C" },
+        },
+      })),
+      sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full" })),
+      insertAttempts,
+    });
+    const service = makeService(sheetRepo, fileScopedPaperRepo());
+
+    // 旧口径把「仅有痕迹」误判为已答（不弹软确认）；修正后计入未答。
+    const rejected = await service.sealSheet({
+      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false,
+    }).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(ConflictError);
+    expect((rejected as ConflictError).meta).toMatchObject({ unansweredCount: 1 });
+
+    // 确认后：Q1 仍物化（痕迹不丢）——answer 精确为空对象（主观字段不进作答事实）、痕迹进 self_assessment。
+    await service.sealSheet({ userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: true });
+    const lastCall = insertAttempts.mock.calls[insertAttempts.mock.calls.length - 1]!;
+    const rows = lastCall[1] as unknown as Array<{ question_id: string; answer: unknown; self_assessment: unknown }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.question_id).toBe(Q1);
+    expect(rows[0]!.answer).toEqual({});
+    expect(rows[0]!.self_assessment).toEqual({ marks: [{ scope: "passage", start: 3, end: 12 }] });
+    expect(rows[1]!.question_id).toBe(Q2);
+    expect(rows[1]!.answer).toEqual({ choice: "C" });
+    expect(rows[1]!.self_assessment).toBeNull();
+  });
 });

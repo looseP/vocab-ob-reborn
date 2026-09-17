@@ -290,6 +290,28 @@ describe("renderSheetExportMarkdown（v2）", () => {
     }));
     expect(markdown).toContain("评审: 存疑 — 选项 B 的归因值得再核对（订正建议: 偷换概念、无中生有）");
   });
+
+  it("draft 痕迹段按卷面序渲染（与 answers 键序无关）；仅痕迹题显示「未作答」", () => {
+    const { markdown } = renderSheetExportMarkdown(exportInput({
+      sheet: submissionRow({ status: "draft", seal_mode: null }),
+      questions: [questionRow({ id: Q1, ordinal: 0 }), questionRow({ id: Q2, ordinal: 1 })],
+      attempts: [],
+      // 故意与卷面序相反（Q2 在前）——渲染须按 questions 序而非键序。
+      answers: {
+        [Q2]: { choice: "C" },
+        [Q1]: { marks: [{ scope: "passage", start: 16, end: 21 }] },
+      },
+      withAnswers: true,
+    }));
+    const section = markdown.split("## 作答与痕迹")[1]!.split("## 注记清单")[0]!;
+    const rows = section.split("\n").filter((line) => line.startsWith("- "));
+    expect(rows).toHaveLength(2);
+    // 卷面序：Q1（序号 1，仅痕迹 → 未作答）；Q2（序号 2，选 C）
+    expect(rows[0]).toContain("- 1.");
+    expect(rows[0]).toContain("未作答 ｜ 重点标记 1 处");
+    expect(rows[1]).toContain("- 2.");
+    expect(rows[1]).toContain("选 C");
+  });
 });
 
 describe("renderSheetExportMarkdown · 边界臂全覆盖", () => {
@@ -316,7 +338,8 @@ describe("renderSheetExportMarkdown · 边界臂全覆盖", () => {
     expect(markdown).toContain("free text answer");
     expect(markdown).toContain("多选 AC");
     expect(markdown).toContain("translated text");
-    expect(markdown).toContain("已作答");
+    // 口径统一修正：未知形状（无 choice/choices/text）不再误标「已作答」。
+    expect(markdown).toContain("未作答");
     expect(markdown).toContain("（未命名材料）");
     expect(markdown).toContain("（无正文）");
     expect(markdown).toContain("无锚点注记");
