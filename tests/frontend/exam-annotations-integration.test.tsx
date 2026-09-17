@@ -82,23 +82,56 @@ afterEach(() => {
 describe("L3ExamPaper 做题注记装配", () => {
   it("卷面加载后批量拉取注记与标签字典，并在题卡渲染折叠子区", async () => {
     const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
-    apiFetchMock
-      .mockResolvedValueOnce({ items: [{
-        id: ANNOTATION_ID,
-        user_id: "00000000-0000-4000-8000-000000000001",
-        question_id: QUESTION_ID,
-        ordinal: 0,
-        anchor_start: 4,
-        anchor_end: 15,
-        excerpt: "trap phrase",
-        note: "B 项偷换概念",
-        entry_tags: ["推断题"],
-        option_tags: { B: ["偷换概念"] },
-        status: "active",
-        created_at: "2026-09-16T00:00:00Z",
-        updated_at: "2026-09-16T00:00:00Z",
-      }] })
-      .mockResolvedValueOnce({ entry: ["细节题", "推断题"], option: ["偷换概念"] });
+    // 批次二起卷面进卷会自动开纸（POST /l3/sheets）；按 URL 分派 mock，
+    // 避免序列式 mock 被新请求错位。
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/l3/sheets") {
+        return {
+          sheet: {
+            id: "00000000-0000-4000-8000-000000000401",
+            user_id: "00000000-0000-4000-8000-000000000001",
+            scope: "paper",
+            scope_key: "paper:00000000-0000-4000-8000-000000000009",
+            source_id: null,
+            question_type: null,
+            paper_id: "00000000-0000-4000-8000-000000000009",
+            status: "draft",
+            answers: {},
+            seal_mode: null,
+            summary: null,
+            sealed_at: null,
+            created_at: "2026-09-17T00:00:00Z",
+            updated_at: "2026-09-17T00:00:00Z",
+          },
+        };
+      }
+      if (path.startsWith("/l3/question-annotations")) {
+        return {
+          items: [{
+            id: ANNOTATION_ID,
+            user_id: "00000000-0000-4000-8000-000000000001",
+            question_id: QUESTION_ID,
+            ordinal: 0,
+            anchor_start: 4,
+            anchor_end: 15,
+            excerpt: "trap phrase",
+            note: "B 项偷换概念",
+            entry_tags: ["推断题"],
+            option_tags: { B: ["偷换概念"] },
+            stage: "confirmed",
+            sheet_id: null,
+            review: null,
+            status: "active",
+            created_at: "2026-09-16T00:00:00Z",
+            updated_at: "2026-09-16T00:00:00Z",
+          }],
+        };
+      }
+      if (path === "/l3/annotation-tags") {
+        return { entry: ["细节题", "推断题"], option: ["偷换概念"] };
+      }
+      return {};
+    });
 
     await render();
 

@@ -60,6 +60,10 @@ export interface QuestionAnnotation {
   note: string;
   entry_tags: string[];
   option_tags: Partial<Record<QuestionAnnotationOptionKey, string[]>>;
+  /** 批次二：stage 生命周期（draft=做题中草稿，挂题纸；随定格升 submitted）。 */
+  stage: "draft" | "submitted" | "confirmed";
+  sheet_id: string | null;
+  review: unknown;
   status: "active" | "deleted";
   created_at: string;
   updated_at: string;
@@ -78,9 +82,11 @@ export interface CreateQuestionAnnotationRequest {
   note?: string;
   entryTags?: string[];
   optionTags?: Partial<Record<QuestionAnnotationOptionKey, string[]>>;
+  /** 批次二：挂到该题纸为草稿注记（缺省 = 正式注记）。 */
+  sheetId?: string;
 }
 
-export type QuestionAnnotationPatchRequest = Partial<Omit<CreateQuestionAnnotationRequest, "questionId">>;
+export type QuestionAnnotationPatchRequest = Partial<Omit<CreateQuestionAnnotationRequest, "questionId" | "sheetId">>;
 
 const ANNOTATION_ID_BATCH_LIMIT = 200;
 
@@ -140,4 +146,125 @@ export async function saveAnnotationTags(dict: AnnotationTagDict): Promise<Annot
     entry: Array.isArray(body?.entry) ? body.entry : dict.entry,
     option: Array.isArray(body?.option) ? body.option : dict.option,
   };
+}
+
+// ── 批次二：题纸（会话信封）与作答历史（题级链）────────────────────────────
+// 同注记组：仅供卷面工作台经通用 apiFetch 调用，字段与后端 snake_case 契约对齐；
+// 所有 items/attempts 响应做 Array.isArray 归一防御（契约漂移只做空结果处理）。
+
+export type SheetScopeValue = "file" | "paper";
+export type SheetStatusValue = "draft" | "sealed" | "discarded";
+export type SealModeValue = "full" | "incremental" | "summary";
+
+export interface L3Sheet {
+  id: string;
+  user_id: string;
+  scope: SheetScopeValue;
+  scope_key: string;
+  source_id: string | null;
+  question_type: string | null;
+  paper_id: string | null;
+  status: SheetStatusValue;
+  /** 仅 draft 期非空；定格后服务端清空（attempts 是唯一作答真源）。 */
+  answers: Record<string, unknown>;
+  seal_mode: SealModeValue | null;
+  summary: string | null;
+  sealed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface L3Attempt {
+  id: string;
+  user_id: string;
+  question_id: string;
+  sheet_id: string | null;
+  venue: SheetScopeValue;
+  /** deleted 行内容已被服务端遮蔽为 null（占位语义由前端渲染）。 */
+  answer: unknown;
+  self_assessment: unknown | null;
+  status: "active" | "deleted";
+  deleted_at: string | null;
+  created_at: string;
+}
+
+export interface OpenSheetRequest {
+  scope: SheetScopeValue;
+  sourceId?: string;
+  questionType?: string;
+  paperId?: string;
+}
+
+export interface SealSheetRequest {
+  mode: SealModeValue;
+  summary?: string;
+  acknowledgeUnanswered?: boolean;
+}
+
+export interface SealSheetResult {
+  sheet: L3Sheet;
+  unansweredCount: number;
+  materializedCount: number;
+  promotedAnnotationCount: number;
+}
+
+const ATTEMPT_ID_BATCH_LIMIT = 200;
+
+/** 开纸（幂等：同作用域复用既有 draft 行；200/201 对调用方等价）。 */
+export async function openSheet(input: OpenSheetRequest): Promise<L3Sheet> {
+  const body = await apiFetch<{ sheet?: L3Sheet } | null>("/l3/sheets", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  if (!body?.sheet) throw new Error("题纸打开失败：响应缺少题纸行");
+  return body.sheet;
+}
+
+/** 题纸详情：draft 含 answers；settled 的逐题明细走 attempts（服务端已排序+遮蔽）。 */
+export async function fetchSheet(id: string): Promise<{ sheet: L3Sheet; attempts: L3Attempt[] }> {
+  const body = await apiFetch<{ sheet?: L3Sheet; attempts?: L3Attempt[] } | null>(
+    `/l3/sheets/${encodeURIComponent(id)}`,
+  );
+  if (!body?.sheet) throw new Error("题纸详情加载失败：响应缺少题纸行");
+  return { sheet: body.sheet, attempts: Array.isArray(body.attempts) ? body.attempts : [] };
+}
+
+/** 逐题 merge（null 清除）：非 draft 时服务端 409，由调用方捕获分流。 */
+export async function patchSheet(id: string, answers: Record<string, unknown>): Promise<L3Sheet> {
+  const body = await apiFetch<{ sheet?: L3Sheet } | null>(
+    `/l3/sheets/${encodeURIComponent(id)}`,
+    { method: "PATCH", body: JSON.stringify({ answers }) },
+  );
+  if (!body?.sheet) throw new Error("题纸保存失败：响应缺少题纸行");
+  return body.sheet;
+}
+
+/** 定格三档：未答 >0 且未确认时服务端 409（BrowserApiError.details.unansweredCount）。 */
+export async function sealSheet(id: string, input: SealSheetRequest): Promise<SealSheetResult> {
+  const body = await apiFetch<Partial<SealSheetResult> | null>(
+    `/l3/sheets/${encodeURIComponent(id)}/seal`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  if (!body?.sheet) throw new Error("定格失败：响应缺少题纸行");
+  return {
+    sheet: body.sheet,
+    unansweredCount: typeof body.unansweredCount === "number" ? body.unansweredCount : 0,
+    materializedCount: typeof body.materializedCount === "number" ? body.materializedCount : 0,
+    promotedAnnotationCount: typeof body.promotedAnnotationCount === "number" ? body.promotedAnnotationCount : 0,
+  };
+}
+
+/** 批量题历史（题卡徽标数据源；服务端过滤已删条目）。 */
+export async function fetchAttempts(questionIds: readonly string[]): Promise<L3Attempt[]> {
+  const ids = [...new Set(questionIds)].slice(0, ATTEMPT_ID_BATCH_LIMIT);
+  if (ids.length === 0) return [];
+  const body = await apiFetch<{ items?: L3Attempt[] } | null>(
+    `/l3/attempts?questionIds=${ids.map(encodeURIComponent).join(",")}`,
+  );
+  return Array.isArray(body?.items) ? body.items : [];
+}
+
+/** 软删单条历史（再删服务端 404）。 */
+export async function deleteAttempt(id: string): Promise<void> {
+  await apiFetch<null>(`/l3/attempts/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

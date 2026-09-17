@@ -280,8 +280,13 @@ export function L3QuestionAnalysis({
           {annotations.map((annotation) => (
             <li
               key={annotation.id}
-              className="list-none rounded-lg bg-[var(--color-surface)] p-2.5 text-xs leading-relaxed ring-1 ring-[var(--color-border)]"
+              className={`list-none rounded-lg bg-[var(--color-surface)] p-2.5 text-xs leading-relaxed ${annotation.stage === "draft" ? "border border-dashed border-[var(--color-accent)]" : "ring-1 ring-[var(--color-border)]"}`}
             >
+              {annotation.stage === "draft" && (
+                <span className="mr-1 inline-block rounded-full border border-dashed border-[var(--color-accent)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
+                  草稿
+                </span>
+              )}
               {annotation.excerpt && annotation.anchor_start != null && annotation.anchor_end != null && (
                 <button
                   type="button"

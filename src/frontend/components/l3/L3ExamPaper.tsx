@@ -9,19 +9,27 @@ import {
   deleteQuestionAnnotation,
   fetchAnnotationTags,
   fetchQuestionAnnotations,
+  openSheet,
+  patchSheet,
   patchQuestionAnnotation,
   saveAnnotationTags,
+  sealSheet,
   type AnnotationTagDict,
   type CreateQuestionAnnotationRequest,
+  type L3Sheet,
   type QuestionAnnotation,
   type QuestionAnnotationPatchRequest,
+  type SealModeValue,
 } from "@/frontend/api/l3Client";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { useToast } from "@/frontend/components/ui/Toast";
 
 /**
  * 拟真卷面（ADR-0030 V1 展示面）：左文右题 + 即点即判 + 解析模式 + 翻译/作文书写区。
  * 批次一（2026-09-16）：文栏三通道（空位角标 / 官方 evidence 仅解析模式 /
  * 用户注记锚点全程）、划词分叉（建原文分析条目 / 圈词入笔记）、题卡原文分析子区。
+ * 批次二（2026-09-17）：题纸栏（进卷自动开纸 / 防抖 800ms 逐题 merge 保存）、
+ * 定格三档 modal（ADR-0034 §5）、定格后只读；划词注记挂题纸为草稿（stage='draft'）。
  */
 
 // 题型从独立类型文件 re-export，保持 L3PapersPage 等既有导入路径不变。
@@ -43,6 +51,19 @@ const TYPE_SHORT: Record<ExamSection["questionType"], string> = {
   long_essay: "大作文",
   grammar_blank: "语法填空",
 };
+
+/** 定格档位文案（ADR-0034 §5 三档：完整记录 / 增量条目 / 只留总结）。 */
+const SEAL_MODE_OPTIONS: Array<{ value: SealModeValue; label: string; hint: string }> = [
+  { value: "full", label: "完整记录", hint: "记录全部已作答题目；题纸保留，可回看逐题明细" },
+  { value: "incremental", label: "增量条目", hint: "不保留作答记录，只把草稿注记提交待检验" },
+  { value: "summary", label: "只留总结", hint: "只保留一条本次刷题总结，作答与草稿注记不留存" },
+];
+
+function formatSavedAt(iso: string): string {
+  const date = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 const OBJECTIVE_TYPES = new Set(["cloze", "reading_choice", "new_question", "grammar_blank"]);
 const SECTION_POINTS: Record<string, number> = {
@@ -431,12 +452,13 @@ function PassageBody({
 }
 
 function OptionRow({
-  optionKey, text, state, onSelect,
+  optionKey, text, state, onSelect, readOnly = false,
 }: {
   optionKey: string;
   text: string;
   state: "idle" | "correct" | "wrong" | "muted";
   onSelect: () => void;
+  readOnly?: boolean;
 }) {
   const styles = {
     idle: "border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft,var(--color-surface))]",
@@ -451,7 +473,7 @@ function OptionRow({
     muted: "border-[var(--color-border)] text-[var(--color-ink-soft)]",
   }[state];
   return (
-    <button type="button" onClick={onSelect} disabled={state !== "idle"}
+    <button type="button" onClick={onSelect} disabled={state !== "idle" || readOnly}
       className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-all ${styles}`}>
       <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold ${badge}`}>
         {state === "correct" ? "✓" : state === "wrong" ? "✕" : optionKey}
@@ -468,6 +490,7 @@ function ChoiceQuestion({
   picked,
   onPick,
   analysis,
+  readOnly = false,
 }: {
   question: ExamQuestion;
   index: number;
@@ -475,6 +498,7 @@ function ChoiceQuestion({
   picked?: string;
   onPick: (key: string) => void;
   analysis?: ReactNode;
+  readOnly?: boolean;
 }) {
   const correct = question.answer.choice;
   const answered = Boolean(picked);
@@ -495,7 +519,7 @@ function ChoiceQuestion({
             else if (opt.key === picked) state = "wrong";
             else if (answered || revealAll) state = "muted";
           }
-          return <OptionRow key={opt.key} optionKey={opt.key} text={opt.text} state={state} onSelect={() => onPick(opt.key)} />;
+          return <OptionRow key={opt.key} optionKey={opt.key} text={opt.text} state={state} readOnly={readOnly} onSelect={() => onPick(opt.key)} />;
         })}
       </div>
       {showResult && question.explanation && (
@@ -514,11 +538,13 @@ function WrittenQuestion({
   kind,
   placeholder,
   analysis,
+  readOnly = false,
 }: {
   question: ExamQuestion;
   kind: "translation" | "essay";
   placeholder: string;
   analysis?: ReactNode;
+  readOnly?: boolean;
 }) {
   const reference = kind === "translation" ? question.answer.text : question.answer.sample;
   return (
@@ -529,6 +555,7 @@ function WrittenQuestion({
       <textarea
         rows={kind === "translation" ? 7 : 12}
         placeholder={placeholder}
+        disabled={readOnly}
         className="w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm leading-7 [background-image:repeating-linear-gradient(transparent,transparent_27px,var(--color-border)_28px)] [background-position:0_11px] focus:border-[var(--color-accent)] focus:outline-none"
       />
       {reference && (
@@ -556,7 +583,81 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
   const [tagDict, setTagDict] = useState<AnnotationTagDict | null>(null);
   /** 本会话划词「圈词入笔记」新建的 context id（抽屉打缓冲徽标）。 */
   const [bufferedContextIds, setBufferedContextIds] = useState<ReadonlySet<string>>(new Set());
+  // ── 批次二：题纸状态机与防抖保存 ──
+  const [sheet, setSheet] = useState<L3Sheet | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "error">("idle");
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [sealOpen, setSealOpen] = useState(false);
+  const [sealMode, setSealMode] = useState<SealModeValue>("full");
+  const [sealSummary, setSealSummary] = useState("");
+  const [sealBusy, setSealBusy] = useState(false);
+  /** 「仍要定格」二次确认：第一次 409 后服务端给出的未答计数。 */
+  const [sealUnanswered, setSealUnanswered] = useState<number | null>(null);
+  const pendingAnswers = useRef<Record<string, unknown>>({});
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sheetRef = useRef<L3Sheet | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  // 进卷自动开纸（幂等）：paper venue 作用域键 paper:<id>，冲突复用既有 draft 行。
+  // draft 行携带服务端 answers → 本地 picks（重进页面不丢已保存作答）。
+  useEffect(() => {
+    let cancelled = false;
+    openSheet({ scope: "paper", paperId: paper.id })
+      .then((row) => {
+        if (cancelled) return;
+        setSheet(row);
+        if (row.status === "draft") {
+          const restored: Record<string, string> = {};
+          for (const [questionId, value] of Object.entries(row.answers ?? {})) {
+            const choice = (value as { choice?: unknown } | null)?.choice;
+            if (typeof choice === "string") restored[questionId] = choice;
+          }
+          if (Object.keys(restored).length > 0) setPicks((prev) => ({ ...restored, ...prev }));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) addToast("error", "题纸打开失败，本次作答不会保存");
+      });
+    return () => { cancelled = true; };
+  }, [paper.id, addToast]);
+
+  useEffect(() => { sheetRef.current = sheet; }, [sheet]);
+
+  /** 防抖 800ms 逐题 merge：批量 PATCH 到题纸（失败回填待重试）。 */
+  const flushAnswers = useCallback(async () => {
+    if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
+    const batch = pendingAnswers.current;
+    const current = sheetRef.current;
+    if (!current || current.status !== "draft" || Object.keys(batch).length === 0) return;
+    pendingAnswers.current = {};
+    setSaveState("saving");
+    try {
+      const updated = await patchSheet(current.id, batch);
+      sheetRef.current = updated;
+      setSheet(updated);
+      setSaveState("idle");
+      setLastSavedAt(new Date().toISOString());
+    } catch {
+      pendingAnswers.current = { ...batch, ...pendingAnswers.current };
+      setSaveState("error");
+    }
+  }, []);
+
+  const scheduleSave = useCallback(() => {
+    if (flushTimer.current) clearTimeout(flushTimer.current);
+    flushTimer.current = setTimeout(() => { void flushAnswers(); }, 800);
+  }, [flushAnswers]);
+
+  // 卸载时把防抖窗口内未发送的作答立即送存（尽力而为，不阻塞卸载）。
+  useEffect(() => () => {
+    if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
+    const batch = pendingAnswers.current;
+    const current = sheetRef.current;
+    if (current && current.status === "draft" && Object.keys(batch).length > 0) {
+      pendingAnswers.current = {};
+      void patchSheet(current.id, batch).catch(() => {});
+    }
+  }, []);
 
   // 卷面加载后按全部 section 的 questionIds 批量拉注记 + 标签字典（首读 lazy-seed）。
   useEffect(() => {
@@ -585,8 +686,48 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
   }, []);
 
   const handleCreateAnnotation = useCallback(async (input: CreateQuestionAnnotationRequest) => {
-    upsertAnnotation(await createQuestionAnnotation(input));
+    // 做题中（draft 题纸）：划词注记挂当前题纸为草稿注记；题纸未就绪/已定格回落正式注记。
+    const current = sheetRef.current;
+    const sheetId = current && current.status === "draft" ? current.id : undefined;
+    upsertAnnotation(await createQuestionAnnotation({ ...input, ...(sheetId ? { sheetId } : {}) }));
   }, [upsertAnnotation]);
+
+  const openSealModal = useCallback(() => {
+    setSealUnanswered(null);
+    setSealOpen(true);
+  }, []);
+
+  const submitSeal = useCallback(async (acknowledgeUnanswered: boolean) => {
+    const current = sheetRef.current;
+    if (!current) return;
+    setSealBusy(true);
+    try {
+      await flushAnswers();
+      const result = await sealSheet(current.id, {
+        mode: sealMode,
+        ...(sealMode === "summary" ? { summary: sealSummary.trim() } : {}),
+        acknowledgeUnanswered,
+      });
+      sheetRef.current = result.sheet;
+      setSheet(result.sheet);
+      setSealOpen(false);
+      setSealUnanswered(null);
+      addToast("success", result.materializedCount > 0
+        ? `已定格：${result.materializedCount} 条作答已入库，可打开「显示全部答案与解析」进入解析模式`
+        : "已定格，可打开「显示全部答案与解析」进入解析模式");
+    } catch (error) {
+      if (error instanceof BrowserApiError && error.status === 409) {
+        const details = error.details as { unansweredCount?: number } | null;
+        if (typeof details?.unansweredCount === "number") {
+          setSealUnanswered(details.unansweredCount);
+          return;
+        }
+      }
+      addToast("error", "定格失败，请稍后重试");
+    } finally {
+      setSealBusy(false);
+    }
+  }, [sealMode, sealSummary, flushAnswers, addToast]);
 
   const handlePatchAnnotation = useCallback(async (id: string, patch: QuestionAnnotationPatchRequest) => {
     upsertAnnotation(await patchQuestionAnnotation(id, patch));
@@ -623,8 +764,12 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
     return grouped;
   }, [annotations]);
 
-  const pickQuestion = (questionId: string, key: string) =>
+  const pickQuestion = (questionId: string, key: string) => {
+    if (sheetRef.current && sheetRef.current.status !== "draft") return; // 定格后只读
     setPicks((prev) => ({ ...prev, [questionId]: key }));
+    pendingAnswers.current = { ...pendingAnswers.current, [questionId]: { choice: key } };
+    scheduleSave();
+  };
 
   const stats = useMemo(() => {
     let correct = 0;
@@ -643,6 +788,9 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
     }
     return { correct, total, score: Math.round(score * 10) / 10 };
   }, [picks, paper.sections]);
+
+  /** 定格后卷面只读（作答输入禁用；选择仍显示用于回看）。 */
+  const readOnly = sheet !== null && sheet.status !== "draft";
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -685,6 +833,28 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
       <div className="flex flex-wrap items-center gap-3">
         <button type="button" onClick={onBack} className="text-xs text-[var(--color-accent)]">← 返回试卷列表</button>
       </div>
+
+      {sheet && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-[var(--color-surface)] px-3.5 py-2 text-xs ring-1 ring-[var(--color-border)]">
+          <span className="font-semibold">题纸</span>
+          <span className="text-[var(--color-ink-soft)]">整卷 · {paper.title}</span>
+          <span className="ml-auto">
+            {sheet.status === "draft" ? (
+              <span className="rounded-full bg-[var(--color-accent-soft,var(--color-surface))] px-2 py-0.5 font-medium text-[var(--color-accent)]">
+                {saveState === "saving"
+                  ? "草稿 · 保存中…"
+                  : saveState === "error"
+                    ? "草稿 · 保存失败，将自动重试"
+                    : lastSavedAt ? `草稿 · 已保存 ${formatSavedAt(lastSavedAt)}` : "草稿"}
+              </span>
+            ) : (
+              <span className="rounded-full bg-[var(--color-ink)] px-2 py-0.5 font-medium text-[var(--color-surface)]">
+                {sheet.status === "sealed" ? "已定格" : "已弃档"}
+              </span>
+            )}
+          </span>
+        </div>
+      )}
 
       <header className="rounded-2xl bg-gradient-to-br from-[var(--color-accent-soft,var(--color-surface))] to-transparent p-5 ring-1 ring-[var(--color-border)]">
         <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-accent)]">National Postgraduate Entrance Exam</p>
@@ -762,6 +932,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
                       kind={section.questionType === "sentence_translation" ? "translation" : "essay"}
                       placeholder={section.questionType === "sentence_translation" ? "在这里写下你的译文…" : "在这里写作文（约 100/150 词）…"}
                       analysis={renderAnalysis(section.key, q)}
+                      readOnly={readOnly}
                     />
                   ))}
                 </div>
@@ -808,6 +979,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
                             if (section.questionType === "new_question") setActiveBlank(q.ordinal + 41);
                           }}
                           analysis={renderAnalysis(section.key, q)}
+                          readOnly={readOnly}
                         />
                       </div>
                     ))}
@@ -824,6 +996,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
                       picked={picks[q.id]}
                       onPick={(key) => pickQuestion(q.id, key)}
                       analysis={renderAnalysis(section.key, q)}
+                      readOnly={readOnly}
                     />
                   ))}
                 </div>
@@ -832,6 +1005,64 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
           );
         })}
       </div>
+
+      {sheet && sheet.status === "draft" && (
+        <div className="flex justify-end">
+          <button type="button" onClick={openSealModal}
+            className="rounded-full bg-[var(--color-accent)] px-5 py-2 text-xs font-semibold text-[var(--color-accent-contrast,var(--color-surface))] shadow-sm hover:opacity-90">
+            定格题纸
+          </button>
+        </div>
+      )}
+
+      {sealOpen && sheet && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog" aria-modal="true" aria-label="定格题纸">
+          <div className="w-full max-w-md space-y-4 rounded-2xl bg-[var(--color-surface)] p-5 shadow-xl ring-1 ring-[var(--color-border)]">
+            <div>
+              <h3 className="text-base font-bold">定格题纸</h3>
+              <p className="mt-1 text-xs leading-relaxed text-[var(--color-ink-soft)]">
+                定格后本题纸不可再修改；草稿注记将随题纸提交待检验。
+              </p>
+            </div>
+            <div className="space-y-2">
+              {SEAL_MODE_OPTIONS.map((option) => (
+                <label key={option.value}
+                  className={`flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition-colors ${sealMode === option.value ? "border-[var(--color-accent)] bg-[var(--color-accent-soft,var(--color-surface))]" : "border-[var(--color-border)]"}`}>
+                  <input type="radio" name="seal-mode" className="mt-0.5" checked={sealMode === option.value}
+                    onChange={() => setSealMode(option.value)} />
+                  <span>
+                    <span className="block text-sm font-medium">{option.label}</span>
+                    <span className="mt-0.5 block text-[11px] leading-relaxed text-[var(--color-ink-soft)]">{option.hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {sealMode === "summary" && (
+              <textarea rows={3} value={sealSummary} onChange={(e) => setSealSummary(e.target.value)}
+                placeholder="写下本次刷题的总结（必填）…"
+                className="w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 text-xs leading-relaxed focus:border-[var(--color-accent)] focus:outline-none" />
+            )}
+            {sealUnanswered !== null && (
+              <div className="rounded-xl border border-amber-400 bg-amber-50 p-2.5 text-xs leading-relaxed text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                还有 {sealUnanswered} 题未作答；继续定格将不会记录这些题。
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => { setSealOpen(false); setSealUnanswered(null); }}
+                className="rounded-md px-3 py-1.5 text-xs text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]">
+                取消
+              </button>
+              <button type="button"
+                disabled={sealBusy || (sealMode === "summary" && sealSummary.trim().length === 0)}
+                onClick={() => void submitSeal(sealUnanswered !== null)}
+                className="rounded-md bg-[var(--color-accent)] px-4 py-1.5 text-xs font-semibold text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50">
+                {sealUnanswered !== null ? "仍要定格" : "确认定格"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
