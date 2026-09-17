@@ -34,6 +34,8 @@ import type {
   L3QuestionAnnotationRow,
   L3QuestionAssessmentRow,
   L3QuestionAttemptRow,
+  L3GradingResultRow,
+  GradingVerdict,
   L3SubmissionRow,
   SealMode,
   SheetScope,
@@ -1590,6 +1592,20 @@ export interface IL3AnnotationRepository {
   promoteBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
   /** 批次二：「只留总结」档总结条（无锚点，stage='submitted'）。 */
   insertSummaryAnnotation(input: NewL3SummaryAnnotation): Promise<L3QuestionAnnotationRow>;
+  /**
+   * 批次三①（ADR-0035 §3.2）：评卷 review 白名单专用写入——只触 review 列 +
+   * stage 流转（+ updated_at 审计列），note/锚点/标签等原始事实列永不触碰；
+   * 不复用公开 PATCH（「agent 永不写注记内容」的代码级保证）。
+   * 条件：active 且非 draft（draft 未提交不授权）；空转返回 null。
+   */
+  applyAnnotationReview(
+    userId: string,
+    id: string,
+    review: unknown,
+    stage: string,
+  ): Promise<L3QuestionAnnotationRow | null>;
+  /** 批次三①（D18）：owner 处置——submitted→confirmed 条件流转；非 submitted 空转 null。 */
+  confirmAnnotation(userId: string, id: string): Promise<L3QuestionAnnotationRow | null>;
 }
 
 // ── 批次二增补（0035）：评析区（ADR-0034 v2 条 10/11）──────────────────────
@@ -1661,6 +1677,27 @@ export interface IL3SheetRepository {
   countAnsweredBySheet(userId: string, sheetId: string): Promise<number>;
 }
 
+// ── 批次三①（0036）：评卷结果（ADR-0035 §1/§3）───────────────────────────
+/** 评卷结果 upsert 输入（graded_by 由 service 从服务端认定的 actor 注入，非调用方自述）。 */
+export interface NewL3GradingResult {
+  user_id: string;
+  sheet_id: string;
+  question_id: string;
+  verdict: GradingVerdict;
+  analysis_md: string | null;
+  graded_by: string;
+}
+
+export interface IL3GradingRepository {
+  /** 题纸全部评卷结果（解析模式读面数据源；无行 → 空数组）。 */
+  listBySheet(userId: string, sheetId: string): Promise<L3GradingResultRow[]>;
+  /**
+   * 同键覆写 upsert（requireTx 由 service 保证事务内调用）：
+   * UNIQUE(sheet_id, question_id) ON CONFLICT DO UPDATE + graded_at 刷新（latest-wins）。
+   */
+  upsertResults(inputs: readonly NewL3GradingResult[]): Promise<L3GradingResultRow[]>;
+}
+
 // ── Aggregate ───────────────────────────────────────────────────────────
 export interface IRepositories {
   words: IWordRepository;
@@ -1683,6 +1720,7 @@ export interface IRepositories {
   l3Annotations: IL3AnnotationRepository;
   l3Sheets: IL3SheetRepository;
   l3Assessments: IL3AssessmentRepository;
+  l3Grading: IL3GradingRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }

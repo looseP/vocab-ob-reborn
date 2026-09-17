@@ -191,6 +191,43 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
     return row ? mapAnnotationRow(row) : null;
   }
 
+  /**
+   * 批次三①（ADR-0035 §3.2）：评卷 review 白名单专用写入——SET 子句只含
+   * review / stage 两列（+ updated_at 审计列），note / 锚点 / 标签等用户原始
+   * 事实列永不触碰（与公开 PATCH 的隔离是本方法的全部意义）。条件
+   * `stage <> 'draft'`：未提交注记不在评卷授权范围（越集由 service 收口为
+   * 422，此处为并发竞态兜底——撤回发生后写入空转）。
+   */
+  async applyAnnotationReview(
+    userId: string,
+    id: string,
+    review: unknown,
+    stage: string,
+  ): Promise<L3QuestionAnnotationRow | null> {
+    const row = await this.queryOne<AnnotationDbRow>(
+      `UPDATE l3_question_annotations
+          SET review = $3::jsonb, stage = $4, updated_at = now()
+        WHERE user_id = $1::uuid AND id = $2::uuid
+          AND status = 'active' AND stage <> 'draft'
+        RETURNING *`,
+      [userId, id, JSON.stringify(review), stage],
+    );
+    return row ? mapAnnotationRow(row) : null;
+  }
+
+  /** 批次三①（D18）：owner 确认——submitted→confirmed 条件流转；非 submitted 空转 null。 */
+  async confirmAnnotation(userId: string, id: string): Promise<L3QuestionAnnotationRow | null> {
+    const row = await this.queryOne<AnnotationDbRow>(
+      `UPDATE l3_question_annotations
+          SET stage = 'confirmed', updated_at = now()
+        WHERE user_id = $1::uuid AND id = $2::uuid
+          AND stage = 'submitted' AND status = 'active'
+        RETURNING *`,
+      [userId, id],
+    );
+    return row ? mapAnnotationRow(row) : null;
+  }
+
   async softDeleteAnnotation(userId: string, id: string): Promise<boolean> {
     const row = await this.queryOne<{ id: string }>(
       `UPDATE l3_question_annotations

@@ -87,6 +87,8 @@ function makeAnnotationRepo(overrides: Partial<IL3AnnotationRepository> = {}): I
     withdrawAnnotation: vi.fn(async () => null),
     promoteBySheet: vi.fn(async () => []),
     insertSummaryAnnotation: vi.fn(async () => annotationRow()),
+    applyAnnotationReview: vi.fn(async () => null),
+    confirmAnnotation: vi.fn(async () => null),
     ...overrides,
   };
 }
