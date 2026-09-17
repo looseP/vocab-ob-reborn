@@ -168,6 +168,8 @@ const OTHER_OWNER_WRITES = [
   "replaceAnnotationTags",
   // v2 §4.7：撤回通道（submitted→draft 重挂题纸）——owner 写端点。
   "withdrawQuestionAnnotation",
+  // 批次三①：owner 处置通道（D18）——submitted→confirmed 确认（撤回改写走 withdraw）。
+  "confirmL3QuestionAnnotation",
   // 批次二：题纸与作答历史（ADR-0034）——做题台面是私人数据，读也不开放给 agent。
   "openL3Sheet",
   "patchL3Sheet",
@@ -206,13 +208,14 @@ describe("owner-only write inventory (D5 + D6 guard)", () => {
     expect(registryOwnerWrites).toEqual(OWNER_WRITE_OPERATION_IDS);
   });
 
-  it("the only agent-writable /api/* writes are the proposal path + the assessment venue（增补批开口）", () => {
+  it("the only agent-writable /api/* writes are the proposal path + the assessment venue + grading（批次三①）", () => {
     const agentWrites = idsWhere(
       (operation) => operation.path.startsWith("/api/") && operation.method !== "get" && operation.minRole === "agent",
     );
     // 提案路径 5（proposal 入口 2 + 载荷准备 1 + l3 imports 2——2026-09-12 裁决，T13a-fix）+
     // 评析区 1（putL3QuestionAssessment——增补批 ADR-0034 v2 条 10/11：agent 首个可写
-    // 持久区，Amends ADR-0029，开口严格限于该区）。
+    // 持久区，Amends ADR-0029，开口严格限于该区）+ 评卷提交 1（submitL3Grading——
+    // 批次三① ADR-0035 §3：agent 写面第 2 开口，graded_by 服务端认定）。
     expect(agentWrites).toEqual([
       "createL2ExternalPrompt",
       "createL3Proposal",
@@ -220,6 +223,7 @@ describe("owner-only write inventory (D5 + D6 guard)", () => {
       "createL3StructuredImport",
       "proposeL2Candidate",
       "putL3QuestionAssessment",
+      "submitL3Grading",
     ]);
   });
 });
@@ -241,6 +245,8 @@ const AGENT_READS = [
   "previewForgetting",
   // 增补批：评析区读面（agent 共建工作流需要读既有评析；写入同一端点双身份）。
   "getL3QuestionAssessment",
+  // 批次三①：评卷上下文读面（agent 面；🔴 含 answerIndex 的 D8 唯一例外，仅 sealed）。
+  "getL3GradingContext",
 ] as const;
 
 const OWNER_READS = [
@@ -253,6 +259,9 @@ const OWNER_READS = [
   "getL3Sheet",
   "listL3Attempts",
   "exportL3Sheet",
+  // 批次三①：解析模式读面（verdict/analysis 前端数据源；不含 answerIndex，agent 面
+  // 已由 grading-context 覆盖，此处保持做题台面 owner-only 口径）。
+  "getL3GradingResults",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {
