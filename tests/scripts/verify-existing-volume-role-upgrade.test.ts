@@ -38,7 +38,8 @@ describe("existing local volume role upgrade", () => {
     // 0031: l3_proposals (user_id, input_hash) partial unique index（ADR-0029 §7②，proposal 幂等收口）
     // 0032: l3_questions/l3_papers 题目与试卷实体（ADR-0030，payload 引用 + RLS + 题型 CHECK）
     // 0033: l3_question_annotations/l3_annotation_tags 做题注记与规律标签字典（批次一，锚点 CHECK + 四权 RLS）
-    expect(authoritativeMigrationCount()).toBe(34);
+    // 0034: l3_submissions/l3_question_attempts 题纸与作答历史（批次二，状态机 + scope_key 部分唯一 + 题级软删链）
+    expect(authoritativeMigrationCount()).toBe(35);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

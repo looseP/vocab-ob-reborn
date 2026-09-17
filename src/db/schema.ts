@@ -1320,6 +1320,74 @@ export const l3Papers = pgTable("l3_papers", {
 	check("l3_papers_status_check", sql`status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])`),
 ]);
 
+// 批次二（ADR-0034 §1）：题纸 = 两个 venue（file/paper）的统一作答容器。
+// scope_key 单列非空字符串（'file:<source_id>:<question_type>' / 'paper:<paper_id>'）
+// 规避组合列在 NULL 时唯一索引不去重的陷阱；部分唯一索引保证一作用域至多一张
+// 在写（draft）题纸。answers 仅 draft 期有效——定格（seal）物化 attempts 后清空，
+// attempts 是唯一作答真源，不冻第二份副本（双真相拆解）。
+export const l3Submissions = pgTable("l3_submissions", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	scope: text("scope").notNull(),
+	scopeKey: text("scope_key").notNull(),
+	sourceId: uuid("source_id"),
+	questionType: text("question_type"),
+	paperId: uuid("paper_id"),
+	// draft（防抖自动保存）→ sealed（定格，PATCH 409）| discarded（弃，留墓碑）。
+	status: text("status").default('draft').notNull(),
+	answers: jsonb("answers").default({}).notNull(),
+	sealMode: text("seal_mode"),
+	summary: text("summary"),
+	sealedAt: timestamp("sealed_at", { withTimezone: true, mode: "string" }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_submissions_user_created").on(table.userId, table.createdAt),
+	index("idx_l3_submissions_user_status").on(table.userId, table.status),
+	unique("l3_submissions_id_user_id_unique").on(table.id, table.userId),
+	uniqueIndex("l3_submissions_user_scope_key_draft_unique").on(table.userId, table.scopeKey).where(sql`status = 'draft'`),
+	foreignKey({
+			columns: [table.sourceId, table.userId],
+			foreignColumns: [l3Sources.id, l3Sources.userId],
+			name: "l3_submissions_source_owner_fk"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.paperId, table.userId],
+			foreignColumns: [l3Papers.id, l3Papers.userId],
+			name: "l3_submissions_paper_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_submissions_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_submissions_scope_check", sql`scope = ANY (ARRAY['file'::text, 'paper'::text])`),
+	check("l3_submissions_scope_shape_check", sql`(scope = 'file' AND source_id IS NOT NULL AND question_type IS NOT NULL AND paper_id IS NULL) OR (scope = 'paper' AND paper_id IS NOT NULL AND source_id IS NULL AND question_type IS NULL)`),
+	check("l3_submissions_status_check", sql`status = ANY (ARRAY['draft'::text, 'sealed'::text, 'discarded'::text])`),
+	check("l3_submissions_seal_mode_check", sql`seal_mode IS NULL OR seal_mode = ANY (ARRAY['full'::text, 'incremental'::text, 'summary'::text])`),
+]);
+
+// 批次二（ADR-0034 §2）：作答历史题中心化——一题一条历史链，管理/删除/重做
+// 按题操作。只存作答事实（answer/venue/sheet/自评快照），无判定列——verdict 真源
+// 归 l3_grading_results（批次三建），attempt 不写判定避免改判两处同步腐化。
+// 软删（status/deleted_at）照注记先例；结果页从 attempts 按 sheet_id 派生渲染，
+// attempt 行不可变，串行即天然快照；统计同源现算（软删行仍在库）。
+export const l3QuestionAttempts = pgTable("l3_question_attempts", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	questionId: uuid("question_id").notNull().references(() => l3Questions.id, { onDelete: "cascade" }),
+	sheetId: uuid("sheet_id").references(() => l3Submissions.id, { onDelete: "set null" }),
+	venue: text("venue").notNull(),
+	answer: jsonb("answer").notNull(),
+	// 当场自评快照（做题时用户当场的自评，非事后判定）。
+	selfAssessment: jsonb("self_assessment"),
+	status: text("status").default('active').notNull(),
+	deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_question_attempts_user_question_created").on(table.userId, table.questionId, table.createdAt),
+	index("idx_l3_question_attempts_sheet").on(table.sheetId),
+	pgPolicy("l3_question_attempts_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_question_attempts_venue_check", sql`venue = ANY (ARRAY['file'::text, 'paper'::text])`),
+	check("l3_question_attempts_status_check", sql`status = ANY (ARRAY['active'::text, 'deleted'::text])`),
+]);
+
 // 批次一（2026-09-16）：做题注记 = 原文分析条目，挂题下、一题多条。
 // 锚点三元组（anchor_start/end/excerpt）同空同非空、end > start 由 CHECK 兜底；
 // 同 (question_id, anchor_start, anchor_end) 的锚点幂等由服务层去重保证。
@@ -1335,6 +1403,12 @@ export const l3QuestionAnnotations = pgTable("l3_question_annotations", {
 	note: text("note").default('').notNull(),
 	entryTags: jsonb("entry_tags").default([]).notNull(),
 	optionTags: jsonb("option_tags").default({}).notNull(),
+	// 批次二（ADR-0034 §3）：stage 生命周期（draft→submitted→confirmed，存量回填
+	// confirmed）与 status（软删）正交；sheet_id 草稿期挂题纸（定格升格后保留溯源）；
+	// review 为 agent 检验产物（批次三写；note/锚点/原判标签不可篡改，订正归 owner）。
+	stage: text("stage").default('confirmed').notNull(),
+	sheetId: uuid("sheet_id").references(() => l3Submissions.id, { onDelete: "set null" }),
+	review: jsonb("review"),
 	status: text("status").default('active').notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),

@@ -342,6 +342,12 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     -- SELECT ... FOR UPDATE 行锁要求 UPDATE 权限（0021 同款行锁陷阱）。
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_question_annotations,
       public.l3_annotation_tags TO vocab_app;
+    -- 0034（批次二）：题纸（状态机 draft/sealed/discarded + answers 草稿列）与作答
+    -- 历史（题级链，软删走 UPDATE）。开纸/物化 INSERT、读 SELECT、PATCH/seal/软删
+    -- UPDATE；SELECT ... FOR UPDATE 行锁（seal 并发守卫）要求 UPDATE 权限（0024
+    -- 同款行锁陷阱）。无物理删路径（discarded/软删均为状态列），不授 DELETE。
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_submissions,
+      public.l3_question_attempts TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;

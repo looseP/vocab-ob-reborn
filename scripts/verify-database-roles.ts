@@ -440,6 +440,10 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       // 行锁与 WITH CHECK 路径要求 UPDATE，故四权齐备。
       "public.l3_question_annotations": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.l3_annotation_tags": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      // 0034（批次二）：题纸 PATCH/seal 状态流转、attempts 物化/软删；行锁要求
+      // UPDATE。无物理删路径（discarded/软删均为状态列），不授 DELETE。
+      "public.l3_submissions": ["SELECT", "INSERT", "UPDATE"],
+      "public.l3_question_attempts": ["SELECT", "INSERT", "UPDATE"],
     }).map(([relation, privileges]) => [relation, new Set(privileges)]))],
     ["vocab_worker", new Map(Object.entries({
       "public.outbox_events": ["SELECT", "UPDATE"],
