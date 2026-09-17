@@ -128,6 +128,9 @@ describe("L3 RLS isolation (integration)", () => {
       await adminPool.query("DELETE FROM l3_context_links WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_contexts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_sources WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      // 0034 批次二：作答历史/题纸（attempts 无级联到题纸，先删 attempts 再删 submissions）
+      await adminPool.query("DELETE FROM l3_question_attempts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      await adminPool.query("DELETE FROM l3_submissions WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       // 0033 批次一：做题注记/标签字典（题删除已级联注记，这里兜底显式清理）
       await adminPool.query("DELETE FROM l3_question_annotations WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_annotation_tags WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
@@ -394,5 +397,149 @@ describe("L3 RLS isolation (integration)", () => {
       [aQuestionId],
     );
     expect(remaining.rows[0]!.count).toBe(0);
+  });
+
+  // ── 0034 批次二：题纸（l3_submissions）/ 作答历史（l3_question_attempts）/
+  //    草稿注记（stage/sheet_id）的行级隔离与状态守卫 ──
+  let aSheetId = "";
+  let aSheetSourceId = "";
+  let aSheetQuestionId = "";
+  let aAttemptId = "";
+  let aDraftAnnotationId = "";
+
+  it("actor A opens a sheet, writes a draft note and seals it into attempts (vocab_app path)", async () => {
+    aSheetSourceId = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_sources (id, user_id, source_type, title)
+       VALUES ($1, $2, 'article', 'RLS sheet source')`,
+      [aSheetSourceId, ACTOR_A],
+    );
+    aSheetQuestionId = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_questions (id, user_id, source_id, space, question_type, stem)
+       VALUES ($1, $2, $3, '阅读', 'reading_choice', 'RLS sheet question')`,
+      [aSheetQuestionId, ACTOR_A, aSheetSourceId],
+    );
+
+    aSheetId = randomUUID();
+    aAttemptId = randomUUID();
+    aDraftAnnotationId = randomUUID();
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      // 开纸（draft，answers 在写）
+      await tx.query(
+        `INSERT INTO l3_submissions
+           (id, user_id, scope, scope_key, source_id, question_type, status, answers)
+         VALUES ($1, $2, 'file', $3, $4, 'reading_choice', 'draft', $5::jsonb)`,
+        [aSheetId, ACTOR_A, `file:${aSheetSourceId}:reading_choice`, aSheetSourceId,
+          JSON.stringify({ [aSheetQuestionId]: { selected: "B" } })],
+      );
+      // 草稿注记挂题纸（stage='draft'）
+      await tx.query(
+        `INSERT INTO l3_question_annotations (id, user_id, question_id, note, stage, sheet_id)
+         VALUES ($1, $2, $3, 'draft judgement', 'draft', $4)`,
+        [aDraftAnnotationId, ACTOR_A, aSheetQuestionId, aSheetId],
+      );
+      // 定格：物化 attempt → 注记升格 → sheet sealed + answers 清空
+      await tx.query(
+        `INSERT INTO l3_question_attempts (id, user_id, question_id, sheet_id, venue, answer)
+         VALUES ($1, $2, $3, $4, 'file', $5::jsonb)`,
+        [aAttemptId, ACTOR_A, aSheetQuestionId, aSheetId, JSON.stringify({ selected: "B" })],
+      );
+      const promoted = await tx.query(
+        `UPDATE l3_question_annotations SET stage = 'submitted', updated_at = now()
+         WHERE sheet_id = $1 AND stage = 'draft' AND status = 'active' RETURNING id`,
+        [aSheetId],
+      );
+      expect(promoted.rows).toHaveLength(1);
+      const sealed = await tx.query(
+        `UPDATE l3_submissions SET status = 'sealed', seal_mode = 'full', sealed_at = now(),
+           answers = '{}'::jsonb, updated_at = now()
+         WHERE id = $1 AND status = 'draft' RETURNING id`,
+        [aSheetId],
+      );
+      expect(sealed.rows).toHaveLength(1);
+    });
+
+    const sheet = await adminPool.query<{ status: string; answers: unknown }>(
+      "SELECT status, answers FROM l3_submissions WHERE id = $1", [aSheetId],
+    );
+    expect(sheet.rows[0]!.status).toBe("sealed");
+    expect(sheet.rows[0]!.answers).toEqual({});
+    const attempt = await adminPool.query<{ answer: unknown }>(
+      "SELECT answer FROM l3_question_attempts WHERE id = $1", [aAttemptId],
+    );
+    expect(attempt.rows[0]!.answer).toEqual({ selected: "B" });
+    const promotedStage = await adminPool.query<{ stage: string }>(
+      "SELECT stage FROM l3_question_annotations WHERE id = $1", [aDraftAnnotationId],
+    );
+    expect(promotedStage.rows[0]!.stage).toBe("submitted");
+  });
+
+  it("actor B cannot read actor A's sheet, attempts or sheet-scoped notes", async () => {
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const counts = await tx.query<{ sheets: number; attempts: number }>(
+        `SELECT
+           (SELECT count(*)::int FROM l3_submissions) AS sheets,
+           (SELECT count(*)::int FROM l3_question_attempts) AS attempts`,
+      );
+      expect(counts.rows[0]).toEqual({ sheets: 0, attempts: 0 });
+      const bySheet = await tx.query(
+        "SELECT id FROM l3_submissions WHERE id = $1", [aSheetId],
+      );
+      expect(bySheet.rows).toHaveLength(0);
+    });
+  });
+
+  it("actor B mutations on actor A's sheet/attempts are no-ops", async () => {
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const patched = await tx.query(
+        `UPDATE l3_submissions SET answers = '{"hijack": true}'::jsonb, updated_at = now()
+         WHERE id = $1 AND status = 'draft' RETURNING id`,
+        [aSheetId],
+      );
+      expect(patched.rows).toHaveLength(0);
+      const softDeleted = await tx.query(
+        `UPDATE l3_question_attempts SET status = 'deleted', deleted_at = now()
+         WHERE id = $1 RETURNING id`,
+        [aAttemptId],
+      );
+      expect(softDeleted.rows).toHaveLength(0);
+    });
+    const still = await adminPool.query<{ status: string }>(
+      "SELECT status FROM l3_question_attempts WHERE id = $1", [aAttemptId],
+    );
+    expect(still.rows[0]!.status).toBe("active");
+  });
+
+  it("rejects actor B inserting sheets/attempts attributed to actor A (RLS WITH CHECK)", async () => {
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_submissions (id, user_id, scope, scope_key, source_id, question_type)
+         VALUES ($1, $2, 'file', $3, $4, 'reading_choice')`,
+        [randomUUID(), ACTOR_A, `file:${aSheetSourceId}:reading_choice`, aSheetSourceId],
+      );
+    })).rejects.toThrow(/row-level security/i);
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_attempts (id, user_id, question_id, venue, answer)
+         VALUES ($1, $2, $3, 'file', '{}'::jsonb)`,
+        [randomUUID(), ACTOR_A, aSheetQuestionId],
+      );
+    })).rejects.toThrow(/row-level security/i);
+  });
+
+  it("keeps the sealed sheet read-only: answers updates behind the draft predicate are no-ops", async () => {
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      const updated = await tx.query(
+        `UPDATE l3_submissions SET answers = '{"late": true}'::jsonb, updated_at = now()
+         WHERE id = $1 AND status = 'draft' RETURNING id`,
+        [aSheetId],
+      );
+      expect(updated.rows).toHaveLength(0);
+    });
+    const answers = await adminPool.query<{ answers: unknown }>(
+      "SELECT answers FROM l3_submissions WHERE id = $1", [aSheetId],
+    );
+    expect(answers.rows[0]!.answers).toEqual({});
   });
 });
