@@ -13,6 +13,11 @@
   --color-accent: #0f6f62;
   --color-accent-rgb: 15, 111, 98;
   --color-accent-subtle: rgba(200, 160, 80, 0.18);
+  /* accent 派生面（2026-09-12 补定义：此前只被使用、从未定义，导致全站
+     bg-[var(--color-accent-soft)] 静态解析为透明——L3 圈记高亮、深链闪高亮
+     等一律不可见。与 2026-09-08 补 --color-surface 同型缺陷。） */
+  --color-accent-soft: rgba(15, 111, 98, 0.14);
+  --color-accent-contrast: #fffdf8;
   --color-accent-2: #b2572f;
   --color-highlight: #f3dca2;
 
@@ -102,6 +107,9 @@
   --color-accent: #3ec9b4;
   --color-accent-rgb: 62, 201, 180;
   --color-accent-subtle: rgba(200, 160, 80, 0.12);
+  --color-accent-soft: rgba(62, 201, 180, 0.18);
+  /* 暗色下 accent 是亮青，其上的文字须为深色才有对比度 */
+  --color-accent-contrast: #10201c;
   --color-accent-2: #e09060;
   --color-highlight: rgba(243, 220, 162, 0.2);
 
@@ -925,4 +933,440 @@ body.zen-mode main {
   /* 实心不透明表面：backdrop-filter 在部分环境（祖先含 filter/transform 的堆叠上下文）
      会静默失效，半透明会导致背景文字透出重叠——可读性优先，不用玻璃材质 */
   background: var(--color-surface);
+}
+
+/* 试卷台：答错选项轻晃反馈（ADR-0030 卷面） */
+@keyframes exam-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
+/* 试卷台：做题注记定位脉冲（批次一，题卡定位钮 → 文栏锚点） */
+@keyframes exam-locate-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 55%, transparent); }
+  70% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-accent) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent); }
+}
+
+/* ─── L3 工具页共享基元（B4 视觉收敛 2026-09-13） ───────────────────────
+   走查实锤：.l3-form/.stats-grid 等约 50 个类被 import/manual/proposal/
+   recommendation/graph/space 页使用却从未定义——整层无样式（与 2026-09-08
+   补 --color-surface、2026-09-12 补 --color-accent-soft 同型缺陷）。
+   本组样式全部走既有 token，明暗主题自动生效。 */
+
+/* 文案头 */
+.eyebrow {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  margin: 0;
+}
+
+.lede {
+  font-size: 0.85rem;
+  color: var(--color-ink-soft);
+  margin: 0;
+}
+
+/* 表单 */
+.l3-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: var(--color-panel);
+  box-shadow: var(--shadow-panel);
+  padding: 1rem;
+}
+
+.l3-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-ink);
+}
+
+.l3-form input,
+.l3-form select,
+.l3-form textarea {
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-surface-input);
+  color: var(--color-ink);
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.l3-form textarea {
+  min-height: 5.5rem;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.l3-form input:focus-visible,
+.l3-form select:focus-visible,
+.l3-form textarea:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+}
+
+.compact-textarea {
+  min-height: 3rem !important;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--color-ink);
+  cursor: pointer;
+}
+
+/* 面板/结果 */
+.l3-result-panel,
+.placeholder-panel,
+.validation-panel,
+.graph-result-panel,
+.space-result-panel,
+.proposal-detail-panel,
+.proposal-list-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: var(--color-panel);
+  box-shadow: var(--shadow-panel);
+  padding: 1rem;
+}
+
+.result-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.result-meta dt,
+.stats-grid dt {
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+
+.result-meta dd,
+.stats-grid dd {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-ink);
+  word-break: break-all;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.6rem;
+  margin: 0;
+}
+
+.stats-grid > div {
+  border: 1px solid var(--color-border);
+  border-radius: 0.6rem;
+  background: var(--color-surface-soft);
+  padding: 0.5rem 0.7rem;
+}
+
+.warning-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.78rem;
+  color: var(--color-accent-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.proposal-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.proposal-preview-list code {
+  border: 1px dashed var(--color-border);
+  border-radius: 0.4rem;
+  background: var(--color-surface-soft);
+  color: var(--color-ink-soft);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 动作行 / 按钮 */
+.action-row,
+.navigation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.action-row button,
+.navigation-actions button {
+  border: 1px solid var(--color-accent);
+  border-radius: 0.5rem;
+  background: var(--color-surface);
+  color: var(--color-accent);
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.action-row button:hover,
+.navigation-actions button:hover {
+  background: var(--color-accent-soft);
+}
+
+.danger-button {
+  border: 1px solid var(--color-accent-2) !important;
+  color: var(--color-accent-2) !important;
+}
+
+.danger-button:hover {
+  background: var(--color-surface-muted-warm) !important;
+}
+
+/* 空态与提示 */
+.empty-state {
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 0.75rem;
+  background: var(--color-surface-soft);
+  color: var(--color-ink-soft);
+  padding: 1.4rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.surface-helper,
+.review-note,
+.contract-note {
+  font-size: 0.75rem;
+  color: var(--color-ink-soft);
+}
+
+.contract-note {
+  border-left: 2px solid var(--color-border-strong);
+  padding-left: 0.6rem;
+}
+
+.detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-pill-border);
+  border-radius: 999px;
+  background: var(--color-pill-bg);
+  color: var(--color-pill-text);
+  padding: 0.1rem 0.55rem;
+  font-size: 0.68rem;
+}
+
+.valid,
+.invalid {
+  font-size: 0.72rem;
+  border-radius: 0.4rem;
+  padding: 0.1rem 0.45rem;
+}
+
+.valid {
+  background: var(--color-surface-muted);
+  color: var(--color-pill-text);
+}
+
+.invalid {
+  background: var(--color-surface-muted-warm);
+  color: var(--color-pill-warm-text);
+}
+
+.delete-blocker-summary {
+  font-size: 0.75rem;
+  color: var(--color-accent-2);
+}
+
+/* 编辑器 / 工作区布局 */
+.manual-editor-page,
+.proposal-workspace,
+.space-page,
+.graph-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.manual-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.manual-card {
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: var(--color-panel);
+  box-shadow: var(--shadow-panel);
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.proposal-list,
+.proposal-items,
+.space-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.proposal-item,
+.space-card,
+.space-row {
+  border: 1px solid var(--color-border);
+  border-radius: 0.6rem;
+  background: var(--color-surface-soft);
+  padding: 0.6rem 0.8rem;
+  font-size: 0.82rem;
+  color: var(--color-ink);
+}
+
+.space-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.space-section,
+.graph-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* 关联图画布 */
+.graph-query-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  background: var(--color-panel);
+  padding: 1rem;
+}
+
+.graph-query-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--color-ink);
+}
+
+.graph-query-form input,
+.graph-query-form select {
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-surface-input);
+  color: var(--color-ink);
+  padding: 0.4rem 0.55rem;
+  font-size: 0.82rem;
+}
+
+.graph-canvas-panel {
+  overflow: hidden;
+}
+
+.graph-canvas-scroll {
+  overflow: auto;
+  max-height: 26rem;
+}
+
+.graph-canvas {
+  min-width: 100%;
+  min-height: 18rem;
+}
+
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  font-size: 0.72rem;
+  color: var(--color-ink-soft);
+}
+
+.graph-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.graph-table-head th {
+  text-align: left;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  border-bottom: 1px solid var(--color-border-strong);
+  padding: 0.4rem 0.5rem;
+}
+
+.graph-table-row td {
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.4rem 0.5rem;
+  color: var(--color-ink);
+  word-break: break-all;
+}
+
+.graph-selection-panel {
+  border: 1px solid var(--color-accent);
 }

@@ -6,16 +6,19 @@ import { L3Bookshelf } from "@/frontend/components/l3/L3Bookshelf";
 import { L3ReadingView } from "@/frontend/components/l3/L3ReadingView";
 import { L3Shell, type L3ShellSection } from "@/frontend/components/L3Shell";
 import { L3ContextPage } from "@/frontend/pages/L3ContextPage";
+import { L3ErrorBookPage } from "@/frontend/pages/L3ErrorBookPage";
 import { L3GraphPage } from "@/frontend/pages/L3GraphPage";
 import { L3HomePage } from "@/frontend/pages/L3HomePage";
 import { L3ImportPage } from "@/frontend/pages/L3ImportPage";
 import { L3ManualEditorPage } from "@/frontend/pages/L3ManualEditorPage";
+import { L3PapersPage } from "@/frontend/components/l3/L3PapersPage";
+import { L3PracticePage } from "@/frontend/pages/L3PracticePage";
 import { L3ProposalPage } from "@/frontend/pages/L3ProposalPage";
 import { L3RecommendationPage } from "@/frontend/pages/L3RecommendationPage";
+import { L3SessionPage } from "@/frontend/pages/L3SessionPage";
 import { L3WordSpacePage } from "@/frontend/pages/L3WordSpacePage";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
 import {
-  PHASE_4C_CACHE_POLICY,
   markActiveReadStaleAfterManualCommand,
   markActiveReadStaleAfterProposalConfirm,
   type L3ActiveReadStaleState,
@@ -37,7 +40,9 @@ import type {
 export function L3Page() {
   const [searchParams] = useSearchParams();
   const deepLinkContextId = searchParams.get("contextId");
-  const [section, setSection] = useState<L3ShellSection>("source");
+  // B1（体验层）：默认落地 = 素材宇宙（设计基线 §2 IA-1）；深链（?sourceId=/
+  // ?wordSlug=/?contextId=）仍会在挂载后把视图切到对应 section。
+  const [section, setSection] = useState<L3ShellSection>("home");
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [graphHandoff, setGraphHandoff] = useState<L3GraphHandoff | null>(null);
   const [contextHandoff, setContextHandoff] = useState<L3ContextHandoff | null>(null);
@@ -84,6 +89,16 @@ export function L3Page() {
     setSection("word");
   }, [deepLinkWordSlug]);
 
+  // 批次二（ADR-0034）：作答历史 modal 的「去题型空间打开此文」深链
+  // /l3?venue=<题型>&file=<文件键> 直达试卷台的题型空间（L3PapersPage 消费参数
+  // 自动打开目标文件；同 contextId/sourceId 的 handoff 模式）。
+  const deepLinkVenue = searchParams.get("venue");
+  const deepLinkFile = searchParams.get("file");
+  useEffect(() => {
+    if (!deepLinkVenue) return;
+    setSection("papers");
+  }, [deepLinkVenue]);
+
   const openProposal = (proposalId: string) => {
     setSelectedProposalId(proposalId);
     setSection("proposals");
@@ -125,7 +140,18 @@ export function L3Page() {
   };
 
   const page = {
-    home: <L3HomePage cachePolicy={PHASE_4C_CACHE_POLICY} />,
+    // B1 素材宇宙：默认落地（设计基线 IA-1）；从这里可直接打开某篇来源的阅读视图
+    // （带 contextId 时深链聚焦该圈记）。
+    home: (
+      <L3HomePage
+        onOpenSource={(sourceId, contextId) => {
+          setSourceHandoff({ sourceId, nonce: Date.now() });
+          setFocusContext(contextId ? { contextId, nonce: Date.now() } : null);
+          setSection("source");
+        }}
+        onNavigate={setSection}
+      />
+    ),
     manual: <L3ManualEditorPage client={l3Client} onManualChanged={(reason) => setActiveReadStale(markActiveReadStaleAfterManualCommand(reason))} onNavigate={navigateL3} />,
     import: <L3ImportPage client={l3Client} onOpenProposal={openProposal} onOpenProposalQueue={openProposalQueue} />,
     proposals: (
@@ -141,6 +167,12 @@ export function L3Page() {
     graph: <L3GraphPage client={l3Client} handoff={graphHandoff} staleState={activeReadStale} onGraphRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     context: <L3ContextPage client={l3Client} handoff={contextHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     word: <L3WordSpacePage client={l3Client} handoff={wordHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
+    // T11（ADR-0019）：练习 / 错题库 / 会话 —— 输出闭环的三个用户表面。
+    // ADR-0030：试卷台（题型空间文件 + 我的试卷 + 粘贴建卷，V1 owner 入库面）。
+    papers: <L3PapersPage deepLinkVenue={deepLinkVenue} deepLinkFile={deepLinkFile} />,
+    practice: <L3PracticePage client={l3Client} onNavigate={navigateL3} />,
+    errorBook: <L3ErrorBookPage client={l3Client} onNavigate={navigateL3} />,
+    session: <L3SessionPage client={l3Client} onNavigate={navigateL3} />,
     // source section：书架为前门；选中来源后整屏切换为阅读视图（返回书架清除
     // handoff 回到书架）。原工程检查面板（L3SourceSpacePage）已删除。
     source: sourceHandoff ? (

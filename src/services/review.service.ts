@@ -23,6 +23,7 @@ import {
   ConflictError,
 } from "../errors";
 import type { Json, ReviewRating, ReviewState, UserWordProgressRow } from "../domain";
+import { deriveContentStaleness } from "../domain/content-staleness";
 import type { ProgressWithContentHash } from "../repositories/interfaces";
 import {
   REVIEW_ANSWER_RECORDED,
@@ -133,9 +134,10 @@ export interface ReviewServiceDeps {
   /**
    * Due candidate pool (P1): a larger pool that the queue-priority builder
    * buckets/sorts and applies the new-card quota to before returning the
-   * final batch for review/zen modes. Carries needs_recheck.
+   * final batch for review/zen modes. Carries needs_recheck (人工标记) plus
+   * the words-side hashes needed for the read-time derivation (ADR-0021).
    */
-  findDueCandidates?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
+  findDueCandidates?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
   /** Find all active cards regardless of due_at — used by cram/preview practice modes. */
   findPracticeCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
   /** Free-review selection: fetch words by ids (published only), independent of review progress. */
@@ -312,10 +314,24 @@ export class ReviewService {
     };
   }
 
-  /** 把候选行转换成队列优先级构建器可消费的候选（携带 word/进度数据）。 */
+  /**
+   * 把候选行转换成队列优先级构建器可消费的候选（携带 word/进度数据）。
+   *
+   * needs_recheck（ADR-0021 读时派生，零写入）：
+   *   行上的人工标记（保留兼容）|| 内容陈旧度派生。
+   * 派生优先比 L1 专属 hash 对，缺失时降级比全量 hash 对；快照缺失一律不派生
+   * （未作答的新卡不得被标为"需重新核对"）。详见 src/domain/content-staleness.ts
+   * 与 docs/adr/0021-needs-recheck-derivation.md。
+   */
   private toQueueCandidate(
-    card: { progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } },
+    card: { progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } },
   ): ReviewQueueCandidate & { progressId: string; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }; lastRating: ReviewRating | null; l1WeakSignal: boolean; stability: number | null } {
+    const derivedNeedsRecheck = deriveContentStaleness({
+      contentHash: card.progress.content_hash,
+      l1ContentHash: card.progress.l1_content_hash,
+      contentHashSnapshot: card.progress.content_hash_snapshot,
+      l1ContentHashSnapshot: card.progress.l1_content_hash_snapshot,
+    });
     return {
       progressId: card.progress.id,
       state: card.progress.state,
@@ -323,7 +339,7 @@ export class ReviewService {
       review_count: card.progress.review_count,
       desired_retention: card.progress.desired_retention,
       scheduler_payload: card.progress.scheduler_payload,
-      needs_recheck: card.progress.needs_recheck,
+      needs_recheck: card.progress.needs_recheck || derivedNeedsRecheck,
       word: card.word,
       lastRating: card.progress.last_rating,
       l1WeakSignal: card.progress.l1_weak_signal,

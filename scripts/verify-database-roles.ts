@@ -24,8 +24,11 @@ interface Fixture {
   wordbooks: [string, string, string, string, string];
   words: [string, string, string];
   l2Progress: [string, string, string, string, string];
+  /** L1 轨探针行（R1：L2 内容刷新不得波及 L1 的 needs_recheck / due_at）。 */
+  l1Progress: string;
   expectedL2Hash: string;
   expectedContentHash: string;
+  originalContentHash: string;
   originalDueAt: string;
 }
 
@@ -178,15 +181,17 @@ async function assertLoginIdentity(client: Client, expectedRole: string): Promis
 
 async function seedFixture(admin: Client): Promise<Fixture> {
   const originalContentHash = "0".repeat(64);
+  // ADR-0017（0027）：refresh_l2_cache 为每个 object 条目补 direction 键，
+  // 缓存形状即 hash 输入形状——夹具按新形状计算期望 hash。
   const expectedWordForHash = {
     definition_md: "role probe",
     core_definitions: [],
     prototype_text: null,
     metadata: {},
-    collocations: [{ order: "bare-1" }, { order: "bare-2" }],
-    corpus_items: [{ order: "wrapper-1" }, { order: "wrapper-2" }],
-    synonym_items: [{ order: "single" }],
-    antonym_items: [{ order: "active" }],
+    collocations: [{ order: "bare-1", direction: "通用" }, { order: "bare-2", direction: "通用" }],
+    corpus_items: [{ order: "wrapper-1", direction: "通用" }, { order: "wrapper-2", direction: "通用" }],
+    synonym_items: [{ order: "single", direction: "通用" }],
+    antonym_items: [{ order: "active", direction: "通用" }],
   };
   const expectedL2Hash = computeL2Hash(expectedWordForHash);
   const expectedContentHash = computeFullHash(expectedWordForHash);
@@ -196,8 +201,10 @@ async function seedFixture(admin: Client): Promise<Fixture> {
     wordbooks: [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()],
     words: [randomUUID(), randomUUID(), randomUUID()],
     l2Progress: [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()],
+    l1Progress: randomUUID(),
     expectedL2Hash,
     expectedContentHash,
+    originalContentHash,
     originalDueAt,
   };
   const suffix = randomUUID().replaceAll("-", "");
@@ -278,6 +285,21 @@ async function seedFixture(admin: Client): Promise<Fixture> {
        (user_id, word_id, wordbook_id, l2_content_hash_snapshot, l2_due_at)
        VALUES ($1, $2, $3, $4, $5)`,
       [fixture.users[0], fixture.words[2], fixture.wordbooks[0], "6".repeat(64), originalDueAt],
+    );
+    // R1 探针：目标词的 L1 进度行。L2 内容刷新（含 direction 形状迁移）必须
+    // 对它零副作用——needs_recheck 保持 false、due_at / 快照列不变（ADR-0002 隔离）。
+    await admin.query(
+      `INSERT INTO user_word_progress
+       (id, user_id, word_id, wordbook_id, due_at, content_hash_snapshot, l1_content_hash_snapshot, needs_recheck)
+       VALUES ($1, $2, $3, $4, $5, $6, $6, false)`,
+      [
+        fixture.l1Progress,
+        fixture.users[0],
+        fixture.words[0],
+        fixture.wordbooks[0],
+        originalDueAt,
+        originalContentHash,
+      ],
     );
     await admin.query("COMMIT");
     return fixture;
@@ -403,6 +425,27 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.l3_proposal_items": ["SELECT", "INSERT", "UPDATE"],
       "public.l3_recommendation_runs": ["SELECT", "INSERT"],
       "public.l3_recommendation_items": ["SELECT", "INSERT", "UPDATE"],
+      // 0028（ADR-0018/0019）：升级工单（状态推进）/ 慢学习会话 / L3 练习记录
+      // （记录只增不删：错题库从 attempts 派生，归档策略另议）。
+      "public.upgrade_work_orders": ["SELECT", "INSERT", "UPDATE"],
+      "public.l3_sessions": ["SELECT", "INSERT", "UPDATE"],
+      "public.l3_practice_attempts": ["SELECT", "INSERT"],
+      // 0030（ADR-0019 §4）：子空间 junction。挂载/取消走 INSERT/DELETE（无原地 UPDATE
+      // 语义，故不授 UPDATE），过滤读走 SELECT；与 l3_occurrences/l3_context_links 同口径。
+      "public.l3_source_spaces": ["SELECT", "INSERT", "DELETE"],
+      // 0032（ADR-0030）：题目可硬删（服务层 409 护栏），试卷 V1 仅建/读。
+      "public.l3_questions": ["SELECT", "INSERT", "DELETE"],
+      "public.l3_papers": ["SELECT", "INSERT"],
+      // 0033（批次一）：做题注记 PATCH/软删、标签字典 lazy-seed/PUT 整存；
+      // 行锁与 WITH CHECK 路径要求 UPDATE，故四权齐备。
+      "public.l3_question_annotations": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      "public.l3_annotation_tags": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      // 0034（批次二）：题纸 PATCH/seal 状态流转、attempts 物化/软删；行锁要求
+      // UPDATE。无物理删路径（discarded/软删均为状态列），不授 DELETE。
+      "public.l3_submissions": ["SELECT", "INSERT", "UPDATE"],
+      "public.l3_question_attempts": ["SELECT", "INSERT", "UPDATE"],
+      // 0035（批次二增补）：评析区 upsert（建/覆写/读三权）+ DELETE 预留（四权惯例）。
+      "public.l3_question_assessments": ["SELECT", "INSERT", "UPDATE", "DELETE"],
     }).map(([relation, privileges]) => [relation, new Set(privileges)]))],
     ["vocab_worker", new Map(Object.entries({
       "public.outbox_events": ["SELECT", "UPDATE"],
@@ -854,10 +897,12 @@ async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fi
   );
   const target = cacheRows.rows.find((row) => row.id === targetWord);
   const other = cacheRows.rows.find((row) => row.id === otherWord);
-  if (!target || JSON.stringify(target.collocations) !== JSON.stringify([{ order: "bare-1" }, { order: "bare-2" }])
-    || JSON.stringify(target.corpus_items) !== JSON.stringify([{ order: "wrapper-1" }, { order: "wrapper-2" }])
-    || JSON.stringify(target.synonym_items) !== JSON.stringify([{ order: "single" }])
-    || JSON.stringify(target.antonym_items) !== JSON.stringify([{ order: "active" }])) {
+  // ADR-0017（0027）：聚合条目携带 direction 键（默认 '通用'），其余字段结构不变；
+  // inactive 行仍不参与聚合（antonym 期望只有 active 那一条）。
+  if (!target || JSON.stringify(target.collocations) !== JSON.stringify([{ order: "bare-1", direction: "通用" }, { order: "bare-2", direction: "通用" }])
+    || JSON.stringify(target.corpus_items) !== JSON.stringify([{ order: "wrapper-1", direction: "通用" }, { order: "wrapper-2", direction: "通用" }])
+    || JSON.stringify(target.synonym_items) !== JSON.stringify([{ order: "single", direction: "通用" }])
+    || JSON.stringify(target.antonym_items) !== JSON.stringify([{ order: "active", direction: "通用" }])) {
     throw new Error(`refresh_l2_cache produced unstable or incorrect aggregation: ${JSON.stringify(target)}`);
   }
   if (!other || JSON.stringify(other.collocations) !== "[]" || JSON.stringify(other.corpus_items) !== "[]"
@@ -905,6 +950,63 @@ async function verifyL2SecurityFunctions(app: Client, admin: Client, fixture: Fi
       throw new Error(`finalize_l2_content_hash changed an excluded progress row: ${JSON.stringify(row)}`);
     }
   }
+
+  // R1（ADR-0017 hash 形状）：L2 缓存形状迁移不得外泄到 L1 轨。
+  // 断言手段 = fixture 里的 L1 探针行：needs_recheck 保持 false、due_at 与两列
+  // 快照逐字节不变（存在是 ADR-0002 双轨隔离；不存在即回归）。
+  const assertL1Untouched = async (stage: string): Promise<void> => {
+    const l1 = await admin.query<{
+      needs_recheck: boolean;
+      due_unchanged: boolean;
+      content_hash_unchanged: boolean;
+      l1_snapshot_unchanged: boolean;
+    }>(
+      `SELECT needs_recheck,
+              due_at = $2::timestamptz AS due_unchanged,
+              content_hash_snapshot = $3::text AS content_hash_unchanged,
+              l1_content_hash_snapshot = $3::text AS l1_snapshot_unchanged
+       FROM user_word_progress WHERE id = $1`,
+      [fixture.l1Progress, fixture.originalDueAt, fixture.originalContentHash],
+    );
+    const row = l1.rows[0];
+    if (!row || row.needs_recheck !== false || !row.due_unchanged
+      || !row.content_hash_unchanged || !row.l1_snapshot_unchanged) {
+      throw new Error(`L2 cascade touched the L1 probe row (${stage}): ${JSON.stringify(row)}`);
+    }
+  };
+  await assertL1Untouched("after first finalize");
+
+  // 形状幂等（R1）：重复 refresh 产出逐字节相同的缓存，同 hash 重复 finalize
+  // 不再改动任何行 → 同一内容不会产生重复 recheck / due push。
+  await actorCommitQuery(app, fixture.users[0], "SELECT public.refresh_l2_cache($1::uuid)", [targetWord]);
+  const refreshedAgain = await admin.query<{
+    collocations: unknown;
+    corpus_items: unknown;
+    synonym_items: unknown;
+    antonym_items: unknown;
+  }>(
+    `SELECT collocations, corpus_items, synonym_items, antonym_items FROM words WHERE id = $1`,
+    [targetWord],
+  );
+  const again = refreshedAgain.rows[0];
+  if (JSON.stringify(again) !== JSON.stringify({
+    collocations: target.collocations,
+    corpus_items: target.corpus_items,
+    synonym_items: target.synonym_items,
+    antonym_items: target.antonym_items,
+  })) {
+    throw new Error(`refresh_l2_cache is not shape-idempotent: ${JSON.stringify(again)}`);
+  }
+  const refinalized = await actorCommitQuery<{ updated_count: number }>(
+    app,
+    fixture.users[0],
+    "SELECT public.finalize_l2_content_hash($1::uuid, $2::text, $3::text) AS updated_count",
+    [targetWord, fixture.expectedL2Hash, fixture.expectedContentHash],
+  );
+  if (refinalized[0]?.updated_count !== 0) {
+    throw new Error(`repeated finalize_l2_content_hash re-pushed progress rows: ${JSON.stringify(refinalized)}`);
+  }
+  await assertL1Untouched("after repeat refresh/finalize");
 }
 
 async function verifyWorker(worker: Client, fixture: Fixture): Promise<void> {

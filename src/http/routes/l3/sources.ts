@@ -1,5 +1,5 @@
-﻿/**
- * L3 来源域路由：来源 CRUD、正文导入（书架）、选区圈记、来源读空间。
+/**
+ * L3 来源域路由：来源 CRUD、正文导入、选区圈记、来源读空间（书架列表见 lists.ts）。
  * 自 2026-09-08 起 l3.ts 按资源域拆分（499/500 复杂度门禁触顶），路径与语义不变。
  */
 import { Hono } from "hono";
@@ -9,7 +9,6 @@ import {
   l3LimitCursorQuerySchema,
   l3SelectionCaptureSchema,
   l3SourceCreateSchema,
-  l3SourceListQuerySchema,
   l3SourceSpaceQuerySchema,
 } from "@/schemas/http";
 import { validationError } from "../../error-response";
@@ -50,21 +49,6 @@ export function sourcesRoutes(services: Services) {
       ...parsed.data,
     });
     return c.json(result, 201);
-  });
-
-  app.get("/sources", async (c) => {
-    const parsed = l3SourceListQuerySchema.safeParse({
-      sourceType: c.req.query("sourceType") || undefined,
-      q: c.req.query("q") || undefined,
-      sort: c.req.query("sort") || undefined,
-      limit: c.req.query("limit") || undefined,
-      offset: c.req.query("offset") || undefined,
-    });
-    if (!parsed.success) {
-      return validationError(c, parsed.error.flatten());
-    }
-    const result = await services.l3Context.listSources({ userId: c.get("userId"), ...parsed.data });
-    return c.json(result);
   });
 
   app.get("/sources/:id/space", async (c) => {

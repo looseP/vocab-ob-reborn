@@ -854,6 +854,8 @@ describe("L3 HTTP routes", () => {
     expect(services.l3Context.listContextsForWord).toHaveBeenCalledWith({
       userId: "user-123",
       slug: "vivid",
+      direction: null,
+      space: null,
       limit: 50,
       cursor: null,
     });
@@ -1650,7 +1652,44 @@ describe("POST /api/l3/sources content import (S1)", () => {
     expect(body.source.content_text).toBe("Full article body...");
     expect(l3Context.createSource).toHaveBeenCalledWith(
       expect.objectContaining({ content_text: "Full article body...", content_hash: expect.any(String) }),
+      ["通用"],
     );
+  });
+
+  it("passes selected spaces through to the service on create", async () => {
+    const l3Context = {
+      createSource: vi.fn().mockResolvedValue({
+        id: "src-10", user_id: "user-123", source_type: "article", title: "真题",
+        author: null, url: null, language: null, metadata: {},
+        content_text: "body", content_hash: "hash",
+        created_at: "2026-09-16T00:00:00Z", updated_at: "2026-09-16T00:00:00Z",
+      }),
+      findSourceByContentHash: vi.fn().mockResolvedValue(null),
+    };
+    const services = { ...makeServices(), l3Context: makeL3ContextService(l3Context) } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request("/api/l3/sources", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ sourceType: "article", title: "真题", contentText: "body", spaces: ["阅读", "作文"] }),
+    });
+    expect(res.status).toBe(201);
+    expect(l3Context.createSource).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "真题" }),
+      ["阅读", "作文"],
+    );
+  });
+
+  it("rejects a spaces payload containing an unknown enum value", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+    const res = await app.request("/api/l3/sources", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ sourceType: "article", title: "bad", contentText: "body", spaces: ["火星"] }),
+    });
+    await expectRouteValidationError(res);
+    expectNoL3ServiceGroupCalled(services);
   });
 
   it("returns 409 with existingId when content hash already exists", async () => {
@@ -1668,6 +1707,39 @@ describe("POST /api/l3/sources content import (S1)", () => {
     expect(res.status).toBe(409);
     const body = await res.json() as { details?: { existingId?: string } };
     expect(body.details?.existingId).toBe("src-exist");
+  });
+});
+
+describe("PUT /api/l3/sources/:id/spaces (V0 sub-space tagging)", () => {
+  it("replaces spaces and returns the normalized set", async () => {
+    const sourceId = "00000000-0000-4000-8000-000000000301";
+    const l3Context = {
+      replaceSourceSpaces: vi.fn().mockResolvedValue({ sourceId, spaces: ["阅读", "翻译"] }),
+    };
+    const services = { ...makeServices(), l3Context } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request(`/api/l3/sources/${sourceId}/spaces`, {
+      method: "PUT",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ spaces: ["阅读", "翻译"] }),
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ sourceId, spaces: ["阅读", "翻译"] });
+    expect(l3Context.replaceSourceSpaces).toHaveBeenCalledWith({
+      userId: "user-123", sourceId, spaces: ["阅读", "翻译"],
+    });
+  });
+
+  it("rejects an empty spaces array", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+    const res = await app.request("/api/l3/sources/00000000-0000-4000-8000-000000000301/spaces", {
+      method: "PUT",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ spaces: [] }),
+    });
+    await expectRouteValidationError(res);
+    expectNoL3ServiceGroupCalled(services);
   });
 });
 
@@ -1790,6 +1862,168 @@ describe("POST /api/l3/quick-context", () => {
     });
 
     await expectRouteValidationError(res);
+    expectNoL3ServiceGroupCalled(services);
+  });
+});
+
+describe("L3 list reads with space/direction filters (ADR-0029 §6)", () => {
+  it("GET /api/l3/sources forwards direction and space filters", async () => {
+    const l3Context = {
+      listSources: vi.fn().mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 }),
+    };
+    const services = { ...makeServices(), l3Context } as unknown as Services;
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/sources?direction=雅思&space=阅读", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(l3Context.listSources).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-123", direction: "雅思", space: "阅读",
+    }));
+  });
+
+  it("GET /api/l3/sources rejects an unknown direction or space", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const badDirection = await app.request("/api/l3/sources?direction=german", { headers: AUTH_HEADERS });
+    await expectRouteValidationError(badDirection);
+    const badSpace = await app.request("/api/l3/sources?space=no-such", { headers: AUTH_HEADERS });
+    await expectRouteValidationError(badSpace);
+    expectNoL3ServiceGroupCalled(services);
+  });
+
+  it("GET /api/l3/words/:slug/contexts forwards direction and space filters", async () => {
+    const listContextsForWord = vi.fn().mockResolvedValue({ items: [], limit: 50, cursor: null, nextCursor: null });
+    const services = makeServices({ listContextsForWord });
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/words/orbit/contexts?direction=考研&space=阅读", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(listContextsForWord).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-123", slug: "orbit", direction: "考研", space: "阅读",
+    }));
+  });
+
+  it("GET /api/l3/occurrences returns a cursor page and forwards filters", async () => {
+    const listOccurrences = vi.fn().mockResolvedValue({
+      items: [
+        {
+          occurrence: {
+            id: "occ-1", context_id: "ctx-1", word_id: "w-1", user_id: "user-123",
+            surface: "orbits", lemma: "orbit", start_offset: 0, end_offset: 6,
+            confidence: null, evidence: {}, bound_sense: null,
+            created_at: "2026-07-13T00:00:00Z",
+          },
+          word: { id: "w-1", slug: "orbit", title: "orbit" },
+          context: {
+            id: "ctx-1", source_id: "src-1", user_id: "user-123", context_type: "sentence",
+            text: "The moon orbits the earth.", normalized_text: null, language: null,
+            position: {}, metadata: {},
+            created_at: "2026-07-13T00:00:00Z", updated_at: "2026-07-13T00:00:00Z",
+          },
+          source: {
+            id: "src-1", user_id: "user-123", wordbook_id: null, source_type: "article",
+            title: "Astronomy", author: null, url: null, language: null, metadata: {},
+            content_text: null, content_hash: null,
+            created_at: "2026-07-13T00:00:00Z", updated_at: "2026-07-13T00:00:00Z",
+          },
+        },
+      ],
+      limit: 50, cursor: null, nextCursor: "occ-1",
+    });
+    const services = makeServices({ listOccurrences });
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/occurrences?slug=orbit&space=阅读", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { items: Array<{ word: { slug: string } }>; nextCursor: string | null };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].word.slug).toBe("orbit");
+    expect(body.nextCursor).toBe("occ-1");
+    expect(listOccurrences).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-123", slug: "orbit", space: "阅读",
+    }));
+    expectOnlyL3ServiceGroupCalled(services, "l3Context");
+  });
+
+  it("GET /api/l3/occurrences rejects an unknown space before any service call", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/occurrences?space=xyz", { headers: AUTH_HEADERS });
+    await expectRouteValidationError(res);
+    expectNoL3ServiceGroupCalled(services);
+  });
+
+  it("GET /api/l3/context-links forwards linkType and direction filters", async () => {
+    const listContextLinks = vi.fn().mockResolvedValue({ items: [], limit: 50, cursor: null, nextCursor: null });
+    const services = makeServices({ listContextLinks });
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/context-links?linkType=supports&direction=雅思", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(listContextLinks).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-123", linkType: "supports", direction: "雅思",
+    }));
+  });
+});
+
+describe("L3 source route guards", () => {
+  it("POST /api/l3/sources rejects an invalid body before any service call", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/l3/sources", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ title: "" }),
+    });
+
+    await expectRouteValidationError(res);
+    expectNoL3ServiceGroupCalled(services);
+  });
+
+  it("POST /api/l3/sources/:id/captures rejects an invalid id or body", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const badId = await app.request("/api/l3/sources/not-a-uuid/captures", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({
+        text: "A vivid context.",
+        anchorStart: 0,
+        anchorEnd: 5,
+        surface: "vivid",
+        wordSlug: "vivid",
+      }),
+    });
+    await expectRouteValidationError(badId);
+
+    const badBody = await app.request(`/api/l3/sources/${SOURCE_ID}/captures`, {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ text: "" }),
+    });
+    await expectRouteValidationError(badBody);
+    expectNoL3ServiceGroupCalled(services);
+  });
+
+  it("GET /api/l3/sources/:id/space and /contexts reject invalid queries", async () => {
+    const services = makeServices();
+    const app = createApp(services);
+
+    const badSpace = await app.request(`/api/l3/sources/${SOURCE_ID}/space?limit=101`, {
+      method: "GET",
+      headers: AUTH_HEADERS,
+    });
+    await expectRouteValidationError(badSpace);
+
+    const badContexts = await app.request(`/api/l3/sources/${SOURCE_ID}/contexts?limit=0`, {
+      method: "GET",
+      headers: AUTH_HEADERS,
+    });
+    await expectRouteValidationError(badContexts);
     expectNoL3ServiceGroupCalled(services);
   });
 });

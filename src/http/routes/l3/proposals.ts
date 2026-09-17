@@ -30,7 +30,7 @@ export function proposalsRoutes(services: Services) {
       summary: parsed.data.summary ?? null,
       inputHash: parsed.data.inputHash ?? null,
       proposedBy: parsed.data.proposedBy ?? null,
-      provenance: asJson(parsed.data.provenance ?? {}),
+      sourceType: parsed.data.sourceType as "agent" | "import" | "external_tool" | "manual_draft" | "other", provenance: asJson(parsed.data.provenance ?? {}), agentId: c.get("principal")?.agentId ?? null, // 契约窗口前 sourceType 仍含弃用值，窄化断言交由 service requireEnum 拒绝
       items: parsed.data.items.map((item) => ({
         itemType: item.itemType,
         clientRef: item.clientRef ?? null,

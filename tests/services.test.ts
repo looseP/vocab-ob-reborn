@@ -93,7 +93,7 @@ function makeMockStatsRepo(overrides: Partial<IStatsRepository> = {}): IStatsRep
       totalWords: 100, trackedWords: 50, dueToday: 5,
       reviewedToday: 10, reviewed7d: 70, reviewed30d: 300,
       streakDays: 3, notesCount: 20,
-      l2: { promoted: 8, dueNow: 2, weakSignal: 1 },
+      l2: { promoted: 8, dueNow: 2, weakSignal: 1, reviewedToday: 4 },
     })),
     getRatingDistribution: vi.fn(async () => ({ again: 1, hard: 2, good: 5, easy: 2 })),
     ...overrides,
@@ -504,7 +504,7 @@ describe("StatsService", () => {
       totalWords: 100, trackedWords: 50, dueToday: 10,
       reviewedToday: 5, reviewed7d: 35, reviewed30d: 150,
       streakDays: 7, notesCount: 3,
-      l2: { promoted: 0, dueNow: 0, weakSignal: 0 },
+      l2: { promoted: 0, dueNow: 0, weakSignal: 0, reviewedToday: 0 },
     });
     expect(forecast.dueNow).toBe(10);
     expect(forecast.due7d).toBe(15);

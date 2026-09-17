@@ -2,10 +2,12 @@ import { z } from "zod";
 import type {
   Json,
   L3ContextDetail,
+  L3ContextLinkListItem,
   L3ContextLinkRow,
   L3ContextRow,
   L3GraphReadModel,
   L3ImportJobRow,
+  L3OccurrenceListItem,
   L3OccurrenceRow,
   L3PaginatedList,
   L3ProposalBundle,
@@ -26,6 +28,7 @@ import type {
   WordRow,
 } from "../domain";
 import type { L3ImportProposalResult, L3ImportParseStats } from "../services/l3-import.service";
+import { ERROR_CODES, type ErrorCode } from "../errors/codes";
 
 export const jsonValueSchema: z.ZodType<Json> = z.json();
 
@@ -168,6 +171,33 @@ export const l3ContextLinkRowResponseSchema: z.ZodType<L3ContextLinkRow> = z.obj
   provenance: jsonValueSchema,
   created_at: z.string(),
 }).strict();
+
+// ── L3 evidence list responses (ADR-0029 §6①) ──────────────────────────
+
+/** 词摘要（列料时的最小词指针；详情走 /api/words/:slug）。 */
+const l3WordSummaryResponseSchema = z.object({
+  id: z.string(),
+  slug: z.string(),
+  title: z.string(),
+}).strict();
+
+export const l3OccurrenceListItemResponseSchema: z.ZodType<L3OccurrenceListItem> = z.object({
+  occurrence: l3OccurrenceRowResponseSchema,
+  word: l3WordSummaryResponseSchema,
+  context: l3ContextRowResponseSchema,
+  source: l3SourceRowResponseSchema,
+}).strict();
+
+export const l3ContextLinkListItemResponseSchema: z.ZodType<L3ContextLinkListItem> = z.object({
+  link: l3ContextLinkRowResponseSchema,
+  word: l3WordSummaryResponseSchema.nullable(),
+  context: l3ContextRowResponseSchema.nullable(),
+  source: l3SourceRowResponseSchema.nullable(),
+}).strict();
+
+export const l3OccurrenceListResponseSchema = cursorPageResponseSchema(l3OccurrenceListItemResponseSchema);
+
+export const l3ContextLinkListResponseSchema = cursorPageResponseSchema(l3ContextLinkListItemResponseSchema);
 
 // ── L3 delete response ────────────────────────────────────────────────────
 
@@ -338,6 +368,14 @@ export const l3SourceListItemResponseSchema: z.ZodType<L3SourceListItem> = z.obj
   url: z.string().nullable(),
   created_at: z.string(),
   context_count: z.number().int().nonnegative(),
+  // 能力域标签（V0）：V0 前历史数据可能为空数组。
+  spaces: z.array(z.enum(["语法", "阅读", "作文", "翻译", "通用"])),
+}).strict();
+
+/** PUT /l3/sources/:id/spaces 响应（V0）。 */
+export const l3SourceSpacesReplaceResponseSchema = z.object({
+  sourceId: z.string().uuid(),
+  spaces: z.array(z.enum(["语法", "阅读", "作文", "翻译", "通用"])).min(1),
 }).strict();
 
 export const l3SourceListResponseSchema: z.ZodType<L3SourceListPage> = z.object({
@@ -421,3 +459,34 @@ export const l3ProposalConfirmResponseSchema: z.ZodType<L3ProposalConfirmResult>
     activeEntityId: z.string(),
   }).strict()),
 }).strict();
+
+// ── Capability discovery（ADR-0029 §8② / T13c）────────────────────────────
+// 预算数字来自 resource-budget.ts、error code 词表来自 errors/codes.ts 的单一
+// 真源；本文件不复制字面值（「禁止第二套真源」由 l3-capabilities 的等值断言钉住）。
+
+const ERROR_CODE_VALUES = Object.values(ERROR_CODES) as [ErrorCode, ...ErrorCode[]];
+
+export const l3CapabilitiesResponseSchema = z.object({
+  role: z.enum(["owner", "agent"]),
+  access: z.object({
+    read: z.literal("all"),
+    write: z.literal("proposal_only"),
+    upgrade: z.literal("owner_only"),
+  }).strict(),
+  /** 批次二（ADR-0034 §4）：评卷授权语义（提交即授权；执行面批次三）。 */
+  grading: z.object({
+    annotationReadScope: z.literal("submitted_sheet_drafts"),
+    annotationWriteScope: z.literal("review_only"),
+  }).strict(),
+  limits: z.object({
+    apiJsonBodyMaxBytes: z.number().int().positive(),
+    jsonRecordMaxBytes: z.number().int().positive(),
+    jsonMaxDepth: z.number().int().positive(),
+    proposalMaxItems: z.number().int().positive(),
+    proposalPayloadMaxBytes: z.number().int().positive(),
+    proposalTotalPayloadMaxBytes: z.number().int().positive(),
+  }).strict(),
+  errorCodes: z.array(z.enum(ERROR_CODE_VALUES)),
+}).strict();
+
+export type L3Capabilities = z.infer<typeof l3CapabilitiesResponseSchema>;

@@ -68,6 +68,23 @@ function buildRanges(space: L3ReadingSpace): AnchorRange[] {
     .sort((a, b) => a.start - b.start);
 }
 
+/**
+ * 文本节点是否属于「注入型 UI」——即不属于正文的字符。
+ *
+ * 2026-09-12 走查 P0-2：句尾跳转标号 `<button data-context-badge>{i+1}</button>`
+ * 自带一个文本节点（"1"/"2"…），若计入累计长度，每个前置标号都会让选区偏移 +1，
+ * 表现为圈选 "enduring" 却存成 "nduring"——锚点错位并导致 stub 词误判。
+ * 判定口径：沿 parentNode 上溯到容器，命中 data-context-badge 即视为注入文本。
+ */
+function isInjectedText(node: Node, container: HTMLElement): boolean {
+  let cur: Node | null = node;
+  while (cur && cur !== container) {
+    if (cur instanceof Element && cur.hasAttribute("data-context-badge")) return true;
+    cur = cur.parentNode;
+  }
+  return false;
+}
+
 /** 选区 → 正文全局 UTF-16 偏移：TreeWalker 累计各文本节点长度。抽为纯函数便于绕过 jsdom Range 限制直测。 */
 export function computeGlobalOffsets(container: HTMLElement, startNode: Node, startOffset: number, endNode: Node, endOffset: number): { start: number; end: number } | null {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
@@ -76,7 +93,7 @@ export function computeGlobalOffsets(container: HTMLElement, startNode: Node, st
   let end: number | null = null;
   while (walker.nextNode()) {
     const node = walker.currentNode;
-    const len = node.textContent?.length ?? 0;
+    const len = isInjectedText(node, container) ? 0 : (node.textContent?.length ?? 0);
     if (node === startNode) start = total + startOffset;
     if (node === endNode) { end = total + endOffset; break; }
     total += len;

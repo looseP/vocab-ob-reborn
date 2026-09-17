@@ -31,7 +31,16 @@ describe("existing local volume role upgrade", () => {
     // 0024: words UPDATE grant（仅用于 FOR UPDATE 行锁，0021 同一陷阱）
     // 0025: words stub-only UPDATE policy（RLS 下 FOR UPDATE 要求行同时通过 UPDATE policy）
     // 0026: l3_sources 书架搜索 pg_trgm GIN 索引（title + content_text，ILIKE 加速）
-    expect(authoritativeMigrationCount()).toBe(27);
+    // 0027: word_l2_content/l3_sources direction 方向列 + CHECK（ADR-0017；方向只作维度，无唯一约束）
+    // 0028: upgrade_work_orders/l3_sessions/l3_practice_attempts 三张新表（ADR-0018/0019）
+    // 0029: 兜底删除旧版 0027 的 partial UNIQUE 索引（P0 修正，2026-09-11；新库 no-op）
+    // 0030: l3_source_spaces 子空间 junction 表（ADR-0019 §4 能力域轴；复合 owner FK + RLS）
+    // 0031: l3_proposals (user_id, input_hash) partial unique index（ADR-0029 §7②，proposal 幂等收口）
+    // 0032: l3_questions/l3_papers 题目与试卷实体（ADR-0030，payload 引用 + RLS + 题型 CHECK）
+    // 0033: l3_question_annotations/l3_annotation_tags 做题注记与规律标签字典（批次一，锚点 CHECK + 四权 RLS）
+    // 0034: l3_submissions/l3_question_attempts 题纸与作答历史（批次二，状态机 + scope_key 部分唯一 + 题级软删链）
+    // 0035: l3_question_assessments 评析区（增补批，一题一条 upsert + last_editor 留痕）
+    expect(authoritativeMigrationCount()).toBe(36);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

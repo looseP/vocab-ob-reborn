@@ -12,6 +12,8 @@ interface WordContext {
 interface CollocationPromptConfig {
   count: number;
   cefrTarget: string;
+  /** ADR-0017/0018 方向指令行（已渲染）；缺省空串 = 与方向化前逐字节一致。 */
+  directionRule?: string;
 }
 
 /**
@@ -51,6 +53,7 @@ export function buildCollocationPrompt(
   options?: CollocationPromptOptions,
 ): LlmMessage[] {
   const candidates = options?.dictionaryCandidates;
+  const directionRule = config.directionRule ?? "";
 
   // ── Dictionary-grounded prompt (B3) ────────────────────────────────────
   // When candidates are supplied, the LLM is constrained to refine/annotate
@@ -71,7 +74,7 @@ export function buildCollocationPrompt(
 - 为每个保留的搭配补充中文释义、语感标注（formal/neutral/informal）与简短例句。
 - 例句应基于候选语境，不要编造与搭配无关的句子。
 - 目标考试级别：${config.cefrTarget}
-- 最多输出 ${config.count} 个搭配。
+${directionRule}- 最多输出 ${config.count} 个搭配。
 - 严格只输出 JSON 数组，不要任何解释文字：
 [{"phrase":"...","gloss":"中文释义","tone":"formal|neutral|informal","example":"英文例句","exampleTranslation":"中文翻译"}]
 
@@ -99,7 +102,7 @@ ${candidateBlock}`,
 - 搭配要"高频且考试有用"，不要生僻
 - 标注每个搭配的语感（formal/neutral/informal）
 - 目标考试级别：${config.cefrTarget}
-- 严格只输出 JSON 数组，不要任何解释文字：
+${directionRule}- 严格只输出 JSON 数组，不要任何解释文字：
 [{"phrase":"...","gloss":"中文释义","tone":"formal|neutral|informal","example":"英文例句","exampleTranslation":"中文翻译"}]`,
     },
     {

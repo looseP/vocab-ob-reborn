@@ -4,7 +4,8 @@
 
 | Secret | Environment variable | Consumer | Rotation frequency |
 |--------|---------------------|----------|-------------------|
-| Owner API token | `OWNER_API_TOKEN` | Web process | Quarterly or after incident |
+| Owner API token | `OWNER_API_TOKEN` | Web process (owner bearer + browser session exchange) | Quarterly or after incident |
+| Agent API tokens | `AGENT_API_TOKENS` | Web process (agent bearer) | Quarterly or after incident |
 | Metrics bearer token | `METRICS_BEARER_TOKEN` | Web process, smoke, drill | Quarterly or after incident |
 | Database password (owner) | `POSTGRES_PASSWORD` | PostgreSQL container | Quarterly |
 | App database URL | `APP_DATABASE_URL` | Web process | Quarterly or after role change |
@@ -49,13 +50,30 @@ Update the secret manager entries for `APP_DATABASE_URL`, `WORKER_DATABASE_URL`,
 
 Rolling-restart the affected services. The old password becomes invalid immediately; ensure all replicas are restarted before the next rotation.
 
-### 2. Owner API token and metrics token
+### 2. Owner API token, agent API tokens and metrics token
 
-1. Generate new tokens (minimum 24 characters, cryptographically random).
-2. Update the secret manager entries.
-3. Rolling-restart the web process.
-4. Update any external consumers (smoke test scripts, drill tools) with the new metrics token.
-5. Verify the old token is rejected.
+**Token 语义（ADR-0029）**
+
+- `OWNER_API_TOKEN`：**只给人**（浏览器会话兑换 + 命令行），拥有全部权限（角色 `owner`）。
+- `AGENT_API_TOKENS`：给外部 Agent / MCP 桥使用，格式为 `agentId:token,agentId:token,...`。
+  - `agentId` 是**服务端认定**的信任锚，形如 `^[a-z0-9][a-z0-9-]{0,31}$`（如 `ci-runner`）；它不是调用方自述字段。
+  - `token` 为 hex/base64url，**不含冒号**；按**第一个** `:` 分割，且每个条目必须**恰好一个**冒号。
+  - agent 角色为 `agent`：可读全量语料、可写 proposal；**升级动作（confirm / accept / validate / apply / restore 等）一律 403**。
+- `METRICS_BEARER_TOKEN`：仅 `/metrics`（Prometheus）使用，与上面两者完全独立。
+
+**启动 fail-fast**（任一违规即拒启，不静默降级）：
+
+- 旧格式裸 token（无 `:`）→ 拒启并提示迁移为 `agentId:token`；
+- `agentId` 不匹配词法、token 为空、`agentId` 重复 → 拒启；
+- 任一 agent token 与 `OWNER_API_TOKEN` 相同 → 拒启。
+
+**轮换步骤**
+
+1. 生成新 token（最小 24 字符，密码学随机）；为每个 Agent 分配稳定的 `agentId`。
+2. 更新 secret manager 条目（`AGENT_API_TOKENS` 为整体字符串，按 `agentId:token` 拼接）。
+3. Rolling-restart web 进程。
+4. 更新外部消费者（smoke 脚本、drill 工具）使用新的 metrics token / agent token。
+5. 验证旧 token 被拒绝；撤销 = 从 `AGENT_API_TOKENS` 移除对应 `agentId:token` 并重启（与设备会话对称）。
 
 ### 3. Backup signing key
 

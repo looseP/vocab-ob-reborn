@@ -193,7 +193,7 @@ export class L3ImportService {
    * eliminated because the entire flow is atomic.
    */
   private async executeImport(
-    input: { userId: string; wordbookId?: string | null; source: { title: string }; provenance?: Json },
+    input: { userId: string; wordbookId?: string | null; source: { title: string }; provenance?: Json; agentId?: string | null },
     inputHash: string,
     parseStats: L3ImportParseStats,
     sourceTag: string,
@@ -227,6 +227,7 @@ export class L3ImportService {
           inputHash,
           proposedBy: "l3_import_builder",
           provenance: mergeEvidence({ importJobId: importJob.id, source: sourceTag }, input.provenance),
+          agentId: input.agentId ?? null,
           items,
         });
         return { importJob, proposal: bundle.proposal, items: bundle.items, parseStats };

@@ -1,3 +1,14 @@
+# Overlay on compose.single-host.yaml. cloudflared is a long-running deployed
+# container, so it gets the same ADR-0026 json-file rotation as the base stack.
+# The `caddy` entry here is a partial override (ports reset only); its logging
+# comes from the base file's service definition, not this layer, so it is not
+# repeated here.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   caddy:
     ports: !reset []
@@ -24,6 +35,7 @@ services:
     depends_on:
       caddy:
         condition: service_healthy
+    logging: *default-logging
 
 networks:
   public:

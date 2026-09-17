@@ -7,7 +7,26 @@
  */
 
 import { z } from "zod";
-import type { Json } from "@/domain";
+import type {
+  Direction,
+  Json,
+  L3EvidenceAnchor,
+  L3QuestionAnswer,
+  L3QuestionOption,
+  L3QuestionType,
+  L3SubSpace,
+} from "@/domain";
+import type {
+  AnnotationTagDict,
+  QuestionAnnotationInput,
+  QuestionAnnotationPatch,
+} from "@/domain/l3-annotations";
+import type { AssessmentUpsertInput } from "@/domain/l3-assessments";
+import type {
+  SheetOpenInput,
+  SheetPatchInput,
+  SheetSealInput,
+} from "@/domain/l3-sheets";
 import {
   reviewAnswerSchema,
   reviewSkipSchema,
@@ -390,7 +409,7 @@ export const L3_CONTEXT_LINK_TYPES = [
 ] as const;
 export const L3_CONTEXT_LINK_TARGET_TYPES = ["word", "l2_item", "context", "source", "topic", "external"] as const;
 export const L3_IMPORT_JOB_STATUSES = ["pending", "processing", "completed", "failed"] as const;
-export const L3_PROPOSAL_SOURCE_TYPES = ["agent", "import", "external_tool", "manual_draft", "mcp_future", "other"] as const;
+export const L3_PROPOSAL_SOURCE_TYPES = ["agent", "import", "external_tool", "manual_draft", "other"] as const;
 export const L3_PROPOSAL_STATUSES = ["pending", "confirmed", "rejected", "canceled"] as const;
 export const L3_PROPOSAL_ITEM_TYPES = ["source", "context", "occurrence", "context_link"] as const;
 export const L3_PROPOSAL_ITEM_STATUSES = ["pending", "confirmed", "rejected"] as const;
@@ -439,6 +458,15 @@ export interface CreateL3SourceInput {
   url?: string | null;
   language?: string | null;
   metadata?: Json;
+  /** 能力域标签（ADR-0019 §4）；省略/空数组归一为 ['通用']，service 负责去重与枚举校验。 */
+  spaces?: L3SubSpace[] | null;
+}
+
+/** 全量替换来源能力域标签（V0 接通 l3_source_spaces 写入）。 */
+export interface ReplaceL3SourceSpacesInput {
+  userId: string;
+  sourceId: string;
+  spaces: L3SubSpace[];
 }
 
 export interface CreateL3ContextInput {
@@ -511,8 +539,44 @@ export interface ListL3SourcesInput {
   sourceType?: L3ServiceSourceType;
   q?: string;
   sort: "recent" | "captures";
+  /** 两轴过滤（ADR-0029 §6②）：方向（考试轴）× 子空间（能力域轴）。 */
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
   limit: number;
   offset: number;
+}
+
+/** L3 证据列表（ADR-0029 §6①）：occurrences 的 cursor 分页查询（"按空间方向列料"）。 */
+export interface ListL3OccurrencesInput {
+  userId: string;
+  slug?: string;
+  wordId?: string;
+  contextId?: string;
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
+  limit: number;
+  cursor?: string | null;
+}
+
+/** L3 证据列表（ADR-0029 §6①）：context-links 的 cursor 分页查询。 */
+export interface ListL3ContextLinksInput {
+  userId: string;
+  slug?: string;
+  wordId?: string;
+  contextId?: string;
+  linkType?: L3ServiceContextLinkType;
+  targetType?: L3ServiceContextLinkTargetType;
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
+  limit: number;
+  cursor?: string | null;
+}
+
+/** 空间汇总（B1 素材宇宙）：全量计数 + 近 windowDays 天生长趋势。 */
+export interface GetL3SpaceSummaryInput {
+  userId: string;
+  /** 生长趋势窗口（自然日；HTTP 层已约束 1-90）。 */
+  windowDays: number;
 }
 
 export interface DeleteL3OccurrenceInput {
@@ -569,6 +633,12 @@ export interface CreateL3ProposalInput {
   inputHash?: string | null;
   proposedBy?: string | null;
   provenance?: Json;
+  /**
+   * ADR-0029 §5：agent 调用的服务端信任锚（来自 Principal.agentId，仅 agent
+   * bearer 路径有值）。service 在插入时把非空 agentId 并入 provenance 并覆盖
+   * 客户端自述；owner/import 调用不传（不注入、不动原 provenance）。
+   */
+  agentId?: string | null;
   items: CreateL3ProposalItemInput[];
 }
 
@@ -617,6 +687,8 @@ export interface CreateL3RawTextImportProposalInput {
   targetWords?: L3ImportTargetWordInput[];
   options?: L3RawTextImportOptionsInput;
   provenance?: Json;
+  /** ADR-0029 §5：agent bearer 调用的服务端信任锚；无锚调用不传（见 CreateL3ProposalInput.agentId）。 */
+  agentId?: string | null;
 }
 
 export interface L3StructuredImportOccurrenceInput {
@@ -658,6 +730,8 @@ export interface CreateL3StructuredImportProposalInput {
   source: L3ImportSourceInput;
   contexts: L3StructuredImportContextInput[];
   provenance?: Json;
+  /** ADR-0029 §5：agent bearer 调用的服务端信任锚；无锚调用不传（见 CreateL3ProposalInput.agentId）。 */
+  agentId?: string | null;
 }
 
 export interface GenerateL3RecommendationsInput {
@@ -686,3 +760,96 @@ export interface L3RecommendationIdInput {
 export interface RejectL3RecommendationInput extends L3RecommendationIdInput {
   reviewNote?: string | null;
 }
+
+// ── ADR-0030：L3 题目 / 试卷（owner 入库面；agent 双级随后续波次）──────────
+
+export interface CreateL3QuestionInput {
+  userId: string;
+  questionType: L3QuestionType;
+  /** 有正文文件：挂到材料；与 fileKey 二选一（翻译/作文可只给 fileKey）。 */
+  sourceId?: string | null;
+  fileKey?: string | null;
+  ordinal?: number;
+  stem: string;
+  options?: L3QuestionOption[];
+  answer?: L3QuestionAnswer;
+  explanation?: string | null;
+  evidence?: L3EvidenceAnchor[];
+}
+
+export interface CreateL3PaperQuestionInput {
+  ordinal?: number;
+  stem: string;
+  options?: L3QuestionOption[];
+  answer?: L3QuestionAnswer;
+  explanation?: string | null;
+  evidence?: L3EvidenceAnchor[];
+}
+
+export interface CreateL3PaperSectionInput {
+  /** 卷面 section 标题（如 "Section I Use of English" / "Text 1"）。 */
+  title: string;
+  questionType: L3QuestionType;
+  /** 阅读类 section 挂已有材料；无正文 section 可空（由 fileKey 定界）。 */
+  sourceId?: string | null;
+  /** 无正文题组的组键；省略时服务端按 paper/section 生成稳定键。 */
+  fileKey?: string | null;
+  questions: CreateL3PaperQuestionInput[];
+}
+
+export interface CreateL3PaperInput {
+  userId: string;
+  title: string;
+  direction?: Direction | null;
+  metadata?: Json;
+  sections: CreateL3PaperSectionInput[];
+}
+
+export interface ListL3PracticeFilesInput {
+  userId: string;
+  questionType?: L3QuestionType | null;
+  direction?: Direction | null;
+  q?: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface ListL3PapersInput {
+  userId: string;
+  status?: "draft" | "active" | "archived" | null;
+  q?: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface GetL3PracticeFileInput {
+  userId: string;
+  questionType: L3QuestionType;
+  sourceId?: string | null;
+  fileKey?: string | null;
+}
+
+export interface DeleteL3QuestionInput {
+  userId: string;
+  questionId: string;
+}
+
+// ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ─────────────────
+export type CreateQuestionAnnotationInput = { userId: string } & QuestionAnnotationInput;
+export type PatchQuestionAnnotationInput = { userId: string; id: string } & QuestionAnnotationPatch;
+export type ReplaceAnnotationTagsInput = { userId: string } & AnnotationTagDict;
+/** v2 §4.7 撤回：sheetId 缺省时借原题纸作用域幂等开新纸（service 编排收口）。 */
+export type WithdrawQuestionAnnotationInput = { userId: string; id: string; sheetId?: string };
+
+// ── 批次二增补（0035）：评析区（ADR-0034 v2 条 10/11）────────────────────
+/** editor 由路由层按服务端认定 role 收窄（agent 首个可写持久区）。 */
+export type PutL3AssessmentInput = {
+  userId: string;
+  questionId: string;
+  editor: "owner" | "agent";
+} & AssessmentUpsertInput;
+
+// ── 批次二（0034）：题纸与作答历史（ADR-0034）────────────────────────────
+export type OpenL3SheetInput = { userId: string } & SheetOpenInput;
+export type PatchL3SheetInput = { userId: string; sheetId: string; answers: SheetPatchInput["answers"] };
+export type SealL3SheetInput = { userId: string; sheetId: string } & SheetSealInput;

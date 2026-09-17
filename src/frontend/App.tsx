@@ -23,6 +23,8 @@ const ImportPage = lazy(() => import("./pages/ImportPage").then((m) => ({ defaul
 const CapturePage = lazy(() => import("./pages/CapturePage").then((m) => ({ default: m.CapturePage })));
 // L3 子应用全家桶（L3Shell + 9 个子页 + l3Client）独立成块，访问 /l3 时才加载。
 const L3Page = lazy(() => import("./pages/L3Page").then((m) => ({ default: m.L3Page })));
+// 升级工作台（ADR-0018）：待升级清单 + 工单工作台，独立 chunk。
+const UpgradePage = lazy(() => import("./pages/UpgradePage").then((m) => ({ default: m.UpgradePage })));
 
 /** 路由懒加载的降级态：占满内容区居中显示加载指示，避免布局跳动。 */
 function PageSuspense({ children }: { children: ReactNode }) {
@@ -60,6 +62,7 @@ export function App() {
               <Route path="/import" element={<SiteFrame><PageSuspense><ImportPage /></PageSuspense></SiteFrame>} />
               <Route path="/capture" element={<PageSuspense><CapturePage /></PageSuspense>} />
               <Route path="/l3" element={<SiteFrame><PageSuspense><L3Page /></PageSuspense></SiteFrame>} />
+              <Route path="/upgrade" element={<SiteFrame><PageSuspense><UpgradePage /></PageSuspense></SiteFrame>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             <OmniPalette />

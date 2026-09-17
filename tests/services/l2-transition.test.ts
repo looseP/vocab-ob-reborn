@@ -405,3 +405,198 @@ describe("L2TransitionService — actor txRunner（HTTP 主动晋升注入路径
     expect(result).toEqual({ alreadyPromoted: false, l2DueAt: null });
   });
 });
+
+// ── ADR-0018 §3: 提前升级 seed 继承（promoteWithSeed）─────────────────────
+describe("L2TransitionService.promoteWithSeed", () => {
+  function makeSeededRepo() {
+    // promoteWithSeed 读取次序：幂等预检 → 晋升主体幂等检查 → 插入后回读。
+    const findByWordbookWordAndUser = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "l2-seeded", l2_due_at: "2026-10-01T00:00:00.000Z" });
+    const insert = vi.fn().mockResolvedValue({ id: "l2-seeded" });
+    const insertL2SeedAuditLog = vi.fn(async (_input: Record<string, unknown>) => undefined);
+    return { findByWordbookWordAndUser, insert, insertL2SeedAuditLog };
+  }
+
+  it("seeds stability/difficulty/payload from the other-book row and writes seeded_from", async () => {
+    const repo = makeSeededRepo();
+    const service = new L2TransitionService(repo as any);
+
+    const result = await service.promoteWithSeed(
+      makeProgress({ stability: 2, review_count: 1, last_rating: "again" }),
+      {
+        progressId: "src-l2",
+        wordbookId: "wb-old",
+        stability: 40,
+        difficulty: 4.5,
+        schedulerPayload: {
+          difficulty: 4.5,
+          due: "2026-09-30T00:00:00.000Z",
+          reps: 7,
+          stability: 40,
+          state: 2,
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      alreadyPromoted: false,
+      l2DueAt: "2026-10-01T00:00:00.000Z",
+      seeded: true,
+    });
+    const inserted = repo.insert.mock.calls[0]![0] as Record<string, any>;
+    expect(inserted.l2_stability).toBe(40);
+    expect(inserted.l2_difficulty).toBe(4.5);
+    expect(inserted.l2_state).toBe("review");
+    // provenance：seed 标记 + 仍然"未经 L2 作答即诞生"
+    expect(inserted.l2_weights_source).toBe("seeded");
+    expect(inserted.l2_inherited_from_l1).toBe(true);
+    // payload 取自 seed（保留 reps 经历），但标量被强制对齐
+    expect(inserted.l2_scheduler_payload.state).toBe(2);
+    expect(inserted.l2_scheduler_payload.stability).toBe(40);
+    expect(inserted.l2_scheduler_payload.reps).toBe(7);
+    expect(inserted.l2_scheduler_payload.due).toBe(inserted.l2_due_at);
+
+    const audit = repo.insertL2SeedAuditLog.mock.calls[0]![0] as Record<string, unknown>;
+    expect(audit.progressId).toBe("l2-seeded");
+    expect(audit.seededFromProgressId).toBe("src-l2");
+    expect(audit.seededFromWordbookId).toBe("wb-old");
+    expect(audit.state).toBe("review");
+  });
+
+  it("clamps a weak seed with the same floor/ceiling as automatic promotion", async () => {
+    const repo = makeSeededRepo();
+    const service = new L2TransitionService(repo as any);
+
+    await service.promoteWithSeed(
+      makeProgress({ stability: 2, review_count: 1, last_rating: "again" }),
+      { progressId: "src-l2", wordbookId: "wb-old", stability: 0.2, difficulty: 99, schedulerPayload: null },
+    );
+
+    const inserted = repo.insert.mock.calls[0]![0] as Record<string, any>;
+    // 次地板种子不得产出次地板行
+    expect(inserted.l2_stability).toBe(1.0);
+    expect(inserted.l2_difficulty).toBe(10);
+    expect(inserted.l2_scheduler_payload.stability).toBe(1.0);
+    expect(inserted.l2_scheduler_payload.difficulty).toBe(10);
+  });
+
+  it("falls back to L1 inheritance (no audit log) when there is no other-book record", async () => {
+    const repo = makeSeededRepo();
+    const service = new L2TransitionService(repo as any);
+
+    const result = await service.promoteWithSeed(makeProgress(), null);
+
+    expect(result.seeded).toBe(false);
+    expect(result.alreadyPromoted).toBe(false);
+    const inserted = repo.insert.mock.calls[0]![0] as Record<string, any>;
+    // 无 seed → 沿用 transitionInto 的 L1 继承语义
+    expect(inserted.l2_weights_source).toBe("inherited");
+    expect(repo.insertL2SeedAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("falls back to L1-derived values when seed scalars are non-numeric", async () => {
+    const repo = makeSeededRepo();
+    const service = new L2TransitionService(repo as any);
+
+    await service.promoteWithSeed(makeProgress({ stability: 25, difficulty: 5 }), {
+      progressId: "src-l2",
+      wordbookId: "wb-old",
+      stability: "abc",
+      difficulty: "abc",
+      schedulerPayload: null,
+    });
+
+    const inserted = repo.insert.mock.calls[0]![0] as Record<string, any>;
+    // 非法 S → L1 派生：max(25 × 0.5×25/46, 1.0) ≈ 6.79
+    expect(inserted.l2_stability).toBeCloseTo(6.79, 1);
+    // 非法 D → L1 派生：min(10, 5 + 2) = 7
+    expect(inserted.l2_difficulty).toBe(7);
+    expect(inserted.l2_scheduler_payload.reps).toBe(0);
+  });
+
+  it("falls back to L1-derived values when seed scalars are null", async () => {
+    const repo = makeSeededRepo();
+    const service = new L2TransitionService(repo as any);
+
+    await service.promoteWithSeed(makeProgress({ stability: 25, difficulty: 5 }), {
+      progressId: "src-l2",
+      wordbookId: "wb-old",
+      stability: null,
+      difficulty: null,
+      schedulerPayload: { due: "not-a-date" },
+    });
+
+    const inserted = repo.insert.mock.calls[0]![0] as Record<string, any>;
+    expect(inserted.l2_stability).toBeCloseTo(6.79, 1);
+    expect(inserted.l2_difficulty).toBe(7);
+    // 不可解析的 seed payload → 重建 base payload（state=Review, reps=0）
+    expect(inserted.l2_scheduler_payload.state).toBe(2);
+    expect(inserted.l2_scheduler_payload.reps).toBe(0);
+  });
+
+  it("is idempotent: an existing L2 row short-circuits without inserting or auditing", async () => {
+    const repo = {
+      findByWordbookWordAndUser: vi.fn().mockResolvedValue({ id: "l2-existing", l2_due_at: "2026-09-20T00:00:00.000Z" }),
+      insert: vi.fn(),
+      insertL2SeedAuditLog: vi.fn(async () => undefined),
+    };
+    const service = new L2TransitionService(repo as any);
+
+    const result = await service.promoteWithSeed(makeProgress(), {
+      progressId: "src-l2",
+      wordbookId: "wb-old",
+      stability: 40,
+      difficulty: 4.5,
+      schedulerPayload: null,
+    });
+
+    expect(result.alreadyPromoted).toBe(true);
+    expect(result.l2DueAt).toBe("2026-09-20T00:00:00.000Z");
+    expect(repo.insert).not.toHaveBeenCalled();
+    expect(repo.insertL2SeedAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("swallows 23505 on the seeded insert and does not write an audit log", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const repo = {
+        findByWordbookWordAndUser: vi.fn().mockResolvedValue(null),
+        insert: vi.fn().mockRejectedValue(Object.assign(new Error("dup"), { code: "23505" })),
+        insertL2SeedAuditLog: vi.fn(async () => undefined),
+      };
+      const service = new L2TransitionService(repo as any);
+
+      const result = await service.promoteWithSeed(makeProgress(), {
+        progressId: "src-l2",
+        wordbookId: "wb-old",
+        stability: 40,
+        difficulty: 4.5,
+        schedulerPayload: null,
+      });
+
+      expect(result).toEqual({ alreadyPromoted: false, l2DueAt: null, seeded: true });
+      expect(repo.insertL2SeedAuditLog).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("re-throws non-23505 errors from the seeded insert", async () => {
+    const repo = {
+      findByWordbookWordAndUser: vi.fn().mockResolvedValue(null),
+      insert: vi.fn().mockRejectedValue(Object.assign(new Error("schema error"), { code: "42P01" })),
+      insertL2SeedAuditLog: vi.fn(async () => undefined),
+    };
+    const service = new L2TransitionService(repo as any);
+
+    await expect(service.promoteWithSeed(makeProgress(), {
+      progressId: "src-l2",
+      wordbookId: "wb-old",
+      stability: 40,
+      difficulty: 4.5,
+      schedulerPayload: null,
+    })).rejects.toThrow("schema error");
+  });
+});

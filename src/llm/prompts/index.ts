@@ -17,6 +17,7 @@ import type { LlmMessage } from "../provider";
 import type { L2Field } from "../../schemas/service";
 import type { DictionaryCandidate } from "../../dictionary/provider";
 import type { L2StyleProfile } from "../../domain/l2-style-profile";
+import type { Direction } from "../../domain";
 import { buildCollocationPrompt } from "./collocations";
 import { buildExamplePrompt } from "./examples";
 import { buildSynonymPrompt } from "./synonyms";
@@ -58,6 +59,17 @@ export interface PromptBuildOptions {
   dictionaryCandidates?: DictionaryCandidate[];
   count?: number;
   userInstruction?: string;
+  direction?: Direction;
+}
+
+/**
+ * 渲染方向指令行（ADR-0017 §2 / ADR-0018）：升级工作台从工单注入的
+ * `direction` 让 prompt 定向到考试语域。`通用` / 缺省返回空串——
+ * 与方向化之前的 prompt **逐字节一致**（默认行为零变化）。
+ */
+export function renderDirectionRule(direction?: Direction): string {
+  if (!direction || direction === "通用") return "";
+  return `- 内容方向：${direction}（取材贴近${direction}考试的真实语域、题型与题材）\n`;
 }
 
 /** Builds the LLM message array for a single field given a word's context. */
@@ -83,7 +95,7 @@ export const promptBuilders: Record<L2Field, PromptBuilder> = {
   collocation: (word, options) =>
     buildCollocationPrompt(
       word,
-      { count: options?.count ?? 3, cefrTarget: word.cefrTarget },
+      { count: options?.count ?? 3, cefrTarget: word.cefrTarget, directionRule: renderDirectionRule(options?.direction) },
       { dictionaryCandidates: options?.dictionaryCandidates },
     ),
   corpus: (word, options) =>
@@ -94,11 +106,14 @@ export const promptBuilders: Record<L2Field, PromptBuilder> = {
         difficulty:
           options?.styleProfile?.promptRules.difficulty ?? word.cefrTarget,
         count: options?.count ?? options?.styleProfile?.promptRules.maxItems ?? 2,
+        directionRule: renderDirectionRule(options?.direction),
       },
       { styleProfile: options?.styleProfile },
     ),
-  synonym: (word, options) => buildSynonymPrompt(word, { count: options?.count ?? 3 }),
-  antonym: (word, options) => buildAntonymPrompt(word, { count: options?.count ?? 2 }),
+  synonym: (word, options) =>
+    buildSynonymPrompt(word, { count: options?.count ?? 3, directionRule: renderDirectionRule(options?.direction) }),
+  antonym: (word, options) =>
+    buildAntonymPrompt(word, { count: options?.count ?? 2, directionRule: renderDirectionRule(options?.direction) }),
 };
 
 /**

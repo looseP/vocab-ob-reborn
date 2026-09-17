@@ -34,7 +34,7 @@ export function importsRoutes(services: Services) {
       },
       targetWords: parsed.data.targetWords,
       options: parsed.data.options,
-      provenance: asJson(parsed.data.provenance ?? {}),
+      provenance: asJson(parsed.data.provenance ?? {}), agentId: c.get("principal")?.agentId ?? null,
     });
     return c.json(result, 201);
   });
@@ -80,7 +80,7 @@ export function importsRoutes(services: Services) {
           provenance: asJson(link.provenance ?? {}),
         })),
       })),
-      provenance: asJson(parsed.data.provenance ?? {}),
+      provenance: asJson(parsed.data.provenance ?? {}), agentId: c.get("principal")?.agentId ?? null,
     });
     return c.json(result, 201);
   });

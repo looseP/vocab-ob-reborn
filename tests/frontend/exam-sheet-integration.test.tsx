@@ -1,0 +1,869 @@
+/// <reference lib="dom" />
+// @vitest-environment jsdom
+
+import { act } from "react";
+import { createElement, type ReactElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { fireEvent, screen, waitFor } from "@testing-library/dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { L3ExamPaper, type ExamPaper } from "@/frontend/components/l3/L3ExamPaper";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
+
+vi.mock("@/frontend/api/client", () => ({ apiFetch: vi.fn() }));
+const { addToastMock } = vi.hoisted(() => ({ addToastMock: vi.fn() }));
+vi.mock("@/frontend/components/ui/Toast", () => ({ useToast: () => ({ addToast: addToastMock }) }));
+import { apiFetch } from "@/frontend/api/client";
+
+const PAPER_ID = "00000000-0000-4000-8000-000000000009";
+const SHEET_ID = "00000000-0000-4000-8000-000000000401";
+const Q1 = "00000000-0000-4000-8000-000000000101";
+const Q2 = "00000000-0000-4000-8000-000000000102";
+
+const paper: ExamPaper = {
+  id: PAPER_ID,
+  title: "2025 英语一",
+  direction: "考研",
+  metadata: { year: 2025 },
+  sections: [{
+    key: "s1",
+    title: "Text 1",
+    questionType: "reading_choice",
+    sourceId: null,
+    fileKey: "rls-file-1",
+    questionIds: [Q1, Q2],
+    missing: false,
+    source_title: null,
+    source_content: null,
+    questions: [
+      {
+        id: Q1, ordinal: 0, stem: "21. Why did the author?",
+        options: [{ key: "A", text: "甲" }, { key: "B", text: "乙" }],
+        answer: { choice: "B" }, explanation: "【词义辨析】测试解析", evidence: [],
+      },
+      {
+        id: Q2, ordinal: 1, stem: "22. What does the phrase mean?",
+        options: [{ key: "A", text: "丙" }, { key: "B", text: "丁" }],
+        answer: { choice: "A" }, explanation: null, evidence: [],
+      },
+    ],
+  }],
+};
+
+function sheetFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: SHEET_ID,
+    user_id: "00000000-0000-4000-8000-000000000001",
+    scope: "paper",
+    scope_key: `paper:${PAPER_ID}`,
+    source_id: null,
+    question_type: null,
+    paper_id: PAPER_ID,
+    status: "draft",
+    answers: {},
+    seal_mode: null,
+    summary: null,
+    sealed_at: null,
+    created_at: "2026-09-17T00:00:00Z",
+    updated_at: "2026-09-17T00:00:00Z",
+    ...overrides,
+  };
+}
+
+type MockOptions = {
+  sheet?: Record<string, unknown>;
+  /** 第一次 seal 抛 409（未答软确认），第二次成功。 */
+  sealSoftConfirmOnce?: number;
+  /** GET /l3/sheets/:id 的派生 attempts（sealed 结果页）。 */
+  derivedAttempts?: unknown[];
+};
+
+function setupMock(options: MockOptions = {}) {
+  const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+  let sealCalls = 0;
+  apiFetchMock.mockImplementation(async (path: string, init?: { method?: string; body?: string }) => {
+    if (path === "/l3/sheets" && (!init || init.method === "POST")) {
+      return { sheet: options.sheet ?? sheetFixture() };
+    }
+    if (path.startsWith("/l3/sheets/") && path.endsWith("/seal")) {
+      sealCalls += 1;
+      if (options.sealSoftConfirmOnce != null && sealCalls === 1) {
+        throw new BrowserApiError(409, {
+          error: "unanswered questions require soft confirmation",
+          code: "CONFLICT",
+          details: { unansweredCount: options.sealSoftConfirmOnce },
+        });
+      }
+      return {
+        sheet: sheetFixture({ status: "sealed", seal_mode: "full" }),
+        unansweredCount: options.sealSoftConfirmOnce ?? 0,
+        materializedCount: options.derivedAttempts?.length ?? 1,
+        promotedAnnotationCount: 0,
+      };
+    }
+    if (path.startsWith("/l3/sheets/") && path.split("?")[0]!.endsWith("/export")) {
+      return `# L3 题纸档案（v2）\n\n导出路径 ${path}`;
+    }
+    if (path.startsWith("/l3/sheets/") && !init?.method) {
+      return { sheet: sheetFixture({ status: "sealed", seal_mode: "full" }), attempts: options.derivedAttempts ?? [] };
+    }
+    if (path.startsWith("/l3/sheets/") && init?.method === "PATCH") {
+      return { sheet: sheetFixture({ answers: init.body ? (JSON.parse(init.body) as { answers: unknown }).answers : {} }) };
+    }
+    if (path.startsWith("/l3/question-annotations")) return { items: [] };
+    if (path === "/l3/annotation-tags") return { entry: [], option: [] };
+    return {};
+  });
+  return apiFetchMock;
+}
+
+const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+  takeRecords(): [] { return []; }
+}
+(globalThis as Record<string, unknown>).IntersectionObserver ??= ResizeObserverStub;
+
+const roots: Root[] = [];
+async function renderPaper(target: ExamPaper = paper, flushes = 3): Promise<void> {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  roots.push(root);
+  await act(async () => {
+    root.render(createElement(L3ExamPaper, { paper: target, onBack: vi.fn() }) as ReactElement);
+    for (let i = 0; i < flushes; i += 1) await Promise.resolve();
+  });
+}
+
+beforeEach(() => {
+  setupMock();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  act(() => {
+    for (const root of roots.splice(0)) root.unmount();
+  });
+  document.body.innerHTML = "";
+  (apiFetch as ReturnType<typeof vi.fn>).mockReset();
+  addToastMock.mockReset();
+});
+
+describe("L3ExamPaper 题纸装配（批次二）", () => {
+  it("进卷自动开纸（paper venue 幂等）并渲染题纸栏草稿徽标", async () => {
+    const apiFetchMock = setupMock();
+    await renderPaper();
+
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    const openCall = apiFetchMock.mock.calls.find(([path]) => path === "/l3/sheets");
+    expect(openCall).toBeTruthy();
+    expect(JSON.parse((openCall![1] as { body: string }).body)).toEqual({ scope: "paper", paperId: PAPER_ID });
+    expect(screen.getByText(/草稿/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy();
+  });
+
+  it("作答防抖 800ms 后逐题 merge PATCH，并在保存成功后给出时间", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    // 防抖窗口内不发请求
+    const patchCallsBefore = apiFetchMock.mock.calls.filter(
+      ([path, init]) => String(path).startsWith("/l3/sheets/") && (init as { method?: string } | undefined)?.method === "PATCH",
+    );
+    expect(patchCallsBefore).toHaveLength(0);
+
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    const patchCallsAfter = apiFetchMock.mock.calls.filter(
+      ([path, init]) => String(path).startsWith("/l3/sheets/") && (init as { method?: string } | undefined)?.method === "PATCH",
+    );
+    expect(patchCallsAfter).toHaveLength(1);
+    const [url, init] = patchCallsAfter[0]!;
+    expect(url).toBe(`/l3/sheets/${SHEET_ID}`);
+    expect(JSON.parse((init as { body: string }).body)).toEqual({ answers: { [Q1]: { choice: "B" } } });
+    expect(screen.getByText(/已保存/)).toBeTruthy();
+  });
+
+  it("连续两次改动合并进同一次防抖 PATCH", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: /丙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    const patchCalls = apiFetchMock.mock.calls.filter(
+      ([path, init]) => String(path).startsWith("/l3/sheets/") && (init as { method?: string } | undefined)?.method === "PATCH",
+    );
+    expect(patchCalls).toHaveLength(1);
+    expect(JSON.parse((patchCalls[0]![1] as { body: string }).body)).toEqual({
+      answers: { [Q1]: { choice: "B" }, [Q2]: { choice: "A" } },
+    });
+  });
+
+  it("定格 modal：summary 档必须填写总结，确认按钮随之启用", async () => {
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    expect(screen.getByRole("dialog", { name: "定格题纸" })).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("radio", { name: /只留总结/ }));
+    });
+    const confirm = screen.getByRole("button", { name: "确认定格" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText(/总结/), { target: { value: "本次全对，只留元认知" } });
+    });
+    expect((screen.getByRole("button", { name: "确认定格" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("未答 409 后进入软确认：提示剩余题数，二次确认才定格", async () => {
+    const apiFetchMock = setupMock({ sealSoftConfirmOnce: 2 });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+
+    expect(screen.getByText(/还有 2 题未作答/)).toBeTruthy();
+    const firstSeal = apiFetchMock.mock.calls.find(([path]) => String(path).endsWith("/seal"));
+    expect(JSON.parse((firstSeal![1] as { body: string }).body)).toEqual({
+      mode: "full",
+      acknowledgeUnanswered: false,
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "仍要定格" }));
+      for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    });
+    const sealCalls = apiFetchMock.mock.calls.filter(([path]) => String(path).endsWith("/seal"));
+    expect(sealCalls).toHaveLength(2);
+    expect(JSON.parse((sealCalls[1]![1] as { body: string }).body)).toEqual({
+      mode: "full",
+      acknowledgeUnanswered: true,
+    });
+    expect(screen.getByText("已定格")).toBeTruthy();
+  });
+
+  it("已定格题纸进入只读：选项禁用、无定格入口", async () => {
+    setupMock({ sheet: sheetFixture({ status: "sealed", seal_mode: "full" }) });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+
+    expect(screen.queryByRole("button", { name: "定格题纸" })).toBeNull();
+    for (const button of screen.getAllByRole("button", { name: /[甲乙丙丁]/ })) {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+    }
+  });
+
+  it("draft 重进恢复服务端已保存的作答（answers → 本地选中态）", async () => {
+    setupMock({ sheet: sheetFixture({ answers: { [Q1]: { choice: "B" } } }) });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+
+    // Q1 的 B 项被恢复为已选（草稿选中态：不揭示、不判对错，不出现 ✓）
+    await waitFor(() => expect(document.querySelector('[data-option-key="B"][data-selected="true"]')).toBeTruthy());
+    expect(screen.queryByText("✓")).toBeNull();
+  });
+
+  it("草稿作答不即判不锁死：可改选，判定与解析仅在显式揭示后出现", async () => {
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+
+    // 先选 A（错误项）：仅示已选草稿态——无 ✓/✕、无解析
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /甲/ }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-option-key="A"][data-selected="true"]')).toBeTruthy();
+    expect(screen.queryByText("✓")).toBeNull();
+    expect(screen.queryByText("✕")).toBeNull();
+    expect(screen.queryByText("解析")).toBeNull();
+
+    // 可改选：点 B 后选中态迁移（若被锁定则点不动）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-option-key="B"][data-selected="true"]')).toBeTruthy();
+    expect(document.querySelector('[data-option-key="A"][data-selected="true"]')).toBeNull();
+
+    // 再改选回 A（最终作答 = 错误项，用于验证揭示后的 ✕）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /甲/ }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-option-key="A"][data-selected="true"]')).toBeTruthy();
+    expect(document.querySelector('[data-option-key="B"][data-selected="true"]')).toBeNull();
+
+    // 显式揭示后才判才析：B 为正确答案（✓）、A 为最终错选（✕）；解析出现；选项锁定
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "显示全部答案与解析" }));
+      await Promise.resolve();
+    });
+    expect(screen.getAllByText("✓").length).toBeGreaterThan(0);
+    expect(screen.getByText("✕")).toBeTruthy();
+    expect(screen.getByText("解析")).toBeTruthy();
+    expect((screen.getByRole("button", { name: /甲/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("翻译参考译文默认隐藏，显式揭示后可见（草稿作答模型一致）", async () => {
+    const translationPaper: ExamPaper = {
+      id: PAPER_ID,
+      title: "2025 英语一 · 翻译",
+      direction: "考研",
+      metadata: {},
+      sections: [{
+        key: "s-tr", title: "Part C 翻译", questionType: "sentence_translation",
+        sourceId: null, fileKey: "tr-file-1", questionIds: [Q1], missing: false,
+        source_title: null, source_content: null,
+        questions: [{
+          id: Q1, ordinal: 0, stem: "46. 翻译题干：The quick brown fox.",
+          options: [], answer: { text: "敏捷的棕色狐狸。" }, explanation: null, evidence: [],
+        }],
+      }],
+    };
+    await renderPaper(translationPaper);
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    // 未揭示：参考译文不渲染（含内容）
+    expect(screen.queryByText(/参考译文/)).toBeNull();
+    expect(screen.queryByText("敏捷的棕色狐狸。")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "显示全部答案与解析" }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/参考译文/)).toBeTruthy();
+    expect(screen.getByText("敏捷的棕色狐狸。")).toBeTruthy();
+  });
+
+  it("定格成功后从 attempts 派生渲染：恢复选中 + 清理占位 + 统计口径", async () => {
+    const apiFetchMock = setupMock({
+      derivedAttempts: [
+        {
+          id: "a1", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q1,
+          sheet_id: SHEET_ID, venue: "paper", answer: { choice: "B" }, self_assessment: null,
+          status: "active", deleted_at: null, created_at: "2026-09-17T01:00:00Z",
+        },
+        {
+          id: "a2", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q2,
+          sheet_id: SHEET_ID, venue: "paper", answer: null, self_assessment: null,
+          status: "deleted", deleted_at: "2026-09-17T02:00:00Z", created_at: "2026-09-17T01:30:00Z",
+        },
+      ],
+    });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    expect(screen.getByText(/已录 2 条作答（含 1 条已清理）/)).toBeTruthy();
+    // 派生恢复同样为草稿选中态（未揭示不判对错；✓ 待显式揭示后出现）
+    expect(document.querySelector('[data-option-key="B"][data-selected="true"]')).toBeTruthy();
+    expect(screen.queryByText("✓")).toBeNull();
+    expect(screen.getByText("作答记录已清理")).toBeTruthy();
+    const detailCall = apiFetchMock.mock.calls.find(([path, init]) =>
+      String(path) === `/l3/sheets/${SHEET_ID}` && !(init as { method?: string } | undefined)?.method);
+    expect(detailCall).toBeTruthy();
+  });
+});
+
+describe("批次二增补：旗标与待复查（v2 §10）", () => {
+  it("旗钮/选项存疑/选择合并进同一次防抖 PATCH（完整对象，服务端题目键级替换）", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper();
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "待复查" })[0]!);   // Q1 待复查
+      await Promise.resolve();
+      fireEvent.click(screen.getAllByRole("button", { name: "存疑" })[0]!);     // Q1 存疑
+      await Promise.resolve();
+      fireEvent.click(document.querySelector('[data-doubt-toggle="A"]')!);      // Q1 选项 A 存疑
+      await Promise.resolve();
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));              // Q1 选 B
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    const patchCalls = apiFetchMock.mock.calls.filter(
+      ([path, init]) => String(path).startsWith("/l3/sheets/") && (init as { method?: string } | undefined)?.method === "PATCH",
+    );
+    expect(patchCalls).toHaveLength(1);
+    expect(JSON.parse((patchCalls[0]![1] as { body: string }).body)).toEqual({
+      answers: { [Q1]: { flags: { recheck: true, doubt: true }, optionFlags: ["A"], choice: "B" } },
+    });
+  });
+
+  it("定格 modal 显示待复查计数（本地实时口径，仅提示不阻断）", async () => {
+    vi.useFakeTimers();
+    setupMock();
+    await renderPaper();
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "待复查" })[0]!);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/还有 1 题标记了「待复查」；仅提示，不影响定格/)).toBeTruthy();
+  });
+
+  it("定格后从 self_assessment 派生恢复旗标（题号角标 + 选项存疑小字）", async () => {
+    const apiFetchMock = setupMock({
+      derivedAttempts: [{
+        id: "a1", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q1,
+        sheet_id: SHEET_ID, venue: "paper", answer: { choice: "B" },
+        self_assessment: { flags: { doubt: true, recheck: true }, optionFlags: ["A"] },
+        status: "active", deleted_at: null, created_at: "2026-09-17T01:00:00Z",
+      }],
+    });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+
+    // 恢复的旗标以题号角标小点体现（只读期旗钮隐藏）
+    const dots = [...document.querySelectorAll("span.bg-amber-500")];
+    expect(dots.length).toBeGreaterThan(0);
+    // 选项 A 恢复存疑：行内「存疑」小字渲染
+    expect(screen.getByText("存疑")).toBeTruthy();
+    // 恢复的来源是 GET /l3/sheets/:id 的 self_assessment
+    void apiFetchMock;
+  });
+});
+
+describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
+  /** 带原文材料的最小卷（walks 文栏分支：hasPassage=true）。 */
+  const PASSAGE_TEXT = "The trap phrase hides here.";
+  const passagePaper: ExamPaper = {
+    id: PAPER_ID,
+    title: "2025 英语一 · 阅读",
+    direction: "考研",
+    metadata: {},
+    sections: [{
+      key: "s1",
+      title: "Text 1",
+      questionType: "reading_choice",
+      sourceId: "00000000-0000-4000-8000-000000000901",
+      fileKey: "rlf-file-1",
+      questionIds: [Q1],
+      missing: false,
+      source_title: "Text 1",
+      source_content: PASSAGE_TEXT,
+      questions: [{
+        id: Q1, ordinal: 0, stem: "21. Why did the author?",
+        options: [{ key: "A", text: "甲" }, { key: "B", text: "乙" }],
+        answer: { choice: "B" }, explanation: null, evidence: [],
+      }],
+    }],
+  };
+
+  /** 按全局 content 偏移划选：定位包含 start 的 [data-content-off] 片段（标记后重分片也成立）。 */
+  function selectTextIn(container: Element, start: number, end: number): void {
+    const spans = [...container.querySelectorAll<HTMLElement>("[data-content-off]")];
+    const anchor = spans.find((el) => {
+      const base = Number(el.dataset.contentOff);
+      return base <= start && start < base + (el.textContent?.length ?? 0);
+    })!;
+    const base = Number(anchor.dataset.contentOff);
+    const textNode = anchor.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(textNode, start - base);
+    range.setEnd(textNode, Math.min(end - base, textNode.length));
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function patchBodies(apiFetchMock: ReturnType<typeof vi.fn>): unknown[] {
+    return apiFetchMock.mock.calls
+      .filter(([path, init]) => String(path).startsWith("/l3/sheets/")
+        && (init as { method?: string } | undefined)?.method === "PATCH")
+      .map(([, init]) => JSON.parse((init as { body: string }).body));
+  }
+
+  it("题干划词（scope=stem）：浮动条标记重点 → PATCH 保存 + 高亮渲染", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector(`#q-${Q1}`)).toBeTruthy());
+
+    const stemParagraph = document.querySelector(`#q-${Q1} p`)!;
+    await act(async () => {
+      selectTextIn(stemParagraph, 4, 11); // "Why did"（相对题干文本偏移）
+      fireEvent.mouseUp(stemParagraph);
+      await Promise.resolve();
+    });
+    const markButton = screen.getByRole("button", { name: "标记重点" });
+    await act(async () => {
+      fireEvent.click(markButton);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { marks: [{ scope: "stem", start: 4, end: 11 }] } } },
+    ]);
+    // 高亮渲染：纯底色 mark（无角标）
+    expect(document.querySelector(`#q-${Q1} [data-stem-mark]`)).toBeTruthy();
+  });
+
+  it("文栏划词（scope=passage）：标记重点走题号选择器；再划同区间显示取消标记", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector("[data-ann-passage]")).toBeTruthy());
+
+    // 先选 B（与标记合并保存）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    // 划选文栏 "trap"（[4, 8)）
+    const passage = document.querySelector("[data-ann-passage]")!;
+    await act(async () => {
+      selectTextIn(passage, 4, 8);
+      fireEvent.mouseUp(passage);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "标记重点" }));
+      await Promise.resolve();
+    });
+    // 题号选择器 → 第 1 题
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /第 1 题/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B", marks: [{ scope: "passage", start: 4, end: 8 }] } } },
+    ]);
+    expect(document.querySelector("[data-passage-mark]")).toBeTruthy();
+
+    // 再划同区间 → 浮动条显示「取消标记」→ 撤销后 PATCH 回到纯 choice
+    await act(async () => {
+      selectTextIn(document.querySelector("[data-ann-passage]")!, 4, 8);
+      fireEvent.mouseUp(document.querySelector("[data-ann-passage]")!);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "取消标记" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B", marks: [{ scope: "passage", start: 4, end: 8 }] } } },
+      { answers: { [Q1]: { choice: "B" } } },
+    ]);
+    expect(document.querySelector("[data-passage-mark]")).toBeNull();
+  });
+
+  it("sealed 结果页从 self_assessment.marks 还原高亮（v2 §4.6）", async () => {
+    const apiFetchMock = setupMock({
+      derivedAttempts: [{
+        id: "a1", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q1,
+        sheet_id: SHEET_ID, venue: "paper", answer: { choice: "B" },
+        self_assessment: { marks: [{ scope: "passage", start: 4, end: 8 }] },
+        status: "active", deleted_at: null, created_at: "2026-09-17T01:00:00Z",
+      }],
+    });
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    expect(document.querySelector("[data-passage-mark]")).toBeTruthy();
+    void apiFetchMock;
+  });
+
+  it("选项划词（scope=option+optionKey）：浮动条标记重点 → PATCH 保存 + 行内高亮", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector(`[data-option-key="B"]`)).toBeTruthy());
+
+    const optionB = document.querySelector(`[data-option-key="B"]`)!;
+    await act(async () => {
+      selectTextIn(optionB, 0, 1); // 选项 B 文本「乙」（[0,1)）
+      fireEvent.mouseUp(optionB);
+      await Promise.resolve();
+    });
+    expect(screen.getByText("「乙」")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "标记重点" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
+    ]);
+    // 行内高亮仅落在 B 行（纯底色，无角标）
+    expect(document.querySelector(`[data-option-key="B"] [data-option-mark]`)).toBeTruthy();
+    expect(document.querySelector(`[data-option-key="A"] [data-option-mark]`)).toBeNull();
+  });
+
+  it("选项标记取消：再划同区间显示「取消标记」→ 撤销后回到原有作答", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector(`[data-option-key="B"]`)).toBeTruthy());
+
+    // 先选中 B（choice），再划选选项文本标记 → 合并保存
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      selectTextIn(document.querySelector(`[data-option-key="B"]`)!, 0, 1);
+      fireEvent.mouseUp(document.querySelector(`[data-option-key="B"]`)!);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "标记重点" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B", marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
+    ]);
+
+    // 再划同区间：浮动条显示「取消标记」→ 撤销后 PATCH 回到纯 choice
+    await act(async () => {
+      selectTextIn(document.querySelector(`[data-option-key="B"]`)!, 0, 1);
+      fireEvent.mouseUp(document.querySelector(`[data-option-key="B"]`)!);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "取消标记" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B", marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
+      { answers: { [Q1]: { choice: "B" } } },
+    ]);
+    expect(document.querySelector("[data-option-mark]")).toBeNull();
+  });
+
+  it("拖选文本不触发作答点选；无选区 mouseUp 不出浮动条；清选区后点选照常", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector(`[data-option-key="B"]`)).toBeTruthy());
+
+    const optionB = document.querySelector(`[data-option-key="B"]`)!;
+    // 1) 无选区 mouseUp → 清场路径（offsets null，不出浮动条）
+    await act(async () => {
+      window.getSelection()!.removeAllRanges();
+      fireEvent.mouseUp(optionB);
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-exam-capture-bar]")).toBeNull();
+
+    // 2) 拖选文本后点击选项：点选被抑制（选中态不变、不产生 choice）
+    await act(async () => {
+      selectTextIn(optionB, 0, 1);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(optionB);
+      await Promise.resolve();
+    });
+    expect(optionB.getAttribute("data-selected")).toBeNull();
+
+    // 3) 清除选区后点击：照常选中并防抖保存
+    await act(async () => {
+      window.getSelection()!.removeAllRanges();
+      fireEvent.click(optionB);
+      await Promise.resolve();
+    });
+    expect(optionB.getAttribute("data-selected")).toBe("true");
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B" } } },
+    ]);
+  });
+
+  it("sealed 结果页还原选项标记高亮；readOnly 下划词不再捕获", async () => {
+    setupMock({
+      derivedAttempts: [{
+        id: "a1", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q1,
+        sheet_id: SHEET_ID, venue: "paper", answer: { choice: "B" },
+        self_assessment: { marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] },
+        status: "active", deleted_at: null, created_at: "2026-09-17T01:00:00Z",
+      }],
+    });
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    expect(document.querySelector(`[data-option-key="B"] [data-option-mark]`)).toBeTruthy();
+
+    // readOnly：划词不再捕获（定格后痕迹只读）
+    const optionB = document.querySelector(`[data-option-key="B"]`)!;
+    await act(async () => {
+      selectTextIn(optionB, 0, 1);
+      fireEvent.mouseUp(optionB);
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-exam-capture-bar]")).toBeNull();
+  });
+});
+
+describe("批次二增补：导出 v2 弹层（v2 §6）", () => {
+  it("draft 默认不勾选 withAnswers；勾选后「复制全文」→ 导出 markdown 入剪贴板", async () => {
+    const apiFetchMock = setupMock();
+    const clipboardWrite = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: clipboardWrite }, configurable: true });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "导出" }));
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("dialog", { name: "导出题纸" })).toBeTruthy();
+    expect(screen.getByText(/草稿快照（导出时刻的实时内容/)).toBeTruthy();
+    const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    // 勾选 withAnswers 后复制
+    await act(async () => {
+      fireEvent.click(checkbox);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制全文" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    const exportCall = apiFetchMock.mock.calls.find(([path]) => String(path).endsWith("/export?withAnswers=1"));
+    expect(exportCall).toBeTruthy();
+    expect(clipboardWrite).toHaveBeenCalledWith(expect.stringContaining("# L3 题纸档案（v2）"));
+    expect(addToastMock).toHaveBeenCalledWith("success", "已复制导出全文");
+    // 弹层关闭
+    expect(screen.queryByRole("dialog", { name: "导出题纸" })).toBeNull();
+  });
+
+  it("sealed 默认勾选 withAnswers=true，并可取消（withAnswers=0）", async () => {
+    const apiFetchMock = setupMock({ sheet: sheetFixture({ status: "sealed", seal_mode: "full" }) });
+    const clipboardWrite = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: clipboardWrite }, configurable: true });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "导出" }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/定格档案（从作答记录派生/)).toBeTruthy();
+    const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+
+    await act(async () => {
+      fireEvent.click(checkbox);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制全文" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(apiFetchMock.mock.calls.some(([path]) => String(path).endsWith("/export?withAnswers=0"))).toBe(true);
+  });
+
+  it("剪贴板不可用时给出降级提示（改用下载）", async () => {
+    setupMock();
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "导出" })).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "导出" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制全文" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(addToastMock).toHaveBeenCalledWith("error", "当前环境不支持剪贴板，请改用「下载 .md」");
+  });
+});

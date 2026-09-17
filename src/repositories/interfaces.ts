@@ -6,30 +6,60 @@
  */
 
 import type {
+  Direction,
   WordRow,
   WordSummary,
   PaginatedResult,
   GetPublicWordsOptions,
   UserWordProgressRow,
   UserWordL2ProgressRow,
+  UpgradeWorkOrderRow,
   L2DrillStepRow,
   L2ContentRow,
+  L3ContextLinkListItem,
   L3ContextLinkRow,
+  L3ContextLinkTargetType,
+  L3ContextLinkType,
   L3ContextRow,
   L3ContextDetail,
   L3GraphReadModel,
   L3ImportJobRow,
+  L3OccurrenceListItem,
   L3OccurrenceRow,
   L3PaginatedList,
+  L3PaperListPage,
+  L3PaperRow,
+  L3AnnotationOptionKey,
+  L3AnnotationTagRow,
+  L3QuestionAnnotationRow,
+  L3QuestionAssessmentRow,
+  L3QuestionAttemptRow,
+  L3SubmissionRow,
+  SealMode,
+  SheetScope,
+  L3PracticeAttemptPage,
+  L3PracticeFilePage,
+  L3QuestionRow,
+  L3PracticeAttemptRow,
+  L3PracticeErrorBookPage,
+  L3PracticeOutcome,
+  L3PracticeType,
   L3ProposalBundle,
   L3ProposalItemRow,
   L3ProposalRow,
+  L3ReadStats,
   L3RecommendationItemRow,
   L3RecommendationRunRow,
+  L3SessionContextSummary,
+  L3SessionRow,
+  L3SessionStatus,
+  L3SessionType,
   L3SourceContextListItem,
   L3SourceRow,
   L3SourceListPage,
   L3SourceSpace,
+  L3SpaceSummaryDay,
+  L3SubSpace,
   L3WordSpace,
   L3WordContextListItem,
   NoteEntryRow,
@@ -44,6 +74,7 @@ import type {
   RootFamilyGroupRow,
   Json,
 } from "../domain";
+import type { OtherBookL2Signal } from "../domain/upgrade-suggestion";
 
 // ── Word ────────────────────────────────────────────────────────────────
 export interface IWordRepository {
@@ -164,6 +195,43 @@ export type InsertNewCardStatus =
   | { status: "word_not_found"; progressId: null }
   | { status: "wordbook_invalid"; progressId: null };
 
+/**
+ * 一键遗忘预览行（ADR-0020）：该书每条 L1 进度 + 词条锚点元数据（词根/助记/语义链/别名）。
+ * 纯读，喂 computeAnchorCandidates 的入参形状；numeric 列已在仓库层归一为 number|null。
+ */
+export interface ForgettingPreviewRow {
+  wordId: string;
+  state: string;
+  stability: number | null;
+  retrievability: number | null;
+  recentRatings: string[];
+  lapseCount: number;
+  /** words.metadata->>'morphology_root'（如 "pre+dict"）。 */
+  morphology: string | null;
+  /** words.metadata->>'mnemonic_text'（回退 metadata->>'mnemonic'）。 */
+  mnemonic: string | null;
+  /** words.metadata->>'semantic_chain'。 */
+  semanticChain: string | null;
+  /** words.aliases（屈折/变体形）。 */
+  aliases: string[];
+}
+
+/** 一键遗忘批量挂起入参（keepWordIds = 锚点保留集，永不挂起）。 */
+export interface BulkSuspendByWordbookInput {
+  userId: string;
+  wordbookId: string;
+  keepWordIds: string[];
+  /** 服务生成；写入每条 review_logs.metadata.batchId，供 restore 精确回溯。 */
+  batchId: string;
+}
+
+/** 一键遗忘批量恢复入参（只回溯本批次日志）。 */
+export interface BulkForgetBatchInput {
+  userId: string;
+  wordbookId: string;
+  batchId: string;
+}
+
 export interface SaveAnswerInput {
   progressId: string;
   userId: string;
@@ -202,9 +270,13 @@ export interface IReviewRepository {
     Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
   >;
 
-  /** Due candidate pool (with needs_recheck) consumed by the P1 queue-priority builder. */
+  /**
+   * Due candidate pool consumed by the P1 queue-priority builder. Carries the
+   * row-level needs_recheck mark plus the words-side hashes, so the service can
+   * derive "content changed" at read time (ADR-0021).
+   */
   findDueCandidates(userId: string, wordbookId: string, limit: number): Promise<
-    Array<{ progress: UserWordProgressRow & { needs_recheck: boolean }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
+    Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
   >;
 
   /** All active (non-suspended) cards regardless of due_at — used by cram/preview practice modes. */
@@ -271,6 +343,40 @@ export interface IReviewRepository {
 
   /** UPDATE state=suspended + INSERT review_log (action=suspend). MUST be in a transaction. */
   suspendCard(progress: ProgressForAction, userId: string, sessionId: string | null, idempotencyKey: string | null): Promise<{ reviewLogId: string }>;
+
+  // ── 一键遗忘（ADR-0020，书级批量挂起/恢复）────────────────────────────
+  /**
+   * 该书预览行（L1 进度 + 词条锚点元数据），只读。owner-RLS 表，
+   * 调用方必须在携带 actorId 的事务内执行。
+   */
+  findForgettingPreviewRows(userId: string, wordbookId: string): Promise<ForgettingPreviewRow[]>;
+
+  /**
+   * 预览计数：与 {@link bulkSuspendByWordbook} **完全同条件**的可挂起行数
+   * （state NOT IN ('suspended','new') AND word_id <> ALL(keepWordIds)）。
+   */
+  countBulkSuspendCandidates(input: {
+    userId: string;
+    wordbookId: string;
+    keepWordIds: string[];
+  }): Promise<number>;
+
+  /**
+   * 一键遗忘批量挂起（单条 set-based 写）：非锚点、非 suspended/new 的 L1 行置
+   * state='suspended' + 单条 INSERT…SELECT 写 review_logs（rating=NULL、metadata
+   * action='bulk_forget'、previous_progress_snapshot 保真旧 state）。**不删、不改
+   * stability、不推 due**。返回受影响（挂起）行数。MUST be in a transaction。
+   */
+  bulkSuspendByWordbook(input: BulkSuspendByWordbookInput): Promise<number>;
+
+  /** restore 前置校验：该 (user, wordbook, batchId) 是否存在 bulk_forget 日志。 */
+  findBulkForgetBatch(input: BulkForgetBatchInput): Promise<boolean>;
+
+  /**
+   * 只按本批次日志回写 user_word_progress.state（取 previous_progress_snapshot->>'state'）。
+   * 不触碰 stability/due_at。返回受影响行数。MUST be in a transaction。
+   */
+  restoreBulkForget(input: BulkForgetBatchInput): Promise<number>;
 
   /** Resolve the owner-scoped wordbook for an undoable review log. MUST be in a transaction. */
   findReviewLogWordbookForUndo(reviewLogId: string, userId: string): Promise<string | null>;
@@ -531,6 +637,51 @@ export interface IL2ProgressRepository {
    * 是否已为该词晋升出 L2 行（跨词书 EXISTS）。供词条详情"待扩展"提示使用。
    */
   existsByUserAndWord(userId: string, wordId: string): Promise<boolean>;
+  /**
+   * 他书该词的"最佳"L2 行（ADR-0018 §3 提前升级 seed 来源，只读）。
+   *
+   * 排序键**写死在此处**，避免各调用方各自重解释"最佳"：
+   *   1. l2_state 优先级：review > relearning > learning > new > 其他；
+   *   2. l2_stability DESC（NULL 视为 -1，排最后）；
+   *   3. l2_due_at DESC（NULLS LAST —— 越晚到期视作越新近的掌握状态）；
+   *   4. id ASC（稳定 tie-break，保证同输入恒同输出）。
+   *
+   * 只返回单行；excludeWordbookId 排除当前书（seed 只许取"他书"）。
+   */
+  findBestByWordAndUser(
+    userId: string,
+    wordId: string,
+    excludeWordbookId: string,
+  ): Promise<UserWordL2ProgressRow | null>;
+  /**
+   * 他书 L2 掌握信号（只读最小投影），直接喂
+   * {@link computeUpgradeSuggestion} 的 otherBooksL2 入参（ADR-0018 §2）。
+   * 已由 SQL 排除当前书；一行 = 一本他书的 L2 状态。
+   */
+  findOtherBookSignals(
+    userId: string,
+    wordId: string,
+    excludeWordbookId: string,
+  ): Promise<OtherBookL2Signal[]>;
+  /**
+   * ADR-0018 §3 提前升级（seed）审计行：track='l2'、rating=NULL，
+   * metadata 记 seeded_from（来源 progress id / wordbook id）。仅 seed 路径写。
+   * MUST be in a transaction（actor RLS）。
+   */
+  insertL2SeedAuditLog(input: {
+    userId: string;
+    wordId: string;
+    wordbookId: string;
+    /** 新建 L2 行的 progress id。 */
+    progressId: string;
+    /** seed 来源（他书最佳行）。 */
+    seededFromProgressId: string;
+    seededFromWordbookId: string;
+    state: string;
+    dueAt: string;
+    stability: number;
+    difficulty: number;
+  }): Promise<void>;
     insert(data: NewL2Progress): Promise<UserWordL2ProgressRow>;
     /** L2 到期口径队列（l2_drill spec §一）：未暂停且 l2_due_at <= now，按到期升序。 */
     findDueCards(
@@ -651,6 +802,22 @@ export interface IL2ProgressRepository {
   pause(userId: string, wordbookId: string, wordId: string, reason: string): Promise<void>;
   /** Unpause L2 progress scoped to (user, wordbook, word) by reason. */
   unpauseByReason(userId: string, wordbookId: string, wordId: string, reason: string): Promise<void>;
+  /**
+   * 一键遗忘 · 书级批量暂停 L2（ADR-0020）：该书全部非锚点 L2 行
+   * l2_paused=true / l2_paused_at=now() / l2_paused_reason='manual'，排除 keepWordIds。
+   * 不触碰 l2_stability / l2_due_at。返回受影响行数。MUST be in a transaction。
+   */
+  batchPauseByWordbook(input: {
+    userId: string;
+    wordbookId: string;
+    keepWordIds: string[];
+  }): Promise<number>;
+  /**
+   * 一键遗忘 · 书级恢复 L2（ADR-0020）：仅 unpause 本功能的 manual 暂停
+   * （l2_paused_reason='manual'），回到 l2_due_at=now()。返回受影响行数。
+   * MUST be in a transaction。
+   */
+  batchUnpauseManual(userId: string, wordbookId: string): Promise<number>;
 }
 
 // ── L2 Content ─────────────────────────────────────────────────────────
@@ -658,6 +825,11 @@ export interface IL2ProgressRepository {
 export interface NewL2Content {
   word_id: string;
   field: string;
+  /**
+   * ADR-0017 §2：内容行方向。缺省 `通用`（既有调用方零改动；
+   * 升级工单/候选池在生成时指定 `考研`/`雅思` 等）。
+   */
+  direction?: Direction;
   content: Json;
   source: string;
   source_ref?: string | null;
@@ -686,6 +858,59 @@ export interface IL2ContentRepository {
   softDelete(id: string): Promise<void>;
   /** Aggregate active L2 content rows into the words JSONB cache columns. */
   refreshL2Cache(wordId: string): Promise<void>;
+}
+
+// ── Upgrade Work Order ─────────────────────────────────────────────────
+/** 建工单输入（ADR-0018 §1）。 */
+export interface NewUpgradeWorkOrder {
+  user_id: string;
+  word_id: string;
+  wordbook_id: string;
+  /** 方向由工单指定（ADR-0017 §2）。 */
+  direction: Direction;
+  status?: string;
+  suggestion_snapshot?: Json | null;
+}
+
+/**
+ * 待升级清单行：工单行 + words 词面（LEFT JOIN）。
+ * `word_slug` / `word_text` 为 null 仅当词行缺失——FK cascade 下理论不可达，
+ * 类型上仍如实为 nullable（不假装 join 必然命中）。
+ */
+export interface UpgradeWorkOrderPendingRow extends UpgradeWorkOrderRow {
+  word_slug: string | null;
+  word_text: string | null;
+}
+
+export interface IUpgradeWorkOrderRepository {
+  /** 插入工单。同 (user,word,wordbook) 已有进行中工单时由 23505 暴露给调用方。 */
+  insert(data: NewUpgradeWorkOrder): Promise<UpgradeWorkOrderRow>;
+  /** 重复标记：刷新既有工单的 direction + suggestion_snapshot（不动 status）。 */
+  updateSuggestion(
+    userId: string,
+    workOrderId: string,
+    direction: Direction,
+    suggestionSnapshot: Json,
+  ): Promise<UpgradeWorkOrderRow | null>;
+  /** 进行中工单（标记中 / 升级中）；无则 null。 */
+  findActiveByScope(
+    userId: string,
+    wordbookId: string,
+    wordId: string,
+  ): Promise<UpgradeWorkOrderRow | null>;
+  findByIdForUser(userId: string, workOrderId: string): Promise<UpgradeWorkOrderRow | null>;
+  /** 待升级清单：进行中工单（含词面，LEFT JOIN words），按创建时间倒序。 */
+  listPending(userId: string, wordbookId: string, limit: number): Promise<UpgradeWorkOrderPendingRow[]>;
+  /**
+   * 状态推进。`completed: true` 时写 completed_at=now()（其余状态保留原值）。
+   * 返回更新行；不存在 / 非本人 → null。
+   */
+  updateStatus(
+    userId: string,
+    workOrderId: string,
+    status: string,
+    options?: { completed?: boolean },
+  ): Promise<UpgradeWorkOrderRow | null>;
 }
 
 // ── L3 Context Space ───────────────────────────────────────────────────
@@ -753,6 +978,9 @@ export interface L3WordLookup {
   userId: string;
   wordId?: string;
   slug?: string;
+  /** 两轴过滤（ADR-0029 §6②）：方向 × 子空间（与练习线同语义）。 */
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
   limit: number;
   cursor?: string | null;
 }
@@ -760,6 +988,30 @@ export interface L3WordLookup {
 export interface L3SourceLookup {
   userId: string;
   sourceId: string;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface L3OccurrenceLookup {
+  userId: string;
+  slug?: string;
+  wordId?: string;
+  contextId?: string;
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
+  limit: number;
+  cursor?: string | null;
+}
+
+export interface L3ContextLinkLookup {
+  userId: string;
+  slug?: string;
+  wordId?: string;
+  contextId?: string;
+  linkType?: L3ContextLinkType;
+  targetType?: L3ContextLinkTargetType;
+  direction?: Direction | null;
+  space?: L3SubSpace | null;
   limit: number;
   cursor?: string | null;
 }
@@ -802,7 +1054,15 @@ export interface L3ContextDeleteBlockers {
 }
 
 export interface IL3ContextRepository {
-  createSource(input: NewL3Source): Promise<L3SourceRow>;
+  /**
+   * 建来源；spaces 非空时同事务写入 l3_source_spaces junction（V0 接通死轴）。
+   * 调用方负责枚举校验/去重/默认值（见 L3ContextService.normalizeSourceSpaces）。
+   */
+  createSource(input: NewL3Source, spaces?: readonly string[]): Promise<L3SourceRow>;
+  /** 全量替换来源的能力域标签（事务内 delete+insert）；调用方须先做所有权校验。 */
+  replaceSourceSpaces(userId: string, sourceId: string, spaces: readonly string[]): Promise<void>;
+  /** 增量挂载能力域标签（只增不删，ON CONFLICT DO NOTHING）；录题自动打标用。 */
+  ensureSourceSpaces(userId: string, sourceId: string, spaces: readonly string[]): Promise<void>;
   createContext(input: NewL3Context): Promise<L3ContextRow>;
   createOccurrence(input: NewL3Occurrence): Promise<L3OccurrenceRow>;
   createContextLink(input: NewL3ContextLink): Promise<L3ContextLinkRow>;
@@ -833,6 +1093,9 @@ export interface IL3ContextRepository {
     sourceType?: string;
     q?: string;
     sort: "recent" | "captures";
+    /** 两轴过滤（ADR-0029 §6②）：方向 × 子空间。 */
+    direction?: Direction | null;
+    space?: L3SubSpace | null;
     limit: number;
     offset: number;
   }): Promise<L3SourceListPage>;
@@ -856,10 +1119,20 @@ export interface IL3ContextRepository {
   findWordInWordbookBySlug(wordbookId: string, slug: string): Promise<WordRow | null>;
   listContextsForWord(input: L3WordLookup): Promise<L3PaginatedList<L3WordContextListItem>>;
   listContextsForSource(input: L3SourceLookup): Promise<L3PaginatedList<L3SourceContextListItem>>;
+  /** ADR-0029 §6①：证据列表（cursor 分页 + 词 / 语境 / 两轴过滤）。 */
+  listOccurrences(input: L3OccurrenceLookup): Promise<L3PaginatedList<L3OccurrenceListItem>>;
+  listContextLinks(input: L3ContextLinkLookup): Promise<L3PaginatedList<L3ContextLinkListItem>>;
   getContextDetail(userId: string, contextId: string): Promise<L3ContextDetail | null>;
   getWordSpace(input: L3WordSpaceLookup): Promise<L3WordSpace | null>;
   getSourceSpace(input: L3SourceSpaceLookup): Promise<L3SourceSpace | null>;
   getGraph(input: L3GraphLookup): Promise<L3GraphReadModel>;
+  /** B1 素材宇宙：四类 L3 实体的全量计数（user-scoped，无任何过滤轴）。 */
+  getSpaceSummaryCounts(userId: string): Promise<L3ReadStats>;
+  /**
+   * B1 素材宇宙：近 windowDays 天每日新增（显示时区 Asia/Shanghai 切日，
+   * 升序、稀疏——仅含产生过新增的日期）。
+   */
+  getSpaceGrowth(userId: string, windowDays: number): Promise<L3SpaceSummaryDay[]>;
 }
 
 export interface NewL3Proposal {
@@ -1001,6 +1274,92 @@ export interface IL3RecommendationRepository {
   findLinkGapCandidates(input: L3RecommendationSignalLookup): Promise<L3RecommendationLinkGapCandidate[]>;
 }
 
+// ── L3 Practice Attempts (ADR-0019 §1/§3) ──────────────────────────────
+/** 插入一条练习记录（INSERT ... RETURNING *）。payload 必带 taskId 幂等身份。 */
+export interface NewL3PracticeAttempt {
+  user_id: string;
+  context_id: string;
+  occurrence_id: string | null;
+  session_id: string | null;
+  practice_type: L3PracticeType;
+  outcome: L3PracticeOutcome;
+  payload: Json;
+}
+
+/** 练习记录/错题库查询（offset 口径；space/direction 两轴过滤）。 */
+export interface L3AttemptLookup {
+  userId: string;
+  practiceType?: L3PracticeType | null;
+  outcome?: L3PracticeOutcome | null;
+  /** 子空间过滤：走 l3_source_spaces junction（EXISTS）。 */
+  space?: L3SubSpace | null;
+  /** 方向过滤：走 l3_sources.direction。 */
+  direction?: Direction | null;
+  limit: number;
+  offset: number;
+  /**
+   * 错题库 cursor 分页（T11 加固；null/缺省 = offset 模式）。与 offset 同时
+   * 给出时以 cursor 为准（offset 被忽略）。练习记录列表不使用本字段。
+   */
+  cursor?: string | null;
+}
+
+export interface IL3PracticeRepository {
+  insertAttempt(input: NewL3PracticeAttempt): Promise<L3PracticeAttemptRow>;
+  /**
+   * 幂等身份锁（taskId 维度）：pg_advisory_xact_lock(hashtext(userId), hashtext(taskId))。
+   * MUST be in a transaction（先例 review.repository.checkIdempotency）。
+   */
+  lockAttemptIdentity(userId: string, taskId: string): Promise<void>;
+  /** 幂等查找：payload->>'taskId' 命中即返回既有行。 */
+  findAttemptByTaskId(userId: string, taskId: string): Promise<L3PracticeAttemptRow | null>;
+  /** 练习记录列表（可选 practiceType/outcome/space/direction 过滤）。 */
+  listAttempts(input: L3AttemptLookup): Promise<L3PracticeAttemptPage>;
+  /**
+   * 错题库 = attempts(outcome='wrong') 派生查询（不建第二真相源）；条目附语境级
+   * 聚合（wrongCount/latestOutcome/latestAt），支持 cursor 分页（cursor 为准）。
+   */
+  listWrongAttempts(input: L3AttemptLookup): Promise<L3PracticeErrorBookPage>;
+}
+
+// ── L3 Sessions (ADR-0019 §2) ──────────────────────────────────────────
+/** 建会话输入：plan 只存实体 id 引用 + version。 */
+export interface NewL3Session {
+  user_id: string;
+  type: L3SessionType;
+  title: string | null;
+  plan: Json;
+  version: number;
+}
+
+/** 确定性抽样入参（space/direction 两轴；seed 决定顺序 → 同 seed 恒同结果）。 */
+export interface L3SessionContextLookup {
+  userId: string;
+  space?: L3SubSpace | null;
+  direction?: Direction | null;
+  limit: number;
+  seed: string;
+}
+
+export interface IL3SessionRepository {
+  insertSession(input: NewL3Session): Promise<L3SessionRow>;
+  findSessionByIdForUser(userId: string, sessionId: string): Promise<L3SessionRow | null>;
+  /** ended=true → ended_at=now()；否则保留原值。 */
+  updateStatus(
+    userId: string,
+    sessionId: string,
+    status: L3SessionStatus,
+    options: { ended: boolean },
+  ): Promise<L3SessionRow | null>;
+  /**
+   * 确定性抽样 context id：ORDER BY md5(c.id::text || seed) LIMIT n。
+   * 同 (userId, space, direction, limit, seed) 恒同结果（getSession re-render 稳定）。
+   */
+  sampleContextIds(input: L3SessionContextLookup): Promise<string[]>;
+  /** 按 id 批量取语境投影（现拉现渲染；供 getSession 组描述）。 */
+  findContextsByIds(userId: string, contextIds: string[]): Promise<L3SessionContextSummary[]>;
+}
+
 // ── LLM Usage ──────────────────────────────────────────────────────────
 /**
  * LLM token usage persistence — backs the UsageTracker budget enforcement.
@@ -1058,6 +1417,8 @@ export interface DashboardL2Stats {
   dueNow: number;
   /** L1 弱信号词数（l2 连败标记，词书 scope）。 */
   weakSignal: number;
+  /** 今日 L2 作答数（L2-only：`track = 'l2'` AND `rating IS NOT NULL`；按书、今日）。 */
+  reviewedToday: number;
 }
 
 export interface DashboardSummary {
@@ -1085,6 +1446,221 @@ export interface IStatsRepository {
   getRatingDistribution(userId: string, wordbookId: string, days?: number): Promise<RatingDistribution>;
 }
 
+// ── ADR-0030：L3 题目 / 试卷（题与 context 分离；卷面存 payload 引用）──────
+export interface NewL3Question {
+  user_id: string;
+  source_id: string | null;
+  file_key: string | null;
+  space: string;
+  question_type: string;
+  ordinal: number;
+  stem: string;
+  options?: Json;
+  answer?: Json;
+  explanation?: string | null;
+  evidence?: Json;
+  status?: string;
+  created_by?: string;
+  input_hash?: string | null;
+}
+
+export interface NewL3Paper {
+  user_id: string;
+  title: string;
+  direction: string | null;
+  metadata: Json;
+  payload: Json;
+  payload_version: number;
+  status: string;
+  created_by?: string;
+  input_hash?: string | null;
+}
+
+export interface L3PracticeFileLookup {
+  userId: string;
+  questionType?: string | null;
+  direction?: string | null;
+  q?: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface L3PaperLookup {
+  userId: string;
+  status?: string | null;
+  q?: string | null;
+  limit: number;
+  offset: number;
+}
+
+export interface L3PaperRef {
+  id: string;
+  title: string;
+}
+
+export interface IL3PaperRepository {
+  insertQuestion(input: NewL3Question): Promise<L3QuestionRow>;
+  findQuestionById(userId: string, questionId: string): Promise<L3QuestionRow | null>;
+  /** 按 id 批量取 active 题（保持传入顺序由调用方处理）；只返回属于该 user 的行。 */
+  findActiveQuestionsByIds(userId: string, questionIds: readonly string[]): Promise<L3QuestionRow[]>;
+  /** 文件题组：(source_id, question_type) 或 (file_key, question_type)，按 ordinal/创建序。 */
+  listActiveQuestionsForFile(
+    userId: string,
+    identity: { sourceId?: string | null; fileKey?: string | null; questionType: string },
+  ): Promise<L3QuestionRow[]>;
+  listPracticeFiles(input: L3PracticeFileLookup): Promise<L3PracticeFilePage>;
+  deleteQuestion(userId: string, questionId: string): Promise<boolean>;
+  /** 拉全部 active 卷的轻量引用（单 owner 数据量小；引用匹配在 service 纯算）。 */
+  listActivePaperRefsWithPayload(userId: string): Promise<Array<L3PaperRef & { payload: unknown }>>;
+  insertPaper(input: NewL3Paper): Promise<L3PaperRow>;
+  findPaperById(userId: string, paperId: string): Promise<L3PaperRow | null>;
+  listPapers(input: L3PaperLookup): Promise<L3PaperListPage>;
+}
+
+// ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ─────────────────
+export interface NewL3QuestionAnnotation {
+  user_id: string;
+  question_id: string;
+  /** 缺省由库内题内 max(ordinal)+1 分配。 */
+  ordinal?: number | null;
+  anchor_start: number | null;
+  anchor_end: number | null;
+  excerpt: string | null;
+  note: string;
+  entry_tags: string[];
+  option_tags: Partial<Record<L3AnnotationOptionKey, string[]>>;
+  /** 批次二：挂题纸的草稿注记（缺省 = 正式注记 confirmed）。 */
+  stage?: "draft" | "confirmed";
+  sheet_id?: string | null;
+}
+
+/** PATCH 的库列形状（snake_case；只含可改列，question_id 永不可改）。 */
+export interface L3QuestionAnnotationPatchDb {
+  anchor_start?: number | null;
+  anchor_end?: number | null;
+  excerpt?: string | null;
+  note?: string;
+  entry_tags?: string[];
+  option_tags?: Partial<Record<L3AnnotationOptionKey, string[]>>;
+}
+
+/** 批次二：「只留总结」档的无锚点总结条（stage='submitted'，挂作用域代表题）。 */
+export interface NewL3SummaryAnnotation {
+  user_id: string;
+  question_id: string;
+  sheet_id: string;
+  note: string;
+}
+
+export interface IL3AnnotationRepository {
+  /** 批量取多题的 active 条目（题内按 ordinal/created_at 排序）。 */
+  listForQuestions(userId: string, questionIds: readonly string[]): Promise<L3QuestionAnnotationRow[]>;
+  /** 锚点幂等查询：同题同锚点 active 行。 */
+  findByAnchor(
+    userId: string,
+    questionId: string,
+    anchorStart: number,
+    anchorEnd: number,
+  ): Promise<L3QuestionAnnotationRow | null>;
+  insertAnnotation(input: NewL3QuestionAnnotation): Promise<L3QuestionAnnotationRow>;
+  /** 动态 SET 仅改提交列（显式 null 落库，用于去除锚点）；未命中返回 null。 */
+  updateAnnotation(
+    userId: string,
+    id: string,
+    patch: L3QuestionAnnotationPatchDb,
+  ): Promise<L3QuestionAnnotationRow | null>;
+  /** 软删（status→deleted），非 active/非属主零行。 */
+  softDeleteAnnotation(userId: string, id: string): Promise<boolean>;
+  /** 整取 active 标签行（调用方按 kind 分组）。 */
+  listTags(userId: string): Promise<L3AnnotationTagRow[]>;
+  /** 整存：事务内软删全部旧行再插新行，返回新行。 */
+  replaceTags(
+    userId: string,
+    dict: { entry: readonly string[]; option: readonly string[] },
+  ): Promise<L3AnnotationTagRow[]>;
+  /** 批次二：题纸草稿注记（定格升格候选；stage='draft' AND sheet）。 */
+  listDraftBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
+  /** 批次二：题纸全部注记（含定格升格后的 submitted/confirmed；导出冻结档案用）。 */
+  listAnnotationsBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
+  /** v2 §4.7：单条 active 注记（stage 守卫判定与撤回前置读取；不存在/非属主 null）。 */
+  getAnnotation(userId: string, id: string): Promise<L3QuestionAnnotationRow | null>;
+  /** v2 §4.7：撤回（submitted→draft + 重挂题纸），条件 UPDATE 空转返回 null。 */
+  withdrawAnnotation(userId: string, id: string, sheetId: string): Promise<L3QuestionAnnotationRow | null>;
+  /** 批次二：定格升格（draft→submitted）批量条件 UPDATE，返回升格行。 */
+  promoteBySheet(userId: string, sheetId: string): Promise<L3QuestionAnnotationRow[]>;
+  /** 批次二：「只留总结」档总结条（无锚点，stage='submitted'）。 */
+  insertSummaryAnnotation(input: NewL3SummaryAnnotation): Promise<L3QuestionAnnotationRow>;
+}
+
+// ── 批次二增补（0035）：评析区（ADR-0034 v2 条 10/11）──────────────────────
+export interface NewL3QuestionAssessment {
+  user_id: string;
+  question_id: string;
+  content_md: string;
+  last_editor: "owner" | "agent";
+}
+
+export interface IL3AssessmentRepository {
+  /** 一题一条（无则 null——GET 空态数据源）。 */
+  findByQuestion(userId: string, questionId: string): Promise<L3QuestionAssessmentRow | null>;
+  /** 批量取多题评析（导出评析段数据源；空数组输入 → 空结果）。 */
+  listByQuestions(userId: string, questionIds: readonly string[]): Promise<L3QuestionAssessmentRow[]>;
+  /** upsert（ON CONFLICT (user_id, question_id) DO UPDATE，latest-wins）；last_editor 按 actor。 */
+  upsert(input: NewL3QuestionAssessment): Promise<L3QuestionAssessmentRow>;
+}
+
+// ── 批次二（0034）：题纸与作答历史（ADR-0034 §1/§2/§5）─────────────────────
+export interface NewL3Submission {
+  user_id: string;
+  scope: SheetScope;
+  scope_key: string;
+  source_id: string | null;
+  question_type: string | null;
+  paper_id: string | null;
+}
+
+/** 定格状态推进（service 事务内调用）：status 由 sheetStatusAfterSeal(mode) 决定。 */
+export interface L3SheetSealUpdate {
+  status: "sealed" | "discarded";
+  seal_mode: SealMode;
+  summary: string | null;
+}
+
+export interface NewL3QuestionAttempt {
+  question_id: string;
+  sheet_id: string | null;
+  venue: SheetScope;
+  answer: unknown;
+  self_assessment: unknown | null;
+}
+
+export interface L3SheetOpenResult {
+  row: L3SubmissionRow;
+  created: boolean;
+}
+
+export interface IL3SheetRepository {
+  /** 幂等开纸查询：该作用域的在写（draft）题纸。 */
+  findDraftByScopeKey(userId: string, scopeKey: string): Promise<L3SubmissionRow | null>;
+  /** 开纸：部分唯一索引 ON CONFLICT 冲突复用既有行（created=false）。 */
+  openSheet(input: NewL3Submission): Promise<L3SheetOpenResult>;
+  /** 条件 UPDATE（WHERE status='draft'）：非 draft/不存在返回 null（service 分派 404/409）。 */
+  patchAnswers(userId: string, sheetId: string, answers: Record<string, unknown>): Promise<L3SubmissionRow | null>;
+  /** 定格（requireTx）：状态流转 + 定格元数据 + answers 清空（attempts 为唯一作答真源）。 */
+  sealSheet(userId: string, sheetId: string, seal: L3SheetSealUpdate): Promise<L3SubmissionRow | null>;
+  getSheet(userId: string, sheetId: string): Promise<L3SubmissionRow | null>;
+  /** 批量物化（seal 事务内）：一批 attempts 单语句插入。 */
+  insertAttempts(userId: string, attempts: readonly NewL3QuestionAttempt[]): Promise<L3QuestionAttemptRow[]>;
+  /** 题历史链（过滤 deleted；批量列名恒为 question_id —— 6665a77 列名 bug 教训）。 */
+  listForQuestions(userId: string, questionIds: readonly string[]): Promise<L3QuestionAttemptRow[]>;
+  /** 软删：非 active/非属主返回 false（再删 → 404）。 */
+  softDeleteAttempt(userId: string, attemptId: string): Promise<boolean>;
+  /** 结果页派生源：含 deleted（结果页占位分流；题历史分流在 listForQuestions）。 */
+  listBySheet(userId: string, sheetId: string): Promise<L3QuestionAttemptRow[]>;
+  /** 该题纸 answers 已答键数（未答 = 作用域题数 - 本值）。 */
+  countAnsweredBySheet(userId: string, sheetId: string): Promise<number>;
+}
+
 // ── Aggregate ───────────────────────────────────────────────────────────
 export interface IRepositories {
   words: IWordRepository;
@@ -1097,9 +1673,16 @@ export interface IRepositories {
   stats: IStatsRepository;
   l2Progress: IL2ProgressRepository;
   l2Content: IL2ContentRepository;
+  upgradeWorkOrders: IUpgradeWorkOrderRepository;
   l3Context: IL3ContextRepository;
   l3Proposal: IL3ProposalRepository;
   l3Recommendation: IL3RecommendationRepository;
+  l3Practice: IL3PracticeRepository;
+  l3Sessions: IL3SessionRepository;
+  l3Paper: IL3PaperRepository;
+  l3Annotations: IL3AnnotationRepository;
+  l3Sheets: IL3SheetRepository;
+  l3Assessments: IL3AssessmentRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }

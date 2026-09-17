@@ -10,6 +10,10 @@ function makeMockL2Repo(overrides: Partial<IL2ProgressRepository> = {}): IL2Prog
       findByWordbookWordAndUser: vi.fn(async () => null),
       // Phase C：详情页"待扩展"标记（跨轨测试不触达，stub false）
       existsByUserAndWord: vi.fn(async () => false),
+      // ADR-0018：提前升级 seed 读路径（跨轨测试不触达，接口对齐需补全 mock）
+      findBestByWordAndUser: vi.fn(async () => null),
+      findOtherBookSignals: vi.fn(async () => []),
+      insertL2SeedAuditLog: vi.fn(async () => undefined),
       insert: vi.fn(async () => ({}) as never),
       findDueCards: vi.fn(async () => []),
       findForUpdate: vi.fn(async () => null),
@@ -32,6 +36,9 @@ function makeMockL2Repo(overrides: Partial<IL2ProgressRepository> = {}): IL2Prog
       finalizeL2ContentHash: vi.fn(async () => 0),
       pause: vi.fn(async () => undefined),
       unpauseByReason: vi.fn(async () => undefined),
+      // ADR-0020：一键遗忘书级批量暂停/恢复（跨轨测试不触达，接口对齐需补全 mock）
+      batchPauseByWordbook: vi.fn(async () => 0),
+      batchUnpauseManual: vi.fn(async () => 0),
       ...overrides,
     };
   }
@@ -62,6 +69,12 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     markStaleForRecheck: vi.fn(async () => 0),
     markL1StaleForRecheck: vi.fn(async () => 0),
     markL1WeakSignal: vi.fn(async () => 1),
+    // ADR-0020：一键遗忘读/写方法（跨轨测试不触达，接口对齐需补全 mock）
+    findForgettingPreviewRows: vi.fn(async () => []),
+    countBulkSuspendCandidates: vi.fn(async () => 0),
+    bulkSuspendByWordbook: vi.fn(async () => 0),
+    findBulkForgetBatch: vi.fn(async () => false),
+    restoreBulkForget: vi.fn(async () => 0),
     ...overrides,
   };
 }

@@ -15,6 +15,7 @@ import {
   EyeOff,
   Plus,
   StickyNote,
+  TrendingUp,
   Zap,
 } from "lucide-react";
 import type { ReviewCard, ReviewNoteEntry } from "@/frontend/hooks/useReview";
@@ -269,7 +270,21 @@ interface ReviewCardViewProps {
   reviewContext?: { mode: string; wordIds?: string[] };
   /** 当前在队列中的进度，仅用于文案展示（返回复习后会通过缓存还原）。 */
   reviewProgress?: { reviewed: number; total: number };
+  /**
+   * ADR-0018 首学徽标：该词在本书的进行中升级工单（来自会话级映射，只读，
+   * 不做逐词请求）。存在 → 显示档位徽标并跳 /upgrade。
+   */
+  upgradeHint?: { suggestion: string; workOrderId: string } | null;
+  /** 「标记升级」动作（POST mark）；仅首学窗口 + 无工单时展示轻量入口。 */
+  onMarkUpgrade?: (wordId: string) => Promise<void>;
 }
+
+/** 三档升级建议文案（与后端 suggestion_snapshot.level 同值）。 */
+const UPGRADE_SUGGESTION_LABELS: Record<string, string> = {
+  strong: "强烈推荐升级",
+  normal: "推荐升级",
+  needs_settling: "需要沉淀",
+};
 
 /**
  * 翻卡交互(P2)+ 三层信息披露(2026-09-06):
@@ -295,11 +310,15 @@ export function ReviewCardView({
   canUndo,
   reviewContext,
   reviewProgress,
+  upgradeHint,
+  onMarkUpgrade,
 }: ReviewCardViewProps) {
   const [revealed, setRevealed] = useState(false);
   // 卡背快记草稿:评分/跳过/挂起时未提交则自动插入(兜底不丢内容)
   const [quickDraft, setQuickDraft] = useState("");
   const [noteEntries, setNoteEntries] = useState<ReviewNoteEntry[]>(card?.note_entries ?? []);
+  // 首学徽标：标记升级请求进行中（防连点）
+  const [markingUpgrade, setMarkingUpgrade] = useState(false);
   const { addToast } = useToast();
 
   // 操作区容器：评分/跳过/挂起/撤销/翻页后把焦点移回这里，
@@ -368,6 +387,21 @@ export function ReviewCardView({
   const handleNext = () => {
     onNext?.();
     refocusActions();
+  };
+
+  // ADR-0018 首学徽标：标记升级（POST mark）。仅在用户显式点击时发出请求，
+  // 作答链路（评分/下一张卡）零新增网络请求。
+  const handleMarkUpgrade = async () => {
+    if (!card || !onMarkUpgrade || markingUpgrade) return;
+    setMarkingUpgrade(true);
+    try {
+      await onMarkUpgrade(card.word.id);
+      addToast("success", "已加入待升级清单");
+    } catch {
+      addToast("error", "标记失败，请重试");
+    } finally {
+      setMarkingUpgrade(false);
+    }
   };
 
   // 键盘快捷键（P0，对齐 v1）：
@@ -468,6 +502,19 @@ export function ReviewCardView({
   }
 
   const showDefinition = preview || revealed;
+
+  // ADR-0018 首学徽标：新词首学（state=new）或刚过首评（reviewCount<=1）视为
+  // 首学窗口。有工单 → 档位徽标（跳 /upgrade）；无工单 + 窗口内 → 轻量
+  // 「标记升级」入口；窗口外不展示（升级仍可走词条详情页自助发起）。
+  // preview 模式不写数据，升级面整体隐藏（组件自防御，不依赖调用方过滤）。
+  const upgradeBadgeLabel = !preview && upgradeHint
+    ? (UPGRADE_SUGGESTION_LABELS[upgradeHint.suggestion] ?? "升级建议")
+    : null;
+  const showMarkUpgradeButton =
+    !preview &&
+    !upgradeHint &&
+    typeof onMarkUpgrade === "function" &&
+    (card.state === "new" || card.reviewCount <= 1);
 
   // 三层数据(来自挂载预取的词条详情;未到达时安静降级只显 Tier 0)
   const detailWord: WordDetail | null = detail.word;
@@ -624,6 +671,30 @@ export function ReviewCardView({
           {card.reviewCount > 0 && <Badge>复习 {card.reviewCount} 次</Badge>}
           {typeof card.retrievability === "number" && (
             <Badge tone="warm">记忆留存 {Math.round(card.retrievability * 100)}%</Badge>
+          )}
+          {upgradeBadgeLabel && (
+            <Link
+              to="/upgrade"
+              title="打开升级工作台"
+              data-testid="upgrade-badge"
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-2.5 py-0.5 text-xs font-medium text-[var(--color-ink)] transition-colors hover:border-[var(--color-border-strong)]"
+            >
+              <TrendingUp className="h-3 w-3 text-[var(--color-accent)]" />
+              {upgradeBadgeLabel}
+            </Link>
+          )}
+          {showMarkUpgradeButton && (
+            <button
+              type="button"
+              title="标记升级：提前进入 L2 辨析（ADR-0018）"
+              data-testid="mark-upgrade"
+              onClick={() => void handleMarkUpgrade()}
+              disabled={markingUpgrade}
+              className="inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--color-border-strong)] px-2.5 py-0.5 text-xs text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+            >
+              {markingUpgrade ? <Spinner className="h-3 w-3" /> : <TrendingUp className="h-3 w-3" />}
+              标记升级
+            </button>
           )}
         </div>
         <Link

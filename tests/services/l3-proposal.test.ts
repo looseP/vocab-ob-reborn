@@ -1,5 +1,5 @@
 ﻿import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConflictError, ValidationError } from "@/errors";
+import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import type {
   IL3ContextRepository,
   IL3ProposalRepository,
@@ -189,7 +189,11 @@ function makeContextRepo(overrides: Partial<IL3ContextRepository> = {}): IL3Cont
   } as IL3ContextRepository;
 }
 
-function makeProposalRepo(items = proposalItems(), proposal = PROPOSAL_ROW): IL3ProposalRepository {
+function makeProposalRepo(
+  items = proposalItems(),
+  proposal = PROPOSAL_ROW,
+  overrides: Partial<IL3ProposalRepository> = {},
+): IL3ProposalRepository {
   return {
     createProposal: vi.fn(async (input) => ({ ...proposal, user_id: input.user_id, wordbook_id: input.wordbook_id ?? null, source_type: input.source_type as never })),
     createProposalItem: vi.fn(async (input) => makeItem(input.ordinal, input.item_type as never, input.payload as never)),
@@ -212,7 +216,19 @@ function makeProposalRepo(items = proposalItems(), proposal = PROPOSAL_ROW): IL3
     markProposalItemsRejected: vi.fn(async () => undefined),
     markProposalConfirmed: vi.fn(async () => ({ ...proposal, status: "confirmed" as const, confirmed_at: "2026-07-08T00:00:01Z" })),
     markProposalRejected: vi.fn(async () => ({ ...proposal, status: "rejected" as const, rejected_at: "2026-07-08T00:00:01Z" })),
-  };
+    ...overrides,
+  } as IL3ProposalRepository;
+}
+
+/** ADR-0029 §7 幂等用例：以 overrides 重建 tx 侧 proposal repo 并据此重建 service。 */
+function useTxProposalRepo(overrides: Partial<IL3ProposalRepository>): void {
+  txProposalRepo = makeProposalRepo(proposalItems(), PROPOSAL_ROW, overrides);
+  service = new L3ProposalService(
+    proposalRepo,
+    contextRepo,
+    txRunner,
+    () => ({ l3Context: txContextRepo, l3Proposal: txProposalRepo } as unknown as IRepositories),
+  );
 }
 
 let proposalRepo: IL3ProposalRepository;
@@ -548,5 +564,262 @@ describe("L3ProposalService", () => {
     await expect(service.confirmProposal({ userId: "u1", proposalId: "prop-1" })).rejects.toBeInstanceOf(ValidationError);
     expect(rolledBack).toBe(true);
     expect(txProposalRepo.markProposalConfirmed).not.toHaveBeenCalled();
+  });
+
+  // ── ADR-0029 §7：createProposal 幂等（input_hash 命中即返回既有 bundle，不重复插入） ──
+
+  it("returns the existing bundle without a duplicate insert when input_hash already exists", async () => {
+    const existing: L3ProposalRow = { ...PROPOSAL_ROW, id: "prop-existing", input_hash: "hash-locked" };
+    useTxProposalRepo({
+      findProposalByInputHash: vi.fn(async () => existing),
+      getProposalBundle: vi.fn(async () => ({ proposal: existing, items: [] })),
+    });
+
+    const result = await service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      inputHash: "hash-locked",
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    });
+
+    expect(result.proposal.id).toBe("prop-existing");
+    expect(txProposalRepo.findProposalByInputHash).toHaveBeenCalledWith("u1", "hash-locked");
+    expect(txProposalRepo.createProposal).not.toHaveBeenCalled();
+    expect(txProposalRepo.createProposalItem).not.toHaveBeenCalled();
+  });
+
+  it("creates on first sight of an input_hash and passes it through to storage", async () => {
+    await service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      inputHash: "hash-fresh",
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    });
+
+    expect(txProposalRepo.findProposalByInputHash).toHaveBeenCalledWith("u1", "hash-fresh");
+    expect(txProposalRepo.createProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ input_hash: "hash-fresh" }),
+    );
+  });
+
+  it("recovers a unique-violation race by re-reading the existing bundle", async () => {
+    const existing: L3ProposalRow = { ...PROPOSAL_ROW, id: "prop-raced", input_hash: "hash-race" };
+    useTxProposalRepo({
+      findProposalByInputHash: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(existing),
+      getProposalBundle: vi.fn(async () => ({ proposal: existing, items: [] })),
+      createProposal: vi.fn(async () => {
+        throw Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
+      }),
+    });
+
+    const result = await service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      inputHash: "hash-race",
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    });
+
+    expect(result.proposal.id).toBe("prop-raced");
+    expect(txProposalRepo.findProposalByInputHash).toHaveBeenCalledTimes(2);
+  });
+
+  it("rethrows a 23505 collision that cannot be re-read", async () => {
+    useTxProposalRepo({
+      createProposal: vi.fn(async () => {
+        throw Object.assign(new Error("duplicate key value"), { code: "23505" });
+      }),
+    });
+
+    await expect(service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      inputHash: "hash-lost",
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    })).rejects.toThrow("duplicate key value");
+    expect(txProposalRepo.findProposalByInputHash).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips the dedup lookup when no input_hash is given", async () => {
+    await service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    });
+
+    expect(txProposalRepo.findProposalByInputHash).not.toHaveBeenCalled();
+    expect(txProposalRepo.createProposal).toHaveBeenCalled();
+  });
+
+  it("does not swallow unrelated creation errors", async () => {
+    useTxProposalRepo({
+      createProposal: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    });
+
+    await expect(service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      inputHash: "hash-boom",
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    })).rejects.toThrow("boom");
+    expect(txProposalRepo.findProposalByInputHash).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes provenance through to storage verbatim", async () => {
+    await service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      provenance: { agentId: "probe-agent", note: "from-route" },
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    });
+
+    expect(txProposalRepo.createProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ provenance: { agentId: "probe-agent", note: "from-route" } }),
+    );
+  });
+
+  // ── ADR-0029 §5：服务端身份锚合并（agentId 非空才注入，且覆盖客户端自述） ──
+
+  it("stamps the server-asserted agentId over a self-declared provenance.agentId", async () => {
+    await service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      agentId: "server-asserted",
+      provenance: { agentId: "self-declared-lie", note: "from-agent" },
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    });
+
+    expect(txProposalRepo.createProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ provenance: { agentId: "server-asserted", note: "from-agent" } }),
+    );
+  });
+
+  it("injects the server-asserted agentId when provenance carries none", async () => {
+    await service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      agentId: "server-asserted",
+      provenance: { note: "from-agent" },
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    });
+
+    expect(txProposalRepo.createProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ provenance: { agentId: "server-asserted", note: "from-agent" } }),
+    );
+  });
+
+  it("leaves provenance untouched when no server agentId is present (owner/import)", async () => {
+    await service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      agentId: null,
+      provenance: { agentId: "self-declared-lie", note: "from-owner" },
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    });
+
+    expect(txProposalRepo.createProposal).toHaveBeenCalledWith(
+      expect.objectContaining({ provenance: { agentId: "self-declared-lie", note: "from-owner" } }),
+    );
+  });
+
+  // ── 边界校验/窄分支护栏（维持 l3-proposal.service.ts 逐文件 85/75 义务） ──
+
+  it("rejects malformed create inputs across the validation boundary", async () => {
+    const goodItem = { itemType: "source" as const, clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } };
+    await expect(service.createProposal({ userId: "   ", sourceType: "agent", items: [goodItem] }))
+      .rejects.toMatchObject({ field: "userId" });
+    await expect(service.createProposal({ userId: "u1", sourceType: "bogus" as never, items: [goodItem] }))
+      .rejects.toMatchObject({ field: "sourceType" });
+    await expect(service.createProposal({ userId: "u1", sourceType: "agent", items: [] }))
+      .rejects.toMatchObject({ field: "items" });
+    await expect(service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      items: [{ itemType: "source", clientRef: null, payload: "not-an-object" as never }],
+    })).rejects.toMatchObject({ field: "payload" });
+    await expect(service.createProposal({
+      userId: "u1",
+      sourceType: "agent",
+      items: Array.from({ length: 5 }, (_, i) => ({ itemType: "source" as const, clientRef: `s-${i}`, payload: { blob: "x".repeat(250_000) } })),
+    })).rejects.toMatchObject({ field: "items" });
+    expect(txProposalRepo.createProposal).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the target wordbook does not exist", async () => {
+    txContextRepo = makeContextRepo({ findWordbookByIdForUser: vi.fn(async () => null) });
+    service = new L3ProposalService(proposalRepo, contextRepo, txRunner, () => ({ l3Context: txContextRepo, l3Proposal: txProposalRepo } as unknown as IRepositories));
+
+    await expect(service.createProposal({
+      userId: "u1",
+      wordbookId: "wb-missing",
+      sourceType: "agent",
+      items: [{ itemType: "source", clientRef: "src-a", payload: { sourceType: "article", title: "Essay" } }],
+    })).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("rejects an invalid status filter on listProposals", async () => {
+    await expect(service.listProposals({ userId: "u1", status: "bogus" as never, limit: 10, cursor: null }))
+      .rejects.toMatchObject({ field: "status" });
+  });
+
+  it("maps a missing proposal bundle to NotFoundError on getProposal", async () => {
+    txProposalRepo = makeProposalRepo(proposalItems(), PROPOSAL_ROW, {
+      getProposalBundle: vi.fn(async () => null),
+    });
+    service = new L3ProposalService(proposalRepo, contextRepo, txRunner, () => ({ l3Context: txContextRepo, l3Proposal: txProposalRepo } as unknown as IRepositories));
+
+    await expect(service.getProposal({ userId: "u1", proposalId: "prop-1" })).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("reports invalid link targets for missing and malformed target ids", async () => {
+    const cases = [
+      { contextRef: "ctx-a", linkType: "illustrates", targetType: "word" },
+      { contextRef: "ctx-a", linkType: "illustrates", targetType: "word", targetId: "not-a-uuid" },
+      { contextRef: "ctx-a", linkType: "illustrates", targetType: "l2_item", targetRef: "not-an-object" },
+    ] as const;
+    for (const [index, payload] of cases.entries()) {
+      const items = proposalItems();
+      items[3] = makeItem(4, "context_link", payload as unknown as Record<string, unknown>);
+      txProposalRepo = makeProposalRepo(items);
+      service = new L3ProposalService(proposalRepo, contextRepo, txRunner, () => ({ l3Context: txContextRepo, l3Proposal: txProposalRepo } as unknown as IRepositories));
+
+      const result = await service.validateProposal({ userId: "u1", proposalId: "prop-1" });
+      expect(result.valid, `case ${index}`).toBe(false);
+      expect(result.errors.some((error) => error.field === "targetId" || error.field === "targetRef"), `case ${index}`).toBe(true);
+    }
+  });
+
+  it("accepts l2_item soft target refs via contentId, hash, or sourceRef", async () => {
+    const refs = [
+      { field: "corpus", contentId: "c-1" },
+      { field: "corpus", hash: "abc" },
+      { field: "corpus", sourceRef: "src-x" },
+    ];
+    for (const [index, targetRef] of refs.entries()) {
+      const items = proposalItems();
+      items[3] = makeItem(4, "context_link", { contextRef: "ctx-a", linkType: "illustrates", targetType: "l2_item", targetRef });
+      txProposalRepo = makeProposalRepo(items);
+      service = new L3ProposalService(proposalRepo, contextRepo, txRunner, () => ({ l3Context: txContextRepo, l3Proposal: txProposalRepo } as unknown as IRepositories));
+
+      const result = await service.validateProposal({ userId: "u1", proposalId: "prop-1" });
+      expect(result.valid, `ref ${index}`).toBe(true);
+    }
+  });
+
+  it("rejects confirming when the locked proposal is missing or no longer pending", async () => {
+    txProposalRepo = makeProposalRepo(proposalItems(), PROPOSAL_ROW, {
+      lockProposalByIdForUser: vi.fn(async () => null),
+    });
+    service = new L3ProposalService(proposalRepo, contextRepo, txRunner, () => ({ l3Context: txContextRepo, l3Proposal: txProposalRepo } as unknown as IRepositories));
+    await expect(service.confirmProposal({ userId: "u1", proposalId: "prop-1" })).rejects.toBeInstanceOf(NotFoundError);
+
+    txProposalRepo = makeProposalRepo(proposalItems(), PROPOSAL_ROW, {
+      lockProposalByIdForUser: vi.fn(async () => ({ ...PROPOSAL_ROW, status: "confirmed" as const })),
+    });
+    service = new L3ProposalService(proposalRepo, contextRepo, txRunner, () => ({ l3Context: txContextRepo, l3Proposal: txProposalRepo } as unknown as IRepositories));
+    await expect(service.confirmProposal({ userId: "u1", proposalId: "prop-1" })).rejects.toBeInstanceOf(ConflictError);
   });
 });

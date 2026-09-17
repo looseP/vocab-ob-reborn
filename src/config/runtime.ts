@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseAgentTokens } from "./agent-tokens";
 
 const booleanString = z.enum(["true", "false"]).transform((value) => value === "true");
 const integer = (minimum: number, maximum: number) => z.coerce.number().int().min(minimum).max(maximum);
@@ -20,6 +21,9 @@ const runtimeSchema = z.object({
   SINGLE_HOST_DEPLOYMENT: booleanString.default(false),
   OWNER_API_TOKEN: z.string().min(24),
   METRICS_BEARER_TOKEN: emptyStringAsUndefined(z.string().min(24)),
+  // agent 接入令牌（ADR-0029 决策 5）：`agentId:token,...`。空 = 无 agent 接入。
+  // 词法与唯一性/与 owner 冲突的校验在 superRefine 中做，失败即拒启（fail-fast）。
+  AGENT_API_TOKENS: emptyStringAsUndefined(z.string()),
   LOCAL_OWNER_ID: z.string().uuid(),
   APP_ORIGIN: z.string().url(),
   TRUST_PROXY: booleanString.default(false),
@@ -66,6 +70,17 @@ const runtimeSchema = z.object({
         context.addIssue({ code: "custom", path: ["APP_DATABASE_URL"], message: "required in production for least-privilege separation" });
       }
     }
+  }
+  // ADR-0029 决策 5 fail-fast：agent token 词法/唯一性/与 owner 冲突一律拒启。
+  // 裸 token（无冒号）显式拒绝并提示迁移，绝不静默当作合法。
+  try {
+    parseAgentTokens(value.AGENT_API_TOKENS, value.OWNER_API_TOKEN);
+  } catch (error) {
+    context.addIssue({
+      code: "custom",
+      path: ["AGENT_API_TOKENS"],
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
   if ((value.LLM_PROVIDER && !value.LLM_MODEL) || (!value.LLM_PROVIDER && value.LLM_MODEL)) {
     context.addIssue({ code: "custom", path: ["LLM_MODEL"], message: "LLM_PROVIDER and LLM_MODEL must be configured together" });

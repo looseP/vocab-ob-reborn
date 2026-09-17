@@ -52,7 +52,7 @@ export function WordReviewTimeline() {
     <Card>
       <div className="mb-4 flex items-center gap-2">
         <History className="h-5 w-5 text-[var(--color-accent)]" />
-        <h2 className="section-title text-lg font-semibold text-[var(--color-ink)]">复习时间线</h2>
+        <h2 className="section-title text-lg font-semibold text-[var(--color-ink)]">L1 复习时间线</h2>
       </div>
 
       {entries.length === 0 ? (

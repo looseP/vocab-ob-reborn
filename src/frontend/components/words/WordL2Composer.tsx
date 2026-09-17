@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Sparkles, ClipboardPaste, Copy, Check, Inbox } from "lucide-react";
+import { Sparkles, ClipboardPaste, Copy, Check, Inbox, Lock } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Spinner } from "@/frontend/components/ui/Spinner";
@@ -7,6 +7,7 @@ import { WordL2Manager } from "@/frontend/components/words/WordL2Manager";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { STYLE_PROFILES } from "@/domain/l2-style-profile";
+import type { Direction } from "@/domain";
 
 type ComposerField = "collocation" | "example" | "synonym" | "antonym";
 
@@ -18,6 +19,9 @@ const FIELD_LABELS: Record<ComposerField, string> = {
 };
 
 const FIELDS: ComposerField[] = ["collocation", "example", "synonym", "antonym"];
+
+/** ADR-0017 §2：方向三值（默认「通用」桶，UI 与 DB CHECK 同值）。 */
+const DIRECTION_OPTIONS: readonly Direction[] = ["通用", "考研", "雅思"];
 
 /** 例句字段在 UI 上的可选风格档案（域内 STYLE_PROFILES 按 fieldScope 过滤）。 */
 const EXAMPLE_FIELD = "example" as const;
@@ -109,14 +113,26 @@ function itemDetail(item: DraftItem, field: ComposerField): string {
 
 /**
  * L2 内容扩展面板（Composer UI）：
- * 选字段 →（选风格/数量）→ AI 生成草稿 或 外部提示词通道 → 勾选保存 → 确认入库。
+ * 选字段 →（选方向/风格/数量）→ AI 生成草稿 或 外部提示词通道 → 勾选保存 → 确认入库。
  * 确认是纯 DB 级联（insert + 刷新缓存 + L2 软重卡），不依赖 LLM 配置。
+ *
+ * ADR-0017/0018：direction 从升级工单注入（工作台）；directionLocked=true 时
+ * 方向只读（不允许在锁定态切换）。词条详情页既有调用（{slug,onConfirmed}）零改动
+ * ——direction 缺省「通用」，行为与方向化之前一致。
  */
-export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirmed: () => void }) {
+export function WordL2Composer({ slug, onConfirmed, direction, directionLocked }: {
+  slug: string;
+  onConfirmed: () => void;
+  /** 内容方向（升级工作台从工单注入）；缺省「通用」。 */
+  direction?: Direction;
+  /** true = 锁定方向（工单决定），UI 只读展示。 */
+  directionLocked?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [field, setField] = useState<ComposerField>("collocation");
   const [styleProfileId, setStyleProfileId] = useState<string>("default");
   const [count, setCount] = useState(2);
+  const [directionDraft, setDirectionDraft] = useState<Direction>(direction ?? "通用");
   const [busy, setBusy] = useState<"draft" | "confirm" | "external" | null>(null);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -143,6 +159,14 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
   }, [field]);
 
   const encodedSlug = encodeURIComponent(slug);
+
+  // 工单注入的方向变化时同步草稿值（同一面板切换工单的场景）。
+  useEffect(() => {
+    setDirectionDraft(direction ?? "通用");
+  }, [direction]);
+
+  /** 生效方向：锁定态恒等于 prop（不允许在锁定态切换），否则取本地选择。 */
+  const effectiveDirection: Direction = directionLocked ? (direction ?? "通用") : directionDraft;
 
   // Phase G：拉取 Agent 候选（面板展开时 + 保存/驳回后刷新）
   const refreshCandidates = useCallback(async () => {
@@ -239,7 +263,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
     setError(null);
     resetDraft();
     try {
-      const body: Record<string, unknown> = { field, count };
+      const body: Record<string, unknown> = { field, count, direction: effectiveDirection };
       if (field === "example" || field === "collocation") body.styleProfileId = styleProfileId;
       const data = await apiFetch<{ draft: unknown; sourceMode?: string }>(`/l2/${encodedSlug}/draft`, {
         method: "POST",
@@ -265,7 +289,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
     setError(null);
     resetDraft();
     try {
-      const body: Record<string, unknown> = { field };
+      const body: Record<string, unknown> = { field, direction: effectiveDirection };
       if (field === "example" || field === "collocation") body.styleProfileId = styleProfileId;
       const data = await apiFetch<{ prompt: string }>(`/l2/${encodedSlug}/external-prompt`, {
         method: "POST",
@@ -304,7 +328,7 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
       const items = draft.items.filter((_, i) => selected.has(i));
       await apiFetch(`/l2/${encodedSlug}/confirm`, {
         method: "POST",
-        body: JSON.stringify({ field, items, source: "manual" }),
+        body: JSON.stringify({ field, items, source: "manual", direction: effectiveDirection }),
         timeoutMs: 60_000,
       });
       resetDraft();
@@ -385,35 +409,59 @@ export function WordL2Composer({ slug, onConfirmed }: { slug: string; onConfirme
             ))}
           </div>
 
-          {/* 选项行：风格档案 + 数量（仅搭配/例句有风格） */}
-          {needsStyle && (
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              <label className="flex items-center gap-2 text-[var(--color-ink-soft)]">
-                风格
+          {/* 选项行：方向（全字段）+ 风格/数量（仅搭配/例句有风格） */}
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <label className="flex items-center gap-2 text-[var(--color-ink-soft)]">
+              方向
+              {directionLocked ? (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-2 py-0.5 text-xs text-[var(--color-ink)]"
+                  title="方向由升级工单锁定"
+                >
+                  {effectiveDirection}
+                  <Lock className="h-3 w-3 text-[var(--color-accent)]" />
+                </span>
+              ) : (
                 <select
-                  value={styleProfileId}
-                  onChange={(e) => setStyleProfileId(e.target.value)}
+                  value={directionDraft}
+                  onChange={(e) => setDirectionDraft(e.target.value as Direction)}
                   className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-ink)]"
                 >
-                  {scopedProfiles.map((p) => (
-                    <option key={p.id} value={p.id}>{p.label}</option>
+                  {DIRECTION_OPTIONS.map((d) => (
+                    <option key={d} value={d}>{d}</option>
                   ))}
                 </select>
-              </label>
-              <label className="flex items-center gap-2 text-[var(--color-ink-soft)]">
-                数量
-                <select
-                  value={count}
-                  onChange={(e) => setCount(Number(e.target.value))}
-                  className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-ink)]"
-                >
-                  {[1, 2, 3].map((n) => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          )}
+              )}
+            </label>
+            {needsStyle && (
+              <>
+                <label className="flex items-center gap-2 text-[var(--color-ink-soft)]">
+                  风格
+                  <select
+                    value={styleProfileId}
+                    onChange={(e) => setStyleProfileId(e.target.value)}
+                    className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-ink)]"
+                  >
+                    {scopedProfiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 text-[var(--color-ink-soft)]">
+                  数量
+                  <select
+                    value={count}
+                    onChange={(e) => setCount(Number(e.target.value))}
+                    className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[var(--color-ink)]"
+                  >
+                    {[1, 2, 3].map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
+          </div>
 
           {/* 动作行：生成 / 外部通道 / Agent 候选收件箱（子 tab，与生成动作同排） */}
           <div className="flex flex-wrap gap-2">

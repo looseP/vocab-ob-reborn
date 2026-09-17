@@ -34,22 +34,27 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
              AND due_at IS NOT NULL AND due_at <= now()`,
           [userId, wordbookId],
         ),
+        // 作答口径（CONTEXT.md「Event log semantics」）：reviewedToday/7d/30d 只计
+        // 作答事件，rating IS NULL 的非作答事件（L2 seed 审计行）不计入。
         this.queryOne<{ count: string }>(
           `SELECT count(*) FROM review_logs
            WHERE user_id = $1 AND wordbook_id = $2::uuid
-             AND reviewed_at >= $3`,
+             AND reviewed_at >= $3
+             AND rating IS NOT NULL`,
           [userId, wordbookId, todayIso],
         ),
         this.queryOne<{ count: string }>(
           `SELECT count(*) FROM review_logs
            WHERE user_id = $1 AND wordbook_id = $2::uuid
-             AND reviewed_at >= now() - interval '7 days'`,
+             AND reviewed_at >= now() - interval '7 days'
+             AND rating IS NOT NULL`,
           [userId, wordbookId],
         ),
         this.queryOne<{ count: string }>(
           `SELECT count(*) FROM review_logs
            WHERE user_id = $1 AND wordbook_id = $2::uuid
-             AND reviewed_at >= now() - interval '30 days'`,
+             AND reviewed_at >= now() - interval '30 days'
+             AND rating IS NOT NULL`,
           [userId, wordbookId],
         ),
         this.queryOne<{ count: string }>(
@@ -57,9 +62,11 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
            WHERE user_id = $1 AND wordbook_id = $2::uuid`,
           [userId, wordbookId],
         ),
-        // Phase E：双轨统计。promoted/dueNow 跨词书（与 l2_promoted EXISTS 口径一致），
-        // weakSignal 属 L1 轨标记 → 词书 scope。单次往返三个标量子查询。
-        this.queryOne<{ promoted: string; due_now: string; weak_signal: string }>(
+        // Phase E：双轨统计。scope 说明（CONTEXT.md「Counter scope」）：
+        //   promoted / dueNow 跨词书（与 l2_promoted EXISTS 口径一致）；
+        //   weakSignal（L1 轨标记）与 reviewedToday（L2 作答计数）均按**词书** scope。
+        // 单次往返四个标量子查询 —— 保持"8 并行查询 + 1 streak"的调用数不变。
+        this.queryOne<{ promoted: string; due_now: string; weak_signal: string; l2_reviewed_today: string }>(
           `SELECT
              (SELECT count(*) FROM user_word_l2_progress
               WHERE user_id = $1) AS promoted,
@@ -67,8 +74,12 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
               WHERE user_id = $1 AND l2_paused = false
                 AND l2_due_at IS NOT NULL AND l2_due_at <= now()) AS due_now,
              (SELECT count(*) FROM user_word_progress
-              WHERE user_id = $1 AND wordbook_id = $2::uuid AND l1_weak_signal = true) AS weak_signal`,
-          [userId, wordbookId],
+              WHERE user_id = $1 AND wordbook_id = $2::uuid AND l1_weak_signal = true) AS weak_signal,
+             (SELECT count(*) FROM review_logs
+              WHERE user_id = $1 AND wordbook_id = $2::uuid
+                AND track = 'l2' AND rating IS NOT NULL
+                AND reviewed_at >= $3) AS l2_reviewed_today`,
+          [userId, wordbookId, todayIso],
         ),
       ]);
 
@@ -87,6 +98,9 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
         promoted: l2Row ? parseInt(l2Row.promoted, 10) : 0,
         dueNow: l2Row ? parseInt(l2Row.due_now, 10) : 0,
         weakSignal: l2Row ? parseInt(l2Row.weak_signal, 10) : 0,
+        // L2-only 作答口径（CONTEXT.md「Counter scope」）：今日 L2 作答数，按词书；
+        // 与全轨 reviewedToday 同一 Asia/Shanghai 日界（复用 todayIso）。
+        reviewedToday: l2Row ? parseInt(l2Row.l2_reviewed_today, 10) : 0,
       },
     };
   }
@@ -124,6 +138,9 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     userId: string,
     wordbookId: string,
   ): Promise<number> {
+    // streakDays = 活动口径（CONTEXT.md「Event log semantics」Activity counter）：
+    // 只问"当天是否学习过"，故**故意不过滤 rating** —— 任何写入的日志事件（含
+    // 非作答的 seed 行）都代表一次学习活动，升级日也是学习日。
     const row = await this.queryOne<{ streak_days: number | string }>(
       `WITH review_days AS (
          SELECT DISTINCT (reviewed_at AT TIME ZONE 'Asia/Shanghai')::date AS review_day

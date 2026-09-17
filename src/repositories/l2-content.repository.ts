@@ -42,8 +42,8 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
   async insert(data: NewL2Content): Promise<L2ContentRow> {
     const row = await this.queryOne<L2ContentRow>(
       `INSERT INTO word_l2_content
-         (word_id, field, content, source, source_ref, approved_by, is_active, approved_at)
-       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, CASE WHEN $7::boolean THEN now() ELSE NULL END)
+         (word_id, field, content, source, source_ref, approved_by, is_active, approved_at, direction)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, CASE WHEN $7::boolean THEN now() ELSE NULL END, $8)
        RETURNING *`,
       [
         data.word_id,
@@ -53,6 +53,8 @@ export class L2ContentRepository extends BaseRepository implements IL2ContentRep
         data.source_ref ?? null,
         data.approved_by ?? "user",
         data.is_active ?? true,
+        // ADR-0017 §2：方向缺省 `通用`（参数追加在末尾，既有 $1..$7 索引不变）。
+        data.direction ?? "通用",
       ],
     );
     if (!row) throw new Error("L2 content insert returned no row");

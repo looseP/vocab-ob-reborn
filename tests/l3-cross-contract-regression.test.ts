@@ -1,4 +1,4 @@
-﻿import type { PoolClient } from "pg";
+import type { PoolClient } from "pg";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Json,
@@ -354,6 +354,8 @@ class L3CrossContractHarness {
         this.sources.set(source.id, source);
         return source;
       }),
+      replaceSourceSpaces: vi.fn(async () => undefined),
+      ensureSourceSpaces: vi.fn(async () => undefined),
       createContext: vi.fn(async (input: NewL3Context) => {
         this.record("l3_contexts", "insert");
         const context: L3ContextRow = {
@@ -541,6 +543,8 @@ class L3CrossContractHarness {
       findWordInWordbookBySlug: vi.fn(async (wordbookId, slug) => wordbookId === WORDBOOK_ID ? this.findWordBySlug(slug) : null),
       listContextsForWord: vi.fn(),
       listContextsForSource: vi.fn(),
+      listOccurrences: vi.fn(),
+      listContextLinks: vi.fn(),
       getContextDetail: vi.fn(async (userId, contextId) => {
         const context = this.contexts.get(contextId);
         const source = context ? this.sources.get(context.source_id) : null;
@@ -575,6 +579,13 @@ class L3CrossContractHarness {
           links: [...this.links.values()],
         } as unknown as Json,
       })),
+      getSpaceSummaryCounts: vi.fn(async () => ({
+        sourceCount: this.sources.size,
+        contextCount: this.contexts.size,
+        occurrenceCount: this.occurrences.size,
+        linkCount: this.links.size,
+      })),
+      getSpaceGrowth: vi.fn(async () => []),
     } as IL3ContextRepository;
   }
 

@@ -11,9 +11,13 @@
  *   throw new ConflictError("Idempotency key already used");
  */
 
+import { ERROR_CODES, type ErrorCode } from "./codes";
+
+export { ERROR_CODES, type ErrorCode } from "./codes";
+
 export abstract class AppError extends Error {
   abstract readonly httpStatus: number;
-  abstract readonly code: string;
+  abstract readonly code: ErrorCode;
 
   constructor(
     message: string,
@@ -32,7 +36,7 @@ export abstract class AppError extends Error {
 /** Resource not found (404). */
 export class NotFoundError extends AppError {
   readonly httpStatus = 404;
-  readonly code = "NOT_FOUND";
+  readonly code = ERROR_CODES.NOT_FOUND;
 
   constructor(
     public readonly resourceType: string,
@@ -46,7 +50,7 @@ export class NotFoundError extends AppError {
 /** Input validation failed (422). */
 export class ValidationError extends AppError {
   readonly httpStatus = 422;
-  readonly code = "VALIDATION_ERROR";
+  readonly code = ERROR_CODES.VALIDATION_ERROR;
 
   constructor(
     message: string,
@@ -60,31 +64,31 @@ export class ValidationError extends AppError {
 /** Conflict — duplicate resource, idempotency collision (409). */
 export class ConflictError extends AppError {
   readonly httpStatus = 409;
-  readonly code = "CONFLICT";
+  readonly code = ERROR_CODES.CONFLICT;
 }
 
 /** Unauthorized — not authenticated (401). */
 export class UnauthorizedError extends AppError {
   readonly httpStatus = 401;
-  readonly code = "UNAUTHORIZED";
+  readonly code = ERROR_CODES.UNAUTHORIZED;
 }
 
 /** Forbidden — authenticated but not allowed (403). */
 export class ForbiddenError extends AppError {
   readonly httpStatus = 403;
-  readonly code = "FORBIDDEN";
+  readonly code = ERROR_CODES.FORBIDDEN;
 }
 
 /** Business rule violation (422). */
 export class BusinessRuleError extends AppError {
   readonly httpStatus = 422;
-  readonly code = "BUSINESS_RULE";
+  readonly code = ERROR_CODES.BUSINESS_RULE;
 }
 
 /** Database connection unavailable (503). */
 export class DbConnectionError extends AppError {
   readonly httpStatus = 503;
-  readonly code = "DB_UNAVAILABLE";
+  readonly code = ERROR_CODES.DB_UNAVAILABLE;
 }
 
 /**
@@ -110,7 +114,7 @@ export function errorToResponse(error: unknown): {
   if (isDbConnectionError(error)) {
     return {
       status: 503,
-      body: { error: "Service temporarily unavailable.", code: "DB_UNAVAILABLE" },
+      body: { error: "Service temporarily unavailable.", code: ERROR_CODES.DB_UNAVAILABLE },
     };
   }
 
@@ -125,7 +129,7 @@ export function errorToResponse(error: unknown): {
   // Unknown error — don't leak internals
   return {
     status: 500,
-    body: { error: "Internal server error", code: "INTERNAL" },
+    body: { error: "Internal server error", code: ERROR_CODES.INTERNAL },
   };
 }
 
@@ -143,36 +147,36 @@ export function errorToResponse(error: unknown): {
  */
 const CONSTRAINT_VIOLATION_MAP: Record<
   string,
-  { status: number; code: string; error: string }
+  { status: number; code: ErrorCode; error: string }
 > = {
   // foreign_key_violation — referenced row does not exist
   "23503": {
     status: 422,
-    code: "FOREIGN_KEY_VIOLATION",
+    code: ERROR_CODES.FOREIGN_KEY_VIOLATION,
     error: "Referenced resource does not exist.",
   },
   // unique_violation — duplicate / already-present row
   "23505": {
     status: 409,
-    code: "CONFLICT",
+    code: ERROR_CODES.CONFLICT,
     error: "Resource already exists.",
   },
   // not_null_violation — required field missing
   "23502": {
     status: 400,
-    code: "NOT_NULL_VIOLATION",
+    code: ERROR_CODES.NOT_NULL_VIOLATION,
     error: "Required field is missing.",
   },
   // check_violation — value rejected by a CHECK constraint
   "23514": {
     status: 400,
-    code: "CHECK_VIOLATION",
+    code: ERROR_CODES.CHECK_VIOLATION,
     error: "Value is not allowed.",
   },
   // invalid_text_representation — e.g. malformed uuid / bad enum literal
   "22P02": {
     status: 400,
-    code: "INVALID_INPUT",
+    code: ERROR_CODES.INVALID_INPUT,
     error: "Invalid input format.",
   },
 };
@@ -198,7 +202,7 @@ function toConstraintViolationResponse(error: unknown): {
 /** Look up the mapping entry for the error's SQLSTATE, if any. */
 function getConstraintViolationSpec(
   error: unknown,
-): { status: number; code: string; error: string } | null {
+): { status: number; code: ErrorCode; error: string } | null {
   if (typeof error !== "object" || error === null) return null;
   const code = (error as Record<string, unknown>).code;
   if (typeof code !== "string" || code.length === 0) return null;

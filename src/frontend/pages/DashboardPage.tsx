@@ -11,6 +11,7 @@ import { MasteryHeatmap } from "@/frontend/components/review/MasteryHeatmap";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Skeleton } from "@/frontend/components/ui/Skeleton";
 import { apiFetch } from "@/frontend/api/client";
+import { OneClickForgettingCard } from "@/frontend/components/forgetting/OneClickForgettingCard";
 
 interface QueueData {
   stats: { total: number; remaining: number };
@@ -30,8 +31,8 @@ interface DashboardStats {
   streakDays: number;
   notesCount: number;
   forecast: { dueNow: number; due7d: number; due14d: number };
-  /** Phase E：L2 轨统计（已晋升 / 到期待练 / 弱信号）。 */
-  l2?: { promoted: number; dueNow: number; weakSignal: number };
+  /** Phase E：L2 轨统计（已晋升 / 到期待练 / 弱信号 / 今日 L2 作答）。 */
+  l2?: { promoted: number; dueNow: number; weakSignal: number; reviewedToday: number };
 }
 
 function StatCard({ icon: Icon, label, value, color, loading, suffix }: {
@@ -132,6 +133,8 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon={Repeat} label="今日待复习" value={effectiveDue} color="var(--color-accent)" loading={loading} />
         <StatCard icon={CheckCircle2} label="今日已复习" value={reviewedToday} color="var(--color-accent)" loading={loading} />
+        {/* headline 层区分快/慢：全轨「今日已复习」之后紧跟 L2-only 今日复习 */}
+        <StatCard icon={Layers} label="今日 L2 复习" value={dashboard?.l2?.reviewedToday ?? 0} color="var(--color-accent-2)" loading={loading} />
         <StatCard icon={Flame} label="连续打卡" value={dashboard?.streakDays ?? 0} color="var(--color-accent-2)" loading={loading} suffix="天" />
         <StatCard icon={BookOpen} label="词条总数" value={effectiveTotal} color="var(--color-accent-2)" loading={loading} />
         <StatCard icon={CalendarRange} label="近 7 天复习" value={dashboard?.reviewed7d ?? 0} color="var(--color-accent)" loading={loading} />
@@ -259,6 +262,9 @@ export function DashboardPage() {
           <p className="text-sm">暂无笔记</p>
         </div>
       </Card>
+
+      {/* 一键遗忘（ADR-0020 / T12）：低显著性入口，置于页面最底部 */}
+      <OneClickForgettingCard />
     </div>
   );
 }

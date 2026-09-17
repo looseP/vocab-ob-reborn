@@ -27,6 +27,15 @@ import { L3ReadService } from "./l3-read.service";
 import { L3RecommendationService } from "./l3-recommendation.service";
 import { CrossTrackService } from "./cross-track.service";
 import { L2DrillService } from "./l2-drill.service";
+import { UpgradeWorkOrderService } from "./upgrade-work-order.service";
+import { L3PracticeService } from "./l3-practice.service";
+import { L3PaperService } from "./l3-paper.service";
+import { L3AnnotationService } from "./l3-annotations.service";
+import { L3SheetService } from "./l3-sheets.service";
+import { L3SheetExportService } from "./l3-sheet-export.service";
+import { L3AssessmentService } from "./l3-assessments.service";
+import { L3SessionService } from "./l3-session.service";
+import { ForgettingService } from "./forgetting.service";
 import { L3ContextSourceAdapter } from "./l3-context-source-adapter";
 import { AuthSessionService } from "./auth-session.service";
 import { LoginRateLimitService } from "./login-rate-limit.service";
@@ -224,6 +233,18 @@ export function createServices(deps: ServiceDeps) {
     l3Read,
     l3Recommendation,
     l3Import: new L3ImportService(repos.l3Context, l3Proposal),
+    // W3/T09 接线：升级工单复用既有 l2Transition（complete 走 promoteWithSeed，
+    // 自动晋升门槛 ADR-0002 一字不动）；其余三个服务自带 withTransaction +
+    // createRepositories 默认，无需额外 deps。
+    upgradeWorkOrders: new UpgradeWorkOrderService({ l2Transition }),
+    l3Practice: new L3PracticeService(),
+    l3Paper: new L3PaperService(repos.l3Paper, repos.l3Context),
+    l3Annotations: new L3AnnotationService(repos.l3Annotations, repos.l3Paper),
+    l3Sheets: new L3SheetService(repos.l3Sheets, repos.l3Paper, repos.l3Annotations),
+    l3SheetExport: new L3SheetExportService(repos.l3Sheets, repos.l3Paper, repos.l3Annotations, repos.l3Context),
+    l3Assessments: new L3AssessmentService(repos.l3Assessments, repos.l3Paper),
+    l3Sessions: new L3SessionService(),
+    forgetting: new ForgettingService(),
   };
 }
 

@@ -24,6 +24,31 @@ describe("L2ContentRepository", () => {
     expect(params[2]).toBe(JSON.stringify({ x: 1 }));
   });
 
+  it("insert writes the ADR-0017 direction column when provided", async () => {
+    const repo = new L2ContentRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: "lc-1" });
+    await repo.insert({
+      word_id: "w-1",
+      field: "collocation",
+      content: { x: 1 },
+      source: "agent",
+      direction: "考研",
+    });
+    const [sql, params] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("direction");
+    // 参数追加在末尾：既有 $1..$7 索引不动，content 仍是 params[2]。
+    expect(params[2]).toBe(JSON.stringify({ x: 1 }));
+    expect(params[7]).toBe("考研");
+  });
+
+  it("insert defaults direction to 通用 when omitted", async () => {
+    const repo = new L2ContentRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: "lc-1" });
+    await repo.insert({ word_id: "w-1", field: "collocation", content: { x: 1 }, source: "llm" });
+    const [, params] = (repo as any).queryOne.mock.calls[0];
+    expect(params[7]).toBe("通用");
+  });
+
   it("insert rejects when the database returns no row", async () => {
     const repo = new L2ContentRepository();
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);

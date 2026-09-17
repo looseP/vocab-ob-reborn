@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 import { getCookie } from "hono/cookie";
 import type { AuthSessionService } from "../../services/auth-session.service";
+import { parseAgentTokens } from "../../config/agent-tokens";
 import { jsonError } from "../error-response";
 
 export type AuthRole = "owner" | "agent" | "public";
@@ -10,7 +11,15 @@ export type Principal = {
   role: AuthRole;
   authMethod: AuthMethod;
   sessionId?: string;
+  /**
+   * ADR-0029 决策 5：服务端由 `AGENT_API_TOKENS` 的 `agentId:token` 映射认定的
+   * 信任锚。仅 agent bearer 路径有值；owner/bearer 与 session 路径无。
+   * T13a 只注入到 Principal；落 `proposal.provenance.agentId` 属 T13c。
+   */
+  agentId?: string;
 };
+/** 每次请求解析所需最小角色的策略（用于 `/api/*` 的按端点分级）。 */
+export type AuthRoleResolver = (c: Context) => AuthRole;
 
 export const SESSION_COOKIE_NAME = "vocab_session";
 export const CSRF_COOKIE_NAME = "vocab_csrf";
@@ -35,11 +44,11 @@ function resolveBearerPrincipal(token: string | undefined): Principal | null {
   if (process.env.OWNER_API_TOKEN && token === process.env.OWNER_API_TOKEN) {
     return { actorId, role: "owner", authMethod: "bearer" };
   }
-  const agentTokens = (process.env.AGENT_API_TOKENS ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (agentTokens.includes(token)) return { actorId, role: "agent", authMethod: "bearer" };
+  // `id:token` 映射是 agentId 信任锚的唯一来源；词法/唯一性已由启动 fail-fast 拒启，
+  // 此处若仍遇非法配置会抛错（fail-closed：宁可 500 也不放行未认定身份）。
+  const agent = parseAgentTokens(process.env.AGENT_API_TOKENS, process.env.OWNER_API_TOKEN)
+    .find((entry) => entry.token === token);
+  if (agent) return { actorId, role: "agent", authMethod: "bearer", agentId: agent.agentId };
   return null;
 }
 
@@ -63,8 +72,13 @@ function expectedOrigin(c: Context): string {
   return new URL(c.req.url).origin;
 }
 
-export function authMiddleware(authSessions: AuthSessionService | undefined, requireRole: AuthRole = "owner") {
+export function authMiddleware(
+  authSessions: AuthSessionService | undefined,
+  requireRole: AuthRole | AuthRoleResolver = "owner",
+) {
   return async (c: Context, next: Next) => {
+    // 按端点分级：所需角色是每次请求解析出来的（/api/* 由注册表查找表给出）。
+    const requiredRole: AuthRole = typeof requireRole === "function" ? requireRole(c) : requireRole;
     const bearerToken = extractBearerToken(c.req.header("Authorization"));
     let principal = resolveBearerPrincipal(bearerToken);
     let expectedCsrfHash: string | undefined;
@@ -75,7 +89,7 @@ export function authMiddleware(authSessions: AuthSessionService | undefined, req
       expectedCsrfHash = authenticated?.csrfHash;
     }
 
-    if (!principal && requireRole === "public") {
+    if (!principal && requiredRole === "public") {
       principal = { actorId: "public", role: "public", authMethod: "public" };
     }
 
@@ -84,7 +98,7 @@ export function authMiddleware(authSessions: AuthSessionService | undefined, req
       return jsonError(c, 401, "UNAUTHENTICATED", "Authentication required");
     }
 
-    if (roleRank[principal.role] < roleRank[requireRole]) {
+    if (roleRank[principal.role] < roleRank[requiredRole]) {
       return jsonError(c, 403, "FORBIDDEN", "Insufficient permissions");
     }
 

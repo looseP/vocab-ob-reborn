@@ -11,15 +11,20 @@ import { ConflictError, NotFoundError, ValidationError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import type {
+  Direction,
   Json,
+  L3ContextLinkListItem,
   L3ContextLinkRow,
   L3ContextRow,
   L3ImportJobRow,
+  L3OccurrenceListItem,
   L3OccurrenceRow,
   L3PaginatedList,
   L3SourceContextListItem,
   L3SourceListPage,
   L3SourceRow,
+  L3SpaceSummary,
+  L3SubSpace,
   L3WordContextListItem,
 } from "../domain";
 import type {
@@ -27,6 +32,8 @@ import type {
   IRepositories,
   IWordRepository,
   L3ContextDeleteBlockers,
+  L3ContextLinkLookup,
+  L3OccurrenceLookup,
   L3SourceDeleteBlockers,
   NewL3Context,
   NewL3ContextLink,
@@ -34,6 +41,7 @@ import type {
   NewL3Occurrence,
   NewL3Source,
 } from "../repositories/interfaces";
+import { L3_SUB_SPACES } from "./l3-practice.service";
 import { slugifyHeadword } from "./capture.service";
 import { buildL3TrioInputs } from "./l3-trio";
 import {
@@ -53,8 +61,12 @@ import {
   type DeleteL3ContextLinkInput,
   type DeleteL3OccurrenceInput,
   type DeleteL3SourceInput,
+  type GetL3SpaceSummaryInput,
   type L3DeleteResult,
+  type ListL3ContextLinksInput,
+  type ListL3OccurrencesInput,
   type ListL3SourcesInput,
+  type ReplaceL3SourceSpacesInput,
 } from "../schemas/service";
 
 type TxRunner = typeof withTransaction;
@@ -64,6 +76,21 @@ function requireEnum(value: string, allowed: readonly string[], field: string): 
   if (!allowed.includes(value)) {
     throw new ValidationError(`Invalid ${field}: ${value}`, field);
   }
+}
+
+const DIRECTIONS: readonly Direction[] = ["通用", "考研", "雅思"];
+
+/** 可选枚举校验：缺省 → null；非法 → ValidationError（对齐练习线同名助手）。 */
+function resolveOptionalEnum<T extends string>(
+  value: T | null | undefined,
+  allowed: readonly string[],
+  field: string,
+): T | null {
+  if (value == null) return null;
+  if (!allowed.includes(value)) {
+    throw new ValidationError(`Invalid ${field}: ${value}`, field);
+  }
+  return value;
 }
 
 function requireNonEmpty(value: string, field: string): void {
@@ -130,6 +157,25 @@ function requireL2SoftTargetRef(targetRef: Json | undefined): void {
   }
 }
 
+/**
+ * 能力域标签归一（V0 接通 l3_source_spaces 死轴，ADR-0019 §4）：
+ * 逐值枚举校验 + trim + 保序去重；省略/全空归一为 ['通用']。
+ * 非法值抛 ValidationError（HTTP 层翻译为 400）。
+ */
+function normalizeSourceSpaces(spaces?: readonly string[] | null): L3SubSpace[] {
+  if (!spaces || spaces.length === 0) return ["通用"];
+  const seen = new Set<string>();
+  const out: L3SubSpace[] = [];
+  for (const raw of spaces) {
+    const value = typeof raw === "string" ? raw.trim() : "";
+    if (!value || seen.has(value)) continue;
+    requireEnum(value, L3_SUB_SPACES, "spaces");
+    seen.add(value);
+    out.push(value as L3SubSpace);
+  }
+  return out.length > 0 ? out : ["通用"];
+}
+
 function hasSourceDeleteBlockers(blockers: L3SourceDeleteBlockers): boolean {
   return blockers.contextCount > 0 ||
     blockers.inboundContextLinkCount > 0 ||
@@ -169,6 +215,7 @@ export class L3ContextService {
     requireNonEmpty(input.title, "title");
     requireEnum(input.sourceType, L3_SOURCE_TYPES, "sourceType");
     const contentText = input.contentText?.trim() || null;
+    const spaces = normalizeSourceSpaces(input.spaces);
 
     return this.withActorRepository(input.userId, async (repository) => {
       if (input.wordbookId) {
@@ -202,8 +249,25 @@ export class L3ContextService {
         metadata: input.metadata ?? {},
         content_text: contentText,
         content_hash: contentHash,
-      } satisfies NewL3Source);
+      } satisfies NewL3Source, spaces);
       return { source };
+    });
+  }
+
+  /** V0 接通子空间死轴：全量替换来源能力域标签（归一+所有权校验）。 */
+  async replaceSourceSpaces(
+    input: ReplaceL3SourceSpacesInput,
+  ): Promise<{ sourceId: string; spaces: L3SubSpace[] }> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.sourceId, "sourceId");
+    const spaces = normalizeSourceSpaces(input.spaces);
+    return this.withActorRepository(input.userId, async (repository) => {
+      const source = await repository.findSourceById(input.userId, input.sourceId);
+      if (!source) {
+        throw new NotFoundError("L3Source", input.sourceId);
+      }
+      await repository.replaceSourceSpaces(input.userId, input.sourceId, spaces);
+      return { sourceId: input.sourceId, spaces };
     });
   }
 
@@ -395,7 +459,8 @@ export class L3ContextService {
       const source = await repository.createSource({
         ...trio.source,
         metadata: trio.source.metadata as Json,
-      });
+        // golden 快记来源无题型上下文：落「通用」能力域（新建来源恒至少一个标签）。
+      }, ["通用"]);
       const context = await repository.createContext({
         ...trio.context,
         source_id: source.id,
@@ -643,6 +708,9 @@ export class L3ContextService {
     userId: string;
     wordId?: string;
     slug?: string;
+    /** 两轴过滤（ADR-0029 §6②）：方向 × 子空间。 */
+    direction?: Direction | null;
+    space?: L3SubSpace | null;
     limit: number;
     cursor?: string | null;
   }): Promise<L3PaginatedList<L3WordContextListItem>> {
@@ -650,6 +718,8 @@ export class L3ContextService {
     if (!input.wordId && !input.slug) {
       throw new ValidationError("wordId or slug is required", "word");
     }
+    const direction = resolveOptionalEnum(input.direction, DIRECTIONS, "direction");
+    const space = resolveOptionalEnum(input.space, L3_SUB_SPACES, "space");
     return this.withActorRepository(input.userId, async (repository) => {
       if (input.slug) {
         const word = await repository.findWordBySlug(input.slug);
@@ -659,7 +729,7 @@ export class L3ContextService {
         const word = await repository.findWordById(input.wordId);
         if (!word) throw new NotFoundError("Word", input.wordId);
       }
-      return repository.listContextsForWord(input);
+      return repository.listContextsForWord({ ...input, direction, space });
     });
   }
 
@@ -681,16 +751,80 @@ export class L3ContextService {
 
   async listSources(input: ListL3SourcesInput): Promise<L3SourceListPage> {
     requireNonEmpty(input.userId, "userId");
+    const direction = resolveOptionalEnum(input.direction, DIRECTIONS, "direction");
+    const space = resolveOptionalEnum(input.space, L3_SUB_SPACES, "space");
     return this.withActorRepository(input.userId, (repository) =>
       repository.listSources({
         userId: input.userId,
         sourceType: input.sourceType,
         q: input.q,
         sort: input.sort,
+        direction,
+        space,
         limit: Math.min(input.limit, 50),
         offset: Math.max(input.offset, 0),
       }),
     );
+  }
+
+
+  /** ADR-0029 §6①：occurrence 只读列表（词 / 语境 / 两轴过滤 + cursor 分页）。 */
+  async listOccurrences(input: ListL3OccurrencesInput): Promise<L3PaginatedList<L3OccurrenceListItem>> {
+    requireNonEmpty(input.userId, "userId");
+    const direction = resolveOptionalEnum(input.direction, DIRECTIONS, "direction");
+    const space = resolveOptionalEnum(input.space, L3_SUB_SPACES, "space");
+    return this.withActorRepository(input.userId, async (repository) => {
+      if (input.slug) {
+        const word = await repository.findWordBySlug(input.slug);
+        if (!word) throw new NotFoundError("Word", input.slug);
+      }
+      if (input.wordId) {
+        const word = await repository.findWordById(input.wordId);
+        if (!word) throw new NotFoundError("Word", input.wordId);
+      }
+      if (input.contextId) {
+        const context = await repository.findContextById(input.userId, input.contextId);
+        if (!context) throw new NotFoundError("L3Context", input.contextId);
+      }
+      return repository.listOccurrences({ ...input, direction, space });
+    });
+  }
+
+  /** ADR-0029 §6①：context-link 只读列表（词 / 语境 / 类型 / 两轴过滤 + cursor 分页）。 */
+  async listContextLinks(input: ListL3ContextLinksInput): Promise<L3PaginatedList<L3ContextLinkListItem>> {
+    requireNonEmpty(input.userId, "userId");
+    const direction = resolveOptionalEnum(input.direction, DIRECTIONS, "direction");
+    const space = resolveOptionalEnum(input.space, L3_SUB_SPACES, "space");
+    return this.withActorRepository(input.userId, async (repository) => {
+      if (input.slug) {
+        const word = await repository.findWordBySlug(input.slug);
+        if (!word) throw new NotFoundError("Word", input.slug);
+      }
+      if (input.wordId) {
+        const word = await repository.findWordById(input.wordId);
+        if (!word) throw new NotFoundError("Word", input.wordId);
+      }
+      if (input.contextId) {
+        const context = await repository.findContextById(input.userId, input.contextId);
+        if (!context) throw new NotFoundError("L3Context", input.contextId);
+      }
+      return repository.listContextLinks({ ...input, direction, space });
+    });
+  }
+
+  /**
+   * B1 素材宇宙：空间汇总（四类实体全量计数 + 近 N 天每日新增）。
+   * 只读、user-scoped；同 actorId 读事务内顺序执行两次查询（pg 单连接不并发）。
+   * windowDays 在此夹紧到 [1, 90]（与 HTTP schema 双保险，便于非 HTTP 调用方）。
+   */
+  async getSpaceSummary(input: GetL3SpaceSummaryInput): Promise<L3SpaceSummary> {
+    requireNonEmpty(input.userId, "userId");
+    const windowDays = Math.min(Math.max(Math.trunc(input.windowDays), 1), 90);
+    return this.withActorRepository(input.userId, async (repository) => {
+      const counts = await repository.getSpaceSummaryCounts(input.userId);
+      const byDay = await repository.getSpaceGrowth(input.userId, windowDays);
+      return { counts, growth: { windowDays, byDay } };
+    });
   }
 
   private withActorRepository<T>(

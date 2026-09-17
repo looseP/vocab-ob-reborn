@@ -36,8 +36,7 @@ export function requestTelemetry(telemetry: Telemetry): MiddlewareHandler<Teleme
     const durationMs = Math.max(0, performance.now() - started);
     const route = stableRoute(c.req.path);
     telemetry.observeHttp(c.req.method, route, c.res.status, durationMs / 1_000);
-    logger.info("http", "Request completed", {
-      requestId,
+    logger.withMeta({ requestId }).info("http", "Request completed", {
       method: c.req.method,
       route,
       status: c.res.status,

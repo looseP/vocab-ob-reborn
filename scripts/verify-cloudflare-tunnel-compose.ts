@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyComposeLogRotation } from "./verify-compose-logging";
 
 export function verifyCloudflareTunnelCompose(
   baseCompose: string,
@@ -11,6 +12,10 @@ export function verifyCloudflareTunnelCompose(
   const requirePattern = (source: string, pattern: RegExp, label: string): void => {
     if (!pattern.test(source)) throw new Error(`${label} is missing or malformed`);
   };
+
+  // Overlay layer: only `cloudflared` is a full service definition here; the
+  // `caddy` entry is a partial override whose rotation comes from the base file.
+  verifyComposeLogRotation(tunnelCompose, "Cloudflare tunnel overlay", ["cloudflared"]);
 
   requirePattern(baseCompose, /^  caddy:$/m, "Base Caddy service");
   requirePattern(baseCompose, /^  app:\n    internal: true$/m, "Internal app network");

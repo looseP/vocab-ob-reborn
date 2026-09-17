@@ -10,18 +10,21 @@ interface WordContext {
 
 interface SynonymPromptConfig {
   count: number;
+  /** ADR-0017/0018 方向指令行（已渲染）；缺省空串 = 与方向化前逐字节一致。 */
+  directionRule?: string;
 }
 
 export function buildSynonymPrompt(
   word: WordContext,
   config: SynonymPromptConfig,
 ): LlmMessage[] {
+  const directionRule = config.directionRule ?? "";
   return [
     {
       role: "system",
       content: `你是一个英语词汇教学专家。为给定单词生成 ${config.count} 个最值得辨析的近义词。
 要求：
-- 五维辨析：semanticDiff（语义差异）/ tone（语气）/ usage（用法差异）/ delta（核心区别）/ object（适用对象）
+${directionRule}- 五维辨析：semanticDiff（语义差异）/ tone（语气）/ usage（用法差异）/ delta（核心区别）/ object（适用对象）
 - 严格只输出 JSON 数组：
 [{"word":"近义词","semanticDiff":"一句话语义差异","tone":"formal|neutral|informal","usage":"用法差异","delta":"核心区别","object":"适用对象"}]`,
     },

@@ -163,3 +163,33 @@ describe("prioritizeReviewQueueItems", () => {
     expect(items.map((i) => i.state)).toEqual(["review", "new"]);
   });
 });
+
+// ── needs_recheck 的消费端（ADR-0021：值由读时派生，这里锁定派生后的行为）──
+describe("buildReviewQueueBatch — 重新核对卡（ADR-0021）", () => {
+  it("提权到最前并给出「重新核对 / 内容已更新」文案", () => {
+    const batch = buildReviewQueueBatch([
+      makeCandidate({ state: "review" }),
+      makeCandidate({ state: "new", needs_recheck: true }),
+    ]);
+
+    const entry = batch.items.find(({ item }) => item.needs_recheck)!;
+    expect(entry.priority.bucket).toBe("learning");
+    expect(entry.priority.label).toBe("重新核对");
+    expect(entry.priority.reason).toBe("内容已更新，请重看");
+    // stateRank 0 → 压过普通 review/new 卡
+    expect(batch.items[0].item.needs_recheck).toBe(true);
+  });
+
+  it("不占新卡配额（3 张 recheck 新卡 + 10 张普通新卡 → 只 defer 普通新卡）", () => {
+    const candidates: ReviewQueueCandidate[] = [
+      ...Array.from({ length: 3 }, () => makeCandidate({ state: "new", needs_recheck: true })),
+      ...Array.from({ length: 10 }, () => makeCandidate({ state: "new" })),
+    ];
+    const batch = buildReviewQueueBatch(candidates, new Date(), 20);
+
+    // 3 张 recheck 卡不受配额约束 + 8 张配额内新卡 = 11 张入选
+    expect(batch.items).toHaveLength(3 + MAX_NEW_CARDS_PER_BATCH);
+    expect(batch.items.filter(({ priority }) => priority.label === "重新核对")).toHaveLength(3);
+    expect(batch.deferredNewCards).toBe(10 - MAX_NEW_CARDS_PER_BATCH);
+  });
+});

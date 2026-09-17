@@ -130,6 +130,21 @@ describe("ReviewCard entity", () => {
     expect(card.needsRecheck("new")).toBe(true);
     expect(card.needsRecheck("old")).toBe(false);
   });
+
+  it("needsRecheck delegates to deriveContentStaleness (ADR-0021)", () => {
+    const card = new ReviewCard(
+      makeProgressRow({ content_hash_snapshot: "full-v1", l1_content_hash_snapshot: "l1-v1" }),
+      { id: "w1", slug: "aboard", title: "aboard", lemma: "aboard" });
+
+    // L1 对可用 → 只比 L1：L2-only 变更（全量 hash 变化）不触发重新核对
+    expect(card.needsRecheck("full-v9", "l1-v1")).toBe(false);
+    // L1 变化 → 触发
+    expect(card.needsRecheck("full-v9", "l1-v2")).toBe(true);
+    // 缺 L1 快照 → 降级比全量对；快照缺失（新卡）→ 不派生
+    const fresh = new ReviewCard(makeProgressRow({ content_hash_snapshot: null }),
+      { id: "w1", slug: "aboard", title: "aboard", lemma: "aboard" });
+    expect(fresh.needsRecheck("full-v9")).toBe(false);
+  });
 });
 
 describe("Wordbook entity", () => {
@@ -149,6 +164,30 @@ describe("Wordbook entity", () => {
       settings: null, created_at: "", updated_at: "",
     } as WordbookRow);
     expect(wb.reviewSettings).toEqual({});
+  });
+
+  // ADR-0017：词书方向落 settings jsonb（0 迁移），缺省/非法值回退 '通用'。
+  it("direction reads settings.direction when present", () => {
+    const wb = new Wordbook({
+      id: "wb1", user_id: "u1", name: "Global", description: null, is_default: true,
+      settings: { direction: "考研" }, created_at: "", updated_at: "",
+    } as WordbookRow);
+    expect(wb.direction).toBe("考研");
+  });
+
+  it("direction defaults to 通用 when settings are absent or unrecognized", () => {
+    const withoutSettings = new Wordbook({
+      id: "wb1", user_id: "u1", name: "Global", description: null, is_default: true,
+      settings: null, created_at: "", updated_at: "",
+    } as WordbookRow);
+    expect(withoutSettings.direction).toBe("通用");
+
+    const unknownDirection = new Wordbook({
+      id: "wb1", user_id: "u1", name: "Global", description: null, is_default: true,
+      // 模拟 DB jsonb 中的未识别值：类型收窄不成立，但运行期必须回退 '通用'。
+      settings: { direction: "雅思A类" } as unknown as WordbookRow["settings"], created_at: "", updated_at: "",
+    } as WordbookRow);
+    expect(unknownDirection.direction).toBe("通用");
   });
 });
 

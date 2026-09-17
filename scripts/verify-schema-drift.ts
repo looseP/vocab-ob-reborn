@@ -113,6 +113,30 @@ const FINALIZE_L2_HASH_OVERRIDE_CONTRACT = [
   "REVOKE ALL ON FUNCTION public.finalize_l2_content_hash(uuid, text, text) FROM PUBLIC",
 ] as const;
 
+/**
+ * 0027 override contract (ADR-0017): refresh_l2_cache keeps the 0018 relaxed
+ * authenticated-actor guard AND preserves a per-item `direction` key while
+ * aggregating active rows. Losing the direction key reverts the cache to the
+ * pre-ADR-0017 shape; regressing to the strict per-word progress guard is also
+ * rejected (the strict marker is asserted absent below).
+ */
+const REFRESH_L2_CACHE_DIRECTION_CONTRACT = [
+  "CREATE OR REPLACE FUNCTION public.refresh_l2_cache(p_word_id uuid)",
+  "RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public",
+  "DECLARE v_actor_id uuid := auth.uid(); BEGIN IF v_actor_id IS NULL THEN RAISE EXCEPTION 'actor cannot refresh L2 cache for word' USING ERRCODE = '42501'; END IF",
+  "FROM public.word_l2_content AS content",
+  "WHERE content.word_id = p_word_id AND content.is_active = true",
+  "pg_catalog.jsonb_build_object('direction', content.direction)",
+  "UPDATE public.words AS word",
+  "SET collocations = aggregated.collocations, corpus_items = aggregated.corpus_items, synonym_items = aggregated.synonym_items, antonym_items = aggregated.antonym_items",
+  "WHERE word.id = p_word_id",
+  "ALTER FUNCTION public.refresh_l2_cache(uuid) OWNER TO vocab_migration",
+  "REVOKE ALL ON FUNCTION public.refresh_l2_cache(uuid) FROM PUBLIC",
+] as const;
+
+/** Marker that only exists in the pre-0018 strict per-word guard. */
+const STRICT_REFRESH_GUARD_MARKER = "progress.user_id = v_actor_id AND progress.word_id = p_word_id";
+
 /** Collapse whitespace and drop trailing statement punctuation for stable comparison. */
 export function normalizeSql(sql: string): string {
   return sql
@@ -165,6 +189,18 @@ export function compareSecurityDefinerOverrideContract(overrideSql: string): boo
   const normalized = normalizeSql(overrideSql);
   return [...REFRESH_L2_CACHE_OVERRIDE_CONTRACT, ...FINALIZE_L2_HASH_OVERRIDE_CONTRACT]
     .every((contract) => normalized.includes(normalizeSql(contract)));
+}
+
+/**
+ * Compare the 0027 direction-preserving refresh_l2_cache override (ADR-0017).
+ * Requires the relaxed guard, the per-item direction key, and rejects any
+ * regression back to the pre-0018 strict per-word progress guard.
+ */
+export function compareSecurityDefinerDirectionContract(migrationSql: string): boolean {
+  const normalized = normalizeSql(migrationSql);
+  const intact = REFRESH_L2_CACHE_DIRECTION_CONTRACT
+    .every((contract) => normalized.includes(normalizeSql(contract)));
+  return intact && !normalized.includes(normalizeSql(STRICT_REFRESH_GUARD_MARKER));
 }
 
 export interface DriftResult {
@@ -266,6 +302,15 @@ export default defineConfig({
     const overrideSql = readFileSync(securityFunctionOverride, "utf8");
     if (!compareSecurityDefinerOverrideContract(overrideSql)) {
       throw new Error("Schema drift detected: SECURITY DEFINER relaxed-guard override contract changed");
+    }
+
+    const securityFunctionDirection = path.join(projectRoot, "drizzle-release", "0027_cold_eddie_brock.sql");
+    if (!existsSync(securityFunctionDirection)) {
+      throw new Error("Schema drift detected: direction-preserving override migration (0027) is missing");
+    }
+    const directionSql = readFileSync(securityFunctionDirection, "utf8");
+    if (!compareSecurityDefinerDirectionContract(directionSql)) {
+      throw new Error("Schema drift detected: 0027 direction-preserving refresh_l2_cache contract changed");
     }
 
     console.log(`[schema-drift] OK — ${result.detail}; SECURITY DEFINER functions match authoritative contracts`);

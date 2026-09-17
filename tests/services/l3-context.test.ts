@@ -1,6 +1,6 @@
-﻿import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ConflictError, NotFoundError, ValidationError } from "@/errors";
-import type { L3ContextRow, L3SourceRow, WordbookRow, WordRow } from "@/domain";
+import type { L3ContextRow, L3SourceRow, L3SubSpace, WordbookRow, WordRow } from "@/domain";
 import type { IL3ContextRepository, IRepositories, IWordRepository } from "@/repositories/interfaces";
 import { L3ContextService } from "@/services/l3-context.service";
 
@@ -90,6 +90,8 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
       created_at: "2026-07-08T00:00:00Z",
       updated_at: "2026-07-08T00:00:00Z",
     })),
+    replaceSourceSpaces: vi.fn(async () => undefined),
+    ensureSourceSpaces: vi.fn(async () => undefined),
     createContext: vi.fn(async (input) => ({
       id: "ctx-1",
       source_id: input.source_id,
@@ -227,10 +229,14 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
     findWordInWordbookBySlug: vi.fn(async () => WORD_ROW),
     listContextsForWord: vi.fn(async () => ({ items: [], limit: 10, cursor: null, nextCursor: null })),
     listContextsForSource: vi.fn(async () => ({ items: [], limit: 10, cursor: null, nextCursor: null })),
+    listOccurrences: vi.fn(async () => ({ items: [], limit: 10, cursor: null, nextCursor: null })),
+    listContextLinks: vi.fn(async () => ({ items: [], limit: 10, cursor: null, nextCursor: null })),
     getContextDetail: vi.fn(),
     getWordSpace: vi.fn(),
     getSourceSpace: vi.fn(),
     getGraph: vi.fn(),
+    getSpaceSummaryCounts: vi.fn(async () => ({ sourceCount: 0, contextCount: 0, occurrenceCount: 0, linkCount: 0 })),
+    getSpaceGrowth: vi.fn(async () => []),
     ...overrides,
   };
 }
@@ -304,6 +310,51 @@ describe("L3ContextService", () => {
       title: "Scoped note",
     })).rejects.toBeInstanceOf(NotFoundError);
     expect(repo.createSource).not.toHaveBeenCalled();
+  });
+
+  // V0 子空间接通：能力域标签的归一化与写透（ADR-0019 / l3_source_spaces）。
+  it("defaults createSource spaces to 通用 and passes them to the repository", async () => {
+    await service.createSource({ userId: "u1", sourceType: "manual", title: "plain note" });
+    expect(repo.createSource).toHaveBeenCalledWith(expect.any(Object), ["通用"]);
+  });
+
+  it("normalizes createSource spaces: trims, dedups while preserving order, empty falls back to 通用", async () => {
+    await service.createSource({
+      userId: "u1", sourceType: "article", title: "真题",
+      // 运行时归一化面向内部调用方，故意给带空格/重复的原始串（类型上收窄断言）。
+      spaces: [" 阅读 ", "阅读", "作文", "作文"] as unknown as L3SubSpace[],
+    });
+    expect(repo.createSource).toHaveBeenCalledWith(expect.any(Object), ["阅读", "作文"]);
+
+    await service.createSource({ userId: "u1", sourceType: "manual", title: "无标签", spaces: [] });
+    expect(repo.createSource).toHaveBeenLastCalledWith(expect.any(Object), ["通用"]);
+  });
+
+  it("rejects createSource spaces containing values outside the five-value enum", async () => {
+    await expect(service.createSource({
+      userId: "u1", sourceType: "manual", title: "bad",
+      spaces: ["火星"] as unknown as L3SubSpace[],
+    })).rejects.toBeInstanceOf(ValidationError);
+    expect(repo.createSource).not.toHaveBeenCalled();
+  });
+
+  it("replaceSourceSpaces normalizes input and writes through after the ownership check", async () => {
+    const result = await service.replaceSourceSpaces({
+      userId: "u1", sourceId: "src-1",
+      spaces: ["翻译", "翻译", " 阅读 "] as unknown as L3SubSpace[],
+    });
+    expect(repo.findSourceById).toHaveBeenCalledWith("u1", "src-1");
+    expect(repo.replaceSourceSpaces).toHaveBeenCalledWith("u1", "src-1", ["翻译", "阅读"]);
+    expect(result).toEqual({ sourceId: "src-1", spaces: ["翻译", "阅读"] });
+  });
+
+  it("replaceSourceSpaces rejects when the source is not owned by the user", async () => {
+    repo = makeRepo({ findSourceById: vi.fn(async () => null) });
+    service = makeService(repo);
+    await expect(service.replaceSourceSpaces({
+      userId: "u1", sourceId: "src-other", spaces: ["阅读"],
+    })).rejects.toBeInstanceOf(NotFoundError);
+    expect(repo.replaceSourceSpaces).not.toHaveBeenCalled();
   });
 
   it("requires occurrences under a wordbook source to use words from that wordbook", async () => {
@@ -830,6 +881,8 @@ describe("L3ContextService", () => {
     expect(repo.listContextsForWord).toHaveBeenCalledWith({
       userId: "u1",
       slug: "vivid",
+      direction: null,
+      space: null,
       limit: 10,
       cursor: null,
     });
@@ -1026,7 +1079,7 @@ describe("L3ContextService", () => {
       source_type: "manual",
       title: "手动记录",
       content_text: null,
-    }));
+    }), ["通用"]);
     expect(txRepo.createContext).toHaveBeenCalledWith(expect.objectContaining({
       source_id: "src-1",
       text: "A vivid context.",
@@ -1072,8 +1125,107 @@ describe("L3ContextService", () => {
       sourceType: undefined,
       q: undefined,
       sort: "recent",
+      direction: null,
+      space: null,
       limit: 50,
       offset: 0,
     });
+  });
+
+  it("lists occurrences and links through actor-scoped repositories with resolved filters", async () => {
+    await service.listOccurrences({
+      userId: "u1",
+      slug: "vivid",
+      direction: "雅思",
+      space: "阅读",
+      limit: 10,
+    });
+    expect(repo.findWordBySlug).toHaveBeenCalledWith("vivid");
+    expect(repo.listOccurrences).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "u1",
+      slug: "vivid",
+      direction: "雅思",
+      space: "阅读",
+    }));
+
+    await service.listContextLinks({
+      userId: "u1",
+      wordId: "w1",
+      linkType: "supports",
+      limit: 10,
+    });
+    expect(repo.findWordById).toHaveBeenCalledWith("w1");
+    expect(repo.listContextLinks).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "u1",
+      wordId: "w1",
+      linkType: "supports",
+    }));
+  });
+
+  it("rejects evidence list reads that point at missing words or contexts", async () => {
+    service = makeService(makeRepo({ findWordBySlug: vi.fn(async () => null) }));
+    await expect(service.listOccurrences({ userId: "u1", slug: "missing", limit: 10 }))
+      .rejects.toBeInstanceOf(NotFoundError);
+
+    service = makeService(makeRepo({ findWordById: vi.fn(async () => null) }));
+    await expect(service.listContextLinks({ userId: "u1", wordId: "missing", limit: 10 }))
+      .rejects.toBeInstanceOf(NotFoundError);
+
+    service = makeService(makeRepo({ findContextById: vi.fn(async () => null) }));
+    await expect(service.listOccurrences({ userId: "u1", contextId: "missing", limit: 10 }))
+      .rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("rejects unknown two-axis values before any repository call", async () => {
+    await expect(service.listOccurrences({ userId: "u1", space: "no-such" as never, limit: 10 }))
+      .rejects.toBeInstanceOf(ValidationError);
+    await expect(service.listContextLinks({ userId: "u1", direction: "no-such" as never, limit: 10 }))
+      .rejects.toBeInstanceOf(ValidationError);
+    expect(repo.listOccurrences).not.toHaveBeenCalled();
+    expect(repo.listContextLinks).not.toHaveBeenCalled();
+  });
+
+  it("assembles the space summary and clamps the growth window to [1, 90]", async () => {
+    repo = makeRepo({
+      getSpaceSummaryCounts: vi.fn(async () => ({ sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 })),
+      getSpaceGrowth: vi.fn(async () => [{ day: "2026-09-08", sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 }]),
+    });
+    service = makeService(repo);
+
+    const summary = await service.getSpaceSummary({ userId: "u1", windowDays: 30 });
+    expect(summary).toEqual({
+      counts: { sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 },
+      growth: {
+        windowDays: 30,
+        byDay: [{ day: "2026-09-08", sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 }],
+      },
+    });
+    expect(repo.getSpaceGrowth).toHaveBeenCalledWith("u1", 30);
+
+    await service.getSpaceSummary({ userId: "u1", windowDays: 200 });
+    expect(repo.getSpaceGrowth).toHaveBeenLastCalledWith("u1", 90);
+
+    await service.getSpaceSummary({ userId: "u1", windowDays: -5 });
+    expect(repo.getSpaceGrowth).toHaveBeenLastCalledWith("u1", 1);
+  });
+
+  it("runs the space summary read under the actor and never writes", async () => {
+    const txRunner = vi.fn(async (callback: (tx: never) => Promise<never>) => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    service = makeService(repo, repo, txRunner);
+
+    await service.getSpaceSummary({ userId: "u1", windowDays: 30 });
+
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(repo.getSpaceSummaryCounts).toHaveBeenCalledWith("u1");
+    expect(repo.createSource).not.toHaveBeenCalled();
+    expect(repo.createContext).not.toHaveBeenCalled();
+    expect(repo.createOccurrence).not.toHaveBeenCalled();
+    expect(repo.createContextLink).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty userId for the space summary read", async () => {
+    await expect(service.getSpaceSummary({ userId: " ", windowDays: 30 }))
+      .rejects.toBeInstanceOf(ValidationError);
+    expect(repo.getSpaceSummaryCounts).not.toHaveBeenCalled();
   });
 });

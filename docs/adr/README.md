@@ -163,6 +163,19 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0006](./0006-l2-composer-contract-freeze.md) | L2 Composer 合同冻结（not chat / collocation 必词典落地 / external-prompt 非持久 / Phase 2E 不引入 L3） | Phase 2E |
 | [0015](./0015-l2-review-outbox-track-routing.md) | L2 复习闭环 Outbox track='l2' 事件路由（FR-12 接线1） | Phase 2E→FR-12 |
 | [0016](./0016-l3-context-source-adapter-for-l2-drill.md) | L3 语境源适配器接入 L2 Drill 产出自评（FR-12 接线2） | Phase 2E→FR-12 |
+| [0017](./0017-l2-content-direction-variant-key.md) | L2 内容方向变体键（word_l2_content 按 direction 扩展；进度键不变） | 2026-09-11 |
+| [0018](./0018-user-initiated-early-l2-upgrade.md) | 用户主动提前升级（豁免晋升门）+ 一次性种子继承 | 2026-09-11 |
+| [0019](./0019-l3-practice-records-and-sessions.md) | L3 练习记录与会话容器（有记录、无调度）+ 子空间两轴 | 2026-09-11 |
+| [0020](./0020-one-click-forgetting-suspension-reset.md) | 一键遗忘——非破坏性挂起重置 + 锚点词保留 | 2026-09-11 |
+| [0021](./0021-needs-recheck-derivation.md) | needs_recheck 读时派生（"内容已更新"标记的懒计算，零写入） | 2026-09-11 |
+| [0022](./0022-single-owner-self-hosted-deployment.md) | 自托管单 owner 形态与首次自举（部署 smoke 必须断言登录） | 2026-09-12 |
+| [0023](./0023-online-first-server-authority-no-offline-sync.md) | 多设备 = 在线优先、服务器权威、不做离线同步 | 2026-09-12 |
+| [0024](./0024-public-exposure-trust-boundary.md) | 公网暴露信任边界（强制 Cloudflare Access + 源站锁定 + 设备会话管理） | 2026-09-12 |
+| [0025](./0025-portable-export-contract.md) | 可携带导出契约（版本化 schema + 单一代码路径 + manifest 留痕） | 2026-09-12 |
+| [0026](./0026-single-host-observability.md) | 单机自托管可观测性（日志落盘轮转 + 轻量 watcher，否决全家桶） | 2026-09-12 |
+| [0027](./0027-backup-failure-contract.md) | 备份失败契约（失败不删本地 + 清理按"已异地校验"推进） | 2026-09-12 |
+| [0028](./0028-word-l3-reference-integrity-and-deletion.md) | 词–L3 引用完整性（阻塞式删除 + RESTRICT 兜底，不建 orphan 池） | 2026-09-12 |
+| [0029](./0029-mcp-agent-access-boundary.md) | MCP / agent 接入边界（传输层不新增信任级 + 资源级 role 强制；修订 0008 non-goal） | 2026-09-12 |
 
 ## 并行 agent 必读
 

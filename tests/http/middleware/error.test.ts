@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
 import { handleError } from "@/http/middleware/error";
 import {
@@ -73,5 +73,31 @@ describe("handleError middleware", () => {
     };
     expect(body.details?.resourceType).toBe("Word");
     expect(body.details?.identifier).toBe("slug");
+  });
+
+  it("stamps the in-flight request id on the unhandled-error log line", async () => {
+    const entries: Array<Record<string, unknown>> = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      const [first] = args;
+      if (typeof first === "string") entries.push(JSON.parse(first) as Record<string, unknown>);
+    });
+    const requestId = "22222222-2222-4222-8222-222222222222";
+    const app = new Hono<{ Variables: { requestId: string } }>();
+    app.onError(handleError);
+    app.use("*", async (c, next) => {
+      c.set("requestId", requestId);
+      await next();
+    });
+    app.get("/*", () => {
+      throw new Error("Something broke");
+    });
+
+    const res = await app.request("/test");
+    expect(res.status).toBe(500);
+    const log = entries.find((entry) => entry.msg === "Unhandled error");
+    expect(log?.requestId).toBe(requestId);
+    expect(res.headers.get("X-Request-ID")).toBe(requestId);
+    expect((log?.meta as Record<string, unknown> | undefined)?.requestId).toBeUndefined();
+    spy.mockRestore();
   });
 });

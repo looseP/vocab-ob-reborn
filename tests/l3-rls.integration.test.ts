@@ -10,7 +10,9 @@
  *                           vocab_app NOBYPASSRLS 非属主 → auth.uid() 策略强制生效
  *
  * 覆盖：三件套写入（RLS WITH CHECK）、跨用户读隔离、跨用户写无操作、
- * 冒名插入被 RLS 拒绝、双用户互不可见、删除级联 + bound_sense 落库。
+ * 冒名插入被 RLS 拒绝、双用户互不可见、删除级联 + bound_sense 落库；
+ * 0033 批次一：做题注记/标签字典隔离（读不可见、冒名 WITH CHECK、update/软删
+ * 无操作）与题删除经 vocab_app 级联清理注记。
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -121,11 +123,20 @@ describe("L3 RLS isolation (integration)", () => {
 
   afterAll(async () => {
     try {
-      // pg 扩展协议不允许带参多语句——逐条执行清理
+      // 逐条执行清理
       await adminPool.query("DELETE FROM l3_occurrences WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_context_links WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_contexts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_sources WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      // 0035 批次二增补：评析区（题删除已级联，这里兜底显式清理）
+      await adminPool.query("DELETE FROM l3_question_assessments WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      // 0034 批次二：作答历史/题纸（attempts 无级联到题纸，先删 attempts 再删 submissions）
+      await adminPool.query("DELETE FROM l3_question_attempts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      await adminPool.query("DELETE FROM l3_submissions WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      // 0033 批次一：做题注记/标签字典（题删除已级联注记，这里兜底显式清理）
+      await adminPool.query("DELETE FROM l3_question_annotations WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      await adminPool.query("DELETE FROM l3_annotation_tags WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      await adminPool.query("DELETE FROM l3_questions WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM words WHERE id = $1", [WORD_ID]);
       await adminPool.query("DELETE FROM profiles WHERE id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
@@ -274,5 +285,333 @@ describe("L3 RLS isolation (integration)", () => {
       "SELECT count(*)::int AS count FROM l3_sources",
     );
     expect(remaining.rows[0]!.count).toBe(0);
+  });
+
+  // ── 0033 批次一：做题注记（原文分析条目）与规律标签字典的行级隔离 ──
+  let aQuestionId = "";
+
+  it("actor A attaches anchored/loose annotations and tag-dict rows to its question", async () => {
+    aQuestionId = randomUUID();
+    // file_key 题组（无 source 也满足 l3_questions 的身份 CHECK）
+    await adminPool.query(
+      `INSERT INTO l3_questions (id, user_id, file_key, space, question_type, stem)
+       VALUES ($1, $2, $3, '阅读', 'reading_choice', 'RLS fixture question')`,
+      [aQuestionId, ACTOR_A, `rls-file-${aQuestionId.slice(0, 8)}`],
+    );
+
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_annotations
+           (id, user_id, question_id, ordinal, anchor_start, anchor_end, excerpt, note, entry_tags, option_tags)
+         VALUES ($1, $2, $3, 0, 12, 20, $4, 'evidence anchors the trap', $5::jsonb, $6::jsonb)`,
+        [randomUUID(), ACTOR_A, aQuestionId, "trap phrase",
+          JSON.stringify(["推断题"]), JSON.stringify({ B: ["偷换概念"] })],
+      );
+      await tx.query(
+        `INSERT INTO l3_question_annotations (id, user_id, question_id, ordinal, note)
+         VALUES ($1, $2, $3, 1, '题型归因，无锚点')`,
+        [randomUUID(), ACTOR_A, aQuestionId],
+      );
+      await tx.query(
+        `INSERT INTO l3_annotation_tags (id, user_id, kind, label, ordinal)
+         VALUES ($1, $2, 'entry', '细节题', 0), ($3, $4, 'option', '无中生有', 0)`,
+        [randomUUID(), ACTOR_A, randomUUID(), ACTOR_A],
+      );
+      const counts = await tx.query<{ annotations: number; tags: number }>(
+        `SELECT
+           (SELECT count(*)::int FROM l3_question_annotations) AS annotations,
+           (SELECT count(*)::int FROM l3_annotation_tags) AS tags`,
+      );
+      expect(counts.rows[0]).toEqual({ annotations: 2, tags: 2 });
+    });
+  });
+
+  it("actor B cannot read actor A's annotations or tags", async () => {
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const counts = await tx.query<{ annotations: number; tags: number }>(
+        `SELECT
+           (SELECT count(*)::int FROM l3_question_annotations) AS annotations,
+           (SELECT count(*)::int FROM l3_annotation_tags) AS tags`,
+      );
+      expect(counts.rows[0]).toEqual({ annotations: 0, tags: 0 });
+      const onQuestion = await tx.query(
+        "SELECT id FROM l3_question_annotations WHERE question_id = $1",
+        [aQuestionId],
+      );
+      expect(onQuestion.rows).toHaveLength(0);
+    });
+  });
+
+  it("rejects actor B inserting annotations/tags attributed to actor A (RLS WITH CHECK)", async () => {
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_annotations (id, user_id, question_id, note)
+         VALUES ($1, $2, $3, 'spoofed owner annotation')`,
+        [randomUUID(), ACTOR_A, aQuestionId],
+      );
+    })).rejects.toThrow(/row-level security/i);
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_annotation_tags (id, user_id, kind, label)
+         VALUES ($1, $2, 'entry', 'spoofed owner tag')`,
+        [randomUUID(), ACTOR_A],
+      );
+    })).rejects.toThrow(/row-level security/i);
+  });
+
+  it("actor B update/soft-delete against actor A's annotations are no-ops", async () => {
+    const before = await adminPool.query<{ note: string; status: string }>(
+      "SELECT note, status FROM l3_question_annotations WHERE question_id = $1 ORDER BY ordinal",
+      [aQuestionId],
+    ).then((r) => r.rows);
+
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const updated = await tx.query(
+        `UPDATE l3_question_annotations SET note = 'hijacked', updated_at = now()
+         WHERE question_id = $1 RETURNING id`,
+        [aQuestionId],
+      );
+      expect(updated.rows).toHaveLength(0);
+      const softDeleted = await tx.query(
+        "UPDATE l3_question_annotations SET status = 'deleted' WHERE question_id = $1 RETURNING id",
+        [aQuestionId],
+      );
+      expect(softDeleted.rows).toHaveLength(0);
+    });
+
+    const after = await adminPool.query<{ note: string; status: string }>(
+      "SELECT note, status FROM l3_question_annotations WHERE question_id = $1 ORDER BY ordinal",
+      [aQuestionId],
+    ).then((r) => r.rows);
+    expect(after).toEqual(before);
+  });
+
+  it("cascades annotations when actor A deletes its question through the vocab_app path", async () => {
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      const deleted = await tx.query(
+        "DELETE FROM l3_questions WHERE id = $1 RETURNING id",
+        [aQuestionId],
+      );
+      expect(deleted.rows).toHaveLength(1);
+    });
+    const remaining = await adminPool.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM l3_question_annotations WHERE question_id = $1",
+      [aQuestionId],
+    );
+    expect(remaining.rows[0]!.count).toBe(0);
+  });
+
+  // ── 0034 批次二：题纸（l3_submissions）/ 作答历史（l3_question_attempts）/
+  //    草稿注记（stage/sheet_id）的行级隔离与状态守卫 ──
+  let aSheetId = "";
+  let aSheetSourceId = "";
+  let aSheetQuestionId = "";
+  let aAttemptId = "";
+  let aDraftAnnotationId = "";
+
+  it("actor A opens a sheet, writes a draft note and seals it into attempts (vocab_app path)", async () => {
+    aSheetSourceId = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_sources (id, user_id, source_type, title)
+       VALUES ($1, $2, 'article', 'RLS sheet source')`,
+      [aSheetSourceId, ACTOR_A],
+    );
+    aSheetQuestionId = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_questions (id, user_id, source_id, space, question_type, stem)
+       VALUES ($1, $2, $3, '阅读', 'reading_choice', 'RLS sheet question')`,
+      [aSheetQuestionId, ACTOR_A, aSheetSourceId],
+    );
+
+    aSheetId = randomUUID();
+    aAttemptId = randomUUID();
+    aDraftAnnotationId = randomUUID();
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      // 开纸（draft，answers 在写）
+      await tx.query(
+        `INSERT INTO l3_submissions
+           (id, user_id, scope, scope_key, source_id, question_type, status, answers)
+         VALUES ($1, $2, 'file', $3, $4, 'reading_choice', 'draft', $5::jsonb)`,
+        [aSheetId, ACTOR_A, `file:${aSheetSourceId}:reading_choice`, aSheetSourceId,
+          JSON.stringify({ [aSheetQuestionId]: { choice: "B" } })],
+      );
+      // 草稿注记挂题纸（stage='draft'）
+      await tx.query(
+        `INSERT INTO l3_question_annotations (id, user_id, question_id, note, stage, sheet_id)
+         VALUES ($1, $2, $3, 'draft judgement', 'draft', $4)`,
+        [aDraftAnnotationId, ACTOR_A, aSheetQuestionId, aSheetId],
+      );
+      // 定格：物化 attempt → 注记升格 → sheet sealed + answers 清空
+      await tx.query(
+        `INSERT INTO l3_question_attempts (id, user_id, question_id, sheet_id, venue, answer)
+         VALUES ($1, $2, $3, $4, 'file', $5::jsonb)`,
+        [aAttemptId, ACTOR_A, aSheetQuestionId, aSheetId, JSON.stringify({ choice: "B" })],
+      );
+      const promoted = await tx.query(
+        `UPDATE l3_question_annotations SET stage = 'submitted', updated_at = now()
+         WHERE sheet_id = $1 AND stage = 'draft' AND status = 'active' RETURNING id`,
+        [aSheetId],
+      );
+      expect(promoted.rows).toHaveLength(1);
+      const sealed = await tx.query(
+        `UPDATE l3_submissions SET status = 'sealed', seal_mode = 'full', sealed_at = now(),
+           answers = '{}'::jsonb, updated_at = now()
+         WHERE id = $1 AND status = 'draft' RETURNING id`,
+        [aSheetId],
+      );
+      expect(sealed.rows).toHaveLength(1);
+    });
+
+    const sheet = await adminPool.query<{ status: string; answers: unknown }>(
+      "SELECT status, answers FROM l3_submissions WHERE id = $1", [aSheetId],
+    );
+    expect(sheet.rows[0]!.status).toBe("sealed");
+    expect(sheet.rows[0]!.answers).toEqual({});
+    const attempt = await adminPool.query<{ answer: unknown }>(
+      "SELECT answer FROM l3_question_attempts WHERE id = $1", [aAttemptId],
+    );
+    expect(attempt.rows[0]!.answer).toEqual({ choice: "B" });
+    const promotedStage = await adminPool.query<{ stage: string }>(
+      "SELECT stage FROM l3_question_annotations WHERE id = $1", [aDraftAnnotationId],
+    );
+    expect(promotedStage.rows[0]!.stage).toBe("submitted");
+  });
+
+  it("actor B cannot read actor A's sheet, attempts or sheet-scoped notes", async () => {
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const counts = await tx.query<{ sheets: number; attempts: number }>(
+        `SELECT
+           (SELECT count(*)::int FROM l3_submissions) AS sheets,
+           (SELECT count(*)::int FROM l3_question_attempts) AS attempts`,
+      );
+      expect(counts.rows[0]).toEqual({ sheets: 0, attempts: 0 });
+      const bySheet = await tx.query(
+        "SELECT id FROM l3_submissions WHERE id = $1", [aSheetId],
+      );
+      expect(bySheet.rows).toHaveLength(0);
+    });
+  });
+
+  it("actor B mutations on actor A's sheet/attempts are no-ops", async () => {
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const patched = await tx.query(
+        `UPDATE l3_submissions SET answers = '{"hijack": true}'::jsonb, updated_at = now()
+         WHERE id = $1 AND status = 'draft' RETURNING id`,
+        [aSheetId],
+      );
+      expect(patched.rows).toHaveLength(0);
+      const softDeleted = await tx.query(
+        `UPDATE l3_question_attempts SET status = 'deleted', deleted_at = now()
+         WHERE id = $1 RETURNING id`,
+        [aAttemptId],
+      );
+      expect(softDeleted.rows).toHaveLength(0);
+    });
+    const still = await adminPool.query<{ status: string }>(
+      "SELECT status FROM l3_question_attempts WHERE id = $1", [aAttemptId],
+    );
+    expect(still.rows[0]!.status).toBe("active");
+  });
+
+  it("rejects actor B inserting sheets/attempts attributed to actor A (RLS WITH CHECK)", async () => {
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_submissions (id, user_id, scope, scope_key, source_id, question_type)
+         VALUES ($1, $2, 'file', $3, $4, 'reading_choice')`,
+        [randomUUID(), ACTOR_A, `file:${aSheetSourceId}:reading_choice`, aSheetSourceId],
+      );
+    })).rejects.toThrow(/row-level security/i);
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_attempts (id, user_id, question_id, venue, answer)
+         VALUES ($1, $2, $3, 'file', '{}'::jsonb)`,
+        [randomUUID(), ACTOR_A, aSheetQuestionId],
+      );
+    })).rejects.toThrow(/row-level security/i);
+  });
+
+  it("keeps the sealed sheet read-only: answers updates behind the draft predicate are no-ops", async () => {
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      const updated = await tx.query(
+        `UPDATE l3_submissions SET answers = '{"late": true}'::jsonb, updated_at = now()
+         WHERE id = $1 AND status = 'draft' RETURNING id`,
+        [aSheetId],
+      );
+      expect(updated.rows).toHaveLength(0);
+    });
+    const answers = await adminPool.query<{ answers: unknown }>(
+      "SELECT answers FROM l3_submissions WHERE id = $1", [aSheetId],
+    );
+    expect(answers.rows[0]!.answers).toEqual({});
+  });
+
+  // ── 0035 批次二增补：评析区（一题一条 upsert）的行级隔离 ──
+  let aAssessSourceId = "";
+  let aAssessQuestionId = "";
+
+  it("actor A upserts a question assessment via vocab_app (ON CONFLICT path)", async () => {
+    aAssessSourceId = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_sources (id, user_id, source_type, title)
+       VALUES ($1, $2, 'article', 'RLS assessment source')`,
+      [aAssessSourceId, ACTOR_A],
+    );
+    aAssessQuestionId = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_questions (id, user_id, source_id, space, question_type, stem)
+       VALUES ($1, $2, $3, '阅读', 'reading_choice', 'RLS assessment question')`,
+      [aAssessQuestionId, ACTOR_A, aAssessSourceId],
+    );
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_assessments (id, user_id, question_id, content_md, last_editor)
+         VALUES ($1, $2, $3, 'owner 首写', 'owner')
+         ON CONFLICT (user_id, question_id)
+         DO UPDATE SET content_md = EXCLUDED.content_md, last_editor = EXCLUDED.last_editor, updated_at = now()`,
+        [randomUUID(), ACTOR_A, aAssessQuestionId],
+      );
+      // 覆盖写（latest-wins；last_editor 留痕）
+      await tx.query(
+        `INSERT INTO l3_question_assessments (id, user_id, question_id, content_md, last_editor)
+         VALUES ($1, $2, $3, 'agent 覆写', 'agent')
+         ON CONFLICT (user_id, question_id)
+         DO UPDATE SET content_md = EXCLUDED.content_md, last_editor = EXCLUDED.last_editor, updated_at = now()`,
+        [randomUUID(), ACTOR_A, aAssessQuestionId],
+      );
+    });
+    const rows = await adminPool.query<{ content_md: string; last_editor: string }>(
+      "SELECT content_md, last_editor FROM l3_question_assessments WHERE question_id = $1",
+      [aAssessQuestionId],
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]).toEqual({ content_md: "agent 覆写", last_editor: "agent" });
+  });
+
+  it("actor B cannot read or mutate actor A's assessment", async () => {
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const read = await tx.query(
+        "SELECT id FROM l3_question_assessments WHERE question_id = $1", [aAssessQuestionId],
+      );
+      expect(read.rows).toHaveLength(0);
+      const patched = await tx.query(
+        "UPDATE l3_question_assessments SET content_md = 'hijack' WHERE question_id = $1 RETURNING id",
+        [aAssessQuestionId],
+      );
+      expect(patched.rows).toHaveLength(0);
+    });
+    const still = await adminPool.query<{ content_md: string }>(
+      "SELECT content_md FROM l3_question_assessments WHERE question_id = $1", [aAssessQuestionId],
+    );
+    expect(still.rows[0]!.content_md).toBe("agent 覆写");
+  });
+
+  it("rejects actor B inserting an assessment attributed to actor A (RLS WITH CHECK)", async () => {
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_assessments (id, user_id, question_id, content_md, last_editor)
+         VALUES ($1, $2, $3, '越权', 'agent')`,
+        [randomUUID(), ACTOR_A, aAssessQuestionId],
+      );
+    })).rejects.toThrow(/row-level security/i);
   });
 });

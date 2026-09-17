@@ -9,6 +9,7 @@ vi.mock("@/db/connection", () => ({
 }));
 
 import { createRepositories } from "@/index";
+import { encodeCursor } from "@/repositories/l3-cursor";
 
 const BASE_CONTEXT_ROW = {
   context_id: "00000000-0000-4000-8000-000000000201",
@@ -637,5 +638,274 @@ describe("L3ContextRepository", () => {
       cursor: "not-a-valid-cursor",
     })).rejects.toBeInstanceOf(Error);
     expect(mock.calls).toHaveLength(0);
+  });
+
+  it("applies direction and space filters to source listings", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+    await repos.l3Context.listSources({
+      userId: BASE_CONTEXT_ROW.user_id,
+      sort: "recent",
+      limit: 10,
+      offset: 0,
+      direction: "雅思",
+      space: "阅读",
+    });
+
+    const texts = mock.calls.map((call) => call.text).join("\n");
+    expect(texts).toContain("AND s.direction = $");
+    expect(texts).toContain("EXISTS (SELECT 1 FROM l3_source_spaces sp");
+    const params = mock.calls.flatMap((call) => call.params);
+    expect(params).toContain("雅思");
+    expect(params).toContain("阅读");
+  });
+
+  it("applies direction and space filters to word context listings", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+    await repos.l3Context.listContextsForWord({
+      userId: BASE_CONTEXT_ROW.user_id,
+      slug: "vivid",
+      limit: 10,
+      direction: "考研",
+      space: "语法",
+    });
+
+    expect(mock.lastQuery?.text).toContain("AND s.direction = $");
+    expect(mock.lastQuery?.text).toContain("EXISTS (SELECT 1 FROM l3_source_spaces sp");
+    expect(mock.lastQuery?.params).toContain("考研");
+    expect(mock.lastQuery?.params).toContain("语法");
+  });
+
+  it("lists occurrences with joins, filters, and cursor paging", async () => {
+    const row = {
+      ...BASE_CONTEXT_ROW,
+      occ_id: "occ-1",
+      occ_context_id: BASE_CONTEXT_ROW.context_id,
+      occ_word_id: "w1",
+      occ_user_id: BASE_CONTEXT_ROW.user_id,
+      occ_surface: "vivid",
+      occ_lemma: "vivid",
+      occ_start_offset: 2,
+      occ_end_offset: 7,
+      occ_confidence: null,
+      occ_evidence: {},
+      occ_bound_sense: null,
+      occ_created_at: "2026-07-08T00:00:00Z",
+      word_slug: "vivid",
+      word_title: "vivid",
+    };
+    mock.setRows([row, { ...row, occ_id: "occ-2", occ_created_at: "2026-07-07T00:00:00Z" }]);
+    const repos = createRepositories();
+    const result = await repos.l3Context.listOccurrences({
+      userId: BASE_CONTEXT_ROW.user_id,
+      slug: "vivid",
+      contextId: BASE_CONTEXT_ROW.context_id,
+      direction: "雅思",
+      space: "阅读",
+      limit: 1,
+      cursor: encodeCursor("2026-07-09T00:00:00Z", "00000000-0000-4000-8000-000000000299"),
+    });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].occurrence.id).toBe("occ-1");
+    expect(result.items[0].word.slug).toBe("vivid");
+    expect(result.items[0].context.text).toBe("A vivid context.");
+    expect(result.items[0].source.title).toBe("Essay");
+    expect(result.nextCursor).not.toBeNull();
+    const sql = mock.lastQuery?.text ?? "";
+    expect(sql).toContain("FROM l3_occurrences o");
+    expect(sql).toContain("JOIN words w ON w.id = o.word_id");
+    expect(sql).toContain("w.slug = $");
+    expect(sql).toContain("o.context_id = $");
+    expect(sql).toContain("s.direction = $");
+    expect(sql).toContain("EXISTS (SELECT 1 FROM l3_source_spaces sp");
+    expect(sql).toContain("(o.created_at, o.id) <");
+  });
+
+  it("lists context links with nullable joins and linkType filters", async () => {
+    const linked = {
+      ...BASE_CONTEXT_ROW,
+      link_id: "link-1",
+      link_user_id: BASE_CONTEXT_ROW.user_id,
+      link_context_id: BASE_CONTEXT_ROW.context_id,
+      link_word_id: "w1",
+      link_type: "supports",
+      target_type: "external",
+      target_id: "https://example.com/a",
+      target_ref: {},
+      link_confidence: null,
+      link_provenance: {},
+      link_created_at: "2026-07-08T00:00:00Z",
+      word_slug: "vivid",
+      word_title: "vivid",
+    };
+    mock.setRows([linked]);
+    const repos = createRepositories();
+    const result = await repos.l3Context.listContextLinks({
+      userId: BASE_CONTEXT_ROW.user_id,
+      wordId: "w1",
+      linkType: "supports",
+      targetType: "external",
+      direction: "雅思",
+      space: "阅读",
+      limit: 10,
+    });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].link.link_type).toBe("supports");
+    expect(result.items[0].word?.slug).toBe("vivid");
+    expect(result.items[0].context?.text).toBe("A vivid context.");
+    expect(result.items[0].source?.title).toBe("Essay");
+    const sql = mock.lastQuery?.text ?? "";
+    expect(sql).toContain("FROM l3_context_links l");
+    expect(sql).toContain("l.word_id = $");
+    expect(sql).toContain("l.link_type = $");
+    expect(sql).toContain("l.target_type = $");
+    expect(sql).toContain("LEFT JOIN l3_contexts c");
+    expect(sql).toContain("s.direction = $");
+
+    const orphanRow = {
+      context_id: null, source_id: null, user_id: null, context_type: null, text: null,
+      normalized_text: null, context_language: null, position: null, context_metadata: null,
+      context_created_at: null, context_updated_at: null, source_user_id: null, wordbook_id: null,
+      source_type: null, title: null, author: null, url: null, source_language: null,
+      source_metadata: null, source_created_at: null, source_updated_at: null,
+      link_id: "link-2", link_user_id: BASE_CONTEXT_ROW.user_id, link_context_id: null, link_word_id: null,
+      link_type: "manual_link", target_type: "external", target_id: null, target_ref: {},
+      link_confidence: null, link_provenance: {}, link_created_at: "2026-07-08T00:00:00Z",
+      word_slug: null, word_title: null,
+    };
+    mock.setRows([orphanRow]);
+    const orphanResult = await repos.l3Context.listContextLinks({ userId: BASE_CONTEXT_ROW.user_id, limit: 10 });
+    expect(orphanResult.items[0].link.id).toBe("link-2");
+    expect(orphanResult.items[0].word).toBeNull();
+    expect(orphanResult.items[0].context).toBeNull();
+    expect(orphanResult.items[0].source).toBeNull();
+  });
+
+  it("fails loudly when inserts return no row", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    await expect(repos.l3Context.createSource({
+      user_id: "u1", source_type: "article", title: "T",
+    })).rejects.toThrow("L3 source insert returned no row");
+    await expect(repos.l3Context.createContext({
+      user_id: "u1", source_id: "s1", context_type: "sentence", text: "T",
+    })).rejects.toThrow("L3 context insert returned no row");
+    await expect(repos.l3Context.createOccurrence({
+      user_id: "u1", context_id: "c1", word_id: "w1", surface: "v",
+    })).rejects.toThrow("L3 occurrence insert returned no row");
+    await expect(repos.l3Context.createContextLink({
+      user_id: "u1", link_type: "supports", target_type: "external",
+    })).rejects.toThrow("L3 context link insert returned no row");
+    await expect(repos.l3Context.createImportJob({
+      user_id: "u1", status: "pending", input_hash: "h",
+    })).rejects.toThrow("L3 import job insert returned no row");
+    await expect(repos.l3Context.updateImportJobStatus("job-1", "u1", "completed"))
+      .rejects.toThrow("L3 import job status update returned no row");
+  });
+
+  it("reaches anchor lookup, per-context occurrences, and content-hash lookups", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    const anchor = await repos.l3Context.findContextByAnchor("u1", "s1", 0, 5);
+    expect(anchor).toBeNull();
+    expect(mock.lastQuery?.text).toContain("FROM l3_contexts");
+
+    const occurrences = await repos.l3Context.listOccurrencesForContext("u1", "c1");
+    expect(occurrences).toEqual([]);
+    expect(mock.lastQuery?.text).toContain("FROM l3_occurrences");
+
+    const byHash = await repos.l3Context.findSourceByContentHash("u1", "hash");
+    expect(byHash).toBeNull();
+    expect(mock.lastQuery?.text).toContain("content_hash = $2");
+  });
+
+  it("applies sourceType and search filters to source listings", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+    await repos.l3Context.listSources({
+      userId: "u1", sourceType: "web", q: "econ", sort: "captures", limit: 5, offset: 0,
+    });
+
+    const texts = mock.calls.map((call) => call.text).join("\n");
+    expect(texts).toContain("s.source_type = $");
+    expect(texts).toContain("ILIKE");
+    expect(texts).toContain("context_count DESC NULLS LAST");
+  });
+
+  it("covers the remaining evidence filter variants", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    await repos.l3Context.listOccurrences({ userId: "u1", wordId: "w1", limit: 10 });
+    expect(mock.lastQuery?.text).toContain("o.word_id = $");
+
+    await repos.l3Context.listOccurrences({ userId: "u1", limit: 10 });
+    expect(mock.lastQuery?.text).toContain("FROM l3_occurrences o");
+    expect(mock.lastQuery?.text).not.toContain("o.word_id = $");
+
+    await repos.l3Context.listContextLinks({ userId: "u1", slug: "vivid", limit: 10 });
+    expect(mock.lastQuery?.text).toContain("w.slug = $");
+
+    await repos.l3Context.listContextLinks({ userId: "u1", contextId: "c1", limit: 10 });
+    expect(mock.lastQuery?.text).toContain("l.context_id = $");
+
+    await repos.l3Context.listContextLinks({
+      userId: "u1",
+      limit: 10,
+      cursor: encodeCursor("2026-07-09T00:00:00Z", "00000000-0000-4000-8000-000000000299"),
+    });
+    expect(mock.lastQuery?.text).toContain("(l.created_at, l.id) <");
+  });
+
+  it("space summary counts aggregate every L3 entity under the caller scope", async () => {
+    mock.setRows([{ source_count: "2", context_count: "5", occurrence_count: "7", link_count: "1" }]);
+    const repos = createRepositories();
+
+    const counts = await repos.l3Context.getSpaceSummaryCounts("u1");
+
+    expect(counts).toEqual({ sourceCount: 2, contextCount: 5, occurrenceCount: 7, linkCount: 1 });
+    const sql = mock.lastQuery?.text ?? "";
+    expect(sql).toContain("l3_sources");
+    expect(sql).toContain("l3_contexts");
+    expect(sql).toContain("l3_occurrences");
+    expect(sql).toContain("l3_context_links");
+    expect(mock.lastQuery?.params).toEqual(["u1"]);
+  });
+
+  // 覆盖率纪律：新增的 ?? 回退必须有测试真实行使（空库/聚合行缺失时回退为 0）。
+  it("space summary counts fall back to zeroes when the aggregate row is missing", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    await expect(repos.l3Context.getSpaceSummaryCounts("u1")).resolves.toEqual({
+      sourceCount: 0,
+      contextCount: 0,
+      occurrenceCount: 0,
+      linkCount: 0,
+    });
+  });
+
+  it("space growth groups by the display timezone day and passes the window through", async () => {
+    mock.setRows([
+      { day: "2026-09-08", source_count: "1", context_count: "2", occurrence_count: "2", link_count: "0" },
+      { day: "2026-09-12", source_count: "0", context_count: "1", occurrence_count: "3", link_count: "1" },
+    ]);
+    const repos = createRepositories();
+
+    const byDay = await repos.l3Context.getSpaceGrowth("u1", 30);
+
+    expect(byDay).toEqual([
+      { day: "2026-09-08", sourceCount: 1, contextCount: 2, occurrenceCount: 2, linkCount: 0 },
+      { day: "2026-09-12", sourceCount: 0, contextCount: 1, occurrenceCount: 3, linkCount: 1 },
+    ]);
+    const sql = mock.lastQuery?.text ?? "";
+    expect(sql).toContain("AT TIME ZONE 'Asia/Shanghai'");
+    expect(sql).toContain("GROUP BY day");
+    expect(mock.lastQuery?.params).toEqual(["u1", 30]);
   });
 });

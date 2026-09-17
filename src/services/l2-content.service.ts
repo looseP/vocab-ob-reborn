@@ -25,7 +25,7 @@ import { buildPromptForField } from "../llm/prompts";
 import { logger } from "../observability/logger";
 import { parseL2Content } from "../schemas/service";
 import type { L2Field } from "../schemas/service";
-import type { L2ContentRow } from "../domain";
+import type { Direction, L2ContentRow } from "../domain";
 import {
   getStyleProfile,
   validateStyleProfileField,
@@ -185,6 +185,11 @@ export interface GenerateDraftOptions {
   count?: number;
   /** Free-text caller guidance (reserved for B5 external-prompt flow). */
   userInstruction?: string;
+  /**
+   * ADR-0017 §2 / ADR-0018：内容方向（升级工作台从工单注入）。
+   * 缺省 `通用`——prompt 与落库行为均与方向化之前一致。
+   */
+  direction?: Direction;
 }
 
 /**
@@ -201,6 +206,11 @@ export interface ConfirmDraftOptions {
   approvedBy?: string | null;
   /** Authenticated actor projected into transaction-local PostgreSQL RLS. */
   actorId?: string;
+  /**
+   * ADR-0017 §2 / ADR-0018：确认写入的内容方向（升级工作台从工单注入）。
+   * 缺省 `通用`——既有调用方（词条详情页 / 外部通道）行为不变。
+   */
+  direction?: Direction;
 }
 
 /**
@@ -212,6 +222,11 @@ export interface BuildExternalPromptOptions {
   styleProfileId?: string;
   count?: number;
   userInstruction?: string;
+  /**
+   * ADR-0017 §2 / ADR-0018：内容方向（升级工作台从工单注入）。
+   * 缺省 `通用`——prompt 文本与方向化之前逐字节一致。
+   */
+  direction?: Direction;
 }
 
 /** Result of {@link L2ContentService.buildExternalPrompt}. */
@@ -262,6 +277,9 @@ function resolveStyleProfile(
   return profile;
 }
 
+/** ADR-0017 §2：方向固定三值（DB CHECK 与 prompt 层同值）。 */
+const L2_DIRECTIONS: readonly Direction[] = ["通用", "考研", "雅思"];
+
 /**
  * Normalize the third `generateDraft` parameter into a full options object.
  *
@@ -276,6 +294,9 @@ function normalizeDraftOptions(
     ? { source: sourceOrOptions }
     : sourceOrOptions ?? {};
 
+  if (options.direction !== undefined && !L2_DIRECTIONS.includes(options.direction)) {
+    throw new ValidationError(`direction must be one of ${L2_DIRECTIONS.join(", ")}`, "direction");
+  }
   if (options.count !== undefined && (
     !Number.isInteger(options.count) ||
     options.count < 1 ||
@@ -577,6 +598,7 @@ export class L2ContentService {
         count: options.count,
         styleProfile,
         userInstruction: options.userInstruction,
+        direction: options.direction,
       });
 
       let result;
@@ -711,11 +733,13 @@ export class L2ContentService {
     }
 
     // 4. Pick the prompt template for the requested field, threading the
-    //    resolved style profile into corpus/example prompts (B4).
+    //    resolved style profile into corpus/example prompts (B4) and the
+    //    direction (ADR-0017) into the shared prompt options.
     const messages = buildPromptForField(field, word, {
       styleProfile,
       count: options.count,
       userInstruction: options.userInstruction,
+      direction: options.direction,
     });
 
     // 5. Call the provider — catch provider/transport errors.
@@ -869,6 +893,7 @@ export class L2ContentService {
       dictionaryCandidates,
       count: options.count,
       userInstruction: options.userInstruction,
+      direction: options.direction,
     });
 
     // Stable, human-readable prompt text: join messages with role markers so
@@ -1026,6 +1051,9 @@ ${provenanceSourceHint}`;
         source,
         source_ref: sourceRef,
         approved_by: approvedBy,
+        // ADR-0017 §2：direction 从请求进入（升级工作台经工单注入）；
+        // 缺省 `通用` 桶——词条详情页 / 外部通道等既有调用方行为不变。
+        direction: opts.direction ?? "通用",
       });
 
       // 2. Refresh the words JSONB cache columns from all active rows.
@@ -1055,7 +1083,17 @@ ${provenanceSourceHint}`;
     wordId: string,
     field: L2Field,
     content: unknown,
-    opts?: { source?: string; sourceRef?: string | null; approvedBy?: string; actorId?: string },
+    opts?: {
+      source?: string;
+      sourceRef?: string | null;
+      approvedBy?: string;
+      actorId?: string;
+      /**
+       * ADR-0017 §2：候选行方向（升级工单在生成时指定 `考研`/`雅思` 等）。
+       * 缺省 `通用` —— 既有调用方零改动（HTTP 路由 / 外部 agent 不传即通用桶）。
+       */
+      direction?: Direction;
+    },
   ): Promise<{ candidateId: string; itemCount: number }> {
     try {
       assertJsonResourceBudget(content, {
@@ -1084,6 +1122,7 @@ ${provenanceSourceHint}`;
         source_ref: opts?.sourceRef ?? null,
         approved_by: opts?.approvedBy ?? "agent",
         is_active: false,
+        direction: opts?.direction ?? "通用",
       });
       return row.id;
     }, { actorId: opts?.actorId });

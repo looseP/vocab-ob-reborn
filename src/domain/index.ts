@@ -1,6 +1,9 @@
 /** Domain types — pure, zero DB/runtime dependencies. */
 
 import type { ParsedCoreDefinition } from "./ingest/types";
+import type { L3PracticeType } from "./l3-practice-task";
+
+export type { L3PracticeType };
 
 // ── Common ──────────────────────────────────────────────────────────────
 export type Json =
@@ -278,13 +281,30 @@ export interface NoteEntryRow {
 }
 
 // ── Wordbook ────────────────────────────────────────────────────────────
+
+/**
+ * Direction（方向，ADR-0017）：考试/用途风味轴，挂在词书、L2 内容行与 L3 来源上。
+ * `通用` 是方向无关桶——方向专属界面先展示本方向，再回退 `通用`。
+ * 词书方向不建列，落在 `wordbooks.settings` jsonb（见 WordbookSettings）。
+ */
+export type Direction = "通用" | "考研" | "雅思";
+
+/** `wordbooks.settings` jsonb 的形状（0 迁移；direction 缺省视为 `通用`）。 */
+export type WordbookSettings = {
+  direction?: Direction;
+  review?: {
+    desired_retention?: number;
+    fsrs_weights?: number[];
+  };
+};
+
 export interface WordbookRow {
   id: string;
   user_id: string;
   name: string;
   description: string | null;
   is_default: boolean;
-  settings: Json;
+  settings: WordbookSettings | null;
   created_at: string;
   updated_at: string;
 }
@@ -387,6 +407,8 @@ export interface L2ContentRow {
   id: string;
   word_id: string;
   field: string;
+  /** ADR-0017 §2：内容行方向（默认 `通用`）。读取侧按"当前方向 + 通用兜底"过滤。 */
+  direction: Direction;
   content: Json;
   source: string;
   source_ref: string | null;
@@ -396,8 +418,30 @@ export interface L2ContentRow {
   is_active: boolean;
 }
 
-// ── L3 Context Space ────────────────────────────────────────────────────
+// ── Upgrade Work Order ───────────────────────────────────────────────────
+/**
+ * 升级工单状态机（ADR-0018 §1；DB CHECK 同值）：
+ *   标记中 → 升级中 → 已完成；任意进行中态可 → 已取消。
+ * 部分唯一索引保证同一 (user, word, wordbook) 至多一张进行中工单。
+ */
+export type UpgradeWorkOrderStatus = "标记中" | "升级中" | "已完成" | "已取消";
 
+/** 升级工单行（upgrade_work_orders，0028）。direction 由工单指定（ADR-0017 §2）。 */
+export interface UpgradeWorkOrderRow {
+  id: string;
+  user_id: string;
+  word_id: string;
+  wordbook_id: string;
+  direction: Direction;
+  status: UpgradeWorkOrderStatus;
+  /** 标记时刻的升级建议快照（三档 + 输入证据）；纯提示、零 FSRS 写入。 */
+  suggestion_snapshot: Json | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+// ── L3 Context Space ────────────────────────────────────────────────────
 export type L3SourceType = "article" | "book" | "video" | "audio" | "chat" | "manual" | "web" | "other";
 export type L3ContextType = "sentence" | "paragraph" | "excerpt" | "dialogue" | "note";
 export type L3ContextLinkType =
@@ -486,6 +530,311 @@ export interface L3ImportJobRow {
   updated_at: string;
 }
 
+// ── L3 practice attempts（ADR-0019 §1/§3）───────────────────────────────
+/**
+ * 子空间（能力域轴，ADR-0019 §4）：固定枚举，与 Direction（考试轴）正交。
+ * 落在 l3_source_spaces junction（多对多），DB CHECK 同值。
+ */
+export type L3SubSpace = "语法" | "阅读" | "作文" | "翻译" | "通用";
+
+/** 练习判定结果（l3_practice_attempts.outcome CHECK 同值）。 */
+export type L3PracticeOutcome = "correct" | "wrong" | "skip";
+
+/** L3 练习记录行（l3_practice_attempts，0028）。零 FSRS 列：有记录、无调度。 */
+export interface L3PracticeAttemptRow {
+  id: string;
+  user_id: string;
+  context_id: string;
+  occurrence_id: string | null;
+  session_id: string | null;
+  practice_type: L3PracticeType;
+  outcome: L3PracticeOutcome;
+  payload: Json;
+  created_at: string;
+}
+
+/** 练习记录分页（offset 口径，对齐 l3-context.listSources 的既有 L3 列表惯例）。 */
+export interface L3PracticeAttemptPage {
+  items: L3PracticeAttemptRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// ── L3 题目 / 试卷（ADR-0030：题与 context 严格分离，文件为派生视图）────────
+import type {
+  L3EvidenceAnchor,
+  L3PaperPayload,
+  L3PaperSection,
+  L3PaperStatus,
+  L3QuestionAnswer,
+  L3QuestionOption,
+  L3QuestionStatus,
+  L3QuestionType,
+} from "./l3-question-types";
+export type {
+  L3EvidenceAnchor,
+  L3PaperPayload,
+  L3PaperSection,
+  L3PaperStatus,
+  L3QuestionAnswer,
+  L3QuestionOption,
+  L3QuestionStatus,
+  L3QuestionType,
+};
+
+/** l3_questions 行（jsonb 列以结构化形态读出，由 repository 负责反序列化收窄）。 */
+export interface L3QuestionRow {
+  id: string;
+  user_id: string;
+  source_id: string | null;
+  file_key: string | null;
+  space: L3SubSpace;
+  question_type: L3QuestionType;
+  ordinal: number;
+  stem: string;
+  options: L3QuestionOption[];
+  answer: L3QuestionAnswer;
+  explanation: string | null;
+  evidence: L3EvidenceAnchor[];
+  status: L3QuestionStatus;
+  created_by: string;
+  input_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** l3_papers 行（卷面 sections 存 payload 引用，不建 sections 表）。 */
+export interface L3PaperRow {
+  id: string;
+  user_id: string;
+  title: string;
+  direction: Direction | null;
+  metadata: Json;
+  payload: L3PaperPayload;
+  payload_version: number;
+  status: L3PaperStatus;
+  created_by: string;
+  input_hash: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 做题文件列表项：文件 = (source_id, question_type) 或 file_key 上的题组聚合。 */
+export interface L3PracticeFileListItem {
+  question_type: L3QuestionType;
+  source_id: string | null;
+  file_key: string | null;
+  /** 有正文文件取材料标题；无正文取题组键。 */
+  title: string;
+  direction: Direction | null;
+  question_count: number;
+  latest_created_at: string;
+}
+
+export interface L3PracticeFilePage {
+  items: L3PracticeFileListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** 试卷列表项（不含 payload）。 */
+export interface L3PaperListItem {
+  id: string;
+  title: string;
+  direction: Direction | null;
+  status: L3PaperStatus;
+  section_count: number;
+  question_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface L3PaperListPage {
+  items: L3PaperListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** 卷面组装后的 section：引用缺失时降级 missing 占位而不是 500（ADR-0030 §2 护栏②）。 */
+export type L3AssembledSection =
+  | (L3PaperSection & { missing: false; source_title: string | null; source_content: string | null; questions: L3QuestionRow[] })
+  | (L3PaperSection & { missing: true; missing_reason: string; source_title: string | null; source_content: string | null; questions: L3QuestionRow[] });
+
+export interface L3PaperDetail extends Omit<L3PaperRow, "payload"> {
+  payload: L3PaperPayload;
+  sections: L3AssembledSection[];
+}
+
+// ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ────────────────
+import type { AnnotationStage } from "./l3-annotations";
+import type { SealMode, SheetScope, SheetStatus } from "./l3-sheets";
+export type { AnnotationStage, SealMode, SheetScope, SheetStatus };
+export type L3AnnotationTagKind = "entry" | "option";
+export type L3AnnotationOptionKey = "A" | "B" | "C" | "D";
+
+/** l3_question_annotations 行（jsonb 列由 repository 反序列化收窄）。 */
+export interface L3QuestionAnnotationRow {
+  id: string;
+  user_id: string;
+  question_id: string;
+  ordinal: number;
+  anchor_start: number | null;
+  anchor_end: number | null;
+  excerpt: string | null;
+  note: string;
+  entry_tags: string[];
+  option_tags: Partial<Record<L3AnnotationOptionKey, string[]>>;
+  /** 批次二（ADR-0034 §3）：stage 生命周期（draft→submitted→confirmed），与软删 status 正交。 */
+  stage: AnnotationStage;
+  /** 草稿期挂题纸（定格升格后保留溯源；题纸删除 SET NULL）。 */
+  sheet_id: string | null;
+  /** agent 检验产物（批次三写；note/锚点/原判标签不可篡改，订正归 owner）。 */
+  review: Json | null;
+  status: "active" | "deleted";
+  created_at: string;
+  updated_at: string;
+}
+
+/** l3_question_assessments 行（评析区，一题一条 latest-wins；增补批 0035）。 */
+export interface L3QuestionAssessmentRow {
+  id: string;
+  user_id: string;
+  question_id: string;
+  content_md: string;
+  last_editor: "owner" | "agent";
+  created_at: string;
+  updated_at: string;
+}
+
+/** l3_annotation_tags 行（预置 + 用户增删改，按用户隔离）。 */
+export interface L3AnnotationTagRow {
+  id: string;
+  user_id: string;
+  kind: L3AnnotationTagKind;
+  label: string;
+  ordinal: number;
+  status: "active" | "deleted";
+  created_at: string;
+  updated_at: string;
+}
+
+// ── 批次二（0034）：题纸与作答历史（ADR-0034 §1/§2）─────────────────────
+/** l3_submissions 行（题纸：draft 期含 answers；定格后 answers 清空、明细从 attempts 派生）。 */
+export interface L3SubmissionRow {
+  id: string;
+  user_id: string;
+  scope: SheetScope;
+  /** 'file:<source_id>:<question_type>' 或 'paper:<paper_id>'（domain 构造器单一收口）。 */
+  scope_key: string;
+  source_id: string | null;
+  question_type: L3QuestionType | null;
+  paper_id: string | null;
+  status: SheetStatus;
+  /** 仅 draft 期有效；定格物化 attempts 后清空（attempts 是唯一作答真源）。 */
+  answers: Record<string, Json>;
+  seal_mode: SealMode | null;
+  summary: string | null;
+  sealed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** l3_question_attempts 行（题级作答历史；读取过滤 deleted；无判定列——verdict 真源归一 l3_grading_results）。 */
+export interface L3QuestionAttemptRow {
+  id: string;
+  user_id: string;
+  question_id: string;
+  sheet_id: string | null;
+  venue: SheetScope;
+  answer: Json;
+  /** 当场自评快照（形状宽松，题类型各自定义键）。 */
+  self_assessment: Json | null;
+  status: "active" | "deleted";
+  deleted_at: string | null;
+  created_at: string;
+}
+
+// ── L3 error book（T11 加固：服务端聚合 + cursor 纯新增）───────────────────
+/**
+ * 错题库条目：wrong attempt 行 + **服务端聚合**的语境级统计。
+ * wrongCount = 该语境全量 outcome='wrong' 计数；latestOutcome / latestAt 取自
+ * 该语境最近一次作答（不限 outcome）——三者均不受任何分页窗口/页大小限制。
+ */
+export interface L3PracticeErrorBookItem extends L3PracticeAttemptRow {
+  wrongCount: number;
+  latestOutcome: L3PracticeOutcome;
+  /** 与该 latestOutcome 同源的最近作答时间（ISO 字符串）。 */
+  latestAt: string;
+}
+
+/**
+ * 错题库分页：offset 参数保留（兼容窗口不删），cursor 纯新增；两者同时出现
+ * 时以 cursor 为准（offset 被忽略，响应 offset 恒 0）。`nextCursor` 在两种
+ * 模式下均给出：null = 已到末页（当前 items 已含过滤条件下全部记录）。
+ */
+export interface L3PracticeErrorBookPage {
+  items: L3PracticeErrorBookItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  nextCursor: string | null;
+}
+
+// ── L3 sessions（ADR-0019 §2：慢学习容器）─────────────────────────────
+export type L3SessionType = "l2_upgrade" | "l3_practice" | "cram_pack" | "knowledge";
+export type L3SessionStatus = "active" | "completed" | "abandoned";
+
+/** L3 会话行（l3_sessions，0028）。plan 只存实体 id 引用 + version，不存产物。 */
+export interface L3SessionRow {
+  id: string;
+  user_id: string;
+  type: L3SessionType;
+  title: string | null;
+  plan: Json;
+  version: number;
+  status: L3SessionStatus;
+  started_at: string;
+  ended_at: string | null;
+  created_at: string;
+}
+
+/** 会话计划的一天：只存 context id 引用（不存文本）。 */
+export interface L3SessionPlanItem {
+  day: number;
+  contextIds: string[];
+}
+
+/** 会话计划（plan jsonb）：实体引用 + version（借 TypeWords flow version 思路）。 */
+export interface L3SessionPlan {
+  version: number;
+  days: number;
+  seed: string;
+  items: L3SessionPlanItem[];
+}
+
+/** 会话渲染用的语境投影（现拉现渲染，非冻结产物）。 */
+export interface L3SessionContextSummary {
+  id: string;
+  text: string;
+  context_type: L3ContextType;
+  source_id: string;
+  source_title: string;
+}
+
+/** 渲染描述的一天：plan 的 id 引用 + 当次现拉的语境数据。 */
+export interface L3SessionRenderItem {
+  day: number;
+  contexts: L3SessionContextSummary[];
+}
+
+export interface L3SessionRenderDescription {
+  session: L3SessionRow;
+  items: L3SessionRenderItem[];
+}
+
 export interface L3WordContextListItem {
   context: L3ContextRow;
   source: L3SourceRow;
@@ -553,6 +902,8 @@ export interface L3SourceListItem {
   url: string | null;
   created_at: string;
   context_count: number;
+  /** 能力域标签（l3_source_spaces，ADR-0019 §4；V0 接通写入；V0 前历史数据可能为空数组，新建恒至少含「通用」）。 */
+  spaces: L3SubSpace[];
 }
 
 export interface L3SourceListPage {
@@ -560,6 +911,22 @@ export interface L3SourceListPage {
   total: number;
   limit: number;
   offset: number;
+}
+
+/** L3 证据列表项（ADR-0029 §6①）：occurrence 主行 + 词 / 语境 / 来源三件套（一屏够用）。 */
+export interface L3OccurrenceListItem {
+  occurrence: L3OccurrenceRow;
+  word: { id: string; slug: string; title: string };
+  context: L3ContextRow;
+  source: L3SourceRow;
+}
+
+/** L3 证据列表项（ADR-0029 §6①）：context-link 主行 + 其词 / 语境 / 来源（随 link 挂点可空）。 */
+export interface L3ContextLinkListItem {
+  link: L3ContextLinkRow;
+  word: { id: string; slug: string; title: string } | null;
+  context: L3ContextRow | null;
+  source: L3SourceRow | null;
 }
 
 export type L3GraphNodeType = "word" | "context" | "source" | "l2_item" | "topic" | "external";
@@ -595,7 +962,31 @@ export interface L3GraphReadModel {
   metadata?: Json;
 }
 
-export type L3ProposalSourceType = "agent" | "import" | "external_tool" | "manual_draft" | "mcp_future" | "other";
+/** 空间汇总的每日新增行（B1 素材宇宙 / 生长趋势）：显示时区（Asia/Shanghai）自然日。 */
+export interface L3SpaceSummaryDay {
+  /** YYYY-MM-DD（显示时区切日，对齐 review/stats 的日界口径）。 */
+  day: string;
+  sourceCount: number;
+  contextCount: number;
+  occurrenceCount: number;
+  linkCount: number;
+}
+
+/**
+ * 空间汇总（B1 素材宇宙）：全量计数 + 生长趋势。
+ * - counts：四类实体全量计数（与 L3ReadStats 同语义，不随任何过滤器变化）；
+ * - growth.byDay：窗口内**每日新增**，升序、稀疏（仅含产生过新增的日期；
+ *   展示端按 windowDays 补零并自行累加出累计曲线）。
+ */
+export interface L3SpaceSummary {
+  counts: L3ReadStats;
+  growth: {
+    windowDays: number;
+    byDay: L3SpaceSummaryDay[];
+  };
+}
+
+export type L3ProposalSourceType = "agent" | "import" | "external_tool" | "manual_draft" | "other";
 export type L3ProposalStatus = "pending" | "confirmed" | "rejected" | "canceled";
 export type L3ProposalItemType = "source" | "context" | "occurrence" | "context_link";
 export type L3ProposalItemStatus = "pending" | "confirmed" | "rejected";
@@ -605,7 +996,13 @@ export interface L3ProposalRow {
   id: string;
   user_id: string;
   wordbook_id: string | null;
-  source_type: L3ProposalSourceType;
+  /**
+   * 契约桥接：写路径已收敛（L3_PROPOSAL_SOURCE_TYPES / 0031 CHECK 均无
+   * mcp_future），但 HTTP 响应契约冻结窗口未到（l3-response-contract /
+   * generated client 仍保留该字面量），读模型类型与之保持一致；service 层
+   * requireEnum 保证新写入不可能出现 mcp_future。
+   */
+  source_type: L3ProposalSourceType | "mcp_future";
   status: L3ProposalStatus;
   title: string | null;
   summary: string | null;

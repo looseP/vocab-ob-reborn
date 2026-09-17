@@ -321,6 +321,37 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
       public.l3_proposal_items TO vocab_app;
     GRANT SELECT, INSERT ON TABLE public.l3_recommendation_runs TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_recommendation_items TO vocab_app;
+    -- 0028（ADR-0018/0019）：升级工单（标记/推进/完成/取消 = 状态 UPDATE）、
+    -- L3 会话（建计划/读/结束）、L3 练习记录（写入/错题库读取，无删除路径——
+    -- 记录是错题库真相源，归档策略另议）。
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.upgrade_work_orders TO vocab_app;
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_sessions TO vocab_app;
+    GRANT SELECT, INSERT ON TABLE public.l3_practice_attempts TO vocab_app;
+    -- 0030（ADR-0019 §4）：L3 子空间 junction（source ↔ 语法/阅读/作文/翻译/通用）。
+    --   SELECT：按 (user_id, space) 过滤取源（T06 错题库 / T07 攻坚包）与展示子空间标记；
+    --   INSERT：把 source 挂到某个子空间；
+    --   DELETE：取消挂载（改归属 = DELETE + INSERT，不做原地 UPDATE，故不授 UPDATE；
+    --           对齐 l3_occurrences / l3_context_links 等 junction 的既有授权口径）。
+    GRANT SELECT, INSERT, DELETE ON TABLE public.l3_source_spaces TO vocab_app;
+    -- 0032（ADR-0030）：题目与试卷实体。题：录入/读/硬删（active 卷面引用由服务层
+    -- 409 护栏拦截）；卷：建卷/读（编辑/归档端点后续波次再授 UPDATE/DELETE）。
+    GRANT SELECT, INSERT, DELETE ON TABLE public.l3_questions TO vocab_app;
+    GRANT SELECT, INSERT ON TABLE public.l3_papers TO vocab_app;
+    -- 0033（批次一）：做题注记（原文分析条目）与规律标签字典。注记建/读/PATCH/软删；
+    -- tags 首次读取 lazy-seed、PUT 整存（事务内软删旧行 + 插新行）。四权齐备——
+    -- SELECT ... FOR UPDATE 行锁要求 UPDATE 权限（0021 同款行锁陷阱）。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_question_annotations,
+      public.l3_annotation_tags TO vocab_app;
+    -- 0034（批次二）：题纸（状态机 draft/sealed/discarded + answers 草稿列）与作答
+    -- 历史（题级链，软删走 UPDATE）。开纸/物化 INSERT、读 SELECT、PATCH/seal/软删
+    -- UPDATE；SELECT ... FOR UPDATE 行锁（seal 并发守卫）要求 UPDATE 权限（0024
+    -- 同款行锁陷阱）。无物理删路径（discarded/软删均为状态列），不授 DELETE。
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_submissions,
+      public.l3_question_attempts TO vocab_app;
+    -- 0035（批次二增补）：评析区（一题一条 upsert，latest-wins 覆写走 INSERT ... ON
+    -- CONFLICT DO UPDATE）。建/覆写与读三权齐备；DELETE 对齐 0033 注记四权惯例
+    -- （owner 后续删除能力预留，随后续端点一并启用）。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_question_assessments TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;

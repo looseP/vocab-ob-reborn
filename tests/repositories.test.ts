@@ -374,7 +374,7 @@ describe("SessionRepository", () => {
 describe("StatsRepository", () => {
   it("getDashboardSummary aggregates 9 queries", async () => {
     // All count queries return 5; the L2 stats query reads its own columns.
-    mock.setRows([{ count: "5", promoted: "2", due_now: "1", weak_signal: "0" }]);
+    mock.setRows([{ count: "5", promoted: "2", due_now: "1", weak_signal: "0", l2_reviewed_today: "3" }]);
     const repos = createRepositories();
     const result = await repos.stats.getDashboardSummary("u1", "wb1");
 
@@ -382,7 +382,7 @@ describe("StatsRepository", () => {
     expect(result.trackedWords).toBe(5);
     expect(result.dueToday).toBe(5);
     expect(result.reviewedToday).toBe(5);
-    expect(result.l2).toEqual({ promoted: 2, dueNow: 1, weakSignal: 0 });
+    expect(result.l2).toEqual({ promoted: 2, dueNow: 1, weakSignal: 0, reviewedToday: 3 });
     // 8 parallel queries + 1 streak query
     expect(mock.calls.length).toBe(9);
   });
