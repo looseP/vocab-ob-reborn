@@ -21,6 +21,15 @@ const QUESTION_ID = "00000000-0000-4000-8000-000000000101";
 const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
 
+// jsdom 不提供 IntersectionObserver（做题表面节导航观察器，同 exam-sheet 先例）。
+class IntersectionObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+  takeRecords(): [] { return []; }
+}
+(globalThis as Record<string, unknown>).IntersectionObserver ??= IntersectionObserverStub;
+
 const mountedRoots: Root[] = [];
 async function renderPage(props: Record<string, unknown> = {}): Promise<void> {
   const container = document.createElement("div");
@@ -46,33 +55,69 @@ beforeEach(() => {
   addToastMock.mockReset();
 });
 
+// ── 夹具与分派式 mock ───────────────────────────────────────────────────────
+// 文件详情自批次二补齐起 source 型走做题表面（L3ExamPaper）：挂载即并发拉
+// sheets/attempts/annotations/tags——序列式 mock 极易错位，这里按路径分派。
+const fileItem = (overrides: Record<string, unknown> = {}) => ({
+  question_type: "reading_choice",
+  source_id: SOURCE_ID,
+  file_key: null,
+  title: "2025 英语二 · Text 1 小费文化",
+  direction: "考研",
+  question_count: 5,
+  latest_created_at: "2026-09-16T00:00:00Z",
+  ...overrides,
+});
+
+const questionFixture = (stem: string) => ({
+  id: QUESTION_ID, ordinal: 0, stem,
+  options: [{ key: "A", text: "选项 A" }], answer: { choice: "A" },
+  explanation: null, evidence: [],
+});
+
+function setupMock(options: { files?: unknown[]; detail?: Record<string, unknown> } = {}) {
+  const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+  const sheet = {
+    id: "00000000-0000-4000-8000-000000000401",
+    user_id: "00000000-0000-4000-8000-000000000001",
+    scope: "file",
+    scope_key: `file:${SOURCE_ID}:reading_choice`,
+    source_id: SOURCE_ID,
+    question_type: "reading_choice",
+    paper_id: null,
+    status: "draft",
+    answers: {},
+    seal_mode: null,
+    summary: null,
+    sealed_at: null,
+    created_at: "2026-09-17T00:00:00Z",
+    updated_at: "2026-09-17T00:00:00Z",
+  };
+  apiFetchMock.mockImplementation(async (path: string) => {
+    if (path.startsWith("/l3/papers?")) return { items: [] };
+    if (path.startsWith("/l3/practice-files?")) return { items: options.files ?? [] };
+    if (path.startsWith("/l3/practice-files/detail?")) return options.detail ?? {};
+    if (path === "/l3/sheets") return { sheet };
+    if (path.startsWith("/l3/attempts")) return { items: [] };
+    if (path.startsWith("/l3/question-annotations")) return { items: [] };
+    if (path === "/l3/annotation-tags") return { entry: [], option: [] };
+    return {};
+  });
+  return apiFetchMock;
+}
+
 describe("L3PapersPage 题型空间", () => {
-  it("全景 → 单专题文件列表 → 文件题组详情", async () => {
-    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
-    apiFetchMock
-      .mockResolvedValueOnce({ items: [] }) // 初始「我的试卷」列表
-      .mockResolvedValueOnce({
-        // 题型空间全景：只收录一个阅读文件
-        items: [{
-          question_type: "reading_choice",
-          source_id: SOURCE_ID,
-          file_key: null,
-          title: "2025 英语二 · Text 1 小费文化",
-          direction: "考研",
-          question_count: 5,
-          latest_created_at: "2026-09-16T00:00:00Z",
-        }],
-      })
-      .mockResolvedValueOnce({
+  it("全景 → 单专题文件列表 → 文件详情接入做题表面（file venue 题纸）", async () => {
+    const apiFetchMock = setupMock({
+      files: [fileItem()],
+      detail: {
         question_type: "reading_choice",
         source: { id: SOURCE_ID, title: "2025 英语二 · Text 1 小费文化" },
+        source_content: "The passage.",
         file_key: null,
-        questions: [{
-          id: QUESTION_ID, ordinal: 0, stem: "21. 题干",
-          options: [{ key: "A", text: "选项 A" }], answer: { choice: "A" },
-          explanation: null, evidence: [],
-        }],
-      });
+        questions: [questionFixture("21. 题干")],
+      },
+    });
 
     await renderPage();
     await act(async () => {
@@ -88,17 +133,57 @@ describe("L3PapersPage 题型空间", () => {
     });
     // 单空间：文件列表（前端按题型过滤，无额外请求）
     await waitFor(() => expect(screen.getByText(/2025 英语二 · Text 1 小费文化/)).toBeTruthy());
-    const filesCall = apiFetchMock.mock.calls[1][0] as string;
-    expect(filesCall).toContain("/l3/practice-files?limit=100");
+    const filesCall = apiFetchMock.mock.calls.find(([path]) => String(path).includes("/l3/practice-files?"));
+    expect(String(filesCall![0])).toContain("/l3/practice-files?limit=100");
 
     await act(async () => {
       fireEvent.click(screen.getByText(/2025 英语二 · Text 1 小费文化/));
     });
+    // 做题表面：题纸自动开（scope=file）+ 题干渲染 + 返回题型空间入口
     await waitFor(() => expect(screen.getByText("21. 题干")).toBeTruthy());
-    const detailCall = apiFetchMock.mock.calls[2][0] as string;
-    expect(detailCall).toContain("/l3/practice-files/detail?");
-    expect(detailCall).toContain("questionType=reading_choice");
-    expect(detailCall).toContain(`sourceId=${SOURCE_ID}`);
+    expect(screen.getByText("题纸")).toBeTruthy();
+    expect(screen.getByText("← 返回题型空间")).toBeTruthy();
+    expect(screen.getByText("定格题纸")).toBeTruthy();
+    const openSheetCall = apiFetchMock.mock.calls.find(([path, init]) =>
+      String(path) === "/l3/sheets" && (init as RequestInit | undefined)?.method === "POST");
+    expect(openSheetCall).toBeTruthy();
+    expect(JSON.parse((openSheetCall![1] as RequestInit).body as string)).toEqual({
+      scope: "file",
+      sourceId: SOURCE_ID,
+      questionType: "reading_choice",
+    });
+    const detailCall = apiFetchMock.mock.calls.find(([path]) => String(path).includes("/l3/practice-files/detail?"));
+    expect(String(detailCall![0])).toContain("questionType=reading_choice");
+    expect(String(detailCall![0])).toContain(`sourceId=${SOURCE_ID}`);
+  });
+
+  it("fileKey 型文件（无 source）保留浏览视图（含答案与解析）", async () => {
+    setupMock({
+      files: [fileItem({
+        question_type: "sentence_translation",
+        source_id: null,
+        file_key: "translation-group-1",
+        title: "翻译题组 A",
+      })],
+      detail: {
+        question_type: "sentence_translation",
+        source: null,
+        source_content: null,
+        file_key: "translation-group-1",
+        questions: [{
+          id: QUESTION_ID, ordinal: 0, stem: "46. 翻译题干",
+          options: [], answer: { text: "参考译文" },
+          explanation: "解析内容", evidence: [],
+        }],
+      },
+    });
+
+    await renderPage({ deepLinkVenue: "sentence_translation", deepLinkFile: "translation-group-1" });
+    await waitFor(() => expect(screen.getByText("46. 翻译题干")).toBeTruthy());
+    // 浏览视图特征：答案与解析直出；未走做题表面（无题纸/定格入口）——
+    // fileKey 型不具备开纸条件（sheetOpenInputSchema 要求 sourceId）
+    expect(screen.getByText(/答案：/)).toBeTruthy();
+    expect(screen.queryByText("定格题纸")).toBeNull();
   });
 });
 
@@ -106,13 +191,13 @@ describe("L3PapersPage 粘贴建卷", () => {
   it("提交 section × 题 × 选项/答案的结构化包并切回试卷列表", async () => {
     const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
     apiFetchMock
-      // 初始题型空间列表（默认 tab=files；BuildTab 未挂载，不拉来源）
+      // 初次挂载自动拉「我的试卷」列表
       .mockResolvedValueOnce({ items: [] })
       // 切到建卷 tab 后拉来源列表
       .mockResolvedValueOnce({ items: [{ id: SOURCE_ID, title: "2023 英一 Text 1" }] })
       // POST /l3/papers
       .mockResolvedValueOnce({ paper: { id: "paper-1" }, questions: [], questionCount: 1 })
-      // 切到「我的试卷」后列表
+      // 切回「我的试卷」后列表
       .mockResolvedValueOnce({ items: [] });
 
     await renderPage();
@@ -154,39 +239,27 @@ describe("L3PapersPage 粘贴建卷", () => {
 });
 
 describe("L3PapersPage 深链（批次二）", () => {
-  it("?venue=&file= 直达题型空间并自动打开目标文件", async () => {
-    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
-    apiFetchMock.mockImplementation(async (path: string) => {
-      if (path.startsWith("/l3/practice-files?")) {
-        return {
-          items: [{
-            question_type: "reading_choice",
-            source_id: SOURCE_ID,
-            file_key: null,
-            title: "2025 英语二 · Text 1 小费文化",
-            direction: "考研",
-            question_count: 5,
-            latest_created_at: "2026-09-16T00:00:00Z",
-          }],
-        };
-      }
-      if (path.startsWith("/l3/practice-files/detail?")) {
-        return {
-          questions: [{
-            id: QUESTION_ID, ordinal: 0, stem: "21. 深链题干",
-            options: [{ key: "A", text: "选项 A" }], answer: { choice: "A" },
-            explanation: null, evidence: [],
-          }],
-        };
-      }
-      return {};
+  it("?venue=&file= 直达题型空间并自动打开目标文件（做题表面）", async () => {
+    const apiFetchMock = setupMock({
+      files: [fileItem()],
+      detail: {
+        question_type: "reading_choice",
+        source: { id: SOURCE_ID, title: "2025 英语二 · Text 1 小费文化" },
+        source_content: "The passage.",
+        file_key: null,
+        questions: [questionFixture("21. 深链题干")],
+      },
     });
 
     await renderPage({ deepLinkVenue: "reading_choice", deepLinkFile: SOURCE_ID });
-    // 深链直达文件题组详情（无需手动切 tab / 点空间 / 点文件）
+    // 深链直达文件详情（无需手动切 tab / 点空间 / 点文件）——且已是做题表面
     await waitFor(() => expect(screen.getByText("21. 深链题干")).toBeTruthy());
+    expect(screen.getByText("← 返回题型空间")).toBeTruthy();
     const detailCall = apiFetchMock.mock.calls.find(([path]) => String(path).includes("/l3/practice-files/detail?"));
     expect(String(detailCall![0])).toContain(`sourceId=${SOURCE_ID}`);
     expect(String(detailCall![0])).toContain("questionType=reading_choice");
+    const openSheetCall = apiFetchMock.mock.calls.find(([path, init]) =>
+      String(path) === "/l3/sheets" && (init as RequestInit | undefined)?.method === "POST");
+    expect(JSON.parse((openSheetCall![1] as RequestInit).body as string)).toMatchObject({ scope: "file" });
   });
 });

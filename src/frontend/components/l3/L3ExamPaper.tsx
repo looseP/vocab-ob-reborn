@@ -592,7 +592,13 @@ function WrittenQuestion({
   );
 }
 
-export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: () => void }) {
+export function L3ExamPaper({ paper, onBack, fileVenue }: {
+  paper: ExamPaperType;
+  onBack: () => void;
+  /** 批次二补齐：题型空间（file venue）复用本组件作单文件做题表面——
+   *  题纸作用域切 file:<sourceId>:<questionType>，题纸栏/头部文案按文件语义呈现。 */
+  fileVenue?: { sourceId: string; questionType: ExamSection["questionType"] };
+}) {
   const { addToast } = useToast();
   const [revealAll, setRevealAll] = useState(false);
   const [picks, setPicks] = useState<Record<string, string>>({});
@@ -629,7 +635,9 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
   // draft 行携带服务端 answers → 本地 picks（重进页面不丢已保存作答）。
   useEffect(() => {
     let cancelled = false;
-    openSheet({ scope: "paper", paperId: paper.id })
+    openSheet(fileVenue
+      ? { scope: "file", sourceId: fileVenue.sourceId, questionType: fileVenue.questionType }
+      : { scope: "paper", paperId: paper.id })
       .then((row) => {
         if (cancelled) return;
         setSheet(row);
@@ -646,7 +654,7 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
         if (!cancelled) addToast("error", "题纸打开失败，本次作答不会保存");
       });
     return () => { cancelled = true; };
-  }, [paper.id, addToast]);
+  }, [paper.id, fileVenue?.sourceId, fileVenue?.questionType, addToast]);
 
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
 
@@ -865,12 +873,13 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
   const historyQuestion = historyQuestionId ? allQuestionsById.get(historyQuestionId) ?? null : null;
 
   const historyDeepLink = useMemo(() => {
-    if (!historyQuestionId) return null;
+    // file venue：当前页已在题型空间，跳转链接自我指向，无需展示。
+    if (fileVenue || !historyQuestionId) return null;
     const section = paper.sections.find((entry) => entry.questionIds.includes(historyQuestionId));
     const fileKey = section?.sourceId ?? section?.fileKey ?? null;
     if (!section || !fileKey) return null;
     return { venue: section.questionType, fileKey };
-  }, [historyQuestionId, paper.sections]);
+  }, [fileVenue, historyQuestionId, paper.sections]);
 
   const pickQuestion = (questionId: string, key: string) => {
     if (sheetRef.current && sheetRef.current.status !== "draft") return; // 定格后只读
@@ -896,6 +905,12 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
     }
     return { correct, total, score: Math.round(score * 10) / 10 };
   }, [picks, paper.sections]);
+
+  /** file venue：头部题数 chip（paper 模式的"48 题"为卷级静态文案）。 */
+  const totalQuestionCount = useMemo(
+    () => paper.sections.reduce((sum, section) => sum + section.questions.length, 0),
+    [paper.sections],
+  );
 
   /** 定格后卷面只读（作答输入禁用；选择仍显示用于回看）。 */
   const readOnly = sheet !== null && sheet.status !== "draft";
@@ -941,13 +956,13 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={onBack} className="text-xs text-[var(--color-accent)]">← 返回试卷列表</button>
+        <button type="button" onClick={onBack} className="text-xs text-[var(--color-accent)]">{fileVenue ? "← 返回题型空间" : "← 返回试卷列表"}</button>
       </div>
 
       {sheet && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-[var(--color-surface)] px-3.5 py-2 text-xs ring-1 ring-[var(--color-border)]">
           <span className="font-semibold">题纸</span>
-          <span className="text-[var(--color-ink-soft)]">整卷 · {paper.title}</span>
+          <span className="text-[var(--color-ink-soft)]">{fileVenue ? "文件" : "整卷"} · {paper.title}</span>
           <span className="ml-auto">
             {sheet.status === "draft" ? (
               <span className="rounded-full bg-[var(--color-accent-soft,var(--color-surface))] px-2 py-0.5 font-medium text-[var(--color-accent)]">
@@ -974,10 +989,13 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
       )}
 
       <header className="rounded-2xl bg-gradient-to-br from-[var(--color-accent-soft,var(--color-surface))] to-transparent p-5 ring-1 ring-[var(--color-border)]">
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-accent)]">National Postgraduate Entrance Exam</p>
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-accent)]">{fileVenue ? `题型空间 · ${TYPE_SHORT[fileVenue.questionType]}` : "National Postgraduate Entrance Exam"}</p>
         <h2 className="mt-1 text-xl font-bold leading-snug">{paper.title}</h2>
         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          {[paper.direction, String(paper.metadata.year ?? ""), "满分 100 分", "48 题"].filter(Boolean).map((chip) => (
+          {(fileVenue
+            ? [TYPE_SHORT[fileVenue.questionType], `共 ${totalQuestionCount} 题`]
+            : [paper.direction, String(paper.metadata.year ?? ""), "满分 100 分", "48 题"]
+          ).filter(Boolean).map((chip) => (
             <span key={chip} className="rounded-full bg-[var(--color-surface)] px-2.5 py-1 ring-1 ring-[var(--color-border)]">{chip}</span>
           ))}
         </div>
@@ -988,8 +1006,8 @@ export function L3ExamPaper({ paper, onBack }: { paper: ExamPaperType; onBack: (
           </button>
           <span className="text-xs text-[var(--color-ink-soft)]">
             客观题已答 <strong className="text-[var(--color-ink)]">{Object.keys(picks).length}/{stats.total}</strong> ·
-            答对 <strong className="text-emerald-600">{stats.correct}</strong> ·
-            估算 <strong>{stats.score}</strong> 分（客观题满分 60）
+            答对 <strong className="text-emerald-600">{stats.correct}</strong>
+            {fileVenue ? null : <> · 估算 <strong>{stats.score}</strong> 分（客观题满分 60）</>}
           </span>
         </div>
       </header>

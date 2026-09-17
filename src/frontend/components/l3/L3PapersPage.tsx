@@ -9,7 +9,8 @@ import { L3ExamPaper, type ExamPaper } from "@/frontend/components/l3/L3ExamPape
  *  - 题型空间：七题型 chips → 派生做题文件列表 → 文件题组详情；
  *  - 我的试卷：卷列表 → 卷面组装详情（缺失引用降级占位）；
  *  - 粘贴建卷：owner 直写表单（section × 题 × 选项/答案），提交后自动落能力域标签。
- * 做题表面（三模式/自动草稿）在 V2，本页只负责入库与浏览。
+ * 做题表面：批次二起，题型空间的 source 型文件直接复用 L3ExamPaper（file venue
+ * 题纸自动开/作答防抖/定格/历史徽标）；fileKey 型文件（翻译/作文）保留浏览视图。
  */
 
 type QuestionType =
@@ -69,6 +70,19 @@ interface QuestionRow {
   explanation: string | null;
   evidence: Array<{ start: number; end: number; label: string }>;
 }
+
+interface PracticeFileDetail {
+  question_type: QuestionType;
+  source: { id: string; title: string } | null;
+  source_content: string | null;
+  file_key: string | null;
+  questions: QuestionRow[];
+}
+
+/** 文件三级详情：source 型组装单节伪卷喂给做题表面（file venue）；fileKey 型保留浏览。 */
+type FilesTabDetail =
+  | { kind: "sheet"; paper: ExamPaper; sourceId: string; questionType: QuestionType }
+  | { kind: "browse"; title: string; questions: QuestionRow[] };
 
 interface AssembledSection {
   key: string;
@@ -194,7 +208,7 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
   const { addToast } = useToast();
   const [files, setFiles] = useState<PracticeFile[] | null>(null);
   const [venue, setVenue] = useState<QuestionType | null>(deepLink?.venue ?? null);
-  const [detail, setDetail] = useState<{ title: string; body: { questions: QuestionRow[] } } | null>(null);
+  const [detail, setDetail] = useState<FilesTabDetail | null>(null);
   const [pendingFileKey, setPendingFileKey] = useState<string | null>(deepLink?.file ?? null);
 
   useEffect(() => {
@@ -210,8 +224,38 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
     if (file.source_id) params.set("sourceId", file.source_id);
     if (file.file_key) params.set("fileKey", file.file_key);
     try {
-      const body = await apiFetch<{ questions: QuestionRow[] }>(`/l3/practice-files/detail?${params}`);
-      setDetail({ title: file.title, body });
+      const body = await apiFetch<PracticeFileDetail>(`/l3/practice-files/detail?${params}`);
+      // source 型文件（阅读/完形/新题型/语法填空）：组装单节伪卷，接入做题表面——
+      // 题纸自动开（file:<sourceId>:<questionType>）、作答防抖、定格三档、历史徽标
+      // 全复用 L3ExamPaper。fileKey 型（翻译/作文无 source）暂不具备开纸条件
+      // （sheetOpenInputSchema 要求 sourceId），保留浏览视图。
+      if (body.source && file.source_id) {
+        setDetail({
+          kind: "sheet",
+          sourceId: file.source_id,
+          questionType: file.question_type,
+          paper: {
+            id: `file:${file.source_id}:${file.question_type}`,
+            title: file.title,
+            direction: null,
+            metadata: {},
+            sections: [{
+              key: "file",
+              title: file.title,
+              questionType: file.question_type,
+              sourceId: file.source_id,
+              fileKey: null,
+              questionIds: body.questions.map((q) => q.id),
+              missing: false,
+              source_title: body.source.title,
+              source_content: body.source_content,
+              questions: body.questions,
+            }],
+          },
+        });
+      } else {
+        setDetail({ kind: "browse", title: file.title, questions: body.questions });
+      }
     } catch {
       addToast("error", "文件题组加载失败");
     }
@@ -228,13 +272,22 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
     if (target) void openFileRef.current?.(target);
   }, [pendingFileKey, venue, files]);
 
-  // 三级：文件题组详情
+  // 三级：文件详情——source 型走做题表面（file venue 题纸）；fileKey 型保留浏览
   if (detail && venue) {
+    if (detail.kind === "sheet") {
+      return (
+        <L3ExamPaper
+          paper={detail.paper}
+          fileVenue={{ sourceId: detail.sourceId, questionType: detail.questionType }}
+          onBack={() => setDetail(null)}
+        />
+      );
+    }
     return (
       <div className="space-y-2">
         <button type="button" onClick={() => setDetail(null)} className="text-xs text-[var(--color-accent)]">← 返回{VENUES.find((v) => v.type === venue)?.name}空间</button>
         <h3 className="text-base font-semibold">{detail.title}</h3>
-        <QuestionList questions={detail.body.questions} />
+        <QuestionList questions={detail.questions} />
       </div>
     );
   }

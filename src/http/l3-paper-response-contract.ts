@@ -163,6 +163,8 @@ export const l3PracticeFileListResponseSchema = z.object({
 export const l3PracticeFileDetailResponseSchema = z.object({
   question_type: questionTypeSchema,
   source: z.object({ id: z.string().uuid(), title: z.string() }).strict().nullable(),
+  /** 原文正文：做题表面（file venue 题纸）文栏渲染所需；仅 source 型文件返回，fileKey 型为 null。 */
+  source_content: z.string().nullable(),
   file_key: z.string().nullable(),
   questions: z.array(l3QuestionResponseSchema),
 }).strict();

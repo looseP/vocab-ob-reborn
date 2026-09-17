@@ -262,6 +262,8 @@ export class L3PaperService {
   ): Promise<{
     question_type: L3QuestionType;
     source: { id: string; title: string } | null;
+    /** 原文正文（file venue 做题表面文栏数据源；fileKey 型为 null）。 */
+    source_content: string | null;
     file_key: string | null;
     questions: L3QuestionRow[];
   }> {
@@ -279,13 +281,25 @@ export class L3PaperService {
           sourceId,
           questionType: input.questionType,
         });
-        return { question_type: input.questionType, source: { id: source.id, title: source.title }, file_key: null, questions };
+        return {
+          question_type: input.questionType,
+          source: { id: source.id, title: source.title },
+          source_content: source.content_text,
+          file_key: null,
+          questions,
+        };
       }
       const questions = await repos.l3Paper.listActiveQuestionsForFile(input.userId, {
         fileKey,
         questionType: input.questionType,
       });
-      return { question_type: input.questionType, source: null, file_key: fileKey, questions };
+      return {
+        question_type: input.questionType,
+        source: null,
+        source_content: null,
+        file_key: fileKey,
+        questions,
+      };
     });
   }
 

@@ -34374,6 +34374,16 @@
                         }
                       ]
                     },
+                    "source_content": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "file_key": {
                       "anyOf": [
                         {
@@ -34588,6 +34598,7 @@
                   "required": [
                     "question_type",
                     "source",
+                    "source_content",
                     "file_key",
                     "questions"
                   ],

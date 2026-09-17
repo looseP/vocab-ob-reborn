@@ -380,3 +380,35 @@ describe("getPaper assembly degradation", () => {
     await expect(service.getPaper(USER_ID, "nope")).rejects.toBeInstanceOf(NotFoundError);
   });
 });
+
+describe("getPracticeFile（file venue 数据源）", () => {
+  it("透传 source 正文（做题表面文栏渲染所需）", async () => {
+    const repo = makePaperRepo({ listActiveQuestionsForFile: vi.fn(async () => [questionRow()]) });
+    const withText = makeContextRepo({
+      findSourceById: vi.fn(async () => ({
+        id: SOURCE_ID,
+        user_id: USER_ID,
+        wordbook_id: null,
+        source_type: "article" as const,
+        title: "2025 英语二 · Text 1 小费文化",
+        author: null,
+        url: null,
+        language: null,
+        metadata: {},
+        content_text: "The passage.",
+        content_hash: null,
+        created_at: "2026-09-16T00:00:00Z",
+        updated_at: "2026-09-16T00:00:00Z",
+      })),
+    });
+    const detail = await makeService(repo, withText).getPracticeFile({
+      userId: USER_ID,
+      questionType: "reading_choice",
+      sourceId: SOURCE_ID,
+    });
+    expect(detail.source).toEqual({ id: SOURCE_ID, title: "2025 英语二 · Text 1 小费文化" });
+    expect(detail.source_content).toBe("The passage.");
+    expect(detail.questions).toHaveLength(1);
+    expect(detail.file_key).toBeNull();
+  });
+});

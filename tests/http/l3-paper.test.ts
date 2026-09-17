@@ -313,6 +313,7 @@ describe("GET /api/l3/practice-files", () => {
     const getPracticeFile = vi.fn(async () => ({
       question_type: "reading_choice" as const,
       source: { id: SOURCE_ID, title: "2023 英语一 Text 1" },
+      source_content: "A passage for the file.",
       file_key: null,
       questions: [questionRow()],
     }));

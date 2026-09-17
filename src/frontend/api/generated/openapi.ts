@@ -16804,6 +16804,7 @@ export interface operations {
                             id: string;
                             title: string;
                         } | null;
+                        source_content: string | null;
                         file_key: string | null;
                         questions: {
                             /** Format: uuid */
