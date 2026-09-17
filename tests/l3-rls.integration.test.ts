@@ -128,6 +128,8 @@ describe("L3 RLS isolation (integration)", () => {
       await adminPool.query("DELETE FROM l3_context_links WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_contexts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_sources WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      // 0036 批次三①：评卷结果（sheet/question 删除已级联，这里兜底显式清理）
+      await adminPool.query("DELETE FROM l3_grading_results WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       // 0035 批次二增补：评析区（题删除已级联，这里兜底显式清理）
       await adminPool.query("DELETE FROM l3_question_assessments WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       // 0034 批次二：作答历史/题纸（attempts 无级联到题纸，先删 attempts 再删 submissions）
@@ -613,5 +615,108 @@ describe("L3 RLS isolation (integration)", () => {
         [randomUUID(), ACTOR_A, aAssessQuestionId],
       );
     })).rejects.toThrow(/row-level security/i);
+  });
+
+  // ── 0036 批次三①：评卷结果（l3_grading_results）/ review 白名单写入的行级隔离 ──
+
+  it("actor A upserts grading results with latest-wins overwrite (vocab_app path)", async () => {
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_grading_results (id, user_id, sheet_id, question_id, verdict, analysis_md, graded_by)
+         VALUES ($1, $2, $3, $4, 'wrong', '定位偏移。', 'agent-a')
+         ON CONFLICT (sheet_id, question_id)
+         DO UPDATE SET verdict = EXCLUDED.verdict, analysis_md = EXCLUDED.analysis_md,
+                       graded_by = EXCLUDED.graded_by, graded_at = now()`,
+        [randomUUID(), ACTOR_A, aSheetId, aSheetQuestionId],
+      );
+      // 改判覆写（同键 latest-wins；无历史版本）。
+      await tx.query(
+        `INSERT INTO l3_grading_results (id, user_id, sheet_id, question_id, verdict, analysis_md, graded_by)
+         VALUES ($1, $2, $3, $4, 'partial', '再看是部分对。', 'agent-b')
+         ON CONFLICT (sheet_id, question_id)
+         DO UPDATE SET verdict = EXCLUDED.verdict, analysis_md = EXCLUDED.analysis_md,
+                       graded_by = EXCLUDED.graded_by, graded_at = now()`,
+        [randomUUID(), ACTOR_A, aSheetId, aSheetQuestionId],
+      );
+    });
+    const rows = await adminPool.query<{ verdict: string; graded_by: string }>(
+      "SELECT verdict, graded_by FROM l3_grading_results WHERE sheet_id = $1 AND question_id = $2",
+      [aSheetId, aSheetQuestionId],
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]).toEqual({ verdict: "partial", graded_by: "agent-b" });
+  });
+
+  it("actor B cannot read or mutate actor A's grading rows", async () => {
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const read = await tx.query("SELECT id FROM l3_grading_results WHERE sheet_id = $1", [aSheetId]);
+      expect(read.rows).toHaveLength(0);
+      const updated = await tx.query(
+        "UPDATE l3_grading_results SET verdict = 'correct' WHERE sheet_id = $1 RETURNING id",
+        [aSheetId],
+      );
+      expect(updated.rows).toHaveLength(0);
+    });
+    const still = await adminPool.query<{ verdict: string }>(
+      "SELECT verdict FROM l3_grading_results WHERE sheet_id = $1",
+      [aSheetId],
+    );
+    expect(still.rows[0]!.verdict).toBe("partial");
+  });
+
+  it("rejects actor B inserting a grading row attributed to actor A (RLS WITH CHECK)", async () => {
+    await expect(inTx(ACTOR_B, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_grading_results (id, user_id, sheet_id, question_id, verdict, graded_by)
+         VALUES ($1, $2, $3, $4, 'correct', 'agent-b')`,
+        [randomUUID(), ACTOR_A, aSheetId, aSheetQuestionId],
+      );
+    })).rejects.toThrow(/row-level security/i);
+  });
+
+  it("review white-list write flips submitted→confirmed without touching the note", async () => {
+    const before = await adminPool.query<{ note: string; excerpt: string; entry_tags: unknown; stage: string }>(
+      "SELECT note, excerpt, entry_tags, stage FROM l3_question_annotations WHERE id = $1",
+      [aDraftAnnotationId],
+    ).then((r) => r.rows[0]!);
+    expect(before.stage).toBe("submitted");
+
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      // 与 L3AnnotationRepository.applyAnnotationReview 同款白名单 SQL（SET 只触 review/stage）。
+      await tx.query(
+        `UPDATE l3_question_annotations
+            SET review = $2::jsonb, stage = $3, updated_at = now()
+          WHERE user_id = $1::uuid AND id = $4::uuid
+            AND status = 'active' AND stage <> 'draft'`,
+        [ACTOR_A, JSON.stringify({ verdict: "sound", comment: "锚点准确" }), "confirmed", aDraftAnnotationId],
+      );
+    });
+
+    const after = await adminPool.query<{ note: string; excerpt: string; entry_tags: unknown; stage: string; review: unknown }>(
+      "SELECT note, excerpt, entry_tags, stage, review FROM l3_question_annotations WHERE id = $1",
+      [aDraftAnnotationId],
+    ).then((r) => r.rows[0]!);
+    expect(after.stage).toBe("confirmed");
+    expect(after.review).toEqual({ verdict: "sound", comment: "锚点准确" });
+    // 白名单红线：note / excerpt / entry_tags 一字不动（不可篡改性由 SQL 形态保证）。
+    expect(after.note).toBe(before.note);
+    expect(after.excerpt).toBe(before.excerpt);
+    expect(after.entry_tags).toEqual(before.entry_tags);
+
+    // actor B 对同一行执行白名单 SQL → RLS 空转，review 不被劫持。
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const hijacked = await tx.query(
+        `UPDATE l3_question_annotations
+            SET review = '{"verdict":"wrong"}'::jsonb, stage = 'draft', updated_at = now()
+          WHERE id = $1 RETURNING id`,
+        [aDraftAnnotationId],
+      );
+      expect(hijacked.rows).toHaveLength(0);
+    });
+    const untouched = await adminPool.query<{ review: unknown }>(
+      "SELECT review FROM l3_question_annotations WHERE id = $1",
+      [aDraftAnnotationId],
+    );
+    expect(untouched.rows[0]!.review).toEqual({ verdict: "sound", comment: "锚点准确" });
   });
 });
