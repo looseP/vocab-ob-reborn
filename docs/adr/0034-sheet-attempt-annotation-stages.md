@@ -78,7 +78,7 @@
 
 **11. 评析区一题一条 upsert + last_editor 留痕**（设计卡 §11）：`(user_id, question_id)` UNIQUE；latest-wins **无历史版本**（last_editor + updated_at 留痕兜底）；**挂题不挂题纸**（跨题纸、跨 venue 永存）；与总结条双轨并存（总结条管场次、评析区管题目）。
 
-**12. 导出 v2 契约**（设计卡 §6）：三状态分流——draft = 快照语义（数据源 answers 实时读，默认 `withAnswers=0` 防自我剧透，页眉「草稿快照 + 导出时刻」）；sealed = 冻结档案语义（attempts 派生，默认 `withAnswers=1`）；discarded = 409。**单工件双读者**：Markdown 外壳（人读 / agent 直读）+ 尾部 ```json 全量结构化块（备份保真 / agent 解析），`exportSchemaVersion=2`；只出不进红线不变。
+**12. 导出 v2 契约**（设计卡 §6）：三状态分流——draft = 快照语义（数据源 answers 实时读，默认 `withAnswers=0` 防自我剧透，页眉「草稿快照 + 导出时刻」）；sealed = 冻结档案语义（attempts 派生，默认 `withAnswers=1`）；discarded = 409。**单工件双读者**：Markdown 外壳（人读 / agent 直读）+ 尾部 ```json 全量结构化块（备份保真 / agent 解析），`exportSchemaVersion=2`；只出不进红线不变。补记（2026-09-17）：**题面段标记高亮**——stem/option 标记随「痕迹恒渲染」在题面以 `==…==` 绘制（与原文通道同口径；json 坐标与痕迹计数不变）。
 
 **13. marks scope 验收补记（2026-09-17 验收档；设计卡 §4.6 执行补记）**：`scope` 由 `passage|stem` 扩至 `passage|stem|option`——选项文本同享划词「标记重点」轻痕迹（`optionKey` 第四维定位，去重键扩为 `scope(+optionKey):start:end`）。开口理由：验收确认选项文本是划词标注的自然目标（题干/原文已支持，构成交互不对称）；零迁移，沿用同一 `answers.marks` 通道、定格物化路径与导出「重点标记 N 处」计数。边界：选项级「存疑」（`optionFlags`）与划词标记并存、语义分立（旗标=整选项疑问；标记=文本位置痕迹）；选项行文本选择与点选作答的冲突由前端「选区非空即抑制点选」收口；揭示（解析模式）后选项行锁定、不接新标记（与「揭示即锁定该题交互」一致）。
 

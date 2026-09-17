@@ -82,6 +82,50 @@ function truncate(text: string, max: number): string {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
+/**
+ * 内联标记重绘（题面段 stem/option；v2 §4.6 补记「痕迹恒渲染」延伸到题面）：
+ * 与 truncate 同口径归一化（空白折叠为单空格、去首尾、超长截断补 …），同时把
+ * 原文坐标系的标记区间换算到展示串上以 == 包裹；相邻/重叠命中自动合并为单段
+ * （不产生 ==x====y== 断裂），与原文通道（decorateArticle）渲染规则一致。
+ */
+export function decorateInline(
+  text: string,
+  marks: ReadonlyArray<{ start: number; end: number }>,
+  max: number,
+): string {
+  // 归一化：空白折叠为单空格（映射到 run 起点）、去首尾；记录每个输出字符的原文位置。
+  const cells: Array<{ ch: string; at: number }> = [];
+  let pendingSpaceAt: number | null = null;
+  for (let i = 0; i < text.length;) {
+    const ch = text[i]!;
+    if (/\s/.test(ch)) {
+      if (pendingSpaceAt === null && cells.length > 0) pendingSpaceAt = i;
+      i += 1;
+      continue;
+    }
+    if (pendingSpaceAt !== null) {
+      cells.push({ ch: " ", at: pendingSpaceAt });
+      pendingSpaceAt = null;
+    }
+    cells.push({ ch, at: i });
+    i += 1;
+  }
+  const truncated = cells.length > max;
+  const visible = truncated ? cells.slice(0, max) : cells;
+  let out = "";
+  let open = false;
+  for (const cell of visible) {
+    const covered = marks.some((mark) => mark.start <= cell.at && cell.at < mark.end);
+    if (covered !== open) {
+      out += "==";
+      open = covered;
+    }
+    out += cell.ch;
+  }
+  if (open) out += "==";
+  return truncated ? `${out}…` : out;
+}
+
 function summarizeAnswer(answer: unknown): string {
   if (answer == null) return "内容已清理";
   if (typeof answer === "string") return truncate(answer, 80);
@@ -204,6 +248,35 @@ function collectMarksBySource(
   return bySource;
 }
 
+/** 题面段标记（stem/option；v2 §4.6 补记：题面高亮数据源——与 withAnswers 无关）。 */
+interface QuestionInlineMark {
+  scope: "stem" | "option";
+  optionKey: string | null;
+  start: number;
+  end: number;
+}
+
+function collectQuestionMarks(
+  entries: ReadonlyArray<{ questionId: string; marks: unknown }>,
+): Map<string, QuestionInlineMark[]> {
+  const byQuestion = new Map<string, QuestionInlineMark[]>();
+  for (const entry of entries) {
+    if (!Array.isArray(entry.marks)) continue;
+    for (const raw of entry.marks) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const mark = raw as { scope?: unknown; optionKey?: unknown; start?: unknown; end?: unknown };
+      if (mark.scope !== "stem" && mark.scope !== "option") continue;
+      if (typeof mark.start !== "number" || typeof mark.end !== "number" || mark.end <= mark.start) continue;
+      const optionKey = typeof mark.optionKey === "string" ? mark.optionKey : null;
+      if (mark.scope === "option" && optionKey === null) continue;
+      const list = byQuestion.get(entry.questionId) ?? [];
+      list.push({ scope: mark.scope, optionKey, start: mark.start, end: mark.end });
+      byQuestion.set(entry.questionId, list);
+    }
+  }
+  return byQuestion;
+}
+
 function collectAnchorsBySource(
   annotations: readonly L3QuestionAnnotationRow[],
   sourceOf: ReadonlyMap<string, string | null>,
@@ -241,21 +314,23 @@ function renderCore(input: L3SheetExportInput, contentSha256: string | null): st
   if (contentSha256) lines.push(`- 内容校验: sha256:${contentSha256}（删除本行后可复算）`);
   lines.push("");
 
+  // 痕迹恒渲染（§4.6 工作流）：sealed 走 self_assessment，draft 走 answers——
+  // 与 withAnswers 无关（withAnswers 只管 choice 等作答事实的剧透面）。
+  const trailEntries = sheet.status === "sealed"
+    ? attempts.map((row) => ({
+      questionId: row.question_id,
+      marks: (row.self_assessment as { marks?: unknown } | null)?.marks,
+    }))
+    : Object.entries(answers).map(([questionId, answer]) => ({
+      questionId,
+      marks: (answer as { marks?: unknown } | null)?.marks,
+    }));
+  const marksBySource = collectMarksBySource(trailEntries, sourceOf);
+  const questionMarks = collectQuestionMarks(trailEntries);
+
   // 原文与标记（§4.6 痕迹可视化；marks 与注记锚点恒渲染）。
   if (articles.length > 0) {
     lines.push("## 原文与标记", "");
-    // 痕迹恒渲染（§4.6 工作流）：sealed 走 self_assessment，draft 走 answers——
-    // 与 withAnswers 无关（withAnswers 只管 choice 等作答事实的剧透面）。
-    const trailEntries = sheet.status === "sealed"
-      ? attempts.map((row) => ({
-        questionId: row.question_id,
-        marks: (row.self_assessment as { marks?: unknown } | null)?.marks,
-      }))
-      : Object.entries(answers).map(([questionId, answer]) => ({
-        questionId,
-        marks: (answer as { marks?: unknown } | null)?.marks,
-      }));
-    const marksBySource = collectMarksBySource(trailEntries, sourceOf);
     const anchorsBySource = collectAnchorsBySource(annotations, sourceOf);
     for (const article of articles) {
       lines.push(`### ${article.title ?? "（未命名材料）"}`, "");
@@ -275,8 +350,16 @@ function renderCore(input: L3SheetExportInput, contentSha256: string | null): st
   lines.push("## 题面", "");
   if (questions.length === 0) lines.push("（作用域内无题）", "");
   questions.forEach((question, index) => {
-    lines.push(`### ${index + 1}. ${truncate(question.stem, 160)}`);
-    for (const option of question.options) lines.push(`- ${option.key}. ${truncate(option.text, 160)}`);
+    // v2 §4.6 补记：stem / option 标记随「痕迹恒渲染」在题面以 == 绘制（坐标不变）。
+    const inlineMarks = questionMarks.get(question.id) ?? [];
+    const stemMarks = inlineMarks.filter((mark) => mark.scope === "stem");
+    lines.push(`### ${index + 1}. ${decorateInline(question.stem, stemMarks, 160)}`);
+    for (const option of question.options) {
+      const optionMarks = inlineMarks.filter(
+        (mark) => mark.scope === "option" && mark.optionKey === option.key,
+      );
+      lines.push(`- ${option.key}. ${decorateInline(option.text, optionMarks, 160)}`);
+    }
     lines.push("");
   });
 

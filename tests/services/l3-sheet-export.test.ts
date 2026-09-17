@@ -19,6 +19,7 @@ import {
   L3_SHEET_EXPORT_SCHEMA_VERSION,
   L3SheetExportService,
   decorateArticle,
+  decorateInline,
   renderSheetExportMarkdown,
   type L3SheetExportInput,
 } from "@/services/l3-sheet-export.service";
@@ -263,6 +264,8 @@ describe("renderSheetExportMarkdown（v2）", () => {
       withAnswers: true,
     }));
     expect(markdown).toContain("选 B ｜ 待复查 ｜ 选项存疑 A ｜ 重点标记 1 处");
+    // v2 §4.6 补记：stem 标记在题面段同样以 == 绘制（痕迹恒渲染延伸到题面）
+    expect(markdown).toContain("21. ==Why did== the author mention the tip?");
     const json = extractJsonBlock(markdown);
     expect(json.answers).toEqual({ [Q1]: { choice: "B", flags: { recheck: true }, optionFlags: ["A"], marks: [{ scope: "stem", start: 4, end: 11 }] } });
   });
@@ -342,9 +345,69 @@ describe("renderSheetExportMarkdown · 边界臂全覆盖", () => {
       ],
       annotations: [],
     }));
-    // stem marks 不进原文高亮（非 passage），但计数进当场痕迹摘要（对 agent 是信息）。
+    // stem marks 不进「原文段」（非 passage），但题面段以 == 高亮 + 计数进当场痕迹摘要（v2 §4.6 补记）。
     expect(stemMarked.markdown).toContain("当场痕迹: 重点标记 1 处");
+    expect(stemMarked.markdown).toContain("2==1==. Why did the author mention the tip?");
     expect(stemMarked.markdown).not.toContain("====");
+  });
+});
+
+describe("题面段标记高亮（v2 §4.6 补记：stem/option 随痕迹恒渲染）", () => {
+  it("选项标记按 optionKey 落到对应行；draft 默认（withAnswers=false）仍绘制", () => {
+    const { markdown } = renderSheetExportMarkdown(exportInput({
+      sheet: submissionRow({ status: "draft", seal_mode: null }),
+      attempts: [],
+      answers: {
+        [Q1]: {
+          marks: [
+            { scope: "stem", start: 0, end: 2 },
+            { scope: "option", optionKey: "A", start: 0, end: 1 },
+          ],
+        },
+      },
+      withAnswers: false,
+    }));
+    expect(markdown).toContain("### 1. ==21==. Why did the author mention the tip?");
+    expect(markdown).toContain("- A. ==甲==");
+    expect(markdown).toContain("- B. 乙");
+    // 恒渲染：作答痕迹段被开关压制，但题面标记照常绘制
+    expect(markdown).toContain("（未包含作答痕迹）");
+    const json = extractJsonBlock(markdown);
+    expect(json.answers).toEqual({});
+  });
+
+  it("sealed 档案路径同样绘制题面标记（self_assessment.marks 数据源）", () => {
+    const { markdown } = renderSheetExportMarkdown(exportInput({
+      attempts: [
+        attemptRow({ self_assessment: { marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } }),
+      ],
+      annotations: [],
+    }));
+    expect(markdown).toContain("- B. ==乙==");
+    expect(markdown).toContain("- A. 甲");
+  });
+});
+
+describe("decorateInline（题面段内联重绘）", () => {
+  it("无标记时与 truncate 同口径（空白折叠+去首尾+截断省略号）", () => {
+    expect(decorateInline("  a   b\nc  ", [], 160)).toBe("a b c");
+    expect(decorateInline("abcdef", [], 3)).toBe("abc…");
+  });
+
+  it("标记按原文坐标绘制；换行折叠后位置仍准确", () => {
+    expect(decorateInline("hello world", [{ start: 6, end: 11 }], 160)).toBe("hello ==world==");
+    // "a\n b"：归一后 "a b"，标记 [3,4)（原文的 b）仍命中
+    expect(decorateInline("a\n b", [{ start: 3, end: 4 }], 160)).toBe("a ==b==");
+  });
+
+  it("相邻/重叠标记合并为单段；截断窗口外的标记丢弃", () => {
+    expect(decorateInline("abcdef", [{ start: 1, end: 3 }, { start: 3, end: 5 }], 160)).toBe("a==bcde==f");
+    expect(decorateInline("abcdef", [{ start: 1, end: 3 }, { start: 2, end: 5 }], 160)).toBe("a==bcde==f");
+    const long = `${"x".repeat(10)}MARK${"y".repeat(170)}`;
+    const out = decorateInline(long, [{ start: 10, end: 14 }, { start: 170, end: 175 }], 160);
+    expect(out.startsWith("xxxxxxxxxx==MARK==")).toBe(true);
+    expect(out.endsWith("…")).toBe(true);
+    expect(out.match(/==/g)).toHaveLength(2); // 仅一对高亮（窗外的被丢弃）
   });
 });
 
