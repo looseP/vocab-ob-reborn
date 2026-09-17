@@ -132,3 +132,54 @@ export type AttemptCreateInput = z.infer<typeof attemptCreateSchema>;
 export const attemptQuestionIdsSchema = z.array(z.string().uuid()).min(1).max(200);
 
 export type AttemptQuestionIds = z.infer<typeof attemptQuestionIdsSchema>;
+
+// ── agent 面契约（批次三执行面；本批只定形状，无 agent 写端点）─────────────
+
+/**
+ * 评卷授权摘要（ADR-0034 §4）——capabilities 能力发现面对 agent 广播的单一真源：
+ * 提交即授权（可读 = 随题纸提交的草稿注记；写面 = 只写 review）；执行面批次三。
+ */
+export const L3_GRADING_AUTHORIZATION = {
+  annotationReadScope: "submitted_sheet_drafts",
+  annotationWriteScope: "review_only",
+} as const;
+
+/**
+ * 注记检验产物（ADR-0034 §4「提交即授权」）：
+ * agent 只写 review 段——note / 锚点 / 用户原判标签是不可篡改的原始事实；
+ * 订正放 review.corrected_*，采纳归 owner（owner 手动改自己的注记，或不理会）。
+ */
+export const ANNOTATION_REVIEW_VERDICTS = ["sound", "questionable", "wrong"] as const;
+export type AnnotationReviewVerdict = (typeof ANNOTATION_REVIEW_VERDICTS)[number];
+
+export const annotationReviewSchema = z.object({
+  verdict: z.enum(ANNOTATION_REVIEW_VERDICTS),
+  /** 订正建议标签（对齐注记标签上限：单标签 ≤30 字、单段 ≤8 条）。 */
+  corrected_tags: z.array(z.string().trim().min(1).max(30)).max(8).optional(),
+  comment: z.string().trim().max(2000).optional(),
+}).strict();
+
+export type AnnotationReview = z.infer<typeof annotationReviewSchema>;
+
+/** 评卷产物 `annotation_reviews[]` 段（批次三评卷提交携带；对齐 0034 review 列形状）。 */
+export const annotationReviewEntrySchema = z.object({
+  annotation_id: z.string().uuid(),
+  review: annotationReviewSchema,
+}).strict();
+
+export const annotationReviewsSectionSchema = z.object({
+  annotation_reviews: z.array(annotationReviewEntrySchema).max(200),
+}).strict();
+
+export type AnnotationReviewsSection = z.infer<typeof annotationReviewsSectionSchema>;
+
+/**
+ * 提交即授权（ADR-0034 §4）：agent 可读的注记范围 = 该题纸 `stage='submitted'`
+ * 的草稿注记（按题纸作用域收口）；`draft`（未提交）与 `confirmed`（历史正式注记）
+ * 均不开放。
+ */
+export const ANNOTATION_AGENT_READABLE_STAGES = ["submitted"] as const;
+
+export function isAnnotationAgentReadable(stage: string): boolean {
+  return (ANNOTATION_AGENT_READABLE_STAGES as readonly string[]).includes(stage);
+}

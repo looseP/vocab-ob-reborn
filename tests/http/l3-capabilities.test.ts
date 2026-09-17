@@ -58,6 +58,11 @@ describe("GET /api/l3/capabilities", () => {
     const body = l3CapabilitiesResponseSchema.parse(await res.json()) as L3Capabilities;
     expect(body.role).toBe("agent");
     expect(body.access).toEqual({ read: "all", write: "proposal_only", upgrade: "owner_only" });
+    // 批次二（ADR-0034 §4）：评卷授权语义登记（提交即授权；执行面批次三）。
+    expect(body.grading).toEqual({
+      annotationReadScope: "submitted_sheet_drafts",
+      annotationWriteScope: "review_only",
+    });
   });
 
   it("serves the same shape to owner tokens with role=owner", async () => {

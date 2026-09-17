@@ -473,6 +473,11 @@ export const l3CapabilitiesResponseSchema = z.object({
     write: z.literal("proposal_only"),
     upgrade: z.literal("owner_only"),
   }).strict(),
+  /** 批次二（ADR-0034 §4）：评卷授权语义（提交即授权；执行面批次三）。 */
+  grading: z.object({
+    annotationReadScope: z.literal("submitted_sheet_drafts"),
+    annotationWriteScope: z.literal("review_only"),
+  }).strict(),
   limits: z.object({
     apiJsonBodyMaxBytes: z.number().int().positive(),
     jsonRecordMaxBytes: z.number().int().positive(),

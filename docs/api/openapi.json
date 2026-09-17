@@ -43341,6 +43341,24 @@
                       ],
                       "additionalProperties": false
                     },
+                    "grading": {
+                      "type": "object",
+                      "properties": {
+                        "annotationReadScope": {
+                          "type": "string",
+                          "const": "submitted_sheet_drafts"
+                        },
+                        "annotationWriteScope": {
+                          "type": "string",
+                          "const": "review_only"
+                        }
+                      },
+                      "required": [
+                        "annotationReadScope",
+                        "annotationWriteScope"
+                      ],
+                      "additionalProperties": false
+                    },
                     "limits": {
                       "type": "object",
                       "properties": {
@@ -43409,6 +43427,7 @@
                   "required": [
                     "role",
                     "access",
+                    "grading",
                     "limits",
                     "errorCodes"
                   ],

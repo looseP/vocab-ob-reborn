@@ -19981,6 +19981,12 @@ export interface operations {
                             /** @constant */
                             upgrade: "owner_only";
                         };
+                        grading: {
+                            /** @constant */
+                            annotationReadScope: "submitted_sheet_drafts";
+                            /** @constant */
+                            annotationWriteScope: "review_only";
+                        };
                         limits: {
                             apiJsonBodyMaxBytes: number;
                             jsonRecordMaxBytes: number;

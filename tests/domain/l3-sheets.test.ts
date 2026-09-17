@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANNOTATION_AGENT_READABLE_STAGES,
+  annotationReviewEntrySchema,
+  annotationReviewSchema,
+  annotationReviewsSectionSchema,
   buildSheetScopeKey,
   canPatchSheet,
   countUnansweredQuestions,
+  isAnnotationAgentReadable,
   SHEET_SCOPES,
   SHEET_STATUSES,
   SEAL_MODES,
@@ -172,5 +177,55 @@ describe("countUnansweredQuestions", () => {
 
   it("returns zero for an empty question scope", () => {
     expect(countUnansweredQuestions([], { a: "x" })).toBe(0);
+  });
+});
+
+describe("annotation review contract (批次三形状)", () => {
+  const ANNOTATION_ID = "00000000-0000-4000-8000-000000000201";
+
+  it("accepts a verdict-only review entry", () => {
+    const parsed = annotationReviewsSectionSchema.parse({
+      annotation_reviews: [{ annotation_id: ANNOTATION_ID, review: { verdict: "sound" } }],
+    });
+    expect(parsed.annotation_reviews[0]!.review.verdict).toBe("sound");
+  });
+
+  it("accepts corrected_tags and comment; caps tags at 8", () => {
+    const ok = annotationReviewSchema.safeParse({
+      verdict: "questionable",
+      corrected_tags: ["偷换概念"],
+      comment: "选项 B 的归因值得再核对",
+    });
+    expect(ok.success).toBe(true);
+    expect(annotationReviewSchema.safeParse({
+      verdict: "sound",
+      corrected_tags: Array.from({ length: 9 }, (_, i) => `标签${i}`),
+    }).success).toBe(false);
+  });
+
+  it("rejects an unknown verdict and extra keys (strict)", () => {
+    expect(annotationReviewSchema.safeParse({ verdict: "maybe" }).success).toBe(false);
+    expect(annotationReviewSchema.safeParse({ verdict: "sound", note: "篡改内容" }).success).toBe(false);
+    expect(annotationReviewEntrySchema.safeParse({
+      annotation_id: ANNOTATION_ID, review: { verdict: "sound" }, note: "越权字段",
+    }).success).toBe(false);
+  });
+
+  it("caps the reviews section at 200 entries and requires the annotation_id", () => {
+    expect(annotationReviewsSectionSchema.safeParse({
+      annotation_reviews: Array.from({ length: 201 }, () => ({
+        annotation_id: ANNOTATION_ID, review: { verdict: "sound" },
+      })),
+    }).success).toBe(false);
+    expect(annotationReviewsSectionSchema.safeParse({
+      annotation_reviews: [{ review: { verdict: "sound" } }],
+    }).success).toBe(false);
+  });
+
+  it("提交即授权：仅 submitted 对 agent 可读（draft/confirmed 不开放）", () => {
+    expect([...ANNOTATION_AGENT_READABLE_STAGES]).toEqual(["submitted"]);
+    expect(isAnnotationAgentReadable("submitted")).toBe(true);
+    expect(isAnnotationAgentReadable("draft")).toBe(false);
+    expect(isAnnotationAgentReadable("confirmed")).toBe(false);
   });
 });

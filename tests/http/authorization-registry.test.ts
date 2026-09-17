@@ -166,6 +166,11 @@ const OTHER_OWNER_WRITES = [
   "patchQuestionAnnotation",
   "deleteQuestionAnnotation",
   "replaceAnnotationTags",
+  // 批次二：题纸与作答历史（ADR-0034）——做题台面是私人数据，读也不开放给 agent。
+  "openL3Sheet",
+  "patchL3Sheet",
+  "sealL3Sheet",
+  "deleteL3Attempt",
   // L3 recommendation generate（消耗预算产出推荐集，非 proposal-only 写入）；
   // l3 imports 两个入口已按 2026-09-12 裁决归 agent（属提案包生产路径）。
   "generateL3Recommendations",
@@ -238,6 +243,9 @@ const OWNER_READS = [
   // 批次一：做题注记与个人标签字典是做题台面私人数据，不对 agent 开放。
   "listQuestionAnnotations",
   "getAnnotationTags",
+  // 批次二（ADR-0034）：题纸与作答历史——owner-only 读（个人做题台面）。
+  "getL3Sheet",
+  "listL3Attempts",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {
