@@ -33118,8 +33118,14 @@
                                     "type": "string",
                                     "enum": [
                                       "passage",
-                                      "stem"
+                                      "stem",
+                                      "option"
                                     ]
+                                  },
+                                  "optionKey": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 8
                                   },
                                   "start": {
                                     "type": "integer",

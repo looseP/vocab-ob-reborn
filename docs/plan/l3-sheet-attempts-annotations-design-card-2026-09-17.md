@@ -125,12 +125,13 @@ l3_question_attempts（§2）
 
 ### 4.6 标记（marks）：非资产化的题纸级痕迹（v2，2026-09-17 同学裁决）
 
-- **定性**：做题中"划重点"（原文/题干）是轻痕迹、不是主张，**不进注记表、不立 stage、不升格**——避免资产囤积负担；
-- **存储**：题纸 `answers[questionId].marks: [{scope:'passage'|'stem', start, end}]`，防抖随题纸保存，**零迁移**（同 scope+start+end 契约层去重）；
+- **定性**：做题中"划重点"（原文/题干/选项）是轻痕迹、不是主张，**不进注记表、不立 stage、不升格**——避免资产囤积负担；
+- **存储**：题纸 `answers[questionId].marks: [{scope:'passage'|'stem'|'option', start, end, optionKey?}]`，防抖随题纸保存，**零迁移**（同 scope(+optionKey)+start+end 契约层去重）；
 - **生命周期随题纸**：draft 期划词即存；定格分流——完整记录档物化进 `attempts.self_assessment`，增量/总结档随题纸弃；
 - **资产化出口 = 导出**：标记经题纸导出（§6 v2）进入冻结档案——"导出即档案化"；agent 对标记正确性的分析发生在导出文档层面，系统内不建 verdict 流程；
 - **渲染**：纯底色高亮，无角标无徽标无 cursor（划词铁律），不进覆盖度视图；sealed 结果页从 self_assessment.marks 还原；
 - **v1 的 shape-driven 分轨设想（标记=锚点-only 注记、定格自动 confirmed）作废**：标记无主张可检验，升格 confirmed 是资产囤积；留在 draft 又会因 §4.5 可见性规则在定格后隐形。
+- **验收补记（2026-09-17 同学拍板）**：scope 扩至选项文本（`option`+`optionKey` 定位）——选项行划词「标记重点」与「存疑」旗标（`optionFlags`）语义分立；选项行文本选择与点选作答的冲突由前端「选区非空即抑制点选」收口；揭示（解析模式）后选项行锁定、不接新标记。
 
 ### 4.7 stage 可变矩阵与撤回通道（v2）
 

@@ -13,6 +13,7 @@ import {
   isAnnotationAgentReadable,
   pruneSheetAnswer,
   removeSheetAnswerMark,
+  SHEET_ANSWER_MARK_SCOPES,
   SHEET_SCOPES,
   SHEET_STATUSES,
   SEAL_MODES,
@@ -313,6 +314,42 @@ describe("marks 切换纯函数（v2 §4.6）", () => {
     expect(removeSheetAnswerMark(base, M1)).toHaveLength(0);
     expect(removeSheetAnswerMark(base, M2)).toHaveLength(1);
     expect(base).toHaveLength(1);
+  });
+});
+
+describe("选项标记契约（验收补记：marks scope 扩至 option）", () => {
+  const OM = { scope: "option" as const, optionKey: "B", start: 2, end: 6 };
+  const OC = { scope: "option" as const, optionKey: "C", start: 2, end: 6 };
+
+  it("白名单三档，接受 option 标记（optionKey 定位）", () => {
+    expect([...SHEET_ANSWER_MARK_SCOPES]).toEqual(["passage", "stem", "option"]);
+    expect(sheetAnswerSchema.safeParse({ marks: [OM] }).success).toBe(true);
+  });
+
+  it("option 标记必须携带 optionKey；非 option 标记不得携带", () => {
+    expect(sheetAnswerSchema.safeParse({ marks: [{ scope: "option", start: 2, end: 6 }] }).success).toBe(false);
+    expect(sheetAnswerSchema.safeParse({ marks: [{ scope: "passage", optionKey: "B", start: 2, end: 6 }] }).success).toBe(false);
+    expect(sheetAnswerSchema.safeParse({ marks: [{ scope: "stem", optionKey: "B", start: 2, end: 6 }] }).success).toBe(false);
+  });
+
+  it("去重按 optionKey 分键：同选项同区间重复即拒；不同选项/跨 scope 同区间放行", () => {
+    expect(sheetAnswerSchema.safeParse({ marks: [OM, { scope: "option", optionKey: "B", start: 2, end: 6 }] }).success).toBe(false);
+    expect(sheetAnswerSchema.safeParse({ marks: [OM, OC] }).success).toBe(true);
+    expect(sheetAnswerSchema.safeParse({ marks: [OM, { scope: "stem", start: 2, end: 6 }] }).success).toBe(true);
+  });
+
+  it("sheetAnswerMarkKey：option 键含 optionKey（option:B:2:6）", () => {
+    expect(sheetAnswerMarkKey(OM)).toBe("option:B:2:6");
+    expect(sheetAnswerMarkKey({ scope: "passage", start: 3, end: 12 })).toBe("passage:3:12");
+  });
+
+  it("add/remove 对选项标记按 optionKey 幂等", () => {
+    const once = addSheetAnswerMark([], OM);
+    expect(once).toHaveLength(1);
+    expect(addSheetAnswerMark(once, OM)).toHaveLength(1);
+    const crossOption = addSheetAnswerMark(once, OC);
+    expect(crossOption).toHaveLength(2);
+    expect(removeSheetAnswerMark(crossOption, OM)).toHaveLength(1);
   });
 });
 

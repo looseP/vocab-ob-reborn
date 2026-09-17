@@ -638,6 +638,157 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
     expect(document.querySelector("[data-passage-mark]")).toBeTruthy();
     void apiFetchMock;
   });
+
+  it("选项划词（scope=option+optionKey）：浮动条标记重点 → PATCH 保存 + 行内高亮", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector(`[data-option-key="B"]`)).toBeTruthy());
+
+    const optionB = document.querySelector(`[data-option-key="B"]`)!;
+    await act(async () => {
+      selectTextIn(optionB, 0, 1); // 选项 B 文本「乙」（[0,1)）
+      fireEvent.mouseUp(optionB);
+      await Promise.resolve();
+    });
+    expect(screen.getByText("「乙」")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "标记重点" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
+    ]);
+    // 行内高亮仅落在 B 行（纯底色，无角标）
+    expect(document.querySelector(`[data-option-key="B"] [data-option-mark]`)).toBeTruthy();
+    expect(document.querySelector(`[data-option-key="A"] [data-option-mark]`)).toBeNull();
+  });
+
+  it("选项标记取消：再划同区间显示「取消标记」→ 撤销后回到原有作答", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector(`[data-option-key="B"]`)).toBeTruthy());
+
+    // 先选中 B（choice），再划选选项文本标记 → 合并保存
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      selectTextIn(document.querySelector(`[data-option-key="B"]`)!, 0, 1);
+      fireEvent.mouseUp(document.querySelector(`[data-option-key="B"]`)!);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "标记重点" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B", marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
+    ]);
+
+    // 再划同区间：浮动条显示「取消标记」→ 撤销后 PATCH 回到纯 choice
+    await act(async () => {
+      selectTextIn(document.querySelector(`[data-option-key="B"]`)!, 0, 1);
+      fireEvent.mouseUp(document.querySelector(`[data-option-key="B"]`)!);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "取消标记" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B", marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
+      { answers: { [Q1]: { choice: "B" } } },
+    ]);
+    expect(document.querySelector("[data-option-mark]")).toBeNull();
+  });
+
+  it("拖选文本不触发作答点选；无选区 mouseUp 不出浮动条；清选区后点选照常", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock();
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(document.querySelector(`[data-option-key="B"]`)).toBeTruthy());
+
+    const optionB = document.querySelector(`[data-option-key="B"]`)!;
+    // 1) 无选区 mouseUp → 清场路径（offsets null，不出浮动条）
+    await act(async () => {
+      window.getSelection()!.removeAllRanges();
+      fireEvent.mouseUp(optionB);
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-exam-capture-bar]")).toBeNull();
+
+    // 2) 拖选文本后点击选项：点选被抑制（选中态不变、不产生 choice）
+    await act(async () => {
+      selectTextIn(optionB, 0, 1);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(optionB);
+      await Promise.resolve();
+    });
+    expect(optionB.getAttribute("data-selected")).toBeNull();
+
+    // 3) 清除选区后点击：照常选中并防抖保存
+    await act(async () => {
+      window.getSelection()!.removeAllRanges();
+      fireEvent.click(optionB);
+      await Promise.resolve();
+    });
+    expect(optionB.getAttribute("data-selected")).toBe("true");
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchBodies(apiFetchMock)).toEqual([
+      { answers: { [Q1]: { choice: "B" } } },
+    ]);
+  });
+
+  it("sealed 结果页还原选项标记高亮；readOnly 下划词不再捕获", async () => {
+    setupMock({
+      derivedAttempts: [{
+        id: "a1", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q1,
+        sheet_id: SHEET_ID, venue: "paper", answer: { choice: "B" },
+        self_assessment: { marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] },
+        status: "active", deleted_at: null, created_at: "2026-09-17T01:00:00Z",
+      }],
+    });
+    await renderPaper(passagePaper);
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    expect(document.querySelector(`[data-option-key="B"] [data-option-mark]`)).toBeTruthy();
+
+    // readOnly：划词不再捕获（定格后痕迹只读）
+    const optionB = document.querySelector(`[data-option-key="B"]`)!;
+    await act(async () => {
+      selectTextIn(optionB, 0, 1);
+      fireEvent.mouseUp(optionB);
+      await Promise.resolve();
+    });
+    expect(document.querySelector("[data-exam-capture-bar]")).toBeNull();
+  });
 });
 
 describe("批次二增补：导出 v2 弹层（v2 §6）", () => {

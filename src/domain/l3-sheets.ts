@@ -84,24 +84,36 @@ export type SheetOpenInput = z.infer<typeof sheetOpenInputSchema>;
 
 // ── answers 显式键契约（ADR-0034 增补条 8 / 设计卡 §10/§4.6）─────────────────
 
-/** 标记作用域：passage=原文（材料正文），stem=题干（题面文本）。 */
-export const SHEET_ANSWER_MARK_SCOPES = ["passage", "stem"] as const;
+/** 标记作用域：passage=原文（材料正文），stem=题干（题面文本），option=选项文本（optionKey 定位）。 */
+export const SHEET_ANSWER_MARK_SCOPES = ["passage", "stem", "option"] as const;
 export type SheetAnswerMarkScope = (typeof SHEET_ANSWER_MARK_SCOPES)[number];
 
-/** 单条标记（轻痕迹，非资产）：正文/题面偏移区间，end>start。 */
+/**
+ * 单条标记（轻痕迹，非资产）：正文/题面/选项偏移区间，end>start。
+ * option 以 optionKey 定位（同区间不同选项是不同标记）；其余 scope 不得携带 optionKey。
+ */
 export const sheetAnswerMarkSchema = z.object({
   scope: z.enum(SHEET_ANSWER_MARK_SCOPES),
+  /** 仅 scope='option' 时携带：选项键（A–D 等，与 answers choice 键集同源）。 */
+  optionKey: z.string().trim().min(1).max(8).optional(),
   start: z.number().int().nonnegative(),
   end: z.number().int().positive(),
 }).strict().superRefine((v, ctx) => {
   if (v.end <= v.start) ctx.addIssue({ code: "custom", message: "标记 end 必须大于 start" });
+  if (v.scope === "option" && v.optionKey == null) {
+    ctx.addIssue({ code: "custom", message: "option 标记必须携带 optionKey" });
+  }
+  if (v.scope !== "option" && v.optionKey != null) {
+    ctx.addIssue({ code: "custom", message: "仅 option 标记可携带 optionKey" });
+  }
 });
 
 export type SheetAnswerMark = z.infer<typeof sheetAnswerMarkSchema>;
 
-/** 标记去重键：同 scope+start+end 视为同一标记（契约层去重判据唯一来源）。 */
+/** 标记去重键：同 scope(+optionKey)+start+end 视为同一标记（契约层去重判据唯一来源）。 */
 export function sheetAnswerMarkKey(mark: SheetAnswerMark): string {
-  return `${mark.scope}:${mark.start}:${mark.end}`;
+  const optionPart = mark.scope === "option" ? `${mark.optionKey}:` : "";
+  return `${mark.scope}:${optionPart}${mark.start}:${mark.end}`;
 }
 
 /** 旗标（§10）：doubt=存疑（认知状态，物化进 self_assessment）；recheck=待复查（流程状态，不物化）。 */
@@ -115,7 +127,7 @@ export type SheetAnswerFlags = z.infer<typeof sheetAnswerFlagsSchema>;
 /**
  * 题纸 answers 值的显式键契约（strict 收口防腐化）：
  * choice=选项键（单选起步）；flags=题级旗标；optionFlags=选项级存疑键列；
- * marks=内容标记（原文/题干）。全部 optional 无 default（PATCH 未提交键不被填充）；
+ * marks=内容标记（原文/题干/选项）。全部 optional 无 default（PATCH 未提交键不被填充）；
  * marks 同 scope+start+end、optionFlags 同键重复即拒（fail-closed，前端幂等添加保证不产生）。
  */
 export const sheetAnswerSchema = z.object({
@@ -129,7 +141,7 @@ export const sheetAnswerSchema = z.object({
     for (const mark of v.marks) {
       const key = sheetAnswerMarkKey(mark);
       if (seen.has(key)) {
-        ctx.addIssue({ code: "custom", message: "marks 存在重复标记（同 scope+start+end）" });
+        ctx.addIssue({ code: "custom", message: "marks 存在重复标记（同去重键）" });
         break;
       }
       seen.add(key);

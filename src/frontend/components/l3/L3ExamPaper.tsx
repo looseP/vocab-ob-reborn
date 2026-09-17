@@ -541,6 +541,7 @@ function PassageBody({
 
 function OptionRow({
   optionKey, text, state, selected = false, onSelect, readOnly = false, doubt = false, onToggleDoubt,
+  marks, onToggleMark,
 }: {
   optionKey: string;
   text: string;
@@ -552,7 +553,52 @@ function OptionRow({
   /** v2 §10：选项级存疑（行尾悬停钮 + 行内小字；随定格物化进 self_assessment）。 */
   doubt?: boolean;
   onToggleDoubt?: (key: string) => void;
+  /** 验收补记：选项文本划重点（scope='option'，已按本行 optionKey 过滤；纯底色通道）。 */
+  marks?: ReadonlyArray<{ start: number; end: number }>;
+  onToggleMark?: (anchor: { start: number; end: number }) => void;
 }) {
+  const rowRef = useRef<HTMLButtonElement>(null);
+  const [markCapture, setMarkCapture] = useState<{ x: number; y: number; start: number; end: number; excerpt: string } | null>(null);
+  useEffect(() => {
+    if (!markCapture) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest("[data-exam-capture-bar]")) return;
+      setMarkCapture(null);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMarkCapture(null);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [markCapture !== null]);
+
+  const handleMouseUp = useCallback(() => {
+    if (readOnly || !onToggleMark) return;
+    const container = rowRef.current;
+    if (!container) return;
+    const offsets = selectionToContentOffsets(container);
+    if (!offsets) {
+      setMarkCapture(null);
+      return;
+    }
+    const rect = window.getSelection()?.getRangeAt(0).getBoundingClientRect?.();
+    setMarkCapture({
+      x: rect ? rect.left + rect.width / 2 : 120,
+      y: rect ? rect.top : 120,
+      start: offsets.start,
+      end: offsets.end,
+      excerpt: text.slice(offsets.start, offsets.end),
+    });
+  }, [text, readOnly, onToggleMark]);
+
+  const marked = markCapture != null
+    && (marks ?? []).some((mark) => mark.start === markCapture.start && mark.end === markCapture.end);
+  const spans = useMemo(() => buildPassageSpans(text, { marks: marks ?? [], parseBlanks: false }), [text, marks]);
   const styles = selected
     ? "border-[var(--color-accent)] bg-[var(--color-accent-soft,var(--color-surface))]"
     : {
@@ -569,14 +615,38 @@ function OptionRow({
   }[state];
   return (
     <div className="group flex items-stretch gap-1">
-      <button type="button" onClick={onSelect} disabled={state !== "idle" || readOnly}
+      <button ref={rowRef} type="button" onClick={(event) => {
+        // 验收补记：拖选文本（选区非空且落在本行内）不触发作答点选。
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && selection.rangeCount > 0
+          && event.currentTarget.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+          return;
+        }
+        onSelect();
+      }} disabled={state !== "idle" || readOnly}
         data-option-key={optionKey}
         data-selected={selected ? "true" : undefined}
-        className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-all ${styles}`}>
+        onMouseUp={handleMouseUp}
+        className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-all select-text ${styles}`}>
         <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold ${badge}`}>
           {state === "correct" ? "✓" : state === "wrong" ? "✕" : optionKey}
         </span>
-        <span className="leading-relaxed">{text}</span>
+        <span className="leading-relaxed">
+          {spans.map((span) => span.kind === "mark" ? (
+            <mark
+              key={`${span.start}-${span.end}`}
+              data-content-off={span.start}
+              data-option-mark
+              className="rounded-sm bg-sky-100 px-0.5 text-inherit dark:bg-sky-900/40"
+            >
+              {text.slice(span.start, span.end)}
+            </mark>
+          ) : (
+            <span key={`${span.start}-${span.end}`} data-content-off={span.start}>
+              {text.slice(span.start, span.end)}
+            </span>
+          ))}
+        </span>
         {doubt && <span className="ml-auto shrink-0 whitespace-nowrap text-[10px] font-medium text-amber-600 dark:text-amber-400">存疑</span>}
       </button>
       {!readOnly && onToggleDoubt && (
@@ -591,6 +661,37 @@ function OptionRow({
           }`}>
           ?
         </span>
+      )}
+      {markCapture && onToggleMark && !readOnly && (
+        <div
+          data-exam-capture-bar
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          style={{
+            position: "fixed",
+            left: Math.min(Math.max(markCapture.x, 140), window.innerWidth - 140),
+            top: Math.max(markCapture.y - 8, 72),
+            transform: "translateX(-50%) translateY(-100%)",
+          }}
+          className="z-50 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-xl"
+        >
+          <p className="mb-2 line-clamp-2 rounded-md bg-[var(--color-accent-soft,var(--color-surface))] p-1.5 text-[11px] italic text-[var(--color-ink-soft)]">
+            「{markCapture.excerpt}」
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              onToggleMark({ start: markCapture.start, end: markCapture.end });
+              setMarkCapture(null);
+              window.getSelection()?.removeAllRanges();
+            }}
+            className={marked
+              ? "w-full rounded-md border border-sky-400 bg-sky-50 px-2 py-1.5 text-xs text-sky-800 hover:border-sky-500 dark:bg-sky-950/40 dark:text-sky-200"
+              : "w-full rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-xs font-semibold text-[var(--color-accent-contrast,var(--color-surface))]"}
+          >
+            {marked ? "取消标记" : "标记重点"}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -611,6 +712,8 @@ function ChoiceQuestion({
   onToggleOptionDoubt,
   stemMarks,
   onToggleStemMark,
+  optionMarks,
+  onToggleOptionMark,
 }: {
   question: ExamQuestion;
   index: number;
@@ -629,6 +732,9 @@ function ChoiceQuestion({
   /** v2 §4.6：题干划重点（scope='stem'，题号天然已知无需选择器）。 */
   stemMarks?: ReadonlyArray<{ start: number; end: number }>;
   onToggleStemMark?: (anchor: { start: number; end: number }) => void;
+  /** 验收补记：选项文本划重点（scope='option'+optionKey；按行过滤后下传 OptionRow）。 */
+  optionMarks?: ReadonlyArray<{ optionKey?: string; start: number; end: number }>;
+  onToggleOptionMark?: (optionKey: string, anchor: { start: number; end: number }) => void;
 }) {
   const correct = question.answer.choice;
 
@@ -772,6 +878,8 @@ function ChoiceQuestion({
               readOnly={readOnly}
               doubt={optionFlags?.includes(opt.key) ?? false}
               onToggleDoubt={onToggleOptionDoubt}
+              marks={(optionMarks ?? []).filter((mark) => mark.optionKey === opt.key).map((mark) => ({ start: mark.start, end: mark.end }))}
+              onToggleMark={onToggleOptionMark && ((anchor) => onToggleOptionMark(opt.key, anchor))}
               onSelect={() => onPick(opt.key)}
             />
           );
@@ -1031,6 +1139,19 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     const next = exists
       ? removeSheetAnswerMark(marks, { scope: "stem", start: anchor.start, end: anchor.end })
       : addSheetAnswerMark(marks, { scope: "stem", start: anchor.start, end: anchor.end });
+    commitAnswer(questionId, { marks: next });
+  }, [commitAnswer]);
+
+  /** 验收补记：选项文本划重点（scope='option'+optionKey，题号与选项键天然已知——toggle 语义）。 */
+  const toggleOptionMark = useCallback((questionId: string, optionKey: string, anchor: { start: number; end: number }) => {
+    const marks = answersRef.current[questionId]?.marks ?? [];
+    const exists = marks.some(
+      (mark) => mark.scope === "option" && mark.optionKey === optionKey
+        && mark.start === anchor.start && mark.end === anchor.end,
+    );
+    const next = exists
+      ? removeSheetAnswerMark(marks, { scope: "option", optionKey, start: anchor.start, end: anchor.end })
+      : addSheetAnswerMark(marks, { scope: "option", optionKey, start: anchor.start, end: anchor.end });
     commitAnswer(questionId, { marks: next });
   }, [commitAnswer]);
 
@@ -1556,6 +1677,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                           onToggleOptionDoubt={(key) => toggleOptionDoubt(q.id, key)}
                           stemMarks={(answers[q.id]?.marks ?? []).filter((mark) => mark.scope === "stem")}
                           onToggleStemMark={(anchor) => toggleStemMark(q.id, anchor)}
+                          optionMarks={(answers[q.id]?.marks ?? []).filter((mark) => mark.scope === "option")}
+                          onToggleOptionMark={(key, anchor) => toggleOptionMark(q.id, key, anchor)}
                         />
                       </div>
                     ))}
@@ -1580,6 +1703,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                       onToggleOptionDoubt={(key) => toggleOptionDoubt(q.id, key)}
                       stemMarks={(answers[q.id]?.marks ?? []).filter((mark) => mark.scope === "stem")}
                       onToggleStemMark={(anchor) => toggleStemMark(q.id, anchor)}
+                      optionMarks={(answers[q.id]?.marks ?? []).filter((mark) => mark.scope === "option")}
+                      onToggleOptionMark={(key, anchor) => toggleOptionMark(q.id, key, anchor)}
                     />
                   ))}
                 </div>

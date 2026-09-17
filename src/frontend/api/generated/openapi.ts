@@ -16320,7 +16320,8 @@ export interface operations {
                             optionFlags?: string[];
                             marks?: {
                                 /** @enum {string} */
-                                scope: "passage" | "stem";
+                                scope: "passage" | "stem" | "option";
+                                optionKey?: string;
                                 start: number;
                                 end: number;
                             }[];
