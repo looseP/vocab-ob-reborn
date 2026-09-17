@@ -110,13 +110,13 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
     const row = await this.queryOne<AnnotationDbRow>(
       `INSERT INTO l3_question_annotations
          (user_id, question_id, ordinal, anchor_start, anchor_end, excerpt,
-          note, entry_tags, option_tags)
+          note, entry_tags, option_tags, stage, sheet_id)
        VALUES ($1::uuid, $2::uuid,
          COALESCE($3,
            (SELECT COALESCE(MAX(ordinal) + 1, 0) AS max_ordinal
               FROM l3_question_annotations
              WHERE question_id = $2::uuid AND user_id = $1::uuid AND status = 'active')),
-         $4, $5, $6, $7, $8::jsonb, $9::jsonb)
+         $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11::uuid)
        RETURNING *`,
       [
         input.user_id,
@@ -128,6 +128,8 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
         input.note,
         JSON.stringify(input.entry_tags),
         JSON.stringify(input.option_tags),
+        input.stage ?? "confirmed",
+        input.sheet_id ?? null,
       ],
     );
     if (!row) throw new Error("annotation insert returned no row");

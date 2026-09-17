@@ -31,6 +31,7 @@ import { UpgradeWorkOrderService } from "./upgrade-work-order.service";
 import { L3PracticeService } from "./l3-practice.service";
 import { L3PaperService } from "./l3-paper.service";
 import { L3AnnotationService } from "./l3-annotations.service";
+import { L3SheetService } from "./l3-sheets.service";
 import { L3SessionService } from "./l3-session.service";
 import { ForgettingService } from "./forgetting.service";
 import { L3ContextSourceAdapter } from "./l3-context-source-adapter";
@@ -237,6 +238,7 @@ export function createServices(deps: ServiceDeps) {
     l3Practice: new L3PracticeService(),
     l3Paper: new L3PaperService(repos.l3Paper, repos.l3Context),
     l3Annotations: new L3AnnotationService(repos.l3Annotations, repos.l3Paper),
+    l3Sheets: new L3SheetService(repos.l3Sheets, repos.l3Paper, repos.l3Annotations),
     l3Sessions: new L3SessionService(),
     forgetting: new ForgettingService(),
   };

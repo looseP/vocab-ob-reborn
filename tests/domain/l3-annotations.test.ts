@@ -140,6 +140,16 @@ describe("questionAnnotationInputSchema", () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it("accepts an optional sheetId for draft notes and rejects a non-uuid one (批次二)", () => {
+    const sheetId = "00000000-0000-4000-8000-000000000401";
+    const ok = questionAnnotationInputSchema.safeParse({ questionId: QUESTION_ID, note: "x", sheetId });
+    expect(ok.success).toBe(true);
+    if (ok.success) expect(ok.data.sheetId).toBe(sheetId);
+    expect(questionAnnotationInputSchema.safeParse({
+      questionId: QUESTION_ID, note: "x", sheetId: "not-a-uuid",
+    }).success).toBe(false);
+  });
 });
 
 describe("questionAnnotationPatchSchema", () => {

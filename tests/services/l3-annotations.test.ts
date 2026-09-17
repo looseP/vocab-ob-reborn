@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NotFoundError } from "@/errors";
-import type { L3AnnotationTagRow, L3QuestionAnnotationRow, L3QuestionRow } from "@/domain";
-import type { IRepositories, IL3AnnotationRepository, IL3PaperRepository } from "@/repositories/interfaces";
+import { ConflictError, NotFoundError } from "@/errors";
+import type { L3AnnotationTagRow, L3QuestionAnnotationRow, L3QuestionRow, L3SubmissionRow } from "@/domain";
+import type {
+  IRepositories,
+  IL3AnnotationRepository,
+  IL3PaperRepository,
+  IL3SheetRepository,
+} from "@/repositories/interfaces";
 import { L3AnnotationService } from "@/services/l3-annotations.service";
 import { PRESET_ENTRY_TAGS, PRESET_OPTION_TAGS } from "@/domain/l3-annotations";
 
@@ -98,15 +103,55 @@ function makePaperRepo(question: L3QuestionRow | null): IL3PaperRepository {
   } as unknown as IL3PaperRepository;
 }
 
+function makeSheetRepo(sheet: L3SubmissionRow | null): IL3SheetRepository {
+  return {
+    findDraftByScopeKey: vi.fn(),
+    openSheet: vi.fn(),
+    patchAnswers: vi.fn(),
+    sealSheet: vi.fn(),
+    getSheet: vi.fn(async () => sheet),
+    insertAttempts: vi.fn(),
+    listForQuestions: vi.fn(),
+    softDeleteAttempt: vi.fn(),
+    listBySheet: vi.fn(),
+    countAnsweredBySheet: vi.fn(),
+  } as unknown as IL3SheetRepository;
+}
+
+function submissionRow(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRow {
+  return {
+    id: "00000000-0000-4000-8000-000000000401",
+    user_id: USER_ID,
+    scope: "file",
+    scope_key: "file:00000000-0000-4000-8000-000000000302:reading_choice",
+    source_id: "00000000-0000-4000-8000-000000000302",
+    question_type: "reading_choice",
+    paper_id: null,
+    status: "draft",
+    answers: {},
+    seal_mode: null,
+    summary: null,
+    sealed_at: null,
+    created_at: "2026-09-17T00:00:00Z",
+    updated_at: "2026-09-17T00:00:00Z",
+    ...overrides,
+  };
+}
+
 function makeService(
   annotationRepo: IL3AnnotationRepository,
   paperRepo: IL3PaperRepository,
+  sheetRepo: IL3SheetRepository = makeSheetRepo(null),
 ): L3AnnotationService {
   return new L3AnnotationService(
     annotationRepo,
     paperRepo,
     async (callback) => callback({} as never),
-    () => ({ l3Annotations: annotationRepo, l3Paper: paperRepo } as unknown as IRepositories),
+    () => ({
+      l3Annotations: annotationRepo,
+      l3Paper: paperRepo,
+      l3Sheets: sheetRepo,
+    } as unknown as IRepositories),
   );
 }
 
@@ -158,6 +203,8 @@ describe("L3AnnotationService.createAnnotation", () => {
       note: "B 偷换概念",
       entry_tags: ["推断题"],
       option_tags: { B: ["偷换概念"] },
+      stage: "confirmed",
+      sheet_id: null,
     });
   });
 
@@ -270,5 +317,56 @@ describe("L3AnnotationService tag dictionary", () => {
     const service = makeService(repo, makePaperRepo(questionRow()));
     const result = await service.replaceTagDict({ userId: USER_ID, entry: ["自定义题型"], option: [] });
     expect(result).toEqual({ entry: ["自定义题型"], option: [] });
+  });
+});
+
+describe("L3AnnotationService.createAnnotation · 批次二草稿注记", () => {
+  const SHEET_ID = "00000000-0000-4000-8000-000000000401";
+
+  it("creates a draft note pinned to the draft sheet", async () => {
+    const annotationRepo = makeAnnotationRepo();
+    vi.mocked(annotationRepo.insertAnnotation).mockResolvedValue(
+      annotationRow({ stage: "draft", sheet_id: SHEET_ID }),
+    );
+    const service = makeService(
+      annotationRepo,
+      makePaperRepo(questionRow()),
+      makeSheetRepo(submissionRow({ status: "draft" })),
+    );
+    const result = await service.createAnnotation({ ...anchoredInput, sheetId: SHEET_ID });
+    expect(result.item.stage).toBe("draft");
+    expect(result.idempotent).toBe(false);
+    expect(annotationRepo.insertAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "draft", sheet_id: SHEET_ID }),
+    );
+  });
+
+  it("404s when the sheet does not exist for this owner", async () => {
+    const annotationRepo = makeAnnotationRepo();
+    const service = makeService(annotationRepo, makePaperRepo(questionRow()), makeSheetRepo(null));
+    await expect(service.createAnnotation({ ...anchoredInput, sheetId: SHEET_ID }))
+      .rejects.toBeInstanceOf(NotFoundError);
+    expect(annotationRepo.insertAnnotation).not.toHaveBeenCalled();
+  });
+
+  it("409s when the sheet is no longer a draft", async () => {
+    const annotationRepo = makeAnnotationRepo();
+    const service = makeService(
+      annotationRepo,
+      makePaperRepo(questionRow()),
+      makeSheetRepo(submissionRow({ status: "sealed" })),
+    );
+    await expect(service.createAnnotation({ ...anchoredInput, sheetId: SHEET_ID }))
+      .rejects.toBeInstanceOf(ConflictError);
+    expect(annotationRepo.insertAnnotation).not.toHaveBeenCalled();
+  });
+
+  it("keeps the batch-1 confirmed path when no sheetId is given", async () => {
+    const annotationRepo = makeAnnotationRepo();
+    const service = makeService(annotationRepo, makePaperRepo(questionRow()));
+    await service.createAnnotation(anchoredInput);
+    expect(annotationRepo.insertAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "confirmed", sheet_id: null }),
+    );
   });
 });

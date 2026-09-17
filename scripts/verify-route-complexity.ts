@@ -24,6 +24,9 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // 2026-09-16 批次一：做题注记 CRUD + 规律标签字典整取/整存（6 端点薄路由，
   // server.ts 直挂；bootstrap 限额留一档余量）。
   { file: "src/http/routes/l3/annotations.ts", maxLines: 160, maxRoutes: 8 },
+  // 2026-09-17 批次二：题纸（开纸/读/merge/定格）与作答历史（批量/软删）薄路由
+  // （server.ts 直挂；bootstrap 限额按实测规模留余量，含 T10 export 端点增长）。
+  { file: "src/http/routes/l3/sheets.ts", maxLines: 120, maxRoutes: 8 },
   { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
   { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },

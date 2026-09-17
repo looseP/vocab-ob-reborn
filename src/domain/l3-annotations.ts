@@ -73,6 +73,8 @@ const annotationObjectSchema = z.object({
   note: z.string().trim().max(2000).default(""),
   entryTags: z.array(tagSchema).max(8).default([]),
   optionTags: optionTagsSchema.default({}),
+  // 批次二：挂题纸的草稿注记（做题中产生，随定格升格）。缺省 = 正式注记（confirmed）。
+  sheetId: z.string().uuid().optional(),
 });
 
 export const questionAnnotationInputSchema = annotationObjectSchema.superRefine((v, ctx) =>

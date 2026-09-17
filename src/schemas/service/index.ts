@@ -21,6 +21,11 @@ import type {
   QuestionAnnotationInput,
   QuestionAnnotationPatch,
 } from "@/domain/l3-annotations";
+import type {
+  SheetOpenInput,
+  SheetPatchInput,
+  SheetSealInput,
+} from "@/domain/l3-sheets";
 import {
   reviewAnswerSchema,
   reviewSkipSchema,
@@ -832,3 +837,8 @@ export interface DeleteL3QuestionInput {
 export type CreateQuestionAnnotationInput = { userId: string } & QuestionAnnotationInput;
 export type PatchQuestionAnnotationInput = { userId: string; id: string } & QuestionAnnotationPatch;
 export type ReplaceAnnotationTagsInput = { userId: string } & AnnotationTagDict;
+
+// ── 批次二（0034）：题纸与作答历史（ADR-0034）────────────────────────────
+export type OpenL3SheetInput = { userId: string } & SheetOpenInput;
+export type PatchL3SheetInput = { userId: string; sheetId: string; answers: SheetPatchInput["answers"] };
+export type SealL3SheetInput = { userId: string; sheetId: string } & SheetSealInput;

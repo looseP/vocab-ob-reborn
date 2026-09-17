@@ -126,6 +126,23 @@ describe("L3AnnotationRepository.insertAnnotation", () => {
       note: "无锚点", entry_tags: [], option_tags: {},
     })).rejects.toThrow("annotation insert returned no row");
   });
+
+  it("carries stage and sheet_id for draft notes (批次二)", async () => {
+    const SHEET = "00000000-0000-4000-8000-000000000401";
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(annotation({ stage: "draft", sheet_id: SHEET }));
+    const row = await repo.insertAnnotation({
+      user_id: USER, question_id: QUESTION,
+      anchor_start: 12, anchor_end: 20, excerpt: "trap phrase",
+      note: "草稿判据", entry_tags: [], option_tags: {},
+      stage: "draft", sheet_id: SHEET,
+    });
+    expect(row.stage).toBe("draft");
+    const [sql, params] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("stage, sheet_id");
+    expect(params).toContain("draft");
+    expect(params).toContain(SHEET);
+  });
 });
 
 describe("L3AnnotationRepository.updateAnnotation", () => {

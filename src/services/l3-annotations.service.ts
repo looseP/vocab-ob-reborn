@@ -8,7 +8,7 @@
  */
 
 import type { PoolClient } from "pg";
-import { NotFoundError } from "../errors";
+import { ConflictError, NotFoundError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import type {
@@ -72,6 +72,23 @@ export class L3AnnotationService {
       const question = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
       if (!question) throw new NotFoundError("L3Question", input.questionId);
 
+      // 批次二：带 sheetId 的创建 = 挂题纸的草稿注记（stage='draft'，随定格升格）。
+      // 题纸不存在/非属主 → 404；已定格/已弃 → 409（草稿注记只能在在写题纸上产生）。
+      let stage: "draft" | "confirmed" = "confirmed";
+      let sheetId: string | null = null;
+      if (input.sheetId) {
+        const sheet = await repos.l3Sheets.getSheet(input.userId, input.sheetId);
+        if (!sheet) throw new NotFoundError("L3Sheet", input.sheetId);
+        if (sheet.status !== "draft") {
+          throw new ConflictError("L3 sheet is settled; draft notes require a draft sheet", undefined, {
+            sheetId: input.sheetId,
+            status: sheet.status,
+          });
+        }
+        stage = "draft";
+        sheetId = input.sheetId;
+      }
+
       if (input.anchorStart != null && input.anchorEnd != null) {
         const existing = await repos.l3Annotations.findByAnchor(
           input.userId,
@@ -91,6 +108,8 @@ export class L3AnnotationService {
         note: input.note,
         entry_tags: input.entryTags,
         option_tags: input.optionTags,
+        stage,
+        sheet_id: sheetId,
       });
       return { item, idempotent: false };
     });

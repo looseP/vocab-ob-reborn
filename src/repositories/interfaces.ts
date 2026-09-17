@@ -1528,6 +1528,9 @@ export interface NewL3QuestionAnnotation {
   note: string;
   entry_tags: string[];
   option_tags: Partial<Record<L3AnnotationOptionKey, string[]>>;
+  /** 批次二：挂题纸的草稿注记（缺省 = 正式注记 confirmed）。 */
+  stage?: "draft" | "confirmed";
+  sheet_id?: string | null;
 }
 
 /** PATCH 的库列形状（snake_case；只含可改列，question_id 永不可改）。 */

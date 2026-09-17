@@ -768,3 +768,19 @@ export const l3QuestionAnnotationListQuerySchema = z.object({
     .refine((ids) => ids.length >= 1 && ids.length <= 200, { message: "questionIds 需为 1–200 个 uuid" })
     .refine((ids) => ids.every((id) => uuidSchema.safeParse(id).success), { message: "questionIds 含非法 uuid" }),
 });
+
+// ── 批次二：题纸与作答历史（2026-09-17）────────────────────────────────
+// body 契约直接复用 domain zod（单一真源：幂等开纸 / 逐题 merge / 三档定格）。
+export {
+  sheetOpenInputSchema as l3SheetOpenSchema,
+  sheetPatchInputSchema as l3SheetPatchSchema,
+  sheetSealInputSchema as l3SheetSealSchema,
+} from "../../domain/l3-sheets";
+
+/** GET /l3/attempts?questionIds=<uuid,uuid,...>：1–200 个 uuid（对齐注记批量口径）。 */
+export const l3AttemptListQuerySchema = z.object({
+  questionIds: z.string().trim().min(1).max(12_000)
+    .transform((raw) => raw.split(",").map((value) => value.trim()).filter(Boolean))
+    .refine((ids) => ids.length >= 1 && ids.length <= 200, { message: "questionIds 需为 1–200 个 uuid" })
+    .refine((ids) => ids.every((id) => uuidSchema.safeParse(id).success), { message: "questionIds 含非法 uuid" }),
+});

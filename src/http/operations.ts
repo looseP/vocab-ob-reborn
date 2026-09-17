@@ -44,6 +44,12 @@ import {
   l3QuestionAnnotationListResponseSchema,
 } from "./l3-annotation-response-contract";
 import {
+  l3AttemptListResponseSchema,
+  l3SheetDetailResponseSchema,
+  l3SheetItemResponseSchema,
+  l3SheetSealResponseSchema,
+} from "./l3-sheet-response-contract";
+import {
   upgradeWorkOrderCompleteResponseSchema,
   upgradeWorkOrderListResponseSchema,
   upgradeWorkOrderMarkResponseSchema,
@@ -139,6 +145,10 @@ import {
   l3QuestionAnnotationListQuerySchema,
   l3QuestionAnnotationPatchSchema,
   l3AnnotationTagDictSchema,
+  l3SheetOpenSchema,
+  l3SheetPatchSchema,
+  l3SheetSealSchema,
+  l3AttemptListQuerySchema,
   l3ProposalCreateSchema,
   l3ProposalListQuerySchema,
   l3ProposalRejectSchema,
@@ -459,6 +469,14 @@ export const apiOperations = [
   operation("delete", "/api/l3/question-annotations/:id", "deleteQuestionAnnotation", "owner", "owner", "sessionMutation", undefined, 204, z.null()),
   operation("get", "/api/l3/annotation-tags", "getAnnotationTags", "owner", "owner", "none", undefined, 200, l3AnnotationTagDictResponseSchema),
   operation("put", "/api/l3/annotation-tags", "replaceAnnotationTags", "owner", "owner", "sessionMutation", { body: l3AnnotationTagDictSchema }, 200, l3AnnotationTagDictResponseSchema),
+  // 批次二：题纸与作答历史（owner-only——做题台面是私人数据，读也不开放给 agent）。
+  // 开纸幂等（复用 200 / 新建 201）；seal 未答软确认 409；attempts 软删 204。
+  operation("post", "/api/l3/sheets", "openL3Sheet", "owner", "owner", "sessionMutation", { body: l3SheetOpenSchema }, 201, l3SheetItemResponseSchema),
+  operation("get", "/api/l3/sheets/:id", "getL3Sheet", "owner", "owner", "none", undefined, 200, l3SheetDetailResponseSchema),
+  operation("patch", "/api/l3/sheets/:id", "patchL3Sheet", "owner", "owner", "sessionMutation", { body: l3SheetPatchSchema }, 200, l3SheetItemResponseSchema),
+  operation("post", "/api/l3/sheets/:id/seal", "sealL3Sheet", "owner", "owner", "sessionMutation", { body: l3SheetSealSchema }, 200, l3SheetSealResponseSchema),
+  operation("get", "/api/l3/attempts", "listL3Attempts", "owner", "owner", "none", { query: l3AttemptListQuerySchema }, 200, l3AttemptListResponseSchema),
+  operation("delete", "/api/l3/attempts/:id", "deleteL3Attempt", "owner", "owner", "sessionMutation", undefined, 204, z.null()),
   operation("get", "/api/l3/practice-files", "listL3PracticeFiles", "owner", "agent", "none", { query: l3PracticeFileListQuerySchema }, 200, l3PracticeFileListResponseSchema),
   operation("get", "/api/l3/practice-files/detail", "getL3PracticeFile", "owner", "agent", "none", { query: l3PracticeFileDetailQuerySchema }, 200, l3PracticeFileDetailResponseSchema),
   operation("post", "/api/l3/contexts", "createL3Context", "owner", "owner", "sessionMutation", { body: l3ContextCreateSchema }, 201, l3ContextCreateResponseSchema),
