@@ -38,7 +38,7 @@ const paper: ExamPaper = {
       {
         id: Q1, ordinal: 0, stem: "21. Why did the author?",
         options: [{ key: "A", text: "甲" }, { key: "B", text: "乙" }],
-        answer: { choice: "B" }, explanation: null, evidence: [],
+        answer: { choice: "B" }, explanation: "【词义辨析】测试解析", evidence: [],
       },
       {
         id: Q2, ordinal: 1, stem: "22. What does the phrase mean?",
@@ -125,13 +125,13 @@ class ResizeObserverStub {
 (globalThis as Record<string, unknown>).IntersectionObserver ??= ResizeObserverStub;
 
 const roots: Root[] = [];
-async function renderPaper(flushes = 3): Promise<void> {
+async function renderPaper(target: ExamPaper = paper, flushes = 3): Promise<void> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   roots.push(root);
   await act(async () => {
-    root.render(createElement(L3ExamPaper, { paper, onBack: vi.fn() }) as ReactElement);
+    root.render(createElement(L3ExamPaper, { paper: target, onBack: vi.fn() }) as ReactElement);
     for (let i = 0; i < flushes; i += 1) await Promise.resolve();
   });
 }
@@ -286,8 +286,79 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
     await renderPaper();
     await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
 
-    // Q1 的 B 项被恢复为已选（correct 徽标 ✓）
-    await waitFor(() => expect(screen.getByText("✓")).toBeTruthy());
+    // Q1 的 B 项被恢复为已选（草稿选中态：不揭示、不判对错，不出现 ✓）
+    await waitFor(() => expect(document.querySelector('[data-option-key="B"][data-selected="true"]')).toBeTruthy());
+    expect(screen.queryByText("✓")).toBeNull();
+  });
+
+  it("草稿作答不即判不锁死：可改选，判定与解析仅在显式揭示后出现", async () => {
+    await renderPaper();
+    await waitFor(() => expect(screen.getByRole("button", { name: "定格题纸" })).toBeTruthy());
+
+    // 先选 A（错误项）：仅示已选草稿态——无 ✓/✕、无解析
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /甲/ }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-option-key="A"][data-selected="true"]')).toBeTruthy();
+    expect(screen.queryByText("✓")).toBeNull();
+    expect(screen.queryByText("✕")).toBeNull();
+    expect(screen.queryByText("解析")).toBeNull();
+
+    // 可改选：点 B 后选中态迁移（若被锁定则点不动）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-option-key="B"][data-selected="true"]')).toBeTruthy();
+    expect(document.querySelector('[data-option-key="A"][data-selected="true"]')).toBeNull();
+
+    // 再改选回 A（最终作答 = 错误项，用于验证揭示后的 ✕）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /甲/ }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-option-key="A"][data-selected="true"]')).toBeTruthy();
+    expect(document.querySelector('[data-option-key="B"][data-selected="true"]')).toBeNull();
+
+    // 显式揭示后才判才析：B 为正确答案（✓）、A 为最终错选（✕）；解析出现；选项锁定
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "显示全部答案与解析" }));
+      await Promise.resolve();
+    });
+    expect(screen.getAllByText("✓").length).toBeGreaterThan(0);
+    expect(screen.getByText("✕")).toBeTruthy();
+    expect(screen.getByText("解析")).toBeTruthy();
+    expect((screen.getByRole("button", { name: /甲/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("翻译参考译文默认隐藏，显式揭示后可见（草稿作答模型一致）", async () => {
+    const translationPaper: ExamPaper = {
+      id: PAPER_ID,
+      title: "2025 英语一 · 翻译",
+      direction: "考研",
+      metadata: {},
+      sections: [{
+        key: "s-tr", title: "Part C 翻译", questionType: "sentence_translation",
+        sourceId: null, fileKey: "tr-file-1", questionIds: [Q1], missing: false,
+        source_title: null, source_content: null,
+        questions: [{
+          id: Q1, ordinal: 0, stem: "46. 翻译题干：The quick brown fox.",
+          options: [], answer: { text: "敏捷的棕色狐狸。" }, explanation: null, evidence: [],
+        }],
+      }],
+    };
+    await renderPaper(translationPaper);
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    // 未揭示：参考译文不渲染（含内容）
+    expect(screen.queryByText(/参考译文/)).toBeNull();
+    expect(screen.queryByText("敏捷的棕色狐狸。")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "显示全部答案与解析" }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/参考译文/)).toBeTruthy();
+    expect(screen.getByText("敏捷的棕色狐狸。")).toBeTruthy();
   });
 
   it("定格成功后从 attempts 派生渲染：恢复选中 + 清理占位 + 统计口径", async () => {
@@ -318,7 +389,9 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
 
     await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
     expect(screen.getByText(/已录 2 条作答（含 1 条已清理）/)).toBeTruthy();
-    expect(screen.getAllByText("✓").length).toBeGreaterThan(0);
+    // 派生恢复同样为草稿选中态（未揭示不判对错；✓ 待显式揭示后出现）
+    expect(document.querySelector('[data-option-key="B"][data-selected="true"]')).toBeTruthy();
+    expect(screen.queryByText("✓")).toBeNull();
     expect(screen.getByText("作答记录已清理")).toBeTruthy();
     const detailCall = apiFetchMock.mock.calls.find(([path, init]) =>
       String(path) === `/l3/sheets/${SHEET_ID}` && !(init as { method?: string } | undefined)?.method);

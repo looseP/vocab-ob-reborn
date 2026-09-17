@@ -30,7 +30,11 @@ import { L3AttemptHistoryModal } from "./L3AttemptHistoryModal";
 import { useToast } from "@/frontend/components/ui/Toast";
 
 /**
- * 拟真卷面（ADR-0030 V1 展示面）：左文右题 + 即点即判 + 解析模式 + 翻译/作文书写区。
+ * 拟真卷面（ADR-0030 V1 展示面）：左文右题 + 草稿作答 + 解析模式 + 翻译/作文书写区。
+ *
+ * 草稿作答模型（2026-09-17 修订）：选中仅为"已选"草稿态——不判对错、不露解析、
+ * 随时可改选（只在 readOnly 定格后或显式揭示后锁定）；判定与解析仅在
+ * 「显示全部答案与解析」（revealAll）揭示后呈现。
  * 批次一（2026-09-16）：文栏三通道（空位角标 / 官方 evidence 仅解析模式 /
  * 用户注记锚点全程）、划词分叉（建原文分析条目 / 圈词入笔记）、题卡原文分析子区。
  * 批次二（2026-09-17）：题纸栏（进卷自动开纸 / 防抖 800ms 逐题 merge 保存）、
@@ -327,7 +331,7 @@ function PassageBody({
                   const showBadge = !renderedBadges.has(annotationId);
                   if (showBadge) renderedBadges.add(annotationId);
                   return (
-                    <span key={`${run.start}-${run.end}`} className="whitespace-nowrap">
+                    <span key={`${run.start}-${run.end}`}>
                       <mark
                         data-content-off={run.start}
                         data-ann-id={annotationId}
@@ -457,20 +461,24 @@ function PassageBody({
 }
 
 function OptionRow({
-  optionKey, text, state, onSelect, readOnly = false,
+  optionKey, text, state, selected = false, onSelect, readOnly = false,
 }: {
   optionKey: string;
   text: string;
   state: "idle" | "correct" | "wrong" | "muted";
+  /** 草稿态选中（未揭示答案前：仅示选中、不判对错，可随时改选）。 */
+  selected?: boolean;
   onSelect: () => void;
   readOnly?: boolean;
 }) {
-  const styles = {
-    idle: "border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft,var(--color-surface))]",
-    correct: "border-emerald-500 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200",
-    wrong: "border-rose-500 bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose-200 [animation:exam-shake_.2s_ease-in-out]",
-    muted: "border-[var(--color-border)] opacity-60",
-  }[state];
+  const styles = selected
+    ? "border-[var(--color-accent)] bg-[var(--color-accent-soft,var(--color-surface))]"
+    : {
+        idle: "border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft,var(--color-surface))]",
+        correct: "border-emerald-500 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200",
+        wrong: "border-rose-500 bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose-200 [animation:exam-shake_.2s_ease-in-out]",
+        muted: "border-[var(--color-border)] opacity-60",
+      }[state];
   const badge = {
     idle: "border-[var(--color-border)] text-[var(--color-ink-soft)]",
     correct: "border-emerald-500 bg-emerald-500 text-white",
@@ -479,6 +487,8 @@ function OptionRow({
   }[state];
   return (
     <button type="button" onClick={onSelect} disabled={state !== "idle" || readOnly}
+      data-option-key={optionKey}
+      data-selected={selected ? "true" : undefined}
       className={`flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-all ${styles}`}>
       <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold ${badge}`}>
         {state === "correct" ? "✓" : state === "wrong" ? "✕" : optionKey}
@@ -509,8 +519,6 @@ function ChoiceQuestion({
   cleared?: boolean;
 }) {
   const correct = question.answer.choice;
-  const answered = Boolean(picked);
-  const showResult = revealAll || answered;
   return (
     <div className="rounded-xl border border-[var(--color-border)] p-3.5 transition-shadow hover:shadow-sm">
       <div className="mb-2.5 flex items-start gap-2">
@@ -526,17 +534,28 @@ function ChoiceQuestion({
       )}
       <div className="grid gap-1.5">
         {question.options.map((opt) => {
+          // 判定仅在显式揭示后（revealAll）：草稿作答不判对错、不锁死（可改选）。
           let state: "idle" | "correct" | "wrong" | "muted" = "idle";
-          if (showResult && correct) {
+          if (revealAll && correct) {
             if (opt.key === correct) state = "correct";
             else if (opt.key === picked) state = "wrong";
-            else if (answered || revealAll) state = "muted";
+            else state = "muted";
           }
-          return <OptionRow key={opt.key} optionKey={opt.key} text={opt.text} state={state} readOnly={readOnly} onSelect={() => onPick(opt.key)} />;
+          return (
+            <OptionRow
+              key={opt.key}
+              optionKey={opt.key}
+              text={opt.text}
+              state={state}
+              selected={!revealAll && picked === opt.key}
+              readOnly={readOnly}
+              onSelect={() => onPick(opt.key)}
+            />
+          );
         })}
       </div>
-      {showResult && question.explanation && (
-        <details className="group mt-2.5 rounded-lg bg-[var(--color-surface)] p-2.5 text-xs leading-relaxed text-[var(--color-ink-soft)] ring-1 ring-[var(--color-border)]" open={revealAll}>
+      {revealAll && question.explanation && (
+        <details className="group mt-2.5 rounded-lg bg-[var(--color-surface)] p-2.5 text-xs leading-relaxed text-[var(--color-ink-soft)] ring-1 ring-[var(--color-border)]" open>
           <summary className="cursor-pointer select-none font-medium text-[var(--color-ink)]">解析</summary>
           <p className="mt-1.5 whitespace-pre-wrap">{question.explanation}</p>
         </details>
@@ -551,6 +570,7 @@ function WrittenQuestion({
   kind,
   placeholder,
   analysis,
+  revealAll = false,
   readOnly = false,
   cleared = false,
 }: {
@@ -558,6 +578,8 @@ function WrittenQuestion({
   kind: "translation" | "essay";
   placeholder: string;
   analysis?: ReactNode;
+  /** 参考译文/范文仅在显式揭示后可见（与客观题同一草稿作答模型）。 */
+  revealAll?: boolean;
   readOnly?: boolean;
   cleared?: boolean;
 }) {
@@ -578,7 +600,7 @@ function WrittenQuestion({
         disabled={readOnly}
         className="w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm leading-7 [background-image:repeating-linear-gradient(transparent,transparent_27px,var(--color-border)_28px)] [background-position:0_11px] focus:border-[var(--color-accent)] focus:outline-none"
       />
-      {reference && (
+      {revealAll && reference && (
         <details className="rounded-xl border border-emerald-500/40 bg-emerald-50/60 p-3.5 dark:bg-emerald-950/20">
           <summary className="cursor-pointer select-none text-sm font-semibold text-emerald-700 dark:text-emerald-300">
             {kind === "translation" ? "参考译文（官方解析整理）" : "参考范文"}
@@ -1067,6 +1089,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                       kind={section.questionType === "sentence_translation" ? "translation" : "essay"}
                       placeholder={section.questionType === "sentence_translation" ? "在这里写下你的译文…" : "在这里写作文（约 100/150 词）…"}
                       analysis={renderAnalysis(section.key, q)}
+                      revealAll={revealAll}
                       readOnly={readOnly}
                       cleared={clearedQuestions.has(q.id)}
                     />

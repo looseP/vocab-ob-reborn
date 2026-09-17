@@ -148,5 +148,8 @@ describe("L3ExamPaper 做题注记装配", () => {
     // 锚点 mark 渲染在文栏（下划线通道）
     const mark = document.querySelector("[data-ann-id]");
     expect(mark?.textContent).toBe("trap phrase");
+    // 防回归：注记片段的包裹层不得使用 whitespace-nowrap——长锚点会破坏原文折行
+    //（曾把整段渲染成一条不折行的长句，2026-09-17 修复）
+    expect(mark?.closest("span")?.className ?? "").not.toContain("whitespace-nowrap");
   });
 });
