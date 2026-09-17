@@ -413,6 +413,10 @@ function parseBreakingApproval(value: unknown): OpenApiBreakingApproval {
   return { version: 1, baseSha256: value.baseSha256, currentSha256: value.currentSha256, issues };
 }
 
+// 口径（2026-09-17 深测会审勘误，详见 ADR-0035 §勘误）：approval 相对 base 未变更即
+// 早退（既不校验也不豁免）——常规 openapi 再生无须重钉哈希；仅当变更集修改了
+// approval 文件时强制整体重锚：baseSha256 ≡ sha256(openapi@PR base)、
+// currentSha256 ≡ sha256(openapi@HEAD)、issues ≡ 相对 base 的实测 breaking 集合。
 function applyBreakingApproval(
   cwd: string,
   baseText: string,

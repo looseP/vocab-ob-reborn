@@ -352,6 +352,9 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     -- CONFLICT DO UPDATE）。建/覆写与读三权齐备；DELETE 对齐 0033 注记四权惯例
     -- （owner 后续删除能力预留，随后续端点一并启用）。
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_question_assessments TO vocab_app;
+    -- 0036（批次三①）：评卷结果（UNIQUE(sheet_id, question_id) 同键覆写 upsert，
+    -- INSERT ... ON CONFLICT DO UPDATE；改判读回与行锁需 UPDATE，四权对齐 0035 惯例）。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_grading_results TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;

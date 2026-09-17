@@ -36,6 +36,9 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   { file: "src/http/routes/l3/annotations-withdraw.ts", maxLines: 30, maxRoutes: 1 },
   // 2026-09-17 增补批：评析区独立薄路由（新文件 bootstrap 限额按实测留一档余量）。
   { file: "src/http/routes/l3/assessments.ts", maxLines: 40, maxRoutes: 2 },
+  // 2026-09-17 批次三①：评卷执行面独立薄路由（sheets.ts 受棘轮约束不许增长，
+  // 新端点沿 sheets-export/assessments 先例拆分；bootstrap 限额按实测留一档余量）。
+  { file: "src/http/routes/l3/grading.ts", maxLines: 60, maxRoutes: 4 },
   { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
   { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },

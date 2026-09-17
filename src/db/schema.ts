@@ -1460,3 +1460,24 @@ export const l3QuestionAssessments = pgTable("l3_question_assessments", {
 	check("l3_question_assessments_last_editor_check", sql`last_editor = ANY (ARRAY['owner'::text, 'agent'::text])`),
 ]);
 
+// 批次三①（ADR-0035 §1，2026-09-17）：评卷结果——agent 对 sealed 题纸的题级判定
+// 与解析。UNIQUE(sheet_id, question_id) 同键覆写（latest-wins：改判 = 覆写 +
+// graded_at 刷新；无历史版本——评卷是消耗品不是资产）；graded_by 为服务端认定的
+// 信任锚（bearer agentId / owner），非调用方自述。verdict 真源两轨：本表（题级）/
+// 注记 review 列（注记级），两轨不混（ADR-0034 §2 双真相拆解在本表闭环）。
+export const l3GradingResults = pgTable("l3_grading_results", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	sheetId: uuid("sheet_id").notNull().references(() => l3Submissions.id, { onDelete: "cascade" }),
+	questionId: uuid("question_id").notNull().references(() => l3Questions.id, { onDelete: "cascade" }),
+	verdict: text("verdict").notNull(),
+	// 题级分析（≤20k 由契约层收口；可空——纯判对错的裸 verdict 合法）。
+	analysisMd: text("analysis_md"),
+	gradedBy: text("graded_by").notNull(),
+	gradedAt: timestamp("graded_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	unique("l3_grading_results_sheet_question_unique").on(table.sheetId, table.questionId),
+	pgPolicy("l3_grading_results_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_grading_results_verdict_check", sql`verdict = ANY (ARRAY['correct'::text, 'partial'::text, 'wrong'::text])`),
+]);
+

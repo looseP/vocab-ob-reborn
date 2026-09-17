@@ -51,6 +51,11 @@ import {
 } from "./l3-sheet-response-contract";
 import { l3AssessmentItemResponseSchema } from "./l3-assessment-response-contract";
 import {
+  l3GradingContextResponseSchema,
+  l3GradingResultsResponseSchema,
+  l3GradingSubmitResponseSchema,
+} from "./l3-grading-response-contract";
+import {
   upgradeWorkOrderCompleteResponseSchema,
   upgradeWorkOrderListResponseSchema,
   upgradeWorkOrderMarkResponseSchema,
@@ -152,6 +157,7 @@ import {
   l3SheetSealSchema,
   l3AttemptListQuerySchema,
   l3AssessmentUpsertSchema,
+  l3GradingSubmitSchema,
   l3SheetExportQuerySchema,
   l3ProposalCreateSchema,
   l3ProposalListQuerySchema,
@@ -476,6 +482,14 @@ export const apiOperations = [
   // 批次二增补：评析区（agent 首个可写持久区，Amends ADR-0029）——owner/agent 双身份。
   operation("get", "/api/l3/questions/:id/assessment", "getL3QuestionAssessment", "owner", "agent", "none", undefined, 200, l3AssessmentItemResponseSchema),
   operation("put", "/api/l3/questions/:id/assessment", "putL3QuestionAssessment", "owner", "agent", "sessionMutation", { body: l3AssessmentUpsertSchema }, 200, l3AssessmentItemResponseSchema),
+  // 批次三①：评卷执行面（ADR-0035）——agent 读 face grading-context 含标准答案
+  // （D8 唯一显式例外：仅 sealed + agent 面，前端永不消费）；grading 提交为 agent
+  // 写面（graded_by 服务端从 bearer agentId 认定）；解析模式读面 owner-only。
+  operation("get", "/api/l3/sheets/:id/grading-context", "getL3GradingContext", "owner", "agent", "none", undefined, 200, l3GradingContextResponseSchema),
+  operation("post", "/api/l3/sheets/:id/grading", "submitL3Grading", "owner", "agent", "sessionMutation", { body: l3GradingSubmitSchema }, 200, l3GradingSubmitResponseSchema),
+  operation("get", "/api/l3/sheets/:id/grading", "getL3GradingResults", "owner", "owner", "none", undefined, 200, l3GradingResultsResponseSchema),
+  // D18：owner 处置（submitted→confirmed）；「撤回改写」走既有 withdraw 通道。
+  operation("post", "/api/l3/annotations/:id/confirm", "confirmL3QuestionAnnotation", "owner", "owner", "sessionMutation", undefined, 200, l3QuestionAnnotationItemResponseSchema),
   operation("get", "/api/l3/annotation-tags", "getAnnotationTags", "owner", "owner", "none", undefined, 200, l3AnnotationTagDictResponseSchema),
   operation("put", "/api/l3/annotation-tags", "replaceAnnotationTags", "owner", "owner", "sessionMutation", { body: l3AnnotationTagDictSchema }, 200, l3AnnotationTagDictResponseSchema),
   // 批次二：题纸与作答历史（owner-only——做题台面是私人数据，读也不开放给 agent）。

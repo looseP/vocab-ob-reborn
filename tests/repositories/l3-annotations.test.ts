@@ -381,3 +381,51 @@ describe("L3AnnotationRepository（v2 §4.7：stage 守卫与撤回）", () => {
     await expect(repo.withdrawAnnotation(USER, ANNOTATION, SHEET_B)).resolves.toBeNull();
   });
 });
+
+describe("L3AnnotationRepository（批次三①：review 白名单与 owner 确认）", () => {
+  const ANNOTATION = "00000000-0000-4000-8000-000000000201";
+  const REVIEW = { verdict: "sound", corrected_tags: ["细节题"], comment: "锚点准确" };
+
+  it("applyAnnotationReview writes only review/stage (plus updated_at) behind the non-draft guard", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(
+      annotation({ stage: "confirmed", review: REVIEW }),
+    );
+    const row = await repo.applyAnnotationReview(USER, ANNOTATION, REVIEW, "confirmed");
+    expect(row?.stage).toBe("confirmed");
+    const [sql, params] = (repo as any).queryOne.mock.calls[0];
+    // 白名单：SET 只允许 review/stage/updated_at；note/锚点/标签等原始事实列不得出现在 SET 子句。
+    expect(sql).toContain("SET review = $3::jsonb, stage = $4, updated_at = now()");
+    const setClause = sql.slice(sql.indexOf("SET "), sql.indexOf(" WHERE "));
+    for (const forbidden of ["note", "anchor_start", "anchor_end", "excerpt", "entry_tags", "option_tags", "sheet_id"]) {
+      expect(setClause).not.toContain(forbidden);
+    }
+    expect(sql).toContain("stage <> 'draft'");
+    expect(sql).toContain("status = 'active'");
+    expect(params).toEqual([USER, ANNOTATION, JSON.stringify(REVIEW), "confirmed"]);
+  });
+
+  it("applyAnnotationReview returns null when the guard misses (draft withdrawn or not owned)", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await expect(repo.applyAnnotationReview(USER, ANNOTATION, REVIEW, "confirmed")).resolves.toBeNull();
+  });
+
+  it("confirmAnnotation flips submitted→confirmed under the submitted guard", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(annotation({ stage: "confirmed" }));
+    const row = await repo.confirmAnnotation(USER, ANNOTATION);
+    expect(row?.stage).toBe("confirmed");
+    const [sql, params] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("SET stage = 'confirmed'");
+    expect(sql).toContain("stage = 'submitted'");
+    expect(sql).toContain("status = 'active'");
+    expect(params).toEqual([USER, ANNOTATION]);
+  });
+
+  it("confirmAnnotation returns null when the row is not submitted", async () => {
+    const repo = new L3AnnotationRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await expect(repo.confirmAnnotation(USER, ANNOTATION)).resolves.toBeNull();
+  });
+});

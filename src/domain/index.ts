@@ -671,7 +671,8 @@ export interface L3PaperDetail extends Omit<L3PaperRow, "payload"> {
 // ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ────────────────
 import type { AnnotationStage } from "./l3-annotations";
 import type { SealMode, SheetScope, SheetStatus } from "./l3-sheets";
-export type { AnnotationStage, SealMode, SheetScope, SheetStatus };
+import type { GradingVerdict } from "./l3-grading";
+export type { AnnotationStage, GradingVerdict, SealMode, SheetScope, SheetStatus };
 export type L3AnnotationTagKind = "entry" | "option";
 export type L3AnnotationOptionKey = "A" | "B" | "C" | "D";
 
@@ -755,6 +756,21 @@ export interface L3QuestionAttemptRow {
   status: "active" | "deleted";
   deleted_at: string | null;
   created_at: string;
+}
+
+/**
+ * l3_grading_results 行（评卷结果；批次三① 0036，ADR-0035 §1）。
+ * UNIQUE(sheet_id, question_id) 同键覆写（latest-wins）；graded_by 服务端认定。
+ */
+export interface L3GradingResultRow {
+  id: string;
+  user_id: string;
+  sheet_id: string;
+  question_id: string;
+  verdict: GradingVerdict;
+  analysis_md: string | null;
+  graded_by: string;
+  graded_at: string;
 }
 
 // ── L3 error book（T11 加固：服务端聚合 + cursor 纯新增）───────────────────

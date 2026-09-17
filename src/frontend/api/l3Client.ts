@@ -319,3 +319,47 @@ export async function fetchAttempts(questionIds: readonly string[]): Promise<L3A
 export async function deleteAttempt(id: string): Promise<void> {
   await apiFetch<null>(`/l3/attempts/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
+
+// ── 批次三①：评卷执行面（ADR-0035）────────────────────────────────────────
+// 解析模式读面是 verdict/analysis 的**前端唯一数据通道**（owner-only，不含
+// answerIndex）；grading-context（含答案）为 agent 专属面，前端永不消费（红线）。
+
+export type GradingVerdictValue = "correct" | "partial" | "wrong";
+export type AnnotationReviewVerdictValue = "sound" | "questionable" | "wrong";
+
+/** 注记 review 列形状（0034 契约：snake_case；agent 检验产物，owner 侧只读展示）。 */
+export interface AnnotationReview {
+  verdict: AnnotationReviewVerdictValue;
+  corrected_tags?: string[];
+  comment?: string;
+}
+
+export interface L3GradingResult {
+  id: string;
+  user_id: string;
+  sheet_id: string;
+  question_id: string;
+  verdict: GradingVerdictValue;
+  analysis_md: string | null;
+  graded_by: string;
+  graded_at: string;
+}
+
+/** 解析模式读面：sealed 题纸的 verdict 行集合（无行 → 空数组，「待评卷」提示数据源）。 */
+export async function fetchSheetGrading(sheetId: string): Promise<L3GradingResult[]> {
+  const body = await apiFetch<{ results?: L3GradingResult[] } | null>(
+    `/l3/sheets/${encodeURIComponent(sheetId)}/grading`,
+  );
+  // 防御：异常形状只做空结果处理（契约漂移不得让解析模式崩溃）。
+  return Array.isArray(body?.results) ? body.results : [];
+}
+
+/** owner 处置（D18）：submitted+有 review 的注记确认；服务端 409 = 状态已变。 */
+export async function confirmQuestionAnnotation(id: string): Promise<QuestionAnnotation> {
+  const body = await apiFetch<{ item?: QuestionAnnotation } | null>(
+    `/l3/annotations/${encodeURIComponent(id)}/confirm`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+  if (!body?.item) throw new Error("确认失败：响应缺少注记行");
+  return body.item;
+}

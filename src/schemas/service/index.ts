@@ -22,6 +22,7 @@ import type {
   QuestionAnnotationPatch,
 } from "@/domain/l3-annotations";
 import type { AssessmentUpsertInput } from "@/domain/l3-assessments";
+import type { GradingSubmitInput } from "@/domain/l3-grading";
 import type {
   SheetOpenInput,
   SheetPatchInput,
@@ -853,3 +854,11 @@ export type PutL3AssessmentInput = {
 export type OpenL3SheetInput = { userId: string } & SheetOpenInput;
 export type PatchL3SheetInput = { userId: string; sheetId: string; answers: SheetPatchInput["answers"] };
 export type SealL3SheetInput = { userId: string; sheetId: string } & SheetSealInput;
+
+// ── 批次三①（0036）：评卷执行面（ADR-0035）──────────────────────────────
+/** gradedBy 由路由层从服务端认定的 Principal 注入（bearer agentId / owner），非调用方自述。 */
+export type SubmitL3GradingInput = {
+  userId: string;
+  sheetId: string;
+  gradedBy: string;
+} & GradingSubmitInput;

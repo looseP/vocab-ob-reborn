@@ -786,6 +786,9 @@ export {
 /** PUT /l3/questions/:id/assessment：评析区 upsert body（增补批 0035）。 */
 export { assessmentUpsertInputSchema as l3AssessmentUpsertSchema } from "../../domain/l3-assessments";
 
+/** POST /l3/sheets/:id/grading：评卷提交 body（批次三① 0036，ADR-0035 §3）。 */
+export { gradingSubmitInputSchema as l3GradingSubmitSchema } from "../../domain/l3-grading";
+
 /** GET /l3/sheets/:id/export?withAnswers=0|1 的 query 契约（v2 §6；文档登记用）。 */
 export const l3SheetExportQuerySchema = z.object({
   withAnswers: z.enum(["0", "1"]).optional(),
