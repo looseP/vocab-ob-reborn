@@ -30,6 +30,8 @@ interface L3QuestionAnalysisProps {
   onCreate: (input: CreateQuestionAnnotationRequest) => Promise<void>;
   onPatch: (id: string, patch: QuestionAnnotationPatchRequest) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  /** v2 §4.7 验收收口：撤回（submitted→草稿，重挂题纸）；缺省不渲染撤回钮。 */
+  onWithdraw?: (id: string) => Promise<void>;
   onSaveTagDict: (dict: AnnotationTagDict) => Promise<void>;
   /** 批次二：该题作答历史（徽标数据源；父层已过滤已删条目）。 */
   attempts?: L3Attempt[];
@@ -176,6 +178,7 @@ export function L3QuestionAnalysis({
   onCreate,
   onPatch,
   onDelete,
+  onWithdraw,
   onSaveTagDict,
   attempts,
   onOpenHistory,
@@ -187,6 +190,8 @@ export function L3QuestionAnalysis({
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [popover, setPopover] = useState<PopoverTarget | null>(null);
+  /** 撤回请求处理中的条目 id（按钮去抖）。 */
+  const [withdrawBusyId, setWithdrawBusyId] = useState<string | null>(null);
 
   const optionKeys = question.options
     .map((option) => option.key)
@@ -334,6 +339,11 @@ export function L3QuestionAnalysis({
                   草稿
                 </span>
               )}
+              {annotation.stage === "submitted" && (
+                <span className="mr-1 inline-block rounded-full border border-sky-400 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                  已提交
+                </span>
+              )}
               {annotation.excerpt && annotation.anchor_start != null && annotation.anchor_end != null && (
                 <button
                   type="button"
@@ -363,14 +373,31 @@ export function L3QuestionAnalysis({
                 </p>
               ))}
               <span className="mt-1.5 flex justify-end gap-2">
-                <button
-                  type="button"
-                  aria-label="编辑"
-                  onClick={(e) => { e.stopPropagation(); openEditor(annotation); }}
-                  className="text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
-                >
-                  编辑
-                </button>
+                {annotation.stage === "submitted" ? (
+                  <button
+                    type="button"
+                    aria-label="撤回"
+                    disabled={withdrawBusyId === annotation.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!onWithdraw) return;
+                      setWithdrawBusyId(annotation.id);
+                      void onWithdraw(annotation.id).finally(() => setWithdrawBusyId(null));
+                    }}
+                    className="text-[10px] text-sky-700 hover:text-sky-900 disabled:opacity-50 dark:text-sky-300"
+                  >
+                    撤回
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    aria-label="编辑"
+                    onClick={(e) => { e.stopPropagation(); openEditor(annotation); }}
+                    className="text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+                  >
+                    编辑
+                  </button>
+                )}
                 <button
                   type="button"
                   aria-label="删除"

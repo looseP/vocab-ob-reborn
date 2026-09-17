@@ -4,7 +4,7 @@
 import { act } from "react";
 import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { fireEvent, screen, waitFor } from "@testing-library/dom";
+import { fireEvent, screen, waitFor, within } from "@testing-library/dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { L3ExamPaper, type ExamPaper } from "@/frontend/components/l3/L3ExamPaper";
 
@@ -151,5 +151,103 @@ describe("L3ExamPaper 做题注记装配", () => {
     // 防回归：注记片段的包裹层不得使用 whitespace-nowrap——长锚点会破坏原文折行
     //（曾把整段渲染成一条不折行的长句，2026-09-17 修复）
     expect(mark?.closest("span")?.className ?? "").not.toContain("whitespace-nowrap");
+  });
+
+  it("submitted 注记显示「已提交」；点击「撤回」→ POST withdraw → 状态回落「草稿」（v2 §4.7 验收）", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === "/l3/sheets") {
+        return {
+          sheet: {
+            id: "00000000-0000-4000-8000-000000000401",
+            user_id: "00000000-0000-4000-8000-000000000001",
+            scope: "paper",
+            scope_key: "paper:00000000-0000-4000-8000-000000000009",
+            source_id: null,
+            question_type: null,
+            paper_id: "00000000-0000-4000-8000-000000000009",
+            status: "draft",
+            answers: {},
+            seal_mode: null,
+            summary: null,
+            sealed_at: null,
+            created_at: "2026-09-17T00:00:00Z",
+            updated_at: "2026-09-17T00:00:00Z",
+          },
+        };
+      }
+      if (path.endsWith("/withdraw")) {
+        return {
+          item: {
+            id: ANNOTATION_ID,
+            user_id: "00000000-0000-4000-8000-000000000001",
+            question_id: QUESTION_ID,
+            ordinal: 0,
+            anchor_start: 4,
+            anchor_end: 15,
+            excerpt: "trap phrase",
+            note: "B 项偷换概念",
+            entry_tags: ["推断题"],
+            option_tags: { B: ["偷换概念"] },
+            stage: "draft",
+            sheet_id: "00000000-0000-4000-8000-000000000402",
+            review: null,
+            status: "active",
+            created_at: "2026-09-16T00:00:00Z",
+            updated_at: "2026-09-17T00:10:00Z",
+          },
+        };
+      }
+      if (path.startsWith("/l3/question-annotations")) {
+        return {
+          items: [{
+            id: ANNOTATION_ID,
+            user_id: "00000000-0000-4000-8000-000000000001",
+            question_id: QUESTION_ID,
+            ordinal: 0,
+            anchor_start: 4,
+            anchor_end: 15,
+            excerpt: "trap phrase",
+            note: "B 项偷换概念",
+            entry_tags: ["推断题"],
+            option_tags: { B: ["偷换概念"] },
+            stage: "submitted",
+            sheet_id: "00000000-0000-4000-8000-000000000401",
+            review: null,
+            status: "active",
+            created_at: "2026-09-16T00:00:00Z",
+            updated_at: "2026-09-16T00:00:00Z",
+          }],
+        };
+      }
+      if (path === "/l3/annotation-tags") {
+        return { entry: ["细节题", "推断题"], option: ["偷换概念"] };
+      }
+      return {};
+    });
+
+    await render();
+    await waitFor(() => expect(screen.getByRole("button", { name: /原文分析 · 1/ })).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /原文分析/ }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText("已提交")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "撤回" }));
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    });
+    const withdrawCall = apiFetchMock.mock.calls.find(([p]) => String(p).includes("/withdraw"));
+    expect(withdrawCall).toBeTruthy();
+    await waitFor(() => {
+      // 注记条目回落草稿态（题纸栏本身也有「草稿」文案，须收窄到条目内断言）
+      const list = screen.getByText("B 项偷换概念").closest("li")!;
+      expect(within(list).getByText("草稿")).toBeTruthy();
+      expect(within(list).getByRole("button", { name: "编辑" })).toBeTruthy();
+      expect(within(list).queryByRole("button", { name: "撤回" })).toBeNull();
+    });
+    expect(screen.queryByText("已提交")).toBeNull();
+    expect(addToastMock).toHaveBeenCalledWith("success", "已撤回为草稿，可编辑；下次定格将重新提交");
   });
 });

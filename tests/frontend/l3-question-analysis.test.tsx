@@ -61,6 +61,24 @@ const loose: QuestionAnnotation = {
   updated_at: "2026-09-16T00:00:00Z",
 };
 
+const submitted: QuestionAnnotation = {
+  id: "ann-3",
+  question_id: QUESTION_ID,
+  ordinal: 2,
+  anchor_start: 4,
+  anchor_end: 9,
+  excerpt: "phrase",
+  note: "待检验的草稿注记",
+  entry_tags: ["推断题"],
+  option_tags: {},
+  stage: "submitted",
+  sheet_id: "00000000-0000-4000-8000-000000000401",
+  review: null,
+  status: "active",
+  created_at: "2026-09-16T00:00:00Z",
+  updated_at: "2026-09-16T00:00:00Z",
+};
+
 const tagDict = {
   entry: ["细节题", "推断题", "主旨题", "态度题", "词汇题", "例证题"],
   option: ["同义替换", "偷换概念", "无中生有", "过度推断", "正反颠倒", "张冠李戴", "答非所问"],
@@ -84,6 +102,7 @@ async function renderAnalysis(overrides: Record<string, unknown> = {}): Promise<
   onCreate: ReturnType<typeof vi.fn>;
   onPatch: ReturnType<typeof vi.fn>;
   onDelete: ReturnType<typeof vi.fn>;
+  onWithdraw: ReturnType<typeof vi.fn>;
   onSaveTagDict: ReturnType<typeof vi.fn>;
 }> {
   const fns = {
@@ -91,6 +110,7 @@ async function renderAnalysis(overrides: Record<string, unknown> = {}): Promise<
     onCreate: vi.fn(async () => undefined),
     onPatch: vi.fn(async () => undefined),
     onDelete: vi.fn(async () => undefined),
+    onWithdraw: vi.fn(async () => undefined),
     onSaveTagDict: vi.fn(async () => undefined),
   };
   const container = document.createElement("div");
@@ -186,6 +206,35 @@ describe("L3QuestionAnalysis 新增/编辑/删除", () => {
     expect(onPatch).toHaveBeenCalledWith("ann-2", expect.objectContaining({
       entryTags: expect.arrayContaining(["主旨题", "态度题"]),
     }));
+  });
+});
+
+describe("L3QuestionAnalysis 撤回收口（submitted 锁定，v2 §4.7 验收）", () => {
+  it("submitted 注记：显示「已提交」徽标与「撤回」按钮（无「编辑」，保留「删除」）", async () => {
+    await renderAnalysis({ annotations: [submitted] });
+    await expandSection();
+    const list = screen.getByText("待检验的草稿注记").closest("li")!;
+    expect(within(list).getByText("已提交")).toBeTruthy();
+    expect(within(list).getByRole("button", { name: "撤回" })).toBeTruthy();
+    expect(within(list).queryByRole("button", { name: "编辑" })).toBeNull();
+    expect(within(list).getByRole("button", { name: "删除" })).toBeTruthy();
+  });
+
+  it("点击「撤回」调用 onWithdraw（stopPropagation，折叠区不受影响）", async () => {
+    const { onWithdraw } = await renderAnalysis({ annotations: [submitted] });
+    await expandSection();
+    const list = screen.getByText("待检验的草稿注记").closest("li")!;
+    await userEvent(() => fireEvent.click(within(list).getByRole("button", { name: "撤回" })));
+    expect(onWithdraw).toHaveBeenCalledWith("ann-3");
+    expect(within(list).getByRole("button", { name: "撤回" })).toBeTruthy();
+  });
+
+  it("draft/confirmed 注记不受影响：无「已提交」徽标，编辑钮在位（回归）", async () => {
+    await renderAnalysis();
+    await expandSection();
+    expect(screen.queryByText("已提交")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "编辑" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "撤回" })).toBeNull();
   });
 });
 

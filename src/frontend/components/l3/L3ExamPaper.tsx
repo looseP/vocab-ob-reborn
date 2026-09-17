@@ -18,6 +18,7 @@ import {
   patchQuestionAnnotation,
   saveAnnotationTags,
   sealSheet,
+  withdrawQuestionAnnotation,
   type AnnotationTagDict,
   type CreateQuestionAnnotationRequest,
   type L3Attempt,
@@ -1351,8 +1352,26 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
   }, [attempts, addToast]);
 
   const handlePatchAnnotation = useCallback(async (id: string, patch: QuestionAnnotationPatchRequest) => {
-    upsertAnnotation(await patchQuestionAnnotation(id, patch));
+    try {
+      upsertAnnotation(await patchQuestionAnnotation(id, patch));
+    } catch (error) {
+      // v2 §4.7 验收收口：submitted 锁定（409）——错误信息给出可执行的下一步（撤回）。
+      if (error instanceof BrowserApiError && error.status === 409) {
+        throw new Error("该注记已提交（锁定）；请先「撤回」再编辑");
+      }
+      throw error;
+    }
   }, [upsertAnnotation]);
+
+  /** v2 §4.7 验收收口：撤回（submitted→草稿，重挂题纸；下次定格重新升格）。 */
+  const handleWithdrawAnnotation = useCallback(async (id: string) => {
+    try {
+      upsertAnnotation(await withdrawQuestionAnnotation(id));
+      addToast("success", "已撤回为草稿，可编辑；下次定格将重新提交");
+    } catch {
+      addToast("error", "撤回失败，请稍后重试");
+    }
+  }, [upsertAnnotation, addToast]);
 
   const handleDeleteAnnotation = useCallback(async (id: string) => {
     await deleteQuestionAnnotation(id);
@@ -1486,6 +1505,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
           onCreate={handleCreateAnnotation}
           onPatch={handlePatchAnnotation}
           onDelete={handleDeleteAnnotation}
+          onWithdraw={handleWithdrawAnnotation}
           onSaveTagDict={handleSaveTagDict}
           attempts={(attemptsByQuestion[q.id] ?? []).filter((row) => row.status === "active")}
           onOpenHistory={() => setHistoryQuestionId(q.id)}
