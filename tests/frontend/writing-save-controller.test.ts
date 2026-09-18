@@ -210,6 +210,37 @@ describe("W4 保存控制器 · 单在途与序号纪律", () => {
   });
 });
 
+describe("W10 修复 · 本地输入必须同步通知（受控输入可见性）", () => {
+  it("setText 立即通知订阅者且快照同步；未确认前不发请求", () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    const controller = setupController(save, timers);
+    const seen: string[] = [];
+    controller.subscribe(() => { seen.push(controller.getSnapshot().text); });
+
+    controller.setText("第一版");
+    expect(seen.length).toBeGreaterThan(0); // 旧实现：0 次通知（React 会把受控值回滚到旧快照）
+    expect(controller.getSnapshot().text).toBe("第一版");
+    expect(controller.getSnapshot().state).toBe("dirty");
+
+    controller.setText("第一版加料"); // 连续输入（state 已是 dirty）也必须再次通知
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen[seen.length - 1]).toBe("第一版加料");
+    expect(save).not.toHaveBeenCalled(); // 尚未到防抖：不发请求
+  });
+
+  it("相同文本重复 setText 幂等（不产生多余通知）", () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    const controller = setupController(save, timers);
+    controller.setText("同文");
+    let calls = 0;
+    controller.subscribe(() => { calls += 1; });
+    controller.setText("同文");
+    expect(calls).toBe(0);
+  });
+});
+
 describe("W4 保存控制器 · 退避与重试策略", () => {
   it("网络错误自动重试 3 次，退避 1/2/4 秒，耗尽后 error（load 未注入→unknown）", async () => {
     const timers = makeFakeTimers();
@@ -417,6 +448,35 @@ describe("W4 保存控制器 · 超时恢复（S§4）", () => {
     await expect(p).rejects.toBeInstanceOf(SaveConflictError);
     expect(controller.getSnapshot().state).toBe("conflict");
     expect(controller.getSnapshot().text).toBe("x"); // 保留本地文本
+  });
+
+  it("网络失败后 load 显示服务器未变（同版本同已确认正文）→ 诚实 error（尚未保存）而非 conflict；手动重试可恢复", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    save.mockRejectedValue(new Error("network"));
+    const load = vi.fn<LoadFn>();
+    load.mockResolvedValue({ text: "", version: 0 }); // 服务器仍是初态（从未保存成功）
+    const controller = setupController(save, timers, { version: 0, load });
+
+    controller.setText("x");
+    const p = controller.flush();
+    await flushMicrotasks();
+    await exhaustRetries(timers);
+    await flushMicrotasks();
+
+    await expect(p).rejects.toBeDefined();
+    expect(controller.getSnapshot().state).toBe("error"); // 诚实"尚未保存"，不误报"另一处更新"
+    expect(controller.getSnapshot().text).toBe("x"); // 本地正文保留
+
+    // 手动重试可恢复（S§2 写入失败态的可执行动作）。
+    const deferredSave = defer<WritingSaveControllerSaveResult>();
+    save.mockReset();
+    save.mockReturnValueOnce(deferredSave.promise);
+    const retryP = controller.retry();
+    deferredSave.resolve({ draftVersion: 1, textSha256: "a".repeat(64) });
+    await expect(retryP).resolves.toBeUndefined();
+    expect(controller.getSnapshot().state).toBe("clean");
+    expect(controller.getSnapshot().version).toBe(1);
   });
 
   it("网络失败后 load 失败 → 无法确认，进入 error", async () => {

@@ -229,6 +229,11 @@ export function createWritingSaveController(
       confirmedText = sentText;
       return "success";
     }
+    // 服务端仍是"我们上次确认的状态"（同版本、同已确认正文）→ 纯网络失败，未发生分歧：
+    // 归入可重试的错误态（诚实显示"尚未保存"），不误报"另一处更新"。
+    if (loaded.version === sentVersion && loaded.text === confirmedText) {
+      return "unknown";
+    }
     // 否则保留本地文本并进入冲突语义（不自动 last-wins）。
     return "conflict";
   }
@@ -341,6 +346,10 @@ export function createWritingSaveController(
     inputSeq += 1;
     setState("dirty");
     scheduleAutosave();
+    // 🔴 本地输入必须立刻通知订阅者：React 受控 textarea（value=快照.text）在无状态
+    // 更新时会由 ReactDOM 把值回滚到旧快照——不通知 = 用户输入直到下一个保存周期
+    // （防抖/退避/完成 notify）才可见；IME 合成文本同理。
+    notify();
   }
 
   function setComposing(value: boolean): void {
