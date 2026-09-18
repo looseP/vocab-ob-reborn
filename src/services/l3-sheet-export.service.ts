@@ -560,6 +560,16 @@ export class L3SheetExportService {
     return this.withActor(userId, async (repos) => {
       const sheet = await repos.l3Sheets.getSheet(userId, sheetId);
       if (!sheet) throw new NotFoundError("L3Sheet", sheetId);
+      if (sheet.scope === "writing") {
+        // W9 契约：通用题纸导出对写作稿一律 409——写作稿走专用导出入口
+        // （/api/l3/writing/tasks/:taskId/sheets/:sheetId/export，带完整作文元数据
+        // 与独立 schemaVersion），不得输出缺作文元数据的旧格式。
+        throw new ConflictError(
+          "writing sheets use the dedicated export endpoint",
+          undefined,
+          { code: "WRITING_ENDPOINT_REQUIRED", sheetId },
+        );
+      }
       if (sheet.status === "discarded") {
         throw new ConflictError(
           "discarded sheets are not exportable; their product is the submitted notes",

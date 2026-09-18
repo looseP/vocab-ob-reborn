@@ -334,7 +334,7 @@ describe("W7 提交屏障（flush 回执核对 + CAS 兜底 + 不盲采最新版
     client.getSheet!.mockResolvedValue(sheetDetail({ sheet: sheetDto({ draftVersion: 3 }), text: "同文" }));
     fireEvent.click(screen.getByRole("button", { name: "提交本稿" }));
     await waitFor(() => {
-      expect(screen.getByText(/另一份修订，未提交/)).toBeTruthy();
+      expect(screen.getByText(/核对发现版本已被推进（可能来自另一处保存），未提交/)).toBeTruthy();
     });
     expect(client.submitSheet).not.toHaveBeenCalled();
   });

@@ -243,6 +243,14 @@ describe("L3SheetRepository.softDeleteAttempt", () => {
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
     await expect(repo.softDeleteAttempt(USER, "00000000-0000-4000-8000-000000000501")).resolves.toBe(false);
   });
+
+  it("excludes writing attempts at the SQL layer（写作正文清理只走专用事务，含 feedback 同事务删除）", async () => {
+    const repo = new L3SheetRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await expect(repo.softDeleteAttempt(USER, "00000000-0000-4000-8000-000000000502")).resolves.toBe(false);
+    const [sql] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("venue <> 'writing'");
+  });
 });
 
 describe("L3SheetRepository.listBySheet", () => {
