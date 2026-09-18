@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConflictError, NotFoundError, ValidationError } from "@/errors";
-import type { L3QuestionAttemptRow, L3QuestionRow, L3SubmissionRow } from "@/domain";
+import type { L3QuestionAttemptRow, L3QuestionRow, L3SheetArchiveRow, L3SubmissionRow } from "@/domain";
 import type {
   IRepositories,
   IL3AnnotationRepository,
@@ -88,6 +88,7 @@ function makeSheetRepo(overrides: Partial<IL3SheetRepository> = {}): IL3SheetRep
     softDeleteAttempt: vi.fn(async () => true),
     listBySheet: vi.fn(async () => []),
     countAnsweredBySheet: vi.fn(async () => 0),
+    listArchive: vi.fn(async () => []),
     ...overrides,
   } as IL3SheetRepository;
 }
@@ -556,5 +557,29 @@ describe("L3SheetService.sealSheet（v2 §4.6/§10：旗标物化与待复查计
     expect(rows[1]!.question_id).toBe(Q2);
     expect(rows[1]!.answer).toEqual({ choice: "C" });
     expect(rows[1]!.self_assessment).toBeNull();
+  });
+});
+
+describe("L3SheetService.listArchive（F-1 题纸档案）", () => {
+  it("passes the limit through within the actor-bound transaction", async () => {
+    const archive: L3SheetArchiveRow[] = [{
+      id: SHEET,
+      scope: "file",
+      source_id: SOURCE,
+      question_type: "reading_choice",
+      paper_id: null,
+      status: "sealed",
+      seal_mode: "full",
+      sealed_at: "2026-09-18T00:10:00.000Z",
+      created_at: "2026-09-18T00:00:00.000Z",
+      graded_count: 3,
+      venue_title: "WA 阅读理解文件",
+    }];
+    const listArchive = vi.fn(async () => archive);
+    const service = makeService(makeSheetRepo({ listArchive }));
+    const result = await service.listArchive(USER, { limit: 20 });
+    expect(listArchive).toHaveBeenCalledWith(USER, 20);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ graded_count: 3, status: "sealed" });
   });
 });

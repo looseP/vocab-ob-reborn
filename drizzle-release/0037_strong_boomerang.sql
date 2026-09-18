@@ -1,0 +1,2 @@
+ALTER TABLE "l3_question_annotations" ADD COLUMN "review_sheet_id" uuid;--> statement-breakpoint
+ALTER TABLE "l3_question_annotations" ADD CONSTRAINT "l3_question_annotations_review_sheet_id_l3_submissions_id_fk" FOREIGN KEY ("review_sheet_id") REFERENCES "public"."l3_submissions"("id") ON DELETE set null ON UPDATE no action;

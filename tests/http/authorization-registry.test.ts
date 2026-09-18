@@ -259,6 +259,8 @@ const OWNER_READS = [
   "getL3Sheet",
   "listL3Attempts",
   "exportL3Sheet",
+  // F-1 回看闭环：题纸档案列表（同上 owner-only 口径；sheetId 深链入口数据源）。
+  "listL3Sheets",
   // 批次三①：解析模式读面（verdict/analysis 前端数据源；不含 answerIndex，agent 面
   // 已由 grading-context 覆盖，此处保持做题台面 owner-only 口径）。
   "getL3GradingResults",

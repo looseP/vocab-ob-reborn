@@ -110,6 +110,7 @@ function annotationRow(overrides: Partial<L3QuestionAnnotationRow> = {}): L3Ques
     stage: "submitted",
     sheet_id: SHEET,
     review: null,
+    review_sheet_id: null,
     status: "active",
     created_at: "2026-09-17T00:30:00.000Z",
     updated_at: "2026-09-17T01:30:00.000Z",

@@ -25,10 +25,12 @@ export const l3QuestionAnnotationResponseSchema = z.object({
   entry_tags: z.array(z.string()),
   option_tags: annotationOptionTagsResponseSchema,
   // 批次二（ADR-0034 §3）：stage 生命周期（与软删 status 正交）；sheet_id 草稿期挂
-  // 题纸；review 为 agent 检验产物（批次三写，当前恒 null，形状暂不收口）。
+  // 题纸；review 为 agent 检验产物（批次三①起写入，阅读侧 parseAnnotationReview 收窄）。
+  // F-1（0037）：review_sheet_id 为评审来源题纸（覆写刷新、撤回随 review 清空）。
   stage: z.enum(["draft", "submitted", "confirmed"]),
   sheet_id: z.string().uuid().nullable(),
   review: z.unknown().nullable(),
+  review_sheet_id: z.string().uuid().nullable(),
   status: z.enum(["active", "deleted"]),
   created_at: z.string(),
   updated_at: z.string(),

@@ -1158,7 +1158,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["listL3Sheets"];
         put?: never;
         post: operations["openL3Sheet"];
         delete?: never;
@@ -14349,6 +14349,7 @@ export interface operations {
                             stage: "draft" | "submitted" | "confirmed";
                             sheet_id: string | null;
                             review: unknown | null;
+                            review_sheet_id: string | null;
                             /** @enum {string} */
                             status: "active" | "deleted";
                             created_at: string;
@@ -14562,6 +14563,7 @@ export interface operations {
                             stage: "draft" | "submitted" | "confirmed";
                             sheet_id: string | null;
                             review: unknown | null;
+                            review_sheet_id: string | null;
                             /** @enum {string} */
                             status: "active" | "deleted";
                             created_at: string;
@@ -14925,6 +14927,7 @@ export interface operations {
                             stage: "draft" | "submitted" | "confirmed";
                             sheet_id: string | null;
                             review: unknown | null;
+                            review_sheet_id: string | null;
                             /** @enum {string} */
                             status: "active" | "deleted";
                             created_at: string;
@@ -15121,6 +15124,7 @@ export interface operations {
                             stage: "draft" | "submitted" | "confirmed";
                             sheet_id: string | null;
                             review: unknown | null;
+                            review_sheet_id: string | null;
                             /** @enum {string} */
                             status: "active" | "deleted";
                             created_at: string;
@@ -15713,6 +15717,7 @@ export interface operations {
                                 stage: "draft" | "submitted" | "confirmed";
                                 sheet_id: string | null;
                                 review: unknown | null;
+                                review_sheet_id: string | null;
                                 /** @enum {string} */
                                 status: "active" | "deleted";
                                 created_at: string;
@@ -16313,6 +16318,7 @@ export interface operations {
                             stage: "draft" | "submitted" | "confirmed";
                             sheet_id: string | null;
                             review: unknown | null;
+                            review_sheet_id: string | null;
                             /** @enum {string} */
                             status: "active" | "deleted";
                             created_at: string;
@@ -16647,6 +16653,183 @@ export interface operations {
                     "application/json": {
                         entry: string[];
                         option: string[];
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listL3Sheets: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** Format: uuid */
+                            id: string;
+                            /** @enum {string} */
+                            scope: "file" | "paper";
+                            source_id: string | null;
+                            question_type: ("cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank") | null;
+                            paper_id: string | null;
+                            /** @enum {string} */
+                            status: "draft" | "sealed" | "discarded";
+                            seal_mode: ("full" | "incremental" | "summary") | null;
+                            sealed_at: string | null;
+                            created_at: string;
+                            graded_count: number;
+                            venue_title: string | null;
+                        }[];
                     };
                 };
             };

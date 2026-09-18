@@ -694,6 +694,8 @@ export interface L3QuestionAnnotationRow {
   sheet_id: string | null;
   /** agent 检验产物（批次三写；note/锚点/原判标签不可篡改，订正归 owner）。 */
   review: Json | null;
+  /** F-1（0037）：review 来源题纸——最近一次评卷写入所属（覆写刷新；撤回随 review 清空）。 */
+  review_sheet_id: string | null;
   status: "active" | "deleted";
   created_at: string;
   updated_at: string;
@@ -741,6 +743,23 @@ export interface L3SubmissionRow {
   sealed_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** F-1（0037）：题纸档案列表行（listArchive 投影；仅索引元数据 + 已评计数 + 展示标题）。 */
+export interface L3SheetArchiveRow {
+  id: string;
+  scope: SheetScope;
+  source_id: string | null;
+  question_type: L3QuestionType | null;
+  paper_id: string | null;
+  status: SheetStatus;
+  seal_mode: SealMode | null;
+  sealed_at: string | null;
+  created_at: string;
+  /** 该题纸已评题数（grading_results 行数；draft 恒 0）。 */
+  graded_count: number;
+  /** 展示标题：file 域取来源标题、paper 域取卷标题（nullable 兜底）。 */
+  venue_title: string | null;
 }
 
 /** l3_question_attempts 行（题级作答历史；读取过滤 deleted；无判定列——verdict 真源归一 l3_grading_results）。 */

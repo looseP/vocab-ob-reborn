@@ -47,6 +47,7 @@ import {
   l3AttemptListResponseSchema,
   l3SheetDetailResponseSchema,
   l3SheetItemResponseSchema,
+  l3SheetListResponseSchema,
   l3SheetSealResponseSchema,
 } from "./l3-sheet-response-contract";
 import { l3AssessmentItemResponseSchema } from "./l3-assessment-response-contract";
@@ -155,6 +156,7 @@ import {
   l3SheetOpenSchema,
   l3SheetPatchSchema,
   l3SheetSealSchema,
+  l3SheetListQuerySchema,
   l3AttemptListQuerySchema,
   l3AssessmentUpsertSchema,
   l3GradingSubmitSchema,
@@ -498,6 +500,8 @@ export const apiOperations = [
   operation("get", "/api/l3/sheets/:id", "getL3Sheet", "owner", "owner", "none", undefined, 200, l3SheetDetailResponseSchema),
   operation("patch", "/api/l3/sheets/:id", "patchL3Sheet", "owner", "owner", "sessionMutation", { body: l3SheetPatchSchema }, 200, l3SheetItemResponseSchema),
   operation("post", "/api/l3/sheets/:id/seal", "sealL3Sheet", "owner", "owner", "sessionMutation", { body: l3SheetSealSchema }, 200, l3SheetSealResponseSchema),
+  // F-1 回看闭环：题纸档案列表（owner-only；sheetId 深链入口数据源）。
+  operation("get", "/api/l3/sheets", "listL3Sheets", "owner", "owner", "none", { query: l3SheetListQuerySchema }, 200, l3SheetListResponseSchema),
   operation("get", "/api/l3/attempts", "listL3Attempts", "owner", "owner", "none", { query: l3AttemptListQuerySchema }, 200, l3AttemptListResponseSchema),
   operation("delete", "/api/l3/attempts/:id", "deleteL3Attempt", "owner", "owner", "sessionMutation", undefined, 204, z.null()),
   // 批次二收官：冻结导出（只出不进；Content-Disposition + 版本/sha256 响应头）。

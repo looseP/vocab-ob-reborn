@@ -244,6 +244,8 @@ export class L3GradingService {
             review.annotationId,
             toStoredAnnotationReview(review),
             stage,
+            // F-1：来源题纸 = 本次评卷所属（前端据此标注「本轮/历史评卷」）。
+            input.sheetId,
           );
           if (!updated) {
             // 并发竞态兜底（注记在事务期间被撤回/软删）——整体回滚。

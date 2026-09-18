@@ -102,6 +102,7 @@ function annotationRow(overrides: Partial<L3QuestionAnnotationRow> = {}): L3Ques
     stage: "submitted",
     sheet_id: SHEET,
     review: null,
+    review_sheet_id: null,
     status: "active",
     created_at: "2026-09-16T00:00:00Z",
     updated_at: "2026-09-16T00:00:00Z",
@@ -313,7 +314,7 @@ describe("L3GradingService.submitGrading", () => {
     expect(upsertResults).toHaveBeenCalledWith([
       { user_id: USER, sheet_id: SHEET, question_id: Q1, verdict: "wrong", analysis_md: "定位偏移。", graded_by: "agent-a" },
     ]);
-    expect(applyAnnotationReview).toHaveBeenCalledWith(USER, A1, { verdict: "sound", corrected_tags: ["细节题"], comment: "锚点准确" }, "confirmed");
+    expect(applyAnnotationReview).toHaveBeenCalledWith(USER, A1, { verdict: "sound", corrected_tags: ["细节题"], comment: "锚点准确" }, "confirmed", SHEET);
     expect(result).toMatchObject({ resultCount: 1, annotationReviewCount: 1, confirmedCount: 1 });
   });
 
@@ -342,8 +343,8 @@ describe("L3GradingService.submitGrading", () => {
         ],
       }],
     });
-    expect(applyAnnotationReview).toHaveBeenNthCalledWith(1, USER, A1, { verdict: "questionable" }, "confirmed");
-    expect(applyAnnotationReview).toHaveBeenNthCalledWith(2, USER, A2, { verdict: "wrong" }, "submitted");
+    expect(applyAnnotationReview).toHaveBeenNthCalledWith(1, USER, A1, { verdict: "questionable" }, "confirmed", SHEET);
+    expect(applyAnnotationReview).toHaveBeenNthCalledWith(2, USER, A2, { verdict: "wrong" }, "submitted", SHEET);
     expect(result).toMatchObject({ annotationReviewCount: 2, confirmedCount: 0 });
   });
 

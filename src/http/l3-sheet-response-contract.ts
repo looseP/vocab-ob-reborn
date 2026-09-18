@@ -67,3 +67,27 @@ export const l3SheetSealResponseSchema = z.object({
 export const l3AttemptListResponseSchema = z.object({
   items: z.array(l3QuestionAttemptResponseSchema),
 }).strict();
+
+/**
+ * F-1：题纸档案列表行（回看入口数据源；仅索引元数据，不含 answers/正文）。
+ * status 保留全枚举以同形复用（查询侧只返回 draft/sealed，弃档墓碑不进档案）。
+ */
+export const l3SheetArchiveItemResponseSchema = z.object({
+  id: z.string().uuid(),
+  scope: z.enum(SHEET_SCOPES),
+  source_id: z.string().uuid().nullable(),
+  question_type: z.enum(L3_QUESTION_TYPES).nullable(),
+  paper_id: z.string().uuid().nullable(),
+  status: z.enum(SHEET_STATUSES),
+  seal_mode: z.enum(SEAL_MODES).nullable(),
+  sealed_at: z.string().nullable(),
+  created_at: z.string(),
+  /** 该题纸已评题数（grading_results 行数；draft 恒 0）——「待评卷/已评 n 题」数据源。 */
+  graded_count: z.number().int().nonnegative(),
+  /** 展示标题：file 域取来源标题、paper 域取卷标题（来源删除级联题纸，保留 nullable 兜底）。 */
+  venue_title: z.string().nullable(),
+}).strict();
+
+export const l3SheetListResponseSchema = z.object({
+  items: z.array(l3SheetArchiveItemResponseSchema),
+}).strict();
