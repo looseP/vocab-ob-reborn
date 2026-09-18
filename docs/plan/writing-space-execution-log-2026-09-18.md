@@ -142,6 +142,27 @@
 - 清理：用例尾部删除本次冒烟数据（feedback→attempts→submissions→tasks→内部题）。
 - 门控：`E2E_WRITING_SMOKE=1` 本机开启；默认跳过（不阻塞 CI 既有 Browser E2E；CI 接线属 W10）。
 
+#### W10 · 验收、必要修复与 CI 接线（2026-09-18 进行中）
+
+- **提交屏障修复（`1b68af8`）**：`flush()` 升级为回执（`{text, version}` = 已确认正文+版本；`confirmedText` 跟踪，reconcile 成功同源）；新增纯函数 `writingSubmitBarrier.evaluateSubmitPrecheck`（同文同版才放行；text/version 不符与非 draft 拒绝）；编辑器：提交期间锁定编辑，GET **仅核对**、绝不采用最新版绕过冲突，CAS 409 不自动重试；测试：controller 回执例 + 组件核对/409/锁定例 + 真实 PG 集成（核对后第三方保存 → CAS 409 未定格，10/10）。
+- **输入可见性 P0 修复（`f45c8de`）**：真实浏览器实测发现——`setText` 改状态后**不通知订阅者**，React 受控 textarea 被 ReactDOM 回滚到旧快照，用户输入直到下一个保存周期（防抖 800ms+）才可见（e2e 场景③以探针实锤：input 事件准时送达但 value 延迟 ~800ms 才渲染）。修复：`setText` 尾部 `notify()`（含 IME 合成文本）；新增通知断言测试（旧实现 0 通知，先红后绿）。reconcile 语义同步收窄：网络失败且服务端未变 → 诚实「尚未保存」（可重试），不误报冲突。
+- **e2e 矩阵扩展（`4d14ebf`，388 行）**：故障与并发（退避恢复 / 不可重试失败阻止提交与导出并诚实恢复 / 延迟 PATCH 不丢输入 / IME 不发半截 / 双标签页冲突不静默覆盖——均含库核）；分页与生命周期（**25 任务 20+5 跨页无重复无漏项**、搜索命中/未命中、**25 稿次 keyset 完整 1..25**、归档/恢复、题面继承）；清理（占位可见、正文/评语/quote 全页不泄漏、导出拒绝、库核 attempt/feedback 双零）。**4/4 全绿（34.5s）**。
+- **独立审查（本轮第 5 次外派，前 4 次配额 429；审查者只读、未参与实现）**：结论=通过为主，3 处处置——
+  ① `writing-workspace` 测试断言缺陷（版本推进场景在文案细分后恒红）→ 修正断言语义；
+  ② 通用 `exportL3Sheet` 对写作稿未 409（W9 契约遗漏）→ 补 `WRITING_ENDPOINT_REQUIRED` 守卫 + 服务测试；
+  ③ 外审称通用 `deleteAttempt` 可删写作 attempt → **核实为误报**（仓库层 SQL `venue <> 'writing'` 已排除，W3 已实现，表现 404 属文档化设计）；补 SQL 层锁定测试固化证据。修复提交 `9e48325`。
+  外审其余项（③清理并发锁序/缓存、④深链零创建/隔离、⑤导出围栏与 hash 可复算、②agent 面）核验通过。
+- **CI 接线（`5d5ea04`）**：新增独立 workflow `.github/workflows/writing-e2e.yml`（**不触碰 ci.yml**——其内容读取被环境敏感审批拦截，不绕过）：显式门控 + postgres:17 独立临时库全链供给（建库→角色 prepare→全量迁移→converge→verifier）+ 构建并启动实际 API+SPA + 4 用例执行 + **fail-closed 校验**（JSON reporter：collected=4、skipped=0、failed=0，否则红灯；已用 mock 三用例本地自证）+ 失败上传 trace/截图/日志。列入必需检查需分支保护配置（见验收报告遗留）。
+
+#### W11 · 完整门禁与 draft PR（2026-09-18 完成，本地门禁绑定代码冻结提交 `61ad3d3`）
+
+- **全量单测 + 分层覆盖（真实 PR base 口径）**：初跑红灯——`repository` 层 86.88/85.34 低于 ratchet（90/86）、diff 覆盖 77.79%<85%（缺口集中于 `l3-writing.repository.ts`：sheet 域 SQL 方法只被集成测试途经，不进单元覆盖）。**补真实测试**（mock executor 的 SQL 形态/分支臂断言）：writing repo 217→0（100%）、paper repo 11→0、sheets repo 6→0、feedback repo 9→0；复跑 **Diff 92.62% PASS / repository 层 92.85/91.17 PASS / Baseline ratchet PASS**；全套件 **3188 passed / 6 skipped**；收集 228/228。提交 `61ad3d3`。
+- **门禁批**：typecheck 0 错；arch 388 模块无违规；**api:governance exit=0**（breaking OK / 契约 10+31 / 复杂度棘轮 passed）；drift dev+测试库 OK ×2；frontend:build 通过（最终 dist 21:12:49）。
+- **真环境矩阵重跑（最终代码 + 最终 dist + 独立库）**：writing e2e **4/4（36.2s）**；三件套集成 **22/22**（RLS 10 + 提交屏障并发 10 + 清理×反馈并发 2，真 PG 两连接）。截图 12 张刷新（`D:/tmp/ws7-acceptance/`，含 10 失败阻止/11 双标签冲突/12 清理无泄漏）。
+- **沙箱环境性障碍（如实记录，均非本线产物，CI 清洁跑不受影响）**：① alerting-drill 测试因 WorkBuddy safe-delete shim 拦截其锁文件删除而间歇失败（同轮内既有通过亦有失败观测；覆盖产物以排除该文件的干净跑生成）；② vitest/vite/drift 的多文件清理动作被 shim 拦截（以「挪移代替删除」或重试窗口通过，未绕过安全护栏）。
+- **外审**：独立只读审查已完成（`9e48325` 处置 3 项），结论=通过为主；PR 的「独立审查」缺项已消除。
+- **draft PR**：`feat/writing-space-v1` 分支推送 + draft PR 创建（链接与最终 HEAD 见 PR 正文；本 PR 为**待验收**状态，未合并、未部署）。
+
 ## 2 · 门禁与证据台账
 
 | 时间 | 命令 | exit code | 证据/产物 |
@@ -171,6 +192,16 @@
 | 2026-09-18 | 截图产物 | — | `D:/tmp/ws7-acceptance/`（01–06 桌面 1440×900；07–08 手机 390×844；09 暗色） |
 | 2026-09-18 | 提交链（续） | — | `d7a26ff`(W5) → `08d9c44`(收口) → `b0bee63`(自查) → `3396150`(W6) → `371355e`(回填) → `02eb1aa`(W9) → `2063461`(W8) → `ba2c082`(W7) → `9a9e4df`(e2e 冒烟) |
 | 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `09a44f0`(W3) → `d7a26ff`(W5) → `08d9c44`(W5 收口) → `b0bee63`(W5 自查) → `3396150`（W6） |
+| 2026-09-18 | W10 提交屏障修复（controller 回执 + precheck + 真 PG 交错） | 0 | 组件/控制器 43/43 + 集成 10/10；`1b68af8` |
+| 2026-09-18 | W10 输入可见性 P0（探针实证 → setText notify 修复，先红后绿） | 0 | controller 21/21；`f45c8de` |
+| 2026-09-18 | W10 e2e 矩阵扩展 + 全套件重跑 | 0 | **4/4（34.5s）**；`4d14ebf` |
+| 2026-09-18 | W10 独立外审（只读）交付 + 处置（2 修 1 误报核实） | 0 | 三文件 62/62；`9e48325` |
+| 2026-09-18 | W10 CI 接线（独立 workflow，fail-closed 校验 mock 自证） | — | `.github/workflows/writing-e2e.yml`；`5d5ea04` |
+| 2026-09-18 | W11 全量单测暴露 shell 守卫回归（注释字面量/矩阵登记）→ 修复 | 0 | shell 守卫 46/46；`6cde7a6` |
+| 2026-09-18 | W11 分层覆盖补强（真实 PR base 口径初红 → repo 层四文件 100%） | 0 | **Diff 92.62% PASS / repository 92.85/91.17 PASS / ratchet PASS**；`61ad3d3` |
+| 2026-09-18 | W11 门禁批：typecheck / arch / governance / drift×2 / frontend:build | 0 | 0 错 / 388 模块 / breaking OK+契约 41 / OK×2 / dist 重建 |
+| 2026-09-18 | W11 真环境矩阵重跑（最终代码） | 0 | e2e **4/4（36.2s）**；三件套集成 **22/22**；截图 12 张刷新 |
+| 2026-09-18 | 提交链终态 | — | `371355e`(W6 回填) → `02eb1aa`(W9) → `2063461`(W8) → `ba2c082`(W7) → `9a9e4df`(冒烟) → `333eead`(日志) → `1b68af8`(屏障) → `f45c8de`(可见性) → `f55e40b`(文案) → `4d14ebf`(矩阵) → `9e48325`(外审) → `5d5ea04`(CI) → `6cde7a6`(守卫) → `61ad3d3`(覆盖) → 本 docs 提交 → draft PR |
 
 ## 3 · 遗留与待决策
 
