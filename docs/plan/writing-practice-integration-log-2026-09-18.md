@@ -3,7 +3,7 @@
 > 基线提交锚：`ccc6fb4c90f45c6e13f0d581298bb617a79baac2`（作文 v1 合并基座；执行前已实测本地=远程 main）。
 > 实施位置：worktree `D:/Temp/Myawesomeapp/vocab-ob'/wt-practice`，分支 `writing-practice-v1`。
 
-## I0 · 现场与行为基线（完成，`48af1bd`）
+## I0 · 现场与行为基线（完成，`e74e749`）
 
 ### 基座与隔离
 - 执行前核对：本地 `main` = 远程 `main` = `ccc6fb4c`（`git ls-remote` 实测，未假定未推进）。
