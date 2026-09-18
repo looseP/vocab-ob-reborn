@@ -79,12 +79,19 @@
 - 交付：`writingSaveController.ts`（单在途/输入序号/flush waiter/800ms 防抖/IME/1-2-4 退避/401·409·400·422 不重试/超时 load 恢复/dispose）+ `useWritingDraft.ts`（composition + beforeunload + 站内导航守卫）+ 单测 17/17。
 - 独立复核：复跑 17/17；无 localStorage/IndexedDB；hook 签名已备 W7。
 
-#### W5 · 定位反馈与 agent 边界（2026-09-18 完成，`<W5-SHA>`）
+#### W5 · 定位反馈与 agent 边界（2026-09-18 完成，`d7a26ff`；收口 `<W5F-SHA>`）
 
 - 交付：`l3-writing-feedback.repository.ts`（一稿一条行锁/首写/版本 CAS）+ `l3-writing-feedback.service.ts`（getContext / getFeedback / putFeedback：task→sheet 锁序、hash 绑定校验、UTF-16 锚点逐字校验、64KiB 体积守卫、requestId 幂等重放不升版、expectedVersion 版本 CAS、last_editor 由 Principal 注入）+ 上下文/读取 DTO（domain 冻结层扩展）。
 - generic 封堵：grading `getGradingContext`/`getGradingResults`/`submitGrading` 对 writing 稿一律 409 `WRITING_ENDPOINT_REQUIRED`（防两套反馈真源）。
 - 验证：repo 5 + service 11 + grading 回归 16（含 3 守卫用例）；**并发集成 7/7**（新增「两 writer 相同 expectedVersion 只有一个成功 + 重放不升版 + 版本冲突 409」）；宽回归 175/175；typecheck 0 错。
-- 待办：`toFeedbackRecord` 的 feedback 形状未做运行时收口（写入侧已由 zod 校验；读取侧信任库内数据，W6 响应契约再做输出校验）。
+- **W5 收口（本轮指令校准）**：
+  · `feedbackVersion` 语义统一：context 无反馈 = **0**（与首次提交 expectedVersion=0 一致），不再用 null（DTO/schema/测试同步）。
+  · 数据一致性收口：sealed 稿缺合法稿号 / 题面记录缺失 / 正文结构不合法 → 显式 `InternalConsistencyError`（500，`meta.code=WRITING_DATA_INCONSISTENT`）；**不得**用空题面或 revisionNo=0 伪造有效评阅上下文；putFeedback 共用严格读取（不再以空串误入 hash 比对）。
+  · 新增错误类 `InternalConsistencyError`（errors/index.ts；code=INTERNAL）。
+  · 新增测试：第二稿不读第一稿反馈（sheet 隔离）、emoji/换行 UTF-16 精度（半 surrogate 拒绝）、键序无关重放、读取异常不伪装 pending、一致性错误族（context×3 + putFeedback×1）；repo 更新范围断言补强。
+  · 并发集成 **8/8**：新增「已有反馈更新并发：两 writer 相同 expectedVersion=1 仅一个成功（version→2）、单行、落败方 409 带 actualVersion」。
+  · 证据：单测 38/38、集成 8/8、typecheck 0（以 W6 起草件暂移法验证）、arch 无违规（375 模块）。
+- 待办（跨任务登记）：**正文删除 × 反馈写入并发**为 **W9 必验项**（依赖 W9 的 attempt soft-delete + feedback 同事务清理；本轮不上报通过）。
 
 #### W3 · 稿件生命周期（2026-09-18 完成，`09a44f0`）
 
@@ -111,9 +118,11 @@
 | 2026-09-18 | W2 独立复核：4 文件复跑 | 0 | 59/59（W4 17 + W2 27 + paper 15）；typecheck 0 |
 | 2026-09-18 | W3 单测 + 回归（11 文件） | 0 | 250/250 |
 | 2026-09-18 | W3 并发集成（vocab_writing_test 两连接屏障） | 0 | 6/6（D1/D2 屏障 slow-query 实证） |
-| 2026-09-18 | W5 单测 + grading 回归 | 0 | 32/32（repo 5 + service 11 + grading 16 含 3 守卫） |
-| 2026-09-18 | W5 并发集成（反馈） | 0 | 7/7（两 writer 同版本单胜 + 重放不升版） |
-| 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `09a44f0`(W3) → `<W5-SHA>`(W5) |
+| 2026-09-18 | W5 单测 + grading 回归 | 0 | 38/38（repo 5 + service 17 + grading 16，收口后计数） |
+| 2026-09-18 | W5 并发集成（反馈 + 更新并发） | 0 | 8/8（首次创建并发 + 已有反馈更新并发各单胜） |
+| 2026-09-18 | W5 收口 typecheck（W6 起草件暂移法） | 0 | 0 error（收口后验证） |
+| 2026-09-18 | W5 收口 arch:check | 0 | 375 模块无违规 |
+| 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `09a44f0`(W3) → `d7a26ff`(W5) → `<W5F-SHA>`（W5 收口） |
 
 ## 3 · 遗留与待决策
 

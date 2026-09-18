@@ -275,6 +275,10 @@ export interface WritingSheetDetail {
 /**
  * agent 评阅上下文（S§5，W5）：sealed 限定、**只含指定稿**——准确题面、方向/形式、
  * 稿次、正文/hash、当前反馈版本与 schema。不含题库答案、其他草稿、历史笔记、跨稿内容。
+ *
+ * 一致性纪律（W5 收口）：sealed 稿缺少合法稿号/题面记录/合法正文结构时，服务层报
+ * 数据一致性错误（InternalConsistencyError）——不得用空题面或 revisionNo=0 伪造有效
+ * 评阅上下文（context 的 revisionNo 恒 >0，feedbackVersion 恒有效：0=尚无反馈）。
  */
 export interface WritingFeedbackContext {
   taskId: string;
@@ -287,8 +291,8 @@ export interface WritingFeedbackContext {
   text: string;
   textSha256: string;
   wordCount: number;
-  /** 当前反馈版本；null = 尚未有反馈。 */
-  feedbackVersion: number | null;
+  /** 当前反馈版本；**0 = 尚未有反馈**（与首次提交 expectedVersion=0 一致）。 */
+  feedbackVersion: number;
   feedbackSchemaVersion: number;
 }
 

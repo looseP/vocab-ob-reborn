@@ -94,6 +94,8 @@ describe("L3WritingFeedbackRepository.updateCas", () => {
     expect(row?.version).toBe(2);
     const [sql, params] = spy.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain("version = version + 1");
+    expect(sql).toContain("user_id = $1::uuid");
+    expect(sql).toContain("sheet_id = $2::uuid");
     expect(sql).toContain("AND version = $7");
     expect(params[6]).toBe(1);
 

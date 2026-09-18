@@ -11,7 +11,13 @@
  */
 
 import type { PoolClient } from "pg";
-import { ConflictError, NotFoundError, ValidationError, BusinessRuleError } from "../errors";
+import {
+  BusinessRuleError,
+  ConflictError,
+  InternalConsistencyError,
+  NotFoundError,
+  ValidationError,
+} from "../errors";
 import { withTransaction } from "../db/transaction";
 import type {
   L3QuestionAttemptRow,
@@ -62,14 +68,23 @@ export function canonicalJson(value: unknown): string {
   return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
 }
 
-function extractAttemptText(attempt: L3QuestionAttemptRow | null): string {
-  if (!attempt) return "";
+/**
+ * 严格读取 attempt 正文（`{ text: string }`）——结构不合法即**数据一致性错误**
+ * （不得以空串伪装合法稿正文；评阅上下文/绑定校验共用此收口）。
+ */
+function requireConsistentAttemptText(attempt: L3QuestionAttemptRow, sheetId: string): string {
   const answer = attempt.answer;
-  if (answer && typeof answer === "object" && !Array.isArray(answer)) {
-    const text = (answer as { text?: unknown }).text;
-    if (typeof text === "string") return text;
+  const text = answer && typeof answer === "object" && !Array.isArray(answer)
+    ? (answer as { text?: unknown }).text
+    : undefined;
+  if (typeof text !== "string") {
+    throw new InternalConsistencyError(
+      "writing attempt answer is missing a text field",
+      undefined,
+      { code: "WRITING_DATA_INCONSISTENT", sheetId, attemptId: attempt.id },
+    );
   }
-  return "";
+  return text;
 }
 
 function toFeedbackRecord(row: L3WritingFeedbackRow): WritingFeedbackRecord {
@@ -112,24 +127,42 @@ export class L3WritingFeedbackService {
     return { task, sheet, attempt };
   }
 
-  /** agent 评阅上下文（sealed + 未清理 + 精确稿；零写入）。 */
+  /** agent 评阅上下文（sealed + 未清理 + 精确稿；零写入；数据不一致即显式报错）。 */
   async getContext(userId: string, taskId: string, sheetId: string): Promise<WritingFeedbackContext> {
     return this.withActor(userId, async (repos) => {
       const { task, sheet, attempt } = await this.loadSealedSheetForRead(repos, userId, taskId, sheetId);
+      // 一致性收口（W5 收口）：sealed 稿必须有合法稿号——不得用 revisionNo=0 伪造上下文。
+      const revisionNo = sheet.revision_no;
+      if (typeof revisionNo !== "number" || revisionNo <= 0) {
+        throw new InternalConsistencyError(
+          "sealed writing sheet is missing a valid revision number",
+          undefined,
+          { code: "WRITING_DATA_INCONSISTENT", sheetId, revisionNo: sheet.revision_no },
+        );
+      }
+      // 题面引用式真源必须可解析——不得用空题面伪造有效评阅上下文。
       const question = await repos.l3Paper.findQuestionById(userId, task.question_id);
+      if (!question) {
+        throw new InternalConsistencyError(
+          "writing task question record is missing",
+          undefined,
+          { code: "WRITING_DATA_INCONSISTENT", taskId, questionId: task.question_id },
+        );
+      }
       const feedback = await repos.l3Feedback.findBySheet(userId, sheetId);
-      const text = extractAttemptText(attempt);
+      const text = requireConsistentAttemptText(attempt, sheetId);
       return {
         taskId: task.id,
         sheetId,
-        revisionNo: sheet.revision_no ?? 0,
+        revisionNo,
         kind: task.kind,
         direction: task.direction,
-        prompt: question?.stem ?? "",
+        prompt: question.stem,
         text,
         textSha256: sha256WritingText(text),
         wordCount: countEnglishWords(text),
-        feedbackVersion: feedback?.version ?? null,
+        // 0 = 尚未有反馈（与首次提交 expectedVersion=0 一致）。
+        feedbackVersion: feedback?.version ?? 0,
         feedbackSchemaVersion: WRITING_FEEDBACK_SCHEMA_VERSION,
       };
     });
@@ -170,8 +203,8 @@ export class L3WritingFeedbackService {
         throw conflict("writing content is cleared", { code: "WRITING_CONTENT_CLEARED", sheetId });
       }
 
-      // ① 绑定校验：hash 指向 exact 稿正文（归一后同串）。
-      const text = extractAttemptText(attempt);
+      // ① 绑定校验：hash 指向 exact 稿正文（归一后同串；结构不合法先报一致性错误）。
+      const text = requireConsistentAttemptText(attempt, sheetId);
       const actualHash = sha256WritingText(text);
       if (input.textSha256 !== actualHash) {
         throw new ValidationError("textSha256 does not match the revision text", "textSha256");

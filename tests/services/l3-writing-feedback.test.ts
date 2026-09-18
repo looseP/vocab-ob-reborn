@@ -99,13 +99,16 @@ class FakeFeedbackRepos {
         : null,
     lockSheet: async (userId: string, taskId: string, sheetId: string) =>
       this.l3Writing.findSheetById(userId, taskId, sheetId),
-    findWritingAttempt: async () => this.attempt,
+    findWritingAttempt: async (_userId: string, sheetId: string) =>
+      this.attempt && this.attempt.sheet_id === sheetId ? this.attempt : null,
     touchTask: async () => { this.touchCount += 1; },
   };
 
   l3Feedback = {
-    findBySheet: async () => this.feedback,
-    lockBySheet: async () => this.feedback,
+    findBySheet: async (_userId: string, sheetId: string) =>
+      this.feedback && this.feedback.sheet_id === sheetId ? this.feedback : null,
+    lockBySheet: async (_userId: string, sheetId: string) =>
+      this.feedback && this.feedback.sheet_id === sheetId ? this.feedback : null,
     insertFirst: async (input: {
       user_id: string; sheet_id: string; text_sha256: string; feedback_jsonb: string;
       request_id: string; last_editor: string;
@@ -171,9 +174,43 @@ describe("W5 getContext（sealed 限定 + 精确稿）", () => {
     expect(ctx.revisionNo).toBe(1);
     expect(ctx.kind).toBe("free");
     expect(ctx.direction).toBe("通用");
-    expect(ctx.feedbackVersion).toBeNull();
+    // W5 收口校准：无反馈时 feedbackVersion=0（与首次提交 expectedVersion=0 一致）。
+    expect(ctx.feedbackVersion).toBe(0);
     expect(ctx.feedbackSchemaVersion).toBe(1);
     expect(repos.touchCount).toBe(0);
+
+    // 已有反馈时暴露当前版本（重传基线）。
+    repos.feedback = feedbackRow({ version: 2 });
+    const withFeedback = await service.getContext(USER, TASK, SHEET);
+    expect(withFeedback.feedbackVersion).toBe(2);
+  });
+
+  it("sealed 稿缺合法稿号/题面记录/合法正文结构 → 数据一致性错误（不伪造上下文）", async () => {
+    const repos = new FakeFeedbackRepos();
+    const service = makeService(repos);
+
+    // 缺合法稿号（sealed 却 revision_no=NULL）。
+    repos.sheet = sheetRow({ revision_no: null });
+    await expect(service.getContext(USER, TASK, SHEET)).rejects.toMatchObject({
+      httpStatus: 500,
+      meta: { code: "WRITING_DATA_INCONSISTENT" },
+    });
+
+    // 题面记录缺失（引用式真源不可解析）。
+    repos.sheet = sheetRow();
+    repos.l3Paper = { findQuestionById: async () => null } as never;
+    await expect(service.getContext(USER, TASK, SHEET)).rejects.toMatchObject({
+      httpStatus: 500,
+      meta: { code: "WRITING_DATA_INCONSISTENT" },
+    });
+
+    // 正文结构不合法（answer 缺 text 字段）。
+    repos.l3Paper = { findQuestionById: async () => ({ stem: "题面：谈谈你的看法。" }) } as never;
+    repos.attempt = attemptRow({ answer: { text: 42 } });
+    await expect(service.getContext(USER, TASK, SHEET)).rejects.toMatchObject({
+      httpStatus: 500,
+      meta: { code: "WRITING_DATA_INCONSISTENT" },
+    });
   });
 
   it("draft → 409；非本人/不存在 → 404；正文已清理 → 409 WRITING_CONTENT_CLEARED", async () => {
@@ -328,5 +365,105 @@ describe("W5 putFeedback（绑定校验 + 幂等 + 版本 CAS）", () => {
   it("canonicalJson 键序无关（幂等比较不因序列化差异误判）", () => {
     expect(canonicalJson({ b: 1, a: { d: 2, c: [3, { f: 4, e: 5 }] } }))
       .toBe(canonicalJson({ a: { c: [3, { e: 5, f: 4 }], d: 2 }, b: 1 }));
+  });
+});
+
+describe("W5 收口校准（一致性 / 隔离 / UTF-16 精度 / 读取异常）", () => {
+  it("读取异常向上报错（不得伪装 pending）", async () => {
+    const repos = new FakeFeedbackRepos();
+    const service = makeService(repos);
+    repos.l3Feedback.findBySheet = async () => {
+      throw new Error("db read failed");
+    };
+    await expect(service.getFeedback(USER, TASK, SHEET)).rejects.toThrow("db read failed");
+  });
+
+  it("第一稿反馈不被第二稿读取（sheet 绑定；第二稿 pending 且 context 版本 0）", async () => {
+    const repos = new FakeFeedbackRepos();
+    const service = makeService(repos);
+    const SHEET_B = "00000000-0000-4000-8000-000000000802";
+    repos.feedback = feedbackRow(); // 第一稿（SHEET）已有反馈
+
+    // 第二稿上下文：读取不得借用第一稿反馈。
+    repos.sheet = sheetRow({ id: SHEET_B });
+    repos.attempt = attemptRow({ sheet_id: SHEET_B });
+    const second = await service.getFeedback(USER, TASK, SHEET_B);
+    expect(second.state).toBe("pending");
+    expect(second.feedback).toBeNull();
+    const ctxB = await service.getContext(USER, TASK, SHEET_B);
+    expect(ctxB.feedbackVersion).toBe(0);
+
+    // 第一稿自身仍可读（对照）。
+    repos.sheet = sheetRow();
+    repos.attempt = attemptRow();
+    const first = await service.getFeedback(USER, TASK, SHEET);
+    expect(first.state).toBe("ready");
+    expect(first.feedback?.version).toBe(1);
+  });
+
+  it("中文/emoji/换行按 UTF-16 精确命中；错位（半 surrogate）拒绝", async () => {
+    const repos = new FakeFeedbackRepos();
+    const service = makeService(repos);
+    const text = "A😀B\n第二行。"; // 😀=[1,3)；"第二行"=[5,8)
+    repos.attempt = attemptRow({ answer: { text } });
+    const hash = sha256WritingText(text);
+
+    const first = await service.putFeedback(USER, TASK, SHEET, {
+      expectedVersion: 0, textSha256: hash, requestId: REQUEST,
+      feedback: feedbackFixture({
+        priorities: [{
+          id: "p1", dimension: "language", observation: "x", action: "y",
+          anchor: { start: 1, end: 3, quote: "😀" },
+        }],
+      }),
+    }, "agent-a");
+    expect(first.version).toBe(1);
+
+    const second = await service.putFeedback(USER, TASK, SHEET, {
+      expectedVersion: 1, textSha256: hash, requestId: "00000000-0000-4000-8000-000000000906",
+      feedback: feedbackFixture({
+        priorities: [{
+          id: "p1", dimension: "organization", observation: "x", action: "y",
+          anchor: { start: 5, end: 8, quote: "第二行" },
+        }],
+      }),
+    }, "agent-a");
+    expect(second.version).toBe(2);
+
+    await expect(service.putFeedback(USER, TASK, SHEET, {
+      expectedVersion: 2, textSha256: hash, requestId: "00000000-0000-4000-8000-000000000907",
+      feedback: feedbackFixture({
+        priorities: [{
+          id: "p1", dimension: "language", observation: "x", action: "y",
+          anchor: { start: 1, end: 2, quote: "😀" }, // 半 surrogate 区间
+        }],
+      }),
+    }, "agent-a")).rejects.toMatchObject({ httpStatus: 422, meta: { code: "FEEDBACK_ANCHOR_MISMATCH" } });
+  });
+
+  it("重放同 requestId 且内容键序变化仍视为相同内容（不升版）", async () => {
+    const repos = new FakeFeedbackRepos();
+    const service = makeService(repos);
+    const original = feedbackFixture();
+    await service.putFeedback(USER, TASK, SHEET, putInput({ feedback: original }), "agent-a");
+
+    const reordered: WritingFeedback = {
+      priorities: original.priorities,
+      dimensions: original.dimensions,
+      strengths: original.strengths,
+      summary: original.summary,
+      schemaVersion: 1,
+    };
+    const replay = await service.putFeedback(USER, TASK, SHEET, putInput({ feedback: reordered }), "agent-a");
+    expect(replay.version).toBe(1);
+  });
+
+  it("正文结构损坏时写入报数据一致性错误（500，不误报 422 hash）", async () => {
+    const repos = new FakeFeedbackRepos();
+    const service = makeService(repos);
+    repos.attempt = attemptRow({ answer: null });
+    await expect(service.putFeedback(USER, TASK, SHEET, putInput(), "agent-a"))
+      .rejects.toMatchObject({ httpStatus: 500, meta: { code: "WRITING_DATA_INCONSISTENT" } });
+    expect(repos.feedback).toBeNull();
   });
 });

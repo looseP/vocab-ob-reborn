@@ -309,4 +309,54 @@ describe("Writing lifecycle concurrency (integration)", () => {
     expect(rows.rows[0]!.c).toBe(1);
     expect(rows.rows[0]!.v).toBe(1);
   });
+
+  it("反馈更新并发：已有反馈上两 writer 相同 expectedVersion 只有一个成功，最终版本正确", async () => {
+    const { task, draft } = await createTask(ACTOR_A);
+    await sheetService.saveDraft(ACTOR_A, task.id, draft.id, { expectedVersion: 0, text: "更新并发稿" });
+    const sealed = await sheetService.submit(ACTOR_A, task.id, draft.id, { expectedVersion: 1 });
+    const textSha256 = sha256WritingText("更新并发稿");
+    const payload = (summary: string) => ({
+      schemaVersion: 1 as const,
+      summary,
+      strengths: ["立场明确"],
+      dimensions: {
+        task_response: { applicable: true, comment: "回应了题目。" },
+        organization: { applicable: true, comment: "结构可辨。" },
+        language: { applicable: true, comment: "基本通顺。" },
+        expression: { applicable: false, comment: "本稿不评表达风格。" },
+      },
+      priorities: [],
+    });
+
+    // 首写 → version 1。
+    await feedbackService.putFeedback(ACTOR_A, task.id, sealed.sheet.id, {
+      expectedVersion: 0, textSha256, requestId: randomUUID(), feedback: payload("首版评语"),
+    }, "agent-a");
+
+    // 两 writer 并发更新（相同 expectedVersion=1，不同 requestId）：只允许一个成功。
+    const [q1, q2] = await Promise.allSettled([
+      feedbackService.putFeedback(ACTOR_A, task.id, sealed.sheet.id, {
+        expectedVersion: 1, textSha256, requestId: randomUUID(), feedback: payload("改判甲版"),
+      }, "agent-a"),
+      feedbackService.putFeedback(ACTOR_A, task.id, sealed.sheet.id, {
+        expectedVersion: 1, textSha256, requestId: randomUUID(), feedback: payload("改判乙版"),
+      }, "agent-b"),
+    ]);
+    const fulfilled = [q1, q2].filter((r) => r.status === "fulfilled");
+    const rejected = [q1, q2].filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((fulfilled[0] as PromiseFulfilledResult<{ version: number }>).value.version).toBe(2);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      httpStatus: 409,
+      meta: { code: "FEEDBACK_VERSION_CONFLICT", actualVersion: 2 },
+    });
+
+    const rows = await adminPool.query<{ c: number; v: number }>(
+      "SELECT count(*)::int AS c, max(version)::int AS v FROM l3_writing_feedback WHERE sheet_id = $1",
+      [sealed.sheet.id],
+    );
+    expect(rows.rows[0]!.c).toBe(1);
+    expect(rows.rows[0]!.v).toBe(2);
+  });
 });
