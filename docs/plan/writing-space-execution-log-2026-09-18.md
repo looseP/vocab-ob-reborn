@@ -127,12 +127,20 @@
 - 交付：`WritingFeedbackPanel`（四态分离：pending/失败/cleared/hash 不一致隐藏；刷新诚实保留旧结果；定位跳转 textarea UTF-16 选中；**纯文本渲染**（XSS 样例断言不解析））、`WritingComparison`（两稿独立读取互不借用；cleared 占位不复活；非 sealed 拒绝；桌面双栏/移动堆叠）、`WritingReviewInstruction`（含精确 taskId/sheetId 与 HTTP 契约；无 token 字样；不承诺自动回灌）。
 - 测试：`writing-feedback.test.tsx` 4 例 + `writing-comparison.test.tsx` 2 例。
 
-#### W7 · 作文入口、任务列表与编辑器（2026-09-18 完成，`<W7-SHA>`）
+#### W7 · 作文入口、任务列表与编辑器（2026-09-18 完成，`ba2c082`）
 
 - 交付：`L3WritingPage` 宿主（列表/开始弹层/任务视图/稿件工作区/对照模式/手机三页签不卸载）、`WritingTaskList`（20/页 + 搜索 + 加载更多）、`WritingStartDialog`（requestId 一次意图：失败沿用、成功轮换）、`WritingEditor`（**只用 useWritingDraft 六态**；提交=`锁定→await flush→GET 权威版本→submit`；导出先 flush 失败不出文件；冲突复制+载入服务器稿重挂）、`WritingRevisionList`（对照入口 + 清理动作 + 反馈态派生）、`writingNavigation`（URL 契约/文案单一真源）。
 - 宿主接入：shell 一级「作文」；HomePage 入口卡；`L3Page` section=writing 优先 + **纯 ?sheet= 只读分流**（GET 判 scope → writing replace 规范 URL，不落试卷台、零创建；file/paper 保持 F-1 原路）；`L3PapersPage` essay 题「在作文空间练习」（questionId 建/复用任务、方向预填）。
 - 测试：`writing-workspace.test.tsx` 8 例（起笔≤2 点击+焦点入正文 / 深链与 F5 重挂（同 sheet 零创建）/ **A→B 切换迟到响应丢弃** / 提交屏障（在途不提交、确认后带权威版本、失败不提交不清空）/ 冲突保留本地 / L3Page 分流不落试卷台）；前端回归 **112/112**；frontend:build 通过；typecheck 0（含 tsconfig.frontend 收口修正）。
 - 过程修复：l3-papers 测试装置补 MemoryRouter（组件新增 useNavigate 的合法上下文依赖）。
+
+#### 真环境闭环冒烟（2026-09-18 完成，`9a9e4df`）
+
+- 栈：`SERVE_FRONTEND=true` 单进程（SPA+API，127.0.0.1:3099）+ **独立验收库 `vocab_writing_test`**；官方 playwright 夹具（UI 表单登录→会话 cookie）。
+- 旅程（一条用例全跑通，7.8s）：Home 卡片→作文列表→开始写作（弹层=第 2 点击，光标入正文）→ 输入自动保存 → 提交只读 → **agent 真实 HTTP**（feedback-context 读 + PUT feedback，确定性 payload，anchor 逐字）→ 手动刷新反馈可见 → 「跳至原句」UTF-16 选区命中 → 开始修改（第二稿默认拷贝父稿）→ 修改提交 → 与第一稿对照（**两稿反馈独立：第二稿显示「本稿尚无反馈」**）→ 关闭后 URL 重开第一稿 → **F5 同 sheet 且库核 sheets/drafts/attempts/feedback 全等（零新增 draft）** → **导出真实下载**（文件名 `writing-<sheet>.md`，JSON 可提取含 anchor 原文）。
+- 截图（产物 `D:/tmp/ws7-acceptance/`，仓外）：01 列表 / 02 编辑已保存 / 03 已提交待评 / 04 反馈可见（含定位）/ 05 对照 / 06 重开第一稿 —— 均为 **1440×900**；07/08 手机 **390×844**（正文/反馈页签）；09 **暗色**（data-theme=dark）。
+- 清理：用例尾部删除本次冒烟数据（feedback→attempts→submissions→tasks→内部题）。
+- 门控：`E2E_WRITING_SMOKE=1` 本机开启；默认跳过（不阻塞 CI 既有 Browser E2E；CI 接线属 W10）。
 
 ## 2 · 门禁与证据台账
 
@@ -157,6 +165,11 @@
 | 2026-09-18 | W6 HTTP/契约/授权/回归批次 | 0 | HTTP 14/14 + 契约 10/10 + 授权矩阵 + 宽回归 177/177 |
 | 2026-09-18 | W6 `api:governance`（API_CONTRACT_BASE_REF=f03ffe3） | 0 | 六步全绿（含 breaking approval 重锚） |
 | 2026-09-18 | W6 typecheck / arch:check | 0 | 0 错 / 376 模块无违规 |
+| 2026-09-18 | W9 导出单测 + 清理并发集成 | 0 | 7/7 + 2/2（真 PG 两连接屏障） |
+| 2026-09-18 | W7/W8 组件测试 + 前端回归 | 0 | 14/14 + 112/112；frontend:build 通过 |
+| 2026-09-18 | 真环境闭环冒烟（E2E_WRITING_SMOKE=1） | 0 | 1 passed（7.8s；含 F5 库核零新增 + 真实导出下载） |
+| 2026-09-18 | 截图产物 | — | `D:/tmp/ws7-acceptance/`（01–06 桌面 1440×900；07–08 手机 390×844；09 暗色） |
+| 2026-09-18 | 提交链（续） | — | `d7a26ff`(W5) → `08d9c44`(收口) → `b0bee63`(自查) → `3396150`(W6) → `371355e`(回填) → `02eb1aa`(W9) → `2063461`(W8) → `ba2c082`(W7) → `9a9e4df`(e2e 冒烟) |
 | 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `09a44f0`(W3) → `d7a26ff`(W5) → `08d9c44`(W5 收口) → `b0bee63`(W5 自查) → `3396150`（W6） |
 
 ## 3 · 遗留与待决策
