@@ -1683,8 +1683,10 @@ export interface IL3SheetRepository {
   listBySheet(userId: string, sheetId: string): Promise<L3QuestionAttemptRow[]>;
   /** 该题纸 answers 已答键数（未答 = 作用域题数 - 本值）。 */
   countAnsweredBySheet(userId: string, sheetId: string): Promise<number>;
-  /** F-1：题纸档案列表（回看闭环入口；draft/sealed 新→旧，含已评计数与展示标题）。 */
+  /** F-1：题纸档案列表（回看闭环入口；draft/sealed 新→旧，含已评计数与展示标题；仅 file/paper 域）。 */
   listArchive(userId: string, limit: number): Promise<L3SheetArchiveRow[]>;
+  /** W3：写作任务 → question_id 只读查询（作用域解析器 writing 分支用；不触发创建）。 */
+  findWritingTaskQuestionId(userId: string, taskId: string): Promise<string | null>;
 }
 
 // ── 批次三①（0036）：评卷结果（ADR-0035 §1/§3）───────────────────────────

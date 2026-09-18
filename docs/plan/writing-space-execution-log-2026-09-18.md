@@ -67,7 +67,26 @@
 
 ### W2–W11
 
--（按依赖推进，逐节回填）
+#### W2 · 写作任务、查找、分页与归档（2026-09-18 完成，`ba26a82`）
+
+- 交付：`l3-writing.repository.ts`（任务域原语 + `lockTask`/`lockQuestion` 事务锁）+ `l3-writing-task.service.ts`（create 幂等/复用/内部题/首 draft/`draft=null` 复用语义；list keyset；rename/archive/restore）+ 单测 27/27。
+- paper 面：`deleteQuestion` 增写作任务 409 blocker（owner 域，不泄露）；`listPracticeFiles` 双条件排除内部写作题（`file_key='writing:%'` **且** 存在任务关联行）。
+- 偏离记录（已复核接受）：`interfaces.ts` 加 `IL3PaperRepository.listWritingTaskRefs`（加性 5 行，编译必需）；`tests/services/l3-paper.test.ts` 补 fake + 1 护栏用例。
+- 独立复核：27+15+17 测试复跑全绿；typecheck 0 错。
+
+#### W4 · 可靠保存控制器（2026-09-18 完成，`3d759e1`）
+
+- 交付：`writingSaveController.ts`（单在途/输入序号/flush waiter/800ms 防抖/IME/1-2-4 退避/401·409·400·422 不重试/超时 load 恢复/dispose）+ `useWritingDraft.ts`（composition + beforeunload + 站内导航守卫）+ 单测 17/17。
+- 独立复核：复跑 17/17；无 localStorage/IndexedDB；hook 签名已备 W7。
+
+#### W3 · 稿件生命周期（2026-09-18 完成，`<W3-SHA>`）
+
+- 交付：`l3-writing-text.ts`（sha256 工具）+ `l3-writing-sheet.service.ts`（saveDraft CAS / submit 单事务物化+幂等重放 / createDraft copy·复用·409 / discard / getSheet 三态 / listRevisions feedbackState 派生）+ repo 11 个 sheet 域方法（`lockSheet`/`casSaveDraft`/`sealWritingSheet`/`discardWritingDraft`/`findMaxRevisionNo`/`listRevisions` 等）。
+- 旁路封堵：通用 `patchAnswers` 加 `scope IN ('file','paper')`；通用 `patchSheet`/`sealSheet` 对 writing 稿 409 `WRITING_ENDPOINT_REQUIRED`；通用 `softDeleteAttempt` 加 `venue <> 'writing'`（写作正文清理走 W9 专用事务）；`listArchive` 限 file/paper。
+- 作用域解析器：writing → 任务关联题只读解析（经 `findWritingTaskQuestionId` 只读助手，不触发创建）。
+- 单测 21/21（CAS 冲突不覆盖 / 提交幂等同 attempt / 稿号 max+1 / 父稿 copy·复用·409 / 终态守卫 / GET 零写）；**并发集成 6/6（真实 PG 两连接屏障——slow-query 日志实证 FOR UPDATE 阻塞 207ms/217ms 至屏障提交）**；回归 250/250；typecheck 0 错。
+- 过程修复：① 任务服务构造缺默认工厂（单测显式注入未暴露；集成构造即炸）→ 补 `defaultWritingReposFactory` 默认参数；② 导出 `toSheetDto`/`encodeCursor`/`decodeCursor` 供 W3/W6 复用（单一真源）。
+- 说明：W3 实施者（外派）曾因推理配额 429 中断（无提交、无锁残留），主理人接手完成（残留 hash 工具与接口声明复核后留用）。
 
 ## 2 · 门禁与证据台账
 
@@ -82,6 +101,10 @@
 | 2026-09-18 | `db:schema:drift`（dev + 测试库双跑） | 0 | OK ×2（RLS policy/契约一致） |
 | 2026-09-18 | `vitest run tests/scripts/verify-existing-volume-role-upgrade.test.ts` | 0 | 9/9（计数 39） |
 | 2026-09-18 | dev/测试库 converge + verifier | 0 | `exactPrivileges=true` ×2 |
+| 2026-09-18 | W2 独立复核：4 文件复跑 | 0 | 59/59（W4 17 + W2 27 + paper 15）；typecheck 0 |
+| 2026-09-18 | W3 单测 + 回归（11 文件） | 0 | 250/250 |
+| 2026-09-18 | W3 并发集成（vocab_writing_test 两连接屏障） | 0 | 6/6（D1/D2 屏障 slow-query 实证） |
+| 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `<W3-SHA>`(W3) |
 
 ## 3 · 遗留与待决策
 

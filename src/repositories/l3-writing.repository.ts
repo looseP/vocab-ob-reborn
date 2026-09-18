@@ -11,6 +11,7 @@
 import type { PoolClient } from "pg";
 import type { Json } from "../domain";
 import type {
+  L3QuestionAttemptRow,
   L3QuestionRow,
   L3SubmissionRow,
   WritingDirection,
@@ -97,6 +98,69 @@ export interface IL3WritingRepository {
   countSealedByTask(userId: string, taskId: string): Promise<number>;
   findLatestSealedByTask(userId: string, taskId: string): Promise<L3SubmissionRow | null>;
   listTasks(input: L3WritingTaskListInput): Promise<L3WritingTaskListResult>;
+
+  // ── 以下为 W3 稿件生命周期（sheet 域）：task→sheet 锁序、CAS、物化、稿次（ADR §4）──
+
+  /** 稿行锁（task→sheet 锁序第二步）。requireTx。 */
+  lockSheet(userId: string, taskId: string, sheetId: string): Promise<L3SubmissionRow | null>;
+  /** 读面：精确归属的稿行（无锁）。 */
+  findSheetById(userId: string, taskId: string, sheetId: string): Promise<L3SubmissionRow | null>;
+  /** 第二稿父稿校验：同 task 且 sealed 的稿行（无锁）。 */
+  findSealedSheetById(userId: string, taskId: string, sheetId: string): Promise<L3SubmissionRow | null>;
+  /** CAS 保存草稿：WHERE status='draft' AND draft_version=$expected；失败返回 null（不 last-wins）。 */
+  casSaveDraft(
+    userId: string,
+    taskId: string,
+    sheetId: string,
+    expectedVersion: number,
+    answersJsonb: string,
+  ): Promise<L3SubmissionRow | null>;
+  /** 该 sheet 的写作 attempt（任意状态——sealed 重放需取 attemptId；软删行亦返回）。 */
+  findWritingAttempt(userId: string, sheetId: string): Promise<L3QuestionAttemptRow | null>;
+  /** 物化写作 attempt（提交事务内；一稿一 attempt 由 DB 部分唯一索引兜底）。 */
+  insertWritingAttempt(input: {
+    user_id: string;
+    question_id: string;
+    sheet_id: string;
+    answerJsonb: string;
+  }): Promise<L3QuestionAttemptRow>;
+  /** 新建写作稿（首稿或第二稿）：支持 parent_sheet_id 与初始 answers（copy 种子）。 */
+  createWritingDraft(input: {
+    user_id: string;
+    task_id: string;
+    question_id: string;
+    parent_sheet_id: string | null;
+    answers: Record<string, unknown>;
+  }): Promise<L3SubmissionRow>;
+  /** 提交物化：同事务内（service 控制）已建 attempt，此处清空 answers、sealed、分配 revision_no。WHERE status='draft' AND draft_version=$expected。 */
+  sealWritingSheet(
+    userId: string,
+    taskId: string,
+    sheetId: string,
+    expectedVersion: number,
+    revisionNo: number,
+  ): Promise<L3SubmissionRow | null>;
+  /** 丢弃草稿：清空 answers、status='discarded'、revision_no 保持 NULL（不占号）。WHERE status='draft' AND draft_version=$expected。 */
+  discardWritingDraft(
+    userId: string,
+    taskId: string,
+    sheetId: string,
+    expectedVersion: number,
+  ): Promise<L3SubmissionRow | null>;
+  /** 已提交稿号最大值（task 行锁下分配新号；无 sealed 返回 0）。不得用 count 充当 max。 */
+  findMaxRevisionNo(userId: string, taskId: string): Promise<number>;
+  /** sealed/discarded 历史（updatedAt DESC, id DESC keyset）；每行带 active attempt 计数与 feedback 计数（只读派生）。 */
+  listRevisions(
+    userId: string,
+    taskId: string,
+    input: { limit: number; cursor: { updatedAt: string; id: string } | null },
+  ): Promise<{ items: WritingRevisionListRow[]; total: number }>;
+}
+
+/** listRevisions 投影行：稿行 + 派生计数（只读，不写反馈表）。 */
+export interface WritingRevisionListRow extends L3SubmissionRow {
+  active_attempt_count: number;
+  feedback_count: number;
 }
 
 function mapWritingTaskRow(row: L3WritingTaskRow): L3WritingTaskRow {
@@ -323,5 +387,192 @@ export class L3WritingRepository extends BaseRepository implements IL3WritingRep
       items: rows.map((r) => ({ ...r, prompt: r.prompt ?? "" })),
       total: Number(totalRow?.total ?? 0),
     };
+  }
+
+  // ── W3 稿件生命周期实现（sheet 域；锁序 task→sheet 由 service 持锁调用）──────────
+
+  async lockSheet(userId: string, taskId: string, sheetId: string): Promise<L3SubmissionRow | null> {
+    this.requireTx();
+    const row = await this.queryOne<L3SubmissionRow>(
+      `SELECT * FROM l3_submissions
+        WHERE id = $3::uuid AND user_id = $2::uuid AND writing_task_id = $1::uuid
+        FOR UPDATE`,
+      [taskId, userId, sheetId],
+    );
+    return row ? mapSubmissionRow(row) : null;
+  }
+
+  async findSheetById(userId: string, taskId: string, sheetId: string): Promise<L3SubmissionRow | null> {
+    const row = await this.queryOne<L3SubmissionRow>(
+      `SELECT * FROM l3_submissions
+        WHERE id = $3::uuid AND user_id = $2::uuid AND writing_task_id = $1::uuid`,
+      [taskId, userId, sheetId],
+    );
+    return row ? mapSubmissionRow(row) : null;
+  }
+
+  async findSealedSheetById(userId: string, taskId: string, sheetId: string): Promise<L3SubmissionRow | null> {
+    const row = await this.queryOne<L3SubmissionRow>(
+      `SELECT * FROM l3_submissions
+        WHERE id = $3::uuid AND user_id = $2::uuid AND writing_task_id = $1::uuid
+          AND status = 'sealed'`,
+      [taskId, userId, sheetId],
+    );
+    return row ? mapSubmissionRow(row) : null;
+  }
+
+  async casSaveDraft(
+    userId: string,
+    taskId: string,
+    sheetId: string,
+    expectedVersion: number,
+    answersJsonb: string,
+  ): Promise<L3SubmissionRow | null> {
+    const row = await this.queryOne<L3SubmissionRow>(
+      `UPDATE l3_submissions
+          SET answers = $4::jsonb, draft_version = draft_version + 1, updated_at = now()
+        WHERE id = $3::uuid AND user_id = $2::uuid AND writing_task_id = $1::uuid
+          AND status = 'draft' AND draft_version = $5
+        RETURNING *`,
+      [taskId, userId, sheetId, answersJsonb, expectedVersion],
+    );
+    return row ? mapSubmissionRow(row) : null;
+  }
+
+  async findWritingAttempt(userId: string, sheetId: string): Promise<L3QuestionAttemptRow | null> {
+    const row = await this.queryOne<L3QuestionAttemptRow>(
+      `SELECT * FROM l3_question_attempts
+        WHERE user_id = $1::uuid AND sheet_id = $2::uuid AND venue = 'writing'
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1`,
+      [userId, sheetId],
+    );
+    return row ?? null;
+  }
+
+  async insertWritingAttempt(input: {
+    user_id: string;
+    question_id: string;
+    sheet_id: string;
+    answerJsonb: string;
+  }): Promise<L3QuestionAttemptRow> {
+    const row = await this.queryOne<L3QuestionAttemptRow>(
+      `INSERT INTO l3_question_attempts (user_id, question_id, sheet_id, venue, answer)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, 'writing', $4::jsonb)
+       RETURNING *`,
+      [input.user_id, input.question_id, input.sheet_id, input.answerJsonb],
+    );
+    if (!row) throw new Error("l3_question_attempts (writing) insert returned no row");
+    return row;
+  }
+
+  async createWritingDraft(input: {
+    user_id: string;
+    task_id: string;
+    question_id: string;
+    parent_sheet_id: string | null;
+    answers: Record<string, unknown>;
+  }): Promise<L3SubmissionRow> {
+    const row = await this.queryOne<L3SubmissionRow>(
+      `INSERT INTO l3_submissions
+         (user_id, scope, scope_key, source_id, question_type, paper_id,
+          writing_task_id, parent_sheet_id, revision_no, draft_version,
+          status, answers, seal_mode, summary)
+       VALUES ($1::uuid, 'writing', $2, NULL, NULL, NULL,
+               $3::uuid, $4::uuid, NULL, 0,
+               'draft', $5::jsonb, NULL, NULL)
+       RETURNING *`,
+      [input.user_id, `writing:${input.task_id}`, input.task_id, input.parent_sheet_id, JSON.stringify(input.answers)],
+    );
+    if (!row) throw new Error("l3_submissions (writing revision draft) insert returned no row");
+    return mapSubmissionRow(row);
+  }
+
+  async sealWritingSheet(
+    userId: string,
+    taskId: string,
+    sheetId: string,
+    expectedVersion: number,
+    revisionNo: number,
+  ): Promise<L3SubmissionRow | null> {
+    const row = await this.queryOne<L3SubmissionRow>(
+      `UPDATE l3_submissions
+          SET answers = '{}'::jsonb, status = 'sealed', seal_mode = 'full',
+              sealed_at = now(), revision_no = $5, draft_version = draft_version + 1,
+              updated_at = now()
+        WHERE id = $3::uuid AND user_id = $2::uuid AND writing_task_id = $1::uuid
+          AND status = 'draft' AND draft_version = $4
+        RETURNING *`,
+      [taskId, userId, sheetId, expectedVersion, revisionNo],
+    );
+    return row ? mapSubmissionRow(row) : null;
+  }
+
+  async discardWritingDraft(
+    userId: string,
+    taskId: string,
+    sheetId: string,
+    expectedVersion: number,
+  ): Promise<L3SubmissionRow | null> {
+    // 终态丢弃：清空 answers、不改 draft_version（无后续写路径）、不占稿号。
+    const row = await this.queryOne<L3SubmissionRow>(
+      `UPDATE l3_submissions
+          SET answers = '{}'::jsonb, status = 'discarded', updated_at = now()
+        WHERE id = $3::uuid AND user_id = $2::uuid AND writing_task_id = $1::uuid
+          AND status = 'draft' AND draft_version = $4
+        RETURNING *`,
+      [taskId, userId, sheetId, expectedVersion],
+    );
+    return row ? mapSubmissionRow(row) : null;
+  }
+
+  async findMaxRevisionNo(userId: string, taskId: string): Promise<number> {
+    const row = await this.queryOne<{ m: number }>(
+      `SELECT COALESCE(max(revision_no), 0)::int AS m FROM l3_submissions
+        WHERE user_id = $1::uuid AND writing_task_id = $2::uuid AND status = 'sealed'`,
+      [userId, taskId],
+    );
+    return Number(row?.m ?? 0);
+  }
+
+  async listRevisions(
+    userId: string,
+    taskId: string,
+    input: { limit: number; cursor: { updatedAt: string; id: string } | null },
+  ): Promise<{ items: WritingRevisionListRow[]; total: number }> {
+    const params: unknown[] = [userId, taskId];
+    let where = `s.user_id = $1::uuid AND s.writing_task_id = $2::uuid
+                 AND s.status IN ('sealed', 'discarded')`;
+    if (input.cursor) {
+      params.push(input.cursor.updatedAt, input.cursor.id);
+      where += ` AND (s.updated_at, s.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+    }
+
+    const totalRow = await this.queryOne<{ total: string }>(
+      `SELECT count(*) AS total FROM l3_submissions s WHERE ${where}`,
+      params,
+    );
+
+    const rows = await this.query<WritingRevisionListRow>(
+      `SELECT s.*,
+              COALESCE(a.cnt, 0)::int AS active_attempt_count,
+              COALESCE(f.cnt, 0)::int AS feedback_count
+         FROM l3_submissions s
+         LEFT JOIN (
+           SELECT sheet_id, count(*)::int AS cnt FROM l3_question_attempts
+            WHERE venue = 'writing' AND status = 'active'
+            GROUP BY sheet_id
+         ) a ON a.sheet_id = s.id
+         LEFT JOIN (
+           SELECT sheet_id, count(*)::int AS cnt FROM l3_writing_feedback
+            GROUP BY sheet_id
+         ) f ON f.sheet_id = s.id
+        WHERE ${where}
+        ORDER BY s.updated_at DESC, s.id DESC
+        LIMIT $${params.length + 1}`,
+      [...params, input.limit],
+    );
+
+    return { items: rows.map((r) => mapSubmissionRow(r) as WritingRevisionListRow), total: Number(totalRow?.total ?? 0) };
   }
 }

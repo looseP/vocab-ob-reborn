@@ -298,6 +298,23 @@ class FakeWritingRepository implements IL3WritingRepository {
     };
     this.submissions.set(sealed.id, sealed);
   }
+
+  // ── W3 sheet 域方法：任务域单测不触及（W3 自带专用 fake；此处防误用）────────
+
+  private notUsed(): never {
+    throw new Error("FakeWritingRepository: sheet-domain method not stubbed for task tests");
+  }
+  async lockSheet(): Promise<never> { return this.notUsed(); }
+  async findSheetById(): Promise<never> { return this.notUsed(); }
+  async findSealedSheetById(): Promise<never> { return this.notUsed(); }
+  async casSaveDraft(): Promise<never> { return this.notUsed(); }
+  async findWritingAttempt(): Promise<never> { return this.notUsed(); }
+  async insertWritingAttempt(): Promise<never> { return this.notUsed(); }
+  async createWritingDraft(): Promise<never> { return this.notUsed(); }
+  async sealWritingSheet(): Promise<never> { return this.notUsed(); }
+  async discardWritingDraft(): Promise<never> { return this.notUsed(); }
+  async findMaxRevisionNo(): Promise<never> { return this.notUsed(); }
+  async listRevisions(): Promise<never> { return this.notUsed(); }
 }
 
 interface Fakes {

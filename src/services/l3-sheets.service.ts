@@ -131,6 +131,14 @@ export class L3SheetService {
       if (updated) return { sheet: updated };
       const sheet = await repos.l3Sheets.getSheet(input.userId, input.sheetId);
       if (!sheet) throw new NotFoundError("L3Sheet", input.sheetId);
+      // W3（ADR《writing-workspace》§4）：writing 稿必须走作文专用写面（CAS 保存契约）
+      // ——通用 PATCH 不得成为旁路（服务端拦截，不是 UI 隐藏）。
+      if (sheet.scope === "writing") {
+        throw new ConflictError("writing sheets require the writing workspace endpoints", undefined, {
+          code: "WRITING_ENDPOINT_REQUIRED",
+          sheetId: input.sheetId,
+        });
+      }
       throw new ConflictError("L3 sheet is settled; answers are read-only", undefined, {
         sheetId: input.sheetId,
         status: sheet.status,
@@ -153,6 +161,14 @@ export class L3SheetService {
     return this.withActor(input.userId, async (repos) => {
       const sheet = await repos.l3Sheets.getSheet(input.userId, input.sheetId);
       if (!sheet) throw new NotFoundError("L3Sheet", input.sheetId);
+      // W3（ADR《writing-workspace》§4）：writing 稿禁用通用定格三档——提交走专用
+      // submit（正文物化进 attempt、稿号分配、版本 CAS 全在作文服务内收口）。
+      if (sheet.scope === "writing") {
+        throw new ConflictError("writing sheets require the writing workspace endpoints", undefined, {
+          code: "WRITING_ENDPOINT_REQUIRED",
+          sheetId: input.sheetId,
+        });
+      }
       if (sheet.status !== "draft") {
         throw new ConflictError("L3 sheet is settled", undefined, { sheetId: input.sheetId, status: sheet.status });
       }

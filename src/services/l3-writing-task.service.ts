@@ -115,7 +115,8 @@ function toTaskDto(row: L3WritingTaskRow, prompt: string): WritingTaskDto {
   };
 }
 
-function toSheetDto(row: L3SubmissionRow): WritingSheetDto {
+/** sheet DTO 映射（W3/W6 复用；单一真源）。 */
+export function toSheetDto(row: L3SubmissionRow): WritingSheetDto {
   return {
     id: row.id,
     taskId: row.writing_task_id as string,
@@ -136,11 +137,11 @@ function clampLimit(limit: number | undefined): number {
   return value;
 }
 
-/** 列表 keyset 游标编解码（updated_at || id；容错：损坏 → null = 首页）。 */
-function encodeCursor(row: L3WritingTaskRow): string {
+/** 列表 keyset 游标编解码（updated_at || id；容错：损坏 → null = 首页）。W3 listRevisions 复用。 */
+export function encodeCursor(row: { updated_at: string; id: string }): string {
   return Buffer.from(`${row.updated_at}||${row.id}`).toString("base64url");
 }
-function decodeCursor(cursor: string | null | undefined): L3WritingTaskListInput["cursor"] {
+export function decodeCursor(cursor: string | null | undefined): { updatedAt: string; id: string } | null {
   if (!cursor) return null;
   try {
     const decoded = Buffer.from(cursor, "base64url").toString("utf8");
@@ -157,7 +158,9 @@ function decodeCursor(cursor: string | null | undefined): L3WritingTaskListInput
 
 export class L3WritingTaskService {
   constructor(
-    private readonly reposFactory: WritingReposFactory,
+    // 默认窄工厂（模块尾定义；默认参数在调用时求值，晚绑定安全）——
+    // W6 集成可改用全局 factory，或继续用本默认。
+    private readonly reposFactory: WritingReposFactory = defaultWritingReposFactory,
     private readonly txRunner: TxRunner = withTransaction,
   ) {}
 
