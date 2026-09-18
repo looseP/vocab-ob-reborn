@@ -109,6 +109,8 @@ function gradingFixture(overrides: Record<string, unknown> = {}): Record<string,
 type MockOptions = {
   sheet?: Record<string, unknown>;
   gradingResults?: unknown[];
+  /** 契约漂移注入：直接提供读面原始响应（含非法形状），优先于 gradingResults。 */
+  gradingRaw?: () => unknown;
   annotations?: unknown[];
 };
 
@@ -119,6 +121,7 @@ function setupMock(options: MockOptions = {}) {
     // ① 评卷读面（GET /l3/sheets/:id/grading）——挂在通用 sheets GET 之前。
     if (String(path) === `/l3/sheets/${SHEET_ID}/grading` && !init?.method) {
       state.gradingCalls += 1;
+      if (options.gradingRaw) return options.gradingRaw();
       return { sheet: sheetFixture(), results: options.gradingResults ?? [] };
     }
     if (path === "/l3/sheets" && (!init || init.method === "POST")) {
@@ -214,6 +217,45 @@ describe("L3ExamPaper 解析模式判读（批次三①）", () => {
   });
 });
 
+describe("契约漂移防御（深测 OB-2/3 转正）", () => {
+  it("读面请求 reject（网络失败）→ 不显示「待评卷」、页面不崩溃", async () => {
+    setupMock({ gradingRaw: () => { throw new Error("network down"); } });
+    await renderPaper(8);
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    await act(async () => { for (let i = 0; i < 8; i += 1) await Promise.resolve(); });
+    expect(screen.queryByText(/待评卷/)).toBeNull();
+    expect(screen.getByRole("button", { name: "显示全部答案与解析" })).toBeTruthy();
+  });
+
+  it("读面成功但形状非法（results 非数组）→ 按加载失败静默，不误报「待评卷」", async () => {
+    setupMock({ gradingRaw: () => ({ results: "boom" }) });
+    await renderPaper(8);
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    await act(async () => { for (let i = 0; i < 8; i += 1) await Promise.resolve(); });
+    expect(screen.queryByText(/待评卷/)).toBeNull();
+    expect(screen.getByRole("button", { name: "显示全部答案与解析" })).toBeTruthy();
+  });
+
+  it("读面成功但 body 为 null → 同样静默（不误报「待评卷」）", async () => {
+    setupMock({ gradingRaw: () => null });
+    await renderPaper(8);
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    await act(async () => { for (let i = 0; i < 8; i += 1) await Promise.resolve(); });
+    expect(screen.queryByText(/待评卷/)).toBeNull();
+  });
+
+  it("grading 行未知 verdict（alien）→ 显示「评卷：未知」而非误导为「错」", async () => {
+    setupMock({ gradingResults: [gradingFixture({ verdict: "alien" })] });
+    await renderPaper(8);
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+    await click(screen.getByRole("button", { name: "显示全部答案与解析" }));
+    const node = document.querySelector("[data-grading-verdict]");
+    expect(node?.getAttribute("data-grading-verdict")).toBe("alien");
+    expect(screen.getByText(/评卷：未知/)).toBeTruthy();
+    expect(screen.queryByText(/评卷：错/)).toBeNull();
+  });
+});
+
 describe("L3QuestionAnalysis 注记 review 对照（批次三①）", () => {
   const question = paper.sections[0]!.questions[0]!;
 
@@ -265,5 +307,41 @@ describe("L3QuestionAnalysis 注记 review 对照（批次三①）", () => {
     expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
     // 撤回通道不受影响（owner 处置第二条路）。
     expect(screen.getByRole("button", { name: "撤回" })).toBeTruthy();
+  });
+
+  // ── 深测 dt 用例转正：review 脏值族（契约漂移不得渲染、不得崩溃）──
+  it("review 为字符串 → 不渲染 review 块、不崩溃、撤回钮仍在", async () => {
+    await renderAnalysis({ annotations: [annotationFixture({ review: "sound" })], onWithdraw: vi.fn(), onConfirm: vi.fn() });
+    await click(screen.getByRole("button", { name: /原文分析 · 1/ }));
+    expect(screen.queryByText(/待商榷/)).toBeNull();
+    expect(document.querySelector("[data-annotation-review]")).toBeNull();
+    expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+    expect(screen.getByRole("button", { name: "撤回" })).toBeTruthy();
+  });
+
+  it("review 缺 verdict 键 → 不渲染", async () => {
+    await renderAnalysis({ annotations: [annotationFixture({ review: { comment: "只有评论" } })], onConfirm: vi.fn() });
+    await click(screen.getByRole("button", { name: /原文分析 · 1/ }));
+    expect(document.querySelector("[data-annotation-review]")).toBeNull();
+    expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+  });
+
+  it("review 脏子值：非字符串 corrected_tags 被过滤、数字 comment 不渲染、不崩溃", async () => {
+    await renderAnalysis({
+      annotations: [annotationFixture({ review: { verdict: "questionable", corrected_tags: [1, "细节题", null], comment: 42 } })],
+      onConfirm: vi.fn(),
+    });
+    await click(screen.getByRole("button", { name: /原文分析 · 1/ }));
+    expect(screen.getByText("? 待商榷")).toBeTruthy();
+    expect(screen.getByText("+细节题")).toBeTruthy();
+    expect(screen.queryByText("+1")).toBeNull();
+    expect(screen.queryByText(/42/)).toBeNull();
+    expect(screen.getByRole("button", { name: "确认" })).toBeTruthy();
+  });
+
+  it("review verdict 越白名单值（alien）→ 不渲染、不崩溃", async () => {
+    await renderAnalysis({ annotations: [annotationFixture({ review: { verdict: "alien" } })], onConfirm: vi.fn() });
+    await click(screen.getByRole("button", { name: /原文分析 · 1/ }));
+    expect(document.querySelector("[data-annotation-review]")).toBeNull();
   });
 });
