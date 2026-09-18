@@ -162,3 +162,30 @@
 | fileKey 浏览 | 题型空间 → 文件（B 批） | 三态 + 记录选择 |
 
 - 剩余风险：`sentence_translation` 无入口（设计如此）；source 型回看方向查询失败时降级「通用」（低概率，不阻塞）。
+
+## D · 最终验收与交付（完成，`8884bdc`；验收报告 `writing-practice-acceptance-2026-09-19.md`）
+
+### 交付
+
+- `8884bdc`：**`e2e/writing-origin.spec.ts`**（B/C/反馈闭环三用例，含 390×844 小屏动线与 agent 真实 HTTP 反馈；幂等种子 + 精确 cleanup）进入 Writing E2E 必需检查；validator 固定收集 **4→7**（回归测试同步：动态推导 + 钉住 7）；workflow 双 spec 执行；`writing.spec` 同步「开始修改」文案；L3PapersPage 方向枚举收窄（`frontend:build` 抓出，`typecheck` 未覆盖）。
+
+### 本地验证（代码 SHA `8884bdc`，base `ccc6fb4c`）
+
+- 全量单测 **3290 passed | 6 skipped（3296）** / 231 文件；**Diff coverage 98.45%**（changed src 19 / 129 行）；四层基线＋目标全 PASS；收集门禁 231/231。
+- 门禁：typecheck 0 / arch（390 modules）/ api:governance（base=ccc6fb4c）/ schema-drift / runtime / alerting / release 契约 ×3 / frontend:build —— 全绿。
+- Writing E2E（CI 姿势）：`collected=7 executed=7 skipped=0 failed=0 passed=7 (pw_exit=0)`，validator exit=0。
+
+### CI（PR #123，head `8884bdc`，三项必需检查）
+
+| 检查 | 结果 | 链接 |
+|---|---|---|
+| Browser E2E (Playwright) | ✅ pass（1m27s） | runs/35377401146 |
+| Engineering Gate + Migration Rehearsal | ✅ pass（5m56s） | runs/35377401146 |
+| Writing E2E（真环境闭环 + 故障矩阵） | ✅ pass（1m50s） | runs/35377401133 |
+
+- PR：https://github.com/looseP/vocab-ob-reborn/pull/123（**draft**；未合并、未部署、未迁移 live）。
+
+### 体验服务（D 交付地址）
+
+- 单端口 app 服务（SERVE_FRONTEND=true）@ **http://127.0.0.1:3100**（`vocab_practice_accept` 合成数据：小作文题组 2 题 / 大作文 1 题 / 合成整卷客观+写作）；核验：readyz/healthz 200、登录 201、原题页与大/小作文入口 + 整卷「不计入」标识可见（截图 `D:/tmp/practice-experience/`）。
+- 登录 token `local-owner-api-token-only-0001`；停止方式=结束对应后台任务/关闭会话（或停本机 3100 node 进程）。
