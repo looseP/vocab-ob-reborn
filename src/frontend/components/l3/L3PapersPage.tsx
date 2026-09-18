@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { useToast } from "@/frontend/components/ui/Toast";
 import { L3ExamPaper, type ExamPaper } from "@/frontend/components/l3/L3ExamPaper";
+import { fetchSheet, fetchSheetArchive, type L3SheetArchiveItem } from "@/frontend/api/l3Client";
 
 /**
  * 试卷台（ADR-0030 V1 最小可用面）：
@@ -172,14 +174,32 @@ function QuestionList({ questions }: { questions: QuestionRow[] }) {
   );
 }
 
-export function L3PapersPage({ deepLinkVenue, deepLinkFile }: {
+export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepLinkPaper }: {
   /** 批次二深链：?venue=<题型>&file=<文件键> 直达题型空间并自动打开目标文件。 */
   deepLinkVenue?: string | null;
   deepLinkFile?: string | null;
+  /** F-1：?sheet=<id> 回看深链——只读指定题纸（不调 openSheet、不新建草稿）。 */
+  deepLinkSheet?: string | null;
+  /** F-1：?paper=<id> 卷深链（回看重做的常规入口）。 */
+  deepLinkPaper?: string | null;
 } = {}) {
   const { addToast } = useToast();
   const hasFilesDeepLink = Boolean(deepLinkVenue && QUESTION_TYPES.includes(deepLinkVenue as QuestionType));
-  const [tab, setTab] = useState<"files" | "papers" | "build">(hasFilesDeepLink ? "files" : "papers");
+  const [tab, setTab] = useState<"files" | "papers" | "archive" | "build">(
+    deepLinkSheet ? "archive" : deepLinkPaper ? "papers" : hasFilesDeepLink ? "files" : "papers",
+  );
+
+  // F-1：深链参数到达即切到对应页签（回看退出后仍留在档案上下文；venue 深链同受益）。
+  useEffect(() => {
+    if (deepLinkSheet) setTab("archive");
+    else if (deepLinkPaper) setTab("papers");
+    else if (hasFilesDeepLink) setTab("files");
+  }, [deepLinkSheet, deepLinkPaper, hasFilesDeepLink]);
+
+  // F-1：回看模式整体接管——按 sheetId 装配卷面（读写全走只读路径；退出/重做由内层回调导航）。
+  if (deepLinkSheet) {
+    return <SheetReplayView sheetId={deepLinkSheet} />;
+  }
 
   return (
     <div className="space-y-3">
@@ -188,7 +208,7 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile }: {
         <h2 className="text-lg font-semibold">试卷台</h2>
       </div>
       <div className="flex flex-wrap gap-1.5" role="tablist">
-        {([["files", "题型空间"], ["papers", "我的试卷"], ["build", "粘贴建卷"]] as const).map(([id, label]) => (
+        {([["files", "题型空间"], ["papers", "我的试卷"], ["archive", "题纸档案"], ["build", "粘贴建卷"]] as const).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
             className={`rounded-full px-3 py-1 text-xs ${tab === id ? "bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]" : "border border-[var(--color-border)] text-[var(--color-ink-soft)]"}`}>
             {label}
@@ -198,10 +218,38 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile }: {
       {tab === "files" && (
         <FilesTab deepLink={hasFilesDeepLink ? { venue: deepLinkVenue as QuestionType, file: deepLinkFile ?? null } : null} />
       )}
-      {tab === "papers" && <PapersTab onToast={addToast} />}
+      {tab === "papers" && <PapersTab onToast={addToast} deepLink={deepLinkPaper ?? null} />}
+      {tab === "archive" && <ArchiveTab onToast={addToast} />}
       {tab === "build" && <BuildTab onBuilt={() => setTab("papers")} onToast={addToast} />}
     </div>
   );
+}
+
+/** file venue 伪卷组装（题型空间文件 → 做题表面；F-1 回看复用同一形态）。 */
+function buildFileVenuePaper(
+  detail: PracticeFileDetail,
+  sourceId: string,
+  questionType: QuestionType,
+  title: string,
+): ExamPaper {
+  return {
+    id: `file:${sourceId}:${questionType}`,
+    title,
+    direction: null,
+    metadata: {},
+    sections: [{
+      key: "file",
+      title,
+      questionType,
+      sourceId,
+      fileKey: null,
+      questionIds: detail.questions.map((q) => q.id),
+      missing: false,
+      source_title: detail.source?.title ?? null,
+      source_content: detail.source_content,
+      questions: detail.questions,
+    }],
+  };
 }
 
 function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string | null } | null } = {}) {
@@ -210,6 +258,8 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
   const [venue, setVenue] = useState<QuestionType | null>(deepLink?.venue ?? null);
   const [detail, setDetail] = useState<FilesTabDetail | null>(null);
   const [pendingFileKey, setPendingFileKey] = useState<string | null>(deepLink?.file ?? null);
+  /** F-1「再做一次」：换 key 重挂载做题面（openSheet 幂等语义决定复用/新建）。 */
+  const [retakeNonce, setRetakeNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,24 +284,7 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
           kind: "sheet",
           sourceId: file.source_id,
           questionType: file.question_type,
-          paper: {
-            id: `file:${file.source_id}:${file.question_type}`,
-            title: file.title,
-            direction: null,
-            metadata: {},
-            sections: [{
-              key: "file",
-              title: file.title,
-              questionType: file.question_type,
-              sourceId: file.source_id,
-              fileKey: null,
-              questionIds: body.questions.map((q) => q.id),
-              missing: false,
-              source_title: body.source.title,
-              source_content: body.source_content,
-              questions: body.questions,
-            }],
-          },
+          paper: buildFileVenuePaper(body, file.source_id, file.question_type, file.title),
         });
       } else {
         setDetail({ kind: "browse", title: file.title, questions: body.questions });
@@ -277,9 +310,11 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
     if (detail.kind === "sheet") {
       return (
         <L3ExamPaper
+          key={`${detail.paper.id}:${retakeNonce}`}
           paper={detail.paper}
           fileVenue={{ sourceId: detail.sourceId, questionType: detail.questionType }}
           onBack={() => setDetail(null)}
+          onRetake={() => setRetakeNonce((n) => n + 1)}
         />
       );
     }
@@ -400,9 +435,14 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
   );
 }
 
-function PapersTab({ onToast }: { onToast: (kind: "success" | "error", msg: string) => void }) {
+function PapersTab({ onToast, deepLink }: {
+  onToast: (kind: "success" | "error", msg: string) => void;
+  /** F-1：?paper=<id> 深链——列表就绪后自动开卷（回看重做的常规入口落点）。 */
+  deepLink?: string | null;
+}) {
   const [papers, setPapers] = useState<PaperListItem[] | null>(null);
   const [detail, setDetail] = useState<ExamPaper | null>(null);
+  const [retakeNonce, setRetakeNonce] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -423,8 +463,24 @@ function PapersTab({ onToast }: { onToast: (kind: "success" | "error", msg: stri
     }
   };
 
+  // F-1 深链：列表就绪后自动开卷（ref 持有最新闭包，效果只盯 deepLink/papers 变化）。
+  const openPaperRef = useRef<typeof openPaper | null>(null);
+  useEffect(() => { openPaperRef.current = openPaper; });
+  useEffect(() => {
+    if (!deepLink || !papers) return;
+    void openPaperRef.current?.(deepLink);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLink, papers]);
+
   if (detail) {
-    return <L3ExamPaper paper={detail} onBack={() => setDetail(null)} />;
+    return (
+      <L3ExamPaper
+        key={`${detail.id}:${retakeNonce}`}
+        paper={detail}
+        onBack={() => setDetail(null)}
+        onRetake={() => setRetakeNonce((n) => n + 1)}
+      />
+    );
   }
 
   return papers === null ? (
@@ -605,5 +661,182 @@ function BuildTab({ onBuilt, onToast }: { onBuilt: () => void; onToast: (kind: "
         </button>
       </div>
     </div>
+  );
+}
+
+/** 档案行时间戳（MM-DD HH:mm；本地口径直读）。 */
+function formatArchiveStamp(iso: string): string {
+  const date = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * F-1：题纸档案（回看闭环入口）——draft/sealed 新→旧。
+ * 「查看解析」走 ?sheet= 深链（只读回看，不新建草稿）；「再做一次」走常规开纸入口。
+ */
+function ArchiveTab({ onToast }: { onToast: (kind: "success" | "error", msg: string) => void }) {
+  const navigate = useNavigate();
+  const [items, setItems] = useState<L3SheetArchiveItem[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoadError(false);
+    try {
+      setItems(await fetchSheetArchive(100));
+    } catch {
+      setItems([]);
+      setLoadError(true);
+      onToast("error", "题纸档案加载失败");
+    }
+  }, [onToast]);
+  useEffect(() => { void load(); }, [load]);
+
+  /** 常规入口（继续作答/再做一次）：走既有开纸路径（draft 冲突复用，幂等）。 */
+  const openNormal = (item: L3SheetArchiveItem) => {
+    if (item.scope === "file" && item.source_id && item.question_type) {
+      navigate(`/l3?venue=${encodeURIComponent(item.question_type)}&file=${encodeURIComponent(item.source_id)}`);
+      return;
+    }
+    if (item.scope === "paper" && item.paper_id) navigate(`/l3?paper=${encodeURIComponent(item.paper_id)}`);
+  };
+
+  if (items === null) return <p className="text-sm text-[var(--color-ink-soft)]">加载中…</p>;
+  if (loadError && items.length === 0) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-[var(--color-ink-soft)]">题纸档案加载失败。</p>
+        <button type="button" onClick={() => void load()} className="text-xs text-[var(--color-accent)]">重试</button>
+      </div>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <p className="rounded-xl border border-dashed border-[var(--color-border)] p-4 text-sm text-[var(--color-ink-soft)]">
+        还没有题纸记录。进入任一题型空间开练并定格后，每轮作答都会在这里留下档案，可随时回来查看解析。
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-[var(--color-ink-soft)]">
+        共 {items.length} 份题纸 ·「查看解析」只读回看（不新建草稿），「再做一次」开新一轮。
+        <button type="button" onClick={() => void load()} className="ml-2 text-[var(--color-accent)]">刷新</button>
+      </p>
+      <ul className="space-y-1.5">
+        {items.map((item) => (
+          <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-sm">
+            <span className="min-w-0 max-w-[16rem] truncate font-medium">{item.venue_title ?? "（来源已删除）"}</span>
+            <span className="rounded-full bg-[var(--color-surface)] px-2 py-0.5 text-[10px] text-[var(--color-ink-soft)] ring-1 ring-[var(--color-border)]">
+              {item.scope === "file" && item.question_type ? TYPE_LABELS[item.question_type as QuestionType] : "整卷"}
+            </span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${item.status === "sealed" ? "bg-[var(--color-ink)] text-[var(--color-surface)]" : "bg-[var(--color-accent-soft,var(--color-surface))] text-[var(--color-accent)]"}`}>
+              {item.status === "sealed" ? "已定格" : "草稿"}
+            </span>
+            {item.status === "sealed" && (
+              <span
+                className="text-[10px] text-[var(--color-ink-soft)]"
+                data-archive-grading={item.graded_count > 0 ? "graded" : "pending"}
+              >
+                {item.graded_count > 0 ? `已评 ${item.graded_count} 题` : "待评卷"}
+              </span>
+            )}
+            <span className="text-[10px] text-[var(--color-ink-soft)]">{formatArchiveStamp(item.sealed_at ?? item.created_at)}</span>
+            <span className="ml-auto flex shrink-0 items-center gap-2 text-xs">
+              {item.status === "draft" ? (
+                <button type="button" onClick={() => openNormal(item)} className="font-medium text-[var(--color-accent)]">继续作答</button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/l3?sheet=${encodeURIComponent(item.id)}`)}
+                    className="font-medium text-[var(--color-accent)]"
+                  >
+                    查看解析
+                  </button>
+                  <button type="button" onClick={() => openNormal(item)} className="text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]">再做一次</button>
+                </>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * F-1：题纸回看（?sheet= 深链）——只读指定题纸：GET 单纸 + 组装卷面，
+ * 不调 openSheet、不新建草稿（回看闭环的读路径唯一入口）。
+ */
+function SheetReplayView({ sheetId }: { sheetId: string }) {
+  const navigate = useNavigate();
+  const [resolved, setResolved] = useState<{
+    paper: ExamPaper;
+    fileVenue?: { sourceId: string; questionType: QuestionType };
+    retakePath: string;
+    backPath: string;
+  } | null>(null);
+  const [error, setError] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(false);
+    setResolved(null);
+    (async () => {
+      try {
+        const { sheet } = await fetchSheet(sheetId);
+        if (cancelled) return;
+        if (sheet.scope === "file" && sheet.source_id && sheet.question_type) {
+          const questionType = sheet.question_type as QuestionType;
+          const params = new URLSearchParams({ questionType, sourceId: sheet.source_id });
+          const body = await apiFetch<PracticeFileDetail>(`/l3/practice-files/detail?${params}`);
+          if (cancelled) return;
+          if (!body.source) throw new Error("来源缺失");
+          setResolved({
+            paper: buildFileVenuePaper(body, sheet.source_id, questionType, body.source.title),
+            fileVenue: { sourceId: sheet.source_id, questionType },
+            retakePath: `/l3?venue=${encodeURIComponent(questionType)}&file=${encodeURIComponent(sheet.source_id)}`,
+            backPath: `/l3?venue=${encodeURIComponent(questionType)}`,
+          });
+          return;
+        }
+        if (sheet.scope === "paper" && sheet.paper_id) {
+          const detail = await apiFetch<ExamPaper>(`/l3/papers/${encodeURIComponent(sheet.paper_id)}`);
+          if (cancelled) return;
+          setResolved({
+            paper: detail,
+            retakePath: `/l3?paper=${encodeURIComponent(sheet.paper_id)}`,
+            backPath: "/l3",
+          });
+          return;
+        }
+        throw new Error("题纸作用域异常");
+      } catch {
+        if (!cancelled) setError(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sheetId, retryNonce]);
+
+  if (error) {
+    return (
+      <div className="space-y-2">
+        <button type="button" onClick={() => navigate("/l3")} className="text-xs text-[var(--color-accent)]">← 返回试卷台</button>
+        <p className="text-sm text-[var(--color-ink-soft)]">题纸回看加载失败（题纸可能已删除）。</p>
+        <button type="button" onClick={() => setRetryNonce((n) => n + 1)} className="text-xs text-[var(--color-accent)]">重试</button>
+      </div>
+    );
+  }
+  if (!resolved) return <p className="text-sm text-[var(--color-ink-soft)]">题纸加载中…</p>;
+  return (
+    <L3ExamPaper
+      paper={resolved.paper}
+      {...(resolved.fileVenue ? { fileVenue: resolved.fileVenue } : {})}
+      replaySheetId={sheetId}
+      onBack={() => navigate(resolved.backPath)}
+      onRetake={() => navigate(resolved.retakePath)}
+    />
   );
 }

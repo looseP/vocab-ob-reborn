@@ -1003,12 +1003,16 @@ function WrittenQuestion({
   );
 }
 
-export function L3ExamPaper({ paper, onBack, fileVenue }: {
+export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake }: {
   paper: ExamPaperType;
   onBack: () => void;
   /** 批次二补齐：题型空间（file venue）复用本组件作单文件做题表面——
    *  题纸作用域切 file:<sourceId>:<questionType>，题纸栏/头部文案按文件语义呈现。 */
   fileVenue?: { sourceId: string; questionType: ExamSection["questionType"] };
+  /** F-1：回看模式（sheetId 深链）——只读指定题纸：不调 openSheet、不新建草稿。 */
+  replaySheetId?: string | null;
+  /** F-1：再做一次回调（父层决定新开/跳转；缺省不渲染「再做一次」钮）。 */
+  onRetake?: () => void;
 }) {
   const { addToast } = useToast();
   const [revealAll, setRevealAll] = useState(false);
@@ -1047,58 +1051,106 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
   const [sheetStats, setSheetStats] = useState<{ total: number; cleared: number } | null>(null);
   // ── 批次三①：评卷结果（解析模式展示；前端只消费 owner 读面，永不消费 grading-context）──
   const [gradingResults, setGradingResults] = useState<Record<string, L3GradingResult>>({});
-  /** sealed 且结果加载成功：参与「待评卷」提示判定（加载失败不误报）。 */
-  const [gradingLoaded, setGradingLoaded] = useState(false);
+  /** F-1：评卷加载态机——idle（非 sealed）/ loading / ready / error（显式失败 + 重试，替代静默）。 */
+  const [gradingPhase, setGradingPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const pendingAnswers = useRef<Record<string, unknown>>({});
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetRef = useRef<L3Sheet | null>(null);
   const answersRef = useRef<Record<string, SheetAnswer>>({});
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
 
-  /** 批次三①：拉取解析模式评卷结果（sealed 时；失败静默——不误报「待评卷」也不打断卷面）。 */
+  /** 批次三①：拉取解析模式评卷结果（sealed 时）。F-1：显式三态——失败不再静默，可手动重试。 */
   const loadGradingResults = useCallback(async (sheetId: string) => {
+    setGradingPhase("loading");
     try {
       const rows = await fetchSheetGrading(sheetId);
       const map: Record<string, L3GradingResult> = {};
       for (const row of rows) map[row.question_id] = row;
       setGradingResults(map);
-      setGradingLoaded(true);
+      setGradingPhase("ready");
     } catch {
-      /* 静默降级 */
+      setGradingPhase("error");
     }
   }, []);
 
-  // 进卷自动开纸（幂等）：paper venue 作用域键 paper:<id>，冲突复用既有 draft 行。
-  // draft 行携带服务端 answers → 本地 picks（重进页面不丢已保存作答）。
+  /** draft 恢复：服务端 answers → 本地 picks（重进/回看草稿不丢已保存作答）。 */
+  const restoreDraftAnswers = useCallback((serverAnswers: Record<string, unknown>) => {
+    const restored: Record<string, SheetAnswer> = {};
+    for (const [questionId, value] of Object.entries(serverAnswers)) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        restored[questionId] = value as SheetAnswer;
+      }
+    }
+    if (Object.keys(restored).length > 0) {
+      const merged = { ...restored, ...answersRef.current };
+      answersRef.current = merged;
+      setAnswers(merged);
+    }
+  }, []);
+
+  /** sealed 派生（批次二）：attempts → 结果页本地态（picks/占位集合/统计/本地历史并入）。 */
+  const applyDerived = useCallback((derived: L3Attempt[]) => {
+    const restored: Record<string, SheetAnswer> = {};
+    const cleared = new Set<string>();
+    for (const row of derived) {
+      if (row.status === "deleted") { cleared.add(row.question_id); continue; }
+      const answer = row.answer as { choice?: unknown } | null;
+      const assessment = row.self_assessment as {
+        flags?: SheetAnswerFlags;
+        optionFlags?: string[];
+        marks?: SheetAnswer["marks"];
+      } | null;
+      const next: SheetAnswer = {};
+      if (answer && typeof answer.choice === "string") next.choice = answer.choice;
+      if (assessment?.flags) next.flags = assessment.flags;
+      if (Array.isArray(assessment?.optionFlags) && assessment.optionFlags.length > 0) {
+        next.optionFlags = assessment.optionFlags;
+      }
+      if (Array.isArray(assessment?.marks) && assessment.marks.length > 0) next.marks = assessment.marks;
+      if (Object.keys(next).length > 0) restored[row.question_id] = next;
+    }
+    answersRef.current = restored;
+    setAnswers(restored);
+    setClearedQuestions(cleared);
+    setSheetStats({ total: derived.length, cleared: cleared.size });
+    setAttempts((prev) => {
+      const byId = new Map(prev.map((row) => [row.id, row]));
+      for (const row of derived) byId.set(row.id, row);
+      return [...byId.values()];
+    });
+  }, []);
+
+  /**
+   * F-1：进卷装配——回看模式（replaySheetId）只读指定题纸（GET /l3/sheets/:id，
+   * 不调 openSheet、不新建草稿）；常态仍为自动开纸（幂等：draft 冲突复用）。
+   */
   useEffect(() => {
     let cancelled = false;
-    openSheet(fileVenue
-      ? { scope: "file", sourceId: fileVenue.sourceId, questionType: fileVenue.questionType }
-      : { scope: "paper", paperId: paper.id })
-      .then((row) => {
-        if (cancelled) return;
-        setSheet(row);
-        // 批次三①：重进已定格页面时拉取解析模式评卷结果（draft 零变更不加载）。
-        if (row.status === "sealed") void loadGradingResults(row.id);
-        if (row.status === "draft") {
-          const restored: Record<string, SheetAnswer> = {};
-          for (const [questionId, value] of Object.entries(row.answers ?? {})) {
-            if (value && typeof value === "object" && !Array.isArray(value)) {
-              restored[questionId] = value as SheetAnswer;
-            }
+    const next = replaySheetId
+      ? fetchSheet(replaySheetId).then(({ sheet: row, attempts: derived }) => {
+          if (cancelled) return;
+          setSheet(row);
+          if (row.status === "sealed") {
+            applyDerived(derived);
+            void loadGradingResults(row.id);
           }
-          if (Object.keys(restored).length > 0) {
-            const merged = { ...restored, ...answersRef.current };
-            answersRef.current = merged;
-            setAnswers(merged);
-          }
-        }
-      })
-      .catch(() => {
-        if (!cancelled) addToast("error", "题纸打开失败，本次作答不会保存");
-      });
+          if (row.status === "draft") restoreDraftAnswers(row.answers ?? {});
+        })
+      : openSheet(fileVenue
+          ? { scope: "file", sourceId: fileVenue.sourceId, questionType: fileVenue.questionType }
+          : { scope: "paper", paperId: paper.id })
+        .then((row) => {
+          if (cancelled) return;
+          setSheet(row);
+          // 批次三①：重进已定格页面时拉取解析模式评卷结果（draft 零变更不加载）。
+          if (row.status === "sealed") void loadGradingResults(row.id);
+          if (row.status === "draft") restoreDraftAnswers(row.answers ?? {});
+        });
+    void next.catch(() => {
+      if (!cancelled) addToast("error", "题纸打开失败，本次作答不会保存");
+    });
     return () => { cancelled = true; };
-  }, [paper.id, fileVenue?.sourceId, fileVenue?.questionType, addToast, loadGradingResults]);
+  }, [paper.id, fileVenue?.sourceId, fileVenue?.questionType, replaySheetId, addToast, loadGradingResults, restoreDraftAnswers, applyDerived]);
 
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
   useEffect(() => { answersRef.current = answers; }, [answers]);
@@ -1232,42 +1284,15 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     commitAnswer(questionId, { marks: next });
   }, [commitAnswer]);
 
-  /** sealed 派生（批次二）：picks 以 attempts 为准重算 + 结果页占位集合 + 本地历史并入。 */
+  /** sealed 派生（批次二）：拉 attempts 并应用（定格成功后/手动重试路径；applyDerived 见进卷装配前）。 */
   const deriveFromSheet = useCallback(async (sheetId: string) => {
     try {
       const { attempts: derived } = await fetchSheet(sheetId);
-      const restored: Record<string, SheetAnswer> = {};
-      const cleared = new Set<string>();
-      for (const row of derived) {
-        if (row.status === "deleted") { cleared.add(row.question_id); continue; }
-        const answer = row.answer as { choice?: unknown } | null;
-        const assessment = row.self_assessment as {
-          flags?: SheetAnswerFlags;
-          optionFlags?: string[];
-          marks?: SheetAnswer["marks"];
-        } | null;
-        const next: SheetAnswer = {};
-        if (answer && typeof answer.choice === "string") next.choice = answer.choice;
-        if (assessment?.flags) next.flags = assessment.flags;
-        if (Array.isArray(assessment?.optionFlags) && assessment.optionFlags.length > 0) {
-          next.optionFlags = assessment.optionFlags;
-        }
-        if (Array.isArray(assessment?.marks) && assessment.marks.length > 0) next.marks = assessment.marks;
-        if (Object.keys(next).length > 0) restored[row.question_id] = next;
-      }
-      answersRef.current = restored;
-      setAnswers(restored);
-      setClearedQuestions(cleared);
-      setSheetStats({ total: derived.length, cleared: cleared.size });
-      setAttempts((prev) => {
-        const byId = new Map(prev.map((row) => [row.id, row]));
-        for (const row of derived) byId.set(row.id, row);
-        return [...byId.values()];
-      });
+      applyDerived(derived);
     } catch {
       addToast("error", "定格已保存，但结果明细加载失败，稍后可重试");
     }
-  }, [addToast]);
+  }, [applyDerived, addToast]);
 
   // 卸载时把防抖窗口内未发送的作答立即送存（尽力而为，不阻塞卸载）。
   useEffect(() => () => {
@@ -1554,6 +1579,16 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
     [paper.sections],
   );
 
+  // F-1：评卷覆盖度（已评 n/m）与最近评卷时间（graded_at 最大者）——题纸栏状态条数据源。
+  const gradedCount = Object.keys(gradingResults).length;
+  const lastGradedAt = useMemo(() => {
+    let latest: string | null = null;
+    for (const row of Object.values(gradingResults)) {
+      if (!latest || row.graded_at > latest) latest = row.graded_at;
+    }
+    return latest;
+  }, [gradingResults]);
+
   /** 定格后卷面只读（作答输入禁用；选择仍显示用于回看）。 */
   const readOnly = sheet !== null && sheet.status !== "draft";
 
@@ -1595,6 +1630,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
             onDelete={handleDeleteAnnotation}
             onWithdraw={handleWithdrawAnnotation}
             onConfirm={handleConfirmAnnotation}
+            currentSheetId={sheet?.id ?? null}
             onSaveTagDict={handleSaveTagDict}
             attempts={(attemptsByQuestion[q.id] ?? []).filter((row) => row.status === "active")}
             onOpenHistory={() => setHistoryQuestionId(q.id)}
@@ -1633,18 +1669,52 @@ export function L3ExamPaper({ paper, onBack, fileVenue }: {
                     : lastSavedAt ? `草稿 · 已保存 ${formatSavedAt(lastSavedAt)}` : "草稿"}
               </span>
             ) : (
-              <span className="flex items-center gap-2">
+              <span className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-[var(--color-ink)] px-2 py-0.5 font-medium text-[var(--color-surface)]">
                   {sheet.status === "sealed" ? "已定格" : "已弃档"}
                 </span>
-                {/* 批次三①：sealed 且无评卷结果 → 「待评卷」引导（加载失败不误报）。 */}
-                {sheet.status === "sealed" && gradingLoaded && Object.keys(gradingResults).length === 0 && (
-                  <span
-                    title="把题纸导出发给 agent 评卷；评卷后回到本页，解析模式会显示判读与分析"
-                    className="rounded-full border border-dashed border-[var(--color-accent)] px-2 py-0.5 font-medium text-[var(--color-accent)]"
+                {/* F-1：评卷协作三态（加载中 / 失败可重试 / 待评卷 / 已评 n/m）+ 手动刷新。 */}
+                {sheet.status === "sealed" && (
+                  <>
+                    <span className="text-[var(--color-ink-soft)]" data-grading-status={gradingPhase}>
+                      {gradingPhase === "loading" && "评卷加载中…"}
+                      {gradingPhase === "error" && "评卷加载失败"}
+                      {gradingPhase === "ready" && (gradedCount === 0
+                        ? (
+                          <span
+                            title="评卷走本地 agent（HTTP）通道：agent 提交后点「刷新评卷」即可显示；「导出」的 Markdown 仅供存档外发，不会自动回灌本页。"
+                            className="rounded-full border border-dashed border-[var(--color-accent)] px-2 py-0.5 font-medium text-[var(--color-accent)]"
+                          >
+                            待评卷 · 可请 agent 评卷
+                          </span>
+                        )
+                        : (
+                          <>
+                            已评 <strong className="text-[var(--color-ink)]">{gradedCount}/{totalQuestionCount}</strong> 题
+                            {lastGradedAt ? ` · 最近评卷 ${formatSavedAt(lastGradedAt)}` : ""}
+                          </>
+                        ))}
+                    </span>
+                    <button
+                      type="button"
+                      data-action="refresh-grading"
+                      disabled={gradingPhase === "loading"}
+                      onClick={() => void loadGradingResults(sheet.id)}
+                      className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 font-medium text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+                    >
+                      {gradingPhase === "loading" ? "刷新中…" : gradingPhase === "error" ? "重试" : "刷新评卷"}
+                    </button>
+                  </>
+                )}
+                {onRetake && sheet.status === "sealed" && (
+                  <button
+                    type="button"
+                    data-action="retake"
+                    onClick={onRetake}
+                    className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 font-medium text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
                   >
-                    待评卷 · 可请 agent 评卷
-                  </span>
+                    再做一次
+                  </button>
                 )}
                 {sheetStats && sheetStats.total > 0 && (
                   <span className="text-[var(--color-ink-soft)]">

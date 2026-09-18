@@ -34,6 +34,8 @@ interface L3QuestionAnalysisProps {
   onWithdraw?: (id: string) => Promise<void>;
   /** 批次三①（D18）：submitted+有 review 注记的确认（submitted→confirmed）；缺省不渲染确认钮。 */
   onConfirm?: (id: string) => Promise<void>;
+  /** F-1：当前所看题纸 id——review 来源对比（命中标「本轮评卷」，其余标「历史评卷」）。 */
+  currentSheetId?: string | null;
   onSaveTagDict: (dict: AnnotationTagDict) => Promise<void>;
   /** 批次二：该题作答历史（徽标数据源；父层已过滤已删条目）。 */
   attempts?: L3Attempt[];
@@ -209,6 +211,7 @@ export function L3QuestionAnalysis({
   onDelete,
   onWithdraw,
   onConfirm,
+  currentSheetId,
   onSaveTagDict,
   attempts,
   onOpenHistory,
@@ -363,6 +366,10 @@ export function L3QuestionAnalysis({
           )}
           {annotations.map((annotation) => {
             const review = parseAnnotationReview(annotation.review);
+            // F-1：来源对比（命中当前题纸=本轮；他轮/缺来源=历史），防多轮作答时旧轮评语被读作本轮结果。
+            const reviewIsCurrent = Boolean(
+              annotation.review_sheet_id && currentSheetId && annotation.review_sheet_id === currentSheetId,
+            );
             const currentTags = new Set([
               ...annotation.entry_tags,
               ...Object.values(annotation.option_tags).flatMap((list) => list ?? []),
@@ -421,7 +428,14 @@ export function L3QuestionAnalysis({
                       <span className={REVIEW_BADGE_CLS[review.verdict]}>
                         {review.verdict === "sound" ? "✓ 主张成立" : review.verdict === "questionable" ? "? 待商榷" : "✗ 主张有误"}
                       </span>
-                      <span className="text-[var(--color-ink-soft)]">评卷</span>
+                      {/* F-1：轮次标识（注记为题目级资产——标明评语所属来源，避免误读为本轮结果）。 */}
+                      <span
+                        data-review-provenance={reviewIsCurrent ? "current" : "history"}
+                        title="评卷为题目级资产：多轮作答时，评语可能来自其他轮次"
+                        className="text-[var(--color-ink-soft)]"
+                      >
+                        · {reviewIsCurrent ? "本轮评卷" : "历史评卷"}
+                      </span>
                     </p>
                     {review.correctedTags.length > 0 && (
                       <p className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">

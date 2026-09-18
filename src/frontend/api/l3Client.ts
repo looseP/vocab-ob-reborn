@@ -64,6 +64,8 @@ export interface QuestionAnnotation {
   stage: "draft" | "submitted" | "confirmed";
   sheet_id: string | null;
   review: unknown;
+  /** F-1：review 来源题纸（最近一次评卷所属；前端对比标注「本轮/历史评卷」）。 */
+  review_sheet_id: string | null;
   status: "active" | "deleted";
   created_at: string;
   updated_at: string;
@@ -350,12 +352,40 @@ export async function fetchSheetGrading(sheetId: string): Promise<L3GradingResul
   const body = await apiFetch<{ results?: L3GradingResult[] } | null>(
     `/l3/sheets/${encodeURIComponent(sheetId)}/grading`,
   );
-  // 防御（深测 OB-2）：契约漂移（200 + 非法形状）按**加载失败**处理（抛错由调用方静默），
-  // 不得归一为空结果——否则「待评卷」提示会把数据异常误导为「还没有评卷」。
+  // 防御（深测 OB-2）：契约漂移（200 + 非法形状）按**加载失败**处理（调用方以失败态
+  // 呈现并提供重试），不得归一为空结果——否则「待评卷」提示会把数据异常误导为「还没有评卷」。
   if (body === null || !Array.isArray(body.results)) {
     throw new Error("评卷结果响应形状异常");
   }
   return body.results;
+}
+
+/** F-1：题纸档案行（回看闭环入口；仅索引元数据）。 */
+export interface L3SheetArchiveItem {
+  id: string;
+  scope: SheetScopeValue;
+  source_id: string | null;
+  question_type: string | null;
+  paper_id: string | null;
+  status: SheetStatusValue;
+  seal_mode: SealModeValue | null;
+  sealed_at: string | null;
+  created_at: string;
+  /** 该题纸已评题数（「待评卷/已评 n 题」数据源；draft 恒 0）。 */
+  graded_count: number;
+  /** 展示标题：file 域取来源标题、paper 域取卷标题。 */
+  venue_title: string | null;
+}
+
+/** F-1：题纸档案列表（新→旧；draft/sealed）。形状非法按加载失败抛错（同 OB-2 口径）。 */
+export async function fetchSheetArchive(limit = 50): Promise<L3SheetArchiveItem[]> {
+  const body = await apiFetch<{ items?: L3SheetArchiveItem[] } | null>(
+    `/l3/sheets?limit=${encodeURIComponent(String(limit))}`,
+  );
+  if (body === null || !Array.isArray(body.items)) {
+    throw new Error("题纸档案响应形状异常");
+  }
+  return body.items;
 }
 
 /** owner 处置（D18）：submitted+有 review 的注记确认；服务端 409 = 状态已变。 */
