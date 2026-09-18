@@ -324,6 +324,10 @@ describe("W5 putFeedback（绑定校验 + 幂等 + 版本 CAS）", () => {
       }] }) }),
       "agent-a",
     )).rejects.toMatchObject({ httpStatus: 422, meta: { code: "FEEDBACK_ANCHOR_MISMATCH" } });
+
+    // 三条校验失败路径均零写。
+    expect(repos.feedback).toBeNull();
+    expect(repos.touchCount).toBe(0);
   });
 
   it("draft / cleared 写入被拒（409）；GET 与校验失败路径零写", async () => {
@@ -456,6 +460,35 @@ describe("W5 收口校准（一致性 / 隔离 / UTF-16 精度 / 读取异常）
     };
     const replay = await service.putFeedback(USER, TASK, SHEET, putInput({ feedback: reordered }), "agent-a");
     expect(replay.version).toBe(1);
+  });
+
+  it("他人任务/错误 task-sheet 组合 → 404 且零写（读与写全域）", async () => {
+    const repos = new FakeFeedbackRepos();
+    const service = makeService(repos);
+    const FOREIGN = "00000000-0000-4000-8000-000000000799";
+    await expect(service.getFeedback(USER, FOREIGN, SHEET)).rejects.toMatchObject({ httpStatus: 404 });
+    await expect(service.getContext(USER, FOREIGN, SHEET)).rejects.toMatchObject({ httpStatus: 404 });
+    await expect(service.putFeedback(USER, FOREIGN, SHEET, putInput(), "agent-a"))
+      .rejects.toMatchObject({ httpStatus: 404 });
+
+    // 错误 task/sheet 组合：sheet 不属于该 task。
+    repos.sheet = sheetRow({ writing_task_id: "00000000-0000-4000-8000-000000000700" });
+    await expect(service.putFeedback(USER, TASK, SHEET, putInput(), "agent-a"))
+      .rejects.toMatchObject({ httpStatus: 404 });
+    expect(repos.feedback).toBeNull();
+    expect(repos.touchCount).toBe(0);
+  });
+
+  it("discarded 稿：读与写均 409（不是 pending、不是 404）", async () => {
+    const repos = new FakeFeedbackRepos();
+    const service = makeService(repos);
+    repos.sheet = sheetRow({ status: "discarded", revision_no: null });
+    await expect(service.getFeedback(USER, TASK, SHEET)).rejects.toMatchObject({ httpStatus: 409 });
+    await expect(service.getContext(USER, TASK, SHEET)).rejects.toMatchObject({ httpStatus: 409 });
+    await expect(service.putFeedback(USER, TASK, SHEET, putInput(), "agent-a"))
+      .rejects.toMatchObject({ httpStatus: 409 });
+    expect(repos.feedback).toBeNull();
+    expect(repos.touchCount).toBe(0);
   });
 
   it("正文结构损坏时写入报数据一致性错误（500，不误报 422 hash）", async () => {

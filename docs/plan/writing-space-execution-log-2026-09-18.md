@@ -79,7 +79,7 @@
 - 交付：`writingSaveController.ts`（单在途/输入序号/flush waiter/800ms 防抖/IME/1-2-4 退避/401·409·400·422 不重试/超时 load 恢复/dispose）+ `useWritingDraft.ts`（composition + beforeunload + 站内导航守卫）+ 单测 17/17。
 - 独立复核：复跑 17/17；无 localStorage/IndexedDB；hook 签名已备 W7。
 
-#### W5 · 定位反馈与 agent 边界（2026-09-18 完成，`d7a26ff`；收口 `<W5F-SHA>`）
+#### W5 · 定位反馈与 agent 边界（2026-09-18 完成，`d7a26ff`；收口 `08d9c44`）
 
 - 交付：`l3-writing-feedback.repository.ts`（一稿一条行锁/首写/版本 CAS）+ `l3-writing-feedback.service.ts`（getContext / getFeedback / putFeedback：task→sheet 锁序、hash 绑定校验、UTF-16 锚点逐字校验、64KiB 体积守卫、requestId 幂等重放不升版、expectedVersion 版本 CAS、last_editor 由 Principal 注入）+ 上下文/读取 DTO（domain 冻结层扩展）。
 - generic 封堵：grading `getGradingContext`/`getGradingResults`/`submitGrading` 对 writing 稿一律 409 `WRITING_ENDPOINT_REQUIRED`（防两套反馈真源）。
@@ -92,6 +92,7 @@
   · 并发集成 **8/8**：新增「已有反馈更新并发：两 writer 相同 expectedVersion=1 仅一个成功（version→2）、单行、落败方 409 带 actualVersion」。
   · 证据：单测 38/38、集成 8/8、typecheck 0（以 W6 起草件暂移法验证）、arch 无违规（375 模块）。
 - 待办（跨任务登记）：**正文删除 × 反馈写入并发**为 **W9 必验项**（依赖 W9 的 attempt soft-delete + feedback 同事务清理；本轮不上报通过）。
+- **独立审查记录（本轮）**：外审派单（read-only reviewer agent）因**推理配额 429** 即刻失败（工作方共享配额 19:33 重置，环境限制非代码问题）；已完成主理人对抗式自查（逐条核对 12 项要求 × 实现与断言），发现并补齐 3 处测试缺口——① 跨属主/错误 task-sheet 组合 404 且全域零写（读与写）；② discarded 稿读/写均 409（非 pending/非 404）；③ hash/锚点 422 路径的零写显式断言。外审排期配额恢复后补（不阻塞 W6 接口交付）。
 
 #### W3 · 稿件生命周期（2026-09-18 完成，`09a44f0`）
 
@@ -122,7 +123,7 @@
 | 2026-09-18 | W5 并发集成（反馈 + 更新并发） | 0 | 8/8（首次创建并发 + 已有反馈更新并发各单胜） |
 | 2026-09-18 | W5 收口 typecheck（W6 起草件暂移法） | 0 | 0 error（收口后验证） |
 | 2026-09-18 | W5 收口 arch:check | 0 | 375 模块无违规 |
-| 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `09a44f0`(W3) → `d7a26ff`(W5) → `<W5F-SHA>`（W5 收口） |
+| 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `09a44f0`(W3) → `d7a26ff`(W5) → `08d9c44`（W5 收口） |
 
 ## 3 · 遗留与待决策
 
