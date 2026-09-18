@@ -1,6 +1,6 @@
 # 作文子空间 v1 · 真实验收报告（2026-09-18）
 
-> 状态：**待验收（draft PR）**。本地门禁与真环境矩阵已完成；CI 首跑待 push 后由 Actions 复验。
+> 状态：**待验收（draft PR）**。本地门禁与真环境矩阵全绿；**CI 三项检查已连续两轮全绿**（历史跑次保留原 SHA：`802318e` 首跑失败（workflow×webServer 冲突，validator 拦截）→ `3304e92` 修复后全绿 → `aed09ee` 复验全绿；**最终提交的检查链接见 §5 末**）。
 > 基座：`main @ f03ffe35`（PR 唯一基座；study-notes 线未合入 → 无迁移序号/schema 冲突待解）。
 > 分支：`feat/writing-space-v1`（本地 `writing-v1`）。
 
@@ -45,6 +45,7 @@
 - 截图 12 张（仓外 `D:/tmp/ws7-acceptance/`）：01–06 桌面 1440×900 / 07–08 手机 390×844 / 09 暗色 / 10 失败阻止提交与导出 / 11 双标签冲突 / 12 清理占位无泄漏。
 - CI：`.github/workflows/writing-e2e.yml` fail-closed（JSON reporter → collected=4 / skipped=0 / failed=0 才算绿，输出计数行；validator 已用 mock 三用例本地自证：过→0、skip→1、少收集→1）。
 - **CI 实跑记录**：首跑（`802318e`）因 workflow 手动预占 3099 与 config webServer（CI 下 `reuseExistingServer=false`）冲突 → `collected=0`，**validator 按设计拦截「空跑绿」**并打印 `report.errors`；修复 `3304e92`（webServer 自起 + `AGENT_API_TOKENS` 白名单透传 + env 形状对齐本地语义，本地 `CI=true` 仿真 4/4 预演）。**终跑（`3304e92`）全绿**：`collected=4 executed=4 skipped=0 failed=0 passed=4 (pw_exit=0)`（1m46s）。
+- **validator 强化（本轮，`scripts/verify-writing-e2e-report.ts` 单一真源，workflow 直接调用）**：① `PW_EXIT` **缺失/非法/非 0 一律失败**；② `report.errors` **非空一律失败**（webServer/teardown 等进程级故障不再被计数掩盖）；③ 保留收集数=4、跳过数=0、失败数=0（含 `stats.unexpected`）。回归测试 `tests/scripts/verify-writing-e2e-report.test.ts` **10/10**（六场景：正常/零收集/跳过/用例失败/四项通过但进程非零/四项通过但有全局错误，另加缺失与非法、CI 首跑实况复刻）；并以**真实首跑工件** CLI 复演（三命中、exit 1）。
 
 ## 6 · 独立审查结论与修复
 
@@ -71,14 +72,31 @@
 ## 9 · 部署前必须完成的事项
 
 1. `converge` 角色链 + verifier（新表授权）。
-2. 分支保护添加 **Writing E2E** 为必需检查（否则仅普通 red/green）。
-3. CI 首次绿跑确认后，将本 PR 从 draft 转正并合并（授权后）。
-4. 生产/预发环境按迁移 0038 + 角色 converge 顺序发布（0038 幂等，可重放）。
+2. 分支保护添加 **Writing E2E** 为必需检查（精确方案见 §10；**保留既有两项要求**）。
+3. 最终提交 CI 三项全绿确认后，将本 PR 从 draft 转正并合并（授权后）。
+4. **发布顺序（统一口径）**：角色 `prepare`（按需）→ 迁移 `0038`（drizzle journal 顺序执行；**非幂等、不可重放**，回滚须另行演练）→ `converge` → `verifier` → 启动新版。
 
-## 10 · 附：分支保护命令（待用户/管理员执行）
+## 10 · 附：分支保护精确配置方案（只读核实于 2026-09-18；**本轮不执行**）
+
+当前保护（只读查询）：`strict=true`、`enforce_admins=true`、`required_conversation_resolution=true`；
+必需检查 = `checks: [{context:"Engineering Gate + Migration Rehearsal", app_id:15368}, {context:"Browser E2E (Playwright)", app_id:15368}]`（来源均为 `github-actions`）。
+Writing E2E 的 check-run 真名（aed09ee check-runs 实测）= `Writing E2E（真环境闭环 + 故障矩阵）`，`app.slug=github-actions`、`app.id=15368`。
+
+**新增方案（保留既有两项 + 追加 Writing E2E，应用 checks 数组形态以保留 app 绑定）：**
 
 ```bash
-gh api -X POST repos/<owner>/<repo>/branches/main/protection/required_status_checks/contexts \
-  -f "contexts[]=Writing E2E / Writing E2E（真环境闭环 + 故障矩阵）"
+cat > /tmp/writing-e2e-protection.json <<'JSON'
+{
+  "strict": true,
+  "checks": [
+    { "context": "Engineering Gate + Migration Rehearsal", "app_id": 15368 },
+    { "context": "Browser E2E (Playwright)", "app_id": 15368 },
+    { "context": "Writing E2E（真环境闭环 + 故障矩阵）", "app_id": 15368 }
+  ]
+}
+JSON
+gh api -X PATCH repos/looseP/vocab-ob-reborn/branches/main/protection/required_status_checks \
+  --input /tmp/writing-e2e-protection.json
 ```
-（或经 GitHub UI → Settings → Branches → main → Require status checks 勾选。）
+
+（注：`checks` 与 `contexts` 互斥；使用 `checks` 需同时保留既有两项且 app_id 一致——已按当前值给出。执行需管理员权限与显式授权；本轮未修改任何仓库保护。）

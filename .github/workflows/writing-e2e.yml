@@ -115,6 +115,8 @@ jobs:
       # 服务由 playwright.config 的 webServer 自起（CI 下 reuseExistingServer=false；
       # 手动预占 3099 会导致 webServer 启动冲突 → 0 收集）。agent 开口所需的
       # AGENT_API_TOKENS 经 webServer env 白名单透传（playwright.config.ts）。
+      # 校验器为仓库脚本 scripts/verify-writing-e2e-report.ts（单一真源，含回归测试）：
+      # PW_EXIT 缺失/非法/非 0、全局 errors 非空、收集≠4、跳过≠0、失败≠0 一律红灯。
       - name: Run writing E2E (gated + fail-closed validation)
         env:
           E2E_WRITING_SMOKE: "1"
@@ -129,26 +131,7 @@ jobs:
           npx playwright test e2e/writing.spec.ts --reporter=json > /tmp/pw-writing.json
           export PW_EXIT=$?
           set -e
-          node -e '
-          const fs = require("node:fs");
-          let report;
-          try { report = JSON.parse(fs.readFileSync("/tmp/pw-writing.json", "utf8")); }
-          catch (e) { console.error("playwright json report unreadable:", e.message); process.exit(1); }
-          for (const err of report.errors ?? []) console.error("playwright error:", err.message ?? JSON.stringify(err));
-          const specs = [];
-          function collect(suite) {
-            for (const s of suite.suites ?? []) collect(s);
-            for (const spec of suite.specs ?? []) specs.push(spec);
-          }
-          for (const suite of report.suites ?? []) collect(suite);
-          const total = specs.length;
-          const skipped = specs.filter((s) => s.tests.some((t) => t.status === "skipped")).length;
-          const failed = specs.filter((s) => s.tests.some((t) => t.status !== "expected" && t.status !== "skipped")).length;
-          console.log(`collected=${total} executed=${total - skipped} skipped=${skipped} failed=${failed} passed=${total - skipped - failed} (pw_exit=${process.env.PW_EXIT ?? "?"})`);
-          if (total !== 4) { console.error("FAIL: expected exactly 4 writing E2E specs (collected=" + total + ")"); process.exit(1); }
-          if (skipped !== 0) { console.error("FAIL: writing E2E was silently skipped (gate/config/env missing)"); process.exit(1); }
-          if (failed !== 0 || (report.stats?.unexpected ?? 0) !== 0) { console.error("FAIL: writing E2E has failures"); process.exit(1); }
-          '
+          npx tsx scripts/verify-writing-e2e-report.ts /tmp/pw-writing.json
 
       - name: Collect evidence artifacts
         if: always()
