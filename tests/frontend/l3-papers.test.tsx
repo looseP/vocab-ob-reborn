@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
@@ -47,23 +47,24 @@ function LocationProbe() {
 
 const locText = (): string => screen.getByTestId("loc").textContent ?? "";
 
-async function renderPage(props: Record<string, unknown> = {}): Promise<void> {
+async function renderPage(props: Record<string, unknown> = {}, opts: { strict?: boolean } = {}): Promise<void> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   mountedRoots.push(root);
   await act(async () => {
     // W7：做题台组件现含 useNavigate（作文入口/深链）——统一包 Router 提供上下文。
+    const tree = createElement(
+      "div",
+      null,
+      createElement(LocationProbe),
+      createElement(L3PapersPage, props as never),
+    );
     root.render(
       createElement(
         MemoryRouter,
         { initialEntries: ["/l3"] },
-        createElement(
-          "div",
-          null,
-          createElement(LocationProbe),
-          createElement(L3PapersPage, props as never),
-        ),
+        opts.strict ? createElement(StrictMode, null, tree) : tree,
       ) as ReactElement,
     );
     await Promise.resolve();
@@ -712,5 +713,45 @@ describe("I3/C 原卷作文入口与返回恢复", () => {
     await waitFor(() => expect(locText()).toContain("writingTaskId"));
     const second = parseWritingSearch(new URLSearchParams(locText().split("?")[1])).origin;
     expect(second).toMatchObject({ kind: "paper", paperId: PAPER_2, sheetId: PAPER_SHEET_B });
+  });
+
+  it("StrictMode（dev 双跑）：整卷 resume 一次性消费——零 openSheet、sealed 不退化新建", async () => {
+    setupEssayMock({
+      fetchSheets: {
+        [RESUME_SEALED]: sheetRow({ id: RESUME_SEALED, paper_id: PAPER_1, scope_key: `paper:${PAPER_1}`, status: "sealed", sealed_at: "2026-09-19T01:00:00Z" }),
+      },
+    });
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+
+    await renderPage(
+      { deepLinkPaper: PAPER_1, deepLinkQuestion: Q_ESSAY, deepLinkResumeSheet: RESUME_SEALED },
+      { strict: true },
+    );
+    await waitFor(() => expect(screen.getByText("专项练习（不计入本次试卷作答）")).toBeTruthy());
+    const posts = (apiFetch as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
+    expect(posts).toHaveLength(0); // 双跑不得把 resume 二次消费后退化成 openSheet（sealed 会另建新卷）
+    expect((screen.getByPlaceholderText(/在这里写作文/) as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
+  it("StrictMode（dev 双跑）：source 文件 resume 同样一次性消费（零 openSheet POST）", async () => {
+    setupEssayMock({
+      files: [essayFile()],
+      detail: essaySourceDetail(),
+      fetchSheets: {
+        [RESUME_DRAFT]: sheetRow({ id: RESUME_DRAFT, scope: "file", scope_key: `file:${SOURCE_ID}:short_essay`, source_id: SOURCE_ID, question_type: "short_essay", paper_id: null }),
+      },
+    });
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+
+    await renderPage(
+      { deepLinkVenue: "short_essay", deepLinkFile: SOURCE_ID, deepLinkQuestion: Q_ESSAY, deepLinkResumeSheet: RESUME_DRAFT },
+      { strict: true },
+    );
+    await waitFor(() => expect(screen.getByText("专项练习（不计入本次试卷作答）")).toBeTruthy());
+    const posts = (apiFetch as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
+    expect(posts).toHaveLength(0);
+    expect((screen.getByPlaceholderText(/在这里写作文/) as HTMLTextAreaElement).disabled).toBe(false);
   });
 });

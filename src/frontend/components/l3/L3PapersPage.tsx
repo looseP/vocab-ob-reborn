@@ -390,10 +390,15 @@ function FilesTab({ deepLink }: {
   };
 
   // 批次二深链：文件列表就绪后自动打开目标文件（?venue=<题型>&file=<source_id|file_key>）。
+  // 🔴 同 PapersTab：StrictMode 下 files 双落地会双触发本效应——一次性消费，防 resumeSheet
+  // 被二次消费后退化为 openSheet 另开新纸。
+  const deepLinkConsumedRef = useRef(false);
   const openFileRef = useRef<typeof openFile | null>(null);
   useEffect(() => { openFileRef.current = openFile; });
   useEffect(() => {
     if (!pendingFileKey || !venue || !files) return;
+    if (deepLinkConsumedRef.current) return;
+    deepLinkConsumedRef.current = true;
     const target = files.find((file) => file.question_type === venue
       && (file.source_id === pendingFileKey || file.file_key === pendingFileKey));
     setPendingFileKey(null);
@@ -658,10 +663,15 @@ function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet }:
   };
 
   // F-1 深链：列表就绪后自动开卷（ref 持有最新闭包，效果只盯 deepLink/papers 变化）。
+  // 🔴 StrictMode（dev）下 load() 双跑会让 papers 两次落地 → 本效应双触发；必须一次性消费，
+  // 否则第二次（resumeSheet 已被消费）会退化成 openSheet——sealed 恢复场景将另建新卷（C 批实证）。
+  const deepLinkOpenedRef = useRef<string | null>(null);
   const openPaperRef = useRef<typeof openPaper | null>(null);
   useEffect(() => { openPaperRef.current = openPaper; });
   useEffect(() => {
     if (!deepLink || !papers) return;
+    if (deepLinkOpenedRef.current === deepLink) return;
+    deepLinkOpenedRef.current = deepLink;
     void openPaperRef.current?.(deepLink);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLink, papers]);
