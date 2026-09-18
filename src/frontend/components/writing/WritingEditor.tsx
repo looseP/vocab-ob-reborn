@@ -47,7 +47,7 @@ export function WritingEditor({ task, detail, onSubmitted, onLoadServerVersion, 
   const readOnly = detail.sheet.status !== "draft";
   const [actionState, setActionState] = useState<"idle" | "submitting" | "exporting">("idle");
   const [actionError, setActionError] = useState<string | null>(null);
-  const [submitConflict, setSubmitConflict] = useState<null | "text" | "version" | "cas">(null);
+  const [submitConflict, setSubmitConflict] = useState<null | "text-mismatch" | "version-mismatch" | "cas">(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
 
   const save = useMemo(
@@ -191,9 +191,11 @@ export function WritingEditor({ task, detail, onSubmitted, onLoadServerVersion, 
           <div className="font-medium text-[var(--color-accent-2)]">
             {submitConflict === "cas"
               ? "提交时另一处先保存了（版本冲突），本次未提交。"
-              : submitConflict
+              : submitConflict === "text-mismatch"
                 ? "提交前核对发现服务器上是另一份修订，未提交。"
-                : "另一处更新了这份草稿（版本冲突）。"}
+                : submitConflict === "version-mismatch"
+                  ? "提交前核对发现版本已被推进（可能来自另一处保存），未提交。"
+                  : "另一处更新了这份草稿（版本冲突）。"}
           </div>
           <div className="mt-1">你的本地正文仍保留在此，未被覆盖。可先「复制正文」备份，再选择载入服务器稿。</div>
           <div className="mt-2 flex gap-2">
