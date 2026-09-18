@@ -88,3 +88,42 @@
 | 查询失败 | HTTP 非 200 | 客户端 INVALID_RESPONSE/错误态，**不归一空** |
 
 - 提交：`b3c24a6`。**未声称用户闭环完成**——闭环在 B/C 接线后验证。
+
+## B · fileKey 首条路径闭环（完成，`838b790` + `51ffa20`）
+
+### 交付
+
+- `838b790`：共享入口 `WritingQuestionEntry`（三态/记录选择/读失败重试/点击防重/requestId 单意图）+ fileKey 题组接线（题组级**一次**批量摘要）+ `?question=` 返回定位高亮 + L3Page 穿透 + 工作区来源条（专项写作 · 来自小作文/大作文）+ 精确返回原题（venue/file/question/resumeSheet）+ 次级「全部作文」+ origin 跨换稿/对照/提交/刷新保留。
+- `51ffa20`：真环境抓到并修复的两个真 bug（下详）。
+
+### 真环境旅程（3100 后端 + 5174 前端 + `vocab_practice_accept`；合成题组 `practice:小作文 · 合成邀请邮件` 两题）
+
+脚本 `.tmp/b-journey.cjs`（分阶段库计数 + 截图）；产物 `D:/tmp/practice-b-journey/`（01–06 截图 + journey.json）。
+
+| 阶段 | tasks | sheets | attempts | 证据 |
+|---|---|---|---|---|
+| c0 开始前 | 0 | 0 | 0 | — |
+| c1 显式「开始写作」后 | **1** | **1** | 0 | 唯一次显式开始增加任务+草稿 |
+| c2 输入保存后 | 1 | 1 | 0 | 保存零新增（等真实 PATCH 200） |
+| c3 返回原题后 | 1 | 1 | 0 | 零新增；`focused_question=1`；入口显示「继续写作」 |
+| c4 继续同稿 | 1 | 1 | 0 | 零新增；`sheet` 与开始前一致（same=true） |
+| c5 F5 后 | 1 | 1 | 0 | 零新增；同 sheet；正文保留（25 字符） |
+| c6 提交后 | 1 | 1 | **1** | 提交产生 attempt（+1）；同 sheet 定格（无新稿） |
+| c7 返回原题后 | 1 | 1 | 1 | 零新增；入口显示「已提交 1 稿 · 待反馈」+「查看本稿」 |
+| c8 查看 sealed 稿 | 1 | 1 | 1 | 零新增（**读取不建下一稿**）；readonly=true；同 sheet |
+
+- 返回 URL 实测：`/l3?venue=short_essay&file=<fileKey>&question=<Q1>`（无 section=writing，落回试卷台上下文）。
+
+### 真环境发现并修复的两个真 bug（`51ffa20`）
+
+1. **lockQuestion 越权锁**：`SELECT … FOR UPDATE` 需表级 UPDATE 权限，而角色模型对 `l3_questions` 仅授 SELECT/INSERT/DELETE → 按题创建作文任务在受控环境必然 500（dev/acceptance 双库实测复现；此前被 service/http mock 与无题路径掩盖）。修复：事务级 advisory 锁 `pg_advisory_xact_lock(hashtextextended(owner:question))` + 无锁 SELECT（等价互斥、零行级权限依赖）。
+2. **StrictMode dev 输入死锁**：`useWritingDraft` 卸载清理 `dispose()` 为终态，React.StrictMode（dev）模拟卸载→再挂载后控制器永久失效（textarea 可聚焦，但 setText 全 no-op、零保存请求）。生产构建无此双调用故此前未暴露。修复：控制器暴露 `isDisposed`，hook setup 检测到 disposed 即重建（清理可逆；真实卸载不会再 setup，无泄漏）。先红后绿：StrictMode 用例（jsdom）复现 dev 死锁 → 修复后 826ms 绿。
+
+### 验证
+
+- 本批定向 9 文件 **176/176**；typecheck 0；入口页面级用例含「重进重读进度（不沿用尚未开始）」与「读失败不冒充尚未开始」。
+
+### B 回报（合成原题可点击地址）
+
+- 原题：`http://127.0.0.1:5174/l3?venue=short_essay&file=practice%3A%E5%B0%8F%E4%BD%9C%E6%96%87+%C2%B7+%E5%90%88%E6%88%90%E9%82%80%E8%AF%B7%E9%82%AE%E4%BB%B6&question=00000000-0000-4000-8000-0000000001b1`
+- 登录：Owner Access Token = `local-owner-api-token-only-0001`（服务运行中：后端 3100 / 前端 5174）。
