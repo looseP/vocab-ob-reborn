@@ -4,6 +4,9 @@
 
 | 文档 | 作用 |
 |---|---|
+| `writing-space-design-2026-09-18.md` | 作文子空间 v1 设计基线：低摩擦路径、任务/稿次真源、保存并发、反馈权限与逐接口契约 |
+| `writing-space-execution-plan-2026-09-18.md` | 作文子空间 W0–W11 外派执行计划：任务依赖、文件独占、接口、测试与真实环境验收 |
+| `writing-space-start-prompt-2026-09-18.md` | 可复制的主理人启动指令、单任务派工模板及独立验收 prompt |
 | `l3-upgrade-task-breakdown-2026-09-11.md` | **任务分解 + §0 外派通用约束（派单模板）**：必读材料 / 门禁取证纪律（base 必须能行使被验证分支）/ 并发写者纪律（共享文件清单）/ 到期清理项锚点 / 覆盖率纪律 / UI 卡验收条款 |
 | `l3-experience-layer-direct-brief-2026-09-12.md` | L3 体验层补救任务书（D0–D4 上游依据） |
 | `l3-visual-audit-report-2026-09-12.md` | 视觉走查报告（G-P1-3 读面三页＝工程检查器 / G-P1-4 推荐页裸 JSON / G-P2-3 空态语言不统一 等） |
