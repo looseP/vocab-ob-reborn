@@ -904,13 +904,23 @@ function ChoiceQuestion({
  * 批次三①：解析模式判读子区（verdict 徽标 ✓/✗/◐ + agent 分析折叠区）。
  * 仅揭示后由题卡渲染（做题模式零变更）；分析为纯文本 pre-wrap（不引 md 依赖）。
  */
+/** 判读徽标（深测 OB-3）：显式三分支 + default「未知」——契约漂移不得把未知值误导为「错」。 */
+function gradingVerdictBadge(verdict: string): { mark: string; label: string; cls: string } {
+  switch (verdict) {
+    case "correct":
+      return { mark: "✓", label: "评卷：对", cls: "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200" };
+    case "partial":
+      return { mark: "◐", label: "评卷：半对", cls: "border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" };
+    case "wrong":
+      return { mark: "✗", label: "评卷：错", cls: "border-rose-500 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" };
+    default:
+      return { mark: "◌", label: "评卷：未知", cls: "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink-soft)]" };
+  }
+}
+
 function L3QuestionGrading({ grading }: { grading: L3GradingResult }) {
   const [expanded, setExpanded] = useState(false);
-  const badge = grading.verdict === "correct"
-    ? { mark: "✓", label: "评卷：对", cls: "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200" }
-    : grading.verdict === "partial"
-      ? { mark: "◐", label: "评卷：半对", cls: "border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" }
-      : { mark: "✗", label: "评卷：错", cls: "border-rose-500 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" };
+  const badge = gradingVerdictBadge(grading.verdict);
   return (
     <div
       data-grading-verdict={grading.verdict}

@@ -350,8 +350,12 @@ export async function fetchSheetGrading(sheetId: string): Promise<L3GradingResul
   const body = await apiFetch<{ results?: L3GradingResult[] } | null>(
     `/l3/sheets/${encodeURIComponent(sheetId)}/grading`,
   );
-  // 防御：异常形状只做空结果处理（契约漂移不得让解析模式崩溃）。
-  return Array.isArray(body?.results) ? body.results : [];
+  // 防御（深测 OB-2）：契约漂移（200 + 非法形状）按**加载失败**处理（抛错由调用方静默），
+  // 不得归一为空结果——否则「待评卷」提示会把数据异常误导为「还没有评卷」。
+  if (body === null || !Array.isArray(body.results)) {
+    throw new Error("评卷结果响应形状异常");
+  }
+  return body.results;
 }
 
 /** owner 处置（D18）：submitted+有 review 的注记确认；服务端 409 = 状态已变。 */
