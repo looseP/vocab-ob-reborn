@@ -104,3 +104,13 @@ Consequences 中「openapi 再生与 currentSha256 重钉」（任务表与设�
 ## 补记 · 2026-09-18（深测 OB-4 处置 a）
 
 撤回语义明确为**评审意见重置**：`L3AnnotationRepository.withdrawAnnotation` 的 SET 子句扩展为 `stage='draft', sheet_id=<重挂纸>, review = NULL`（与 `applyAnnotationReview` 同列——可写 review 的专用方法；公开注记 PATCH 依旧禁触 review，白名单口径不变）。依据：review 定义为「对本提交版本的评语」（consumable，无版本、无内容指纹），跨版本保留会形成「旧评语 × 新内容」错配并可被误确认升终态（外派深测 OB-4）。影响：撤回后注记回到「submitted 无 review」等待重评；confirmed 终态不可撤回，不受影响；RLS 隔离语义不变（同款 SQL 在非属主 actor 下空转，见 `tests/l3-rls.integration.test.ts` 新增用例）。
+
+## 补记二 · 2026-09-18（F-1 回看闭环落位）
+
+**背景**：真环境走查（2026-09-18）实证「已定格题纸缺少稳定重开路径」（静态审查 F3/F4 升级为真实环境确认）——openSheet 恒返回 draft 使「重进已定格页面读评卷」分支不可达，题级 verdict/分析在关闭页面后无 UI 路径回看。裁决 d=a+b（保持 openSheet 草稿语义不变），本条记录落位口径：
+
+- **评审来源列**：`l3_question_annotations.review_sheet_id`（迁移 0037；SET NULL 外键）——记录**最近一次 review 写入所属题纸**。§3.2 白名单 SET 口径自本条起为 `review / stage / review_sheet_id` 三列（+ updated_at）；`withdrawAnnotation` 撤回时来源列随 review **一并清空**（来源必须与意见同步存灭）。前端以「当前所看题纸 vs 来源题纸」对比标注「本轮评卷 / 历史评卷」（旧数据无来源保守标「历史」），防多轮作答时旧轮评语被读作本轮结果——注记为题目级资产，本列是其轮次衰减的显式化。
+- **回看读路径（b）**：`GET /api/l3/sheets`（题纸档案列表，owner-only；draft/sealed 新→旧 + `graded_count` + `venue_title`）+ `?sheet=<id>` 深链只读回看。**回看路径不调 openSheet、不新建草稿**（读路径唯一入口 = GET 单纸 + 卷面组装）；「再做一次」= 常规开纸入口（openSheet 幂等语义决定复用/新建），「继续草稿」= 常规入口落回既有 draft。三态动作区分：继续草稿 / 查看某次解析 / 再做一次。
+- **刷新评卷（a）**：解析模式读面由「失败静默」改为显式三态（loading / ready / error + 重试）；sealed 状态条显示「已评 n/m 题 · 最近评卷时间」覆盖度 + 手动「刷新评卷」；「待评卷」引导文案更正为本地 agent（HTTP）通道口径（导出 Markdown 仅供存档外发，无回灌通道）。
+- **验收**：真实浏览器全链 40/40（定格 → 评卷 → 关闭 → 档案入口回看 → F5 同纸 + DB 零新增草稿；改判刷新更新；两轮互不串），见 `.tmp/f1-acceptance.mjs` 与 `D:/tmp/l3-f1-acceptance/`。
+- **实现缺陷定性**（裁决措辞）：不可达分支与缺失入口是**实现缺陷**而非体验优化——本批按缺陷修复，验收以「用户回看闭环端到端可用」为判据，而非「接口行为通过」。
