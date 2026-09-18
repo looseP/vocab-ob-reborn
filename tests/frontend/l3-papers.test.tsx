@@ -6,6 +6,7 @@ import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { L3PapersPage } from "@/frontend/components/l3/L3PapersPage";
 
 // 与 l3-bookshelf.test.tsx 同款手动挂载（仓库无 @testing-library/react）。
@@ -37,7 +38,14 @@ async function renderPage(props: Record<string, unknown> = {}): Promise<void> {
   const root = createRoot(container);
   mountedRoots.push(root);
   await act(async () => {
-    root.render(createElement(L3PapersPage, props as never) as ReactElement);
+    // W7：做题台组件现含 useNavigate（作文入口/深链）——统一包 Router 提供上下文。
+    root.render(
+      createElement(
+        MemoryRouter,
+        { initialEntries: ["/l3"] },
+        createElement(L3PapersPage, props as never) as ReactElement,
+      ) as ReactElement,
+    );
     await Promise.resolve();
     await Promise.resolve();
   });

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { BookOpen, Repeat, LayoutGrid, Notebook, Sparkles, Zap, Upload } from "lucide-react";
+import { BookOpen, PenLine, Repeat, LayoutGrid, Notebook, Sparkles, Zap, Upload } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 
 const features = [
@@ -10,6 +10,8 @@ const features = [
   { href: "/notes", icon: Notebook, title: "笔记", desc: "词汇笔记和标注" },
   { href: "/import", icon: Upload, title: "导入", desc: "批量导入词汇和笔记" },
   { href: "/l3", icon: Sparkles, title: "L3 进阶研究", desc: "知识图谱、提案、推荐" },
+  // 作文子空间 v1（W7）：低摩擦入口——一次点击直达写作列表（动笔前至多再点一次）。
+  { href: "/l3?section=writing", icon: PenLine, title: "作文", desc: "写作 → 提交 → 反馈 → 第二稿" },
 ] as const;
 
 export function HomePage() {

@@ -5,6 +5,8 @@ import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { useToast } from "@/frontend/components/ui/Toast";
 import { L3ExamPaper, type ExamPaper } from "@/frontend/components/l3/L3ExamPaper";
 import { fetchSheet, fetchSheetArchive, type L3SheetArchiveItem } from "@/frontend/api/l3Client";
+import { writingClient } from "@/frontend/api/writingClient";
+import { buildWritingUrl } from "@/frontend/viewModels/writingNavigation";
 
 /**
  * 试卷台（ADR-0030 V1 最小可用面）：
@@ -33,6 +35,8 @@ const TYPE_LABELS: Record<QuestionType, string> = {
   grammar_blank: "语法填空",
 };
 const SOURCELESS_TYPES: QuestionType[] = ["sentence_translation", "short_essay", "long_essay"];
+/** 作文子空间入口（W7）：仅这两类题显示「在作文空间练习」。 */
+const ESSAY_TYPES: QuestionType[] = ["short_essay", "long_essay"];
 const CHOICE_TYPES: QuestionType[] = ["cloze", "reading_choice", "new_question", "grammar_blank"];
 const OPTION_KEYS = ["A", "B", "C", "D"] as const;
 
@@ -84,7 +88,7 @@ interface PracticeFileDetail {
 /** 文件三级详情：source 型组装单节伪卷喂给做题表面（file venue）；fileKey 型保留浏览。 */
 type FilesTabDetail =
   | { kind: "sheet"; paper: ExamPaper; sourceId: string; questionType: QuestionType }
-  | { kind: "browse"; title: string; questions: QuestionRow[] };
+  | { kind: "browse"; title: string; questions: QuestionRow[]; direction: "通用" | "考研" | "雅思" | null };
 
 interface AssembledSection {
   key: string;
@@ -143,7 +147,11 @@ const emptySection = (questionType: QuestionType = "reading_choice"): DraftSecti
   questions: [emptyQuestion()],
 });
 
-function QuestionList({ questions }: { questions: QuestionRow[] }) {
+function QuestionList({ questions, practiceEssayFor }: {
+  questions: QuestionRow[];
+  /** 作文子空间入口（W7）：仅有 callback 时渲染「在作文空间练习」（essay 题专用）。 */
+  practiceEssayFor?: (questionId: string) => void;
+}) {
   if (questions.length === 0) return <p className="text-xs text-[var(--color-ink-soft)]">（无题）</p>;
   return (
     <ol className="space-y-2">
@@ -168,6 +176,17 @@ function QuestionList({ questions }: { questions: QuestionRow[] }) {
             </p>
           )}
           {q.explanation && <p className="mt-1 whitespace-pre-wrap text-xs text-[var(--color-ink-soft)]">解析：{q.explanation}</p>}
+          {practiceEssayFor && (
+            <div className="mt-1.5">
+              <button
+                type="button"
+                onClick={() => practiceEssayFor(q.id)}
+                className="text-xs text-[var(--color-accent)] hover:underline"
+              >
+                在作文空间练习 →
+              </button>
+            </div>
+          )}
         </li>
       ))}
     </ol>
@@ -254,6 +273,7 @@ function buildFileVenuePaper(
 
 function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string | null } | null } = {}) {
   const { addToast } = useToast();
+  const navigate = useNavigate();
   const [files, setFiles] = useState<PracticeFile[] | null>(null);
   const [venue, setVenue] = useState<QuestionType | null>(deepLink?.venue ?? null);
   const [detail, setDetail] = useState<FilesTabDetail | null>(null);
@@ -287,10 +307,25 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
           paper: buildFileVenuePaper(body, file.source_id, file.question_type, file.title),
         });
       } else {
-        setDetail({ kind: "browse", title: file.title, questions: body.questions });
+        setDetail({ kind: "browse", title: file.title, questions: body.questions, direction: file.direction });
       }
     } catch {
       addToast("error", "文件题组加载失败");
+    }
+  };
+
+  /** 作文子空间入口（W7）：带 questionId 创建/复用任务 → 直达作文宿主（继承题面与方向）。 */
+  const practiceEssay = async (questionId: string, direction: "通用" | "考研" | "雅思" | null) => {
+    try {
+      const result = await writingClient.createTask({
+        requestId: crypto.randomUUID(),
+        kind: "whole",
+        direction: direction ?? "通用",
+        questionId,
+      });
+      navigate(buildWritingUrl({ taskId: result.task.id, sheetId: result.draft?.id ?? null }));
+    } catch {
+      addToast("error", "进入作文空间失败，请重试");
     }
   };
 
@@ -322,7 +357,12 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
       <div className="space-y-2">
         <button type="button" onClick={() => setDetail(null)} className="text-xs text-[var(--color-accent)]">← 返回{VENUES.find((v) => v.type === venue)?.name}空间</button>
         <h3 className="text-base font-semibold">{detail.title}</h3>
-        <QuestionList questions={detail.questions} />
+        <QuestionList
+          questions={detail.questions}
+          practiceEssayFor={ESSAY_TYPES.includes(venue)
+            ? (questionId) => void practiceEssay(questionId, detail.direction)
+            : undefined}
+        />
       </div>
     );
   }

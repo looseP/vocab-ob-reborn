@@ -115,6 +115,25 @@
 - W7 交接（接口可交给 W7 使用）：`writingClient` 全集 14 方法 + `WritingClient` 类型；错误码：`DRAFT_VERSION_CONFLICT`/`ACTIVE_DRAFT_EXISTS`/`WRITING_ENDPOINT_REQUIRED`/`WRITING_CONTENT_CLEARED`/`FEEDBACK_VERSION_CONFLICT`/`FEEDBACK_REQUEST_CONFLICT`/`FEEDBACK_ANCHOR_MISMATCH`/`WRITING_DATA_INCONSISTENT`/`INVALID_RESPONSE`/409·413·422 状态语义；DTO 全套在 `@/domain` 转发；保存状态机由 W4 `useWritingDraft` 提供（clean/dirty/saving/retrying/error/conflict + flush/retry/composition/navigationBlocked）。
 - 未验证/边界：导出端点（W9）、前端页面集成（W7）、真环境全链（W10）。
 
+#### W9 · 导出、正文清理与跨入口兼容（2026-09-18 完成，`02eb1aa`）
+
+- 交付：`l3-writing-export.service.ts`（单稿 schemaVersion=1 导出；sealed→active attempt / draft→draftVersion；cleared·discarded 409；双段渲染可复算 sha256；正文/题面/JSON **动态围栏**（最长反引号串+1）含 ```/中文/emoji 可提取）；`L3WritingSheetService.clearRevisionContent`（task→sheet 锁序；sealed 限定；soft-delete attempt + 同事务删反馈；幂等）+ repo `softDeleteWritingAttempt`/`deleteBySheet`；路由 `writing-export.ts`（GET export text/markdown + 版本/sha256 头；DELETE content 直接回 sheet DTO）。
+- 集成（主理人）：services/index、server 挂载、operations 2 注册、授权注册表（export→owner 读、clear→owner 写）、复杂度棘轮；前端 `writingClient.exportSheet`/`clearSheetContent` 冻结落地。
+- 生成物：openapi + client 再生；breaking approval 按勘误口径**二次重锚**（currentSha256=sha256(openapi@HEAD)，issues 实测集不变）。
+- 验证：导出单测 7/7；**清理并发集成 2/2 真实 PG 两连接**（A 反馈先持锁→清理删反馈无残留；B 清理先持锁→迟到写入 409 不落库；屏障阻塞 209/217ms 实证）；HTTP 16/16；宽回归 150/150；typecheck 0；arch 378 模块；api:governance exit=0。
+
+#### W8 · 反馈、第二稿与对照（2026-09-18 完成，`2063461`）
+
+- 交付：`WritingFeedbackPanel`（四态分离：pending/失败/cleared/hash 不一致隐藏；刷新诚实保留旧结果；定位跳转 textarea UTF-16 选中；**纯文本渲染**（XSS 样例断言不解析））、`WritingComparison`（两稿独立读取互不借用；cleared 占位不复活；非 sealed 拒绝；桌面双栏/移动堆叠）、`WritingReviewInstruction`（含精确 taskId/sheetId 与 HTTP 契约；无 token 字样；不承诺自动回灌）。
+- 测试：`writing-feedback.test.tsx` 4 例 + `writing-comparison.test.tsx` 2 例。
+
+#### W7 · 作文入口、任务列表与编辑器（2026-09-18 完成，`<W7-SHA>`）
+
+- 交付：`L3WritingPage` 宿主（列表/开始弹层/任务视图/稿件工作区/对照模式/手机三页签不卸载）、`WritingTaskList`（20/页 + 搜索 + 加载更多）、`WritingStartDialog`（requestId 一次意图：失败沿用、成功轮换）、`WritingEditor`（**只用 useWritingDraft 六态**；提交=`锁定→await flush→GET 权威版本→submit`；导出先 flush 失败不出文件；冲突复制+载入服务器稿重挂）、`WritingRevisionList`（对照入口 + 清理动作 + 反馈态派生）、`writingNavigation`（URL 契约/文案单一真源）。
+- 宿主接入：shell 一级「作文」；HomePage 入口卡；`L3Page` section=writing 优先 + **纯 ?sheet= 只读分流**（GET 判 scope → writing replace 规范 URL，不落试卷台、零创建；file/paper 保持 F-1 原路）；`L3PapersPage` essay 题「在作文空间练习」（questionId 建/复用任务、方向预填）。
+- 测试：`writing-workspace.test.tsx` 8 例（起笔≤2 点击+焦点入正文 / 深链与 F5 重挂（同 sheet 零创建）/ **A→B 切换迟到响应丢弃** / 提交屏障（在途不提交、确认后带权威版本、失败不提交不清空）/ 冲突保留本地 / L3Page 分流不落试卷台）；前端回归 **112/112**；frontend:build 通过；typecheck 0（含 tsconfig.frontend 收口修正）。
+- 过程修复：l3-papers 测试装置补 MemoryRouter（组件新增 useNavigate 的合法上下文依赖）。
+
 ## 2 · 门禁与证据台账
 
 | 时间 | 命令 | exit code | 证据/产物 |

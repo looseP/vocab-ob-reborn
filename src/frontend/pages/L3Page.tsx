@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiFetch } from "@/frontend/api/client";
 import type { L3FrontendClient } from "@/l3/frontend/contract";
 import { L3Bookshelf } from "@/frontend/components/l3/L3Bookshelf";
@@ -17,7 +17,9 @@ import { L3ProposalPage } from "@/frontend/pages/L3ProposalPage";
 import { L3RecommendationPage } from "@/frontend/pages/L3RecommendationPage";
 import { L3SessionPage } from "@/frontend/pages/L3SessionPage";
 import { L3WordSpacePage } from "@/frontend/pages/L3WordSpacePage";
+import { L3WritingPage } from "@/frontend/pages/L3WritingPage";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
+import { isWritingSection, WRITING_SECTION } from "@/frontend/viewModels/writingNavigation";
 import {
   markActiveReadStaleAfterManualCommand,
   markActiveReadStaleAfterProposalConfirm,
@@ -39,6 +41,7 @@ import type {
  */
 export function L3Page() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const deepLinkContextId = searchParams.get("contextId");
   // B1（体验层）：默认落地 = 素材宇宙（设计基线 §2 IA-1）；深链（?sourceId=/
   // ?wordSlug=/?contextId=）仍会在挂载后把视图切到对应 section。
@@ -93,14 +96,51 @@ export function L3Page() {
   // /l3?venue=<题型>&file=<文件键> 直达试卷台的题型空间（L3PapersPage 消费参数
   // 自动打开目标文件；同 contextId/sourceId 的 handoff 模式）。
   // F-1（回看闭环）：?sheet=<id> 回看深链 / ?paper=<id> 卷深链——同模式落到试卷台。
+  // 作文子空间 v1（W7）：section=writing 优先选择作文宿主（不被旧 sheet effect 抢回）。
   const deepLinkVenue = searchParams.get("venue");
   const deepLinkFile = searchParams.get("file");
   const deepLinkSheet = searchParams.get("sheet");
   const deepLinkPaper = searchParams.get("paper");
+  const writingSectionPreferred = isWritingSection(searchParams);
+  const writingTaskIdParam = searchParams.get("writingTaskId");
+
+  useEffect(() => {
+    if (writingSectionPreferred || writingTaskIdParam) setSection(WRITING_SECTION as L3ShellSection);
+  }, [writingSectionPreferred, writingTaskIdParam]);
+
+  // 纯 ?sheet=<id> 分流（只读）：先 GET 判 scope——file/paper 沿用 F-1 落试卷台；
+  // writing 记录只读解析 taskId 并 replace 为作文规范 URL，**不调用 openSheet、不建纸**。
+  useEffect(() => {
+    if (!deepLinkSheet || writingSectionPreferred || deepLinkVenue || deepLinkPaper) return;
+    let cancelled = false;
+    apiFetch<{ sheet?: { scope?: string; writing_task_id?: string | null } }>(
+      `/l3/sheets/${encodeURIComponent(deepLinkSheet)}`,
+      { timeoutMs: 10_000 },
+    )
+      .then((detail) => {
+        if (cancelled) return;
+        const sheet = detail?.sheet;
+        if (sheet?.scope === "writing" && sheet.writing_task_id) {
+          navigate(
+            `/l3?section=writing&writingTaskId=${encodeURIComponent(sheet.writing_task_id)}&sheet=${encodeURIComponent(deepLinkSheet)}`,
+            { replace: true },
+          );
+          return;
+        }
+        setSection("papers");
+      })
+      .catch(() => {
+        if (!cancelled) setSection("papers"); // 判读失败交回 F-1 原路（其自带 404 空态）
+      });
+    return () => { cancelled = true; };
+  }, [deepLinkSheet, writingSectionPreferred, deepLinkVenue, deepLinkPaper, navigate]);
+
   useEffect(() => {
     if (!deepLinkVenue && !deepLinkSheet && !deepLinkPaper) return;
+    if (writingSectionPreferred) return; // 作文宿主优先
+    if (deepLinkSheet && !deepLinkVenue && !deepLinkPaper) return; // 分流 effect 处理
     setSection("papers");
-  }, [deepLinkVenue, deepLinkSheet, deepLinkPaper]);
+  }, [deepLinkVenue, deepLinkSheet, deepLinkPaper, writingSectionPreferred]);
 
   const openProposal = (proposalId: string) => {
     setSelectedProposalId(proposalId);
@@ -181,6 +221,9 @@ export function L3Page() {
         deepLinkPaper={deepLinkPaper}
       />
     ),
+    // 作文子空间 v1（W7）：宿主页（section=writing 优先；搜索参数由页面自身消费，
+    // 查看稿零创建、新稿只由显式 POST）。
+    writing: <L3WritingPage />,
     practice: <L3PracticePage client={l3Client} onNavigate={navigateL3} />,
     errorBook: <L3ErrorBookPage client={l3Client} onNavigate={navigateL3} />,
     session: <L3SessionPage client={l3Client} onNavigate={navigateL3} />,
