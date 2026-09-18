@@ -41,6 +41,10 @@ import { sheetsExportRoutes } from "./routes/l3/sheets-export";
 import { sheetsArchiveRoutes } from "./routes/l3/sheets-archive";
 import { assessmentsRoutes } from "./routes/l3/assessments";
 import { gradingRoutes } from "./routes/l3/grading";
+import { writingTasksRoutes } from "./routes/l3/writing-tasks";
+import { writingSheetsRoutes } from "./routes/l3/writing-sheets";
+import { writingFeedbackRoutes } from "./routes/l3/writing-feedback";
+import { writingExportRoutes } from "./routes/l3/writing-export";
 import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
 import { l3PracticeRoutes } from "./routes/l3-practice";
 import { l3SessionsRoutes } from "./routes/l3-sessions";
@@ -165,6 +169,13 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   // 批次三①：评卷执行面（ADR-0035）——agent 读面 grading-context（D8 唯一例外，
   // 🔴 含答案）、agent 写面 grading 提交、owner 解析模式读面、owner 处置 confirm。
   app.route("/api/l3", gradingRoutes(services));
+
+  // 作文子空间 v1（W6/W9，ADR《writing-workspace》）：任务/稿件/反馈/导出清理四薄路由，
+  // 同挂 /api/l3/writing（独立文件以满足复杂度棘轮）。
+  app.route("/api/l3/writing", writingTasksRoutes(services));
+  app.route("/api/l3/writing", writingSheetsRoutes(services));
+  app.route("/api/l3/writing", writingFeedbackRoutes(services));
+  app.route("/api/l3/writing", writingExportRoutes(services));
 
   // W3/T09：升级工单 / L3 练习记录 / L3 会话计划 / 一键遗忘（独立薄路由，
   // 全部位于 owner 鉴权挂载之后）。

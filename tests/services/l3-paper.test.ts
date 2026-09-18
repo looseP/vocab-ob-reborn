@@ -48,6 +48,7 @@ function makePaperRepo(overrides: Partial<IL3PaperRepository> = {}): IL3PaperRep
     listPracticeFiles: vi.fn(async () => ({ items: [], total: 0, limit: 50, offset: 0 })),
     deleteQuestion: vi.fn(async () => true),
     listActivePaperRefsWithPayload: vi.fn(async () => []),
+    listWritingTaskRefs: vi.fn(async () => []),
     insertPaper: vi.fn(async (input) => ({
       id: "paper-1",
       user_id: USER_ID,
@@ -287,6 +288,21 @@ describe("deleteQuestion", () => {
     await expect(makeService(repo, contextRepo).deleteQuestion({
       userId: USER_ID, questionId: qid,
     })).rejects.toBeInstanceOf(ConflictError);
+    expect(repo.deleteQuestion).not.toHaveBeenCalled();
+  });
+
+  it("blocks deletion with a writing-task blocker when referenced by an active writing task", async () => {
+    const qid = "00000000-0000-4000-8000-000000000301";
+    const repo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: qid })),
+      listWritingTaskRefs: vi.fn(async () => [{ id: "wt-1", title: "我的写作任务" }]),
+    });
+    await expect(makeService(repo, contextRepo).deleteQuestion({
+      userId: USER_ID, questionId: qid,
+    })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: { blockers: { writingTasks: [{ id: "wt-1", title: "我的写作任务" }] } },
+    });
     expect(repo.deleteQuestion).not.toHaveBeenCalled();
   });
 

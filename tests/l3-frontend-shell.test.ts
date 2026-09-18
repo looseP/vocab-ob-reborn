@@ -145,11 +145,14 @@ describe("Phase 4B L3 frontend shell", () => {
       expect(source).not.toMatch(/\bfetch\s*\(/);
       expect(source).not.toMatch(/XMLHttpRequest/);
       expect(source).not.toContain("/api/l3/");
-      // L3 surfaces keep using the typed L3 client. Non-L3 pages reach the API
-      // only through the generic apiFetch module (src/frontend/api/client),
-      // which the global no-raw-fetch rules above keep exclusive.
+      // L3 surfaces keep using their typed clients: the L3 client
+      // (L3FrontendClient / `client.`) or the writing workspace client
+      // (`writingClient.`, src/frontend/api/writingClient.ts). Non-L3 pages
+      // reach the API only through the generic apiFetch module
+      // (src/frontend/api/client), which the global no-raw-fetch rules above
+      // keep exclusive.
       if (file.includes("/pages/L3") && !file.endsWith("src/frontend/pages/L3HomePage.tsx")) {
-        expect(source).toMatch(/L3FrontendClient|client\./);
+        expect(source).toMatch(/L3FrontendClient|writingClient\.|client\./);
       }
     }
   });
@@ -159,6 +162,7 @@ describe("Phase 4B L3 frontend shell", () => {
       { id: "home", label: "空间首页" },
       { id: "source", label: "来源书架" },
       { id: "papers", label: "试卷台" },
+      { id: "writing", label: "作文" },
       { id: "word", label: "词空间" },
       { id: "context", label: "语境条目" },
       { id: "graph", label: "关联图" },

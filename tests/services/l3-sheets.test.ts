@@ -26,6 +26,10 @@ function submissionRow(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRo
     source_id: SOURCE,
     question_type: "reading_choice",
     paper_id: null,
+    writing_task_id: null,
+    parent_sheet_id: null,
+    revision_no: null,
+    draft_version: 0,
     status: "draft",
     answers: {},
     seal_mode: null,
@@ -285,6 +289,38 @@ describe("L3SheetService.patchSheet", () => {
     }));
     await expect(settled.patchSheet({ userId: USER, sheetId: SHEET, answers: { [Q1]: null } }))
       .rejects.toBeInstanceOf(ConflictError);
+  });
+});
+
+describe("L3SheetService 通用写面 vs writing 稿（W3 旁路封堵）", () => {
+  const writingDraft = (overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRow =>
+    submissionRow({
+      scope: "writing",
+      scope_key: "writing:00000000-0000-4000-8000-000000000701",
+      source_id: null,
+      question_type: null,
+      paper_id: null,
+      writing_task_id: "00000000-0000-4000-8000-000000000701",
+      ...overrides,
+    });
+
+  it("patchSheet 对 writing 稿 409 WRITING_ENDPOINT_REQUIRED（通用 PATCH 非旁路）", async () => {
+    const sheetRepo = makeSheetRepo({
+      patchAnswers: vi.fn(async () => null),
+      getSheet: vi.fn(async () => writingDraft()),
+    });
+    const service = makeService(sheetRepo);
+    await expect(service.patchSheet({ userId: USER, sheetId: SHEET, answers: { [Q1]: null } }))
+      .rejects.toMatchObject({ httpStatus: 409, meta: { code: "WRITING_ENDPOINT_REQUIRED" } });
+  });
+
+  it("sealSheet 对 writing 稿 409 WRITING_ENDPOINT_REQUIRED（不进入定格三档）", async () => {
+    const sheetRepo = makeSheetRepo({
+      getSheet: vi.fn(async () => writingDraft()),
+    });
+    const service = makeService(sheetRepo);
+    await expect(service.sealSheet({ userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false }))
+      .rejects.toMatchObject({ httpStatus: 409, meta: { code: "WRITING_ENDPOINT_REQUIRED" } });
   });
 });
 

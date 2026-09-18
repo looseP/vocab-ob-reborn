@@ -1,0 +1,152 @@
+# 作文子空间 v1 · Writing E2E（独立验收 job）
+#
+# 目的：让 writing E2E 在 CI 中「真实执行」而非静默跳过——显式启用 E2E_WRITING_SMOKE、
+# 供给独立临时数据库（postgres:17 service 容器 + 全量迁移 + 角色 prepare/converge）、
+# 构建并启动实际 API+SPA（SERVE_FRONTEND）、跑成功旅程与关键故障矩阵，并在
+# 收集数/跳过数不符时 fail-closed（防「绿而未跑」）。失败上传 trace/截图/日志。
+#
+# 注意：本 workflow 独立于 ci.yml；将其列入必需检查（branch protection）需仓库管理侧
+# 配置（见 PR 说明）。
+name: Writing E2E
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: writing-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DB_SSLMODE: disable
+  ADMIN_URL: postgresql://vocab:vocab@127.0.0.1:5433/vocab_writing_test
+  APP_URL: postgresql://vocab_app:CiWritingApp_7rN3zM4c@127.0.0.1:5433/vocab_writing_test
+  WORKER_URL: postgresql://vocab_worker:CiWritingWorker_4xV9pC@127.0.0.1:5433/vocab_writing_test
+  BACKUP_URL: postgresql://vocab_backup:CiWritingBackup_6kT2yH@127.0.0.1:5433/vocab_writing_test
+  MIGRATION_URL: postgresql://vocab_migration:CiWritingMigration_5mJ8qD@127.0.0.1:5433/vocab_writing_test
+
+jobs:
+  writing-e2e:
+    name: Writing E2E（真环境闭环 + 故障矩阵）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: vocab
+          POSTGRES_PASSWORD: vocab
+          POSTGRES_DB: vocab
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U vocab"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create writing acceptance database
+        run: |
+          node -e '
+          const { Client } = require("pg");
+          (async () => {
+            const c = new Client({ connectionString: "postgresql://vocab:vocab@127.0.0.1:5433/vocab" });
+            await c.connect();
+            const r = await c.query("SELECT 1 FROM pg_database WHERE datname = $1", ["vocab_writing_test"]);
+            if (r.rowCount === 0) await c.query("CREATE DATABASE vocab_writing_test OWNER vocab");
+            await c.end();
+            console.log("vocab_writing_test ready");
+          })().catch((e) => { console.error(e); process.exit(1); });
+          '
+
+      - name: Prepare roles
+        env:
+          DATABASE_ADMIN_URL: ${{ env.ADMIN_URL }}
+          APP_DATABASE_URL: ${{ env.APP_URL }}
+          WORKER_DATABASE_URL: ${{ env.WORKER_URL }}
+          BACKUP_DATABASE_URL: ${{ env.BACKUP_URL }}
+          MIGRATION_DATABASE_URL: ${{ env.MIGRATION_URL }}
+        run: npx tsx scripts/bootstrap-database-roles.ts prepare
+
+      - name: Migrate schema (all migrations)
+        env:
+          DATABASE_URL: ${{ env.MIGRATION_URL }}
+        run: npx drizzle-kit migrate --config drizzle.config.ts
+
+      - name: Converge role privileges
+        env:
+          DATABASE_ADMIN_URL: ${{ env.ADMIN_URL }}
+          APP_DATABASE_URL: ${{ env.APP_URL }}
+          WORKER_DATABASE_URL: ${{ env.WORKER_URL }}
+          BACKUP_DATABASE_URL: ${{ env.BACKUP_URL }}
+          MIGRATION_DATABASE_URL: ${{ env.MIGRATION_URL }}
+        run: npx tsx scripts/bootstrap-database-roles.ts converge
+
+      - name: Verify role privileges
+        env:
+          DATABASE_ADMIN_URL: ${{ env.ADMIN_URL }}
+          APP_DATABASE_URL: ${{ env.APP_URL }}
+          WORKER_DATABASE_URL: ${{ env.WORKER_URL }}
+          BACKUP_DATABASE_URL: ${{ env.BACKUP_URL }}
+          MIGRATION_DATABASE_URL: ${{ env.MIGRATION_URL }}
+        run: npx tsx scripts/verify-database-roles.ts
+
+      - name: Build frontend (served by the API process)
+        run: npm run frontend:build
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # 服务由 playwright.config 的 webServer 自起（CI 下 reuseExistingServer=false；
+      # 手动预占 3099 会导致 webServer 启动冲突 → 0 收集）。agent 开口所需的
+      # AGENT_API_TOKENS 经 webServer env 白名单透传（playwright.config.ts）。
+      # 校验器为仓库脚本 scripts/verify-writing-e2e-report.ts（单一真源，含回归测试）：
+      # PW_EXIT 缺失/非法/非 0、全局 errors 非空、收集≠4、跳过≠0、失败≠0 一律红灯。
+      - name: Run writing E2E (gated + fail-closed validation)
+        env:
+          E2E_WRITING_SMOKE: "1"
+          E2E_OWNER_TOKEN: ci-owner-token-writing-e2e-0001
+          E2E_AGENT_TOKEN: ci-agent-token-writing-e2e-0001
+          AGENT_API_TOKENS: agent-a:ci-agent-token-writing-e2e-0001
+          E2E_SETUP_DATABASE_URL: ${{ env.ADMIN_URL }}
+          DATABASE_URL: ${{ env.APP_URL }}
+          WRITING_SHOT_DIR: /tmp/writing-shots
+        run: |
+          set +e
+          npx playwright test e2e/writing.spec.ts --reporter=json > /tmp/pw-writing.json
+          export PW_EXIT=$?
+          set -e
+          npx tsx scripts/verify-writing-e2e-report.ts /tmp/pw-writing.json
+
+      - name: Collect evidence artifacts
+        if: always()
+        run: |
+          mkdir -p writing-e2e-artifacts
+          cp -r /tmp/writing-shots writing-e2e-artifacts/shots 2>/dev/null || true
+          cp /tmp/pw-writing.json writing-e2e-artifacts/ 2>/dev/null || true
+
+      - name: Upload failure evidence (trace / screenshots / logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: writing-e2e-evidence
+          path: |
+            test-results/
+            writing-e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 14

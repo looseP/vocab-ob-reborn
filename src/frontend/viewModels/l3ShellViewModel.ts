@@ -9,6 +9,7 @@ export type L3ShellSection =
   | "word"
   | "source"
   | "papers"
+  | "writing"
   | "practice"
   | "errorBook"
   | "session";
@@ -17,6 +18,8 @@ export const L3_SHELL_SECTIONS: Array<{ id: L3ShellSection; label: string }> = [
   { id: "home", label: "空间首页" },
   { id: "source", label: "来源书架" },
   { id: "papers", label: "试卷台" },
+  // 作文子空间 v1（W7）：一级入口「作文」（/l3?section=writing）。
+  { id: "writing", label: "作文" },
   { id: "word", label: "词空间" },
   { id: "context", label: "语境条目" },
   { id: "graph", label: "关联图" },
@@ -35,4 +38,4 @@ export const L3_SHELL_SECTIONS: Array<{ id: L3ShellSection; label: string }> = [
  * B1（体验层）：「空间首页」= 素材宇宙，是 /l3 的默认落地与"开门第一眼"，
  * 因此从工具组提为一级并置于首位（设计基线 §2 IA-1 / IA-2）。
  */
-export const L3_SHELL_CORE_SECTIONS: L3ShellSection[] = ["home", "source", "papers", "graph", "practice", "errorBook", "session"];
+export const L3_SHELL_CORE_SECTIONS: L3ShellSection[] = ["home", "source", "papers", "writing", "graph", "practice", "errorBook", "session"];

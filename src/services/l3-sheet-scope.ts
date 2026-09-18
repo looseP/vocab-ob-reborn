@@ -1,7 +1,8 @@
 /**
  * 题纸作用域题集解析（批次二共享）：file=题组（ordinal 序）；paper=payload
- * sections 顺序（现拉现组装）。sheet 与 export 两个 service 共用同一实现——
- * 作用域语义只有一处（不复制、不漂移，ADR-0025 单一代码路径纪律）。
+ * sections 顺序（现拉现组装）；writing=任务单题（W3：只读解析，不触发创建）。
+ * sheet 与 export 两个 service 共用同一实现——作用域语义只有一处（不复制、
+ * 不漂移，ADR-0025 单一代码路径纪律）。
  */
 import type { IRepositories } from "../repositories/interfaces";
 import type { L3QuestionRow, L3SubmissionRow } from "../domain";
@@ -24,6 +25,14 @@ export async function resolveSheetScopedQuestions(
     const questions = await repos.l3Paper.findActiveQuestionsByIds(userId, ids);
     const byId = new Map(questions.map((question) => [question.id, question]));
     return ids.map((id) => byId.get(id)).filter((question): question is L3QuestionRow => Boolean(question));
+  }
+  if (sheet.scope === "writing" && sheet.writing_task_id) {
+    // 作文（W3）：作用域 = 任务关联的题（题面引用式，单题）。只读解析——不建纸、
+    // 不写库；task→question 经只读查询（W6 注册 l3Writing 后可改道写作 repo）。
+    const questionId = await repos.l3Sheets.findWritingTaskQuestionId(userId, sheet.writing_task_id);
+    if (!questionId) return [];
+    const question = await repos.l3Paper.findQuestionById(userId, questionId);
+    return question ? [question] : [];
   }
   return [];
 }

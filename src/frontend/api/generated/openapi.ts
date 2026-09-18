@@ -1231,6 +1231,214 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/l3/writing/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listL3WritingTasks"];
+        put?: never;
+        post: operations["createL3WritingTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getL3WritingTask"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["patchL3WritingTask"];
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["archiveL3WritingTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["restoreL3WritingTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listL3WritingRevisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/sheets/{sheetId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getL3WritingSheet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["saveL3WritingDraft"];
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createL3WritingDraft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/sheets/{sheetId}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["submitL3WritingSheet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/sheets/{sheetId}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["discardL3WritingSheet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/sheets/{sheetId}/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getL3WritingFeedback"];
+        put: operations["putL3WritingFeedback"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/sheets/{sheetId}/feedback-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getL3WritingFeedbackContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/sheets/{sheetId}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportL3WritingSheet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/l3/writing/tasks/{taskId}/sheets/{sheetId}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["clearL3WritingSheetContent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/l3/sheets/{id}/export": {
         parameters: {
             query?: never;
@@ -15651,7 +15859,7 @@ export interface operations {
                             /** Format: uuid */
                             user_id: string;
                             /** @enum {string} */
-                            scope: "file" | "paper";
+                            scope: "file" | "paper" | "writing";
                             scope_key: string;
                             source_id: string | null;
                             question_type: ("cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank") | null;
@@ -15897,7 +16105,7 @@ export interface operations {
                             /** Format: uuid */
                             user_id: string;
                             /** @enum {string} */
-                            scope: "file" | "paper";
+                            scope: "file" | "paper" | "writing";
                             scope_key: string;
                             source_id: string | null;
                             question_type: ("cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank") | null;
@@ -16115,7 +16323,7 @@ export interface operations {
                             /** Format: uuid */
                             user_id: string;
                             /** @enum {string} */
-                            scope: "file" | "paper";
+                            scope: "file" | "paper" | "writing";
                             scope_key: string;
                             source_id: string | null;
                             question_type: ("cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank") | null;
@@ -16818,7 +17026,7 @@ export interface operations {
                             /** Format: uuid */
                             id: string;
                             /** @enum {string} */
-                            scope: "file" | "paper";
+                            scope: "file" | "paper" | "writing";
                             source_id: string | null;
                             question_type: ("cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank") | null;
                             paper_id: string | null;
@@ -17008,7 +17216,7 @@ export interface operations {
                             /** Format: uuid */
                             user_id: string;
                             /** @enum {string} */
-                            scope: "file" | "paper";
+                            scope: "file" | "paper" | "writing";
                             scope_key: string;
                             source_id: string | null;
                             question_type: ("cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank") | null;
@@ -17191,7 +17399,7 @@ export interface operations {
                             /** Format: uuid */
                             user_id: string;
                             /** @enum {string} */
-                            scope: "file" | "paper";
+                            scope: "file" | "paper" | "writing";
                             scope_key: string;
                             source_id: string | null;
                             question_type: ("cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank") | null;
@@ -17216,7 +17424,7 @@ export interface operations {
                             question_id: string;
                             sheet_id: string | null;
                             /** @enum {string} */
-                            venue: "file" | "paper";
+                            venue: "file" | "paper" | "writing";
                             answer: components["schemas"]["JsonValue"] | null;
                             self_assessment: components["schemas"]["JsonValue"] | null;
                             /** @enum {string} */
@@ -17413,7 +17621,7 @@ export interface operations {
                             /** Format: uuid */
                             user_id: string;
                             /** @enum {string} */
-                            scope: "file" | "paper";
+                            scope: "file" | "paper" | "writing";
                             scope_key: string;
                             source_id: string | null;
                             question_type: ("cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank") | null;
@@ -17606,7 +17814,7 @@ export interface operations {
                             /** Format: uuid */
                             user_id: string;
                             /** @enum {string} */
-                            scope: "file" | "paper";
+                            scope: "file" | "paper" | "writing";
                             scope_key: string;
                             source_id: string | null;
                             question_type: ("cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank") | null;
@@ -17796,7 +18004,7 @@ export interface operations {
                             question_id: string;
                             sheet_id: string | null;
                             /** @enum {string} */
-                            venue: "file" | "paper";
+                            venue: "file" | "paper" | "writing";
                             answer: components["schemas"]["JsonValue"] | null;
                             self_assessment: components["schemas"]["JsonValue"] | null;
                             /** @enum {string} */
@@ -17964,6 +18172,3229 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listL3WritingTasks: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+                q?: string;
+                status?: "active" | "archived";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            task: {
+                                /** Format: uuid */
+                                id: string;
+                                /** Format: uuid */
+                                questionId: string;
+                                title: string;
+                                /** @enum {string} */
+                                kind: "whole" | "paragraph" | "free";
+                                /** @enum {string} */
+                                direction: "通用" | "考研" | "雅思";
+                                /** @enum {string} */
+                                status: "active" | "archived";
+                                createdAt: string;
+                                updatedAt: string;
+                            };
+                            draftSheetId: string | null;
+                            lastSheetId: string | null;
+                            latestRevisionNo: number | null;
+                        }[];
+                        total: number;
+                        nextCursor: string | null;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    createL3WritingTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    requestId: string;
+                    title?: string;
+                    /** @enum {string} */
+                    kind: "whole" | "paragraph" | "free";
+                    /** @enum {string} */
+                    direction: "通用" | "考研" | "雅思";
+                    prompt?: string;
+                    /** Format: uuid */
+                    questionId?: string;
+                    /** @default false */
+                    forceNew?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        task: {
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            questionId: string;
+                            title: string;
+                            prompt: string;
+                            /** @enum {string} */
+                            kind: "whole" | "paragraph" | "free";
+                            /** @enum {string} */
+                            direction: "通用" | "考研" | "雅思";
+                            /** @enum {string} */
+                            status: "active" | "archived";
+                            createdAt: string;
+                            updatedAt: string;
+                        };
+                        draft: {
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            taskId: string;
+                            /** @enum {string} */
+                            status: "draft" | "sealed" | "discarded";
+                            draftVersion: number;
+                            revisionNo: number | null;
+                            parentSheetId: string | null;
+                            createdAt: string;
+                            updatedAt: string;
+                            sealedAt: string | null;
+                        } | null;
+                        created: boolean;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getL3WritingTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        task: {
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            questionId: string;
+                            title: string;
+                            prompt: string;
+                            /** @enum {string} */
+                            kind: "whole" | "paragraph" | "free";
+                            /** @enum {string} */
+                            direction: "通用" | "考研" | "雅思";
+                            /** @enum {string} */
+                            status: "active" | "archived";
+                            createdAt: string;
+                            updatedAt: string;
+                        };
+                        draftSummary: {
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            taskId: string;
+                            /** @enum {string} */
+                            status: "draft" | "sealed" | "discarded";
+                            draftVersion: number;
+                            revisionNo: number | null;
+                            parentSheetId: string | null;
+                            createdAt: string;
+                            updatedAt: string;
+                            sealedAt: string | null;
+                        } | null;
+                        revisionCount: number;
+                        latestSubmittedSheetId: string | null;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    patchL3WritingTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                        /** Format: uuid */
+                        questionId: string;
+                        title: string;
+                        prompt: string;
+                        /** @enum {string} */
+                        kind: "whole" | "paragraph" | "free";
+                        /** @enum {string} */
+                        direction: "通用" | "考研" | "雅思";
+                        /** @enum {string} */
+                        status: "active" | "archived";
+                        createdAt: string;
+                        updatedAt: string;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    archiveL3WritingTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                        /** Format: uuid */
+                        questionId: string;
+                        title: string;
+                        prompt: string;
+                        /** @enum {string} */
+                        kind: "whole" | "paragraph" | "free";
+                        /** @enum {string} */
+                        direction: "通用" | "考研" | "雅思";
+                        /** @enum {string} */
+                        status: "active" | "archived";
+                        createdAt: string;
+                        updatedAt: string;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    restoreL3WritingTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                        /** Format: uuid */
+                        questionId: string;
+                        title: string;
+                        prompt: string;
+                        /** @enum {string} */
+                        kind: "whole" | "paragraph" | "free";
+                        /** @enum {string} */
+                        direction: "通用" | "考研" | "雅思";
+                        /** @enum {string} */
+                        status: "active" | "archived";
+                        createdAt: string;
+                        updatedAt: string;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listL3WritingRevisions: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            sheet: {
+                                /** Format: uuid */
+                                id: string;
+                                /** Format: uuid */
+                                taskId: string;
+                                /** @enum {string} */
+                                status: "draft" | "sealed" | "discarded";
+                                draftVersion: number;
+                                revisionNo: number | null;
+                                parentSheetId: string | null;
+                                createdAt: string;
+                                updatedAt: string;
+                                sealedAt: string | null;
+                            };
+                            /** @enum {string} */
+                            contentStatus: "available" | "cleared";
+                            /** @enum {string} */
+                            feedbackState: "pending" | "ready" | "unavailable";
+                        }[];
+                        total: number;
+                        nextCursor: string | null;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getL3WritingSheet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+                sheetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sheet: {
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            taskId: string;
+                            /** @enum {string} */
+                            status: "draft" | "sealed" | "discarded";
+                            draftVersion: number;
+                            revisionNo: number | null;
+                            parentSheetId: string | null;
+                            createdAt: string;
+                            updatedAt: string;
+                            sealedAt: string | null;
+                        };
+                        text: string | null;
+                        textSha256: string | null;
+                        wordCount: number;
+                        /** @enum {string} */
+                        contentStatus: "available" | "cleared";
+                        feedback: {
+                            feedback: {
+                                /** @constant */
+                                schemaVersion: 1;
+                                summary: string;
+                                strengths: string[];
+                                dimensions: {
+                                    task_response: {
+                                        applicable: boolean;
+                                        comment: string;
+                                    };
+                                    organization: {
+                                        applicable: boolean;
+                                        comment: string;
+                                    };
+                                    language: {
+                                        applicable: boolean;
+                                        comment: string;
+                                    };
+                                    expression: {
+                                        applicable: boolean;
+                                        comment: string;
+                                    };
+                                };
+                                priorities: {
+                                    id: string;
+                                    /** @enum {string} */
+                                    dimension: "task_response" | "organization" | "language" | "expression";
+                                    observation: string;
+                                    action: string;
+                                    anchor: {
+                                        start: number;
+                                        end: number;
+                                        quote: string;
+                                    } | null;
+                                }[];
+                            };
+                            version: number;
+                            textSha256: string;
+                            lastEditor: string;
+                            updatedAt: string;
+                        } | null;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    saveL3WritingDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+                sheetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expectedVersion: number;
+                    text: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sheet: {
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            taskId: string;
+                            /** @enum {string} */
+                            status: "draft" | "sealed" | "discarded";
+                            draftVersion: number;
+                            revisionNo: number | null;
+                            parentSheetId: string | null;
+                            createdAt: string;
+                            updatedAt: string;
+                            sealedAt: string | null;
+                        };
+                        textSha256: string;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    createL3WritingDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    parentSheetId: string | null;
+                    /** @enum {string} */
+                    seed: "blank" | "copy";
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sheet: {
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            taskId: string;
+                            /** @enum {string} */
+                            status: "draft" | "sealed" | "discarded";
+                            draftVersion: number;
+                            revisionNo: number | null;
+                            parentSheetId: string | null;
+                            createdAt: string;
+                            updatedAt: string;
+                            sealedAt: string | null;
+                        };
+                        created: boolean;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    submitL3WritingSheet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+                sheetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expectedVersion: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sheet: {
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            taskId: string;
+                            /** @enum {string} */
+                            status: "draft" | "sealed" | "discarded";
+                            draftVersion: number;
+                            revisionNo: number | null;
+                            parentSheetId: string | null;
+                            createdAt: string;
+                            updatedAt: string;
+                            sealedAt: string | null;
+                        };
+                        /** Format: uuid */
+                        attemptId: string;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    discardL3WritingSheet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+                sheetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expectedVersion: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                        /** Format: uuid */
+                        taskId: string;
+                        /** @enum {string} */
+                        status: "draft" | "sealed" | "discarded";
+                        draftVersion: number;
+                        revisionNo: number | null;
+                        parentSheetId: string | null;
+                        createdAt: string;
+                        updatedAt: string;
+                        sealedAt: string | null;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getL3WritingFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+                sheetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        state: "pending" | "ready";
+                        feedback: {
+                            feedback: {
+                                /** @constant */
+                                schemaVersion: 1;
+                                summary: string;
+                                strengths: string[];
+                                dimensions: {
+                                    task_response: {
+                                        applicable: boolean;
+                                        comment: string;
+                                    };
+                                    organization: {
+                                        applicable: boolean;
+                                        comment: string;
+                                    };
+                                    language: {
+                                        applicable: boolean;
+                                        comment: string;
+                                    };
+                                    expression: {
+                                        applicable: boolean;
+                                        comment: string;
+                                    };
+                                };
+                                priorities: {
+                                    id: string;
+                                    /** @enum {string} */
+                                    dimension: "task_response" | "organization" | "language" | "expression";
+                                    observation: string;
+                                    action: string;
+                                    anchor: {
+                                        start: number;
+                                        end: number;
+                                        quote: string;
+                                    } | null;
+                                }[];
+                            };
+                            version: number;
+                            textSha256: string;
+                            lastEditor: string;
+                            updatedAt: string;
+                        } | null;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    putL3WritingFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+                sheetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expectedVersion: number;
+                    textSha256: string;
+                    /** Format: uuid */
+                    requestId: string;
+                    feedback: {
+                        /** @constant */
+                        schemaVersion: 1;
+                        summary: string;
+                        strengths: string[];
+                        dimensions: {
+                            task_response: {
+                                applicable: boolean;
+                                comment: string;
+                            };
+                            organization: {
+                                applicable: boolean;
+                                comment: string;
+                            };
+                            language: {
+                                applicable: boolean;
+                                comment: string;
+                            };
+                            expression: {
+                                applicable: boolean;
+                                comment: string;
+                            };
+                        };
+                        priorities: {
+                            id: string;
+                            /** @enum {string} */
+                            dimension: "task_response" | "organization" | "language" | "expression";
+                            observation: string;
+                            action: string;
+                            anchor: {
+                                start: number;
+                                end: number;
+                                quote: string;
+                            } | null;
+                        }[];
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        feedback: {
+                            /** @constant */
+                            schemaVersion: 1;
+                            summary: string;
+                            strengths: string[];
+                            dimensions: {
+                                task_response: {
+                                    applicable: boolean;
+                                    comment: string;
+                                };
+                                organization: {
+                                    applicable: boolean;
+                                    comment: string;
+                                };
+                                language: {
+                                    applicable: boolean;
+                                    comment: string;
+                                };
+                                expression: {
+                                    applicable: boolean;
+                                    comment: string;
+                                };
+                            };
+                            priorities: {
+                                id: string;
+                                /** @enum {string} */
+                                dimension: "task_response" | "organization" | "language" | "expression";
+                                observation: string;
+                                action: string;
+                                anchor: {
+                                    start: number;
+                                    end: number;
+                                    quote: string;
+                                } | null;
+                            }[];
+                        };
+                        version: number;
+                        textSha256: string;
+                        lastEditor: string;
+                        updatedAt: string;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getL3WritingFeedbackContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+                sheetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        taskId: string;
+                        /** Format: uuid */
+                        sheetId: string;
+                        revisionNo: number;
+                        /** @enum {string} */
+                        kind: "whole" | "paragraph" | "free";
+                        /** @enum {string} */
+                        direction: "通用" | "考研" | "雅思";
+                        prompt: string;
+                        text: string;
+                        textSha256: string;
+                        wordCount: number;
+                        feedbackVersion: number;
+                        feedbackSchemaVersion: number;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    exportL3WritingSheet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+                sheetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    clearL3WritingSheetContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskId: string;
+                sheetId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                        /** Format: uuid */
+                        taskId: string;
+                        /** @enum {string} */
+                        status: "draft" | "sealed" | "discarded";
+                        draftVersion: number;
+                        revisionNo: number | null;
+                        parentSheetId: string | null;
+                        createdAt: string;
+                        updatedAt: string;
+                        sealedAt: string | null;
+                    };
+                };
             };
             /** @description Invalid request */
             400: {

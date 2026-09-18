@@ -105,6 +105,14 @@ export class L3GradingService {
     return this.withActor(userId, async (repos) => {
       const sheet = await repos.l3Sheets.getSheet(userId, sheetId);
       if (!sheet) throw new NotFoundError("L3Sheet", sheetId);
+      // W5（ADR《writing-workspace》§5）：writing 稿的评阅走作文 feedback-context
+      // （作文 feedback 是唯一质量反馈源）——generic 入口一律 409。
+      if (sheet.scope === "writing") {
+        throw new ConflictError("writing sheets use the writing feedback endpoints", undefined, {
+          code: "WRITING_ENDPOINT_REQUIRED",
+          sheetId,
+        });
+      }
       this.assertSealed(sheet, "grading-context");
 
       const scoped = await resolveSheetScopedQuestions(repos, userId, sheet);
@@ -174,6 +182,13 @@ export class L3GradingService {
     return this.withActor(userId, async (repos) => {
       const sheet = await repos.l3Sheets.getSheet(userId, sheetId);
       if (!sheet) throw new NotFoundError("L3Sheet", sheetId);
+      // W5：writing 稿解析模式读面走作文 feedback（generic 409）。
+      if (sheet.scope === "writing") {
+        throw new ConflictError("writing sheets use the writing feedback endpoints", undefined, {
+          code: "WRITING_ENDPOINT_REQUIRED",
+          sheetId,
+        });
+      }
       this.assertSealed(sheet, "grading results");
       return { sheet, results: await repos.l3Grading.listBySheet(userId, sheetId) };
     });
@@ -189,6 +204,13 @@ export class L3GradingService {
     return this.withActor(input.userId, async (repos) => {
       const sheet = await repos.l3Sheets.getSheet(input.userId, input.sheetId);
       if (!sheet) throw new NotFoundError("L3Sheet", input.sheetId);
+      // W5：writing 稿评卷写面走作文 feedback PUT（防两套反馈真源）。
+      if (sheet.scope === "writing") {
+        throw new ConflictError("writing sheets use the writing feedback endpoints", undefined, {
+          code: "WRITING_ENDPOINT_REQUIRED",
+          sheetId: input.sheetId,
+        });
+      }
       this.assertSealed(sheet, "grading");
 
       // ① questionId 越集校验（题纸作用域题目集）。

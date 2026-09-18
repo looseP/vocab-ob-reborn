@@ -158,9 +158,19 @@ export class L3PaperRepository extends BaseRepository implements IL3PaperReposit
     return rows.map(mapQuestionRow);
   }
 
+  /**
+   * 内部写作题排除判定（双条件）：file_key 以 'writing:' 前缀 **且** 存在关联的
+   * l3_writing_tasks 行。用于 practice-files 聚合排除「作文子空间自建题」——
+   * 既有导入题（含 short_essay/long_essay）无此前缀 + 无关联写作任务，不受影响。
+   * SQL 层实现，不依赖任何用户可输入字符串判断。
+   */
+  private isInternalWritingQuestionClause(): string {
+    return "(q.file_key LIKE 'writing:%' AND EXISTS (SELECT 1 FROM l3_writing_tasks wt WHERE wt.question_id = q.id AND wt.user_id = q.user_id))";
+  }
+
   async listPracticeFiles(input: L3PracticeFileLookup): Promise<L3PracticeFilePage> {
     const params: unknown[] = [input.userId];
-    let where = " WHERE q.user_id = $1::uuid AND q.status = 'active'";
+    let where = ` WHERE q.user_id = $1::uuid AND q.status = 'active' AND NOT ${this.isInternalWritingQuestionClause()}`;
     if (input.questionType) {
       params.push(input.questionType);
       where += ` AND q.question_type = $${params.length}`;
@@ -199,6 +209,20 @@ export class L3PaperRepository extends BaseRepository implements IL3PaperReposit
       limit: input.limit,
       offset: input.offset,
     };
+  }
+
+  /**
+   * 删题护栏（作文子空间 V1，W2）：返回引用该 question 的全部当前 owner 写作任务
+   * （id + 标题）。owner 作用域，不泄露任何他人信息。空数组表示该题未被写作任务引用。
+   */
+  async listWritingTaskRefs(userId: string, questionId: string): Promise<Array<{ id: string; title: string }>> {
+    return this.query<{ id: string; title: string }>(
+      `SELECT t.id, t.title
+         FROM l3_writing_tasks t
+        WHERE t.question_id = $1::uuid AND t.user_id = $2::uuid
+        ORDER BY t.created_at ASC, t.id ASC`,
+      [questionId, userId],
+    );
   }
 
   async deleteQuestion(userId: string, questionId: string): Promise<boolean> {

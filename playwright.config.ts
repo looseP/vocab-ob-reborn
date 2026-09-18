@@ -20,6 +20,9 @@ const E2E_WEB_SERVER_ENVIRONMENT = [
   "LOG_LEVEL",
   "DB_LOG_LEVEL",
   "TZ",
+  // 作文子空间 E2E（writing-e2e workflow）：agent 的 feedback-context 读 / feedback 写
+  // 两个开口需要服务端持有该 token 表；未设置时为无 agent 开口（存量 Browser E2E 不受影响）。
+  "AGENT_API_TOKENS",
 ] as const;
 
 export function resolveE2EWebServerEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {

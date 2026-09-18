@@ -78,6 +78,8 @@ import type {
   Json,
 } from "../domain";
 import type { OtherBookL2Signal } from "../domain/upgrade-suggestion";
+import type { IL3WritingRepository } from "./l3-writing.repository";
+import type { IL3WritingFeedbackRepository } from "./l3-writing-feedback.repository";
 
 // ── Word ────────────────────────────────────────────────────────────────
 export interface IWordRepository {
@@ -1512,6 +1514,11 @@ export interface IL3PaperRepository {
     identity: { sourceId?: string | null; fileKey?: string | null; questionType: string },
   ): Promise<L3QuestionRow[]>;
   listPracticeFiles(input: L3PracticeFileLookup): Promise<L3PracticeFilePage>;
+  /**
+   * 删题护栏（作文子空间 V1，W2）：引用该 question 的全部当前 owner 写作任务
+   * （id + 标题）。owner 作用域，不泄露他人信息。空数组 = 未被写作任务引用。
+   */
+  listWritingTaskRefs(userId: string, questionId: string): Promise<Array<{ id: string; title: string }>>;
   deleteQuestion(userId: string, questionId: string): Promise<boolean>;
   /** 拉全部 active 卷的轻量引用（单 owner 数据量小；引用匹配在 service 纯算）。 */
   listActivePaperRefsWithPayload(userId: string): Promise<Array<L3PaperRef & { payload: unknown }>>;
@@ -1678,8 +1685,10 @@ export interface IL3SheetRepository {
   listBySheet(userId: string, sheetId: string): Promise<L3QuestionAttemptRow[]>;
   /** 该题纸 answers 已答键数（未答 = 作用域题数 - 本值）。 */
   countAnsweredBySheet(userId: string, sheetId: string): Promise<number>;
-  /** F-1：题纸档案列表（回看闭环入口；draft/sealed 新→旧，含已评计数与展示标题）。 */
+  /** F-1：题纸档案列表（回看闭环入口；draft/sealed 新→旧，含已评计数与展示标题；仅 file/paper 域）。 */
   listArchive(userId: string, limit: number): Promise<L3SheetArchiveRow[]>;
+  /** W3：写作任务 → question_id 只读查询（作用域解析器 writing 分支用；不触发创建）。 */
+  findWritingTaskQuestionId(userId: string, taskId: string): Promise<string | null>;
 }
 
 // ── 批次三①（0036）：评卷结果（ADR-0035 §1/§3）───────────────────────────
@@ -1726,6 +1735,9 @@ export interface IRepositories {
   l3Sheets: IL3SheetRepository;
   l3Assessments: IL3AssessmentRepository;
   l3Grading: IL3GradingRepository;
+  // 作文子空间 v1（W6 注册）：写作任务/稿次 + 作文反馈（自包含接口定义于各自 repo 文件）。
+  l3Writing: IL3WritingRepository;
+  l3Feedback: IL3WritingFeedbackRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }

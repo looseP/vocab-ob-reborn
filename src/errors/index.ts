@@ -92,6 +92,18 @@ export class DbConnectionError extends AppError {
 }
 
 /**
+ * Internal data-consistency violation (500) — a server-side invariant is broken
+ * (e.g. a sealed writing sheet without a revision number / question record /
+ * well-formed attempt body). Distinct from a client-validation failure: the
+ * request is not the problem, the persisted data is. Never fabricate a valid
+ * surface (empty prompt / revisionNo 0) on top of inconsistent rows.
+ */
+export class InternalConsistencyError extends AppError {
+  readonly httpStatus = 500;
+  readonly code = ERROR_CODES.INTERNAL;
+}
+
+/**
  * Map any thrown error to an HTTP response shape.
  * Route layer uses this to avoid per-route error handling.
  */

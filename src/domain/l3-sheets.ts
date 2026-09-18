@@ -2,10 +2,15 @@
  * 题纸（l3_submissions）与作答历史（l3_question_attempts）的 domain 契约
  * （批次二，ADR-0034 §1/§2/§5）——纯常量 + zod 纯函数，零 IO、零出向。
  *
- * 题纸 = 两个 venue（file/paper）的统一作答容器：scope_key 单列非空字符串
- * （'file:<source_id>:<question_type>' / 'paper:<paper_id>'）规避组合列在 NULL
- * 时唯一索引不去重的陷阱；状态机 draft→sealed|discarded 由 service 在条件
- * UPDATE 内收口（定格后 PATCH 409）。
+ * 题纸 = 多个 venue（file/paper/writing）的统一容器：scope_key 单列非空字符串
+ * （'file:<source_id>:<question_type>' / 'paper:<paper_id>' / 'writing:<task_id>'）
+ * 规避组合列在 NULL 时唯一索引不去重的陷阱；状态机 draft→sealed|discarded 由
+ * service 在条件 UPDATE 内收口（定格后 PATCH 409）。
+ *
+ * 作文扩展（ADR《writing-workspace》§2，W1）：SHEET_SCOPES 为**存储**枚举（含
+ * writing，供响应契约/行类型）；SHEET_INTERACTIVE_SCOPES 为**交互开纸**枚举
+ * （file/paper）——旧 open 输入不因存储扩展而接受 writing（写作稿只由 W3 专用
+ * POST 创建）。
  *
  * 定格三档（设计卡 §5）：full=完整记录（物化 attempts + 保留 sealed 题纸）；
  * incremental/summary=弃题纸（discarded）。answers 仅 draft 期有效——定格物化后
@@ -14,8 +19,16 @@
 import { z } from "zod";
 import { L3_QUESTION_TYPES } from "./l3-question-types";
 
-export const SHEET_SCOPES = ["file", "paper"] as const;
+/** 存储 scope/venue 枚举（含 writing；响应契约与行类型的唯一真源）。 */
+export const SHEET_SCOPES = ["file", "paper", "writing"] as const;
 export type SheetScope = (typeof SHEET_SCOPES)[number];
+
+/**
+ * 交互开纸 scope 枚举（file/paper）：通用 open / 通用落卷只在此域；
+ * writing 稿的创建走作文专用 POST（不许经通用开纸进入）。
+ */
+export const SHEET_INTERACTIVE_SCOPES = ["file", "paper"] as const;
+export type SheetInteractiveScope = (typeof SHEET_INTERACTIVE_SCOPES)[number];
 
 export const SHEET_STATUSES = ["draft", "sealed", "discarded"] as const;
 export type SheetStatus = (typeof SHEET_STATUSES)[number];
@@ -38,15 +51,18 @@ export function sheetStatusAfterSeal(mode: SealMode): Extract<SheetStatus, "seal
 
 /**
  * scope_key 构造收口（服务端唯一构造点）：
- *   file  → 'file:<source_id>:<question_type>'
- *   paper → 'paper:<paper_id>'
+ *   file    → 'file:<source_id>:<question_type>'
+ *   paper   → 'paper:<paper_id>'
+ *   writing → 'writing:<task_id>'
  */
 export function buildSheetScopeKey(
   input:
     | { scope: "file"; sourceId: string; questionType: string }
-    | { scope: "paper"; paperId: string },
+    | { scope: "paper"; paperId: string }
+    | { scope: "writing"; taskId: string },
 ): string {
   if (input.scope === "file") return `file:${input.sourceId}:${input.questionType}`;
+  if (input.scope === "writing") return `writing:${input.taskId}`;
   return `paper:${input.paperId}`;
 }
 
@@ -80,9 +96,10 @@ export function countUnansweredQuestions(
   return questionIds.filter((id) => !hasAnswerContent(answers[id])).length;
 }
 
-/** 开纸输入：file=sourceId+questionType；paper=paperId；两 scope 字段互斥。 */
+/** 开纸输入：file=sourceId+questionType；paper=paperId；两 scope 字段互斥。
+ *  scope 用交互枚举（file/paper）——writing 不走通用开纸（ADR《writing-workspace》§7）。 */
 export const sheetOpenInputSchema = z.object({
-  scope: z.enum(SHEET_SCOPES),
+  scope: z.enum(SHEET_INTERACTIVE_SCOPES),
   sourceId: z.string().uuid().optional(),
   questionType: z.enum(L3_QUESTION_TYPES).optional(),
   paperId: z.string().uuid().optional(),
@@ -304,10 +321,11 @@ export type SheetSealInput = z.infer<typeof sheetSealInputSchema>;
 /**
  * attempt 契约（存储与交互解耦）：answer 为题型无关 JSON；当场自评快照形状宽松
  * （题类型各自定义键，服务端只做 JSON 可序列化收口）。
+ * venue 用交互枚举（file/paper）——writing attempt 由 W3 专用事务物化。
  */
 export const attemptCreateSchema = z.object({
   questionId: z.string().uuid(),
-  venue: z.enum(SHEET_SCOPES),
+  venue: z.enum(SHEET_INTERACTIVE_SCOPES),
   answer: z.json(),
   selfAssessment: z.record(z.string(), z.json()).nullable().optional(),
 });

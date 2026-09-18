@@ -35,6 +35,11 @@ interface SubmissionDbRow {
   source_id: string | null;
   question_type: L3QuestionType | null;
   paper_id: string | null;
+  /** 作文四元数据（W1）：writing 行 task 必填；其余行前三者 NULL。 */
+  writing_task_id: string | null;
+  parent_sheet_id: string | null;
+  revision_no: number | null;
+  draft_version: number;
   status: L3SubmissionRow["status"];
   answers: unknown;
   seal_mode: SealMode | null;
@@ -102,10 +107,13 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
     sheetId: string,
     answers: Record<string, unknown>,
   ): Promise<L3SubmissionRow | null> {
+    // W3（ADR《writing-workspace》§4）：通用 PATCH 只服务 file/paper 域——writing 稿
+    // 必须走专用 saveDraft（CAS + 专用保存契约），通用写面不得成为旁路。
     const row = await this.queryOne<SubmissionDbRow>(
       `UPDATE l3_submissions
           SET answers = answers || $3::jsonb, updated_at = now()
         WHERE user_id = $1::uuid AND id = $2::uuid AND status = 'draft'
+          AND scope IN ('file', 'paper')
         RETURNING *`,
       [userId, sheetId, JSON.stringify(answers)],
     );
@@ -179,10 +187,14 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
   }
 
   async softDeleteAttempt(userId: string, attemptId: string): Promise<boolean> {
+    // W3（旁路封堵）：通用删历史只服务 file/paper——writing attempt 的删除必须走
+    // 专用流程（同事务清理 feedback，W9）；此处过滤后 writing attempt 表现为
+    // 「不可经通用面删除」（返回 false → 上层 404 语义）。
     const row = await this.queryOne<{ id: string }>(
       `UPDATE l3_question_attempts
           SET status = 'deleted', deleted_at = now()
         WHERE user_id = $1::uuid AND id = $2::uuid AND status = 'active'
+          AND venue <> 'writing'
         RETURNING id`,
       [userId, attemptId],
     );
@@ -236,10 +248,23 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
          LEFT JOIN l3_sources src ON src.id = s.source_id
          LEFT JOIN l3_papers p ON p.id = s.paper_id
         WHERE s.user_id = $1::uuid AND s.status IN ('draft', 'sealed')
+          AND s.scope IN ('file', 'paper')
         ORDER BY s.created_at DESC, s.id DESC
         LIMIT $2`,
       [userId, limit],
     );
     return rows.map((row) => ({ ...row, graded_count: Number(row.graded_count) }));
+  }
+
+  /**
+   * W3：写作任务 → question_id 只读查询（仅供作用域解析器 writing 分支；
+   * 不触发任何创建；W6 注册 l3Writing 后可迁至写作 repo）。
+   */
+  async findWritingTaskQuestionId(userId: string, taskId: string): Promise<string | null> {
+    const row = await this.queryOne<{ question_id: string }>(
+      `SELECT question_id FROM l3_writing_tasks WHERE id = $1::uuid AND user_id = $2::uuid`,
+      [taskId, userId],
+    );
+    return row?.question_id ?? null;
   }
 }

@@ -37,6 +37,10 @@ function sheetRow(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRow {
     source_id: SOURCE,
     question_type: "reading_choice",
     paper_id: null,
+    writing_task_id: null,
+    parent_sheet_id: null,
+    revision_no: null,
+    draft_version: 0,
     status: "sealed",
     answers: {},
     seal_mode: "full",
@@ -422,5 +426,29 @@ describe("L3GradingService.confirmAnnotation", () => {
       },
     });
     await expect(service.confirmAnnotation(USER, A1)).rejects.toBeInstanceOf(ConflictError);
+  });
+});
+
+describe("L3GradingService 对 writing 稿的 generic 封堵（W5 防两套反馈真源）", () => {
+  const writingSheet = (): L3SubmissionRow => sheetRow({
+    scope: "writing",
+    scope_key: "writing:00000000-0000-4000-8000-000000000701",
+    source_id: null,
+    question_type: null,
+    writing_task_id: "00000000-0000-4000-8000-000000000701",
+  });
+
+  it("context / results / submit 三入口对 writing 稿一律 409 WRITING_ENDPOINT_REQUIRED", async () => {
+    const service = makeService({ sheets: { getSheet: vi.fn(async () => writingSheet()) } });
+    await expect(service.getGradingContext(USER, SHEET))
+      .rejects.toMatchObject({ httpStatus: 409, meta: { code: "WRITING_ENDPOINT_REQUIRED" } });
+    await expect(service.getGradingResults(USER, SHEET))
+      .rejects.toMatchObject({ httpStatus: 409, meta: { code: "WRITING_ENDPOINT_REQUIRED" } });
+    await expect(service.submitGrading({
+      userId: USER,
+      sheetId: SHEET,
+      gradedBy: "agent-a",
+      results: [{ questionId: Q1, verdict: "correct" }],
+    })).rejects.toMatchObject({ httpStatus: 409, meta: { code: "WRITING_ENDPOINT_REQUIRED" } });
   });
 });

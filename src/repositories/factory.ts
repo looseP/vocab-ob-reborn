@@ -31,6 +31,8 @@ import { L3AnnotationRepository } from "./l3-annotations.repository";
 import { L3SheetRepository } from "./l3-sheets.repository";
 import { L3AssessmentRepository } from "./l3-assessments.repository";
 import { L3GradingRepository } from "./l3-grading.repository";
+import { L3WritingRepository } from "./l3-writing.repository";
+import { L3WritingFeedbackRepository } from "./l3-writing-feedback.repository";
 import { OutboxRepository } from "./outbox.repository";
 
 export function createRepositories(tx?: PoolClient): IRepositories {
@@ -56,6 +58,8 @@ export function createRepositories(tx?: PoolClient): IRepositories {
     l3Sheets: new L3SheetRepository(tx),
     l3Assessments: new L3AssessmentRepository(tx),
     l3Grading: new L3GradingRepository(tx),
+    l3Writing: new L3WritingRepository(tx),
+    l3Feedback: new L3WritingFeedbackRepository(tx),
     llmUsage: new LlmUsageRepository(tx),
     outbox: new OutboxRepository(tx),
   };

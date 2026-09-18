@@ -448,6 +448,10 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.l3_question_assessments": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       // 0036（批次三①）：评卷结果 upsert（建/覆写/读三权）+ DELETE 预留（四权惯例）。
       "public.l3_grading_results": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      // 0038（作文 W1）：写作任务（建/改名/归档/恢复 + 任务锁；无物理删路径，不授 DELETE）。
+      "public.l3_writing_tasks": ["SELECT", "INSERT", "UPDATE"],
+      // 0038（作文 W1）：作文反馈（upsert 三权 + 正文清理删反馈行需 DELETE）。
+      "public.l3_writing_feedback": ["SELECT", "INSERT", "UPDATE", "DELETE"],
     }).map(([relation, privileges]) => [relation, new Set(privileges)]))],
     ["vocab_worker", new Map(Object.entries({
       "public.outbox_events": ["SELECT", "UPDATE"],

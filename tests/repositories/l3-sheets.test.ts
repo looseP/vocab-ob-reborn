@@ -18,6 +18,10 @@ function submission(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRow {
     source_id: SOURCE,
     question_type: "reading_choice",
     paper_id: null,
+    writing_task_id: null,
+    parent_sheet_id: null,
+    revision_no: null,
+    draft_version: 0,
     status: "draft",
     answers: {},
     seal_mode: null,
@@ -239,6 +243,14 @@ describe("L3SheetRepository.softDeleteAttempt", () => {
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
     await expect(repo.softDeleteAttempt(USER, "00000000-0000-4000-8000-000000000501")).resolves.toBe(false);
   });
+
+  it("excludes writing attempts at the SQL layer（写作正文清理只走专用事务，含 feedback 同事务删除）", async () => {
+    const repo = new L3SheetRepository();
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await expect(repo.softDeleteAttempt(USER, "00000000-0000-4000-8000-000000000502")).resolves.toBe(false);
+    const [sql] = (repo as any).queryOne.mock.calls[0];
+    expect(sql).toContain("venue <> 'writing'");
+  });
 });
 
 describe("L3SheetRepository.listBySheet", () => {
@@ -341,5 +353,21 @@ describe("L3SheetRepository.listArchive（F-1 题纸档案）", () => {
     const rows = await repo.listArchive(USER, 50);
     expect(rows[0]!.graded_count).toBe(0);
     expect(rows[0]!.venue_title).toBeNull();
+  });
+});
+
+describe("L3SheetRepository.findWritingTaskQuestionId（W3 作用域解析只读助手）", () => {
+  it("只读解析写作任务的 question_id（无锁、owner 限定）；空行 null", async () => {
+    const repo = new L3SheetRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ question_id: "q-1" });
+    expect(await repo.findWritingTaskQuestionId(USER, "00000000-0000-4000-8000-000000000601")).toBe("q-1");
+    const [sql, params] = spy.mock.calls[0]!;
+    expect(sql).toContain("FROM l3_writing_tasks WHERE id = $1::uuid AND user_id = $2::uuid");
+    expect(sql).not.toContain("FOR UPDATE");
+    expect(params).toEqual(["00000000-0000-4000-8000-000000000601", USER]);
+
+    spy.mockResolvedValue(null);
+    expect(await repo.findWritingTaskQuestionId(USER, "00000000-0000-4000-8000-000000000601")).toBeNull();
   });
 });

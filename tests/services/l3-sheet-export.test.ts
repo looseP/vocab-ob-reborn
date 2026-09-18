@@ -42,6 +42,10 @@ function submissionRow(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRo
     source_id: SOURCE,
     question_type: "reading_choice",
     paper_id: null,
+    writing_task_id: null,
+    parent_sheet_id: null,
+    revision_no: null,
+    draft_version: 0,
     status: "sealed",
     answers: {},
     seal_mode: "full",
@@ -589,6 +593,22 @@ describe("L3SheetExportService.exportSheet（v2 三状态分流）", () => {
     const rejected = await service.exportSheet(USER, SHEET).catch((error: unknown) => error);
     expect(rejected).toBeInstanceOf(ConflictError);
     expect((rejected as ConflictError).meta).toMatchObject({ status: "discarded" });
+  });
+
+  it("writing 稿 → 409 WRITING_ENDPOINT_REQUIRED（不得输出缺作文元数据的旧格式）", async () => {
+    const service = makeService(makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({
+        scope: "writing",
+        scope_key: "writing:00000000-0000-4000-8000-000000000701",
+        source_id: null,
+        question_type: null,
+        paper_id: null,
+        writing_task_id: "00000000-0000-4000-8000-000000000701",
+      })),
+    }));
+    const rejected = await service.exportSheet(USER, SHEET).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(ConflictError);
+    expect((rejected as ConflictError).meta).toMatchObject({ code: "WRITING_ENDPOINT_REQUIRED" });
   });
 
   it("draft 快照：默认不含作答（防自我剧透）但痕迹可见；显式 withAnswers=true 含答案", async () => {

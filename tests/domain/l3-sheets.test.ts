@@ -15,6 +15,7 @@ import {
   pruneSheetAnswer,
   removeSheetAnswerMark,
   SHEET_ANSWER_MARK_SCOPES,
+  SHEET_INTERACTIVE_SCOPES,
   SHEET_SCOPES,
   SHEET_STATUSES,
   SEAL_MODES,
@@ -32,10 +33,17 @@ const PAPER_ID = "00000000-0000-4000-8000-000000000302";
 const QUESTION_ID = "00000000-0000-4000-8000-000000000303";
 
 describe("sheet taxonomy constants", () => {
-  it("exposes the three sheet statuses and two scopes", () => {
+  it("exposes the three sheet statuses and the stored scopes（W1：writing 入存储枚举）", () => {
     expect([...SHEET_STATUSES]).toEqual(["draft", "sealed", "discarded"]);
-    expect([...SHEET_SCOPES]).toEqual(["file", "paper"]);
+    expect([...SHEET_SCOPES]).toEqual(["file", "paper", "writing"]);
+    expect([...SHEET_INTERACTIVE_SCOPES]).toEqual(["file", "paper"]);
     expect([...SEAL_MODES]).toEqual(["full", "incremental", "summary"]);
+  });
+
+  it("通用开纸输入不接受 writing（写作稿只由作文专用 POST 创建）", () => {
+    expect(sheetOpenInputSchema.safeParse({ scope: "writing", paperId: PAPER_ID }).success).toBe(false);
+    // 交互域仍正常。
+    expect(sheetOpenInputSchema.safeParse({ scope: "paper", paperId: PAPER_ID }).success).toBe(true);
   });
 });
 
@@ -66,6 +74,11 @@ describe("buildSheetScopeKey", () => {
 
   it("builds the paper form as paper:<paper_id>", () => {
     expect(buildSheetScopeKey({ scope: "paper", paperId: PAPER_ID })).toBe(`paper:${PAPER_ID}`);
+  });
+
+  it("builds the writing form as writing:<task_id>", () => {
+    const taskId = "00000000-0000-4000-8000-000000000304";
+    expect(buildSheetScopeKey({ scope: "writing", taskId })).toBe(`writing:${taskId}`);
   });
 });
 

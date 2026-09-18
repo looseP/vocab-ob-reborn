@@ -1320,11 +1320,47 @@ export const l3Papers = pgTable("l3_papers", {
 	check("l3_papers_status_check", sql`status = ANY (ARRAY['draft'::text, 'active'::text, 'archived'::text])`),
 ]);
 
-// 批次二（ADR-0034 §1）：题纸 = 两个 venue（file/paper）的统一作答容器。
-// scope_key 单列非空字符串（'file:<source_id>:<question_type>' / 'paper:<paper_id>'）
+// 作文子空间（W1，ADR《writing-workspace》§1）：写作任务——**题面引用式**（question 为
+// 唯一题面真源，任务不复制题干快照；改题意 = 新建任务）。create_request_id 幂等 +
+// create_input_hash（规范化输入 SHA256，不随 title 变化）防「同请求不同输入」；
+// 任务只归档不硬删；question 删除被 RESTRICT 引用保护（可理解的 409 blocker 由
+// service 收口，不泄露其他 owner 信息）。
+export const l3WritingTasks = pgTable("l3_writing_tasks", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	questionId: uuid("question_id").notNull(),
+	title: text("title").notNull(),
+	kind: text("kind").notNull(),
+	direction: text("direction").notNull(),
+	status: text("status").default('active').notNull(),
+	createRequestId: uuid("create_request_id").notNull(),
+	createInputHash: text("create_input_hash").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_writing_tasks_user_updated").on(table.userId, table.updatedAt),
+	unique("l3_writing_tasks_id_user_id_unique").on(table.id, table.userId),
+	unique("l3_writing_tasks_user_request_unique").on(table.userId, table.createRequestId),
+	foreignKey({
+			columns: [table.questionId, table.userId],
+			foreignColumns: [l3Questions.id, l3Questions.userId],
+			name: "l3_writing_tasks_question_owner_fk"
+		}).onDelete("restrict"),
+	pgPolicy("l3_writing_tasks_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_writing_tasks_kind_check", sql`kind = ANY (ARRAY['whole'::text, 'paragraph'::text, 'free'::text])`),
+	check("l3_writing_tasks_direction_check", sql`direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
+	check("l3_writing_tasks_status_check", sql`status = ANY (ARRAY['active'::text, 'archived'::text])`),
+	check("l3_writing_tasks_title_check", sql`char_length(title) BETWEEN 1 AND 120`),
+]);
+
+// 批次二（ADR-0034 §1）＋作文扩展（W1，ADR《writing-workspace》§2）：题纸 =
+// 三个 venue（file/paper/writing）的统一容器。scope_key 单列非空字符串
+// （'file:<source_id>:<question_type>' / 'paper:<paper_id>' / 'writing:<task_id>'）
 // 规避组合列在 NULL 时唯一索引不去重的陷阱；部分唯一索引保证一作用域至多一张
 // 在写（draft）题纸。answers 仅 draft 期有效——定格（seal）物化 attempts 后清空，
-// attempts 是唯一作答真源，不冻第二份副本（双真相拆解）。
+// attempts 是唯一作答真源，不冻第二份副本（双真相拆解）。writing 行带
+// writing_task_id/parent_sheet_id/revision_no/draft_version 四元数据（非 writing 行
+// 前三者全 NULL；revision_no 仅 sealed writing >0）。
 export const l3Submissions = pgTable("l3_submissions", {
 	id: uuid("id").defaultRandom().primaryKey().notNull(),
 	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
@@ -1333,6 +1369,14 @@ export const l3Submissions = pgTable("l3_submissions", {
 	sourceId: uuid("source_id"),
 	questionType: text("question_type"),
 	paperId: uuid("paper_id"),
+	// 作文四元数据（W1）：writing 行必填 writing_task_id；parent_sheet_id 为第二稿
+	// 显式父引用（父稿同 task 且 sealed 由事务内检查）；revision_no 仅 sealed
+	// writing >0（task 行锁下 max+1 分配，discard 不占号）；draft_version 为
+	// CAS 版本（普通题纸恒 0）。
+	writingTaskId: uuid("writing_task_id"),
+	parentSheetId: uuid("parent_sheet_id"),
+	revisionNo: integer("revision_no"),
+	draftVersion: integer("draft_version").default(0).notNull(),
 	// draft（防抖自动保存）→ sealed（定格，PATCH 409）| discarded（弃，留墓碑）。
 	status: text("status").default('draft').notNull(),
 	answers: jsonb("answers").default({}).notNull(),
@@ -1346,6 +1390,7 @@ export const l3Submissions = pgTable("l3_submissions", {
 	index("idx_l3_submissions_user_status").on(table.userId, table.status),
 	unique("l3_submissions_id_user_id_unique").on(table.id, table.userId),
 	uniqueIndex("l3_submissions_user_scope_key_draft_unique").on(table.userId, table.scopeKey).where(sql`status = 'draft'`),
+	unique("l3_submissions_writing_revision_unique").on(table.userId, table.writingTaskId, table.revisionNo),
 	foreignKey({
 			columns: [table.sourceId, table.userId],
 			foreignColumns: [l3Sources.id, l3Sources.userId],
@@ -1356,9 +1401,21 @@ export const l3Submissions = pgTable("l3_submissions", {
 			foreignColumns: [l3Papers.id, l3Papers.userId],
 			name: "l3_submissions_paper_owner_fk"
 		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.writingTaskId, table.userId],
+			foreignColumns: [l3WritingTasks.id, l3WritingTasks.userId],
+			name: "l3_submissions_writing_task_owner_fk"
+		}).onDelete("restrict"),
+	foreignKey({
+			columns: [table.parentSheetId, table.userId],
+			foreignColumns: [table.id, table.userId],
+			name: "l3_submissions_parent_sheet_owner_fk"
+		}).onDelete("restrict"),
 	pgPolicy("l3_submissions_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
-	check("l3_submissions_scope_check", sql`scope = ANY (ARRAY['file'::text, 'paper'::text])`),
-	check("l3_submissions_scope_shape_check", sql`(scope = 'file' AND source_id IS NOT NULL AND question_type IS NOT NULL AND paper_id IS NULL) OR (scope = 'paper' AND paper_id IS NOT NULL AND source_id IS NULL AND question_type IS NULL)`),
+	check("l3_submissions_scope_check", sql`scope = ANY (ARRAY['file'::text, 'paper'::text, 'writing'::text])`),
+	check("l3_submissions_scope_shape_check", sql`(scope = 'file' AND source_id IS NOT NULL AND question_type IS NOT NULL AND paper_id IS NULL) OR (scope = 'paper' AND paper_id IS NOT NULL AND source_id IS NULL AND question_type IS NULL) OR (scope = 'writing' AND source_id IS NULL AND question_type IS NULL AND paper_id IS NULL)`),
+	check("l3_submissions_writing_meta_check", sql`(scope = 'writing' AND writing_task_id IS NOT NULL) OR (scope <> 'writing' AND writing_task_id IS NULL AND parent_sheet_id IS NULL AND revision_no IS NULL)`),
+	check("l3_submissions_writing_revision_check", sql`scope <> 'writing' OR (status = 'sealed' AND revision_no IS NOT NULL AND revision_no > 0) OR (status <> 'sealed' AND revision_no IS NULL)`),
 	check("l3_submissions_status_check", sql`status = ANY (ARRAY['draft'::text, 'sealed'::text, 'discarded'::text])`),
 	check("l3_submissions_seal_mode_check", sql`seal_mode IS NULL OR seal_mode = ANY (ARRAY['full'::text, 'incremental'::text, 'summary'::text])`),
 ]);
@@ -1383,8 +1440,11 @@ export const l3QuestionAttempts = pgTable("l3_question_attempts", {
 }, (table) => [
 	index("idx_l3_question_attempts_user_question_created").on(table.userId, table.questionId, table.createdAt),
 	index("idx_l3_question_attempts_sheet").on(table.sheetId),
+	// 作文（W1）：一个 writing sheet 只物化一个 attempt（只约束 writing venue，
+	// 普通题纸数据不受影响）。
+	uniqueIndex("l3_question_attempts_writing_sheet_unique").on(table.sheetId).where(sql`venue = 'writing'`),
 	pgPolicy("l3_question_attempts_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
-	check("l3_question_attempts_venue_check", sql`venue = ANY (ARRAY['file'::text, 'paper'::text])`),
+	check("l3_question_attempts_venue_check", sql`venue = ANY (ARRAY['file'::text, 'paper'::text, 'writing'::text])`),
 	check("l3_question_attempts_status_check", sql`status = ANY (ARRAY['active'::text, 'deleted'::text])`),
 ]);
 
@@ -1483,5 +1543,36 @@ export const l3GradingResults = pgTable("l3_grading_results", {
 	unique("l3_grading_results_sheet_question_unique").on(table.sheetId, table.questionId),
 	pgPolicy("l3_grading_results_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 	check("l3_grading_results_verdict_check", sql`verdict = ANY (ARRAY['correct'::text, 'partial'::text, 'wrong'::text])`),
+]);
+
+// 作文子空间（W1，ADR《writing-workspace》§5）：作文反馈——作文稿的唯一质量反馈源。
+// 一稿一条 latest-wins（UNIQUE(user_id,sheet_id)，expectedVersion 更新，无历史版本）；
+// 绑定精确稿（text_sha256 = SHA256(UTF-8(NORMALIZE_LF(原样正文)))，换稿即失效）；
+// last_editor 服务端按 Principal 认定（不信请求体）。不压 correct/partial/wrong，
+// 与 generic grading 双真源隔离（writing sheet 走专用入口）。
+export const l3WritingFeedback = pgTable("l3_writing_feedback", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	sheetId: uuid("sheet_id").notNull(),
+	textSha256: text("text_sha256").notNull(),
+	schemaVersion: integer("schema_version").default(1).notNull(),
+	feedback: jsonb("feedback").notNull(),
+	version: integer("version").notNull(),
+	requestId: uuid("request_id").notNull(),
+	lastEditor: text("last_editor").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	unique("l3_writing_feedback_user_sheet_unique").on(table.userId, table.sheetId),
+	foreignKey({
+			columns: [table.sheetId, table.userId],
+			foreignColumns: [l3Submissions.id, l3Submissions.userId],
+			name: "l3_writing_feedback_sheet_owner_fk"
+		}).onDelete("cascade"),
+	pgPolicy("l3_writing_feedback_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_writing_feedback_schema_version_check", sql`schema_version = 1`),
+	check("l3_writing_feedback_version_check", sql`version > 0`),
+	check("l3_writing_feedback_text_sha256_check", sql`char_length(text_sha256) = 64`),
+	check("l3_writing_feedback_last_editor_check", sql`char_length(last_editor) BETWEEN 1 AND 64`),
 ]);
 
