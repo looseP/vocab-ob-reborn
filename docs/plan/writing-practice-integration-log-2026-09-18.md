@@ -69,7 +69,7 @@
 - **source 返回参数决策（验收点 2：复用既有 `file=` 契约）**：builder 改为 `file=<fileKey ?? sourceId>` 单参数（不再输出 `source=`）；依据：`L3PapersPage.tsx`（A2 时点 L337-338）FilesTab 的 `file` 参数**本就同时匹配 `source_id` 与 `file_key`**。页面级测试须证明返回打开正确文件与题目（不得只断言 URL 含某字符串）。
 - **关系验证义务（验收点 3：B/C 接线时实际执行）**：`task.questionId = origin.questionId`；question 属于指定文件/试卷；`resumeSheet` 的 scope（paper/source）、题型与来源一致；**同 owner 错误组合必须拒绝恢复且零新增题纸**。
 
-### A2 / I2 · 按题批量只读摘要（完成，`<A2-SHA>`）
+### A2 / I2 · 按题批量只读摘要（完成，`b3c24a6`）
 
 - **端点**：`GET /api/l3/writing/tasks/question-summaries?questionId=…&kind=whole|paragraph|free&direction=通用|考研|雅思`（owner-only 只读；新薄路由 `src/http/routes/l3/writing-summaries.ts`（35 行）先于 `writing-tasks.ts` 挂载；`operations.ts` 注册 `listL3WritingQuestionSummaries`，scope `none`）。
 - **契约（strict）**：query `questionId: uuid[]`（原始 ≤100，去重后再查）；响应 `{ items: [{ questionId, tasks: WritingQuestionTaskSummary[] }] }`——逐题必返条目、无匹配=空数组；`taskId/taskStatus/draftSheetId/latestSubmittedSheetId/latestRevisionNo/revisionCount/feedbackState/contentStatus`（**draft 与最新 sealed 分开；feedbackState/contentStatus 仅指最新已提交稿**；清理后 `unavailable`，不转显旧反馈）；多匹配返回列表**不代挑**。生成物已同步（`docs/api/openapi.json` + `generated/openapi.ts`）。
@@ -87,4 +87,4 @@
 | 仅归档 | `taskStatus=archived` 透传 | 记录选择/归档标识 |
 | 查询失败 | HTTP 非 200 | 客户端 INVALID_RESPONSE/错误态，**不归一空** |
 
-- 提交：`<A2-SHA>`。**未声称用户闭环完成**——闭环在 B/C 接线后验证。
+- 提交：`b3c24a6`。**未声称用户闭环完成**——闭环在 B/C 接线后验证。
