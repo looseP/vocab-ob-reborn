@@ -36,6 +36,7 @@ import type {
   L3QuestionAttemptRow,
   L3GradingResultRow,
   GradingVerdict,
+  L3SheetArchiveRow,
   L3SubmissionRow,
   SealMode,
   SheetScope,
@@ -1593,9 +1594,10 @@ export interface IL3AnnotationRepository {
   /** 批次二：「只留总结」档总结条（无锚点，stage='submitted'）。 */
   insertSummaryAnnotation(input: NewL3SummaryAnnotation): Promise<L3QuestionAnnotationRow>;
   /**
-   * 批次三①（ADR-0035 §3.2）：评卷 review 白名单专用写入——只触 review 列 +
-   * stage 流转（+ updated_at 审计列），note/锚点/标签等原始事实列永不触碰；
-   * 不复用公开 PATCH（「agent 永不写注记内容」的代码级保证）。
+   * 批次三①（ADR-0035 §3.2）：评卷 review 白名单专用写入——只触 review /
+   * review_sheet_id 列 + stage 流转（+ updated_at 审计列），note/锚点/标签等
+   * 原始事实列永不触碰；不复用公开 PATCH（「agent 永不写注记内容」的代码级保证）。
+   * review_sheet_id = 来源题纸（F-1：随覆写刷新，前端据此标注本轮/历史评卷）。
    * 条件：active 且非 draft（draft 未提交不授权）；空转返回 null。
    */
   applyAnnotationReview(
@@ -1603,6 +1605,7 @@ export interface IL3AnnotationRepository {
     id: string,
     review: unknown,
     stage: string,
+    reviewSheetId: string,
   ): Promise<L3QuestionAnnotationRow | null>;
   /** 批次三①（D18）：owner 处置——submitted→confirmed 条件流转；非 submitted 空转 null。 */
   confirmAnnotation(userId: string, id: string): Promise<L3QuestionAnnotationRow | null>;
@@ -1675,6 +1678,8 @@ export interface IL3SheetRepository {
   listBySheet(userId: string, sheetId: string): Promise<L3QuestionAttemptRow[]>;
   /** 该题纸 answers 已答键数（未答 = 作用域题数 - 本值）。 */
   countAnsweredBySheet(userId: string, sheetId: string): Promise<number>;
+  /** F-1：题纸档案列表（回看闭环入口；draft/sealed 新→旧，含已评计数与展示标题）。 */
+  listArchive(userId: string, limit: number): Promise<L3SheetArchiveRow[]>;
 }
 
 // ── 批次三①（0036）：评卷结果（ADR-0035 §1/§3）───────────────────────────

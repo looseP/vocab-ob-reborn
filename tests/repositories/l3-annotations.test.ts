@@ -21,6 +21,7 @@ function annotation(overrides: Partial<L3QuestionAnnotationRow> = {}): L3Questio
     stage: "confirmed",
     sheet_id: null,
     review: null,
+    review_sheet_id: null,
     status: "active",
     created_at: "2026-09-16T00:00:00.000Z",
     updated_at: "2026-09-16T00:00:00.000Z",
@@ -373,6 +374,8 @@ describe("L3AnnotationRepository（v2 §4.7：stage 守卫与撤回）", () => {
     expect(sql).toContain("sheet_id = $3::uuid");
     // 深测 OB-4 处置 a：撤回=评审意见重置（review 与 stage 同步回落，防「旧评语×新内容」错配）。
     expect(sql).toContain("review = NULL");
+    // F-1：来源列随 review 一并清空（来源必须与意见同步存灭）。
+    expect(sql).toContain("review_sheet_id = NULL");
     expect(sql).toContain("stage = 'submitted'");
     expect(sql).toContain("status = 'active'");
     expect(params).toEqual([USER, ANNOTATION, SHEET_B]);
@@ -387,31 +390,35 @@ describe("L3AnnotationRepository（v2 §4.7：stage 守卫与撤回）", () => {
 
 describe("L3AnnotationRepository（批次三①：review 白名单与 owner 确认）", () => {
   const ANNOTATION = "00000000-0000-4000-8000-000000000201";
+  const SHEET = "00000000-0000-4000-8000-000000000401";
   const REVIEW = { verdict: "sound", corrected_tags: ["细节题"], comment: "锚点准确" };
 
-  it("applyAnnotationReview writes only review/stage (plus updated_at) behind the non-draft guard", async () => {
+  it("applyAnnotationReview writes only review/stage/review_sheet_id (plus updated_at) behind the non-draft guard", async () => {
     const repo = new L3AnnotationRepository();
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(
-      annotation({ stage: "confirmed", review: REVIEW }),
+      annotation({ stage: "confirmed", review: REVIEW, review_sheet_id: SHEET }),
     );
-    const row = await repo.applyAnnotationReview(USER, ANNOTATION, REVIEW, "confirmed");
+    const row = await repo.applyAnnotationReview(USER, ANNOTATION, REVIEW, "confirmed", SHEET);
     expect(row?.stage).toBe("confirmed");
+    expect(row?.review_sheet_id).toBe(SHEET);
     const [sql, params] = (repo as any).queryOne.mock.calls[0];
-    // 白名单：SET 只允许 review/stage/updated_at；note/锚点/标签等原始事实列不得出现在 SET 子句。
-    expect(sql).toContain("SET review = $3::jsonb, stage = $4, updated_at = now()");
+    // 白名单：SET 只允许 review / review_sheet_id / stage / updated_at；note/锚点/标签等
+    // 原始事实列不得出现在 SET 子句（sheet_id 须排除 review_sheet_id 的来源列本身）。
+    expect(sql).toContain("SET review = $3::jsonb, stage = $4, review_sheet_id = $5::uuid, updated_at = now()");
     const setClause = sql.slice(sql.indexOf("SET "), sql.indexOf(" WHERE "));
-    for (const forbidden of ["note", "anchor_start", "anchor_end", "excerpt", "entry_tags", "option_tags", "sheet_id"]) {
+    for (const forbidden of ["note", "anchor_start", "anchor_end", "excerpt", "entry_tags", "option_tags"]) {
       expect(setClause).not.toContain(forbidden);
     }
+    expect(setClause).not.toMatch(/(?<!review_)sheet_id/);
     expect(sql).toContain("stage <> 'draft'");
     expect(sql).toContain("status = 'active'");
-    expect(params).toEqual([USER, ANNOTATION, JSON.stringify(REVIEW), "confirmed"]);
+    expect(params).toEqual([USER, ANNOTATION, JSON.stringify(REVIEW), "confirmed", SHEET]);
   });
 
   it("applyAnnotationReview returns null when the guard misses (draft withdrawn or not owned)", async () => {
     const repo = new L3AnnotationRepository();
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
-    await expect(repo.applyAnnotationReview(USER, ANNOTATION, REVIEW, "confirmed")).resolves.toBeNull();
+    await expect(repo.applyAnnotationReview(USER, ANNOTATION, REVIEW, "confirmed", SHEET)).resolves.toBeNull();
   });
 
   it("confirmAnnotation flips submitted→confirmed under the submitted guard", async () => {

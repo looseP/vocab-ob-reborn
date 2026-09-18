@@ -27,6 +27,7 @@ import type {
 } from "../repositories/interfaces";
 import type {
   L3QuestionAttemptRow,
+  L3SheetArchiveRow,
   L3SubmissionRow,
 } from "../domain";
 import {
@@ -237,5 +238,12 @@ export class L3SheetService {
       if (!deleted) throw new NotFoundError("L3QuestionAttempt", attemptId);
       return { deleted: true };
     });
+  }
+
+  /** F-1：题纸档案列表（回看闭环入口；draft/sealed 新→旧，含已评计数与展示标题）。 */
+  async listArchive(userId: string, query: { limit: number }): Promise<{ items: L3SheetArchiveRow[] }> {
+    return this.withActor(userId, async (repos) => ({
+      items: await repos.l3Sheets.listArchive(userId, query.limit),
+    }));
   }
 }

@@ -92,12 +92,15 @@ export function L3Page() {
   // 批次二（ADR-0034）：作答历史 modal 的「去题型空间打开此文」深链
   // /l3?venue=<题型>&file=<文件键> 直达试卷台的题型空间（L3PapersPage 消费参数
   // 自动打开目标文件；同 contextId/sourceId 的 handoff 模式）。
+  // F-1（回看闭环）：?sheet=<id> 回看深链 / ?paper=<id> 卷深链——同模式落到试卷台。
   const deepLinkVenue = searchParams.get("venue");
   const deepLinkFile = searchParams.get("file");
+  const deepLinkSheet = searchParams.get("sheet");
+  const deepLinkPaper = searchParams.get("paper");
   useEffect(() => {
-    if (!deepLinkVenue) return;
+    if (!deepLinkVenue && !deepLinkSheet && !deepLinkPaper) return;
     setSection("papers");
-  }, [deepLinkVenue]);
+  }, [deepLinkVenue, deepLinkSheet, deepLinkPaper]);
 
   const openProposal = (proposalId: string) => {
     setSelectedProposalId(proposalId);
@@ -169,7 +172,15 @@ export function L3Page() {
     word: <L3WordSpacePage client={l3Client} handoff={wordHandoff} staleState={activeReadStale} onReadRefreshed={() => setActiveReadStale(null)} onNavigate={navigateL3} />,
     // T11（ADR-0019）：练习 / 错题库 / 会话 —— 输出闭环的三个用户表面。
     // ADR-0030：试卷台（题型空间文件 + 我的试卷 + 粘贴建卷，V1 owner 入库面）。
-    papers: <L3PapersPage deepLinkVenue={deepLinkVenue} deepLinkFile={deepLinkFile} />,
+    // F-1：题纸档案与回看深链（?sheet= 只读回看；?paper= 卷深链）。
+    papers: (
+      <L3PapersPage
+        deepLinkVenue={deepLinkVenue}
+        deepLinkFile={deepLinkFile}
+        deepLinkSheet={deepLinkSheet}
+        deepLinkPaper={deepLinkPaper}
+      />
+    ),
     practice: <L3PracticePage client={l3Client} onNavigate={navigateL3} />,
     errorBook: <L3ErrorBookPage client={l3Client} onNavigate={navigateL3} />,
     session: <L3SessionPage client={l3Client} onNavigate={navigateL3} />,

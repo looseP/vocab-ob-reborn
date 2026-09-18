@@ -789,6 +789,11 @@ export { assessmentUpsertInputSchema as l3AssessmentUpsertSchema } from "../../d
 /** POST /l3/sheets/:id/grading：评卷提交 body（批次三① 0036，ADR-0035 §3）。 */
 export { gradingSubmitInputSchema as l3GradingSubmitSchema } from "../../domain/l3-grading";
 
+/** GET /l3/sheets：题纸档案列表 query（F-1 回看闭环；owner-only，新→旧）。 */
+export const l3SheetListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
 /** GET /l3/sheets/:id/export?withAnswers=0|1 的 query 契约（v2 §6；文档登记用）。 */
 export const l3SheetExportQuerySchema = z.object({
   withAnswers: z.enum(["0", "1"]).optional(),

@@ -14,6 +14,7 @@ import type {
   Json,
   L3QuestionAttemptRow,
   L3QuestionType,
+  L3SheetArchiveRow,
   L3SubmissionRow,
   SealMode,
   SheetScope,
@@ -206,5 +207,39 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
       [userId, sheetId],
     );
     return row ? Number(row.answered_count) : 0;
+  }
+
+  /**
+   * F-1：题纸档案列表（回看闭环入口）——新→旧，仅 draft/sealed（弃档墓碑不进档案）。
+   * graded_count 由子查询现算（grading_results 无冗余计数列）；venue_title 按域取
+   * 来源/卷标题展示（两外键均 CASCADE，理论上恒有值，保留 null 兜底）。
+   */
+  async listArchive(userId: string, limit: number): Promise<L3SheetArchiveRow[]> {
+    const rows = await this.query<{
+      id: string;
+      scope: SheetScope;
+      source_id: string | null;
+      question_type: L3QuestionType | null;
+      paper_id: string | null;
+      status: L3SubmissionRow["status"];
+      seal_mode: SealMode | null;
+      sealed_at: string | null;
+      created_at: string;
+      graded_count: number;
+      venue_title: string | null;
+    }>(
+      `SELECT s.id, s.scope, s.source_id, s.question_type, s.paper_id, s.status,
+              s.seal_mode, s.sealed_at, s.created_at,
+              (SELECT count(*)::int FROM l3_grading_results g WHERE g.sheet_id = s.id) AS graded_count,
+              COALESCE(src.title, p.title) AS venue_title
+         FROM l3_submissions s
+         LEFT JOIN l3_sources src ON src.id = s.source_id
+         LEFT JOIN l3_papers p ON p.id = s.paper_id
+        WHERE s.user_id = $1::uuid AND s.status IN ('draft', 'sealed')
+        ORDER BY s.created_at DESC, s.id DESC
+        LIMIT $2`,
+      [userId, limit],
+    );
+    return rows.map((row) => ({ ...row, graded_count: Number(row.graded_count) }));
   }
 }

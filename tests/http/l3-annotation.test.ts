@@ -42,6 +42,7 @@ function annotationItem(overrides: Partial<L3QuestionAnnotationRow> = {}): L3Que
     stage: "confirmed",
     sheet_id: null,
     review: null,
+    review_sheet_id: null,
     status: "active",
     created_at: "2026-09-16T00:00:00.000Z",
     updated_at: "2026-09-16T00:00:00.000Z",

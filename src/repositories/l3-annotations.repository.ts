@@ -36,6 +36,7 @@ interface AnnotationDbRow {
   stage: "draft" | "submitted" | "confirmed";
   sheet_id: string | null;
   review: unknown;
+  review_sheet_id: string | null;
   status: "active" | "deleted";
   created_at: string;
   updated_at: string;
@@ -182,14 +183,15 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
   /**
    * 撤回：submitted→draft + 重挂题纸 + **评审意见重置**（深测 OB-4 处置 a，2026-09-18）。
    * review 定义为「对本提交版本的评语」（consumable，无版本、无内容指纹）——撤回按
-   * 「意见随提交一并回退」处理，防「旧评语 × 新内容」错配与误确认升终态。
+   * 「意见随提交一并回退」处理，防「旧评语 × 新内容」错配与误确认升终态；来源列
+   * review_sheet_id 随 review 一并清空（F-1：来源必须与意见同步存灭）。
    * 本方法是可写 review 的专用方法之一（与 applyAnnotationReview 同列，见 ADR-0035 §补记）；
    * 公开注记 PATCH 依旧禁触 review。
    */
   async withdrawAnnotation(userId: string, id: string, sheetId: string): Promise<L3QuestionAnnotationRow | null> {
     const row = await this.queryOne<AnnotationDbRow>(
       `UPDATE l3_question_annotations
-          SET stage = 'draft', sheet_id = $3::uuid, review = NULL, updated_at = now()
+          SET stage = 'draft', sheet_id = $3::uuid, review = NULL, review_sheet_id = NULL, updated_at = now()
         WHERE user_id = $1::uuid AND id = $2::uuid
           AND stage = 'submitted' AND status = 'active'
         RETURNING *`,
@@ -200,24 +202,26 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
 
   /**
    * 批次三①（ADR-0035 §3.2）：评卷 review 白名单专用写入——SET 子句只含
-   * review / stage 两列（+ updated_at 审计列），note / 锚点 / 标签等用户原始
-   * 事实列永不触碰（与公开 PATCH 的隔离是本方法的全部意义）。条件
-   * `stage <> 'draft'`：未提交注记不在评卷授权范围（越集由 service 收口为
-   * 422，此处为并发竞态兜底——撤回发生后写入空转）。
+   * review / stage / review_sheet_id 三列（+ updated_at 审计列），note / 锚点 /
+   * 标签等用户原始事实列永不触碰（与公开 PATCH 的隔离是本方法的全部意义）。
+   * review_sheet_id 为 F-1 评审来源列（本方法独占写入，随覆写刷新——前端据此
+   * 标注「本轮/历史评卷」）。条件 `stage <> 'draft'`：未提交注记不在评卷授权
+   * 范围（越集由 service 收口为 422，此处为并发竞态兜底——撤回发生后写入空转）。
    */
   async applyAnnotationReview(
     userId: string,
     id: string,
     review: unknown,
     stage: string,
+    reviewSheetId: string,
   ): Promise<L3QuestionAnnotationRow | null> {
     const row = await this.queryOne<AnnotationDbRow>(
       `UPDATE l3_question_annotations
-          SET review = $3::jsonb, stage = $4, updated_at = now()
+          SET review = $3::jsonb, stage = $4, review_sheet_id = $5::uuid, updated_at = now()
         WHERE user_id = $1::uuid AND id = $2::uuid
           AND status = 'active' AND stage <> 'draft'
         RETURNING *`,
-      [userId, id, JSON.stringify(review), stage],
+      [userId, id, JSON.stringify(review), stage, reviewSheetId],
     );
     return row ? mapAnnotationRow(row) : null;
   }

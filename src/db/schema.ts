@@ -1409,6 +1409,10 @@ export const l3QuestionAnnotations = pgTable("l3_question_annotations", {
 	stage: text("stage").default('confirmed').notNull(),
 	sheetId: uuid("sheet_id").references(() => l3Submissions.id, { onDelete: "set null" }),
 	review: jsonb("review"),
+	// F-1（2026-09-18）：review 来源列——最近一次评卷写入所属题纸（覆写随之更新；撤回随
+	// review 一并清空）。前端以「当前所看题纸 vs 来源题纸」对比标注「本轮/历史评卷」，
+	// 防止旧轮 review 被读作本轮结果（注记为题目级资产的轮次衰减）。
+	reviewSheetId: uuid("review_sheet_id").references(() => l3Submissions.id, { onDelete: "set null" }),
 	status: text("status").default('active').notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),

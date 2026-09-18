@@ -38,6 +38,7 @@ import { annotationsRoutes } from "./routes/l3/annotations";
 import { annotationsWithdrawRoutes } from "./routes/l3/annotations-withdraw";
 import { sheetsRoutes } from "./routes/l3/sheets";
 import { sheetsExportRoutes } from "./routes/l3/sheets-export";
+import { sheetsArchiveRoutes } from "./routes/l3/sheets-archive";
 import { assessmentsRoutes } from "./routes/l3/assessments";
 import { gradingRoutes } from "./routes/l3/grading";
 import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
@@ -157,6 +158,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3", sheetsRoutes(services));
   // 批次二收官：题纸冻结导出（sheets.ts 受棘轮约束，新端点独立薄路由拆分）。
   app.route("/api/l3", sheetsExportRoutes(services));
+  // F-1 回看闭环：题纸档案列表（同上棘轮约束，独立薄路由；owner-only）。
+  app.route("/api/l3", sheetsArchiveRoutes(services));
   // 批次二增补：评析区（agent 首个可写持久区，Amends ADR-0029；独立薄路由）。
   app.route("/api/l3", assessmentsRoutes(services));
   // 批次三①：评卷执行面（ADR-0035）——agent 读面 grading-context（D8 唯一例外，

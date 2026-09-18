@@ -682,22 +682,25 @@ describe("L3 RLS isolation (integration)", () => {
     expect(before.stage).toBe("submitted");
 
     await inTx(ACTOR_A, async (_repo, tx) => {
-      // 与 L3AnnotationRepository.applyAnnotationReview 同款白名单 SQL（SET 只触 review/stage）。
+      // 与 L3AnnotationRepository.applyAnnotationReview 同款白名单 SQL（SET 只触
+      // review/stage/review_sheet_id——F-1 起来源列纳入白名单）。
       await tx.query(
         `UPDATE l3_question_annotations
-            SET review = $2::jsonb, stage = $3, updated_at = now()
+            SET review = $2::jsonb, stage = $3, review_sheet_id = $5::uuid, updated_at = now()
           WHERE user_id = $1::uuid AND id = $4::uuid
             AND status = 'active' AND stage <> 'draft'`,
-        [ACTOR_A, JSON.stringify({ verdict: "sound", comment: "锚点准确" }), "confirmed", aDraftAnnotationId],
+        [ACTOR_A, JSON.stringify({ verdict: "sound", comment: "锚点准确" }), "confirmed", aDraftAnnotationId, aSheetId],
       );
     });
 
-    const after = await adminPool.query<{ note: string; excerpt: string; entry_tags: unknown; stage: string; review: unknown }>(
-      "SELECT note, excerpt, entry_tags, stage, review FROM l3_question_annotations WHERE id = $1",
+    const after = await adminPool.query<{ note: string; excerpt: string; entry_tags: unknown; stage: string; review: unknown; review_sheet_id: string | null }>(
+      "SELECT note, excerpt, entry_tags, stage, review, review_sheet_id FROM l3_question_annotations WHERE id = $1",
       [aDraftAnnotationId],
     ).then((r) => r.rows[0]!);
     expect(after.stage).toBe("confirmed");
     expect(after.review).toEqual({ verdict: "sound", comment: "锚点准确" });
+    // F-1：来源列随白名单写入落位（前端「本轮/历史评卷」标注数据源）。
+    expect(after.review_sheet_id).toBe(aSheetId);
     // 白名单红线：note / excerpt / entry_tags 一字不动（不可篡改性由 SQL 形态保证）。
     expect(after.note).toBe(before.note);
     expect(after.excerpt).toBe(before.excerpt);
@@ -721,51 +724,54 @@ describe("L3 RLS isolation (integration)", () => {
   });
 
   it("withdraw SQL resets review while re-pinning the sheet（深测 OB-4：撤回=评审意见重置）", async () => {
-    // 自建 submitted + review 注记（独立数据，不依赖前序用例状态）。
+    // 自建 submitted + review（含 F-1 来源列）注记（独立数据，不依赖前序用例状态）。
     const id = randomUUID();
     await inTx(ACTOR_A, async (_repo, tx) => {
       await tx.query(
-        `INSERT INTO l3_question_annotations (id, user_id, question_id, note, stage, sheet_id, review)
-         VALUES ($1, $2, $3, '撤回不改内容', 'submitted', $4, '{"verdict":"questionable","comment":"旧评语"}'::jsonb)`,
+        `INSERT INTO l3_question_annotations (id, user_id, question_id, note, stage, sheet_id, review, review_sheet_id)
+         VALUES ($1, $2, $3, '撤回不改内容', 'submitted', $4, '{"verdict":"questionable","comment":"旧评语"}'::jsonb, $4)`,
         [id, ACTOR_A, aSheetQuestionId, aSheetId],
       );
     });
 
-    // actor B 执行同款撤回 SQL → RLS 空转（行仍 submitted，stage/review 不被劫持）。
+    // actor B 执行同款撤回 SQL → RLS 空转（行仍 submitted，stage/review/来源列不被劫持）。
     await inTx(ACTOR_B, async (_repo, tx) => {
       const hijacked = await tx.query(
         `UPDATE l3_question_annotations
-            SET stage = 'draft', sheet_id = $3::uuid, review = NULL, updated_at = now()
+            SET stage = 'draft', sheet_id = $3::uuid, review = NULL, review_sheet_id = NULL, updated_at = now()
           WHERE user_id = $1::uuid AND id = $2::uuid
             AND stage = 'submitted' AND status = 'active' RETURNING id`,
         [ACTOR_A, id, aSheetId],
       );
       expect(hijacked.rows).toHaveLength(0);
     });
-    const beforeWithdraw = await adminPool.query<{ stage: string; review: unknown }>(
-      "SELECT stage, review FROM l3_question_annotations WHERE id = $1",
+    const beforeWithdraw = await adminPool.query<{ stage: string; review: unknown; review_sheet_id: string | null }>(
+      "SELECT stage, review, review_sheet_id FROM l3_question_annotations WHERE id = $1",
       [id],
     ).then((r) => r.rows[0]!);
     expect(beforeWithdraw.stage).toBe("submitted");
     expect(beforeWithdraw.review).toEqual({ verdict: "questionable", comment: "旧评语" });
+    expect(beforeWithdraw.review_sheet_id).toBe(aSheetId);
 
     // actor A 执行同款撤回 SQL（与 L3AnnotationRepository.withdrawAnnotation 形态一致）：
-    // review 随 stage 一并回落，内容列一字不动。
+    // review 与来源列随 stage 一并回落，内容列一字不动。
     await inTx(ACTOR_A, async (_repo, tx) => {
       await tx.query(
         `UPDATE l3_question_annotations
-            SET stage = 'draft', sheet_id = $3::uuid, review = NULL, updated_at = now()
+            SET stage = 'draft', sheet_id = $3::uuid, review = NULL, review_sheet_id = NULL, updated_at = now()
           WHERE user_id = $1::uuid AND id = $2::uuid
             AND stage = 'submitted' AND status = 'active'`,
         [ACTOR_A, id, aSheetId],
       );
     });
-    const after = await adminPool.query<{ stage: string; review: unknown; note: string }>(
-      "SELECT stage, review, note FROM l3_question_annotations WHERE id = $1",
+    const after = await adminPool.query<{ stage: string; review: unknown; review_sheet_id: string | null; note: string }>(
+      "SELECT stage, review, review_sheet_id, note FROM l3_question_annotations WHERE id = $1",
       [id],
     ).then((r) => r.rows[0]!);
     expect(after.stage).toBe("draft");
     expect(after.review).toBeNull();
+    // F-1：来源列与意见同步存灭（撤回后不得残留来源，否则前端仍按来源标注）。
+    expect(after.review_sheet_id).toBeNull();
     expect(after.note).toBe("撤回不改内容");
   });
 });

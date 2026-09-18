@@ -291,3 +291,55 @@ describe("L3SheetRepository transaction guard", () => {
     })).resolves.toMatchObject({ status: "sealed" });
   });
 });
+
+describe("L3SheetRepository.listArchive（F-1 题纸档案）", () => {
+  it("projects archive rows with graded_count/venue_title and draft+sealed filter, newest first", async () => {
+    const repo = new L3SheetRepository();
+    vi.spyOn(repo as any, "query").mockResolvedValue([{
+      id: SHEET,
+      scope: "file",
+      source_id: SOURCE,
+      question_type: "reading_choice",
+      paper_id: null,
+      status: "sealed",
+      seal_mode: "full",
+      sealed_at: "2026-09-18T00:10:00.000Z",
+      created_at: "2026-09-18T00:00:00.000Z",
+      graded_count: 3,
+      venue_title: "WA 阅读理解文件",
+    }]);
+    const rows = await repo.listArchive(USER, 20);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: SHEET, status: "sealed", graded_count: 3, venue_title: "WA 阅读理解文件",
+    });
+    const [sql, params] = (repo as any).query.mock.calls[0];
+    expect(sql).toContain("FROM l3_submissions s");
+    expect(sql).toContain("LEFT JOIN l3_sources src");
+    expect(sql).toContain("LEFT JOIN l3_papers p");
+    expect(sql).toContain("s.status IN ('draft', 'sealed')");
+    expect(sql).toContain("ORDER BY s.created_at DESC");
+    expect(sql).toContain("LIMIT $2");
+    expect(params).toEqual([USER, 20]);
+  });
+
+  it("coerces driver shapes (string count / null title) without leaking through", async () => {
+    const repo = new L3SheetRepository();
+    vi.spyOn(repo as any, "query").mockResolvedValue([{
+      id: SHEET,
+      scope: "paper",
+      source_id: null,
+      question_type: null,
+      paper_id: "00000000-0000-4000-8000-000000000303",
+      status: "draft",
+      seal_mode: null,
+      sealed_at: null,
+      created_at: "2026-09-18T00:00:00.000Z",
+      graded_count: "0",
+      venue_title: null,
+    }]);
+    const rows = await repo.listArchive(USER, 50);
+    expect(rows[0]!.graded_count).toBe(0);
+    expect(rows[0]!.venue_title).toBeNull();
+  });
+});
