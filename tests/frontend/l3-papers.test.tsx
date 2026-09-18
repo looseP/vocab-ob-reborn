@@ -6,7 +6,7 @@ import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { L3PapersPage } from "@/frontend/components/l3/L3PapersPage";
 
 // 与 l3-bookshelf.test.tsx 同款手动挂载（仓库无 @testing-library/react）。
@@ -14,7 +14,13 @@ import { L3PapersPage } from "@/frontend/components/l3/L3PapersPage";
 vi.mock("@/frontend/api/client", () => ({ apiFetch: vi.fn() }));
 const { addToastMock } = vi.hoisted(() => ({ addToastMock: vi.fn() }));
 vi.mock("@/frontend/components/ui/Toast", () => ({ useToast: () => ({ addToast: addToastMock }) }));
+// I3：fileKey 作文入口经 writingClient（批量摘要 + 显式创建）；页面测试按调用断言。
+vi.mock("@/frontend/api/writingClient", () => ({
+  writingClient: { questionSummaries: vi.fn(), createTask: vi.fn() },
+}));
 import { apiFetch } from "@/frontend/api/client";
+import { writingClient } from "@/frontend/api/writingClient";
+import { parseWritingSearch } from "@/frontend/viewModels/writingNavigation";
 
 const SOURCE_ID = "00000000-0000-4000-8000-000000000002";
 const QUESTION_ID = "00000000-0000-4000-8000-000000000101";
@@ -32,6 +38,15 @@ class IntersectionObserverStub {
 (globalThis as Record<string, unknown>).IntersectionObserver ??= IntersectionObserverStub;
 
 const mountedRoots: Root[] = [];
+
+/** 路由位置探针（I3：断言入口导航目标 URL）。 */
+function LocationProbe() {
+  const location = useLocation();
+  return createElement("div", { "data-testid": "loc" }, `${location.pathname}${location.search}`);
+}
+
+const locText = (): string => screen.getByTestId("loc").textContent ?? "";
+
 async function renderPage(props: Record<string, unknown> = {}): Promise<void> {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -43,7 +58,12 @@ async function renderPage(props: Record<string, unknown> = {}): Promise<void> {
       createElement(
         MemoryRouter,
         { initialEntries: ["/l3"] },
-        createElement(L3PapersPage, props as never) as ReactElement,
+        createElement(
+          "div",
+          null,
+          createElement(LocationProbe),
+          createElement(L3PapersPage, props as never),
+        ),
       ) as ReactElement,
     );
     await Promise.resolve();
@@ -61,6 +81,8 @@ afterEach(() => {
 beforeEach(() => {
   (apiFetch as ReturnType<typeof vi.fn>).mockReset();
   addToastMock.mockReset();
+  (writingClient.questionSummaries as ReturnType<typeof vi.fn>).mockReset();
+  (writingClient.createTask as ReturnType<typeof vi.fn>).mockReset();
 });
 
 // ── 夹具与分派式 mock ───────────────────────────────────────────────────────
@@ -269,5 +291,133 @@ describe("L3PapersPage 深链（批次二）", () => {
     const openSheetCall = apiFetchMock.mock.calls.find(([path, init]) =>
       String(path) === "/l3/sheets" && (init as RequestInit | undefined)?.method === "POST");
     expect(JSON.parse((openSheetCall![1] as RequestInit).body as string)).toMatchObject({ scope: "file" });
+  });
+});
+
+// ── I3（B 批）：fileKey 作文入口——题组级一次批量摘要、三态按钮、显式创建与返回锚点 ──
+
+describe("L3PapersPage fileKey 作文入口（I3）", () => {
+  const Q1 = "00000000-0000-4000-8000-000000000101";
+  const Q2 = "00000000-0000-4000-8000-000000000102";
+  const Q3 = "00000000-0000-4000-8000-000000000103";
+  const TASK_Q2 = "00000000-0000-4000-8000-000000000711";
+  const SHEET_Q2 = "00000000-0000-4000-8000-000000000811";
+  const SEALED_Q3 = "00000000-0000-4000-8000-000000000813";
+  const TASK_NEW = "00000000-0000-4000-8000-000000000721";
+  const SHEET_NEW = "00000000-0000-4000-8000-000000000821";
+
+  const essayFile = () => fileItem({
+    question_type: "short_essay",
+    source_id: null,
+    file_key: "writing-short-1",
+    title: "小作文题组 A",
+    direction: "考研",
+    question_count: 3,
+  });
+  const essayDetail = (ids: string[]) => ({
+    question_type: "short_essay",
+    source: null,
+    source_content: null,
+    file_key: "writing-short-1",
+    questions: ids.map((id, index) => ({
+      id, ordinal: index, stem: `作文题 ${index + 1}`, options: [],
+      answer: { sample: "样文" }, explanation: null, evidence: [],
+    })),
+  });
+  const taskSummary = (overrides: Record<string, unknown> = {}) => ({
+    taskId: TASK_Q2, taskStatus: "active",
+    draftSheetId: null, latestSubmittedSheetId: null,
+    latestRevisionNo: null, revisionCount: 0,
+    feedbackState: null, contentStatus: null,
+    ...overrides,
+  });
+  const summariesMock = () => writingClient.questionSummaries as ReturnType<typeof vi.fn>;
+
+  it("题组级一次批量摘要；尚未开始/有草稿/已提交三态；继续与开始均带 origin（开始才 createTask）", async () => {
+    setupMock({ files: [essayFile()], detail: essayDetail([Q1, Q2, Q3]) });
+    summariesMock().mockResolvedValue({ items: [
+      { questionId: Q1, tasks: [] },
+      { questionId: Q2, tasks: [taskSummary({ draftSheetId: SHEET_Q2 })] },
+      {
+        questionId: Q3,
+        tasks: [taskSummary({
+          latestSubmittedSheetId: SEALED_Q3, latestRevisionNo: 1, revisionCount: 1,
+          feedbackState: "pending", contentStatus: "available",
+        })],
+      },
+    ] });
+
+    await renderPage({ deepLinkVenue: "short_essay", deepLinkFile: "writing-short-1" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "继续写作" })).toBeTruthy());
+
+    // 一次集合读取：全部题一次下传（按钮不自取整套；非逐题 N 次）
+    expect(summariesMock()).toHaveBeenCalledTimes(1);
+    expect(summariesMock().mock.calls[0]![0]).toEqual([Q1, Q2, Q3]);
+    expect(summariesMock().mock.calls[0]![1]).toEqual({ kind: "whole", direction: "考研" });
+    expect(screen.getByRole("button", { name: "开始写作" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "查看本稿" })).toBeTruthy();
+
+    // 继续：按已知 ID 只读导航（零创建）+ origin 保留
+    fireEvent.click(screen.getByRole("button", { name: "继续写作" }));
+    await waitFor(() => expect(locText()).toContain(`writingTaskId=${TASK_Q2}`));
+    const continued = new URLSearchParams(locText().split("?")[1]);
+    expect(continued.get("sheet")).toBe(SHEET_Q2);
+    expect(parseWritingSearch(continued).origin).toMatchObject({
+      kind: "file", questionId: Q2, questionType: "short_essay", fileKey: "writing-short-1",
+    });
+    expect(writingClient.createTask).not.toHaveBeenCalled();
+
+    // 开始：显式 createTask（唯一写入路径）→ 直达工作区（sheet+draft、origin 指向本题）
+    (writingClient.createTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+      task: { id: TASK_NEW }, draft: { id: SHEET_NEW }, created: true,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await waitFor(() => expect(locText()).toContain(`writingTaskId=${TASK_NEW}`));
+    expect(writingClient.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "whole", direction: "考研", questionId: Q1, requestId: expect.any(String),
+    }));
+    const started = new URLSearchParams(locText().split("?")[1]);
+    expect(started.get("sheet")).toBe(SHEET_NEW);
+    expect(parseWritingSearch(started).origin?.questionId).toBe(Q1);
+  });
+
+  it("?question= 返回原题：高亮目标题；重进重新读取进度（不沿用进入前的尚未开始）", async () => {
+    setupMock({ files: [essayFile()], detail: essayDetail([Q1, Q2]) });
+    summariesMock().mockResolvedValueOnce({ items: [
+      { questionId: Q1, tasks: [] },
+      { questionId: Q2, tasks: [] },
+    ] });
+
+    await renderPage({ deepLinkVenue: "short_essay", deepLinkFile: "writing-short-1", deepLinkQuestion: Q1 });
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "开始写作" })).toHaveLength(2));
+    expect(document.querySelector(`[data-question-id="${Q1}"]`)?.getAttribute("data-focused")).toBe("true");
+    expect(document.querySelector(`[data-question-id="${Q2}"]`)?.getAttribute("data-focused")).toBeNull();
+
+    // 「进入写作保存草稿后返回」= 重挂载：第二次读取反映最新进度（Q1 → 继续）
+    act(() => { for (const root of mountedRoots.splice(0)) root.unmount(); });
+    document.body.innerHTML = "";
+    summariesMock().mockResolvedValueOnce({ items: [
+      { questionId: Q1, tasks: [taskSummary({ draftSheetId: SHEET_Q2 })] },
+      { questionId: Q2, tasks: [] },
+    ] });
+    await renderPage({ deepLinkVenue: "short_essay", deepLinkFile: "writing-short-1", deepLinkQuestion: Q1 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "继续写作" })).toBeTruthy());
+    expect(summariesMock()).toHaveBeenCalledTimes(2);
+    const q1 = document.querySelector(`[data-question-id="${Q1}"]`)!;
+    expect(Array.from(q1.querySelectorAll("button")).map((b) => b.textContent)).toContain("继续写作");
+  });
+
+  it("摘要读取失败：显示重试（不冒充「尚未开始」）；重试触发第二次读取", async () => {
+    setupMock({ files: [essayFile()], detail: essayDetail([Q1]) });
+    summariesMock().mockRejectedValueOnce(new Error("boom"));
+
+    await renderPage({ deepLinkVenue: "short_essay", deepLinkFile: "writing-short-1" });
+    await waitFor(() => expect(screen.getByText(/进度读取失败/)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "开始写作" })).toBeNull();
+
+    summariesMock().mockResolvedValueOnce({ items: [{ questionId: Q1, tasks: [] }] });
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "开始写作" })).toBeTruthy());
+    expect(summariesMock()).toHaveBeenCalledTimes(2);
   });
 });

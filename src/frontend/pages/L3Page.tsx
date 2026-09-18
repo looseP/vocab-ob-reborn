@@ -101,6 +101,8 @@ export function L3Page() {
   const deepLinkFile = searchParams.get("file");
   const deepLinkSheet = searchParams.get("sheet");
   const deepLinkPaper = searchParams.get("paper");
+  // I3（作文整合）：返回原题定位参数（?question=<id>；由 L3PapersPage 滚动高亮，零创建）。
+  const deepLinkQuestion = searchParams.get("question");
   const writingSectionPreferred = isWritingSection(searchParams);
   const writingTaskIdParam = searchParams.get("writingTaskId");
 
@@ -219,6 +221,7 @@ export function L3Page() {
         deepLinkFile={deepLinkFile}
         deepLinkSheet={deepLinkSheet}
         deepLinkPaper={deepLinkPaper}
+        deepLinkQuestion={deepLinkQuestion}
       />
     ),
     // 作文子空间 v1（W7）：宿主页（section=writing 优先；搜索参数由页面自身消费，

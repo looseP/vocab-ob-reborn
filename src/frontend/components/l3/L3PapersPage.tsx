@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
@@ -6,7 +6,12 @@ import { useToast } from "@/frontend/components/ui/Toast";
 import { L3ExamPaper, type ExamPaper } from "@/frontend/components/l3/L3ExamPaper";
 import { fetchSheet, fetchSheetArchive, type L3SheetArchiveItem } from "@/frontend/api/l3Client";
 import { writingClient } from "@/frontend/api/writingClient";
-import { buildWritingUrl } from "@/frontend/viewModels/writingNavigation";
+import {
+  WritingQuestionEntry,
+  type WritingEntryState,
+} from "@/frontend/components/writing/WritingQuestionEntry";
+import type { WritingOrigin, WritingOriginQuestionType } from "@/frontend/viewModels/writingNavigation";
+import type { WritingQuestionTaskSummary } from "@/domain";
 
 /**
  * 试卷台（ADR-0030 V1 最小可用面）：
@@ -85,10 +90,19 @@ interface PracticeFileDetail {
   questions: QuestionRow[];
 }
 
-/** 文件三级详情：source 型组装单节伪卷喂给做题表面（file venue）；fileKey 型保留浏览。 */
+/** 文件三级详情：source 型组装单节伪卷喂给做题表面（file venue）；fileKey 型保留浏览（含作文入口）。 */
 type FilesTabDetail =
   | { kind: "sheet"; paper: ExamPaper; sourceId: string; questionType: QuestionType }
-  | { kind: "browse"; title: string; questions: QuestionRow[]; direction: "通用" | "考研" | "雅思" | null };
+  | {
+      kind: "browse";
+      title: string;
+      questions: QuestionRow[];
+      direction: "通用" | "考研" | "雅思" | null;
+      /** 来源标识（作文入口 origin 用：fileKey 型无 source；source 型无 fileKey）。 */
+      fileKey: string | null;
+      sourceId: string | null;
+      questionType: QuestionType;
+    };
 
 interface AssembledSection {
   key: string;
@@ -147,16 +161,23 @@ const emptySection = (questionType: QuestionType = "reading_choice"): DraftSecti
   questions: [emptyQuestion()],
 });
 
-function QuestionList({ questions, practiceEssayFor }: {
+function QuestionList({ questions, writingEntryFor, focusedQuestionId }: {
   questions: QuestionRow[];
-  /** 作文子空间入口（W7）：仅有 callback 时渲染「在作文空间练习」（essay 题专用）。 */
-  practiceEssayFor?: (questionId: string) => void;
+  /** 作文入口（I3）：essay 题由宿主渲染共享组件（fileKey/source/整卷/回看同源）。 */
+  writingEntryFor?: (question: QuestionRow) => ReactNode;
+  /** 返回原题定位（?question= 深链）：高亮该题。 */
+  focusedQuestionId?: string | null;
 }) {
   if (questions.length === 0) return <p className="text-xs text-[var(--color-ink-soft)]">（无题）</p>;
   return (
     <ol className="space-y-2">
       {questions.map((q) => (
-        <li key={q.id} className="rounded-lg border border-[var(--color-border)] p-2.5">
+        <li
+          key={q.id}
+          data-question-id={q.id}
+          data-focused={focusedQuestionId === q.id ? "true" : undefined}
+          className={`rounded-lg border p-2.5 ${focusedQuestionId === q.id ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]" : "border-[var(--color-border)]"}`}
+        >
           <p className="whitespace-pre-wrap text-sm">{q.stem}</p>
           {q.options.length > 0 && (
             <ul className="mt-1.5 space-y-0.5">
@@ -176,24 +197,14 @@ function QuestionList({ questions, practiceEssayFor }: {
             </p>
           )}
           {q.explanation && <p className="mt-1 whitespace-pre-wrap text-xs text-[var(--color-ink-soft)]">解析：{q.explanation}</p>}
-          {practiceEssayFor && (
-            <div className="mt-1.5">
-              <button
-                type="button"
-                onClick={() => practiceEssayFor(q.id)}
-                className="text-xs text-[var(--color-accent)] hover:underline"
-              >
-                在作文空间练习 →
-              </button>
-            </div>
-          )}
+          {writingEntryFor?.(q)}
         </li>
       ))}
     </ol>
   );
 }
 
-export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepLinkPaper }: {
+export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepLinkPaper, deepLinkQuestion }: {
   /** 批次二深链：?venue=<题型>&file=<文件键> 直达题型空间并自动打开目标文件。 */
   deepLinkVenue?: string | null;
   deepLinkFile?: string | null;
@@ -201,6 +212,8 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
   deepLinkSheet?: string | null;
   /** F-1：?paper=<id> 卷深链（回看重做的常规入口）。 */
   deepLinkPaper?: string | null;
+  /** I3：?question=<id> 返回原题定位（滚动 + 高亮；全程零创建）。 */
+  deepLinkQuestion?: string | null;
 } = {}) {
   const { addToast } = useToast();
   const hasFilesDeepLink = Boolean(deepLinkVenue && QUESTION_TYPES.includes(deepLinkVenue as QuestionType));
@@ -235,7 +248,7 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
         ))}
       </div>
       {tab === "files" && (
-        <FilesTab deepLink={hasFilesDeepLink ? { venue: deepLinkVenue as QuestionType, file: deepLinkFile ?? null } : null} />
+        <FilesTab deepLink={hasFilesDeepLink ? { venue: deepLinkVenue as QuestionType, file: deepLinkFile ?? null, question: deepLinkQuestion ?? null } : null} />
       )}
       {tab === "papers" && <PapersTab onToast={addToast} deepLink={deepLinkPaper ?? null} />}
       {tab === "archive" && <ArchiveTab onToast={addToast} />}
@@ -271,7 +284,9 @@ function buildFileVenuePaper(
   };
 }
 
-function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string | null } | null } = {}) {
+function FilesTab({ deepLink }: {
+  deepLink?: { venue: QuestionType; file: string | null; question?: string | null } | null;
+} = {}) {
   const { addToast } = useToast();
   const navigate = useNavigate();
   const [files, setFiles] = useState<PracticeFile[] | null>(null);
@@ -280,6 +295,14 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
   const [pendingFileKey, setPendingFileKey] = useState<string | null>(deepLink?.file ?? null);
   /** F-1「再做一次」：换 key 重挂载做题面（openSheet 幂等语义决定复用/新建）。 */
   const [retakeNonce, setRetakeNonce] = useState(0);
+  /** I3：作文入口批量摘要（fileKey 浏览视图；题组级一次读取，按钮不自取整套）。 */
+  const [summaries, setSummaries] = useState<{
+    status: WritingEntryState;
+    byQuestion: Map<string, WritingQuestionTaskSummary[]>;
+  }>({ status: "loading", byQuestion: new Map() });
+  const [summariesNonce, setSummariesNonce] = useState(0);
+  /** 返回原题（?question=）：定位并高亮目标题（零创建）。 */
+  const [focusedQuestionId, setFocusedQuestionId] = useState<string | null>(deepLink?.question ?? null);
 
   useEffect(() => {
     let cancelled = false;
@@ -307,25 +330,18 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
           paper: buildFileVenuePaper(body, file.source_id, file.question_type, file.title),
         });
       } else {
-        setDetail({ kind: "browse", title: file.title, questions: body.questions, direction: file.direction });
+        setDetail({
+          kind: "browse",
+          title: file.title,
+          questions: body.questions,
+          direction: file.direction,
+          fileKey: file.file_key,
+          sourceId: file.source_id,
+          questionType: file.question_type,
+        });
       }
     } catch {
       addToast("error", "文件题组加载失败");
-    }
-  };
-
-  /** 作文子空间入口（W7）：带 questionId 创建/复用任务 → 直达作文宿主（继承题面与方向）。 */
-  const practiceEssay = async (questionId: string, direction: "通用" | "考研" | "雅思" | null) => {
-    try {
-      const result = await writingClient.createTask({
-        requestId: crypto.randomUUID(),
-        kind: "whole",
-        direction: direction ?? "通用",
-        questionId,
-      });
-      navigate(buildWritingUrl({ taskId: result.task.id, sheetId: result.draft?.id ?? null }));
-    } catch {
-      addToast("error", "进入作文空间失败，请重试");
     }
   };
 
@@ -340,6 +356,39 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
     if (target) void openFileRef.current?.(target);
   }, [pendingFileKey, venue, files]);
 
+  // I3：fileKey 作文题组——题组级**一次**批量摘要读取（重试与「返回原题」重进均重新读取，
+  // 不沿用进入前的「尚未开始」）；按钮自身零请求。
+  useEffect(() => {
+    if (!detail || detail.kind !== "browse" || !ESSAY_TYPES.includes(detail.questionType)) return;
+    const questionIds = detail.questions.map((q) => q.id);
+    if (questionIds.length === 0) {
+      setSummaries({ status: "ready", byQuestion: new Map() });
+      return;
+    }
+    let cancelled = false;
+    setSummaries((prev) => ({ status: "loading", byQuestion: prev.byQuestion }));
+    writingClient
+      .questionSummaries(questionIds, { kind: "whole", direction: detail.direction ?? "通用" })
+      .then((page) => {
+        if (cancelled) return;
+        setSummaries({
+          status: "ready",
+          byQuestion: new Map(page.items.map((item) => [item.questionId, item.tasks])),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setSummaries({ status: "error", byQuestion: new Map() });
+      });
+    return () => { cancelled = true; };
+  }, [detail, summariesNonce]);
+
+  // 返回原题：题组渲染后滚动定位（无滚动容器/jsdom 时静默）。
+  useEffect(() => {
+    if (!focusedQuestionId || !detail || detail.kind !== "browse") return;
+    const el = document.querySelector(`[data-question-id="${focusedQuestionId}"]`);
+    el?.scrollIntoView?.({ block: "start" });
+  }, [focusedQuestionId, detail]);
+
   // 三级：文件详情——source 型走做题表面（file venue 题纸）；fileKey 型保留浏览
   if (detail && venue) {
     if (detail.kind === "sheet") {
@@ -353,15 +402,45 @@ function FilesTab({ deepLink }: { deepLink?: { venue: QuestionType; file: string
         />
       );
     }
+    // I3：essay 题（小/大作文）渲染共享作文入口；origin 依来源身份构造（fileKey|sourceId）。
+    const essayType = ESSAY_TYPES.includes(detail.questionType)
+      ? (detail.questionType as WritingOriginQuestionType)
+      : null;
+    let writingEntryFor: ((question: QuestionRow) => ReactNode) | undefined;
+    if (essayType) {
+      const questionType = essayType;
+      writingEntryFor = (question) => {
+        const origin: WritingOrigin = {
+          v: 1,
+          kind: "file",
+          questionId: question.id,
+          questionType,
+          fileKey: detail.fileKey,
+          sourceId: detail.sourceId,
+          sheetId: null, // fileKey 型无原卷题纸；进入后按需回看的是专项稿
+        };
+        return (
+          <WritingQuestionEntry
+            questionId={question.id}
+            kind="whole"
+            direction={detail.direction ?? "通用"}
+            origin={origin}
+            tasks={summaries.byQuestion.get(question.id) ?? []}
+            state={summaries.status}
+            onRetry={() => setSummariesNonce((n) => n + 1)}
+            onNavigate={(url) => navigate(url)}
+          />
+        );
+      };
+    }
     return (
       <div className="space-y-2">
         <button type="button" onClick={() => setDetail(null)} className="text-xs text-[var(--color-accent)]">← 返回{VENUES.find((v) => v.type === venue)?.name}空间</button>
         <h3 className="text-base font-semibold">{detail.title}</h3>
         <QuestionList
           questions={detail.questions}
-          practiceEssayFor={ESSAY_TYPES.includes(venue)
-            ? (questionId) => void practiceEssay(questionId, detail.direction)
-            : undefined}
+          focusedQuestionId={focusedQuestionId}
+          writingEntryFor={writingEntryFor}
         />
       </div>
     );

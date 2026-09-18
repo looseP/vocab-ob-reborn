@@ -230,6 +230,12 @@ export const WRITING_KIND_LABELS: Record<string, string> = {
   free: "自由写作",
 };
 
+/** A1/I3：来源题型标签（工作区来源条与返回按钮共用）。 */
+export const WRITING_ORIGIN_TYPE_LABELS: Record<WritingOriginQuestionType, string> = {
+  short_essay: "小作文",
+  long_essay: "大作文",
+};
+
 export function writingKindLabel(kind: string): string {
   return WRITING_KIND_LABELS[kind] ?? kind;
 }

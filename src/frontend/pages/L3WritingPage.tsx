@@ -21,9 +21,11 @@ import { WritingReviewInstruction } from "@/frontend/components/writing/WritingR
 import { WritingStartDialog } from "@/frontend/components/writing/WritingStartDialog";
 import { WritingTaskList } from "@/frontend/components/writing/WritingTaskList";
 import {
+  buildWritingOriginReturnUrl,
   buildWritingUrl,
   parseWritingSearch,
   revisionLabel,
+  WRITING_ORIGIN_TYPE_LABELS,
   writingKindLabel,
 } from "@/frontend/viewModels/writingNavigation";
 
@@ -58,6 +60,8 @@ export function L3WritingPage() {
   const taskId = location.taskId;
   const sheetId = location.sheetId;
   const compareTo = location.compareTo;
+  const origin = location.origin;
+  const originInvalid = location.originInvalid;
 
   const loadTask = useCallback(async (id: string) => {
     setTasks({ status: "loading" });
@@ -111,9 +115,9 @@ export function L3WritingPage() {
     if (!taskId || sheetId || tasks.status !== "ready") return;
     const draft = tasks.data.draftSummary;
     if (draft) {
-      navigate(buildWritingUrl({ taskId, sheetId: draft.id }), { replace: true });
+      navigate(buildWritingUrl({ taskId, sheetId: draft.id, origin: location.origin }), { replace: true });
     }
-  }, [taskId, sheetId, tasks, navigate]);
+  }, [taskId, sheetId, tasks, navigate, location.origin]);
 
   const guardedNavigate = useCallback((url: string, replace = false) => {
     if (dirtyRef.current) {
@@ -125,20 +129,40 @@ export function L3WritingPage() {
 
   const goList = () => guardedNavigate("/l3?section=writing");
 
+  // I3/I4：来源条——专项写作身份 + 精确返回原题（依 origin 生成站内 URL；禁任意 returnUrl）。
+  // 失效 origin 仅降级来源功能（提示一句），不影响稿件与编辑状态。
+  const originBanner = origin ? (
+    <div
+      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
+      data-testid="writing-origin-bar"
+    >
+      <span className="text-xs text-[var(--color-ink-soft)]">
+        专项写作 · 来自{WRITING_ORIGIN_TYPE_LABELS[origin.questionType]}
+      </span>
+      <Button size="sm" variant="secondary" onClick={() => guardedNavigate(buildWritingOriginReturnUrl(origin))}>
+        返回原题
+      </Button>
+    </div>
+  ) : originInvalid ? (
+    <p className="text-xs text-[var(--color-ink-soft)]" data-testid="writing-origin-bar">
+      来源信息无效，已忽略（不影响写作与稿件）。
+    </p>
+  ) : null;
+
   const openSheet = (targetSheetId: string) =>
-    guardedNavigate(buildWritingUrl({ taskId, sheetId: targetSheetId }));
+    guardedNavigate(buildWritingUrl({ taskId, sheetId: targetSheetId, origin }));
 
   const startRevisionFrom = async (parentSheetId: string) => {
     if (!taskId) return;
     setNotice(null);
     try {
       const result = await writingClient.createDraft(taskId, { parentSheetId, seed: "copy" });
-      navigate(buildWritingUrl({ taskId, sheetId: result.sheet.id }), { replace: true });
+      navigate(buildWritingUrl({ taskId, sheetId: result.sheet.id, origin }), { replace: true });
     } catch (error) {
       const details = (error as { details?: { code?: string; draftSheetId?: string } }).details;
       if ((error as { status?: number }).status === 409 && details?.code === "ACTIVE_DRAFT_EXISTS" && details.draftSheetId) {
         setNotice("已有基于其他稿的草稿，未自动覆盖；已带你前往现有草稿。");
-        navigate(buildWritingUrl({ taskId, sheetId: details.draftSheetId }), { replace: true });
+        navigate(buildWritingUrl({ taskId, sheetId: details.draftSheetId, origin }), { replace: true });
         return;
       }
       setNotice("创建修改稿失败，请重试。");
@@ -204,7 +228,7 @@ export function L3WritingPage() {
       onOpenSheet={openSheet}
       onCompareWith={(otherId) => {
         if (!sheetId) return;
-        guardedNavigate(buildWritingUrl({ taskId, sheetId, compareTo: otherId }));
+        guardedNavigate(buildWritingUrl({ taskId, sheetId, compareTo: otherId, origin }));
       }}
       onCleared={async () => { if (sheetId) await loadSheet(taskId, sheetId); }}
     />
@@ -215,6 +239,7 @@ export function L3WritingPage() {
     const latest = tasks.data.latestSubmittedSheetId;
     return (
       <div className="space-y-4">
+        {originBanner}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-lg font-semibold text-[var(--color-ink)]">{task.title}</h2>
@@ -223,7 +248,7 @@ export function L3WritingPage() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={goList}>返回列表</Button>
+            <Button size="sm" variant="secondary" onClick={goList}>{origin ? "全部作文" : "返回列表"}</Button>
             {latest && <Button size="sm" onClick={() => void startRevisionFrom(latest)}>开始修改（第二稿）</Button>}
           </div>
         </div>
@@ -241,9 +266,10 @@ export function L3WritingPage() {
   if (compareTo) {
     return (
       <div className="space-y-3">
+        {originBanner}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-[var(--color-ink)]">{task.title}</h2>
-          <Button size="sm" variant="secondary" onClick={() => guardedNavigate(buildWritingUrl({ taskId, sheetId }))}>
+          <Button size="sm" variant="secondary" onClick={() => guardedNavigate(buildWritingUrl({ taskId, sheetId, origin }))}>
             返回稿件
           </Button>
         </div>
@@ -251,7 +277,7 @@ export function L3WritingPage() {
           taskId={taskId}
           leftSheetId={sheetId}
           rightSheetId={compareTo}
-          onClose={() => guardedNavigate(buildWritingUrl({ taskId, sheetId }))}
+          onClose={() => guardedNavigate(buildWritingUrl({ taskId, sheetId, origin }))}
         />
       </div>
     );
@@ -266,7 +292,7 @@ export function L3WritingPage() {
       onSubmitted={async () => {
         await loadSheet(taskId, sheetId);
         await loadTask(taskId);
-        navigate(buildWritingUrl({ taskId, sheetId }), { replace: true });
+        navigate(buildWritingUrl({ taskId, sheetId, origin }), { replace: true });
       }}
       onLoadServerVersion={async () => {
         await loadSheet(taskId, sheetId);
@@ -304,6 +330,7 @@ export function L3WritingPage() {
 
   return (
     <div className="space-y-3">
+      {originBanner}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold text-[var(--color-ink)]">{task.title}</h2>
@@ -313,7 +340,7 @@ export function L3WritingPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="secondary" onClick={goList}>返回列表</Button>
+          <Button size="sm" variant="secondary" onClick={goList}>{origin ? "全部作文" : "返回列表"}</Button>
           {sealed && (
             <Button size="sm" onClick={() => void startRevisionFrom(detail.sheet.id)}>开始修改（第二稿）</Button>
           )}
