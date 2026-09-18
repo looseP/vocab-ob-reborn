@@ -272,6 +272,32 @@ export interface WritingSheetDetail {
   feedback: WritingFeedbackRecord | null;
 }
 
+/**
+ * agent 评阅上下文（S§5，W5）：sealed 限定、**只含指定稿**——准确题面、方向/形式、
+ * 稿次、正文/hash、当前反馈版本与 schema。不含题库答案、其他草稿、历史笔记、跨稿内容。
+ */
+export interface WritingFeedbackContext {
+  taskId: string;
+  sheetId: string;
+  revisionNo: number;
+  kind: WritingKind;
+  direction: WritingDirection;
+  /** 准确题面（题面引用式真源：question.stem）。 */
+  prompt: string;
+  text: string;
+  textSha256: string;
+  wordCount: number;
+  /** 当前反馈版本；null = 尚未有反馈。 */
+  feedbackVersion: number | null;
+  feedbackSchemaVersion: number;
+}
+
+/** 反馈读取结果（GET feedback）：pending=尚无反馈（正常态，不是错误）。 */
+export interface WritingFeedbackGetResult {
+  state: "pending" | "ready";
+  feedback: WritingFeedbackRecord | null;
+}
+
 export interface WritingPage<T> {
   items: T[];
   total: number;

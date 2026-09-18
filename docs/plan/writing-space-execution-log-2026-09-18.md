@@ -79,7 +79,14 @@
 - 交付：`writingSaveController.ts`（单在途/输入序号/flush waiter/800ms 防抖/IME/1-2-4 退避/401·409·400·422 不重试/超时 load 恢复/dispose）+ `useWritingDraft.ts`（composition + beforeunload + 站内导航守卫）+ 单测 17/17。
 - 独立复核：复跑 17/17；无 localStorage/IndexedDB；hook 签名已备 W7。
 
-#### W3 · 稿件生命周期（2026-09-18 完成，`<W3-SHA>`）
+#### W5 · 定位反馈与 agent 边界（2026-09-18 完成，`<W5-SHA>`）
+
+- 交付：`l3-writing-feedback.repository.ts`（一稿一条行锁/首写/版本 CAS）+ `l3-writing-feedback.service.ts`（getContext / getFeedback / putFeedback：task→sheet 锁序、hash 绑定校验、UTF-16 锚点逐字校验、64KiB 体积守卫、requestId 幂等重放不升版、expectedVersion 版本 CAS、last_editor 由 Principal 注入）+ 上下文/读取 DTO（domain 冻结层扩展）。
+- generic 封堵：grading `getGradingContext`/`getGradingResults`/`submitGrading` 对 writing 稿一律 409 `WRITING_ENDPOINT_REQUIRED`（防两套反馈真源）。
+- 验证：repo 5 + service 11 + grading 回归 16（含 3 守卫用例）；**并发集成 7/7**（新增「两 writer 相同 expectedVersion 只有一个成功 + 重放不升版 + 版本冲突 409」）；宽回归 175/175；typecheck 0 错。
+- 待办：`toFeedbackRecord` 的 feedback 形状未做运行时收口（写入侧已由 zod 校验；读取侧信任库内数据，W6 响应契约再做输出校验）。
+
+#### W3 · 稿件生命周期（2026-09-18 完成，`09a44f0`）
 
 - 交付：`l3-writing-text.ts`（sha256 工具）+ `l3-writing-sheet.service.ts`（saveDraft CAS / submit 单事务物化+幂等重放 / createDraft copy·复用·409 / discard / getSheet 三态 / listRevisions feedbackState 派生）+ repo 11 个 sheet 域方法（`lockSheet`/`casSaveDraft`/`sealWritingSheet`/`discardWritingDraft`/`findMaxRevisionNo`/`listRevisions` 等）。
 - 旁路封堵：通用 `patchAnswers` 加 `scope IN ('file','paper')`；通用 `patchSheet`/`sealSheet` 对 writing 稿 409 `WRITING_ENDPOINT_REQUIRED`；通用 `softDeleteAttempt` 加 `venue <> 'writing'`（写作正文清理走 W9 专用事务）；`listArchive` 限 file/paper。
@@ -104,7 +111,9 @@
 | 2026-09-18 | W2 独立复核：4 文件复跑 | 0 | 59/59（W4 17 + W2 27 + paper 15）；typecheck 0 |
 | 2026-09-18 | W3 单测 + 回归（11 文件） | 0 | 250/250 |
 | 2026-09-18 | W3 并发集成（vocab_writing_test 两连接屏障） | 0 | 6/6（D1/D2 屏障 slow-query 实证） |
-| 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `<W3-SHA>`(W3) |
+| 2026-09-18 | W5 单测 + grading 回归 | 0 | 32/32（repo 5 + service 11 + grading 16 含 3 守卫） |
+| 2026-09-18 | W5 并发集成（反馈） | 0 | 7/7（两 writer 同版本单胜 + 重放不升版） |
+| 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `09a44f0`(W3) → `<W5-SHA>`(W5) |
 
 ## 3 · 遗留与待决策
 

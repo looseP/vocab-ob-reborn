@@ -18,6 +18,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resetPool } from "@/db/connection";
 import { L3WritingSheetService } from "@/services/l3-writing-sheet.service";
 import { L3WritingTaskService } from "@/services/l3-writing-task.service";
+import { L3WritingFeedbackService } from "@/services/l3-writing-feedback.service";
+import { sha256WritingText } from "@/services/l3-writing-text";
 
 const adminDatabaseUrl = process.env.TEST_DATABASE_URL;
 const appDatabaseUrl = process.env.TEST_APP_DATABASE_URL;
@@ -41,6 +43,7 @@ describe("Writing lifecycle concurrency (integration)", () => {
   const barrierPool = new Pool({ connectionString: appDatabaseUrl!, max: 2 });
   const taskService = new L3WritingTaskService();
   const sheetService = new L3WritingSheetService();
+  const feedbackService = new L3WritingFeedbackService();
 
   /** 独立 app 角色连接 + actor 注入（与 withTransaction 同键），用于可控屏障。 */
   async function actorClient(actorId: string): Promise<PoolClient> {
@@ -247,5 +250,63 @@ describe("Writing lifecycle concurrency (integration)", () => {
     await sheetService.submit(ACTOR_A, b.task.id, b.draft.id, { expectedVersion: 1 });
     await expect(sheetService.saveDraft(ACTOR_A, b.task.id, b.draft.id, { expectedVersion: 2, text: "不该落" }))
       .rejects.toMatchObject({ httpStatus: 409 });
+  });
+
+  it("反馈并发：相同 expectedVersion 两 writer 只有一个成功；重放同 request 不升版", async () => {
+    const { task, draft } = await createTask(ACTOR_A);
+    await sheetService.saveDraft(ACTOR_A, task.id, draft.id, { expectedVersion: 0, text: "终稿正文" });
+    const sealed = await sheetService.submit(ACTOR_A, task.id, draft.id, { expectedVersion: 1 });
+
+    const textSha256 = sha256WritingText("终稿正文");
+    const r1 = randomUUID();
+    const r2 = randomUUID();
+    const payload = {
+      schemaVersion: 1 as const,
+      summary: "结构清楚。",
+      strengths: ["立场明确"],
+      dimensions: {
+        task_response: { applicable: true, comment: "回应了题目。" },
+        organization: { applicable: true, comment: "结构可辨。" },
+        language: { applicable: true, comment: "基本通顺。" },
+        expression: { applicable: false, comment: "本稿不评表达风格。" },
+      },
+      priorities: [],
+    };
+
+    const [p1, p2] = await Promise.allSettled([
+      feedbackService.putFeedback(ACTOR_A, task.id, sealed.sheet.id, {
+        expectedVersion: 0, textSha256, requestId: r1, feedback: payload,
+      }, "agent-a"),
+      feedbackService.putFeedback(ACTOR_A, task.id, sealed.sheet.id, {
+        expectedVersion: 0, textSha256, requestId: r2, feedback: payload,
+      }, "agent-b"),
+    ]);
+    const oks = [p1, p2].filter((r) => r.status === "fulfilled");
+    const failed = [p1, p2].filter((r) => r.status === "rejected");
+    expect(oks).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    expect((failed[0] as PromiseRejectedResult).reason).toMatchObject({
+      httpStatus: 409,
+      meta: { code: "FEEDBACK_VERSION_CONFLICT" },
+    });
+
+    // 重放获胜请求（同 requestId 同内容）→ 200 且版本不变。
+    const winnerRequest = p1.status === "fulfilled" ? r1 : r2;
+    const replay = await feedbackService.putFeedback(ACTOR_A, task.id, sealed.sheet.id, {
+      expectedVersion: 0, textSha256, requestId: winnerRequest, feedback: payload,
+    }, "agent-a");
+    expect(replay.version).toBe(1);
+
+    // 新请求但版本落后 → 409。
+    await expect(feedbackService.putFeedback(ACTOR_A, task.id, sealed.sheet.id, {
+      expectedVersion: 0, textSha256, requestId: randomUUID(), feedback: payload,
+    }, "agent-a")).rejects.toMatchObject({ httpStatus: 409, meta: { code: "FEEDBACK_VERSION_CONFLICT" } });
+
+    const rows = await adminPool.query<{ c: number; v: number }>(
+      "SELECT count(*)::int AS c, max(version)::int AS v FROM l3_writing_feedback WHERE sheet_id = $1",
+      [sealed.sheet.id],
+    );
+    expect(rows.rows[0]!.c).toBe(1);
+    expect(rows.rows[0]!.v).toBe(1);
   });
 });
