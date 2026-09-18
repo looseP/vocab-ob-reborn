@@ -85,7 +85,9 @@ export interface IL3WritingRepository {
   ): Promise<L3WritingTaskRow | null>;
   /** 任务行锁（task→sheet 锁序第一步）。requireTx。 */
   lockTask(userId: string, taskId: string): Promise<L3WritingTaskRow | null>;
-  /** owner+question 事务锁（题路径并发创建复用保护）。requireTx。 */
+  /** owner+question 事务锁（题路径并发创建复用保护）。requireTx。
+   *  实现为事务级 advisory 锁 + 无锁 SELECT——角色模型对 l3_questions 仅授
+   *  SELECT/INSERT/DELETE（行锁 FOR UPDATE 需表级 UPDATE 权限，实际环境必 permission denied）。 */
   lockQuestion(userId: string, questionId: string): Promise<L3QuestionRow | null>;
   updateTaskTitle(userId: string, taskId: string, title: string): Promise<L3WritingTaskRow | null>;
   setTaskStatus(
@@ -267,9 +269,13 @@ export class L3WritingRepository extends BaseRepository implements IL3WritingRep
 
   async lockQuestion(userId: string, questionId: string): Promise<L3QuestionRow | null> {
     const tx = this.requireTx();
+    // B 批真环境修复：l3_questions 的角色模型仅授 SELECT/INSERT/DELETE——FOR UPDATE 需表级
+    // UPDATE 权限，在 dev/acceptance 双库实测必然 permission denied（按题创建作文任务 500）。
+    // 改用事务级 advisory 锁串行化「owner × question」并发创建：等价互斥、零行级权限依赖。
+    await this.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${userId}:${questionId}`]);
     const row = await this.queryOne<L3QuestionRow>(
       `SELECT * FROM l3_questions
-        WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE`,
+        WHERE id = $1::uuid AND user_id = $2::uuid`,
       [questionId, userId],
     );
     void tx;

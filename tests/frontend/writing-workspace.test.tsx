@@ -6,7 +6,7 @@
  * 起笔路径 ≤2 点击 / 深链与 F5 零创建 / 任务切换隔离 / 提交屏障（flush 先行）/
  * 冲突保留本地 / 反馈三态与 hash 校验 / 对照独立 / 评阅指令无 token / 分流与页签。
  */
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
@@ -582,5 +582,46 @@ describe("I4 工作区来源闭环（origin）", () => {
     expect(screen.getByTestId("writing-origin-bar").textContent).toContain("来源信息无效");
     expect(screen.queryByRole("button", { name: "返回原题" })).toBeNull();
     expect(textarea.value).toBe("草稿正文");
+  });
+});
+
+// ── StrictMode（dev 语义）：控制器清理必须可逆，否则 dev 下输入/保存永久死锁 ──
+
+describe("StrictMode（dev 语义·W4 控制器可逆清理）", () => {
+  it("模拟卸载再挂载后输入不被吞：dirty → 防抖保存 → 已保存（B 批真环境发现的 dev 阻塞）", async () => {
+    client.getTask!.mockResolvedValue({ task: taskDto({ kind: "whole" }), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
+    client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    client.getSheet!.mockResolvedValue(sheetDetail());
+    client.saveDraft!.mockResolvedValue({ sheet: sheetDto({ draftVersion: 1 }), textSha256: SHA });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mountedRoots.push(root);
+    await act(async () => {
+      root.render(
+        createElement(
+          StrictMode,
+          null,
+          createElement(
+            MemoryRouter,
+            { initialEntries: [`/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}`] },
+            createElement(L3WritingPage),
+            createElement(LocationProbe),
+          ),
+        ),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "StrictMode 输入不被吞" } });
+    // 输入必须进入 dirty（控制器未被模拟卸载 dispose 永久杀伤）。
+    await waitFor(() => expect(screen.getByText(/保存状态：未保存/)).toBeTruthy(), { timeout: 3000 });
+    // 防抖到期 → 保存请求 → 回到已保存；正文不丢。
+    await waitFor(() => expect(client.saveDraft).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    await waitFor(() => expect(screen.getByText(/保存状态：已保存/)).toBeTruthy(), { timeout: 4000 });
+    expect((screen.getByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement).value).toBe("StrictMode 输入不被吞");
   });
 });

@@ -225,13 +225,20 @@ describe("任务域残余分支（空行/异常/映射兜底）", () => {
     expect(row.answers).toEqual({});
   });
 
-  it("lockTask/lockQuestion 空行返回 null（requireTx 已由 client 构造满足）", async () => {
+  it("lockTask/lockQuestion 空行返回 null；lockQuestion 走 advisory 锁（无 FOR UPDATE——角色模型无表级 UPDATE）", async () => {
     querySpy.mockImplementation(async () => ({ rows: [] }));
     expect(await repo.lockTask(USER, "t-1")).toBeNull();
+    // lockTask：writing_tasks 有 UPDATE 授权，保持行锁。
+    expect(querySpy.mock.calls[0]![0]).toContain("FOR UPDATE");
     const row = await repo.lockQuestion(USER, "q-1");
-    const [text, params] = querySpy.mock.calls[1]!;
+    // lockQuestion：① 事务级 advisory 锁（串行化 owner×question 并发创建）；② 普通 SELECT（无行锁）。
+    const [lockText, lockParams] = querySpy.mock.calls[1]!;
+    expect(lockText).toContain("pg_advisory_xact_lock");
+    expect(lockText).toContain("hashtextextended");
+    expect(lockParams).toEqual([`${USER}:q-1`]);
+    const [text, params] = querySpy.mock.calls[2]!;
     expect(text).toContain("FROM l3_questions");
-    expect(text).toContain("FOR UPDATE");
+    expect(text).not.toContain("FOR UPDATE");
     expect(params).toEqual(["q-1", USER]);
     expect(row).toBeNull();
   });

@@ -32,6 +32,8 @@ export interface WritingSaveController {
   getSnapshot(): WritingSaveControllerSnapshot;
   subscribe(listener: () => void): () => void;
   dispose(): void;
+  /** 是否已被 dispose（终态）。宿主据此在「模拟卸载→再挂载」（React StrictMode）后重建控制器。 */
+  isDisposed(): boolean;
 }
 
 export interface WritingSaveControllerSaveInput {
@@ -417,5 +419,6 @@ export function createWritingSaveController(
     getSnapshot,
     subscribe,
     dispose,
+    isDisposed: () => disposed,
   };
 }
