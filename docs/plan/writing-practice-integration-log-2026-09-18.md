@@ -50,3 +50,15 @@
 ### 与用户体验环境的隔离承诺（全程）
 - 不连接/不写 `vocab_writing_test`、不调用 3099 任何写接口、不动 3001/live；
 - 全部测试与 e2e 只使用 `vocab_practice_accept` + 端口 3100 + 合成数据（`practice:` 前缀标识）。
+
+## A · 导航与进度契约（2026-09-19）
+
+### A1 / I1 · 来源身份与精确返回（完成，`<A1-SHA>`）
+
+- **契约**（`src/frontend/viewModels/writingNavigation.ts`）：
+  - `origin` 参数 v1：`base64url(JSON)` 单参数；判别联合 **file/paper**；file 需 `fileKey|sourceId` 至少其一；paper 需 `paperId`；`questionId` + 题型（short_essay/long_essay）；可选**进入时原 sheetId**；限长 1024、逐键白名单、UUID/枚举严格校验；非 base64url 字符（含 `http(s)://`、`javascript:`、`/`、`:`）直接拒绝。
+  - `parseWritingSearch` 增 `origin` / `originInvalid`（非法仅降级来源提示，不破坏其余参数）；`buildWritingUrl` 可选携带 origin——**无 origin 时与旧 URL 完全一致**。
+  - 返回原题：`buildWritingOriginReturnUrl` 生成 `/l3?venue|paper&question=<qid>[&file|source][&resumeSheet=<sid>]`；原 sheet 由消费方按 ID 读面（draft → 可编辑恢复 / sealed → 只读；**不经 openSheet**）。
+- **关系校验读面分析（A1 决策）**：复用既有 owner 读即满足——`task.questionId`（getTask 已含）/ file 归属（`practice-files/detail` questions）/ paper 归属（`papers/:id` payload.sections）/ 原 sheet（`fetchSheet` by id）。**A1 无需新增服务端读面**。
+- **验证**：`tests/frontend/writing-navigation.test.ts` **19/19**（旧 URL 兼容、四型往返、超长/字符/结构/UUID/外站拒绝、换稿与对照保留、多来源不同返回位置）；定向回归 **36/36**（含写作工作区与试卷台组件）；typecheck 0 错。
+- 提交：`<A1-SHA>`（导航契约 + 测试）。
