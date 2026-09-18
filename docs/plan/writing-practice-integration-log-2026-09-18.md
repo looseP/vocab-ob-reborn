@@ -127,3 +127,38 @@
 
 - 原题：`http://127.0.0.1:5174/l3?venue=short_essay&file=practice%3A%E5%B0%8F%E4%BD%9C%E6%96%87+%C2%B7+%E5%90%88%E6%88%90%E9%82%80%E8%AF%B7%E9%82%AE%E4%BB%B6&question=00000000-0000-4000-8000-0000000001b1`
 - 登录：Owner Access Token = `local-owner-api-token-only-0001`（服务运行中：后端 3100 / 前端 5174）。
+
+## C · 四分支入口 + 保存屏障 + 返回恢复（完成，`91bbc2a` + `558fac5`）
+
+### 交付
+
+- `91bbc2a`：整卷草稿 / source 文件 / 整卷 sealed 回看 / 文件 sealed 回看**四分支入口**（共用 `WritingQuestionEntry`）＋「专项练习（不计入本次试卷作答）」标识＋翻译题不渲染；**跳转前保存屏障**（flush 在途句柄 + 至多 3 轮二次 flush 覆盖等待期新输入 + 失败显式提示留页且不创建任务）；**返回恢复**（`?resumeSheet=` 按 ID 读面：draft 可编辑 / sealed 只读、**零 openSheet**；不匹配/不可达 → 提示并停留来源列表）；`?question=` 卷内定位高亮；多卷同题各自 origin（无全局串味）；「开始修改（第二稿）」→「开始修改」。
+- `558fac5`：**StrictMode 深链一次性消费修复**（真环境实证：dev 双跑使 resume 二次消费后退化 openSheet——sealed 场景会另建新卷；修复后 `opensheet_posts_after_back` 2→0）。
+
+### 真环境旅程（`.tmp/c-journey.cjs`；产物 `D:/tmp/practice-c-journey/`：01 入口+不计入标识 / 02 工作区 / 03 返回恢复）
+
+| 阶段 | tasks | writeSheets | venueSheets | venuePick | venueAttempts |
+|---|---|---|---|---|---|
+| c0 开始前 | 0 | 0 | 0 | - | 0 |
+| c1 整卷入（自动开纸） | 0 | 0 | **1:draft** | - | 0 |
+| c2 点乙 → **立即**开始写作（屏障） | 1 | 1 | 1:draft | **B** | 0 |
+| c3 工作区保存 | 1 | 1 | 1:draft | B | 0 |
+| c4 返回原题（resumeSheet） | 1 | 1 | 1:draft | B | 0 |
+
+- 屏障证据：`patch_status=200`（离开前作答已落库）；返回 URL 含 `resumeSheet=`；返回后原卷选择恢复「B/乙」（`data-selected`）；**`opensheet_posts_after_back=0`**；venue 全链零新增（无另开新纸、零判定泄漏、零回填）。
+
+### 测试
+
+- 入口屏障 2 + 页面级 11（含 2 条 StrictMode 回归）；前台全量 **365/365**；typecheck 0。
+
+### C 回报（入口矩阵）
+
+| 分支 | 入口位置 | 覆盖 |
+|---|---|---|
+| 整卷草稿 | 我的试卷 → 卷详情（写作节） | 「开始写作/继续/查看」+ 不计入标识 + 屏障 |
+| source 文件 | 题型空间 → 源文件题纸 | 同上（file origin） |
+| 整卷 sealed 回看 | ?sheet= 回看（paper scope） | 入口 + resume 只读 |
+| 文件 sealed 回看 | ?sheet= 回看（file scope） | 入口 + resume 只读 |
+| fileKey 浏览 | 题型空间 → 文件（B 批） | 三态 + 记录选择 |
+
+- 剩余风险：`sentence_translation` 无入口（设计如此）；source 型回看方向查询失败时降级「通用」（低概率，不阻塞）。
