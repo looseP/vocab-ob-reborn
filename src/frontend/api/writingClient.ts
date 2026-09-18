@@ -8,7 +8,7 @@
  *   （code=INVALID_RESPONSE），绝不归一为「成功空列表」或「pending」**；
  * - 单稿导出端点属 W9（暂不在本客户端内，避免假成功接口）。
  */
-import type { z } from "zod";
+import { z } from "zod";
 import { BrowserApiError, createBrowserResponseRequest } from "./browserRequest";
 import {
   l3WritingDraftCreateResponseSchema,
@@ -90,7 +90,7 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 }
 
 interface CallOptions {
-  method?: "GET" | "POST" | "PATCH" | "PUT";
+  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
 }
@@ -195,6 +195,17 @@ export function createWritingClient(options: { baseUrl?: string; fetch?: typeof 
       call(l3WritingFeedbackPutResponseSchema, `/tasks/${enc(taskId)}/sheets/${enc(sheetId)}/feedback`, {
         method: "PUT",
         body: input,
+      }),
+
+    // ── 导出与正文清理（W9 冻结接口；服务端由 W9 交付，本客户端先行冻结）─────
+    /** 单稿导出原文（text/markdown；非空校验为最低契约线，空响应=INVALID_RESPONSE）。 */
+    exportSheet: async (taskId: string, sheetId: string, signal?: AbortSignal): Promise<string> =>
+      call(z.string().min(1), `/tasks/${enc(taskId)}/sheets/${enc(sheetId)}/export`, { signal }),
+
+    /** 清理该稿正文（soft-delete attempt + 同事务删反馈；sealed 限定，幂等）。 */
+    clearSheetContent: (taskId: string, sheetId: string): Promise<WritingSheetDto> =>
+      call(l3WritingSheetResponseSchema, `/tasks/${enc(taskId)}/sheets/${enc(sheetId)}/content`, {
+        method: "DELETE",
       }),
   };
 }

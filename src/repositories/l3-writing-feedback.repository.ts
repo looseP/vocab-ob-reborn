@@ -31,6 +31,8 @@ export interface IL3WritingFeedbackRepository {
   insertFirst(input: InsertWritingFeedbackInput): Promise<L3WritingFeedbackRow>;
   /** CAS 更新：WHERE version=$expected → version+1、覆写 feedback/text_sha256/request_id/last_editor。 */
   updateCas(input: UpdateWritingFeedbackInput): Promise<L3WritingFeedbackRow | null>;
+  /** W9 正文清理：删除该稿反馈行（同事务调用；幂等；无行返回 false）。 */
+  deleteBySheet(userId: string, sheetId: string): Promise<boolean>;
 }
 
 export class L3WritingFeedbackRepository extends BaseRepository implements IL3WritingFeedbackRepository {
@@ -81,5 +83,15 @@ export class L3WritingFeedbackRepository extends BaseRepository implements IL3Wr
         input.expected_version,
       ],
     );
+  }
+
+  async deleteBySheet(userId: string, sheetId: string): Promise<boolean> {
+    const row = await this.queryOne<{ id: string }>(
+      `DELETE FROM l3_writing_feedback
+        WHERE user_id = $1::uuid AND sheet_id = $2::uuid
+        RETURNING id`,
+      [userId, sheetId],
+    );
+    return Boolean(row);
   }
 }

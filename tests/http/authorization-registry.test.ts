@@ -191,6 +191,8 @@ const OTHER_OWNER_WRITES = [
   "saveL3WritingDraft",
   "submitL3WritingSheet",
   "discardL3WritingSheet",
+  // 作文子空间 v1（W9）：正文清理（soft-delete attempt + 同事务删反馈；sealed 限定）。
+  "clearL3WritingSheetContent",
 ] as const;
 
 const OWNER_WRITE_OPERATION_IDS = sorted([
@@ -287,6 +289,8 @@ const OWNER_READS = [
   "listL3WritingRevisions",
   "getL3WritingSheet",
   "getL3WritingFeedback",
+  // 作文子空间 v1（W9）：单稿导出（owner-only；agent 无导出权限）。
+  "exportL3WritingSheet",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {

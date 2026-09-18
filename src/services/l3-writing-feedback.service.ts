@@ -87,7 +87,8 @@ function requireConsistentAttemptText(attempt: L3QuestionAttemptRow, sheetId: st
   return text;
 }
 
-function toFeedbackRecord(row: L3WritingFeedbackRow): WritingFeedbackRecord {
+/** 反馈记录映射（W9 导出复用；单一真源）。 */
+export function toFeedbackRecord(row: L3WritingFeedbackRow): WritingFeedbackRecord {
   return {
     feedback: row.feedback as WritingFeedbackRecord["feedback"],
     version: row.version,

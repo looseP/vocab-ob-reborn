@@ -101,7 +101,8 @@ async function rereadOnConflict(
   };
 }
 
-function toTaskDto(row: L3WritingTaskRow, prompt: string): WritingTaskDto {
+/** 任务 DTO 映射（W9 导出等复用；单一真源）。 */
+export function toTaskDto(row: L3WritingTaskRow, prompt: string): WritingTaskDto {
   return {
     id: row.id,
     questionId: row.question_id,

@@ -155,6 +155,8 @@ export interface IL3WritingRepository {
     taskId: string,
     input: { limit: number; cursor: { updatedAt: string; id: string } | null },
   ): Promise<{ items: WritingRevisionListRow[]; total: number }>;
+  /** W9 正文清理：soft-delete active writing attempt（幂等；无 active 行返回 false）。 */
+  softDeleteWritingAttempt(userId: string, sheetId: string): Promise<boolean>;
 }
 
 /** listRevisions 投影行：稿行 + 派生计数（只读，不写反馈表）。 */
@@ -574,5 +576,18 @@ export class L3WritingRepository extends BaseRepository implements IL3WritingRep
     );
 
     return { items: rows.map((r) => mapSubmissionRow(r) as WritingRevisionListRow), total: Number(totalRow?.total ?? 0) };
+  }
+
+  async softDeleteWritingAttempt(userId: string, sheetId: string): Promise<boolean> {
+    // W9 正文清理（专用路径；通用 softDeleteAttempt 对 writing 已过滤）。
+    const row = await this.queryOne<{ id: string }>(
+      `UPDATE l3_question_attempts
+          SET status = 'deleted', deleted_at = now()
+        WHERE user_id = $1::uuid AND sheet_id = $2::uuid AND venue = 'writing'
+          AND status = 'active'
+        RETURNING id`,
+      [userId, sheetId],
+    );
+    return Boolean(row);
   }
 }

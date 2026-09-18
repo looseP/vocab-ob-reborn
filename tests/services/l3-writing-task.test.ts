@@ -315,6 +315,7 @@ class FakeWritingRepository implements IL3WritingRepository {
   async discardWritingDraft(): Promise<never> { return this.notUsed(); }
   async findMaxRevisionNo(): Promise<never> { return this.notUsed(); }
   async listRevisions(): Promise<never> { return this.notUsed(); }
+  async softDeleteWritingAttempt(): Promise<never> { return this.notUsed(); }
 }
 
 interface Fakes {

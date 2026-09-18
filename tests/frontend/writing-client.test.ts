@@ -64,6 +64,45 @@ describe("writingClient（契约校验）", () => {
     });
   });
 
+  it("exportSheet 返回原文；空响应 → INVALID_RESPONSE（不产生空文件假成功）", async () => {
+    const markdown = "# L3 作文档案（v1）\n\n- 任务: x\n\n## 正文\n";
+    const okMock = vi.fn(async () => new Response(markdown, {
+      status: 200,
+      headers: { "Content-Type": "text/markdown; charset=utf-8" },
+    }));
+    const okClient = createWritingClient({ fetch: okMock as unknown as typeof fetch });
+    await expect(okClient.exportSheet(TASK_ID, SHEET_ID)).resolves.toBe(markdown);
+
+    const emptyMock = vi.fn(async () => new Response("", { status: 200, headers: { "Content-Type": "text/markdown" } }));
+    const emptyClient = createWritingClient({ fetch: emptyMock as unknown as typeof fetch });
+    await expect(emptyClient.exportSheet(TASK_ID, SHEET_ID)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+
+  it("clearSheetContent：DELETE 请求并解析 sheet DTO", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return jsonResponse({
+        sheet: {
+          id: SHEET_ID, taskId: TASK_ID, status: "sealed", draftVersion: 3, revisionNo: 1,
+          parentSheetId: null, createdAt: "x", updatedAt: "x", sealedAt: "x",
+        },
+      });
+    });
+    const client = createWritingClient({ fetch: fetchMock as unknown as typeof fetch });
+    // 路由直接返回 sheet DTO（不包 {sheet} 包装）——这里回包 {sheet:{...}} 应判 INVALID_RESPONSE。
+    await expect(client.clearSheetContent(TASK_ID, SHEET_ID)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+    expect(calls[0]!.init.method).toBe("DELETE");
+
+    const direct = vi.fn(async () => jsonResponse({
+      id: SHEET_ID, taskId: TASK_ID, status: "sealed", draftVersion: 3, revisionNo: 1,
+      parentSheetId: null, createdAt: "x", updatedAt: "x", sealedAt: "x",
+    }));
+    const directClient = createWritingClient({ fetch: direct as unknown as typeof fetch });
+    const cleared = await directClient.clearSheetContent(TASK_ID, SHEET_ID);
+    expect(cleared.id).toBe(SHEET_ID);
+  });
+
   it("请求构造：路径、方法与 JSON body 正确（保存与反馈 PUT）", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {

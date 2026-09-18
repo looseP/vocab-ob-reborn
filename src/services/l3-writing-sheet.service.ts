@@ -48,8 +48,24 @@ import {
   type WritingRepos,
   type WritingReposFactory,
 } from "./l3-writing-task.service";
+import {
+  L3WritingFeedbackRepository,
+  type IL3WritingFeedbackRepository,
+} from "../repositories/l3-writing-feedback.repository";
 
 type TxRunner = typeof withTransaction;
+
+/** 清理（W9）需要反馈 repo：本地窄扩展，不改 W2 共享类型/工厂。 */
+interface WritingSheetRepos extends WritingRepos {
+  l3Feedback: IL3WritingFeedbackRepository;
+}
+
+type WritingSheetReposFactory = (tx?: Parameters<WritingReposFactory>[0]) => WritingSheetRepos;
+
+const defaultWritingSheetReposFactory: WritingSheetReposFactory = (tx) => ({
+  ...defaultWritingReposFactory(tx),
+  l3Feedback: new L3WritingFeedbackRepository(tx),
+});
 
 const LIST_DEFAULT_LIMIT = 20;
 const LIST_MAX_LIMIT = 50;
@@ -88,11 +104,11 @@ function conflict(message: string, details: Record<string, unknown>): ConflictEr
 
 export class L3WritingSheetService {
   constructor(
-    private readonly reposFactory: WritingReposFactory = defaultWritingReposFactory,
+    private readonly reposFactory: WritingSheetReposFactory = defaultWritingSheetReposFactory,
     private readonly txRunner: TxRunner = withTransaction,
   ) {}
 
-  private withActor<T>(userId: string, callback: (repos: WritingRepos) => Promise<T>): Promise<T> {
+  private withActor<T>(userId: string, callback: (repos: WritingSheetRepos) => Promise<T>): Promise<T> {
     return this.txRunner(async (tx) => callback(this.reposFactory(tx)), { actorId: userId });
   }
 
@@ -408,6 +424,30 @@ export class L3WritingSheetService {
       });
       const nextCursor = hasMore ? encodeCursor(pageItems[pageItems.length - 1]!) : null;
       return { items: summaries, total, nextCursor };
+    });
+  }
+
+  /**
+   * 正文清理（W9，S§3 D2/§7）：soft-delete 该稿 active writing attempt，并**同事务**
+   * 删除该稿反馈（防止已删正文的反馈摘录残留）。固定锁序 task→sheet；仅 sealed 可
+   * 清理（draft 走 discard、discarded 已是终态）；**幂等**（重复调用仍确保反馈已删）。
+   */
+  async clearRevisionContent(userId: string, taskId: string, sheetId: string): Promise<WritingSheetDto> {
+    return this.withActor(userId, async (repos) => {
+      const task = await repos.l3Writing.lockTask(userId, taskId);
+      if (!task) throw new NotFoundError("WritingTask", taskId);
+      const sheet = await repos.l3Writing.lockSheet(userId, taskId, sheetId);
+      if (!sheet) throw new NotFoundError("WritingSheet", sheetId);
+      if (sheet.status !== "sealed") {
+        throw conflict("only a sealed revision can be cleared", { sheetId, status: sheet.status });
+      }
+      // 幂等：attempt 可能已删（false 无需报错），但反馈必须随之清除（同事务）。
+      await repos.l3Writing.softDeleteWritingAttempt(userId, sheetId);
+      await repos.l3Feedback.deleteBySheet(userId, sheetId);
+      await repos.l3Writing.touchTask(userId, taskId);
+      const reread = await repos.l3Writing.findSheetById(userId, taskId, sheetId);
+      if (!reread) throw new NotFoundError("WritingSheet", sheetId);
+      return toSheetDto(reread);
     });
   }
 }

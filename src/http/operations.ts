@@ -547,6 +547,11 @@ export const apiOperations = [
   // 写该稿 feedback（lastEditor 服务端认定；作文 feedback 是该稿唯一质量反馈源）。
   operation("get", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/feedback-context", "getL3WritingFeedbackContext", "owner", "agent", "none", undefined, 200, l3WritingFeedbackContextResponseSchema),
   operation("put", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/feedback", "putL3WritingFeedback", "owner", "agent", "sessionMutation", { body: l3WritingFeedbackPutSchema }, 200, l3WritingFeedbackPutResponseSchema),
+  // W9（ADR《writing-workspace》§7）：单稿导出（owner-only；text/markdown + 版本/sha256
+  // 响应头，对齐题纸导出先例）与正文清理（soft-delete attempt + 同事务删反馈；
+  // sealed 限定、幂等；agent 无导出权限）。
+  operation("get", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/export", "exportL3WritingSheet", "owner", "owner", "none", undefined, 200, z.string(), "text/markdown"),
+  operation("delete", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/content", "clearL3WritingSheetContent", "owner", "owner", "sessionMutation", undefined, 200, l3WritingSheetResponseSchema),
   // 批次二收官：冻结导出（只出不进；Content-Disposition + 版本/sha256 响应头）。
   operation("get", "/api/l3/sheets/:id/export", "exportL3Sheet", "owner", "owner", "none", { query: l3SheetExportQuerySchema }, 200, z.string(), "text/markdown"),
   operation("get", "/api/l3/practice-files", "listL3PracticeFiles", "owner", "agent", "none", { query: l3PracticeFileListQuerySchema }, 200, l3PracticeFileListResponseSchema),

@@ -85,6 +85,8 @@ class FakeSheetRepos implements IL3WritingRepository {
   sheets = new Map<string, L3SubmissionRow>();
   attempt: L3QuestionAttemptRow | null = null;
   feedbackCount = new Map<string, number>();
+  /** W9 清理用：反馈行（删除桩操作对象）。 */
+  feedback: import("@/repositories/l3-writing.types").L3WritingFeedbackRow | null = null;
   touchCount = 0;
   insertAttemptCount = 0;
 
@@ -211,6 +213,27 @@ class FakeSheetRepos implements IL3WritingRepository {
     }
     return max;
   }
+  // ── W9：正文清理（soft-delete attempt）+ 反馈删除桩 ────────────────────
+  feedbackDeletedFor: string[] = [];
+  opOrder: string[] = [];
+  async softDeleteWritingAttempt(userId: string, sheetId: string): Promise<boolean> {
+    const attempt = this.attempt;
+    if (attempt && attempt.sheet_id === sheetId && attempt.user_id === userId && attempt.status === "active") {
+      this.opOrder.push("softDeleteAttempt");
+      this.attempt = { ...attempt, status: "deleted", deleted_at: nowIso() };
+      return true;
+    }
+    return false;
+  }
+  l3Feedback = {
+    deleteBySheet: async (_userId: string, sheetId: string) => {
+      this.opOrder.push("deleteFeedback");
+      const had = this.feedback != null && this.feedback.sheet_id === sheetId;
+      if (had) this.feedback = null;
+      this.feedbackDeletedFor.push(sheetId);
+      return had;
+    },
+  };
   async listRevisions(
     userId: string, taskId: string,
     input: { limit: number; cursor: { updatedAt: string; id: string } | null },
@@ -237,7 +260,7 @@ class FakeSheetRepos implements IL3WritingRepository {
 function makeService(repos: FakeSheetRepos): L3WritingSheetService {
   const fakeTxRunner = (async (cb: (tx: undefined) => Promise<unknown>) => cb(undefined)) as never;
   return new L3WritingSheetService(
-    (() => ({ l3Writing: repos }) as unknown as WritingRepos) as never,
+    (() => ({ l3Writing: repos, l3Feedback: repos.l3Feedback }) as unknown as WritingRepos) as never,
     fakeTxRunner,
   );
 }
@@ -502,5 +525,57 @@ describe("W3 getSheet / listRevisions（GET 零写）", () => {
     expect(discardedSummary.feedbackState).toBe("unavailable");
     expect(discardedSummary.contentStatus).toBe("cleared");
     expect(page.nextCursor).toBeNull();
+  });
+});
+
+describe("W9 clearRevisionContent（正文清理：attempt 软删 + 反馈同事务删除）", () => {
+  function sealedWithContent(repos: FakeSheetRepos): void {
+    repos.sheets.set(SHEET, sheetRow({
+      status: "sealed", revision_no: 1, seal_mode: "full", sealed_at: nowIso(),
+    }));
+    repos.attempt = attemptRow({ sheet_id: SHEET, answer: { text: "正文" } });
+    repos.feedback = {
+      id: "00000000-0000-4000-8000-000000000921",
+      user_id: USER,
+      sheet_id: SHEET,
+      text_sha256: "a".repeat(64),
+      schema_version: 1,
+      feedback: { schemaVersion: 1 },
+      version: 1,
+      request_id: "00000000-0000-4000-8000-000000000902",
+      last_editor: "agent-a",
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+  }
+
+  it("sealed：soft-delete attempt → 删反馈（顺序），幂等可重入", async () => {
+    const repos = new FakeSheetRepos();
+    sealedWithContent(repos);
+    const service = makeService(repos);
+    const sheet = await service.clearRevisionContent(USER, TASK, SHEET);
+    expect(sheet.status).toBe("sealed"); // 稿行保持 sealed（内容清理不是状态迁移）
+    expect(repos.attempt!.status).toBe("deleted");
+    expect(repos.feedback).toBeNull();
+    expect(repos.opOrder).toEqual(["softDeleteAttempt", "deleteFeedback"]);
+    expect(repos.touchCount).toBe(1);
+
+    // 幂等重入：不报错；反馈仍为空（每次都确保删除）。
+    await service.clearRevisionContent(USER, TASK, SHEET);
+    expect(repos.feedback).toBeNull();
+    expect(repos.feedbackDeletedFor).toEqual([SHEET, SHEET]);
+  });
+
+  it("draft / discarded → 409；不存在 → 404（零写）", async () => {
+    const repos = new FakeSheetRepos();
+    const service = makeService(repos);
+    repos.sheets.set(SHEET, sheetRow({ status: "draft" }));
+    await expect(service.clearRevisionContent(USER, TASK, SHEET)).rejects.toMatchObject({ httpStatus: 409 });
+    repos.sheets.set(SHEET, sheetRow({ status: "discarded", revision_no: null }));
+    await expect(service.clearRevisionContent(USER, TASK, SHEET)).rejects.toMatchObject({ httpStatus: 409 });
+    repos.sheets.delete(SHEET);
+    await expect(service.clearRevisionContent(USER, TASK, SHEET)).rejects.toMatchObject({ httpStatus: 404 });
+    expect(repos.feedbackDeletedFor).toEqual([]);
+    expect(repos.touchCount).toBe(0);
   });
 });

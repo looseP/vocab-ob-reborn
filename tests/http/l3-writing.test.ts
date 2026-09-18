@@ -100,6 +100,7 @@ type FakeBundle = {
   l3WritingTasks?: Record<string, unknown>;
   l3WritingSheets?: Record<string, unknown>;
   l3WritingFeedback?: Record<string, unknown>;
+  l3WritingExport?: Record<string, unknown>;
 };
 
 function makeServices(bundle: FakeBundle): Services {
@@ -107,6 +108,7 @@ function makeServices(bundle: FakeBundle): Services {
     l3WritingTasks: {},
     l3WritingSheets: {},
     l3WritingFeedback: {},
+    l3WritingExport: {},
     ...bundle,
   } as unknown as Services;
 }
@@ -371,5 +373,50 @@ describe("反馈路由（owner/agent 双身份 + editor 服务端认定 + 64KiB 
     const app = createApp(makeServices({}));
     expect((await app.request(`/api/l3/writing/tasks`)).status).toBe(401);
     expect((await app.request(`/api/l3/writing/tasks/${TASK_ID}/sheets/${SHEET_ID}/feedback`, { method: "PUT" })).status).toBe(401);
+  });
+});
+
+describe("导出与正文清理路由（W9）", () => {
+  it("GET export：owner 得 text/markdown + 版本/sha 响应头；agent 403（无导出权限）", async () => {
+    const markdown = "# L3 作文档案（v1）\n\n- 任务: x\n";
+    const exportSheet = vi.fn(async () => ({
+      markdown,
+      sha256: "a".repeat(64),
+      filename: `writing-${SHEET_ID}.md`,
+      schemaVersion: 1,
+    }));
+    const app = createApp(makeServices({ l3WritingExport: { exportSheet } }));
+    const res = await app.request(`/api/l3/writing/tasks/${TASK_ID}/sheets/${SHEET_ID}/export`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/markdown");
+    expect(res.headers.get("content-disposition")).toContain(`writing-${SHEET_ID}.md`);
+    expect(res.headers.get("x-export-schema-version")).toBe("1");
+    expect(res.headers.get("x-export-sha256")).toBe("a".repeat(64));
+    expect(await res.text()).toBe(markdown);
+    expect(exportSheet).toHaveBeenCalledWith("user-123", TASK_ID, SHEET_ID);
+
+    const agent = await app.request(`/api/l3/writing/tasks/${TASK_ID}/sheets/${SHEET_ID}/export`, { headers: AGENT_HEADERS });
+    expect(agent.status).toBe(403);
+    expect(exportSheet).toHaveBeenCalledTimes(1);
+  });
+
+  it("DELETE content：直接回 sheet DTO；agent 403", async () => {
+    const clearRevisionContent = vi.fn(async () => ({
+      id: SHEET_ID, taskId: TASK_ID, status: "sealed", draftVersion: 3, revisionNo: 1,
+      parentSheetId: null, createdAt: "2026-09-18T00:00:00.000Z", updatedAt: "2026-09-18T00:00:00.000Z",
+      sealedAt: "2026-09-18T01:00:00.000Z",
+    }));
+    const app = createApp(makeServices({ l3WritingSheets: { clearRevisionContent } }));
+    const res = await app.request(`/api/l3/writing/tasks/${TASK_ID}/sheets/${SHEET_ID}/content`, {
+      method: "DELETE", headers: AUTH_HEADERS,
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).id).toBe(SHEET_ID);
+    expect(clearRevisionContent).toHaveBeenCalledWith("user-123", TASK_ID, SHEET_ID);
+
+    const agent = await app.request(`/api/l3/writing/tasks/${TASK_ID}/sheets/${SHEET_ID}/content`, {
+      method: "DELETE", headers: AGENT_HEADERS,
+    });
+    expect(agent.status).toBe(403);
   });
 });
