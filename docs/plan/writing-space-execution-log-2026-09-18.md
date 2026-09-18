@@ -161,7 +161,9 @@
 - **真环境矩阵重跑（最终代码 + 最终 dist + 独立库）**：writing e2e **4/4（36.2s）**；三件套集成 **22/22**（RLS 10 + 提交屏障并发 10 + 清理×反馈并发 2，真 PG 两连接）。截图 12 张刷新（`D:/tmp/ws7-acceptance/`，含 10 失败阻止/11 双标签冲突/12 清理无泄漏）。
 - **沙箱环境性障碍（如实记录，均非本线产物，CI 清洁跑不受影响）**：① alerting-drill 测试因 WorkBuddy safe-delete shim 拦截其锁文件删除而间歇失败（同轮内既有通过亦有失败观测；覆盖产物以排除该文件的干净跑生成）；② vitest/vite/drift 的多文件清理动作被 shim 拦截（以「挪移代替删除」或重试窗口通过，未绕过安全护栏）。
 - **外审**：独立只读审查已完成（`9e48325` 处置 3 项），结论=通过为主；PR 的「独立审查」缺项已消除。
-- **draft PR**：`feat/writing-space-v1` 分支推送 + draft PR 创建（链接与最终 HEAD 见 PR 正文；本 PR 为**待验收**状态，未合并、未部署）。
+- **draft PR**：`feat/writing-space-v1` 分支推送 + draft PR **#122** 创建（链接与最终 HEAD 见 PR 正文；本 PR 为**待验收**状态，未合并、未部署）。
+- **CI 首跑（HEAD `802318e`）与修复**：Writing E2E **1 失败**——手动预占 3099 与 playwright.config `webServer`（CI 下 `reuseExistingServer=false`）冲突 → `collected=0`（**validator fail-closed 正确拦截「空跑绿」**，并按设计打印计数行）。修复 `3304e92`：移除 workflow 手动服务步骤（由 webServer 自起）、步骤 env 改喂 `DATABASE_URL=APP 角色` + `E2E_SETUP_DATABASE_URL=管理 URL` + `AGENT_API_TOKENS`（config env 白名单增补透传）、validator 增打印 `report.errors`；本地以 `CI=true` 仿真 webServer 自起路径 **4/4（42.8s）** 预演通过。
+- **CI 最终态（HEAD `3304e92`）**：**三检查全绿**——Writing E2E `collected=4 executed=4 skipped=0 failed=0 passed=4 (pw_exit=0)`（1m46s）/ Browser E2E ✓（1m37s）/ Engineering Gate + Migration Rehearsal ✓（6m10s）。
 
 ## 2 · 门禁与证据台账
 
@@ -201,7 +203,9 @@
 | 2026-09-18 | W11 分层覆盖补强（真实 PR base 口径初红 → repo 层四文件 100%） | 0 | **Diff 92.62% PASS / repository 92.85/91.17 PASS / ratchet PASS**；`61ad3d3` |
 | 2026-09-18 | W11 门禁批：typecheck / arch / governance / drift×2 / frontend:build | 0 | 0 错 / 388 模块 / breaking OK+契约 41 / OK×2 / dist 重建 |
 | 2026-09-18 | W11 真环境矩阵重跑（最终代码） | 0 | e2e **4/4（36.2s）**；三件套集成 **22/22**；截图 12 张刷新 |
-| 2026-09-18 | 提交链终态 | — | `371355e`(W6 回填) → `02eb1aa`(W9) → `2063461`(W8) → `ba2c082`(W7) → `9a9e4df`(冒烟) → `333eead`(日志) → `1b68af8`(屏障) → `f45c8de`(可见性) → `f55e40b`(文案) → `4d14ebf`(矩阵) → `9e48325`(外审) → `5d5ea04`(CI) → `6cde7a6`(守卫) → `61ad3d3`(覆盖) → 本 docs 提交 → draft PR |
+| 2026-09-18 | 提交链终态 | — | `371355e`(W6 回填) → `02eb1aa`(W9) → `2063461`(W8) → `ba2c082`(W7) → `9a9e4df`(冒烟) → `333eead`(日志) → `1b68af8`(屏障) → `f45c8de`(可见性) → `f55e40b`(文案) → `4d14ebf`(矩阵) → `9e48325`(外审) → `5d5ea04`(CI) → `6cde7a6`(守卫) → `61ad3d3`(覆盖) → `802318e`(报告) → `3304e92`(CI 修复) → draft PR **#122** |
+| 2026-09-18 | CI 首跑（Writing E2E，HEAD `802318e`） | 1 | workflow 缺陷：手动预占 3099 × webServer 冲突 → `collected=0`；validator fail-closed 拦截（符合设计）→ 修复 `3304e92` |
+| 2026-09-18 | CI 最终跑（HEAD `3304e92`） | 0 | **三检查全绿**：Writing E2E `collected=4 executed=4 skipped=0 failed=0 passed=4 (pw_exit=0)`（1m46s）/ Browser E2E ✓ / Engineering Gate + Migration Rehearsal ✓（6m10s） |
 
 ## 3 · 遗留与待决策
 

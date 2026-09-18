@@ -6,7 +6,7 @@
 
 ## 1 · 提交链（base → head）
 
-`f03ffe35`(base) ← `2b754a1`(计划文档) ← `44ab3f3`(ADR/baseline/log) ← `da1317c`(W1 迁移 **0038** + domain/DTO + RLS) ← `3d759e1`(W4 保存控制器) ← `ba26a82`(W2 任务生命周期) ← `09a44f0`(W3 稿件生命周期) ← `d7a26ff`(W5 反馈) ← `08d9c44`(W5 收口) ← `b0bee63`(W5 自查) ← `3396150`(W6 HTTP/授权) ← `371355e`(回填) ← `02eb1aa`(W9 导出/清理) ← `2063461`(W8 反馈/对照) ← `ba2c082`(W7 页面) ← `9a9e4df`(e2e 冒烟) ← `333eead`(日志) ← `1b68af8`(提交屏障) ← `f45c8de`(输入可见性 P0) ← `f55e40b`(冲突文案) ← `4d14ebf`(e2e 矩阵) ← `9e48325`(外审修复) ← `5d5ea04`(CI workflow) ← `6cde7a6`(shell 守卫) ← `61ad3d3`(覆盖补强) ← `《docs 提交（本报告）》`
+`f03ffe35`(base) ← `2b754a1`(计划文档) ← `44ab3f3`(ADR/baseline/log) ← `da1317c`(W1 迁移 **0038** + domain/DTO + RLS) ← `3d759e1`(W4 保存控制器) ← `ba26a82`(W2 任务生命周期) ← `09a44f0`(W3 稿件生命周期) ← `d7a26ff`(W5 反馈) ← `08d9c44`(W5 收口) ← `b0bee63`(W5 自查) ← `3396150`(W6 HTTP/授权) ← `371355e`(回填) ← `02eb1aa`(W9 导出/清理) ← `2063461`(W8 反馈/对照) ← `ba2c082`(W7 页面) ← `9a9e4df`(e2e 冒烟) ← `333eead`(日志) ← `1b68af8`(提交屏障) ← `f45c8de`(输入可见性 P0) ← `f55e40b`(冲突文案) ← `4d14ebf`(e2e 矩阵) ← `9e48325`(外审修复) ← `5d5ea04`(CI workflow) ← `6cde7a6`(shell 守卫) ← `61ad3d3`(覆盖补强) ← `802318e`(报告) ← `3304e92`(CI 修复) ← `《docs 提交（本报告回填）》`
 
 ## 2 · 用户使用路径与本版范围
 
@@ -44,6 +44,7 @@
 - 本地最终跑：**4/4 passed（36.2s）**，栈 = `SERVE_FRONTEND` 单进程 + 最终 dist + 独立验收库。
 - 截图 12 张（仓外 `D:/tmp/ws7-acceptance/`）：01–06 桌面 1440×900 / 07–08 手机 390×844 / 09 暗色 / 10 失败阻止提交与导出 / 11 双标签冲突 / 12 清理占位无泄漏。
 - CI：`.github/workflows/writing-e2e.yml` fail-closed（JSON reporter → collected=4 / skipped=0 / failed=0 才算绿，输出计数行；validator 已用 mock 三用例本地自证：过→0、skip→1、少收集→1）。
+- **CI 实跑记录**：首跑（`802318e`）因 workflow 手动预占 3099 与 config webServer（CI 下 `reuseExistingServer=false`）冲突 → `collected=0`，**validator 按设计拦截「空跑绿」**并打印 `report.errors`；修复 `3304e92`（webServer 自起 + `AGENT_API_TOKENS` 白名单透传 + env 形状对齐本地语义，本地 `CI=true` 仿真 4/4 预演）。**终跑（`3304e92`）全绿**：`collected=4 executed=4 skipped=0 failed=0 passed=4 (pw_exit=0)`（1m46s）。
 
 ## 6 · 独立审查结论与修复
 
@@ -58,8 +59,8 @@
 
 ## 8 · 未验证项与已知限制（如实）
 
-- CI 首跑未执行（push 后由 Actions 验证；workflow 的 validator 已本地 mock 自证）。
-- 分支保护未把 Writing E2E 列为必需检查（需仓库设置；命令见 §10）。
+- ✅ **CI 已全绿（最终 HEAD `3304e92`）**：Writing E2E `passed=4`（fail-closed 计数行）/ Browser E2E ✓ / Engineering Gate + Migration Rehearsal ✓。
+- 分支保护尚未把 Writing E2E 列为必需检查（需仓库设置；命令见 §10）。
 - 真 PG 集成测试在本地跑于 `vocab_writing_test`；CI 使用临时 service 容器复建。
 - `题库进入`（questionId 路径）在浏览器层未覆盖（服务层全测；UI 按钮已实现）——浏览器断言以 `prompt` 路径（段落/自由写作）覆盖。
 - 其余既有 E2E（auth/phase5c）不在本轮改动面，交由 CI Browser E2E 继续看护。
