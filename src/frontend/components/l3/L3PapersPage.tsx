@@ -45,6 +45,11 @@ const ESSAY_TYPES: QuestionType[] = ["short_essay", "long_essay"];
 const CHOICE_TYPES: QuestionType[] = ["cloze", "reading_choice", "new_question", "grammar_blank"];
 const OPTION_KEYS = ["A", "B", "C", "D"] as const;
 
+/** ExamPaper.direction 为宽松 string——作文入口需严格方向枚举（未知值归「通用」）。 */
+function toWritingDirection(value: string | null | undefined): "通用" | "考研" | "雅思" {
+  return value === "考研" || value === "雅思" ? value : "通用";
+}
+
 /** 七大题型专题空间（按卷面顺序；points=考纲标准分，grammar_blank 英二不考）。 */
 const VENUES: Array<{
   type: QuestionType;
@@ -683,7 +688,7 @@ function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet }:
         paper={detail}
         {...(resumeSheetId ? { replaySheetId: resumeSheetId } : {})}
         focusQuestionId={deepLinkQuestion ?? null}
-        writingEntry={{ direction: detail.direction ?? "通用", onNavigate: (url) => navigate(url) }}
+        writingEntry={{ direction: toWritingDirection(detail.direction), onNavigate: (url) => navigate(url) }}
         onBack={() => setDetail(null)}
         onRetake={() => setRetakeNonce((n) => n + 1)}
       />
@@ -981,8 +986,8 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
   const [resolved, setResolved] = useState<{
     paper: ExamPaper;
     fileVenue?: { sourceId: string; questionType: QuestionType };
-    /** 作文入口方向（file 型查文件列表；paper 型取卷方向；失败降级「通用」）。 */
-    direction: "通用" | "考研" | "雅思" | null;
+    /** 作文入口方向（file 型查文件列表；paper 型取卷方向；未知值统一归「通用」）。 */
+    direction: "通用" | "考研" | "雅思";
     retakePath: string;
     backPath: string;
   } | null>(null);
@@ -1003,11 +1008,11 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
           const body = await apiFetch<PracticeFileDetail>(`/l3/practice-files/detail?${params}`);
           if (cancelled) return;
           if (!body.source) throw new Error("来源缺失");
-          let direction: "通用" | "考研" | "雅思" | null = null;
+          let direction: "通用" | "考研" | "雅思" = "通用";
           try {
             const page = await apiFetch<{ items: PracticeFile[] }>("/l3/practice-files?limit=100");
-            direction = page.items.find((item) => item.question_type === questionType
-              && item.source_id === sheet.source_id)?.direction ?? null;
+            direction = toWritingDirection(page.items.find((item) => item.question_type === questionType
+              && item.source_id === sheet.source_id)?.direction);
           } catch { /* 方向查询失败降级「通用」；不阻塞回看 */ }
           if (cancelled) return;
           setResolved({
@@ -1024,7 +1029,7 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
           if (cancelled) return;
           setResolved({
             paper: detail,
-            direction: detail.direction ?? null,
+            direction: toWritingDirection(detail.direction),
             retakePath: `/l3?paper=${encodeURIComponent(sheet.paper_id)}`,
             backPath: "/l3",
           });
@@ -1053,7 +1058,7 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
       paper={resolved.paper}
       {...(resolved.fileVenue ? { fileVenue: resolved.fileVenue } : {})}
       replaySheetId={sheetId}
-      writingEntry={{ direction: resolved.direction ?? "通用", onNavigate: (url) => navigate(url) }}
+      writingEntry={{ direction: resolved.direction, onNavigate: (url) => navigate(url) }}
       onBack={() => navigate(resolved.backPath)}
       onRetake={() => navigate(resolved.retakePath)}
     />
