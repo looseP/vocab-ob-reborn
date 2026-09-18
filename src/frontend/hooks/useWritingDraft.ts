@@ -18,6 +18,7 @@ import {
   type WritingSaveControllerLoadResult,
   type WritingSaveControllerSaveInput,
   type WritingSaveControllerSaveResult,
+  type WritingSaveFlushReceipt,
 } from "@/frontend/state/writingSaveController";
 
 export interface UseWritingDraftOptions {
@@ -33,7 +34,8 @@ export interface UseWritingDraftResult {
   state: SaveState;
   inFlight: boolean;
   setText: (text: string) => void;
-  flush: () => Promise<void>;
+  /** flush 回执：已确认正文+版本；提交屏障据此核对权威状态（不盲目采信 GET 最新值）。 */
+  flush: () => Promise<WritingSaveFlushReceipt>;
   retry: () => Promise<void>;
   onCompositionStart: () => void;
   onCompositionEnd: () => void;

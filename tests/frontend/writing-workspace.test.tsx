@@ -39,6 +39,7 @@ vi.mock("@/frontend/api/client", () => ({ apiFetch: vi.fn() }));
 import { writingClient } from "@/frontend/api/writingClient";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
+import { evaluateSubmitPrecheck } from "@/frontend/state/writingSubmitBarrier";
 import { L3WritingPage } from "@/frontend/pages/L3WritingPage";
 import { L3Page } from "@/frontend/pages/L3Page";
 import { buildWritingUrl, parseWritingSearch } from "@/frontend/viewModels/writingNavigation";
@@ -164,6 +165,22 @@ describe("writingNavigation（URL 契约）", () => {
   });
 });
 
+describe("W10 提交屏障纯函数（evaluateSubmitPrecheck）", () => {
+  it("同文同版放行；text/version 不符与非 draft 拒绝（不盲采最新版本）", () => {
+    const receipt = { text: "T", version: 1 };
+    expect(evaluateSubmitPrecheck(receipt, { status: "draft", text: "T", draftVersion: 1 }))
+      .toEqual({ ok: true, expectedVersion: 1 });
+    expect(evaluateSubmitPrecheck(receipt, { status: "draft", text: "X", draftVersion: 1 }))
+      .toEqual({ ok: false, reason: "text-mismatch" });
+    expect(evaluateSubmitPrecheck(receipt, { status: "draft", text: "T", draftVersion: 2 }))
+      .toEqual({ ok: false, reason: "version-mismatch" });
+    expect(evaluateSubmitPrecheck(receipt, { status: "sealed", text: null, draftVersion: 3 }))
+      .toEqual({ ok: false, reason: "not-draft" });
+    // 空文本与 receipt 不一致同样拒绝（文本比较用原样空串，不做归一）。
+    expect(evaluateSubmitPrecheck(receipt, { status: "draft", text: null, draftVersion: 1 }).ok).toBe(false);
+  });
+});
+
 describe("W7 起笔路径与列表（≤2 次主要点击）", () => {
   it("空态 → 开始写作 → 创建 → replace 到规范 URL 且光标进入正文", async () => {
     client.listTasks!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
@@ -255,8 +272,8 @@ describe("W7 任务切换隔离（A 的在途响应不落到 B）", () => {
   });
 });
 
-describe("W7 提交屏障（flush 先行 + 失败不提交）", () => {
-  it("保存未确认时提交被阻止；确认后以最新版本提交", async () => {
+describe("W7 提交屏障（flush 回执核对 + CAS 兜底 + 不盲采最新版本）", () => {
+  it("保存未确认时提交被阻止；确认后以回执版本提交（核对一致）", async () => {
     client.getTask!.mockResolvedValue({ task: taskDto(), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
     client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
     client.getSheet!.mockResolvedValue(sheetDetail());
@@ -271,8 +288,8 @@ describe("W7 提交屏障（flush 先行 + 失败不提交）", () => {
     // flush 在途（保存未确认）：未提交。
     expect(client.submitSheet).not.toHaveBeenCalled();
 
-    // 保存确认（version 1），随后 getSheet 返回权威版本 1 → 允许提交。
-    client.getSheet!.mockResolvedValue(sheetDetail({ sheet: sheetDto({ draftVersion: 1 }) }));
+    // 保存确认（version 1）；核对读面与回执一致（同文同版）→ 允许提交。
+    client.getSheet!.mockResolvedValue(sheetDetail({ sheet: sheetDto({ draftVersion: 1 }), text: "改过的正文" }));
     client.submitSheet!.mockResolvedValue({ sheet: sheetDto({ status: "sealed", revisionNo: 1 }), attemptId: SHEET });
     await act(async () => {
       pendingSave.resolve({ sheet: sheetDto({ draftVersion: 1 }), textSha256: SHA });
@@ -283,22 +300,106 @@ describe("W7 提交屏障（flush 先行 + 失败不提交）", () => {
     await waitFor(() => {
       expect(client.submitSheet).toHaveBeenCalledWith(TASK, SHEET, { expectedVersion: 1 });
     });
+    expect(client.submitSheet).toHaveBeenCalledTimes(1);
   });
 
-  it("保存失败：提交不发生、正文保留、错误可见", async () => {
+  it("核对发现服务器是另一份修订（正文不一致）→ 冲突提示、不提交、不自动重试", async () => {
     client.getTask!.mockResolvedValue({ task: taskDto(), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
     client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
     client.getSheet!.mockResolvedValue(sheetDetail());
-    // 非可重试失败（422）：立即置错并拒绝 flush（5xx 会走自动重试，不在本用例范围）。
+    client.saveDraft!.mockResolvedValue({ sheet: sheetDto({ draftVersion: 1 }), textSha256: SHA });
+
+    await renderAt(`/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}`, createElement(L3WritingPage));
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "我的确认稿" } });
+    // 核对读面：服务器上是别人的修订（正文不同、版本 2）。
+    client.getSheet!.mockResolvedValue(sheetDetail({ sheet: sheetDto({ draftVersion: 2 }), text: "别人的改动" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交本稿" }));
+    await waitFor(() => {
+      expect(screen.getByText(/另一份修订，未提交/)).toBeTruthy();
+    });
+    expect(client.submitSheet).not.toHaveBeenCalled(); // 不采纳最新版本、不提交
+    expect((screen.getByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement).value).toBe("我的确认稿");
+  });
+
+  it("核对发现版本被推进（同文本新版本）→ 冲突提示、不提交", async () => {
+    client.getTask!.mockResolvedValue({ task: taskDto(), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
+    client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    client.getSheet!.mockResolvedValue(sheetDetail());
+    client.saveDraft!.mockResolvedValue({ sheet: sheetDto({ draftVersion: 1 }), textSha256: SHA });
+
+    await renderAt(`/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}`, createElement(L3WritingPage));
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "同文" } });
+    client.getSheet!.mockResolvedValue(sheetDetail({ sheet: sheetDto({ draftVersion: 3 }), text: "同文" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交本稿" }));
+    await waitFor(() => {
+      expect(screen.getByText(/另一份修订，未提交/)).toBeTruthy();
+    });
+    expect(client.submitSheet).not.toHaveBeenCalled();
+  });
+
+  it("核对通过后第三方保存 → CAS 409：冲突提示、submit 恰一次、本地正文保留", async () => {
+    client.getTask!.mockResolvedValue({ task: taskDto(), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
+    client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    client.getSheet!.mockResolvedValue(sheetDetail());
+    client.saveDraft!.mockResolvedValue({ sheet: sheetDto({ draftVersion: 1 }), textSha256: SHA });
+    client.submitSheet!.mockRejectedValue(new BrowserApiError(409, {
+      error: "draft version conflict", code: "CONFLICT", details: { code: "DRAFT_VERSION_CONFLICT", actualVersion: 2 },
+    }));
+
+    await renderAt(`/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}`, createElement(L3WritingPage));
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "核对通过稿" } });
+    client.getSheet!.mockResolvedValue(sheetDetail({ sheet: sheetDto({ draftVersion: 1 }), text: "核对通过稿" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交本稿" }));
+    await waitFor(() => {
+      expect(screen.getByText(/提交时另一处先保存了/)).toBeTruthy();
+    });
+    expect(client.submitSheet).toHaveBeenCalledTimes(1); // 不自动重试
+    expect((screen.getByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement).value).toBe("核对通过稿");
+  });
+
+  it("提交期间编辑锁定（textarea 只读）", async () => {
+    client.getTask!.mockResolvedValue({ task: taskDto(), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
+    client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    client.getSheet!.mockResolvedValue(sheetDetail());
+    const pendingSave = deferred<{ sheet: unknown; textSha256: string }>();
+    client.saveDraft!.mockReturnValue(pendingSave.promise);
+
+    await renderAt(`/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}`, createElement(L3WritingPage));
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "锁定前正文" } });
+    fireEvent.click(screen.getByRole("button", { name: "提交本稿" }));
+    await flushAsync();
+    expect(textarea.readOnly).toBe(true); // 提交在途：编辑锁定
+    await act(async () => {
+      pendingSave.reject(new BrowserApiError(422, { code: "VALIDATION_ERROR", message: "rejected" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() => { expect(screen.getByText(/保存未完成，未能提交/)).toBeTruthy(); });
+    expect(textarea.readOnly).toBe(false); // 失败后可继续编辑（正文仍在）
+  });
+
+  it("保存失败：提交不发生、正文保留、错误可见；导出同样被阻止", async () => {
+    client.getTask!.mockResolvedValue({ task: taskDto(), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
+    client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    client.getSheet!.mockResolvedValue(sheetDetail());
     client.saveDraft!.mockRejectedValue(new BrowserApiError(422, { code: "VALIDATION_ERROR", message: "rejected" }));
 
     await renderAt(`/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}`, createElement(L3WritingPage));
     const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: "别丢的正文" } });
     fireEvent.click(screen.getByRole("button", { name: "提交本稿" }));
-    await waitFor(() => { expect(screen.getByText(/提交未成功/)).toBeTruthy(); });
+    await waitFor(() => { expect(screen.getByText(/保存未完成，未能提交/)).toBeTruthy(); });
     expect(client.submitSheet).not.toHaveBeenCalled();
     expect((screen.getByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement).value).toBe("别丢的正文");
+
+    // 导出先 flush：保存失败 → 不出文件、明确报错。
+    fireEvent.click(screen.getByRole("button", { name: "导出本稿" }));
+    await waitFor(() => { expect(screen.getByText(/导出失败，未生成文件/)).toBeTruthy(); });
+    expect(client.exportSheet).not.toHaveBeenCalled();
   });
 
   it("版本冲突：保留本地正文并提供复制与载入服务器稿", async () => {

@@ -12,8 +12,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { WritingSheetDetail, WritingTaskDto } from "@/domain";
 import { countEnglishWords } from "@/domain/l3-writing";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { writingClient } from "@/frontend/api/writingClient";
 import { useWritingDraft } from "@/frontend/hooks/useWritingDraft";
+import { SaveConflictError } from "@/frontend/state/writingSaveController";
+import { evaluateSubmitPrecheck } from "@/frontend/state/writingSubmitBarrier";
 import { Button } from "@/frontend/components/ui/Button";
 import { saveStateLabel, WRITING_TEXTAREA_ID } from "@/frontend/viewModels/writingNavigation";
 
@@ -44,6 +47,7 @@ export function WritingEditor({ task, detail, onSubmitted, onLoadServerVersion, 
   const readOnly = detail.sheet.status !== "draft";
   const [actionState, setActionState] = useState<"idle" | "submitting" | "exporting">("idle");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [submitConflict, setSubmitConflict] = useState<null | "text" | "version" | "cas">(null);
   const [copyHint, setCopyHint] = useState<string | null>(null);
 
   const save = useMemo(
@@ -89,25 +93,43 @@ export function WritingEditor({ task, detail, onSubmitted, onLoadServerVersion, 
   const submit = async () => {
     setActionState("submitting");
     setActionError(null);
+    setSubmitConflict(null);
+    let phase: "flush" | "submit" = "flush";
     try {
-      // ① flush：保存未确认（失败/在途未确认）→ reject，禁止提交。
-      await draft.flush();
-      // ② 取最新确认版本（服务器权威）。
+      // ① flush：保存未确认（失败/在途未确认）→ reject，禁止提交；回执=本次确认的正文+版本。
+      const receipt = await draft.flush();
+      phase = "submit";
+      // ② GET 只用于**核对**权威状态——绝不采用其最新 version 绕过冲突（S§4）。
       const latest = await writingClient.getSheet(task.id, detail.sheet.id);
-      if (latest.sheet.status !== "draft") {
-        await onSubmitted();
+      const precheck = evaluateSubmitPrecheck(
+        { text: receipt.text, version: receipt.version },
+        { status: latest.sheet.status, text: latest.text, draftVersion: latest.sheet.draftVersion },
+      );
+      if (!precheck.ok) {
+        if (precheck.reason === "not-draft") {
+          // 已被其他标签页提交：刷新进入只读视图（不是冲突，也不是本次提交）。
+          await onSubmitted();
+          return;
+        }
+        setSubmitConflict(precheck.reason); // 不提交、不采用最新版本、不自动重试
         return;
       }
-      // ③ 提交（CAS）。
-      await writingClient.submitSheet(task.id, detail.sheet.id, { expectedVersion: latest.sheet.draftVersion });
+      // ③ CAS 兜底：核对与 submit 之间第三方再保存 → 409（服务端原子守卫）。
+      await writingClient.submitSheet(task.id, detail.sheet.id, { expectedVersion: precheck.expectedVersion });
       await onSubmitted();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      setActionError(
-        message.includes("empty") || message.includes("422")
-          ? "正文为空或未通过校验，未提交；你的正文仍在。"
-          : "提交未成功（可能是版本冲突或网络问题）；你的正文仍在，可重试。",
-      );
+      const status = error instanceof BrowserApiError ? error.status : undefined;
+      if (error instanceof SaveConflictError) {
+        // 控制器已置 conflict 态；冲突框由 draft.state 呈现（复制/载入服务器稿）。
+      } else if (phase === "flush") {
+        setActionError("保存未完成，未能提交；你的正文仍在，可重试。");
+      } else if (status === 409) {
+        setSubmitConflict("cas");
+      } else if (status === 422) {
+        setActionError("正文为空或未通过校验，未提交；你的正文仍在。");
+      } else {
+        setActionError("提交未成功（网络或服务异常）；你的正文仍在，可重试。");
+      }
     } finally {
       setActionState("idle");
     }
@@ -151,7 +173,11 @@ export function WritingEditor({ task, detail, onSubmitted, onLoadServerVersion, 
             {actionState === "exporting" ? "导出中…" : "导出本稿"}
           </Button>
           {!readOnly && (
-            <Button size="sm" onClick={() => void submit()} disabled={busy || draft.state === "conflict"}>
+            <Button
+              size="sm"
+              onClick={() => void submit()}
+              disabled={busy || draft.state === "conflict" || submitConflict !== null}
+            >
               {actionState === "submitting" ? "提交中…" : "提交本稿"}
             </Button>
           )}
@@ -160,9 +186,15 @@ export function WritingEditor({ task, detail, onSubmitted, onLoadServerVersion, 
 
       {copyHint && <p className="text-[11px] text-[var(--color-ink-soft)]">{copyHint}</p>}
 
-      {!readOnly && draft.state === "conflict" && (
+      {!readOnly && (draft.state === "conflict" || submitConflict !== null) && (
         <div className="rounded-lg border border-[var(--color-accent-2)] bg-[var(--color-surface)] p-2 text-xs text-[var(--color-ink)]" role="alert">
-          <div className="font-medium text-[var(--color-accent-2)]">另一处更新了这份草稿（版本冲突）。</div>
+          <div className="font-medium text-[var(--color-accent-2)]">
+            {submitConflict === "cas"
+              ? "提交时另一处先保存了（版本冲突），本次未提交。"
+              : submitConflict
+                ? "提交前核对发现服务器上是另一份修订，未提交。"
+                : "另一处更新了这份草稿（版本冲突）。"}
+          </div>
           <div className="mt-1">你的本地正文仍保留在此，未被覆盖。可先「复制正文」备份，再选择载入服务器稿。</div>
           <div className="mt-2 flex gap-2">
             <Button size="sm" variant="ghost" onClick={() => void copyText()}>复制本地正文</Button>
@@ -186,7 +218,7 @@ export function WritingEditor({ task, detail, onSubmitted, onLoadServerVersion, 
         className="min-h-[50vh] w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm leading-6 text-[var(--color-ink)] outline-none focus:border-[var(--color-accent)]"
         placeholder={readOnly ? "" : "从这里开始写…（自动保存）"}
         value={text}
-        readOnly={readOnly}
+        readOnly={readOnly || actionState === "submitting"}
         onChange={(event) => draft.setText(event.target.value)}
         onCompositionStart={draft.onCompositionStart}
         onCompositionEnd={draft.onCompositionEnd}

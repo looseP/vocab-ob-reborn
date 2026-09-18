@@ -26,7 +26,8 @@ export interface WritingSaveControllerSnapshot {
 export interface WritingSaveController {
   setText(text: string): void;
   setComposing(value: boolean): void;
-  flush(): Promise<void>;
+  /** flush 回执携带「已确认正文 + 版本」——提交屏障的核对基线（S§4）。 */
+  flush(): Promise<WritingSaveFlushReceipt>;
   retry(): Promise<void>;
   getSnapshot(): WritingSaveControllerSnapshot;
   subscribe(listener: () => void): () => void;
@@ -111,9 +112,19 @@ function isConflictStatus(status: number | null): boolean {
 
 type TimerHandle = unknown;
 
+/**
+ * flush 回执（提交屏障的基石）：**当代** 服务端已确认的正文与版本——
+ * flush resolve 后调用方必须以此为准核对权威状态，不得改用"重新 GET 到的最新值"
+ * 绕过冲突（S§4：提交正文必须等于本次用户确认提交的正文）。
+ */
+export interface WritingSaveFlushReceipt {
+  text: string;
+  version: number;
+}
+
 interface FlushWaiter {
   targetSeq: number;
-  resolve: () => void;
+  resolve: (receipt: WritingSaveFlushReceipt) => void;
   reject: (err: unknown) => void;
 }
 
@@ -135,6 +146,7 @@ export function createWritingSaveController(
 
   let inputSeq = 0; // 本地输入序号；每次 setText 自增
   let committedSeq = 0; // 服务端已确认的最新输入序号
+  let confirmedText = initialText; // 与 committedSeq 同步的"已确认正文"（flush 回执用）
   let disposed = false;
   let inFlight = false;
 
@@ -174,7 +186,7 @@ export function createWritingSaveController(
     if (waiters.length === 0) return;
     const remaining: FlushWaiter[] = [];
     for (const waiter of waiters) {
-      if (waiter.targetSeq <= committedSeq) waiter.resolve();
+      if (waiter.targetSeq <= committedSeq) waiter.resolve({ text: confirmedText, version });
       else remaining.push(waiter);
     }
     waiters = remaining;
@@ -214,6 +226,7 @@ export function createWritingSaveController(
     if (loaded.text === sentText && loaded.version === sentVersion + 1) {
       version = loaded.version;
       committedSeq = inputSeq;
+      confirmedText = sentText;
       return "success";
     }
     // 否则保留本地文本并进入冲突语义（不自动 last-wins）。
@@ -272,6 +285,7 @@ export function createWritingSaveController(
           if (disposed) return; // 在途响应被丢弃
           version = result.draftVersion;
           committedSeq = sentSeq;
+          confirmedText = sentText; // 回执：该版本对应的正是本次发送的正文
           // 成功后若有更新的本地输入，循环继续补发（单在途 + 自动续发）。
         } catch (err) {
           if (disposed) return;
@@ -340,7 +354,7 @@ export function createWritingSaveController(
     }
   }
 
-  function flush(): Promise<void> {
+  function flush(): Promise<WritingSaveFlushReceipt> {
     if (disposed) return Promise.reject(new SaveDisposedError());
     const targetSeq = inputSeq;
     if (state === "conflict") {
@@ -348,23 +362,21 @@ export function createWritingSaveController(
       return Promise.reject(new SaveConflictError());
     }
     if (targetSeq <= committedSeq && !inFlight) {
-      return Promise.resolve();
+      return Promise.resolve({ text: confirmedText, version });
     }
     maybeSend();
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<WritingSaveFlushReceipt>((resolve, reject) => {
       waiters.push({ targetSeq, resolve, reject });
     });
   }
 
   function retry(): Promise<void> {
     if (disposed) return Promise.reject(new SaveDisposedError());
-    const targetSeq = inputSeq;
     // 清除 error/conflict，使管道可以重新尝试（即便仍是 409，也保持"手动重试可用"）
     setState("dirty");
     maybeSend();
-    return new Promise<void>((resolve, reject) => {
-      waiters.push({ targetSeq, resolve, reject });
-    });
+    // 复用 flush 的等待机制（waiters 需携带回执签名）；retry 本身只关心成败。
+    return flush().then(() => undefined);
   }
 
   function dispose(): void {

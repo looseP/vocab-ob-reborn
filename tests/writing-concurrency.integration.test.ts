@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resetPool } from "@/db/connection";
+import { evaluateSubmitPrecheck } from "@/frontend/state/writingSubmitBarrier";
 import { L3WritingSheetService } from "@/services/l3-writing-sheet.service";
 import { L3WritingTaskService } from "@/services/l3-writing-task.service";
 import { L3WritingFeedbackService } from "@/services/l3-writing-feedback.service";
@@ -358,5 +359,66 @@ describe("Writing lifecycle concurrency (integration)", () => {
     );
     expect(rows.rows[0]!.c).toBe(1);
     expect(rows.rows[0]!.v).toBe(2);
+  });
+
+  it("提交屏障交错（真实服务端）：核对通过后第三方保存 → CAS 409；不采纳最新版本、不自动重试", async () => {
+    const { task, draft } = await createTask(ACTOR_A);
+    await sheetService.saveDraft(ACTOR_A, task.id, draft.id, { expectedVersion: 0, text: "我的确认稿" });
+
+    // flush 回执：已确认正文 + 版本 1（提交屏障的核对基线）。
+    const receipt = { text: "我的确认稿", version: 1 };
+
+    // 核对阶段：权威读面与回执**一致** → 允许提交（真实 getSheet + 真实纯函数）。
+    const before = await sheetService.getSheet(ACTOR_A, task.id, draft.id);
+    expect(evaluateSubmitPrecheck(receipt, {
+      status: before.sheet.status, text: before.text, draftVersion: before.sheet.draftVersion,
+    })).toEqual({ ok: true, expectedVersion: 1 });
+
+    // 核对与 submit 之间：另一标签页保存（版本推进、正文替换）。
+    await sheetService.saveDraft(ACTOR_A, task.id, draft.id, { expectedVersion: 1, text: "另一标签页的改动" });
+
+    // 提交走 CAS：409；不自动重试；未定格任何正文。
+    await expect(sheetService.submit(ACTOR_A, task.id, draft.id, { expectedVersion: 1 }))
+      .rejects.toMatchObject({ httpStatus: 409, meta: { code: "DRAFT_VERSION_CONFLICT" } });
+
+    const row = await adminPool.query<{ status: string; answers: Record<string, { text: string }> }>(
+      "SELECT status, answers FROM l3_submissions WHERE id = $1",
+      [draft.id],
+    );
+    expect(row.rows[0]!.status).toBe("draft"); // 未定格
+    expect(row.rows[0]!.answers[task.questionId]!.text).toBe("另一标签页的改动"); // 第三方正文完好
+    const attempts = await adminPool.query<{ c: number }>(
+      "SELECT count(*)::int AS c FROM l3_question_attempts WHERE sheet_id = $1",
+      [draft.id],
+    );
+    expect(attempts.rows[0]!.c).toBe(0);
+  });
+
+  it("提交屏障：核对发现他人修订 → 拒绝路径；盲采最新版本会定格未确认正文（危害对照）", async () => {
+    // 正确路径：核对发现服务器上是别人修订 → precheck 拒绝（不提交，故不发生封印）。
+    const a = await createTask(ACTOR_A);
+    await sheetService.saveDraft(ACTOR_A, a.task.id, a.draft.id, { expectedVersion: 0, text: "我的确认稿" });
+    await sheetService.saveDraft(ACTOR_A, a.task.id, a.draft.id, { expectedVersion: 1, text: "别人的改动" });
+    const latest = await sheetService.getSheet(ACTOR_A, a.task.id, a.draft.id);
+    expect(evaluateSubmitPrecheck(
+      { text: "我的确认稿", version: 1 },
+      { status: latest.sheet.status, text: latest.text, draftVersion: latest.sheet.draftVersion },
+    )).toEqual({ ok: false, reason: "text-mismatch" });
+
+    // 危害对照（独立第二稿）：若客户端盲采最新版本提交，会把「别人的改动」定格——
+    // 证明上述拒绝是**必要保护**（服务端无法从版本号区分客户端意图）。
+    const b = await createTask(ACTOR_A);
+    await sheetService.saveDraft(ACTOR_A, b.task.id, b.draft.id, { expectedVersion: 0, text: "我的确认稿" });
+    await sheetService.saveDraft(ACTOR_A, b.task.id, b.draft.id, { expectedVersion: 1, text: "别人的改动" });
+    const blind = await sheetService.getSheet(ACTOR_A, b.task.id, b.draft.id);
+    const sealed = await sheetService.submit(ACTOR_A, b.task.id, b.draft.id, {
+      expectedVersion: blind.sheet.draftVersion, // ← 盲采：危害演示
+    });
+    expect(sealed.sheet.status).toBe("sealed");
+    const attempt = await adminPool.query<{ answer: { text: string } }>(
+      "SELECT answer FROM l3_question_attempts WHERE sheet_id = $1 AND status = 'active'",
+      [b.draft.id],
+    );
+    expect(attempt.rows[0]!.answer.text).toBe("别人的改动");
   });
 });

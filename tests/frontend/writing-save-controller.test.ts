@@ -181,12 +181,32 @@ describe("W4 保存控制器 · 单在途与序号纪律", () => {
     expect(controller.getSnapshot().state).toBe("clean");
   });
 
-  it("已 clean 时 flush 立即 resolve，不发请求", async () => {
+  it("已 clean 时 flush 立即 resolve 回执（初值），不发请求", async () => {
     const timers = makeFakeTimers();
     const save = vi.fn<SaveFn>();
-    const controller = setupController(save, timers);
-    await expect(controller.flush()).resolves.toBeUndefined();
+    const controller = setupController(save, timers, { text: "初始", version: 3 });
+    await expect(controller.flush()).resolves.toEqual({ text: "初始", version: 3 });
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("flush 回执=已确认正文+版本（提交屏障核对基线；推进后回执同步）", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    const first = defer<WritingSaveControllerSaveResult>();
+    save.mockReturnValueOnce(first.promise);
+    const controller = setupController(save, timers);
+
+    controller.setText("A");
+    const f1 = controller.flush();
+    first.resolve({ draftVersion: 1, textSha256: "a".repeat(64) });
+    await expect(f1).resolves.toEqual({ text: "A", version: 1 }); // 回执=本次发送的正文与确认版本
+
+    const second = defer<WritingSaveControllerSaveResult>();
+    save.mockReturnValueOnce(second.promise);
+    controller.setText("AB");
+    const f2 = controller.flush();
+    second.resolve({ draftVersion: 2, textSha256: "b".repeat(64) });
+    await expect(f2).resolves.toEqual({ text: "AB", version: 2 });
   });
 });
 
@@ -375,7 +395,7 @@ describe("W4 保存控制器 · 超时恢复（S§4）", () => {
     expect(load).toHaveBeenCalledTimes(1);
 
     await flushMicrotasks();
-    await expect(p).resolves.toBeUndefined();
+    await expect(p).resolves.toEqual({ text: "x", version: 1 }); // 回执=已发送正文+确认版本
     expect(controller.getSnapshot().state).toBe("clean");
     expect(controller.getSnapshot().version).toBe(1);
   });
