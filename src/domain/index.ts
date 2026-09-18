@@ -673,6 +673,45 @@ import type { AnnotationStage } from "./l3-annotations";
 import type { SealMode, SheetScope, SheetStatus } from "./l3-sheets";
 import type { GradingVerdict } from "./l3-grading";
 export type { AnnotationStage, GradingVerdict, SealMode, SheetScope, SheetStatus };
+
+// ── 作文子空间（W1 冻结，ADR《writing-workspace》）────────────────────────
+// 类型真源 = ./l3-writing（本块仅转发；其他任务禁止自建同名漂移类型）。
+import type {
+  CreateWritingTaskResult,
+  WritingContentStatus,
+  WritingDirection,
+  WritingFeedback,
+  WritingFeedbackRecord,
+  WritingKind,
+  WritingPage,
+  WritingRevisionSummary,
+  WritingSeed,
+  WritingSheetDetail,
+  WritingSheetDto,
+  WritingSheetStatus,
+  WritingTaskDetail,
+  WritingTaskDto,
+  WritingTaskStatus,
+  WritingTaskSummary,
+} from "./l3-writing";
+export type {
+  CreateWritingTaskResult,
+  WritingContentStatus,
+  WritingDirection,
+  WritingFeedback,
+  WritingFeedbackRecord,
+  WritingKind,
+  WritingPage,
+  WritingRevisionSummary,
+  WritingSeed,
+  WritingSheetDetail,
+  WritingSheetDto,
+  WritingSheetStatus,
+  WritingTaskDetail,
+  WritingTaskDto,
+  WritingTaskStatus,
+  WritingTaskSummary,
+};
 export type L3AnnotationTagKind = "entry" | "option";
 export type L3AnnotationOptionKey = "A" | "B" | "C" | "D";
 
@@ -730,11 +769,19 @@ export interface L3SubmissionRow {
   id: string;
   user_id: string;
   scope: SheetScope;
-  /** 'file:<source_id>:<question_type>' 或 'paper:<paper_id>'（domain 构造器单一收口）。 */
+  /** 'file:<source_id>:<question_type>' 或 'paper:<paper_id>' 或 'writing:<task_id>'（domain 构造器单一收口）。 */
   scope_key: string;
   source_id: string | null;
   question_type: L3QuestionType | null;
   paper_id: string | null;
+  /** 作文（W1）：写作任务引用（writing 行必填；source/question_type/paper 全空）。 */
+  writing_task_id: string | null;
+  /** 作文：父稿引用（第二稿显式指向；父稿同 task 且 sealed 由事务内检查）。 */
+  parent_sheet_id: string | null;
+  /** 作文：稿号（sealed writing >0；draft/discarded 与普通题纸 NULL）。 */
+  revision_no: number | null;
+  /** 作文：草稿版本（CAS expectedVersion 对照；普通题纸恒 0）。 */
+  draft_version: number;
   status: SheetStatus;
   /** 仅 draft 期有效；定格物化 attempts 后清空（attempts 是唯一作答真源）。 */
   answers: Record<string, Json>;

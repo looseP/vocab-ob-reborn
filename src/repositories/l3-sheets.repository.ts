@@ -35,6 +35,11 @@ interface SubmissionDbRow {
   source_id: string | null;
   question_type: L3QuestionType | null;
   paper_id: string | null;
+  /** 作文四元数据（W1）：writing 行 task 必填；其余行前三者 NULL。 */
+  writing_task_id: string | null;
+  parent_sheet_id: string | null;
+  revision_no: number | null;
+  draft_version: number;
   status: L3SubmissionRow["status"];
   answers: unknown;
   seal_mode: SealMode | null;

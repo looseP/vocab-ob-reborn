@@ -355,6 +355,12 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     -- 0036（批次三①）：评卷结果（UNIQUE(sheet_id, question_id) 同键覆写 upsert，
     -- INSERT ... ON CONFLICT DO UPDATE；改判读回与行锁需 UPDATE，四权对齐 0035 惯例）。
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_grading_results TO vocab_app;
+    -- 0038（作文子空间 W1）：写作任务（建/改名/归档/恢复 + SELECT ... FOR UPDATE
+    -- 任务锁；无物理删路径——任务只归档不硬删，不授 DELETE）。
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_writing_tasks TO vocab_app;
+    -- 0038（作文 W1）：作文反馈（一稿一条 upsert + 正文清理时同事务删除反馈行，
+    -- 故四权齐备；行锁与 WITH CHECK 同 0035/0036 惯例）。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_writing_feedback TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;
