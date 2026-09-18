@@ -1,7 +1,7 @@
 /**
  * 作文子空间宿主页（W7，S§2/§6/§10）——/l3?section=writing 的唯一落地组件。
  *
- * 数据纪律：只经 writingClient 访问 /api/l3/writing；GET 零创建（查看稿不 openSheet、
+ * 数据纪律：只经 writingClient（作文专用 typed client）访问；GET 零创建（查看稿不 openSheet、
  * 不建 draft）；新稿只由显式操作（开始写作 / 开始修改）创建；任务 A→B 切换以
  * cancelled 标记 + 编辑器 key 重挂隔离在途请求与保存状态（A 的响应不会落到 B）。
  *
