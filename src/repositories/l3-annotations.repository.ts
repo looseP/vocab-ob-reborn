@@ -179,10 +179,17 @@ export class L3AnnotationRepository extends BaseRepository implements IL3Annotat
     return row ? mapAnnotationRow(row) : null;
   }
 
+  /**
+   * 撤回：submitted→draft + 重挂题纸 + **评审意见重置**（深测 OB-4 处置 a，2026-09-18）。
+   * review 定义为「对本提交版本的评语」（consumable，无版本、无内容指纹）——撤回按
+   * 「意见随提交一并回退」处理，防「旧评语 × 新内容」错配与误确认升终态。
+   * 本方法是可写 review 的专用方法之一（与 applyAnnotationReview 同列，见 ADR-0035 §补记）；
+   * 公开注记 PATCH 依旧禁触 review。
+   */
   async withdrawAnnotation(userId: string, id: string, sheetId: string): Promise<L3QuestionAnnotationRow | null> {
     const row = await this.queryOne<AnnotationDbRow>(
       `UPDATE l3_question_annotations
-          SET stage = 'draft', sheet_id = $3::uuid, updated_at = now()
+          SET stage = 'draft', sheet_id = $3::uuid, review = NULL, updated_at = now()
         WHERE user_id = $1::uuid AND id = $2::uuid
           AND stage = 'submitted' AND status = 'active'
         RETURNING *`,

@@ -719,4 +719,53 @@ describe("L3 RLS isolation (integration)", () => {
     );
     expect(untouched.rows[0]!.review).toEqual({ verdict: "sound", comment: "锚点准确" });
   });
+
+  it("withdraw SQL resets review while re-pinning the sheet（深测 OB-4：撤回=评审意见重置）", async () => {
+    // 自建 submitted + review 注记（独立数据，不依赖前序用例状态）。
+    const id = randomUUID();
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      await tx.query(
+        `INSERT INTO l3_question_annotations (id, user_id, question_id, note, stage, sheet_id, review)
+         VALUES ($1, $2, $3, '撤回不改内容', 'submitted', $4, '{"verdict":"questionable","comment":"旧评语"}'::jsonb)`,
+        [id, ACTOR_A, aSheetQuestionId, aSheetId],
+      );
+    });
+
+    // actor B 执行同款撤回 SQL → RLS 空转（行仍 submitted，stage/review 不被劫持）。
+    await inTx(ACTOR_B, async (_repo, tx) => {
+      const hijacked = await tx.query(
+        `UPDATE l3_question_annotations
+            SET stage = 'draft', sheet_id = $3::uuid, review = NULL, updated_at = now()
+          WHERE user_id = $1::uuid AND id = $2::uuid
+            AND stage = 'submitted' AND status = 'active' RETURNING id`,
+        [ACTOR_A, id, aSheetId],
+      );
+      expect(hijacked.rows).toHaveLength(0);
+    });
+    const beforeWithdraw = await adminPool.query<{ stage: string; review: unknown }>(
+      "SELECT stage, review FROM l3_question_annotations WHERE id = $1",
+      [id],
+    ).then((r) => r.rows[0]!);
+    expect(beforeWithdraw.stage).toBe("submitted");
+    expect(beforeWithdraw.review).toEqual({ verdict: "questionable", comment: "旧评语" });
+
+    // actor A 执行同款撤回 SQL（与 L3AnnotationRepository.withdrawAnnotation 形态一致）：
+    // review 随 stage 一并回落，内容列一字不动。
+    await inTx(ACTOR_A, async (_repo, tx) => {
+      await tx.query(
+        `UPDATE l3_question_annotations
+            SET stage = 'draft', sheet_id = $3::uuid, review = NULL, updated_at = now()
+          WHERE user_id = $1::uuid AND id = $2::uuid
+            AND stage = 'submitted' AND status = 'active'`,
+        [ACTOR_A, id, aSheetId],
+      );
+    });
+    const after = await adminPool.query<{ stage: string; review: unknown; note: string }>(
+      "SELECT stage, review, note FROM l3_question_annotations WHERE id = $1",
+      [id],
+    ).then((r) => r.rows[0]!);
+    expect(after.stage).toBe("draft");
+    expect(after.review).toBeNull();
+    expect(after.note).toBe("撤回不改内容");
+  });
 });

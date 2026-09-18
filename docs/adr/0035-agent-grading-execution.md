@@ -100,3 +100,7 @@ Consequences 中「openapi 再生与 currentSha256 重钉」（任务表与设�
 - 「每次再生都重钉」在机制语义下不可持续：重锚天然以「某次 base/HEAD 对」为有效期，下一批再生即再漂移；且 7e1fd39（锚点语义定稿）之后 18 个 openapi 变更提交零重钉、门禁全绿，即为惯例背书。
 
 **本批裁定**：B3① 未修改 approval（2fe327c→60586c1 实测零 breaking，外派与本地方双渠道复核），无重钉动作、任何门禁行为不受影响。**自本勘误起，「重钉」口径统一为：仅当变更集修改 approval 文件时才需重锚；常规 openapi 再生无须处理。**
+
+## 补记 · 2026-09-18（深测 OB-4 处置 a）
+
+撤回语义明确为**评审意见重置**：`L3AnnotationRepository.withdrawAnnotation` 的 SET 子句扩展为 `stage='draft', sheet_id=<重挂纸>, review = NULL`（与 `applyAnnotationReview` 同列——可写 review 的专用方法；公开注记 PATCH 依旧禁触 review，白名单口径不变）。依据：review 定义为「对本提交版本的评语」（consumable，无版本、无内容指纹），跨版本保留会形成「旧评语 × 新内容」错配并可被误确认升终态（外派深测 OB-4）。影响：撤回后注记回到「submitted 无 review」等待重评；confirmed 终态不可撤回，不受影响；RLS 隔离语义不变（同款 SQL 在非属主 actor 下空转，见 `tests/l3-rls.integration.test.ts` 新增用例）。

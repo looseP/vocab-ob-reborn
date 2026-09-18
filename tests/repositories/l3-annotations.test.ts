@@ -362,14 +362,17 @@ describe("L3AnnotationRepository（v2 §4.7：stage 守卫与撤回）", () => {
     expect(sql).toContain("stage <> 'submitted'");
   });
 
-  it("withdrawAnnotation flips submitted→draft and re-pins the sheet", async () => {
+  it("withdrawAnnotation flips submitted→draft, re-pins the sheet and resets review", async () => {
     const repo = new L3AnnotationRepository();
-    vi.spyOn(repo as any, "queryOne").mockResolvedValue(annotation({ stage: "draft", sheet_id: SHEET_B }));
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(annotation({ stage: "draft", sheet_id: SHEET_B, review: null }));
     const row = await repo.withdrawAnnotation(USER, ANNOTATION, SHEET_B);
     expect(row?.stage).toBe("draft");
+    expect(row?.review).toBeNull();
     const [sql, params] = (repo as any).queryOne.mock.calls[0];
     expect(sql).toContain("SET stage = 'draft'");
     expect(sql).toContain("sheet_id = $3::uuid");
+    // 深测 OB-4 处置 a：撤回=评审意见重置（review 与 stage 同步回落，防「旧评语×新内容」错配）。
+    expect(sql).toContain("review = NULL");
     expect(sql).toContain("stage = 'submitted'");
     expect(sql).toContain("status = 'active'");
     expect(params).toEqual([USER, ANNOTATION, SHEET_B]);
