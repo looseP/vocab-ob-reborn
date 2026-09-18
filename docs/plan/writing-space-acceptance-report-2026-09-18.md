@@ -6,7 +6,7 @@
 
 ## 1 · 提交链（base → head）
 
-`f03ffe35`(base) ← `2b754a1`(计划文档) ← `44ab3f3`(ADR/baseline/log) ← `da1317c`(W1 迁移 **0038** + domain/DTO + RLS) ← `3d759e1`(W4 保存控制器) ← `ba26a82`(W2 任务生命周期) ← `09a44f0`(W3 稿件生命周期) ← `d7a26ff`(W5 反馈) ← `08d9c44`(W5 收口) ← `b0bee63`(W5 自查) ← `3396150`(W6 HTTP/授权) ← `371355e`(回填) ← `02eb1aa`(W9 导出/清理) ← `2063461`(W8 反馈/对照) ← `ba2c082`(W7 页面) ← `9a9e4df`(e2e 冒烟) ← `333eead`(日志) ← `1b68af8`(提交屏障) ← `f45c8de`(输入可见性 P0) ← `f55e40b`(冲突文案) ← `4d14ebf`(e2e 矩阵) ← `9e48325`(外审修复) ← `5d5ea04`(CI workflow) ← `6cde7a6`(shell 守卫) ← `61ad3d3`(覆盖补强) ← `802318e`(报告) ← `3304e92`(CI 修复) ← `《docs 提交（本报告回填）》`
+`f03ffe35`(base) ← `2b754a1`(计划文档) ← `44ab3f3`(ADR/baseline/log) ← `da1317c`(W1 迁移 **0038** + domain/DTO + RLS) ← `3d759e1`(W4 保存控制器) ← `ba26a82`(W2 任务生命周期) ← `09a44f0`(W3 稿件生命周期) ← `d7a26ff`(W5 反馈) ← `08d9c44`(W5 收口) ← `b0bee63`(W5 自查) ← `3396150`(W6 HTTP/授权) ← `371355e`(回填) ← `02eb1aa`(W9 导出/清理) ← `2063461`(W8 反馈/对照) ← `ba2c082`(W7 页面) ← `9a9e4df`(e2e 冒烟) ← `333eead`(日志) ← `1b68af8`(提交屏障) ← `f45c8de`(输入可见性 P0) ← `f55e40b`(冲突文案) ← `4d14ebf`(e2e 矩阵) ← `9e48325`(外审修复) ← `5d5ea04`(CI workflow) ← `6cde7a6`(shell 守卫) ← `61ad3d3`(覆盖补强) ← `802318e`(报告) ← `3304e92`(CI 修复) ← `aed09ee`(CI 回填) ← `bd5f443`(validator 强化) ← `25fa4ef`(终态链接/日志)（此后仅 docs 口径修正）
 
 ## 2 · 用户使用路径与本版范围
 
@@ -65,8 +65,8 @@
 
 ## 8 · 未验证项与已知限制（如实）
 
-- ✅ **CI 已全绿（最终 HEAD `3304e92`）**：Writing E2E `passed=4`（fail-closed 计数行）/ Browser E2E ✓ / Engineering Gate + Migration Rehearsal ✓。
-- 分支保护尚未把 Writing E2E 列为必需检查（需仓库设置；命令见 §10）。
+- ✅ **CI 三项全绿（历轮）**：`802318e` 首跑失败（validator 拦截）→ `3304e92` 修复后全绿 → `aed09ee` 复验 → `bd5f443`（validator 强化）→ `25fa4ef` 终态；Writing E2E `passed=4 (pw_exit=0)`（fail-closed 计数行）/ Browser E2E ✓ / Engineering Gate + Migration Rehearsal ✓；**最终检查链接见 §5 末**。
+- ✅ **分支保护（2026-09-18 本轮更新，回读核验）**：已把 Writing E2E 列为必需检查——`strict=true`，`checks=[Engineering Gate + Migration Rehearsal, Browser E2E (Playwright), Writing E2E（真环境闭环 + 故障矩阵）]`，三项均 `app_id=15368`；更新基于当时**最新只读配置程序化追加**（既有项与 app 绑定原样保留，未使用历史固定数组）。
 - 真 PG 集成测试在本地跑于 `vocab_writing_test`；CI 使用临时 service 容器复建。
 - `题库进入`（questionId 路径）在浏览器层未覆盖（服务层全测；UI 按钮已实现）——浏览器断言以 `prompt` 路径（段落/自由写作）覆盖。
 - 其余既有 E2E（auth/phase5c）不在本轮改动面，交由 CI Browser E2E 继续看护。
@@ -81,7 +81,7 @@
 3. 最终提交 CI 三项全绿确认后，将本 PR 从 draft 转正并合并（授权后）。
 4. **发布顺序（统一口径）**：角色 `prepare`（按需）→ 迁移 `0038`（drizzle journal 顺序执行；**非幂等、不可重放**，回滚须另行演练）→ `converge` → `verifier` → 启动新版。
 
-## 10 · 附：分支保护精确配置方案（只读核实于 2026-09-18；**本轮不执行**）
+## 10 · 附：分支保护配置记录（只读核实 + 2026-09-18 经授权执行）
 
 当前保护（只读查询）：`strict=true`、`enforce_admins=true`、`required_conversation_resolution=true`；
 必需检查 = `checks: [{context:"Engineering Gate + Migration Rehearsal", app_id:15368}, {context:"Browser E2E (Playwright)", app_id:15368}]`（来源均为 `github-actions`）。
@@ -104,4 +104,4 @@ gh api -X PATCH repos/looseP/vocab-ob-reborn/branches/main/protection/required_s
   --input /tmp/writing-e2e-protection.json
 ```
 
-（注：`checks` 与 `contexts` 互斥；使用 `checks` 需同时保留既有两项且 app_id 一致——已按当前值给出。执行需管理员权限与显式授权；本轮未修改任何仓库保护。）
+（注：`checks` 与 `contexts` 互斥；使用 `checks` 需同时保留既有两项且 app_id 一致——已按当时最新只读值程序化构造。**执行记录（2026-09-18）**：PATCH 已应用并回读核验通过（`strict=true`；三项 checks 齐全；`app_id=15368` 全部保留，详见 §8）。）
