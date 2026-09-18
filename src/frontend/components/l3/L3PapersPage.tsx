@@ -92,7 +92,16 @@ interface PracticeFileDetail {
 
 /** 文件三级详情：source 型组装单节伪卷喂给做题表面（file venue）；fileKey 型保留浏览（含作文入口）。 */
 type FilesTabDetail =
-  | { kind: "sheet"; paper: ExamPaper; sourceId: string; questionType: QuestionType }
+  | {
+      kind: "sheet";
+      paper: ExamPaper;
+      sourceId: string;
+      questionType: QuestionType;
+      /** 作文入口方向（与文件一致；缺省「通用」）。 */
+      direction: "通用" | "考研" | "雅思" | null;
+      /** 返回原题恢复：按 ID 读面（draft 可编辑 / sealed 只读；不经 openSheet 另开新纸）。 */
+      replaySheetId: string | null;
+    }
   | {
       kind: "browse";
       title: string;
@@ -204,7 +213,7 @@ function QuestionList({ questions, writingEntryFor, focusedQuestionId }: {
   );
 }
 
-export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepLinkPaper, deepLinkQuestion }: {
+export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepLinkPaper, deepLinkQuestion, deepLinkResumeSheet }: {
   /** 批次二深链：?venue=<题型>&file=<文件键> 直达题型空间并自动打开目标文件。 */
   deepLinkVenue?: string | null;
   deepLinkFile?: string | null;
@@ -214,6 +223,8 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
   deepLinkPaper?: string | null;
   /** I3：?question=<id> 返回原题定位（滚动 + 高亮；全程零创建）。 */
   deepLinkQuestion?: string | null;
+  /** I3：?resumeSheet=<id> 返回原题恢复（draft 可编辑 / sealed 只读；一次性消费）。 */
+  deepLinkResumeSheet?: string | null;
 } = {}) {
   const { addToast } = useToast();
   const hasFilesDeepLink = Boolean(deepLinkVenue && QUESTION_TYPES.includes(deepLinkVenue as QuestionType));
@@ -248,9 +259,16 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
         ))}
       </div>
       {tab === "files" && (
-        <FilesTab deepLink={hasFilesDeepLink ? { venue: deepLinkVenue as QuestionType, file: deepLinkFile ?? null, question: deepLinkQuestion ?? null } : null} />
+        <FilesTab deepLink={hasFilesDeepLink ? { venue: deepLinkVenue as QuestionType, file: deepLinkFile ?? null, question: deepLinkQuestion ?? null, resumeSheet: deepLinkResumeSheet ?? null } : null} />
       )}
-      {tab === "papers" && <PapersTab onToast={addToast} deepLink={deepLinkPaper ?? null} />}
+      {tab === "papers" && (
+        <PapersTab
+          onToast={addToast}
+          deepLink={deepLinkPaper ?? null}
+          deepLinkQuestion={deepLinkQuestion ?? null}
+          deepLinkResumeSheet={deepLinkResumeSheet ?? null}
+        />
+      )}
       {tab === "archive" && <ArchiveTab onToast={addToast} />}
       {tab === "build" && <BuildTab onBuilt={() => setTab("papers")} onToast={addToast} />}
     </div>
@@ -285,7 +303,7 @@ function buildFileVenuePaper(
 }
 
 function FilesTab({ deepLink }: {
-  deepLink?: { venue: QuestionType; file: string | null; question?: string | null } | null;
+  deepLink?: { venue: QuestionType; file: string | null; question?: string | null; resumeSheet?: string | null } | null;
 } = {}) {
   const { addToast } = useToast();
   const navigate = useNavigate();
@@ -303,6 +321,8 @@ function FilesTab({ deepLink }: {
   const [summariesNonce, setSummariesNonce] = useState(0);
   /** 返回原题（?question=）：定位并高亮目标题（零创建）。 */
   const [focusedQuestionId, setFocusedQuestionId] = useState<string | null>(deepLink?.question ?? null);
+  /** 返回原题恢复（I3）：一次性——打开文件时校验并按 ID 读面；不匹配/不可达 → 提示并回到列表。 */
+  const pendingResumeSheetRef = useRef<string | null>(deepLink?.resumeSheet ?? null);
 
   useEffect(() => {
     let cancelled = false;
@@ -323,10 +343,34 @@ function FilesTab({ deepLink }: {
       // 全复用 L3ExamPaper。fileKey 型（翻译/作文无 source）暂不具备开纸条件
       // （sheetOpenInputSchema 要求 sourceId），保留浏览视图。
       if (body.source && file.source_id) {
+        // I3：返回原题恢复——按 resumeSheet 的 ID 读面（draft 可编辑 / sealed 只读）；
+        // 与来源不匹配或不可达（清理/删除）→ 明确提示并停留文件列表，不偷偷另开新纸。
+        let replaySheetId: string | null = null;
+        const resumeId = pendingResumeSheetRef.current;
+        if (resumeId) {
+          pendingResumeSheetRef.current = null;
+          try {
+            const { sheet: row } = await fetchSheet(resumeId);
+            const compatible = row.scope === "file"
+              && row.source_id === file.source_id
+              && row.question_type === file.question_type
+              && row.status !== "discarded";
+            if (!compatible) {
+              addToast("error", "原题纸不可用或与来源不匹配，已回到文件列表。");
+              return;
+            }
+            replaySheetId = resumeId;
+          } catch {
+            addToast("error", "原题纸不可用（可能已清理或删除），已回到文件列表。");
+            return;
+          }
+        }
         setDetail({
           kind: "sheet",
           sourceId: file.source_id,
           questionType: file.question_type,
+          direction: file.direction,
+          replaySheetId,
           paper: buildFileVenuePaper(body, file.source_id, file.question_type, file.title),
         });
       } else {
@@ -397,6 +441,9 @@ function FilesTab({ deepLink }: {
           key={`${detail.paper.id}:${retakeNonce}`}
           paper={detail.paper}
           fileVenue={{ sourceId: detail.sourceId, questionType: detail.questionType }}
+          {...(detail.replaySheetId ? { replaySheetId: detail.replaySheetId } : {})}
+          focusQuestionId={focusedQuestionId}
+          writingEntry={{ direction: detail.direction ?? "通用", onNavigate: (url) => navigate(url) }}
           onBack={() => setDetail(null)}
           onRetake={() => setRetakeNonce((n) => n + 1)}
         />
@@ -554,14 +601,21 @@ function FilesTab({ deepLink }: {
   );
 }
 
-function PapersTab({ onToast, deepLink }: {
+function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet }: {
   onToast: (kind: "success" | "error", msg: string) => void;
   /** F-1：?paper=<id> 深链——列表就绪后自动开卷（回看重做的常规入口落点）。 */
   deepLink?: string | null;
+  /** I3：?question= 返回原题定位（滚动 + 高亮；零创建）。 */
+  deepLinkQuestion?: string | null;
+  /** I3：?resumeSheet= 返回原题恢复（按 ID 读面；一次性消费）。 */
+  deepLinkResumeSheet?: string | null;
 }) {
+  const navigate = useNavigate();
   const [papers, setPapers] = useState<PaperListItem[] | null>(null);
   const [detail, setDetail] = useState<ExamPaper | null>(null);
   const [retakeNonce, setRetakeNonce] = useState(0);
+  const [resumeSheetId, setResumeSheetId] = useState<string | null>(null);
+  const pendingResumeSheetRef = useRef<string | null>(deepLinkResumeSheet ?? null);
 
   const load = useCallback(async () => {
     try {
@@ -576,7 +630,28 @@ function PapersTab({ onToast, deepLink }: {
 
   const openPaper = async (id: string) => {
     try {
-      setDetail(await apiFetch<ExamPaper>(`/l3/papers/${id}`));
+      const next = await apiFetch<ExamPaper>(`/l3/papers/${id}`);
+      // I3：返回原题恢复——resumeSheet 校验后按 ID 读面（draft 可编辑 / sealed 只读）；
+      // 不匹配或不可达 → 明确提示并停留试卷列表（不另开新卷、不显示可编辑假象）。
+      let replaySheetId: string | null = null;
+      const resumeId = pendingResumeSheetRef.current;
+      if (resumeId) {
+        pendingResumeSheetRef.current = null;
+        try {
+          const { sheet: row } = await fetchSheet(resumeId);
+          const compatible = row.scope === "paper" && row.paper_id === id && row.status !== "discarded";
+          if (!compatible) {
+            onToast("error", "原题纸不可用或与试卷不匹配，已回到试卷列表。");
+            return;
+          }
+          replaySheetId = resumeId;
+        } catch {
+          onToast("error", "原题纸不可用（可能已清理或删除），已回到试卷列表。");
+          return;
+        }
+      }
+      setResumeSheetId(replaySheetId);
+      setDetail(next);
     } catch {
       onToast("error", "试卷详情加载失败");
     }
@@ -596,6 +671,9 @@ function PapersTab({ onToast, deepLink }: {
       <L3ExamPaper
         key={`${detail.id}:${retakeNonce}`}
         paper={detail}
+        {...(resumeSheetId ? { replaySheetId: resumeSheetId } : {})}
+        focusQuestionId={deepLinkQuestion ?? null}
+        writingEntry={{ direction: detail.direction ?? "通用", onNavigate: (url) => navigate(url) }}
         onBack={() => setDetail(null)}
         onRetake={() => setRetakeNonce((n) => n + 1)}
       />
@@ -893,6 +971,8 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
   const [resolved, setResolved] = useState<{
     paper: ExamPaper;
     fileVenue?: { sourceId: string; questionType: QuestionType };
+    /** 作文入口方向（file 型查文件列表；paper 型取卷方向；失败降级「通用」）。 */
+    direction: "通用" | "考研" | "雅思" | null;
     retakePath: string;
     backPath: string;
   } | null>(null);
@@ -913,9 +993,17 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
           const body = await apiFetch<PracticeFileDetail>(`/l3/practice-files/detail?${params}`);
           if (cancelled) return;
           if (!body.source) throw new Error("来源缺失");
+          let direction: "通用" | "考研" | "雅思" | null = null;
+          try {
+            const page = await apiFetch<{ items: PracticeFile[] }>("/l3/practice-files?limit=100");
+            direction = page.items.find((item) => item.question_type === questionType
+              && item.source_id === sheet.source_id)?.direction ?? null;
+          } catch { /* 方向查询失败降级「通用」；不阻塞回看 */ }
+          if (cancelled) return;
           setResolved({
             paper: buildFileVenuePaper(body, sheet.source_id, questionType, body.source.title),
             fileVenue: { sourceId: sheet.source_id, questionType },
+            direction,
             retakePath: `/l3?venue=${encodeURIComponent(questionType)}&file=${encodeURIComponent(sheet.source_id)}`,
             backPath: `/l3?venue=${encodeURIComponent(questionType)}`,
           });
@@ -926,6 +1014,7 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
           if (cancelled) return;
           setResolved({
             paper: detail,
+            direction: detail.direction ?? null,
             retakePath: `/l3?paper=${encodeURIComponent(sheet.paper_id)}`,
             backPath: "/l3",
           });
@@ -954,6 +1043,7 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
       paper={resolved.paper}
       {...(resolved.fileVenue ? { fileVenue: resolved.fileVenue } : {})}
       replaySheetId={sheetId}
+      writingEntry={{ direction: resolved.direction ?? "通用", onNavigate: (url) => navigate(url) }}
       onBack={() => navigate(resolved.backPath)}
       onRetake={() => navigate(resolved.retakePath)}
     />

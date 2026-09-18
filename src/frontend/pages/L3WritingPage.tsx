@@ -249,7 +249,7 @@ export function L3WritingPage() {
           </div>
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" onClick={goList}>{origin ? "全部作文" : "返回列表"}</Button>
-            {latest && <Button size="sm" onClick={() => void startRevisionFrom(latest)}>开始修改（第二稿）</Button>}
+            {latest && <Button size="sm" onClick={() => void startRevisionFrom(latest)}>开始修改</Button>}
           </div>
         </div>
         {notice && <p className="text-xs text-[var(--color-accent-2)]">{notice}</p>}
@@ -342,7 +342,7 @@ export function L3WritingPage() {
         <div className="flex gap-2">
           <Button size="sm" variant="secondary" onClick={goList}>{origin ? "全部作文" : "返回列表"}</Button>
           {sealed && (
-            <Button size="sm" onClick={() => void startRevisionFrom(detail.sheet.id)}>开始修改（第二稿）</Button>
+            <Button size="sm" onClick={() => void startRevisionFrom(detail.sheet.id)}>开始修改</Button>
           )}
         </div>
       </div>

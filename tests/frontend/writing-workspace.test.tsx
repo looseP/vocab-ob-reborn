@@ -521,7 +521,7 @@ describe("I4 工作区来源闭环（origin）", () => {
 
     await renderAt(urlWithOrigin(SHEET_SEALED), createElement(L3WritingPage));
     await screen.findByRole("textbox", { name: "作文正文" });
-    fireEvent.click(screen.getByRole("button", { name: "开始修改（第二稿）" }));
+    fireEvent.click(screen.getByRole("button", { name: "开始修改" }));
     await waitFor(() => expect(locText()).toContain(`sheet=${SHEET_B}`));
     expect(locText()).toContain(`origin=${ORIGIN_PARAM}`);
   });

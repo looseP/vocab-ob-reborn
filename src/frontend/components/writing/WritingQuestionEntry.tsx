@@ -28,6 +28,11 @@ export interface WritingQuestionEntryProps {
   onRetry: () => void;
   /** 站内导航（宿主提供；组件只产出规范 URL，禁任意 returnUrl / history.back）。 */
   onNavigate: (url: string) => void;
+  /**
+   * 跳转前屏障（原卷语义：作答防抖/在途保存确认后才允许离开）——返回 false = 留页：
+   * 本组件既不导航、也不创建任务（不产生副作用）。缺省无屏障（题型空间浏览视图）。
+   */
+  beforeAction?: () => Promise<boolean>;
 }
 
 /** 任务行状态文案（专项写作口径；归档额外前置标识）。 */
@@ -60,23 +65,48 @@ export function WritingQuestionEntry({
   state,
   onRetry,
   onNavigate,
+  beforeAction,
 }: WritingQuestionEntryProps) {
   const [createState, setCreateState] = useState<"idle" | "creating" | "error">("idle");
+  const [actionBusy, setActionBusy] = useState(false);
   /** 单次创建意图：结果未知（网络失败）沿用同一 requestId 重试；成功后不轮换（本实例即本意图）。 */
   const requestIdRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
+  const actionInFlightRef = useRef(false);
 
-  const openRecord = (task: WritingQuestionTaskSummary) => {
+  const goTask = (task: WritingQuestionTaskSummary) => {
     const sheetId = task.draftSheetId ?? task.latestSubmittedSheetId ?? null;
     onNavigate(buildWritingUrl({ taskId: task.taskId, sheetId, origin }));
+  };
+
+  const openRecord = (task: WritingQuestionTaskSummary) => {
+    if (actionInFlightRef.current) return;
+    if (!beforeAction) { goTask(task); return; } // 无屏障：同步只读导航
+    actionInFlightRef.current = true;
+    setActionBusy(true);
+    void (async () => {
+      try {
+        if (!(await beforeAction())) return; // 屏障拒绝：留页、不导航
+        goTask(task);
+      } finally {
+        actionInFlightRef.current = false;
+        setActionBusy(false);
+      }
+    })();
   };
 
   const start = async () => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
-    requestIdRef.current ??= crypto.randomUUID();
     setCreateState("creating");
     try {
+      // 屏障先行：保存未确认（失败/冲突/未知）→ 留页，且**不创建任何任务**。
+      if (beforeAction && !(await beforeAction())) {
+        inFlightRef.current = false;
+        setCreateState("idle");
+        return;
+      }
+      requestIdRef.current ??= crypto.randomUUID();
       const result = await writingClient.createTask({
         requestId: requestIdRef.current,
         kind,
@@ -125,7 +155,7 @@ export function WritingQuestionEntry({
             <span className="text-xs text-[var(--color-ink-soft)]">
               {summaryLabel(task, task.taskStatus !== "active")}
             </span>
-            <Button size="sm" variant="ghost" onClick={() => openRecord(task)}>
+            <Button size="sm" variant="ghost" disabled={actionBusy} onClick={() => openRecord(task)}>
               {recordActionLabel(task)}
             </Button>
           </div>
@@ -151,7 +181,7 @@ export function WritingQuestionEntry({
           {unique ? `专项写作 · ${summaryLabel(unique)}` : "专项写作 · 尚未开始"}
         </span>
         {unique ? (
-          <Button size="sm" variant="secondary" onClick={() => openRecord(unique)}>
+          <Button size="sm" variant="secondary" disabled={actionBusy} onClick={() => openRecord(unique)}>
             {recordActionLabel(unique)}
           </Button>
         ) : (
@@ -170,7 +200,7 @@ export function WritingQuestionEntry({
                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5"
               >
                 <span className="text-xs text-[var(--color-ink-soft)]">{summaryLabel(task, true)}</span>
-                <Button size="sm" variant="ghost" onClick={() => openRecord(task)}>
+                <Button size="sm" variant="ghost" disabled={actionBusy} onClick={() => openRecord(task)}>
                   {recordActionLabel(task)}
                 </Button>
               </div>

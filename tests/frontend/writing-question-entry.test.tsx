@@ -231,3 +231,49 @@ describe("WritingQuestionEntry（I3 共享入口状态机）", () => {
     expect(lastNavigation().get("sheet")).toBeNull(); // 无草稿不伪造 sheet
   });
 });
+
+describe("WritingQuestionEntry · 跳转前屏障（原卷语义）", () => {
+  it("屏障拒绝：开始不创建不导航（留页、按钮恢复）；继续同样留页", async () => {
+    const deny = vi.fn(async () => false);
+    client.createTask.mockResolvedValue({ task: { id: TASK }, draft: null, created: true });
+    await renderEntry({ beforeAction: deny });
+
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await flushAsync();
+    expect(deny).toHaveBeenCalledTimes(1);
+    expect(client.createTask).not.toHaveBeenCalled(); // 不悄悄创建任务
+    expect(navigations).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "开始写作" })).toBeTruthy(); // 留页可重试（非错误态）
+
+    // 继续（只读导航）同样受屏障约束：拒绝即留页
+    act(() => { for (const root of mountedRoots.splice(0)) root.unmount(); });
+    document.body.innerHTML = "";
+    const deny2 = vi.fn(async () => false);
+    await renderEntry({ tasks: [taskSummary({ draftSheetId: SHEET })], beforeAction: deny2 });
+    fireEvent.click(screen.getByRole("button", { name: "继续写作" }));
+    await flushAsync();
+    expect(deny2).toHaveBeenCalledTimes(1);
+    expect(navigations).toHaveLength(0);
+  });
+
+  it("慢屏障：放行前零创建零导航；在途重复点击防重（单次）；放行后恰一次导航与创建", async () => {
+    const gate = deferred<boolean>();
+    const beforeAction = vi.fn(() => gate.promise);
+    client.createTask.mockResolvedValue({ task: { id: TASK }, draft: { id: SHEET }, created: true });
+    await renderEntry({ beforeAction });
+
+    const button = screen.getByRole("button", { name: "开始写作" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await flushAsync();
+    expect(beforeAction).toHaveBeenCalledTimes(1); // 防重：屏障只跑一次
+    expect(client.createTask).not.toHaveBeenCalled(); // 屏障未放行 → 不创建
+    expect(navigations).toHaveLength(0);
+
+    gate.resolve(true);
+    await waitFor(() => expect(navigations.length).toBe(1));
+    expect(client.createTask).toHaveBeenCalledTimes(1);
+    expect(lastNavigation().get("writingTaskId")).toBe(TASK);
+    expect(lastNavigation().get("sheet")).toBe(SHEET);
+  });
+});

@@ -421,3 +421,296 @@ describe("L3PapersPage fileKey 作文入口（I3）", () => {
     expect(summariesMock()).toHaveBeenCalledTimes(2);
   });
 });
+
+// ── I3/C：原卷作文入口（整卷/source 文件/回看）＋ 跳转前保存屏障 ＋ 返回恢复 ──
+
+describe("I3/C 原卷作文入口与返回恢复", () => {
+  const Q_CHOICE = "00000000-0000-4000-8000-0000000001c0";
+  const PAPER_1 = "00000000-0000-4000-8000-0000000009a1";
+  const PAPER_2 = "00000000-0000-4000-8000-0000000009a2";
+  const Q_ESSAY = "00000000-0000-4000-8000-0000000001c1";
+  const TASK_W = "00000000-0000-4000-8000-0000000007c1";
+  const SHEET_W = "00000000-0000-4000-8000-0000000008c1";
+  const PAPER_SHEET = "00000000-0000-4000-8000-0000000008c2";
+  const PAPER_SHEET_B = "00000000-0000-4000-8000-0000000008c5";
+  const RESUME_DRAFT = "00000000-0000-4000-8000-0000000008c4";
+  const RESUME_SEALED = "00000000-0000-4000-8000-0000000008c3";
+  const MISSING_SHEET = "00000000-0000-4000-8000-0000000008c9";
+
+  const essayFile = () => fileItem({
+    question_type: "short_essay", source_id: SOURCE_ID, file_key: null,
+    title: "合成来源 · 小作文文件", direction: "考研", question_count: 1,
+  });
+  const essaySourceDetail = () => ({
+    question_type: "short_essay",
+    source: { id: SOURCE_ID, title: "合成来源 · 小作文文件" },
+    source_content: null, file_key: null,
+    questions: [{ id: Q_ESSAY, ordinal: 0, stem: "47. 小作文题干", options: [], answer: { sample: "范文" }, explanation: null, evidence: [] }],
+  });
+  const sheetRow = (overrides: Record<string, unknown> = {}) => ({
+    id: PAPER_SHEET, user_id: "00000000-0000-4000-8000-000000000001",
+    scope: "paper", scope_key: "paper:paper-1", source_id: null, question_type: null, paper_id: "paper-1",
+    status: "draft", answers: {}, seal_mode: null, summary: null, sealed_at: null,
+    created_at: "2026-09-19T00:00:00Z", updated_at: "2026-09-19T00:00:00Z", ...overrides,
+  });
+  const essayPaper = (id = PAPER_1) => ({
+    id, title: `合成试卷 ${id}`, direction: "考研", metadata: {},
+    sections: [
+      {
+        key: "s1", title: "阅读", questionType: "reading_choice", sourceId: null, fileKey: null,
+        questionIds: [Q_CHOICE], missing: false, source_title: null, source_content: null,
+        questions: [{
+          id: Q_CHOICE, ordinal: 0, stem: "1. 客观题干",
+          options: [{ key: "A", text: "甲" }, { key: "B", text: "乙" }],
+          answer: { choice: "B" }, explanation: null, evidence: [],
+        }],
+      },
+      {
+        key: "s2", title: "写作", questionType: "short_essay", sourceId: null, fileKey: null,
+        questionIds: [Q_ESSAY], missing: false, source_title: null, source_content: null,
+        questions: [{ id: Q_ESSAY, ordinal: 0, stem: "47. 小作文题干", options: [], answer: { sample: "范文" }, explanation: null, evidence: [] }],
+      },
+    ],
+  });
+  const translationPaper = () => ({
+    id: "paper-1", title: "翻译合成卷", direction: "考研", metadata: {},
+    sections: [{
+      key: "t1", title: "翻译", questionType: "sentence_translation", sourceId: null, fileKey: null,
+      questionIds: [Q_ESSAY], missing: false, source_title: null, source_content: null,
+      questions: [{ id: Q_ESSAY, ordinal: 0, stem: "46. 翻译题干", options: [], answer: { text: "参考译文" }, explanation: null, evidence: [] }],
+    }],
+  });
+
+  function setupEssayMock(options: {
+    files?: unknown[];
+    detail?: Record<string, unknown>;
+    paper?: unknown;
+    openSheet?: unknown;
+    fetchSheets?: Record<string, unknown | null>;
+  } = {}) {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (path.startsWith("/l3/papers?")) return { items: [] };
+      if (path.startsWith("/l3/papers/")) return options.paper ?? essayPaper();
+      if (path === "/l3/sheets" && method === "POST") return { sheet: options.openSheet ?? sheetRow() };
+      if (path.startsWith("/l3/sheets/") && method === "PATCH") return { sheet: sheetRow({ answers: {} }) };
+      if (path.startsWith("/l3/sheets/") && method === "GET") {
+        const id = path.split("/").pop()!;
+        const hit = options.fetchSheets?.[id];
+        if (hit === undefined) return { sheet: sheetRow({ id }), attempts: [] };
+        if (hit === null) throw new Error("sheet missing");
+        return { sheet: hit, attempts: [] };
+      }
+      if (path.startsWith("/l3/attempts")) return { items: [] };
+      if (path.startsWith("/l3/question-annotations")) return { items: [] };
+      if (path === "/l3/annotation-tags") return { entry: [], option: [] };
+      if (path.startsWith("/l3/practice-files?")) return { items: options.files ?? [] };
+      if (path.startsWith("/l3/practice-files/detail?")) return options.detail ?? {};
+      throw new Error(`unmocked: ${path}`);
+    });
+    return apiFetchMock;
+  }
+  const summariesMock = () => writingClient.questionSummaries as ReturnType<typeof vi.fn>;
+  const createTaskMock = () => writingClient.createTask as ReturnType<typeof vi.fn>;
+  const patchCalls = () => (apiFetch as ReturnType<typeof vi.fn>).mock.calls
+    .filter(([p, i]) => String(p).startsWith("/l3/sheets/") && (i as RequestInit | undefined)?.method === "PATCH");
+
+  it("整卷草稿：题组级一次批量摘要 + 「专项练习（不计入本次试卷作答）」；开始 → paper origin（含当前题纸）", async () => {
+    setupEssayMock();
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+    createTaskMock().mockResolvedValue({ task: { id: TASK_W }, draft: { id: SHEET_W }, created: true });
+
+    await renderPage({ deepLinkPaper: PAPER_1 });
+    await waitFor(() => expect(screen.getByText("专项练习（不计入本次试卷作答）")).toBeTruthy());
+
+    // 一次集合读取（仅 essay 题；方向=卷方向）
+    expect(summariesMock()).toHaveBeenCalledTimes(1);
+    expect(summariesMock().mock.calls[0]![0]).toEqual([Q_ESSAY]);
+    expect(summariesMock().mock.calls[0]![1]).toEqual({ kind: "whole", direction: "考研" });
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await waitFor(() => expect(locText()).toContain(`writingTaskId=${TASK_W}`));
+    expect(createTaskMock()).toHaveBeenCalledWith(expect.objectContaining({ questionId: Q_ESSAY, kind: "whole", direction: "考研" }));
+    const origin = parseWritingSearch(new URLSearchParams(locText().split("?")[1])).origin;
+    expect(origin).toMatchObject({ kind: "paper", paperId: PAPER_1, questionId: Q_ESSAY, sheetId: PAPER_SHEET });
+  });
+
+  it("翻译题不渲染作文入口（零摘要请求）", async () => {
+    setupEssayMock({ paper: translationPaper() });
+    await renderPage({ deepLinkPaper: PAPER_1 });
+    await waitFor(() => expect(screen.getByText("46. 翻译题干")).toBeTruthy());
+    expect(screen.queryByText("专项练习（不计入本次试卷作答）")).toBeNull();
+    expect(summariesMock()).not.toHaveBeenCalled();
+  });
+
+  it("source 文件题纸：入口在卷内 + ?question= 定位高亮 + file origin（sourceId）", async () => {
+    setupEssayMock({
+      files: [essayFile()],
+      detail: essaySourceDetail(),
+      openSheet: sheetRow({ id: PAPER_SHEET, scope: "file", scope_key: `file:${SOURCE_ID}:short_essay`, source_id: SOURCE_ID, question_type: "short_essay", paper_id: null }),
+    });
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+    createTaskMock().mockResolvedValue({ task: { id: TASK_W }, draft: { id: SHEET_W }, created: true });
+
+    await renderPage({ deepLinkVenue: "short_essay", deepLinkFile: SOURCE_ID, deepLinkQuestion: Q_ESSAY });
+    await waitFor(() => expect(screen.getByText("专项练习（不计入本次试卷作答）")).toBeTruthy());
+    const anchor = document.getElementById(`question-${Q_ESSAY}`);
+    expect(anchor?.getAttribute("data-focused")).toBe("true");
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await waitFor(() => expect(locText()).toContain("writingTaskId"));
+    const origin = parseWritingSearch(new URLSearchParams(locText().split("?")[1])).origin;
+    expect(origin).toMatchObject({ kind: "file", sourceId: SOURCE_ID, questionId: Q_ESSAY, sheetId: PAPER_SHEET });
+  });
+
+  it("保存屏障成功路径：慢 PATCH 在途 + 之后又有新选中 → 二次 flush 全确认后才跳转", async () => {
+    setupEssayMock();
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+    createTaskMock().mockResolvedValue({ task: { id: TASK_W }, draft: { id: SHEET_W }, created: true });
+
+    await renderPage({ deepLinkPaper: PAPER_1 });
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+
+    // 第一个 PATCH 挂起（慢保存）
+    let resolveFirstPatch!: (value: unknown) => void;
+    const firstPatch = new Promise((resolve) => { resolveFirstPatch = resolve; });
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    const base = apiFetchMock.getMockImplementation()!;
+    let patchCount = 0;
+    apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (String(path).startsWith("/l3/sheets/") && init?.method === "PATCH") {
+        patchCount += 1;
+        if (patchCount === 1) return firstPatch;
+        return { sheet: sheetRow({ answers: {} }) };
+      }
+      return base(path, init);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /甲/ })); // 第一次选中
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 900)); }); // 防抖到期 → PATCH#1 在途
+    expect(patchCount).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: /乙/ })); // 在途期间又有新选中
+
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await act(async () => { await Promise.resolve(); }); // 屏障进入等待（在途 PATCH）
+    expect(createTaskMock()).not.toHaveBeenCalled(); // 未确认前不创建
+    resolveFirstPatch({ sheet: sheetRow({ answers: {} }) }); // PATCH#1 完成
+    await waitFor(() => expect(patchCount).toBe(2)); // 覆盖等待期间新输入的第二次 flush
+    await waitFor(() => expect(locText()).toContain(`writingTaskId=${TASK_W}`));
+    expect(createTaskMock()).toHaveBeenCalledTimes(1);
+    // 两批内容都发出去了（甲先、乙后）
+    const bodies = patchCalls().map(([, init]) => JSON.parse((init as RequestInit).body as string));
+    expect(bodies[0].answers[Q_CHOICE]).toMatchObject({ choice: "A" });
+    expect(bodies[1].answers[Q_CHOICE]).toMatchObject({ choice: "B" });
+  });
+
+  it("保存屏障失败：PATCH 失败 → 留页保留正文、不创建任务、显式提示", async () => {
+    setupEssayMock();
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+    createTaskMock().mockResolvedValue({ task: { id: TASK_W }, draft: null, created: true });
+
+    await renderPage({ deepLinkPaper: PAPER_1 });
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    const base = apiFetchMock.getMockImplementation()!;
+    apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (String(path).startsWith("/l3/sheets/") && init?.method === "PATCH") throw new Error("save failed");
+      return base(path, init);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /甲/ }));
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", expect.stringMatching(/暂不能离开|尚未保存成功/)));
+    expect(createTaskMock()).not.toHaveBeenCalled();
+    expect(locText()).not.toContain("writingTaskId=");
+  });
+
+  it("resume（source 文件·draft）：按 ID 读面可编辑；零 openSheet 新开", async () => {
+    setupEssayMock({
+      files: [essayFile()],
+      detail: essaySourceDetail(),
+      fetchSheets: {
+        [RESUME_DRAFT]: sheetRow({ id: RESUME_DRAFT, scope: "file", scope_key: `file:${SOURCE_ID}:short_essay`, source_id: SOURCE_ID, question_type: "short_essay", paper_id: null, status: "draft" }),
+      },
+      openSheet: null as never,
+    });
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+
+    await renderPage({ deepLinkVenue: "short_essay", deepLinkFile: SOURCE_ID, deepLinkQuestion: Q_ESSAY, deepLinkResumeSheet: RESUME_DRAFT });
+    await waitFor(() => expect(screen.getByText("专项练习（不计入本次试卷作答）")).toBeTruthy());
+    // 零 openSheet：POST /l3/sheets 未被调用
+    const posts = (apiFetch as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
+    expect(posts).toHaveLength(0);
+    const textarea = screen.getByPlaceholderText(/在这里写作文/) as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(false); // draft 恢复可编辑
+  });
+
+  it("resume（paper·sealed）：同 ID 只读；零 openSheet；不显示可编辑假象", async () => {
+    setupEssayMock({
+      fetchSheets: {
+        [RESUME_SEALED]: sheetRow({ id: RESUME_SEALED, paper_id: PAPER_1, scope_key: `paper:${PAPER_1}`, status: "sealed", sealed_at: "2026-09-19T01:00:00Z" }),
+      },
+    });
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [{ taskId: TASK_W, taskStatus: "active", draftSheetId: null, latestSubmittedSheetId: SHEET_W, latestRevisionNo: 1, revisionCount: 1, feedbackState: "pending", contentStatus: "available" }] }] });
+
+    await renderPage({ deepLinkPaper: PAPER_1, deepLinkQuestion: Q_ESSAY, deepLinkResumeSheet: RESUME_SEALED });
+    await waitFor(() => expect(screen.getByText("专项练习（不计入本次试卷作答）")).toBeTruthy());
+    const posts = (apiFetch as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
+    expect(posts).toHaveLength(0);
+    const textarea = screen.getByPlaceholderText(/在这里写作文/) as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(true); // 只读，不显示可编辑假象
+    // 入口显示精确 sealed 稿状态（查看本稿）
+    expect(screen.getByRole("button", { name: "查看本稿" })).toBeTruthy();
+  });
+
+  it("resume 不可达：明确提示并停留来源列表（不打开详情、不建纸）", async () => {
+    setupEssayMock({
+      files: [essayFile()],
+      detail: essaySourceDetail(),
+      fetchSheets: { [MISSING_SHEET]: null },
+    });
+    summariesMock().mockResolvedValue({ items: [] });
+
+    await renderPage({ deepLinkVenue: "short_essay", deepLinkFile: SOURCE_ID, deepLinkQuestion: Q_ESSAY, deepLinkResumeSheet: MISSING_SHEET });
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", expect.stringMatching(/不可用|不匹配/)));
+    expect(screen.queryByText("专项练习（不计入本次试卷作答）")).toBeNull(); // 未进入做题面
+    const posts = (apiFetch as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
+    expect(posts).toHaveLength(0);
+  });
+
+  it("多卷同题：各自 origin 返回各自卷（无全局来源串味）", async () => {
+    setupEssayMock({ openSheet: sheetRow({ id: PAPER_SHEET }) });
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+    createTaskMock().mockResolvedValue({ task: { id: TASK_W }, draft: null, created: true });
+
+    await renderPage({ deepLinkPaper: PAPER_1 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "开始写作" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await waitFor(() => expect(locText()).toContain("writingTaskId"));
+    const first = parseWritingSearch(new URLSearchParams(locText().split("?")[1])).origin;
+    expect(first).toMatchObject({ kind: "paper", paperId: PAPER_1 });
+
+    // 第二卷（同库同题）：重挂载后来源各自取自当前卷
+    act(() => { for (const root of mountedRoots.splice(0)) root.unmount(); });
+    document.body.innerHTML = "";
+    setupEssayMock({
+      paper: essayPaper(PAPER_2),
+      openSheet: sheetRow({ id: PAPER_SHEET_B, scope_key: `paper:${PAPER_2}`, paper_id: PAPER_2 }),
+    });
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+    await renderPage({ deepLinkPaper: PAPER_2 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "开始写作" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await waitFor(() => expect(locText()).toContain("writingTaskId"));
+    const second = parseWritingSearch(new URLSearchParams(locText().split("?")[1])).origin;
+    expect(second).toMatchObject({ kind: "paper", paperId: PAPER_2, sheetId: PAPER_SHEET_B });
+  });
+});
