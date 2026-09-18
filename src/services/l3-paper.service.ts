@@ -345,11 +345,22 @@ export class L3PaperService {
     });
   }
 
-  /** 删题护栏③：active 卷面引用中的题不可删，409 带引用卷面清单（中文化在 HTTP 层）。 */
+  /** 删题护栏③：active 卷面引用中的题 / 被作文任务引用的题不可删，409 带引用清单（中文化在 HTTP 层）。 */
   async deleteQuestion(input: DeleteL3QuestionInput): Promise<{ deleted: true }> {
     return this.withActor(input.userId, async (repos) => {
       const question = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
       if (!question) throw new NotFoundError("L3Question", input.questionId);
+
+      // 护栏③-b（作文子空间 V1，W2）：被当前 owner 写作任务引用的题不可删。
+      // owner 作用域查询，返回信息不含任何他人数据（不泄露）；沿用 papers blocker 风格。
+      const writingRefs = await repos.l3Paper.listWritingTaskRefs(input.userId, input.questionId);
+      if (writingRefs.length > 0) {
+        throw new ConflictError("Cannot delete L3 question referenced by an active writing task", undefined, {
+          entityType: "question",
+          id: input.questionId,
+          blockers: { writingTasks: writingRefs.map((t) => ({ id: t.id, title: t.title })) },
+        });
+      }
 
       const papers = await repos.l3Paper.listActivePaperRefsWithPayload(input.userId);
       const blockers = papers

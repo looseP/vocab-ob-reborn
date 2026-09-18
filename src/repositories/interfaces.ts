@@ -1512,6 +1512,11 @@ export interface IL3PaperRepository {
     identity: { sourceId?: string | null; fileKey?: string | null; questionType: string },
   ): Promise<L3QuestionRow[]>;
   listPracticeFiles(input: L3PracticeFileLookup): Promise<L3PracticeFilePage>;
+  /**
+   * 删题护栏（作文子空间 V1，W2）：引用该 question 的全部当前 owner 写作任务
+   * （id + 标题）。owner 作用域，不泄露他人信息。空数组 = 未被写作任务引用。
+   */
+  listWritingTaskRefs(userId: string, questionId: string): Promise<Array<{ id: string; title: string }>>;
   deleteQuestion(userId: string, questionId: string): Promise<boolean>;
   /** 拉全部 active 卷的轻量引用（单 owner 数据量小；引用匹配在 service 纯算）。 */
   listActivePaperRefsWithPayload(userId: string): Promise<Array<L3PaperRef & { payload: unknown }>>;
