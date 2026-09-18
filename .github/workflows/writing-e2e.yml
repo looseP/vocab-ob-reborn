@@ -112,42 +112,29 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Start API + SPA server
-        env:
-          NODE_ENV: test
-          PORT: "3099"
-          SERVE_FRONTEND: "true"
-          DATABASE_URL: ${{ env.APP_URL }}
-          OWNER_API_TOKEN: ci-owner-token-writing-e2e-0001
-          LOCAL_OWNER_ID: 00000000-0000-1000-8000-000000000001
-          APP_ORIGIN: http://127.0.0.1:3099
-          AGENT_API_TOKENS: agent-a:ci-agent-token-writing-e2e-0001
-        run: |
-          nohup npx tsx src/server.ts > /tmp/writing-server.log 2>&1 &
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3099/health > /dev/null; then echo "server ready"; exit 0; fi
-            sleep 1
-          done
-          echo "server failed to become ready"; cat /tmp/writing-server.log; exit 1
-
+      # 服务由 playwright.config 的 webServer 自起（CI 下 reuseExistingServer=false；
+      # 手动预占 3099 会导致 webServer 启动冲突 → 0 收集）。agent 开口所需的
+      # AGENT_API_TOKENS 经 webServer env 白名单透传（playwright.config.ts）。
       - name: Run writing E2E (gated + fail-closed validation)
         env:
           E2E_WRITING_SMOKE: "1"
           E2E_OWNER_TOKEN: ci-owner-token-writing-e2e-0001
           E2E_AGENT_TOKEN: ci-agent-token-writing-e2e-0001
+          AGENT_API_TOKENS: agent-a:ci-agent-token-writing-e2e-0001
           E2E_SETUP_DATABASE_URL: ${{ env.ADMIN_URL }}
-          DATABASE_URL: ${{ env.ADMIN_URL }}
+          DATABASE_URL: ${{ env.APP_URL }}
           WRITING_SHOT_DIR: /tmp/writing-shots
         run: |
           set +e
           npx playwright test e2e/writing.spec.ts --reporter=json > /tmp/pw-writing.json
-          PW_EXIT=$?
+          export PW_EXIT=$?
           set -e
           node -e '
           const fs = require("node:fs");
           let report;
           try { report = JSON.parse(fs.readFileSync("/tmp/pw-writing.json", "utf8")); }
           catch (e) { console.error("playwright json report unreadable:", e.message); process.exit(1); }
+          for (const err of report.errors ?? []) console.error("playwright error:", err.message ?? JSON.stringify(err));
           const specs = [];
           function collect(suite) {
             for (const s of suite.suites ?? []) collect(s);
@@ -157,7 +144,7 @@ jobs:
           const total = specs.length;
           const skipped = specs.filter((s) => s.tests.some((t) => t.status === "skipped")).length;
           const failed = specs.filter((s) => s.tests.some((t) => t.status !== "expected" && t.status !== "skipped")).length;
-          console.log(`collected=${total} executed=${total - skipped} skipped=${skipped} failed=${failed} passed=${total - skipped - failed}`);
+          console.log(`collected=${total} executed=${total - skipped} skipped=${skipped} failed=${failed} passed=${total - skipped - failed} (pw_exit=${process.env.PW_EXIT ?? "?"})`);
           if (total !== 4) { console.error("FAIL: expected exactly 4 writing E2E specs (collected=" + total + ")"); process.exit(1); }
           if (skipped !== 0) { console.error("FAIL: writing E2E was silently skipped (gate/config/env missing)"); process.exit(1); }
           if (failed !== 0 || (report.stats?.unexpected ?? 0) !== 0) { console.error("FAIL: writing E2E has failures"); process.exit(1); }
@@ -168,7 +155,6 @@ jobs:
         run: |
           mkdir -p writing-e2e-artifacts
           cp -r /tmp/writing-shots writing-e2e-artifacts/shots 2>/dev/null || true
-          cp /tmp/writing-server.log writing-e2e-artifacts/ 2>/dev/null || true
           cp /tmp/pw-writing.json writing-e2e-artifacts/ 2>/dev/null || true
 
       - name: Upload failure evidence (trace / screenshots / logs)
