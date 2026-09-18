@@ -111,3 +111,36 @@ describe("L3WritingFeedbackRepository.updateCas", () => {
     })).resolves.toBeNull();
   });
 });
+
+describe("L3WritingFeedbackRepository.deleteBySheet（W9 清理）", () => {
+  it("owner+sheet 限定的 DELETE…RETURNING；true/false 两态", async () => {
+    const repo = new L3WritingFeedbackRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: "f-1" });
+    expect(await repo.deleteBySheet(USER, SHEET)).toBe(true);
+    const [sql, params] = spy.mock.calls[0]!;
+    expect(sql).toContain("DELETE FROM l3_writing_feedback");
+    expect(sql).toContain("user_id = $1::uuid AND sheet_id = $2::uuid");
+    expect(sql).toContain("RETURNING id");
+    expect(params).toEqual([USER, SHEET]);
+
+    spy.mockResolvedValue(null);
+    expect(await repo.deleteBySheet(USER, SHEET)).toBe(false);
+  });
+});
+
+describe("L3WritingFeedbackRepository.insertFirst（异常臂）", () => {
+  it("空行抛错（防静默假成功）", async () => {
+    const repo = new L3WritingFeedbackRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await expect(repo.insertFirst({
+      user_id: USER,
+      sheet_id: SHEET,
+      text_sha256: "a".repeat(64),
+      feedback_jsonb: "{}",
+      request_id: REQUEST,
+      last_editor: "agent-a",
+    })).rejects.toThrow("insert returned no row");
+  });
+});

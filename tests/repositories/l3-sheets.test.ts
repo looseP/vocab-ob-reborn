@@ -355,3 +355,19 @@ describe("L3SheetRepository.listArchive（F-1 题纸档案）", () => {
     expect(rows[0]!.venue_title).toBeNull();
   });
 });
+
+describe("L3SheetRepository.findWritingTaskQuestionId（W3 作用域解析只读助手）", () => {
+  it("只读解析写作任务的 question_id（无锁、owner 限定）；空行 null", async () => {
+    const repo = new L3SheetRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ question_id: "q-1" });
+    expect(await repo.findWritingTaskQuestionId(USER, "00000000-0000-4000-8000-000000000601")).toBe("q-1");
+    const [sql, params] = spy.mock.calls[0]!;
+    expect(sql).toContain("FROM l3_writing_tasks WHERE id = $1::uuid AND user_id = $2::uuid");
+    expect(sql).not.toContain("FOR UPDATE");
+    expect(params).toEqual(["00000000-0000-4000-8000-000000000601", USER]);
+
+    spy.mockResolvedValue(null);
+    expect(await repo.findWritingTaskQuestionId(USER, "00000000-0000-4000-8000-000000000601")).toBeNull();
+  });
+});
