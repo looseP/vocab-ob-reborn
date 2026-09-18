@@ -53,12 +53,38 @@
 
 ## A · 导航与进度契约（2026-09-19）
 
-### A1 / I1 · 来源身份与精确返回（完成，`<A1-SHA>`）
+### A1 / I1 · 来源身份与精确返回（契约完成，`ed8d3bb`）
 
 - **契约**（`src/frontend/viewModels/writingNavigation.ts`）：
   - `origin` 参数 v1：`base64url(JSON)` 单参数；判别联合 **file/paper**；file 需 `fileKey|sourceId` 至少其一；paper 需 `paperId`；`questionId` + 题型（short_essay/long_essay）；可选**进入时原 sheetId**；限长 1024、逐键白名单、UUID/枚举严格校验；非 base64url 字符（含 `http(s)://`、`javascript:`、`/`、`:`）直接拒绝。
   - `parseWritingSearch` 增 `origin` / `originInvalid`（非法仅降级来源提示，不破坏其余参数）；`buildWritingUrl` 可选携带 origin——**无 origin 时与旧 URL 完全一致**。
-  - 返回原题：`buildWritingOriginReturnUrl` 生成 `/l3?venue|paper&question=<qid>[&file|source][&resumeSheet=<sid>]`；原 sheet 由消费方按 ID 读面（draft → 可编辑恢复 / sealed → 只读；**不经 openSheet**）。
+  - 返回原题：`buildWritingOriginReturnUrl` 生成 `/l3?venue|paper&question=<qid>[&file=<fileKey|sourceId>][&resumeSheet=<sid>]`（source 复用 `file=` 契约，见下方修正）；原 sheet 由消费方按 ID 读面（draft → 可编辑恢复 / sealed → 只读；**不经 openSheet**）。
 - **关系校验读面分析（A1 决策）**：复用既有 owner 读即满足——`task.questionId`（getTask 已含）/ file 归属（`practice-files/detail` questions）/ paper 归属（`papers/:id` payload.sections）/ 原 sheet（`fetchSheet` by id）。**A1 无需新增服务端读面**。
 - **验证**：`tests/frontend/writing-navigation.test.ts` **19/19**（旧 URL 兼容、四型往返、超长/字符/结构/UUID/外站拒绝、换稿与对照保留、多来源不同返回位置）；定向回归 **36/36**（含写作工作区与试卷台组件）；typecheck 0 错。
-- 提交：`<A1-SHA>`（导航契约 + 测试）。
+- 提交：`ed8d3bb`（导航契约 + 测试）。
+
+#### A1 完成口径修正（2026-09-19 验收点 1–3）
+
+- **A1 只计**：origin 编解码、返回 URL 构造、兼容性测试。**原 sheet 恢复 / 来源关系实际验证 / 页面换稿保留 origin 未计完成**——须在 B/C 实际接线并以页面级测试/真环境验证后才记。
+- **source 返回参数决策（验收点 2：复用既有 `file=` 契约）**：builder 改为 `file=<fileKey ?? sourceId>` 单参数（不再输出 `source=`）；依据：`L3PapersPage.tsx`（A2 时点 L337-338）FilesTab 的 `file` 参数**本就同时匹配 `source_id` 与 `file_key`**。页面级测试须证明返回打开正确文件与题目（不得只断言 URL 含某字符串）。
+- **关系验证义务（验收点 3：B/C 接线时实际执行）**：`task.questionId = origin.questionId`；question 属于指定文件/试卷；`resumeSheet` 的 scope（paper/source）、题型与来源一致；**同 owner 错误组合必须拒绝恢复且零新增题纸**。
+
+### A2 / I2 · 按题批量只读摘要（完成，`<A2-SHA>`）
+
+- **端点**：`GET /api/l3/writing/tasks/question-summaries?questionId=…&kind=whole|paragraph|free&direction=通用|考研|雅思`（owner-only 只读；新薄路由 `src/http/routes/l3/writing-summaries.ts`（35 行）先于 `writing-tasks.ts` 挂载；`operations.ts` 注册 `listL3WritingQuestionSummaries`，scope `none`）。
+- **契约（strict）**：query `questionId: uuid[]`（原始 ≤100，去重后再查）；响应 `{ items: [{ questionId, tasks: WritingQuestionTaskSummary[] }] }`——逐题必返条目、无匹配=空数组；`taskId/taskStatus/draftSheetId/latestSubmittedSheetId/latestRevisionNo/revisionCount/feedbackState/contentStatus`（**draft 与最新 sealed 分开；feedbackState/contentStatus 仅指最新已提交稿**；清理后 `unavailable`，不转显旧反馈）；多匹配返回列表**不代挑**。生成物已同步（`docs/api/openapi.json` + `generated/openapi.ts`）。
+- **repo 单条集合查询（防 JOIN 放大）**：`t.question_id = ANY($2::uuid[])` + LATERAL 三段（d：活跃草稿 ≤1 行；s：最新 sealed 按 revision_no/created_at/id DESC ≤1 行；rc：sealed+discarded 标量计数）+ `f.sheet_id = s.id`（反馈仅对应最新已提交稿，一稿一条）+ active attempt 标量（清理态）。**一稿一行。**
+- **零写证据**：repo 测试断言**仅 1 次查询**且 SQL 文本 `not.toContain("INSERT")`/`"UPDATE"`；service 测试断言写方法零调用 + 任务计数不变；HTTP 测试断言校验失败**不触达服务**、静态路径不被 `/tasks/:taskId` 吞（缺参数 400）。跨 owner：repo owner 谓词（$1=userId）+ service owner 原样下传 + HTTP agent 403。
+- **验证**：定向批次 **139/139**（7 文件：repo / service-task / service-sheet / http / client / navigation / authorization-registry；其中 A2 新增 repo 2、service 3、http 3、client 2）；typecheck **0**；`api:governance` **全绿**（openapi 含 `question-summaries`；client:check 匹配；contract 10/10；breaking OK（base=`ccc6fb4c`）；breaking:contract 31/31；复杂度棘轮通过）。注册表 owner 读名单 +1。
+- **失败/多任务决策表（读面口径；前端处置于 B/C 实施）**：
+
+| 场景 | 读面行为 | 前端处置（B/C） |
+|---|---|---|
+| 无匹配 | `tasks=[]` | 「开始写作」 |
+| 唯一活跃草稿 | `draftSheetId≠null` | 「继续写作」→ 工作区 |
+| 无草稿、有最新 sealed | `latestSubmittedSheetId≠null` | 「查看本稿」→ 只读 |
+| 多活跃匹配 | tasks 全量返回 | 记录选择（不代挑） |
+| 仅归档 | `taskStatus=archived` 透传 | 记录选择/归档标识 |
+| 查询失败 | HTTP 非 200 | 客户端 INVALID_RESPONSE/错误态，**不归一空** |
+
+- 提交：`<A2-SHA>`。**未声称用户闭环完成**——闭环在 B/C 接线后验证。

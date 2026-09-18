@@ -93,6 +93,26 @@ export const l3WritingRevisionListResponseSchema = z.object({
   nextCursor: z.string().nullable(),
 }).strict();
 
+/** A2：按题批量进度摘要条目（只含状态；不含正文/反馈文本）。 */
+const l3WritingQuestionTaskSummaryResponseSchema = z.object({
+  taskId: z.string().uuid(),
+  taskStatus: z.enum(["active", "archived"]),
+  draftSheetId: z.string().uuid().nullable(),
+  latestSubmittedSheetId: z.string().uuid().nullable(),
+  latestRevisionNo: z.number().int().positive().nullable(),
+  revisionCount: z.number().int().nonnegative(),
+  feedbackState: z.enum(["pending", "ready", "unavailable"]).nullable(),
+  contentStatus: z.enum(["available", "cleared"]).nullable(),
+}).strict();
+
+/** GET /tasks/question-summaries（owner-only 批量读面；逐题返回条目，无匹配为空数组）。 */
+export const l3WritingQuestionSummariesResponseSchema = z.object({
+  items: z.array(z.object({
+    questionId: z.string().uuid(),
+    tasks: z.array(l3WritingQuestionTaskSummaryResponseSchema),
+  }).strict()),
+}).strict();
+
 /** GET /tasks/:taskId/sheets/:sheetId（含反馈组合；cleared=占位语义）。 */
 export const l3WritingSheetDetailResponseSchema = z.object({
   sheet: l3WritingSheetResponseSchema,

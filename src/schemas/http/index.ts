@@ -25,6 +25,7 @@ import {
   L3_SUB_SPACES,
 } from "../../services/l3-practice.service";
 import { L3_QUESTION_TYPES, questionTypeAllowsSourceless } from "../../domain/l3-question-types";
+import { WRITING_DIRECTIONS, WRITING_KINDS } from "../../domain/l3-writing";
 import {
   L3_SESSION_DEFAULT_CONTEXTS,
   L3_SESSION_END_STATUSES,
@@ -812,6 +813,16 @@ export const l3WritingTaskListQuerySchema = z.object({
 export const l3WritingRevisionListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
   cursor: z.string().trim().max(500).optional(),
+});
+
+/**
+ * A2：GET /l3/writing/tasks/question-summaries（owner-only 批量进度读面）。
+ * questionId 可重复传入（原始数量与去重后数量均 ≤100）；kind/direction 严格枚举。
+ */
+export const l3WritingQuestionSummariesQuerySchema = z.object({
+  questionId: z.array(z.string().uuid()).min(1).max(100),
+  kind: z.enum(WRITING_KINDS),
+  direction: z.enum(WRITING_DIRECTIONS),
 });
 
 /** GET /l3/sheets：题纸档案列表 query（F-1 回看闭环；owner-only，新→旧）。 */

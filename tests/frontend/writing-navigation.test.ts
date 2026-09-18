@@ -192,11 +192,11 @@ describe("A1 · 返回原题 URL（按来源构建，禁用任意 returnUrl）",
     expect(params.get("origin")).toBeNull();
   });
 
-  it("sourceId 型：venue + source + question", () => {
+  it("sourceId 型：复用既有 file 契约（file=<sourceId>，FilesTab 匹配 source_id/file_key）", () => {
     const params = new URLSearchParams(buildWritingOriginReturnUrl(fileOriginSourced).split("?")[1]!);
     expect(params.get("venue")).toBe("long_essay");
-    expect(params.get("source")).toBe(SRC);
-    expect(params.get("file")).toBeNull();
+    expect(params.get("file")).toBe(SRC);
+    expect(params.get("source")).toBeNull();
     expect(params.get("question")).toBe(Q);
   });
 

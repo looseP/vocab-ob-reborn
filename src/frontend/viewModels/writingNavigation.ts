@@ -203,7 +203,8 @@ export function decodeWritingOrigin(raw: string | null | undefined): WritingOrig
 
 /**
  * 返回原题 URL（按来源生成，禁止任意 returnUrl）：
- *  - file：/l3?venue=<题型>[&file=<fileKey>][&source=<sourceId>]
+ *  - file：/l3?venue=<题型>&file=<fileKey|sourceId>（复用既有 file 契约——
+ *    FilesTab 的 file 参数本就同时匹配 source_id 与 file_key，source 型文件无 fileKey 时以 sourceId 代入）
  *  - paper：/l3?paper=<paperId>
  *  附 `question=<questionId>` 供定位原题；进入时若有原 sheet → `resumeSheet=<sheetId>`
  *  （消费方按 ID 读面：draft 可编辑恢复 / sealed 只读；不得经 openSheet 另开新纸）。
@@ -212,8 +213,8 @@ export function buildWritingOriginReturnUrl(origin: WritingOrigin): string {
   const search = new URLSearchParams();
   if (origin.kind === "file") {
     search.set("venue", origin.questionType);
-    if (origin.fileKey) search.set("file", origin.fileKey);
-    if (origin.sourceId) search.set("source", origin.sourceId);
+    const fileRef = origin.fileKey ?? origin.sourceId;
+    if (fileRef) search.set("file", fileRef);
   } else {
     search.set("paper", origin.paperId);
   }
