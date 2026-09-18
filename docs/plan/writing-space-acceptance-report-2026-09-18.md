@@ -1,6 +1,6 @@
 # 作文子空间 v1 · 真实验收报告（2026-09-18）
 
-> 状态：**待验收（draft PR）**。本地门禁与真环境矩阵全绿；**CI 三项检查已连续两轮全绿**（历史跑次保留原 SHA：`802318e` 首跑失败（workflow×webServer 冲突，validator 拦截）→ `3304e92` 修复后全绿 → `aed09ee` 复验全绿；**最终提交的检查链接见 §5 末**）。
+> 状态：**待验收（draft PR）**。本地门禁与真环境矩阵全绿；**CI 三项检查历轮全绿**（历史跑次保留原 SHA：`802318e` 首跑失败（workflow×webServer 冲突，validator 拦截）→ `3304e92` 修复后全绿 → `aed09ee` 复验全绿 → **代码终稿 `bd5f443`（validator 强化）全绿，其检查链接见 §5 末**；本报告为 docs-only 提交，最新一轮检查见 PR checks 面板）。
 > 基座：`main @ f03ffe35`（PR 唯一基座；study-notes 线未合入 → 无迁移序号/schema 冲突待解）。
 > 分支：`feat/writing-space-v1`（本地 `writing-v1`）。
 
@@ -46,6 +46,11 @@
 - CI：`.github/workflows/writing-e2e.yml` fail-closed（JSON reporter → collected=4 / skipped=0 / failed=0 才算绿，输出计数行；validator 已用 mock 三用例本地自证：过→0、skip→1、少收集→1）。
 - **CI 实跑记录**：首跑（`802318e`）因 workflow 手动预占 3099 与 config webServer（CI 下 `reuseExistingServer=false`）冲突 → `collected=0`，**validator 按设计拦截「空跑绿」**并打印 `report.errors`；修复 `3304e92`（webServer 自起 + `AGENT_API_TOKENS` 白名单透传 + env 形状对齐本地语义，本地 `CI=true` 仿真 4/4 预演）。**终跑（`3304e92`）全绿**：`collected=4 executed=4 skipped=0 failed=0 passed=4 (pw_exit=0)`（1m46s）。
 - **validator 强化（本轮，`scripts/verify-writing-e2e-report.ts` 单一真源，workflow 直接调用）**：① `PW_EXIT` **缺失/非法/非 0 一律失败**；② `report.errors` **非空一律失败**（webServer/teardown 等进程级故障不再被计数掩盖）；③ 保留收集数=4、跳过数=0、失败数=0（含 `stats.unexpected`）。回归测试 `tests/scripts/verify-writing-e2e-report.test.ts` **10/10**（六场景：正常/零收集/跳过/用例失败/四项通过但进程非零/四项通过但有全局错误，另加缺失与非法、CI 首跑实况复刻）；并以**真实首跑工件** CLI 复演（三命中、exit 1）。
+- **最终检查链接（代码终稿 `bd5f443`，三项全绿；其后仅 docs-only 提交）**：
+  - Writing E2E（真环境闭环 + 故障矩阵）→ `passed`（1m45s）：https://github.com/looseP/vocab-ob-reborn/actions/runs/35354532083/job/105630518502 —— 新 validator 实跑输出 `collected=4 executed=4 skipped=0 failed=0 passed=4 (pw_exit=0)`；
+  - Browser E2E (Playwright) → `passed`（1m28s）：https://github.com/looseP/vocab-ob-reborn/actions/runs/35354532080/job/105630518028；
+  - Engineering Gate + Migration Rehearsal → `passed`（6m1s）：https://github.com/looseP/vocab-ob-reborn/actions/runs/35354532080/job/105630518358。
+  （三项 check-run 真名与来源复核：均 `github-actions` / `app_id=15368`。）
 
 ## 6 · 独立审查结论与修复
 

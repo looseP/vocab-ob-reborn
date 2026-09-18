@@ -206,6 +206,7 @@
 | 2026-09-18 | 提交链终态 | — | `371355e`(W6 回填) → `02eb1aa`(W9) → `2063461`(W8) → `ba2c082`(W7) → `9a9e4df`(冒烟) → `333eead`(日志) → `1b68af8`(屏障) → `f45c8de`(可见性) → `f55e40b`(文案) → `4d14ebf`(矩阵) → `9e48325`(外审) → `5d5ea04`(CI) → `6cde7a6`(守卫) → `61ad3d3`(覆盖) → `802318e`(报告) → `3304e92`(CI 修复) → draft PR **#122** |
 | 2026-09-18 | CI 首跑（Writing E2E，HEAD `802318e`） | 1 | workflow 缺陷：手动预占 3099 × webServer 冲突 → `collected=0`；validator fail-closed 拦截（符合设计）→ 修复 `3304e92` |
 | 2026-09-18 | CI 最终跑（HEAD `3304e92`） | 0 | **三检查全绿**：Writing E2E `collected=4 executed=4 skipped=0 failed=0 passed=4 (pw_exit=0)`（1m46s）/ Browser E2E ✓ / Engineering Gate + Migration Rehearsal ✓（6m10s） |
+| 2026-09-18 | 收口评审修正（validator 单真源 + 回归测试 + 报告口径/发布顺序/保护方案） | 0 | validator 10/10 + 真实首跑工件复演；`bd5f443` → 三项全绿（链接见验收报告 §5 末）；发布顺序统一 `prepare（按需）→ migrate → converge → verifier → 启动新版` |
 
 ## 3 · 遗留与待决策
 
