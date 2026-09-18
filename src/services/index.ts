@@ -35,6 +35,9 @@ import { L3SheetService } from "./l3-sheets.service";
 import { L3SheetExportService } from "./l3-sheet-export.service";
 import { L3AssessmentService } from "./l3-assessments.service";
 import { L3GradingService } from "./l3-grading.service";
+import { L3WritingTaskService } from "./l3-writing-task.service";
+import { L3WritingSheetService } from "./l3-writing-sheet.service";
+import { L3WritingFeedbackService } from "./l3-writing-feedback.service";
 import { L3SessionService } from "./l3-session.service";
 import { ForgettingService } from "./forgetting.service";
 import { L3ContextSourceAdapter } from "./l3-context-source-adapter";
@@ -253,6 +256,11 @@ export function createServices(deps: ServiceDeps) {
       repos.l3Annotations,
       repos.l3Context,
     ),
+    // 作文子空间 v1（W6）：任务/稿件/反馈——三服务使用自包含窄工厂（tx-bound repo
+    // 一次性构造，含 l3Writing/l3Feedback），与全局 factory 语义等价且可独立测试。
+    l3WritingTasks: new L3WritingTaskService(),
+    l3WritingSheets: new L3WritingSheetService(),
+    l3WritingFeedback: new L3WritingFeedbackService(),
     l3Sessions: new L3SessionService(),
     forgetting: new ForgettingService(),
   };

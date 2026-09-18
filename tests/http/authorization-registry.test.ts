@@ -181,6 +181,16 @@ const OTHER_OWNER_WRITES = [
   // L3 practice / sessions
   "recordL3PracticeAttempt",
   "createL3Session",
+  // 作文子空间 v1（W6）：写作任务/稿件 owner 写面（私人写作工作台；agent 开口仅
+  // feedback-context 读 + feedback 写两处，见 agent 清单）。
+  "createL3WritingTask",
+  "patchL3WritingTask",
+  "archiveL3WritingTask",
+  "restoreL3WritingTask",
+  "createL3WritingDraft",
+  "saveL3WritingDraft",
+  "submitL3WritingSheet",
+  "discardL3WritingSheet",
 ] as const;
 
 const OWNER_WRITE_OPERATION_IDS = sorted([
@@ -208,14 +218,16 @@ describe("owner-only write inventory (D5 + D6 guard)", () => {
     expect(registryOwnerWrites).toEqual(OWNER_WRITE_OPERATION_IDS);
   });
 
-  it("the only agent-writable /api/* writes are the proposal path + the assessment venue + grading（批次三①）", () => {
+  it("the only agent-writable /api/* writes are the proposal path + the assessment venue + grading + writing feedback（批次三① / W6）", () => {
     const agentWrites = idsWhere(
       (operation) => operation.path.startsWith("/api/") && operation.method !== "get" && operation.minRole === "agent",
     );
     // 提案路径 5（proposal 入口 2 + 载荷准备 1 + l3 imports 2——2026-09-12 裁决，T13a-fix）+
     // 评析区 1（putL3QuestionAssessment——增补批 ADR-0034 v2 条 10/11：agent 首个可写
     // 持久区，Amends ADR-0029，开口严格限于该区）+ 评卷提交 1（submitL3Grading——
-    // 批次三① ADR-0035 §3：agent 写面第 2 开口，graded_by 服务端认定）。
+    // 批次三① ADR-0035 §3：agent 写面第 2 开口，graded_by 服务端认定）+
+    // 作文反馈 1（putL3WritingFeedback——W6《writing-workspace》§5：agent 写面第 3
+    // 开口，只写指定已提交稿的 feedback，lastEditor 服务端认定）。
     expect(agentWrites).toEqual([
       "createL2ExternalPrompt",
       "createL3Proposal",
@@ -223,6 +235,7 @@ describe("owner-only write inventory (D5 + D6 guard)", () => {
       "createL3StructuredImport",
       "proposeL2Candidate",
       "putL3QuestionAssessment",
+      "putL3WritingFeedback",
       "submitL3Grading",
     ]);
   });
@@ -247,6 +260,9 @@ const AGENT_READS = [
   "getL3QuestionAssessment",
   // 批次三①：评卷上下文读面（agent 面；🔴 含 answerIndex 的 D8 唯一例外，仅 sealed）。
   "getL3GradingContext",
+  // 作文子空间 v1（W6）：agent 读面第 3 开口——只读指定 sealed 稿的评阅上下文
+  // （feedback-context；draft 409、正文已清理 409、零写入）。
+  "getL3WritingFeedbackContext",
 ] as const;
 
 const OWNER_READS = [
@@ -264,6 +280,13 @@ const OWNER_READS = [
   // 批次三①：解析模式读面（verdict/analysis 前端数据源；不含 answerIndex，agent 面
   // 已由 grading-context 覆盖，此处保持做题台面 owner-only 口径）。
   "getL3GradingResults",
+  // 作文子空间 v1（W6）：写作台面 owner-only 读（任务列表/详情/稿次历史/稿详情/
+  // 反馈读取；agent 面仅 feedback-context 一处，正文与草稿不对 agent 开放）。
+  "listL3WritingTasks",
+  "getL3WritingTask",
+  "listL3WritingRevisions",
+  "getL3WritingSheet",
+  "getL3WritingFeedback",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {

@@ -1,56 +1,56 @@
 {
   "version": 1,
-  "baseSha256": "7be0ee4f821611bcc5203a0ea04ae1ca1184c03105b9c3714a4006e79b505632",
-  "currentSha256": "d7a5bea896b3c8db6a171db7b0f8c8c78cd3d757e95aa31ff9eb243d5a2ffefd",
+  "baseSha256": "7115f2ad5375a7ed0bf9e484fa86a3cbb85cc23315b59a723150d9af172321ea",
+  "currentSha256": "8a841eccc67561c4f6ec8289a99d13046c014ad4aa57dec72a164752ebf8bdfe",
   "issues": [
     {
       "kind": "breaking",
-      "location": "paths./api/words/{slug}/notes.get.responses.200.content.application/json.schema.properties.content_md",
-      "message": "删除 required response field"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/words/{slug}/notes.get.responses.200.content.application/json.schema.properties.updated_at",
-      "message": "删除 required response field"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/words/{slug}/notes.get.responses.200.content.application/json.schema.properties.version",
-      "message": "删除 required response field"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/words/{slug}/notes.put",
-      "message": "HTTP method 被删除"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/notes.get.responses.200.content.application/json.schema.properties.items.items.properties.version",
-      "message": "删除 required response field"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/capture.post.responses.201.content.application/json.schema.properties.l3Status",
-      "message": "schema const 发生变化"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/occurrences/{id}.delete.responses.200.content.application/json.schema.properties.deleted.properties.entityType",
+      "location": "paths./api/l3/sheets/{id}/grading-context.get.responses.200.content.application/json.schema.properties.sheet.properties.scope",
       "message": "response enum 新增未声明值"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/context-links/{id}.delete.responses.200.content.application/json.schema.properties.deleted.properties.entityType",
+      "location": "paths./api/l3/sheets/{id}/grading.get.responses.200.content.application/json.schema.properties.sheet.properties.scope",
       "message": "response enum 新增未声明值"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sources/{id}.delete.responses.200.content.application/json.schema.properties.deleted.properties.entityType",
+      "location": "paths./api/l3/sheets/{id}/grading.post.responses.200.content.application/json.schema.properties.sheet.properties.scope",
       "message": "response enum 新增未声明值"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/contexts/{id}.delete.responses.200.content.application/json.schema.properties.deleted.properties.entityType",
+      "location": "paths./api/l3/sheets.get.responses.200.content.application/json.schema.properties.items.items.properties.scope",
+      "message": "response enum 新增未声明值"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/sheets.post.responses.201.content.application/json.schema.properties.sheet.properties.scope",
+      "message": "response enum 新增未声明值"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/sheets/{id}.get.responses.200.content.application/json.schema.properties.sheet.properties.scope",
+      "message": "response enum 新增未声明值"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/sheets/{id}.get.responses.200.content.application/json.schema.properties.attempts.items.properties.venue",
+      "message": "response enum 新增未声明值"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/sheets/{id}.patch.responses.200.content.application/json.schema.properties.sheet.properties.scope",
+      "message": "response enum 新增未声明值"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/sheets/{id}/seal.post.responses.200.content.application/json.schema.properties.sheet.properties.scope",
+      "message": "response enum 新增未声明值"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/attempts.get.responses.200.content.application/json.schema.properties.items.items.properties.venue",
       "message": "response enum 新增未声明值"
     }
   ]

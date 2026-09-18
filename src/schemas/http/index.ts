@@ -789,6 +789,31 @@ export { assessmentUpsertInputSchema as l3AssessmentUpsertSchema } from "../../d
 /** POST /l3/sheets/:id/grading：评卷提交 body（批次三① 0036，ADR-0035 §3）。 */
 export { gradingSubmitInputSchema as l3GradingSubmitSchema } from "../../domain/l3-grading";
 
+// ── 作文子空间 v1（W6，ADR《writing-workspace》§6）──────────────────────
+// body 契约复用 domain zod（单一真源）；查询契约就地定义。
+export {
+  writingTaskCreateInputSchema as l3WritingTaskCreateSchema,
+  writingTaskRenameInputSchema as l3WritingTaskRenameSchema,
+  writingDraftInputSchema as l3WritingDraftSaveSchema,
+  writingSubmitInputSchema as l3WritingSubmitSchema,
+  writingDraftCreateInputSchema as l3WritingDraftCreateSchema,
+  writingFeedbackPutInputSchema as l3WritingFeedbackPutSchema,
+} from "../../domain/l3-writing";
+
+/** GET /l3/writing/tasks?q&status&limit&cursor（列表 keyset；标题/题面搜索）。 */
+export const l3WritingTaskListQuerySchema = z.object({
+  q: z.string().trim().max(200).optional(),
+  status: z.enum(["active", "archived"]).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().max(500).optional(),
+});
+
+/** GET /l3/writing/tasks/:taskId/revisions?limit&cursor（稿次历史 keyset）。 */
+export const l3WritingRevisionListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().max(500).optional(),
+});
+
 /** GET /l3/sheets：题纸档案列表 query（F-1 回看闭环；owner-only，新→旧）。 */
 export const l3SheetListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),

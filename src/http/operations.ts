@@ -57,6 +57,21 @@ import {
   l3GradingSubmitResponseSchema,
 } from "./l3-grading-response-contract";
 import {
+  l3WritingDraftCreateResponseSchema,
+  l3WritingFeedbackContextResponseSchema,
+  l3WritingFeedbackGetResponseSchema,
+  l3WritingFeedbackPutResponseSchema,
+  l3WritingRevisionListResponseSchema,
+  l3WritingSaveResponseSchema,
+  l3WritingSheetDetailResponseSchema,
+  l3WritingSheetResponseSchema,
+  l3WritingSubmitResponseSchema,
+  l3WritingTaskCreateResponseSchema,
+  l3WritingTaskDetailResponseSchema,
+  l3WritingTaskListResponseSchema,
+  l3WritingTaskResponseSchema,
+} from "./l3-writing-response-contract";
+import {
   upgradeWorkOrderCompleteResponseSchema,
   upgradeWorkOrderListResponseSchema,
   upgradeWorkOrderMarkResponseSchema,
@@ -161,6 +176,14 @@ import {
   l3AssessmentUpsertSchema,
   l3GradingSubmitSchema,
   l3SheetExportQuerySchema,
+  l3WritingTaskCreateSchema,
+  l3WritingTaskRenameSchema,
+  l3WritingTaskListQuerySchema,
+  l3WritingRevisionListQuerySchema,
+  l3WritingDraftCreateSchema,
+  l3WritingDraftSaveSchema,
+  l3WritingSubmitSchema,
+  l3WritingFeedbackPutSchema,
   l3ProposalCreateSchema,
   l3ProposalListQuerySchema,
   l3ProposalRejectSchema,
@@ -504,6 +527,26 @@ export const apiOperations = [
   operation("get", "/api/l3/sheets", "listL3Sheets", "owner", "owner", "none", { query: l3SheetListQuerySchema }, 200, l3SheetListResponseSchema),
   operation("get", "/api/l3/attempts", "listL3Attempts", "owner", "owner", "none", { query: l3AttemptListQuerySchema }, 200, l3AttemptListResponseSchema),
   operation("delete", "/api/l3/attempts/:id", "deleteL3Attempt", "owner", "owner", "sessionMutation", undefined, 204, z.null()),
+  // 作文子空间 v1（W6，ADR《writing-workspace》§6）：任务/稿件/反馈，基路径
+  // /api/l3/writing。owner-only 写面（私人写作工作台）；agent 开口仅
+  // feedback-context 读 + feedback 写两处；单稿导出端点属 W9（本轮未注册）。
+  operation("post", "/api/l3/writing/tasks", "createL3WritingTask", "owner", "owner", "sessionMutation", { body: l3WritingTaskCreateSchema }, 201, l3WritingTaskCreateResponseSchema),
+  operation("get", "/api/l3/writing/tasks", "listL3WritingTasks", "owner", "owner", "none", { query: l3WritingTaskListQuerySchema }, 200, l3WritingTaskListResponseSchema),
+  operation("get", "/api/l3/writing/tasks/:taskId", "getL3WritingTask", "owner", "owner", "none", undefined, 200, l3WritingTaskDetailResponseSchema),
+  operation("patch", "/api/l3/writing/tasks/:taskId", "patchL3WritingTask", "owner", "owner", "sessionMutation", { body: l3WritingTaskRenameSchema }, 200, l3WritingTaskResponseSchema),
+  operation("post", "/api/l3/writing/tasks/:taskId/archive", "archiveL3WritingTask", "owner", "owner", "sessionMutation", undefined, 200, l3WritingTaskResponseSchema),
+  operation("post", "/api/l3/writing/tasks/:taskId/restore", "restoreL3WritingTask", "owner", "owner", "sessionMutation", undefined, 200, l3WritingTaskResponseSchema),
+  operation("get", "/api/l3/writing/tasks/:taskId/revisions", "listL3WritingRevisions", "owner", "owner", "none", { query: l3WritingRevisionListQuerySchema }, 200, l3WritingRevisionListResponseSchema),
+  operation("get", "/api/l3/writing/tasks/:taskId/sheets/:sheetId", "getL3WritingSheet", "owner", "owner", "none", undefined, 200, l3WritingSheetDetailResponseSchema),
+  operation("post", "/api/l3/writing/tasks/:taskId/drafts", "createL3WritingDraft", "owner", "owner", "sessionMutation", { body: l3WritingDraftCreateSchema }, 201, l3WritingDraftCreateResponseSchema),
+  operation("patch", "/api/l3/writing/tasks/:taskId/sheets/:sheetId", "saveL3WritingDraft", "owner", "owner", "sessionMutation", { body: l3WritingDraftSaveSchema }, 200, l3WritingSaveResponseSchema),
+  operation("post", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/submit", "submitL3WritingSheet", "owner", "owner", "sessionMutation", { body: l3WritingSubmitSchema }, 200, l3WritingSubmitResponseSchema),
+  operation("post", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/discard", "discardL3WritingSheet", "owner", "owner", "sessionMutation", { body: l3WritingSubmitSchema }, 200, l3WritingSheetResponseSchema),
+  operation("get", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/feedback", "getL3WritingFeedback", "owner", "owner", "none", undefined, 200, l3WritingFeedbackGetResponseSchema),
+  // agent 开口（ADR-0029 Amends：第 3/4 处）——只读指定 sealed 稿 context +
+  // 写该稿 feedback（lastEditor 服务端认定；作文 feedback 是该稿唯一质量反馈源）。
+  operation("get", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/feedback-context", "getL3WritingFeedbackContext", "owner", "agent", "none", undefined, 200, l3WritingFeedbackContextResponseSchema),
+  operation("put", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/feedback", "putL3WritingFeedback", "owner", "agent", "sessionMutation", { body: l3WritingFeedbackPutSchema }, 200, l3WritingFeedbackPutResponseSchema),
   // 批次二收官：冻结导出（只出不进；Content-Disposition + 版本/sha256 响应头）。
   operation("get", "/api/l3/sheets/:id/export", "exportL3Sheet", "owner", "owner", "none", { query: l3SheetExportQuerySchema }, 200, z.string(), "text/markdown"),
   operation("get", "/api/l3/practice-files", "listL3PracticeFiles", "owner", "agent", "none", { query: l3PracticeFileListQuerySchema }, 200, l3PracticeFileListResponseSchema),

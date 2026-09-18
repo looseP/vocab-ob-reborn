@@ -42,6 +42,11 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // 2026-09-18 F-1 回看闭环：题纸档案列表独立薄路由（同棘轮约束，沿前例拆分；
   // bootstrap 限额按实测留一档余量）。
   { file: "src/http/routes/l3/sheets-archive.ts", maxLines: 30, maxRoutes: 1 },
+  // 2026-09-18 作文子空间 v1（W6）：任务/稿件/反馈三独立薄路由（同棘轮约束；
+  // bootstrap 限额按实测留一档余量——实测 65/85/68 行、7/5/3 路由）。
+  { file: "src/http/routes/l3/writing-tasks.ts", maxLines: 80, maxRoutes: 7 },
+  { file: "src/http/routes/l3/writing-sheets.ts", maxLines: 100, maxRoutes: 5 },
+  { file: "src/http/routes/l3/writing-feedback.ts", maxLines: 75, maxRoutes: 3 },
   { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
   { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },

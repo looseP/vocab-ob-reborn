@@ -214,6 +214,12 @@ export const writingTaskCreateInputSchema = z.object({
 });
 export type WritingTaskCreateInput = z.infer<typeof writingTaskCreateInputSchema>;
 
+/**
+ * 创建输入的**入线侧**类型（HTTP body / 前端 client 用）：`forceNew` 等带 default
+ * 的字段在入线时可选、解析后由服务端补默认（服务层用 WritingTaskCreateInput）。
+ */
+export type WritingTaskCreateRequest = z.input<typeof writingTaskCreateInputSchema>;
+
 /** 任务重命名输入（非空 patch；题面不开放编辑）。 */
 export const writingTaskRenameInputSchema = z.object({
   title: z.string().trim().min(1).max(WRITING_TITLE_MAX),

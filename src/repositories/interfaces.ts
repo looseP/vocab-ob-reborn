@@ -78,6 +78,8 @@ import type {
   Json,
 } from "../domain";
 import type { OtherBookL2Signal } from "../domain/upgrade-suggestion";
+import type { IL3WritingRepository } from "./l3-writing.repository";
+import type { IL3WritingFeedbackRepository } from "./l3-writing-feedback.repository";
 
 // ── Word ────────────────────────────────────────────────────────────────
 export interface IWordRepository {
@@ -1733,6 +1735,9 @@ export interface IRepositories {
   l3Sheets: IL3SheetRepository;
   l3Assessments: IL3AssessmentRepository;
   l3Grading: IL3GradingRepository;
+  // 作文子空间 v1（W6 注册）：写作任务/稿次 + 作文反馈（自包含接口定义于各自 repo 文件）。
+  l3Writing: IL3WritingRepository;
+  l3Feedback: IL3WritingFeedbackRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }

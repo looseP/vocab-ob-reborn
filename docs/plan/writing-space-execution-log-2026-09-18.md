@@ -103,6 +103,18 @@
 - 过程修复：① 任务服务构造缺默认工厂（单测显式注入未暴露；集成构造即炸）→ 补 `defaultWritingReposFactory` 默认参数；② 导出 `toSheetDto`/`encodeCursor`/`decodeCursor` 供 W3/W6 复用（单一真源）。
 - 说明：W3 实施者（外派）曾因推理配额 429 中断（无提交、无锁残留），主理人接手完成（残留 hash 工具与接口声明复核后留用）。
 
+#### W6 · API、授权、注册与生成物（2026-09-18 完成，`<W6-SHA>`）
+
+- 交付：**15 端点**（任务 7 / 稿件 5 / 反馈 3）基路径 `/api/l3/writing`；单稿导出端点属 **W9**（本轮未注册，无假成功接口）。
+- 集成（集成者单写）：`interfaces.ts`/`factory.ts`（`l3Writing` + `l3Feedback` 注册）、`services/index.ts`（三服务）、`server.ts`（三薄路由挂载）、`operations.ts`（15 注册）、`schemas/http`（6 输入 + 2 query 契约）、复杂度棘轮（三文件登记 80/100/75 行）。
+- 响应契约 `l3-writing-response-contract.ts`（14 schema，strict；`feedbackVersion=0` 语义；`revisionNo` 恒 >0）；反馈 PUT 的 **64KiB 解析前双闸**（声明长度 + 实测字节 → 413；服务层 validated 体积校验为第二道防线）。
+- 授权登记：owner 写 8 项（create/patch/archive/restore/createDraft/save/submit/discard）入 OTHER_OWNER_WRITES；**agent 写面第 3 开口**（putL3WritingFeedback）+ **agent 读面第 3 开口**（getL3WritingFeedbackContext）；GET 分类 owner-only 5 项。注册表全量行测试 + 授权矩阵全通过。
+- 生成物：`docs/api/openapi.json` + `generated/openapi.ts` 再生；**breaking approval 重锚**（ADR-0035 勘误口径：`baseSha256`=sha256(openapi@f03ffe3)、`currentSha256`=sha256(openapi@HEAD)、issues=实测 10 项「response enum 新增未声明值」——scope/venue 扩 writing 的消费者升级点，非静默改豁免）。
+- 前端：`writingClient.ts`（复用 `browserRequest`，不新建认证；响应经契约 zod 校验，**非法响应抛 `BrowserApiError(INVALID_RESPONSE)`，不归一为成功空值/pending**）；`WritingTaskCreateRequest`（入线侧类型，forceNew 可选）入 domain 单一真源。
+- 验证：HTTP **14/14**（接线/严格校验/错误映射/413 前闸/editor 认定/401 抽样）；契约 **10/10** + breaking 契约 **31/31** + openapi 快照同步；授权矩阵绿；宽回归 **177/177**（含 F-1 档案/导出/题纸旧面）；typecheck 0；arch 无违规（376 模块）；**api:governance 全链 exit=0**（openapi + client:check + contract + breaking + breaking:contract + complexity）。
+- W7 交接（接口可交给 W7 使用）：`writingClient` 全集 14 方法 + `WritingClient` 类型；错误码：`DRAFT_VERSION_CONFLICT`/`ACTIVE_DRAFT_EXISTS`/`WRITING_ENDPOINT_REQUIRED`/`WRITING_CONTENT_CLEARED`/`FEEDBACK_VERSION_CONFLICT`/`FEEDBACK_REQUEST_CONFLICT`/`FEEDBACK_ANCHOR_MISMATCH`/`WRITING_DATA_INCONSISTENT`/`INVALID_RESPONSE`/409·413·422 状态语义；DTO 全套在 `@/domain` 转发；保存状态机由 W4 `useWritingDraft` 提供（clean/dirty/saving/retrying/error/conflict + flush/retry/composition/navigationBlocked）。
+- 未验证/边界：导出端点（W9）、前端页面集成（W7）、真环境全链（W10）。
+
 ## 2 · 门禁与证据台账
 
 | 时间 | 命令 | exit code | 证据/产物 |
@@ -123,7 +135,10 @@
 | 2026-09-18 | W5 并发集成（反馈 + 更新并发） | 0 | 8/8（首次创建并发 + 已有反馈更新并发各单胜） |
 | 2026-09-18 | W5 收口 typecheck（W6 起草件暂移法） | 0 | 0 error（收口后验证） |
 | 2026-09-18 | W5 收口 arch:check | 0 | 375 模块无违规 |
-| 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `09a44f0`(W3) → `d7a26ff`(W5) → `08d9c44`（W5 收口） |
+| 2026-09-18 | W6 HTTP/契约/授权/回归批次 | 0 | HTTP 14/14 + 契约 10/10 + 授权矩阵 + 宽回归 177/177 |
+| 2026-09-18 | W6 `api:governance`（API_CONTRACT_BASE_REF=f03ffe3） | 0 | 六步全绿（含 breaking approval 重锚） |
+| 2026-09-18 | W6 typecheck / arch:check | 0 | 0 错 / 376 模块无违规 |
+| 2026-09-18 | 提交链 | — | `2b754a1` → `44ab3f3` → `da1317c` → `3d759e1`(W4) → `ba26a82`(W2) → `09a44f0`(W3) → `d7a26ff`(W5) → `08d9c44`(W5 收口) → `b0bee63`(W5 自查) → `<W6-SHA>`（W6） |
 
 ## 3 · 遗留与待决策
 
