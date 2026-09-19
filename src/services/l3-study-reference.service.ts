@@ -22,6 +22,8 @@ import { NotFoundError, ValidationError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import {
   validateQuote,
+  STUDY_PAGE_LIMIT_DEFAULT,
+  STUDY_PAGE_LIMIT_MAX,
   STUDY_SOURCE_EXCERPT_MAX,
   type ReferenceDisplaySnapshot,
   type ReferencePreview,
@@ -29,15 +31,27 @@ import {
   type ReferenceTarget,
   type ReferenceTargetPreview,
   type ReferenceKind,
+  type StudyPage,
 } from "../domain/l3-study-notes";
+import type { L3QuestionType } from "../domain/l3-question-types";
 import {
   L3StudyReferenceRepository,
   type IL3StudyReferenceRepository,
   type L3StudyNoteReferenceRow,
   type LoadedQuestionTarget,
   type LoadedTarget,
+  type ReferenceTargetKind,
+  type StudyBacklinkRow,
+  type StudyQuestionTargetRow,
   type StudyReferenceInsertRow,
+  type StudySourceTargetRow,
 } from "../repositories/l3-study-references.repository";
+import { decodeCursor, encodeCursor } from "../repositories/l3-cursor";
+import {
+  decodeStudyCursor,
+  encodeStudyCursor,
+  studyFilterFingerprint,
+} from "../repositories/l3-study-cursor";
 
 type TxRunner = typeof withTransaction;
 
@@ -98,6 +112,12 @@ function safeExcerpt(text: string | null, max: number): string {
   const last = cut.charCodeAt(cut.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) return cut.slice(0, -1);
   return cut;
+}
+
+/** 分页上限（默认 20、最大 50，设计 §7）。 */
+function clampPageLimit(value: number | null | undefined): number {
+  if (value == null || Number.isNaN(value)) return STUDY_PAGE_LIMIT_DEFAULT;
+  return Math.min(Math.max(Math.trunc(value), 1), STUDY_PAGE_LIMIT_MAX);
 }
 
 function assertQuote(field: string, start: number, end: number, quote: string): void {
@@ -175,11 +195,15 @@ export class L3StudyReferenceService {
     if (!target) {
       throw new NotFoundError("StudyReferenceTarget", `${ref.kind}:${ref.id}`);
     }
-    return { id: input.id, ...this.captureAgainst(input.target, target) };
+    return {
+      id: input.id,
+      ...this.captureAgainst(input.target, target),
+      captured_at: new Date().toISOString(),
+    };
   }
 
-  /** 对已加载目标构建引用行（id 由调用方补；供批量保存复用，避免重复 loadTargets）。 */
-  captureAgainst(target: ReferenceTarget, loaded: LoadedTarget): Omit<StudyReferenceInsertRow, "id"> {
+  /** 对已加载目标构建引用行（id/captured_at 由调用方补；供批量保存复用，避免重复 loadTargets）。 */
+  captureAgainst(target: ReferenceTarget, loaded: LoadedTarget): Omit<StudyReferenceInsertRow, "id" | "captured_at"> {
     switch (target.kind) {
       case "source": {
         if (loaded.kind !== "source" || loaded.id !== target.sourceId) {
@@ -359,6 +383,93 @@ export class L3StudyReferenceService {
           displaySnapshot: preview.display_snapshot as unknown as ReferenceDisplaySnapshot,
           liveTitle: liveTitleOf(loadedTarget),
         };
+      },
+      { actorId: userId },
+    );
+  }
+
+  /**
+   * GET /reference-targets：目标搜索（每次只查一个 kind；摘要不含答案/解析/evidence）。
+   * cursor 复用 l3-cursor 的 (createdAt,id) 键集（设计 §7："source 采用 createdAt/id"）。
+   */
+  async search(
+    userId: string,
+    query: {
+      kind: ReferenceTargetKind;
+      q?: string | null;
+      venue?: L3QuestionType | null;
+      limit?: number | null;
+      cursor?: string | null;
+    },
+  ): Promise<StudyPage<StudySourceTargetRow | StudyQuestionTargetRow>> {
+    const limit = clampPageLimit(query.limit);
+    const cursor = decodeCursor(query.cursor);
+    return this.txRunner(
+      async (tx) => {
+        const repos = this.reposFactory(tx);
+        const { items, total } = await repos.studyReferences.searchTargets({
+          userId,
+          kind: query.kind,
+          q: query.q ?? null,
+          venue: query.kind === "question" ? query.venue ?? null : null,
+          cursor,
+          limit: limit + 1,
+        });
+        const hasMore = items.length > limit;
+        const pageItems = hasMore ? items.slice(0, limit) : items;
+        let nextCursor: string | null = null;
+        if (hasMore && pageItems.length > 0) {
+          const last = pageItems[pageItems.length - 1]!;
+          nextCursor = encodeCursor(last.created_at, last.id);
+        }
+        return { items: pageItems, total, nextCursor };
+      },
+      { actorId: userId },
+    );
+  }
+
+  /**
+   * GET /backlinks：反向引用（按 note 去重聚合，默认不含归档）。
+   * cursor 绑定 targetKind+targetId 指纹（不能用于另一目标）。
+   */
+  async backlinks(
+    userId: string,
+    query: {
+      targetKind: ReferenceTargetKind;
+      targetId: string;
+      limit?: number | null;
+      cursor?: string | null;
+    },
+  ): Promise<StudyPage<StudyBacklinkRow>> {
+    const limit = clampPageLimit(query.limit);
+    const filter = studyFilterFingerprint([query.targetKind, query.targetId.toLowerCase()]);
+    const cursor = decodeStudyCursor(query.cursor);
+    if (cursor && (cursor.filter !== filter || cursor.sortKind !== "updatedAt")) {
+      throw new ValidationError("Invalid pagination cursor", "cursor");
+    }
+    return this.txRunner(
+      async (tx) => {
+        const repos = this.reposFactory(tx);
+        const { items, total } = await repos.studyReferences.listBacklinks({
+          userId,
+          targetKind: query.targetKind,
+          targetId: query.targetId,
+          cursor: cursor ? { updatedAt: cursor.lastSort, id: cursor.id } : null,
+          limit: limit + 1,
+        });
+        const hasMore = items.length > limit;
+        const pageItems = hasMore ? items.slice(0, limit) : items;
+        let nextCursor: string | null = null;
+        if (hasMore && pageItems.length > 0) {
+          const last = pageItems[pageItems.length - 1]!;
+          nextCursor = encodeStudyCursor({
+            sortKind: "updatedAt",
+            lastSort: last.updated_at,
+            id: last.note_id,
+            filter,
+          });
+        }
+        return { items: pageItems, total, nextCursor };
       },
       { actorId: userId },
     );

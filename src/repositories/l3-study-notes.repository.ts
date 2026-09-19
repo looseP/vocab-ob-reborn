@@ -66,8 +66,13 @@ export interface ListStudyNotesInput {
   limit: number;
 }
 
+export interface L3StudyNoteListRow extends L3StudyNoteRow {
+  /** topicId 过滤时携带成员 position（position 分页游标生成需要）。 */
+  position?: number;
+}
+
 export interface L3StudyNoteListResult {
-  items: L3StudyNoteRow[];
+  items: L3StudyNoteListRow[];
   /** 与过滤条件一致的总数（不含游标）。 */
   total: number;
 }
@@ -81,6 +86,8 @@ export interface StudyTopicBlockerRow {
 export interface IL3StudyNoteRepository {
   create(input: NewL3StudyNote): Promise<L3StudyNoteRow>;
   get(userId: string, noteId: string): Promise<L3StudyNoteRow | null>;
+  /** 创建幂等回查：同 (user_id, create_request_id)。 */
+  findByCreateRequestId(userId: string, requestId: string): Promise<L3StudyNoteRow | null>;
   /** 笔记行锁（保存路径第一步）。requireTx。 */
   lock(userId: string, noteId: string): Promise<L3StudyNoteRow | null>;
   /** CAS：仅当 version=expectedVersion 才更新；不匹配返回 null（service 转 409）。requireTx。 */
@@ -92,6 +99,10 @@ export interface IL3StudyNoteRepository {
   ): Promise<L3StudyNoteRow | null>;
   /** 归属整体替换（DELETE + unnest INSERT）。requireTx。 */
   replaceVenues(userId: string, noteId: string, venues: readonly L3QuestionType[]): Promise<void>;
+  /** 单笔记归属（固定枚举序排序由调用方/展示层决定，repo 只回原集合）。 */
+  listVenues(userId: string, noteId: string): Promise<L3QuestionType[]>;
+  /** 批量归属（列表页避免 N+1）。 */
+  listVenuesForNotes(userId: string, noteIds: readonly string[]): Promise<Map<string, L3QuestionType[]>>;
   list(input: ListStudyNotesInput): Promise<L3StudyNoteListResult>;
   /** 移除题型归属前的 409 详情：note 所属且题型命中的专题（含归档——成员关系仍在）。 */
   listTopicBlockers(
@@ -121,6 +132,14 @@ export class L3StudyNoteRepository extends BaseRepository implements IL3StudyNot
       `SELECT * FROM l3_study_notes
         WHERE id = $1::uuid AND user_id = $2::uuid`,
       [noteId, userId],
+    );
+  }
+
+  async findByCreateRequestId(userId: string, requestId: string): Promise<L3StudyNoteRow | null> {
+    return this.queryOne<L3StudyNoteRow>(
+      `SELECT * FROM l3_study_notes
+        WHERE user_id = $1::uuid AND create_request_id = $2::uuid`,
+      [userId, requestId],
     );
   }
 
@@ -168,6 +187,34 @@ export class L3StudyNoteRepository extends BaseRepository implements IL3StudyNot
        SELECT $1::uuid, $2::uuid, unnest($3::text[])`,
       [noteId, userId, [...venues]],
     );
+  }
+
+  async listVenues(userId: string, noteId: string): Promise<L3QuestionType[]> {
+    const rows = await this.query<{ question_type: L3QuestionType }>(
+      `SELECT question_type FROM l3_study_note_venues
+        WHERE note_id = $1::uuid AND user_id = $2::uuid`,
+      [noteId, userId],
+    );
+    return rows.map((row) => row.question_type);
+  }
+
+  async listVenuesForNotes(
+    userId: string,
+    noteIds: readonly string[],
+  ): Promise<Map<string, L3QuestionType[]>> {
+    const map = new Map<string, L3QuestionType[]>();
+    if (noteIds.length === 0) return map;
+    const rows = await this.query<{ note_id: string; question_type: L3QuestionType }>(
+      `SELECT note_id, question_type FROM l3_study_note_venues
+        WHERE user_id = $1::uuid AND note_id = ANY($2::uuid[])`,
+      [userId, [...noteIds]],
+    );
+    for (const row of rows) {
+      const list = map.get(row.note_id) ?? [];
+      list.push(row.question_type);
+      map.set(row.note_id, list);
+    }
+    return map;
   }
 
   async list(input: ListStudyNotesInput): Promise<L3StudyNoteListResult> {
@@ -235,8 +282,8 @@ export class L3StudyNoteRepository extends BaseRepository implements IL3StudyNot
     }
 
     params.push(input.limit);
-    const items = await this.query<L3StudyNoteRow>(
-      `SELECT n.*${fromWhere}${keyset}${orderBy}
+    const items = await this.query<L3StudyNoteListRow>(
+      `SELECT n.*${input.topicId ? ", tn.position" : ""}${fromWhere}${keyset}${orderBy}
        LIMIT $${params.length}`,
       params,
     );

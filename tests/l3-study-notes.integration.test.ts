@@ -18,6 +18,10 @@ import { resetPool } from "@/db/connection";
 import { withTransaction } from "@/db/transaction";
 import { L3ContextService } from "@/services/l3-context.service";
 import { L3PaperService } from "@/services/l3-paper.service";
+import { L3StudyNoteService } from "@/services/l3-study-notes.service";
+import { L3StudyReferenceService } from "@/services/l3-study-reference.service";
+import type { SaveNoteInput } from "@/domain/l3-study-notes";
+import type { L3QuestionType } from "@/domain/l3-question-types";
 import { L3StudyNoteRepository } from "@/repositories/l3-study-notes.repository";
 import { L3StudyTopicRepository } from "@/repositories/l3-study-topics.repository";
 import { L3StudyReferenceRepository } from "@/repositories/l3-study-references.repository";
@@ -704,5 +708,190 @@ describe("引用保护与删除（Task 04）", () => {
       await c1.end().catch(() => undefined);
       await c2.end().catch(() => undefined);
     }
+  });
+});
+
+// ── Task 05：笔记/专题服务全链（真实 PG，经受限连接与 RLS）─────────────────
+
+describe("学习笔记服务 · 真实 PG（Task 05）", () => {
+  it("全链：创建 → 保存（capture 引用）→ 读取预览 → 原文变化标 changed（旧摘录原样保留）", async () => {
+    const src = randomUUID();
+    const q = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "Chain test source." });
+    await seedStudyQuestion(adminPool, {
+      id: q, userId: OWNER_A, sourceId: src, stem: "Original stem question?",
+      options: [{ key: "A", text: "alpha" }],
+    });
+
+    const service = new L3StudyNoteService();
+    const created = await service.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" });
+    const noteId = created.item.id;
+    expect(created.created).toBe(true);
+
+    const refId = randomUUID();
+    const saveInput: SaveNoteInput = {
+      expectedVersion: 1,
+      requestId: randomUUID(),
+      title: "全链笔记",
+      bodyMd: `我的分析：\n\n[[ref:${refId}]]`,
+      venues: ["reading_choice"],
+      pinned: false,
+      status: "active",
+      references: [{
+        id: refId,
+        action: "capture",
+        target: { kind: "stem_quote", questionId: q, start: 0, end: 8, quote: "Original" },
+      }],
+    };
+    const saved = await service.save(OWNER_A, noteId, saveInput);
+    expect(saved.item.version).toBe(2);
+    expect(saved.item.references).toHaveLength(1);
+    expect(saved.item.references[0]!.status).toBe("current");
+    expect(saved.item.references[0]!.target).toEqual({
+      kind: "stem_quote", questionId: q, start: 0, end: 8, quote: "Original",
+    });
+
+    // 原文改写 → changed：旧摘录与旧 offset 原样保留（不重定位）
+    await adminPool.query(`UPDATE l3_questions SET stem = 'Rewritten entirely.' WHERE id = $1`, [q]);
+    const after = await service.get(OWNER_A, noteId);
+    expect(after.item.references[0]!.status).toBe("changed");
+    expect(after.item.references[0]!.target).toMatchObject({ start: 0, end: 8, quote: "Original" });
+    expect((after.item.references[0]!.displaySnapshot as { quote?: string }).quote).toBe("Original");
+  });
+
+  it("幂等与版本：同 requestId 重试不二次推进；旧版本新请求 409 只带 currentVersion", async () => {
+    const service = new L3StudyNoteService();
+    const created = await service.create(OWNER_A, { requestId: randomUUID(), venue: "cloze" });
+    const noteId = created.item.id;
+    const base: Omit<SaveNoteInput, "requestId"> = {
+      expectedVersion: 1,
+      title: "幂等真库",
+      bodyMd: "",
+      venues: ["cloze"],
+      pinned: false,
+      status: "active",
+      references: [],
+    };
+    const req = randomUUID();
+    const first = await service.save(OWNER_A, noteId, { ...base, requestId: req });
+    expect(first.item.version).toBe(2);
+    const retry = await service.save(OWNER_A, noteId, { ...base, requestId: req });
+    expect(retry.item.version).toBe(2); // 不二次推进
+
+    const stale = await service
+      .save(OWNER_A, noteId, { ...base, requestId: randomUUID() })
+      .catch((e: unknown) => e);
+    expect(stale).toBeInstanceOf(ConflictError);
+    expect((stale as ConflictError).meta).toMatchObject({ currentVersion: 2 });
+  });
+
+  it("专题成员真库：加入/计数、跨题型 409、归档后成员只读 409", async () => {
+    const service = new L3StudyNoteService();
+    const noteA = (await service.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" })).item.id;
+    const noteB = (await service.create(OWNER_A, { requestId: randomUUID(), venue: "cloze" })).item.id;
+    const topic = (
+      await service.createTopic(OWNER_A, { requestId: randomUUID(), venue: "reading_choice", title: "链路专题" })
+    ).item;
+
+    const moved = await service.moveTopicMember(OWNER_A, topic.id, noteA, {
+      requestId: randomUUID(), expectedVersion: 1, beforeNoteId: null,
+    });
+    expect(moved.item.memberCount).toBe(1);
+    expect(moved.item.version).toBe(2);
+
+    await expect(
+      service.moveTopicMember(OWNER_A, topic.id, noteB, {
+        requestId: randomUUID(), expectedVersion: 2, beforeNoteId: null,
+      }),
+    ).rejects.toThrow(ConflictError); // 跨题型未归属
+
+    await service.saveTopic(OWNER_A, topic.id, {
+      requestId: randomUUID(), expectedVersion: 2, title: "链路专题", status: "archived",
+    });
+    await expect(
+      service.moveTopicMember(OWNER_A, topic.id, noteA, {
+        requestId: randomUUID(), expectedVersion: 3, beforeNoteId: null,
+      }),
+    ).rejects.toThrow(ConflictError); // 归档不能改成员
+  });
+
+  it("归属↔成员不变量（真库）：在专题中移归属 409；移归属后加入专题 409", async () => {
+    const service = new L3StudyNoteService();
+    const noteA = (await service.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" })).item.id;
+    const topic = (
+      await service.createTopic(OWNER_A, { requestId: randomUUID(), venue: "reading_choice", title: "不变量专题" })
+    ).item;
+    await service.moveTopicMember(OWNER_A, topic.id, noteA, {
+      requestId: randomUUID(), expectedVersion: 1, beforeNoteId: null,
+    });
+
+    // 方向一：note 仍在专题中 → 移除归属被 409 阻止（列出专题）
+    await expect(
+      service.save(OWNER_A, noteA, {
+        expectedVersion: 1, requestId: randomUUID(), title: "", bodyMd: "",
+        venues: ["cloze"], pinned: false, status: "active", references: [],
+      }),
+    ).rejects.toThrow(ConflictError);
+
+    // 方向二：另一 note 先移除归属，再加入专题 → 409（跨题型）
+    const noteC = (await service.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" })).item.id;
+    await service.save(OWNER_A, noteC, {
+      expectedVersion: 1, requestId: randomUUID(), title: "", bodyMd: "",
+      venues: ["cloze"], pinned: false, status: "active", references: [],
+    });
+    await expect(
+      service.moveTopicMember(OWNER_A, topic.id, noteC, {
+        requestId: randomUUID(), expectedVersion: 2, beforeNoteId: null,
+      }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("note 行锁互斥（save 与成员操作共享锁机制）：pg_locks 绑定 PID 观测", async () => {
+    const service = new L3StudyNoteService();
+    const noteId = (await service.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" })).item.id;
+    const c1 = await connectAs(OWNER_A);
+    const c2 = await connectAs(OWNER_A);
+    try {
+      await c1.query(
+        `SELECT id FROM l3_study_notes WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE`,
+        [noteId, OWNER_A],
+      );
+      const c2Pid = await backendPid(c2);
+      const lockPromise = c2.query(
+        `SELECT id FROM l3_study_notes WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE`,
+        [noteId, OWNER_A],
+      );
+      expect(await waitForLockWait(c2Pid)).toBe(true);
+      await c1.query("COMMIT");
+      const result = await lockPromise;
+      expect(result.rowCount).toBe(1);
+      await c2.query("COMMIT");
+    } finally {
+      await c1.end().catch(() => undefined);
+      await c2.end().catch(() => undefined);
+    }
+  });
+
+  it("search（question kind）与 backlinks 在真实 PG 上闭环（摘要不含答案）", async () => {
+    const src = randomUUID();
+    const q = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "search source" });
+    await seedStudyQuestion(adminPool, {
+      id: q, userId: OWNER_A, sourceId: src, stem: "Unique-searchable-stem-xyz",
+    });
+    const refService = new L3StudyReferenceService();
+    const found = await refService.search(OWNER_A, { kind: "question", q: "Unique-searchable-stem-xyz" });
+    expect(found.items.some((item) => item.id === q)).toBe(true);
+    expect(found.items[0]).not.toHaveProperty("answer");
+    expect(found.total).toBeGreaterThanOrEqual(1);
+
+    const noteId = await rawInsertNote(OWNER_A);
+    await rawInsertReference({
+      noteId, userId: OWNER_A, kind: "stem_quote", questionId: q, start: 0, end: 6, quote: "Unique",
+    });
+    const back = await refService.backlinks(OWNER_A, { targetKind: "question", targetId: q });
+    expect(back.items.some((item) => item.note_id === noteId)).toBe(true);
+    expect(back.items.find((item) => item.note_id === noteId)!.reference_count).toBeGreaterThanOrEqual(1);
+    await adminPool.query(`DELETE FROM l3_study_note_references WHERE note_id = $1`, [noteId]);
   });
 });

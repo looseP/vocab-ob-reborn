@@ -84,10 +84,16 @@
   - 相对原设计的调整：本轮不做 `L3Bookshelf.tsx` 前端提示（本批不含前端；blocker 已进 409 `meta.blockers.studyNotes` + `resolution` 提示位，UI 接入属前端批次）——见 §8
   - 边界说明：question 删除以 `pg_advisory_xact_lock(l3_question:<id>)` 与 capture 串行（l3_questions 无 UPDATE 授权不能行锁——实测 permission denied，沿 l3-writing 先例）；source 删除靠既有 FOR UPDATE 行锁 + FK 兜底，无需额外 advisory
 
-### Task 05 · 笔记与专题服务
-- 状态：待执行
-- 提交：—
-- 证据：—
+### Task 05 · 笔记与专题 service 原子编排
+- 状态：完成（证据见下）
+- 提交：见 §7 提交链（本批第 6 提交）
+- 新增：`src/services/l3-study-notes.service.ts`（create/list/get/save + createTopic/listTopics/saveTopic/moveTopicMember/removeTopicMember；规范化 hash、幂等三步、CAS、归属 blocker、引用 keep/capture、快照限额）
+- 修改：`src/services/index.ts`（`studyNotes`/`studyReferences` 注册）、`src/services/l3-study-reference.service.ts`（补 `search`/`backlinks` 编排）、三个仓储补编排所需方法（`findByCreateRequestId`/`listVenues(ForNotes)`/`findReferenceOwners`/`bumpVersion`/`countMembersForTopics`；`replaceForNote` 增 `captured_at` 传参以保 keep 时间）、`src/errors/index.ts`（`isUniqueViolation`）
+- 证据：
+  - 单测 24/24（幂等重试不二次推进、同 requestId 异 payload 409、旧版本 409 仅 currentVersion、404 先于版本、marker 422、keep 保留原摘录与原 capturedAt、capture 先 lockTargets、被他笔记占用的引用 id 409、快照 >2MiB 422、成员锁序 topic→note、移动插位、空操作版本递增、500 上限、归档 409、cursor 指纹绑定）
+  - 集成 31/31（全链：create→save（capture stem_quote）→get（current）→原文改写→changed 且旧摘录/旧 offset 原样；幂等与版本真库复验；专题成员真库（计数/跨题型/归档）；**归属↔成员不变量双向**；note 行锁互斥（pg_locks 绑定 PID）；search/backlinks 真库闭环）
+  - 相对原设计的必要调整：执行计划接口清单未列 `findByCreateRequestId`/`bumpVersion` 等方法（幂等与成员操作必需）——已按设计 §6/§7 语义补齐并在 §8 记录
+  - 锁序实现：moveTopicMember 取 `topic → note` 双锁（防「移除归属 vs 加入专题」竞态破坏成员不变量）；save 锁 note 后只普通读成员
 
 ### Task 06 · HTTP 与 API 治理
 - 状态：待执行

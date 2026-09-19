@@ -68,6 +68,8 @@ export interface StudyTopicMemberRow {
 export interface IL3StudyTopicRepository {
   create(input: NewL3StudyTopic): Promise<L3StudyTopicRow>;
   get(userId: string, topicId: string): Promise<L3StudyTopicRow | null>;
+  /** 创建幂等回查：同 (user_id, create_request_id)。 */
+  findByCreateRequestId(userId: string, requestId: string): Promise<L3StudyTopicRow | null>;
   /** 专题行锁（成员操作的锁序第一步）。requireTx。 */
   lock(userId: string, topicId: string): Promise<L3StudyTopicRow | null>;
   /** CAS：version 不匹配返回 null。requireTx。 */
@@ -77,10 +79,20 @@ export interface IL3StudyTopicRepository {
     expectedVersion: number,
     patch: StudyTopicSavePatch,
   ): Promise<L3StudyTopicRow | null>;
+  /** 仅推进版本与幂等列（成员操作共享 topic 版本；不动 title/status）。requireTx。 */
+  bumpVersion(
+    userId: string,
+    topicId: string,
+    expectedVersion: number,
+    lastWriteRequestId: string,
+    lastWriteHash: string,
+  ): Promise<L3StudyTopicRow | null>;
   list(input: ListStudyTopicsInput): Promise<L3StudyTopicListResult>;
   /** 成员（position ASC, note_id ASC）；保存路径允许普通读。 */
   listMembers(userId: string, topicId: string): Promise<StudyTopicMemberRow[]>;
   countMembers(userId: string, topicId: string): Promise<number>;
+  /** 批量成员计数（专题列表避免 N+1）。 */
+  countMembersForTopics(userId: string, topicIds: readonly string[]): Promise<Map<string, number>>;
   /** 加入成员（position 由 service 计算）。requireTx。 */
   insertMember(input: { topicId: string; noteId: string; userId: string; position: number }): Promise<void>;
   /** 移出成员，返回是否删除了行。requireTx。 */
@@ -109,6 +121,33 @@ export class L3StudyTopicRepository extends BaseRepository implements IL3StudyTo
       `SELECT * FROM l3_study_topics
         WHERE id = $1::uuid AND user_id = $2::uuid`,
       [topicId, userId],
+    );
+  }
+
+  async findByCreateRequestId(userId: string, requestId: string): Promise<L3StudyTopicRow | null> {
+    return this.queryOne<L3StudyTopicRow>(
+      `SELECT * FROM l3_study_topics
+        WHERE user_id = $1::uuid AND create_request_id = $2::uuid`,
+      [userId, requestId],
+    );
+  }
+
+  async bumpVersion(
+    userId: string,
+    topicId: string,
+    expectedVersion: number,
+    lastWriteRequestId: string,
+    lastWriteHash: string,
+  ): Promise<L3StudyTopicRow | null> {
+    this.requireTx();
+    return this.queryOne<L3StudyTopicRow>(
+      `UPDATE l3_study_topics
+          SET version = version + 1,
+              last_write_request_id = $4::uuid, last_write_hash = $5,
+              updated_at = now()
+        WHERE id = $1::uuid AND user_id = $2::uuid AND version = $3::integer
+        RETURNING *`,
+      [topicId, userId, expectedVersion, lastWriteRequestId, lastWriteHash],
     );
   }
 
@@ -187,6 +226,24 @@ export class L3StudyTopicRepository extends BaseRepository implements IL3StudyTo
       [topicId, userId],
     );
     return Number(row?.n ?? 0);
+  }
+
+  async countMembersForTopics(
+    userId: string,
+    topicIds: readonly string[],
+  ): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    if (topicIds.length === 0) return map;
+    const rows = await this.query<{ topic_id: string; n: string }>(
+      `SELECT topic_id, count(*) AS n FROM l3_study_topic_notes
+        WHERE user_id = $1::uuid AND topic_id = ANY($2::uuid[])
+        GROUP BY topic_id`,
+      [userId, [...topicIds]],
+    );
+    for (const row of rows) {
+      map.set(row.topic_id, Number(row.n));
+    }
+    return map;
   }
 
   async insertMember(input: { topicId: string; noteId: string; userId: string; position: number }): Promise<void> {

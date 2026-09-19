@@ -30,9 +30,12 @@ export interface NewL3StudyNoteReference {
 
 /**
  * replaceForNote 的载荷行：note_id/user_id 由方法参数注入（防载荷伪造归属），
- * 行对象不携带归属列。
+ * 行对象不携带归属列；captured_at 随之携带（keep 保留原时间、capture 用服务端
+ * 当前时间——"keep 不改变 capturedAt"）。
  */
-export type StudyReferenceInsertRow = Omit<NewL3StudyNoteReference, "note_id" | "user_id">;
+export type StudyReferenceInsertRow = Omit<NewL3StudyNoteReference, "note_id" | "user_id"> & {
+  captured_at: string;
+};
 
 export interface L3StudyNoteReferenceRow {
   id: string;
@@ -100,6 +103,7 @@ export interface StudyBacklinkRow {
   status: string;
   reference_count: number;
   ref_ids: string[];
+  updated_at: string;
 }
 
 export interface ListBacklinksInput {
@@ -120,6 +124,8 @@ export interface DeleteBlockerRow {
 
 export interface IL3StudyReferenceRepository {
   listForNote(userId: string, noteId: string): Promise<L3StudyNoteReferenceRow[]>;
+  /** 引用 id → 所属 note（跨笔记冲突判定：已被其他笔记使用的 id 返回 409）。 */
+  findReferenceOwners(userId: string, ids: readonly string[]): Promise<Map<string, string>>;
   /** 整组替换（DELETE + jsonb_to_recordset 批量 INSERT；note_id/user_id 由参数注入）。requireTx。 */
   replaceForNote(
     userId: string,
@@ -152,6 +158,20 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     );
   }
 
+  async findReferenceOwners(userId: string, ids: readonly string[]): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (ids.length === 0) return map;
+    const rows = await this.query<{ id: string; note_id: string }>(
+      `SELECT id, note_id FROM l3_study_note_references
+        WHERE user_id = $1::uuid AND id = ANY($2::uuid[])`,
+      [userId, [...ids]],
+    );
+    for (const row of rows) {
+      map.set(row.id.toLowerCase(), row.note_id);
+    }
+    return map;
+  }
+
   async replaceForNote(
     userId: string,
     noteId: string,
@@ -175,17 +195,18 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
       quote_snapshot: row.quote_snapshot,
       field_hash: row.field_hash,
       display_snapshot: row.display_snapshot,
+      captured_at: row.captured_at,
     }));
     await this.query(
       `INSERT INTO l3_study_note_references
          (id, note_id, user_id, kind, source_id, question_id, option_key,
           start_offset, end_offset, quote_snapshot, field_hash, display_snapshot, captured_at)
        SELECT x.id, $1::uuid, $2::uuid, x.kind, x.source_id, x.question_id, x.option_key,
-              x.start_offset, x.end_offset, x.quote_snapshot, x.field_hash, x.display_snapshot, now()
+              x.start_offset, x.end_offset, x.quote_snapshot, x.field_hash, x.display_snapshot, x.captured_at
          FROM jsonb_to_recordset($3::jsonb) AS x(
            id uuid, kind text, source_id uuid, question_id uuid, option_key text,
            start_offset integer, end_offset integer, quote_snapshot text,
-           field_hash text, display_snapshot jsonb
+           field_hash text, display_snapshot jsonb, captured_at timestamptz
          )`,
       [noteId, userId, JSON.stringify(payload)],
     );
@@ -357,7 +378,8 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     const items = await this.query<StudyBacklinkRow>(
       `SELECT n.id AS note_id, n.title, n.status,
               count(r.id)::int AS reference_count,
-              array_agg(r.id::text ORDER BY r.captured_at DESC, r.id) AS ref_ids${fromWhere}${keyset}
+              array_agg(r.id::text ORDER BY r.captured_at DESC, r.id) AS ref_ids,
+              n.updated_at${fromWhere}${keyset}
         GROUP BY n.id, n.title, n.status, n.updated_at
         ORDER BY n.updated_at DESC, n.id DESC
         LIMIT $${params.length}`,

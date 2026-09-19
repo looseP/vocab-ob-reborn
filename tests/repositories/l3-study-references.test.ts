@@ -53,7 +53,7 @@ describe("listForNote", () => {
 });
 
 describe("replaceForNote", () => {
-  it("整组替换：DELETE 本 note 全部引用后 jsonb_to_recordset 批量 INSERT（note_id/user_id 由参数注入，JSON 载荷不得覆盖）", async () => {
+  it("整组替换：DELETE 本 note 全部引用后 jsonb_to_recordset 批量 INSERT（note_id/user_id 由参数注入，captured_at 随行——keep 保留原时间）", async () => {
     querySpy.mockImplementation(async () => ({ rows: [] }));
     await repo.replaceForNote(USER, NOTE, [
       {
@@ -61,12 +61,14 @@ describe("replaceForNote", () => {
         source_id: SOURCE, question_id: null, option_key: null,
         start_offset: 0, end_offset: 3, quote_snapshot: "The",
         field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
+        captured_at: "2026-09-19T00:00:00.000Z",
       },
     ]);
     const text = querySpy.mock.calls.map((c) => c[0]).join("\n");
     expect(text).toContain("DELETE FROM l3_study_note_references WHERE note_id = $1::uuid AND user_id = $2::uuid");
     expect(text).toContain("INSERT INTO l3_study_note_references");
     expect(text).toContain("jsonb_to_recordset($3::jsonb)");
+    expect(text).not.toContain("now()");
     const insertCall = querySpy.mock.calls.find((c) => (c[0] as string).includes("INSERT INTO"))!;
     expect(insertCall[1]![0]).toBe(NOTE);
     expect(insertCall[1]![1]).toBe(USER);
@@ -75,6 +77,7 @@ describe("replaceForNote", () => {
       id: REF, kind: "source_quote", source_id: SOURCE, question_id: null, option_key: null,
       start_offset: 0, end_offset: 3, quote_snapshot: "The",
       field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
+      captured_at: "2026-09-19T00:00:00.000Z",
     }]);
     // JSON 载荷不含 note_id/user_id（列值由参数注入）
     expect(payload[0]).not.toHaveProperty("note_id");
