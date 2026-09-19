@@ -169,7 +169,7 @@ describe("studyNotesClient（响应契约）", () => {
         409,
       ),
     );
-    const caught = await client
+    const caught = (await client
       .save(NOTE_ID, {
         expectedVersion: 3,
         requestId: REQ_ID,
@@ -180,7 +180,7 @@ describe("studyNotesClient（响应契约）", () => {
         status: "active",
         references: [],
       })
-      .catch((err: unknown) => err as BrowserApiError);
+      .catch((err: unknown) => err)) as BrowserApiError;
     expect(caught).toBeInstanceOf(BrowserApiError);
     const details = caught.details as Record<string, unknown>;
     expect(details.currentVersion).toBeUndefined();
@@ -242,7 +242,7 @@ describe("studyNotesClient（响应契约）", () => {
     const { client } = captureClient(() =>
       jsonResponse({ error: "Too many requests", code: "RATE_LIMITED" }, 429, { "Retry-After": "7" }),
     );
-    const caught = await client.get(NOTE_ID).catch((err: unknown) => err as BrowserApiError);
+    const caught = (await client.get(NOTE_ID).catch((err: unknown) => err)) as BrowserApiError;
     expect(caught).toBeInstanceOf(BrowserApiError);
     expect(caught.status).toBe(429);
     expect(caught.headers?.get("Retry-After")).toBe("7");

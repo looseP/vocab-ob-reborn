@@ -5,7 +5,7 @@
  * 通过 deferred Promise 构造真实在途状态（A/B 交错、结果不明重试、dispose 旧回包）。
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type Mock } from "vitest";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import {
   StudyNoteConflictError,
@@ -140,9 +140,9 @@ function setupController(
   });
 }
 
-function deferredSave(): { save: ReturnType<typeof vi.fn>; defers: Array<Deferred<StudyNoteSaveResult>> } {
+function deferredSave(): { save: Mock<SaveFn>; defers: Array<Deferred<StudyNoteSaveResult>> } {
   const defers: Array<Deferred<StudyNoteSaveResult>> = [];
-  const save = vi.fn((_input: StudyNoteSaveRequest) => {
+  const save = vi.fn<SaveFn>(() => {
     const d = defer<StudyNoteSaveResult>();
     defers.push(d);
     return d.promise;
