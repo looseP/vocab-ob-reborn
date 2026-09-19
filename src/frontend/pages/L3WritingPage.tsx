@@ -68,14 +68,22 @@ export function L3WritingPage() {
   type OriginCheck =
     | { status: "none" }
     | { status: "checking" }
-    | { status: "ok"; title: string; sheetValid: boolean }
+    | {
+        status: "ok";
+        title: string;
+        /** 原题纸恢复态：none=来源本无原纸（按契约正常返回）；ok=已验证可恢复；unavailable=有原纸但读失败/不匹配/discarded。 */
+        sheet: "none" | "ok" | "unavailable";
+      }
     | { status: "degraded" };
   const [originCheck, setOriginCheck] = useState<OriginCheck>(origin ? { status: "checking" } : { status: "none" });
+  /** 原题纸不可用时的重试脉冲（重跑来源关系与题纸校验）。 */
+  const [originCheckNonce, setOriginCheckNonce] = useState(0);
 
   /**
-   * R2：来源关系验证——task.questionId = origin.questionId；question 属于指定文件/试卷；
-   * resumeSheet 的 scope/paper|source/题型与来源一致（**仅一致才随返回携带**）。
+   * R2：来源关系验证——task.questionId = origin.questionId；question 属于指定文件/试卷。
    * 关系不符或读面失败 → 仅降级来源功能（隐藏返回原题），稿件与编辑不受影响。
+   * R2 收口：原题纸（origin.sheetId 存在时）读取失败/不匹配/discarded → **不删参放行**，
+   * 标记 sheet=unavailable（「原题纸暂不可用」+重试+安全列表）；来源本无 sheetId → 按契约正常返回。
    */
   useEffect(() => {
     if (!origin) { setOriginCheck({ status: "none" }); return; }
@@ -114,25 +122,25 @@ export function L3WritingPage() {
           }
           title = paper.title;
         }
-        let sheetValid = false;
+        let sheet: "none" | "ok" | "unavailable" = "none";
         if (origin.sheetId) {
           try {
             const { sheet: row } = await fetchSheet(origin.sheetId);
-            sheetValid = origin.kind === "file"
+            const compatible = origin.kind === "file"
               ? row.scope === "file" && row.source_id === origin.sourceId && row.question_type === origin.questionType
               : row.scope === "paper" && row.paper_id === origin.paperId;
-            if (row.status === "discarded") sheetValid = false;
+            sheet = compatible && row.status !== "discarded" ? "ok" : "unavailable";
           } catch {
-            sheetValid = false; // 读失败 ≠ 权威无值：一律不带 resumeSheet（返回侧还会再校验）
+            sheet = "unavailable"; // 读失败 ≠ 可恢复：不删参放行（原题纸暂不可用 + 重试）
           }
         }
-        if (!cancelled) setOriginCheck({ status: "ok", title, sheetValid });
+        if (!cancelled) setOriginCheck({ status: "ok", title, sheet });
       } catch {
         if (!cancelled) setOriginCheck({ status: "degraded" });
       }
     })();
     return () => { cancelled = true; };
-  }, [origin, tasks]);
+  }, [origin, tasks, originCheckNonce]);
 
   const loadTask = useCallback(async (id: string) => {
     setTasks({ status: "loading" });
@@ -201,8 +209,9 @@ export function L3WritingPage() {
   const goList = () => guardedNavigate("/l3?section=writing");
 
   // I3/I4：来源条——专项写作身份 + 精确返回原题（依 origin 生成站内 URL；禁任意 returnUrl）。
-  // R2：来源经关系验证（task.questionId / 所属文件|试卷 / resumeSheet 一致性）；不符或读取
-  // 失败仅降级来源功能（隐藏返回），稿件与编辑不受影响；标题显示真实来源名称。
+  // R2：来源经关系验证（task.questionId / 所属文件|试卷）；不符或读取失败仅降级来源功能（隐藏
+  // 返回），稿件与编辑不受影响；标题显示真实来源名称。
+  // R2 收口：原题纸读取失败/不匹配/discarded → 不删参放行——显示「原题纸暂不可用」+重试+安全列表。
   const originBanner = origin ? (
     originCheck.status === "degraded" ? (
       <p className="text-xs text-[var(--color-ink-soft)]" data-testid="writing-origin-bar">
@@ -217,12 +226,28 @@ export function L3WritingPage() {
           专项写作 · 来自{WRITING_ORIGIN_TYPE_LABELS[origin.questionType]}
           {originCheck.status === "ok" && originCheck.title ? `「${originCheck.title}」` : ""}
         </span>
-        {originCheck.status === "ok" ? (
+        {originCheck.status === "ok" && originCheck.sheet === "unavailable" ? (
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-[var(--color-accent-2)]">原题纸暂不可用</span>
+            <Button size="sm" variant="secondary" onClick={() => setOriginCheckNonce((n) => n + 1)}>
+              重试
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => guardedNavigate(origin.kind === "file"
+                ? `/l3?venue=${encodeURIComponent(origin.questionType)}`
+                : "/l3")}
+            >
+              {origin.kind === "file" ? "题型空间列表" : "试卷台列表"}
+            </Button>
+          </span>
+        ) : originCheck.status === "ok" ? (
           <Button
             size="sm"
             variant="secondary"
             onClick={() => guardedNavigate(buildWritingOriginReturnUrl(
-              originCheck.sheetValid ? origin : { ...origin, sheetId: null },
+              originCheck.sheet === "ok" ? origin : { ...origin, sheetId: null },
             ))}
           >
             返回原题

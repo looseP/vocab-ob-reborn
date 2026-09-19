@@ -693,20 +693,87 @@ describe("I4 工作区来源闭环（origin）", () => {
     await waitFor(() => expect(screen.getByTestId("writing-origin-bar").textContent).toContain("来源不可用"));
   });
 
-  it("R2：resumeSheet 与来源不匹配 → 返回 URL 不带 resumeSheet（返回仍可用、不禁用）", async () => {
+  it("R2 收口：resumeSheet 不匹配 → 「原题纸暂不可用」（重试+题型空间列表；零 openSheet；正文保留）", async () => {
     mockWorkspaceBasics();
-    mockOriginReads({
+    const apiFetchMock = mockOriginReads({
       fileTitle: "合成来源 · 小作文",
       sheetFixtures: { [SHEET_SEALED]: { ...fileSheetOk(), scope: "paper", paper_id: PAPER_UUID, question_type: null } },
     });
 
     await renderAt(urlWithOrigin(SHEET), createElement(L3WritingPage));
-    await screen.findByRole("textbox", { name: "作文正文" });
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(screen.getByText(/原题纸暂不可用/)).toBeTruthy());
+
+    // 不得「删 sheetId 后继续打开来源做题页」：返回原题按钮不存在；重试 + 安全列表在
+    expect(screen.queryByRole("button", { name: "返回原题" })).toBeNull();
+    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+    // 降级过程：零 openSheet、零稿件写入
+    const sheetPosts = () => apiFetchMock.mock.calls.filter(([p, i]) =>
+      String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
+    expect(sheetPosts()).toHaveLength(0);
+    expect(client.createTask).not.toHaveBeenCalled();
+    expect(client.createDraft).not.toHaveBeenCalled();
+    expect(client.saveDraft).not.toHaveBeenCalled();
+    // 当前作文正文与编辑状态保留
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.value).toBe("草稿正文");
+
+    // 安全列表入口 → 题型空间列表（不携带 question/sheet/task 参数）
+    fireEvent.click(screen.getByRole("button", { name: "题型空间列表" }));
+    await waitFor(() => expect(locText()).toBe("/l3?venue=short_essay"));
+    expect(locText()).not.toContain("resumeSheet=");
+  });
+
+  it("R2 收口：resumeSheet 读取失败 → 「原题纸暂不可用」；重试成功后恢复带 resumeSheet 的正常返回", async () => {
+    mockWorkspaceBasics();
+    const apiFetchMock = mockOriginReads({ fileTitle: "合成来源 · 小作文", sheetFixtures: { [SHEET_SEALED]: null } });
+
+    await renderAt(urlWithOrigin(SHEET), createElement(L3WritingPage));
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(screen.getByText(/原题纸暂不可用/)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "返回原题" })).toBeNull();
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.value).toBe("草稿正文");
+    const sheetPosts = () => apiFetchMock.mock.calls.filter(([p, i]) =>
+      String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
+    expect(sheetPosts()).toHaveLength(0);
+
+    // 读取恢复正常 → 重试 → 返回原题（带 resumeSheet）
+    mockOriginReads({ fileTitle: "合成来源 · 小作文", sheetFixtures: { [SHEET_SEALED]: fileSheetOk() } });
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "返回原题" })).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "返回原题" }));
-    await waitFor(() => expect(locText()).toContain(`question=${QUESTION}`));
-    expect(locText()).toContain("file=writing-short-1");
-    expect(locText()).not.toContain("resumeSheet=");
+    await waitFor(() => expect(locText()).toContain(`resumeSheet=${SHEET_SEALED}`));
+  });
+
+  it("R2 收口：resumeSheet discarded → 「原题纸暂不可用」+ 试卷台列表入口（零 openSheet、正文保留）", async () => {
+    mockWorkspaceBasics();
+    const apiFetchMock = mockOriginReads({
+      paperTitle: "合成试卷 A",
+      sheetFixtures: {
+        [SHEET_SEALED]: {
+          ...fileSheetOk(), scope: "paper", scope_key: `paper:${PAPER_UUID}`,
+          source_id: null, question_type: null, paper_id: PAPER_UUID, status: "discarded",
+        },
+      },
+    });
+    const paperWithSheet = encodeWritingOrigin({ ...PAPER_ORIGIN, sheetId: SHEET_SEALED })!;
+
+    await renderAt(
+      `/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}&origin=${paperWithSheet}`,
+      createElement(L3WritingPage),
+    );
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(screen.getByText(/原题纸暂不可用/)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "返回原题" })).toBeNull();
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.value).toBe("草稿正文");
+    const sheetPosts = () => apiFetchMock.mock.calls.filter(([p, i]) =>
+      String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
+    expect(sheetPosts()).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "试卷台列表" }));
+    await waitFor(() => expect(locText()).toBe("/l3"));
   });
 
   it("R2：来源读面失败 → 降级但稿件完好（可编辑，正文保留）", async () => {
