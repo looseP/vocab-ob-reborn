@@ -212,9 +212,9 @@ describe("preview · 只读", () => {
   it("合法目标返回将生成的快照与 liveTitle（不持久化）", async () => {
     const repos = fakeRepos([QUESTION_TARGET]);
     const service = makeService(repos);
-    const preview = await service.preview(USER, { kind: "stem_quote", questionId: QUESTION, start: 0, end: 4, quote: "What" });
-    expect(preview.liveTitle).toBe("Fox source");
-    expect(preview.displaySnapshot).toMatchObject({ kind: "stem_quote", quote: "What" });
+    const response = await service.preview(USER, { kind: "stem_quote", questionId: QUESTION, start: 0, end: 4, quote: "What" });
+    expect(response.preview.liveTitle).toBe("Fox source");
+    expect(response.preview.displaySnapshot).toMatchObject({ kind: "stem_quote", quote: "What" });
     // 只读：无 replace/lock 调用
     expect((repos.studyReferences.replaceForNote as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
     expect((repos.studyReferences.lockTargets as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);

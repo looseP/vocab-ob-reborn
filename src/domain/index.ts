@@ -1276,4 +1276,7 @@ export type {
   StudyTopicStatus,
   StudyTopicDto,
   StudyPage,
+  StudySourceTargetItem,
+  StudyQuestionTargetItem,
+  StudyBacklinkItem,
 } from "./l3-study-notes";

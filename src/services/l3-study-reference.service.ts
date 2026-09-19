@@ -31,7 +31,11 @@ import {
   type ReferenceTarget,
   type ReferenceTargetPreview,
   type ReferenceKind,
+  type StudyBacklinkItem,
+  type StudyNoteStatus,
   type StudyPage,
+  type StudyQuestionTargetItem,
+  type StudySourceTargetItem,
 } from "../domain/l3-study-notes";
 import type { L3QuestionType } from "../domain/l3-question-types";
 import {
@@ -41,10 +45,7 @@ import {
   type LoadedQuestionTarget,
   type LoadedTarget,
   type ReferenceTargetKind,
-  type StudyBacklinkRow,
-  type StudyQuestionTargetRow,
   type StudyReferenceInsertRow,
-  type StudySourceTargetRow,
 } from "../repositories/l3-study-references.repository";
 import { decodeCursor, encodeCursor } from "../repositories/l3-cursor";
 import {
@@ -367,7 +368,7 @@ export class L3StudyReferenceService {
    * 只读预览（POST /reference-preview）：独立 actor 事务、零写、不持久化。
    * 目标不存在/不可见 → 404；quote 不匹配/选项不存在 → 422。
    */
-  async preview(userId: string, target: ReferenceTarget): Promise<ReferenceTargetPreview> {
+  async preview(userId: string, target: ReferenceTarget): Promise<{ preview: ReferenceTargetPreview }> {
     return this.txRunner(
       async (tx) => {
         const repos = this.reposFactory(tx);
@@ -379,9 +380,11 @@ export class L3StudyReferenceService {
         }
         const preview = this.captureAgainst(target, loadedTarget);
         return {
-          target,
-          displaySnapshot: preview.display_snapshot as unknown as ReferenceDisplaySnapshot,
-          liveTitle: liveTitleOf(loadedTarget),
+          preview: {
+            target,
+            displaySnapshot: preview.display_snapshot as unknown as ReferenceDisplaySnapshot,
+            liveTitle: liveTitleOf(loadedTarget),
+          },
         };
       },
       { actorId: userId },
@@ -401,7 +404,7 @@ export class L3StudyReferenceService {
       limit?: number | null;
       cursor?: string | null;
     },
-  ): Promise<StudyPage<StudySourceTargetRow | StudyQuestionTargetRow>> {
+  ): Promise<StudyPage<StudySourceTargetItem | StudyQuestionTargetItem>> {
     const limit = clampPageLimit(query.limit);
     const cursor = decodeCursor(query.cursor);
     return this.txRunner(
@@ -417,12 +420,22 @@ export class L3StudyReferenceService {
         });
         const hasMore = items.length > limit;
         const pageItems = hasMore ? items.slice(0, limit) : items;
+        const mapped = pageItems.map((row) =>
+          "stem" in row
+            ? {
+                id: row.id,
+                stem: row.stem,
+                questionType: row.question_type,
+                createdAt: row.created_at,
+              }
+            : { id: row.id, title: row.title, createdAt: row.created_at },
+        );
         let nextCursor: string | null = null;
         if (hasMore && pageItems.length > 0) {
           const last = pageItems[pageItems.length - 1]!;
           nextCursor = encodeCursor(last.created_at, last.id);
         }
-        return { items: pageItems, total, nextCursor };
+        return { items: mapped, total, nextCursor };
       },
       { actorId: userId },
     );
@@ -440,7 +453,7 @@ export class L3StudyReferenceService {
       limit?: number | null;
       cursor?: string | null;
     },
-  ): Promise<StudyPage<StudyBacklinkRow>> {
+  ): Promise<StudyPage<StudyBacklinkItem>> {
     const limit = clampPageLimit(query.limit);
     const filter = studyFilterFingerprint([query.targetKind, query.targetId.toLowerCase()]);
     const cursor = decodeStudyCursor(query.cursor);
@@ -459,6 +472,13 @@ export class L3StudyReferenceService {
         });
         const hasMore = items.length > limit;
         const pageItems = hasMore ? items.slice(0, limit) : items;
+        const mapped = pageItems.map((row) => ({
+          noteId: row.note_id,
+          title: row.title,
+          status: row.status as StudyNoteStatus,
+          referenceCount: row.reference_count,
+          refIds: row.ref_ids,
+        }));
         let nextCursor: string | null = null;
         if (hasMore && pageItems.length > 0) {
           const last = pageItems[pageItems.length - 1]!;
@@ -469,7 +489,7 @@ export class L3StudyReferenceService {
             filter,
           });
         }
-        return { items: pageItems, total, nextCursor };
+        return { items: mapped, total, nextCursor };
       },
       { actorId: userId },
     );

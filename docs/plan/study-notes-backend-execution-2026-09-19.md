@@ -96,9 +96,17 @@
   - 锁序实现：moveTopicMember 取 `topic → note` 双锁（防「移除归属 vs 加入专题」竞态破坏成员不变量）；save 锁 note 后只普通读成员
 
 ### Task 06 · HTTP 与 API 治理
-- 状态：待执行
-- 提交：—
-- 证据：—
+- 状态：完成（证据见下）
+- 提交：见 §7 提交链（本批第 7 提交）
+- 新增：`src/http/l3-study-note-response-contract.ts`；三薄路由 `src/http/routes/l3/study-notes.ts`（4 路由）、`study-topics.ts`（5 路由）、`study-references.ts`（3 路由）
+- 修改：`src/http/server.ts`（references 组先挂——固定路径防吞）、`src/http/operations.ts`（12 操作全 owner-only）、`src/schemas/http/index.ts`（body re-export + 4 query 契约）、`scripts/verify-route-complexity.ts`（三新文件 bootstrap 限额）、`tests/http/authorization-registry.test.ts`（写面 7 + 读面 5 登记）、domain/服务（search/backlinks DTO camelCase 映射、preview `{preview}` 包装）
+- 证据：
+  - HTTP 测试 `tests/http/l3-study-notes.test.ts` 10/10 + 响应合同 8/8；**全量 HTTP 组 521/521**（注册表驱动的 401/403/CSRF 全量行自动覆盖新 12 端点）
+  - OpenAPI：8 路径 / 12 操作登记；`api:client:check` 通过；`api:contract` 10/10；`api:breaking`（base=b7dcea4e）"未发现 breaking change"
+  - 路由复杂度：bootstrap 分支 + 默认分支双通过；**变异证明**（study-notes 限额 65→40 → `50 lines > 40 (bootstrap)` 红）
+  - 既有删除端点（source/question）的 409/404 错误行为回归：service 单测 + 真库集成双层断言（HTTP 响应形状未变）
+  - 固定路径优先：`/study-notes/reference-targets` 不被 `/:noteId` 捕获（HTTP 测试断言）
+- 相对原设计的调整：本批**不交付**手写 `src/frontend/api/studyNotesClient.ts` 与其测试（属前端产品面，Task 07 范围；生成客户端 `src/frontend/api/generated/openapi.ts` 已同步）——见 §8
 
 ## 5. 验收矩阵（15 项，mock 与真实 PG 分别留证）
 

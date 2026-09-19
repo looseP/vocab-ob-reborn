@@ -890,8 +890,8 @@ describe("学习笔记服务 · 真实 PG（Task 05）", () => {
       noteId, userId: OWNER_A, kind: "stem_quote", questionId: q, start: 0, end: 6, quote: "Unique",
     });
     const back = await refService.backlinks(OWNER_A, { targetKind: "question", targetId: q });
-    expect(back.items.some((item) => item.note_id === noteId)).toBe(true);
-    expect(back.items.find((item) => item.note_id === noteId)!.reference_count).toBeGreaterThanOrEqual(1);
+    expect(back.items.some((item) => item.noteId === noteId)).toBe(true);
+    expect(back.items.find((item) => item.noteId === noteId)!.referenceCount).toBeGreaterThanOrEqual(1);
     await adminPool.query(`DELETE FROM l3_study_note_references WHERE note_id = $1`, [noteId]);
   });
 });

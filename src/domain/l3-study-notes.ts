@@ -209,6 +209,30 @@ export interface StudyPage<T> {
   nextCursor: string | null;
 }
 
+/** 目标搜索项（source kind；摘要不含正文全文）。 */
+export interface StudySourceTargetItem {
+  id: string;
+  title: string;
+  createdAt: string;
+}
+
+/** 目标搜索项（question kind；摘要不含答案/解析/evidence）。 */
+export interface StudyQuestionTargetItem {
+  id: string;
+  stem: string;
+  questionType: L3QuestionType;
+  createdAt: string;
+}
+
+/** 反向引用项（按 note 去重聚合；默认不含归档）。 */
+export interface StudyBacklinkItem {
+  noteId: string;
+  title: string;
+  status: StudyNoteStatus;
+  referenceCount: number;
+  refIds: string[];
+}
+
 // ── 合同错误（service 收口转 422；domain 不依赖 errors 层）──────────────────
 
 export class ReferenceContractError extends Error {
