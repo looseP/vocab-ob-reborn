@@ -64,3 +64,29 @@ describe("studyFilterFingerprint", () => {
     expect(a).toMatch(/^[0-9a-f]{16}$/);
   });
 });
+
+// ── F4（补修批次）：createdAt 游标族（引用目标搜索）────────────────────────
+
+describe("F4：createdAt 游标族", () => {
+  it("createdAt 游标往返一致（lastSort 为 ISO 时间）", () => {
+    const cursor: StudyCursor = {
+      ...CURSOR,
+      sortKind: "createdAt",
+      lastSort: "2026-09-19T03:00:00.000Z",
+    };
+    expect(decodeStudyCursor(encodeStudyCursor(cursor))).toEqual(cursor);
+  });
+
+  it("createdAt 的 lastSort 非时间 → 400", () => {
+    expect(() =>
+      decodeStudyCursor(encodeStudyCursor({ ...CURSOR, sortKind: "createdAt", lastSort: "zzz" })),
+    ).toThrow(ValidationError);
+  });
+
+  it("旧的不绑定条件的目标游标（l3-cursor {createdAt,id}）不满足本族校验 → 400", async () => {
+    const { encodeCursor } = await import("@/repositories/l3-cursor");
+    expect(() =>
+      decodeStudyCursor(encodeCursor("2026-09-19T00:00:00Z", CURSOR.id)),
+    ).toThrow(ValidationError);
+  });
+});

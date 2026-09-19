@@ -5,6 +5,10 @@
  * （时间列表 updatedAt DESC / 专题成员列表 position ASC）共用一族游标，
  * 且携带**过滤指纹**防止跨过滤/跨专题复用（设计 §7：不能将 A 专题的 cursor
  * 用于 B 专题）。任何格式/长度异常一律抛 ValidationError(field=cursor)。
+ *
+ * F4：新增 createdAt 族（引用目标搜索。设计 §7「source/question 采用
+ * createdAt/id」）——同样携带过滤指纹（绑定目标搜索族/kind/规范化 q/有效
+ * venue）；旧的、不绑定条件的 l3-cursor 格式不被本族接受。
  */
 
 import { createHash } from "node:crypto";
@@ -15,14 +19,14 @@ const UUID_RE =
 const FILTER_RE = /^[0-9a-f]{16}$/;
 const MAX_CURSOR_LENGTH = 800;
 
-export type StudyCursorSortKind = "updatedAt" | "position";
+export type StudyCursorSortKind = "updatedAt" | "position" | "createdAt";
 
 export interface StudyCursor {
   sortKind: StudyCursorSortKind;
-  /** 排序键的字符串形态：updatedAt 为 ISO 时间；position 为整数字符串。 */
+  /** 排序键的字符串形态：updatedAt/createdAt 为 ISO 时间；position 为整数字符串。 */
   lastSort: string;
   id: string;
-  /** 过滤指纹（studyFilterFingerprint 产物）：绑定 venue/status/pinned/topic/ unfiled/q。 */
+  /** 过滤指纹（studyFilterFingerprint 产物）：绑定 venue/status/pinned/topic/ unfiled/q 或目标搜索条件。 */
   filter: string;
 }
 
@@ -49,7 +53,10 @@ export function decodeStudyCursor(raw: string | null | undefined): StudyCursor |
   }
   try {
     const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as Partial<StudyCursor>;
-    const sortKindOk = parsed.sortKind === "updatedAt" || parsed.sortKind === "position";
+    const sortKindOk =
+      parsed.sortKind === "updatedAt"
+      || parsed.sortKind === "position"
+      || parsed.sortKind === "createdAt";
     const idOk = typeof parsed.id === "string" && UUID_RE.test(parsed.id);
     const filterOk = typeof parsed.filter === "string" && FILTER_RE.test(parsed.filter);
     const lastSortOk =
@@ -59,9 +66,9 @@ export function decodeStudyCursor(raw: string | null | undefined): StudyCursor |
     const lastSortValid =
       sortKindOk &&
       lastSortOk &&
-      (parsed.sortKind === "updatedAt"
-        ? !Number.isNaN(Date.parse(parsed.lastSort as string))
-        : /^\d+$/.test(parsed.lastSort as string));
+      (parsed.sortKind === "position"
+        ? /^\d+$/.test(parsed.lastSort as string)
+        : !Number.isNaN(Date.parse(parsed.lastSort as string)));
     if (sortKindOk && idOk && filterOk && lastSortValid) {
       return parsed as StudyCursor;
     }

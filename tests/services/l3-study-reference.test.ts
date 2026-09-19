@@ -462,3 +462,83 @@ describe("F5 UUID 身份：目标查找 / 预览 / capture / backlinks", () => {
     expect(page2.items).toEqual([]);
   });
 });
+
+// ── F4（补修批次）：游标绑定目标搜索过滤条件 ────────────────────────────────
+
+describe("F4 游标绑定目标搜索过滤条件", () => {
+  const SOURCE_B = "00000000-0000-4000-8000-000000000202";
+
+  function searchRepos() {
+    const repos = fakeRepos([]);
+    (repos.studyReferences.searchTargets as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      items: [
+        { id: SOURCE, title: "T1", created_at: "2026-09-19T02:00:00Z" },
+        { id: SOURCE_B, title: "T2", created_at: "2026-09-19T01:00:00Z" },
+      ],
+      total: 2,
+    }));
+    return repos;
+  }
+
+  it("同条件分页：游标为 createdAt 族，指纹绑定 kind/q/有效 venue；limit 不参与指纹", async () => {
+    const { decodeStudyCursor, studyFilterFingerprint } = await import("@/repositories/l3-study-cursor");
+    const repos = searchRepos();
+    const service = makeService(repos);
+    const first = await service.search(USER, { kind: "source", q: "first", limit: 1 });
+    const decoded = decodeStudyCursor(first.nextCursor);
+    expect(decoded).toMatchObject({
+      sortKind: "createdAt",
+      lastSort: "2026-09-19T02:00:00Z",
+      id: SOURCE,
+      filter: studyFilterFingerprint(["reference-targets", "source", "first", null]),
+    });
+
+    // 同条件 + 不同 limit 复用 → 正常分页（limit 不是过滤身份）
+    const page2 = await service.search(USER, { kind: "source", q: "first", limit: 10, cursor: first.nextCursor! });
+    expect(page2.items.length).toBeGreaterThan(0);
+    // 规范化 q 参与指纹：q="first" 带首尾空白 → 同一指纹（归一化）→ 可复用
+    const padded = await service.search(USER, { kind: "source", q: "  first  ", limit: 10, cursor: first.nextCursor! });
+    expect(padded.items.length).toBeGreaterThan(0);
+    // 空白 q 归一为「无 q」→ 与 "first" 指纹不同 → 400
+    await expect(service.search(USER, { kind: "source", q: "   ", limit: 10, cursor: first.nextCursor! }))
+      .rejects.toThrow(ValidationError);
+  });
+
+  it("换 kind / 换 q / 换有效 venue / 其他列表游标：复用旧游标 → 400", async () => {
+    const { encodeStudyCursor, studyFilterFingerprint } = await import("@/repositories/l3-study-cursor");
+    const repos = searchRepos();
+    const service = makeService(repos);
+    const first = await service.search(USER, { kind: "question", q: "first", venue: "reading_choice", limit: 1 });
+    const cursor = first.nextCursor!;
+
+    await expect(service.search(USER, { kind: "source", q: "first", limit: 1, cursor }))
+      .rejects.toThrow(ValidationError);
+    await expect(service.search(USER, { kind: "question", q: "different", venue: "reading_choice", limit: 1, cursor }))
+      .rejects.toThrow(ValidationError);
+    await expect(service.search(USER, { kind: "question", q: "first", venue: null, limit: 1, cursor }))
+      .rejects.toThrow(ValidationError);
+
+    // 其他列表（updatedAt）游标不能用于目标搜索
+    const notesCursor = encodeStudyCursor({
+      sortKind: "updatedAt", lastSort: "2026-09-19T00:00:00Z", id: SOURCE,
+      filter: studyFilterFingerprint(["reference-targets", "question", "first", "reading_choice"]),
+    });
+    await expect(service.search(USER, { kind: "question", q: "first", venue: "reading_choice", limit: 1, cursor: notesCursor }))
+      .rejects.toThrow(ValidationError);
+  });
+
+  it("source 忽略无效 venue（不制造虚假指纹差异）；旧的不绑定条件游标 → 400", async () => {
+    const { encodeCursor } = await import("@/repositories/l3-cursor");
+    const repos = searchRepos();
+    const service = makeService(repos);
+    const first = await service.search(USER, { kind: "source", q: "x", venue: "reading_choice", limit: 1 });
+    // source + venue 与 source 无 venue：同指纹 → 可复用
+    const page2 = await service.search(USER, { kind: "source", q: "x", venue: null, limit: 1, cursor: first.nextCursor! });
+    expect(page2.items.length).toBeGreaterThan(0);
+
+    // 旧格式（不绑定条件）游标一律拒绝
+    await expect(
+      service.search(USER, { kind: "source", q: "x", limit: 1, cursor: encodeCursor("2026-09-19T00:00:00Z", SOURCE) }),
+    ).rejects.toThrow(ValidationError);
+  });
+});

@@ -48,7 +48,6 @@ import {
   type ReferenceTargetKind,
   type StudyReferenceInsertRow,
 } from "../repositories/l3-study-references.repository";
-import { decodeCursor, encodeCursor } from "../repositories/l3-cursor";
 import {
   decodeStudyCursor,
   encodeStudyCursor,
@@ -394,7 +393,9 @@ export class L3StudyReferenceService {
 
   /**
    * GET /reference-targets：目标搜索（每次只查一个 kind；摘要不含答案/解析/evidence）。
-   * cursor 复用 l3-cursor 的 (createdAt,id) 键集（设计 §7："source 采用 createdAt/id"）。
+   * F4：游标为 createdAt 族并携带**过滤指纹**——绑定目标搜索族/kind/规范化 q/
+   * 有效 venue（source 忽略无效 venue；limit 不参与指纹）。换 kind/q/有效 venue
+   * 复用游标、或使用旧的不绑定条件游标 → 400（设计 §7）。
    */
   async search(
     userId: string,
@@ -407,16 +408,25 @@ export class L3StudyReferenceService {
     },
   ): Promise<StudyPage<StudySourceTargetItem | StudyQuestionTargetItem>> {
     const limit = clampPageLimit(query.limit);
-    const cursor = decodeCursor(query.cursor);
+    // 与 SQL 一致的规范化条件：q 去首尾空白（空白视为无过滤）；venue 仅 question 生效。
+    const effectiveQ = query.q?.trim() || null;
+    const effectiveVenue = query.kind === "question" ? query.venue ?? null : null;
+    const filter = studyFilterFingerprint([
+      "reference-targets", query.kind, effectiveQ, effectiveVenue,
+    ]);
+    const cursor = decodeStudyCursor(query.cursor);
+    if (cursor && (cursor.filter !== filter || cursor.sortKind !== "createdAt")) {
+      throw new ValidationError("Invalid pagination cursor", "cursor");
+    }
     return this.txRunner(
       async (tx) => {
         const repos = this.reposFactory(tx);
         const { items, total } = await repos.studyReferences.searchTargets({
           userId,
           kind: query.kind,
-          q: query.q ?? null,
-          venue: query.kind === "question" ? query.venue ?? null : null,
-          cursor,
+          q: effectiveQ,
+          venue: effectiveVenue,
+          cursor: cursor ? { createdAt: cursor.lastSort, id: cursor.id } : null,
           limit: limit + 1,
         });
         const hasMore = items.length > limit;
@@ -434,7 +444,12 @@ export class L3StudyReferenceService {
         let nextCursor: string | null = null;
         if (hasMore && pageItems.length > 0) {
           const last = pageItems[pageItems.length - 1]!;
-          nextCursor = encodeCursor(last.created_at, last.id);
+          nextCursor = encodeStudyCursor({
+            sortKind: "createdAt",
+            lastSort: last.created_at,
+            id: last.id,
+            filter,
+          });
         }
         return { items: mapped, total, nextCursor };
       },

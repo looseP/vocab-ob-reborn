@@ -59,11 +59,13 @@
 
 ## 5. F4 · 引用搜索游标绑定过滤（先红后绿）
 
-- 修改（待执行）：`src/repositories/l3-study-cursor.ts`、`src/services/l3-study-reference.service.ts`
-- 红测试：待执行
-- 实现提交：待执行
-- 真库分页证据：待执行
-- 备注：游标族=createdAt，指纹绑定 kind/规范化 q/有效 venue；拒绝旧不绑定游标与其他列表游标。
+- 修改（已实施）：`src/repositories/l3-study-cursor.ts`（新增 `createdAt` 游标族；decode 校验 ISO 时间）；`src/services/l3-study-reference.service.ts`（search 指纹绑定 `["reference-targets", kind, 规范化q, 有效venue]`；改走 study 游标族；移除 l3-cursor 依赖）
+- 红测试（单元）：`npx vitest run tests/repositories/l3-study-cursor.test.ts tests/services/l3-study-reference.test.ts` → **4 failed / 37 passed，exit 1**（`D:/tmp/n1r-f4-red-unit.log`：createdAt 族缺、旧格式游标被接受、换条件复用未被拒）
+- 红测试（真库）：F4 → **1 failed**（`D:/tmp/n1r-f4-red-integration.log`：换 kind 复用旧游标被接受并执行——正是审查探针复现的缺陷）
+- 绿测试：单元 **41/41 exit 0**；真库 **15/15 exit 0**；typecheck exit 0（`D:/tmp/n1r-f4-green-unit.log`、`D:/tmp/n1r-f4-green-integration.log`）
+- 真库分页证据：57 目标（55+2）全同时间戳、limit=20 跨页消费游标——无遗漏/无重复（Set=57）、total 恒定 57 不随 cursor 变；换 kind/venue 复用 400、旧格式游标 400；q 首尾空白归一化一致；`100%`/`under_score`/`_` 字面量搜索（转义生效）
+- 实现提交：（回填）
+- 备注：limit 不参与指纹；source 忽略无效 venue（不制造虚假差异）；其他列表（updatedAt/position 族）的调用点继续拒绝 createdAt 游标。
 
 ## 6. 最终验收（待执行）
 

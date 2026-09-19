@@ -17,7 +17,7 @@
 import { randomUUID } from "node:crypto";
 import { Client, Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ConflictError, NotFoundError } from "@/errors";
+import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import { resetPool } from "@/db/connection";
 import { withTransaction } from "@/db/transaction";
 import {
@@ -842,5 +842,79 @@ describe("F3 · 题目 active 规则（真实 PG）", () => {
       bodyMd: "正文", venues: ["reading_choice"], pinned: false, status: "active", references: [],
     });
     expect(removed.item.references).toEqual([]);
+  });
+});
+
+// ── F4 · 引用目标搜索游标（真实 PG，>50 目标与相同时间戳）────────────────────
+
+describe("F4 · 引用搜索游标（真实 PG）", () => {
+  it("同条件跨页无遗漏/重复、total 恒定；换条件复用 400；q 空白归一化与 %/_ 字面量", async () => {
+    const ids: string[] = [];
+    for (let index = 0; index < 55; index += 1) {
+      const qid = randomUUID();
+      ids.push(qid);
+      await seedStudyQuestion(adminPool, {
+        id: qid, userId: OWNER_A, sourceId: null, fileKey: `f4-${index}`,
+        stem: `F4 target #${String(index).padStart(2, "0")}?`,
+      });
+    }
+    const percentId = randomUUID();
+    const underscoreId = randomUUID();
+    await seedStudyQuestion(adminPool, {
+      id: percentId, userId: OWNER_A, sourceId: null, fileKey: "f4-pct", stem: "100% coverage F4?",
+    });
+    await seedStudyQuestion(adminPool, {
+      id: underscoreId, userId: OWNER_A, sourceId: null, fileKey: "f4-us", stem: "under_score F4?",
+    });
+    // 相同时间戳（55+2 全部对齐同一时刻；keyset 依赖 (created_at,id) 的 id 决胜）
+    await adminPool.query(
+      `UPDATE l3_questions SET created_at = '2026-09-19T00:00:00Z' WHERE user_id = $1`,
+      [OWNER_A],
+    );
+
+    const refService = new L3StudyReferenceService();
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page = await refService.search(OWNER_A, { kind: "question", q: "F4", limit: 20, cursor });
+      expect(page.total).toBe(57); // total 与过滤一致、不随 cursor 变
+      for (const item of page.items) {
+        expect(seen.has(item.id)).toBe(false); // 无重复
+        seen.add(item.id);
+      }
+      cursor = page.nextCursor;
+      pages += 1;
+      expect(pages).toBeLessThanOrEqual(10);
+    } while (cursor !== null);
+    expect(seen.size).toBe(57); // 无遗漏
+    expect([...ids, percentId, underscoreId].every((id) => seen.has(id))).toBe(true);
+
+    // 换条件复用游标 → 400（kind / 有效 venue）
+    const first = await refService.search(OWNER_A, { kind: "question", q: "F4", limit: 1 });
+    expect(first.nextCursor).not.toBeNull();
+    await expect(
+      refService.search(OWNER_A, { kind: "source", q: "F4", limit: 1, cursor: first.nextCursor! }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(
+      refService.search(OWNER_A, { kind: "question", q: "F4", venue: "cloze", limit: 1, cursor: first.nextCursor! }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    // 旧的不绑定条件游标（l3-cursor 格式）→ 400
+    const { encodeCursor } = await import("@/repositories/l3-cursor");
+    await expect(
+      refService.search(OWNER_A, { kind: "question", q: "F4", limit: 1, cursor: encodeCursor("2026-09-19T00:00:00Z", percentId) }),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    // q 空白归一化：首尾空白与去空白同结果
+    const padded = await refService.search(OWNER_A, { kind: "question", q: "  F4  ", limit: 1 });
+    expect(padded.total).toBe(57);
+
+    // %/_ 字面量（转义后按文字匹配，不作通配）
+    const percent = await refService.search(OWNER_A, { kind: "question", q: "100%", limit: 50 });
+    expect(percent.items.map((item) => item.id)).toEqual([percentId]);
+    const underscore = await refService.search(OWNER_A, { kind: "question", q: "under_score", limit: 50 });
+    expect(underscore.items.map((item) => item.id)).toEqual([underscoreId]);
+    const singleUnderscore = await refService.search(OWNER_A, { kind: "question", q: "_", limit: 50 });
+    expect(singleUnderscore.items.map((item) => item.id)).toEqual([underscoreId]);
   });
 });
