@@ -189,3 +189,30 @@
 
 - 单端口 app 服务（SERVE_FRONTEND=true）@ **http://127.0.0.1:3100**（`vocab_practice_accept` 合成数据：小作文题组 2 题 / 大作文 1 题 / 合成整卷客观+写作）；核验：readyz/healthz 200、登录 201、原题页与大/小作文入口 + 整卷「不计入」标识可见（截图 `D:/tmp/practice-experience/`）。
 - 登录 token `local-owner-api-token-only-0001`；停止方式=结束对应后台任务/关闭会话（或停本机 3100 node 进程）。
+
+## 收口批 R1–R3（2026-09-19；不扩展功能、不合并、不部署）
+
+### R1 · 原卷保存→导航空档闭合（`e3a762a`）
+
+- 入口 `start` 改为「屏障①（创建前）→ createTask → **屏障②（导航前二次确认）**」：创建在途期间原卷产生的新输入同样须落库后才导航。
+- 屏障②失败：留页保留正文 + 显式提示；已创建任务进 `pendingTaskRef`——**重试只重跑确认、复用同任务不重复创建**（requestId 单意图保持）。
+- 测试（先红后绿 4 例）：入口单测 2（二次确认次数；失败留页+复用直航）＋页面级 2（慢创建期间再输入 → 二次 flush 后才导航；gate②失败 → 重试恰一次 createTask）。
+- 测试时序教训（已入档）：页面级用例须「等 createTask 已调用（gate① 完成）」后再注入新输入，否则新输入会被 gate① 的 flush 循环吃掉，测不到目标路径。
+
+### R2 · 来源关系验证与真实标题（`2af17e0`）
+
+- 工作区来源条升级为**验证后渲染**：`task.questionId = origin.questionId`；question 属于指定文件/试卷（复用 owner 读面 `practice-files/detail` 与 `papers/:id`）；`resumeSheet` 的 scope/来源/题型一致性——**仅一致才随返回携带 resumeSheet**；resume 读取失败同样不带（返回侧还会再校验）。
+- 不符或读面失败：仅降级来源功能（隐藏返回原题、提示「来源不可用」），**稿件与编辑不受影响**；标题显示真实来源名（文件标题/试卷标题）。
+- 返回侧同 owner 错误组合回归：来源不符/题型不符/卷不符 → 拒绝恢复、停留列表、零 openSheet。
+- 测试：工作区 26/26（6 红→绿：标题×2 / 关系降级×2 / resumeSheet 白名单 / 读面失败）；页面级 21/21。
+
+### R3 · 方向精确读取（`091d90b`）
+
+- `GET /l3/practice-files` 增**精确来源过滤**（可选 `sourceId`（uuid 校验）/`fileKey`；additive → openapi-breaking 放行；client 再生同步）。
+- 回看（SheetReplayView）方向改为精确读面（`sourceId` 过滤 + `limit=1`，**不依赖前 100 条列表**）：权威 null → 按契约「通用」；**读取失败 → 入口显示重试、不请求摘要、不创建任务**（回看原卷不受影响）。
+- `L3ExamPaper` 方向态门控：`directionState` 非 ready 时不以「通用」冒充去请求摘要/创建。
+- 测试：先红后绿 4 例——前端 2（第 101 个文件经精确读面取「考研」；读失败 → 题纸可见+入口重试 → 恢复后（权威 null）以「通用」请求）、http 1（过滤透传 + 非法 uuid 400）、repo 1（WHERE 追加与参数位）。
+
+### 收口批验证
+
+- 广域批 70 文件 **1131/1131**；typecheck 0；frontend:build 0；api:governance 全绿（base=ccc6fb4c）；Writing E2E 本地复验见下节。
