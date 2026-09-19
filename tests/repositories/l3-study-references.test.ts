@@ -112,7 +112,7 @@ describe("searchTargets", () => {
     expect(text).not.toContain("answer");
   });
 
-  it("question kind：venue 过滤题型且摘要不含 answer/explanation/evidence", async () => {
+  it("question kind：venue 过滤题型且摘要不含 answer/explanation/evidence；仅 active 题进入搜索（F3）", async () => {
     querySpy.mockImplementation(async (text: string) => {
       if ((text as string).includes("count(*)")) return { rows: [{ total: "0" }] };
       return { rows: [{ id: QUESTION, stem: "题干", question_type: "reading_choice", created_at: "2026-09-19T00:00:00Z" }] };
@@ -124,6 +124,7 @@ describe("searchTargets", () => {
     expect(text).toContain("FROM l3_questions");
     expect(text).toContain("stem ILIKE");
     expect(text).toContain("question_type = $");
+    expect(text).toContain("status = 'active'"); // F3：非 active 目标不得进入搜索
     expect(text).not.toContain("explanation");
     expect(text).not.toContain("evidence");
     expect(text).not.toMatch(/SELECT[^;]*\banswer\b/);
@@ -151,6 +152,7 @@ describe("loadTargets", () => {
     const questionText = querySpy.mock.calls[1]![0] as string;
     expect(sourceText).toContain("content_text");
     expect(questionText).toContain("LEFT JOIN l3_sources");
+    expect(questionText).toContain("status = 'active'"); // F3：非 active 目标不可装载（capture/resolve 同断）
     expect(questionText).not.toContain("answer");
     expect(map.get(`source:${SOURCE}`)).toMatchObject({ kind: "source", content_text: "The quick brown fox." });
     expect(map.get(`question:${QUESTION}`)).toMatchObject({

@@ -724,3 +724,123 @@ describe("F2 · 详情一致快照（真实 PG）", () => {
     expect(saved.item.version).toBe(first.item.version + 1);
   });
 });
+
+// ── F3 · 题目 active 规则（真实 PG 矩阵）────────────────────────────────────
+
+describe("F3 · 题目 active 规则（真实 PG）", () => {
+  it("搜索/预览/capture：仅 active 题可用；pending/rejected 404；失败不落库（整体不变）", async () => {
+    const src = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "f3 source text" });
+    const qActive = randomUUID();
+    const qPending = randomUUID();
+    const qRejected = randomUUID();
+    const qOwnerB = randomUUID();
+    await seedStudyQuestion(adminPool, {
+      id: qActive, userId: OWNER_A, sourceId: src, stem: "F3 active stem?",
+      options: [{ key: "A", text: "alpha" }],
+    });
+    await seedStudyQuestion(adminPool, { id: qPending, userId: OWNER_A, sourceId: src, stem: "F3 pending stem?" });
+    await seedStudyQuestion(adminPool, { id: qRejected, userId: OWNER_A, sourceId: src, stem: "F3 rejected stem?" });
+    await seedStudyQuestion(adminPool, { id: qOwnerB, userId: OWNER_B, sourceId: null, stem: "F3 owner-B stem?", fileKey: "f3-b" });
+    // 实际状态更新路径：l3_questions 对 app 角色无 UPDATE 授权（grants 实测），
+    // status 变更由属主/管理通道执行——测试用 admin（vocab_migration）直改。
+    await adminPool.query(`UPDATE l3_questions SET status = 'pending' WHERE id = $1`, [qPending]);
+    await adminPool.query(`UPDATE l3_questions SET status = 'rejected' WHERE id = $1`, [qRejected]);
+
+    const refService = new L3StudyReferenceService();
+
+    // 搜索：仅 active；total 与 items 同条件；跨 owner 不可见
+    const page = await refService.search(OWNER_A, { kind: "question", q: "F3", limit: 50 });
+    expect(page.items.map((item) => item.id)).toEqual([qActive]);
+    expect(page.total).toBe(1);
+
+    // 预览：active（question / option_quote）可预览；pending / rejected → 404
+    await expect(refService.preview(OWNER_A, { kind: "question", questionId: qActive })).resolves.toBeTruthy();
+    await expect(refService.preview(OWNER_A, {
+      kind: "option_quote", questionId: qActive, optionKey: "A", start: 0, end: 5, quote: "alpha",
+    })).resolves.toBeTruthy();
+    await expect(refService.preview(OWNER_A, { kind: "question", questionId: qPending }))
+      .rejects.toBeInstanceOf(NotFoundError);
+    await expect(refService.preview(OWNER_A, { kind: "stem_quote", questionId: qRejected, start: 0, end: 3, quote: "F3 " }))
+      .rejects.toBeInstanceOf(NotFoundError);
+    await expect(refService.preview(OWNER_A, { kind: "question", questionId: qOwnerB }))
+      .rejects.toBeInstanceOf(NotFoundError);
+
+    // capture：rejected/pending → 404；失败后正文/version/归属/引用整体不变
+    const service = new L3StudyNoteService();
+    const noteId = (await service.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" })).item.id;
+    const before = await service.get(OWNER_A, noteId);
+    const badRef = randomUUID();
+    await expect(service.save(OWNER_A, noteId, {
+      expectedVersion: before.item.version, requestId: randomUUID(), title: "不会落库",
+      bodyMd: `正文\n\n[[ref:${badRef}]]`, venues: ["cloze"], pinned: true, status: "active",
+      references: [{
+        id: badRef, action: "capture",
+        target: { kind: "stem_quote", questionId: qRejected, start: 0, end: 3, quote: "F3 " },
+      }],
+    })).rejects.toBeInstanceOf(NotFoundError);
+    const after = await service.get(OWNER_A, noteId);
+    expect(after.item).toEqual(before.item); // 原子回滚：整体不变
+  });
+
+  it("已有引用在目标失效后：GET unavailable 保留旧摘录/时间；keep 可保存；重新 capture 被拒；移除可行", async () => {
+    const src = randomUUID();
+    const q = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "f3b source" });
+    await seedStudyQuestion(adminPool, {
+      id: q, userId: OWNER_A, sourceId: src, stem: "F3B stem?",
+      options: [{ key: "A", text: "alpha" }],
+    });
+
+    const service = new L3StudyNoteService();
+    const noteId = (await service.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" })).item.id;
+    const refId = randomUUID();
+    const saved = await service.save(OWNER_A, noteId, {
+      expectedVersion: 1, requestId: randomUUID(), title: "f3b", bodyMd: `正文\n\n[[ref:${refId}]]`,
+      venues: ["reading_choice"], pinned: false, status: "active",
+      references: [{
+        id: refId, action: "capture",
+        target: { kind: "stem_quote", questionId: q, start: 0, end: 4, quote: "F3B " },
+      }],
+    });
+    expect(saved.item.references[0]!.status).toBe("current");
+    const capturedAt = saved.item.references[0]!.capturedAt;
+
+    // 目标后来非 active（实际状态更新路径：admin 直改；见前一条测试注释）
+    await adminPool.query(`UPDATE l3_questions SET status = 'rejected' WHERE id = $1`, [q]);
+
+    // GET → unavailable：旧摘录与 capturedAt 原样保留，不整页失败
+    const fetched = await service.get(OWNER_A, noteId);
+    const ref = fetched.item.references[0]!;
+    expect(ref.status).toBe("unavailable");
+    expect(ref.capturedAt).toBe(capturedAt);
+    expect(ref.displaySnapshot).toMatchObject({ kind: "stem_quote", quote: "F3B " });
+    expect(ref.target).toMatchObject({ kind: "stem_quote", questionId: q });
+
+    // keep：可保存（不重新 capture；不因目标非 active 阻止整篇保存）
+    const kept = await service.save(OWNER_A, noteId, {
+      expectedVersion: fetched.item.version, requestId: randomUUID(), title: "f3b",
+      bodyMd: fetched.item.bodyMd, venues: ["reading_choice"], pinned: false, status: "active",
+      references: [{ id: refId, action: "keep" }],
+    });
+    expect(kept.item.references[0]!.capturedAt).toBe(capturedAt);
+    expect(kept.item.references[0]!.status).toBe("unavailable");
+
+    // 显式重新 capture → 404（目标不可用）
+    await expect(service.save(OWNER_A, noteId, {
+      expectedVersion: kept.item.version, requestId: randomUUID(), title: "f3b",
+      bodyMd: kept.item.bodyMd, venues: ["reading_choice"], pinned: false, status: "active",
+      references: [{
+        id: refId, action: "capture",
+        target: { kind: "stem_quote", questionId: q, start: 0, end: 4, quote: "F3B " },
+      }],
+    })).rejects.toBeInstanceOf(NotFoundError);
+
+    // 移除引用可行（正文去 marker + 空引用集）
+    const removed = await service.save(OWNER_A, noteId, {
+      expectedVersion: kept.item.version, requestId: randomUUID(), title: "f3b",
+      bodyMd: "正文", venues: ["reading_choice"], pinned: false, status: "active", references: [],
+    });
+    expect(removed.item.references).toEqual([]);
+  });
+});

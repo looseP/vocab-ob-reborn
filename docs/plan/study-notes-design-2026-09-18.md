@@ -108,6 +108,7 @@ type ReferenceWrite =
 - 每条保存引用含 capturedAt、fieldHash、displaySnapshot 和定位。全部 snapshot 序列化总量上限2 MiB，超出422；避免100个整题造成无限放大。
 - `keep` 引用必须已经属于当前笔记，只保留原摘录，不自动重新截取。`capture` 可新建或显式更新当前引用；已被其他笔记使用的引用 id 返回409。
 - 引用状态：current / changed / unavailable。字段hash不同标changed；旧摘录仍显示，但不把旧offset套到新正文。v1不自动重锚，用户重新选择更新引用。
+- 题目可用性（2026-09-19 补修 F3 校准）：仅 `status='active'` 的题可被搜索、预览与新增 capture；pending/rejected 目标按不可用目标 404（不区分存在性）。目标后来非 active：已保存引用照常保留（resolve=unavailable，旧摘录/capturedAt 不变），允许 keep 与移除，禁止显式重新 capture。`unavailable` 同时覆盖「目标被数据库直删」与「目标非 active」两种来源，前端按同一占位展示（原始摘录仍可读），不使整篇笔记不可读或不可保存。
 - 只读预览与定位由独立面板承担，不调用 openSheet。来源可跳既有阅读深链；整题/选项通过新只读题目预览定位，避免去做题文件时顺带创建草稿。
 
 ## 4. 删除与授权的 v1 明确取舍

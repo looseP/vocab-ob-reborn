@@ -49,11 +49,13 @@
 
 ## 4. F3 · 题目 active 规则（先红后绿）
 
-- 修改（待执行）：`src/repositories/l3-study-references.repository.ts`、设计文件同步
-- 红测试：待执行
-- 实现提交：待执行
-- 真库矩阵证据：待执行
-- 备注：搜索/装载收敛 `status='active'`；旧引用 resolve=unavailable、keep 保留、禁止重新 capture。
+- 修改（已实施）：`src/repositories/l3-study-references.repository.ts`（searchTargets question 分支与 loadTargets question 分支收敛 `status = 'active'`；模块注释同步）；`docs/plan/study-notes-design-2026-09-18.md` §3（题目可用性与 unavailable 消费说明同步）
+- 红测试（单元）：`npx vitest run tests/repositories/l3-study-references.test.ts` → **2 failed / 14 passed，exit 1**（`D:/tmp/n1r-f3-red-unit.log`：两处 SQL 均无 active 条件）
+- 红测试（真库）：F3 矩阵 → **2 failed**（`D:/tmp/n1r-f3-red-integration.log`：搜索含非 active、preview/capture 未收口）
+- 绿测试：单元 **16/16 exit 0**；真库 **14/14 exit 0**（`D:/tmp/n1r-f3-green-unit.log`、`D:/tmp/n1r-f3-green-integration.log`）
+- 真库矩阵证据：同 owner active/pending/rejected × question/stem_quote/option_quote；搜索只回 active（total=items 条件）、pending/rejected 预览 404、跨 owner 404；rejected capture 失败后正文/version/归属/引用整体不变；active→rejected 后 GET unavailable 保留旧摘录/capturedAt、keep 可保存、重新 capture 404、移除可行
+- 实现提交：（回填）
+- 备注：状态更新路径——l3_questions 对 vocab_app 无 UPDATE 授权（grants 实测），测试经 admin（vocab_migration）直改 status 作为实际状态入口；本批不改全项目状态机制。
 
 ## 5. F4 · 引用搜索游标绑定过滤（先红后绿）
 

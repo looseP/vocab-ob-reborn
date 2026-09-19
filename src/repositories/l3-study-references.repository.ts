@@ -6,6 +6,9 @@
  * FOR SHARE + question advisory 锁；question 无 UPDATE 权限不能行锁——实测
  * permission denied，见 l3-writing.lockQuestion 同款先例）/listBacklinks
  * （按 note 去重聚合，默认不含归档）/删除 blockers（source 含子题引用去重）。
+ *
+ * F3：题目目标一律要求 `status='active'`——搜索与装载（capture/resolve 共同依赖）
+ * 同条件；目标后来失效时，已保存引用按 unavailable 展示且保留快照/时间。
  */
 
 import type { L3QuestionOption, L3QuestionType } from "../domain";
@@ -245,7 +248,8 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     }
 
     // question：stem 搜索 + 可选题型过滤；摘要白名单不含 answer/explanation/evidence。
-    const questionFilters: string[] = ["user_id = $1::uuid"];
+    // F3：仅 active 题可被搜索/装载（pending/rejected 目标对搜索、预览、capture 均按不可用）。
+    const questionFilters: string[] = ["user_id = $1::uuid", "status = 'active'"];
     if (input.q && input.q.trim()) {
       questionFilters.push(`stem ILIKE $${params.length} ESCAPE '\\'`);
     }
@@ -310,7 +314,8 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
         `SELECT q.id, q.stem, q.options, q.question_type, q.source_id, s.title AS source_title
            FROM l3_questions q
            LEFT JOIN l3_sources s ON s.id = q.source_id AND s.user_id = q.user_id
-          WHERE q.user_id = $1::uuid AND q.id = ANY($2::uuid[])`,
+          WHERE q.user_id = $1::uuid AND q.id = ANY($2::uuid[])
+            AND q.status = 'active'`,
         [userId, questionIds],
       );
       for (const row of rows) {
