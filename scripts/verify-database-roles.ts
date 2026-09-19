@@ -452,6 +452,14 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.l3_writing_tasks": ["SELECT", "INSERT", "UPDATE"],
       // 0038（作文 W1）：作文反馈（upsert 三权 + 正文清理删反馈行需 DELETE）。
       "public.l3_writing_feedback": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      // 0039（N1 学习笔记）：笔记/专题只归档不硬删；CAS 保存 + 行锁走 UPDATE。
+      "public.l3_study_notes": ["SELECT", "INSERT", "UPDATE"],
+      "public.l3_study_topics": ["SELECT", "INSERT", "UPDATE"],
+      // 0039：题型归属整体替换（DELETE + INSERT，无原地 UPDATE）。
+      "public.l3_study_note_venues": ["SELECT", "INSERT", "DELETE"],
+      // 0039：专题成员（加入/移出/重排）与引用行（替换 + capture-更新）四权。
+      "public.l3_study_topic_notes": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      "public.l3_study_note_references": ["SELECT", "INSERT", "UPDATE", "DELETE"],
     }).map(([relation, privileges]) => [relation, new Set(privileges)]))],
     ["vocab_worker", new Map(Object.entries({
       "public.outbox_events": ["SELECT", "UPDATE"],

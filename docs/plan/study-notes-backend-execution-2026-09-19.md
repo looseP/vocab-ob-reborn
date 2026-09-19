@@ -50,9 +50,16 @@
 - 证据：—
 
 ### Task 02 · 数据库、迁移与角色
-- 状态：待执行
-- 提交：—
-- 证据：—
+- 状态：完成（证据见下）
+- 提交：见 §7 提交链（本批第 3 提交）
+- 迁移：`drizzle-release/0039_redundant_imperial_guard.sql`（`db:generate` 实际产出；编号未预占）
+- 证据：
+  - 迁移契约测试 `tests/scripts/l3-study-notes-migration.test.ts` 10/10 绿（发现式定位迁移；复合 FK/RESTRICT/RLS/CHECK/journal/schema 同步断言）
+  - 专用库 `vocab_study_notes_accept`：迁移应用 39→40；`bootstrap-database-roles converge` ok；`verify-database-roles` `exactPrivileges:true`（含 5 新表逐项权限）
+  - 集成测试 `tests/l3-study-notes.integration.test.ts` **17/17**（受限角色 RLS 读隔离/冒名拒绝；复合 owner FK ×3；CHECK 矩阵；五 kind 落库；删除保护含子题级联链截断与非误杀回归）；测试后 5 表 0 行残留（fixture 清理限定本任务 owner）
+  - `npm run db:schema:drift` OK（新表 RLS 契约逐条比对）
+  - 变异证明：drift 新契约检查移除 → `verify-schema-drift.test.ts` 1 failed；恢复 → 15/15
+  - 权限快查：`vocab_backup` 对新表 SELECT=t（备份可见性）；`vocab_app` SELECT=t / DELETE=f（无硬删路径）
 
 ### Task 03 · 仓储与并发保存
 - 状态：待执行
