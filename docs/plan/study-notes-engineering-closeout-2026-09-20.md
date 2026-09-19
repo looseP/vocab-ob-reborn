@@ -139,6 +139,14 @@
 
 ## 7. 未关闭项
 
-- D 卷系统层成因未闭环（§2.4）；gate 依赖隔离路径（§4 待填）。
+- 「慢区」（非 Temp 类目录）为何普遍慢且偶发挂起的系统层成因未闭环（§2.4）；工程门禁验收依赖隔离运行路径（§4.2 已完成，原环境挂死不修复）。
 - `GET /:noteId/export` 未交付（Task 10）；Task 09 引用侧栏、N2 均后置。
-- CI：依赖 PR #126 当前仅 `writing-e2e` 触发；`ci.yml`（Engineering Gate + Browser E2E）不在 base≠main 的 PR 上运行——以最终 head 的实际运行结果为准（不拿旧 CI 充当新绿）。
+- CI：依赖 PR #126 上仅 `Writing E2E` 自动运行；`ci.yml`（Engineering Gate + Browser E2E）不在 base≠main 的 PR 上触发——三项必需检查待 #125 合并并 retarget 后在新 head 运行（后续授权任务）；不拿旧 CI 充当新绿。
+
+## 8. 推送、PR 与 CI（2026-09-20）
+
+- 提交：**`5a1dbec`**（`docs(notes): close out engineering acceptance and calibrate Task 07-08`；5 files，+494/−3；提交后 `git fsck` exit 0、`git count-objects` 正常）。
+- 推送：`git push origin HEAD:refs/heads/study-notes-n1-backend`（**fast-forward 普通推送，非强推、未推 main**）；`git ls-remote` 远端 = 本地 = `5a1dbecabde110d186ce4d739d9cee99351aae73`。
+- PR **#126**：保持 **draft / OPEN**，base=`integration/l3-reliability-writing` 不变（未 retarget、未合并）；说明已更新（收尾轮证据、隔离验收、任务书校准）。
+- CI（真实口径）：`Writing E2E` @ `5a1dbec` **pass**（run `35457924418`，2m1s）；`ci.yml`（Engineering Gate + Browser E2E）因 base≠main **未触发**——不以本 PR 的现有绿色替代三项必需检查。
+- 本轮结束点：**停在 Task 07–08 开工之前**（任务书已校准、未实施；不宣称 N1 完整交付）。
