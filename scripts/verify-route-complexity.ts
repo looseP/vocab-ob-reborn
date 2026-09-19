@@ -49,6 +49,8 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   { file: "src/http/routes/l3/writing-feedback.ts", maxLines: 75, maxRoutes: 3 },
   // W9：导出 + 正文清理（实测 ~42 行、2 路由；留一档余量）。
   { file: "src/http/routes/l3/writing-export.ts", maxLines: 55, maxRoutes: 2 },
+  // A2（2026-09-19）：按题批量进度读面（独立薄路由；实测 ~33 行、1 路由）。
+  { file: "src/http/routes/l3/writing-summaries.ts", maxLines: 45, maxRoutes: 1 },
   { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
   { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },

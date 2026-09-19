@@ -107,6 +107,7 @@ class FakeSheetRepos implements IL3WritingRepository {
   async countSealedByTask(): Promise<never> { return this.nope(); }
   async findLatestSealedByTask(): Promise<never> { return this.nope(); }
   async listTasks(): Promise<never> { return this.nope(); }
+  async listQuestionTaskSummaries(): Promise<never> { return this.nope(); }
 
   async findTaskById(userId: string, taskId: string): Promise<L3WritingTaskRow | null> {
     return this.task && this.task.user_id === userId && this.task.id === taskId ? this.task : null;

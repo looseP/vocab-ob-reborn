@@ -62,6 +62,7 @@ import {
   l3WritingFeedbackGetResponseSchema,
   l3WritingFeedbackPutResponseSchema,
   l3WritingRevisionListResponseSchema,
+  l3WritingQuestionSummariesResponseSchema,
   l3WritingSaveResponseSchema,
   l3WritingSheetDetailResponseSchema,
   l3WritingSheetResponseSchema,
@@ -180,6 +181,7 @@ import {
   l3WritingTaskRenameSchema,
   l3WritingTaskListQuerySchema,
   l3WritingRevisionListQuerySchema,
+  l3WritingQuestionSummariesQuerySchema,
   l3WritingDraftCreateSchema,
   l3WritingDraftSaveSchema,
   l3WritingSubmitSchema,
@@ -552,6 +554,9 @@ export const apiOperations = [
   // sealed 限定、幂等；agent 无导出权限）。
   operation("get", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/export", "exportL3WritingSheet", "owner", "owner", "none", undefined, 200, z.string(), "text/markdown"),
   operation("delete", "/api/l3/writing/tasks/:taskId/sheets/:sheetId/content", "clearL3WritingSheetContent", "owner", "owner", "sessionMutation", undefined, 200, l3WritingSheetResponseSchema),
+  // A2（2026-09-19）：按题批量进度读面（owner-only 只读；静态路径先于 /tasks/:taskId 注册；
+  // 原始 questionId 重复参数 ≤100、去重后单条集合查询；无匹配 = 空数组，不代挑任务）。
+  operation("get", "/api/l3/writing/tasks/question-summaries", "listL3WritingQuestionSummaries", "owner", "owner", "none", { query: l3WritingQuestionSummariesQuerySchema }, 200, l3WritingQuestionSummariesResponseSchema),
   // 批次二收官：冻结导出（只出不进；Content-Disposition + 版本/sha256 响应头）。
   operation("get", "/api/l3/sheets/:id/export", "exportL3Sheet", "owner", "owner", "none", { query: l3SheetExportQuerySchema }, 200, z.string(), "text/markdown"),
   operation("get", "/api/l3/practice-files", "listL3PracticeFiles", "owner", "agent", "none", { query: l3PracticeFileListQuerySchema }, 200, l3PracticeFileListResponseSchema),

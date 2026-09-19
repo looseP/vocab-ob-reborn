@@ -337,6 +337,35 @@ describe("GET /api/l3/practice-files", () => {
     expect(body.questions).toHaveLength(1);
   });
 
+  it("R3：精确来源过滤（sourceId/fileKey）透传服务层；非法 sourceId → 400", async () => {
+    const listPracticeFiles = vi.fn(async () => ({ items: [], total: 0, limit: 1, offset: 0 }));
+    const app = createApp(makeServices({ listPracticeFiles }));
+
+    const bySource = await app.request(
+      `/api/l3/practice-files?questionType=short_essay&sourceId=${SOURCE_ID}&limit=1`,
+      { headers: AUTH_HEADERS },
+    );
+    expect(bySource.status).toBe(200);
+    expect(listPracticeFiles).toHaveBeenCalledWith(expect.objectContaining({
+      questionType: "short_essay", sourceId: SOURCE_ID, limit: 1,
+    }));
+
+    const byFileKey = await app.request(
+      "/api/l3/practice-files?questionType=short_essay&fileKey=writing-short-1&limit=1",
+      { headers: AUTH_HEADERS },
+    );
+    expect(byFileKey.status).toBe(200);
+    expect(listPracticeFiles).toHaveBeenLastCalledWith(expect.objectContaining({
+      questionType: "short_essay", fileKey: "writing-short-1",
+    }));
+
+    const bad = await app.request(
+      "/api/l3/practice-files?questionType=short_essay&sourceId=not-a-uuid",
+      { headers: AUTH_HEADERS },
+    );
+    await expectValidationError(bad);
+  });
+
   it("requires a file identity on the detail endpoint", async () => {
     const getPracticeFile = vi.fn();
     const app = createApp(makeServices({ getPracticeFile }));

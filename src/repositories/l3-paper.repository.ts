@@ -183,6 +183,15 @@ export class L3PaperRepository extends BaseRepository implements IL3PaperReposit
       params.push(`%${input.q.trim().replace(/[\\%_]/g, "\\$&")}%`);
       where += ` AND COALESCE(s.title, q.file_key) ILIKE $${params.length} ESCAPE '\\'`;
     }
+    // R3：精确来源过滤（精确读面——单文件方向/标题不依赖 limit 扫描）。
+    if (input.sourceId) {
+      params.push(input.sourceId);
+      where += ` AND q.source_id = $${params.length}::uuid`;
+    }
+    if (input.fileKey) {
+      params.push(input.fileKey);
+      where += ` AND q.file_key = $${params.length}`;
+    }
     const grouped = `
       SELECT q.question_type, q.source_id, q.file_key,
              COALESCE(NULLIF(s.title, ''), q.file_key) AS title,
