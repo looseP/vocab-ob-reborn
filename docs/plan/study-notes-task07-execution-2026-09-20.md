@@ -137,7 +137,7 @@
 
 - 推送：`git push origin HEAD:refs/heads/study-notes-n1-editor`（**新分支普通推送，非强推、未推 main**）；`git ls-remote` 远端 = 本地 = `bc202bac21809a78ea75a77f473ae56062eb84ea`（推送时点）。本台账更新提交将再次普通推送；最终 head 以 `git ls-remote origin refs/heads/study-notes-n1-editor` 为准。
 - PR **#127**（**draft / OPEN**）：base=`study-notes-n1-backend`（依赖链 **#127 → #126 → #125**），head=`study-notes-n1-editor`；正文含范围/证据/边界与依赖说明；未 retarget、未合并、未部署。
-- CI（真实口径）：`Writing E2E` 自动触发（run `35462708553`）；`ci.yml`（Engineering Gate + Browser E2E）不在 base≠main 的 PR 上触发——三项必需检查待 #125 合并并 retarget 后在最终 head 运行（后续授权任务）；**不得转述为三项必需 CI 已绿**。
+- CI（真实口径）：`Writing E2E` 对 head `fa5cfaa` **pass**（run `35462763087`，2m5s；首次推送 `bc202ba` 的 run `35462708553` 被后续 push 取代）。`ci.yml`（Engineering Gate + Browser E2E）不在 base≠main 的 PR 上触发——三项必需检查待 #125 合并并 retarget 后在最终 head 运行（后续授权任务）；**不得转述为三项必需 CI 已绿**。本台账提交将使 head 再次前移；最终 head 的检查状态以 PR checks 页面为准。
 
 ## 4. 未覆盖项与观察项（如实边界）
 
