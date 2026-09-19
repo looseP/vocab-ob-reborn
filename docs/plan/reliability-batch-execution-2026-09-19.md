@@ -168,3 +168,7 @@ DB_SSLMODE=disable npx vitest run --config vitest.integration.config.ts tests/l3
 ### 剩余边界（与验收报告一致）
 - Task C 未开始；导出锁 E2E 已补；R2 竞争路径已可观测证明；HUSKY=0 仍为临时隔离；`.git` 事故根因未定论；旧 reflog/暂存不承诺找回。
 
+### 远端与 CI（补修批次）
+- 推送 `reliability-batch`（`bae22a5..c778b52`）→ PR #124（draft/OPEN）描述已更新（含补修章节）。
+- 三项必需检查在最终 head `c778b52` 上**全绿**：Browser E2E `pass 1m54s` / Engineering Gate + Migration Rehearsal `pass 5m49s` / Writing E2E `pass 1m51s`（补修新增的 2 个导出屏障 E2E 用例已在 CI Browser E2E 内收集执行）。
+
