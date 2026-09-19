@@ -116,23 +116,26 @@ describe("L3SheetRepository.openSheet", () => {
 });
 
 describe("L3SheetRepository.patchAnswers", () => {
-  it("merges answers atomically behind a draft-only status guard", async () => {
+  it("merges answers atomically behind a draft-only status guard and bumps the draft version", async () => {
     const repo = new L3SheetRepository();
-    const updated = submission({ answers: { [QUESTION]: { choice: "B" } } });
+    const updated = submission({ answers: { [QUESTION]: { choice: "B" } }, draft_version: 3 });
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(updated);
-    const result = await repo.patchAnswers(USER, SHEET, { [QUESTION]: { choice: "B" } });
+    const result = await repo.patchAnswers(USER, SHEET, { [QUESTION]: { choice: "B" } }, 2);
     expect(result?.answers).toEqual({ [QUESTION]: { choice: "B" } });
+    expect(result?.draft_version).toBe(3);
     const [sql, params] = (repo as any).queryOne.mock.calls[0];
     expect(sql).toContain("answers = answers || $3::jsonb");
+    expect(sql).toContain("draft_version = draft_version + 1");
     expect(sql).toContain("status = 'draft'");
+    expect(sql).toContain("draft_version = $4"); // V：客户端确认版本 CAS
     expect(sql).toContain("updated_at = now()");
-    expect(params).toEqual([USER, SHEET, JSON.stringify({ [QUESTION]: { choice: "B" } })]);
+    expect(params).toEqual([USER, SHEET, JSON.stringify({ [QUESTION]: { choice: "B" } }), 2]);
   });
 
-  it("returns null when the conditional update hits a non-draft or missing sheet", async () => {
+  it("returns null when the conditional update hits a non-draft, missing sheet or stale version", async () => {
     const repo = new L3SheetRepository();
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
-    await expect(repo.patchAnswers(USER, SHEET, { [QUESTION]: null })).resolves.toBeNull();
+    await expect(repo.patchAnswers(USER, SHEET, { [QUESTION]: null }, 5)).resolves.toBeNull();
   });
 });
 
@@ -144,14 +147,15 @@ describe("L3SheetRepository.sealSheet", () => {
     }));
     const result = await repo.sealSheet(USER, SHEET, {
       status: "sealed", seal_mode: "full", summary: null,
-    });
+    }, submission().draft_version);
     expect(result?.status).toBe("sealed");
     const [sql, params] = (repo as any).queryOne.mock.calls[0];
     expect(sql).toContain("SET status = $3");
     expect(sql).toContain("answers = '{}'::jsonb");
     expect(sql).toContain("sealed_at = now()");
     expect(sql).toContain("status = 'draft'");
-    expect(params).toEqual([USER, SHEET, "sealed", "full", null]);
+    expect(sql).toContain("draft_version = $6");
+    expect(params).toEqual([USER, SHEET, "sealed", "full", null, submission().draft_version]);
   });
 
   it("returns null when the seal guard misses (already sealed/discarded)", async () => {
@@ -159,7 +163,7 @@ describe("L3SheetRepository.sealSheet", () => {
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
     await expect(repo.sealSheet(USER, SHEET, {
       status: "discarded", seal_mode: "summary", summary: "本次只留总结",
-    })).resolves.toBeNull();
+    }, submission().draft_version)).resolves.toBeNull();
   });
 });
 
@@ -292,7 +296,7 @@ describe("L3SheetRepository transaction guard", () => {
     const repo = new L3SheetRepository();
     await expect(repo.sealSheet(USER, SHEET, {
       status: "sealed", seal_mode: "full", summary: null,
-    })).rejects.toThrow("requires an active transaction");
+    }, submission().draft_version)).rejects.toThrow("requires an active transaction");
   });
 
   it("allows sealSheet inside a transaction", async () => {
@@ -300,7 +304,7 @@ describe("L3SheetRepository transaction guard", () => {
     vi.spyOn(repo as any, "queryOne").mockResolvedValue(submission({ status: "sealed" }));
     await expect(repo.sealSheet(USER, SHEET, {
       status: "sealed", seal_mode: "full", summary: null,
-    })).resolves.toMatchObject({ status: "sealed" });
+    }, submission().draft_version)).resolves.toMatchObject({ status: "sealed" });
   });
 });
 

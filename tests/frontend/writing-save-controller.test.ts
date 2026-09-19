@@ -540,3 +540,280 @@ describe("W4 保存控制器 · dispose", () => {
     await expect(controller.flush()).rejects.toBeInstanceOf(SaveDisposedError);
   });
 });
+
+describe("W12 修复 · 恢复确认只绑定已发送序号（新输入不被误确认）", () => {
+  it("第四次丢响应、恢复确认旧正文期间输入新正文：继续补发最新输入，flush 不得以旧正文提前返回", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    const load = vi.fn<LoadFn>();
+    const defers: Deferred<WritingSaveControllerSaveResult>[] = [];
+    let calls = 0;
+    save.mockImplementation(() => {
+      calls += 1;
+      if (calls <= 3) return Promise.reject(new Error("network")); // 前三次网络失败
+      const d = defer<WritingSaveControllerSaveResult>();
+      defers.push(d);
+      return d.promise; // 第 4 次：在途（稍后丢响应）；第 5 次：恢复后的新正文
+    });
+    load.mockResolvedValue({ text: "A", version: 2 }); // 第 4 次实际已落库（响应丢失）
+
+    const controller = setupController(save, timers, { version: 1, text: "", load });
+
+    controller.setText("A"); // seq1
+    const first = controller.flush();
+    await flushMicrotasks();
+    await exhaustRetries(timers); // 3 次退避 → 第 4 次进入在途
+
+    expect(save).toHaveBeenCalledTimes(4);
+    expect(save.mock.calls[3]![0]).toEqual({ text: "A", expectedVersion: 1 });
+    expect(defers).toHaveLength(1);
+
+    controller.setText("B"); // 第 4 次在途期间的新输入（seq2）
+    const second = controller.flush();
+
+    defers[0]!.reject(new Error("response lost")); // 丢响应：自动重试耗尽 → load 恢复
+    await flushMicrotasks(8);
+
+    // 恢复只确认 sentSeq(A)：必须继续把 B 发出去（旧实现误把 B 记为已确认、不再发送）
+    expect(save).toHaveBeenCalledTimes(5);
+    expect(save.mock.calls[4]![0]).toEqual({ text: "B", expectedVersion: 2 });
+
+    // B 确认前：两个 flush 都不得以 A 提前结算（不得返回与已确认正文不匹配的回执）
+    let settled = 0;
+    const bump = (): void => { settled += 1; };
+    void first.then(bump, bump);
+    void second.then(bump, bump);
+    await flushMicrotasks();
+    expect(settled).toBe(0);
+
+    defers[1]!.resolve({ draftVersion: 3, textSha256: "h" });
+    await flushMicrotasks(8);
+
+    await expect(second).resolves.toEqual({ text: "B", version: 3 });
+    await expect(first).resolves.toEqual({ text: "B", version: 3 });
+    expect(controller.getSnapshot()).toMatchObject({ text: "B", version: 3, state: "clean" });
+  });
+
+  it("恢复读取在途期间输入新正文：load 返回确认后仍按最新输入补发（不丢稿、不误确认）", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    const load = vi.fn<LoadFn>();
+    const defers: Deferred<WritingSaveControllerSaveResult>[] = [];
+    let calls = 0;
+    save.mockImplementation(() => {
+      calls += 1;
+      if (calls <= 3) return Promise.reject(new Error("network"));
+      const d = defer<WritingSaveControllerSaveResult>();
+      defers.push(d);
+      return d.promise;
+    });
+    const loadDeferred = defer<WritingSaveControllerLoadResult>();
+    load.mockReturnValue(loadDeferred.promise);
+
+    const controller = setupController(save, timers, { version: 1, text: "", load });
+
+    controller.setText("A");
+    const first = controller.flush();
+    await flushMicrotasks();
+    await exhaustRetries(timers);
+    defers[0]!.reject(new Error("response lost"));
+    await flushMicrotasks(8);
+    expect(load).toHaveBeenCalledTimes(1); // 恢复读取在途
+
+    controller.setText("B"); // 读取期间的新输入
+    controller.flush();
+
+    loadDeferred.resolve({ text: "A", version: 2 });
+    await flushMicrotasks(8);
+
+    expect(save).toHaveBeenCalledTimes(5);
+    expect(save.mock.calls[4]![0]).toEqual({ text: "B", expectedVersion: 2 });
+
+    defers[1]!.resolve({ draftVersion: 3, textSha256: "h" });
+    await flushMicrotasks(8);
+
+    await expect(first).resolves.toEqual({ text: "B", version: 3 });
+    expect(controller.getSnapshot()).toMatchObject({ text: "B", version: 3, state: "clean" });
+  });
+
+  it("恢复确认后无新输入：不追加发送，flush 回执=恢复确认的正文与版本", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    const load = vi.fn<LoadFn>();
+    const defers: Deferred<WritingSaveControllerSaveResult>[] = [];
+    let calls = 0;
+    save.mockImplementation(() => {
+      calls += 1;
+      if (calls <= 3) return Promise.reject(new Error("network"));
+      const d = defer<WritingSaveControllerSaveResult>();
+      defers.push(d);
+      return d.promise;
+    });
+    load.mockResolvedValue({ text: "A", version: 2 });
+
+    const controller = setupController(save, timers, { version: 1, text: "", load });
+
+    controller.setText("A");
+    const p = controller.flush();
+    await flushMicrotasks();
+    await exhaustRetries(timers);
+    defers[0]!.reject(new Error("response lost"));
+    await flushMicrotasks(8);
+
+    await expect(p).resolves.toEqual({ text: "A", version: 2 });
+    expect(save).toHaveBeenCalledTimes(4); // 无新输入：不追加发送
+    expect(controller.getSnapshot()).toMatchObject({ text: "A", version: 2, state: "clean" });
+  });
+
+  it("409 冲突保留本地内容：不自动重发、不盲采服务端（手动 retry 仍可用）", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    save.mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 }));
+    const controller = setupController(save, timers, { text: "", version: 0 });
+
+    controller.setText("本地稿");
+    const p = controller.flush();
+    await expect(p).rejects.toBeInstanceOf(SaveConflictError);
+
+    expect(save).toHaveBeenCalledTimes(1); // 不自动重试
+    expect(controller.getSnapshot()).toMatchObject({ text: "本地稿", state: "conflict", version: 0 });
+  });
+});
+
+describe("W13/S 订阅合同 · 终态快照、重入与 dispose（先红后绿）", () => {
+  type Snap = { text: string; version: number; state: string; inFlight: boolean };
+
+  it("成功：订阅者最后收到的快照与 getSnapshot 一致（clean + inFlight=false）", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>().mockResolvedValue({ draftVersion: 1, textSha256: "h" });
+    const controller = setupController(save, timers);
+    const seen: Snap[] = [];
+    controller.subscribe(() => { seen.push({ ...controller.getSnapshot() }); });
+
+    controller.setText("甲");
+    await controller.flush(); // flush 直接发（不等防抖）；pipeline 落地后断言订阅证据
+
+    expect(seen.at(-1)).toEqual(controller.getSnapshot());
+    expect(seen.at(-1)).toMatchObject({ state: "clean", inFlight: false });
+  });
+
+  it("失败（500×4）：最后快照 error + inFlight=false，不把终态显示成保存中", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>().mockRejectedValue(Object.assign(new Error("boom"), { status: 500 }));
+    const controller = setupController(save, timers);
+    const seen: Snap[] = [];
+    controller.subscribe(() => { seen.push({ ...controller.getSnapshot() }); });
+
+    controller.setText("甲");
+    const p = controller.flush();
+    await flushMicrotasks();
+    await exhaustRetries(timers);
+    await expect(p).rejects.toThrow();
+
+    expect(seen.at(-1)).toEqual(controller.getSnapshot());
+    expect(seen.at(-1)).toMatchObject({ state: "error", inFlight: false });
+  });
+
+  it("409：最后快照 conflict + inFlight=false（订阅者不被在途帧掩蔽）", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>().mockRejectedValue(Object.assign(new Error("conflict"), { status: 409 }));
+    const controller = setupController(save, timers);
+    const seen: Snap[] = [];
+    controller.subscribe(() => { seen.push({ ...controller.getSnapshot() }); });
+
+    controller.setText("甲");
+    const p = controller.flush();
+    await expect(p).rejects.toBeInstanceOf(SaveConflictError);
+
+    expect(seen.at(-1)).toEqual(controller.getSnapshot());
+    expect(seen.at(-1)).toMatchObject({ state: "conflict", inFlight: false });
+  });
+
+  it("Task A 恢复续写：补发 B 确认后，订阅最后快照 = clean + inFlight=false", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    const load = vi.fn<LoadFn>();
+    const defers: Deferred<WritingSaveControllerSaveResult>[] = [];
+    let calls = 0;
+    save.mockImplementation(() => {
+      calls += 1;
+      if (calls <= 3) return Promise.reject(new Error("network"));
+      const d = defer<WritingSaveControllerSaveResult>();
+      defers.push(d);
+      return d.promise;
+    });
+    load.mockResolvedValue({ text: "A", version: 2 });
+
+    const controller = setupController(save, timers, { version: 1, text: "", load });
+    const seen: Snap[] = [];
+    controller.subscribe(() => { seen.push({ ...controller.getSnapshot() }); });
+
+    controller.setText("A");
+    const first = controller.flush();
+    await flushMicrotasks();
+    await exhaustRetries(timers);
+    controller.setText("B"); // 在途新输入
+    const second = controller.flush();
+    defers[0]!.reject(new Error("response lost")); // 恢复确认 A（sentSeq）
+    await flushMicrotasks(8);
+    defers[1]!.resolve({ draftVersion: 3, textSha256: "h" }); // 补发 B
+    await flushMicrotasks(8);
+
+    await expect(second).resolves.toEqual({ text: "B", version: 3 });
+    await first;
+    expect(seen.at(-1)).toEqual(controller.getSnapshot());
+    expect(seen.at(-1)).toMatchObject({ state: "clean", inFlight: false });
+  });
+
+  it("重入：clean 通知里立刻 setText+flush，等待者由释放 inFlight 后的排出推进（不依赖防抖）", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>().mockResolvedValue({ draftVersion: 1, textSha256: "h" });
+    const controller = setupController(save, timers);
+    const reentrantFlushes: Array<Promise<unknown>> = [];
+    let armed = false;
+    controller.subscribe(() => {
+      const snap = controller.getSnapshot();
+      if (!armed && snap.state === "clean" && snap.text === "甲") {
+        armed = true;
+        controller.setText("乙");
+        reentrantFlushes.push(controller.flush());
+      }
+    });
+
+    controller.setText("甲");
+    await controller.flush(); // 甲确认后触发重入
+    expect(reentrantFlushes).toHaveLength(1);
+
+    const outcome = await Promise.race([
+      reentrantFlushes[0]!.then(() => "done"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 200)),
+    ]);
+    expect(outcome).toBe("done");
+    expect(controller.getSnapshot()).toMatchObject({ text: "乙", state: "clean" });
+  });
+
+  it("dispose 后管道落地不再发通知（订阅者不再收到帧）", async () => {
+    const timers = makeFakeTimers();
+    const save = vi.fn<SaveFn>();
+    const defers: Deferred<WritingSaveControllerSaveResult>[] = [];
+    save.mockImplementation(() => {
+      const d = defer<WritingSaveControllerSaveResult>();
+      defers.push(d);
+      return d.promise;
+    });
+    const controller = setupController(save, timers);
+    let calls = 0;
+    controller.subscribe(() => { calls += 1; });
+
+    controller.setText("甲");
+    const p = controller.flush();
+    await flushMicrotasks();
+    const before = calls;
+    controller.dispose();
+    defers[0]!.resolve({ draftVersion: 1, textSha256: "h" });
+    await flushMicrotasks(8);
+
+    expect(calls).toBe(before);
+    await expect(p).rejects.toBeInstanceOf(SaveDisposedError);
+  });
+});

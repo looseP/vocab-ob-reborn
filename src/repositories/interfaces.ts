@@ -1670,10 +1670,20 @@ export interface IL3SheetRepository {
   findDraftByScopeKey(userId: string, scopeKey: string): Promise<L3SubmissionRow | null>;
   /** 开纸：部分唯一索引 ON CONFLICT 冲突复用既有行（created=false）。 */
   openSheet(input: NewL3Submission): Promise<L3SheetOpenResult>;
-  /** 条件 UPDATE（WHERE status='draft'）：非 draft/不存在返回 null（service 分派 404/409）。 */
-  patchAnswers(userId: string, sheetId: string, answers: Record<string, unknown>): Promise<L3SubmissionRow | null>;
-  /** 定格（requireTx）：状态流转 + 定格元数据 + answers 清空（attempts 为唯一作答真源）。 */
-  sealSheet(userId: string, sheetId: string, seal: L3SheetSealUpdate): Promise<L3SubmissionRow | null>;
+  /** 条件 UPDATE（WHERE status='draft'）：非 draft/不存在返回 null（service 分派 404/409）。
+   *  每次 merge 推进 draft_version（定格 CAS 护栏）。
+   *  V（2026-09-19）：expectedDraftVersion 为客户端确认版本的 CAS 条件——旧版本
+   *  的合并落空返回 null，由 service 区分 404/409（不泄露服务器当前版本）。 */
+  patchAnswers(
+    userId: string,
+    sheetId: string,
+    answers: Record<string, unknown>,
+    expectedDraftVersion: number,
+  ): Promise<L3SubmissionRow | null>;
+  /** 定格（requireTx）：状态流转 + 定格元数据 + answers 清空（attempts 为唯一作答真源）。
+   *  expectedDraftVersion 为 CAS 护栏——仅当当前 draft_version 匹配才抢占成功。 */
+  sealSheet(userId: string, sheetId: string, seal: L3SheetSealUpdate, expectedDraftVersion: number): Promise<L3SubmissionRow | null>;
+  /** 题纸详情读（非锁，仅供定格读取基线 / 结果页派生）。 */
   getSheet(userId: string, sheetId: string): Promise<L3SubmissionRow | null>;
   /** 批量物化（seal 事务内）：一批 attempts 单语句插入。 */
   insertAttempts(userId: string, attempts: readonly NewL3QuestionAttempt[]): Promise<L3QuestionAttemptRow[]>;

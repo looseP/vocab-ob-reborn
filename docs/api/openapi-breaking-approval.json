@@ -1,57 +1,17 @@
 {
   "version": 1,
-  "baseSha256": "7115f2ad5375a7ed0bf9e484fa86a3cbb85cc23315b59a723150d9af172321ea",
-  "currentSha256": "2c6970d29dfb1ab6ec7b661a65ac91caa513dae20dfbc2956a073c17cedc361f",
+  "baseSha256": "2c6970d29dfb1ab6ec7b661a65ac91caa513dae20dfbc2956a073c17cedc361f",
+  "currentSha256": "49743dd4983c759e717316b590b1478d1875f13d80c9cd124c5faf16bc31277c",
   "issues": [
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}/grading-context.get.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/sheets/{id}.patch.requestBody.content.application/json.schema.properties.expectedVersion",
+      "message": "新增 required request field"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}/grading.get.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}/grading.post.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/sheets.get.responses.200.content.application/json.schema.properties.items.items.properties.scope",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/sheets.post.responses.201.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}.get.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}.get.responses.200.content.application/json.schema.properties.attempts.items.properties.venue",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}.patch.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}/seal.post.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/attempts.get.responses.200.content.application/json.schema.properties.items.items.properties.venue",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/sheets/{id}/seal.post.requestBody.content.application/json.schema.properties.expectedVersion",
+      "message": "新增 required request field"
     }
   ]
 }

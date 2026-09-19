@@ -59,6 +59,7 @@ function sheetFixture(overrides: Record<string, unknown> = {}): Record<string, u
     question_type: null,
     paper_id: PAPER_ID,
     status: "draft",
+    draft_version: 0,
     answers: {},
     seal_mode: null,
     summary: null,
@@ -75,11 +76,18 @@ type MockOptions = {
   sealSoftConfirmOnce?: number;
   /** GET /l3/sheets/:id 的派生 attempts（sealed 结果页）。 */
   derivedAttempts?: unknown[];
+  /** 注入 PATCH 行为（Task B 屏障测试）：hold=挂起到 gate 释放；error=直接抛错。 */
+  patchBehavior?: { hold?: Promise<void>; error?: { status: number; code?: string } };
+  /** V 测试：PATCH 成功时逐次递增 draft_version（默认恒定 0）。 */
+  patchVersionStep?: boolean;
+  /** V 测试：GET /l3/sheets/:id 的详情行覆盖（冲突恢复动作读服务器版本用）。 */
+  detailSheet?: Record<string, unknown>;
 };
 
 function setupMock(options: MockOptions = {}) {
   const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
   let sealCalls = 0;
+  let patchCount = 0;
   apiFetchMock.mockImplementation(async (path: string, init?: { method?: string; body?: string }) => {
     if (path === "/l3/sheets" && (!init || init.method === "POST")) {
       return { sheet: options.sheet ?? sheetFixture() };
@@ -104,10 +112,25 @@ function setupMock(options: MockOptions = {}) {
       return `# L3 题纸档案（v2）\n\n导出路径 ${path}`;
     }
     if (path.startsWith("/l3/sheets/") && !init?.method) {
-      return { sheet: sheetFixture({ status: "sealed", seal_mode: "full" }), attempts: options.derivedAttempts ?? [] };
+      return { sheet: options.detailSheet ?? sheetFixture({ status: "sealed", seal_mode: "full" }), attempts: options.derivedAttempts ?? [] };
     }
     if (path.startsWith("/l3/sheets/") && init?.method === "PATCH") {
-      return { sheet: sheetFixture({ answers: init.body ? (JSON.parse(init.body) as { answers: unknown }).answers : {} }) };
+      if (options.patchBehavior?.error) {
+        throw new BrowserApiError(options.patchBehavior.error.status, {
+          error: "patch failed",
+          code: options.patchBehavior.error.code ?? "VALIDATION_ERROR",
+        });
+      }
+      if (options.patchBehavior?.hold) {
+        await options.patchBehavior.hold;
+      }
+      if (options.patchVersionStep) patchCount += 1;
+      return {
+        sheet: sheetFixture({
+          answers: init.body ? (JSON.parse(init.body) as { answers: unknown }).answers : {},
+          draft_version: options.patchVersionStep ? patchCount : 0,
+        }),
+      };
     }
     if (path.startsWith("/l3/question-annotations")) return { items: [] };
     if (path === "/l3/annotation-tags") return { entry: [], option: [] };
@@ -191,7 +214,7 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
     expect(patchCallsAfter).toHaveLength(1);
     const [url, init] = patchCallsAfter[0]!;
     expect(url).toBe(`/l3/sheets/${SHEET_ID}`);
-    expect(JSON.parse((init as { body: string }).body)).toEqual({ answers: { [Q1]: { choice: "B" } } });
+    expect(JSON.parse((init as { body: string }).body)).toEqual({ expectedVersion: 0, answers: { [Q1]: { choice: "B" } } });
     expect(screen.getByText(/已保存/)).toBeTruthy();
   });
 
@@ -215,6 +238,7 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
     );
     expect(patchCalls).toHaveLength(1);
     expect(JSON.parse((patchCalls[0]![1] as { body: string }).body)).toEqual({
+      expectedVersion: 0,
       answers: { [Q1]: { choice: "B" }, [Q2]: { choice: "A" } },
     });
   });
@@ -256,6 +280,7 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
     expect(screen.getByText(/还有 2 题未作答/)).toBeTruthy();
     const firstSeal = apiFetchMock.mock.calls.find(([path]) => String(path).endsWith("/seal"));
     expect(JSON.parse((firstSeal![1] as { body: string }).body)).toEqual({
+      expectedVersion: 0,
       mode: "full",
       acknowledgeUnanswered: false,
     });
@@ -267,6 +292,7 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
     const sealCalls = apiFetchMock.mock.calls.filter(([path]) => String(path).endsWith("/seal"));
     expect(sealCalls).toHaveLength(2);
     expect(JSON.parse((sealCalls[1]![1] as { body: string }).body)).toEqual({
+      expectedVersion: 0,
       mode: "full",
       acknowledgeUnanswered: true,
     });
@@ -429,6 +455,7 @@ describe("批次二增补：旗标与待复查（v2 §10）", () => {
     );
     expect(patchCalls).toHaveLength(1);
     expect(JSON.parse((patchCalls[0]![1] as { body: string }).body)).toEqual({
+      expectedVersion: 0,
       answers: { [Q1]: { flags: { recheck: true, doubt: true }, optionFlags: ["A"], choice: "B" } },
     });
   });
@@ -553,7 +580,7 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
     });
 
     expect(patchBodies(apiFetchMock)).toEqual([
-      { answers: { [Q1]: { marks: [{ scope: "stem", start: 4, end: 11 }] } } },
+      { expectedVersion: 0, answers: { [Q1]: { marks: [{ scope: "stem", start: 4, end: 11 }] } } },
     ]);
     // 高亮渲染：纯底色 mark（无角标）
     expect(document.querySelector(`#q-${Q1} [data-stem-mark]`)).toBeTruthy();
@@ -591,7 +618,7 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
     expect(patchBodies(apiFetchMock)).toEqual([
-      { answers: { [Q1]: { choice: "B", marks: [{ scope: "passage", start: 4, end: 8 }] } } },
+      { expectedVersion: 0, answers: { [Q1]: { choice: "B", marks: [{ scope: "passage", start: 4, end: 8 }] } } },
     ]);
     expect(document.querySelector("[data-passage-mark]")).toBeTruthy();
 
@@ -610,8 +637,8 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
     expect(patchBodies(apiFetchMock)).toEqual([
-      { answers: { [Q1]: { choice: "B", marks: [{ scope: "passage", start: 4, end: 8 }] } } },
-      { answers: { [Q1]: { choice: "B" } } },
+      { expectedVersion: 0, answers: { [Q1]: { choice: "B", marks: [{ scope: "passage", start: 4, end: 8 }] } } },
+      { expectedVersion: 0, answers: { [Q1]: { choice: "B" } } },
     ]);
     expect(document.querySelector("[data-passage-mark]")).toBeNull();
   });
@@ -661,7 +688,7 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
     expect(patchBodies(apiFetchMock)).toEqual([
-      { answers: { [Q1]: { marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
+      { expectedVersion: 0, answers: { [Q1]: { marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
     ]);
     // 行内高亮仅落在 B 行（纯底色，无角标）
     expect(document.querySelector(`[data-option-key="B"] [data-option-mark]`)).toBeTruthy();
@@ -693,7 +720,7 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
     expect(patchBodies(apiFetchMock)).toEqual([
-      { answers: { [Q1]: { choice: "B", marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
+      { expectedVersion: 0, answers: { [Q1]: { choice: "B", marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
     ]);
 
     // 再划同区间：浮动条显示「取消标记」→ 撤销后 PATCH 回到纯 choice
@@ -711,8 +738,8 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
     expect(patchBodies(apiFetchMock)).toEqual([
-      { answers: { [Q1]: { choice: "B", marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
-      { answers: { [Q1]: { choice: "B" } } },
+      { expectedVersion: 0, answers: { [Q1]: { choice: "B", marks: [{ scope: "option", optionKey: "B", start: 0, end: 1 }] } } },
+      { expectedVersion: 0, answers: { [Q1]: { choice: "B" } } },
     ]);
     expect(document.querySelector("[data-option-mark]")).toBeNull();
   });
@@ -755,7 +782,7 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
     expect(patchBodies(apiFetchMock)).toEqual([
-      { answers: { [Q1]: { choice: "B" } } },
+      { expectedVersion: 0, answers: { [Q1]: { choice: "B" } } },
     ]);
   });
 
@@ -817,7 +844,7 @@ describe("批次二增补：导出 v2 弹层（v2 §6）", () => {
       fireEvent.click(screen.getByRole("button", { name: "复制全文" }));
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
-    const exportCall = apiFetchMock.mock.calls.find(([path]) => String(path).endsWith("/export?withAnswers=1"));
+    const exportCall = apiFetchMock.mock.calls.find(([path]) => String(path).includes("/export?withAnswers=1"));
     expect(exportCall).toBeTruthy();
     expect(clipboardWrite).toHaveBeenCalledWith(expect.stringContaining("# L3 题纸档案（v2）"));
     expect(addToastMock).toHaveBeenCalledWith("success", "已复制导出全文");
@@ -848,7 +875,7 @@ describe("批次二增补：导出 v2 弹层（v2 §6）", () => {
       fireEvent.click(screen.getByRole("button", { name: "复制全文" }));
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
-    expect(apiFetchMock.mock.calls.some(([path]) => String(path).endsWith("/export?withAnswers=0"))).toBe(true);
+    expect(apiFetchMock.mock.calls.some(([path]) => String(path).includes("/export?withAnswers=0"))).toBe(true);
   });
 
   it("剪贴板不可用时给出降级提示（改用下载）", async () => {
@@ -865,5 +892,261 @@ describe("批次二增补：导出 v2 弹层（v2 §6）", () => {
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
     expect(addToastMock).toHaveBeenCalledWith("error", "当前环境不支持剪贴板，请改用「下载 .md」");
+  });
+});
+
+describe("Task B · 保存/定格/导出屏障（页面级）", () => {
+  const patchCallsOf = (apiFetchMock: ReturnType<typeof vi.fn>) =>
+    apiFetchMock.mock.calls.filter(
+      ([path, init]) => String(path).startsWith("/l3/sheets/") && (init as { method?: string } | undefined)?.method === "PATCH",
+    );
+  const sealCallsOf = (apiFetchMock: ReturnType<typeof vi.fn>) =>
+    apiFetchMock.mock.calls.filter(([path]) => String(path).endsWith("/seal"));
+
+  it("PATCH 失败（422 非可重试）→ 定格被屏障阻断：seal 未调用、未定格、失败可见、作答保留", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock({ patchBehavior: { error: { status: 422, code: "VALIDATION_ERROR" } } });
+    await renderPaper();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    // 保存失败诚实可见（非「已保存」），并提供手动重试（可恢复操作）
+    expect(screen.getByText(/保存失败，尚未保存，请勿离开/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+
+    // 尝试定格：flush 屏障 reject → seal 请求不得发出
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    expect(sealCallsOf(apiFetchMock)).toHaveLength(0);
+    expect(screen.queryByText("已定格")).toBeNull();
+    expect(addToastMock).toHaveBeenCalledWith("error", expect.stringContaining("定格失败"));
+    // 本地作答保留（未确认也不丢）
+    expect(screen.getByRole("button", { name: /乙/ }).getAttribute("data-selected")).toBe("true");
+  });
+
+  it("已有 PATCH 在途时点定格：seal 等待确认后才调用（不提前定格）", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const apiFetchMock = setupMock({ patchBehavior: { hold: gate } });
+    await renderPaper();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(patchCallsOf(apiFetchMock)).toHaveLength(1); // 在途（挂起）
+    expect(screen.queryByText(/已保存/)).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    // 在途未确认：seal 不得发出
+    expect(sealCallsOf(apiFetchMock)).toHaveLength(0);
+
+    release();
+    await act(async () => {
+      for (let i = 0; i < 24; i += 1) await Promise.resolve();
+    });
+    // 确认完成后才定格（恰一次）
+    expect(sealCallsOf(apiFetchMock)).toHaveLength(1);
+    expect(screen.getByText("已定格")).toBeTruthy();
+  });
+
+  it("在途保存未确认时导出：等待确认后才发出导出请求（不导出未落库草稿）", async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const apiFetchMock = setupMock({ patchBehavior: { hold: gate } });
+    const clipboardWrite = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: clipboardWrite }, configurable: true });
+    await renderPaper();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "导出" }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制全文" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    const exportCalls = () => apiFetchMock.mock.calls.filter(([path]) => String(path).includes("/export"));
+    expect(exportCalls()).toHaveLength(0); // 屏障未放行：不导出
+    expect(clipboardWrite).not.toHaveBeenCalled();
+
+    release();
+    await act(async () => {
+      for (let i = 0; i < 24; i += 1) await Promise.resolve();
+    });
+    expect(exportCalls().length).toBeGreaterThan(0);
+    expect(clipboardWrite).toHaveBeenCalledWith(expect.stringContaining("# L3 题纸档案（v2）"));
+  });
+});
+
+describe("S · 已保存时间与离页守卫（组件级合同）", () => {
+  const dispatchBeforeUnload = (): Event => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event;
+  };
+
+  it("干净无写入不生造保存时间：恢复态只显示「草稿」不显示「已保存」", async () => {
+    setupMock({ sheet: sheetFixture({ answers: { [Q1]: { choice: "B" } } }) });
+    await renderPaper();
+
+    expect(screen.queryByText(/已保存/)).toBeNull();
+    expect(screen.getByText("草稿")).toBeTruthy();
+  });
+
+  it("保存成功显示确认时间；失败不显示本次「已保存」；离页守卫随未确认状态切换", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 19, 12, 30, 0));
+    const opts: MockOptions = {};
+    setupMock(opts);
+    await renderPaper();
+
+    // 首次保存成功：时间来自确认回执（12:30），并已 clean → 离页不拦截
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(screen.getByText("草稿 · 已保存 12:30")).toBeTruthy();
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(false);
+
+    // 时钟前进后再次编辑并保存失败（422 不自动重试）：
+    // 不得显示「本次已保存（12:35）」——时间只来自实际确认事件；未确认 → 离页恢复拦截。
+    opts.patchBehavior = { error: { status: 422, code: "VALIDATION_ERROR" } };
+    vi.setSystemTime(new Date(2026, 8, 19, 12, 35, 0));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /丙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(screen.getByText(/保存失败，尚未保存，请勿离开/)).toBeTruthy();
+    expect(screen.queryByText(/已保存 12:35/)).toBeNull();
+    expect(dispatchBeforeUnload().defaultPrevented).toBe(true);
+  });
+});
+
+describe("V · 版本合同（组件级）", () => {
+  it("定格携带 flush 回执版本：保存推进到 v1 后 seal(expectedVersion=1)", async () => {
+    vi.useFakeTimers();
+    const apiFetchMock = setupMock({ patchVersionStep: true });
+    await renderPaper();
+
+    // 保存一次：v0 → v1（PATCH 返回递增版本）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    // 定格：必须携带 flush 回执版本 1（不得 GET 最新版绕过，也不得回退旧版本）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "定格题纸" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "确认定格" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    const sealCall = apiFetchMock.mock.calls.find(([path]) => String(path).endsWith("/seal"));
+    expect(sealCall).toBeTruthy();
+    expect(JSON.parse((sealCall![1] as { body: string }).body)).toEqual({
+      expectedVersion: 1,
+      mode: "full",
+      acknowledgeUnanswered: false,
+    });
+    expect(screen.getByText("已定格")).toBeTruthy();
+  });
+
+  it("冲突恢复：409 → 复制本地答案/载入服务器版本（无盲试重试）；载入后显式编辑才成功", async () => {
+    vi.useFakeTimers();
+    const opts: MockOptions = {
+      patchBehavior: { error: { status: 409, code: "DRAFT_VERSION_CONFLICT" } },
+      detailSheet: sheetFixture({ answers: { [Q1]: { choice: "A" } }, draft_version: 3 }),
+    };
+    const apiFetchMock = setupMock(opts);
+    await renderPaper();
+
+    // 编辑 → 保存 409（版本冲突）→ 冲突态与恢复动作可见；无「重试」（盲试无意义）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(screen.getByText(/保存冲突：可能已在别处定格/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "复制本地答案" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "载入服务器版本" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+
+    // 载入服务器版本：GET 详情（他端 Q1=A、v3）→ 本地重置、基线重建（离开冲突态）
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "载入服务器版本" }));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(screen.queryByText(/保存冲突/)).toBeNull();
+    expect(addToastMock).toHaveBeenCalledWith("success", expect.stringContaining("已载入服务器版本"));
+    expect(screen.getByRole("button", { name: /甲/ }).getAttribute("data-selected")).toBe("true");
+
+    // 清掉冲突行为后，显式重新编辑才允许成功（版本基线=载入的 v3）
+    opts.patchBehavior = undefined;
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(800);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    const patchCalls = apiFetchMock.mock.calls.filter(
+      ([path, init]) => String(path).startsWith("/l3/sheets/") && (init as { method?: string } | undefined)?.method === "PATCH",
+    );
+    expect(patchCalls).toHaveLength(2); // 冲突那次 + 恢复后成功那次
+    const lastPatch = JSON.parse((patchCalls[1]![1] as { body: string }).body) as { expectedVersion: number };
+    expect(lastPatch.expectedVersion).toBe(3); // 以载入的服务器版本为基线
+    expect(screen.getByText(/已保存/)).toBeTruthy();
   });
 });

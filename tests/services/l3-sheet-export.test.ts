@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { ConflictError, NotFoundError } from "@/errors";
+import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import type {
   L3QuestionAnnotationRow,
   L3QuestionAssessmentRow,
@@ -621,13 +621,13 @@ describe("L3SheetExportService.exportSheet（v2 三状态分流）", () => {
     });
     const service = makeService(sheetRepo);
 
-    const snapshot = await service.exportSheet(USER, SHEET);
+    const snapshot = await service.exportSheet(USER, SHEET, { expectedVersion: 0 });
     expect(snapshot.markdown).toContain("- 状态: 草稿快照（导出时刻）");
     expect(snapshot.markdown).not.toContain("选 B");
     expect(snapshot.markdown).toContain("The ==trap phrase==");
     expect(extractJsonBlock(snapshot.markdown).answers).toEqual({});
 
-    const withAnswers = await service.exportSheet(USER, SHEET, { withAnswers: true });
+    const withAnswers = await service.exportSheet(USER, SHEET, { withAnswers: true, expectedVersion: 0 });
     expect(withAnswers.markdown).toContain("选 B");
     expect(extractJsonBlock(withAnswers.markdown).answers).toEqual({
       [Q1]: { choice: "B", marks: [{ scope: "passage", start: 4, end: 15 }] },
@@ -675,5 +675,31 @@ describe("L3SheetExportService.exportSheet（v2 三状态分流）", () => {
 
     // v2 sha256 复算：删除「- 内容校验:」行后重算一致（自描述约定）。
     expect(recomputeSha256(first.markdown)).toBe(first.sha256);
+  });
+
+  it("V：draft 导出缺 expectedVersion → ValidationError（缺版本不可导出草稿）", async () => {
+    const service = makeService(makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({ status: "draft", seal_mode: null })),
+    }));
+    await expect(service.exportSheet(USER, SHEET)).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("V：draft 导出旧版本 → 409 DRAFT_VERSION_CONFLICT（核对与生成同一次读取）", async () => {
+    const service = makeService(makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({
+        status: "draft", seal_mode: null, draft_version: 4,
+        answers: { [Q1]: { choice: "B" } },
+      })),
+      listBySheet: vi.fn(async () => []),
+    }));
+    const rejected = await service.exportSheet(USER, SHEET, { expectedVersion: 3 }).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(ConflictError);
+    expect((rejected as ConflictError).meta).toMatchObject({ code: "DRAFT_VERSION_CONFLICT" });
+  });
+
+  it("V：sealed 导出不要求 expectedVersion（旧回看/导出合同保持）", async () => {
+    const service = makeService(makeSheetRepo());
+    const result = await service.exportSheet(USER, SHEET); // fixture 默认 sealed
+    expect(result.schemaVersion).toBe(L3_SHEET_EXPORT_SCHEMA_VERSION);
   });
 });

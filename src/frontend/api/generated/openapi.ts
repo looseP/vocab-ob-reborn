@@ -15866,6 +15866,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -16112,6 +16113,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -16330,6 +16332,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17223,6 +17226,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17406,6 +17410,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17587,6 +17592,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    expectedVersion: number;
                     answers: {
                         [key: string]: {
                             choice?: string;
@@ -17628,6 +17634,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17792,6 +17799,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    expectedVersion: number;
                     /** @enum {string} */
                     mode: "full" | "incremental" | "summary";
                     summary?: string;
@@ -17821,6 +17829,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -21539,6 +21548,7 @@ export interface operations {
     exportL3Sheet: {
         parameters: {
             query?: {
+                expectedVersion?: string;
                 withAnswers?: "0" | "1";
             };
             header?: never;
