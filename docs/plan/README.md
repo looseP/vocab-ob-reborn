@@ -2,8 +2,13 @@
 
 本目录是**派单模板与设计标尺**的**仓内权威副本**。原 `deliverables/software-company/` 下的同名文件已改为指针桩（内容冻结、指向此处），避免双份漂移。
 
+**换机与项目接手**：先读 [已有功能与交接入口](../handoff/README.md)，再按 [换机执行计划](machine-handoff-execution-plan-2026-09-19.md) 恢复环境与数据。该入口区分主线、未合并分支和设计待实现能力。
+
 | 文档 | 作用 |
 |---|---|
+| `study-notes-design-2026-09-18.md` | 题型学习笔记 N1 设计：自由写作、专题、跨题型归属、精确引用、保存与删除契约 |
+| `study-notes-execution-plan-2026-09-18.md` | 学习笔记 Task00–11 执行计划：文件、接口、依赖、测试与真实环境验收 |
+| `study-notes-start-prompt-2026-09-18.md` | 学习笔记执行交接指令，含与 F-1/作文空间的边界 |
 | `writing-space-design-2026-09-18.md` | 作文子空间 v1 设计基线：低摩擦路径、任务/稿次真源、保存并发、反馈权限与逐接口契约 |
 | `writing-space-execution-plan-2026-09-18.md` | 作文子空间 W0–W11 外派执行计划：任务依赖、文件独占、接口、测试与真实环境验收 |
 | `writing-space-start-prompt-2026-09-18.md` | 可复制的主理人启动指令、单任务派工模板及独立验收 prompt |
