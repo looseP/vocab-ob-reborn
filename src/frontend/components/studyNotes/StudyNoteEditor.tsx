@@ -23,6 +23,11 @@ export interface StudyNoteEditorProps {
   noteId: string;
   /** 注入客户端（联调宿主/测试）；默认单例。 */
   client?: StudyNotesClient;
+  /**
+   * 宿主提供的离开动作：经 hook 的 requestNavigation 包装——
+   * flush 成功且无未保存/无在途才执行；失败释放锁并留在原位（navigationError 呈现）。
+   */
+  leaveAction?: { label: string; onLeave: () => void | Promise<void> };
 }
 
 const SAVE_STATE_LABELS: Record<StudyNoteSaveState, string> = {
@@ -127,7 +132,7 @@ function ReferencePlaceholder({ refId, meta }: { refId: string; meta: ReferenceP
   );
 }
 
-export function StudyNoteEditor({ noteId, client }: StudyNoteEditorProps) {
+export function StudyNoteEditor({ noteId, client, leaveAction }: StudyNoteEditorProps) {
   const editor = useStudyNoteEditor({ noteId, client });
   const [showPreview, setShowPreview] = useState(false);
   const [copyState, setCopyState] = useState<{ ok: boolean; text: string } | null>(null);
@@ -196,6 +201,17 @@ export function StudyNoteEditor({ noteId, client }: StudyNoteEditorProps) {
           <Button size="sm" variant={showPreview ? "primary" : "ghost"} onClick={() => setShowPreview((value) => !value)}>
             {showPreview ? "返回编辑" : "预览"}
           </Button>
+          {leaveAction && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void editor.requestNavigation(leaveAction.onLeave)}
+              disabled={editingLocked}
+              data-testid="leave-action"
+            >
+              {leaveAction.label}
+            </Button>
+          )}
         </div>
       </div>
 
