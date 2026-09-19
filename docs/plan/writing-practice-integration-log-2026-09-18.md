@@ -216,3 +216,10 @@
 ### 收口批验证
 
 - 广域批 70 文件 **1131/1131**；typecheck 0；frontend:build 0；api:governance 全绿（base=ccc6fb4c）；Writing E2E 本地复验见下节。
+
+### R2 收口补丁 · 返回降级语义（`74f165e`，2026-09-19）
+
+- **两态区分**：① origin 本无 `sheetId` → 按既有无原纸契约正常返回（不带 resumeSheet）；② origin 有 `sheetId` 但**读取失败 / 不匹配 / discarded** → **不再删参放行**——显示「原题纸暂不可用」+ **重试**（重跑来源与题纸校验）+ **安全列表入口**（file→`/l3?venue=…` 题型空间列表；paper→`/l3` 试卷台列表）；当前作文正文与编辑状态保留。
+- 替换旧测试「不匹配→删 resumeSheet 仍可返回」；**新增三类回归**：不匹配（file·重试+安全列表+零 openSheet+正文保留）、读取失败（含**重试恢复**→带 resumeSheet 正常返回）、discarded（paper 分支·试卷台列表）。页面级断言降级全程零 openSheet、零 createTask/createDraft/saveDraft。
+- **真环境页面级验证**（3100，`.tmp/r2-closeout-verify.cjs`）：A 读取失败（随机 sheetId 404）→ 降级 UI、返回按钮不存在、重试后仍失败、安全列表落 `/l3`、**postsA=0**；B 不匹配（sheetId=写作稿自身 scope 不符）→ 同、**postsB_delta=0**；C 正常 draft 恢复回归 → 返回保留原卷选择「乙」、返回环节 0 openSheet；**三流程 task/sheet/attempt（含 venue）计数全 UNCHANGED**、体验数据未清。截图 `D:/tmp/practice-experience/05-r2b-unavailable.png`。
+- 测试：工作区 28/28；前台全量 381/381；typecheck 0；frontend:build 0。
