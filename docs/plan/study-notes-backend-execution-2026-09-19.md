@@ -155,7 +155,7 @@
 | 提交链（8 提交，逐任务） | `4cffd57`（Task 00）→ `f359f20`（01）→ `8ab7522`（02）→ `59c1702`（03）→ `55bc20b`（04）→ `9d6dedf`（05）→ `d81d44f`（06）→ `f70fcdb`（门禁收口/台账） |
 | 推送 | `study-notes-n1-backend` → origin（多次普通推送，**非强推、未推 main**；每次推送后 `git ls-remote` 核验一致；PR head 以 #126 页面为准） |
 | PR | **#126（draft）** base=`integration/l3-reliability-writing` head=`study-notes-n1-backend`；明确依赖 #125 → https://github.com/looseP/vocab-ob-reborn/pull/126 |
-| CI（依赖 PR 现状） | **`writing-e2e.yml` 已通过**（run `35446505895`，@`3afa898`，2m32s；该 workflow 对全部 PR 触发）；`ci.yml`（Engineering Gate + Browser E2E）触发条件为 `branches:[main]` → **依赖 PR 上不自动运行**（现状配置，未降低门禁、未改审批文件）。#125 合并后本 PR retarget 到 main 即触发三项必需检查；本地等价门禁已全数通过（§6） |
+| CI（依赖 PR 现状） | **`writing-e2e.yml` 已通过**（run `35446505895`，@`3afa898`，2m32s；该 workflow 对全部 PR 触发）；`ci.yml`（Engineering Gate + Browser E2E）触发条件为 `branches:[main]` → **依赖 PR 上不自动运行**（现状配置，未降低门禁、未改审批文件）。#125 合并后本 PR retarget 到 main 即触发三项必需检查；本地门禁分步结果见 §6——**其中 `vitest run --coverage` 收尾挂死、不记 exit 0（2026-09-20 已定位为 D 卷 fs 删除行为并经隔离路径完成验收，见 repair 台账 §6.2 后续结论与 closeout 文档），其余步骤各自 exit 0** |
 
 ## 8. 未覆盖项与已知风险（实时更新）
 

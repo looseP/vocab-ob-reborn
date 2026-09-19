@@ -91,6 +91,8 @@
 | release 合同 | `release:acceptance:contract` / `secret-rotation:evidence:contract` / `release:workflow:verify` | 全 0 | n1r-rac/src/rwv.log |
 
 > **未达 exit 0 的唯一命令**：`vitest run --coverage`（收尾阶段挂死——本机已知环境现象）。任务规则要求"修正执行环境/报告器后重跑，或明确留下未通过项"：本批已执行报告器修正重跑（去 html、直启二进制），挂死复现；测试全绿与新鲜产物完整（已驱动下游 `coverage:layered` 通过），但该命令本身**不记 exit0**；其余 12 步以等价分步执行且各自 exit 0。
+>
+> **后续结论（2026-09-20，另见 `study-notes-engineering-closeout-2026-09-20.md`）**：挂死机制与根因已定位——coverage 收尾 `cleanAfterRun()` 的 `fs.rm(.tmp,{recursive:true})` 中一个未完成的 `rmdir`（async_hooks 创建栈实证，`internal/fs/rimraf`）进入永久 pending，流程走不到 vitest 的退出兜底（`exit()` 的 teardownTimeout 从未被设置）；独立最小复现（不涉 vitest）证明 **D 卷上 node fs 删除异常缓慢（≈32–38ms/次，C 卷≈0.2ms）+ 偶发永久挂起，C 卷同操作正常**。又：原「去 html」尝试中 `--coverage.reporter=json,text` 一次实为参数误用（istanbul `Cannot find module 'json,text'`），未构成有效对照；reporter 组合与挂死无因果。工程门禁验收改经「隔离运行路径」（C 盘独立 clone、同 SHA/lock/config）完成，结果与证据见 closeout 文档 §4。
 
 ### 6.3 独立只读复核（本批 diff 全量复审）
 - 范围：`git diff 555ae18..HEAD -- src/`（953 行）+ tests/docs；重点＝失败事务查询 / GET 一致性 / actor·RLS 边界 / 锁键一致性 / keep 语义。
@@ -105,7 +107,7 @@
 ## 7. 未覆盖项与限制（实时更新）
 
 - 本批不覆盖：Task 07–11（前端）、N2、导出闭环、自动整理、数据迁移；`GET /:noteId/export` 端点仍未交付（Task 10）。
-- 环境限制：`vitest run --coverage` 收尾挂死（见 §6.2；不记 exit0）；`pg_stat_activity.query` 对非超管不可见（交错测试以 `pg_locks`/`pg_blocking_locks` 组合证据代替语句文本）。
+- 环境限制：`vitest run --coverage` 收尾挂死（见 §6.2；不记 exit0）——**2026-09-20 已定位到 D 卷 fs 删除行为（最小复现+定量对照），工程门禁经隔离运行路径完成，详见 closeout 文档**；`pg_stat_activity.query` 对非超管不可见（交错测试以 `pg_locks`/`pg_blocking_locks` 组合证据代替语句文本）。
 - 范围外同型模式观察见 §6.3。
 - CI：`ci.yml` 仅对 base=main 的 PR 触发；本依赖 PR 上仅 `writing-e2e` 运行。三项必需检查待 #125 合并并 retarget 后在新 head 执行（后续授权任务）。
 
@@ -115,4 +117,4 @@
 - **错误码**：无新增码。创建幂等：同键同输入 200 复用 / 异输入 409（不变）；删除 blocker 409 结构不变；FK 兜底无匹配 blocker 时保持原错误语义（不再出现 25P02）。
 - **游标**：目标搜索（`GET /reference-targets`）游标为 **createdAt 族 + 过滤指纹**——换 kind / q（规范化后）/ 有效 venue 必须清空游标重新起翻（复用旧游标 → 400）；`limit` 可自由调整；笔记/专题/backlinks 游标族不变且互不通用。
 - **失效引用**：目标非 active 与目标被直删同显 `unavailable`（保留旧摘录/capturedAt，可 keep 可移除，显式重 capture → 404）；搜索仅返回 active 目标。
-- **详情一致性**：`GET /:noteId` 为单快照视图（body/version/venues/references 同属一次提交），前端可直接整包替换本地态。
+- **详情一致性**：`GET /:noteId` 为单快照视图（body/version/venues/references 同属一次提交）。**前端消费校准（2026-09-20）**：不得无条件整包替换本地态——首次加载也须校验 note 身份与请求代际，仅在无更新的本地编辑时才可替换；GET 一致性只保证单个响应自洽，**不等于响应永远最新**，保存仍以 `expectedVersion` CAS 把关（过期→409→显式载入服务器版本）。另：保存必须携带完整 `references`（既有条目一律 `keep`，保留原摘录/capturedAt）；打开/保存已有笔记不得清空引用或破坏 marker 集合（详见 `study-notes-frontend-tasks-2026-09-20.md` §2.6）。

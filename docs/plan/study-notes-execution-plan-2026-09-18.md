@@ -230,6 +230,8 @@ const fieldHash = createHash('sha256').update(fieldText, 'utf8').digest('hex');
 
 ## Task 07：可靠编辑与保存控制器
 
+> **执行校准（2026-09-20）**：Task 07–08（含 Task 06 延期的手写 `studyNotesClient.ts`）的**可独立执行版本**见 `docs/plan/study-notes-frontend-tasks-2026-09-20.md`。该版本在本文基础上增补硬性要求：完整状态快照保存（正文/归属/置顶/归档共享单一控制器）、A/B 交错语义（固定 payload/requestId/expectedVersion、原样重试、新编辑排队、409 停自动写）、flush 回执（version/editSeq/真实 lastSavedAt、失败 reject）、首次加载的 note 身份与请求代际校验（GET 一致 ≠ 响应永新）、冲突恢复前本地副本保全与恢复期间输入保护、引用保全（keep 不重 capture；打开/保存不得清空 references 或破坏 marker 集合）。与本文冲突处以校准版为准；本文保留历史叙述。
+
 **Files:** Create `src/frontend/state/studyNoteSaveController.ts`、`src/frontend/hooks/useStudyNoteEditor.ts`、`src/frontend/components/studyNotes/StudyNoteEditor.tsx`、`tests/frontend/study-note-save.test.ts`、`study-note-editor.test.tsx`。
 
 **Interfaces:**
@@ -270,6 +272,8 @@ it('does not finish flush while the current save is in flight', async () => {
 - [ ] Commit `feat(notes): implement reliable single-writer editing`。
 
 ## Task 08：笔记空间、专题、分页与导航
+
+> **执行校准（2026-09-20）**：见 `docs/plan/study-notes-frontend-tasks-2026-09-20.md` §3——创建纪律（GET/F5/历史返回不得创建，仅显式操作创建）、深链合法性（noteId 归属/venue 组合校验）、筛选变化清 cursor 与请求序号守卫、专题元数据与成员共享 topic 版本串行、跨页排序用服务端 `beforeNoteId` 合同（不得用当前页顺序覆盖全量）、切 topic/venue 不丢未保存编辑。
 
 **Files:** Create `L3StudyNotesPage.tsx`、`StudyNoteList.tsx`、`StudyTopicPanel.tsx`、`src/frontend/viewModels/studyNoteNavigation.ts`、`tests/frontend/study-notes-page.test.tsx`、`study-note-navigation.test.ts`；Modify `L3Page.tsx`、`L3PapersPage.tsx`、`l3ShellViewModel.ts`、`docs/design/l3-space/baseline.md`。
 
