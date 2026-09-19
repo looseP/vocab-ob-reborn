@@ -11,6 +11,9 @@
  * R2 两连接复现（Task B 核心）：seal 读取 A（v=1）后阻塞，PATCH 写 B（v=2 提交），再释放
  *    seal —— seal 的 draft_version CAS 必须落空，拒绝固化旧 A 并**保留**并发写入 B（不丢）；
  *    库核：题纸仍 draft、answers=B、draft_version=2、无 attempt 物化。
+ *    屏障可观测（2026-09-19 补强）：以 pg_locks 未授予 transactionid 锁为判据，确认被测
+ *    请求已到达 CAS UPDATE 被行锁阻塞（读后竞争路径）后再提交屏障；超时即失败，
+ *    不用固定 sleep 掩盖「读前冲突」的退化路径。
  *
  * 设计要点（与 writing 并发测试同律，但语义相反）：writing 测试里迟到提交因锁阻塞后 409；
  * 本题纸采用「读版本 + CAS 抢占」乐观并发，**不**用 FOR UPDATE 悲观锁——悲观锁会把
@@ -58,6 +61,26 @@ describe("L3 sheet seal concurrency (integration)", () => {
     await client.query("BEGIN");
     await client.query("SELECT set_config('request.jwt.claim.sub', $1, true)", [actorId]);
     return client;
+  }
+
+  /**
+   * 可观测屏障（审查建议）：轮询 pg_locks 直到出现「未授予的 transactionid 锁」——
+   * 即被测请求已通过版本读取并到达 CAS UPDATE、被屏障事务的行锁阻塞（读后竞争路径
+   * 已发生）。取代固定 sleep：慢调度下若请求未达 UPDATE，超时失败如实暴露而不是
+   * 静默退化为「读前冲突」路径。
+   */
+  async function waitForCasLockWait(label: string, timeoutMs = 10_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const row = await adminPool.query<{ c: number }>(
+        `SELECT count(*)::int AS c FROM pg_locks WHERE NOT granted AND locktype = 'transactionid'`,
+      );
+      if (row.rows[0]!.c > 0) return;
+      if (Date.now() > deadline) {
+        throw new Error(`屏障超时：未观测到 CAS UPDATE 的行锁等待（${label}）`);
+      }
+      await sleep(50);
+    }
   }
 
   /** 每个用例前清掉 A 的草稿（含 attempt），并以固定 scope_key 插入一张干净 draft。 */
@@ -185,7 +208,8 @@ describe("L3 sheet seal concurrency (integration)", () => {
     const sealPromise = sheetService.sealSheet({
       userId: ACTOR_A, sheetId, expectedVersion: 1, mode: "full", acknowledgeUnanswered: true,
     });
-    await sleep(250);
+    // 可观测屏障：确认 seal 已到达 CAS UPDATE 且被行锁阻塞（读后竞争路径），再提交屏障。
+    await waitForCasLockWait("R2 seal CAS UPDATE");
     await client.query("COMMIT");
     client.release();
 
@@ -228,7 +252,8 @@ describe("L3 sheet seal concurrency (integration)", () => {
     const patchPromise = sheetService.patchSheet({
       userId: ACTOR_A, sheetId, expectedVersion: 0, answers: { [QUESTION]: { choice: "B" } },
     });
-    await sleep(250);
+    // 可观测屏障：确认本端 PATCH 已到达 CAS UPDATE 且被行锁阻塞，再提交屏障。
+    await waitForCasLockWait("R3 patch CAS UPDATE");
     await client.query("COMMIT");
     client.release();
 
