@@ -92,6 +92,17 @@ function formatSavedAt(iso: string): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/** 服务端 answers → 本地 picks（形状防御：仅收对象值）。restore 与 server-baseline 共用。 */
+function pickSheetAnswers(serverAnswers: Record<string, unknown>): Record<string, SheetAnswer> {
+  const restored: Record<string, SheetAnswer> = {};
+  for (const [questionId, value] of Object.entries(serverAnswers)) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      restored[questionId] = value as SheetAnswer;
+    }
+  }
+  return restored;
+}
+
 const OBJECTIVE_TYPES = new Set(["cloze", "reading_choice", "new_question", "grammar_blank"]);
 const SECTION_POINTS: Record<string, number> = {
   cloze: 10,
@@ -1061,22 +1072,9 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   const sheetSave = useRef<ExamSheetSaveController | null>(null);
   /** 未确认（非 clean）标记：离页守卫读取（订阅回调维护）。 */
   const sheetSaveBlockedRef = useRef(false);
-  // StrictMode 双挂载防御：卸载清理会 dispose 控制器；再次渲染时检测并重建（清理可逆）。
-  if (!sheetSave.current || sheetSave.current.isDisposed()) {
-    sheetSave.current = createExamSheetSaveController({
-      // sheetId 仅作契约标识；实际题纸 id 由下方 save 闭包经 sheetRef 携带。
-      // V：初始版本由装配 effect 经 setDraftVersion 注入（未装配不发送）。
-      sheetId: "l3-exam-sheet",
-      save: async ({ answers, expectedVersion }) => {
-        const sheet = sheetRef.current;
-        if (!sheet || sheet.status !== "draft") {
-          throw Object.assign(new Error("题纸非草稿态，无法保存"), { status: 409 });
-        }
-        const updated = await patchSheet(sheet.id, answers, expectedVersion);
-        return { draftVersion: updated.draft_version };
-      },
-    });
-  }
+  /** F2 动作锁：定格/导出进行中禁止一切答案变更与竞争动作（V3 编辑窗口约束）。 */
+  const actionLockRef = useRef<null | "seal" | "export">(null);
+  const [actionLocked, setActionLocked] = useState(false);
   const sheetRef = useRef<L3Sheet | null>(null);
   const answersRef = useRef<Record<string, SheetAnswer>>({});
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -1097,12 +1095,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
 
   /** draft 恢复：服务端 answers → 本地 picks（重进/回看草稿不丢已保存作答）。 */
   const restoreDraftAnswers = useCallback((serverAnswers: Record<string, unknown>) => {
-    const restored: Record<string, SheetAnswer> = {};
-    for (const [questionId, value] of Object.entries(serverAnswers)) {
-      if (value && typeof value === "object" && !Array.isArray(value)) {
-        restored[questionId] = value as SheetAnswer;
-      }
-    }
+    const restored = pickSheetAnswers(serverAnswers);
     if (Object.keys(restored).length > 0) {
       const merged = { ...restored, ...answersRef.current };
       answersRef.current = merged;
@@ -1142,6 +1135,57 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     });
   }, []);
 
+  /** sealed 派生（批次二）：拉 attempts 并应用（定格成功后/统一装配的行内缺省补齐；applyDerived 见上方）。 */
+  const deriveFromSheet = useCallback(async (sheetId: string) => {
+    try {
+      const { attempts: derived } = await fetchSheet(sheetId);
+      applyDerived(derived);
+    } catch {
+      addToast("error", "定格已保存，但结果明细加载失败，稍后可重试");
+    }
+  }, [applyDerived, addToast]);
+
+  /**
+   * F3 统一装配（回看 / 常态开纸 / 定格成功 / 冲突恢复共用同一入口）：
+   *  - draft → 版本基线 + answers（server-baseline 模式为「放弃本地」覆盖 + 重建控制器基线）；
+   *  - sealed → attempts 派生 + 评卷加载（terminal 模式附带终态冻结——此后不再发送）；
+   *  - 其余终态（discarded 等）→ 只读展示。
+   */
+  const assembleSheet = useCallback((
+    row: L3Sheet,
+    derived: L3Attempt[] | null,
+    mode: "open" | "terminal" | "server-baseline",
+  ) => {
+    sheetRef.current = row;
+    setSheet(row);
+    if (row.status === "draft") {
+      if (mode === "server-baseline") {
+        // 明确载入服务器版本：放弃本地未确认输入（覆盖 + 清空控制器脏键，离开 conflict）。
+        const restored = pickSheetAnswers(row.answers ?? {});
+        answersRef.current = restored;
+        setAnswers(restored);
+        sheetSave.current?.adoptServerBaseline(row.draft_version);
+      } else {
+        sheetSave.current?.setDraftVersion(row.draft_version); // V：先装配版本基线，再允许编辑
+        restoreDraftAnswers(row.answers ?? {});
+      }
+      return;
+    }
+    if (mode === "terminal") {
+      // 终态装配：停止一切后续发送，控制器回 clean 快照（清空未确认脏键）。
+      sheetSave.current?.freeze();
+      sheetSave.current?.adoptServerBaseline(row.draft_version);
+    } else {
+      // 回看/常态打开的非 draft 行：同样装配版本基线——只读期导出等屏障仍要 flush 可决议。
+      sheetSave.current?.setDraftVersion(row.draft_version);
+    }
+    if (row.status === "sealed") {
+      if (derived) applyDerived(derived);
+      else void deriveFromSheet(row.id); // 行内无 attempts：异步补齐（定格成功 / openSheet 复合行）
+      void loadGradingResults(row.id);
+    }
+  }, [applyDerived, deriveFromSheet, loadGradingResults, restoreDraftAnswers]);
+
   /**
    * F-1：进卷装配——回看模式（replaySheetId）只读指定题纸（GET /l3/sheets/:id，
    * 不调 openSheet、不新建草稿）；常态仍为自动开纸（幂等：draft 冲突复用）。
@@ -1151,42 +1195,49 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     const next = replaySheetId
       ? fetchSheet(replaySheetId).then(({ sheet: row, attempts: derived }) => {
           if (cancelled) return;
-          sheetSave.current?.setDraftVersion(row.draft_version); // V：先装配版本基线，再允许编辑
-          setSheet(row);
-          if (row.status === "sealed") {
-            applyDerived(derived);
-            void loadGradingResults(row.id);
-          }
-          if (row.status === "draft") restoreDraftAnswers(row.answers ?? {});
+          assembleSheet(row, derived, "open");
         })
       : openSheet(fileVenue
           ? { scope: "file", sourceId: fileVenue.sourceId, questionType: fileVenue.questionType }
           : { scope: "paper", paperId: paper.id })
         .then((row) => {
           if (cancelled) return;
-          sheetSave.current?.setDraftVersion(row.draft_version); // V：先装配版本基线，再允许编辑
-          setSheet(row);
-          // 批次三①：重进已定格页面时拉取解析模式评卷结果（draft 零变更不加载）。
-          if (row.status === "sealed") void loadGradingResults(row.id);
-          if (row.status === "draft") restoreDraftAnswers(row.answers ?? {});
+          assembleSheet(row, null, "open");
         });
     void next.catch(() => {
       if (!cancelled) addToast("error", "题纸打开失败，本次作答不会保存");
     });
     return () => { cancelled = true; };
-  }, [paper.id, fileVenue?.sourceId, fileVenue?.questionType, replaySheetId, addToast, loadGradingResults, restoreDraftAnswers, applyDerived]);
+  }, [paper.id, fileVenue?.sourceId, fileVenue?.questionType, replaySheetId, addToast, assembleSheet]);
 
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
   useEffect(() => { answersRef.current = answers; }, [answers]);
 
   /**
-   * 写屏障状态 → UI：saving/error/conflict 映射 saveState；一次在途确认完成置"已保存"时间。
-   * 诚实状态：保存中显示"保存中…"，失败显示"保存失败，将自动重试"，离页未确认可见。
+   * 写控制器生命周期（F1）：实例创建、订阅、卸载送存/释放全部绑定到同一代「题纸身份」。
+   * StrictMode 模拟卸载走同一 cleanup（送存 + dispose），重放时创建全新实例并重订阅——
+   * 不再依赖渲染期间 isDisposed 重建（旧路径会让订阅/版本装配错位到已释放实例）。
+   * 异步开纸回调经 sheetSave.current 读取「当代」实例；订阅后同步一次快照，
+   * 换纸/重挂后不残留旧代 saveState / 已保存时间 / 离页标记。
    */
   useEffect(() => {
-    const ctrl = sheetSave.current;
-    if (!ctrl) return;
-    const unsub = ctrl.subscribe(() => {
+    const ctrl = createExamSheetSaveController({
+      // sheetId 仅作契约标识；实际题纸 id 由 save 闭包经 sheetRef 携带。
+      // V：初始版本由装配回调经 setDraftVersion 注入（未装配不发送）。
+      sheetId: "l3-exam-sheet",
+      save: async ({ answers, expectedVersion }) => {
+        const sheet = sheetRef.current;
+        if (!sheet || sheet.status !== "draft") {
+          throw Object.assign(new Error("题纸非草稿态，无法保存"), { status: 409 });
+        }
+        const updated = await patchSheet(sheet.id, answers, expectedVersion);
+        return { draftVersion: updated.draft_version };
+      },
+    });
+    sheetSave.current = ctrl;
+    // 写屏障状态 → UI：saving/error/conflict 映射 saveState；「已保存」时间只来自控制器
+    // 快照的确认回执（S 合同），不在 clean 通知帧里生造新时间。
+    const applySnapshot = (): void => {
       const snap = ctrl.getSnapshot();
       // 状态优先级：terminal（error/conflict）不被在途帧掩蔽——控制器在 inFlight=true 的
       // 同一帧内通知终态，若以 inFlight 优先会把「保存失败/已确认」误显示为「保存中」。
@@ -1201,14 +1252,21 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
       } else {
         setSaveState("idle");
       }
-      // 已保存时间只来自控制器快照的确认回执（S 合同）：不在 clean 通知帧里生成
-      // 新时间——重复 flush / 重复 notify / 仅订阅 / 恢复初始态都不得刷新「已保存」。
       setLastSavedAt(snap.lastSavedAt);
       // 离页守卫标记：未确认（非 clean）时置真。
       sheetSaveBlockedRef.current = snap.state !== "clean";
-    });
-    return unsub;
-  }, []);
+    };
+    const unsub = ctrl.subscribe(applySnapshot);
+    applySnapshot();
+    return () => {
+      unsub();
+      // 卸载/换纸：尽力送存未确认作答（不阻塞，reject 静默），随后释放控制器（清
+      // timer/监听、在途响应丢弃——不伪造保存成功；StrictMode 重放会重建全新实例）。
+      void ctrl.flush().catch(() => {});
+      ctrl.dispose();
+      if (sheetSave.current === ctrl) sheetSave.current = null;
+    };
+  }, [paper.id, fileVenue?.sourceId, fileVenue?.questionType, replaySheetId]);
 
   // 离页守卫（Task B）：存在未确认作答时，刷新/关闭给出浏览器级提示（与写控制器同律）。
   useEffect(() => {
@@ -1243,6 +1301,22 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   }, [paper.id, paper.sections]);
 
   /**
+   * F2 动作锁：定格/导出进行中禁止一切答案变更与竞争动作（执行计划 V3 编辑窗口约束）。
+   * 同步 ref 作事件入口判据（同 tick 生效），state 作渲染判据（选项禁用）。
+   */
+  const acquireActionLock = useCallback((kind: "seal" | "export"): boolean => {
+    if (actionLockRef.current !== null) return false;
+    actionLockRef.current = kind;
+    setActionLocked(true);
+    return true;
+  }, []);
+  const releaseActionLock = useCallback((): void => {
+    if (actionLockRef.current === null) return;
+    actionLockRef.current = null;
+    setActionLocked(false);
+  }, []);
+
+  /**
    * 定格/导出屏障：等待全部在途与调用前输入被服务端确认（单在途写控制器）。
    * 返回回执 {draftVersion,lastSavedAt}——定格/导出的版本核对基线；失败（flush
    * reject）由调用方捕获——不得越过未确认态，也不得 GET 最新版绕过冲突。
@@ -1266,28 +1340,24 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     }
   }, [addToast]);
 
-  /** V 冲突恢复动作②：明确载入服务器版本——放弃本地未确认输入、重建编辑基线。 */
+  /**
+   * V 冲突恢复动作②：明确载入服务器版本——放弃本地未确认输入、重建编辑基线（F3 统一装配）：
+   *  - draft → answers 覆盖 + adoptServerBaseline（离开 conflict，后续编辑用服务器版本）；
+   *  - sealed → attempts 派生结果视图 + 终态冻结（他端已定格的分支，不再写任何 PATCH）。
+   */
   const loadServerBaseline = useCallback(async () => {
     const current = sheetRef.current;
     if (!current) return;
     try {
-      const { sheet: row } = await fetchSheet(current.id);
-      const restored: Record<string, SheetAnswer> = {};
-      for (const [questionId, value] of Object.entries(row.answers ?? {})) {
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-          restored[questionId] = value as SheetAnswer;
-        }
-      }
-      sheetRef.current = row;
-      setSheet(row);
-      answersRef.current = restored;
-      setAnswers(restored);
-      sheetSave.current?.adoptServerBaseline(row.draft_version);
-      addToast("success", "已载入服务器版本；本地未确认修改已放弃");
+      const { sheet: row, attempts: derived } = await fetchSheet(current.id);
+      assembleSheet(row, derived, row.status === "draft" ? "server-baseline" : "terminal");
+      addToast("success", row.status === "draft"
+        ? "已载入服务器版本；本地未确认修改已放弃"
+        : "服务器版本已定格；已按服务器结果重载本页");
     } catch {
       addToast("error", "载入服务器版本失败，请稍后重试");
     }
-  }, [addToast]);
+  }, [addToast, assembleSheet]);
 
   /**
    * v2 草稿答案状态机：完整对象浅 merge → prune（空键清理）→ 整题入队 pending
@@ -1295,6 +1365,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
    * 定格后（sheet 非 draft）静默忽略——只读由渲染层与守卫双重收口。
    */
   const commitAnswer = useCallback((questionId: string, patch: Partial<SheetAnswer>) => {
+    // F2：定格/导出进行中不接受任何答案变更（事件入口 + 渲染层双守卫）。
+    if (actionLockRef.current !== null) return;
     if (sheetRef.current && sheetRef.current.status !== "draft") return;
     const merged: SheetAnswer = { ...(answersRef.current[questionId] ?? {}), ...patch };
     const next = pruneSheetAnswer(merged);
@@ -1372,24 +1444,6 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     commitAnswer(questionId, { marks: next });
   }, [commitAnswer]);
 
-  /** sealed 派生（批次二）：拉 attempts 并应用（定格成功后/手动重试路径；applyDerived 见进卷装配前）。 */
-  const deriveFromSheet = useCallback(async (sheetId: string) => {
-    try {
-      const { attempts: derived } = await fetchSheet(sheetId);
-      applyDerived(derived);
-    } catch {
-      addToast("error", "定格已保存，但结果明细加载失败，稍后可重试");
-    }
-  }, [applyDerived, addToast]);
-
-  // 卸载：尽力送存未确认作答（不阻塞卸载，reject 静默），随后释放控制器（清 timer/监听、
-  // 在途响应丢弃——不伪造保存成功）。StrictMode 清理可逆：下次渲染检测 isDisposed 重建。
-  useEffect(() => () => {
-    const ctrl = sheetSave.current;
-    void ctrl?.flush().catch(() => {});
-    ctrl?.dispose();
-  }, []);
-
   // 卷面加载后按全部 section 的 questionIds 批量拉注记 + 标签字典（首读 lazy-seed）。
   useEffect(() => {
     let cancelled = false;
@@ -1429,6 +1483,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   }, [upsertAnnotation]);
 
   const openSealModal = useCallback(() => {
+    if (actionLockRef.current !== null) return; // F2：导出在途不得开启定格
     setSealUnanswered(null);
     // v2 §10：待复查计数（本地实时口径；服务端 409/定格响应同源复核）。
     const scopeIds = paper.sections.flatMap((section) => section.questionIds);
@@ -1439,6 +1494,9 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   const submitSeal = useCallback(async (acknowledgeUnanswered: boolean) => {
     const current = sheetRef.current;
     if (!current) return;
+    // F2：定格一开始即同步取得编辑锁，覆盖 flush → 请求 → 终态装配整个阶段；
+    // 重复提交/导出在途时直接拒绝（竞争入口一致语义）。
+    if (!acquireActionLock("seal")) return;
     setSealBusy(true);
     try {
       // 屏障：确保全部待保存输入已确认后再定格；定格必须使用 flush 回执的版本
@@ -1450,18 +1508,13 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
         ...(sealMode === "summary" ? { summary: sealSummary.trim() } : {}),
         acknowledgeUnanswered,
       });
-      sheetRef.current = result.sheet;
-      setSheet(result.sheet);
-      // 终态冻结：只读期不再触发任何 PATCH（服务端守卫之外的双保险）。
-      sheetSave.current?.freeze();
+      // F3 统一装配（terminal）：终态冻结 + attempts 异步补齐 + 评卷刷新。
+      assembleSheet(result.sheet, null, "terminal");
       setSealOpen(false);
       setSealUnanswered(null);
       addToast("success", result.materializedCount > 0
         ? `已定格：${result.materializedCount} 条作答已入库，可打开「显示全部答案与解析」进入解析模式`
         : "已定格，可打开「显示全部答案与解析」进入解析模式");
-      void deriveFromSheet(result.sheet.id);
-      // 批次三①：定格后刷新解析模式评卷结果（初次为空 → 题纸栏显示「待评卷」引导）。
-      void loadGradingResults(result.sheet.id);
     } catch (error) {
       if (error instanceof BrowserApiError && error.status === 409) {
         // V：版本冲突不是"仍要定格"——不得当软确认重试；提示重新载入。
@@ -1480,11 +1533,14 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
       addToast("error", "定格失败，请稍后重试");
     } finally {
       setSealBusy(false);
+      // 成功：只读由 sheetRef/readOnly 立即接管；失败：恢复编辑窗口（保留本地输入）。
+      releaseActionLock();
     }
-  }, [sealMode, sealSummary, flushAnswers, deriveFromSheet, addToast]);
+  }, [sealMode, sealSummary, flushAnswers, assembleSheet, addToast, acquireActionLock, releaseActionLock]);
 
   /** v2 §6：导出弹层开启（withAnswers 缺省按状态：draft=0 / sealed=1）。 */
   const openExportModal = useCallback(() => {
+    if (actionLockRef.current !== null) return; // F2：定格在途不得开启导出
     const current = sheetRef.current;
     if (!current) return;
     setExportWithAnswers(current.status === "sealed");
@@ -1495,10 +1551,12 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   const copyExport = useCallback(async () => {
     const current = sheetRef.current;
     if (!current) return;
+    // F2：导出期间锁定该次编辑窗口（结束恢复）；未取得锁（定格在途/重复导出）直接拒绝。
+    if (!acquireActionLock("export")) return;
     setExportBusy(true);
     try {
       // 导出前等待在途保存确认，并携带 flush 回执版本（V：draft 导出服务端核对；
-      // sealed 忽略该参数——旧回看/导出合同不变）。
+      // sealed 忽略该参数——旧回看/导出合同不变）。核对失败不写剪贴板。
       const receipt = await flushAnswers();
       const text = await fetchSheetExport(current.id, exportWithAnswers, receipt.draftVersion);
       if (navigator.clipboard?.writeText) {
@@ -1512,13 +1570,16 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
       addToast("error", "导出失败，请稍后重试");
     } finally {
       setExportBusy(false);
+      releaseActionLock();
     }
-  }, [exportWithAnswers, addToast, flushAnswers]);
+  }, [exportWithAnswers, addToast, flushAnswers, acquireActionLock, releaseActionLock]);
 
   /** v2 §6：下载 .md（fetch 文本 → Blob → a[download]）。 */
   const downloadExport = useCallback(async () => {
     const current = sheetRef.current;
     if (!current) return;
+    // F2：导出期间锁定该次编辑窗口（同复制全文）；核对失败不下载。
+    if (!acquireActionLock("export")) return;
     setExportBusy(true);
     try {
       // 导出前等待在途保存确认，并携带 flush 回执版本（V 合同，同复制全文）。
@@ -1539,8 +1600,9 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
       addToast("error", "导出失败，请稍后重试");
     } finally {
       setExportBusy(false);
+      releaseActionLock();
     }
-  }, [exportWithAnswers, addToast, flushAnswers]);
+  }, [exportWithAnswers, addToast, flushAnswers, acquireActionLock, releaseActionLock]);
 
   /** 单条历史软删（批次二）：只改历史视图与占位，不动成绩统计口径。 */
   const handleDeleteAttempt = useCallback(async (attemptId: string) => {
@@ -1692,6 +1754,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
 
   /** 定格后卷面只读（作答输入禁用；选择仍显示用于回看）。 */
   const readOnly = sheet !== null && sheet.status !== "draft";
+  /** F2：交互锁 = 终态只读 ∪ 定格/导出在途——两者都必须封闭全部答案入口（渲染层判据）。 */
+  const interactionLocked = readOnly || actionLocked;
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -1757,7 +1821,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
             <button
               type="button"
               onClick={openExportModal}
-              className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 font-medium text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+              disabled={actionLocked}
+              className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 font-medium text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
             >
               导出
             </button>
@@ -1940,7 +2005,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
                       placeholder={section.questionType === "sentence_translation" ? "在这里写下你的译文…" : "在这里写作文（约 100/150 词）…"}
                       analysis={renderAnalysis(section.key, q)}
                       revealAll={revealAll}
-                      readOnly={readOnly}
+                      readOnly={interactionLocked}
                       cleared={clearedQuestions.has(q.id)}
                     />
                   ))}
@@ -1991,7 +2056,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
                             if (section.questionType === "new_question") setActiveBlank(q.ordinal + 41);
                           }}
                           analysis={renderAnalysis(section.key, q)}
-                          readOnly={readOnly}
+                          readOnly={interactionLocked}
                           cleared={clearedQuestions.has(q.id)}
                           flags={answers[q.id]?.flags}
                           onToggleFlag={(flag) => toggleFlag(q.id, flag)}
@@ -2017,7 +2082,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
                       picked={picks[q.id]}
                       onPick={(key) => pickQuestion(q.id, key)}
                       analysis={renderAnalysis(section.key, q)}
-                      readOnly={readOnly}
+                      readOnly={interactionLocked}
                       cleared={clearedQuestions.has(q.id)}
                       flags={answers[q.id]?.flags}
                       onToggleFlag={(flag) => toggleFlag(q.id, flag)}
@@ -2038,8 +2103,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
 
       {sheet && sheet.status === "draft" && (
         <div className="flex justify-end">
-          <button type="button" onClick={openSealModal}
-            className="rounded-full bg-[var(--color-accent)] px-5 py-2 text-xs font-semibold text-[var(--color-accent-contrast,var(--color-surface))] shadow-sm hover:opacity-90">
+          <button type="button" onClick={openSealModal} disabled={actionLocked}
+            className="rounded-full bg-[var(--color-accent)] px-5 py-2 text-xs font-semibold text-[var(--color-accent-contrast,var(--color-surface))] shadow-sm hover:opacity-90 disabled:opacity-50">
             定格题纸
           </button>
         </div>
@@ -2138,7 +2203,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
             )}
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => { setSealOpen(false); setSealUnanswered(null); }}
-                className="rounded-md px-3 py-1.5 text-xs text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]">
+                disabled={sealBusy}
+                className="rounded-md px-3 py-1.5 text-xs text-[var(--color-ink-soft)] hover:text-[var(--color-ink)] disabled:opacity-50">
                 取消
               </button>
               <button type="button"
