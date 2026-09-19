@@ -39,11 +39,13 @@
 
 ## 3. F2 · 详情一致快照（先红后绿）
 
-- 修改（待执行）：`src/db/transaction.ts`、`src/services/l3-study-notes.service.ts`
-- 红测试：待执行
-- 实现提交：待执行
-- 真库交错证据：待执行
-- 备注：GET 详情增加显式 readSnapshot（REPEATABLE READ READ ONLY）；幂等复用路径锁行后组装。
+- 修改（已实施）：`src/db/transaction.ts`（`TransactionOptions.readSnapshot` → `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`；默认仍为普通 BEGIN）；`src/services/l3-study-notes.service.ts`（`get()` 启用 readSnapshot；幂等复用两路径——已存在与冲突回读——先 `lock` 行再组装 DTO；createTopic 复用同样先锁行）
+- 红测试（单元）：`npx vitest run tests/db/transaction.test.ts tests/services/l3-study-notes.test.ts` → **5 failed / 48 passed，exit 1**（`D:/tmp/n1r-f2-red-unit.log`：BEGIN 文本不符、未传 readSnapshot、复用未锁行）
+- 红测试（真库）：F2 交错 → **1 failed / 1 passed**（`D:/tmp/n1r-f2-red-integration.log`；实证"旧正文拼新引用"：marker 集合 [1] ≠ 引用集合 [2]）
+- 绿测试：单元 **53/53 exit 0**（`D:/tmp/n1r-f2-green-unit.log`）；真库 **12/12 exit 0**（`D:/tmp/n1r-f2-green-integration.log`）
+- 真库交错证据：GET 读出 note 行后（实际仓储 SQL 后的可观测屏障）另一连接提交 v2（新正文/新引用/新归属）→ 响应完整属于旧版（version=2 全集）或新版（version=3 全集），marker 与引用集合一致；GET 零写（5 表计数不变）、跨 owner 404、重开读取一致、连接归还后普通写事务仍可写
+- 实现提交：（回填）
+- 备注：readSnapshot 仅供只读详情使用（写路径不启用）；冲突回读加锁不影响 F1 的输入 hash 比对语义。
 
 ## 4. F3 · 题目 active 规则（先红后绿）
 

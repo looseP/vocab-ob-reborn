@@ -222,8 +222,12 @@ export class L3StudyNoteService {
     private readonly referenceService: L3StudyReferenceService = new L3StudyReferenceService(),
   ) {}
 
-  private withActor<T>(userId: string, callback: (repos: StudyNoteRepos) => Promise<T>): Promise<T> {
-    return this.txRunner(async (tx) => callback(this.reposFactory(tx)), { actorId: userId });
+  private withActor<T>(
+    userId: string,
+    callback: (repos: StudyNoteRepos) => Promise<T>,
+    options: { readSnapshot?: boolean } = {},
+  ): Promise<T> {
+    return this.txRunner(async (tx) => callback(this.reposFactory(tx)), { actorId: userId, ...options });
   }
 
   // ── 笔记 ────────────────────────────────────────────────────────────────
@@ -243,7 +247,10 @@ export class L3StudyNoteService {
             entityType: "studyNote",
           });
         }
-        return { item: await this.buildNoteDto(userId, existing, repos), created: false };
+        // F2：复用路径先取行锁，再组装 DTO——保证 version/正文/归属/引用属于同一提交。
+        const locked = await repos.studyNotes.lock(userId, existing.id);
+        if (!locked) throw new NotFoundError("StudyNote", existing.id);
+        return { item: await this.buildNoteDto(userId, locked, repos), created: false };
       }
 
       // F1：ON CONFLICT (user_id, create_request_id) DO NOTHING —— 冲突不中止事务；
@@ -262,7 +269,10 @@ export class L3StudyNoteService {
       if (row === null) {
         const raced = await repos.studyNotes.findByCreateRequestId(userId, requestId);
         if (raced && raced.create_input_hash === createHash) {
-          return { item: await this.buildNoteDto(userId, raced, repos), created: false };
+          // F2：冲突回读同样先锁行再组装（不影响 F1 的输入 hash 比对语义）
+          const racedLocked = await repos.studyNotes.lock(userId, raced.id);
+          if (!racedLocked) throw new NotFoundError("StudyNote", raced.id);
+          return { item: await this.buildNoteDto(userId, racedLocked, repos), created: false };
         }
         throw new ConflictError("Idempotency conflict: same requestId with different input", undefined, {
           entityType: "studyNote",
@@ -339,14 +349,14 @@ export class L3StudyNoteService {
     });
   }
 
-  /** GET /:noteId：详情（含正文、归属、引用预览）。 */
+  /** GET /:noteId：详情（含正文、归属、引用预览）。F2：只读一致快照（同一提交的完整视图）。 */
   async get(userId: string, noteId: string): Promise<{ item: StudyNoteDto }> {
     const id = normalizeStudyUuid(noteId);
     return this.withActor(userId, async (repos) => {
       const note = await repos.studyNotes.get(userId, id);
       if (!note) throw new NotFoundError("StudyNote", noteId);
       return { item: await this.buildNoteDto(userId, note, repos) };
-    });
+    }, { readSnapshot: true });
   }
 
   /** PUT /:noteId：完整状态保存（原子；失败整体回滚）。 */
@@ -459,7 +469,10 @@ export class L3StudyNoteService {
             entityType: "studyTopic",
           });
         }
-        return { item: await this.buildTopicDto(userId, existing, repos), created: false };
+        // F2：复用路径先锁行再组装（version 与 memberCount 同源快照）。
+        const locked = await repos.studyTopics.lock(userId, existing.id);
+        if (!locked) throw new NotFoundError("StudyTopic", existing.id);
+        return { item: await this.buildTopicDto(userId, locked, repos), created: false };
       }
       // F1：同 create —— ON CONFLICT DO NOTHING；冲突后新语句回读比对输入 hash。
       const row = await repos.studyTopics.createIfAbsent({
@@ -475,7 +488,10 @@ export class L3StudyNoteService {
       if (row === null) {
         const raced = await repos.studyTopics.findByCreateRequestId(userId, requestId);
         if (raced && raced.create_input_hash === createHash) {
-          return { item: await this.buildTopicDto(userId, raced, repos), created: false };
+          // F2：冲突回读先锁行再组装
+          const racedLocked = await repos.studyTopics.lock(userId, raced.id);
+          if (!racedLocked) throw new NotFoundError("StudyTopic", raced.id);
+          return { item: await this.buildTopicDto(userId, racedLocked, repos), created: false };
         }
         throw new ConflictError("Idempotency conflict: same requestId with different input", undefined, {
           entityType: "studyTopic",

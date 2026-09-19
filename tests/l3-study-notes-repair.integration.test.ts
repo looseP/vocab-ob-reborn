@@ -17,9 +17,15 @@
 import { randomUUID } from "node:crypto";
 import { Client, Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ConflictError } from "@/errors";
+import { ConflictError, NotFoundError } from "@/errors";
 import { resetPool } from "@/db/connection";
-import { L3StudyNoteService, computeNoteCreateHash, computeTopicCreateHash } from "@/services/l3-study-notes.service";
+import { withTransaction } from "@/db/transaction";
+import {
+  L3StudyNoteService,
+  computeNoteCreateHash,
+  computeTopicCreateHash,
+  type StudyNoteRepos,
+} from "@/services/l3-study-notes.service";
 import { L3StudyReferenceService } from "@/services/l3-study-reference.service";
 import { L3ContextService } from "@/services/l3-context.service";
 import { L3PaperService } from "@/services/l3-paper.service";
@@ -122,6 +128,16 @@ function expectCaseDifference(lower: string): string {
   const upper = lower.toUpperCase();
   expect(upper).not.toBe(lower); // 防纯数字 UUID 的大小写用例假绿
   return upper;
+}
+
+/** 轮询等待测试内屏障标志（未到达目标窗口返回 false → 用例失败）。 */
+async function waitUntil(predicate: () => boolean, deadlineMs = 5000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < deadlineMs) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
 }
 
 beforeAll(async () => {
@@ -577,5 +593,134 @@ describe("F1 · 删除事务恢复（真实 PG 交错）", () => {
     } finally {
       await c1.end().catch(() => undefined);
     }
+  });
+});
+
+// ── F2 · 详情一致快照（真实 PG 交错）────────────────────────────────────────
+
+describe("F2 · 详情一致快照（真实 PG）", () => {
+  it("GET 读出 note 行后暂停 → 另一连接提交新正文/引用/归属 → 响应完整属于旧版或新版", async () => {
+    const src = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "snapshot source text" });
+
+    const baseline = new L3StudyNoteService();
+    const created = await baseline.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" });
+    const noteId = created.item.id;
+
+    const ref1 = randomUUID();
+    const ref2 = randomUUID();
+    const bodyV1 = `# V1\n\n[[ref:${ref1}]]`;
+    const bodyV2 = `# V2\n\n[[ref:${ref1}]]\n\n[[ref:${ref2}]]`;
+
+    await baseline.save(OWNER_A, noteId, {
+      expectedVersion: 1, requestId: randomUUID(), title: "v1", bodyMd: bodyV1,
+      venues: ["reading_choice"], pinned: false, status: "active",
+      references: [{ id: ref1, action: "capture", target: { kind: "source", sourceId: src } }],
+    });
+
+    // GET 交错：在实际仓储 SQL（读出 note 行）之后设可观测屏障。
+    let releaseBarrier!: () => void;
+    const barrier = new Promise<void>((resolve) => { releaseBarrier = resolve; });
+    let reached = false;
+    let getCount = 0;
+    const wrappedService = new L3StudyNoteService(
+      withTransaction,
+      (tx) => {
+        const real = {
+          studyNotes: new L3StudyNoteRepository(tx),
+          studyTopics: new L3StudyTopicRepository(tx),
+          studyReferences: new L3StudyReferenceRepository(tx),
+        };
+        const originalGet = real.studyNotes.get.bind(real.studyNotes);
+        real.studyNotes.get = async (userId: string, id: string) => {
+          const row = await originalGet(userId, id);
+          getCount += 1;
+          if (getCount === 1) {
+            reached = true; // 屏障：note 行已读出、后续 venues/references 读取尚未发生
+            await barrier;
+          }
+          return row;
+        };
+        return real as unknown as StudyNoteRepos;
+      },
+      new L3StudyReferenceService(),
+    );
+
+    const getCall = wrappedService.get(OWNER_A, noteId);
+    expect(await waitUntil(() => reached)).toBe(true); // 未到达目标窗口即失败
+
+    // 另一连接提交 v2（独立 app 连接，不受 service pool max=1 限制）
+    const c2 = await connectAs(OWNER_A);
+    try {
+      const saveService = new L3StudyNoteService(
+        (async (callback: (tx: unknown) => Promise<unknown>) => callback(c2)) as never,
+      );
+      await saveService.save(OWNER_A, noteId, {
+        expectedVersion: 2, requestId: randomUUID(), title: "v2", bodyMd: bodyV2,
+        venues: ["reading_choice", "cloze"], pinned: false, status: "active",
+        references: [
+          { id: ref1, action: "keep" },
+          { id: ref2, action: "capture", target: { kind: "source", sourceId: src } },
+        ],
+      });
+      await c2.query("COMMIT");
+    } finally {
+      await c2.end().catch(() => undefined);
+    }
+
+    releaseBarrier();
+    const result = await getCall;
+
+    // 响应必须完整属于一个提交：正文 marker 集合 == 引用集合，version/venues 同版
+    // （create=1；v1 保存后 version=2；v2 保存后 version=3）
+    const dto = result.item;
+    const markerIds = [...dto.bodyMd.matchAll(/\[\[ref:([0-9a-fA-F-]{36})\]\]/g)]
+      .map((match) => match[1]!.toLowerCase())
+      .sort();
+    const refIds = dto.references.map((ref) => ref.id).sort();
+    expect(markerIds).toEqual(refIds); // 旧正文不得拼新引用（反之亦然）
+
+    if (dto.version === 2) {
+      expect(dto.bodyMd).toContain("# V1");
+      expect(dto.venues).toEqual(["reading_choice"]);
+      expect(refIds).toEqual([ref1]);
+    } else {
+      expect(dto.version).toBe(3);
+      expect(dto.bodyMd).toContain("# V2");
+      expect(dto.venues).toEqual(["reading_choice", "cloze"]);
+      expect(refIds).toEqual([ref1, ref2].sort());
+    }
+  });
+
+  it("GET 零写、跨 owner 404、重开读取一致、连接归还后普通写事务仍可写", async () => {
+    const svc = new L3StudyNoteService();
+    const created = await svc.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" });
+    const noteId = created.item.id;
+
+    const counts = async (): Promise<Record<string, number>> => {
+      const result: Record<string, number> = {};
+      for (const table of ["l3_study_notes", "l3_study_note_venues", "l3_study_note_references", "l3_papers", "l3_submissions"]) {
+        const row = await adminPool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`);
+        result[table] = row.rows[0]!.n;
+      }
+      return result;
+    };
+
+    const before = await counts();
+    const first = await svc.get(OWNER_A, noteId);
+    const second = await svc.get(OWNER_A, noteId); // 重开/恢复读取
+    expect(second.item).toEqual(first.item);
+    const after = await counts();
+    expect(after).toEqual(before); // GET 零写（题纸/作答等计数不变）
+
+    // 跨 owner → 404（RLS 下不可见）
+    await expect(svc.get(OWNER_B, noteId)).rejects.toBeInstanceOf(NotFoundError);
+
+    // 连接归还后普通写事务仍可写（READ ONLY 不泄漏到池连接）
+    const saved = await svc.save(OWNER_A, noteId, {
+      expectedVersion: first.item.version, requestId: randomUUID(), title: "写回",
+      bodyMd: "ok", venues: ["reading_choice"], pinned: false, status: "active", references: [],
+    });
+    expect(saved.item.version).toBe(first.item.version + 1);
   });
 });

@@ -168,11 +168,12 @@ describe("create · 幂等与自由创建", () => {
   });
 
   it("同 requestId 同输入重试返回当前笔记（created=false，不重置内容、不再建）", async () => {
-    const createHash = repos.studyNotes.create.mock.calls.length === 0 ? undefined : undefined;
-    void createHash;
-    repos.studyNotes.findByCreateRequestId = vi.fn(async () =>
-      noteRow({ title: "已编辑过的标题", create_input_hash: (await import("node:crypto")).createHash("sha256").update(JSON.stringify({ venue: "reading_choice" })).digest("hex") }),
-    );
+    const existingRow = noteRow({
+      title: "已编辑过的标题",
+      create_input_hash: (await import("node:crypto")).createHash("sha256").update(JSON.stringify({ venue: "reading_choice" })).digest("hex"),
+    });
+    repos.studyNotes.findByCreateRequestId = vi.fn(async () => existingRow);
+    repos.studyNotes.lock = vi.fn(async () => existingRow); // F2：复用路径先锁行再组装
     const result = await service.create(USER, { requestId: REQ, venue: "reading_choice" });
     expect(result.created).toBe(false);
     expect(result.item.title).toBe("已编辑过的标题");
@@ -757,5 +758,68 @@ describe("F5 UUID 身份：成员移动 / 排序 / 幂等重试 / 锁身份", ()
       venue: "reading_choice", topicId: TOPIC_L, limit: 1, cursor: first.nextCursor!,
     });
     expect(page2.items).toEqual([]);
+  });
+});
+
+// ── F2（补修批次）：一致详情（readSnapshot 与复用路径先锁后组装）──────────────
+
+describe("F2 一致详情：readSnapshot / 复用锁序", () => {
+  it("get 使用只读一致快照（readSnapshot:true 传给事务层，其余调用保持默认）", async () => {
+    const txRunner = vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback({})) as unknown as never;
+    const svc = new L3StudyNoteService(txRunner, () => repos as unknown as StudyNoteRepos, referenceService as never);
+    repos.studyNotes.get = vi.fn(async () => noteRow());
+    await svc.get(USER, NOTE);
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: USER, readSnapshot: true });
+
+    // 保存路径保持默认（写事务不得进入只读快照）
+    const saveTxRunner = vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback({})) as unknown as never;
+    const saveSvc = new L3StudyNoteService(saveTxRunner, () => repos as unknown as StudyNoteRepos, referenceService as never);
+    await saveSvc.save(USER, NOTE, baseSaveInput());
+    expect(saveTxRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: USER });
+  });
+
+  it("幂等创建复用（已存在路径与冲突回读路径）：先锁现有笔记再组装 DTO", async () => {
+    const { computeNoteCreateHash } = await import("@/services/l3-study-notes.service");
+    const order: string[] = [];
+    const existing = noteRow({ id: NOTE, create_input_hash: computeNoteCreateHash("reading_choice") });
+    repos.studyNotes.findByCreateRequestId = vi.fn(async () => existing);
+    repos.studyNotes.lock = vi.fn(async () => { order.push("lock"); return existing; });
+    repos.studyNotes.listVenues = vi.fn(async () => { order.push("listVenues"); return ["reading_choice"]; });
+
+    const result = await service.create(USER, { requestId: REQ, venue: "reading_choice" });
+    expect(result.created).toBe(false);
+    expect(repos.studyNotes.lock).toHaveBeenCalledWith(USER, NOTE);
+    expect(order[0]).toBe("lock");
+
+    // 冲突回读路径（createIfAbsent 返回 null → 新语句回读）
+    order.length = 0;
+    let lookups = 0;
+    repos.studyNotes.createIfAbsent = vi.fn(async () => null);
+    repos.studyNotes.findByCreateRequestId = vi.fn(async () => {
+      lookups += 1;
+      return lookups >= 2 ? existing : null;
+    });
+    repos.studyNotes.lock = vi.fn(async () => { order.push("lock"); return existing; });
+    const raced = await service.create(USER, { requestId: REQ, venue: "reading_choice" });
+    expect(raced.created).toBe(false);
+    expect(order[0]).toBe("lock");
+  });
+
+  it("createTopic 幂等复用：先锁行再组装（version 与 memberCount 同源快照）", async () => {
+    const { computeTopicCreateHash } = await import("@/services/l3-study-notes.service");
+    const order: string[] = [];
+    const hash = computeTopicCreateHash("reading_choice", "专题");
+    repos.studyTopics.findByCreateRequestId = vi.fn(async () => topicRow({ version: 3, create_input_hash: hash }));
+    repos.studyTopics.lock = vi.fn(async () => {
+      order.push("lock");
+      return topicRow({ version: 3, create_input_hash: hash });
+    });
+    repos.studyTopics.countMembers = vi.fn(async () => { order.push("count"); return 2; });
+
+    const result = await service.createTopic(USER, { requestId: REQ, venue: "reading_choice", title: "专题" });
+    expect(result.created).toBe(false);
+    expect(repos.studyTopics.lock).toHaveBeenCalledWith(USER, TOPIC);
+    expect(order).toEqual(["lock", "count"]);
+    expect(result.item).toMatchObject({ version: 3, memberCount: 2 });
   });
 });
