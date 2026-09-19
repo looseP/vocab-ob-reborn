@@ -211,6 +211,7 @@ export function createWritingSaveController(
 
   /** 网络超时/失败后 GET 当前草稿，判断"其实已成功"还是"进入冲突语义"。 */
   async function reconcile(
+    sentSeq: number,
     sentText: string,
     sentVersion: number,
   ): Promise<"success" | "conflict" | "unknown"> {
@@ -225,7 +226,7 @@ export function createWritingSaveController(
     // 服务端内容等于刚发送内容且 version = 旧 + 1 → 可确认成功（不自动 last-wins）。
     if (loaded.text === sentText && loaded.version === sentVersion + 1) {
       version = loaded.version;
-      committedSeq = inputSeq;
+      committedSeq = sentSeq;
       confirmedText = sentText;
       return "success";
     }
@@ -312,9 +313,9 @@ export function createWritingSaveController(
           }
           // 不可重试，或自动重试耗尽：网络故障尝试 load 恢复
           if (isNetworkError(err)) {
-            const outcome = await reconcile(sentText, sentVersion);
+            const outcome = await reconcile(sentSeq, sentText, sentVersion);
             if (disposed) return;
-            if (outcome === "success") break;
+            if (outcome === "success") continue;
             if (outcome === "conflict") {
               setState("conflict");
               notify();

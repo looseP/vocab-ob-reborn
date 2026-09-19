@@ -266,6 +266,7 @@ test("开始→保存→提交→评阅→刷新→第二稿→对照→回看�
 
 test("故障与并发（浏览器+真实HTTP+库核）：失败阻止提交/导出并诚实恢复；延迟不丢输入；IME不存半截；双标签页不覆盖", async ({ page, context, request }) => {
   test.skip(!ENABLED, "writing fault matrix gated behind E2E_WRITING_SMOKE=1");
+  test.setTimeout(120_000); // 含 ⑥ 恢复误确认回归（真实退避 1/2/4s）后总时长超默认 30s
   await login(page);
   const writingUrl = (taskId: string, sheetId: string) =>
     `/l3?section=writing&writingTaskId=${taskId}&sheet=${sheetId}`;
@@ -388,6 +389,67 @@ test("故障与并发（浏览器+真实HTTP+库核）：失败阻止提交/导�
     expect(await p2.inputValue()).toBe("乙版内容"); // 本地保留 + 冲突处理入口
     await second.screenshot({ path: `${SHOT_DIR}/11-two-tab-conflict.png` });
     await second.close();
+  }
+
+  // ── ⑥ 恢复误确认（reconcile 交错）：恢复确认不得吞掉期间的新输入 ──────────
+  {
+    const f = await createTaskViaApi(request);
+    await page.goto(writingUrl(f.taskId, f.sheetId));
+    const textarea = page.getByRole("textbox", { name: "作文正文" });
+    await expect(textarea).toBeVisible();
+
+    // 前三次纯网络失败（abort）；第四次真实发到服务端后丢弃响应；期间输入新正文。
+    let patchCount = 0;
+    let failPatches = true;
+    let markLostResponseStarted!: () => void;
+    const lostResponseStarted = new Promise<void>((resolve) => { markLostResponseStarted = resolve; });
+    let releaseLostResponse!: () => void;
+    const lostResponseGate = new Promise<void>((resolve) => { releaseLostResponse = resolve; });
+    await page.route("**/api/l3/writing/**", async (route) => {
+      if (route.request().method() === "PATCH" && failPatches) {
+        patchCount += 1;
+        if (patchCount <= 3) return route.abort("failed");
+        if (patchCount === 4) {
+          await route.fetch().catch(() => undefined); // 服务端实际已落库（响应将被丢弃）
+          markLostResponseStarted();
+          await lostResponseGate; // 等待「第 4 次在途期间输入新正文」
+          failPatches = false; // 恢复后的补发放行（应真实成功）
+          return route.abort("failed"); // 丢弃响应：客户端视为网络失败
+        }
+      }
+      return route.continue();
+    });
+
+    await textarea.fill("恢复基线稿"); // seq1：三次失败 + 第四次丢响应
+    await lostResponseStarted; // 第 4 次已在途且服务端已落库
+    await textarea.fill("恢复基线稿·续写"); // seq2：恢复期间的新输入
+
+    // 诚实性（未确认窗口）：不得显示「已保存」；离开提示处于拦截态（beforeunload）。
+    await expect(page.getByText(/保存状态：已保存/)).not.toBeVisible();
+    const guardedWhileUnsaved = await page.evaluate(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    expect(guardedWhileUnsaved).toBe(true);
+    await page.screenshot({ path: `${SHOT_DIR}/12-reconcile-unsaved-honest.png` });
+
+    releaseLostResponse(); // 丢弃响应 → 重试耗尽 → load 恢复确认「恢复基线稿」
+
+    // 修复核心：恢复只确认已发送序号——必须继续把「续写」补发落库（旧实现把它误记为已确认而永久丢失）。
+    await expect(page.getByText(/保存状态：已保存/)).toBeVisible({ timeout: 20_000 });
+    expect(await writingText(f.taskId, f.sheetId)).toBe("恢复基线稿·续写");
+    expect(await attemptCount(f.sheetId)).toBe(0); // 未提交：不产生 attempt
+
+    // 保存确认后：离开提示不再拦截（状态诚实归零）。
+    const guardedAfterSaved = await page.evaluate(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    expect(guardedAfterSaved).toBe(false);
+    await page.screenshot({ path: `${SHOT_DIR}/13-reconcile-keeps-newer-input.png` });
+    await page.unroute("**/api/l3/writing/**");
   }
 
   // ── 清理本次故障矩阵数据 ────────────────────────────────────────────────
