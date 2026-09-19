@@ -12,7 +12,7 @@
  */
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { expect, test } from "./fixtures";
+import { expect, loginAsOwner, test } from "./fixtures";
 
 const ADMIN_DB_URL = process.env.E2E_SETUP_DATABASE_URL ?? process.env.DATABASE_URL ?? "";
 const OWNER_ID = process.env.E2E_OWNER_ID ?? "00000000-0000-1000-8000-000000000001";
@@ -30,14 +30,16 @@ async function withAdmin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
 interface Fixture {
   sourceId: string;
   questionId: string;
+  questionId2: string;
   paperId: string;
   scopeKey: string;
 }
 
-/** 播种：1 source + 1 reading_choice 题（选项含唯一标记 beta marker）+ 1 卷（单节引用该题）。 */
+/** 播种：1 source + 2 道 reading_choice 题（Q1 选项含 beta marker；Q2 选项含 gamma marker）+ 1 卷。 */
 async function seedPaper(): Promise<Fixture> {
   const sourceId = randomUUID();
   const questionId = randomUUID();
+  const questionId2 = randomUUID();
   const paperId = randomUUID();
   const scopeKey = `paper:${paperId}`;
   await withAdmin(async (client) => {
@@ -61,6 +63,20 @@ async function seedPaper(): Promise<Fixture> {
       ],
     );
     await client.query(
+      `INSERT INTO l3_questions (id, user_id, source_id, space, question_type, ordinal, stem, options, answer, status)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, '阅读', 'reading_choice', 1, '2. Which marker belongs to the second question?', $4::jsonb, $5::jsonb, 'active')`,
+      [
+        questionId2,
+        OWNER_ID,
+        sourceId,
+        JSON.stringify([
+          { key: "A", text: "gamma marker" },
+          { key: "B", text: "delta marker" },
+        ]),
+        JSON.stringify({ choice: "A" }),
+      ],
+    );
+    await client.query(
       `INSERT INTO l3_papers (id, user_id, title, direction, metadata, payload, payload_version, status, created_by)
        VALUES ($1::uuid, $2::uuid, 'Task B 可靠性验收卷', '通用', '{}'::jsonb, $3::jsonb, 1, 'active', 'e2e')`,
       [
@@ -71,10 +87,10 @@ async function seedPaper(): Promise<Fixture> {
           sections: [
             {
               key: "s1",
-              title: "Task B · 单题节",
+              title: "Task B · 两题节",
               fileKey: null,
               sourceId,
-              questionIds: [questionId],
+              questionIds: [questionId, questionId2],
               questionType: "reading_choice",
             },
           ],
@@ -82,7 +98,7 @@ async function seedPaper(): Promise<Fixture> {
       ],
     );
   });
-  return { sourceId, questionId, paperId, scopeKey };
+  return { sourceId, questionId, questionId2, paperId, scopeKey };
 }
 
 async function cleanupFixture(f: Fixture): Promise<void> {
@@ -93,7 +109,7 @@ async function cleanupFixture(f: Fixture): Promise<void> {
     );
     await client.query("DELETE FROM l3_submissions WHERE user_id = $1::uuid AND scope_key = $2", [OWNER_ID, f.scopeKey]);
     await client.query("DELETE FROM l3_papers WHERE id = $1::uuid", [f.paperId]);
-    await client.query("DELETE FROM l3_questions WHERE id = $1::uuid", [f.questionId]);
+    await client.query("DELETE FROM l3_questions WHERE id = ANY($1::uuid[])", [[f.questionId, f.questionId2]]);
     await client.query("DELETE FROM l3_sources WHERE id = $1::uuid", [f.sourceId]);
   });
 }
@@ -152,10 +168,12 @@ test.describe("Task B · 题纸保存/定格屏障（真实栈）", () => {
       expect((afterSave?.answers?.[f.questionId] as { choice?: string } | undefined)?.choice).toBe("B");
       expect(afterSave!.draft_version).toBeGreaterThanOrEqual(1);
 
-      // 定格
+      // 定格（两题 fixture 只答其一：服务端软确认 → 「仍要定格」）
       await page.getByRole("button", { name: "定格题纸" }).click();
       await expect(page.getByRole("dialog", { name: "定格题纸" })).toBeVisible();
       await page.getByRole("button", { name: "确认定格" }).click();
+      await expect(page.getByText(/还有 1 题未作答/)).toBeVisible({ timeout: 10_000 });
+      await page.getByRole("button", { name: "仍要定格" }).click();
       await expect(page.getByText("已定格", { exact: true })).toBeVisible({ timeout: 15_000 });
 
       const sealed = await sheetRow(f);
@@ -233,6 +251,53 @@ test.describe("Task B · 题纸保存/定格屏障（真实栈）", () => {
 
       await page.unroute("**/api/l3/sheets/**");
     } finally {
+      await cleanupFixture(f);
+    }
+  });
+
+  test("双标签冲突：同题他写后本端 409（库不写入）；载入服务器版本后不同题改动保留并成功", async ({ authedPage: page, browser }) => {
+    test.setTimeout(120_000);
+    const f = await seedPaper();
+    const contextB = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const pageB = await contextB.newPage();
+    try {
+      await loginAsOwner(pageB);
+
+      // A 先答 Q1=A（alpha）保存成功 → v1
+      await page.goto(`/l3?paper=${f.paperId}`);
+      await expect(page.getByText("草稿", { exact: true })).toBeVisible({ timeout: 15_000 });
+      await page.getByRole("button", { name: /alpha marker/ }).click();
+      await expect(page.getByText(/草稿 · 已保存/)).toBeVisible({ timeout: 10_000 });
+      const v1 = await sheetRow(f);
+      expect(v1!.draft_version).toBe(1);
+
+      // B 打开（基线 v1）→ 改同题 Q1=B（beta）保存成功 → v2（他端已写入）
+      await pageB.goto(`/l3?paper=${f.paperId}`);
+      await expect(pageB.getByText("草稿", { exact: true })).toBeVisible({ timeout: 15_000 });
+      await pageB.getByRole("button", { name: /beta marker/ }).click();
+      await expect(pageB.getByText(/草稿 · 已保存/)).toBeVisible({ timeout: 10_000 });
+      const v2 = await sheetRow(f);
+      expect(v2!.draft_version).toBe(2);
+      expect((v2!.answers[f.questionId] as { choice?: string } | undefined)?.choice).toBe("B");
+
+      // A 只改 Q2（gamma）→ PATCH(expectedVersion=1) 相对服务器 v2 → 409 冲突（库不写入）
+      await page.getByRole("button", { name: /gamma marker/ }).click();
+      await expect(page.getByText(/保存冲突/)).toBeVisible({ timeout: 10_000 });
+      const conflicted = await sheetRow(f);
+      expect(conflicted!.draft_version).toBe(2);
+      expect(conflicted!.answers[f.questionId2]).toBeUndefined(); // 本地保留、未落库
+
+      // A 载入服务器版本（明确恢复动作）→ 冲突解除；重新显式改 Q2 → v3（他端 Q1 未被覆盖）
+      await page.getByRole("button", { name: "载入服务器版本" }).click();
+      await expect(page.getByText(/保存冲突/)).toBeHidden({ timeout: 10_000 });
+      await page.getByRole("button", { name: /gamma marker/ }).click();
+      await expect(page.getByText(/草稿 · 已保存/)).toBeVisible({ timeout: 10_000 });
+      const v3 = await sheetRow(f);
+      expect(v3!.draft_version).toBe(3);
+      expect((v3!.answers[f.questionId] as { choice?: string } | undefined)?.choice).toBe("B"); // 他端 Q1 保留
+      expect((v3!.answers[f.questionId2] as { choice?: string } | undefined)?.choice).toBe("A"); // gamma 落库
+    } finally {
+      await contextB.close();
       await cleanupFixture(f);
     }
   });

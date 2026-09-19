@@ -115,14 +115,16 @@ describe("L3 sheet seal concurrency (integration)", () => {
   beforeEach(async () => {
     await adminPool.query("DELETE FROM l3_question_attempts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
     await adminPool.query("DELETE FROM l3_submissions WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+    await adminPool.query("DELETE FROM l3_writing_tasks WHERE user_id = $1", [ACTOR_A]);
   });
 
   afterAll(async () => {
     try {
       await adminPool.query("DELETE FROM l3_question_attempts WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM l3_submissions WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
+      await adminPool.query("DELETE FROM l3_writing_tasks WHERE user_id = $1", [ACTOR_A]);
       await adminPool.query("DELETE FROM l3_questions WHERE user_id = $1", [ACTOR_A]);
-      await adminPool.query("DELETE FROM l3_sources WHERE user_id = $1", [ACTOR_A]);
+      await adminPool.query("DELETE FROM l3_sources WHERE user_id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM profiles WHERE id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
       await adminPool.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [[ACTOR_A, ACTOR_B]]);
     } finally {
@@ -313,20 +315,31 @@ describe("L3 sheet seal concurrency (integration)", () => {
   });
 
   it("R7 跨 owner 404 与 writing 旁路封堵（通用写面不服务写作稿/他人稿）", async () => {
-    // 跨 owner：ACTOR_B 的题纸，以 ACTOR_A 调用 → 404（不泄露存在性）。
+    // 跨 owner：ACTOR_B 的题纸（自属 source 满足 (source_id,user_id) FK），以 ACTOR_A 调用 → 404（不泄露存在性）。
+    const foreignSource = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_sources (id, user_id, source_type, direction, title)
+       VALUES ($1::uuid, $2::uuid, 'article', '通用', 'sheet reliability foreign fixture')`,
+      [foreignSource, ACTOR_B],
+    );
     const foreignId = randomUUID();
     await adminPool.query(
       `INSERT INTO l3_submissions
          (id, user_id, scope, scope_key, source_id, question_type, status, answers, draft_version)
        VALUES ($1::uuid, $2::uuid, 'file', $3, $4::uuid, 'reading_choice', 'draft', '{}'::jsonb, 0)`,
-      [foreignId, ACTOR_B, `file:${SOURCE}:reading_choice`, SOURCE],
+      [foreignId, ACTOR_B, `file:${foreignSource}:reading_choice`, foreignSource],
     );
     const notFound = await sheetService.patchSheet({
       userId: ACTOR_A, sheetId: foreignId, expectedVersion: 0, answers: { [QUESTION]: { choice: "A" } },
     }).catch((e: unknown) => e);
     expect(notFound).toMatchObject({ httpStatus: 404 });
 
-    // writing scope：专用写面之外一律 409 WRITING_ENDPOINT_REQUIRED（PATCH 与 seal 同律）。
+    // writing scope：先补 (writing_task_id,user_id) FK 指到的任务行；专用写面之外一律 409 WRITING_ENDPOINT_REQUIRED。
+    await adminPool.query(
+      `INSERT INTO l3_writing_tasks (id, user_id, question_id, title, kind, direction, create_request_id, create_input_hash)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, '旁路封堵夹具', 'free', '通用', $4, $5)`,
+      [WRITING_TASK, ACTOR_A, QUESTION, randomUUID(), `hash-${WRITING_TASK.slice(0, 8)}`],
+    );
     const writingId = randomUUID();
     await adminPool.query(
       `INSERT INTO l3_submissions
@@ -348,5 +361,28 @@ describe("L3 sheet seal concurrency (integration)", () => {
       [writingId],
     );
     expect(attempts.rows[0]!.c).toBe(0);
+  });
+
+  it("R8 无冲突定格三档：full=sealed、incremental/summary=discarded（真库状态流转）", async () => {
+    for (const mode of ["full", "incremental", "summary"] as const) {
+      const sheetId = randomUUID();
+      await freshDraft(sheetId);
+      await sheetService.patchSheet({
+        userId: ACTOR_A, sheetId, expectedVersion: 0, answers: { [QUESTION]: { choice: "A" } },
+      });
+      const result = await sheetService.sealSheet({
+        userId: ACTOR_A, sheetId, expectedVersion: 1, mode,
+        ...(mode === "summary" ? { summary: "本轮只留总结" } : {}),
+        acknowledgeUnanswered: true,
+      });
+      const expected = mode === "full" ? "sealed" : "discarded";
+      expect(result.sheet.status).toBe(expected);
+      const row = await adminPool.query<{ status: string; answers: Record<string, unknown> }>(
+        "SELECT status, answers FROM l3_submissions WHERE id = $1",
+        [sheetId],
+      );
+      expect(row.rows[0]!.status).toBe(expected);
+      expect(Object.keys(row.rows[0]!.answers)).toHaveLength(0); // 定格后 answers 清空（attempts 唯一真源）
+    }
   });
 });

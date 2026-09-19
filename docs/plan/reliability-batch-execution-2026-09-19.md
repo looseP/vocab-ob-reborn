@@ -69,5 +69,53 @@
 - **防线/证据**：`D:/tmp/rel-gitmeta-backup/`（pack + refs + 修复前快照）、`D:/tmp/rel-wt-recovery/`（5 文件）、`D:/tmp/rel-wt-old-hold/`（事故前 worktree 归档）。
 - **规避措施（本批次生效）**：后续提交一律 `HUSKY=0` + 人工等价检查（typecheck 等）；每次 git 写操作后核验 refs/对象计数与 `git log -1`。
 
-## Task B / Task C / Task D
-（待展开。）
+## Task B 续 · Git 收尾 + S + V/Q（2026-09-19 下午；单写者接续）
+
+### Git 事故收尾 G0–G2（证据目录 `build-analysis/git-closeout-20260919-124144/`，摘要见 `GIT-CLOSEOUT-SUMMARY.md`）
+- **G0**：接管前 15 分钟静默 + 无锁文件确认；`.git` 全量副本 86 文件 sha256 逐件校验 100%；四工作区未提交文件（wt-reliability 12、wt-main 13）源=副本 OK；ignored 用户文件（.env/.learnings/superpowers/.tmp/backups/tests-scripts）保全；二进制 diff 与 refs/index/status 基线快照。
+- **G1**：基线复现默认 fsck **exit 32**（6843 行 pack entry 错误）＝与阶段复核一致；隔离 3 个残留索引（旧 `multi-pack-index` + 两个无配对 pack 的孤儿 `.idx`，sha256 留档于 `quarantine/`）→ 默认 `fsck --full --no-reflogs` **exit 0**；`multi-pack-index write`/`verify` 各 0；`garbage 2→0`；**refs/四工作区 status/四个 index sha256 与基线完全一致**（修复未改业务状态）。
+- **G2**：`bundle create --all` + `verify` + 独立 `clone --mirror` 其 `fsck --full` 全 0（8 refs 完整历史）。如实声明：bundle 不含未提交/reflog-only 对象；**旧 reflog/暂存快照不承诺找回、删除根因仍未定论**（HUSKY=0 仍为临时隔离）。
+- 提交后复验：`370b9fb`、`14bdd6d` 之后默认 fsck 均 0（仅保留 dangling `a8fd8927`，不删）。
+
+### S · 保存控制器订阅快照与确认时间（提交 `370b9fb`）
+- **先红 9**（exam 4 + writing 5）：终态帧必须 inFlight=false、Task A 恢复续写的订阅证据、clean 通知重入不丢 waiter（不依赖防抖）、dispose 后不发通知（防回归绿）。
+- 修复（两控制器+组件）：`finally` 统一「释放 inFlight → 结算等待者 → 通知终态帧 → 排出重入输入」；`flush()` 先登记 waiter 再启动管道；L3ExamPaper「已保存」时间只读控制器快照 `lastSavedAt`（不在 clean 通知里 `new Date()`）。
+- 绿：控制器 45/45（exam 14 + writing 31）；组件 30/30（含时间/离页守卫新增断言）。
+
+### V · expectedVersion 端到端合同（提交 `14bdd6d`）
+- **先红**：domain 4（缺/负数/小数拒绝）、repo 1（SQL CAS）、service 3（patch 落空 `DRAFT_VERSION_CONFLICT` 不泄露版本；seal 版本不符不物化）、export service 2（缺版本拒绝/旧版本 409）、http 2（缺版本 400）、控制器 11、组件 2。
+- 合同：PATCH/seal/draft 导出全链必填 `expectedVersion`；**seal 双窗口**（getSheet 后先核对 + 最终 UPDATE 以 `input.expectedVersion` 抢占）；公开响应与 OpenAPI 显式 `draft_version`（strict contract + 生成客户端同步）；breaking approval 重锚（2 条 required-field issues，base/current/issues 三元组对齐）。
+- 前端：装配后 `setDraftVersion` 才允许发送；seal 用 flush 回执版本；draft 导出携带回执版本；冲突恢复动作（复制本地答案 / 载入服务器版本）。
+- 门禁：typecheck / arch:check / api:governance 全链（openapi→client check→contract→breaking→breaking-contract→complexity）/ frontend:build 全绿；路由棘轮净行数不增（sheets 65≤66、sheets-export 25≤25 vs base）。
+
+### Q · 逐题脏键与请求序号（提交 `14bdd6d`）
+- **先红 8**：Q1 保存后只改 Q2 只发 Q2、在途再编辑保留、null 清除按序、429 重试冻结同一载荷+版本、409 停发且新编辑不清 conflict、两标签同题冲突、201 键分两批按序无并发。
+- 控制器重构：`dirty Map<questionId,{seq,answer}>`；成功仅清「仍为同一发送序号」的键；载荷发送时刻 `structuredClone` 冻结；单批 ≤200 按 seq 升序、前批确认才发下批；`adoptServerBaseline` 明确恢复；未装配（版本 null）不发送且 flush 诚实拒绝。
+- 绿：控制器 22/22；组件回归 110/110（exam+writing 群）。
+
+### 真库（独立验收库 `vocab_writing_test`，两连接可控屏障）
+```
+TEST_DATABASE_URL=postgresql://vocab_migration:***@127.0.0.1:5433/vocab_writing_test
+TEST_APP_DATABASE_URL=postgresql://vocab_app:***@127.0.0.1:5433/vocab_writing_test
+DB_SSLMODE=disable npx vitest run --config vitest.integration.config.ts tests/l3-sheet-reliability.integration.test.ts
+```
+**结果 8/8**：R1 happy full 物化清空；**R2** seal 已读 v1→他端 PATCH v2 提交→seal CAS 落空 409（读取后窗口）；**R3** 两端 PATCH 同初始版本 → 一胜一 409、版本仅 +1；**R4** 客户端确认后、seal 读取前他处写入 → seal(v1) 409 不物化（读取前窗口）；R5 先定格后 PATCH 409；R6 导出版本核对（旧 409/缺 422/sealed 无参）；R7 跨 owner 404 与 writing 旁路 409；R8 三档定格状态流转。
+
+### 真浏览器 E2E（真栈：3108 单进程 + vocab_writing_test）
+命令（本地）：`E2E_PORT=3108 DATABASE_URL=<app@…vocab_writing_test> E2E_SETUP_DATABASE_URL=<migration@…> DB_SSLMODE=disable npx playwright test e2e/l3-sheet-reliability.spec.ts`
+**结果 3/3 passed（1.7m）**：
+1. 作答→保存→定格（两题软确认「仍要定格」）→离开→同 sheet 回看→刷新评卷（库核：attempt 物化、题纸清空、**零多建纸**）；
+2. 故障：PATCH 持续 422 → 定格被屏障阻断（seal 0 请求）、最后输入保留、手动重试恢复（库核）；
+3. **双标签冲突**：同题他写（v2）后本端 PATCH(v1) → 409 且库未写入 → 「载入服务器版本」→ 重新显式改另一题成功（v3；他端 Q1 未被覆盖）。
+证据：`D:/tmp/l3-sheet-e2e-run2.log`（真实 HTTP 日志含 409 与恢复后 200）。
+
+### 剩余限制与后续
+- **Task C（作文入口整合）未开始**：需先核对 `writing-practice-v1`（wt-practice@b11f3ee）成果，决定复用/降级，避免双线重复改卷面入口。
+- 本轮未开发：学习笔记、分页、备份调度、注记评审、完整翻译工作台（超范围）。
+- HUSKY=0 仍为临时隔离；钩子化删除的根因未锁定（独立任务）。
+- 浏览器 E2E 覆盖定格局限；导出屏障由组件级测试覆盖（E2E 未加导出变体）。
+- CI 全绿受本地内存限制的项（分层覆盖）；已本地跑 typecheck/arch/governance/complexity/build。
+
+### 提交链（本 worktree）
+`56fabdd`(Task A) → `3c906a3`(台账) → `370b9fb`(S 通知合同) → `14bdd6d`(V/Q 版本+脏键) → 本轮末尾 `test(e2e)` 提交（E2E/真库夹具修正）。
+
