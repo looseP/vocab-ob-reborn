@@ -379,14 +379,14 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
     };
     await renderPaper(translationPaper);
     await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
-    // 未揭示：参考译文不渲染（含内容）
-    expect(screen.queryByText(/参考译文/)).toBeNull();
+    // 未揭示：参考译文标题不渲染（降级文案除外；含内容）
+    expect(screen.queryByText("参考译文（官方解析整理）")).toBeNull();
     expect(screen.queryByText("敏捷的棕色狐狸。")).toBeNull();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "显示全部答案与解析" }));
       await Promise.resolve();
     });
-    expect(screen.getByText(/参考译文/)).toBeTruthy();
+    expect(screen.getByText("参考译文（官方解析整理）")).toBeTruthy();
     expect(screen.getByText("敏捷的棕色狐狸。")).toBeTruthy();
   });
 
@@ -1148,5 +1148,68 @@ describe("V · 版本合同（组件级）", () => {
     const lastPatch = JSON.parse((patchCalls[1]![1] as { body: string }).body) as { expectedVersion: number };
     expect(lastPatch.expectedVersion).toBe(3); // 以载入的服务器版本为基线
     expect(screen.getByText(/已保存/)).toBeTruthy();
+  });
+});
+
+// ── Task C：旧卷面诚实化（无持久化链的可编辑输入不得出现；作答经作文空间） ──
+
+describe("Task C · 旧卷面诚实化", () => {
+  const Q_ESSAY = "00000000-0000-4000-8000-000000000301";
+  const Q_TRANS = "00000000-0000-4000-8000-000000000302";
+
+  const writtenPaper: ExamPaper = {
+    id: PAPER_ID,
+    title: "2025 英语一 · 写作与翻译",
+    direction: "考研",
+    metadata: {},
+    sections: [
+      {
+        key: "s-essay", title: "Part A 应用文", questionType: "short_essay",
+        sourceId: null, fileKey: "w-file-1", questionIds: [Q_ESSAY], missing: false,
+        source_title: null, source_content: null,
+        questions: [{
+          id: Q_ESSAY, ordinal: 0, stem: "47. Write a letter to a friend.",
+          options: [], answer: { sample: "Dear friend, ..." }, explanation: "范文提纲", evidence: [],
+        }],
+      },
+      {
+        key: "s-tr", title: "Part C 翻译", questionType: "sentence_translation",
+        sourceId: null, fileKey: "tr-file-1", questionIds: [Q_TRANS], missing: false,
+        source_title: null, source_content: null,
+        questions: [{
+          id: Q_TRANS, ordinal: 0, stem: "46. 翻译：The quick brown fox.",
+          options: [], answer: { text: "敏捷的棕色狐狸。" }, explanation: null, evidence: [],
+        }],
+      },
+    ],
+  };
+
+  it("作文题不再出现无持久化链的可编辑输入框（作答经作文空间入口）", async () => {
+    await renderPaper(writtenPaper);
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    expect(screen.queryByPlaceholderText(/在这里写作文/)).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("翻译题诚实降级：无输入框 + 明示暂未开放；参考译文仍显式揭示", async () => {
+    await renderPaper(writtenPaper);
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    expect(screen.queryByPlaceholderText(/写下你的译文/)).toBeNull();
+    expect(screen.getByText(/译文作答保存暂未开放/)).toBeTruthy();
+    // 参考译文默认隐藏（与卷面揭示纪律一致）
+    expect(screen.queryByText("敏捷的棕色狐狸。")).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "显示全部答案与解析" }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText("参考译文（官方解析整理）")).toBeTruthy();
+    expect(screen.getByText("敏捷的棕色狐狸。")).toBeTruthy();
+  });
+
+  it("已定格卷面同样不渲染输入框（只读纪律不依赖禁用态假象）", async () => {
+    setupMock({ sheet: sheetFixture({ status: "sealed", seal_mode: "full" }) });
+    await renderPaper(writtenPaper);
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 });

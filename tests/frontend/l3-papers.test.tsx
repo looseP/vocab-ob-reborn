@@ -651,8 +651,9 @@ describe("I3/C 原卷作文入口与返回恢复", () => {
     const posts = (apiFetch as ReturnType<typeof vi.fn>).mock.calls
       .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
     expect(posts).toHaveLength(0);
-    const textarea = screen.getByPlaceholderText(/在这里写作文/) as HTMLTextAreaElement;
-    expect(textarea.disabled).toBe(false); // draft 恢复可编辑
+    // Task C：卷面不再渲染无持久化链的可编辑输入框（作答与可编辑性在作文空间）
+    expect(screen.queryByPlaceholderText(/在这里写作文/)).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 
   it("resume（paper·sealed）：同 ID 只读；零 openSheet；不显示可编辑假象", async () => {
@@ -668,8 +669,8 @@ describe("I3/C 原卷作文入口与返回恢复", () => {
     const posts = (apiFetch as ReturnType<typeof vi.fn>).mock.calls
       .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
     expect(posts).toHaveLength(0);
-    const textarea = screen.getByPlaceholderText(/在这里写作文/) as HTMLTextAreaElement;
-    expect(textarea.disabled).toBe(true); // 只读，不显示可编辑假象
+    // Task C：卷面无输入框（不存在可编辑假象；只读纪律由无输入框与揭示纪律承担）
+    expect(screen.queryByRole("textbox")).toBeNull();
     // 入口显示精确 sealed 稿状态（查看本稿）
     expect(screen.getByRole("button", { name: "查看本稿" })).toBeTruthy();
   });
@@ -735,7 +736,8 @@ describe("I3/C 原卷作文入口与返回恢复", () => {
     const posts = (apiFetch as ReturnType<typeof vi.fn>).mock.calls
       .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
     expect(posts).toHaveLength(0); // 双跑不得把 resume 二次消费后退化成 openSheet（sealed 会另建新卷）
-    expect((screen.getByPlaceholderText(/在这里写作文/) as HTMLTextAreaElement).disabled).toBe(true);
+    // Task C：卷面无输入框（双跑不得产生可编辑假象）
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 
   it("StrictMode（dev 双跑）：source 文件 resume 同样一次性消费（零 openSheet POST）", async () => {
@@ -756,7 +758,8 @@ describe("I3/C 原卷作文入口与返回恢复", () => {
     const posts = (apiFetch as ReturnType<typeof vi.fn>).mock.calls
       .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
     expect(posts).toHaveLength(0);
-    expect((screen.getByPlaceholderText(/在这里写作文/) as HTMLTextAreaElement).disabled).toBe(false);
+    // Task C：卷面无输入框（作答与可编辑性在作文空间，双跑同样零输入框）
+    expect(screen.queryByRole("textbox")).toBeNull();
   });
 
   it("R1：创建在途再次输入——二次 flush 落库后才导航（空档闭合）", async () => {

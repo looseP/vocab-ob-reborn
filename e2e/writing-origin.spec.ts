@@ -280,6 +280,8 @@ test("C｜整卷：保存屏障先行落库 → 返回原题 resumeSheet 按 ID 
   await page.goto(`/l3?paper=${PAPER}`);
   await expect(page.getByText("题纸", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("专项练习（不计入本次试卷作答）")).toBeVisible();
+  // Task C：旧卷面（L3ExamPaper）不再渲染无持久化链的作文输入框（作答一律经「开始写作」）
+  await expect(page.getByPlaceholder(/在这里写作文/)).toHaveCount(0);
   const v0 = await venueState();
   expect(v0).toMatchObject({ sheets: 1, pick: "-", attempts: 0 });
   await page.screenshot({ path: `${SHOT_DIR}/origin-05-paper-entry.png` });

@@ -507,4 +507,20 @@ describe("GET /api/l3/writing/tasks/question-summaries（A2 批量进度读面�
     expect(missingDirection.status).toBe(400);
     expect(questionSummaries).not.toHaveBeenCalled();
   });
+
+  it("Task C：只读进度读取零副作用——返回/刷新/历史查看不创建任务或稿件", async () => {
+    const questionSummaries = vi.fn(async () => [{ questionId: Q1, tasks: [] }]);
+    const create = vi.fn(async () => ({ task: taskDto(), draft: sheetDto(), created: true }));
+    const app = createApp(makeServices({
+      l3WritingTasks: { questionSummaries, create },
+    }));
+    const res = await app.request(
+      `/api/l3/writing/tasks/question-summaries?questionId=${Q1}&kind=whole&direction=${encodeURIComponent("通用")}`,
+      { headers: AUTH_HEADERS },
+    );
+    expect(res.status).toBe(200);
+    expect(questionSummaries).toHaveBeenCalledTimes(1);
+    // 读面零副作用：进度读取不得走创建链（返回原题 / F5 / 历史查看不重复建纸的服务端保证）。
+    expect(create).not.toHaveBeenCalled();
+  });
 });

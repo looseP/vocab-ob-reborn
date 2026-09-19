@@ -974,22 +974,24 @@ function L3QuestionGrading({ grading }: { grading: L3GradingResult }) {
   );
 }
 
+/**
+ * Task C：旧卷面诚实化——不再渲染无持久化链的可编辑输入（输入无处保存，禁止假象）。
+ *  - 作文（essay）：作答经宿主渲染的「作文空间」入口（WritingQuestionEntry）；
+ *  - 翻译（translation）：本批次仅诚实降级（明示暂未开放），保留题面/揭示/清理状态；
+ *  - 参考译文/范文与解析的显式揭示纪律、定格后只读纪律保持不变。
+ */
 function WrittenQuestion({
   question,
   kind,
-  placeholder,
   analysis,
   revealAll = false,
-  readOnly = false,
   cleared = false,
 }: {
   question: ExamQuestion;
   kind: "translation" | "essay";
-  placeholder: string;
   analysis?: ReactNode;
   /** 参考译文/范文仅在显式揭示后可见（与客观题同一草稿作答模型）。 */
   revealAll?: boolean;
-  readOnly?: boolean;
   cleared?: boolean;
 }) {
   const reference = kind === "translation" ? question.answer.text : question.answer.sample;
@@ -1003,12 +1005,11 @@ function WrittenQuestion({
           作答记录已清理
         </p>
       )}
-      <textarea
-        rows={kind === "translation" ? 7 : 12}
-        placeholder={placeholder}
-        disabled={readOnly}
-        className="w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm leading-7 [background-image:repeating-linear-gradient(transparent,transparent_27px,var(--color-border)_28px)] [background-position:0_11px] focus:border-[var(--color-accent)] focus:outline-none"
-      />
+      {kind === "translation" && (
+        <p className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-ink-soft)]">
+          当前支持查看题目与参考译文；译文作答保存暂未开放。
+        </p>
+      )}
       {revealAll && reference && (
         <details className="rounded-xl border border-emerald-500/40 bg-emerald-50/60 p-3.5 dark:bg-emerald-950/20">
           <summary className="cursor-pointer select-none text-sm font-semibold text-emerald-700 dark:text-emerald-300">
@@ -2100,10 +2101,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
                         <WrittenQuestion
                           question={q}
                           kind={section.questionType === "sentence_translation" ? "translation" : "essay"}
-                          placeholder={section.questionType === "sentence_translation" ? "在这里写下你的译文…" : "在这里写作文（约 100/150 词）…"}
                           analysis={renderAnalysis(section.key, q)}
                           revealAll={revealAll}
-                          readOnly={interactionLocked}
                           cleared={clearedQuestions.has(q.id)}
                         />
                         {isEssay && writingEntry && (
