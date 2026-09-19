@@ -2,7 +2,14 @@
 
 > **本文件是 Task 07–08 的可独立执行版本**：校准自 `study-notes-execution-plan-2026-09-18.md`（Task 07/08 原文保留、不改写）与 2026-09-20 收尾轮任务书要求（§四 1–9 全部落实）。与原文冲突时以本文件为准。
 > **前置状态**：后端 Task 00–06 已交付（`docs/plan/study-notes-backend-execution-2026-09-19.md`）；F1–F5 补修与工程收尾见 `docs/plan/study-notes-backend-repair-2026-09-19.md`、`docs/plan/study-notes-engineering-closeout-2026-09-20.md`。
-> **本轮（2026-09-20）只交付本文件；不开工任何前端代码。**
+> **本轮（2026-09-20）只交付本文件；不开工任何前端代码。**（历史注：该行为收尾轮记录；Task 07 执行轮已在其后开工。）
+> **Task 07 执行轮校准（2026-09-20，开工前同步，本文件内文已按此修订）**：
+> ① 删除 S4「新内容 T2 复用 R1」例外——只有**完全相同的未确认请求**重试才复用其 requestId；T1 确认后发送 T2 必须**新 requestId、新确认版本**。
+> ② S10/S11/N10 的「无写」断言改为「不误报确认 / 不接受旧代回包 / 不继续导航」——请求可能已提交但响应丢失，**实际结果以库核为准**。
+> ③ 删除冲突态「确认已合并后重试」：仅保留**复制本地内容**与**显式载入服务器版本**；载入成功后重新编辑，以**新 requestId 和新基线**保存，不做自动合并、不做强制覆盖。
+> ④ 与后端实际合同逐条核对后的两处校准：preview 请求体为 `ReferenceTarget` **本体**（无 `{target}` 包装）；布尔 query 为 **`"1"/"0"`**（非 `true/false`）。证据见 `study-notes-task07-execution-2026-09-20.md` §1。
+> ⑤ 工程环境校准：Windows Temp 守卫遗漏（`scripts/run-alerting-drill.ts` 仅检测 `os.tmpdir()`，运维合同要求演练锁在所有临时目录之外）**登记为独立观察项**；本批不修改告警系统、不靠该缺口制造门禁绿色；「挂死系统层根因未闭环」口径同步（见 closeout 文档校准注）。
+> 执行过程与证据落于 `docs/plan/study-notes-task07-execution-2026-09-20.md`（不预填通过）。
 
 ---
 
@@ -17,7 +24,7 @@
 | GET | `/api/l3/study-notes/:noteId` | → `{item: StudyNoteDto}`（单快照：body/version/venues/references 同属一次提交） |
 | PUT | `/api/l3/study-notes/:noteId` | `SaveNoteInput` → `{item}` |
 | GET | `/api/l3/study-notes/reference-targets` | `q?, kind(source\|question), venue?, limit?, cursor?` → `Page<StudySourceTargetItem\|StudyQuestionTargetItem>` |
-| POST | `/api/l3/study-notes/reference-preview` | `{target}` → `{preview}`（只读，非持久化；POST 仅沿用 CSRF 保护） |
+| POST | `/api/l3/study-notes/reference-preview` | `ReferenceTarget` **本体**（无 `{target}` 包装）→ `{preview}`（只读，非持久化；POST 仅沿用 CSRF 保护） |
 | GET | `/api/l3/study-notes/backlinks` | `targetKind, targetId, limit?, cursor?` → 反向引用（按 note 去重） |
 | POST | `/api/l3/study-topics` | `{requestId, venue, title}` → `{item, created}` |
 | GET | `/api/l3/study-topics` | `venue`(必填), `status?`, `limit?, cursor?` → `Page<StudyTopicDto>` |
@@ -64,7 +71,7 @@
 2. 每个响应经**服务端契约 zod 运行时校验**；失败抛 `BrowserApiError(code="INVALID_RESPONSE")`——**非法 200 绝不能归一为「空笔记 / 无引用 / 空列表」**；缺失字段不得补默认。
 3. 所有入参类型来自 `@/domain/l3-study-notes`；所有响应 schema 来自 `@/http/l3-study-note-response-contract`。
 4. **不提供** export/未实现端点的客户端函数；也不提供「未接线」的假成功路径。
-5. query 序列化：`undefined` 不发送；布尔以字符串 `true/false`；cursor 原样透传（不解析、不重建）。
+5. query 序列化：`undefined` 不发送；布尔以字符串 `"1"/"0"`（**2026-09-20 校准**：实际合同 `pinned`/`unfiled` 为 `enum("0","1")`，见 `l3StudyNoteListQuerySchema`/openapi；`true`/`false` 会被 400）；cursor 原样透传（不解析、不重建）。
 
 ### 1.3 操作映射表（12 个，命名建议 `studyNotesClient.*`）
 
@@ -125,10 +132,10 @@
 ### 2.4 冲突（409）与恢复（用户明确选择，不自动）
 
 - `conflict` 状态：**停止自动写**；保留本地输入。
-- 提供三个明确动作（UI 文案对应）：
+- 提供两个明确动作（UI 文案对应；**2026-09-20 纠偏：删除「确认已合并后重试」**——不做自动合并、不做强制覆盖、不提供「确认后继续用旧本地内容覆盖重试」）：
   1. **复制本地内容**（剪贴板；不产生请求）；
-  2. **查看/载入服务器版本**：显式操作 → `GET /:noteId` → `adoptServerSnapshot(dto)`（放弃本地未确认输入、以服务器快照重建编辑基线）；
-  3. 重试（仅当用户确认服务器版本已由自己合并时提供；文案说明风险）。
+  2. **查看/载入服务器版本**：显式操作 → `GET /:noteId` → `adoptServerSnapshot(dto)`（放弃本地未确认输入、以服务器快照重建编辑基线）。
+- 载入成功后用户**重新编辑**；保存以**新 requestId** 与**新基线（载入得到的版本）**进行，不得沿用冲突前的 requestId 或旧 expectedVersion。
 - **载入前必须先提供复制本地副本的机会**（顺序保障：按钮可得性/操作序列上有明确保全点）。
 - **恢复请求期间锁编辑**（或核对 `editSeq`）：`GET` 在途期间产生的新输入**不得被恢复结果吞掉**——若发生新编辑，恢复结果作废（放弃替换或提示重新获取），**绝不静默覆盖**。
 
@@ -163,7 +170,7 @@
 - `src/frontend/components/studyNotes/StudyNoteEditor.tsx`：
   - 标题（≤120）/正文（≤100k，textarea + 预览，marked + DOMPurify 复用现有净化渲染）；
   - 状态条诚实：`已保存/未保存/保存中/保存失败/冲突`（对应 lastSavedAt、错误、冲突提示）；
-  - 冲突面板：复制本地内容 / 载入服务器版本（显式）/（可选）重试；
+  - 冲突面板：复制本地内容 / 载入服务器版本（显式）；（**不含「确认已合并后重试」**，见 §2.4 纠偏）；
   - 正文中的 `[[ref:...]]` 标记：渲染为引用占位（Task 09 完整卡片前的**安全占位**：不可编辑区域/只读文本，绝不作为 HTML 注入）。
 
 ### 2.8 文件清单（Task 07）
@@ -291,14 +298,14 @@ export interface StudyNoteSaveController {
 | S1 | 编辑 T1（800ms 内无后续） | dirty→saving→idle | 1×PUT(T1, R1, V1) | version=V1+1、正文=T1 |
 | S2 | T1 在途时编辑 T2（未回包） | T2 排队；A 回包后 B sending | PUT(T1,R1,V1) → PUT(T2,R2,V2) | 最终 version=V2+1、正文=T2；**T2 回包前不得显示已保存** |
 | S3 | T1 保存网络超时；期间无新编辑 | retrying（1/2/4s） | PUT(T1,R1,V1) 重试 ×≤3（**载荷逐字节相同**） | 一次成功即 version=V1+1；全失败=error（输入保留） |
-| S4 | T1 重试期间编辑 T2 | 重试不发 T2 | 重试仍为 (T1,R1,V1)；成功后以 V2 发 (T2,R2,V2)（或 R1 若上次成功即幂等复用——以「沿用未确认请求优先」为准） | T2 最终落库 |
+| S4 | T1 重试期间编辑 T2 | 重试不发 T2 | 重试仍为 (T1,R1,V1)；**T1 确认后发送 T2 必须新 requestId R2、新确认版本 V2**（**2026-09-20 纠偏：删除「或 R1 复用」例外**——只有完全相同的未确认请求重试才复用其 requestId） | T2 最终落库 |
 | S5 | 保存遇 409 | conflict（停自动写） | 无后续 PUT | 服务器版本不变；local 输入保留 |
 | S6 | conflict 下点「复制本地内容」 | conflict（不变） | 无请求 | 无变化 |
 | S7 | conflict 下点「载入服务器版本」 | 恢复请求 GET | 1×GET /:noteId（恢复期间锁编辑） | 无写；本地基线=服务器快照 |
 | S8 | S7 恢复 GET 期间产生新输入 | 恢复结果**不覆盖**新输入 | （按实现：作废重取或提示） | 无写 |
 | S9 | flush() 调用（T2 在途） | pending | 等待 T2 确认 | flush resolve 回执 version=V3、editSeq=2、lastSavedAt=真实时间 |
-| S10 | flush() 等待中保存失败 | reject | — | 无写；宿主不导航 |
-| S11 | dispose / 换 note / StrictMode 重建后旧回包到达 | 旧代际丢弃 | 无新请求 | 无写 |
+| S10 | flush() 等待中保存失败 | reject | — | **不得断言「无写」**（请求可能已提交但响应丢失；**2026-09-20 纠偏**）；断言=不误报确认（不 resolve、不推进 savedSeq）、宿主不导航；实际落库结果以库核为准 |
+| S11 | dispose / 换 note / StrictMode 重建后旧回包到达 | 旧代际丢弃 | 无新请求 | **不得断言「无写」**（旧请求可能已提交但响应丢失；**2026-09-20 纠偏**）；断言=旧回包不污染新控制器、不误报确认；实际落库结果以库核为准 |
 | S12 | 打开已有笔记（references 3 条，含 1 unavailable）→ 仅改标题 → 保存 | idle→saving→idle | PUT(references=[keep×3]) | **refs 3 条 id/摘录/capturedAt 不变**（unavailable 保留） |
 | S13 | 用户手删正文 marker → 触发保存 | 阻止提交 + 提示 | **无 PUT**（本地预检拦截） | 无写 |
 | S14 | 打开笔记 GET 返回 vs 期间本地编辑（限可发生路径） | 不覆盖 dirty | — | 无写 |
@@ -316,7 +323,7 @@ export interface StudyNoteSaveController {
 | N7 | 加载第 2 页 | 追加去重 | list(cursor=C1) | 无写 |
 | N8 | 专题内上移成员（跨页） | 需要目标前成员可见 | PUT members{requestId,expectedVersion,beforeNoteId} | 该专题 position 重排；**其他顺序不变** |
 | N9 | 编辑中切 topic | 不丢字 | 先 flush（成功才切） | 保存落库后才切换视图 |
-| N10 | 编辑中触发导航且 flush 失败 | 保持原位 | — | 无写、视图不动 |
+| N10 | 编辑中触发导航且 flush 失败 | 保持原位（**不继续导航**） | — | **不得断言「无写」**（**2026-09-20 纠偏**）；断言=视图不动、不误报成功；实际落库结果以库核为准 |
 | N11 | 归档笔记 → 恢复 | 状态切换 | PUT（status=archived/active；完整快照） | status 字段变更、version+1 |
 | N12 | 移除最后一个 venue | 阻止 / 服务端 422 展示 | PUT 被 422 | 无写；venues 保持 ≥1 |
 
