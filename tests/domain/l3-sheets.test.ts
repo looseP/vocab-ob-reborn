@@ -130,6 +130,7 @@ describe("sheetOpenInputSchema", () => {
 describe("sheetPatchInputSchema", () => {
   it("accepts per-question merge payloads including explicit nulls", () => {
     const parsed = sheetPatchInputSchema.parse({
+      expectedVersion: 1,
       answers: { [QUESTION_ID]: { choice: "B" }, [PAPER_ID]: null },
     });
     expect(parsed.answers[QUESTION_ID]).toEqual({ choice: "B" });
@@ -137,12 +138,15 @@ describe("sheetPatchInputSchema", () => {
   });
 
   it("rejects an empty merge object", () => {
-    const result = sheetPatchInputSchema.safeParse({ answers: {} });
+    const result = sheetPatchInputSchema.safeParse({ expectedVersion: 0, answers: {} });
     expect(result.success).toBe(false);
   });
 
   it("rejects non-uuid question keys", () => {
-    expect(sheetPatchInputSchema.safeParse({ answers: { "q-1": { selected: "A" } } }).success).toBe(false);
+    expect(sheetPatchInputSchema.safeParse({
+      expectedVersion: 0,
+      answers: { "q-1": { selected: "A" } },
+    }).success).toBe(false);
   });
 
   it("rejects more than 200 merged questions in one patch", () => {
@@ -150,25 +154,40 @@ describe("sheetPatchInputSchema", () => {
     for (let i = 0; i < 201; i += 1) {
       answers[`00000000-0000-4000-8000-${String(i).padStart(12, "0")}`] = { selected: "A" };
     }
+    expect(sheetPatchInputSchema.safeParse({ expectedVersion: 0, answers }).success).toBe(false);
+  });
+
+  it("V：缺 expectedVersion / 负数 / 小数一律拒绝（缺版本 400 语义，不留无版本旁路）", () => {
+    const answers = { [QUESTION_ID]: { choice: "B" } };
     expect(sheetPatchInputSchema.safeParse({ answers }).success).toBe(false);
+    expect(sheetPatchInputSchema.safeParse({ answers, expectedVersion: -1 }).success).toBe(false);
+    expect(sheetPatchInputSchema.safeParse({ answers, expectedVersion: 1.5 }).success).toBe(false);
+  });
+
+  it("V：expectedVersion 为非负整数时接受（0 = 打开后未保存过的初值）", () => {
+    const parsed = sheetPatchInputSchema.parse({
+      answers: { [QUESTION_ID]: { choice: "B" } },
+      expectedVersion: 0,
+    });
+    expect(parsed.expectedVersion).toBe(0);
   });
 });
 
 describe("sheetSealInputSchema", () => {
   it("accepts a full-record seal without summary", () => {
-    const parsed = sheetSealInputSchema.parse({ mode: "full" });
+    const parsed = sheetSealInputSchema.parse({ expectedVersion: 0, mode: "full" });
     expect(parsed.mode).toBe("full");
     expect(parsed.acknowledgeUnanswered).toBe(false);
   });
 
   it("accepts incremental and summary modes; summary keeps its text", () => {
-    expect(sheetSealInputSchema.safeParse({ mode: "incremental" }).success).toBe(true);
-    const parsed = sheetSealInputSchema.parse({ mode: "summary", summary: "本次全对，只留元认知" });
+    expect(sheetSealInputSchema.safeParse({ expectedVersion: 2, mode: "incremental" }).success).toBe(true);
+    const parsed = sheetSealInputSchema.parse({ expectedVersion: 2, mode: "summary", summary: "本次全对，只留元认知" });
     expect(parsed.summary).toBe("本次全对，只留元认知");
   });
 
   it("rejects a summary-mode seal without summary text", () => {
-    const result = sheetSealInputSchema.safeParse({ mode: "summary" });
+    const result = sheetSealInputSchema.safeParse({ expectedVersion: 0, mode: "summary" });
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.issues.some((issue) => issue.message.includes("总结"))).toBe(true);
@@ -176,15 +195,26 @@ describe("sheetSealInputSchema", () => {
   });
 
   it("rejects an unknown mode and over-long summary", () => {
-    expect(sheetSealInputSchema.safeParse({ mode: "partial" }).success).toBe(false);
+    expect(sheetSealInputSchema.safeParse({ expectedVersion: 0, mode: "partial" }).success).toBe(false);
     expect(sheetSealInputSchema.safeParse({
-      mode: "full", summary: "x".repeat(2001),
+      expectedVersion: 0, mode: "full", summary: "x".repeat(2001),
     }).success).toBe(false);
   });
 
   it("carries the unanswered confirmation flag when explicitly set", () => {
-    const parsed = sheetSealInputSchema.parse({ mode: "full", acknowledgeUnanswered: true });
+    const parsed = sheetSealInputSchema.parse({ expectedVersion: 1, mode: "full", acknowledgeUnanswered: true });
     expect(parsed.acknowledgeUnanswered).toBe(true);
+  });
+
+  it("V：缺 expectedVersion 的定格请求拒绝（客户端确认版本必填）", () => {
+    expect(sheetSealInputSchema.safeParse({ mode: "full" }).success).toBe(false);
+    expect(sheetSealInputSchema.safeParse({ mode: "summary", summary: "s" }).success).toBe(false);
+  });
+
+  it("V：携带非负整数 expectedVersion 的定格接受（0 亦合法——开纸读取的初值）", () => {
+    expect(sheetSealInputSchema.safeParse({ mode: "full", expectedVersion: 3 }).success).toBe(true);
+    expect(sheetSealInputSchema.safeParse({ mode: "summary", summary: "s", expectedVersion: 0 }).success).toBe(true);
+    expect(sheetSealInputSchema.safeParse({ mode: "full", expectedVersion: -1 }).success).toBe(false);
   });
 });
 
@@ -325,12 +355,13 @@ describe("sheetAnswerSchema（v2 显式键契约，ADR-0034 增补条 8）", () 
 
   it("PATCH 契约收口 answers 值形状（null 清除仍放行）", () => {
     const ok = sheetPatchInputSchema.safeParse({
+      expectedVersion: 0,
       answers: { [QUESTION_ID]: { choice: "B", flags: { recheck: true } } },
     });
     expect(ok.success).toBe(true);
-    const cleared = sheetPatchInputSchema.safeParse({ answers: { [QUESTION_ID]: null } });
+    const cleared = sheetPatchInputSchema.safeParse({ expectedVersion: 0, answers: { [QUESTION_ID]: null } });
     expect(cleared.success).toBe(true);
-    const loose = sheetPatchInputSchema.safeParse({ answers: { [QUESTION_ID]: { selected: "C" } } });
+    const loose = sheetPatchInputSchema.safeParse({ expectedVersion: 0, answers: { [QUESTION_ID]: { selected: "C" } } });
     expect(loose.success).toBe(false);
   });
 });

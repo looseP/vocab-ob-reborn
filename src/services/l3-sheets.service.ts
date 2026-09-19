@@ -56,9 +56,11 @@ function shadeAttempt(row: L3QuestionAttemptRow): L3QuestionAttemptRow {
 
 export class L3SheetService {
   constructor(
-    private readonly sheetRepo: IL3SheetRepository,
-    private readonly paperRepo: IL3PaperRepository,
-    private readonly annotationRepo: IL3AnnotationRepository,
+    // 三个仓储参数当前不直接读取（业务一律经 withActor → repositoryFactory(tx) 取
+    // 事务绑定仓储），保留为可选：组合根/单测显式注入、集成测试沿用零参构造先例。
+    private readonly sheetRepo?: IL3SheetRepository,
+    private readonly paperRepo?: IL3PaperRepository,
+    private readonly annotationRepo?: IL3AnnotationRepository,
     private readonly txRunner: TxRunner = withTransaction,
     private readonly repositoryFactory: RepositoryFactory = createRepositories,
   ) {}
@@ -124,10 +126,17 @@ export class L3SheetService {
     });
   }
 
-  /** 逐题 merge（null 清除）：非 draft → 409（条件 UPDATE 空转后二次判别 404/409）。 */
+  /** 逐题 merge（null 清除）：非 draft → 409（条件 UPDATE 空转后二次判别 404/409）。
+   *  V（2026-09-19）：expectedVersion 为客户端确认版本的 CAS 条件——draft 上落空
+   *  = 他处已写入（版本前进），返回 DRAFT_VERSION_CONFLICT 且不泄露服务器版本。 */
   async patchSheet(input: PatchL3SheetInput): Promise<{ sheet: L3SubmissionRow }> {
     return this.withActor(input.userId, async (repos) => {
-      const updated = await repos.l3Sheets.patchAnswers(input.userId, input.sheetId, input.answers);
+      const updated = await repos.l3Sheets.patchAnswers(
+        input.userId,
+        input.sheetId,
+        input.answers,
+        input.expectedVersion,
+      );
       if (updated) return { sheet: updated };
       const sheet = await repos.l3Sheets.getSheet(input.userId, input.sheetId);
       if (!sheet) throw new NotFoundError("L3Sheet", input.sheetId);
@@ -139,10 +148,19 @@ export class L3SheetService {
           sheetId: input.sheetId,
         });
       }
-      throw new ConflictError("L3 sheet is settled; answers are read-only", undefined, {
-        sheetId: input.sheetId,
-        status: sheet.status,
-      });
+      if (sheet.status !== "draft") {
+        throw new ConflictError("L3 sheet is settled; answers are read-only", undefined, {
+          sheetId: input.sheetId,
+          status: sheet.status,
+        });
+      }
+      // draft 且条件合并落空 = 版本已前进（他标签/他处已写入）：
+      // 明确 DRAFT_VERSION_CONFLICT，客户端保留本地输入并停止自动写。
+      throw new ConflictError(
+        "题纸已在其他地方更新，本次保存已中止；请载入服务器版本或复制本地答案后再继续",
+        undefined,
+        { code: "DRAFT_VERSION_CONFLICT", sheetId: input.sheetId },
+      );
     });
   }
 
@@ -159,6 +177,12 @@ export class L3SheetService {
     promotedAnnotationCount: number;
   }> {
     return this.withActor(input.userId, async (repos) => {
+      // Task B（2026-09-19）：定格临界区以「读版本 + CAS 抢占」实现乐观并发，
+      // 而非 FOR UPDATE 悲观锁——悲观锁会阻塞并发 PATCH，使「先读 A、后并发写 B」
+      // 的时序被串行化为「先定格 A、PATCH 落后 409」，反而丢弃了更新的 B。
+      // 这里用普通 getSheet 读回权威 answers 与 draft_version（读到的即时版本），
+      // 临界区末尾再以 draft_version 作 CAS 兜底：若读取后发生了并发 PATCH（版本
+      // 已前进），条件 UPDATE 落空 → 拒绝固化旧值且保留并发写入（PATCH 已成功）。
       const sheet = await repos.l3Sheets.getSheet(input.userId, input.sheetId);
       if (!sheet) throw new NotFoundError("L3Sheet", input.sheetId);
       // W3（ADR《writing-workspace》§4）：writing 稿禁用通用定格三档——提交走专用
@@ -171,6 +195,16 @@ export class L3SheetService {
       }
       if (sheet.status !== "draft") {
         throw new ConflictError("L3 sheet is settled", undefined, { sheetId: input.sheetId, status: sheet.status });
+      }
+      // V（2026-09-19）：核对客户端确认版本——覆盖「客户端确认之后、服务端读取
+      // 之前」的他处写入窗口：版本不一致立即 409 且不物化（版本冲突不是"仍要
+      // 定格"，不得当软确认重试）。
+      if (sheet.draft_version !== input.expectedVersion) {
+        throw new ConflictError(
+          "题纸已在其他地方更新，定格已中止；请重新载入后再定格",
+          undefined,
+          { code: "DRAFT_VERSION_CONFLICT", sheetId: input.sheetId },
+        );
       }
 
       const summaryText = input.mode === "summary" ? (input.summary ?? "").trim() : null;
@@ -195,13 +229,26 @@ export class L3SheetService {
       }
 
       // 原子抢占：并发双 seal 只有一个赢家（条件 UPDATE 基于最新行版本重评估）。
-      const settled = await repos.l3Sheets.sealSheet(input.userId, input.sheetId, {
-        status: sheetStatusAfterSeal(input.mode),
-        seal_mode: input.mode,
-        summary: summaryText,
-      });
+      // V（2026-09-19）：以 **input.expectedVersion**（客户端确认版本）作最终 CAS
+      // 条件——上方读取之后、本次 UPDATE 之前的并发 PATCH 会推进版本，使条件
+      // 落空 → 拒绝固化旧值，且不丢弃并发写入（其 PATCH 已成功）。两个时间窗口
+      // （读取前 / UPDATE 前）都有保护；不使用读取值兜底，避免"核对 A 却写 B"。
+      const settled = await repos.l3Sheets.sealSheet(
+        input.userId,
+        input.sheetId,
+        {
+          status: sheetStatusAfterSeal(input.mode),
+          seal_mode: input.mode,
+          summary: summaryText,
+        },
+        input.expectedVersion,
+      );
       if (!settled) {
-        throw new ConflictError("L3 sheet is settled", undefined, { sheetId: input.sheetId });
+        throw new ConflictError(
+          "题纸在读取后被并发修改，定格已中止；请重新载入后再定格",
+          undefined,
+          { code: "DRAFT_VERSION_CONFLICT", sheetId: input.sheetId },
+        );
       }
 
       let materializedCount = 0;

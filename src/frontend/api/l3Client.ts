@@ -200,6 +200,8 @@ export interface OpenSheetRequest {
 }
 
 export interface SealSheetRequest {
+  /** V（2026-09-19）：定格基线版本——来自本客户端 flush 回执，不得改用 GET 最新版绕过冲突。 */
+  expectedVersion: number;
   mode: SealModeValue;
   summary?: string;
   acknowledgeUnanswered?: boolean;
@@ -235,11 +237,17 @@ export async function fetchSheet(id: string): Promise<{ sheet: L3Sheet; attempts
   return { sheet: body.sheet, attempts: Array.isArray(body.attempts) ? body.attempts : [] };
 }
 
-/** 逐题 merge（null 清除）：非 draft 时服务端 409，由调用方捕获分流。 */
-export async function patchSheet(id: string, answers: Record<string, unknown>): Promise<L3Sheet> {
+/** 逐题 merge（null 清除）：非 draft/旧版本时服务端 409，由调用方捕获分流。
+ *  V（2026-09-19）：expectedVersion 为客户端确认版本（CAS 基线）——旧版本 409 后
+ *  保留本地输入并停止自动写，绝不 GET 最新版后静默套用。 */
+export async function patchSheet(
+  id: string,
+  answers: Record<string, unknown>,
+  expectedVersion: number,
+): Promise<L3Sheet> {
   const body = await apiFetch<{ sheet?: L3Sheet } | null>(
     `/l3/sheets/${encodeURIComponent(id)}`,
-    { method: "PATCH", body: JSON.stringify({ answers }) },
+    { method: "PATCH", body: JSON.stringify({ expectedVersion, answers }) },
   );
   if (!body?.sheet) throw new Error("题纸保存失败：响应缺少题纸行");
   return body.sheet;
@@ -293,9 +301,17 @@ export async function saveQuestionAssessment(questionId: string, contentMd: stri
 
 // ── 批次二增补：导出 v2（ADR-0034 v2 条 12）────────────────────────────────
 
-/** 导出的 Markdown 全文（text/markdown 响应；parseJson:false 取原文）。 */
-export async function fetchSheetExport(sheetId: string, withAnswers?: boolean): Promise<string> {
-  const query = withAnswers == null ? "" : `?withAnswers=${withAnswers ? 1 : 0}`;
+/** 导出的 Markdown 全文（text/markdown 响应；parseJson:false 取原文）。
+ *  V（2026-09-19）：draft 导出携带 flush 回执版本（服务端核对；sealed 忽略）。 */
+export async function fetchSheetExport(
+  sheetId: string,
+  withAnswers?: boolean,
+  expectedVersion?: number,
+): Promise<string> {
+  const params = new URLSearchParams();
+  if (withAnswers != null) params.set("withAnswers", withAnswers ? "1" : "0");
+  if (expectedVersion != null) params.set("expectedVersion", String(expectedVersion));
+  const query = params.size > 0 ? `?${params.toString()}` : "";
   return apiFetch<string>(`/l3/sheets/${encodeURIComponent(sheetId)}/export${query}`, { parseJson: false });
 }
 

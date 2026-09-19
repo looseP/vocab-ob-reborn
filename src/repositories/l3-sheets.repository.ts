@@ -106,16 +106,22 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
     userId: string,
     sheetId: string,
     answers: Record<string, unknown>,
+    expectedDraftVersion: number,
   ): Promise<L3SubmissionRow | null> {
     // W3（ADR《writing-workspace》§4）：通用 PATCH 只服务 file/paper 域——writing 稿
     // 必须走专用 saveDraft（CAS + 专用保存契约），通用写面不得成为旁路。
+    // Task B（2026-09-19）：每次 merge 推进 draft_version，作为定格 CAS 的护栏
+    // （与 seal 的 FOR UPDATE + 版本约束协同，杜绝「旧读取被并发写入覆盖」）。
+    // V（2026-09-19）：合并本身也以客户端确认版本作 CAS——旧版本的写入落空
+    // （另一标签已写入），由 service 转 409 DRAFT_VERSION_CONFLICT 保留本地输入。
     const row = await this.queryOne<SubmissionDbRow>(
       `UPDATE l3_submissions
-          SET answers = answers || $3::jsonb, updated_at = now()
+          SET answers = answers || $3::jsonb, draft_version = draft_version + 1, updated_at = now()
         WHERE user_id = $1::uuid AND id = $2::uuid AND status = 'draft'
           AND scope IN ('file', 'paper')
+          AND draft_version = $4
         RETURNING *`,
-      [userId, sheetId, JSON.stringify(answers)],
+      [userId, sheetId, JSON.stringify(answers), expectedDraftVersion],
     );
     return row ? mapSubmissionRow(row) : null;
   }
@@ -124,15 +130,21 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
     userId: string,
     sheetId: string,
     seal: L3SheetSealUpdate,
+    expectedDraftVersion: number,
   ): Promise<L3SubmissionRow | null> {
     this.requireTx();
+    // Task B（2026-09-19）：定格 CAS 抢占——调用方须先用 getSheet 读回权威
+    // answers 与 draft_version，此处再以 draft_version 作条件兜底：若读取后
+    // 发生并发 PATCH（版本已前进），条件 UPDATE 落空 → 拒绝固化旧值，且保留
+    // 并发写入（其 PATCH 已成功、版本已前进）。
     const row = await this.queryOne<SubmissionDbRow>(
       `UPDATE l3_submissions
           SET status = $3, seal_mode = $4, summary = $5, sealed_at = now(),
               answers = '{}'::jsonb, updated_at = now()
         WHERE user_id = $1::uuid AND id = $2::uuid AND status = 'draft'
+          AND draft_version = $6
         RETURNING *`,
-      [userId, sheetId, seal.status, seal.seal_mode, seal.summary],
+      [userId, sheetId, seal.status, seal.seal_mode, seal.summary, expectedDraftVersion],
     );
     return row ? mapSubmissionRow(row) : null;
   }

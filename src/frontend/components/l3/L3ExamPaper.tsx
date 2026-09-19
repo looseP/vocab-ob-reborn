@@ -1065,13 +1065,14 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   if (!sheetSave.current || sheetSave.current.isDisposed()) {
     sheetSave.current = createExamSheetSaveController({
       // sheetId 仅作契约标识；实际题纸 id 由下方 save 闭包经 sheetRef 携带。
+      // V：初始版本由装配 effect 经 setDraftVersion 注入（未装配不发送）。
       sheetId: "l3-exam-sheet",
-      save: async ({ answers }) => {
+      save: async ({ answers, expectedVersion }) => {
         const sheet = sheetRef.current;
         if (!sheet || sheet.status !== "draft") {
           throw Object.assign(new Error("题纸非草稿态，无法保存"), { status: 409 });
         }
-        const updated = await patchSheet(sheet.id, answers);
+        const updated = await patchSheet(sheet.id, answers, expectedVersion);
         return { draftVersion: updated.draft_version };
       },
     });
@@ -1150,6 +1151,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     const next = replaySheetId
       ? fetchSheet(replaySheetId).then(({ sheet: row, attempts: derived }) => {
           if (cancelled) return;
+          sheetSave.current?.setDraftVersion(row.draft_version); // V：先装配版本基线，再允许编辑
           setSheet(row);
           if (row.status === "sealed") {
             applyDerived(derived);
@@ -1162,6 +1164,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
           : { scope: "paper", paperId: paper.id })
         .then((row) => {
           if (cancelled) return;
+          sheetSave.current?.setDraftVersion(row.draft_version); // V：先装配版本基线，再允许编辑
           setSheet(row);
           // 批次三①：重进已定格页面时拉取解析模式评卷结果（draft 零变更不加载）。
           if (row.status === "sealed") void loadGradingResults(row.id);
@@ -1241,11 +1244,50 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
 
   /**
    * 定格/导出屏障：等待全部在途与调用前输入被服务端确认（单在途写控制器）。
-   * 失败（flush reject）由调用方捕获——定格/导出不得越过未确认态。
+   * 返回回执 {draftVersion,lastSavedAt}——定格/导出的版本核对基线；失败（flush
+   * reject）由调用方捕获——不得越过未确认态，也不得 GET 最新版绕过冲突。
    */
   const flushAnswers = useCallback(async () => {
-    await sheetSave.current?.flush();
+    const ctrl = sheetSave.current;
+    if (!ctrl) throw new Error("题纸保存控制器缺失");
+    return await ctrl.flush();
   }, []);
+
+  /** V 冲突恢复动作①：把本地未确认答案复制走（人工保全，不自动覆盖服务器）。 */
+  const copyLocalAnswers = useCallback(() => {
+    const payload = JSON.stringify(answersRef.current, null, 2);
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(payload).then(
+        () => addToast("success", "本地答案已复制（冲突人工保全）"),
+        () => addToast("error", "剪贴板不可用，请手动抄录"),
+      );
+    } else {
+      addToast("error", "当前环境不支持剪贴板");
+    }
+  }, [addToast]);
+
+  /** V 冲突恢复动作②：明确载入服务器版本——放弃本地未确认输入、重建编辑基线。 */
+  const loadServerBaseline = useCallback(async () => {
+    const current = sheetRef.current;
+    if (!current) return;
+    try {
+      const { sheet: row } = await fetchSheet(current.id);
+      const restored: Record<string, SheetAnswer> = {};
+      for (const [questionId, value] of Object.entries(row.answers ?? {})) {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          restored[questionId] = value as SheetAnswer;
+        }
+      }
+      sheetRef.current = row;
+      setSheet(row);
+      answersRef.current = restored;
+      setAnswers(restored);
+      sheetSave.current?.adoptServerBaseline(row.draft_version);
+      addToast("success", "已载入服务器版本；本地未确认修改已放弃");
+    } catch {
+      addToast("error", "载入服务器版本失败，请稍后重试");
+    }
+  }, [addToast]);
 
   /**
    * v2 草稿答案状态机：完整对象浅 merge → prune（空键清理）→ 整题入队 pending
@@ -1399,9 +1441,11 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     if (!current) return;
     setSealBusy(true);
     try {
-      // 屏障：确保全部待保存输入已确认后再定格（服务端 draft_version CAS 拒绝并发旧写）
-      await flushAnswers();
+      // 屏障：确保全部待保存输入已确认后再定格；定格必须使用 flush 回执的版本
+      // （V 合同：不得 GET 最新版绕过冲突，也不得丢弃回执改用服务器读取值）。
+      const receipt = await flushAnswers();
       const result = await sealSheet(current.id, {
+        expectedVersion: receipt.draftVersion,
         mode: sealMode,
         ...(sealMode === "summary" ? { summary: sealSummary.trim() } : {}),
         acknowledgeUnanswered,
@@ -1420,6 +1464,12 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
       void loadGradingResults(result.sheet.id);
     } catch (error) {
       if (error instanceof BrowserApiError && error.status === 409) {
+        // V：版本冲突不是"仍要定格"——不得当软确认重试；提示重新载入。
+        const conflictCode = (error.details as { code?: string } | null)?.code;
+        if (conflictCode === "DRAFT_VERSION_CONFLICT") {
+          addToast("error", "题纸已在其他地方更新，定格已中止；请重新载入后再定格");
+          return;
+        }
         const details = error.details as { unansweredCount?: number; recheckCount?: number } | null;
         if (typeof details?.unansweredCount === "number") {
           setSealUnanswered(details.unansweredCount);
@@ -1447,8 +1497,10 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     if (!current) return;
     setExportBusy(true);
     try {
-      await flushAnswers(); // 导出前等待在途保存确认（不导出未落库草稿）
-      const text = await fetchSheetExport(current.id, exportWithAnswers);
+      // 导出前等待在途保存确认，并携带 flush 回执版本（V：draft 导出服务端核对；
+      // sealed 忽略该参数——旧回看/导出合同不变）。
+      const receipt = await flushAnswers();
+      const text = await fetchSheetExport(current.id, exportWithAnswers, receipt.draftVersion);
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
         addToast("success", "已复制导出全文");
@@ -1461,7 +1513,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     } finally {
       setExportBusy(false);
     }
-  }, [exportWithAnswers, addToast]);
+  }, [exportWithAnswers, addToast, flushAnswers]);
 
   /** v2 §6：下载 .md（fetch 文本 → Blob → a[download]）。 */
   const downloadExport = useCallback(async () => {
@@ -1469,8 +1521,9 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     if (!current) return;
     setExportBusy(true);
     try {
-      await flushAnswers(); // 导出前等待在途保存确认
-      const text = await fetchSheetExport(current.id, exportWithAnswers);
+      // 导出前等待在途保存确认，并携带 flush 回执版本（V 合同，同复制全文）。
+      const receipt = await flushAnswers();
+      const text = await fetchSheetExport(current.id, exportWithAnswers, receipt.draftVersion);
       const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -1487,7 +1540,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     } finally {
       setExportBusy(false);
     }
-  }, [exportWithAnswers, addToast]);
+  }, [exportWithAnswers, addToast, flushAnswers]);
 
   /** 单条历史软删（批次二）：只改历史视图与占位，不动成绩统计口径。 */
   const handleDeleteAttempt = useCallback(async (attemptId: string) => {
@@ -1719,7 +1772,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
                       : saveState === "error"
                         ? "草稿 · 保存失败，尚未保存，请勿离开"
                         : lastSavedAt ? `草稿 · 已保存 ${formatSavedAt(lastSavedAt)}` : "草稿"}
-                {(saveState === "error" || saveState === "conflict") && (
+                {saveState === "error" && (
                   <button
                     type="button"
                     onClick={() => { void sheetSave.current?.retry().catch(() => {}); }}
@@ -1727,6 +1780,25 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
                   >
                     重试
                   </button>
+                )}
+                {saveState === "conflict" && (
+                  <>
+                    {/* V：冲突恢复动作——复制本地答案 / 明确载入服务器版本（不自动重试）。 */}
+                    <button
+                      type="button"
+                      onClick={copyLocalAnswers}
+                      className="ml-1 underline decoration-dotted underline-offset-2"
+                    >
+                      复制本地答案
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void loadServerBaseline(); }}
+                      className="ml-1 underline decoration-dotted underline-offset-2"
+                    >
+                      载入服务器版本
+                    </button>
+                  </>
                 )}
               </span>
             ) : (

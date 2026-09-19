@@ -819,9 +819,11 @@ export const l3SheetListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
-/** GET /l3/sheets/:id/export?withAnswers=0|1 的 query 契约（v2 §6；文档登记用）。 */
+/** GET /l3/sheets/:id/export?withAnswers=0|1 的 query 契约（v2 §6；文档登记用）。
+ *  V（2026-09-19）：expectedVersion 为 draft 导出版本核对参数（sealed 归档忽略）。 */
 export const l3SheetExportQuerySchema = z.object({
   withAnswers: z.enum(["0", "1"]).optional(),
+  expectedVersion: z.string().regex(/^\d+$/).optional(),
 });
 
 /**
@@ -833,6 +835,18 @@ export function parseSheetExportWithAnswers(raw: string | undefined): boolean | 
   if (raw === "1") return true;
   if (raw === "0") return false;
   throw new ValidationError("withAnswers must be 0 or 1", "withAnswers");
+}
+
+/**
+ * V（2026-09-19）：draft 导出核对版本参数——缺省返回 undefined（由 service 对
+ * draft 拒绝、对 sealed 忽略）；非法值抛校验错误（422 惯例，勿宽容吞掉）。
+ */
+export function parseSheetExportExpectedVersion(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  if (!/^\d+$/.test(raw)) {
+    throw new ValidationError("expectedVersion must be a non-negative integer", "expectedVersion");
+  }
+  return Number(raw);
 }
 
 /** GET /l3/attempts?questionIds=<uuid,uuid,...>：1–200 个 uuid（对齐注记批量口径）。 */
