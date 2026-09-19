@@ -225,13 +225,20 @@ describe("任务域残余分支（空行/异常/映射兜底）", () => {
     expect(row.answers).toEqual({});
   });
 
-  it("lockTask/lockQuestion 空行返回 null（requireTx 已由 client 构造满足）", async () => {
+  it("lockTask/lockQuestion 空行返回 null；lockQuestion 走 advisory 锁（无 FOR UPDATE——角色模型无表级 UPDATE）", async () => {
     querySpy.mockImplementation(async () => ({ rows: [] }));
     expect(await repo.lockTask(USER, "t-1")).toBeNull();
+    // lockTask：writing_tasks 有 UPDATE 授权，保持行锁。
+    expect(querySpy.mock.calls[0]![0]).toContain("FOR UPDATE");
     const row = await repo.lockQuestion(USER, "q-1");
-    const [text, params] = querySpy.mock.calls[1]!;
+    // lockQuestion：① 事务级 advisory 锁（串行化 owner×question 并发创建）；② 普通 SELECT（无行锁）。
+    const [lockText, lockParams] = querySpy.mock.calls[1]!;
+    expect(lockText).toContain("pg_advisory_xact_lock");
+    expect(lockText).toContain("hashtextextended");
+    expect(lockParams).toEqual([`${USER}:q-1`]);
+    const [text, params] = querySpy.mock.calls[2]!;
     expect(text).toContain("FROM l3_questions");
-    expect(text).toContain("FOR UPDATE");
+    expect(text).not.toContain("FOR UPDATE");
     expect(params).toEqual(["q-1", USER]);
     expect(row).toBeNull();
   });
@@ -505,5 +512,41 @@ describe("分支臂补全（三元/兜底全覆盖）", () => {
     const page = await repo.listRevisions(USER, "t-1", { limit: 20, cursor: null });
     expect(page.total).toBe(0);
     expect(page.items).toEqual([]);
+  });
+});
+
+describe("listQuestionTaskSummaries（A2：单条集合查询，JOIN 不放大）", () => {
+  it("单次查询 + ANY(uuid[]) + draft/最新 sealed LATERAL + 反馈仅按 s 关联 + 归档排序", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.listQuestionTaskSummaries(USER, { questionIds: ["q-1", "q-2"], kind: "whole", direction: "通用" });
+    expect(querySpy).toHaveBeenCalledTimes(1); // 集合查询（无逐题 N+1）
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("t.question_id = ANY($2::uuid[])");
+    expect(text).toContain("AND t.kind = $3 AND t.direction = $4");
+    expect(text).toContain("status = 'draft'");
+    expect(text).toContain("status = 'sealed'");
+    expect(text).toContain("ORDER BY (t.status = 'archived')");
+    expect(text).toContain("f.sheet_id = s.id"); // 反馈只取对应最新已提交稿
+    expect(text).toContain("venue = 'writing' AND status = 'active'");
+    expect(text).not.toContain("INSERT");
+    expect(text).not.toContain("UPDATE");
+    expect(params).toEqual([USER, ["q-1", "q-2"], "whole", "通用"]);
+  });
+
+  it("映射派生：sealed 各组（有反馈/无反馈/已清理）与无 sealed 的 null 组；归档状态透传", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [
+        { question_id: "q-1", task_id: "t-1", task_status: "active", draft_sheet_id: null, latest_submitted_sheet_id: "s-1", latest_revision_no: 2, revision_count: 3, feedback_id: "f-1", active_attempt_count: 1 },
+        { question_id: "q-2", task_id: "t-2", task_status: "archived", draft_sheet_id: "s-d", latest_submitted_sheet_id: null, latest_revision_no: null, revision_count: 0, feedback_id: null, active_attempt_count: 0 },
+        { question_id: "q-3", task_id: "t-3", task_status: "active", draft_sheet_id: null, latest_submitted_sheet_id: "s-3", latest_revision_no: 1, revision_count: 1, feedback_id: null, active_attempt_count: 1 },
+        { question_id: "q-4", task_id: "t-4", task_status: "active", draft_sheet_id: null, latest_submitted_sheet_id: "s-4", latest_revision_no: 1, revision_count: 1, feedback_id: "f-stale", active_attempt_count: 0 },
+      ],
+    }));
+    const rows = await repo.listQuestionTaskSummaries(USER, { questionIds: ["q-1", "q-2", "q-3", "q-4"], kind: "free", direction: "通用" });
+    expect(rows[0]).toMatchObject({ question_id: "q-1", latestRevisionNo: 2, revisionCount: 3, feedbackState: "ready", contentStatus: "available" });
+    expect(rows[1]).toMatchObject({ question_id: "q-2", taskStatus: "archived", draftSheetId: "s-d", latestRevisionNo: null, feedbackState: null, contentStatus: null });
+    expect(rows[2]).toMatchObject({ question_id: "q-3", feedbackState: "pending", contentStatus: "available" });
+    // 已清理（无 active attempt）→ unavailable/cleared：即便存在历史反馈行也不转显旧反馈
+    expect(rows[3]).toMatchObject({ question_id: "q-4", feedbackState: "unavailable", contentStatus: "cleared" });
   });
 });

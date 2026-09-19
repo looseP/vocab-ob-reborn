@@ -15,6 +15,7 @@ import {
   l3WritingFeedbackContextResponseSchema,
   l3WritingFeedbackGetResponseSchema,
   l3WritingFeedbackPutResponseSchema,
+  l3WritingQuestionSummariesResponseSchema,
   l3WritingRevisionListResponseSchema,
   l3WritingSaveResponseSchema,
   l3WritingSheetDetailResponseSchema,
@@ -31,6 +32,7 @@ import type {
   WritingFeedbackGetResult,
   WritingFeedbackRecord,
   WritingPage,
+  WritingQuestionSummary,
   WritingRevisionSummary,
   WritingSheetDetail,
   WritingSheetDto,
@@ -39,9 +41,11 @@ import type {
   WritingTaskSummary,
 } from "@/domain";
 import type {
+  WritingDirection,
   WritingDraftCreateInput,
   WritingDraftInput,
   WritingFeedbackPutInput,
+  WritingKind,
   WritingSubmitInput,
   WritingTaskCreateRequest,
   WritingTaskRenameInput,
@@ -151,6 +155,26 @@ export function createWritingClient(options: { baseUrl?: string; fetch?: typeof 
         `/tasks/${enc(taskId)}/revisions${buildQuery({ limit: query.limit, cursor: query.cursor })}`,
         { signal },
       ),
+
+    /**
+     * A2：按题批量进度摘要（owner-only 只读；1–100 个去重 questionId）。
+     * 逐题返回条目（无匹配 tasks=[]，不代挑任务）；非法响应抛 INVALID_RESPONSE（不归一空态）。
+     */
+    questionSummaries: (
+      questionIds: string[],
+      filter: { kind: WritingKind; direction: WritingDirection },
+      signal?: AbortSignal,
+    ): Promise<{ items: WritingQuestionSummary[] }> => {
+      const search = new URLSearchParams();
+      for (const questionId of questionIds) search.append("questionId", questionId);
+      search.set("kind", filter.kind);
+      search.set("direction", filter.direction);
+      return call(
+        l3WritingQuestionSummariesResponseSchema,
+        `/tasks/question-summaries?${search.toString()}`,
+        { signal },
+      );
+    },
 
     // ── 稿件 ────────────────────────────────────────────────────────────────
     getSheet: (taskId: string, sheetId: string, signal?: AbortSignal): Promise<WritingSheetDetail> =>

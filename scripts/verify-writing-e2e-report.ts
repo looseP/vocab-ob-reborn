@@ -18,7 +18,7 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-export const EXPECTED_WRITING_E2E_SPECS = 4;
+export const EXPECTED_WRITING_E2E_SPECS = 7;
 
 export interface WritingE2EValidation {
   ok: boolean;

@@ -288,8 +288,11 @@ export function stripAnswerSubjectiveFields(answer: unknown): Record<string, unk
 /**
  * PATCH 逐题 merge：`answers: Record<questionId, answer|null>`，null 清除该题。
  * 值为 answers 显式键契约（ADR-0034 增补条 8）；至少 1 键、最多 200 键。
+ * V（2026-09-19）：expectedVersion 必填——客户端最后一次确认的 draft_version，
+ * 服务端以条件 UPDATE 抢占；缺版本/负数/小数一律拒绝（不留无版本旁路）。
  */
 export const sheetPatchInputSchema = z.object({
+  expectedVersion: z.number().int().nonnegative(),
   answers: z.record(z.string().uuid(), sheetAnswerSchema.nullable()),
 }).superRefine((v, ctx) => {
   const keyCount = Object.keys(v.answers).length;
@@ -305,8 +308,11 @@ export type SheetPatchInput = z.infer<typeof sheetPatchInputSchema>;
  * 定格输入：mode 三档 + summary?（仅 summary 档必填）+ 未答题软确认标志。
  * 未答题 > 0 且未确认时 service 返回 409（details.unansweredCount），前端据此
  * 弹软确认后带 acknowledgeUnanswered=true 重发。
+ * V（2026-09-19）：expectedVersion 必填——来自本客户端 flush 回执的确认版本；
+ * 服务端据此拒绝「客户端确认之后、他处已写入」的定格（不得 GET 最新版绕过冲突）。
  */
 export const sheetSealInputSchema = z.object({
+  expectedVersion: z.number().int().nonnegative(),
   mode: z.enum(SEAL_MODES),
   summary: z.string().trim().max(2000).optional(),
   acknowledgeUnanswered: z.boolean().optional().default(false),

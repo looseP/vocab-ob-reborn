@@ -291,6 +291,8 @@ const OWNER_READS = [
   "getL3WritingFeedback",
   // 作文子空间 v1（W9）：单稿导出（owner-only；agent 无导出权限）。
   "exportL3WritingSheet",
+  // A2（2026-09-19）：按题批量进度读面（owner-only；agent 无权限，零写、零创建）。
+  "listL3WritingQuestionSummaries",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {

@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import type { IL3PaperRepository } from "@/repositories/interfaces";
-import type { IL3WritingRepository } from "@/repositories/l3-writing.repository";
+import type { IL3WritingRepository, WritingQuestionTaskSummaryRow } from "@/repositories/l3-writing.repository";
 import type { L3WritingTaskRow } from "@/repositories/l3-writing.types";
 import type {
   L3QuestionRow,
@@ -299,6 +299,23 @@ class FakeWritingRepository implements IL3WritingRepository {
     this.submissions.set(sealed.id, sealed);
   }
 
+  // ── A2：按题批量进度（可配置行 + 调用记录；任务域单测使用）────────────────
+
+  questionSummaryRows: WritingQuestionTaskSummaryRow[] = [];
+  questionSummaryCalls: Array<{ userId: string; questionIds: string[]; kind: string; direction: string }> = [];
+  async listQuestionTaskSummaries(
+    userId: string,
+    input: { questionIds: string[]; kind: "whole" | "paragraph" | "free"; direction: "通用" | "考研" | "雅思" },
+  ): Promise<WritingQuestionTaskSummaryRow[]> {
+    this.questionSummaryCalls.push({
+      userId,
+      questionIds: [...input.questionIds],
+      kind: input.kind,
+      direction: input.direction,
+    });
+    return this.questionSummaryRows.filter((row) => input.questionIds.includes(row.question_id));
+  }
+
   // ── W3 sheet 域方法：任务域单测不触及（W3 自带专用 fake；此处防误用）────────
 
   private notUsed(): never {
@@ -582,5 +599,64 @@ describe("rename", () => {
     const renamed = await service.rename(OWNER_A, created.task.id, { title: "新标题" });
     expect(renamed.title).toBe("新标题");
     expect(renamed.prompt).toBe("改名题面");
+  });
+});
+
+describe("questionSummaries（A2：按题批量进度读面）", () => {
+  const Q_A = "00000000-0000-4000-8000-0000000009a1";
+  const Q_B = "00000000-0000-4000-8000-0000000009a2";
+  const Q_X = "00000000-0000-4000-8000-0000000009a3";
+
+  function row(overrides: Partial<WritingQuestionTaskSummaryRow> = {}): WritingQuestionTaskSummaryRow {
+    return {
+      question_id: Q_A,
+      taskId: randomUUID(),
+      taskStatus: "active",
+      draftSheetId: null,
+      latestSubmittedSheetId: null,
+      latestRevisionNo: null,
+      revisionCount: 0,
+      feedbackState: null,
+      contentStatus: null,
+      ...overrides,
+    };
+  }
+
+  it("去重后单次下传（无 N+1）；逐题必返条目（无匹配=空数组）；行按题归档", async () => {
+    fakes.writing.questionSummaryRows = [
+      row({ question_id: Q_A, draftSheetId: randomUUID(), revisionCount: 2, latestSubmittedSheetId: randomUUID(), latestRevisionNo: 2, feedbackState: "ready", contentStatus: "available" }),
+    ];
+    const items = await service.questionSummaries(OWNER_A, {
+      questionIds: [Q_A, Q_A, Q_B],
+      kind: "whole",
+      direction: "通用",
+    });
+    expect(fakes.writing.questionSummaryCalls).toHaveLength(1);
+    expect(fakes.writing.questionSummaryCalls[0]!.questionIds).toEqual([Q_A, Q_B]);
+    expect(items.map((item) => item.questionId)).toEqual([Q_A, Q_B]);
+    expect(items[0]!.tasks).toHaveLength(1);
+    expect(items[0]!.tasks[0]!.feedbackState).toBe("ready");
+    expect(items[1]!.tasks).toEqual([]);
+  });
+
+  it("数据库返回未请求的行不外泄（防御）；只读零写（任务计数不变）", async () => {
+    fakes.writing.questionSummaryRows = [row({ question_id: Q_X })];
+    const before = fakes.writing.taskCount;
+    const items = await service.questionSummaries(OWNER_A, {
+      questionIds: [Q_A],
+      kind: "free",
+      direction: "考研",
+    });
+    expect(items).toEqual([{ questionId: Q_A, tasks: [] }]);
+    expect(fakes.writing.taskCount).toBe(before);
+  });
+
+  it("owner 原样下传（跨 owner 隔离由 repo 的 owner 谓词兜底）", async () => {
+    await service.questionSummaries(OWNER_B, { questionIds: [Q_A], kind: "paragraph", direction: "雅思" });
+    expect(fakes.writing.questionSummaryCalls[0]).toMatchObject({
+      userId: OWNER_B,
+      kind: "paragraph",
+      direction: "雅思",
+    });
   });
 });

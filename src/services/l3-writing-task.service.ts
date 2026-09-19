@@ -29,6 +29,8 @@ import {
   type WritingDirection,
   type WritingKind,
   type WritingPage,
+  type WritingQuestionSummary,
+  type WritingQuestionTaskSummary,
   type WritingSheetDto,
   type WritingTaskCreateInput,
   type WritingTaskDetail,
@@ -304,6 +306,42 @@ export class L3WritingTaskService {
         revisionCount,
         latestSubmittedSheetId: latest ? latest.id : null,
       };
+    });
+  }
+
+  /**
+   * A2：按题批量进度摘要（owner-only 只读；**零写、零创建**）。
+   * 1–100 个去重 questionId，kind/direction 由路由严格校验；逐题必返回条目
+   * （无匹配 = 空数组）；多匹配任务返回列表，不代客户端挑选。
+   */
+  async questionSummaries(
+    userId: string,
+    input: { questionIds: string[]; kind: WritingKind; direction: WritingDirection },
+  ): Promise<WritingQuestionSummary[]> {
+    return this.withActor(userId, async (repos) => {
+      const unique = [...new Set(input.questionIds)];
+      const rows = await repos.l3Writing.listQuestionTaskSummaries(userId, {
+        questionIds: unique,
+        kind: input.kind,
+        direction: input.direction,
+      });
+      const byQuestion = new Map<string, WritingQuestionTaskSummary[]>();
+      for (const questionId of unique) byQuestion.set(questionId, []);
+      for (const row of rows) {
+        const bucket = byQuestion.get(row.question_id);
+        if (!bucket) continue; // 防御：数据库多余行不外泄（服务端集合查询理论上不会产生）
+        bucket.push({
+          taskId: row.taskId,
+          taskStatus: row.taskStatus,
+          draftSheetId: row.draftSheetId,
+          latestSubmittedSheetId: row.latestSubmittedSheetId,
+          latestRevisionNo: row.latestRevisionNo,
+          revisionCount: row.revisionCount,
+          feedbackState: row.feedbackState,
+          contentStatus: row.contentStatus,
+        });
+      }
+      return unique.map((questionId) => ({ questionId, tasks: byQuestion.get(questionId) ?? [] }));
     });
   }
 
