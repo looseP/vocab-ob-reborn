@@ -39,7 +39,7 @@
 
 ## Task 3：新机恢复与基线验收
 
-- [ ] 新目录 clone bundle，恢复四个本地分支，然后配置可信 origin；先保存 practice 分支再 prune。
+- [ ] 新目录恢复代码：首选从 GitHub clone 并检出 `local-closeout-2026-09-19`（备选：离线 bundle 恢复分支）；配置可信 origin，先核对 `writing-practice-v1` 再考虑 prune。
 - [ ] 依 lockfile 安装依赖，按 `.nvmrc`/packageManager 固定工具版本。
 - [ ] 在隔离空库执行恢复演练，核对迁移历史、用户身份、行数和代表性历史数据。
 - [ ] 源码开发或单机 Compose 选择其一，重配路径/origin/端口，单独启动 worker。
@@ -58,7 +58,7 @@
 
 请先阅读 docs/handoff/README.md、feature-map.md、machine-migration.md 和本计划，按实际 Git 状态更新认知。目标是恢复并巩固现有项目，不开始新增功能。先只读核对当前仓库根、HEAD/分支/工作区、Node/npm/PG 版本、迁移历史和私密配置是否齐备；不得输出密钥。
 
-main 的历史基线为 ccc6fb4；可靠性成果为 reliability-batch@b96b972；作文原题整合为 writing-practice-v1@b11f3ee；学习笔记还只有设计。它们是本轮交接快照，不强制回退新机器上更晚的提交。若实际状态更新，先解释差异并保留所有分支和未提交文件。
+main 的历史基线为 ccc6fb4；可靠性成果为 reliability-batch@b96b972；作文原题整合为 writing-practice-v1@b11f3ee；学习笔记设计文档已提交（独立系统未实现）。它们是交接快照，不强制回退新机器上更晚的提交。若实际状态更新，先解释差异并保留所有分支和未提交文件。
 
 按迁移手册恢复代码与独立测试数据库，完成实际用户历史样例、组件和浏览器验收，记录准确 SHA 和命令退出码。不要把 npm ci、首页可打开或 CI 全绿当作数据库已经迁移。所有 Git 写遵守单写者，HUSKY=0 仍为临时隔离。不得自动合并 PR、覆盖数据库、删旧机文件或恢复 hooks。
 

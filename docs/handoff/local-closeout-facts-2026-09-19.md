@@ -2,14 +2,16 @@
 
 基准：`main@ccc6fb4` 工作区实测。本文件记录 2026-09-19 本地收尾轮（代码/资料/数据库保全与恢复验证）的实际结果、私密位置与遗留事项。**本文件不含任何凭据值**；凭据只存在于私密目录。
 
+**范围更新（09-19 晚 GitHub 交接收尾轮）**：本文件的数据库与资产操作系旧机本地收尾的**历史记录**。GitHub 交接收尾仅覆盖代码、已提交文档与指定开发分支；数据库、原始语料、截图、私密配置与备份继续留在旧机，不在本次交接内，数据恢复与外部介质复制也不是本次完成条件。
+
 ## 1. 代码保全
 
 - 四个本地分支 HEAD 未变：`main@ccc6fb4`、`reliability-batch@b96b972`、`writing-practice-v1@b11f3ee`、`writing-v1@baf971e`；默认 `git fsck --full --no-reflogs` exit 0（保留既有 dangling commit 观察项，无可达对象缺失）。
-- 本轮文档收敛到本地分支 `local-closeout-2026-09-19`（不推送）；提交 SHA 记录在外层 `deliverables/machine-closeout-2026-09-19/LOCAL-CLOSEOUT-REPORT.md`。
+- 本轮文档收敛到本地分支 `local-closeout-2026-09-19`；初始提交 SHA 记录在外层 `deliverables/machine-closeout-2026-09-19/LOCAL-CLOSEOUT-REPORT.md`。该分支与两个功能分支的远端保全见 `README.md` 新机入口（GitHub 交接收尾轮）。
 - 最终离线 bundle：外层交接包 `repository.bundle`，包含 5 个分支（四个原分支 + 交接分支）与四个 worktree HEAD 记录；独立恢复与 fsck 结果见收尾报告。
 - 未提交内容的实际副本：`D:\tmp\local-closeout-2026-09-19\pack-staging\repo-uncommitted\`（docs 17 个文件 + 五个 `scripts/tmp-*` 迁移脚本，目录按仓库结构保留）。
 
-## 2. 数据库学习数据（已备份 + 已恢复验证）
+## 2. 数据库学习数据（三库已备份；仅主库完成恢复演练）
 
 三个承载用户数据的库已用现有 `postgres-backup` 工具执行单次签名备份（HMAC-SHA256，密钥见私密目录）：
 
@@ -30,7 +32,8 @@
 验证命令模板（凭据从私密目录载入，不写入任何提交或普通包）：
 
 ```powershell
-$env:BACKUP_SIGNING_KEY = '<private-backups\keys\backup-signing-key.txt>'
+# 读取密钥文件内容（不要把文件路径当作密钥值）；.Trim() 去掉末尾换行。
+$env:BACKUP_SIGNING_KEY = (Get-Content -Raw '<private-backups>\keys\backup-signing-key.txt').Trim()
 $env:BACKUP_DIR = 'D:\tmp\local-closeout-2026-09-19\private-backups\db'
 npm run db:backup:verify -- .\vocab_practice_accept-<timestamp>.manifest.json
 ```
@@ -71,12 +74,12 @@ npm run db:backup:verify -- .\vocab_practice_accept-<timestamp>.manifest.json
 - 既有交接包顶层 SHA-256：6/6 一致（本轮复核）。
 - 默认 fsck（四 worktree 同库）：exit 0。
 - bundle verify + 独立 clone --mirror + 默认 fsck：见收尾报告。
-- 数据库：三份 verify exit 0；恢复演练 exit 0 + 行数一致 + 抽样一致。
+- 数据库：三份 `db:backup:verify` exit 0（三库备份全部验证）；恢复演练 exit 0 仅针对 `vocab_practice_accept`（行数一致 + 抽样一致）。
 - 资料包：`machine-closeout-2026-09-19` 包内逐文件 SHA-256 见该目录 `SHA256SUMS.json`。
 
-## 6. 未完成与下一步
+## 6. 本收尾轮的遗留（历史记录）与后续范围
 
-1. **异机复制未做**：以上产物均在旧机同一磁盘；需复制到外部介质/新机并在目的端校验（清单：pack-staging + private-backups + `deliverables/machine-closeout-2026-09-19`）。
-2. compose 库（compose `vocab`）未单独跑恢复演练；其备份管道（backup-scheduler 容器）健康，建议在新机按同一合同演练。
-3. 最终切换快照：旧机停写后重做首库备份（本轮的为准备阶段备份）。
-4. 旧机清理、PR 合并、部署、Task C、学习笔记 N1 均不在本轮范围。
+1. **外部介质复制（本收尾轮未做）**：以上本地保全产物均在旧机同一磁盘。随后的 GitHub 交接收尾轮已将代码与文档通路独立完成；数据类资产（dump、语料、截图、私密配置）仍保留旧机，需要时另行复制并校验（清单：pack-staging + private-backups + `deliverables/machine-closeout-2026-09-19`）。
+2. compose 库（compose `vocab`）未单独跑恢复演练；其备份管道（backup-scheduler 容器）健康，建议将来按同一合同演练。
+3. 最终切换快照：旧机停写后重做备份（本轮的为准备阶段备份）。
+4. 旧机清理、PR 合并、部署均不在收尾范围；后续开发顺序见 `feature-map.md`“最值得先做”：可靠性整合 → 作文练习分支与 Task C → 学习笔记 N1。

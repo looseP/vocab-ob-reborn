@@ -20,13 +20,24 @@
 ## 旧机出发前
 
 - [x] 记录最后一次写入时间与准备迁移的数据库身份（只记 host/port/db 和 owner ID，不记密码）。开发库、验收库、个人学习库分别标识。（2026-09-19 收尾轮完成：见 [收尾事实](local-closeout-facts-2026-09-19.md) 与功能地图的数据库拓扑）
-- [ ] 将本轮产物及未打包资产复制到另一块磁盘/新机；在目标端复核 SHA-256。仅留在旧机同盘不算异机保全。（本地保全副本已就绪：`pack-staging`＋`private-backups`；**异机复制仍需执行**）
+- [ ] 将数据类资产（数据库 dump、语料、截图、私密配置；**不含代码与文档**）复制到另一块磁盘/新机并在目的端复核 SHA-256；代码与文档已通过 GitHub 交接收尾轮独立保全，不受此步阻塞。（本地保全副本已就绪：`pack-staging`＋`private-backups`；外部复制仍未执行）
 - [ ] 若仍在持续学习，最终切换前安排停止业务写入，再做最终数据库备份；之前的演练备份不能代表最终一致数据。
 - [ ] 保留原有 Git 事故证据；默认 fsck=0 不等于根因查明。所有 Git 元数据写操作由一个执行者协调。
 
 ## 新机恢复代码
 
-工具基线：Node **22.22.2**（`.nvmrc`）、npm **10.9.7**（`packageManager`）、Git、PowerShell；数据库使用 PostgreSQL **17**。Docker Desktop/WSL2 在选择容器方案时需要。备份脚本需 pg_dump/pg_restore；容器工具链固定版本以 Dockerfile 为准。
+**首选（GitHub；2026-09-19 交接收尾后可用）**：
+
+```powershell
+git clone https://github.com/looseP/vocab-ob-reborn.git vocab-ob
+cd vocab-ob
+git switch --track origin/local-closeout-2026-09-19   # 先读交接文档，再按任务选择功能分支
+git fetch origin reliability-batch writing-practice-v1
+```
+
+三个目标分支分别保全：`local-closeout-2026-09-19`（交接文档与快照）、`reliability-batch`（可靠性补修，PR #124 draft）、`writing-practice-v1`（作文原题整合，PR #123 draft）。它们**不是**一个已整合的“全功能合集”；整合顺序见 `feature-map.md` 末节。
+
+**备选（离线 bundle）**：需要离线恢复时，用交接包 `repository.bundle`（含 5 分支快照）按下方流程执行。工具基线：Node **22.22.2**（`.nvmrc`）、npm **10.9.7**（`packageManager`）、Git、PowerShell；数据库使用 PostgreSQL **17**。Docker Desktop/WSL2 在选择容器方案时需要。备份脚本需 pg_dump/pg_restore；容器工具链固定版本以 Dockerfile 为准。
 
 建议使用无引号的短路径，如 `D:/dev/vocab-ob`，不沿用旧机外层目录名与四个 `.git` 指针。恢复到不存在的新目录：
 
@@ -48,7 +59,7 @@ git log -1 --oneline reliability-batch
 git log -1 --oneline writing-practice-v1
 ```
 
-如果分支名已存在，先核对 SHA，不重复创建或覆盖。先保全 `writing-practice-v1@b11f3ee`，它的远端状态不能靠旧 tracking 记录保证。暂不 `fetch --prune`。
+如果分支名已存在，先核对 SHA，不重复创建或覆盖。`writing-practice-v1@b11f3ee` 与 `reliability-batch@b96b972` 已于 2026-09-19 核实存在于远端且 SHA 一致（旧 tracking 记录可能过时）。暂不 `fetch --prune`。
 
 解开 `handoff-docs.zip` 到单独检查目录：`wt-main/docs/...` 对应新仓库 `docs/...`。比较现有文件再拷入；`wt-practice/docs/plan` 与 `wt-reliability/docs/plan` 是分支资料，不混写主线同名文件。资料包中保留 SHA 与目录来源。
 
