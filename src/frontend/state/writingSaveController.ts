@@ -332,11 +332,20 @@ export function createWritingSaveController(
       }
       if (!disposed) {
         setState("clean");
-        notify();
-        resolveEligibleWaiters();
       }
     } finally {
       inFlight = false;
+      if (!disposed) {
+        // S（2026-09-19）订阅合同：终态帧必须反映 inFlight 已释放——clean/error/
+        // conflict 的最终快照不得被在途帧掩蔽；dispose 后不再发任何通知。
+        if (state === "clean") resolveEligibleWaiters();
+        notify();
+        // 重入排出：订阅者在完成通知里再次 setText+flush 时，新输入不能永远等待
+        // 防抖——释放 inFlight 后立即排出；error/conflict 不自动重发（等人工 retry）。
+        if (state !== "error" && state !== "conflict" && inputSeq !== committedSeq && !composing) {
+          maybeSend();
+        }
+      }
     }
   }
 
@@ -374,10 +383,12 @@ export function createWritingSaveController(
     if (targetSeq <= committedSeq && !inFlight) {
       return Promise.resolve({ text: confirmedText, version });
     }
-    maybeSend();
-    return new Promise<WritingSaveFlushReceipt>((resolve, reject) => {
+    // 先登记等待者再启动管道：即便 save 立即 settle，也不遗漏本等待者（S 重入合同）。
+    const promise = new Promise<WritingSaveFlushReceipt>((resolve, reject) => {
       waiters.push({ targetSeq, resolve, reject });
     });
+    maybeSend();
+    return promise;
   }
 
   function retry(): Promise<void> {

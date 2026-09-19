@@ -1,0 +1,422 @@
+/**
+ * 题纸作答可靠保存控制器（Task B，2026-09-19）。
+ *
+ * 与作文 text 控制器（writingSaveController）同构但**不复用**：题纸是「逐题答案
+ * 映射」语义，PATCH 为题目键级整体替换；作文是单字符串正文 + 版本 CAS。两者
+ * 的乐观合并与恢复判据不同，故独立实现、独立契约。
+ *
+ * 职责（任务书 Task B 合同）：
+ *  - 客户端同一时刻只有一个 PATCH 在途（单在途写队列）；
+ *  - 响应只确认其「发送序号」，旧响应绝不覆盖之后的本地输入（序号纪律）；
+ *  - flush() 等待「调用时刻的输入序号」被服务端确认才 resolve，失败 reject；
+ *  - 800ms 防抖、IME 合成期间不发、合成结束后按防抖补发；
+ *  - 仅网络/429/5xx 自动重试（退避 1/2/4 秒共 3 次），401/409/400/422 不自动重试；
+ *  - 409 = 题纸已被他人/他标签定格 → 进入 conflict（阻断后续定格/导出，保留本地答案）；
+ *  - 定格与草稿导出均须 await 本控制器 flush() 屏障，未确认不得进行；
+ *  - 失败阻断后续动作并保留本地答案（本地 answers 真源永不被旧响应覆盖）；
+ *  - 诚实可观察状态（clean/dirty/saving/retrying/error/conflict）。
+ *
+ * 控制器本身不发网络请求：save 由调用方注入（封装 patchSheet + 本地 sheet 状态更新）。
+ * 不引用 localStorage / IndexedDB。
+ */
+
+import type { SheetAnswer } from "@/domain/l3-sheets";
+
+export type ExamSheetSaveState =
+  | "clean"
+  | "dirty"
+  | "saving"
+  | "retrying"
+  | "error"
+  | "conflict";
+
+export interface ExamSheetSaveSnapshot {
+  state: ExamSheetSaveState;
+  inFlight: boolean;
+  lastSavedAt: string | null;
+}
+
+/** flush 回执：本次 flush 确认后已落库的最新草稿版本（定格屏障的核对基线）。 */
+export interface ExamSheetSaveFlushReceipt {
+  draftVersion: number;
+  lastSavedAt: string | null;
+}
+
+export interface ExamSheetSaveController {
+  /** 记录一次题级作答变更（answer=null 表示清除该题）。立即推进序号并防抖排发。 */
+  setAnswer(questionId: string, answer: SheetAnswer | null): void;
+  setComposing(value: boolean): void;
+  /** 等待「调用时刻的输入序号」全部被服务端确认；失败 reject（阻断定格/导出）。 */
+  flush(): Promise<ExamSheetSaveFlushReceipt>;
+  /** 手动重试（error/conflict 后可用）；复用 flush 等待机制。 */
+  retry(): Promise<void>;
+  /** 注入服务端已确认的最新草稿版本（开纸恢复 / 重进时）。 */
+  setDraftVersion(version: number): void;
+  /** 题纸进入终态后停止发送（只读期不触发任何 PATCH）。 */
+  freeze(): void;
+  /** 是否已释放（StrictMode 双挂载/重挂载守卫：已释放实例须重建）。 */
+  isDisposed(): boolean;
+  getSnapshot(): ExamSheetSaveSnapshot;
+  subscribe(listener: () => void): () => void;
+  dispose(): void;
+}
+
+export interface ExamSheetSaveControllerSaveInput {
+  answers: Record<string, SheetAnswer | null>;
+}
+
+export interface ExamSheetSaveControllerSaveResult {
+  draftVersion: number;
+}
+
+export interface CreateExamSheetSaveControllerOptions {
+  sheetId: string;
+  /** 初始草稿版本（开纸恢复时携带）。 */
+  draftVersion?: number;
+  save: (input: ExamSheetSaveControllerSaveInput) => Promise<ExamSheetSaveControllerSaveResult>;
+  /** 注入以便测试控制防抖与退避；默认 setTimeout/clearTimeout。 */
+  setTimer?: (fn: () => void, delayMs: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}
+
+/** 题纸已被他处定格（PATCH 返回 409 / 恢复判据落到冲突语义）。不自动 last-wins。 */
+export class ExamSheetSaveConflictError extends Error {
+  constructor(message = "题纸保存冲突：可能已在另一处定格，需要人工确认") {
+    super(message);
+    this.name = "ExamSheetSaveConflictError";
+  }
+}
+
+/** 控制器已被 dispose，无法保存。 */
+export class ExamSheetSaveDisposedError extends Error {
+  constructor(message = "题纸保存控制器已释放") {
+    super(message);
+    this.name = "ExamSheetSaveDisposedError";
+  }
+}
+
+const DEBOUNCE_MS = 800;
+const BACKOFF_MS = [1000, 2000, 4000] as const; // 退避 1/2/4 秒，共 3 次自动重试
+const MAX_AUTO_RETRIES = BACKOFF_MS.length;
+
+function defaultSetTimer(fn: () => void, delayMs: number): unknown {
+  return setTimeout(fn, delayMs);
+}
+
+function defaultClearTimer(handle: unknown): void {
+  clearTimeout(handle as ReturnType<typeof setTimeout>);
+}
+
+function errorStatus(err: unknown): number | null {
+  if (err && typeof err === "object") {
+    const candidate = (err as { status?: unknown; statusCode?: unknown }).status
+      ?? (err as { status?: unknown; statusCode?: unknown }).statusCode;
+    if (typeof candidate === "number") return candidate;
+  }
+  return null;
+}
+
+/** 无 status（网络错误 / 超时）视为可重试的网络故障。 */
+function isNetworkError(err: unknown): boolean {
+  return errorStatus(err) === null;
+}
+
+function isRetryableStatus(status: number | null): boolean {
+  if (status === null) return true;
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function isConflictStatus(status: number | null): boolean {
+  return status === 409;
+}
+
+type TimerHandle = unknown;
+
+interface FlushWaiter {
+  targetSeq: number;
+  resolve: (receipt: ExamSheetSaveFlushReceipt) => void;
+  reject: (err: unknown) => void;
+}
+
+export function createExamSheetSaveController(
+  options: CreateExamSheetSaveControllerOptions,
+): ExamSheetSaveController {
+  const {
+    sheetId,
+    draftVersion: initialDraftVersion = 0,
+    save,
+    setTimer = defaultSetTimer,
+    clearTimer = defaultClearTimer,
+  } = options;
+
+  void sheetId; // 由调用方 save 闭包携带，控制器层仅作契约标识
+
+  let draftVersion = initialDraftVersion;
+  let state: ExamSheetSaveState = "clean";
+  let lastSavedAt: string | null = null;
+
+  let inputSeq = 0; // 本地输入序号；每次 setAnswer 自增
+  let committedSeq = 0; // 服务端已确认的最新输入序号
+  let disposed = false;
+  let frozen = false; // 题纸进入终态（sealed/discarded）
+  let inFlight = false;
+
+  // 本地作答真源（仅 setAnswer / 恢复注入修改；旧响应绝不回写）。
+  const localAnswers: Record<string, SheetAnswer | null> = {};
+
+  let composing = false;
+  let pendingAfterCompose = false;
+  let debounceTimer: TimerHandle | null = null;
+
+  let backoffTimer: TimerHandle | null = null;
+  let backoffResolve: (() => void) | null = null;
+
+  const listeners = new Set<() => void>();
+  let waiters: FlushWaiter[] = [];
+
+  function notify(): void {
+    for (const listener of listeners) listener();
+  }
+
+  function setState(next: ExamSheetSaveState): void {
+    if (state !== next) state = next;
+  }
+
+  function getSnapshot(): ExamSheetSaveSnapshot {
+    return { state, inFlight, lastSavedAt };
+  }
+
+  function subscribe(listener: () => void): () => void {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }
+
+  function resolveEligibleWaiters(): void {
+    if (waiters.length === 0) return;
+    const remaining: FlushWaiter[] = [];
+    for (const waiter of waiters) {
+      if (waiter.targetSeq <= committedSeq) {
+        waiter.resolve({ draftVersion, lastSavedAt });
+      } else {
+        remaining.push(waiter);
+      }
+    }
+    waiters = remaining;
+  }
+
+  function rejectWaiters(err: unknown): void {
+    const current = waiters;
+    waiters = [];
+    for (const waiter of current) waiter.reject(err);
+  }
+
+  function delayTimer(delayMs: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      backoffResolve = resolve;
+      backoffTimer = setTimer(() => {
+        backoffTimer = null;
+        backoffResolve = null;
+        resolve();
+      }, delayMs);
+    });
+  }
+
+  function scheduleAutosave(): void {
+    if (frozen || disposed) return;
+    if (debounceTimer !== null) clearTimer(debounceTimer);
+    debounceTimer = setTimer(() => {
+      debounceTimer = null;
+      if (composing) {
+        pendingAfterCompose = true;
+        return;
+      }
+      maybeSend();
+    }, DEBOUNCE_MS);
+  }
+
+  function maybeSend(): void {
+    if (inFlight || disposed || frozen) return;
+    if (composing) {
+      pendingAfterCompose = true;
+      return;
+    }
+    if (inputSeq === committedSeq) {
+      if (state !== "clean" && state !== "error" && state !== "conflict") {
+        setState("clean");
+        notify();
+      }
+      return;
+    }
+    if (debounceTimer !== null) {
+      clearTimer(debounceTimer);
+      debounceTimer = null;
+    }
+    void runPipeline();
+  }
+
+  async function runPipeline(): Promise<void> {
+    if (inFlight || disposed || frozen) return;
+    inFlight = true;
+    let retryCount = 0;
+    try {
+      while (!disposed && !frozen) {
+        if (inputSeq === committedSeq) break;
+
+        // 取本次发送时刻的脏键快照（包含最新本地值；绝不回退到旧值）。
+        const sentSeq = inputSeq;
+        const batch: Record<string, SheetAnswer | null> = {};
+        for (const [questionId, value] of Object.entries(localAnswers)) {
+          batch[questionId] = value;
+        }
+        setState("saving");
+        notify();
+
+        try {
+          const result = await save({ answers: batch });
+          if (disposed) return;
+          draftVersion = result.draftVersion;
+          committedSeq = sentSeq; // 仅确认本次发送序号
+          lastSavedAt = new Date().toISOString();
+        } catch (err) {
+          if (disposed) return;
+          const status = errorStatus(err);
+          if (isConflictStatus(status)) {
+            setState("conflict");
+            notify();
+            rejectWaiters(new ExamSheetSaveConflictError(err instanceof Error ? err.message : "sheet conflict"));
+            return;
+          }
+          const retryable = isRetryableStatus(status);
+          if (retryable && retryCount < MAX_AUTO_RETRIES) {
+            retryCount += 1;
+            setState("retrying");
+            notify();
+            await delayTimer(BACKOFF_MS[retryCount - 1]);
+            if (disposed) return;
+            continue; // 退避后重发（取最新本地输入）
+          }
+          // 不可重试，或自动重试耗尽：落到 error（保留本地答案，不回写）。
+          setState("error");
+          notify();
+          rejectWaiters(err instanceof Error ? err : new Error("题纸保存失败"));
+          return;
+        }
+      }
+      if (!disposed && !frozen) {
+        setState("clean");
+      }
+    } finally {
+      inFlight = false;
+      if (!disposed) {
+        // S（2026-09-19）订阅合同：终态帧必须反映 inFlight 已释放——clean/error/
+        // conflict 的最终快照不得被在途帧掩蔽；dispose 后不再发任何通知。
+        if (state === "clean" && !frozen) resolveEligibleWaiters();
+        notify();
+        // 重入排出：订阅者在完成通知里再次 setAnswer+flush 时，新输入不能永远等待
+        // 防抖——释放 inFlight 后立即排出；error/conflict 不自动重发（等人工处理）。
+        if (!frozen && state !== "error" && state !== "conflict" && !composing
+          && inputSeq !== committedSeq) {
+          maybeSend();
+        }
+      }
+    }
+  }
+
+  function setAnswer(questionId: string, answer: SheetAnswer | null): void {
+    if (disposed || frozen) return;
+    localAnswers[questionId] = answer;
+    inputSeq += 1;
+    setState("dirty");
+    scheduleAutosave();
+    notify();
+  }
+
+  function setComposing(value: boolean): void {
+    if (disposed) return;
+    if (value === composing) return;
+    composing = value;
+    if (!composing) {
+      pendingAfterCompose = false;
+      if (inputSeq !== committedSeq) scheduleAutosave();
+    }
+  }
+
+  function flush(): Promise<ExamSheetSaveFlushReceipt> {
+    if (disposed) return Promise.reject(new ExamSheetSaveDisposedError());
+    const targetSeq = inputSeq;
+    if (state === "conflict") {
+      return Promise.reject(new ExamSheetSaveConflictError());
+    }
+    if (state === "error") {
+      return Promise.reject(new Error("题纸保存失败，无法确认"));
+    }
+    if (targetSeq <= committedSeq && !inFlight) {
+      return Promise.resolve({ draftVersion, lastSavedAt });
+    }
+    // 先登记等待者再启动管道：即便 save 立即 settle，也不遗漏本等待者（S 重入合同）。
+    const promise = new Promise<ExamSheetSaveFlushReceipt>((resolve, reject) => {
+      waiters.push({ targetSeq, resolve, reject });
+    });
+    maybeSend();
+    return promise;
+  }
+
+  function retry(): Promise<void> {
+    if (disposed) return Promise.reject(new ExamSheetSaveDisposedError());
+    if (frozen) return Promise.resolve();
+    setState("dirty");
+    maybeSend();
+    return flush().then(() => undefined);
+  }
+
+  function setDraftVersion(version: number): void {
+    draftVersion = version;
+  }
+
+  function freeze(): void {
+    frozen = true;
+    if (debounceTimer !== null) {
+      clearTimer(debounceTimer);
+      debounceTimer = null;
+    }
+  }
+
+  function isDisposed(): boolean {
+    return disposed;
+  }
+
+  function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    if (debounceTimer !== null) {
+      clearTimer(debounceTimer);
+      debounceTimer = null;
+    }
+    if (backoffTimer !== null) {
+      clearTimer(backoffTimer);
+      backoffTimer = null;
+    }
+    if (backoffResolve) {
+      const resolve = backoffResolve;
+      backoffResolve = null;
+      resolve();
+    }
+    listeners.clear();
+    rejectWaiters(new ExamSheetSaveDisposedError());
+  }
+
+  return {
+    setAnswer,
+    setComposing,
+    flush,
+    retry,
+    setDraftVersion,
+    freeze,
+    isDisposed,
+    getSnapshot,
+    subscribe,
+    dispose,
+  };
+}

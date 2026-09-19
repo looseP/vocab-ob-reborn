@@ -5,6 +5,10 @@ import { L3QuestionAnalysis } from "./L3QuestionAnalysis";
 import { L3SourceNotesDrawer } from "./L3SourceNotesDrawer";
 import { apiFetch } from "@/frontend/api/client";
 import {
+  createExamSheetSaveController,
+  type ExamSheetSaveController,
+} from "@/frontend/state/examSheetSaveController";
+import {
   confirmQuestionAnnotation,
   createQuestionAnnotation,
   deleteAttempt,
@@ -1028,7 +1032,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   const [bufferedContextIds, setBufferedContextIds] = useState<ReadonlySet<string>>(new Set());
   // ── 批次二：题纸状态机与防抖保存 ──
   const [sheet, setSheet] = useState<L3Sheet | null>(null);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "error">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "retrying" | "error" | "conflict">("idle");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [sealOpen, setSealOpen] = useState(false);
   const [sealMode, setSealMode] = useState<SealModeValue>("full");
@@ -1053,8 +1057,25 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   const [gradingResults, setGradingResults] = useState<Record<string, L3GradingResult>>({});
   /** F-1：评卷加载态机——idle（非 sealed）/ loading / ready / error（显式失败 + 重试，替代静默）。 */
   const [gradingPhase, setGradingPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const pendingAnswers = useRef<Record<string, unknown>>({});
-  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 题纸单在途写屏障控制器（Task B）：输入序号 + 单在途，flush 即定格/导出屏障。 */
+  const sheetSave = useRef<ExamSheetSaveController | null>(null);
+  /** 未确认（非 clean）标记：离页守卫读取（订阅回调维护）。 */
+  const sheetSaveBlockedRef = useRef(false);
+  // StrictMode 双挂载防御：卸载清理会 dispose 控制器；再次渲染时检测并重建（清理可逆）。
+  if (!sheetSave.current || sheetSave.current.isDisposed()) {
+    sheetSave.current = createExamSheetSaveController({
+      // sheetId 仅作契约标识；实际题纸 id 由下方 save 闭包经 sheetRef 携带。
+      sheetId: "l3-exam-sheet",
+      save: async ({ answers }) => {
+        const sheet = sheetRef.current;
+        if (!sheet || sheet.status !== "draft") {
+          throw Object.assign(new Error("题纸非草稿态，无法保存"), { status: 409 });
+        }
+        const updated = await patchSheet(sheet.id, answers);
+        return { draftVersion: updated.draft_version };
+      },
+    });
+  }
   const sheetRef = useRef<L3Sheet | null>(null);
   const answersRef = useRef<Record<string, SheetAnswer>>({});
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -1155,6 +1176,49 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   useEffect(() => { sheetRef.current = sheet; }, [sheet]);
   useEffect(() => { answersRef.current = answers; }, [answers]);
 
+  /**
+   * 写屏障状态 → UI：saving/error/conflict 映射 saveState；一次在途确认完成置"已保存"时间。
+   * 诚实状态：保存中显示"保存中…"，失败显示"保存失败，将自动重试"，离页未确认可见。
+   */
+  useEffect(() => {
+    const ctrl = sheetSave.current;
+    if (!ctrl) return;
+    const unsub = ctrl.subscribe(() => {
+      const snap = ctrl.getSnapshot();
+      // 状态优先级：terminal（error/conflict）不被在途帧掩蔽——控制器在 inFlight=true 的
+      // 同一帧内通知终态，若以 inFlight 优先会把「保存失败/已确认」误显示为「保存中」。
+      if (snap.state === "error") {
+        setSaveState("error");
+      } else if (snap.state === "conflict") {
+        setSaveState("conflict");
+      } else if (snap.state === "retrying") {
+        setSaveState("retrying");
+      } else if (snap.state === "saving" || snap.state === "dirty") {
+        setSaveState("saving");
+      } else {
+        setSaveState("idle");
+      }
+      // 已保存时间只来自控制器快照的确认回执（S 合同）：不在 clean 通知帧里生成
+      // 新时间——重复 flush / 重复 notify / 仅订阅 / 恢复初始态都不得刷新「已保存」。
+      setLastSavedAt(snap.lastSavedAt);
+      // 离页守卫标记：未确认（非 clean）时置真。
+      sheetSaveBlockedRef.current = snap.state !== "clean";
+    });
+    return unsub;
+  }, []);
+
+  // 离页守卫（Task B）：存在未确认作答时，刷新/关闭给出浏览器级提示（与写控制器同律）。
+  useEffect(() => {
+    const handler = (event: Event): void => {
+      if (sheetSaveBlockedRef.current) {
+        event.preventDefault();
+        (event as unknown as { returnValue?: string }).returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
+
   /** choice 投影（下游渲染与统计沿用批次二契约，不感知完整对象形态）。 */
   const picks = useMemo(() => {
     const map: Record<string, string> = {};
@@ -1175,34 +1239,17 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     return () => { cancelled = true; };
   }, [paper.id, paper.sections]);
 
-  /** 防抖 800ms 逐题 merge：批量 PATCH 到题纸（失败回填待重试）。 */
+  /**
+   * 定格/导出屏障：等待全部在途与调用前输入被服务端确认（单在途写控制器）。
+   * 失败（flush reject）由调用方捕获——定格/导出不得越过未确认态。
+   */
   const flushAnswers = useCallback(async () => {
-    if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
-    const batch = pendingAnswers.current;
-    const current = sheetRef.current;
-    if (!current || current.status !== "draft" || Object.keys(batch).length === 0) return;
-    pendingAnswers.current = {};
-    setSaveState("saving");
-    try {
-      const updated = await patchSheet(current.id, batch);
-      sheetRef.current = updated;
-      setSheet(updated);
-      setSaveState("idle");
-      setLastSavedAt(new Date().toISOString());
-    } catch {
-      pendingAnswers.current = { ...batch, ...pendingAnswers.current };
-      setSaveState("error");
-    }
+    await sheetSave.current?.flush();
   }, []);
-
-  const scheduleSave = useCallback(() => {
-    if (flushTimer.current) clearTimeout(flushTimer.current);
-    flushTimer.current = setTimeout(() => { void flushAnswers(); }, 800);
-  }, [flushAnswers]);
 
   /**
    * v2 草稿答案状态机：完整对象浅 merge → prune（空键清理）→ 整题入队 pending
-   * → 防抖 PATCH（服务端为题目键级整体替换，必须发送合并后的完整对象）。
+   * → 经写控制器防抖 PATCH（服务端为题目键级整体替换，必须发送合并后的完整对象）。
    * 定格后（sheet 非 draft）静默忽略——只读由渲染层与守卫双重收口。
    */
   const commitAnswer = useCallback((questionId: string, patch: Partial<SheetAnswer>) => {
@@ -1212,15 +1259,14 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     const updated = { ...answersRef.current };
     if (next === null) {
       delete updated[questionId];
-      pendingAnswers.current = { ...pendingAnswers.current, [questionId]: null };
     } else {
       updated[questionId] = next;
-      pendingAnswers.current = { ...pendingAnswers.current, [questionId]: next };
     }
     answersRef.current = updated;
     setAnswers(updated);
-    scheduleSave();
-  }, [scheduleSave]);
+    // 经单在途写控制器入队（防抖 800ms 由控制器内部收口）
+    sheetSave.current?.setAnswer(questionId, next);
+  }, []);
 
   /** v2 §10：题级旗标切换（待复查=流程状态 / 存疑=认知状态；取消即删键）。 */
   const toggleFlag = useCallback((questionId: string, flag: "doubt" | "recheck") => {
@@ -1294,15 +1340,12 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     }
   }, [applyDerived, addToast]);
 
-  // 卸载时把防抖窗口内未发送的作答立即送存（尽力而为，不阻塞卸载）。
+  // 卸载：尽力送存未确认作答（不阻塞卸载，reject 静默），随后释放控制器（清 timer/监听、
+  // 在途响应丢弃——不伪造保存成功）。StrictMode 清理可逆：下次渲染检测 isDisposed 重建。
   useEffect(() => () => {
-    if (flushTimer.current) { clearTimeout(flushTimer.current); flushTimer.current = null; }
-    const batch = pendingAnswers.current;
-    const current = sheetRef.current;
-    if (current && current.status === "draft" && Object.keys(batch).length > 0) {
-      pendingAnswers.current = {};
-      void patchSheet(current.id, batch).catch(() => {});
-    }
+    const ctrl = sheetSave.current;
+    void ctrl?.flush().catch(() => {});
+    ctrl?.dispose();
   }, []);
 
   // 卷面加载后按全部 section 的 questionIds 批量拉注记 + 标签字典（首读 lazy-seed）。
@@ -1356,6 +1399,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     if (!current) return;
     setSealBusy(true);
     try {
+      // 屏障：确保全部待保存输入已确认后再定格（服务端 draft_version CAS 拒绝并发旧写）
       await flushAnswers();
       const result = await sealSheet(current.id, {
         mode: sealMode,
@@ -1364,6 +1408,8 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
       });
       sheetRef.current = result.sheet;
       setSheet(result.sheet);
+      // 终态冻结：只读期不再触发任何 PATCH（服务端守卫之外的双保险）。
+      sheetSave.current?.freeze();
       setSealOpen(false);
       setSealUnanswered(null);
       addToast("success", result.materializedCount > 0
@@ -1401,6 +1447,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     if (!current) return;
     setExportBusy(true);
     try {
+      await flushAnswers(); // 导出前等待在途保存确认（不导出未落库草稿）
       const text = await fetchSheetExport(current.id, exportWithAnswers);
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
@@ -1422,6 +1469,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     if (!current) return;
     setExportBusy(true);
     try {
+      await flushAnswers(); // 导出前等待在途保存确认
       const text = await fetchSheetExport(current.id, exportWithAnswers);
       const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
@@ -1664,9 +1712,22 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
               <span className="rounded-full bg-[var(--color-accent-soft,var(--color-surface))] px-2 py-0.5 font-medium text-[var(--color-accent)]">
                 {saveState === "saving"
                   ? "草稿 · 保存中…"
-                  : saveState === "error"
-                    ? "草稿 · 保存失败，将自动重试"
-                    : lastSavedAt ? `草稿 · 已保存 ${formatSavedAt(lastSavedAt)}` : "草稿"}
+                  : saveState === "retrying"
+                    ? "草稿 · 保存失败，自动重试中…"
+                    : saveState === "conflict"
+                      ? "草稿 · 保存冲突：可能已在别处定格"
+                      : saveState === "error"
+                        ? "草稿 · 保存失败，尚未保存，请勿离开"
+                        : lastSavedAt ? `草稿 · 已保存 ${formatSavedAt(lastSavedAt)}` : "草稿"}
+                {(saveState === "error" || saveState === "conflict") && (
+                  <button
+                    type="button"
+                    onClick={() => { void sheetSave.current?.retry().catch(() => {}); }}
+                    className="ml-1 underline decoration-dotted underline-offset-2"
+                  >
+                    重试
+                  </button>
+                )}
               </span>
             ) : (
               <span className="flex flex-wrap items-center gap-2">

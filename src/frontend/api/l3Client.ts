@@ -167,6 +167,8 @@ export interface L3Sheet {
   question_type: string | null;
   paper_id: string | null;
   status: SheetStatusValue;
+  /** 定格 CAS 版本基线：每次逐题 merge +1（Task B；服务端行本就随响应返回）。 */
+  draft_version: number;
   /** 仅 draft 期非空；定格后服务端清空（attempts 是唯一作答真源）。 */
   answers: Record<string, unknown>;
   seal_mode: SealModeValue | null;
