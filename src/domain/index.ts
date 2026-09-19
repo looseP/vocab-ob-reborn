@@ -1227,3 +1227,52 @@ export interface L3RecommendationAcceptResult {
   proposal?: L3ProposalBundle;
   actionPayload?: Json;
 }
+
+// ── 学习笔记（N1，ADR《study-notes-workspace》）────────────────────────────
+// 类型真源 = ./l3-study-notes（本块仅转发；其他任务禁止自建同名漂移类型）。
+export {
+  STUDY_NOTE_STATUSES,
+  STUDY_TOPIC_STATUSES,
+  REFERENCE_KINDS,
+  REFERENCE_STATUSES,
+  STUDY_NOTE_TITLE_MAX,
+  STUDY_NOTE_BODY_MAX,
+  STUDY_REFERENCE_MAX_PER_NOTE,
+  STUDY_QUOTE_MAX,
+  STUDY_OPTION_KEY_MAX,
+  STUDY_TOPIC_TITLE_MAX,
+  STUDY_TOPIC_MEMBER_MAX,
+  STUDY_SNAPSHOT_BYTES_MAX,
+  STUDY_PAGE_LIMIT_DEFAULT,
+  STUDY_PAGE_LIMIT_MAX,
+  STUDY_SEARCH_Q_MAX,
+  STUDY_SOURCE_EXCERPT_MAX,
+  ReferenceContractError,
+  parseReferenceIds,
+  assertReferenceSet,
+  validateQuote,
+  referenceTargetSchema,
+  referenceWriteSchema,
+  saveStudyNoteSchema,
+  createStudyNoteSchema,
+  createStudyTopicSchema,
+  saveStudyTopicSchema,
+  moveStudyTopicMemberSchema,
+  removeStudyTopicMemberSchema,
+} from "./l3-study-notes";
+export type {
+  ReferenceKind,
+  ReferenceStatus,
+  ReferenceTarget,
+  ReferenceInput,
+  ReferenceWrite,
+  SaveNoteInput,
+  ReferenceDisplaySnapshot,
+  ReferencePreview,
+  StudyNoteStatus,
+  StudyNoteSummary,
+  StudyNoteDto,
+  StudyTopicStatus,
+  StudyTopicDto,
+  StudyPage,
+} from "./l3-study-notes";
