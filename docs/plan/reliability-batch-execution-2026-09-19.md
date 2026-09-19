@@ -117,5 +117,9 @@ DB_SSLMODE=disable npx vitest run --config vitest.integration.config.ts tests/l3
 - CI 全绿受本地内存限制的项（分层覆盖）；已本地跑 typecheck/arch/governance/complexity/build。
 
 ### 提交链（本 worktree）
-`56fabdd`(Task A) → `3c906a3`(台账) → `370b9fb`(S 通知合同) → `14bdd6d`(V/Q 版本+脏键) → 本轮末尾 `test(e2e)` 提交（E2E/真库夹具修正）。
+`56fabdd`(Task A) → `3c906a3`(台账) → `370b9fb`(S 通知合同) → `14bdd6d`(V/Q 版本+脏键) → `bed97f8`(E2E/真库夹具+台账)。
+
+### 远端与 CI（PR #124 · draft）
+- 推分支 `reliability-batch` → PR **#124（draft，OPEN）**：https://github.com/looseP/vocab-ob-reborn/pull/124
+- 三项必需检查在 `bed97f8` 上**全绿**：Browser E2E `pass 1m37s` / Engineering Gate + Migration Rehearsal `pass 5m44s` / Writing E2E `pass 1m47s`。未合并、未部署（按批次纪律）。
 
