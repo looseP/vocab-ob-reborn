@@ -241,17 +241,31 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
   };
 }
 
+/** 学习笔记引用向的窄 fake（N1）：默认无 blocker。 */
+function makeStudyRefRepo(overrides: Record<string, unknown> = {}) {
+  return {
+    getSourceDeleteBlockers: vi.fn(async () => []),
+    ...overrides,
+  };
+}
+
+/** F1：deleteSource 的 FK 兜底需要事务连接可用（SAVEPOINT/ROLLBACK TO/RELEASE）。 */
+function makeTx() {
+  return { query: vi.fn(async () => ({})) } as never;
+}
+
 function makeService(
   repository: IL3ContextRepository,
   txRepository = repository,
-  txRunner: typeof import("@/db/transaction").withTransaction = async (callback) => callback({} as never),
+  txRunner: typeof import("@/db/transaction").withTransaction = async (callback) => callback(makeTx()),
   words?: IWordRepository,
+  studyRefRepo: Record<string, unknown> = makeStudyRefRepo(),
 ): L3ContextService {
   return new L3ContextService(
     repository,
     words,
     txRunner,
-    () => ({ l3Context: txRepository } as unknown as IRepositories),
+    () => ({ l3Context: txRepository, studyReferences: studyRefRepo } as unknown as IRepositories),
   );
 }
 
@@ -265,7 +279,7 @@ beforeEach(() => {
 
 describe("L3ContextService", () => {
   it("passes the authenticated actor into transactional source operations", async () => {
-    const txRunner = vi.fn(async (callback: (tx: never) => Promise<never>) => callback({} as never)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const txRunner = vi.fn(async (callback: (tx: never) => Promise<never>) => callback(makeTx())) as unknown as typeof import("@/db/transaction").withTransaction;
     service = makeService(repo, repo, txRunner);
 
     await service.deleteSource({ userId: "u1", sourceId: "src-1" });
@@ -679,6 +693,130 @@ describe("L3ContextService", () => {
     expect(repo.findContextById).not.toHaveBeenCalledWith("u1", "ctx-1");
     expect(repo.getContextDeleteBlockers).toHaveBeenCalledWith("u1", "ctx-1");
     expect(repo.deleteContext).toHaveBeenCalledWith("u1", "ctx-1");
+  });
+
+  it("blocks source deletion when referenced by learning notes (N1，含归档笔记)", async () => {
+    repo = makeRepo();
+    const studyRefRepo = makeStudyRefRepo({
+      getSourceDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-1", title: "受保护笔记", status: "archived", reference_count: 2 },
+      ]),
+    });
+    service = makeService(repo, repo, undefined, undefined, studyRefRepo);
+
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: {
+        blockers: {
+          studyNotes: [{ id: "note-1", title: "受保护笔记", status: "archived", referenceCount: 2 }],
+        },
+      },
+    });
+    expect(repo.deleteSource).not.toHaveBeenCalled();
+  });
+
+  it("FK RESTRICT 并发兜底：DELETE 报 23503 → 重查 blocker 转 409（不落 500）", async () => {
+    repo = makeRepo({
+      deleteSource: vi.fn(async () => {
+        throw Object.assign(new Error("fk violation"), { code: "23503" });
+      }),
+    });
+    const studyRefRepo = makeStudyRefRepo({
+      getSourceDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-9", title: "并发笔记", status: "active", reference_count: 1 },
+      ]),
+    });
+    service = makeService(repo, repo, undefined, undefined, studyRefRepo);
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: { blockers: { studyNotes: [expect.objectContaining({ id: "note-9" })] } },
+    });
+  });
+
+  it("F1：DELETE 报 23503 后先回滚保存点再重查 blocker（不落 25P02；顺序留证）", async () => {
+    let poisoned = false;
+    let blockerCalls = 0;
+    const events: string[] = [];
+    const tx = {
+      query: vi.fn(async (sql: string) => {
+        const text = String(sql);
+        events.push(`tx:${text}`);
+        if (text.trim().toUpperCase().startsWith("ROLLBACK TO SAVEPOINT")) poisoned = false;
+        return {};
+      }),
+    };
+    const txRunner = (async (callback: (tx: unknown) => Promise<unknown>) => callback(tx)) as never;
+    const studyRefRepo = makeStudyRefRepo({
+      getSourceDeleteBlockers: vi.fn(async () => {
+        events.push("blocker-query");
+        if (poisoned) throw Object.assign(new Error("current transaction is aborted"), { code: "25P02" });
+        blockerCalls += 1;
+        // 预检查（第 1 次）：并发引用尚不可见 → 空；恢复后重查（第 2 次）：命中真实 blocker
+        return blockerCalls === 1
+          ? []
+          : [{ note_id: "note-9", title: "并发笔记", status: "active", reference_count: 1 }];
+      }),
+    });
+    repo = makeRepo({
+      deleteSource: vi.fn(async () => {
+        poisoned = true; // 模拟真实 PG：FK 异常中止当前事务
+        throw Object.assign(new Error("fk violation"), { code: "23503" });
+      }),
+    });
+    service = makeService(repo, repo, txRunner, undefined, studyRefRepo);
+
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: { blockers: { studyNotes: [expect.objectContaining({ id: "note-9" })] } },
+    });
+
+    expect(events).toContain("tx:SAVEPOINT study_note_delete");
+    expect(events).toContain("tx:ROLLBACK TO SAVEPOINT study_note_delete");
+    expect(events).toContain("tx:RELEASE SAVEPOINT study_note_delete");
+    // 恢复动作先于 blocker 重查（失败事务内查询会 25P02）
+    expect(events.indexOf("tx:ROLLBACK TO SAVEPOINT study_note_delete"))
+      .toBeLessThan(events.lastIndexOf("blocker-query"));
+  });
+
+  it("F1：FK 失败但无笔记 blocker → 保持原错误语义（不伪造笔记阻塞）", async () => {
+    let poisoned = false;
+    const tx = {
+      query: vi.fn(async (sql: string) => {
+        if (String(sql).trim().toUpperCase().startsWith("ROLLBACK TO SAVEPOINT")) poisoned = false;
+        return {};
+      }),
+    };
+    const txRunner = (async (callback: (tx: unknown) => Promise<unknown>) => callback(tx)) as never;
+    const studyRefRepo = makeStudyRefRepo({
+      getSourceDeleteBlockers: vi.fn(async () => {
+        if (poisoned) throw Object.assign(new Error("current transaction is aborted"), { code: "25P02" });
+        return [];
+      }),
+    });
+    repo = makeRepo({
+      deleteSource: vi.fn(async () => {
+        poisoned = true;
+        throw Object.assign(new Error("fk violation"), { code: "23503" });
+      }),
+    });
+    service = makeService(repo, repo, txRunner, undefined, studyRefRepo);
+
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" }))
+      .rejects.toMatchObject({ code: "23503" });
+  });
+
+  it("删除未命中重查：source 仍在而删除未生效时优先重查笔记 blocker", async () => {
+    repo = makeRepo({ deleteSource: vi.fn(async () => null) });
+    const studyRefRepo = makeStudyRefRepo({
+      getSourceDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-2", title: "重查笔记", status: "active", reference_count: 1 },
+      ]),
+    });
+    service = makeService(repo, repo, undefined, undefined, studyRefRepo);
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: { blockers: { studyNotes: [expect.objectContaining({ id: "note-2" })] } },
+    });
   });
 
   it("maps missing or out-of-scope source and context parent deletes to NotFoundError", async () => {

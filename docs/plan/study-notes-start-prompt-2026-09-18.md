@@ -1,0 +1,29 @@
+# 学习笔记空间执行交接
+
+以下文字可作为后续执行任务的启动指令。当前任务只编写计划，未运行这些步骤。
+
+---
+
+请在 vocab-ob 项目实现题型学习笔记 N1，使用现有工程模式逐任务推进。
+
+必读：
+
+1. `docs/plan/study-notes-design-2026-09-18.md`（唯一N1设计合同）。
+2. `docs/plan/study-notes-execution-plan-2026-09-18.md`（Task00–11，文件/接口/测试/验收）。
+3. `docs/plan/l3-upgrade-task-breakdown-2026-09-11.md` §0（共享文件、门禁和UI验收纪律）。
+4. `docs/design/l3-space/baseline.md`、ADR-0019/0023/0029/0030。
+5. `docs/plan/writing-space-design-2026-09-18.md`（只为识别并行边界，不实施作文功能）。
+
+首先刷新git状态、已合并HEAD、现存迁移与运行时。计划观察HEAD为219be04，但执行不得假定它仍为最新。工作区可能有F-1、review_sheet_id及作文任务进行中；按执行技能建立隔离checkout，不提交、重置或覆盖他人的改动。
+
+**执行校准（2026-09-19）**：实际开工于独立 clone `D:/Temp/vocab-ob-n1`（不含斜杠分支 `study-notes-n1-backend`），依赖基线 `integration/l3-reliability-writing@b7dcea4e`（PR #125 draft、未合并）。F-1 深链（`?sheet=`/`?paper=`）与作文稿次协议已随整合合并；历史迁移 0000–0038 已应用（39个），本批迁移从实际生成结果起。旧共享工作区（`wt-main`/`wt-integration`/`wt-writing`/`wt-practice`）为本批只读参照，未修改、未切换分支。
+
+执行范围：独立自由笔记、七题型归属、平面专题、精确source/question引用、反向引用、原位侧栏、并发保存、导出。N2历史题纸/作答/评卷与作文稿次引用不在本次实现范围；它们有明确的后续接口前置，不用unknown JSON提前糊进去。
+
+按Task00–11执行，每项先写有意义的失败测试，再落实现，验证后以精确文件清单提交。默认单执行者串行；需要委派时先遵守会话授权，不因本指令自行开多个任务。schema、迁移journal、operations与L3Page等共享集成点必须协调，迁移号以实际生成结果为准，绝不预占0037/0038。
+
+重要红线：GET/预览不创建题纸；笔记不写FSRS；新API owner-only；引用快照由服务端读取生成；正文和引用原子保存；source删除检查子题引用；未保存内容与在途请求不能被“保存成功”掩盖；topic/venues变更不能导致悬空成员；未知200响应不得当空数据。
+
+文档中每项通过标准都须留证。工程门禁、真库restricted role与浏览器走查分别报告，不用组件mock替代端到端。内存不足不得降门禁；把未执行项转到资源足够环境补齐后才宣称完成。
+
+最终交付：提交/PR列表、实际迁移号、真实base SHA、需求→任务→测试证据映射、桌面/手机与明暗截图、剩余N2范围；新建PR后按Codex工具规则附加到当前任务。不要自动部署或合并未获授权的PR。

@@ -198,6 +198,18 @@ export function isConstraintViolation(error: unknown): boolean {
   return getConstraintViolationSpec(error) !== null;
 }
 
+/** True when the error is a foreign-key violation（如 RESTRICT 阻止删除）。 */
+export function isForeignKeyViolation(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  return (error as Record<string, unknown>).code === "23503";
+}
+
+/** True when the error is a unique-violation（并发幂等竞态回退用）。 */
+export function isUniqueViolation(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  return (error as Record<string, unknown>).code === "23505";
+}
+
 /**
  * Build the HTTP response for a constraint violation, or null when the error is
  * not one. Response body never contains database internals.

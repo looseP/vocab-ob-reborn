@@ -80,6 +80,9 @@ import type {
 import type { OtherBookL2Signal } from "../domain/upgrade-suggestion";
 import type { IL3WritingRepository } from "./l3-writing.repository";
 import type { IL3WritingFeedbackRepository } from "./l3-writing-feedback.repository";
+import type { IL3StudyNoteRepository } from "./l3-study-notes.repository";
+import type { IL3StudyTopicRepository } from "./l3-study-topics.repository";
+import type { IL3StudyReferenceRepository } from "./l3-study-references.repository";
 
 // ── Word ────────────────────────────────────────────────────────────────
 export interface IWordRepository {
@@ -1751,6 +1754,10 @@ export interface IRepositories {
   // 作文子空间 v1（W6 注册）：写作任务/稿次 + 作文反馈（自包含接口定义于各自 repo 文件）。
   l3Writing: IL3WritingRepository;
   l3Feedback: IL3WritingFeedbackRepository;
+  // 学习笔记（N1 注册）：笔记 / 平面专题 / 引用快照（自包含接口定义于各自 repo 文件）。
+  studyNotes: IL3StudyNoteRepository;
+  studyTopics: IL3StudyTopicRepository;
+  studyReferences: IL3StudyReferenceRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }

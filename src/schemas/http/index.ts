@@ -870,3 +870,56 @@ export const l3AttemptListQuerySchema = z.object({
     .refine((ids) => ids.length >= 1 && ids.length <= 200, { message: "questionIds 需为 1–200 个 uuid" })
     .refine((ids) => ids.every((id) => uuidSchema.safeParse(id).success), { message: "questionIds 含非法 uuid" }),
 });
+
+// ── 学习笔记（N1，ADR《study-notes-workspace》/ 设计 §7）────────────────────
+// body 契约复用 domain zod（单一真源）；查询契约就地定义。
+export {
+  createStudyNoteSchema as l3StudyNoteCreateSchema,
+  saveStudyNoteSchema as l3StudyNoteSaveSchema,
+  createStudyTopicSchema as l3StudyTopicCreateSchema,
+  saveStudyTopicSchema as l3StudyTopicSaveSchema,
+  moveStudyTopicMemberSchema as l3StudyTopicMemberMoveSchema,
+  removeStudyTopicMemberSchema as l3StudyTopicMemberRemoveSchema,
+  referenceTargetSchema as l3StudyReferenceTargetSchema,
+} from "../../domain/l3-study-notes";
+
+/** GET /l3/study-notes?venue&q&status&pinned&topicId&unfiled&limit&cursor（topicId 与 unfiled 互斥）。 */
+export const l3StudyNoteListQuerySchema = z
+  .object({
+    venue: l3QuestionTypeSchema,
+    q: z.string().trim().max(100).optional(),
+    status: z.enum(["active", "archived"]).optional(),
+    pinned: z.enum(["0", "1"]).optional().transform((value) => (value === undefined ? null : value === "1")),
+    topicId: uuidSchema.optional(),
+    unfiled: z.enum(["0", "1"]).optional().transform((value) => value === "1"),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+    cursor: z.string().trim().max(800).optional(),
+  })
+  .refine((value) => !(value.topicId !== undefined && value.unfiled === true), {
+    message: "topicId 与 unfiled 互斥",
+  });
+
+/** GET /l3/study-topics?venue&status&limit&cursor。 */
+export const l3StudyTopicListQuerySchema = z.object({
+  venue: l3QuestionTypeSchema,
+  status: z.enum(["active", "archived"]).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().max(800).optional(),
+});
+
+/** GET /l3/study-notes/reference-targets?q&kind&venue&limit&cursor（每次只查一个 kind）。 */
+export const l3StudyReferenceTargetQuerySchema = z.object({
+  q: z.string().trim().max(200).optional(),
+  kind: z.enum(["source", "question"]),
+  venue: l3QuestionTypeSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().max(800).optional(),
+});
+
+/** GET /l3/study-notes/backlinks?targetKind&targetId&limit&cursor。 */
+export const l3StudyBacklinkQuerySchema = z.object({
+  targetKind: z.enum(["source", "question"]),
+  targetId: uuidSchema,
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().max(800).optional(),
+});

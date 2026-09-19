@@ -73,6 +73,17 @@ import {
   l3WritingTaskResponseSchema,
 } from "./l3-writing-response-contract";
 import {
+  l3ReferenceTargetListResponseSchema,
+  l3ReferenceTargetPreviewResponseSchema,
+  l3StudyBacklinkListResponseSchema,
+  l3StudyNoteCreateResponseSchema,
+  l3StudyNoteItemResponseSchema,
+  l3StudyNoteListResponseSchema,
+  l3StudyTopicCreateResponseSchema,
+  l3StudyTopicItemResponseSchema,
+  l3StudyTopicListResponseSchema,
+} from "./l3-study-note-response-contract";
+import {
   upgradeWorkOrderCompleteResponseSchema,
   upgradeWorkOrderListResponseSchema,
   upgradeWorkOrderMarkResponseSchema,
@@ -186,6 +197,17 @@ import {
   l3WritingDraftSaveSchema,
   l3WritingSubmitSchema,
   l3WritingFeedbackPutSchema,
+  l3StudyNoteCreateSchema,
+  l3StudyNoteSaveSchema,
+  l3StudyNoteListQuerySchema,
+  l3StudyTopicCreateSchema,
+  l3StudyTopicSaveSchema,
+  l3StudyTopicListQuerySchema,
+  l3StudyTopicMemberMoveSchema,
+  l3StudyTopicMemberRemoveSchema,
+  l3StudyReferenceTargetSchema,
+  l3StudyReferenceTargetQuerySchema,
+  l3StudyBacklinkQuerySchema,
   l3ProposalCreateSchema,
   l3ProposalListQuerySchema,
   l3ProposalRejectSchema,
@@ -557,6 +579,21 @@ export const apiOperations = [
   // A2（2026-09-19）：按题批量进度读面（owner-only 只读；静态路径先于 /tasks/:taskId 注册；
   // 原始 questionId 重复参数 ≤100、去重后单条集合查询；无匹配 = 空数组，不代挑任务）。
   operation("get", "/api/l3/writing/tasks/question-summaries", "listL3WritingQuestionSummaries", "owner", "owner", "none", { query: l3WritingQuestionSummariesQuerySchema }, 200, l3WritingQuestionSummariesResponseSchema),
+  // 学习笔记（N1，ADR《study-notes-workspace》/ 设计 §7）：笔记/专题/引用三组，
+  // **全部 owner-only**（agent 一律 403；未认证 401；他人资源 404；零写 GET）。
+  // 固定路径（reference-targets / reference-preview / backlinks）先于 /:noteId 动态段注册。
+  operation("post", "/api/l3/study-notes", "createL3StudyNote", "owner", "owner", "sessionMutation", { body: l3StudyNoteCreateSchema }, 201, l3StudyNoteCreateResponseSchema),
+  operation("get", "/api/l3/study-notes", "listL3StudyNotes", "owner", "owner", "none", { query: l3StudyNoteListQuerySchema }, 200, l3StudyNoteListResponseSchema),
+  operation("get", "/api/l3/study-notes/reference-targets", "searchL3ReferenceTargets", "owner", "owner", "none", { query: l3StudyReferenceTargetQuerySchema }, 200, l3ReferenceTargetListResponseSchema),
+  operation("post", "/api/l3/study-notes/reference-preview", "previewL3ReferenceTarget", "owner", "owner", "sessionMutation", { body: l3StudyReferenceTargetSchema }, 200, l3ReferenceTargetPreviewResponseSchema),
+  operation("get", "/api/l3/study-notes/backlinks", "listL3StudyBacklinks", "owner", "owner", "none", { query: l3StudyBacklinkQuerySchema }, 200, l3StudyBacklinkListResponseSchema),
+  operation("get", "/api/l3/study-notes/:noteId", "getL3StudyNote", "owner", "owner", "none", undefined, 200, l3StudyNoteItemResponseSchema),
+  operation("put", "/api/l3/study-notes/:noteId", "saveL3StudyNote", "owner", "owner", "sessionMutation", { body: l3StudyNoteSaveSchema }, 200, l3StudyNoteItemResponseSchema),
+  operation("post", "/api/l3/study-topics", "createL3StudyTopic", "owner", "owner", "sessionMutation", { body: l3StudyTopicCreateSchema }, 201, l3StudyTopicCreateResponseSchema),
+  operation("get", "/api/l3/study-topics", "listL3StudyTopics", "owner", "owner", "none", { query: l3StudyTopicListQuerySchema }, 200, l3StudyTopicListResponseSchema),
+  operation("put", "/api/l3/study-topics/:topicId", "saveL3StudyTopic", "owner", "owner", "sessionMutation", { body: l3StudyTopicSaveSchema }, 200, l3StudyTopicItemResponseSchema),
+  operation("put", "/api/l3/study-topics/:topicId/members/:noteId", "moveL3StudyTopicMember", "owner", "owner", "sessionMutation", { body: l3StudyTopicMemberMoveSchema }, 200, l3StudyTopicItemResponseSchema),
+  operation("delete", "/api/l3/study-topics/:topicId/members/:noteId", "removeL3StudyTopicMember", "owner", "owner", "sessionMutation", { body: l3StudyTopicMemberRemoveSchema }, 200, l3StudyTopicItemResponseSchema),
   // 批次二收官：冻结导出（只出不进；Content-Disposition + 版本/sha256 响应头）。
   operation("get", "/api/l3/sheets/:id/export", "exportL3Sheet", "owner", "owner", "none", { query: l3SheetExportQuerySchema }, 200, z.string(), "text/markdown"),
   operation("get", "/api/l3/practice-files", "listL3PracticeFiles", "owner", "agent", "none", { query: l3PracticeFileListQuerySchema }, 200, l3PracticeFileListResponseSchema),

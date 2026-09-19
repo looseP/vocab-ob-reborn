@@ -33,6 +33,9 @@ import { L3AssessmentRepository } from "./l3-assessments.repository";
 import { L3GradingRepository } from "./l3-grading.repository";
 import { L3WritingRepository } from "./l3-writing.repository";
 import { L3WritingFeedbackRepository } from "./l3-writing-feedback.repository";
+import { L3StudyNoteRepository } from "./l3-study-notes.repository";
+import { L3StudyTopicRepository } from "./l3-study-topics.repository";
+import { L3StudyReferenceRepository } from "./l3-study-references.repository";
 import { OutboxRepository } from "./outbox.repository";
 
 export function createRepositories(tx?: PoolClient): IRepositories {
@@ -60,6 +63,9 @@ export function createRepositories(tx?: PoolClient): IRepositories {
     l3Grading: new L3GradingRepository(tx),
     l3Writing: new L3WritingRepository(tx),
     l3Feedback: new L3WritingFeedbackRepository(tx),
+    studyNotes: new L3StudyNoteRepository(tx),
+    studyTopics: new L3StudyTopicRepository(tx),
+    studyReferences: new L3StudyReferenceRepository(tx),
     llmUsage: new LlmUsageRepository(tx),
     outbox: new OutboxRepository(tx),
   };

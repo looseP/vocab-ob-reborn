@@ -43,7 +43,8 @@ describe("existing local volume role upgrade", () => {
     // 0036: l3_grading_results 评卷结果（批次三①，UNIQUE(sheet_id,question_id) 同键覆写 + graded_by 留痕）
     // 0037: l3_question_annotations.review_sheet_id 评审来源列（F-1 回看闭环，SET NULL 外键）
     // 0038: l3_writing_tasks/l3_writing_feedback + l3_submissions 四元数据与 l3_question_attempts venue 扩 writing（作文子空间 W1）
-    expect(authoritativeMigrationCount()).toBe(39);
+    // 0039: l3_study_notes/l3_study_note_venues/l3_study_topics/l3_study_topic_notes/l3_study_note_references 五表（N1 学习笔记：owner RLS + 复合 FK + 引用 RESTRICT 删除保护）
+    expect(authoritativeMigrationCount()).toBe(40);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
