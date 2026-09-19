@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "@/http/server";
 import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import type { Services } from "@/services";
+import { L3StudyNoteService, computeNoteCreateHash } from "@/services/l3-study-notes.service";
 import { createMockPool } from "../helpers/mock-db";
 
 const mockDb = createMockPool();
@@ -343,5 +344,64 @@ describe("补齐：各端点校验分支（400；不触服务）", () => {
     })).status).toBe(400);
     expect(list).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+// ── F5：合法大写 UUID 经真实 service 接线（路径参数与 body 同一身份进入仓储层）──
+// 本组直接挂载真实 L3StudyNoteService（fake 仓储），验证 HTTP 边界 → 服务入口
+// 的规范化行为；语义真库证据在 l3-study-notes-repair.integration.test.ts。
+
+describe("F5 UUID 身份（真实 service 接线）", () => {
+  const NOTE_CASE_L = "abcdef01-2345-4789-8abc-def012345678";
+  const NOTE_CASE_U = "ABCDEF01-2345-4789-8ABC-DEF012345678";
+  const REQ_CASE_L = "deadbeef-2345-4789-8abc-0123456789ab";
+  const REQ_CASE_U = "DEADBEEF-2345-4789-8ABC-0123456789AB";
+
+  function caseNoteRow() {
+    return {
+      id: NOTE_CASE_L, user_id: "user-123", title: "详情", body_md: "", status: "active" as const,
+      pinned: false, version: 1, create_request_id: REQ_CASE_L,
+      create_input_hash: computeNoteCreateHash("reading_choice"),
+      last_write_request_id: null, last_write_hash: null,
+      created_at: "2026-09-19T00:00:00Z", updated_at: "2026-09-19T00:00:00Z",
+    };
+  }
+
+  function mountRealService() {
+    const repos = {
+      studyNotes: {
+        get: vi.fn(async () => caseNoteRow()),
+        lock: vi.fn(async () => caseNoteRow()),
+        findByCreateRequestId: vi.fn(async () => caseNoteRow()),
+        listVenues: vi.fn(async () => ["reading_choice"]),
+      },
+      studyTopics: {},
+      studyReferences: {
+        listForNote: vi.fn(async () => []),
+      },
+    };
+    const txRunner = (async (callback: (tx: unknown) => Promise<unknown>) => callback({})) as never;
+    const referenceService = { resolve: vi.fn(async () => []) } as never;
+    const service = new L3StudyNoteService(txRunner, () => repos as never, referenceService);
+    return { app: createApp(makeServices({ studyNotes: service as never })), repos };
+  }
+
+  it("路径参数：合法大写 noteId → 仓储以规范小写为键读取（同一身份）", async () => {
+    const { app, repos } = mountRealService();
+    const res = await app.request(`/api/l3/study-notes/${NOTE_CASE_U}`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { item: { id: string } };
+    expect(body.item.id).toBe(NOTE_CASE_L);
+    expect(repos.studyNotes.get).toHaveBeenCalledWith("user-123", NOTE_CASE_L);
+  });
+
+  it("body：合法大写 requestId → 幂等查询以规范小写为键（复用既有对象，200）", async () => {
+    const { app, repos } = mountRealService();
+    const res = await app.request("/api/l3/study-notes", {
+      method: "POST", headers: AUTH_HEADERS,
+      body: JSON.stringify({ requestId: REQ_CASE_U, venue: "reading_choice" }),
+    });
+    expect(res.status).toBe(200);
+    expect(repos.studyNotes.findByCreateRequestId).toHaveBeenCalledWith("user-123", REQ_CASE_L);
   });
 });

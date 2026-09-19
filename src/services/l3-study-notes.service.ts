@@ -24,6 +24,7 @@ import { L3_QUESTION_TYPES, type L3QuestionType } from "../domain/l3-question-ty
 import {
   assertReferenceSet,
   ReferenceContractError,
+  normalizeStudyUuid,
   STUDY_PAGE_LIMIT_DEFAULT,
   STUDY_PAGE_LIMIT_MAX,
   STUDY_SNAPSHOT_BYTES_MAX,
@@ -186,12 +187,12 @@ export function computeMemberOpHash(input: {
   }));
 }
 
-/** 目标引用 → loadTargets 键。 */
+/** 目标引用 → loadTargets 键（F5：UUID 身份规范小写，与仓储返回的 DB 形态一致）。 */
 function targetKey(target: ReferenceTarget): { kind: "source" | "question"; id: string } {
   if (target.kind === "source" || target.kind === "source_quote") {
-    return { kind: "source", id: target.sourceId };
+    return { kind: "source", id: normalizeStudyUuid(target.sourceId) };
   }
-  return { kind: "question", id: target.questionId };
+  return { kind: "question", id: normalizeStudyUuid(target.questionId) };
 }
 
 // ── Service ──────────────────────────────────────────────────────────────
@@ -232,9 +233,10 @@ export class L3StudyNoteService {
     userId: string,
     input: { requestId: string; venue: L3QuestionType },
   ): Promise<{ item: StudyNoteDto; created: boolean }> {
+    const requestId = normalizeStudyUuid(input.requestId);
     const createHash = computeNoteCreateHash(input.venue);
     return this.withActor(userId, async (repos) => {
-      const existing = await repos.studyNotes.findByCreateRequestId(userId, input.requestId);
+      const existing = await repos.studyNotes.findByCreateRequestId(userId, requestId);
       if (existing) {
         if (existing.create_input_hash !== createHash) {
           throw new ConflictError("Idempotency conflict: same requestId with different input", undefined, {
@@ -254,13 +256,13 @@ export class L3StudyNoteService {
           status: "active",
           pinned: false,
           version: 1,
-          create_request_id: input.requestId,
+          create_request_id: requestId,
           create_input_hash: createHash,
         });
       } catch (error) {
         if (isUniqueViolation(error)) {
           // 并发竞态回读（l3-import 同款范式）：同 requestId 已被并行创建。
-          const raced = await repos.studyNotes.findByCreateRequestId(userId, input.requestId);
+          const raced = await repos.studyNotes.findByCreateRequestId(userId, requestId);
           if (raced && raced.create_input_hash === createHash) {
             return { item: await this.buildNoteDto(userId, raced, repos), created: false };
           }
@@ -278,7 +280,7 @@ export class L3StudyNoteService {
   /** GET /：venue 必填的 keyset 分页（cursor 绑定过滤指纹，跨过滤复用 400）。 */
   async list(userId: string, query: StudyNoteListQuery): Promise<StudyPage<StudyNoteSummary>> {
     const limit = clampLimit(query.limit);
-    const topicId = query.topicId ?? null;
+    const topicId = query.topicId ? normalizeStudyUuid(query.topicId) : null;
     const unfiled = Boolean(query.unfiled) && topicId === null;
     const filter = studyFilterFingerprint([
       query.venue,
@@ -343,8 +345,9 @@ export class L3StudyNoteService {
 
   /** GET /:noteId：详情（含正文、归属、引用预览）。 */
   async get(userId: string, noteId: string): Promise<{ item: StudyNoteDto }> {
+    const id = normalizeStudyUuid(noteId);
     return this.withActor(userId, async (repos) => {
-      const note = await repos.studyNotes.get(userId, noteId);
+      const note = await repos.studyNotes.get(userId, id);
       if (!note) throw new NotFoundError("StudyNote", noteId);
       return { item: await this.buildNoteDto(userId, note, repos) };
     });
@@ -353,8 +356,9 @@ export class L3StudyNoteService {
   /** PUT /:noteId：完整状态保存（原子；失败整体回滚）。 */
   async save(userId: string, noteId: string, input: SaveNoteInput): Promise<{ item: StudyNoteDto }> {
     const requestHash = computeSaveRequestHash(input);
+    const id = normalizeStudyUuid(noteId);
     return this.withActor(userId, async (repos) => {
-      const note = await repos.studyNotes.lock(userId, noteId);
+      const note = await repos.studyNotes.lock(userId, id);
       if (!note) throw new NotFoundError("StudyNote", noteId);
 
       // 1) 最后一次请求幂等：同 requestId 同规范化 hash → 返回当前结果（不二次推进版本）。
@@ -365,30 +369,30 @@ export class L3StudyNoteService {
         throw new ConflictError(
           "Idempotency conflict: same requestId with different payload",
           undefined,
-          { noteId },
+          { noteId: id },
         );
       }
 
       // 2) 版本合同：冲突只返回 currentVersion，不自动返回内容。
       if (note.version !== input.expectedVersion) {
         throw new ConflictError("Study note version conflict", undefined, {
-          noteId,
+          noteId: id,
           currentVersion: note.version,
         });
       }
 
       // 3) 归属：被移除的题型若仍属于该题型专题 → 409（含归档专题；先移出专题）。
-      const currentVenues = await repos.studyNotes.listVenues(userId, noteId);
+      const currentVenues = await repos.studyNotes.listVenues(userId, id);
       const nextVenues = orderVenues([...new Set(input.venues)]);
       const removedVenues = currentVenues.filter((venue) => !nextVenues.includes(venue));
       if (removedVenues.length > 0) {
-        const topicBlockers = await repos.studyNotes.listTopicBlockers(userId, noteId, removedVenues);
+        const topicBlockers = await repos.studyNotes.listTopicBlockers(userId, id, removedVenues);
         if (topicBlockers.length > 0) {
           throw new ConflictError(
             "The note still belongs to topics of the removed venue",
             undefined,
             {
-              noteId,
+              noteId: id,
               blockers: {
                 topics: topicBlockers.map((topic) => ({
                   id: topic.topic_id,
@@ -412,10 +416,10 @@ export class L3StudyNoteService {
       }
 
       // 5) 引用处理（keep 保留原摘录与时间；capture 服务端快照）。
-      const referenceRows = await this.prepareReferences(userId, noteId, input.references, repos);
+      const referenceRows = await this.prepareReferences(userId, id, input.references, repos);
 
       // 6) 正文/元数据 CAS（行已锁，失败为理论兜底）。
-      const updated = await repos.studyNotes.updateIfVersion(userId, noteId, input.expectedVersion, {
+      const updated = await repos.studyNotes.updateIfVersion(userId, id, input.expectedVersion, {
         title: input.title,
         body_md: input.bodyMd,
         status: input.status,
@@ -424,17 +428,17 @@ export class L3StudyNoteService {
         last_write_hash: requestHash,
       });
       if (!updated) {
-        throw new ConflictError("Study note version conflict", undefined, { noteId });
+        throw new ConflictError("Study note version conflict", undefined, { noteId: id });
       }
 
       // 7) 归属与引用替换（同事务；整体回滚保障正文/归属/引用一致）。
-      await repos.studyNotes.replaceVenues(userId, noteId, nextVenues);
+      await repos.studyNotes.replaceVenues(userId, id, nextVenues);
       try {
-        await repos.studyReferences.replaceForNote(userId, noteId, referenceRows);
+        await repos.studyReferences.replaceForNote(userId, id, referenceRows);
       } catch (error) {
         // 并发兜底：keep/目标被数据库直删等 FK 异常 → 可读 409，不落 500。
         if (isForeignKeyViolation(error)) {
-          throw new ConflictError("Referenced material is no longer available", undefined, { noteId });
+          throw new ConflictError("Referenced material is no longer available", undefined, { noteId: id });
         }
         throw error;
       }
@@ -449,9 +453,10 @@ export class L3StudyNoteService {
     userId: string,
     input: { requestId: string; venue: L3QuestionType; title: string },
   ): Promise<{ item: StudyTopicDto; created: boolean }> {
+    const requestId = normalizeStudyUuid(input.requestId);
     const createHash = computeTopicCreateHash(input.venue, input.title);
     return this.withActor(userId, async (repos) => {
-      const existing = await repos.studyTopics.findByCreateRequestId(userId, input.requestId);
+      const existing = await repos.studyTopics.findByCreateRequestId(userId, requestId);
       if (existing) {
         if (existing.create_input_hash !== createHash) {
           throw new ConflictError("Idempotency conflict: same requestId with different input", undefined, {
@@ -469,12 +474,12 @@ export class L3StudyNoteService {
           title: input.title,
           status: "active",
           version: 1,
-          create_request_id: input.requestId,
+          create_request_id: requestId,
           create_input_hash: createHash,
         });
       } catch (error) {
         if (isUniqueViolation(error)) {
-          const raced = await repos.studyTopics.findByCreateRequestId(userId, input.requestId);
+          const raced = await repos.studyTopics.findByCreateRequestId(userId, requestId);
           if (raced && raced.create_input_hash === createHash) {
             return { item: await this.buildTopicDto(userId, raced, repos), created: false };
           }
@@ -533,8 +538,9 @@ export class L3StudyNoteService {
     input: { requestId: string; expectedVersion: number; title: string; status: StudyTopicStatus },
   ): Promise<{ item: StudyTopicDto }> {
     const requestHash = computeTopicSaveHash(input);
+    const id = normalizeStudyUuid(topicId);
     return this.withActor(userId, async (repos) => {
-      const topic = await repos.studyTopics.lock(userId, topicId);
+      const topic = await repos.studyTopics.lock(userId, id);
       if (!topic) throw new NotFoundError("StudyTopic", topicId);
       if (topic.last_write_request_id === input.requestId.toLowerCase()) {
         if (topic.last_write_hash === requestHash) {
@@ -550,7 +556,7 @@ export class L3StudyNoteService {
           currentVersion: topic.version,
         });
       }
-      const updated = await repos.studyTopics.updateIfVersion(userId, topicId, input.expectedVersion, {
+      const updated = await repos.studyTopics.updateIfVersion(userId, id, input.expectedVersion, {
         title: input.title,
         status: input.status,
         last_write_request_id: input.requestId.toLowerCase(),
@@ -574,14 +580,18 @@ export class L3StudyNoteService {
     noteId: string,
     input: { requestId: string; expectedVersion: number; beforeNoteId: string | null },
   ): Promise<{ item: StudyTopicDto }> {
+    // F5：身份规范化（同一 UUID 的大小写表示同一对象；锁/比较/成员键/幂等键同用规范值）
+    const id = normalizeStudyUuid(topicId);
+    const memberNoteId = normalizeStudyUuid(noteId);
+    const beforeNoteId = input.beforeNoteId === null ? null : normalizeStudyUuid(input.beforeNoteId);
     const opHash = computeMemberOpHash({
       op: "move",
       expectedVersion: input.expectedVersion,
-      noteId,
-      beforeNoteId: input.beforeNoteId,
+      noteId: memberNoteId,
+      beforeNoteId,
     });
     return this.withActor(userId, async (repos) => {
-      const topic = await repos.studyTopics.lock(userId, topicId);
+      const topic = await repos.studyTopics.lock(userId, id);
       if (!topic) throw new NotFoundError("StudyTopic", topicId);
 
       if (topic.last_write_request_id === input.requestId.toLowerCase()) {
@@ -606,11 +616,11 @@ export class L3StudyNoteService {
 
       // 锁序 topic → note（设计防竞态）：与 note save 的「锁 note 后读成员」互斥，
       // 避免「移除归属 vs 加入专题」两边均成功破坏 成员 ⊆ 题型归属 不变量。
-      const note = await repos.studyNotes.lock(userId, noteId);
+      const note = await repos.studyNotes.lock(userId, memberNoteId);
       if (!note) {
         throw new NotFoundError("StudyNote", noteId);
       }
-      const noteVenues = await repos.studyNotes.listVenues(userId, noteId);
+      const noteVenues = await repos.studyNotes.listVenues(userId, memberNoteId);
       if (!noteVenues.includes(topic.question_type)) {
         throw new ConflictError(
           "The note does not belong to the topic's question type",
@@ -619,40 +629,40 @@ export class L3StudyNoteService {
         );
       }
 
-      const members = await repos.studyTopics.listMembers(userId, topicId);
-      const isMember = members.some((member) => member.note_id === noteId);
+      const members = await repos.studyTopics.listMembers(userId, id);
+      const isMember = members.some((member) => member.note_id === memberNoteId);
       if (!isMember && members.length >= STUDY_TOPIC_MEMBER_MAX) {
         throw new ValidationError(`专题成员已达上限（${STUDY_TOPIC_MEMBER_MAX}）`, "noteId");
       }
-      if (input.beforeNoteId !== null) {
+      if (beforeNoteId !== null) {
         const isValid = members.some(
-          (member) => member.note_id === input.beforeNoteId && member.note_id !== noteId,
+          (member) => member.note_id === beforeNoteId && member.note_id !== memberNoteId,
         );
         if (!isValid) {
           throw new ValidationError("beforeNoteId must be another member of the same topic", "beforeNoteId");
         }
       }
 
-      const orderedIds = members.map((member) => member.note_id).filter((id) => id !== noteId);
-      if (input.beforeNoteId === null) {
-        orderedIds.push(noteId);
+      const orderedIds = members.map((member) => member.note_id).filter((memberId) => memberId !== memberNoteId);
+      if (beforeNoteId === null) {
+        orderedIds.push(memberNoteId);
       } else {
-        const index = orderedIds.indexOf(input.beforeNoteId);
-        orderedIds.splice(index, 0, noteId);
+        const index = orderedIds.indexOf(beforeNoteId);
+        orderedIds.splice(index, 0, memberNoteId);
       }
 
       if (!isMember) {
         await repos.studyTopics.insertMember({
-          topicId,
-          noteId,
+          topicId: id,
+          noteId: memberNoteId,
           userId,
           position: orderedIds.length - 1,
         });
       }
-      await repos.studyTopics.replaceMemberPositions(userId, topicId, orderedIds);
+      await repos.studyTopics.replaceMemberPositions(userId, id, orderedIds);
       const updated = await repos.studyTopics.bumpVersion(
         userId,
-        topicId,
+        id,
         topic.version,
         input.requestId.toLowerCase(),
         opHash,
@@ -674,14 +684,17 @@ export class L3StudyNoteService {
     noteId: string,
     input: { requestId: string; expectedVersion: number },
   ): Promise<{ item: StudyTopicDto }> {
+    // F5：身份规范化（与 moveTopicMember 同口径）
+    const id = normalizeStudyUuid(topicId);
+    const memberNoteId = normalizeStudyUuid(noteId);
     const opHash = computeMemberOpHash({
       op: "remove",
       expectedVersion: input.expectedVersion,
-      noteId,
+      noteId: memberNoteId,
       beforeNoteId: null,
     });
     return this.withActor(userId, async (repos) => {
-      const topic = await repos.studyTopics.lock(userId, topicId);
+      const topic = await repos.studyTopics.lock(userId, id);
       if (!topic) throw new NotFoundError("StudyTopic", topicId);
 
       if (topic.last_write_request_id === input.requestId.toLowerCase()) {
@@ -704,18 +717,18 @@ export class L3StudyNoteService {
         });
       }
 
-      const deleted = await repos.studyTopics.deleteMember(userId, topicId, noteId);
+      const deleted = await repos.studyTopics.deleteMember(userId, id, memberNoteId);
       if (deleted) {
-        const remaining = await repos.studyTopics.listMembers(userId, topicId);
+        const remaining = await repos.studyTopics.listMembers(userId, id);
         await repos.studyTopics.replaceMemberPositions(
           userId,
-          topicId,
+          id,
           remaining.map((member) => member.note_id),
         );
       }
       const updated = await repos.studyTopics.bumpVersion(
         userId,
-        topicId,
+        id,
         topic.version,
         input.requestId.toLowerCase(),
         opHash,

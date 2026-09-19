@@ -596,3 +596,102 @@ describe("补齐：默认装配 / 成功路径 / 竞态与兜底", () => {
     expect((error as ConflictError).message).toContain("no longer available");
   });
 });
+
+// ── F5（补修批次）：UUID 身份规范化 —— 合法大写 UUID 必须与同值小写同一身份 ──
+// 样例均含 a–f（纯数字 UUID 无法暴露大小写差异）。
+
+describe("F5 UUID 身份：成员移动 / 排序 / 幂等重试 / 锁身份", () => {
+  const TOPIC_U = "BEEFCAFE-2345-4789-8ABC-FEDCBA987654";
+  const TOPIC_L = "beefcafe-2345-4789-8abc-fedcba987654";
+  const NOTE_U = "ABCDEF01-2345-4789-8ABC-DEF012345678";
+  const NOTE_L = "abcdef01-2345-4789-8abc-def012345678";
+  const N_B_U = "CAFEBABE-2345-4789-8ABC-111122223333";
+  const N_B_L = "cafebabe-2345-4789-8abc-111122223333";
+  const REQ_U = "DEADBEEF-2345-4789-8ABC-0123456789AB";
+  const REQ_L = "deadbeef-2345-4789-8abc-0123456789ab";
+
+  it("成员移动：大写 noteId 命中小写成员（不误走重复 INSERT，重排完整顺序）", async () => {
+    repos.studyTopics.listMembers = vi.fn(async () => [
+      { note_id: N_B_L, position: 0 },
+      { note_id: NOTE_L, position: 1 },
+    ]);
+    repos.studyNotes.lock = vi.fn(async () => noteRow({ id: NOTE_L }));
+
+    await service.moveTopicMember(USER, TOPIC, NOTE_U, {
+      requestId: REQ, expectedVersion: 1, beforeNoteId: null,
+    });
+    expect(repos.studyNotes.lock).toHaveBeenCalledWith(USER, NOTE_L);
+    expect(repos.studyTopics.insertMember).not.toHaveBeenCalled();
+    expect(repos.studyTopics.replaceMemberPositions).toHaveBeenCalledWith(USER, TOPIC, [N_B_L, NOTE_L]);
+  });
+
+  it("beforeNoteId 大写：按同一身份解析（不再 422），插位到成员之前", async () => {
+    repos.studyTopics.listMembers = vi.fn(async () => [
+      { note_id: NOTE_L, position: 0 },
+      { note_id: N_B_L, position: 1 },
+    ]);
+    repos.studyNotes.lock = vi.fn(async () => noteRow({ id: N_B_L }));
+
+    await service.moveTopicMember(USER, TOPIC, N_B_U, {
+      requestId: REQ, expectedVersion: 1, beforeNoteId: NOTE_U,
+    });
+    expect(repos.studyTopics.replaceMemberPositions).toHaveBeenCalledWith(USER, TOPIC, [N_B_L, NOTE_L]);
+  });
+
+  it("create：大写 requestId 规范到同一身份查询（幂等重试命中既有对象）", async () => {
+    const { computeNoteCreateHash } = await import("@/services/l3-study-notes.service");
+    repos.studyNotes.findByCreateRequestId = vi.fn(async () =>
+      noteRow({ id: NOTE_L, create_input_hash: computeNoteCreateHash("reading_choice") }),
+    );
+    const result = await service.create(USER, { requestId: REQ_U, venue: "reading_choice" });
+    expect(repos.studyNotes.findByCreateRequestId).toHaveBeenCalledWith(USER, REQ_L);
+    expect(result.created).toBe(false);
+  });
+
+  it("createTopic：大写 requestId 规范到同一身份查询；saveTopic 大写 topicId 锁行", async () => {
+    await service.createTopic(USER, { requestId: REQ_U, venue: "reading_choice", title: "专题" });
+    expect(repos.studyTopics.findByCreateRequestId).toHaveBeenCalledWith(USER, REQ_L);
+
+    await service.saveTopic(USER, TOPIC_U, {
+      requestId: REQ_U, expectedVersion: 1, title: "改名", status: "active",
+    });
+    expect(repos.studyTopics.lock).toHaveBeenCalledWith(USER, TOPIC_L);
+  });
+
+  it("removeTopicMember：大写 topicId/noteId 规范到同一身份；幂等请求键同为小写", async () => {
+    await service.removeTopicMember(USER, TOPIC_U, NOTE_U, { requestId: REQ_U, expectedVersion: 1 });
+    expect(repos.studyTopics.lock).toHaveBeenCalledWith(USER, TOPIC_L);
+    expect(repos.studyTopics.deleteMember).toHaveBeenCalledWith(USER, TOPIC_L, NOTE_L);
+    expect(repos.studyTopics.bumpVersion).toHaveBeenCalledWith(USER, TOPIC_L, 1, REQ_L, expect.any(String));
+  });
+
+  it("save / get：大写 noteId 规范到同一身份（锁行与读取同键）", async () => {
+    await service.save(USER, NOTE_U, baseSaveInput());
+    expect(repos.studyNotes.lock).toHaveBeenCalledWith(USER, NOTE_L);
+    expect(repos.studyNotes.updateIfVersion).toHaveBeenCalledWith(USER, NOTE_L, 1, expect.anything());
+
+    repos.studyNotes.get = vi.fn(async () => noteRow({ id: NOTE_L }));
+    await service.get(USER, NOTE_U);
+    expect(repos.studyNotes.get).toHaveBeenCalledWith(USER, NOTE_L);
+  });
+
+  it("专题内列表：topicId 大小写属同一过滤身份（cursor 指纹可跨大小写复用）", async () => {
+    repos.studyNotes.list = vi.fn(async () => ({
+      items: [
+        { ...noteRow({ id: NOTE_L }), position: 0, updated_at: "2026-09-19T02:00:00Z" },
+        { ...noteRow({ id: N_B_L }), position: 1, updated_at: "2026-09-19T01:00:00Z" },
+      ],
+      total: 2,
+    }));
+    const first = await service.list(USER, { venue: "reading_choice", topicId: TOPIC_U, limit: 1 });
+    expect(repos.studyNotes.list).toHaveBeenCalledWith(expect.objectContaining({ topicId: TOPIC_L }));
+    expect(first.nextCursor).toBeTypeOf("string");
+
+    // 第二次请求换成小写 topicId 复用同一游标：同一身份 → 指纹一致，不 400
+    repos.studyNotes.list = vi.fn(async () => ({ items: [], total: 2 }));
+    const page2 = await service.list(USER, {
+      venue: "reading_choice", topicId: TOPIC_L, limit: 1, cursor: first.nextCursor!,
+    });
+    expect(page2.items).toEqual([]);
+  });
+});

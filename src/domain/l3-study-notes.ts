@@ -242,6 +242,20 @@ export class ReferenceContractError extends Error {
   }
 }
 
+// ── UUID 身份规范化（F5）────────────────────────────────────────────────────
+
+/**
+ * 合法 UUID 的身份规范化：大小写不敏感（PG 的 uuid 类型返回规范小写，
+ * JS 侧比较/Map 查找/幂等键/锁键必须使用同一规范形态）。
+ *
+ * 边界纪律：仅在既有校验器（zod uuid / 路径参数合同 / PG 22P02）已判定
+ * 合法性之后使用；本函数不新增校验，非法输入按原样返回（错误面不变）。
+ * 不得用于正文、quote、optionKey 等文本字段。
+ */
+export function normalizeStudyUuid(value: string): string {
+  return value.toLowerCase();
+}
+
 // ── marker 解析（marked 顶层 paragraph 完全相等识别）───────────────────────
 
 const UUID_SCHEMA = z.string().uuid();

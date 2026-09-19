@@ -373,3 +373,92 @@ describe("补齐：resolve 各 kind / 防御分支 / search·backlinks 编排", 
     expect(new L3StudyReferenceService()).toBeInstanceOf(L3StudyReferenceService);
   });
 });
+
+// ── F5（补修批次）：UUID 身份规范化 —— 大写 UUID 与小写同一身份 ─────────────
+// 样例均含 a–f；loaded 目标一律以 DB 规范形态（小写）提供。
+
+describe("F5 UUID 身份：目标查找 / 预览 / capture / backlinks", () => {
+  const SOURCE_U = "ABCDEFAB-2345-4789-8ABC-000000000201";
+  const SOURCE_L = "abcdefab-2345-4789-8abc-000000000201";
+  const QUESTION_U = "BEEFCAFE-2345-4789-8ABC-000000000211";
+  const QUESTION_L = "beefcafe-2345-4789-8abc-000000000211";
+
+  function loadedSourceCase(): LoadedTarget {
+    return { kind: "source", id: SOURCE_L, title: "Case source", content_text: SOURCE_TEXT };
+  }
+  function loadedQuestionCase(): LoadedTarget {
+    return {
+      kind: "question", id: QUESTION_L, stem: "Case stem?", options: [{ key: "A", text: "alpha" }],
+      question_type: "reading_choice", source_id: SOURCE_L, source_title: "Case source",
+    };
+  }
+
+  it("capture source/question：大写目标 id 命中 DB 小写行（不再 404）", async () => {
+    const repos = fakeRepos([loadedSourceCase(), loadedQuestionCase()]);
+    const service = makeService(repos);
+
+    const sourceRow = await service.capture(USER, {
+      id: REF, target: { kind: "source", sourceId: SOURCE_U },
+    }, repos);
+    expect(sourceRow.source_id).toBe(SOURCE_L);
+    expect(sourceRow.display_snapshot).toMatchObject({ kind: "source", title: "Case source" });
+
+    const stemRow = await service.capture(USER, {
+      id: REF, target: { kind: "stem_quote", questionId: QUESTION_U, start: 0, end: 4, quote: "Case" },
+    }, repos);
+    expect(stemRow.question_id).toBe(QUESTION_L);
+    expect(stemRow.quote_snapshot).toBe("Case");
+
+    // 引用行落库字段（source_id/question_id）使用 DB 规范形态
+    const optionRow = await service.capture(USER, {
+      id: REF, target: { kind: "option_quote", questionId: QUESTION_U, optionKey: "A", start: 0, end: 5, quote: "alpha" },
+    }, repos);
+    expect(optionRow.question_id).toBe(QUESTION_L);
+    expect(optionRow.option_key).toBe("A"); // optionKey 非 UUID，不参与规范化
+  });
+
+  it("preview：大写目标 id 正常返回预览（不 404）", async () => {
+    const repos = fakeRepos([loadedQuestionCase()]);
+    const service = makeService(repos);
+    const response = await service.preview(USER, {
+      kind: "stem_quote", questionId: QUESTION_U, start: 0, end: 4, quote: "Case",
+    });
+    expect(response.preview.liveTitle).toBe("Case source");
+  });
+
+  it("captureAgainst：大写 target 对 DB 小写 loaded 不抛 404（比较按规范身份）", () => {
+    const service = makeService(fakeRepos([]));
+    const row = service.captureAgainst(
+      { kind: "source", sourceId: SOURCE_U },
+      loadedSourceCase(),
+    );
+    expect(row.source_id).toBe(SOURCE_L);
+    const quoteRow = service.captureAgainst(
+      { kind: "stem_quote", questionId: QUESTION_U, start: 0, end: 4, quote: "Case" },
+      loadedQuestionCase(),
+    );
+    expect(quoteRow.question_id).toBe(QUESTION_L);
+  });
+
+  it("backlinks：大写 targetId 规范到同一身份（仓储同键；cursor 指纹可跨大小写复用）", async () => {
+    const repos = fakeRepos([]);
+    const listBacklinks = repos.studyReferences.listBacklinks as ReturnType<typeof vi.fn>;
+    listBacklinks.mockImplementation(async () => ({
+      items: [
+        { note_id: "00000000-0000-4000-8000-000000000101", title: "T1", status: "active", reference_count: 1, ref_ids: [REF], updated_at: "2026-09-19T02:00:00Z" },
+        { note_id: "00000000-0000-4000-8000-000000000102", title: "T2", status: "active", reference_count: 1, ref_ids: [REF], updated_at: "2026-09-19T01:00:00Z" },
+      ],
+      total: 2,
+    }));
+    const service = makeService(repos);
+    const first = await service.backlinks(USER, { targetKind: "source", targetId: SOURCE_U, limit: 1 });
+    expect(listBacklinks).toHaveBeenCalledWith(expect.objectContaining({ targetId: SOURCE_L }));
+    expect(first.nextCursor).toBeTypeOf("string");
+
+    listBacklinks.mockImplementation(async () => ({ items: [], total: 2 }));
+    const page2 = await service.backlinks(USER, {
+      targetKind: "source", targetId: SOURCE_L, limit: 1, cursor: first.nextCursor!,
+    });
+    expect(page2.items).toEqual([]);
+  });
+});

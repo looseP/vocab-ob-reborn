@@ -11,6 +11,7 @@
 import type { L3QuestionOption, L3QuestionType } from "../domain";
 import type { ReferenceKind } from "../domain";
 import type { Json } from "../domain";
+import { normalizeStudyUuid } from "../domain/l3-study-notes";
 import { BaseRepository } from "./base";
 
 export interface NewL3StudyNoteReference {
@@ -332,8 +333,10 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     targets: readonly { kind: ReferenceTargetKind; id: string }[],
   ): Promise<void> {
     this.requireTx();
-    const sourceIds = [...new Set(targets.filter((t) => t.kind === "source").map((t) => t.id))].sort();
-    const questionIds = [...new Set(targets.filter((t) => t.kind === "question").map((t) => t.id))].sort();
+    // F5：锁身份规范化——同一 UUID 的大小写是同一对象；capture 与 question 删除
+    // 两端必须使用同一 advisory 键（`l3_question:<小写uuid>`），否则并发不再串行。
+    const sourceIds = [...new Set(targets.filter((t) => t.kind === "source").map((t) => normalizeStudyUuid(t.id)))].sort();
+    const questionIds = [...new Set(targets.filter((t) => t.kind === "question").map((t) => normalizeStudyUuid(t.id)))].sort();
 
     if (sourceIds.length > 0) {
       // 稳定顺序（id ASC）批量共享锁；DELETE 的排他锁将等待锁释放。

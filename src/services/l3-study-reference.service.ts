@@ -22,6 +22,7 @@ import { NotFoundError, ValidationError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import {
   validateQuote,
+  normalizeStudyUuid,
   STUDY_PAGE_LIMIT_DEFAULT,
   STUDY_PAGE_LIMIT_MAX,
   STUDY_SOURCE_EXCERPT_MAX,
@@ -127,12 +128,12 @@ function assertQuote(field: string, start: number, end: number, quote: string): 
   }
 }
 
-/** 输入 target → ({kind,id}) 的 loadTargets 键。 */
+/** 输入 target → ({kind,id}) 的 loadTargets 键（F5：UUID 身份规范小写，与 DB 返回形态一致）。 */
 function targetRefOf(target: ReferenceTarget): { kind: "source" | "question"; id: string } {
   if (target.kind === "source" || target.kind === "source_quote") {
-    return { kind: "source", id: target.sourceId };
+    return { kind: "source", id: normalizeStudyUuid(target.sourceId) };
   }
-  return { kind: "question", id: target.questionId };
+  return { kind: "question", id: normalizeStudyUuid(target.questionId) };
 }
 
 /** 引用行 → 重建输入 target（响应与 resolve 用）。 */
@@ -197,7 +198,7 @@ export class L3StudyReferenceService {
       throw new NotFoundError("StudyReferenceTarget", `${ref.kind}:${ref.id}`);
     }
     return {
-      id: input.id,
+      id: normalizeStudyUuid(input.id),
       ...this.captureAgainst(input.target, target),
       captured_at: new Date().toISOString(),
     };
@@ -207,7 +208,7 @@ export class L3StudyReferenceService {
   captureAgainst(target: ReferenceTarget, loaded: LoadedTarget): Omit<StudyReferenceInsertRow, "id" | "captured_at"> {
     switch (target.kind) {
       case "source": {
-        if (loaded.kind !== "source" || loaded.id !== target.sourceId) {
+        if (loaded.kind !== "source" || loaded.id !== normalizeStudyUuid(target.sourceId)) {
           throw new NotFoundError("StudyReferenceTarget", `source:${target.sourceId}`);
         }
         return {
@@ -227,7 +228,7 @@ export class L3StudyReferenceService {
         };
       }
       case "source_quote": {
-        if (loaded.kind !== "source" || loaded.id !== target.sourceId) {
+        if (loaded.kind !== "source" || loaded.id !== normalizeStudyUuid(target.sourceId)) {
           throw new NotFoundError("StudyReferenceTarget", `source:${target.sourceId}`);
         }
         if (loaded.content_text == null) {
@@ -247,7 +248,7 @@ export class L3StudyReferenceService {
         };
       }
       case "question": {
-        if (loaded.kind !== "question" || loaded.id !== target.questionId) {
+        if (loaded.kind !== "question" || loaded.id !== normalizeStudyUuid(target.questionId)) {
           throw new NotFoundError("StudyReferenceTarget", `question:${target.questionId}`);
         }
         return {
@@ -269,7 +270,7 @@ export class L3StudyReferenceService {
         };
       }
       case "stem_quote": {
-        if (loaded.kind !== "question" || loaded.id !== target.questionId) {
+        if (loaded.kind !== "question" || loaded.id !== normalizeStudyUuid(target.questionId)) {
           throw new NotFoundError("StudyReferenceTarget", `question:${target.questionId}`);
         }
         assertQuote(loaded.stem, target.start, target.end, target.quote);
@@ -291,7 +292,7 @@ export class L3StudyReferenceService {
         };
       }
       case "option_quote": {
-        if (loaded.kind !== "question" || loaded.id !== target.questionId) {
+        if (loaded.kind !== "question" || loaded.id !== normalizeStudyUuid(target.questionId)) {
           throw new NotFoundError("StudyReferenceTarget", `question:${target.questionId}`);
         }
         const option = loaded.options.find((candidate) => candidate.key === target.optionKey);
@@ -455,7 +456,8 @@ export class L3StudyReferenceService {
     },
   ): Promise<StudyPage<StudyBacklinkItem>> {
     const limit = clampPageLimit(query.limit);
-    const filter = studyFilterFingerprint([query.targetKind, query.targetId.toLowerCase()]);
+    const targetId = normalizeStudyUuid(query.targetId);
+    const filter = studyFilterFingerprint([query.targetKind, targetId]);
     const cursor = decodeStudyCursor(query.cursor);
     if (cursor && (cursor.filter !== filter || cursor.sortKind !== "updatedAt")) {
       throw new ValidationError("Invalid pagination cursor", "cursor");
@@ -466,7 +468,7 @@ export class L3StudyReferenceService {
         const { items, total } = await repos.studyReferences.listBacklinks({
           userId,
           targetKind: query.targetKind,
-          targetId: query.targetId,
+          targetId,
           cursor: cursor ? { updatedAt: cursor.lastSort, id: cursor.id } : null,
           limit: limit + 1,
         });

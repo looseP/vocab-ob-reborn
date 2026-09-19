@@ -20,6 +20,7 @@ import {
   saveStudyTopicSchema,
   moveStudyTopicMemberSchema,
   removeStudyTopicMemberSchema,
+  normalizeStudyUuid,
 } from "@/domain/l3-study-notes";
 import {
   QUESTION_ID,
@@ -348,5 +349,23 @@ describe("study topic schemas", () => {
       removeStudyTopicMemberSchema.safeParse({ requestId: REQUEST_ID, expectedVersion: 2 }).success,
     ).toBe(true);
     expect(removeStudyTopicMemberSchema.safeParse({ requestId: REQUEST_ID }).success).toBe(false);
+  });
+});
+
+// ── F5（补修批次）：UUID 身份规范化合同 ─────────────────────────────────────
+
+describe("normalizeStudyUuid（F5 UUID 身份）", () => {
+  // 含 a–f 的样例 UUID（纯数字 UUID 无法暴露大小写问题）
+  const UPPER = "ABCDEF01-2345-4789-8ABC-DEF012345678";
+  const LOWER = "abcdef01-2345-4789-8abc-def012345678";
+
+  it("合法大写/混合大小写 UUID 归一为小写（同一身份）", () => {
+    expect(normalizeStudyUuid(UPPER)).toBe(LOWER);
+    expect(normalizeStudyUuid("aBcDeF01-2345-4789-8AbC-dEf012345678")).toBe(LOWER);
+  });
+
+  it("小写输入不变；非法输入按原样返回（合法性仍由既有校验器/PG 收口，不新增错误面）", () => {
+    expect(normalizeStudyUuid(LOWER)).toBe(LOWER);
+    expect(normalizeStudyUuid("not-a-uuid")).toBe("not-a-uuid");
   });
 });

@@ -190,6 +190,21 @@ describe("lockTargets", () => {
     await expect(noTx.lockTargets(USER, [{ kind: "source", id: SOURCE }]))
       .rejects.toThrow(/requires an active transaction/);
   });
+
+  it("F5：question 大写 → advisory 键规范为小写（与 capture/删除两端同键）；source 混合大小写去重为单一规范值", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.lockTargets(USER, [
+      { kind: "question", id: "BEEFCAFE-2345-4789-8ABC-000000000211" },
+      { kind: "source", id: "ABCDEFAB-2345-4789-8ABC-000000000201" },
+      { kind: "source", id: "abcdefab-2345-4789-8abc-000000000201" },
+    ]);
+    const calls = querySpy.mock.calls;
+    const sourceCall = calls.find((c) => (c[0] as string).includes("FROM l3_sources"))!;
+    expect(sourceCall[1]).toEqual([USER, ["abcdefab-2345-4789-8abc-000000000201"]]);
+    const lockCalls = calls.filter((c) => (c[0] as string).includes("pg_advisory_xact_lock"));
+    expect(lockCalls.length).toBe(1);
+    expect(lockCalls[0]![1]).toEqual(["l3_question:beefcafe-2345-4789-8abc-000000000211"]);
+  });
 });
 
 describe("listBacklinks", () => {
