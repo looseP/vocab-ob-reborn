@@ -282,3 +282,66 @@ describe("study-topics 路由", () => {
     }));
   });
 });
+
+describe("补齐：各端点校验分支（400；不触服务）", () => {
+  it("study-topics 各端点非法载荷均 400 且零调用", async () => {
+    const createTopic = vi.fn();
+    const listTopics = vi.fn();
+    const saveTopic = vi.fn();
+    const moveTopicMember = vi.fn();
+    const removeTopicMember = vi.fn();
+    const app = createApp(makeServices({
+      studyNotes: { createTopic, listTopics, saveTopic, moveTopicMember, removeTopicMember },
+    }));
+
+    const cases: [string, string, string, unknown][] = [
+      ["POST", "/api/l3/study-topics", "创建（坏 requestId）", { requestId: "bad", venue: "reading_choice", title: "x" }],
+      ["GET", "/api/l3/study-topics", "列表（缺 venue）", undefined],
+      ["PUT", `/api/l3/study-topics/${TOPIC_ID}`, "保存（缺字段）", { requestId: REQ }],
+      ["PUT", `/api/l3/study-topics/${TOPIC_ID}/members/${NOTE_ID}`, "移动（缺 beforeNoteId）", { requestId: REQ, expectedVersion: 1 }],
+      ["DELETE", `/api/l3/study-topics/${TOPIC_ID}/members/${NOTE_ID}`, "移除（空 body）", {}],
+    ];
+    for (const [method, url, label, body] of cases) {
+      const res = await app.request(url, {
+        method,
+        headers: AUTH_HEADERS,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      expect(res.status, label).toBe(400);
+    }
+    expect(createTopic).not.toHaveBeenCalled();
+    expect(listTopics).not.toHaveBeenCalled();
+    expect(saveTopic).not.toHaveBeenCalled();
+    expect(moveTopicMember).not.toHaveBeenCalled();
+    expect(removeTopicMember).not.toHaveBeenCalled();
+  });
+
+  it("study-references 三端点非法输入均 400 且零调用", async () => {
+    const search = vi.fn();
+    const preview = vi.fn();
+    const backlinks = vi.fn();
+    const app = createApp(makeServices({ studyReferences: { search, preview, backlinks } }));
+
+    expect((await app.request("/api/l3/study-notes/reference-targets", { headers: AUTH_HEADERS })).status).toBe(400);
+    expect((await app.request("/api/l3/study-notes/reference-preview", {
+      method: "POST", headers: AUTH_HEADERS, body: JSON.stringify({ kind: "nope" }),
+    })).status).toBe(400);
+    expect((await app.request("/api/l3/study-notes/backlinks?targetKind=source", { headers: AUTH_HEADERS })).status).toBe(400);
+
+    expect(search).not.toHaveBeenCalled();
+    expect(preview).not.toHaveBeenCalled();
+    expect(backlinks).not.toHaveBeenCalled();
+  });
+
+  it("study-notes 列表非法 venue 与保存缺字段均 400 且零调用", async () => {
+    const list = vi.fn();
+    const save = vi.fn();
+    const app = createApp(makeServices({ studyNotes: { list, save } }));
+    expect((await app.request("/api/l3/study-notes?venue=not_a_type", { headers: AUTH_HEADERS })).status).toBe(400);
+    expect((await app.request(`/api/l3/study-notes/${NOTE_ID}`, {
+      method: "PUT", headers: AUTH_HEADERS, body: JSON.stringify({}),
+    })).status).toBe(400);
+    expect(list).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+});

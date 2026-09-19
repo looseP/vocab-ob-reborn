@@ -148,3 +148,45 @@ describe("members", () => {
     await expect(noTx.replaceMemberPositions(USER, TOPIC, [])).rejects.toThrow(/requires an active transaction/);
   });
 });
+
+describe("补齐：幂等回查 / 版本推进 / 批量计数 / 边界早退", () => {
+  it("findByCreateRequestId 按 (user_id, create_request_id)", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [topicRow()] }));
+    const row = await repo.findByCreateRequestId(USER, REQUEST);
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("user_id = $1::uuid AND create_request_id = $2::uuid");
+    expect(params).toEqual([USER, REQUEST]);
+    expect(row?.id).toBe(TOPIC);
+  });
+
+  it("bumpVersion：仅推进版本与幂等列（不动 title/status）；version 参与 WHERE", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [topicRow({ version: 3 })] }));
+    const row = await repo.bumpVersion(USER, TOPIC, 2, REQUEST, "c".repeat(64));
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("version = version + 1");
+    expect(text).toContain("version = $3::integer");
+    expect(text).not.toContain("title =");
+    expect(params).toEqual([TOPIC, USER, 2, REQUEST, "c".repeat(64)]);
+    expect(row?.version).toBe(3);
+  });
+
+  it("countMembersForTopics 聚合返回；空输入不产生查询", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [{ topic_id: TOPIC, n: "5" }, { topic_id: "00000000-0000-4000-8000-000000000222", n: "2" }],
+    }));
+    const map = await repo.countMembersForTopics(USER, [TOPIC, "00000000-0000-4000-8000-000000000222"]);
+    expect(map.get(TOPIC)).toBe(5);
+    expect(map.get("00000000-0000-4000-8000-000000000222")).toBe(2);
+
+    const callsBefore = querySpy.mock.calls.length;
+    const empty = await repo.countMembersForTopics(USER, []);
+    expect(empty.size).toBe(0);
+    expect(querySpy.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("replaceMemberPositions 空列表不产生写入", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.replaceMemberPositions(USER, TOPIC, []);
+    expect(querySpy.mock.calls.length).toBe(0);
+  });
+});

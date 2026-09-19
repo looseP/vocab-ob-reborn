@@ -112,37 +112,41 @@
 
 | # | 场景 | mock | 真实PG | 证据 |
 |---|---|---|---|---|
-| 1 | 两 owner 互不可读写；受限角色 RLS 生效 | — | — | — |
-| 2 | agent 无法使用新读写端点 | — | — | — |
-| 3 | 同版本并发保存一胜一冲突 | — | — | — |
-| 4 | 成功落库丢响应后重试不重复写 | — | — | — |
-| 5 | 同 requestId 不同载荷被拒 | — | — | — |
-| 6 | 引用校验失败时正文/归属/引用整体回滚 | — | — | — |
-| 7 | marker 不一致/重复 ID/非法字段/越界被拒 | — | — | — |
-| 8 | emoji/非 ASCII UTF-16 锚点正确 | — | — | — |
-| 9 | 原文变化 → changed、旧摘录保留、不误重定位 | — | — | — |
-| 10 | 被引用题目/来源（含子题）删除被阻止 | — | — | — |
-| 11 | 引用创建与源删除并发不产生悬空 | — | — | — |
-| 12 | 专题排序/成员/题型约束/版本冲突 | — | — | — |
-| 13 | 121+121+55 跨页完整访问 | — | — | — |
-| 14 | GET/预览/搜索/反向引用零写 | — | — | — |
-| 15 | 未被引用对象删除仍按原合同 | — | — | — |
+| 1 | 两 owner 互不可读写；受限角色 RLS 生效 | — | ✅ | 集成：B 读不到 A 的 note/venue（0 行）；冒名插入被 WITH CHECK 拒 |
+| 2 | agent 无法使用新读写端点 | ✅ | — | authorization-matrix（注册表驱动）对 12 端点全量 401/403/CSRF 行（521/521 全绿自动覆盖） |
+| 3 | 同版本并发保存一胜一冲突 | — | ✅ | 集成：c1 CAS 成功 → c2 阻塞（pg_locks 绑定 c2 PID）→ 提交后 rowCount=0；版本只推进一次（1→2） |
+| 4 | 成功落库丢响应后重试不重复写 | ✅ | ✅ | 单测（同 requestId 同 hash 不二次推进）；集成幂等真库（version 保持 2） |
+| 5 | 同 requestId 不同载荷被拒；过旧请求版本合同 | ✅ | ✅ | 单测（异 payload 409；旧版本 409 仅 currentVersion）；集成复验 |
+| 6 | 引用校验失败时正文/归属/引用整体回滚 | — | ✅ | 集成：quote mismatch 422 后 title/body/venues/pinned/refs/version 全部保持第一版 |
+| 7 | marker 不一致/重复 ID/非法字段/越界被拒 | ✅ | ✅ | domain 单测 40 例 + service 422（bodyMd 字段）+ 单测矩阵 |
+| 8 | emoji/非 ASCII UTF-16 锚点正确 | ✅ | — | domain 单测（含残段代理对拒绝 + 变异证明：边界检查移除 → 1 failed） |
+| 9 | 原文变化 → changed、旧摘录保留、不误重定位 | ✅ | ✅ | service 单测（changed 保旧 offset）+ 集成全链（改写 stem 后 changed 且旧摘录原样） |
+| 10 | 被引用题目/来源（含子题）删除被阻止 | ✅ | ✅ | 单测守卫 ×2（409 details + 锁先行）；集成 4 用例（直接/子题/FK 23503 兜底/未引用回归） |
+| 11 | 引用创建与源删除并发不产生悬空 | — | ✅ | 集成交错 A（capture 持锁 → 删除阻塞 → FK RESTRICT）+ 交错 B（删除先行 → 插入 FK 阻止） |
+| 12 | 专题排序/成员/题型约束/版本冲突 | ✅ | ✅ | 单测 10 用例（锁序 topic→note、插位、空操作版本递增、上限、归档 409）；集成真库复核 |
+| 13 | 121+121+55 跨页完整访问 | — | ✅ | 集成：121 笔记（total=121 恒定）、121 目标搜索、55 专题；三组均无重复无遗漏（Set 等值断言） |
+| 14 | GET/预览/搜索/反向引用零写 | ✅ | ✅ | 单测（preview 零 lock/replace）；集成（题纸/作文任务/笔记/引用四计数调用前后不变） |
+| 15 | 未被引用对象删除仍按原合同 | — | ✅ | 集成：未被引用 source 删除成功且消失；被引用 blocker 路径转 409 不误杀 |
 
-> 并发窗口以 deferred 屏障/可观测数据库屏障构造；pg_locks 观察须绑定被测连接 PID 与阻塞事务；
+> 并发窗口以 deferred 屏障/可观测数据库屏障构造；pg_locks 观察绑定被测连接 PID 与阻塞事务；
 > 不以固定 sleep 宣称覆盖并发窗口。
 
 ## 6. 工程门禁（本批适用）
 
 | 门禁 | 命令 | 退出码 | 结果 |
 |---|---|---|---|
-| typecheck | `npm run typecheck` | — | 待执行 |
-| arch | `npm run arch:check` | — | 待执行 |
-| 单测（全量） | `npx vitest run --coverage --maxWorkers=1` | — | 待执行 |
-| 分层覆盖 | `npm run coverage:layered` | — | 待执行 |
-| 测试收集 | `npm run test:collection` | — | 待执行 |
-| schema drift | `npm run db:schema:drift` | — | 待执行 |
-| API 治理 | `npm run api:governance` | — | 待执行 |
-| 集成（专用库） | `vitest --config vitest.integration.config.ts …` | — | 待执行 |
+| typecheck | `npm run typecheck` | 0 | 通过（多轮：Task 00 基线、02、05、06 后各复验） |
+| arch | `npm run arch:check` | 0 | 398 模块 0 违规（depcruise） |
+| 单测（全量） | `npx vitest run --coverage.enabled=false --maxWorkers=1` | 0 | **3511 passed / 6 skipped**（240 files 全绿；Task 06 后 HTTP 组 521/521 回归；补充后目标组 274/274） |
+| 覆盖率全量 | `npx vitest run --coverage --coverage.reporter=json,text --maxWorkers=1` | 产物完整 | `coverage/coverage-final.json`（2.4 MB）完整产出。**过程如实记录**：①首跑（默认 reporter 含 html）23m30s 无进展、人工终止；②重跑产物生成后 runner 收尾挂死（16m21s，`coverage-final.json` 已落盘、数据不受影响，人工终止）——与 Playwright 收尾挂死同类环境现象；③测试执行结果以独立全量（3511 passed）与补充后目标组（274 passed）为准 |
+| 分层覆盖 | `npm run coverage:layered`（`COVERAGE_BASE_REF=b7dcea4e`） | 0 | **全 PASS**：baseline ratchet PASS；各层 target PASS（domain 98.17/95.04、service 94.75/83.50、repository 93.83/82.68、http 91.67/79.85）；**diff coverage 92.23% ≥85% PASS**（修复前 74.84% → 补 ~40 目标用例后达标；1840 变更行覆盖 1697） |
+| 测试收集 | `npm run test:collection` | 0 | 243 files collected / 243 on disk / 0 missing |
+| schema drift | `npm run db:schema:drift` | 0 | OK（含 5 新表 RLS 契约逐条；见 Task 02） |
+| API 治理 | `npm run api:governance`（`API_CONTRACT_BASE_REF=b7dcea4e`） | 0 | openapi → client:check → contract(10/10) → breaking("未发现 breaking change") → complexity 双路径 |
+| 前端构建 | `npm run frontend:build` | 0 | tsc(frontend) + vite build 通过 |
+| 真实 PG 集成 | `vitest --config vitest.integration.config.ts`（专用库+受限角色） | 0 | **34/34**（见 §5 矩阵） |
+
+**门禁收口说明（2026-09-19）**：首次 layered 运行 diff 覆盖率 **74.84% < 85%（门禁如实拦截）**——定位为"成功路径 / 竞态兜底 / 防御分支"未覆盖（23 个变更文件逐一排查到语句级）；补充 ~40 个目标用例（默认装配、list/get 成功路径、create 唯一冲突竞态回读、captureAgainst 交叉防御、resolve 全 kind、search/backlinks 编排、FK 23503 兜底×2、路由 400 分支矩阵、repo 边界早退等）后 **92.23% PASS**。未降低任何阈值、未修改审批文件；覆盖产物 `coverage/` 不入库。
 
 ## 7. 提交与 PR
 
@@ -154,11 +158,16 @@
 
 ## 8. 未覆盖项与已知风险（实时更新）
 
-- （初始）本批不覆盖：Task 07–11（前端编辑器/专题界面/侧栏/导出闭环/浏览器验收）；历史评卷、作文稿次、feedback 引用（N2）；agent 自动整理。
-- 本机 Playwright 收尾间歇挂死为已知环境现象（前批已定性）；本批以组件/集成/HTTP 层与 CI 为准。
-- HUSKY=0 沿前批临时隔离（钩子根因未定论）；等价检查（typecheck/测试）均照常执行。
+- **本批不覆盖（前端产品面，Task 07–11）**：React 保存控制器与编辑 hook、自由笔记编辑器、专题界面、卷面/阅读侧栏与选区菜单/引用卡片、手写 `src/frontend/api/studyNotesClient.ts`（生成客户端已同步）、导出闭环（Task 10，含 `GET /:noteId/export` 端点）。
+- **本批不覆盖（N2 边界）**：历史题纸/作答/评卷引用、作文稿次/feedback 引用、笔记互链。
+- **本机 Playwright 收尾间歇挂死**为已知环境现象（前批定性）；本批**不含浏览器验收**（前端未改业务行为，不伪造浏览器证据）；相关构建/CI 以仓库标准流程为准。
+- HUSKY=0 沿前批临时隔离（钩子根因未定论）；等价检查（typecheck/测试/门禁）均照常执行。
+- 语义决定记录：①笔记列表 `total` 为过滤条件总数（**不含游标**，按设计文字"与列表过滤一致"）；②backlinks 默认不含归档，repo 层提供 `includeArchived` 开关（N1 HTTP 层不暴露）；③专题 blocker 判定含归档专题（成员关系仍在；归档专题需先恢复再移出成员）。
 
 ## 9. 下一步消费者信息（Task 07–08 可消费）
 
-- DTO、错误码、保存/幂等语义：见 `src/domain/l3-study-notes.ts` 与 OpenAPI 生成物（完成后补写精确引用）。
-- fixture 位置：`tests/helpers/study-notes.ts`（纯 fixture）、`tests/helpers/study-notes-db.ts`（DB fixture）。
+- **DTO / 错误码 / 保存幂等语义**：`src/domain/l3-study-notes.ts`（类型与输入契约）；`src/http/l3-study-note-response-contract.ts`（响应形状）；`docs/api/openapi.json` 12 个新操作与生成客户端 `src/frontend/api/generated/openapi.ts`。
+- 保存语义：`PUT /api/l3/study-notes/:noteId` 为完整状态保存（`expectedVersion` + `requestId`；最后一次请求幂等）；409 响应含 `meta.currentVersion`（`study-notes`/`study-topics` 同口径）；422 字段级（`bodyMd` / `quote` / `options` / `beforeNoteId`）。
+- 删除保护响应：`DELETE /api/l3/sources/:id`、`DELETE /api/l3/questions/:id` 被引用时 409，`meta.blockers.studyNotes`（含 `id/title/status/referenceCount`）+ `resolution: remove_references_or_convert_to_plain_excerpt`。
+- **fixture 位置**：`tests/helpers/study-notes.ts`（纯 fixture：固定 UUID）；`tests/helpers/study-notes-db.ts`（DB fixture：owner 播种/清理纪律）。
+- 集成测试可供前端联调参考：`tests/l3-study-notes.integration.test.ts`（34 用例，覆盖验收矩阵 15 项）。

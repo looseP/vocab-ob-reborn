@@ -230,3 +230,43 @@ describe("listTopicBlockers", () => {
     expect(blockers[0]).toMatchObject({ topic_id: TOPIC, title: "阅读专题" });
   });
 });
+
+describe("补齐：幂等回查 / 归属读取 / 边界早退", () => {
+  it("findByCreateRequestId 按 (user_id, create_request_id) 查询", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [noteRow()] }));
+    const row = await repo.findByCreateRequestId(USER, REQUEST);
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("user_id = $1::uuid AND create_request_id = $2::uuid");
+    expect(params).toEqual([USER, REQUEST]);
+    expect(row?.id).toBe(NOTE);
+  });
+
+  it("listVenues / listVenuesForNotes 返回题型集合；空输入不产生查询", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [{ question_type: "cloze" }] }));
+    expect(await repo.listVenues(USER, NOTE)).toEqual(["cloze"]);
+
+    querySpy.mockImplementation(async () => ({
+      rows: [
+        { note_id: NOTE, question_type: "cloze" },
+        { note_id: NOTE, question_type: "reading_choice" },
+        { note_id: "00000000-0000-4000-8000-000000000102", question_type: "cloze" },
+      ],
+    }));
+    const map = await repo.listVenuesForNotes(USER, [NOTE, "00000000-0000-4000-8000-000000000102"]);
+    expect(map.get(NOTE)).toEqual(["cloze", "reading_choice"]);
+    expect(map.get("00000000-0000-4000-8000-000000000102")).toEqual(["cloze"]);
+
+    const callsBefore = querySpy.mock.calls.length;
+    const empty = await repo.listVenuesForNotes(USER, []);
+    expect(empty.size).toBe(0);
+    expect(querySpy.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("replaceVenues 空数组只 DELETE 不 INSERT", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.replaceVenues(USER, NOTE, []);
+    const text = querySpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(text).toContain("DELETE FROM l3_study_note_venues");
+    expect(text).not.toContain("INSERT INTO");
+  });
+});

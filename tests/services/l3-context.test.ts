@@ -710,6 +710,38 @@ describe("L3ContextService", () => {
     expect(repo.deleteSource).not.toHaveBeenCalled();
   });
 
+  it("FK RESTRICT 并发兜底：DELETE 报 23503 → 重查 blocker 转 409（不落 500）", async () => {
+    repo = makeRepo({
+      deleteSource: vi.fn(async () => {
+        throw Object.assign(new Error("fk violation"), { code: "23503" });
+      }),
+    });
+    const studyRefRepo = makeStudyRefRepo({
+      getSourceDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-9", title: "并发笔记", status: "active", reference_count: 1 },
+      ]),
+    });
+    service = makeService(repo, repo, undefined, undefined, studyRefRepo);
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: { blockers: { studyNotes: [expect.objectContaining({ id: "note-9" })] } },
+    });
+  });
+
+  it("删除未命中重查：source 仍在而删除未生效时优先重查笔记 blocker", async () => {
+    repo = makeRepo({ deleteSource: vi.fn(async () => null) });
+    const studyRefRepo = makeStudyRefRepo({
+      getSourceDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-2", title: "重查笔记", status: "active", reference_count: 1 },
+      ]),
+    });
+    service = makeService(repo, repo, undefined, undefined, studyRefRepo);
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: { blockers: { studyNotes: [expect.objectContaining({ id: "note-2" })] } },
+    });
+  });
+
   it("maps missing or out-of-scope source and context parent deletes to NotFoundError", async () => {
     repo = makeRepo({
       lockSourceByIdForUser: vi.fn(async () => null),

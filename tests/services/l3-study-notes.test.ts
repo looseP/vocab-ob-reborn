@@ -454,3 +454,145 @@ describe("list · cursor 过滤绑定", () => {
     ).rejects.toThrow(ValidationError);
   });
 });
+
+describe("补齐：默认装配 / 成功路径 / 竞态与兜底", () => {
+  it("默认装配可构造；不注入 factory 时在 fake tx 上完成 list（覆盖默认工厂体）", async () => {
+    const tx = { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) };
+    const svc = new L3StudyNoteService((async (cb: (t: unknown) => Promise<unknown>) => cb(tx)) as never);
+    const page = await svc.list(USER, { venue: "reading_choice", limit: 10 });
+    expect(page).toEqual({ items: [], total: 0, nextCursor: null });
+    // clampLimit 带值分支：limit=10 → repo 收 11
+    expect(tx.query).toHaveBeenCalled();
+  });
+
+  it("list 成功路径：DTO 映射（venues 枚举序）+ hasMore/nextCursor（updatedAt）", async () => {
+    const { decodeStudyCursor } = await import("@/repositories/l3-study-cursor");
+    const NOTE_B = "00000000-0000-4000-8000-000000000102";
+    repos.studyNotes.list = vi.fn(async () => ({
+      items: [
+        { ...noteRow({ id: NOTE }), updated_at: "2026-09-19T02:00:00Z" },
+        { ...noteRow({ id: NOTE_B }), updated_at: "2026-09-19T01:00:00Z" },
+      ],
+      total: 4,
+    }));
+    repos.studyNotes.listVenuesForNotes = vi.fn(async () =>
+      new Map([[NOTE, ["reading_choice", "cloze"]]]),
+    );
+    const page = await service.list(USER, { venue: "reading_choice", limit: 1 });
+    expect(page.total).toBe(4);
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]!.venues).toEqual(["cloze", "reading_choice"]); // 枚举序（comparator 执行）
+    const decoded = decodeStudyCursor(page.nextCursor);
+    expect(decoded).toMatchObject({ sortKind: "updatedAt", lastSort: "2026-09-19T02:00:00Z", id: NOTE });
+    expect(repos.studyNotes.list).toHaveBeenCalledWith(expect.objectContaining({ limit: 2 }));
+  });
+
+  it("list 专题内成功路径：position 游标", async () => {
+    const { decodeStudyCursor } = await import("@/repositories/l3-study-cursor");
+    const NOTE_B = "00000000-0000-4000-8000-000000000102";
+    repos.studyNotes.list = vi.fn(async () => ({
+      items: [
+        { ...noteRow({ id: NOTE }), position: 0 },
+        { ...noteRow({ id: NOTE_B }), position: 1 },
+      ],
+      total: 2,
+    }));
+    const page = await service.list(USER, { venue: "reading_choice", topicId: TOPIC, limit: 1 });
+    const decoded = decodeStudyCursor(page.nextCursor);
+    expect(decoded).toMatchObject({ sortKind: "position", lastSort: "0", id: NOTE });
+  });
+
+  it("get 成功路径与 404", async () => {
+    repos.studyNotes.get = vi.fn(async () => noteRow({ title: "详情" }));
+    const result = await service.get(USER, NOTE);
+    expect(result.item.title).toBe("详情");
+    expect(result.item.references).toEqual([]);
+
+    repos.studyNotes.get = vi.fn(async () => null);
+    await expect(service.get(USER, NOTE)).rejects.toThrow(NotFoundError);
+  });
+
+  it("create 唯一冲突竞态回读（同 hash→created=false / 异 hash→409 / 非 23505→rethrow）", async () => {
+    const { computeNoteCreateHash } = await import("@/services/l3-study-notes.service");
+    const uniqueErr = Object.assign(new Error("dup"), { code: "23505" });
+    repos.studyNotes.create = vi.fn(async () => {
+      throw uniqueErr;
+    });
+    repos.studyNotes.findByCreateRequestId = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(noteRow({ create_input_hash: computeNoteCreateHash("reading_choice") }));
+    const raced = await service.create(USER, { requestId: REQ, venue: "reading_choice" });
+    expect(raced.created).toBe(false);
+
+    repos.studyNotes.findByCreateRequestId = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(noteRow({ create_input_hash: "0".repeat(64) }));
+    await expect(service.create(USER, { requestId: REQ, venue: "reading_choice" })).rejects.toThrow(ConflictError);
+
+    repos.studyNotes.create = vi.fn(async () => {
+      throw new Error("other failure");
+    });
+    repos.studyNotes.findByCreateRequestId = vi.fn(async () => null);
+    await expect(service.create(USER, { requestId: REQ, venue: "reading_choice" })).rejects.toThrow("other failure");
+  });
+
+  it("createTopic：新建 / 同输入幂等复用 / 异输入 409", async () => {
+    const first = await service.createTopic(USER, { requestId: REQ, venue: "reading_choice", title: "专题" });
+    expect(first.created).toBe(true);
+    const hash = (repos.studyTopics.create.mock.calls[0]![0] as { create_input_hash: string }).create_input_hash;
+    repos.studyTopics.findByCreateRequestId = vi.fn(async () => topicRow({ create_input_hash: hash }));
+    const retry = await service.createTopic(USER, { requestId: REQ, venue: "reading_choice", title: "专题" });
+    expect(retry.created).toBe(false);
+
+    repos.studyTopics.findByCreateRequestId = vi.fn(async () => topicRow({ create_input_hash: "0".repeat(64) }));
+    await expect(
+      service.createTopic(USER, { requestId: REQ, venue: "cloze", title: "别的" }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("saveTopic：成功（CAS+幂等列）/ 重放幂等 / 版本冲突", async () => {
+    const { computeTopicSaveHash } = await import("@/services/l3-study-notes.service");
+    const first = await service.saveTopic(USER, TOPIC, {
+      requestId: REQ, expectedVersion: 1, title: "改名", status: "active",
+    });
+    expect(first.item.version).toBe(2);
+    expect(repos.studyTopics.updateIfVersion).toHaveBeenCalledWith(USER, TOPIC, 1, expect.objectContaining({
+      title: "改名", last_write_request_id: REQ,
+    }));
+
+    const hash = computeTopicSaveHash({ expectedVersion: 1, title: "改名", status: "active" });
+    repos.studyTopics.lock = vi.fn(async () =>
+      topicRow({ version: 2, last_write_request_id: REQ, last_write_hash: hash }),
+    );
+    const retry = await service.saveTopic(USER, TOPIC, {
+      requestId: REQ, expectedVersion: 1, title: "改名", status: "active",
+    });
+    expect(retry.item.version).toBe(2);
+
+    repos.studyTopics.lock = vi.fn(async () => topicRow({ version: 9 }));
+    await expect(
+      service.saveTopic(USER, TOPIC, { requestId: REQ_B, expectedVersion: 1, title: "x", status: "active" }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("listTopics 成功路径（批量成员计数填充）", async () => {
+    repos.studyTopics.list = vi.fn(async () => ({ items: [topicRow()], total: 1 }));
+    repos.studyTopics.countMembersForTopics = vi.fn(async () => new Map([[TOPIC, 3]]));
+    const page = await service.listTopics(USER, { venue: "reading_choice" });
+    expect(page.total).toBe(1);
+    expect(page.items[0]).toMatchObject({ id: TOPIC, memberCount: 3 });
+  });
+
+  it("save 兜底：updateIfVersion null → 409；replaceForNote 23503 → 409（Referenced material）", async () => {
+    repos.studyNotes.updateIfVersion = vi.fn(async () => null);
+    await expect(service.save(USER, NOTE, baseSaveInput())).rejects.toThrow(ConflictError);
+
+    repos.studyNotes.updateIfVersion = vi.fn(async () => noteRow({ version: 2 }));
+    repos.studyReferences.replaceForNote = vi.fn(async () => {
+      throw Object.assign(new Error("fk"), { code: "23503" });
+    });
+    const error = await service.save(USER, NOTE, baseSaveInput()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictError);
+    expect((error as ConflictError).message).toContain("no longer available");
+  });
+});

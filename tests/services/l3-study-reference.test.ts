@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { NotFoundError, ValidationError } from "@/errors";
 import {
   L3StudyReferenceService,
+  currentFieldText,
   questionFieldText,
   type StudyReferenceRepos,
 } from "@/services/l3-study-reference.service";
@@ -230,5 +231,145 @@ describe("preview · 只读", () => {
     await expect(
       emptyService.preview(USER, { kind: "source", sourceId: SOURCE }),
     ).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe("补齐：resolve 各 kind / 防御分支 / search·backlinks 编排", () => {
+  const SOURCE_B = "00000000-0000-4000-8000-000000000202";
+  const NOTE_ID = "00000000-0000-4000-8000-000000000101";
+
+  it("resolve 覆盖 source / source_quote / question 三种行的 target 重建与 status", async () => {
+    const source = { kind: "source" as const, id: SOURCE, title: "T", content_text: SOURCE_TEXT };
+    const repos = fakeRepos([source, QUESTION_TARGET]);
+    const service = makeService(repos);
+    const questionJson = JSON.stringify({
+      stem: QUESTION_TARGET.stem,
+      options: QUESTION_TARGET.options.map((o) => ({ key: o.key, text: o.text })),
+    });
+    const rows: L3StudyNoteReferenceRow[] = [
+      refRow({
+        kind: "source", question_id: null, source_id: SOURCE, start_offset: null,
+        end_offset: null, quote_snapshot: null, field_hash: sha256Hex(SOURCE_TEXT),
+      }),
+      refRow({
+        id: "00000000-0000-4000-8000-000000000002", kind: "source_quote", question_id: null,
+        source_id: SOURCE, start_offset: 0, end_offset: 3, quote_snapshot: "The",
+        field_hash: sha256Hex(SOURCE_TEXT),
+      }),
+      refRow({
+        id: "00000000-0000-4000-8000-000000000003", kind: "question",
+        source_id: null, start_offset: null, end_offset: null, quote_snapshot: null,
+        field_hash: sha256Hex(questionJson),
+      }),
+    ];
+    const previews = await service.resolve(USER, rows, repos);
+    expect(previews[0]!.target).toEqual({ kind: "source", sourceId: SOURCE });
+    expect(previews[0]!.status).toBe("current");
+    expect(previews[1]!.target).toMatchObject({ kind: "source_quote", quote: "The" });
+    expect(previews[2]!.target).toEqual({ kind: "question", questionId: QUESTION });
+    expect(previews[2]!.status).toBe("current");
+  });
+
+  it("resolve 空数组直接返回（零查询）", async () => {
+    const repos = fakeRepos([]);
+    const service = makeService(repos);
+    const previews = await service.resolve(USER, [], repos);
+    expect(previews).toEqual([]);
+    expect((repos.studyReferences.loadTargets as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+  });
+
+  it("currentFieldText 交叉防御：kind 与 target 类型不匹配返回 null", () => {
+    const sourceLoaded = { kind: "source" as const, id: SOURCE, title: "T", content_text: SOURCE_TEXT };
+    expect(currentFieldText("stem_quote", null, sourceLoaded)).toBeNull();
+    expect(currentFieldText("option_quote", "A", sourceLoaded)).toBeNull();
+  });
+
+  it("capture source：长正文截 280 且不切代理对；NULL 正文 excerpt 空且 hash 按空串", async () => {
+    const long = "a".repeat(279) + "😀" + "tail"; // 截到 280 会切进代理对 → 回退到 279
+    const repos = fakeRepos([{ kind: "source", id: SOURCE, title: "T", content_text: long }]);
+    const service = makeService(repos);
+    const row = await service.capture(USER, { id: REF, target: { kind: "source", sourceId: SOURCE } }, repos);
+    const snapshot = row.display_snapshot as { excerpt: string };
+    expect(snapshot.excerpt).toBe("a".repeat(279));
+
+    const reposNull = fakeRepos([{ kind: "source", id: SOURCE, title: "T", content_text: null }]);
+    const serviceNull = makeService(reposNull);
+    const rowNull = await serviceNull.capture(USER, { id: REF, target: { kind: "source", sourceId: SOURCE } }, reposNull);
+    expect((rowNull.display_snapshot as { excerpt: string }).excerpt).toBe("");
+    expect(rowNull.field_hash).toBe(sha256Hex(""));
+  });
+
+  it("captureAgainst 目标交叉不匹配防御（五种 target × 异型 loaded）→ 404", () => {
+    const service = makeService(fakeRepos([]));
+    const sourceLoaded = { kind: "source" as const, id: SOURCE, title: "T", content_text: SOURCE_TEXT };
+    expect(() => service.captureAgainst({ kind: "source", sourceId: SOURCE }, QUESTION_TARGET)).toThrow(NotFoundError);
+    expect(() => service.captureAgainst(
+      { kind: "source_quote", sourceId: SOURCE, start: 0, end: 3, quote: "The" }, QUESTION_TARGET,
+    )).toThrow(NotFoundError);
+    expect(() => service.captureAgainst({ kind: "question", questionId: QUESTION }, sourceLoaded)).toThrow(NotFoundError);
+    expect(() => service.captureAgainst(
+      { kind: "stem_quote", questionId: QUESTION, start: 0, end: 4, quote: "What" }, sourceLoaded,
+    )).toThrow(NotFoundError);
+    expect(() => service.captureAgainst(
+      { kind: "option_quote", questionId: QUESTION, optionKey: "A", start: 0, end: 5, quote: "jumps" }, sourceLoaded,
+    )).toThrow(NotFoundError);
+  });
+
+  it("search 编排：camelCase 映射、limit+1 与 nextCursor（clampPageLimit 带值）", async () => {
+    const repos = fakeRepos([]);
+    (repos.studyReferences.searchTargets as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      items: [
+        { id: SOURCE, title: "T1", created_at: "2026-09-19T01:00:00Z" },
+        { id: SOURCE_B, title: "T2", created_at: "2026-09-19T00:00:00Z" },
+      ],
+      total: 3,
+    }));
+    const service = makeService(repos);
+    const page = await service.search(USER, { kind: "source", limit: 1 });
+    expect(page.total).toBe(3);
+    expect(page.items).toEqual([{ id: SOURCE, title: "T1", createdAt: "2026-09-19T01:00:00Z" }]);
+    expect(page.nextCursor).toBeTypeOf("string");
+    expect((repos.studyReferences.searchTargets as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+      .toMatchObject({ limit: 2, kind: "source" });
+  });
+
+  it("search question kind（venue 传递）与 backlinks 编排（camelCase）", async () => {
+    const repos = fakeRepos([]);
+    (repos.studyReferences.searchTargets as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      items: [{ id: QUESTION, stem: "Q", question_type: "reading_choice", created_at: "2026-09-19T00:00:00Z" }],
+      total: 1,
+    }));
+    const service = makeService(repos);
+    const page = await service.search(USER, { kind: "question", venue: "reading_choice" });
+    expect(page.items[0]).toEqual({
+      id: QUESTION, stem: "Q", questionType: "reading_choice", createdAt: "2026-09-19T00:00:00Z",
+    });
+    expect((repos.studyReferences.searchTargets as ReturnType<typeof vi.fn>).mock.calls[0]![0])
+      .toMatchObject({ venue: "reading_choice" });
+
+    (repos.studyReferences.listBacklinks as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
+      items: [{
+        note_id: NOTE_ID, title: "T", status: "active", reference_count: 2,
+        ref_ids: [REF], updated_at: "2026-09-19T00:00:00Z",
+      }],
+      total: 1,
+    }));
+    const back = await service.backlinks(USER, { targetKind: "source", targetId: SOURCE });
+    expect(back.items[0]).toEqual({
+      noteId: NOTE_ID, title: "T", status: "active", referenceCount: 2, refIds: [REF],
+    });
+  });
+
+  it("backlinks 过滤指纹不符 → 400；默认构造可实例化（默认工厂参数求值）", async () => {
+    const service = makeService(fakeRepos([]));
+    const { encodeStudyCursor, studyFilterFingerprint } = await import("@/repositories/l3-study-cursor");
+    const wrong = encodeStudyCursor({
+      sortKind: "updatedAt", lastSort: "2026-09-19T00:00:00Z", id: REF,
+      filter: studyFilterFingerprint(["question", SOURCE]),
+    });
+    await expect(
+      service.backlinks(USER, { targetKind: "source", targetId: SOURCE, cursor: wrong }),
+    ).rejects.toThrow(ValidationError);
+    expect(new L3StudyReferenceService()).toBeInstanceOf(L3StudyReferenceService);
   });
 });

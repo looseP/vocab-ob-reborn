@@ -241,3 +241,54 @@ describe("删除 blockers", () => {
     expect(blockers.length).toBe(1);
   });
 });
+
+describe("补齐：引用归属回查 / 搜索与反向引用游标", () => {
+  it("findReferenceOwners 返回 id→note 映射（归一为小写）；空输入不查询", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [{ id: REF.toUpperCase(), note_id: NOTE }],
+    }));
+    const owners = await repo.findReferenceOwners(USER, [REF]);
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("id = ANY($2::uuid[])");
+    expect(params).toEqual([USER, [REF]]);
+    expect(owners.get(REF)).toBe(NOTE);
+
+    const callsBefore = querySpy.mock.calls.length;
+    const empty = await repo.findReferenceOwners(USER, []);
+    expect(empty.size).toBe(0);
+    expect(querySpy.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("searchTargets（question kind）带 cursor 生成 (created_at,id) 键集", async () => {
+    querySpy.mockImplementation(async (text: string) => {
+      if ((text as string).includes("count(*)")) return { rows: [{ total: "1" }] };
+      return { rows: [{ id: QUESTION, stem: "Q", question_type: "reading_choice", created_at: "2026-09-19T00:00:00Z" }] };
+    });
+    await repo.searchTargets({
+      userId: USER, kind: "question", q: null, venue: null,
+      cursor: { createdAt: "2026-09-19T00:00:00Z", id: QUESTION }, limit: 21,
+    });
+    const listCall = querySpy.mock.calls.find((c) => (c[0] as string).includes("ORDER BY"))!;
+    expect(listCall[0]).toContain("(created_at, id) <");
+    expect(listCall[0]).toContain("::timestamptz");
+  });
+
+  it("listBacklinks 带 cursor 生成 (n.updated_at, n.id) 键集且返回 updated_at", async () => {
+    querySpy.mockImplementation(async (text: string) => {
+      if ((text as string).includes("count(DISTINCT")) return { rows: [{ total: "1" }] };
+      return {
+        rows: [{
+          note_id: NOTE, title: "T", status: "active", reference_count: 1,
+          ref_ids: [REF], updated_at: "2026-09-19T00:00:00Z",
+        }],
+      };
+    });
+    const { items } = await repo.listBacklinks({
+      userId: USER, targetKind: "source", targetId: SOURCE,
+      cursor: { updatedAt: "2026-09-19T00:00:00Z", id: NOTE }, limit: 21,
+    });
+    const listCall = querySpy.mock.calls.find((c) => (c[0] as string).includes("ORDER BY"))!;
+    expect(listCall[0]).toContain("(n.updated_at, n.id) <");
+    expect(items[0]!.updated_at).toBe("2026-09-19T00:00:00Z");
+  });
+});

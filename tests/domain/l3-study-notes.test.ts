@@ -155,6 +155,11 @@ describe("validateQuote", () => {
     expect(validateQuote("选项扩大了原文范围", 2, 4, "扩大")).toBe(true);
     expect(validateQuote("选项扩大了原文范围", 2, 4, "扩大了")).toBe(false);
   });
+
+  it("非字符串输入防御返回 false", () => {
+    expect(validateQuote(null as unknown as string, 0, 1, "a")).toBe(false);
+    expect(validateQuote("abc", 0, 1, null as unknown as string)).toBe(false);
+  });
 });
 
 // ── 引用输入 schema：五种 kind 严格枚举 ────────────────────────────────────

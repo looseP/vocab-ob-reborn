@@ -13,7 +13,7 @@
 import { randomUUID } from "node:crypto";
 import { Client, Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ConflictError } from "@/errors";
+import { ConflictError, ValidationError } from "@/errors";
 import { resetPool } from "@/db/connection";
 import { withTransaction } from "@/db/transaction";
 import { L3ContextService } from "@/services/l3-context.service";
@@ -893,5 +893,90 @@ describe("学习笔记服务 · 真实 PG（Task 05）", () => {
     expect(back.items.some((item) => item.noteId === noteId)).toBe(true);
     expect(back.items.find((item) => item.noteId === noteId)!.referenceCount).toBeGreaterThanOrEqual(1);
     await adminPool.query(`DELETE FROM l3_study_note_references WHERE note_id = $1`, [noteId]);
+  });
+
+  it("引用校验失败时正文/归属/引用整体回滚（真实事务；矩阵#6）", async () => {
+    const source = randomUUID();
+    await seedStudySource(adminPool, { id: source, userId: OWNER_A, contentText: "Rollback source text." });
+    const service = new L3StudyNoteService();
+    const noteId = (await service.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" })).item.id;
+
+    // 第一版成功保存（version 1→2）
+    await service.save(OWNER_A, noteId, {
+      expectedVersion: 1, requestId: randomUUID(), title: "第一版", bodyMd: "基座",
+      venues: ["reading_choice"], pinned: false, status: "active", references: [],
+    });
+
+    // 第二版：marker 与引用集合一致但 quote 与 slice 不符 → 422（在正文更新之前抛出）
+    const refId = randomUUID();
+    await expect(
+      service.save(OWNER_A, noteId, {
+        expectedVersion: 2, requestId: randomUUID(), title: "第二版", bodyMd: `[[ref:${refId}]]`,
+        venues: ["cloze"], pinned: true, status: "active",
+        references: [{
+          id: refId, action: "capture",
+          target: { kind: "source_quote", sourceId: source, start: 0, end: 4, quote: "WRONG" },
+        }],
+      }),
+    ).rejects.toThrow(ValidationError);
+
+    // 整体回滚：正文/标题/归属/pinned/引用/版本全部保持第一版
+    const after = await service.get(OWNER_A, noteId);
+    expect(after.item.title).toBe("第一版");
+    expect(after.item.bodyMd).toBe("基座");
+    expect(after.item.version).toBe(2);
+    expect(after.item.venues).toEqual(["reading_choice"]);
+    expect(after.item.pinned).toBe(false);
+    expect(after.item.references).toEqual([]);
+  });
+
+  it("121 目标材料跨页完整访问（search source kind；矩阵#13）", async () => {
+    const seeded = await adminPool.query<{ id: string }>(
+      `INSERT INTO l3_sources (id, user_id, source_type, title)
+       SELECT gen_random_uuid(), $1::uuid, 'article', '搜索目标 ' || g
+         FROM generate_series(1, 121) AS g
+       RETURNING id`,
+      [OWNER_A],
+    );
+    const refService = new L3StudyReferenceService();
+    const collected: string[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 5; page += 1) {
+      const result = await refService.search(OWNER_A, { kind: "source", q: "搜索目标", limit: 50, cursor });
+      expect(result.total).toBe(121);
+      collected.push(...result.items.map((item) => item.id));
+      if (result.items.length < 50) break;
+      cursor = result.nextCursor;
+    }
+    expect(collected.length).toBe(121);
+    expect(new Set(collected).size).toBe(121);
+    expect(new Set(collected)).toEqual(new Set(seeded.rows.map((row) => row.id)));
+  });
+
+  it("GET/预览/搜索/反向引用零写：题纸与作文任务数不变（矩阵#14）", async () => {
+    const service = new L3StudyNoteService();
+    const noteId = (await service.create(OWNER_A, { requestId: randomUUID(), venue: "reading_choice" })).item.id;
+    const snapshotCounts = async () => {
+      const { rows } = await adminPool.query<{
+        sheets: number; tasks: number; notes: number; refs: number;
+      }>(
+        `SELECT (SELECT count(*) FROM l3_submissions)::int AS sheets,
+                (SELECT count(*) FROM l3_writing_tasks)::int AS tasks,
+                (SELECT count(*) FROM l3_study_notes)::int AS notes,
+                (SELECT count(*) FROM l3_study_note_references)::int AS refs`,
+      );
+      return rows[0]!;
+    };
+    const before = await snapshotCounts();
+
+    await service.get(OWNER_A, noteId);
+    await service.list(OWNER_A, { venue: "reading_choice" });
+    const refService = new L3StudyReferenceService();
+    await refService.search(OWNER_A, { kind: "question", q: "fixture" });
+    await refService.backlinks(OWNER_A, { targetKind: "source", targetId: SOURCE_A });
+    await refService.preview(OWNER_A, { kind: "source", sourceId: SOURCE_A });
+
+    const after = await snapshotCounts();
+    expect(after).toEqual(before);
   });
 });

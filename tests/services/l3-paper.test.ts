@@ -340,6 +340,32 @@ describe("deleteQuestion", () => {
     expect(repo.deleteQuestion).not.toHaveBeenCalled();
   });
 
+  it("FK RESTRICT 并发兜底：删除报 23503 → 重查 blocker 转 409；无 blocker 原样透传", async () => {
+    const qid = "00000000-0000-4000-8000-000000000402";
+    const repo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: qid })),
+      deleteQuestion: vi.fn(async () => {
+        throw Object.assign(new Error("fk violation"), { code: "23503" });
+      }),
+    });
+    studyRefRepo = makeStudyRefRepo({
+      getQuestionDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-3", title: "题笔记", status: "active", reference_count: 1 },
+      ]),
+    });
+    await expect(makeService(repo, contextRepo).deleteQuestion({
+      userId: USER_ID, questionId: qid,
+    })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: { blockers: { studyNotes: [expect.objectContaining({ id: "note-3" })] } },
+    });
+
+    studyRefRepo = makeStudyRefRepo({ getQuestionDeleteBlockers: vi.fn(async () => []) });
+    await expect(makeService(repo, contextRepo).deleteQuestion({
+      userId: USER_ID, questionId: qid,
+    })).rejects.toThrow("fk violation");
+  });
+
   it("deletes an unreferenced question", async () => {
     await service.deleteQuestion({
       userId: USER_ID, questionId: "00000000-0000-4000-8000-000000000101",

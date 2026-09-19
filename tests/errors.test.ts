@@ -15,6 +15,8 @@ import {
   errorToResponse,
   isDbConnectionError,
   isConstraintViolation,
+  isForeignKeyViolation,
+  isUniqueViolation,
 } from "@/errors";
 
 describe("Error hierarchy", () => {
@@ -237,5 +239,18 @@ describe("single error-code export", () => {
     );
     expect(source).not.toMatch(/code: "[A-Z_]+"/);
     expect(source).not.toMatch(/code = "[A-Z_]+"/);
+  });
+});
+
+describe("FK / unique 判定（N1 并发兜底判据）", () => {
+  it("isForeignKeyViolation / isUniqueViolation 精确匹配 SQLSTATE 且防御非对象输入", () => {
+    expect(isForeignKeyViolation({ code: "23503" })).toBe(true);
+    expect(isForeignKeyViolation({ code: "23505" })).toBe(false);
+    expect(isForeignKeyViolation(null)).toBe(false);
+    expect(isForeignKeyViolation("boom")).toBe(false);
+
+    expect(isUniqueViolation({ code: "23505" })).toBe(true);
+    expect(isUniqueViolation({ code: "23503" })).toBe(false);
+    expect(isUniqueViolation(undefined)).toBe(false);
   });
 });
