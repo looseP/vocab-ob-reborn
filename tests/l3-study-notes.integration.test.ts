@@ -11,10 +11,14 @@
  *   npx vitest run --config vitest.integration.config.ts tests/l3-study-notes.integration.test.ts --maxWorkers=1
  */
 import { randomUUID } from "node:crypto";
-import { Pool, type PoolClient } from "pg";
+import { Client, Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resetPool } from "@/db/connection";
 import { withTransaction } from "@/db/transaction";
+import { L3StudyNoteRepository } from "@/repositories/l3-study-notes.repository";
+import { L3StudyTopicRepository } from "@/repositories/l3-study-topics.repository";
+import { L3StudyReferenceRepository } from "@/repositories/l3-study-references.repository";
+import type { StudyCursor } from "@/repositories/l3-study-cursor";
 import {
   cleanupStudyFixture,
   requireStudyNoteTestUrls,
@@ -367,5 +371,200 @@ describe("学习笔记存储 · 删除保护（RESTRICT + 级联链截断）", (
     const refs = await adminPool.query(`SELECT id FROM l3_study_note_references WHERE note_id = $1`, [noteId]);
     expect(venues.rowCount).toBe(0);
     expect(refs.rowCount).toBe(0);
+  });
+});
+
+// ── Task 03：并发窗口与规模（deferred/锁观测屏障，不依赖 sleep 断言）────────
+
+/** 以受限角色打开独立连接并开启 RLS 事务（并发测试专用，不走 pool）。 */
+async function connectAs(actorId: string): Promise<Client> {
+  const client = new Client({ connectionString: appUrl });
+  await client.connect();
+  await client.query("BEGIN");
+  await client.query("SELECT set_config('request.jwt.claim.sub', $1, true)", [actorId]);
+  return client;
+}
+
+/** 观察指定 backend pid 是否存在未授予的锁请求（绑定被测连接的锁等待证据）。 */
+async function waitForLockWait(targetPid: number, deadlineMs = 5000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < deadlineMs) {
+    const { rows } = await adminPool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_locks WHERE pid = $1 AND granted = false`,
+      [targetPid],
+    );
+    if ((rows[0]?.n ?? 0) > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+async function backendPid(client: Client): Promise<number> {
+  const { rows } = await client.query<{ pid: number }>(`SELECT pg_backend_pid() AS pid`);
+  return rows[0]!.pid;
+}
+
+describe("学习笔记存储 · 并发窗口（Task 03）", () => {
+  it("同版本并发保存一胜一冲突：版本只推进一次（行锁 + CAS，pg_locks 观测到达路径）", async () => {
+    const noteId = randomUUID();
+    await adminPool.query(
+      `INSERT INTO l3_study_notes (id, user_id, title, body_md, status, pinned, version, create_request_id, create_input_hash)
+       VALUES ($1, $2, '并发基线', '', 'active', false, 1, $3, $4)`,
+      [noteId, OWNER_A, randomUUID(), "f".repeat(64)],
+    );
+    const casSql = `UPDATE l3_study_notes
+        SET title = $3, body_md = '', status = 'active', pinned = false,
+            version = version + 1, last_write_request_id = $4::uuid, last_write_hash = $5, updated_at = now()
+      WHERE id = $1::uuid AND user_id = $2::uuid AND version = 1`;
+
+    const c1 = await connectAs(OWNER_A);
+    const c2 = await connectAs(OWNER_A);
+    try {
+      const c1Res = await c1.query(casSql, [noteId, OWNER_A, "c1", randomUUID(), "1".repeat(64)]);
+      expect(c1Res.rowCount).toBe(1);
+
+      const c2Pid = await backendPid(c2);
+      const c2Promise = c2.query(casSql, [noteId, OWNER_A, "c2", randomUUID(), "2".repeat(64)]);
+      // 屏障：c2 的锁请求进入等待（绑定 c2 的 PID，非"集群任意锁等待"）
+      expect(await waitForLockWait(c2Pid)).toBe(true);
+
+      await c1.query("COMMIT");
+      const c2Res = await c2Promise;
+      expect(c2Res.rowCount).toBe(0); // CAS 失配（不再是 1）→ 0 行
+      await c2.query("COMMIT");
+
+      const { rows } = await adminPool.query<{ version: number; title: string }>(
+        `SELECT version, title FROM l3_study_notes WHERE id = $1`,
+        [noteId],
+      );
+      expect(rows[0]).toMatchObject({ version: 2, title: "c1" }); // 只推进一次、旧版本未覆盖新版本
+    } finally {
+      await c1.end().catch(() => undefined);
+      await c2.end().catch(() => undefined);
+    }
+  });
+
+  it("capture 持锁期间源删除被阻塞（FOR SHARE 屏障），提交后释放", async () => {
+    const src = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "lock target text" });
+    const c1 = await connectAs(OWNER_A);
+    const c2 = await connectAs(OWNER_A);
+    try {
+      await new L3StudyReferenceRepository(c1 as unknown as PoolClient).lockTargets(OWNER_A, [
+        { kind: "source", id: src },
+      ]);
+
+      const c2Pid = await backendPid(c2);
+      const deletePromise = c2.query(`DELETE FROM l3_sources WHERE id = $1`, [src]);
+      expect(await waitForLockWait(c2Pid)).toBe(true); // 删除等待共享锁
+
+      await c1.query("COMMIT");
+      const deleteRes = await deletePromise;
+      expect(deleteRes.rowCount).toBe(1); // 无引用冲突时释放后可删
+      await c2.query("COMMIT");
+    } finally {
+      await c1.end().catch(() => undefined);
+      await c2.end().catch(() => undefined);
+    }
+  });
+
+  it("121 条笔记跨页完整访问：分页遍历无重复无遗漏（limit 50 × 3 页）", async () => {
+    const seeded = await adminPool.query<{ id: string }>(
+      `INSERT INTO l3_study_notes (id, user_id, title, body_md, status, pinned, version, create_request_id, create_input_hash)
+       SELECT gen_random_uuid(), $1::uuid, '批量笔记 ' || g, '', 'active', false, 1, gen_random_uuid(), $2
+         FROM generate_series(1, 121) AS g
+       RETURNING id`,
+      [OWNER_A, "3".repeat(64)],
+    );
+    const seededIds = seeded.rows.map((r) => r.id);
+    await adminPool.query(
+      `INSERT INTO l3_study_note_venues (note_id, user_id, question_type)
+       SELECT unnest($2::uuid[]), $1::uuid, 'reading_choice'`,
+      [OWNER_A, seededIds],
+    );
+
+    const collected: string[] = [];
+    let cursor: StudyCursor | null = null;
+    for (let page = 0; page < 5; page += 1) {
+      const result = await withTransaction(
+        (tx) =>
+          new L3StudyNoteRepository(tx).list({
+            userId: OWNER_A, venue: "reading_choice", q: "批量笔记", status: null, pinned: null,
+            topicId: null, unfiled: false, cursor, limit: 50,
+          }),
+        { actorId: OWNER_A },
+      );
+      expect(result.total).toBe(121); // 过滤总数不随翻页变化
+      collected.push(...result.items.map((row) => row.id));
+      if (result.items.length < 50) break;
+      const last = result.items[result.items.length - 1]!;
+      cursor = { sortKind: "updatedAt", lastSort: last.updated_at, id: last.id, filter: "0123456789abcdef" };
+    }
+    expect(collected.length).toBe(121);
+    expect(new Set(collected).size).toBe(121);
+    expect(new Set(collected)).toEqual(new Set(seededIds));
+  });
+
+  it("55 个专题跨页访问 + 成员重排 0..n-1（repo 层真实 PG）", async () => {
+    // 55 专题 seed（reading_choice）
+    const topicSeeded = await adminPool.query<{ id: string }>(
+      `INSERT INTO l3_study_topics (id, user_id, question_type, title, status, version, create_request_id, create_input_hash)
+       SELECT gen_random_uuid(), $1::uuid, 'reading_choice', '专题 ' || g, 'active', 1, gen_random_uuid(), $2
+         FROM generate_series(1, 55) AS g
+       RETURNING id`,
+      [OWNER_A, "4".repeat(64)],
+    );
+    const topicIds = topicSeeded.rows.map((r) => r.id);
+
+    const collected: string[] = [];
+    let cursor: { updatedAt: string; id: string } | null = null;
+    for (let page = 0; page < 4; page += 1) {
+      const result = await withTransaction(
+        (tx) =>
+          new L3StudyTopicRepository(tx as unknown as PoolClient).list({
+            userId: OWNER_A, questionType: "reading_choice", status: null, cursor, limit: 20,
+          }),
+        { actorId: OWNER_A },
+      );
+      expect(result.total).toBe(55);
+      collected.push(...result.items.map((row) => row.id));
+      if (result.items.length < 20) break;
+      const last = result.items[result.items.length - 1]!;
+      cursor = { updatedAt: last.updated_at, id: last.id };
+    }
+    expect(collected.length).toBe(55);
+    expect(new Set(collected).size).toBe(55);
+
+    // 成员重排：3 个成员按任意顺序重排为 0..n-1
+    const topicId = topicIds[0]!;
+    const noteSeeded = await adminPool.query<{ id: string }>(
+      `INSERT INTO l3_study_notes (id, user_id, title, body_md, status, pinned, version, create_request_id, create_input_hash)
+       SELECT gen_random_uuid(), $1::uuid, '重排笔记 ' || g, '', 'active', false, 1, gen_random_uuid(), $2
+         FROM generate_series(1, 3) AS g
+       RETURNING id`,
+      [OWNER_A, "5".repeat(64)],
+    );
+    const [n1, n2, n3] = noteSeeded.rows.map((r) => r.id) as [string, string, string];
+    await adminPool.query(
+      `INSERT INTO l3_study_note_venues (note_id, user_id, question_type)
+       SELECT unnest($2::uuid[]), $1::uuid, 'reading_choice'`,
+      [OWNER_A, [n1, n2, n3]],
+    );
+    await adminPool.query(
+      `INSERT INTO l3_study_topic_notes (topic_id, note_id, user_id, position)
+       SELECT $1::uuid, unnest($2::uuid[]), $3::uuid, 0`,
+      [topicId, [n1, n2, n3], OWNER_A],
+    );
+    await withTransaction(
+      async (tx) => {
+        const repo = new L3StudyTopicRepository(tx as unknown as PoolClient);
+        await repo.replaceMemberPositions(OWNER_A, topicId, [n3, n1, n2]);
+        const members = await repo.listMembers(OWNER_A, topicId);
+        expect(members.map((m) => m.note_id)).toEqual([n3, n1, n2]);
+        expect(members.map((m) => m.position)).toEqual([0, 1, 2]);
+        expect(await repo.countMembers(OWNER_A, topicId)).toBe(3);
+      },
+      { actorId: OWNER_A },
+    );
   });
 });

@@ -62,9 +62,15 @@
   - 权限快查：`vocab_backup` 对新表 SELECT=t（备份可见性）；`vocab_app` SELECT=t / DELETE=f（无硬删路径）
 
 ### Task 03 · 仓储与并发保存
-- 状态：待执行
-- 提交：—
-- 证据：—
+- 状态：完成（证据见下）
+- 提交：见 §7 提交链（本批第 4 提交）
+- 新增：`src/repositories/l3-study-notes.repository.ts`、`l3-study-topics.repository.ts`、`l3-study-references.repository.ts`、`l3-study-cursor.ts`；接线 `interfaces.ts`/`factory.ts`
+- 证据：
+  - 单测 47/47（`tests/repositories/l3-study-{notes,topic,references,cursor}.test.ts`：SQL 形态/参数顺序/q 转义/keyset/requireTx/unnest 批插/jsonb_to_recordset）
+  - 集成 21/21（新增并发与规模组：同版本并发一胜一冲突且**版本只推进一次**（pg_locks 绑定 c2 PID 观测到达路径，非 sleep）；capture FOR SHARE 期间源删除阻塞、提交后释放；121 笔记跨页无重复无遗漏（total=121 不随翻页变）；55 专题跨页 + 成员重排 0..n-1）
+  - **真实 bug 修复（集成先行抓获）**：`list` 曾把游标参数并入 count 查询（"bind supplies 5 parameters but requires 3"）→ 修复为 count 先行 + 参数快照；单测补精确参数断言防回归
+  - 相对原设计的必要调整：`studyTopics` 接口补 `insertMember`/`deleteMember`/`countMembers`（执行计划接口清单遗漏落入路径；`replaceMemberPositions` 仅覆盖"移动"）——已记录
+- 契约细节：cursor=base64url(JSON{sortKind,lastSort,id,filter})，filter 为过滤指纹（16 hex sha256 截断）；backlinks 默认不含归档（repo 提供 `includeArchived` 开关，HTTP 层 N1 不暴露）
 
 ### Task 04 · 引用解析与删除保护
 - 状态：待执行
