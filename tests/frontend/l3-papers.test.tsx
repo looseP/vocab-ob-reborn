@@ -754,4 +754,73 @@ describe("I3/C 原卷作文入口与返回恢复", () => {
     expect(posts).toHaveLength(0);
     expect((screen.getByPlaceholderText(/在这里写作文/) as HTMLTextAreaElement).disabled).toBe(false);
   });
+
+  it("R1：创建在途再次输入——二次 flush 落库后才导航（空档闭合）", async () => {
+    setupEssayMock();
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+    let resolveCreate!: (value: unknown) => void;
+    const createPending = new Promise((resolve) => { resolveCreate = resolve; });
+    createTaskMock().mockImplementation(() => createPending);
+
+    await renderPage({ deepLinkPaper: PAPER_1 });
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "开始写作" })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /甲/ }));
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    // 等 gate① 完成（createTask 进入挂起）——此后产生的新输入就落在「创建在途」空档里
+    await waitFor(() => expect(createTaskMock()).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(patchCalls()).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /乙/ })); // 创建在途：原卷又产生新输入
+    resolveCreate({ task: { id: TASK_W }, draft: { id: SHEET_W }, created: true });
+
+    // 导航前二次确认：乙必须落库（PATCH#2）之后才导航
+    await waitFor(() => expect(patchCalls()).toHaveLength(2));
+    await waitFor(() => expect(locText()).toContain(`writingTaskId=${TASK_W}`));
+    const bodies = patchCalls().map(([, init]) => JSON.parse((init as RequestInit).body as string));
+    expect(bodies[0].answers[Q_CHOICE]).toMatchObject({ choice: "A" });
+    expect(bodies[1].answers[Q_CHOICE]).toMatchObject({ choice: "B" });
+    expect(createTaskMock()).toHaveBeenCalledTimes(1);
+  });
+
+  it("R1：二次确认失败留页→重试复用任务（不重复创建）后导航", async () => {
+    setupEssayMock();
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
+    let resolveCreate!: (value: unknown) => void;
+    const createPending = new Promise((resolve) => { resolveCreate = resolve; });
+    createTaskMock().mockImplementation(() => createPending);
+
+    await renderPage({ deepLinkPaper: PAPER_1 });
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: "开始写作" })).toBeTruthy());
+
+    // PATCH：第 1 次成功（甲·gate①）、第 2 次失败（gate② 乙拒收）、其后成功
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    const base = apiFetchMock.getMockImplementation()!;
+    let patchCount = 0;
+    apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (String(path).startsWith("/l3/sheets/") && init?.method === "PATCH") {
+        patchCount += 1;
+        if (patchCount === 2) throw new Error("save failed");
+        return { sheet: sheetRow({ answers: {} }) };
+      }
+      return base(path, init);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /甲/ }));
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await waitFor(() => expect(createTaskMock()).toHaveBeenCalledTimes(1)); // gate① 完成、任务挂起
+    fireEvent.click(screen.getByRole("button", { name: /乙/ }));
+    resolveCreate({ task: { id: TASK_W }, draft: { id: SHEET_W }, created: true });
+
+    // gate② 失败：留页保留正文 + 显式提示；不导航
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", expect.stringMatching(/暂不能离开|尚未保存成功/)));
+    expect(locText()).not.toContain("writingTaskId=");
+
+    // 重试：复用已创建任务（createTask 恰一次）→ 确认通过 → 导航
+    fireEvent.click(screen.getByRole("button", { name: /重试进入写作/ }));
+    await waitFor(() => expect(locText()).toContain(`writingTaskId=${TASK_W}`));
+    expect(createTaskMock()).toHaveBeenCalledTimes(1);
+  });
 });

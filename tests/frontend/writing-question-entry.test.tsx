@@ -277,3 +277,41 @@ describe("WritingQuestionEntry · 跳转前屏障（原卷语义）", () => {
     expect(lastNavigation().get("sheet")).toBe(SHEET);
   });
 });
+
+describe("WritingQuestionEntry · R1 创建在途空档闭合", () => {
+  it("屏障→createTask→导航前**二次确认**：创建在途期间的输入也在落库后才导航", async () => {
+    // 语义等价于「慢 createTask 期间用户又改了原卷作答」：第二次屏障必须发生且先于导航。
+    const gates = [true, true];
+    let gateIndex = 0;
+    const beforeAction = vi.fn(async () => gates[Math.min(gateIndex++, gates.length - 1)]);
+    client.createTask.mockResolvedValue({ task: { id: TASK }, draft: { id: SHEET }, created: true });
+    await renderEntry({ beforeAction });
+
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await waitFor(() => expect(navigations.length).toBe(1));
+    expect(beforeAction).toHaveBeenCalledTimes(2); // 创建前 + 导航前
+    expect(client.createTask).toHaveBeenCalledTimes(1);
+    expect(lastNavigation().get("writingTaskId")).toBe(TASK);
+  });
+
+  it("二次确认失败：留页不导航、任务已创建不重复创建；重试复用同任务直航", async () => {
+    const gates = [true, false, true];
+    let gateIndex = 0;
+    const beforeAction = vi.fn(async () => gates[Math.min(gateIndex++, gates.length - 1)]);
+    client.createTask.mockResolvedValue({ task: { id: TASK }, draft: { id: SHEET }, created: true });
+    await renderEntry({ beforeAction });
+
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await flushAsync();
+    expect(client.createTask).toHaveBeenCalledTimes(1);
+    expect(navigations).toHaveLength(0); // 留页保留正文
+
+    // 重试：不重复创建，仅重跑确认后直航（复用已创建任务）
+    fireEvent.click(screen.getByRole("button", { name: /重试进入写作/ }));
+    await waitFor(() => expect(navigations.length).toBe(1));
+    expect(client.createTask).toHaveBeenCalledTimes(1);
+    expect(lastNavigation().get("writingTaskId")).toBe(TASK);
+    expect(lastNavigation().get("sheet")).toBe(SHEET);
+    expect(beforeAction).toHaveBeenCalledTimes(3);
+  });
+});

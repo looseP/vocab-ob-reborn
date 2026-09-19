@@ -73,6 +73,8 @@ export function WritingQuestionEntry({
   const requestIdRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const actionInFlightRef = useRef(false);
+  /** R1：已创建但尚未导航的任务（二次确认失败时保留；重试只重跑确认、不重复创建）。 */
+  const pendingTaskRef = useRef<{ taskId: string; sheetId: string | null } | null>(null);
 
   const goTask = (task: WritingQuestionTaskSummary) => {
     const sheetId = task.draftSheetId ?? task.latestSubmittedSheetId ?? null;
@@ -100,20 +102,33 @@ export function WritingQuestionEntry({
     inFlightRef.current = true;
     setCreateState("creating");
     try {
-      // 屏障先行：保存未确认（失败/冲突/未知）→ 留页，且**不创建任何任务**。
+      // R1：创建在途期间原卷可能又产生新输入——导航前必须**再次确认**（空档闭合）。
+      // 任务已创建（含上一轮二次确认失败的场景）则复用，不重复创建、不重复前置确认。
+      let pending = pendingTaskRef.current;
+      if (!pending) {
+        // 屏障①：保存未确认（失败/冲突/未知）→ 留页，且**不创建任何任务**。
+        if (beforeAction && !(await beforeAction())) {
+          inFlightRef.current = false;
+          setCreateState("idle");
+          return;
+        }
+        requestIdRef.current ??= crypto.randomUUID();
+        const result = await writingClient.createTask({
+          requestId: requestIdRef.current,
+          kind,
+          direction,
+          questionId,
+        });
+        pending = { taskId: result.task.id, sheetId: result.draft?.id ?? null };
+        pendingTaskRef.current = pending;
+      }
+      // 屏障②：确认失败 → 留页保留正文；任务留在 pending，重试只重跑确认、不重复创建。
       if (beforeAction && !(await beforeAction())) {
         inFlightRef.current = false;
-        setCreateState("idle");
+        setCreateState("error");
         return;
       }
-      requestIdRef.current ??= crypto.randomUUID();
-      const result = await writingClient.createTask({
-        requestId: requestIdRef.current,
-        kind,
-        direction,
-        questionId,
-      });
-      onNavigate(buildWritingUrl({ taskId: result.task.id, sheetId: result.draft?.id ?? null, origin }));
+      onNavigate(buildWritingUrl({ taskId: pending.taskId, sheetId: pending.sheetId, origin }));
     } catch {
       inFlightRef.current = false;
       setCreateState("error");
