@@ -98,7 +98,9 @@
 - 范围外观察（未改动）：`l3-writing-task.service.ts`、`upgrade-work-order.service.ts` 存在同型「唯一冲突后于同一事务内重读」疑似模式——不属 F1–F5 范围，建议后续批次评估。
 
 ### 6.4 推送与 PR
-- 推送与 #126 更新：见 §9（完成后回填）。
+- 推送：`git push origin HEAD:refs/heads/study-notes-n1-backend`（快进普通推送，**非强推、未推 main**；`git ls-remote` 核验远端 head 与本地一致）。
+- PR #126：保持 **draft / OPEN**，base=`integration/l3-reliability-writing` 不变；说明已更新（F1–F5 摘要、验证证据、真实 CI 口径；`gh pr edit --body-file`）。
+- CI（真实口径）：本批功能提交（`955aae4`）的 `Writing E2E` 自动运行并 **pass**（run `35453408260`，2m0s）；台账提交后 head 前移并触发同名 workflow，最终 head 的检查状态以 PR checks 页面为准。`ci.yml`（Engineering Gate + Browser E2E）因 base≠main 在本 PR 上**未触发**——待 #125 合并并 retarget 后的新 head 运行（后续授权任务）；不得转述为三项必需 CI 已绿。
 
 ## 7. 未覆盖项与限制（实时更新）
 
