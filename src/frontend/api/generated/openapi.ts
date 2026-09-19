@@ -21897,10 +21897,12 @@ export interface operations {
         parameters: {
             query?: {
                 direction?: "通用" | "考研" | "雅思";
+                fileKey?: string;
                 limit?: number;
                 offset?: number;
                 q?: string;
                 questionType?: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                sourceId?: string;
             };
             header?: never;
             path?: never;

@@ -986,18 +986,21 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
   const [resolved, setResolved] = useState<{
     paper: ExamPaper;
     fileVenue?: { sourceId: string; questionType: QuestionType };
-    /** 作文入口方向（file 型查文件列表；paper 型取卷方向；未知值统一归「通用」）。 */
-    direction: "通用" | "考研" | "雅思";
     retakePath: string;
     backPath: string;
   } | null>(null);
   const [error, setError] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  /** R3：作文入口方向——精确读面（sourceId 过滤）取得；读失败 ≠ 权威无值，不冒充「通用」。 */
+  const [direction, setDirection] = useState<"通用" | "考研" | "雅思">("通用");
+  const [directionState, setDirectionState] = useState<"loading" | "ready" | "error">("loading");
+  const [directionNonce, setDirectionNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setError(false);
     setResolved(null);
+    setDirectionState("loading");
     (async () => {
       try {
         const { sheet } = await fetchSheet(sheetId);
@@ -1008,17 +1011,9 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
           const body = await apiFetch<PracticeFileDetail>(`/l3/practice-files/detail?${params}`);
           if (cancelled) return;
           if (!body.source) throw new Error("来源缺失");
-          let direction: "通用" | "考研" | "雅思" = "通用";
-          try {
-            const page = await apiFetch<{ items: PracticeFile[] }>("/l3/practice-files?limit=100");
-            direction = toWritingDirection(page.items.find((item) => item.question_type === questionType
-              && item.source_id === sheet.source_id)?.direction);
-          } catch { /* 方向查询失败降级「通用」；不阻塞回看 */ }
-          if (cancelled) return;
           setResolved({
             paper: buildFileVenuePaper(body, sheet.source_id, questionType, body.source.title),
             fileVenue: { sourceId: sheet.source_id, questionType },
-            direction,
             retakePath: `/l3?venue=${encodeURIComponent(questionType)}&file=${encodeURIComponent(sheet.source_id)}`,
             backPath: `/l3?venue=${encodeURIComponent(questionType)}`,
           });
@@ -1029,7 +1024,6 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
           if (cancelled) return;
           setResolved({
             paper: detail,
-            direction: toWritingDirection(detail.direction),
             retakePath: `/l3?paper=${encodeURIComponent(sheet.paper_id)}`,
             backPath: "/l3",
           });
@@ -1042,6 +1036,37 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
     })();
     return () => { cancelled = true; };
   }, [sheetId, retryNonce]);
+
+  // R3：方向解析——file 型经**精确读面**（sourceId 过滤 + limit=1；不依赖前 100 条列表）；
+  // 权威 null → 按契约「通用」；读失败 → error（入口显示重试、不创建任务；回看原卷不受影响）。
+  useEffect(() => {
+    if (!resolved) return;
+    if (!resolved.fileVenue) {
+      setDirection(toWritingDirection(resolved.paper.direction));
+      setDirectionState("ready");
+      return;
+    }
+    let cancelled = false;
+    setDirectionState("loading");
+    (async () => {
+      try {
+        const params = new URLSearchParams({
+          questionType: resolved.fileVenue!.questionType,
+          sourceId: resolved.fileVenue!.sourceId,
+          limit: "1",
+        });
+        const page = await apiFetch<{ items: PracticeFile[] }>(`/l3/practice-files?${params.toString()}`);
+        if (cancelled) return;
+        const item = page.items?.[0];
+        if (!item) throw new Error("file meta missing"); // 读面无该文件：不冒充「通用」
+        setDirection(toWritingDirection(item.direction));
+        setDirectionState("ready");
+      } catch {
+        if (!cancelled) setDirectionState("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [resolved, directionNonce]);
 
   if (error) {
     return (
@@ -1058,7 +1083,12 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
       paper={resolved.paper}
       {...(resolved.fileVenue ? { fileVenue: resolved.fileVenue } : {})}
       replaySheetId={sheetId}
-      writingEntry={{ direction: resolved.direction, onNavigate: (url) => navigate(url) }}
+      writingEntry={{
+        direction,
+        onNavigate: (url) => navigate(url),
+        directionState,
+        onRetryDirection: () => setDirectionNonce((n) => n + 1),
+      }}
       onBack={() => navigate(resolved.backPath)}
       onRetake={() => navigate(resolved.retakePath)}
     />

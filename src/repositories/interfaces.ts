@@ -1486,6 +1486,9 @@ export interface L3PracticeFileLookup {
   questionType?: string | null;
   direction?: string | null;
   q?: string | null;
+  /** R3：精确来源过滤（q.source_id / q.file_key 精确匹配；精确读面用）。 */
+  sourceId?: string | null;
+  fileKey?: string | null;
   limit: number;
   offset: number;
 }

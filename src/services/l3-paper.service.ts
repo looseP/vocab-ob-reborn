@@ -241,6 +241,8 @@ export class L3PaperService {
       questionType: input.questionType ?? null,
       direction: input.direction ?? null,
       q: input.q ?? null,
+      sourceId: input.sourceId ?? null,
+      fileKey: input.fileKey ?? null,
       limit: input.limit,
       offset: input.offset,
     }));

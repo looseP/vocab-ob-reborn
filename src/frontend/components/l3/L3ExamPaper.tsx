@@ -1020,8 +1020,14 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
   onRetake?: () => void;
   /** I3/C：返回原题定位——滚动并高亮该题（来源链接 ?question= 锚点；零创建）。 */
   focusQuestionId?: string | null;
-  /** I3/C：作文专项入口（小/大作文）——宿主注入方向与导航；缺省不渲染入口、零请求。 */
-  writingEntry?: { direction: WritingDirection; onNavigate: (url: string) => void };
+  /** I3/C：作文专项入口（小/大作文）——宿主注入方向与导航；缺省不渲染入口、零请求。
+   *  R3：directionState 非 ready 时入口只显示加载/重试（读失败不冒充「通用」、不创建任务）。 */
+  writingEntry?: {
+    direction: WritingDirection;
+    onNavigate: (url: string) => void;
+    directionState?: "loading" | "ready" | "error";
+    onRetryDirection?: () => void;
+  };
 }) {
   const { addToast } = useToast();
   const [revealAll, setRevealAll] = useState(false);
@@ -1193,8 +1199,10 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
   }, [paper.id, paper.sections]);
 
   // I3/C：原卷作文入口——题组级**一次**批量摘要（仅小/大作文题；重试与重进均重新读取）。
+  // R3：方向未 ready（加载/读取失败）时**不请求摘要**（不得拿「通用」冒充方向）。
   const writingEnabled = Boolean(writingEntry);
   const writingDirection: WritingDirection = writingEntry?.direction ?? "通用";
+  const entryDirectionState = writingEntry?.directionState ?? "ready";
   const essayQuestionIds = useMemo(
     () => [...new Set(paper.sections
       .filter((section) => section.questionType === "short_essay" || section.questionType === "long_essay")
@@ -1204,6 +1212,10 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
   useEffect(() => {
     if (!writingEnabled || essayQuestionIds.length === 0) {
       setWritingSummaries({ status: "ready", byQuestion: new Map() });
+      return;
+    }
+    if (entryDirectionState !== "ready") {
+      setWritingSummaries((prev) => ({ status: "loading", byQuestion: prev.byQuestion }));
       return;
     }
     let cancelled = false;
@@ -1219,7 +1231,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
       })
       .catch(() => { if (!cancelled) setWritingSummaries({ status: "error", byQuestion: new Map() }); });
     return () => { cancelled = true; };
-  }, [writingEnabled, writingDirection, essayQuestionIds, writingSummariesNonce]);
+  }, [writingEnabled, entryDirectionState, writingDirection, essayQuestionIds, writingSummariesNonce]);
 
   /** 返回原题定位：卷面渲染后滚动到目标题（无滚动容器/jsdom 时静默）。 */
   useEffect(() => {
@@ -1922,8 +1934,13 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
                               direction={writingEntry.direction}
                               origin={makeWritingOrigin(q.id, section.questionType === "long_essay" ? "long_essay" : "short_essay")}
                               tasks={writingSummaries.byQuestion.get(q.id) ?? []}
-                              state={writingSummaries.status}
-                              onRetry={() => setWritingSummariesNonce((n) => n + 1)}
+                              state={entryDirectionState === "error"
+                                ? "error"
+                                : entryDirectionState === "loading" ? "loading" : writingSummaries.status}
+                              onRetry={() => {
+                                if (entryDirectionState !== "ready") writingEntry.onRetryDirection?.();
+                                else setWritingSummariesNonce((n) => n + 1);
+                              }}
                               onNavigate={writingEntry.onNavigate}
                               beforeAction={jumpBarrier}
                             />

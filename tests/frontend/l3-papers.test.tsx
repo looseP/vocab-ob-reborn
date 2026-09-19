@@ -873,3 +873,100 @@ describe("I3/C 原卷作文入口与返回恢复", () => {
     expect(createTaskMock()).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── R3：回看方向精确读取（不依赖前 100 条列表；读失败不得冒充「通用」） ──
+
+describe("R3 回看方向精确读取", () => {
+  const SRC2 = "00000000-0000-4000-8000-0000000000d2";
+  const Q_E2 = "00000000-0000-4000-8000-0000000001d1";
+  const REPLAY_SHEET = "00000000-0000-4000-8000-0000000008e1";
+  const TASK_R3 = "00000000-0000-4000-8000-0000000007e1";
+
+  const replaySheet = () => ({
+    id: REPLAY_SHEET, user_id: "00000000-0000-4000-8000-000000000001", scope: "file",
+    scope_key: `file:${SRC2}:short_essay`, source_id: SRC2, question_type: "short_essay", paper_id: null,
+    status: "sealed", answers: {}, seal_mode: "full", summary: null, sealed_at: "2026-09-19T02:00:00Z",
+    created_at: "2026-09-19T00:00:00Z", updated_at: "2026-09-19T02:00:00Z",
+  });
+  const replayDetail = () => ({
+    question_type: "short_essay",
+    source: { id: SRC2, title: "精确来源文件" },
+    source_content: null, file_key: null,
+    questions: [{ id: Q_E2, ordinal: 0, stem: "47. R3 小作文题干", options: [], answer: { sample: "范文" }, explanation: null, evidence: [] }],
+  });
+  const hundredWithoutTarget = () => Array.from({ length: 100 }, (_, index) => ({
+    question_type: "short_essay",
+    source_id: `00000000-0000-4000-8000-0000000009${String(index).padStart(2, "0")}`,
+    file_key: null, title: `占位 ${index}`, direction: "通用", question_count: 1, latest_created_at: "2026-09-19T00:00:00Z",
+  }));
+
+  function setupReplayMock(options: {
+    metaFailFirst?: boolean;
+    metaDirection?: "通用" | "考研" | "雅思" | null;
+  } = {}) {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    let metaFailuresLeft = options.metaFailFirst ? 1 : 0;
+    apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (path.includes("/grading")) return { results: [] };
+      if (path === `/l3/sheets/${REPLAY_SHEET}` && method === "GET") return { sheet: replaySheet(), attempts: [] };
+      if (path.startsWith("/l3/practice-files/detail?")) return replayDetail();
+      if (path.startsWith("/l3/practice-files?")) {
+        if (path.includes(`sourceId=${SRC2}`)) {
+          // 精确读面（R3 目标路径）：失败注入仅作用于它
+          if (metaFailuresLeft > 0) { metaFailuresLeft -= 1; throw new Error("meta read failed"); }
+          return {
+            items: [{
+              question_type: "short_essay", source_id: SRC2, file_key: null, title: "精确来源文件",
+              direction: options.metaDirection ?? null, question_count: 1, latest_created_at: "2026-09-19T00:00:00Z",
+            }],
+          };
+        }
+        // 旧式全量列表（R3 明确不再依赖；此处 100 条不含目标，模拟「第 101 个文件」）
+        return { items: hundredWithoutTarget() };
+      }
+      if (path.startsWith("/l3/attempts")) return { items: [] };
+      if (path.startsWith("/l3/question-annotations")) return { items: [] };
+      if (path === "/l3/annotation-tags") return { entry: [], option: [] };
+      throw new Error(`unmocked: ${path}`);
+    });
+    return apiFetchMock;
+  }
+  const summariesMock = () => writingClient.questionSummaries as ReturnType<typeof vi.fn>;
+  const createTaskMock = () => writingClient.createTask as ReturnType<typeof vi.fn>;
+
+  it("#101：方向经精确读面（sourceId 过滤 + limit=1）取得——旧列表不含目标也不冒充通用", async () => {
+    const apiFetchMock = setupReplayMock({ metaDirection: "考研" });
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_E2, tasks: [] }] });
+    createTaskMock().mockResolvedValue({ task: { id: TASK_R3 }, draft: null, created: true });
+
+    await renderPage({ deepLinkSheet: REPLAY_SHEET });
+    await waitFor(() => expect(screen.getByRole("button", { name: "开始写作" })).toBeTruthy());
+
+    const calls = apiFetchMock.mock.calls.map(([p]) => String(p));
+    const precise = calls.filter((p) => p.startsWith("/l3/practice-files?") && p.includes(`sourceId=${SRC2}`));
+    expect(precise.length).toBeGreaterThanOrEqual(1);
+    expect(precise[0]).toContain("limit=1");
+
+    fireEvent.click(screen.getByRole("button", { name: "开始写作" }));
+    await waitFor(() => expect(locText()).toContain(`writingTaskId=${TASK_R3}`));
+    expect(createTaskMock()).toHaveBeenCalledWith(expect.objectContaining({ direction: "考研" }));
+  });
+
+  it("方向读面失败：回看原卷可见、入口重试、不请求摘要不创建；重试后恢复（权威 null→通用）", async () => {
+    setupReplayMock({ metaFailFirst: true, metaDirection: null });
+    summariesMock().mockResolvedValue({ items: [{ questionId: Q_E2, tasks: [] }] });
+    createTaskMock().mockResolvedValue({ task: { id: TASK_R3 }, draft: null, created: true });
+
+    await renderPage({ deepLinkSheet: REPLAY_SHEET });
+    await waitFor(() => expect(screen.getByText("题纸", { exact: true })).toBeTruthy()); // 回看原卷可见
+    await waitFor(() => expect(screen.getByText(/进度读取失败/)).toBeTruthy());
+    expect(summariesMock()).not.toHaveBeenCalled(); // 读失败不得冒充方向去请求摘要
+    expect(createTaskMock()).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /重试/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "开始写作" })).toBeTruthy());
+    await waitFor(() => expect(summariesMock()).toHaveBeenCalledTimes(1));
+    expect(summariesMock().mock.calls[0]![1]).toEqual({ kind: "whole", direction: "通用" });
+  });
+});

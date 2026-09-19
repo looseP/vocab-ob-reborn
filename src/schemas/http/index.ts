@@ -335,11 +335,14 @@ export const l3PaperCreateSchema = z.object({
   sections: z.array(l3PaperSectionSchema).min(1).max(20),
 });
 
-/** GET /l3/practice-files：题型空间的文件管理列表（派生视图）。 */
+/** GET /l3/practice-files：题型空间的文件管理列表（派生视图）。
+ *  R3：sourceId/fileKey 为**精确来源过滤**（精确读面——不依赖 limit 扫描取单文件方向/标题）。 */
 export const l3PracticeFileListQuerySchema = z.object({
   questionType: l3QuestionTypeSchema.optional(),
   direction: directionSchema.optional(),
   q: z.string().trim().max(200).optional(),
+  sourceId: z.string().uuid().optional(),
+  fileKey: z.string().trim().min(1).max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
