@@ -7,7 +7,7 @@
  */
 
 import type { PoolClient } from "pg";
-import { ConflictError, NotFoundError, ValidationError } from "../errors";
+import { ConflictError, NotFoundError, ValidationError, isForeignKeyViolation } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import type { IRepositories, IL3ContextRepository, IL3PaperRepository } from "../repositories/interfaces";
@@ -379,8 +379,48 @@ export class L3PaperService {
           blockers: { papers: blockers },
         });
       }
-      await repos.l3Paper.deleteQuestion(input.userId, input.questionId);
+
+      // 学习笔记引用保护（N1）：与 capture 取同一把 advisory 锁（l3_question:<id>）
+      // 串行化并发窗口，再查可读 blocker（capture 先提交 → 本查询可见；本删除先执行
+      // → capture 的引用插入 FK 失败 23503）。FK RESTRICT 于 catch 分支兜底转 409。
+      await repos.studyReferences.lockTargets(input.userId, [{ kind: "question", id: input.questionId }]);
+      const noteBlockers = await repos.studyReferences.getQuestionDeleteBlockers(input.userId, input.questionId);
+      if (noteBlockers.length > 0) {
+        throw questionStudyNoteConflict(input.questionId, noteBlockers);
+      }
+
+      try {
+        await repos.l3Paper.deleteQuestion(input.userId, input.questionId);
+      } catch (error) {
+        if (isForeignKeyViolation(error)) {
+          const latestNoteBlockers = await repos.studyReferences.getQuestionDeleteBlockers(input.userId, input.questionId);
+          if (latestNoteBlockers.length > 0) {
+            throw questionStudyNoteConflict(input.questionId, latestNoteBlockers);
+          }
+        }
+        throw error;
+      }
       return { deleted: true };
     });
   }
+}
+
+/** 学习笔记引用阻止 question 删除（N1）：可读笔记标题/引用数 + 处理入口提示。 */
+function questionStudyNoteConflict(
+  questionId: string,
+  noteBlockers: readonly { note_id: string; title: string; status: string; reference_count: number }[],
+): ConflictError {
+  return new ConflictError("Cannot delete L3 question referenced by study notes", undefined, {
+    entityType: "question",
+    id: questionId,
+    blockers: {
+      studyNotes: noteBlockers.map((note) => ({
+        id: note.note_id,
+        title: note.title,
+        status: note.status,
+        referenceCount: note.reference_count,
+      })),
+    },
+    resolution: "remove_references_or_convert_to_plain_excerpt",
+  });
 }

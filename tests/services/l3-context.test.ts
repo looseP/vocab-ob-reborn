@@ -241,17 +241,26 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
   };
 }
 
+/** 学习笔记引用向的窄 fake（N1）：默认无 blocker。 */
+function makeStudyRefRepo(overrides: Record<string, unknown> = {}) {
+  return {
+    getSourceDeleteBlockers: vi.fn(async () => []),
+    ...overrides,
+  };
+}
+
 function makeService(
   repository: IL3ContextRepository,
   txRepository = repository,
   txRunner: typeof import("@/db/transaction").withTransaction = async (callback) => callback({} as never),
   words?: IWordRepository,
+  studyRefRepo: Record<string, unknown> = makeStudyRefRepo(),
 ): L3ContextService {
   return new L3ContextService(
     repository,
     words,
     txRunner,
-    () => ({ l3Context: txRepository } as unknown as IRepositories),
+    () => ({ l3Context: txRepository, studyReferences: studyRefRepo } as unknown as IRepositories),
   );
 }
 
@@ -679,6 +688,26 @@ describe("L3ContextService", () => {
     expect(repo.findContextById).not.toHaveBeenCalledWith("u1", "ctx-1");
     expect(repo.getContextDeleteBlockers).toHaveBeenCalledWith("u1", "ctx-1");
     expect(repo.deleteContext).toHaveBeenCalledWith("u1", "ctx-1");
+  });
+
+  it("blocks source deletion when referenced by learning notes (N1，含归档笔记)", async () => {
+    repo = makeRepo();
+    const studyRefRepo = makeStudyRefRepo({
+      getSourceDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-1", title: "受保护笔记", status: "archived", reference_count: 2 },
+      ]),
+    });
+    service = makeService(repo, repo, undefined, undefined, studyRefRepo);
+
+    await expect(service.deleteSource({ userId: "u1", sourceId: "src-1" })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: {
+        blockers: {
+          studyNotes: [{ id: "note-1", title: "受保护笔记", status: "archived", referenceCount: 2 }],
+        },
+      },
+    });
+    expect(repo.deleteSource).not.toHaveBeenCalled();
   });
 
   it("maps missing or out-of-scope source and context parent deletes to NotFoundError", async () => {

@@ -7,7 +7,7 @@
 
 import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
-import { ConflictError, NotFoundError, ValidationError } from "../errors";
+import { ConflictError, NotFoundError, ValidationError, isForeignKeyViolation } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import type {
@@ -199,6 +199,26 @@ function deleteConflict(
     entityType,
     id,
     blockers,
+  });
+}
+
+/** 学习笔记引用阻止 source 删除（N1）：可读笔记标题/引用数 + 处理入口提示。 */
+function sourceStudyNoteConflict(
+  sourceId: string,
+  noteBlockers: readonly { note_id: string; title: string; status: string; reference_count: number }[],
+): ConflictError {
+  return new ConflictError("Cannot delete L3 source referenced by study notes", undefined, {
+    entityType: "source",
+    id: sourceId,
+    blockers: {
+      studyNotes: noteBlockers.map((note) => ({
+        id: note.note_id,
+        title: note.title,
+        status: note.status,
+        referenceCount: note.reference_count,
+      })),
+    },
+    resolution: "remove_references_or_convert_to_plain_excerpt",
   });
 }
 
@@ -628,11 +648,34 @@ export class L3ContextService {
         throw deleteConflict("source", input.sourceId, blockers);
       }
 
-      const deleted = await repos.l3Context.deleteSource(input.userId, input.sourceId);
+      // 学习笔记引用保护（N1）：被引用的 source 先移除引用或显式转普通摘录才能删。
+      // 不计子题引用（question→source 为 CASCADE，其下题目引用经 question FK RESTRICT
+      // 在同一次 DELETE 内截断——预检查与 FK 兜底双保险，见 catch 分支）。
+      const noteBlockers = await repos.studyReferences.getSourceDeleteBlockers(input.userId, input.sourceId);
+      if (noteBlockers.length > 0) {
+        throw sourceStudyNoteConflict(input.sourceId, noteBlockers);
+      }
+
+      let deleted: Awaited<ReturnType<typeof repos.l3Context.deleteSource>>;
+      try {
+        deleted = await repos.l3Context.deleteSource(input.userId, input.sourceId);
+      } catch (error) {
+        // 并发兜底：capture 在本事务预检查之后插入引用（持 FOR SHARE）→ DELETE 触发
+        // FK RESTRICT（23503）；重查可读 blocker 转 409，不把数据库异常当 500。
+        if (isForeignKeyViolation(error)) {
+          const latestNoteBlockers = await repos.studyReferences.getSourceDeleteBlockers(input.userId, input.sourceId);
+          throw sourceStudyNoteConflict(input.sourceId, latestNoteBlockers);
+        }
+        throw error;
+      }
       if (!deleted) {
         const current = await repos.l3Context.findSourceById(input.userId, input.sourceId);
         if (!current) {
           throw new NotFoundError("L3Source", input.sourceId);
+        }
+        const latestNoteBlockers = await repos.studyReferences.getSourceDeleteBlockers(input.userId, input.sourceId);
+        if (latestNoteBlockers.length > 0) {
+          throw sourceStudyNoteConflict(input.sourceId, latestNoteBlockers);
         }
         const latestBlockers = await repos.l3Context.getSourceDeleteBlockers(input.userId, input.sourceId);
         throw deleteConflict("source", input.sourceId, latestBlockers);

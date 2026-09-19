@@ -168,6 +168,14 @@ export interface ReferencePreview {
   liveTitle: string | null;
 }
 
+/** POST /reference-preview 的只读预览（不持久化；目标无效直接 404/422）。 */
+export interface ReferenceTargetPreview {
+  target: ReferenceTarget;
+  /** 将生成的展示快照（与 capture 同口径；供 UI 预展示）。 */
+  displaySnapshot: ReferenceDisplaySnapshot;
+  liveTitle: string | null;
+}
+
 export interface StudyNoteSummary {
   id: string;
   title: string;

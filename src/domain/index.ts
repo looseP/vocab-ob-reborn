@@ -1269,6 +1269,7 @@ export type {
   SaveNoteInput,
   ReferenceDisplaySnapshot,
   ReferencePreview,
+  ReferenceTargetPreview,
   StudyNoteStatus,
   StudyNoteSummary,
   StudyNoteDto,

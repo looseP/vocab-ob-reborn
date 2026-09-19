@@ -73,9 +73,16 @@
 - 契约细节：cursor=base64url(JSON{sortKind,lastSort,id,filter})，filter 为过滤指纹（16 hex sha256 截断）；backlinks 默认不含归档（repo 提供 `includeArchived` 开关，HTTP 层 N1 不暴露）
 
 ### Task 04 · 引用解析与删除保护
-- 状态：待执行
-- 提交：—
-- 证据：—
+- 状态：完成（证据见下）
+- 提交：见 §7 提交链（本批第 5 提交）
+- 新增：`src/services/l3-study-reference.service.ts`（capture/resolve/preview；服务端快照与 hash 生成）
+- 修改：`src/errors/index.ts`（`isForeignKeyViolation` 导出）、`l3-context.service.ts`（source 删除：study notes blocker + FK 兜底）、`l3-paper.service.ts`（question 删除：同款 advisory 锁 + blocker + FK 兜底）
+- 证据：
+  - 单测 12/12（五 kind 快照/hash 口径、quote 严格校验"只接受服务端原文"、他人目标 404、选项不存在 422、resolve current/changed/unavailable、preview 只读且零 lock/replace）
+  - 既有面回归适配：`l3-context.test.ts`/`l3-paper.test.ts` 各 +1 守卫用例（study notes blocker 409 + 锁先行断言）→ 三文件 79/79
+  - 集成 25/25（新增 4 用例：source/question 删除 409 可读 blocker（标题/引用数/归档笔记也算）且清引用后按原合同可删；**并发交错 A**：capture 持 FOR SHARE 插入未提交时删除阻塞（pg_locks 绑定 PID 观测），提交后删除触发 FK RESTRICT 23503，无悬空引用；**并发交错 B**：删除先行时引用插入 FK 阻止（23503），无悬空）
+  - 相对原设计的调整：本轮不做 `L3Bookshelf.tsx` 前端提示（本批不含前端；blocker 已进 409 `meta.blockers.studyNotes` + `resolution` 提示位，UI 接入属前端批次）——见 §8
+  - 边界说明：question 删除以 `pg_advisory_xact_lock(l3_question:<id>)` 与 capture 串行（l3_questions 无 UPDATE 授权不能行锁——实测 permission denied，沿 l3-writing 先例）；source 删除靠既有 FOR UPDATE 行锁 + FK 兜底，无需额外 advisory
 
 ### Task 05 · 笔记与专题服务
 - 状态：待执行

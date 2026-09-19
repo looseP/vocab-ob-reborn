@@ -92,6 +92,17 @@ function makeContextRepo(overrides: Partial<IL3ContextRepository> = {}): IL3Cont
   } as unknown as IL3ContextRepository;
 }
 
+/** 学习笔记引用向的窄 fake（N1）：默认无 blocker、lockTargets 空实现。 */
+function makeStudyRefRepo(overrides: Record<string, unknown> = {}) {
+  return {
+    lockTargets: vi.fn(async () => undefined),
+    getQuestionDeleteBlockers: vi.fn(async () => []),
+    ...overrides,
+  };
+}
+
+let studyRefRepo: Record<string, unknown>;
+
 function makeService(
   paperRepo: IL3PaperRepository,
   contextRepo: IL3ContextRepository,
@@ -100,7 +111,7 @@ function makeService(
     paperRepo,
     contextRepo,
     async (callback) => callback({} as never),
-    () => ({ l3Paper: paperRepo, l3Context: contextRepo } as unknown as IRepositories),
+    () => ({ l3Paper: paperRepo, l3Context: contextRepo, studyReferences: studyRefRepo } as unknown as IRepositories),
   );
 }
 
@@ -111,6 +122,7 @@ let service: L3PaperService;
 beforeEach(() => {
   paperRepo = makePaperRepo();
   contextRepo = makeContextRepo();
+  studyRefRepo = makeStudyRefRepo();
   service = makeService(paperRepo, contextRepo);
 });
 
@@ -303,6 +315,28 @@ describe("deleteQuestion", () => {
       httpStatus: 409,
       meta: { blockers: { writingTasks: [{ id: "wt-1", title: "我的写作任务" }] } },
     });
+    expect(repo.deleteQuestion).not.toHaveBeenCalled();
+  });
+
+  it("blocks deletion with a study-note blocker when referenced by a learning note (N1)，并先取 capture 同款 advisory 锁", async () => {
+    const qid = "00000000-0000-4000-8000-000000000401";
+    const repo = makePaperRepo({ findQuestionById: vi.fn(async () => questionRow({ id: qid })) });
+    studyRefRepo = makeStudyRefRepo({
+      getQuestionDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-1", title: "我的学习笔记", status: "active", reference_count: 2 },
+      ]),
+    });
+    await expect(makeService(repo, contextRepo).deleteQuestion({
+      userId: USER_ID, questionId: qid,
+    })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: {
+        blockers: {
+          studyNotes: [{ id: "note-1", title: "我的学习笔记", status: "active", referenceCount: 2 }],
+        },
+      },
+    });
+    expect(studyRefRepo.lockTargets).toHaveBeenCalledWith(USER_ID, [{ kind: "question", id: qid }]);
     expect(repo.deleteQuestion).not.toHaveBeenCalled();
   });
 

@@ -13,8 +13,11 @@
 import { randomUUID } from "node:crypto";
 import { Client, Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ConflictError } from "@/errors";
 import { resetPool } from "@/db/connection";
 import { withTransaction } from "@/db/transaction";
+import { L3ContextService } from "@/services/l3-context.service";
+import { L3PaperService } from "@/services/l3-paper.service";
 import { L3StudyNoteRepository } from "@/repositories/l3-study-notes.repository";
 import { L3StudyTopicRepository } from "@/repositories/l3-study-topics.repository";
 import { L3StudyReferenceRepository } from "@/repositories/l3-study-references.repository";
@@ -566,5 +569,140 @@ describe("学习笔记存储 · 并发窗口（Task 03）", () => {
       },
       { actorId: OWNER_A },
     );
+  });
+});
+
+// ── Task 04：引用保护与删除并发（service 预检查 + FK RESTRICT 兜底）─────────
+
+describe("引用保护与删除（Task 04）", () => {
+  it("被学习笔记引用的 source：删除 409（可读 blocker），清引用后按原合同可删", async () => {
+    const src = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "protected source text" });
+    const noteId = await rawInsertNote(OWNER_A);
+    await adminPool.query(`UPDATE l3_study_notes SET title = '受保护笔记' WHERE id = $1`, [noteId]);
+    await rawInsertReference({ noteId, userId: OWNER_A, kind: "source", sourceId: src });
+
+    // 真实 service（txRunner/factory 默认走 appUrl 受限连接）
+    const service = new L3ContextService({} as never);
+    const error = await service.deleteSource({ userId: OWNER_A, sourceId: src }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictError);
+    const meta = (error as ConflictError).meta as {
+      blockers?: { studyNotes?: { id: string; title: string; referenceCount: number }[] };
+    };
+    expect(meta.blockers?.studyNotes).toEqual([
+      expect.objectContaining({ id: noteId, title: "受保护笔记", referenceCount: 1 }),
+    ]);
+
+    // 移除引用（或转普通摘录）后，删除回到原合同
+    await adminPool.query(`DELETE FROM l3_study_note_references WHERE note_id = $1`, [noteId]);
+    const result = await service.deleteSource({ userId: OWNER_A, sourceId: src });
+    expect(result.deleted).toEqual({ entityType: "source", id: src });
+  });
+
+  it("被学习笔记引用的 question：删除 409，清引用后可删", async () => {
+    const src = randomUUID();
+    const q = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "q source" });
+    await seedStudyQuestion(adminPool, { id: q, userId: OWNER_A, sourceId: src, stem: "protected stem" });
+    const noteId = await rawInsertNote(OWNER_A);
+    await rawInsertReference({
+      noteId, userId: OWNER_A, kind: "stem_quote", questionId: q,
+      start: 0, end: 9, quote: "protected",
+    });
+
+    const service = new L3PaperService({} as never, {} as never);
+    const error = await service.deleteQuestion({ userId: OWNER_A, questionId: q }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictError);
+    const meta = (error as ConflictError).meta as {
+      blockers?: { studyNotes?: { id: string; title: string }[] };
+    };
+    expect(meta.blockers?.studyNotes?.[0]).toMatchObject({ id: noteId });
+
+    await adminPool.query(`DELETE FROM l3_study_note_references WHERE note_id = $1`, [noteId]);
+    await expect(service.deleteQuestion({ userId: OWNER_A, questionId: q })).resolves.toEqual({ deleted: true });
+  });
+
+  it("并发交错 A：capture 持锁插入（未提交）时删除被 FK RESTRICT 阻止（无悬空引用）", async () => {
+    const src = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "concurrent A" });
+    const c1 = await connectAs(OWNER_A);
+    const c2 = await connectAs(OWNER_A);
+    try {
+      // c1（capture/保存事务）：FOR SHARE 锁目标 → 插入引用（未提交）
+      const refRepo = new L3StudyReferenceRepository(c1 as unknown as PoolClient);
+      await refRepo.lockTargets(OWNER_A, [{ kind: "source", id: src }]);
+      const noteId = randomUUID();
+      await c1.query(
+        `INSERT INTO l3_study_notes (id, user_id, title, body_md, status, pinned, version, create_request_id, create_input_hash)
+         VALUES ($1, $2, '', '', 'active', false, 1, $3, $4)`,
+        [noteId, OWNER_A, randomUUID(), "7".repeat(64)],
+      );
+      await c1.query(
+        `INSERT INTO l3_study_note_references (id, note_id, user_id, kind, source_id, field_hash, display_snapshot)
+         VALUES ($1, $2, $3, 'source', $4, $5, '{}'::jsonb)`,
+        [randomUUID(), noteId, OWNER_A, src, "8".repeat(64)],
+      );
+
+      // c2：删除 source —— 阻塞于 c1 的 FOR SHARE
+      const c2Pid = await backendPid(c2);
+      const deleteOutcome = c2
+        .query(`DELETE FROM l3_sources WHERE id = $1`, [src])
+        .then(() => ({ ok: true as const, code: null as string | null }))
+        .catch((e: unknown) => ({ ok: false as const, code: (e as { code?: string }).code ?? null }));
+      expect(await waitForLockWait(c2Pid)).toBe(true);
+
+      // c1 提交（引用落库）→ c2 的删除被执行 → FK RESTRICT 拒绝
+      await c1.query("COMMIT");
+      const outcome = await deleteOutcome;
+      expect(outcome.ok).toBe(false);
+      expect(outcome.code).toBe("23503");
+
+      // 无悬空：source 仍在、引用完好
+      const sourceStill = await adminPool.query(`SELECT id FROM l3_sources WHERE id = $1`, [src]);
+      expect(sourceStill.rowCount).toBe(1);
+      const refs = await adminPool.query(`SELECT id FROM l3_study_note_references WHERE source_id = $1`, [src]);
+      expect(refs.rowCount).toBe(1);
+    } finally {
+      await c2.query("ROLLBACK").catch(() => undefined);
+      await c1.end().catch(() => undefined);
+      await c2.end().catch(() => undefined);
+    }
+  });
+
+  it("并发交错 B：删除先行（未提交）时引用插入被 FK 阻止（不能产生悬空引用）", async () => {
+    const src = randomUUID();
+    await seedStudySource(adminPool, { id: src, userId: OWNER_A, contentText: "concurrent B" });
+    const noteId = await rawInsertNote(OWNER_A);
+    const c1 = await connectAs(OWNER_A);
+    const c2 = await connectAs(OWNER_A);
+    try {
+      // c1：DELETE source（排他锁，未提交）
+      await c1.query(`DELETE FROM l3_sources WHERE id = $1`, [src]);
+
+      // c2：插入引用 —— FK 检查等待 c1 的排他锁
+      const c2Pid = await backendPid(c2);
+      const insertOutcome = c2
+        .query(
+          `INSERT INTO l3_study_note_references (id, note_id, user_id, kind, source_id, field_hash, display_snapshot)
+           VALUES ($1, $2, $3, 'source', $4, $5, '{}'::jsonb)`,
+          [randomUUID(), noteId, OWNER_A, src, "9".repeat(64)],
+        )
+        .then(() => ({ ok: true as const, code: null as string | null }))
+        .catch((e: unknown) => ({ ok: false as const, code: (e as { code?: string }).code ?? null }));
+      expect(await waitForLockWait(c2Pid)).toBe(true);
+
+      // c1 提交（source 消失）→ c2 的 FK 校验失败
+      await c1.query("COMMIT");
+      const outcome = await insertOutcome;
+      expect(outcome.ok).toBe(false);
+      expect(outcome.code).toBe("23503");
+
+      const refs = await adminPool.query(`SELECT id FROM l3_study_note_references WHERE source_id = $1`, [src]);
+      expect(refs.rowCount).toBe(0);
+    } finally {
+      await c2.query("ROLLBACK").catch(() => undefined);
+      await c1.end().catch(() => undefined);
+      await c2.end().catch(() => undefined);
+    }
   });
 });

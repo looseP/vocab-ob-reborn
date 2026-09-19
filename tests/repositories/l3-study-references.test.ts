@@ -57,7 +57,7 @@ describe("replaceForNote", () => {
     querySpy.mockImplementation(async () => ({ rows: [] }));
     await repo.replaceForNote(USER, NOTE, [
       {
-        id: REF, note_id: NOTE, user_id: USER, kind: "source_quote",
+        id: REF, kind: "source_quote",
         source_id: SOURCE, question_id: null, option_key: null,
         start_offset: 0, end_offset: 3, quote_snapshot: "The",
         field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },

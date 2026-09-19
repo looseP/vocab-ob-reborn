@@ -28,6 +28,12 @@ export interface NewL3StudyNoteReference {
   display_snapshot: Json;
 }
 
+/**
+ * replaceForNote 的载荷行：note_id/user_id 由方法参数注入（防载荷伪造归属），
+ * 行对象不携带归属列。
+ */
+export type StudyReferenceInsertRow = Omit<NewL3StudyNoteReference, "note_id" | "user_id">;
+
 export interface L3StudyNoteReferenceRow {
   id: string;
   note_id: string;
@@ -118,7 +124,7 @@ export interface IL3StudyReferenceRepository {
   replaceForNote(
     userId: string,
     noteId: string,
-    rows: readonly NewL3StudyNoteReference[],
+    rows: readonly StudyReferenceInsertRow[],
   ): Promise<void>;
   searchTargets(input: SearchTargetsInput): Promise<{ items: StudySourceTargetRow[] | StudyQuestionTargetRow[]; total: number }>;
   /** 批量加载目标字段（白名单：quote 校验与快照组装所需，不含答案/解析/evidence）。 */
@@ -149,7 +155,7 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
   async replaceForNote(
     userId: string,
     noteId: string,
-    rows: readonly NewL3StudyNoteReference[],
+    rows: readonly StudyReferenceInsertRow[],
   ): Promise<void> {
     this.requireTx();
     await this.query(
