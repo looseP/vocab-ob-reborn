@@ -461,14 +461,76 @@ describe("I4 工作区来源闭环（origin）", () => {
 
   const ORIGIN_NO_SHEET_PARAM = encodeWritingOrigin({ ...ORIGIN, sheetId: null })!;
 
-  it("来源条显示「专项写作 · 来自小作文」；返回原题生成精确 URL（venue/file/question/resumeSheet）", async () => {
+  // ── R2：来源关系验证读面 mock（file detail / paper detail / sheet by id）──
+  const PAPER_UUID = "00000000-0000-4000-8000-00000000d101";
+  const PAPER_ORIGIN: WritingOrigin = {
+    v: 1, kind: "paper", questionId: QUESTION, questionType: "short_essay",
+    paperId: PAPER_UUID, sheetId: null,
+  };
+  const PAPER_ORIGIN_PARAM = encodeWritingOrigin(PAPER_ORIGIN)!;
+  const fileSheetOk = () => ({
+    id: SHEET_SEALED, user_id: "u", scope: "file", scope_key: "file:writing-short-1:short_essay",
+    source_id: null, question_type: "short_essay", paper_id: null, status: "draft",
+    answers: {}, seal_mode: null, summary: null, sealed_at: null, created_at: "2026-09-19T00:00:00Z", updated_at: "2026-09-19T00:00:00Z",
+  });
+  function mockOriginReads(options: {
+    fileTitle?: string;
+    detailQuestions?: string[];
+    failFile?: boolean;
+    paperTitle?: string;
+    paperQuestionIds?: string[];
+    failPaper?: boolean;
+    sheetFixtures?: Record<string, unknown | null>;
+  } = {}) {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/l3/practice-files/detail?")) {
+        if (options.failFile) throw new Error("file read failed");
+        return {
+          question_type: "short_essay",
+          source: options.fileTitle ? { id: "src-1", title: options.fileTitle } : null,
+          source_content: null,
+          file_key: options.fileTitle ? null : "writing-short-1",
+          questions: (options.detailQuestions ?? [QUESTION]).map((id) => ({ id })),
+        };
+      }
+      if (path.startsWith("/l3/papers/")) {
+        if (options.failPaper) throw new Error("paper read failed");
+        return {
+          id: PAPER_UUID, title: options.paperTitle ?? "合成试卷 A", direction: "考研", metadata: {},
+          sections: [{
+            key: "s1", title: "写作", questionType: "short_essay", sourceId: null, fileKey: null,
+            questionIds: options.paperQuestionIds ?? [QUESTION], missing: false,
+            source_title: null, source_content: null, questions: [],
+          }],
+        };
+      }
+      if (path.startsWith("/l3/sheets/")) {
+        const id = path.split("/").pop()!;
+        const hit = options.sheetFixtures?.[id];
+        if (hit === undefined) throw new Error("sheet not found");
+        if (hit === null) throw new Error("sheet read failed");
+        return { sheet: hit, attempts: [] };
+      }
+      throw new Error(`unmocked: ${path}`);
+    });
+    return apiFetchMock;
+  }
+
+  function mockWorkspaceBasics(): void {
     client.getTask!.mockResolvedValue({ task: taskDto({ kind: "whole" }), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
     client.getSheet!.mockResolvedValue(sheetDetail());
     client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
     client.listTasks!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+  }
+
+  it("来源条显示「专项写作 · 来自小作文『标题』」；返回原题生成精确 URL（venue/file/question/resumeSheet）", async () => {
+    mockWorkspaceBasics();
+    mockOriginReads({ fileTitle: "合成来源 · 小作文", sheetFixtures: { [SHEET_SEALED]: fileSheetOk() } });
 
     await renderAt(urlWithOrigin(SHEET), createElement(L3WritingPage));
     await screen.findByRole("textbox", { name: "作文正文" });
+    await waitFor(() => expect(screen.getByTestId("writing-origin-bar").textContent).toContain("「合成来源 · 小作文」"));
     expect(screen.getByTestId("writing-origin-bar").textContent).toContain("专项写作 · 来自小作文");
 
     fireEvent.click(screen.getByRole("button", { name: "返回原题" }));
@@ -483,23 +545,19 @@ describe("I4 工作区来源闭环（origin）", () => {
   });
 
   it("来源条无原卷 sheet 时不带 resumeSheet（fileKey 型常态）", async () => {
-    client.getTask!.mockResolvedValue({ task: taskDto({ kind: "whole" }), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
-    client.getSheet!.mockResolvedValue(sheetDetail());
-    client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
-    client.listTasks!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    mockWorkspaceBasics();
+    mockOriginReads({ fileTitle: "合成来源 · 小作文" });
 
     await renderAt(`/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}&origin=${ORIGIN_NO_SHEET_PARAM}`, createElement(L3WritingPage));
     await screen.findByRole("textbox", { name: "作文正文" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "返回原题" })).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "返回原题" }));
     await waitFor(() => expect(locText()).toContain(`question=${QUESTION}`));
     expect(locText()).not.toContain("resumeSheet=");
   });
 
   it("次级「全部作文」：回到作文列表（丢弃来源与任务参数）", async () => {
-    client.getTask!.mockResolvedValue({ task: taskDto({ kind: "whole" }), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
-    client.getSheet!.mockResolvedValue(sheetDetail());
-    client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
-    client.listTasks!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    mockWorkspaceBasics();
 
     await renderAt(urlWithOrigin(SHEET), createElement(L3WritingPage));
     await screen.findByRole("textbox", { name: "作文正文" });
@@ -556,6 +614,7 @@ describe("I4 工作区来源闭环（origin）", () => {
     client.getTask!.mockResolvedValue({ task: taskDto({ kind: "whole" }), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
     client.getSheet!.mockResolvedValue(sheetDetail());
     client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    mockOriginReads({ fileTitle: "合成来源 · 小作文", sheetFixtures: { [SHEET_SEALED]: fileSheetOk() } });
 
     const url = urlWithOrigin(SHEET);
     await renderAt(url, createElement(L3WritingPage));
@@ -566,22 +625,99 @@ describe("I4 工作区来源闭环（origin）", () => {
     document.body.innerHTML = "";
     await renderAt(url, createElement(L3WritingPage));
     await screen.findByRole("textbox", { name: "作文正文" });
-    expect(screen.getByTestId("writing-origin-bar").textContent).toContain("返回原题");
+    await waitFor(() => expect(screen.getByTestId("writing-origin-bar").textContent).toContain("返回原题"));
     expect(client.createTask).not.toHaveBeenCalled();
     expect(client.createDraft).not.toHaveBeenCalled();
     expect(client.saveDraft).not.toHaveBeenCalled();
   });
 
   it("失效 origin：仅降级来源功能（提示、无返回按钮），稿件与编辑不受影响", async () => {
-    client.getTask!.mockResolvedValue({ task: taskDto({ kind: "whole" }), draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null });
-    client.getSheet!.mockResolvedValue(sheetDetail());
-    client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    mockWorkspaceBasics();
 
     await renderAt(`/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}&origin=not-base64%21`, createElement(L3WritingPage));
     const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
     expect(screen.getByTestId("writing-origin-bar").textContent).toContain("来源信息无效");
     expect(screen.queryByRole("button", { name: "返回原题" })).toBeNull();
     expect(textarea.value).toBe("草稿正文");
+  });
+
+  it("R2：paper origin 显示试卷标题；返回原题生成 paper/question 链接", async () => {
+    mockWorkspaceBasics();
+    mockOriginReads({ paperTitle: "合成试卷 A" });
+
+    await renderAt(
+      `/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}&origin=${PAPER_ORIGIN_PARAM}`,
+      createElement(L3WritingPage),
+    );
+    await screen.findByRole("textbox", { name: "作文正文" });
+    await waitFor(() => expect(screen.getByTestId("writing-origin-bar").textContent).toContain("「合成试卷 A」"));
+    fireEvent.click(screen.getByRole("button", { name: "返回原题" }));
+    await waitFor(() => {
+      expect(locText()).toContain(`paper=${PAPER_UUID}`);
+      expect(locText()).toContain(`question=${QUESTION}`);
+    });
+  });
+
+  it("R2：task.questionId ≠ origin.questionId → 降级（无返回原题；稿件不受影响）", async () => {
+    client.getTask!.mockResolvedValue({
+      task: taskDto({ kind: "whole", questionId: "00000000-0000-4000-8000-0000000000ff" }),
+      draftSummary: sheetDto(), revisionCount: 0, latestSubmittedSheetId: null,
+    });
+    client.getSheet!.mockResolvedValue(sheetDetail());
+    client.listRevisions!.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+
+    await renderAt(urlWithOrigin(SHEET), createElement(L3WritingPage));
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(screen.getByTestId("writing-origin-bar").textContent).toContain("来源不可用"));
+    expect(screen.queryByRole("button", { name: "返回原题" })).toBeNull();
+    expect(textarea.value).toBe("草稿正文");
+    expect(textarea.disabled).toBe(false);
+  });
+
+  it("R2：question 不属于文件 → 降级；不属于试卷 → 降级", async () => {
+    mockWorkspaceBasics();
+    mockOriginReads({ fileTitle: "合成来源 · 小作文", detailQuestions: ["00000000-0000-4000-8000-0000000000ee"] });
+    await renderAt(urlWithOrigin(SHEET), createElement(L3WritingPage));
+    await screen.findByRole("textbox", { name: "作文正文" });
+    await waitFor(() => expect(screen.getByTestId("writing-origin-bar").textContent).toContain("来源不可用"));
+
+    act(() => { for (const root of mountedRoots.splice(0)) root.unmount(); });
+    document.body.innerHTML = "";
+    mockWorkspaceBasics();
+    mockOriginReads({ paperTitle: "合成试卷 A", paperQuestionIds: ["00000000-0000-4000-8000-0000000000ee"] });
+    await renderAt(
+      `/l3?section=writing&writingTaskId=${TASK}&sheet=${SHEET}&origin=${PAPER_ORIGIN_PARAM}`,
+      createElement(L3WritingPage),
+    );
+    await screen.findByRole("textbox", { name: "作文正文" });
+    await waitFor(() => expect(screen.getByTestId("writing-origin-bar").textContent).toContain("来源不可用"));
+  });
+
+  it("R2：resumeSheet 与来源不匹配 → 返回 URL 不带 resumeSheet（返回仍可用、不禁用）", async () => {
+    mockWorkspaceBasics();
+    mockOriginReads({
+      fileTitle: "合成来源 · 小作文",
+      sheetFixtures: { [SHEET_SEALED]: { ...fileSheetOk(), scope: "paper", paper_id: PAPER_UUID, question_type: null } },
+    });
+
+    await renderAt(urlWithOrigin(SHEET), createElement(L3WritingPage));
+    await screen.findByRole("textbox", { name: "作文正文" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "返回原题" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "返回原题" }));
+    await waitFor(() => expect(locText()).toContain(`question=${QUESTION}`));
+    expect(locText()).toContain("file=writing-short-1");
+    expect(locText()).not.toContain("resumeSheet=");
+  });
+
+  it("R2：来源读面失败 → 降级但稿件完好（可编辑，正文保留）", async () => {
+    mockWorkspaceBasics();
+    mockOriginReads({ failFile: true });
+
+    await renderAt(urlWithOrigin(SHEET), createElement(L3WritingPage));
+    const textarea = await screen.findByRole("textbox", { name: "作文正文" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(screen.getByTestId("writing-origin-bar").textContent).toContain("来源不可用"));
+    expect(textarea.value).toBe("草稿正文");
+    expect(textarea.disabled).toBe(false);
   });
 });
 

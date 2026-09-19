@@ -12,6 +12,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import type { WritingSheetDetail, WritingTaskDetail } from "@/domain";
 import { writingClient } from "@/frontend/api/writingClient";
+import { apiFetch } from "@/frontend/api/client";
+import { fetchSheet } from "@/frontend/api/l3Client";
 import { Button } from "@/frontend/components/ui/Button";
 import { WritingComparison } from "@/frontend/components/writing/WritingComparison";
 import { WritingEditor } from "@/frontend/components/writing/WritingEditor";
@@ -62,6 +64,75 @@ export function L3WritingPage() {
   const compareTo = location.compareTo;
   const origin = location.origin;
   const originInvalid = location.originInvalid;
+
+  type OriginCheck =
+    | { status: "none" }
+    | { status: "checking" }
+    | { status: "ok"; title: string; sheetValid: boolean }
+    | { status: "degraded" };
+  const [originCheck, setOriginCheck] = useState<OriginCheck>(origin ? { status: "checking" } : { status: "none" });
+
+  /**
+   * R2：来源关系验证——task.questionId = origin.questionId；question 属于指定文件/试卷；
+   * resumeSheet 的 scope/paper|source/题型与来源一致（**仅一致才随返回携带**）。
+   * 关系不符或读面失败 → 仅降级来源功能（隐藏返回原题），稿件与编辑不受影响。
+   */
+  useEffect(() => {
+    if (!origin) { setOriginCheck({ status: "none" }); return; }
+    if (tasks.status !== "ready") { setOriginCheck({ status: "checking" }); return; }
+    let cancelled = false;
+    setOriginCheck({ status: "checking" });
+    (async () => {
+      try {
+        if (tasks.data.task.questionId !== origin.questionId) {
+          if (!cancelled) setOriginCheck({ status: "degraded" });
+          return;
+        }
+        let title: string;
+        if (origin.kind === "file") {
+          const params = new URLSearchParams({ questionType: origin.questionType });
+          if (origin.sourceId) params.set("sourceId", origin.sourceId);
+          else if (origin.fileKey) params.set("fileKey", origin.fileKey);
+          const body = await apiFetch<{
+            source: { title: string } | null;
+            file_key: string | null;
+            questions: Array<{ id: string }>;
+          }>(`/l3/practice-files/detail?${params.toString()}`);
+          if (!Array.isArray(body.questions) || !body.questions.some((q) => q.id === origin.questionId)) {
+            if (!cancelled) setOriginCheck({ status: "degraded" });
+            return;
+          }
+          title = body.source?.title ?? body.file_key ?? "";
+        } else {
+          const paper = await apiFetch<{
+            title: string;
+            sections: Array<{ questionIds: string[] }>;
+          }>(`/l3/papers/${encodeURIComponent(origin.paperId)}`);
+          if (!paper.sections?.some((section) => section.questionIds?.includes(origin.questionId))) {
+            if (!cancelled) setOriginCheck({ status: "degraded" });
+            return;
+          }
+          title = paper.title;
+        }
+        let sheetValid = false;
+        if (origin.sheetId) {
+          try {
+            const { sheet: row } = await fetchSheet(origin.sheetId);
+            sheetValid = origin.kind === "file"
+              ? row.scope === "file" && row.source_id === origin.sourceId && row.question_type === origin.questionType
+              : row.scope === "paper" && row.paper_id === origin.paperId;
+            if (row.status === "discarded") sheetValid = false;
+          } catch {
+            sheetValid = false; // 读失败 ≠ 权威无值：一律不带 resumeSheet（返回侧还会再校验）
+          }
+        }
+        if (!cancelled) setOriginCheck({ status: "ok", title, sheetValid });
+      } catch {
+        if (!cancelled) setOriginCheck({ status: "degraded" });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [origin, tasks]);
 
   const loadTask = useCallback(async (id: string) => {
     setTasks({ status: "loading" });
@@ -130,19 +201,35 @@ export function L3WritingPage() {
   const goList = () => guardedNavigate("/l3?section=writing");
 
   // I3/I4：来源条——专项写作身份 + 精确返回原题（依 origin 生成站内 URL；禁任意 returnUrl）。
-  // 失效 origin 仅降级来源功能（提示一句），不影响稿件与编辑状态。
+  // R2：来源经关系验证（task.questionId / 所属文件|试卷 / resumeSheet 一致性）；不符或读取
+  // 失败仅降级来源功能（隐藏返回），稿件与编辑不受影响；标题显示真实来源名称。
   const originBanner = origin ? (
-    <div
-      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
-      data-testid="writing-origin-bar"
-    >
-      <span className="text-xs text-[var(--color-ink-soft)]">
-        专项写作 · 来自{WRITING_ORIGIN_TYPE_LABELS[origin.questionType]}
-      </span>
-      <Button size="sm" variant="secondary" onClick={() => guardedNavigate(buildWritingOriginReturnUrl(origin))}>
-        返回原题
-      </Button>
-    </div>
+    originCheck.status === "degraded" ? (
+      <p className="text-xs text-[var(--color-ink-soft)]" data-testid="writing-origin-bar">
+        来源不可用，已降级（不影响本稿写作与稿件）。
+      </p>
+    ) : (
+      <div
+        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
+        data-testid="writing-origin-bar"
+      >
+        <span className="text-xs text-[var(--color-ink-soft)]">
+          专项写作 · 来自{WRITING_ORIGIN_TYPE_LABELS[origin.questionType]}
+          {originCheck.status === "ok" && originCheck.title ? `「${originCheck.title}」` : ""}
+        </span>
+        {originCheck.status === "ok" ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => guardedNavigate(buildWritingOriginReturnUrl(
+              originCheck.sheetValid ? origin : { ...origin, sheetId: null },
+            ))}
+          >
+            返回原题
+          </Button>
+        ) : null}
+      </div>
+    )
   ) : originInvalid ? (
     <p className="text-xs text-[var(--color-ink-soft)]" data-testid="writing-origin-bar">
       来源信息无效，已忽略（不影响写作与稿件）。

@@ -784,6 +784,55 @@ describe("I3/C 原卷作文入口与返回恢复", () => {
     expect(createTaskMock()).toHaveBeenCalledTimes(1);
   });
 
+  it("R2：resume 同 owner 错误组合（来源不符/题型不符/卷不符）→ 拒绝恢复、停留列表、零新增", async () => {
+    const otherUuid = "00000000-0000-4000-8000-0000000009f9";
+    const resumePosts = () => (apiFetch as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([p, i]) => String(p) === "/l3/sheets" && (i as RequestInit | undefined)?.method === "POST");
+
+    // ① file：来源不符（同 owner，sheet.source_id 对不上文件）
+    setupEssayMock({
+      files: [essayFile()],
+      detail: essaySourceDetail(),
+      fetchSheets: {
+        [RESUME_DRAFT]: sheetRow({ id: RESUME_DRAFT, scope: "file", scope_key: "x", source_id: otherUuid, question_type: "short_essay", paper_id: null }),
+      },
+    });
+    await renderPage({ deepLinkVenue: "short_essay", deepLinkFile: SOURCE_ID, deepLinkQuestion: Q_ESSAY, deepLinkResumeSheet: RESUME_DRAFT });
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", expect.stringMatching(/不可用|不匹配/)));
+    expect(screen.queryByText("专项练习（不计入本次试卷作答）")).toBeNull();
+    expect(resumePosts()).toHaveLength(0);
+    act(() => { for (const root of mountedRoots.splice(0)) root.unmount(); });
+    document.body.innerHTML = "";
+    addToastMock.mockReset();
+
+    // ② file：题型不符（sheet 记为大作文）
+    setupEssayMock({
+      files: [essayFile()],
+      detail: essaySourceDetail(),
+      fetchSheets: {
+        [RESUME_DRAFT]: sheetRow({ id: RESUME_DRAFT, scope: "file", scope_key: "x", source_id: SOURCE_ID, question_type: "long_essay", paper_id: null }),
+      },
+    });
+    await renderPage({ deepLinkVenue: "short_essay", deepLinkFile: SOURCE_ID, deepLinkQuestion: Q_ESSAY, deepLinkResumeSheet: RESUME_DRAFT });
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", expect.stringMatching(/不可用|不匹配/)));
+    expect(screen.queryByText("专项练习（不计入本次试卷作答）")).toBeNull();
+    expect(resumePosts()).toHaveLength(0);
+    act(() => { for (const root of mountedRoots.splice(0)) root.unmount(); });
+    document.body.innerHTML = "";
+    addToastMock.mockReset();
+
+    // ③ paper：卷不符（sheet.paper_id 对不上深链试卷）
+    setupEssayMock({
+      fetchSheets: {
+        [RESUME_SEALED]: sheetRow({ id: RESUME_SEALED, paper_id: otherUuid, scope_key: `paper:${otherUuid}`, status: "sealed", sealed_at: "2026-09-19T01:00:00Z" }),
+      },
+    });
+    await renderPage({ deepLinkPaper: PAPER_1, deepLinkQuestion: Q_ESSAY, deepLinkResumeSheet: RESUME_SEALED });
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("error", expect.stringMatching(/不可用|不匹配/)));
+    expect(screen.queryByText("专项练习（不计入本次试卷作答）")).toBeNull();
+    expect(resumePosts()).toHaveLength(0);
+  });
+
   it("R1：二次确认失败留页→重试复用任务（不重复创建）后导航", async () => {
     setupEssayMock();
     summariesMock().mockResolvedValue({ items: [{ questionId: Q_ESSAY, tasks: [] }] });
