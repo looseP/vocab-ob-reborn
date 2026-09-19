@@ -18,7 +18,7 @@
 import type { PoolClient } from "pg";
 import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
-import { ConflictError, NotFoundError, ValidationError, isForeignKeyViolation, isUniqueViolation } from "../errors";
+import { ConflictError, NotFoundError, ValidationError, isForeignKeyViolation } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { L3_QUESTION_TYPES, type L3QuestionType } from "../domain/l3-question-types";
 import {
@@ -246,31 +246,27 @@ export class L3StudyNoteService {
         return { item: await this.buildNoteDto(userId, existing, repos), created: false };
       }
 
-      let row: L3StudyNoteRow;
-      try {
-        row = await repos.studyNotes.create({
-          id: randomUUID(),
-          user_id: userId,
-          title: "",
-          body_md: "",
-          status: "active",
-          pinned: false,
-          version: 1,
-          create_request_id: requestId,
-          create_input_hash: createHash,
-        });
-      } catch (error) {
-        if (isUniqueViolation(error)) {
-          // 并发竞态回读（l3-import 同款范式）：同 requestId 已被并行创建。
-          const raced = await repos.studyNotes.findByCreateRequestId(userId, requestId);
-          if (raced && raced.create_input_hash === createHash) {
-            return { item: await this.buildNoteDto(userId, raced, repos), created: false };
-          }
-          throw new ConflictError("Idempotency conflict: same requestId with different input", undefined, {
-            entityType: "studyNote",
-          });
+      // F1：ON CONFLICT (user_id, create_request_id) DO NOTHING —— 冲突不中止事务；
+      // 冲突后的回读必须是**新 SQL 语句**（保持 READ COMMITTED，见设计 §6）。
+      const row = await repos.studyNotes.createIfAbsent({
+        id: randomUUID(),
+        user_id: userId,
+        title: "",
+        body_md: "",
+        status: "active",
+        pinned: false,
+        version: 1,
+        create_request_id: requestId,
+        create_input_hash: createHash,
+      });
+      if (row === null) {
+        const raced = await repos.studyNotes.findByCreateRequestId(userId, requestId);
+        if (raced && raced.create_input_hash === createHash) {
+          return { item: await this.buildNoteDto(userId, raced, repos), created: false };
         }
-        throw error;
+        throw new ConflictError("Idempotency conflict: same requestId with different input", undefined, {
+          entityType: "studyNote",
+        });
       }
       await repos.studyNotes.replaceVenues(userId, row.id, [input.venue]);
       return { item: await this.buildNoteDto(userId, row, repos), created: true };
@@ -465,29 +461,25 @@ export class L3StudyNoteService {
         }
         return { item: await this.buildTopicDto(userId, existing, repos), created: false };
       }
-      let row: L3StudyTopicRow;
-      try {
-        row = await repos.studyTopics.create({
-          id: randomUUID(),
-          user_id: userId,
-          question_type: input.venue,
-          title: input.title,
-          status: "active",
-          version: 1,
-          create_request_id: requestId,
-          create_input_hash: createHash,
-        });
-      } catch (error) {
-        if (isUniqueViolation(error)) {
-          const raced = await repos.studyTopics.findByCreateRequestId(userId, requestId);
-          if (raced && raced.create_input_hash === createHash) {
-            return { item: await this.buildTopicDto(userId, raced, repos), created: false };
-          }
-          throw new ConflictError("Idempotency conflict: same requestId with different input", undefined, {
-            entityType: "studyTopic",
-          });
+      // F1：同 create —— ON CONFLICT DO NOTHING；冲突后新语句回读比对输入 hash。
+      const row = await repos.studyTopics.createIfAbsent({
+        id: randomUUID(),
+        user_id: userId,
+        question_type: input.venue,
+        title: input.title,
+        status: "active",
+        version: 1,
+        create_request_id: requestId,
+        create_input_hash: createHash,
+      });
+      if (row === null) {
+        const raced = await repos.studyTopics.findByCreateRequestId(userId, requestId);
+        if (raced && raced.create_input_hash === createHash) {
+          return { item: await this.buildTopicDto(userId, raced, repos), created: false };
         }
-        throw error;
+        throw new ConflictError("Idempotency conflict: same requestId with different input", undefined, {
+          entityType: "studyTopic",
+        });
       }
       return { item: await this.buildTopicDto(userId, row, repos), created: true };
     });

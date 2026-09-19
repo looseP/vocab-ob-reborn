@@ -90,8 +90,8 @@ export class L3PaperService {
     private readonly repositoryFactory: RepositoryFactory = createRepositories,
   ) {}
 
-  private withActor<T>(userId: string, callback: (repos: IRepositories) => Promise<T>): Promise<T> {
-    return this.txRunner(async (tx) => callback(this.repositoryFactory(tx)), { actorId: userId });
+  private withActor<T>(userId: string, callback: (repos: IRepositories, tx: PoolClient) => Promise<T>): Promise<T> {
+    return this.txRunner(async (tx) => callback(this.repositoryFactory(tx), tx), { actorId: userId });
   }
 
   /** 散题录入：归入某个做题文件（source 题组或 fileKey 题组）。 */
@@ -349,7 +349,7 @@ export class L3PaperService {
 
   /** 删题护栏③：active 卷面引用中的题 / 被作文任务引用的题不可删，409 带引用清单（中文化在 HTTP 层）。 */
   async deleteQuestion(input: DeleteL3QuestionInput): Promise<{ deleted: true }> {
-    return this.withActor(input.userId, async (repos) => {
+    return this.withActor(input.userId, async (repos, tx) => {
       const question = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
       if (!question) throw new NotFoundError("L3Question", input.questionId);
 
@@ -389,17 +389,24 @@ export class L3PaperService {
         throw questionStudyNoteConflict(input.questionId, noteBlockers);
       }
 
+      // F1：FK 兜底必须先恢复失败事务（保存点）再重查 blocker——aborted 事务内查询
+      // 会得到 25P02，丢失约定的 409 合同。保存点名称为静态常量、不从请求插值。
+      await tx.query("SAVEPOINT study_note_delete");
       try {
         await repos.l3Paper.deleteQuestion(input.userId, input.questionId);
       } catch (error) {
         if (isForeignKeyViolation(error)) {
+          await tx.query("ROLLBACK TO SAVEPOINT study_note_delete");
+          await tx.query("RELEASE SAVEPOINT study_note_delete");
           const latestNoteBlockers = await repos.studyReferences.getQuestionDeleteBlockers(input.userId, input.questionId);
           if (latestNoteBlockers.length > 0) {
             throw questionStudyNoteConflict(input.questionId, latestNoteBlockers);
           }
+          // 无匹配 blocker：保持原错误语义（不伪造笔记阻塞）
         }
         throw error;
       }
+      await tx.query("RELEASE SAVEPOINT study_note_delete");
       return { deleted: true };
     });
   }

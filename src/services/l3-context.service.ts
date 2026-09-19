@@ -649,25 +649,34 @@ export class L3ContextService {
       }
 
       // 学习笔记引用保护（N1）：被引用的 source 先移除引用或显式转普通摘录才能删。
-      // 不计子题引用（question→source 为 CASCADE，其下题目引用经 question FK RESTRICT
-      // 在同一次 DELETE 内截断——预检查与 FK 兜底双保险，见 catch 分支）。
+      // 预检查**计入子题引用**（getSourceDeleteBlockers 同时匹配 source 直引与其下
+      // 题目的引用），并与 FK RESTRICT 兜底构成双保险（见 catch 分支）。
       const noteBlockers = await repos.studyReferences.getSourceDeleteBlockers(input.userId, input.sourceId);
       if (noteBlockers.length > 0) {
         throw sourceStudyNoteConflict(input.sourceId, noteBlockers);
       }
 
       let deleted: Awaited<ReturnType<typeof repos.l3Context.deleteSource>>;
+      // F1：DELETE 的 FK 兜底必须先恢复失败事务（保存点）再重查 blocker——在 aborted
+      // 事务里查询会得到 25P02，丢失约定的 409 合同。保存点名称为静态常量、不从请求插值。
+      await tx.query("SAVEPOINT study_note_delete");
       try {
         deleted = await repos.l3Context.deleteSource(input.userId, input.sourceId);
       } catch (error) {
-        // 并发兜底：capture 在本事务预检查之后插入引用（持 FOR SHARE）→ DELETE 触发
-        // FK RESTRICT（23503）；重查可读 blocker 转 409，不把数据库异常当 500。
+        // 并发兜底：capture 在本事务预检查之后插入引用 → DELETE 触发 FK RESTRICT
+        // （23503）；回滚到保存点后重查可读 blocker 转 409，不把数据库异常当 500。
         if (isForeignKeyViolation(error)) {
+          await tx.query("ROLLBACK TO SAVEPOINT study_note_delete");
+          await tx.query("RELEASE SAVEPOINT study_note_delete");
           const latestNoteBlockers = await repos.studyReferences.getSourceDeleteBlockers(input.userId, input.sourceId);
-          throw sourceStudyNoteConflict(input.sourceId, latestNoteBlockers);
+          if (latestNoteBlockers.length > 0) {
+            throw sourceStudyNoteConflict(input.sourceId, latestNoteBlockers);
+          }
+          // 无匹配 blocker：保持原错误语义（不伪造笔记阻塞，由既有通用约束处理收口）
         }
         throw error;
       }
+      await tx.query("RELEASE SAVEPOINT study_note_delete");
       if (!deleted) {
         const current = await repos.l3Context.findSourceById(input.userId, input.sourceId);
         if (!current) {

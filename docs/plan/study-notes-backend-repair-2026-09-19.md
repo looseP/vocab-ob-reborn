@@ -23,16 +23,19 @@
 - 红测试：`npx vitest run tests/domain/l3-study-notes.test.ts tests/services/l3-study-notes.test.ts tests/services/l3-study-reference.test.ts tests/repositories/l3-study-references.test.ts tests/http/l3-study-notes.test.ts --coverage.enabled=false` → **16 failed / 123 passed，exit 1**（日志 `D:/tmp/n1r-f5-red.log`；失败均为目标缺陷：大写目标未命中 Map→404、成员误走重复 INSERT、锁键/幂等键未规范、`normalizeStudyUuid` 未导出）
 - 绿测试：同命令 → **139 passed，exit 0**（`D:/tmp/n1r-f5-green.log`）
 - 真库证据：`npx vitest run --config vitest.integration.config.ts tests/l3-study-notes-repair.integration.test.ts`（新库 `vocab_study_notes_repair_accept`）→ **2/2，exit 0**（`D:/tmp/n1r-f5-integration.log`）：大写 UUID preview/capture/keep 同一身份、引用落库规范小写、幂等重试不新建（计数=1）、成员移动只重排不新增（行数=2、顺序 [n2,n1]）
-- 实现提交：（提交后回填）
+- 实现提交：`2fd6b2d05137773ae332ac819cabcbb56ee3ba91`（`fix(notes): normalize UUID identity at study-note boundaries (F5)`，11 文件；提交后 fsck exit 0）
 - 设计决策：规范化落在服务入口 + 仓库锁键（不动 zod schema，避免 OpenAPI 生成物扰动）；HTTP 层以真实 service 接线验证路径/body；不得用于正文/quote/optionKey。
 
 ## 2. F1 · 创建幂等与删除事务恢复（先红后绿）
 
-- 修改（待执行）：`src/repositories/l3-study-notes.repository.ts`、`src/repositories/l3-study-topics.repository.ts`、`src/services/l3-study-notes.service.ts`、`src/services/l3-context.service.ts`、`src/services/l3-paper.service.ts`
-- 红测试：待执行
-- 实现提交：待执行
-- 真库并发/交错证据：待执行
-- 备注：create/createTopic 用 `ON CONFLICT (user_id, create_request_id) DO NOTHING RETURNING *` + 新语句回读；删除 FK 兜底用 SAVEPOINT（ROLLBACK TO / RELEASE）。
+- 修改（已实施）：`src/repositories/l3-study-notes.repository.ts`、`l3-study-topics.repository.ts`（+`createIfAbsent`：`ON CONFLICT (user_id, create_request_id) DO NOTHING RETURNING *`）；`src/services/l3-study-notes.service.ts`（create/createTopic 改走冲突-忽略 + 新语句回读比对输入 hash，创建事务保持 READ COMMITTED）；`src/services/l3-context.service.ts`、`l3-paper.service.ts`（DELETE 前 `SAVEPOINT study_note_delete`；FK 失败先 ROLLBACK TO/RELEASE 再查 blockers；无匹配 blocker 保持原错误语义，不伪造笔记阻塞）
+- 红测试（单元）：`npx vitest run tests/repositories/l3-study-notes.test.ts tests/repositories/l3-study-topic.test.ts tests/services/l3-study-notes.test.ts tests/services/l3-context.test.ts tests/services/l3-paper.test.ts` → **13 failed / 138 passed，exit 1**（`D:/tmp/n1r-f1-red-unit.log`）
+- 红测试（删除路径·临时还原修复捕获后已恢复）：单测 4 failed（`D:/tmp/n1r-f1-red-delete-unit.log`，失败原因均为 `current transaction is aborted`（25P02））；真库 2 failed（`D:/tmp/n1r-f1-red-delete-integration2.log`，两则删除交错均以 25P02 而非 ConflictError 失败）
+- 红测试（真实 PG 首轮）：集成 **5 failed / 5 passed**（`D:/tmp/n1r-f1-red-integration.log`；含多条真实 25P02 证据）
+- 绿测试：单元 **151/151 exit 0**（`D:/tmp/n1r-f1-green-unit.log`）；真库 **10/10 exit 0**（`D:/tmp/n1r-f1-green-integration.log`）；typecheck exit 0
+- 真库交错证据：①来源删除——预检查（未提交引用不可见）后 DELETE 阻塞（transactionid 等待可观测）→ 引用提交 → FK RESTRICT → savepoint 恢复 → **409 含真实 blockers**，S/Q/引用完整；②题目删除 FK 后备（事务级故障测试，与自然串行测试分列记账）；③反向交错——删除先行时引用插入被 FK 阻止（实际错误码 23503），无悬空引用；④advisory 锁键大小写归一后 capture×删除串行（阻塞窗口可观测）。
+- 实现提交：（回填）
+- 备注：预检查注释已按实际查询修正（**计入子题引用**）；「无匹配 blocker 不伪造笔记阻塞」边界双端（context/paper）留证。
 
 ## 3. F2 · 详情一致快照（先红后绿）
 

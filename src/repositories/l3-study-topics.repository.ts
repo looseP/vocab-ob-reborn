@@ -67,6 +67,12 @@ export interface StudyTopicMemberRow {
 
 export interface IL3StudyTopicRepository {
   create(input: NewL3StudyTopic): Promise<L3StudyTopicRow>;
+  /**
+   * 幂等创建（F1）：仅对 (user_id, create_request_id) 执行 ON CONFLICT DO NOTHING。
+   * 冲突时不抛 23505、不中止事务；返回 null 表示键已存在（调用方需以**新语句**
+   * 回读既有行并比对 create_input_hash）。requireTx（与 create 同）。
+   */
+  createIfAbsent(input: NewL3StudyTopic): Promise<L3StudyTopicRow | null>;
   get(userId: string, topicId: string): Promise<L3StudyTopicRow | null>;
   /** 创建幂等回查：同 (user_id, create_request_id)。 */
   findByCreateRequestId(userId: string, requestId: string): Promise<L3StudyTopicRow | null>;
@@ -121,6 +127,20 @@ export class L3StudyTopicRepository extends BaseRepository implements IL3StudyTo
       `SELECT * FROM l3_study_topics
         WHERE id = $1::uuid AND user_id = $2::uuid`,
       [topicId, userId],
+    );
+  }
+
+  async createIfAbsent(input: NewL3StudyTopic): Promise<L3StudyTopicRow | null> {
+    return this.queryOne<L3StudyTopicRow>(
+      `INSERT INTO l3_study_topics
+         (id, user_id, question_type, title, status, version, create_request_id, create_input_hash)
+       VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::uuid, $8)
+       ON CONFLICT (user_id, create_request_id) DO NOTHING
+       RETURNING *`,
+      [
+        input.id, input.user_id, input.question_type, input.title, input.status,
+        input.version, input.create_request_id, input.create_input_hash,
+      ],
     );
   }
 

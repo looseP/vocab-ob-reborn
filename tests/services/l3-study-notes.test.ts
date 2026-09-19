@@ -75,6 +75,7 @@ function fakeRepos(overrides: {
   return {
     studyNotes: {
       create: vi.fn(async (input: Record<string, unknown>) => noteRow({ ...input, id: (input.id as string) ?? NOTE })),
+      createIfAbsent: vi.fn(async (input: Record<string, unknown>) => noteRow({ ...input, id: (input.id as string) ?? NOTE })),
       get: vi.fn(async () => noteRow()),
       findByCreateRequestId: vi.fn(async () => null),
       lock: vi.fn(async () => noteRow()),
@@ -88,6 +89,7 @@ function fakeRepos(overrides: {
     },
     studyTopics: {
       create: vi.fn(async (input: Record<string, unknown>) => topicRow({ ...input, id: (input.id as string) ?? TOPIC })),
+      createIfAbsent: vi.fn(async (input: Record<string, unknown>) => topicRow({ ...input, id: (input.id as string) ?? TOPIC })),
       get: vi.fn(async () => topicRow()),
       findByCreateRequestId: vi.fn(async () => null),
       lock: vi.fn(async () => topicRow()),
@@ -155,12 +157,13 @@ beforeEach(() => {
 });
 
 describe("create · 幂等与自由创建", () => {
-  it("新请求创建空白笔记并挂初始题型归属（created=true）", async () => {
+  it("新请求创建空白笔记并挂初始题型归属（created=true；F1：走 createIfAbsent）", async () => {
     const result = await service.create(USER, { requestId: REQ, venue: "reading_choice" });
     expect(result.created).toBe(true);
-    expect(repos.studyNotes.create).toHaveBeenCalledWith(expect.objectContaining({
+    expect(repos.studyNotes.createIfAbsent).toHaveBeenCalledWith(expect.objectContaining({
       user_id: USER, title: "", body_md: "", version: 1, create_request_id: REQ,
     }));
+    expect(repos.studyNotes.create).not.toHaveBeenCalled();
     expect(repos.studyNotes.replaceVenues).toHaveBeenCalledWith(USER, expect.any(String), ["reading_choice"]);
   });
 
@@ -173,7 +176,7 @@ describe("create · 幂等与自由创建", () => {
     const result = await service.create(USER, { requestId: REQ, venue: "reading_choice" });
     expect(result.created).toBe(false);
     expect(result.item.title).toBe("已编辑过的标题");
-    expect(repos.studyNotes.create).not.toHaveBeenCalled();
+    expect(repos.studyNotes.createIfAbsent).not.toHaveBeenCalled();
   });
 
   it("同 requestId 不同输入 → 409", async () => {
@@ -512,34 +515,60 @@ describe("补齐：默认装配 / 成功路径 / 竞态与兜底", () => {
     await expect(service.get(USER, NOTE)).rejects.toThrow(NotFoundError);
   });
 
-  it("create 唯一冲突竞态回读（同 hash→created=false / 异 hash→409 / 非 23505→rethrow）", async () => {
+  it("create 并发竞态（F1）：ON CONFLICT 不中止事务、新语句回读；异输入 409", async () => {
     const { computeNoteCreateHash } = await import("@/services/l3-study-notes.service");
-    const uniqueErr = Object.assign(new Error("dup"), { code: "23505" });
+    // 模拟真实 PG 语义：普通 INSERT 撞唯一键会中止事务（后续查询 25P02）；
+    // ON CONFLICT DO NOTHING 不中止，冲突后新语句可回读并发已提交行。
+    let txPoisoned = false;
+    let lookups = 0;
+    const racedRow = noteRow({ create_input_hash: computeNoteCreateHash("reading_choice") });
     repos.studyNotes.create = vi.fn(async () => {
-      throw uniqueErr;
+      txPoisoned = true; // 旧实现路径：23505 使事务进入 aborted 状态
+      throw Object.assign(new Error("dup"), { code: "23505" });
     });
-    repos.studyNotes.findByCreateRequestId = vi.fn()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(noteRow({ create_input_hash: computeNoteCreateHash("reading_choice") }));
+    repos.studyNotes.createIfAbsent = vi.fn(async () => null);
+    repos.studyNotes.findByCreateRequestId = vi.fn(async () => {
+      if (txPoisoned) {
+        throw Object.assign(new Error("current transaction is aborted"), { code: "25P02" });
+      }
+      lookups += 1;
+      return lookups >= 2 ? racedRow : null;
+    });
+
     const raced = await service.create(USER, { requestId: REQ, venue: "reading_choice" });
     expect(raced.created).toBe(false);
+    expect(raced.item.id).toBe(racedRow.id);
+    expect(txPoisoned).toBe(false); // ON CONFLICT 路径不得使用失败事务
 
-    repos.studyNotes.findByCreateRequestId = vi.fn()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(noteRow({ create_input_hash: "0".repeat(64) }));
+    // 同键异输入 → 409（同一机制，不依赖失败事务内查询）
+    lookups = 0;
+    repos.studyNotes.findByCreateRequestId = vi.fn(async () => {
+      if (txPoisoned) {
+        throw Object.assign(new Error("current transaction is aborted"), { code: "25P02" });
+      }
+      lookups += 1;
+      return lookups >= 2 ? noteRow({ create_input_hash: computeNoteCreateHash("cloze") }) : null;
+    });
+    await expect(service.create(USER, { requestId: REQ, venue: "reading_choice" })).rejects.toThrow(ConflictError);
+  });
+
+  it("create 冲突后回读不到行（理论边界）→ 409；createIfAbsent 非冲突异常照常上抛", async () => {
+    repos.studyNotes.createIfAbsent = vi.fn(async () => null);
+    repos.studyNotes.findByCreateRequestId = vi.fn(async () => null);
     await expect(service.create(USER, { requestId: REQ, venue: "reading_choice" })).rejects.toThrow(ConflictError);
 
-    repos.studyNotes.create = vi.fn(async () => {
+    repos.studyNotes.createIfAbsent = vi.fn(async () => {
       throw new Error("other failure");
     });
     repos.studyNotes.findByCreateRequestId = vi.fn(async () => null);
     await expect(service.create(USER, { requestId: REQ, venue: "reading_choice" })).rejects.toThrow("other failure");
   });
 
-  it("createTopic：新建 / 同输入幂等复用 / 异输入 409", async () => {
+  it("createTopic：新建（走 createIfAbsent）/ 同输入幂等复用 / 异输入 409", async () => {
     const first = await service.createTopic(USER, { requestId: REQ, venue: "reading_choice", title: "专题" });
     expect(first.created).toBe(true);
-    const hash = (repos.studyTopics.create.mock.calls[0]![0] as { create_input_hash: string }).create_input_hash;
+    expect(repos.studyTopics.create).not.toHaveBeenCalled();
+    const hash = (repos.studyTopics.createIfAbsent.mock.calls[0]![0] as { create_input_hash: string }).create_input_hash;
     repos.studyTopics.findByCreateRequestId = vi.fn(async () => topicRow({ create_input_hash: hash }));
     const retry = await service.createTopic(USER, { requestId: REQ, venue: "reading_choice", title: "专题" });
     expect(retry.created).toBe(false);
@@ -547,6 +576,41 @@ describe("补齐：默认装配 / 成功路径 / 竞态与兜底", () => {
     repos.studyTopics.findByCreateRequestId = vi.fn(async () => topicRow({ create_input_hash: "0".repeat(64) }));
     await expect(
       service.createTopic(USER, { requestId: REQ, venue: "cloze", title: "别的" }),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("createTopic 并发竞态（F1）：冲突不中止事务、新语句回读；异输入 409", async () => {
+    const { computeTopicCreateHash } = await import("@/services/l3-study-notes.service");
+    let txPoisoned = false;
+    let lookups = 0;
+    const racedRow = topicRow({ create_input_hash: computeTopicCreateHash("reading_choice", "专题") });
+    repos.studyTopics.create = vi.fn(async () => {
+      txPoisoned = true;
+      throw Object.assign(new Error("dup"), { code: "23505" });
+    });
+    repos.studyTopics.createIfAbsent = vi.fn(async () => null);
+    repos.studyTopics.findByCreateRequestId = vi.fn(async () => {
+      if (txPoisoned) {
+        throw Object.assign(new Error("current transaction is aborted"), { code: "25P02" });
+      }
+      lookups += 1;
+      return lookups >= 2 ? racedRow : null;
+    });
+
+    const raced = await service.createTopic(USER, { requestId: REQ, venue: "reading_choice", title: "专题" });
+    expect(raced.created).toBe(false);
+    expect(raced.item.id).toBe(racedRow.id);
+
+    lookups = 0;
+    repos.studyTopics.findByCreateRequestId = vi.fn(async () => {
+      if (txPoisoned) {
+        throw Object.assign(new Error("current transaction is aborted"), { code: "25P02" });
+      }
+      lookups += 1;
+      return lookups >= 2 ? noteRow({ create_input_hash: computeTopicCreateHash("cloze", "别的") }) : null;
+    });
+    await expect(
+      service.createTopic(USER, { requestId: REQ, venue: "reading_choice", title: "专题" }),
     ).rejects.toThrow(ConflictError);
   });
 

@@ -190,3 +190,32 @@ describe("补齐：幂等回查 / 版本推进 / 批量计数 / 边界早退", (
     expect(querySpy.mock.calls.length).toBe(0);
   });
 });
+
+// ── F1（补修批次）：幂等创建（ON CONFLICT DO NOTHING，不使事务失败）──────────
+
+describe("createIfAbsent（F1）", () => {
+  it("仅对 (user_id, create_request_id) 执行 ON CONFLICT DO NOTHING + RETURNING *；0 行返回 null", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    const result = await repo.createIfAbsent({
+      id: TOPIC, user_id: USER, question_type: "reading_choice", title: "专题", status: "active",
+      version: 1, create_request_id: REQUEST, create_input_hash: "a".repeat(64),
+    });
+    expect(result).toBeNull();
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("INSERT INTO l3_study_topics");
+    expect(text).toContain("ON CONFLICT (user_id, create_request_id) DO NOTHING");
+    expect(text).toContain("RETURNING *");
+    expect(params).toEqual([
+      TOPIC, USER, "reading_choice", "专题", "active", 1, REQUEST, "a".repeat(64),
+    ]);
+  });
+
+  it("插入成功返回整行", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [topicRow()] }));
+    const row = await repo.createIfAbsent({
+      id: TOPIC, user_id: USER, question_type: "reading_choice", title: "专题", status: "active",
+      version: 1, create_request_id: REQUEST, create_input_hash: "a".repeat(64),
+    });
+    expect(row).toMatchObject({ id: TOPIC, create_request_id: REQUEST });
+  });
+});
