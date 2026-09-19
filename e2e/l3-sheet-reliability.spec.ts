@@ -11,6 +11,7 @@
  * 数据：本文件自播种（admin 角色，E2E_SETUP_DATABASE_URL）并自清理；仅隔离 fixture。
  */
 import { randomUUID } from "node:crypto";
+import type { Page } from "@playwright/test";
 import pg from "pg";
 import { expect, loginAsOwner, test } from "./fixtures";
 
@@ -146,6 +147,37 @@ async function sheetCount(f: Fixture): Promise<number> {
     );
     return r.rows[0].c;
   });
+}
+
+/** 记录剪贴板写入与对象 URL 创建次数（导出外部副作用的可观测证据）。 */
+async function stubExportSideEffects(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __copied: string[]; __objectUrls: number };
+    w.__copied = [];
+    w.__objectUrls = 0;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          w.__copied.push(text);
+          return Promise.resolve();
+        },
+      },
+    });
+    const originalCreate = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (blob: Blob) => {
+      w.__objectUrls += 1;
+      return originalCreate(blob);
+    };
+  });
+}
+
+async function copiedCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __copied: string[] }).__copied.length);
+}
+
+async function objectUrlCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __objectUrls: number }).__objectUrls);
 }
 
 test.describe("Task B · 题纸保存/定格屏障（真实栈）", () => {
@@ -298,6 +330,105 @@ test.describe("Task B · 题纸保存/定格屏障（真实栈）", () => {
       expect((v3!.answers[f.questionId2] as { choice?: string } | undefined)?.choice).toBe("A"); // gamma 落库
     } finally {
       await contextB.close();
+      await cleanupFixture(f);
+    }
+  });
+
+  test("导出屏障变体：保存冲突未确认时不写剪贴板、不下载，弹层保留", async ({ authedPage: page }) => {
+    test.setTimeout(90_000);
+    const f = await seedPaper();
+    try {
+      await page.goto(`/l3?paper=${f.paperId}`);
+      await expect(page.getByRole("button", { name: "定格题纸" })).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText("草稿", { exact: true })).toBeVisible({ timeout: 15_000 });
+
+      // Q1 先保存成功（v1）；随后 PATCH 一律 409：模拟他端已改动/定格（未确认状态）。
+      await page.getByRole("button", { name: /beta marker/ }).click();
+      await expect(page.getByText(/草稿 · 已保存/)).toBeVisible({ timeout: 10_000 });
+      await page.route("**/api/l3/sheets/**", (route) => {
+        if (route.request().method() === "PATCH") {
+          return route.fulfill({
+            status: 409,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "conflict", code: "CONFLICT", details: { code: "DRAFT_VERSION_CONFLICT" } }),
+          });
+        }
+        return route.continue();
+      });
+      await page.getByRole("button", { name: /gamma marker/ }).click();
+      await expect(page.getByText(/保存冲突/)).toBeVisible({ timeout: 10_000 });
+
+      await stubExportSideEffects(page);
+
+      // 导出 → 复制全文：flush 必 reject → 不写剪贴板；失败不关闭弹层（保留上下文）。
+      await page.getByRole("button", { name: "导出" }).click();
+      await expect(page.getByRole("dialog", { name: "导出题纸" })).toBeVisible();
+      await page.getByRole("button", { name: "复制全文" }).click();
+      await expect(page.getByText("导出失败，请稍后重试")).toBeVisible({ timeout: 10_000 });
+      await page.waitForTimeout(300);
+      expect(await copiedCount(page)).toBe(0);
+      await expect(page.getByRole("dialog", { name: "导出题纸" })).toBeVisible();
+
+      // 下载 .md：同样不越过屏障（零下载对象、零剪贴板写入）。
+      await page.getByRole("button", { name: "下载 .md" }).click();
+      await page.waitForTimeout(600);
+      expect(await objectUrlCount(page)).toBe(0);
+      expect(await copiedCount(page)).toBe(0);
+    } finally {
+      await page.unroute("**/api/l3/sheets/**");
+      await cleanupFixture(f);
+    }
+  });
+
+  test("导出等待未确认保存：不越过屏障；在途编辑被拒、放行后完成并恢复", async ({ authedPage: page }) => {
+    test.setTimeout(90_000);
+    const f = await seedPaper();
+    let holdPatches = true;
+    const held: { release: (() => void) | null } = { release: null };
+    try {
+      await page.route("**/api/l3/sheets/**", async (route) => {
+        if (route.request().method() === "PATCH" && holdPatches) {
+          await new Promise<void>((resolve) => { held.release = resolve; });
+        }
+        return route.continue();
+      });
+      await page.goto(`/l3?paper=${f.paperId}`);
+      await expect(page.getByRole("button", { name: "定格题纸" })).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText("草稿", { exact: true })).toBeVisible({ timeout: 15_000 });
+      await stubExportSideEffects(page);
+
+      // Q1 作答 → PATCH 被挂起（在途未确认）。
+      await page.getByRole("button", { name: /beta marker/ }).click();
+      await expect(page.getByText(/草稿 · 保存中/)).toBeVisible({ timeout: 10_000 });
+
+      // 导出 → 复制全文：必须等待在途确认——此刻不得写剪贴板。
+      await page.getByRole("button", { name: "导出" }).click();
+      await expect(page.getByRole("dialog", { name: "导出题纸" })).toBeVisible();
+      await page.getByRole("button", { name: "复制全文" }).click();
+      await page.waitForTimeout(600);
+      expect(await copiedCount(page)).toBe(0);
+
+      // 导出在途：编辑入口被锁（渲染禁用；程序化派发也不改变选中态——事件层双守卫）。
+      await expect(page.getByRole("button", { name: /gamma marker/ })).toBeDisabled();
+      await page.evaluate(() => {
+        const el = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("gamma marker"));
+        el?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await expect(page.getByRole("button", { name: /gamma marker/ })).not.toHaveAttribute("data-selected", "true");
+
+      // 放行在途 PATCH → 确认完成 → 导出越过屏障完成（写剪贴板恰一次）。
+      holdPatches = false;
+      if (held.release) held.release();
+      await expect.poll(() => copiedCount(page), { timeout: 10_000 }).toBe(1);
+
+      // 完成后编辑窗口恢复：显式编辑 → 保存成功。
+      await page.getByRole("button", { name: /gamma marker/ }).click();
+      await expect(page.getByRole("button", { name: /gamma marker/ })).toHaveAttribute("data-selected", "true");
+      await expect(page.getByText(/草稿 · 已保存/)).toBeVisible({ timeout: 10_000 });
+    } finally {
+      holdPatches = false;
+      if (held.release) held.release();
+      await page.unroute("**/api/l3/sheets/**");
       await cleanupFixture(f);
     }
   });
