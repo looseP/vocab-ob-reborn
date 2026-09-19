@@ -420,3 +420,91 @@ describe("导出与正文清理路由（W9）", () => {
     expect(agent.status).toBe(403);
   });
 });
+
+describe("GET /api/l3/writing/tasks/question-summaries（A2 批量进度读面）", () => {
+  const Q1 = "00000000-0000-4000-8000-000000000101";
+  const Q2 = "00000000-0000-4000-8000-000000000102";
+
+  function summaryEntry(overrides: Record<string, unknown> = {}) {
+    return {
+      taskId: TASK_ID,
+      taskStatus: "active",
+      draftSheetId: SHEET_ID,
+      latestSubmittedSheetId: null,
+      latestRevisionNo: null,
+      revisionCount: 0,
+      feedbackState: null,
+      contentStatus: null,
+      ...overrides,
+    };
+  }
+
+  it("重复 questionId 去重后单次下传；200 走契约；agent 403", async () => {
+    const questionSummaries = vi.fn(async () => [
+      { questionId: Q1, tasks: [summaryEntry()] },
+      { questionId: Q2, tasks: [] },
+    ]);
+    const app = createApp(makeServices({ l3WritingTasks: { questionSummaries } }));
+    const res = await app.request(
+      `/api/l3/writing/tasks/question-summaries?questionId=${Q1}&questionId=${Q1}&questionId=${Q2}&kind=whole&direction=${encodeURIComponent("通用")}`,
+      { headers: AUTH_HEADERS },
+    );
+    expect(res.status).toBe(200);
+    expect(questionSummaries).toHaveBeenCalledTimes(1);
+    expect(questionSummaries).toHaveBeenCalledWith("user-123", {
+      questionIds: [Q1, Q2],
+      kind: "whole",
+      direction: "通用",
+    });
+    const body = await res.json();
+    expect(body.items).toHaveLength(2);
+    expect(body.items[1].tasks).toEqual([]);
+
+    const agent = await app.request(
+      `/api/l3/writing/tasks/question-summaries?questionId=${Q1}&kind=whole&direction=${encodeURIComponent("通用")}`,
+      { headers: AGENT_HEADERS },
+    );
+    expect(agent.status).toBe(403);
+  });
+
+  it("静态路径不被 /tasks/:taskId 吞掉：缺参数时 400 校验错，且不触达服务", async () => {
+    const questionSummaries = vi.fn();
+    const get = vi.fn();
+    const app = createApp(makeServices({ l3WritingTasks: { questionSummaries, get } }));
+    const res = await app.request("/api/l3/writing/tasks/question-summaries", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(400);
+    expect(questionSummaries).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("原始数量 >100 / 非法 UUID / 非法 kind / 缺 direction → 400，且不触达服务", async () => {
+    const questionSummaries = vi.fn(async () => []);
+    const app = createApp(makeServices({ l3WritingTasks: { questionSummaries } }));
+
+    const many = Array.from({ length: 101 }, () => `questionId=${Q1}`).join("&");
+    const tooMany = await app.request(
+      `/api/l3/writing/tasks/question-summaries?${many}&kind=whole&direction=${encodeURIComponent("通用")}`,
+      { headers: AUTH_HEADERS },
+    );
+    expect(tooMany.status).toBe(400);
+
+    const badUuid = await app.request(
+      `/api/l3/writing/tasks/question-summaries?questionId=not-a-uuid&kind=whole&direction=${encodeURIComponent("通用")}`,
+      { headers: AUTH_HEADERS },
+    );
+    expect(badUuid.status).toBe(400);
+
+    const badKind = await app.request(
+      `/api/l3/writing/tasks/question-summaries?questionId=${Q1}&kind=essay&direction=${encodeURIComponent("通用")}`,
+      { headers: AUTH_HEADERS },
+    );
+    expect(badKind.status).toBe(400);
+
+    const missingDirection = await app.request(
+      `/api/l3/writing/tasks/question-summaries?questionId=${Q1}&kind=whole`,
+      { headers: AUTH_HEADERS },
+    );
+    expect(missingDirection.status).toBe(400);
+    expect(questionSummaries).not.toHaveBeenCalled();
+  });
+});

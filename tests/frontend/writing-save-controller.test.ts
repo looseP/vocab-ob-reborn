@@ -532,11 +532,13 @@ describe("W4 保存控制器 · dispose", () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
-  it("dispose 后 flush 直接 reject", async () => {
+  it("dispose 后 flush 直接 reject；isDisposed 前 false 后 true（宿主可逆清理依据）", async () => {
     const timers = makeFakeTimers();
     const save = vi.fn<SaveFn>();
     const controller = setupController(save, timers);
+    expect(controller.isDisposed()).toBe(false);
     controller.dispose();
+    expect(controller.isDisposed()).toBe(true);
     await expect(controller.flush()).rejects.toBeInstanceOf(SaveDisposedError);
   });
 });

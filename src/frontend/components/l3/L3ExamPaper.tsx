@@ -46,6 +46,11 @@ import {
 import { L3AttemptHistoryModal } from "./L3AttemptHistoryModal";
 import { L3QuestionAssessment } from "./L3QuestionAssessment";
 import { useToast } from "@/frontend/components/ui/Toast";
+import { writingClient } from "@/frontend/api/writingClient";
+import { WritingQuestionEntry, type WritingEntryState } from "@/frontend/components/writing/WritingQuestionEntry";
+import type { WritingOrigin } from "@/frontend/viewModels/writingNavigation";
+import type { WritingQuestionTaskSummary } from "@/domain";
+import type { WritingDirection } from "@/domain/l3-writing";
 
 /**
  * 拟真卷面（ADR-0030 V1 展示面）：左文右题 + 草稿作答 + 解析模式 + 翻译/作文书写区。
@@ -1018,7 +1023,7 @@ function WrittenQuestion({
   );
 }
 
-export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake }: {
+export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake, focusQuestionId, writingEntry }: {
   paper: ExamPaperType;
   onBack: () => void;
   /** 批次二补齐：题型空间（file venue）复用本组件作单文件做题表面——
@@ -1028,6 +1033,16 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   replaySheetId?: string | null;
   /** F-1：再做一次回调（父层决定新开/跳转；缺省不渲染「再做一次」钮）。 */
   onRetake?: () => void;
+  /** I3/C：返回原题定位——滚动并高亮该题（来源链接 ?question= 锚点；零创建）。 */
+  focusQuestionId?: string | null;
+  /** I3/C：作文专项入口（小/大作文）——宿主注入方向与导航；缺省不渲染入口、零请求。
+   *  R3：directionState 非 ready 时入口只显示加载/重试（读失败不冒充「通用」、不创建任务）。 */
+  writingEntry?: {
+    direction: WritingDirection;
+    onNavigate: (url: string) => void;
+    directionState?: "loading" | "ready" | "error";
+    onRetryDirection?: () => void;
+  };
 }) {
   const { addToast } = useToast();
   const [revealAll, setRevealAll] = useState(false);
@@ -1078,6 +1093,12 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
   const sheetRef = useRef<L3Sheet | null>(null);
   const answersRef = useRef<Record<string, SheetAnswer>>({});
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
+  // ── I3/C：作文专项入口（essay 题）批量摘要（题组级一次读取；屏障在 flushAnswers 之上）──
+  const [writingSummaries, setWritingSummaries] = useState<{
+    status: WritingEntryState;
+    byQuestion: Map<string, WritingQuestionTaskSummary[]>;
+  }>({ status: "loading", byQuestion: new Map() });
+  const [writingSummariesNonce, setWritingSummariesNonce] = useState(0);
 
   /** 批次三①：拉取解析模式评卷结果（sealed 时）。F-1：显式三态——失败不再静默，可手动重试。 */
   const loadGradingResults = useCallback(async (sheetId: string) => {
@@ -1316,6 +1337,56 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
     setActionLocked(false);
   }, []);
 
+  // I3/C：原卷作文入口——题组级**一次**批量摘要（仅小/大作文题；重试与重进均重新读取）。
+  // R3：方向未 ready（加载/读取失败）时**不请求摘要**（不得拿「通用」冒充方向）。
+  const writingEnabled = Boolean(writingEntry);
+  const writingDirection: WritingDirection = writingEntry?.direction ?? "通用";
+  const entryDirectionState = writingEntry?.directionState ?? "ready";
+  const essayQuestionIds = useMemo(
+    () => [...new Set(paper.sections
+      .filter((section) => section.questionType === "short_essay" || section.questionType === "long_essay")
+      .flatMap((section) => section.questionIds))],
+    [paper.sections],
+  );
+  useEffect(() => {
+    if (!writingEnabled || essayQuestionIds.length === 0) {
+      setWritingSummaries({ status: "ready", byQuestion: new Map() });
+      return;
+    }
+    if (entryDirectionState !== "ready") {
+      setWritingSummaries((prev) => ({ status: "loading", byQuestion: prev.byQuestion }));
+      return;
+    }
+    let cancelled = false;
+    setWritingSummaries((prev) => ({ status: "loading", byQuestion: prev.byQuestion }));
+    writingClient
+      .questionSummaries(essayQuestionIds, { kind: "whole", direction: writingDirection })
+      .then((page) => {
+        if (cancelled) return;
+        setWritingSummaries({
+          status: "ready",
+          byQuestion: new Map(page.items.map((item) => [item.questionId, item.tasks])),
+        });
+      })
+      .catch(() => { if (!cancelled) setWritingSummaries({ status: "error", byQuestion: new Map() }); });
+    return () => { cancelled = true; };
+  }, [writingEnabled, entryDirectionState, writingDirection, essayQuestionIds, writingSummariesNonce]);
+
+  /** 返回原题定位：卷面渲染后滚动到目标题（无滚动容器/jsdom 时静默）。 */
+  useEffect(() => {
+    if (!focusQuestionId) return;
+    const el = document.getElementById(`question-${focusQuestionId}`);
+    el?.scrollIntoView?.({ block: "start" });
+  }, [focusQuestionId, paper.id]);
+
+  /** 作文入口 origin（返回目标上下文；sheetId=当前原卷题纸/回看纸，A1 契约消费）。 */
+  const currentSheetId = replaySheetId ?? sheet?.id ?? null;
+  const makeWritingOrigin = (questionId: string, questionType: "short_essay" | "long_essay"): WritingOrigin => (
+    fileVenue
+      ? { v: 1, kind: "file", questionId, questionType, fileKey: null, sourceId: fileVenue.sourceId, sheetId: currentSheetId }
+      : { v: 1, kind: "paper", questionId, questionType, paperId: paper.id, sheetId: currentSheetId }
+  );
+
   /**
    * 定格/导出屏障：等待全部在途与调用前输入被服务端确认（单在途写控制器）。
    * 返回回执 {draftVersion,lastSavedAt}——定格/导出的版本核对基线；失败（flush
@@ -1358,6 +1429,25 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
       addToast("error", "载入服务器版本失败，请稍后重试");
     }
   }, [addToast, assembleSheet]);
+
+  /**
+   * I3/C 跳转前保存屏障（整合后经单在途写控制器）：等待调用时输入序号全部被服务端确认
+   * 才放行——控制器 flush 覆盖「在途 + 等待期间的新输入」（Task A 序号语义）；失败/冲突/
+   * 未装配一律拒答（留页保留正文，且不创建写作任务；不静默、不吞错）。
+   * 粘性 error（自动重试耗尽/被拒）先显式 retry 排出未确认载荷，仍失败才拒答——
+   * 与「重试进入写作」按钮语义闭环，不把未确认作答带出本页。
+   */
+  const jumpBarrier = useCallback(async (): Promise<boolean> => {
+    try {
+      const ctrl = sheetSave.current;
+      if (ctrl && ctrl.getSnapshot().state === "error") await ctrl.retry();
+      await flushAnswers();
+      return true;
+    } catch {
+      addToast("error", "本卷作答尚未保存成功，暂不能离开本页；请稍后重试。");
+      return false;
+    }
+  }, [flushAnswers, addToast]);
 
   /**
    * v2 草稿答案状态机：完整对象浅 merge → prune（空键清理）→ 整题入队 pending
@@ -1997,18 +2087,51 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake 
 
               {isWritten ? (
                 <div className="space-y-3">
-                  {section.questions.map((q) => (
-                    <WrittenQuestion
-                      key={q.id}
-                      question={q}
-                      kind={section.questionType === "sentence_translation" ? "translation" : "essay"}
-                      placeholder={section.questionType === "sentence_translation" ? "在这里写下你的译文…" : "在这里写作文（约 100/150 词）…"}
-                      analysis={renderAnalysis(section.key, q)}
-                      revealAll={revealAll}
-                      readOnly={interactionLocked}
-                      cleared={clearedQuestions.has(q.id)}
-                    />
-                  ))}
+                  {section.questions.map((q) => {
+                    const isEssay = section.questionType === "short_essay" || section.questionType === "long_essay";
+                    const focused = focusQuestionId === q.id;
+                    return (
+                      <div
+                        key={q.id}
+                        id={`question-${q.id}`}
+                        data-focused={focused ? "true" : undefined}
+                        className={`space-y-3 rounded-xl ${focused ? "ring-1 ring-[var(--color-accent)]" : ""}`}
+                      >
+                        <WrittenQuestion
+                          question={q}
+                          kind={section.questionType === "sentence_translation" ? "translation" : "essay"}
+                          placeholder={section.questionType === "sentence_translation" ? "在这里写下你的译文…" : "在这里写作文（约 100/150 词）…"}
+                          analysis={renderAnalysis(section.key, q)}
+                          revealAll={revealAll}
+                          readOnly={interactionLocked}
+                          cleared={clearedQuestions.has(q.id)}
+                        />
+                        {isEssay && writingEntry && (
+                          <div className="border-t border-dashed border-[var(--color-border)] pt-2">
+                            <p className="mb-1 text-[11px] text-[var(--color-ink-soft)]">
+                              专项练习（不计入本次试卷作答）
+                            </p>
+                            <WritingQuestionEntry
+                              questionId={q.id}
+                              kind="whole"
+                              direction={writingEntry.direction}
+                              origin={makeWritingOrigin(q.id, section.questionType === "long_essay" ? "long_essay" : "short_essay")}
+                              tasks={writingSummaries.byQuestion.get(q.id) ?? []}
+                              state={entryDirectionState === "error"
+                                ? "error"
+                                : entryDirectionState === "loading" ? "loading" : writingSummaries.status}
+                              onRetry={() => {
+                                if (entryDirectionState !== "ready") writingEntry.onRetryDirection?.();
+                                else setWritingSummariesNonce((n) => n + 1);
+                              }}
+                              onNavigate={writingEntry.onNavigate}
+                              beforeAction={jumpBarrier}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : hasPassage ? (
                 <div className="grid gap-4 lg:grid-cols-2">

@@ -150,3 +150,27 @@ describe("writingClient（契约校验）", () => {
     expect(calls[1]!.init.method).toBe("PUT");
   });
 });
+
+describe("writingClient.questionSummaries（A2 批量进度读面）", () => {
+  it("重复 questionId 按序拼接 + kind/direction；合法响应回传", async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      calls.push(String(url));
+      return jsonResponse({ items: [{ questionId: QUESTION_ID, tasks: [] }] });
+    });
+    const client = createWritingClient({ fetch: fetchMock as unknown as typeof fetch });
+    const result = await client.questionSummaries([QUESTION_ID, QUESTION_ID], { kind: "whole", direction: "通用" });
+    expect(calls[0]).toBe(
+      `/api/l3/writing/tasks/question-summaries?questionId=${QUESTION_ID}&questionId=${QUESTION_ID}&kind=whole&direction=${encodeURIComponent("通用")}`,
+    );
+    expect(result.items).toEqual([{ questionId: QUESTION_ID, tasks: [] }]);
+  });
+
+  it("非法响应（条目缺 tasks）→ INVALID_RESPONSE，不归一空态", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ items: [{ questionId: QUESTION_ID }] }));
+    const client = createWritingClient({ fetch: fetchMock as unknown as typeof fetch });
+    await expect(
+      client.questionSummaries([QUESTION_ID], { kind: "free", direction: "通用" }),
+    ).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+});

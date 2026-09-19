@@ -193,7 +193,7 @@ test("开始→保存→提交→评阅→刷新→第二稿→对照→回看�
   await page.screenshot({ path: `${SHOT_DIR}/04-feedback-visible-desktop.png` });
 
   // ── 第二稿：默认复制父稿 → 修改 → 提交 ─────────────────────────────────
-  await page.getByRole("button", { name: "开始修改（第二稿）" }).click();
+  await page.getByRole("button", { name: "开始修改" }).click();
   const textarea2 = page.getByRole("textbox", { name: "作文正文" });
   await expect(textarea2).toBeVisible();
   await expect(textarea2).toHaveValue(firstText); // 默认拷贝父稿正文

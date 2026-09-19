@@ -811,6 +811,9 @@ export interface ListL3PracticeFilesInput {
   questionType?: L3QuestionType | null;
   direction?: Direction | null;
   q?: string | null;
+  /** R3：精确来源过滤（与文件键/来源 id 精确匹配；精确读面用）。 */
+  sourceId?: string | null;
+  fileKey?: string | null;
   limit: number;
   offset: number;
 }
