@@ -123,3 +123,48 @@ DB_SSLMODE=disable npx vitest run --config vitest.integration.config.ts tests/l3
 - 推分支 `reliability-batch` → PR **#124（draft，OPEN）**：https://github.com/looseP/vocab-ob-reborn/pull/124
 - 三项必需检查在 `bed97f8` 上**全绿**：Browser E2E `pass 1m37s` / Engineering Gate + Migration Rehearsal `pass 5m44s` / Writing E2E `pass 1m47s`。未合并、未部署（按批次纪律）。
 
+## 独立验收补修批次 · F1/F2/F3（2026-09-19 傍晚；单写者接续）
+
+> 依据：外部独立审查 `build-analysis/status-2026-09-19/PR124独立验收与补修任务.md`（基线 `bae22a5`）。
+> 范围：仅 F1 StrictMode 保存生命周期、F2 定格/导出编辑锁、F3 冲突恢复 sealed 装配 + 直接相关验收加强；**不启动 Task C**。
+
+### 先红（先于实现落地）
+- 新正式回归 `tests/frontend/exam-sheet-lifecycle.test.tsx`（12 例：探针三场景转正 + 扩展；保留普通挂载对照）：**5 红** —— StrictMode 双挂载 PATCH=0、离页守卫不切换、定格在途编辑被接受且弹层可取消、导出在途编辑被接受、冲突恢复 sealed 丢弃 attempts。
+- 独立审查探针（仓外 `review-probes.test.tsx`）3 红（与报告一致）→ 修复后 **4/4 绿**。
+- 过程教训：组件测试裸 `fireEvent` 未 act 包裹导致假绿 → 全部点击改 act 包裹后先红才成立（初跑 4 红含 1 假绿，修正后 5 红）。
+
+### F1 · StrictMode 保存生命周期（提交 `4dbfed9`）
+- 根因：控制器创建在 render（isDisposed 重建）、订阅/版本装配/销毁分散在不同 effect——StrictMode 模拟卸载 dispose 后，重放订阅与异步装配错位到已释放实例。
+- 修复：控制器「创建 + 订阅 + 送存/dispose」收拢为同一 effect（deps=题纸身份）；订阅后同步一次快照（换纸不残留旧代状态）；删除 render 期创建与旧 unmount effect。
+- 验收：StrictMode 下编辑真实触发 PATCH（载荷版本正确）、离页守卫随确认切换、切纸只发往新纸。
+
+### F2 · 定格/导出编辑窗口锁（提交 `4dbfed9`）
+- `actionLockRef`（事件入口同 tick 判据）+ `actionLocked`（渲染判据）；`acquireActionLock("seal"|"export")` 覆盖 flush→请求→终态装配全程；`commitAnswer` 首行守卫；三处 `readOnly={interactionLocked}` 覆盖选择/旗标/存疑/划词全入口；弹层「取消」seal 在途禁用；「定格/导出」触发钮互斥禁用；open 弹层加锁检查；失败 release 保留本地、成功由只读接管。
+- 导出「核对失败不写剪贴板、不下载」：组件级 + E2E 双覆盖。
+
+### F3 · 冲突恢复统一装配（提交 `4dbfed9`）
+- 新增 `assembleSheet(row, derived, mode)`（open / terminal / server-baseline）统一回看、常态开纸、定格成功、冲突恢复四条路径；sealed 恢复按 attempts 派生答案/统计/评卷并冻结；draft 恢复覆盖 answers + `adoptServerBaseline`；openSheet 非 draft 行补版本装配（回看导出屏障可决议）。
+
+### R2/R3 屏障强化（提交 `c388f64`）
+- `sleep(250)` → `waitForCasLockWait`：轮询 `pg_locks` 未授予 transactionid 锁，确认请求已到达 CAS UPDATE 被行锁阻塞（读后竞争路径）后再提交屏障；超时即失败（不再掩盖「读前冲突」退化路径）。
+
+### 验证矩阵（本批次；全部实测）
+| 项 | 命令 | 结果 |
+|---|---|---|
+| 审查探针（仓外复跑） | `node vitest --config build-analysis/…/review-vitest.config.mjs` | **4/4 绿**（原 3 红全消） |
+| lifecycle 组件级 | `vitest tests/frontend/exam-sheet-lifecycle.test.tsx` | **12/12** |
+| 前端全量 + sheets 后端组 | `vitest tests/frontend + domain/repo/service/http sheets` | **40 文件 526/526** |
+| 真库（可观测屏障） | `vitest --config vitest.integration.config.ts tests/l3-sheet-reliability.integration.test.ts` | **8/8** |
+| 真浏览器 E2E | `playwright test e2e/l3-sheet-reliability.spec.ts`（3108 + vocab_writing_test） | **5/5**（+2：导出屏障变体、导出等待未确认 + 编辑锁） |
+| typecheck | `tsc --noEmit`（主 tsconfig + e2e/tsconfig） | 0 / 0 |
+| arch / client / complexity | dependency-cruiser / check-openapi-client / verify-route-complexity（base=ccc6fb4c） | 0 / 0 / 0 |
+| frontend:build | `vite build` | 0 |
+
+### 过程记录（如实）
+- 补修后首跑 E2E 红 1：**旧前端构建**（改源码未 rebuild，webServer 服务旧 dist）——重建后全绿；教训：E2E 前必须 `frontend:build`。
+- `test-results/` 批量清理被 safe-delete 护栏拦截（Playwright 启动即退）→ 目录 `mv` 归档后重跑（未绕护栏）。
+- 提交链：`bae22a5` → `4dbfed9`(fix F1/F2/F3) → `c388f64`(test 屏障) → `13c4126`(test E2E)；三次提交后默认 `fsck --full --no-reflogs` = 0（仅遗留 dangling `a8fd8927`，不删）。
+
+### 剩余边界（与验收报告一致）
+- Task C 未开始；导出锁 E2E 已补；R2 竞争路径已可观测证明；HUSKY=0 仍为临时隔离；`.git` 事故根因未定论；旧 reflog/暂存不承诺找回。
+
