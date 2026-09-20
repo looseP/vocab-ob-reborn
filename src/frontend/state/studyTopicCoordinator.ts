@@ -36,6 +36,12 @@ export interface StudyTopicsSnapshot {
   createError: string | null;
   /** 当前在途写操作的 topicId（null = 无）。 */
   writePendingTopicId: string | null;
+  /** 服务端过滤口径下的专题总数（R1 分页）。 */
+  total: number;
+  /** 服务端 nextCursor（null = 已取尽）。 */
+  nextCursor: string | null;
+  /** 专题续取在途（loadMore）。 */
+  loadingMoreTopics: boolean;
 }
 
 export interface StudyTopicCoordinatorOptions {
@@ -49,6 +55,8 @@ export interface StudyTopicCoordinatorOptions {
 export interface StudyTopicCoordinator {
   load(venue: L3QuestionType): Promise<void>;
   refresh(): Promise<void>;
+  /** 续取专题下一页（R1：cursor 合同；取尽或未 ready 时为 no-op）。 */
+  loadMore(): Promise<void>;
   createTopic(title: string): Promise<StudyTopicDto>;
   saveTopic(topicId: string, input: { title: string; status: StudyTopicStatus }): Promise<StudyTopicDto>;
   moveMember(topicId: string, noteId: string, beforeNoteId: string | null): Promise<StudyTopicDto>;
@@ -86,10 +94,15 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
   let createError: string | null = null;
   let writePendingTopicId: string | null = null;
   let venue: L3QuestionType | null = null;
+  let total = 0;
+  let nextCursor: string | null = null;
+  let loadingMoreTopics = false;
   let pendingCreate: { requestId: string; title: string; venue: L3QuestionType } | null = null;
   let createFlight: Promise<StudyTopicDto> | null = null;
   let chain: Promise<unknown> = Promise.resolve();
   let loadSeq = 0;
+  /** 专题翻页代际：load(切题型/刷新) 推进后，在途续取回包整体丢弃（R1/R2）。 */
+  let topicsPageSeq = 0;
   let disposed = false;
   const subscribers = new Set<() => void>();
 
@@ -111,6 +124,7 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
     if (disposed) return;
     venue = nextVenue;
     const seq = ++loadSeq;
+    topicsPageSeq += 1; // 切题型/刷新：失效在途专题续取（旧代回包不污染新列表）
     state = "loading";
     error = null;
     notify();
@@ -118,6 +132,8 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
       const page = await options.client.listTopics({ venue: nextVenue });
       if (disposed || seq !== loadSeq) return;
       topics = page.items;
+      total = page.total;
+      nextCursor = page.nextCursor;
       // 显式刷新：若冲突专题出现在刷新结果中，视为已对齐，可恢复写
       if (conflictTopicId && topics.some((topic) => topic.id === conflictTopicId)) {
         conflictTopicId = null;
@@ -127,6 +143,38 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
       if (disposed || seq !== loadSeq) return;
       state = "error";
       error = describeError(caught);
+    }
+    notify();
+  }
+
+  /** 专题续取（R1）：cursor 合同；去重合并；失败保留旧列表与 cursor 可重试。 */
+  async function loadMore(): Promise<void> {
+    if (disposed || state !== "ready" || loadingMoreTopics || nextCursor === null || venue === null) return;
+    const currentVenue = venue;
+    const cursor = nextCursor;
+    const seq = ++topicsPageSeq;
+    loadingMoreTopics = true;
+    notify();
+    try {
+      const page = await options.client.listTopics({ venue: currentVenue, cursor });
+      if (disposed || seq !== topicsPageSeq) return; // 代际失效（切题型/刷新已发生）：整体丢弃
+      const seen = new Set(topics.map((topic) => topic.id));
+      const merged = [...topics];
+      for (const item of page.items) {
+        if (!seen.has(item.id)) {
+          seen.add(item.id);
+          merged.push(item);
+        }
+      }
+      topics = merged;
+      total = page.total;
+      nextCursor = page.nextCursor;
+      loadingMoreTopics = false;
+      error = null;
+    } catch (caught) {
+      if (disposed || seq !== topicsPageSeq) return;
+      loadingMoreTopics = false;
+      error = describeError(caught); // 保留 topics/nextCursor，可重试
     }
     notify();
   }
@@ -163,9 +211,36 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
     return topic;
   }
 
+  /**
+   * R1 后页深链：写操作目标不在本地（分页未加载）时，经 cursor 续取定位专题，
+   * 结果并入列表后返回其最新版本；取尽仍无 → 显式报错（不静默成功、不发写请求）。
+   * 仅在串行写执行体内调用；期间 venue 未变（切题型后同 id 不在新列表，取尽同样报错）。
+   */
+  async function ensureTopicLoaded(topicId: string): Promise<StudyTopicDto> {
+    const known = topics.find((item) => item.id === topicId);
+    if (known) return known;
+    if (venue === null) throw new Error("专题不存在或尚未加载。");
+    while (nextCursor !== null && !disposed) {
+      const page = await options.client.listTopics({ venue, cursor: nextCursor });
+      if (disposed) throw new Error("协调器已销毁。");
+      const seen = new Set(topics.map((topic) => topic.id));
+      const merged = [...topics];
+      for (const item of page.items) {
+        if (!seen.has(item.id)) merged.push(item);
+      }
+      topics = merged;
+      total = page.total;
+      nextCursor = page.nextCursor;
+      notify();
+      const found = topics.find((item) => item.id === topicId);
+      if (found) return found;
+    }
+    throw new Error("专题不存在或已被移除。");
+  }
+
   function saveTopic(topicId: string, input: { title: string; status: StudyTopicStatus }): Promise<StudyTopicDto> {
     return enqueue(topicId, async () => {
-      const topic = requireTopic(topicId); // 执行时取最新版本
+      const topic = await ensureTopicLoaded(topicId); // 执行时取最新版本（后页深链经续取定位）
       try {
         const { item } = await options.client.saveTopic(topicId, {
           requestId: generateRequestId(),
@@ -188,7 +263,7 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
 
   function moveMember(topicId: string, noteId: string, beforeNoteId: string | null): Promise<StudyTopicDto> {
     return enqueue(topicId, async () => {
-      const topic = requireTopic(topicId);
+      const topic = await ensureTopicLoaded(topicId);
       try {
         const { item } = await options.client.moveTopicMember(topicId, noteId, {
           requestId: generateRequestId(),
@@ -210,7 +285,7 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
 
   function removeMember(topicId: string, noteId: string): Promise<StudyTopicDto> {
     return enqueue(topicId, async () => {
-      const topic = requireTopic(topicId);
+      const topic = await ensureTopicLoaded(topicId);
       try {
         const { item } = await options.client.removeTopicMember(topicId, noteId, {
           requestId: generateRequestId(),
@@ -279,6 +354,9 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
       createPending,
       createError,
       writePendingTopicId,
+      total,
+      nextCursor,
+      loadingMoreTopics,
     };
   }
 
@@ -293,11 +371,13 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
     disposed = true;
     subscribers.clear();
     loadSeq += 1;
+    topicsPageSeq += 1; // 在途专题续取一并失效
   }
 
   return {
     load,
     refresh,
+    loadMore,
     createTopic,
     saveTopic,
     moveMember,

@@ -262,3 +262,130 @@ describe("studyTopicCoordinator · 生命周期", () => {
     await expect(coordinator.saveTopic(TOPIC_ID, { title: "y", status: "active" })).rejects.toBeTruthy();
   });
 });
+
+describe("studyTopicCoordinator · 专题分页（R1 补修）", () => {
+  it("load：暴露服务端 total/nextCursor；loadMore 续取下一页并去重合并（探针1正式化）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics
+      .mockResolvedValueOnce({ items: [topicDto()], nextCursor: "cursor-page-2", total: 55 })
+      .mockResolvedValueOnce({
+        items: [topicDto({ id: TOPIC2_ID, title: "专题二", memberCount: 0 })],
+        nextCursor: null,
+        total: 55,
+      });
+
+    await coordinator.load("cloze");
+    let snapshot = coordinator.getSnapshot();
+    expect(snapshot.topics).toHaveLength(1);
+    expect(snapshot.total).toBe(55);
+    expect(snapshot.nextCursor).toBe("cursor-page-2");
+
+    const more = coordinator.loadMore();
+    expect(coordinator.getSnapshot().loadingMoreTopics).toBe(true);
+    await more;
+    snapshot = coordinator.getSnapshot();
+    expect(client.listTopics).toHaveBeenLastCalledWith(
+      expect.objectContaining({ venue: "cloze", cursor: "cursor-page-2" }),
+    );
+    expect(snapshot.topics.map((item) => item.id)).toEqual([TOPIC_ID, TOPIC2_ID]);
+    expect(snapshot.total).toBe(55);
+    expect(snapshot.nextCursor).toBe(null);
+    expect(snapshot.loadingMoreTopics).toBe(false);
+
+    // cursor 用尽后再 loadMore = no-op（不发请求）
+    await coordinator.loadMore();
+    expect(client.listTopics).toHaveBeenCalledTimes(2);
+  });
+
+  it("loadMore 失败：保留旧列表与 cursor、状态复位、可重试成功", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics
+      .mockResolvedValueOnce({ items: [topicDto()], nextCursor: "cursor-page-2", total: 2 })
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({
+        items: [topicDto({ id: TOPIC2_ID, title: "专题二", memberCount: 0 })],
+        nextCursor: null,
+        total: 2,
+      });
+
+    await coordinator.load("cloze");
+    await coordinator.loadMore(); // 第一次：失败
+    let snapshot = coordinator.getSnapshot();
+    expect(snapshot.topics).toHaveLength(1); // 旧列表保留
+    expect(snapshot.nextCursor).toBe("cursor-page-2"); // cursor 保留可重试
+    expect(snapshot.loadingMoreTopics).toBe(false);
+    expect(snapshot.error).toContain("network down");
+
+    await coordinator.loadMore(); // 重试：成功
+    snapshot = coordinator.getSnapshot();
+    expect(snapshot.topics).toHaveLength(2);
+    expect(snapshot.error).toBe(null);
+    expect(snapshot.nextCursor).toBe(null);
+  });
+
+  it("切题型（load）失效在途 loadMore：迟到回包不污染新列表（也不释放/推进新代状态）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    const d = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics
+      .mockResolvedValueOnce({ items: [topicDto()], nextCursor: "cursor-page-2", total: 3 })
+      .mockReturnValueOnce(d.promise) // cloze 的 loadMore 挂起
+      .mockResolvedValueOnce({ items: [topicDto({ questionType: "sentence_translation", title: "译题" })], nextCursor: null, total: 1 });
+
+    await coordinator.load("cloze");
+    const more = coordinator.loadMore();
+    await coordinator.load("sentence_translation"); // 切题型推进代际
+    d.resolve({ items: [topicDto({ id: TOPIC2_ID })], nextCursor: null, total: 3 });
+    await more;
+
+    const snapshot = coordinator.getSnapshot();
+    expect(snapshot.topics.map((item) => item.questionType)).toEqual(["sentence_translation"]);
+  });
+
+  it("后页专题深链：本地未加载时写操作经续取定位专题后按其最新版本执行（不误判不存在）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics
+      .mockResolvedValueOnce({ items: [topicDto()], nextCursor: "cursor-page-2", total: 2 })
+      .mockResolvedValueOnce({
+        items: [topicDto({ id: TOPIC2_ID, title: "专题二", version: 7 })],
+        nextCursor: null,
+        total: 2,
+      });
+    client.saveTopic.mockResolvedValueOnce({
+      item: topicDto({ id: TOPIC2_ID, title: "v8 标题", version: 8, memberCount: 0 }),
+    });
+
+    await coordinator.load("cloze"); // 本地仅首页
+    await expect(
+      coordinator.saveTopic(TOPIC2_ID, { title: "v8 标题", status: "active" }),
+    ).resolves.toMatchObject({ id: TOPIC2_ID, version: 8 });
+    // 先经 cursor 续取拿到该专题（v7），再用 v7 作为 expectedVersion
+    expect(client.saveTopic).toHaveBeenCalledWith(
+      TOPIC2_ID,
+      expect.objectContaining({ expectedVersion: 7 }),
+    );
+    // 续取结果并入列表：面板可见、可再次操作
+    expect(coordinator.getSnapshot().topics.map((item) => item.id)).toEqual([TOPIC_ID, TOPIC2_ID]);
+  });
+
+  it("深链专题确不存在（cursor 取尽仍无）：显式报错，不静默成功", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics
+      .mockResolvedValueOnce({ items: [topicDto()], nextCursor: "cursor-page-2", total: 2 })
+      .mockResolvedValueOnce({
+        items: [topicDto({ id: TOPIC2_ID, title: "专题二" })],
+        nextCursor: null,
+        total: 2,
+      });
+
+    await coordinator.load("cloze");
+    const ghostId = "00000000-0000-4000-8000-000000000999";
+    await expect(coordinator.saveTopic(ghostId, { title: "x", status: "active" })).rejects.toBeTruthy();
+    // 未发起 saveTopic 请求
+    expect(client.saveTopic).not.toHaveBeenCalled();
+  });
+});

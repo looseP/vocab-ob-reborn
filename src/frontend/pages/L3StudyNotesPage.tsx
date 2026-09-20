@@ -534,6 +534,10 @@ export function L3StudyNotesPage({ client, onRegisterLeaveBarrier }: L3StudyNote
               onSelectTopic={handleSelectTopic}
               onUnfiledToggle={handleUnfiledToggle}
               onRefresh={() => void topicsRef.current?.refresh()}
+              total={topicsSnap.total}
+              nextCursor={topicsSnap.nextCursor}
+              loadingMoreTopics={topicsSnap.loadingMoreTopics}
+              onLoadMoreTopics={() => void topicsRef.current?.loadMore()}
               create={{
                 pending: topicsSnap.createPending,
                 error: topicsSnap.createError ?? topicOpError,

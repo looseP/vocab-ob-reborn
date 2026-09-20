@@ -19,6 +19,11 @@ export interface StudyTopicPanelProps {
   onSelectTopic: (topicId: string) => void;
   onUnfiledToggle: () => void;
   onRefresh: () => void;
+  /** R1 分页：nextCursor 非空时显示「加载更多专题」。 */
+  total?: number;
+  nextCursor?: string | null;
+  loadingMoreTopics?: boolean;
+  onLoadMoreTopics?: () => void;
   create: {
     pending: boolean;
     error: string | null;
@@ -96,6 +101,19 @@ export function StudyTopicPanel(props: StudyTopicPanelProps) {
         ))}
         {props.state === "ready" && props.topics.length === 0 && (
           <p className="text-[11px] text-[var(--color-ink-soft)]">还没有专题。创建后可将笔记归入其中。</p>
+        )}
+        {props.nextCursor && props.onLoadMoreTopics && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={props.loadingMoreTopics}
+            onClick={props.onLoadMoreTopics}
+            data-testid="topic-load-more"
+          >
+            {props.loadingMoreTopics
+              ? "加载中…"
+              : `加载更多专题${typeof props.total === "number" ? `（${props.topics.length}/${props.total}）` : ""}`}
+          </Button>
         )}
       </div>
 
