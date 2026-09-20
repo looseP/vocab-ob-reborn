@@ -30,9 +30,18 @@ import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNot
 import {
   assertReferenceSet,
   normalizeStudyUuid,
+  STUDY_REFERENCE_MAX_PER_NOTE,
   type ReferencePreview,
+  type ReferenceTarget,
+  type ReferenceTargetPreview,
   type StudyNoteDto,
 } from "@/domain/l3-study-notes";
+import {
+  excerptLinesFromSnapshot,
+  insertReferenceMarker,
+  removeReferenceMarker,
+  replaceMarkerWithExcerpt,
+} from "@/frontend/utils/studyNoteReferenceOps";
 
 export type StudyNoteEditorLoadState = "loading" | "ready" | "error";
 
@@ -64,6 +73,16 @@ export interface UseStudyNoteEditorResult {
   onCompositionStart(): void;
   onCompositionEnd(): void;
   retry(): Promise<void>;
+
+  /**
+   * Task 09A：引用编辑（经同一 applyEdit 通道，与正文原子保存）。
+   * 插入：新 refId + capture write + marker（光标处）；被锁/超限返回 null。
+   */
+  insertReference(target: ReferenceTarget, preview: ReferenceTargetPreview, cursor: number | null): string | null;
+  /** 移除：marker 与 write 同次移除；marker 缺失/被锁返回 false（不静默部分修改）。 */
+  removeReference(refId: string): boolean;
+  /** 转普通摘录：marker 替换为引文行 + write 移除；失败返回 false。 */
+  convertReferenceToExcerpt(refId: string): boolean;
 
   /** 冲突面板：复制本地内容（ok=false 时展示 text 作为可见备选）。 */
   copyLocalContent(): Promise<CopyLocalResult>;
@@ -297,6 +316,83 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
 
   const setTitle = useCallback((value: string) => applyEdit({ title: value }), [applyEdit]);
   const setBodyMd = useCallback((value: string) => applyEdit({ bodyMd: value }), [applyEdit]);
+
+  // ── Task 09A：引用编辑（marker 与 references 同一次 patch；与正文原子保存）────
+  const insertReference = useCallback(
+    (target: ReferenceTarget, preview: ReferenceTargetPreview, cursor: number | null): string | null => {
+      const controller = controllerRef.current;
+      if (!controller || controller.isDisposed() || editingLocked()) return null;
+      const current = controller.getSnapshot().edit;
+      if (current.references.length >= STUDY_REFERENCE_MAX_PER_NOTE) return null;
+      const refId = crypto.randomUUID();
+      const nextBodyMd = insertReferenceMarker(current.bodyMd, refId, cursor);
+      const nextReferences = [...current.references, { id: refId, action: "capture" as const, target }];
+      controller.edit({ ...current, bodyMd: nextBodyMd, references: nextReferences });
+      setReferencesMeta((previous) => [
+        ...previous,
+        {
+          id: refId,
+          target,
+          status: "current",
+          capturedAt: new Date().toISOString(),
+          displaySnapshot: preview.displaySnapshot,
+          liveTitle: preview.liveTitle,
+        },
+      ]);
+      return refId;
+    },
+    [editingLocked],
+  );
+
+  const removeReference = useCallback(
+    (refId: string): boolean => {
+      const controller = controllerRef.current;
+      if (!controller || controller.isDisposed() || editingLocked()) return false;
+      const current = controller.getSnapshot().edit;
+      let nextBodyMd: string;
+      try {
+        nextBodyMd = removeReferenceMarker(current.bodyMd, refId);
+      } catch {
+        return false; // marker 缺失：不静默部分修改（保存预检兜底提示）
+      }
+      const nextReferences = current.references.filter(
+        (write) => normalizeStudyUuid(write.id) !== normalizeStudyUuid(refId),
+      );
+      controller.edit({ ...current, bodyMd: nextBodyMd, references: nextReferences });
+      setReferencesMeta((previous) =>
+        previous.filter((meta) => normalizeStudyUuid(meta.id) !== normalizeStudyUuid(refId)),
+      );
+      return true;
+    },
+    [editingLocked],
+  );
+
+  const convertReferenceToExcerpt = useCallback(
+    (refId: string): boolean => {
+      const controller = controllerRef.current;
+      if (!controller || controller.isDisposed() || editingLocked()) return false;
+      const current = controller.getSnapshot().edit;
+      const meta = referencesMeta.find(
+        (reference) => normalizeStudyUuid(reference.id) === normalizeStudyUuid(refId),
+      );
+      if (!meta) return false; // 无快照：无法生成独立摘录（不猜测内容）
+      let nextBodyMd: string;
+      try {
+        nextBodyMd = replaceMarkerWithExcerpt(current.bodyMd, refId, excerptLinesFromSnapshot(meta));
+      } catch {
+        return false;
+      }
+      const nextReferences = current.references.filter(
+        (write) => normalizeStudyUuid(write.id) !== normalizeStudyUuid(refId),
+      );
+      controller.edit({ ...current, bodyMd: nextBodyMd, references: nextReferences });
+      setReferencesMeta((previous) =>
+        previous.filter((reference) => normalizeStudyUuid(reference.id) !== normalizeStudyUuid(refId)),
+      );
+      return true;
+    },
+    [editingLocked, referencesMeta],
+  );
   const onCompositionStart = useCallback(() => controllerRef.current?.setComposing(true), []);
   const onCompositionEnd = useCallback(() => controllerRef.current?.setComposing(false), []);
 
@@ -433,6 +529,9 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
     referencesMeta,
     setTitle,
     setBodyMd,
+    insertReference,
+    removeReference,
+    convertReferenceToExcerpt,
     onCompositionStart,
     onCompositionEnd,
     retry,
