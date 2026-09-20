@@ -142,7 +142,17 @@
 ## 5. 提交、推送与 PR
 
 - 状态：进行中（见文末提交与 PR 记录）。
-- 提交后 coverage:layered 复跑：__待补__
+- 提交后 coverage:layered 复跑（快区 `t08-verify` ff 至 4deb972，`COVERAGE_BASE_REF=origin/study-notes-n1-editor`）：**exit 0**——diff 覆盖率四层全 PASS（domain 98.18% / service 95.09% / repository 93.83% / http 91.67% lines），baseline ratchet 通过，functional evidence matrix 完整（`D:/tmp/t08-layered3.log`）。
+
+### 5.1 提交记录（工作区 `D:/Temp/vocab-ob-n1-task08`，HUSKY=0，逐文件点名暂存）
+
+| SHA | 段 | 内容 |
+| --- | --- | --- |
+| `bd66f40` | feat | 学习笔记消费工作台：列表/游标/专题/深链/URL 态/导航屏障 + shell 接线（12 文件 +2178） |
+| `c1978fb` | test | 61 单测/组件 + 9 场景浏览器 E2E + shell 白名单与矩阵锁同步（7 文件 +1992） |
+| `4deb972` | docs | 执行台账（§1–§7；本表为此后追加） |
+
+提交后核验：`git status` 干净；`git fsck --no-dangling` 无损坏；分支 `study-notes-n1-task08`（HEAD=4deb972）。
 
 ## 6. 未覆盖项与观察项
 
