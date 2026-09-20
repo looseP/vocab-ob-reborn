@@ -521,3 +521,245 @@ describe("studyTopicCoordinator · 读写代际（R2/R3 补修）", () => {
     expect(coordinator.getSnapshot().createError).toBe(null);
   });
 });
+
+describe("studyTopicCoordinator · 读取生命周期（F1–F3 收尾）", () => {
+  it("F1：翻页被刷新取代 → 释放 loadingMoreTopics；旧回包不清新代 busy；刷新后确实能再翻页（探针迁移）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto()], nextCursor: "page2", total: 3 });
+    await coordinator.load("cloze");
+
+    const stale = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(stale.promise);
+    const more = coordinator.loadMore(); // 挂起
+    expect(coordinator.getSnapshot().loadingMoreTopics).toBe(true);
+
+    client.listTopics.mockResolvedValueOnce({
+      items: [topicDto()],
+      nextCursor: "fresh-page2",
+      total: 3,
+    });
+    await coordinator.refresh(); // 取代翻页
+    expect(coordinator.getSnapshot().loadingMoreTopics).toBe(false); // 释放（F1 修复点）
+
+    stale.resolve({ items: [topicDto({ id: TOPIC2_ID })], nextCursor: null, total: 3 });
+    await more; // 旧回包丢弃
+
+    const after = coordinator.getSnapshot();
+    expect(after.loadingMoreTopics).toBe(false);
+    expect(after.topics.map((item) => item.id)).toEqual([TOPIC_ID]); // 旧数据未混入
+
+    // 刷新后再次翻页：真实发出携新 cursor 的请求
+    client.listTopics.mockResolvedValueOnce({
+      items: [topicDto({ id: TOPIC2_ID, title: "专题二", memberCount: 0 })],
+      nextCursor: null,
+      total: 3,
+    });
+    await coordinator.loadMore();
+    expect(client.listTopics).toHaveBeenLastCalledWith(
+      expect.objectContaining({ venue: "cloze", cursor: "fresh-page2" }),
+    );
+    expect(coordinator.getSnapshot().topics).toHaveLength(2);
+  });
+
+  it("F1b：旧翻页回包到达时新代翻页在途 → 不清除新代 busy 标记", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto()], nextCursor: "page2", total: 4 });
+    await coordinator.load("cloze");
+
+    const oldPage = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(oldPage.promise);
+    const oldMore = coordinator.loadMore(); // 旧代挂起
+
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto()], nextCursor: "page2b", total: 4 });
+    await coordinator.refresh(); // 取代
+
+    const newPage = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(newPage.promise);
+    const newMore = coordinator.loadMore(); // 新代挂起
+    expect(coordinator.getSnapshot().loadingMoreTopics).toBe(true);
+
+    oldPage.resolve({ items: [topicDto({ id: TOPIC2_ID })], nextCursor: null, total: 4 }); // 旧回包迟到
+    await oldMore;
+    expect(coordinator.getSnapshot().loadingMoreTopics).toBe(true); // 新代 busy 不被旧回包清除
+
+    newPage.resolve({ items: [topicDto({ id: TOPIC2_ID })], nextCursor: null, total: 4 });
+    await newMore;
+    expect(coordinator.getSnapshot().loadingMoreTopics).toBe(false); // 新代正常结算
+  });
+
+  it("F2a：写确认作废迟到刷新后必须结算加载终态（不永久 loading；探针迁移）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto()], nextCursor: "p2", total: 2 });
+    await coordinator.load("cloze");
+
+    const stale = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(stale.promise);
+    const refreshing = coordinator.refresh(); // v1 挂起（state=loading）
+    expect(coordinator.getSnapshot().state).toBe("loading");
+
+    client.saveTopic.mockResolvedValueOnce({ item: topicDto({ version: 2 }) });
+    await coordinator.saveTopic(TOPIC_ID, { title: "v2", status: "active" }); // 写确认 v2
+
+    stale.resolve({ items: [topicDto({ version: 1 })], nextCursor: "p2", total: 2 });
+    await refreshing; // 迟到 v1 回包（数据丢弃）
+
+    const snapshot = coordinator.getSnapshot();
+    expect(snapshot.topics[0]!.version).toBe(2); // 版本不回退
+    expect(snapshot.state).toBe("ready"); // 加载终态结算（F2a 修复点）
+    expect(snapshot.loadingMoreTopics).toBe(false);
+  });
+
+  it("F2b：旧题型写确认发生在题型切换首屏 GET 在途时 → 不作废新题型读取（探针迁移）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValueOnce({ items: [], nextCursor: null, total: 0 });
+    await coordinator.load("cloze");
+
+    const create = defer<{ item: StudyTopicDto; created: boolean }>();
+    client.createTopic.mockReturnValueOnce(create.promise);
+    const creating = coordinator.createTopic("旧题型专题");
+
+    const newRead = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(newRead.promise);
+    const switching = coordinator.load("sentence_translation"); // 新题型 GET 在途
+
+    create.resolve({ item: topicDto({ id: TOPIC_ID, title: "旧题型专题" }), created: true });
+    await creating; // 旧题型确认先到（venue 归属：不注入也不作废新读）
+
+    newRead.resolve({
+      items: [topicDto({ id: TOPIC2_ID, questionType: "sentence_translation", title: "新译题" })],
+      nextCursor: null,
+      total: 1,
+    });
+    await switching;
+
+    const snapshot = coordinator.getSnapshot();
+    expect(snapshot.state).toBe("ready"); // 新题型读取正常装配（F2b 修复点）
+    expect(snapshot.topics.map((item) => item.id)).toEqual([TOPIC2_ID]);
+  });
+
+  it("F3：后页定位回包不得改动已切换题型的列表/游标（探针迁移）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto()], nextCursor: "cloze-page2", total: 2 });
+    await coordinator.load("cloze");
+
+    // cloze 后页定位挂起（saveTopic → ensureTopicLoaded 走 cursor）
+    const walk = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(walk.promise);
+    client.saveTopic.mockResolvedValue({ item: topicDto({ id: TOPIC2_ID, version: 2 }) });
+    const writing = coordinator
+      .saveTopic(TOPIC2_ID, { title: "改名", status: "active" })
+      .catch(() => undefined);
+    for (let i = 0; i < 6; i += 1) await Promise.resolve(); // 排空：让串行写 task 启动并发起定位请求
+
+    // 切题型并完成首屏
+    client.listTopics.mockResolvedValueOnce({
+      items: [
+        topicDto({ id: "00000000-0000-4000-8000-000000000903", questionType: "sentence_translation", title: "译题" }),
+      ],
+      nextCursor: "translation-page2",
+      total: 2,
+    });
+    await coordinator.load("sentence_translation");
+
+    walk.resolve({ items: [topicDto({ id: TOPIC2_ID, title: "目标" })], nextCursor: null, total: 2 });
+    await writing; // 定位回包迟到
+
+    const snapshot = coordinator.getSnapshot();
+    expect(snapshot.topics.map((item) => item.questionType)).toEqual(["sentence_translation"]); // 不混入
+    expect(snapshot.nextCursor).toBe("translation-page2"); // 游标不被覆盖（F3 修复点）
+    expect(snapshot.total).toBe(2);
+    expect(snapshot.state).toBe("ready");
+  });
+
+  it("F3b：定位与手工翻页并行 → 定位回包按代际中止，不覆盖翻页结果", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto()], nextCursor: "p2", total: 3 });
+    await coordinator.load("cloze");
+
+    const walk = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(walk.promise);
+    client.saveTopic.mockResolvedValue({ item: topicDto({ id: TOPIC2_ID, version: 2 }) });
+    const writing = coordinator
+      .saveTopic(TOPIC2_ID, { title: "改名", status: "active" })
+      .catch(() => undefined);
+    for (let i = 0; i < 6; i += 1) await Promise.resolve(); // 排空：让定位请求先于手工翻页发起
+
+    // 用户手工翻页（同题型）：推进页代际并成功
+    client.listTopics.mockResolvedValueOnce({
+      items: [topicDto({ id: TOPIC2_ID, title: "第二页" })],
+      nextCursor: null,
+      total: 3,
+    });
+    await coordinator.loadMore();
+    expect(coordinator.getSnapshot().topics).toHaveLength(2);
+
+    // 定位回包迟到：其代际已过期 → 中止且不得改动（不回退 cursor 等）
+    walk.resolve({ items: [topicDto({ id: TOPIC2_ID })], nextCursor: "p9", total: 9 });
+    await writing;
+
+    const snapshot = coordinator.getSnapshot();
+    expect(snapshot.topics.map((item) => item.id)).toEqual([TOPIC_ID, TOPIC2_ID]);
+    expect(snapshot.nextCursor).toBe(null); // 翻页终态保持
+    expect(snapshot.total).toBe(3);
+  });
+
+  it("F3c：A→B→A 切题型后，最初 A 的定位回包不污染当前 A 列表", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    // 调用序列：cloze 首屏 → 定位 walk（挂起）→ translation 首屏 → cloze 二回
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto()], nextCursor: "a-p2", total: 5 });
+    await coordinator.load("cloze");
+
+    const walk = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(walk.promise);
+    client.listTopics.mockResolvedValueOnce({
+      items: [topicDto({ id: TOPIC2_ID, questionType: "sentence_translation", title: "B" })],
+      nextCursor: null,
+      total: 1,
+    });
+    client.listTopics.mockResolvedValueOnce({
+      items: [topicDto({ id: "00000000-0000-4000-8000-000000000904", title: "A-new" })],
+      nextCursor: "a2-p2",
+      total: 5,
+    });
+    client.saveTopic.mockResolvedValue({ item: topicDto({ id: TOPIC2_ID, version: 2 }) });
+    const writing = coordinator
+      .saveTopic(TOPIC2_ID, { title: "改名", status: "active" })
+      .catch(() => undefined);
+    for (let i = 0; i < 6; i += 1) await Promise.resolve(); // 排空：让定位请求先于切题型发起
+
+    await coordinator.load("sentence_translation"); // A→B
+    await coordinator.load("cloze"); // B→A
+    walk.resolve({ items: [topicDto({ id: TOPIC2_ID })], nextCursor: "stale", total: 5 });
+    await writing;
+
+    const snapshot = coordinator.getSnapshot();
+    expect(snapshot.topics.map((item) => item.id)).toEqual(["00000000-0000-4000-8000-000000000904"]);
+    expect(snapshot.nextCursor).toBe("a2-p2");
+  });
+
+  it("F3d：定位在途 dispose → 定位拒绝且不改动状态", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto()], nextCursor: "p2", total: 2 });
+    await coordinator.load("cloze");
+
+    const walk = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(walk.promise);
+    client.saveTopic.mockResolvedValue({ item: topicDto({ id: TOPIC2_ID, version: 2 }) });
+    const writing = coordinator
+      .saveTopic(TOPIC2_ID, { title: "改名", status: "active" })
+      .catch(() => undefined);
+
+    coordinator.dispose();
+    walk.resolve({ items: [topicDto({ id: TOPIC2_ID })], nextCursor: "stale", total: 9 });
+    await writing;
+    expect(client.saveTopic).not.toHaveBeenCalled(); // 定位中止：未发写请求
+  });
+});

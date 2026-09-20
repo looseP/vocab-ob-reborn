@@ -102,6 +102,8 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
   let createKeySeq = 0;
   let chain: Promise<unknown> = Promise.resolve();
   let loadSeq = 0;
+  /** 在途 load 请求计数（F2a：用于在被写确认作废后判断是否仍有更新的请求接手结算）。 */
+  let loadOutstanding = 0;
   /** 专题翻页代际：load(切题型/刷新) 推进后，在途续取回包整体丢弃（R1/R2）。 */
   let topicsPageSeq = 0;
   let disposed = false;
@@ -112,12 +114,12 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
   }
 
   function upsertTopic(item: StudyTopicDto): void {
+    // F2b：venue 归属判定在推进读代际之前——旧题型的迟到写确认不得注入视图、
+    // 也不得作废当前题型正在进行的有效读取。
+    if (item.questionType !== venue) return;
     // R3：写确认即推进读代际——此前发起、仍在途的 load/refresh 回包整体失效，
     // 防止旧快照覆盖已确认的新版本；之后发起的新鲜刷新不受影响（仍采纳他端更高版本）。
     loadSeq += 1;
-    // R2：迟到写回包的 venue 归属判定——真实成功保留在服务端（切回原题型可读），
-    // 但不得注入当前已切换到的其他题型视图。
-    if (item.questionType !== venue) return;
     const index = topics.findIndex((topic) => topic.id === item.id);
     if (index >= 0) {
       topics = topics.map((topic, i) => (i === index ? item : topic));
@@ -131,14 +133,20 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
     if (disposed) return;
     venue = nextVenue;
     const seq = ++loadSeq;
+    loadOutstanding += 1;
     topicsPageSeq += 1; // 切题型/刷新：失效在途专题续取（旧代回包不污染新列表）
+    loadingMoreTopics = false; // F1：刷新/切题型取代翻页 → 终结旧翻页 pending（旧回包不得再动它）
     state = "loading";
     error = null;
     createError = null; // 切题型/刷新：旧视图的创建错误不带到新视图（R2）
     notify();
     try {
       const page = await options.client.listTopics({ venue: nextVenue });
-      if (disposed || seq !== loadSeq) return;
+      loadOutstanding -= 1;
+      if (disposed || seq !== loadSeq) {
+        settleSupersededLoad();
+        return;
+      }
       topics = page.items;
       total = page.total;
       nextCursor = page.nextCursor;
@@ -148,11 +156,28 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
       }
       state = "ready";
     } catch (caught) {
-      if (disposed || seq !== loadSeq) return;
+      loadOutstanding -= 1;
+      if (disposed || seq !== loadSeq) {
+        settleSupersededLoad();
+        return;
+      }
       state = "error";
       error = describeError(caught);
     }
     notify();
+  }
+
+  /**
+   * F2a：本读请求被写确认作废后，若没有更新的读请求接手（loadOutstanding===0），
+   * 必须结算加载终态——数据保持写确认后的现状并转 ready；绝不允许永久 loading。
+   * 注意：仅在仍有请求在途（新 load 会自行结算）或非 loading 态时不干预，
+   * 避免把新请求的进行中状态误结算、或把正常失败伪报成功。
+   */
+  function settleSupersededLoad(): void {
+    if (!disposed && loadOutstanding === 0 && state === "loading") {
+      state = "ready";
+      notify();
+    }
   }
 
   /** 专题续取（R1）：cursor 合同；去重合并；失败保留旧列表与 cursor 可重试。 */
@@ -222,15 +247,22 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
   /**
    * R1 后页深链：写操作目标不在本地（分页未加载）时，经 cursor 续取定位专题，
    * 结果并入列表后返回其最新版本；取尽仍无 → 显式报错（不静默成功、不发写请求）。
-   * 仅在串行写执行体内调用；期间 venue 未变（切题型后同 id 不在新列表，取尽同样报错）。
+   * F3：定位纳入读取代际合同——发起题型/页代际在等待期间任一变化（切题型、刷新、
+   * 手工翻页、dispose）即中止并显式拒绝，绝不改动当前视图的 topics/total/cursor。
    */
   async function ensureTopicLoaded(topicId: string): Promise<StudyTopicDto> {
     const known = topics.find((item) => item.id === topicId);
     if (known) return known;
     if (venue === null) throw new Error("专题不存在或尚未加载。");
+    const walkVenue = venue;
+    const walkSeq = topicsPageSeq;
     while (nextCursor !== null && !disposed) {
-      const page = await options.client.listTopics({ venue, cursor: nextCursor });
+      const page = await options.client.listTopics({ venue: walkVenue, cursor: nextCursor });
       if (disposed) throw new Error("协调器已销毁。");
+      // F3：读取代际核对（在合并之前）——上下文已切换则整体中止
+      if (venue !== walkVenue || topicsPageSeq !== walkSeq) {
+        throw new Error("专题上下文已切换，请重试。");
+      }
       const seen = new Set(topics.map((topic) => topic.id));
       const merged = [...topics];
       for (const item of page.items) {
