@@ -84,16 +84,27 @@ function ReferencePlaceholder({
   onConvert,
 }: {
   refId: string;
-  meta: ReferencePreview | undefined;
+  meta: ReferencePreview & { confirmed?: boolean } | undefined;
   onRemove?: (refId: string) => void;
   onConvert?: (refId: string) => void;
 }) {
-  const statusLabel = meta === undefined ? "未找到快照" : meta.status === "changed" ? "内容已变化" : meta.status === "unavailable" ? "引用已失效" : null;
+  const pending = meta !== undefined && meta.confirmed === false;
+  const statusLabel =
+    meta === undefined
+      ? "未找到快照"
+      : pending
+        ? "待确认"
+        : meta.status === "changed"
+          ? "内容已变化"
+          : meta.status === "unavailable"
+            ? "引用已失效"
+            : null;
   return (
     <div
       className="my-2 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-ink)]"
       data-testid="reference-placeholder"
       data-ref-id={refId}
+      data-ref-confirmed={meta === undefined ? "unknown" : pending ? "pending" : "confirmed"}
     >
       <div className="flex items-center gap-2">
         <span className="rounded bg-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-soft)]">引用</span>
@@ -110,8 +121,10 @@ function ReferencePlaceholder({
           {onConvert && (
             <button
               type="button"
-              className="rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-soft)] hover:border-[var(--color-accent)]"
+              className="rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-soft)] hover:border-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => onConvert(refId)}
+              disabled={pending}
+              title={pending ? "该引用尚未保存确认：请先保存后再转为普通摘录" : undefined}
               data-testid="ref-card-convert"
             >
               转普通摘录
@@ -298,6 +311,24 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
             data-testid="note-body"
           />
           {overBody && <p className="mt-1 text-[11px] text-[var(--color-accent-2)]">正文超过 {BODY_MAX} 字符上限，保存将被拒绝；请先精简。</p>}
+        </div>
+      )}
+
+      {/* Task 09A：引用操作拒绝/未确认反馈（可见原因，不只返回 false/null） */}
+      {editor.referenceError && (
+        <div
+          className="flex items-start justify-between gap-2 rounded-lg border border-[var(--color-accent-2)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-ink)]"
+          role="alert"
+          data-testid="reference-error"
+        >
+          <span className="min-w-0 flex-1">{editor.referenceError}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-soft)]"
+            onClick={editor.dismissReferenceError}
+          >
+            知道了
+          </button>
         </div>
       )}
 

@@ -10,7 +10,7 @@
  */
 import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { fireEvent, screen, waitFor } from "@testing-library/dom";
+import { fireEvent, screen, waitFor, within } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
@@ -508,5 +508,230 @@ describe("复核补修 · StrictMode / 预览时效 / 插入光标", () => {
     expect(parseReferenceIds(body)).toHaveLength(2);
     expect(body.startsWith("正文\n\n[[ref:")).toBe(true); // 位置 2 插入（打开时快照为 0 会插到文首）
     expect(body).toContain("一\n\n[[ref:");
+  });
+});
+
+describe("Task 09A 补修 · 确认协议（R1）与正式快照（R2）", () => {
+  /**
+   * 增强 fake save：**按提交的 marker/reference 集合**回传有效 DTO（服务端口径）——
+   * 新 capture 得到服务端快照与 capturedAt；既有引用保持原快照。
+   * 旧 mock 一律回原 DTO（不含新增引用），会掩盖「确认处理缺失」的缺陷。
+   */
+  function withEchoSave(overrides: Partial<StudyNoteDto> = {}) {
+    const mocks = makeClient();
+    const base = makeDto(overrides);
+    mocks.get.mockResolvedValue({ item: base });
+    mocks.searchTargets.mockResolvedValue({
+      items: [{ id: SOURCE_ID, title: "来源A", createdAt: "2026-09-20T00:00:00.000Z" }],
+      total: 1,
+      nextCursor: null,
+    });
+    mocks.preview.mockResolvedValue({
+      target: { kind: "source", sourceId: SOURCE_ID },
+      displaySnapshot: { kind: "source", title: "PREVIEW_OLD", excerpt: "PREVIEW_EXCERPT" },
+      liveTitle: "PREVIEW_OLD",
+    });
+    const calls: Array<Record<string, unknown>> = [];
+    mocks.save.mockImplementation(async (_id: string, payload: any) => {
+      calls.push(payload);
+      const previous = calls.length - 1;
+      return {
+        item: {
+          ...base,
+          title: payload.title,
+          bodyMd: payload.bodyMd,
+          version: base.version + previous + 1,
+          updatedAt: `2026-09-21T0${previous + 1}:00:00.000Z`,
+          // 服务端为每个引用返回**正式元数据**（capture → 新快照 + 服务端时间）
+          references: (payload.references as Array<{ id: string; action: string; target: unknown }>).map((write) => {
+            const existing = base.references.find((reference) => reference.id.toLowerCase() === write.id.toLowerCase());
+            if (existing && write.action === "keep") return existing;
+            return {
+              id: write.id,
+              target: write.target,
+              status: "current",
+              capturedAt: `2026-09-21T0${previous + 1}:00:00.000Z`,
+              displaySnapshot: { kind: "source", title: "SERVER_CONFIRMED", excerpt: "SERVER_EXCERPT" },
+              liveTitle: "SERVER_CONFIRMED",
+            };
+          }),
+        },
+      };
+    });
+    return { ...mocks, calls };
+  }
+
+  async function insertViaPicker(): Promise<string> {
+    await openPicker();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-item"));
+    });
+    await waitFor(() => expect(screen.queryByTestId("ref-preview-card")).not.toBeNull());
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-insert"));
+    });
+    const ids = parseReferenceIds(bodyValue());
+    return ids.find((id) => id !== REF_ID)!;
+  }
+
+  it("R1：插入→确认→仅改标题，第二次 PUT 的新引用必须 keep（不再重采集）", async () => {
+    const { client, get, save } = withEchoSave();
+    get.mockResolvedValue({ item: makeDto() });
+    await renderEditor(client);
+    const newRefId = await insertViaPicker();
+
+    // 第一次保存（capture）
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect((save.mock.calls[0]![1] as any).references.find((w: any) => w.id === newRefId).action).toBe("capture");
+
+    // 仅改标题 → 第二次保存
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("note-title"), { target: { value: "第二次标题" } });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    const second = save.mock.calls[1]![1] as any;
+    expect(second.references.find((w: any) => w.id === newRefId).action).toBe("keep");
+    expect(second.references.find((w: any) => w.id === REF_ID).action).toBe("keep");
+    // 正文未被回退（marker 仍在）
+    expect(parseReferenceIds(second.bodyMd)).toHaveLength(2);
+  });
+
+  it("R2：保存确认的服务端快照与时间替换预览；预览旧标题不再出现于卡片", async () => {
+    const { client, get, save } = withEchoSave();
+    get.mockResolvedValue({ item: makeDto() });
+    await renderEditor(client);
+    const newRefId = await insertViaPicker();
+
+    // 保存前：卡片显示预览内容（待确认）
+    await act(async () => {
+      fireEvent.click(screen.getByText("预览"));
+    });
+    const cardBefore = screen.getAllByTestId("reference-placeholder").find((c) => c.getAttribute("data-ref-id") === newRefId)!;
+    expect(cardBefore.textContent).toContain("PREVIEW_OLD");
+    expect(cardBefore.textContent).toContain("待确认");
+    await act(async () => {
+      fireEvent.click(screen.getByText("返回编辑"));
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    });
+    await waitFor(() => expect(save).toHaveBeenCalled());
+
+    // 确认后：卡片显示服务端快照（无需 F5）
+    await act(async () => {
+      fireEvent.click(screen.getByText("预览"));
+    });
+    const cardAfter = screen.getAllByTestId("reference-placeholder").find((c) => c.getAttribute("data-ref-id") === newRefId)!;
+    expect(cardAfter.textContent).toContain("SERVER_CONFIRMED");
+    expect(cardAfter.textContent).not.toContain("PREVIEW_OLD");
+    expect(cardAfter.textContent).not.toContain("待确认");
+  });
+
+  it("R2：未确认的引用禁止转普通摘录（可见原因，不改动正文）", async () => {
+    const { client, get, save } = withEchoSave();
+    get.mockResolvedValue({ item: makeDto() });
+    await renderEditor(client);
+    const newRefId = await insertViaPicker();
+    const bodyBefore = bodyValue();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("预览"));
+    });
+    const card = screen
+      .getAllByTestId("reference-placeholder")
+      .find((c) => (c.getAttribute("data-ref-id") ?? "").toLowerCase() === newRefId.toLowerCase())!;
+    expect(card).toBeTruthy();
+    expect(card.getAttribute("data-ref-confirmed")).toBe("pending");
+    // 未确认：转换按钮禁用（不只靠点击后被拒）+ 明确原因
+    expect((within(card).getByTestId("ref-card-convert") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      fireEvent.click(within(card).getByTestId("ref-card-convert"));
+    });
+
+    // 正文、marker、引用计数完全不变
+    expect(parseReferenceIds(bodyBefore)).toHaveLength(2);
+    await act(async () => {
+      fireEvent.click(screen.getByText("返回编辑"));
+    });
+    expect(bodyValue()).toBe(bodyBefore);
+    expect(parseReferenceIds(bodyValue())).toHaveLength(2);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("R2：确认后转换消费服务端快照（非预览内容）", async () => {
+    const { client, get, save } = withEchoSave();
+    get.mockResolvedValue({ item: makeDto() });
+    await renderEditor(client);
+    const newRefId = await insertViaPicker();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    });
+    await waitFor(() => expect(save).toHaveBeenCalled());
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("预览"));
+    });
+    const card = screen.getAllByTestId("reference-placeholder").find((c) => c.getAttribute("data-ref-id") === newRefId)!;
+    await act(async () => {
+      fireEvent.click(within(card).getByTestId("ref-card-convert"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("返回编辑"));
+    });
+
+    const body = bodyValue();
+    expect(body).toContain("SERVER_CONFIRMED"); // 服务端快照被消费
+    expect(body).not.toContain("PREVIEW_OLD"); // 预览未被冒充
+    expect(parseReferenceIds(body)).toHaveLength(1); // 新引用已转普通摘录
+  });
+
+
+  it("R4：光标在代码块内插入被拒绝 → 可见反馈、正文与引用计数完全不变", async () => {
+    const { client, get, searchTargets, preview } = makeClient();
+    const codeBody = ["```md", "example", "```"].join("\n");
+    get.mockResolvedValue({ item: makeDto({ bodyMd: codeBody, references: [] }) });
+    searchTargets.mockResolvedValue({
+      items: [{ id: SOURCE_ID, title: "来源A", createdAt: "2026-09-20T00:00:00.000Z" }],
+      total: 1,
+      nextCursor: null,
+    });
+    preview.mockResolvedValue({
+      target: { kind: "source", sourceId: SOURCE_ID },
+      displaySnapshot: { kind: "source", title: "来源A", excerpt: "摘录A" },
+      liveTitle: "来源A",
+    });
+    await renderEditor(client);
+
+    // 把光标放进代码块内部（"example" 中间），再打开 picker 插入
+    const textarea = screen.getByTestId("note-body") as HTMLTextAreaElement;
+    await act(async () => {
+      textarea.setSelectionRange(codeBody.indexOf("example") + 3, codeBody.indexOf("example") + 3);
+    });
+    await openPicker();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-item"));
+    });
+    await waitFor(() => expect(screen.queryByTestId("ref-preview-card")).not.toBeNull());
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-insert"));
+    });
+
+    // DEBUG
+    console.log('DBG body=', JSON.stringify(bodyValue()));
+    console.log('DBG count=', screen.queryByText(/引用 \d+ 条/)?.textContent);
+    console.log('DBG err=', screen.queryByTestId("reference-error")?.textContent ?? "NONE");
+    // 拒绝且完全不变：正文原样、无新 marker、无引用
+    expect(bodyValue()).toBe(codeBody);
+    expect(parseReferenceIds(bodyValue())).toHaveLength(0);
+    expect(screen.getByText(/引用 0 条/)).toBeTruthy();
+    expect(screen.getByTestId("reference-error").textContent).toContain("代码块");
   });
 });
