@@ -146,13 +146,14 @@ describe("Phase 4B L3 frontend shell", () => {
       expect(source).not.toMatch(/XMLHttpRequest/);
       expect(source).not.toContain("/api/l3/");
       // L3 surfaces keep using their typed clients: the L3 client
-      // (L3FrontendClient / `client.`) or the writing workspace client
-      // (`writingClient.`, src/frontend/api/writingClient.ts). Non-L3 pages
-      // reach the API only through the generic apiFetch module
+      // (L3FrontendClient / `client.`), the writing workspace client
+      // (`writingClient.`, src/frontend/api/writingClient.ts) or the study-notes
+      // workspace client (studyNotesClient, src/frontend/api/studyNotesClient.ts).
+      // Non-L3 pages reach the API only through the generic apiFetch module
       // (src/frontend/api/client), which the global no-raw-fetch rules above
       // keep exclusive.
       if (file.includes("/pages/L3") && !file.endsWith("src/frontend/pages/L3HomePage.tsx")) {
-        expect(source).toMatch(/L3FrontendClient|writingClient\.|client\./);
+        expect(source).toMatch(/L3FrontendClient|writingClient\.|studyNotesClient\b|client\./);
       }
     }
   });
@@ -163,6 +164,8 @@ describe("Phase 4B L3 frontend shell", () => {
       { id: "source", label: "来源书架" },
       { id: "papers", label: "试卷台" },
       { id: "writing", label: "作文" },
+      // Task 08：学习笔记子空间（/l3?section=study-notes）为显式新增的一级入口。
+      { id: "studyNotes", label: "学习笔记" },
       { id: "word", label: "词空间" },
       { id: "context", label: "语境条目" },
       { id: "graph", label: "关联图" },
