@@ -892,19 +892,23 @@ describe("保存控制器 · R1 确定拒绝恢复与结果不明分离", () => 
     const third = save.mock.calls[2]![0] as StudyNoteSaveRequest;
     expect(third.snapshot.title).toBe("A");
     expect(third.requestId).toBe((save.mock.calls[0]![0] as StudyNoteSaveRequest).requestId);
+    expect(third.expectedVersion).toBe(3); // 重放仍以「最近已确认版本」（基线）提交
 
-    defers[2]!.resolve({ version: 2, updatedAt: "t1" });
+    defers[2]!.resolve({ version: 2, updatedAt: "t1" }); // A 幂等确认（不重复推进）
     await flushMicrotasks();
     expect(save).toHaveBeenCalledTimes(4);
     const fourth = save.mock.calls[3]![0] as StudyNoteSaveRequest;
     expect(fourth.snapshot.title).toBe("B");
     expect(fourth.requestId).not.toBe(third.requestId);
+    expect(fourth.expectedVersion).toBe(2); // A 确认推进后的版本
 
     defers[3]!.resolve({ version: 3, updatedAt: "t2" });
     await flushMicrotasks();
     const done = controller.getSnapshot();
     expect(done.state).toBe("idle");
     expect(done.edit.title).toBe("B");
+    expect(done.version).toBe(3); // 版本仅随两次成功确认推进（2 → 3）
+    expect(done.savedSeq).toBe(2); // A 与 B 各自确认一次
   });
 });
 
