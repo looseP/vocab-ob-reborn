@@ -50,15 +50,20 @@
 
 - 全量（host 10 + reference-loop 4 + workspace 18）：**32/32 exit 0**（`D:/tmp/t09a-e2e-full.log`，3.4m）。reference-loop 单独复跑亦 4/4（`D:/tmp/t09a-e2e3.log`）。
 
-### 5.2 工程门禁（快区 `C:/Windows/Temp/t09a-verify`@`6a679a4`；三 BASE_REF=PR base 完整 SHA `832192943496099e53b3330bd0d2e7fb85b925c2`）
+### 5.2 工程门禁（三 BASE_REF=PR base 完整 SHA `832192943496099e53b3330bd0d2e7fb85b925c2`）
 
-- **聚合 `verify:engineering` 退出 1（如实保留，`D:/tmp/t09a-gate.log`）**：断点在 `test:unit` 的 coverage 收尾——`safe-delete` 拦截 `coverage\.tmp` 清理（280 文件 > 50 阈值，turn 预算窗口环境量）；链上 typecheck/arch:check 通过，且**vitest 本体全绿：255 文件（254 passed / 1 skipped）/ 3817 用例（3811 passed / 6 skipped，0 failed）**，覆盖率产物完整（`coverage-final.json`）。
-- **分段证据（全部自然退出 0）**：coverage:layered=0 / test:collection=0 / db:schema:drift=0 / api:governance=0（含 route complexity ratchet passed；无 breaking）/ frontend:build=0 / runtime:verify=0 / alerting:verify=0 / release:acceptance:contract=0 / secret-rotation:evidence:contract=0 / release:workflow:verify=0 / complexity:routes=0。
-- **coverage 口径（如实）**：`Diff coverage N/A — changed src files 5 (governed 0 / outside governed layers 5), changed executable lines 0`——本批为纯前端改动，不在受治理四层内；沿用前批口径，不以 N/A 记作通过亦不伪造覆盖率。
+- **首轮（快区 `t09a-verify`@`6a679a4`，`D:/tmp/t09a-gate.log`）**：聚合退出 1（如实保留）——断点在 `test:unit` 的 coverage 收尾（`safe-delete` 拦 `coverage\.tmp` 280 文件）；链上 typecheck/arch 通过，**vitest 本体全绿：255 文件（254 passed / 1 skipped）/ 3817 用例（3811 passed / 6 skipped，0 failed）**；分段 11 步全部 0（含 layered；同日 staged 证据 `t09a-stages.txt`）。
+- **终态（快区 `t09a-verify2`/`t09a-verify3`@`037136c`）**：
+  - 聚合复跑（`D:/tmp/t09a-gate2.log`）退出 1 如实保留：vitest 窗口内 **16 failed 全部为 safe-delete 护栏产物**（15 例 drill 锁级联 + 1 例 node_modules 被改名挂 `.DELETE.` 后缀）；**受控对照**：同 SHA 下非护栏（审批流）复跑该两文件 **2/2 绿**（`t09a-gate2-retry.log`）。
+  - **可执行环境复验（同 SHA/lock/config，审批流）**：vitest --coverage **exit 0 —— 254 passed / 1 skipped（255 文件）、3815 passed / 6 skipped / 0 failed（3821 用例）**，`coverage-final.json` 产出，`.DELETE` 残留 0（`D:/tmp/t09a-unit-final4.log`）。
+  - **分段 11 步全部自然退出 0**（`t09a-stages3.txt`；`sh` 记录：layered / coll / drift / gov / febuild / rt / alert / rel1 / sec / relw / cxr 均 `=0`）。
+- **coverage 口径（如实）**：`Diff coverage N/A — changed src files 5 (governed 0 / outside governed layers 5), changed executable lines 0`——本批为纯前端改动，不在受治理四层内；不以 N/A 记作通过亦不伪造覆盖率。
 
 ### 5.3 提交、推送与 PR
 
-__待补（推送与 PR 更新后回填）__
+- 提交链：`663bdab`（域+模型）→ `9bf7310`（picker/hook/editor）→ `e91e5df`（import 对齐）→ `6a679a4`（E2E+409）→ `e7b91dc`（复核补修）→ `67625d9`（台账）→ `037136c`（R3 口径同步+二次复核记录）。
+- 推送：`git push -u origin study-notes-n1-task09a`；**local HEAD = ls-remote = `037136cc094f9e63aad12bfb7d9df97fac45f7b8`**。
+- PR：**#129**（draft、OPEN、base=`study-notes-n1-task08`），依赖 #128→#127→#126→#125；描述含交付、测试证据、门禁口径与环境说明。
 
 ## 6. 独立只读复核与补修（2026-09-20 晚）
 
