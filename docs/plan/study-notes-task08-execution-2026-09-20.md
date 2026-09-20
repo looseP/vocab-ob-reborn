@@ -137,12 +137,13 @@
 - `coverage:layered` 补跑 → fail-closed：diff gate 只测量 **已提交**变更（HEAD 仍 = base 259415f，本批未提交时 base…HEAD diff 为空）。故顺序调整为：**先提交 → 再以 `COVERAGE_BASE_REF=origin/study-notes-n1-editor` 复跑**（结果见 §5）。
 - E2E 证据时间线核验：`t08-e2e3.log`（16:31）晚于全部实现改动（`L3StudyNotesPage.tsx` 16:22、`studyNoteHistoryGuard.ts` 16:28）→ §3 的 19/19 对应终态代码，证据有效。
 
-**未触发（真实 CI）**：三项必需检查（Browser E2E / Engineering Gate / Writing E2E）本批尚未运行——需先推送分支并开出 PR 才会触发；本批以本地等价验证替代（本地 E2E 19/19 + 本节门禁证据）。
+**未触发（真实 CI，口径校准）**：`ci.yml` 的 Engineering Gate / Browser E2E 仅在 `push/main` 与 `pull_request → base=main` 触发——本 PR base=`study-notes-n1-editor`，**这两项不会因开 PR 自动运行**；Writing E2E 为独立工作流、支持所有 PR（#128 上可见 pending/运行）。学习笔记 E2E 使用独立配置（`playwright.study-notes.config.ts`），**不在默认浏览器 CI 收集内**，Writing E2E 通过不替代它。最终远端 CI 结果以 GitHub 实时查询为准。
 
 ## 5. 提交、推送与 PR
 
 - 状态：进行中（见文末提交与 PR 记录）。
-- 提交后 coverage:layered 复跑（快区 `t08-verify` ff 至 4deb972，`COVERAGE_BASE_REF=origin/study-notes-n1-editor`）：**exit 0**——diff 覆盖率四层全 PASS（domain 98.18% / service 95.09% / repository 93.83% / http 91.67% lines），baseline ratchet 通过，functional evidence matrix 完整（`D:/tmp/t08-layered3.log`）。
+- 提交后 coverage:layered 复跑（快区 `t08-verify` ff 至 4deb972，`COVERAGE_BASE_REF=origin/study-notes-n1-editor`）：**exit 0**，baseline ratchet 通过，functional evidence matrix 完整（`D:/tmp/t08-layered3.log`）。
+- **口径校准（独立复核纠正）**：该日志明确记录 `Diff coverage ... N/A — changed src files exist outside governed layers`（12 个 changed src、0 个 governed）——本批前端增量**不在 diff 覆盖率测量范围内**；98.18/95.09/93.83/91.67 是 domain/service/repository/http 四个**后端层的总体覆盖率**，不得表述为「本批前端 diff 四层全 PASS」。门禁 exit 0 成立，但含义以上述为准。
 
 ### 5.1 提交记录（工作区 `D:/Temp/vocab-ob-n1-task08`，HUSKY=0，逐文件点名暂存）
 

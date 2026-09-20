@@ -499,3 +499,267 @@ test("⑨ 在途保存期间禁止错误导航：flush 落定后才离开", asyn
     .toBe(`${marker} 内容`);
   await page.unroute("**/api/l3/study-notes/**");
 });
+
+// ── R1–R5 补修场景（⑩–⑭）────────────────────────────────────────────────────
+
+/** 种子：创建专题（title 可直接进 create 请求，与笔记不同）。 */
+async function apiSeedTopic(page: Page, title: string, venue = "cloze"): Promise<string> {
+  const created = await pageApiCall(page, "/api/l3/study-topics", {
+    method: "POST",
+    body: { requestId: randomUUID(), venue, title },
+  });
+  if (created.status !== 201) throw new Error(`创建专题失败：${created.status} ${JSON.stringify(created.body)}`);
+  return (created.body as { item: { id: string } }).item.id;
+}
+
+async function fetchTopicTitle(topicId: string): Promise<{ title: string; version: number }> {
+  return withAdmin(async (client) => {
+    const result = await client.query<{ title: string; version: number }>(
+      "SELECT title, version FROM l3_study_topics WHERE id = $1::uuid AND user_id = $2::uuid",
+      [topicId, OWNER_ID],
+    );
+    if (result.rows.length !== 1) throw new Error(`topic ${topicId} 不存在`);
+    return result.rows[0]!;
+  });
+}
+
+/** 取尽专题分页（点击「加载更多专题」直到入口消失），返回终态 DOM 的专题 id 集合。 */
+async function exhaustTopicPagination(page: Page): Promise<string[]> {
+  for (let guard = 0; guard < 10; guard += 1) {
+    const moreButton = page.getByTestId("topic-load-more");
+    if ((await moreButton.count()) === 0) break;
+    const before = await page.getByTestId("topic-item").count();
+    await moreButton.click();
+    // 等待行数增长（响应驱动）；若等待失败但按钮已消失，说明 cursor 取尽（成功路径）
+    try {
+      await page.waitForFunction(
+        (previous) => document.querySelectorAll('[data-testid="topic-item"]').length > previous,
+        before,
+        { timeout: 15_000 },
+      );
+    } catch {
+      if ((await page.getByTestId("topic-load-more").count()) === 0) break;
+      const now = await page.getByTestId("topic-item").count();
+      const hasError = await page.getByTestId("topic-error").count();
+      const errText = hasError ? await page.getByTestId("topic-error").textContent() : "(none)";
+      throw new Error(
+        `专题续取未增长且未取尽：before=${before} now=${now} topicError=${String(errText)}`,
+      );
+    }
+  }
+  // 终态统一收集（避免过渡帧重复行干扰）
+  return (await page.getByTestId("topic-item").evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute("data-topic-id")),
+  )) as string[];
+}
+
+test("⑩ R1 专题分页：55 个专题全数可达、无重无漏；后页专题深链可重命名（库核）", async ({ authedPage: page }) => {
+  test.setTimeout(120_000);
+  const marker = `T08R1-${Date.now()}`;
+  const seededIds: string[] = [];
+  for (let index = 0; index < 55; index += 1) {
+    seededIds.push(await apiSeedTopic(page, `${marker}-${String(index).padStart(2, "0")}`));
+  }
+  expect(new Set(seededIds).size).toBe(55);
+
+  await openWorkspace(page);
+  await expect(page.getByTestId("topic-item")).toHaveCount(20, { timeout: 15_000 }); // 首页 20
+  await expect(page.getByTestId("topic-load-more")).toBeVisible();
+
+  const visibleIds = await exhaustTopicPagination(page);
+  expect(new Set(visibleIds).size).toBe(visibleIds.length); // 无重复
+  // 本 suite 的 ④ 场景可能已创建遗留专题（beforeAll 只清一次）：断言「本批 seed 全数可达 + 无遗漏」
+  expect(new Set(seededIds).difference(new Set(visibleIds)).size).toBe(0);
+
+  // 后页专题深链：直接进入 topicId（最后一个创建 → 排序最末页）→ 分页取尽定位 → 重命名 → 库核
+  const lastTopicId = seededIds[seededIds.length - 1]!;
+  await page.goto(`/l3?section=study-notes&venue=cloze&topicId=${lastTopicId}`);
+  await expect(page.getByTestId("list-total")).toBeVisible({ timeout: 15_000 });
+  await exhaustTopicPagination(page); // 后页专题经分页取尽后可达（面板语义）
+  const target = page.getByTestId("topic-item").filter({ hasText: `${marker}-54` });
+  await expect(target).toBeVisible({ timeout: 15_000 });
+  await target.click();
+  await page.getByTestId("topic-rename-input").fill(`${marker}-54-改名`);
+  await page.getByTestId("topic-rename-submit").click();
+  await expect(
+    page.getByTestId("topic-item").filter({ hasText: `${marker}-54-改名` }),
+  ).toBeVisible({ timeout: 10_000 });
+  const renamed = await fetchTopicTitle(lastTopicId);
+  expect(renamed.title).toBe(`${marker}-54-改名`);
+  expect(renamed.version).toBe(2);
+});
+
+test("⑪ R2 迟到创建回包不注入新题型；切回可读且不重复创建（真实 HTTP 延迟 + 库核）", async ({ authedPage: page }) => {
+  test.setTimeout(90_000);
+  const marker = `T08R2-${Date.now()}`;
+  let createPosts = 0;
+  await page.route("**/api/l3/study-topics", async (route) => {
+    if (route.request().method() === "POST") {
+      createPosts += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1200)); // 真实响应延迟
+    }
+    await route.continue();
+  });
+
+  await openWorkspace(page);
+  await page.getByTestId("topic-create-input").fill(`${marker}-完形`);
+  await page.getByTestId("topic-create-submit").click(); // POST 挂起
+
+  // 挂起期间切题型：translation 面板加载完成，cloze 创建回包迟到
+  await page.getByTestId("venue-chip-sentence_translation").click();
+  await expect(page.getByTestId("topic-unfiled-button")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("list-total")).toBeVisible({ timeout: 15_000 });
+
+  // 等待迟到回包（真实延迟后到达）
+  await expect
+    .poll(() => createPosts, { timeout: 15_000 })
+    .toBe(1);
+  await page.waitForTimeout(300); // 回包处理与渲染
+  const translationTopics = await page.getByTestId("topic-item").evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute("data-topic-id")),
+  );
+  expect(translationTopics).not.toContain(`${marker}-完形`); // 不注入当前视图
+
+  // 切回 cloze：真实成功可读，不重复创建（仍只 1 次 POST）
+  await page.getByTestId("venue-chip-cloze").click();
+  await expect(
+    page.getByTestId("topic-item").filter({ hasText: `${marker}-完形` }),
+  ).toBeVisible({ timeout: 15_000 });
+  expect(createPosts).toBe(1);
+
+  await withAdmin(async (client) => {
+    const result = await client.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM l3_study_topics WHERE user_id = $1::uuid AND title = $2",
+      [OWNER_ID, `${marker}-完形`],
+    );
+    expect(result.rows[0]!.n).toBe(1);
+  });
+  await page.unroute("**/api/l3/study-topics");
+});
+
+test("⑫ R3 迟到刷新不回退已确认版本：刷新挂起期间完成写入，UI 保持新版本且下次写用新基线（库核）", async ({ authedPage: page }) => {
+  test.setTimeout(90_000);
+  const marker = `T08R3-${Date.now()}`;
+  const topicId = await apiSeedTopic(page, `${marker}-原题`);
+
+  await openWorkspace(page);
+  const topicItem = page.getByTestId("topic-item").filter({ hasText: `${marker}-原题` });
+  await expect(topicItem).toBeVisible({ timeout: 15_000 });
+  await topicItem.click();
+
+  // 刷新请求延迟（load 已完成后再挂 route：仅影响此后的 GET）
+  await page.route("**/api/l3/study-topics*", async (route) => {
+    if (route.request().method() === "GET") {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    await route.continue();
+  });
+
+  await page.getByTestId("topic-refresh-button").click(); // GET 挂起（将返回 v1 快照）
+  await page.getByTestId("topic-rename-input").fill(`${marker}-v2名`);
+  await page.getByTestId("topic-rename-submit").click(); // 写确认 v2（PUT 不延迟）
+  await expect(
+    page.getByTestId("topic-item").filter({ hasText: `${marker}-v2名` }),
+  ).toBeVisible({ timeout: 10_000 });
+
+  // 迟到刷新回包到达后：版本不得回退到 v1（面板版本显示 v2）
+  await page.waitForTimeout(2000); // 等延迟回包到达并处理
+  await expect(page.getByTestId("topic-version")).toContainText("v2");
+
+  // 下一次写使用已确认版本 v2（若已回退 v1，此写会 409）
+  await page.getByTestId("topic-rename-input").fill(`${marker}-v3名`);
+  await page.getByTestId("topic-rename-submit").click();
+  await expect(
+    page.getByTestId("topic-item").filter({ hasText: `${marker}-v3名` }),
+  ).toBeVisible({ timeout: 10_000 });
+
+  const finalTopic = await fetchTopicTitle(topicId);
+  expect(finalTopic.title).toBe(`${marker}-v3名`);
+  expect(finalTopic.version).toBe(3);
+  await page.unroute("**/api/l3/study-topics*");
+});
+
+test("⑬ R4 翻页挂起时刷新：释放加载锁、可再次翻页（真实 HTTP 延迟 + 库核归档）", async ({ authedPage: page }) => {
+  test.setTimeout(120_000);
+  const marker = `T08R4-${Date.now()}`;
+  const noteIds: string[] = [];
+  for (let index = 0; index < 25; index += 1) {
+    noteIds.push(await apiSeedNote(page, `${marker}-${String(index).padStart(2, "0")}`));
+  }
+
+  await openWorkspace(page);
+  await searchMarker(page, marker, 20, 25);
+
+  // 仅延迟带 cursor 的翻页请求（refresh 无 cursor，立即返回）
+  await page.route("**/api/l3/study-notes*", async (route) => {
+    if (route.request().method() === "GET" && new URL(route.request().url()).searchParams.has("cursor")) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    await route.continue();
+  });
+
+  await page.getByTestId("load-more-button").click(); // 翻页挂起
+  await expect(page.getByTestId("load-more-button")).toBeDisabled();
+
+  // 归档第一行 → 触发列表 refresh（取代挂起翻页）
+  await page.getByTestId("study-note-row").first().getByTestId("row-archive").click();
+  await expect(page.getByTestId("load-more-button")).toBeEnabled({ timeout: 10_000 }); // R4：释放
+
+  // 挂起的旧翻页回包到达（被丢弃）；再次翻页确实发请求并增量合并
+  await page.waitForTimeout(2000);
+  await page.getByTestId("load-more-button").click();
+  // refresh 不带 status 过滤：25 条（24 active + 1 archived）；首页 20 + 第二页 5
+  await expect(page.getByTestId("study-note-row")).toHaveCount(25, { timeout: 10_000 });
+  // 归档行在列表中呈现已归档状态（refresh 取到归档结果）
+  await expect(page.getByTestId("study-note-row").first()).toContainText("已归档");
+
+  const ids = await page.getByTestId("study-note-row").evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute("data-note-id")),
+  );
+  expect(new Set(ids).size).toBe(25); // 去重成立（旧翻页回包未重复合并）
+  await withAdmin(async (client) => {
+    const result = await client.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM l3_study_notes WHERE user_id = $1::uuid AND status = 'archived' AND title LIKE $2",
+      [OWNER_ID, `${marker}%`],
+    );
+    expect(result.rows[0]!.n).toBe(1); // 归档恰好 1 条（库核）
+  });
+  await page.unroute("**/api/l3/study-notes*");
+});
+
+test("⑭ R5 防抖期点击加载更多：不发『新 q + 旧 cursor』错配请求（服务端无 400）", async ({ authedPage: page }) => {
+  test.setTimeout(90_000);
+  const marker = `T08R5-${Date.now()}`;
+  for (let index = 0; index < 25; index += 1) {
+    await apiSeedNote(page, `${marker}-${String(index).padStart(2, "0")}`);
+  }
+
+  await openWorkspace(page);
+  await searchMarker(page, marker, 20, 25);
+
+  const badRequests: string[] = [];
+  const listResponses: number[] = [];
+  page.on("response", (response) => {
+    const url = new URL(response.url());
+    if (url.pathname === "/api/l3/study-notes") listResponses.push(response.status());
+  });
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (request.method() === "GET" && url.pathname === "/api/l3/study-notes") {
+      const cursor = url.searchParams.get("cursor");
+      const q = url.searchParams.get("q");
+      // 错配定义：带 cursor 的翻页请求同时携带 q（防抖期组合）
+      if (cursor && q) badRequests.push(request.url());
+    }
+  });
+
+  // 输入新搜索词（300ms 防抖挂起）→ R5 修复：旧游标立即失效 → 「加载更多」入口即时关闭
+  await page.getByTestId("search-input").fill(`${marker}-不匹配词`);
+  await expect(page.getByTestId("load-more-button")).toHaveCount(0, { timeout: 5_000 });
+
+  // 防抖到期：唯一的新请求 = 新 q 首页（无 cursor）；全程无错配、无 400
+  await expect(page.getByTestId("list-empty")).toBeVisible({ timeout: 10_000 });
+  expect(badRequests).toEqual([]);
+  expect(listResponses.filter((status) => status === 400)).toEqual([]);
+  expect(listResponses.every((status) => status < 400)).toBe(true);
+});

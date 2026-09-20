@@ -30,6 +30,7 @@ export default defineConfig({
   retries: 0,
   timeout: 60_000,
   reporter: "list",
+  outputDir: process.env.E2E_OUTPUT_DIR ?? "test-results",
   use: {
     baseURL: BASE_URL,
     trace: "retain-on-failure",
