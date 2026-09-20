@@ -62,7 +62,7 @@
 ### 5.3 提交、推送与 PR
 
 - 提交链：`663bdab`（域+模型）→ `9bf7310`（picker/hook/editor）→ `e91e5df`（import 对齐）→ `6a679a4`（E2E+409）→ `e7b91dc`（复核补修）→ `67625d9`（台账）→ `037136c`（R3 口径同步+二次复核记录）。
-- 推送：`git push -u origin study-notes-n1-task09a`；推送链 `037136c..58178be..<本台账提交>`。门禁证据对应 `037136c`；其后的提交为 E2E 用例与 docs 增量（E2E spec 不参与任何门禁运行；`58178be` 后 typecheck/collection/layered 已复跑见下）。
+- 推送：`git push -u origin study-notes-n1-task09a`；推送链 `037136c..58178be..f6b7455`（含本台账提交）。门禁证据对应 `037136c`；其后的提交为 E2E 用例与 docs 增量（E2E spec 不参与任何门禁运行）；**`58178be`/`f6b7455` 处已复跑轻量门禁：typecheck=0 / test:collection=0 / coverage:layered=0**（`D:/tmp/t09a4-*.log`）。
 - PR：**#129**（draft、OPEN、base=`study-notes-n1-task08`），依赖 #128→#127→#126→#125；描述含交付、测试证据、门禁口径与环境说明；CI 只读：Writing E2E pending（已触发），Engineering Gate / Browser E2E 为 main-only 不触发。
 
 ## 6. 独立只读复核与补修（2026-09-20 晚）
