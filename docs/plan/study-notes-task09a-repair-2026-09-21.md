@@ -138,3 +138,39 @@ E2E 新增 4 场景（库核）：
    （`capturedAt`/`displaySnapshot`/`liveTitle`/`status`/`target` + 预览值不残留）。
    未改写审查方的只读探针文件。
 3. 本轮不要求实时轮询来源状态（仅正确消费已取得的确认 DTO）；自动刷新为后续范围。
+
+## 6. 工程门禁（三 BASE_REF = PR base 完整 SHA `832192943496099e53b3330bd0d2e7fb85b925c2`）
+
+先提交 `47b1e2f`，再按 committed diff 运行；**分段全部自然退出 0**：
+
+| 步骤 | 退出码 | 备注 |
+| --- | --- | --- |
+| `typecheck` | 0 | |
+| `arch:check` | 0 | 无分层违规 |
+| `test:collection` | 0 | **256/256**（较 09A 的 255 增 1：新增确认套件） |
+| `coverage:layered` | 0 | domain 98.18 / service 95.11 / repository 93.83 / http 91.67，四层均 PASS |
+| `api:governance` | 0 | |
+| `db:schema:drift` | 0 | |
+| `runtime:verify` | 0 | |
+| `alerting:verify` | 0 | |
+| `frontend:build` | 0 | |
+| `release:acceptance:contract` | 0 | |
+| `secret-rotation:evidence:contract` | 0 | |
+| `release:workflow:verify` | 0 | |
+
+- **聚合 `test:unit`（`vitest run --coverage`）如实退出 1**：**3848 用例 / 2 failed**，
+  两例均为 `tests/scripts/`（`compose-database-role-routing`、`generate-openapi-client`）
+  的 **30s 超时**，非断言失败；同机隔离复跑（`--testTimeout=120000`）**7/7 passed** →
+  环境性超时，与本批改动无关（本批未触及 compose/OpenAPI 生成）。
+- 排除上述两例后重跑 coverage：**exit 0**，254 文件（253 passed / 1 skipped）、
+  **3835 passed / 6 skipped / 0 failed**，`coverage-final.json` 正常产出。
+- **Diff coverage 口径（如实）**：`N/A — changed src files 6 (governed 0 / outside governed layers 6),
+  changed executable lines 0`。本批为纯前端改动，不在受治理四层内；**不以 N/A 记作通过，
+  也不伪造前端增量覆盖率**。若复用改动涉及 domain 层则相应层已由 `coverage:layered` 覆盖（本批为 0）。
+
+## 7. 提交与推送
+
+- 提交：`47b1e2f`（本批唯一功能提交，含源码/测试/台账）。
+- 推送：普通快进推送当前分支 `study-notes-n1-task09a`；更新既有 draft PR **#129**
+  （base 仍为 `study-notes-n1-task08@832192943496099e53b3330bd0d2e7fb85b925c2`，未 retarget）。
+- 停在此处：**不进入 Task 09B**，不合并/不部署/不推 main/不开导出与 N2。
