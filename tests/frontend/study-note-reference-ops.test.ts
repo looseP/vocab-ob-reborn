@@ -287,3 +287,113 @@ describe("studyNoteReferenceOps · R3/R4 完整 Markdown 顶层语义", () => {
     expect(() => insertReferenceMarker(body, REF_B, 3)).toThrow(ReferenceMarkerPositionError);
   });
 });
+
+/**
+ * DEFECT 2（P2）· CRLF 正文中的引用标记无法删除/转换。
+ *
+ * 持久化正文不保证 LF-only（保存 schema 为 `z.string().max`，服务端直接落库 bodyMd），
+ * 而 marked 会把 CRLF/CR 归一为 LF 进入 `token.raw`——因此 token.raw 的**长度**
+ * 不能当作原文坐标推进量。定位必须走「解析坐标 → 原文坐标」的映射（此处：按行内容
+ * 逐行对齐，行分隔符不同不算不匹配），删除/转换/插入共用同一套容器位置规则。
+ */
+describe("studyNoteReferenceOps · DEFECT2 CRLF 原文坐标", () => {
+  const id = "00000000-0000-4000-8000-000000000801";
+  const prefix = "intro\r\n\r\n";
+  const body = prefix + `[[ref:${id}]]`;
+
+  it("DEFECT2：CRLF 正文中 remove/replace 必须命中真实顶层 marker", () => {
+    assertReferenceSet(body, [{ id, action: "keep" }]);
+
+    const removed = removeReferenceMarker(body, id);
+    assertReferenceSet(removed, []);
+    expect(removed).toBe("intro");
+
+    expect(replaceMarkerWithExcerpt(body, id, ["> saved excerpt"])).toBe(prefix + "> saved excerpt");
+  });
+
+  it("DEFECT2：CRLF 非目标正文逐字保留（marker 前后的 CRLF 字节不得被改写）", () => {
+    const next = replaceMarkerWithExcerpt(body, id, ["> saved excerpt"]);
+    expect(next.startsWith("intro\r\n\r\n")).toBe(true);
+    expect(next).not.toContain("\r\r");
+    expect(next.includes("\n\n") && !next.includes("\r\n\r\n")).toBe(false);
+  });
+
+  it.each([
+    ["LF", "intro\n\n"],
+    ["CRLF", "intro\r\n\r\n"],
+    ["CR-only", "intro\r\r"],
+  ])("DEFECT2：%s 换行的前置正文：删除与转换都命中，且前置正文逐字保留", (_label, pre) => {
+    const source = pre + `[[ref:${id}]]`;
+    assertReferenceSet(source, [{ id, action: "keep" }]);
+
+    const removed = removeReferenceMarker(source, id);
+    assertReferenceSet(removed, []);
+    expect(removed).toBe("intro");
+
+    const converted = replaceMarkerWithExcerpt(source, id, ["> excerpt"]);
+    expect(converted).toBe(pre + "> excerpt");
+    assertReferenceSet(converted, []);
+  });
+
+  it("DEFECT2：混合换行（CRLF 前文 + LF 边界）同样命中，前置正文逐字保留", () => {
+    const pre = "前文\r\n\r\n";
+    const source = pre + `[[ref:${id}]]` + "\n\n后文";
+    assertReferenceSet(source, [{ id, action: "keep" }]);
+
+    const removed = removeReferenceMarker(source, id);
+    expect(removed).toBe("前文\r\n\r\n后文");
+    assertReferenceSet(removed, []);
+  });
+
+  it("DEFECT2：CRLF 正文中「前有链接定义」不影响定位（定义行逐字保留）", () => {
+    const def = "[a]: /url\r\n";
+    const source = def + prefix + `[[ref:${id}]]`;
+    assertReferenceSet(source, [{ id, action: "keep" }]);
+
+    const removed = removeReferenceMarker(source, id);
+    expect(removed).toBe(def + "intro");
+    assertReferenceSet(removed, []);
+
+    expect(replaceMarkerWithExcerpt(source, id, ["> excerpt"])).toBe(def + prefix + "> excerpt");
+  });
+
+  it("DEFECT2：围栏代码内的同名标记 + CRLF 顶层真标记：只动真标记，代码逐字保留", () => {
+    const marker = `[[ref:${id}]]`;
+    const code = ["```md", marker, "```"].join("\r\n");
+    const source = code + "\r\n\r\n" + marker;
+    assertReferenceSet(source, [{ id, action: "keep" }]);
+
+    const removed = removeReferenceMarker(source, id);
+    expect(removed).toContain(code); // 代码示例逐字保留（含 CRLF）
+    assertReferenceSet(removed, []);
+
+    const converted = replaceMarkerWithExcerpt(source, id, ["> excerpt"]);
+    expect(converted).toContain(code);
+    expect(converted).toContain("> excerpt");
+    assertReferenceSet(converted, []);
+  });
+
+  it("DEFECT2：CRLF 正文中光标落在围栏代码内 → 拒绝插入且正文不变", () => {
+    const codeBody = ["```md", "example", "```"].join("\r\n");
+    const snapshot = codeBody;
+    expect(() => insertReferenceMarker(codeBody, REF_A, codeBody.indexOf("example") + 3)).toThrow(
+      ReferenceMarkerPositionError,
+    );
+    expect(codeBody).toBe(snapshot); // 拒绝时不产生任何正文变更
+  });
+
+  it("DEFECT2：CRLF 正文中光标落在容器外 → 合法插入（沿用 CRLF 风格）", () => {
+    const source = "前文\r\n\r\n后文";
+    const next = insertReferenceMarker(source, REF_A, 2);
+    expect(next).toBe(`前文\r\n\r\n[[ref:${REF_A}]]\r\n\r\n后文`);
+    expect(() =>
+      assertReferenceSet(next, [
+        {
+          id: REF_A,
+          action: "capture",
+          target: { kind: "source", sourceId: "00000000-0000-4000-8000-000000000001" },
+        },
+      ]),
+    ).not.toThrow();
+  });
+});
