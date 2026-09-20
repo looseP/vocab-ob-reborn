@@ -333,7 +333,7 @@ export interface StudyNoteSaveController {
 |---|---|---|---|
 | R1 | kind: source→question | 清 cursor | GET reference-targets(kind=question, 无 cursor) |
 | R2 | q 变化（含首尾空白规范化） | 清 cursor | 同上（q 规范） |
-| R3 | venue 变化（有效值） | 清 cursor | 同上 |
+| R3 | venue 变化（有效值；venue 仅 question kind 生效——source 下仅记录筛选、不发请求，切入 question 时随首屏携带） | 清 cursor | 同上 |
 | R4 | 仅 limit 变化 | cursor 可保留 | 同上（limit 新值） |
 | R5 | 复用旧 cursor（异 kind） | 400 → 前端提示刷新 | — |
 

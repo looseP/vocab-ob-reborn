@@ -74,3 +74,9 @@ __待补（推送与 PR 更新后回填）__
 - 复核另注：同一目标可重复插入（不同摘录）——`l3_study_note_references` 无 (note,target) 唯一约束、服务端只校验 marker/id 集合一致，属**设计允许**，不拦截。
 - 复核对测试质量的结论：409 用例为真断言（非假绿）；E2E 四场景逐条扎实并带 PG 库核；changed 的 liveTitle 由组件层覆盖（E2E 未单独覆盖 changed，作为已知覆盖边界记录）。
 - 补修后：5 文件 **96/96 exit 0**、typecheck=0、前端重建 exit 0、全量 E2E 复验 **32/32**（`D:/tmp/t09a-e2e-full2.log`）。
+
+### 6.1 补修提交的二次复核（对 `e7b91dc` 单提交）
+
+- 结论：P1 与 3 个次要问题**真实闭环**，无新缺陷。StrictMode 探针实测（jsdom+React dev）：旧实现搜索 1 次、候选永不出现（红）；新实现搜索 2 次、候选可见（绿）；旧实例 dispose 使在途回包被丢弃、订阅归属各实例、无旧实例 setState。
+- 测试真实性：jsdom 下 StrictMode 确实双调用（用例不会恒绿）；三个用例在旧代码上均必红；`tsc --noEmit` exit 0；`verify-test-collection` 255/255。
+- 唯一建议（已办）：冻结规格 §4.3 R3 行补充 kind 限定，消除口径漂移（本次随批同步）。
