@@ -4,7 +4,7 @@
  * 已冻结协议（frontend-tasks §4.3）：
  *  - R1 切 kind → 清 cursor 立即请求；
  *  - R2 q 变化 → 立即失效旧代际 + 清 cursor，防抖后请求；
- *  - R3 venue 变化 → 清 cursor 立即请求；
+ *  - R3 venue 变化（question kind）→ 清 cursor 立即请求；source kind 下仅记录筛选（随后切 question 时携带）；
  *  - R4 仅 limit 变化 → cursor 可保留（从当前 cursor 重取）；
  *  - R5 旧 cursor 400 → 可见提示（不静默），refresh 重发无 cursor；
  *  - 分页去重、序号守卫（旧响应丢弃）、取尽 no-op；构造即发起首页（kind=source）。
@@ -156,6 +156,12 @@ export function createStudyReferenceSearchModel(options: ReferenceSearchModelOpt
     if (disposed || next === venue) return;
     venue = next;
     cancelDebounce();
+    if (kind !== "question") {
+      // venue 仅对 question kind 生效（buildQuery 只在 question 携带 venue）：
+      // source 视图下仅记录筛选待用，避免与请求结果无关的重复请求；切入 question 时随首屏携带。
+      notify();
+      return;
+    }
     restart(false);
   }
 

@@ -217,3 +217,21 @@ describe("studyReferenceSearchModel · 分页去重", () => {
     expect(h.calls.length).toBe(2); // no-op（cursor 取尽）
   });
 });
+
+describe("studyReferenceSearchModel · venue 归属（复核补修）", () => {
+  it("source kind 下 setVenue 仅记录筛选不发请求；切入 question 后首屏携带 venue", async () => {
+    const h = harness(); // 构造已发 1 次（source 首页）
+    expect(h.calls.length).toBe(1);
+
+    h.model.setVenue("cloze");
+    await flush();
+    expect(h.calls.length).toBe(1); // 不产生与请求无关的重复请求（venue 仅 question 生效）
+    expect(h.model.getSnapshot().filters.venue).toBe("cloze"); // 已记录待用
+
+    h.model.setKind("question");
+    await flush();
+    expect(h.calls.length).toBe(2);
+    expect(h.calls[1]!.venue).toBe("cloze"); // 切入 question 后随首屏携带
+    expect(h.calls[1]!.cursor).toBeUndefined();
+  });
+});

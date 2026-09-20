@@ -52,14 +52,18 @@ function previewSummary(preview: ReferenceTargetPreview): string {
 
 export function StudyReferencePicker({ client, onInsert, onClose }: StudyReferencePickerProps) {
   const modelRef = useRef<ReferenceSearchModel | null>(null);
-  if (!modelRef.current) {
-    modelRef.current = createStudyReferenceSearchModel({
+  const ensureModel = (): ReferenceSearchModel => {
+    const existing = modelRef.current;
+    if (existing && !existing.isDisposed()) return existing;
+    const created = createStudyReferenceSearchModel({
       search: (query) => client.searchTargets(query),
       setTimer: (fn, ms) => setTimeout(fn, ms),
       clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     });
-  }
-  const model = modelRef.current;
+    modelRef.current = created;
+    return created;
+  };
+  const model = ensureModel();
   const [snapshot, setSnapshot] = useState<ReferenceSearchSnapshot>(() => model.getSnapshot());
   const [previewState, setPreviewState] = useState<
     | { phase: "idle" }
@@ -70,13 +74,22 @@ export function StudyReferencePicker({ client, onInsert, onClose }: StudyReferen
   const previewSeqRef = useRef(0);
 
   useEffect(() => {
-    const unsubscribe = model.subscribe(() => setSnapshot(model.getSnapshot()));
-    setSnapshot(model.getSnapshot());
+    const current = ensureModel(); // StrictMode：cleanup 处置旧实例后，重挂载需重建（否则面板永久失效）
+    const unsubscribe = current.subscribe(() => setSnapshot(current.getSnapshot()));
+    setSnapshot(current.getSnapshot());
     return () => {
       unsubscribe();
-      model.dispose();
+      current.dispose();
+      modelRef.current = null; // 卸下已处置实例：下次挂载（含 StrictMode 双调用）重建
     };
-  }, [model]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ensureModel 只依赖 client；实例生命周期由本 effect 接管
+  }, [client]);
+
+  /** 作废在途预览并清空预览卡（筛选变化/取消时防止插入过期预览）。 */
+  const resetPreview = (): void => {
+    previewSeqRef.current += 1;
+    setPreviewState((prev) => (prev.phase === "idle" ? prev : { phase: "idle" }));
+  };
 
   const handlePreview = (item: StudyTargetItem): void => {
     const target = targetOf(item);
@@ -122,7 +135,10 @@ export function StudyReferencePicker({ client, onInsert, onClose }: StudyReferen
           <button
             type="button"
             className={`rounded-full border px-2 py-0.5 text-[11px] ${filters.kind === "source" ? "border-[var(--color-accent)] text-[var(--color-ink)]" : "border-[var(--color-border)] text-[var(--color-ink-soft)]"}`}
-            onClick={() => model.setKind("source")}
+            onClick={() => {
+              resetPreview();
+              model.setKind("source");
+            }}
             data-testid="ref-picker-kind-source"
           >
             来源
@@ -130,7 +146,10 @@ export function StudyReferencePicker({ client, onInsert, onClose }: StudyReferen
           <button
             type="button"
             className={`rounded-full border px-2 py-0.5 text-[11px] ${filters.kind === "question" ? "border-[var(--color-accent)] text-[var(--color-ink)]" : "border-[var(--color-border)] text-[var(--color-ink-soft)]"}`}
-            onClick={() => model.setKind("question")}
+            onClick={() => {
+              resetPreview();
+              model.setKind("question");
+            }}
             data-testid="ref-picker-kind-question"
           >
             题目
@@ -146,16 +165,20 @@ export function StudyReferencePicker({ client, onInsert, onClose }: StudyReferen
           className="min-w-0 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs text-[var(--color-ink)] outline-none focus:border-[var(--color-accent)]"
           placeholder="搜索标题/题干…"
           value={filters.q ?? ""}
-          onChange={(event) => model.setQuery(event.target.value)}
+          onChange={(event) => {
+            resetPreview();
+            model.setQuery(event.target.value);
+          }}
           data-testid="ref-picker-q"
         />
         {filters.kind === "question" && (
           <select
             className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-xs text-[var(--color-ink)]"
             value={filters.venue ?? ""}
-            onChange={(event) =>
-              model.setVenue((event.target.value || null) as (typeof L3_QUESTION_TYPES)[number] | null)
-            }
+            onChange={(event) => {
+              resetPreview();
+              model.setVenue((event.target.value || null) as (typeof L3_QUESTION_TYPES)[number] | null);
+            }}
             data-testid="ref-picker-venue"
           >
             <option value="">全部题型</option>
@@ -237,10 +260,7 @@ export function StudyReferencePicker({ client, onInsert, onClose }: StudyReferen
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => {
-                previewSeqRef.current += 1;
-                setPreviewState({ phase: "idle" });
-              }}
+              onClick={resetPreview}
               data-testid="ref-picker-cancel"
             >
               取消

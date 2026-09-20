@@ -305,9 +305,11 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
       {showPicker && (
         <StudyReferencePicker
           client={activeClient}
-          onInsert={(target, preview) =>
-            editor.insertReference(target, preview, insertCursorRef.current) !== null
-          }
+          onInsert={(target, preview) => {
+            // 以「插入时刻」的选区为准（面板打开期间光标可能已移动）；textarea 不可用时回退到打开时快照
+            const cursor = bodyRef.current?.selectionStart ?? insertCursorRef.current;
+            return editor.insertReference(target, preview, cursor) !== null;
+          }}
           onClose={() => setShowPicker(false)}
         />
       )}

@@ -8,7 +8,7 @@
  * 卡片状态（current/changed/unavailable）→ 移除 → 转普通摘录 → 保存载荷含 references
  * → 重试载荷逐字节相同 → 重开（reload）一致。
  */
-import { act, createElement } from "react";
+import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -97,9 +97,10 @@ afterEach(() => {
   container.remove();
 });
 
-async function renderEditor(client: StudyNotesClient): Promise<void> {
+async function renderEditor(client: StudyNotesClient, options: { strict?: boolean } = {}): Promise<void> {
   await act(async () => {
-    root.render(createElement(StudyNoteEditor, { noteId: NOTE_ID, client }));
+    const editor = createElement(StudyNoteEditor, { noteId: NOTE_ID, client });
+    root.render(options.strict ? createElement(StrictMode, null, editor) : editor);
   });
   await waitFor(() => expect(screen.queryByTestId("note-body")).not.toBeNull());
 }
@@ -415,5 +416,97 @@ describe("StudyNoteEditor · 409 与引用保留（09A 验收）", () => {
       await new Promise((resolve) => setTimeout(resolve, 1400));
     });
     expect(save).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("复核补修 · StrictMode / 预览时效 / 插入光标", () => {
+  function withSourceSearch() {
+    const mocks = makeClient();
+    mocks.get.mockResolvedValue({ item: makeDto() });
+    mocks.searchTargets.mockResolvedValue({
+      items: [{ id: SOURCE_ID, title: "来源A", createdAt: "2026-09-20T00:00:00.000Z" }],
+      total: 1,
+      nextCursor: null,
+    });
+    mocks.preview.mockResolvedValue({
+      target: { kind: "source", sourceId: SOURCE_ID },
+      displaySnapshot: { kind: "source", title: "来源A", excerpt: "摘录A" },
+      liveTitle: "来源A",
+    });
+    mocks.save.mockResolvedValue({ item: makeDto() });
+    return mocks;
+  }
+
+  it("StrictMode 双挂载：picker 仍可用（搜索发出、候选可见、可插入）", async () => {
+    const { client } = withSourceSearch();
+    await renderEditor(client, { strict: true });
+    await openPicker();
+
+    // 候选可见（复核缺陷：cleanup dispose 后不重建 → 永远停在“正在搜索…”，此断言即红）
+    await waitFor(() => expect(screen.getAllByTestId("ref-picker-item").length).toBeGreaterThan(0), {
+      timeout: 3000,
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-item"));
+    });
+    await waitFor(() => expect(screen.queryByTestId("ref-preview-card")).not.toBeNull());
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-insert"));
+    });
+    expect(parseReferenceIds(bodyValue())).toHaveLength(2); // 插入成功（双挂载下未被锁死）
+  });
+
+  it("筛选变化清除已就绪预览：切 kind 与改 q 后不可插入过期预览", async () => {
+    const { client } = withSourceSearch();
+    await renderEditor(client);
+    await openPicker();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-item"));
+    });
+    await waitFor(() => expect(screen.queryByTestId("ref-preview-card")).not.toBeNull());
+
+    // 切 kind → 预览清除
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-kind-question"));
+    });
+    expect(screen.queryByTestId("ref-preview-card")).toBeNull();
+
+    // 回 source、重新预览 → 改 q → 预览清除
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-kind-source"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getAllByTestId("ref-picker-item")[0]!);
+    });
+    await waitFor(() => expect(screen.queryByTestId("ref-preview-card")).not.toBeNull());
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("ref-picker-q"), { target: { value: "新词" } });
+    });
+    expect(screen.queryByTestId("ref-preview-card")).toBeNull();
+  });
+
+  it("picker 打开后移动光标：插入位置以插入时选区为准（非打开时快照）", async () => {
+    const { client } = withSourceSearch();
+    await renderEditor(client);
+    await openPicker();
+
+    // 用户在面板打开期间回到正文移动光标（选区前移到位置 2）
+    const textarea = screen.getByTestId("note-body") as HTMLTextAreaElement;
+    await act(async () => {
+      textarea.setSelectionRange(2, 2);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-item"));
+    });
+    await waitFor(() => expect(screen.queryByTestId("ref-preview-card")).not.toBeNull());
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-insert"));
+    });
+
+    const body = bodyValue();
+    expect(parseReferenceIds(body)).toHaveLength(2);
+    expect(body.startsWith("正文\n\n[[ref:")).toBe(true); // 位置 2 插入（打开时快照为 0 会插到文首）
+    expect(body).toContain("一\n\n[[ref:");
   });
 });
