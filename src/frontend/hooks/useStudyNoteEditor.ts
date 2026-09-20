@@ -217,8 +217,14 @@ function applyConfirmedReferences(
   setReferencesMeta: (updater: (previous: StudyNoteReferenceMeta[]) => StudyNoteReferenceMeta[]) => void,
   referencesMetaRef: { current: StudyNoteReferenceMeta[] },
 ): void {
+  // 「当前有效引用集合」：确认回包只能作用于**此刻仍在编辑中的**引用身份。
+  // 在途移除的 A 已不在集合内——它既不能被升级，也不能被下面的「补齐」循环复活。
+  // 只按身份过滤，不从迟到的服务器快照整体覆写本地编辑态（本地并发输入优先）。
+  const liveIds = new Set(controller.getSnapshot().edit.references.map((write) => normalizeStudyUuid(write.id)));
   const upgraded = new Map<string, StudyNoteReferenceMeta>(
-    confirmed.references.map((reference) => [normalizeStudyUuid(reference.id), { ...reference, confirmed: true }]),
+    confirmed.references
+      .filter((reference) => liveIds.has(normalizeStudyUuid(reference.id)))
+      .map((reference) => [normalizeStudyUuid(reference.id), { ...reference, confirmed: true }]),
   );
 
   referencesMetaRef.current = referencesMetaRef.current.map((meta) => {
@@ -230,8 +236,10 @@ function applyConfirmedReferences(
       const fresh = upgraded.get(normalizeStudyUuid(meta.id));
       return fresh ? { ...fresh, id: meta.id } : meta;
     });
-    // 响应确认存在的引用若本地元数据缺失则补入；**不删除任何本地条目**。
+    // 响应确认存在的引用若本地元数据缺失则补入（同样只限仍在编辑集合中的身份）；
+    // **不删除任何本地条目**。
     for (const reference of confirmed.references) {
+      if (!liveIds.has(normalizeStudyUuid(reference.id))) continue;
       if (!next.some((meta) => sameRef(meta.id, reference.id))) next.push({ ...reference, confirmed: true });
     }
     return next;
