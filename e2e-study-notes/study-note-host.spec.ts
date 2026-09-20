@@ -414,3 +414,186 @@ test("⑦ 界面证据截图（编辑/预览/冲突面板；输出目录可配�
   await expect(page.getByTestId("note-title")).toHaveValue("他端更新", { timeout: 15_000 });
   await page.screenshot({ path: `${shotsDir}/04-after-load-server.png`, fullPage: true });
 });
+
+/** 记录 PUT 请求体（用于断言「重试提交的是最新内容」而非旧载荷）。 */
+function trackPutRequests(page: Page): { count: () => number; bodies: () => string[] } {
+  const bodies: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "PUT" && request.url().includes("/api/l3/study-notes/")) {
+      bodies.push(request.postData() ?? "");
+    }
+  });
+  return { count: () => bodies.length, bodies: () => [...bodies] };
+}
+
+/** 恢复引用行（E2E ⑨：世界修复）——按原值 INSERT。 */
+async function restoreReference(row: Record<string, unknown>): Promise<void> {
+  await withAdmin(async (client) => {
+    await client.query(
+      `INSERT INTO l3_study_note_references
+         (id, note_id, user_id, kind, source_id, question_id, option_key, start_offset, end_offset,
+          quote_snapshot, field_hash, display_snapshot, captured_at)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::uuid, $6::uuid, $7, $8, $9, $10, $11, $12::jsonb, $13)`,
+      [
+        row.id,
+        row.note_id,
+        row.user_id,
+        row.kind,
+        row.source_id,
+        row.question_id,
+        row.option_key,
+        row.start_offset,
+        row.end_offset,
+        row.quote_snapshot,
+        row.field_hash,
+        JSON.stringify(row.display_snapshot ?? null),
+        row.captured_at,
+      ],
+    );
+  });
+}
+
+// ⑧ 用户可操作的真实服务端拒绝恢复路径：
+//   「输入越界（标题 121 字）→ 服务端确定拒绝 → 用户改短标题 → 重试提交最新内容 → 成功」。
+//   用户只用编辑器即可完成恢复；真实 HTTP（400 VALIDATION_ERROR）+ 真实 PG 库核。
+test("⑧ 服务端确定拒绝（真实超长标题）→ 修正 → 重试提交最新内容成功", async ({ authedPage: page }) => {
+  const noteId = await openHostAndCreate(page);
+  const puts = trackPutRequests(page);
+
+  // 真实超限标题（121 > 120）：服务端路由层 schema 拒绝（VALIDATION_ERROR）
+  await page.getByTestId("note-title").fill("超".repeat(121));
+  await expect(page.getByTestId("error-panel")).toBeVisible({ timeout: 30_000 }); // 真实服务端拒绝
+  const panelText = (await page.getByTestId("error-panel").textContent()) ?? "";
+  expect(panelText).toContain("服务端拒绝"); // 分类文案（修复前：一律「网络或服务异常」）
+  expect(panelText).not.toContain("网络或服务异常");
+
+  // 修正内容 → 显式重试 → 提交最新完整快照
+  await page.getByTestId("note-title").fill("修正后的标题");
+  await page.getByRole("button", { name: "重试保存" }).click();
+  await expect(page.getByTestId("save-state")).toContainText("已保存", { timeout: 15_000 });
+
+  // 请求纪律：恰好 2 次 PUT；第 2 次携带修正后内容（修复前：重发 121 字旧载荷 → 再失败）
+  expect(puts.count()).toBe(2);
+  expect(puts.bodies()[1]).toContain("修正后的标题");
+
+  const note = await fetchNote(noteId);
+  expect(note.title).toBe("修正后的标题");
+  expect(note.version).toBe(2); // 创建 1 → 修正保存 2（拒绝不推进版本）
+});
+
+// ⑨ 【异常检测用例——非「用户可操作恢复」路径】：keep 引用被服务端删除属「世界损坏」类 422。
+//   当前编辑器不提供移除/重建引用（引用工具后置 Task 09），用户无法在界面内自修；
+//   本用例验证：真实 422 检测、本地输入保全、错误分类可读、重试提交「最新内容」且恰好 2 次 PUT。
+//   恢复需「世界修复」（恢复引用行）——这是异常检测，不作用户可操作恢复的宣称；
+//   用户可操作恢复场景由 ⑧（改短标题）、⑤（网络恢复留原位）、④（409 显式载入）覆盖。
+test("⑨ 真实 422（keep 引用缺失）→ 本地保全 → 世界修复 + 内容修正 → 重试最新内容成功", async ({ authedPage: page }) => {
+  // 种子：question + capture 建立引用（真实 API 生成引用行）
+  const sourceId = randomUUID();
+  const questionId = randomUUID();
+  await withAdmin(async (client) => {
+    await client.query(
+      `INSERT INTO l3_sources (id, user_id, source_type, title, content_text)
+       VALUES ($1::uuid, $2::uuid, 'article', 'E2E 422 来源', '来源正文 C1')`,
+      [sourceId, OWNER_ID],
+    );
+    await client.query(
+      `INSERT INTO l3_questions (id, user_id, source_id, file_key, space, question_type, stem, options, answer, evidence)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, NULL, '阅读', 'reading_choice', 'E2E 422 题干', '[]'::jsonb, '{}'::jsonb, '[]'::jsonb)`,
+      [questionId, OWNER_ID, sourceId],
+    );
+  });
+
+  await page.goto("/study-note-host");
+  const noteId = await apiCreateNote(page);
+  const refId = randomUUID();
+  const capture = await apiSaveNote(page, noteId, {
+    expectedVersion: 1,
+    requestId: randomUUID(),
+    title: "422 场景",
+    bodyMd: `正文\n\n[[ref:${refId}]]\n`,
+    venues: ["cloze"],
+    pinned: false,
+    status: "active",
+    references: [{ id: refId, action: "capture", target: { kind: "question", questionId } }],
+  });
+  expect(capture.status).toBe(200);
+  const refBefore = await fetchReference(refId);
+
+  // 打开编辑器（本地持有完整引用与 marker）
+  await page.goto(`/study-note-host?noteId=${noteId}`);
+  await expect(page.getByTestId("note-title")).toHaveValue("422 场景", { timeout: 15_000 });
+  const puts = trackPutRequests(page);
+
+  // 制造 keep 缺失：删除服务端引用行（本地编辑快照仍持有该引用）
+  await withAdmin(async (client) => {
+    await client.query("DELETE FROM l3_study_note_references WHERE id = $1::uuid", [refId]);
+  });
+
+  // 第一次修正 → 保存 → 服务端 keep 校验失败 → 真实 422
+  await page.getByTestId("note-title").fill("第一次修正");
+  await expect(page.getByTestId("error-panel")).toBeVisible({ timeout: 30_000 });
+  const panelText = (await page.getByTestId("error-panel").textContent()) ?? "";
+  expect(panelText).toContain("服务端拒绝");
+  expect(panelText).toContain("keep 引用必须已属于当前笔记"); // 服务端可读原因（非「网络异常」）
+  await expect(page.getByTestId("note-title")).toHaveValue("第一次修正"); // 本地输入保留
+
+  // 世界修复：恢复引用行（原值）
+  await restoreReference(refBefore);
+
+  // 内容再修正 → 显式重试 → 提交最新完整快照（修复前：重发旧载荷「第一次修正」）
+  await page.getByTestId("note-title").fill("第二次修正");
+  await page.getByRole("button", { name: "重试保存" }).click();
+  await expect(page.getByTestId("save-state")).toContainText("已保存", { timeout: 15_000 });
+
+  expect(puts.count()).toBe(2); // 422 一次 + 修正后一次（修复前：3 次——旧载荷重试 + 续发新载荷）
+  expect(puts.bodies()[1]).toContain("第二次修正");
+
+  const note = await fetchNote(noteId);
+  expect(note.title).toBe("第二次修正");
+  const refAfter = await fetchReference(refId);
+  expect(refAfter).toEqual(refBefore); // 引用行经删除/恢复后与原值一致
+});
+
+test("⑩ 在途保存与 IME 组合交错：组合中不发送未完成快照；compositionend 后发送完整内容", async ({ authedPage: page }) => {
+  const noteId = await openHostAndCreate(page);
+  const puts = trackPutRequests(page);
+
+  // 第一次保存（A）延迟响应，制造在途窗口
+  let delayedOnce = false;
+  await page.route("**/api/l3/study-notes/*", async (route) => {
+    if (route.request().method() === "PUT" && !delayedOnce) {
+      delayedOnce = true;
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+    }
+    await route.continue();
+  });
+
+  await page.getByTestId("note-title").fill("在途-A");
+  await expect.poll(() => puts.count(), { timeout: 10_000 }).toBe(1); // A 已发出（在途）
+
+  // 在途期间进入 IME 组合并输入未完成内容（合成 composition 事件验证事件路径；
+  // 非 OS 输入法人工实测——HTTP/PG 全部真实）
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="note-title"]') as HTMLInputElement;
+    el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+  });
+  await page.getByTestId("note-title").fill("组合完成B");
+
+  // 覆盖 A 的 1.5s 延迟响应 + 观察窗口：组合中不得发送新快照
+  await page.waitForTimeout(2_200);
+  expect(puts.count()).toBe(1); // 修复前：A 确认后立刻发送组合中的快照（2 次）
+  await expect(page.getByTestId("save-state")).toContainText("未保存"); // 如实呈现（非「已保存」）
+
+  // 完成组合 → 防抖后发送完整内容
+  await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="note-title"]') as HTMLInputElement;
+    el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+  });
+  await expect.poll(() => puts.count(), { timeout: 10_000 }).toBe(2);
+  expect(puts.bodies()[1]).toContain("组合完成B");
+  await expect(page.getByTestId("save-state")).toContainText("已保存", { timeout: 15_000 });
+
+  const note = await fetchNote(noteId);
+  expect(note.title).toBe("组合完成B"); // A 与 B 分次确认（创建 1 → A 2 → B 3）
+  expect(note.version).toBe(3);
+});

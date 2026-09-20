@@ -649,3 +649,460 @@ describe("保存控制器 · IME 合成", () => {
     expect(controller.getSnapshot().state).toBe("idle");
   });
 });
+
+// ── R1：确定拒绝（422/400/404 等）与结果不明（网络/超时/5xx/INVALID_RESPONSE）分流 ──
+
+function validationError(message = "标题超过上限"): BrowserApiError {
+  return new BrowserApiError(422, {
+    error: message,
+    code: "VALIDATION_ERROR",
+    details: { field: "title" },
+  });
+}
+
+describe("保存控制器 · R1 确定拒绝恢复与结果不明分离", () => {
+  it("R1-A：422 后修正内容 → 显式重试发送最新完整快照（新 requestId）；版本不提前推进；错误可读", async () => {
+    const timers = makeFakeTimers();
+    const calls: StudyNoteSaveRequest[] = [];
+    const save = vi.fn(async (input: StudyNoteSaveRequest): Promise<StudyNoteSaveResult> => {
+      calls.push(input);
+      if (input.snapshot.title.length > 120) throw validationError();
+      return { version: 2, updatedAt: "2026-09-20T09:00:00.000Z" };
+    });
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "x".repeat(121) }));
+    await expect(controller.flush()).rejects.toBeTruthy();
+    const errorSnap = controller.getSnapshot();
+    expect(errorSnap.state).toBe("error");
+    expect(errorSnap.savedSeq).toBe(0); // 确定拒绝：无确认
+    expect(errorSnap.version).toBe(3); // 版本不提前推进
+
+    controller.edit(makeEdit({ title: "fixed" })); // 用户修正
+    await controller.retry().catch(() => {});
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.snapshot.title).toBe("x".repeat(121));
+    expect(calls[1]!.snapshot.title).toBe("fixed"); // 旧实现：仍原样重发 121 字旧载荷
+    expect(calls[1]!.requestId).not.toBe(calls[0]!.requestId); // 新 requestId
+    expect(calls[1]!.expectedVersion).toBe(calls[0]!.expectedVersion); // 最近已确认版本（基线 3）
+
+    // 错误分类与可读消息（UI 恢复指引依赖；旧实现无此快照字段）
+    expect(errorSnap.errorKind).toBe("rejected");
+    expect(errorSnap.lastErrorMessage).toBe("标题超过上限");
+
+    const done = controller.getSnapshot();
+    expect(done.state).toBe("idle");
+    expect(done.version).toBe(2);
+    expect(done.savedSeq).toBe(2);
+    expect(done.errorKind).toBeNull();
+  });
+
+  it("R1-B：422 返回前已编辑 B → 错误帧不覆盖 B；重试提交 B（不丢本地输入）", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(1);
+
+    controller.edit(makeEdit({ title: "B" })); // 422 返回前的本地编辑
+    defers[0]!.reject(validationError());
+    await flushMicrotasks();
+
+    expect(controller.getSnapshot().state).toBe("error");
+    expect(controller.getSnapshot().edit.title).toBe("B"); // 错误帧未把 B 覆盖为 A
+
+    void controller.retry().catch(() => {});
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    const second = save.mock.calls[1]![0] as StudyNoteSaveRequest;
+    expect(second.snapshot.title).toBe("B"); // 旧实现：重发 A（121 场景即「旧载荷不可成功」）
+    expect(second.requestId).not.toBe((save.mock.calls[0]![0] as StudyNoteSaveRequest).requestId);
+  });
+
+  it("R1-C：结果不明（断网）→ 编辑 B → 原样重试 A（同 requestId）成功 → 新键续发 B，版本内容正确", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+
+    defers[0]!.reject(new Error("network down")); // 无 status = 结果不明
+    await flushMicrotasks();
+    expect(controller.getSnapshot().state).toBe("retrying");
+
+    for (let round = 0; round < 3; round += 1) {
+      timers.runPending(); // 退避 1/2/4s
+      await flushMicrotasks();
+      defers[round + 1]!.reject(new Error("network down"));
+      await flushMicrotasks();
+    }
+    expect(save).toHaveBeenCalledTimes(4); // 1 + 3 自动重试
+    expect(controller.getSnapshot().state).toBe("error");
+    expect(controller.getSnapshot().errorKind).toBe("unknown"); // 结果不明（旧实现：无此字段）
+
+    controller.edit(makeEdit({ title: "B" })); // 编辑 B 不丢
+    void controller.retry().catch(() => {});
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(5);
+    const fifth = save.mock.calls[4]![0] as StudyNoteSaveRequest;
+    expect(fifth.snapshot.title).toBe("A"); // 原样重发（不混入 B）
+    expect(fifth.requestId).toBe((save.mock.calls[0]![0] as StudyNoteSaveRequest).requestId);
+
+    defers[4]!.resolve({ version: 2, updatedAt: "2026-09-20T09:01:00.000Z" });
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(6);
+    const sixth = save.mock.calls[5]![0] as StudyNoteSaveRequest;
+    expect(sixth.snapshot.title).toBe("B"); // A 确认后以新 requestId 续发 B
+    expect(sixth.requestId).not.toBe(fifth.requestId);
+    expect(sixth.expectedVersion).toBe(2);
+    defers[5]!.resolve({ version: 3, updatedAt: "2026-09-20T09:02:00.000Z" });
+    await flushMicrotasks();
+
+    const done = controller.getSnapshot();
+    expect(done.state).toBe("idle");
+    expect(done.edit.title).toBe("B");
+    expect(done.version).toBe(3);
+  });
+
+  it("R1-D：INVALID_RESPONSE 不误记确认；保留原样重试权（同 requestId 重发）", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+
+    defers[0]!.reject(
+      new BrowserApiError(200, { code: "INVALID_RESPONSE", message: "学习笔记接口响应与契约不符" }),
+    );
+    await flushMicrotasks();
+    const snap = controller.getSnapshot();
+    expect(snap.state).toBe("error");
+    expect(snap.savedSeq).toBe(0); // 不误记确认
+    expect(snap.version).toBe(3);
+    expect(snap.errorKind).toBe("unknown"); // 200 但格式非法 = 结果不明（可能已提交）
+
+    void controller.retry().catch(() => {});
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    const second = save.mock.calls[1]![0] as StudyNoteSaveRequest;
+    expect(second.requestId).toBe((save.mock.calls[0]![0] as StudyNoteSaveRequest).requestId); // 原样
+    expect(second.snapshot.title).toBe("A");
+  });
+
+  it("R1-E：401（身份）不自动重试；保留未确认请求与身份恢复语义；重试成功后续发新编辑", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+
+    defers[0]!.reject(new BrowserApiError(401, { error: "unauthorized", code: "UNAUTHORIZED" }));
+    await flushMicrotasks();
+    expect(controller.getSnapshot().state).toBe("error");
+    expect(save).toHaveBeenCalledTimes(1); // 不自动重试
+    expect(controller.getSnapshot().errorKind).toBe("auth"); // 身份分类（供 UI 恢复引导）
+
+    controller.edit(makeEdit({ title: "B" }));
+    void controller.retry().catch(() => {});
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    const second = save.mock.calls[1]![0] as StudyNoteSaveRequest;
+    expect(second.snapshot.title).toBe("A"); // 身份恢复语义：原样重发未确认请求
+    expect(second.requestId).toBe((save.mock.calls[0]![0] as StudyNoteSaveRequest).requestId);
+
+    defers[1]!.resolve({ version: 2, updatedAt: "t1" });
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(3);
+    expect((save.mock.calls[2]![0] as StudyNoteSaveRequest).snapshot.title).toBe("B"); // 成功后续发 B
+  });
+
+  it("R1-F：5xx 自动重试耗尽仍属结果不明（保留原样重试权）", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+
+    const serverError = () => new BrowserApiError(503, { error: "unavailable", code: "UNAVAILABLE" });
+    defers[0]!.reject(serverError());
+    await flushMicrotasks();
+    expect(controller.getSnapshot().state).toBe("retrying");
+    for (let round = 0; round < 3; round += 1) {
+      timers.runPending();
+      await flushMicrotasks();
+      defers[round + 1]!.reject(serverError());
+      await flushMicrotasks();
+    }
+    expect(save).toHaveBeenCalledTimes(4);
+    expect(controller.getSnapshot().state).toBe("error");
+    expect(controller.getSnapshot().errorKind).toBe("unknown");
+
+    void controller.retry().catch(() => {});
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(5);
+    const fifth = save.mock.calls[4]![0] as StudyNoteSaveRequest;
+    expect(fifth.requestId).toBe((save.mock.calls[0]![0] as StudyNoteSaveRequest).requestId); // 原样
+    expect(fifth.snapshot.title).toBe("A");
+  });
+
+  it("R1-G：已落库丢响应后遇 401（身份失败）→ 原请求与新编辑均保全；重试幂等成功后续发新内容", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    // A 发出后响应丢失（服务端实际已落库；此处以「网络错误」语义模拟）
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(1);
+
+    defers[0]!.reject(new Error("network down"));
+    await flushMicrotasks();
+    expect(controller.getSnapshot().state).toBe("retrying");
+
+    // 自动原样重试时身份失效（401）→ auth 保留（不误当「确定拒绝」清掉未确认请求）
+    timers.runPending();
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    defers[1]!.reject(new BrowserApiError(401, { error: "unauthorized", code: "UNAUTHORIZED" }));
+    await flushMicrotasks();
+    const errSnap = controller.getSnapshot();
+    expect(errSnap.state).toBe("error");
+    expect(errSnap.errorKind).toBe("auth"); // 身份分类（修复前：无此字段）
+    expect(errSnap.edit.title).toBe("A"); // 原请求内容保全
+    expect(save).toHaveBeenCalledTimes(2); // 不自动重试
+
+    // 新编辑 B 同时保全；显式重试先原样重发 A（幂等，已落库不重复推进），成功后自动续发 B
+    controller.edit(makeEdit({ title: "B" }));
+    void controller.retry().catch(() => {});
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(3);
+    const third = save.mock.calls[2]![0] as StudyNoteSaveRequest;
+    expect(third.snapshot.title).toBe("A");
+    expect(third.requestId).toBe((save.mock.calls[0]![0] as StudyNoteSaveRequest).requestId);
+
+    defers[2]!.resolve({ version: 2, updatedAt: "t1" });
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(4);
+    const fourth = save.mock.calls[3]![0] as StudyNoteSaveRequest;
+    expect(fourth.snapshot.title).toBe("B");
+    expect(fourth.requestId).not.toBe(third.requestId);
+
+    defers[3]!.resolve({ version: 3, updatedAt: "t2" });
+    await flushMicrotasks();
+    const done = controller.getSnapshot();
+    expect(done.state).toBe("idle");
+    expect(done.edit.title).toBe("B");
+  });
+});
+
+// ── R2：管道（续发新快照）必须遵守 IME 组合状态 ──
+
+describe("保存控制器 · R2 管道续发遵守 IME", () => {
+  it("R2-A：A 在途进入组合并编辑 B → A 确认后不发未完成的 B；compositionend 补发完整 B", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // A 在途：用户开始组合并输入未完成 B
+    controller.setComposing(true);
+    controller.edit(makeEdit({ title: "未完成B" }));
+
+    defers[0]!.resolve({ version: 2, updatedAt: "t1" });
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(1); // 旧实现：A 确认后立刻发送组合中的 B（次数 2）
+    expect(controller.getSnapshot().state).toBe("dirty"); // 反映 B 未保存（旧实现：saving/idle）
+
+    controller.setComposing(false);
+    timers.runPending();
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect((save.mock.calls[1]![0] as StudyNoteSaveRequest).snapshot.title).toBe("未完成B");
+    defers[1]!.resolve({ version: 3, updatedAt: "t2" });
+    await flushMicrotasks();
+    expect(controller.getSnapshot().state).toBe("idle");
+  });
+
+  it("R2-B：A 退避（结果不明重试）期间进入组合 → A 原样重试不受影响；组合中不发新快照", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+    defers[0]!.reject(new Error("net"));
+    await flushMicrotasks();
+    expect(controller.getSnapshot().state).toBe("retrying"); // 退避 1s
+
+    controller.setComposing(true);
+    controller.edit(makeEdit({ title: "未完成B" }));
+    timers.runPending(); // 退避到期 → 原样重发 A（冻结载荷与组合无关）
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect((save.mock.calls[1]![0] as StudyNoteSaveRequest).snapshot.title).toBe("A");
+    defers[1]!.resolve({ version: 2, updatedAt: "t1" });
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2); // 组合未结束：不发 B（旧实现：立刻发送 → 3）
+    expect(controller.getSnapshot().state).toBe("dirty");
+
+    controller.setComposing(false);
+    timers.runPending();
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(3);
+    expect((save.mock.calls[2]![0] as StudyNoteSaveRequest).snapshot.title).toBe("未完成B");
+  });
+
+  it("R2-C：组合中 A 确认 → flush 等待者不提前 resolve；compositionend 后完整 B 确认才结算", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+
+    controller.setComposing(true);
+    controller.edit(makeEdit({ title: "B" }));
+    const flushB = controller.flush(); // 等待 B 序号
+    let settled = false;
+    let receipt: unknown = null;
+    void flushB.then((value) => { settled = true; receipt = value; }, () => { settled = true; });
+
+    defers[0]!.resolve({ version: 2, updatedAt: "t1" }); // A 确认（B 未发送）
+    await flushMicrotasks();
+    expect(settled).toBe(false); // 不提前 resolve
+
+    controller.setComposing(false);
+    timers.runPending();
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    defers[1]!.resolve({ version: 3, updatedAt: "t2" });
+    await flushMicrotasks();
+    expect(settled).toBe(true);
+    expect((receipt as { version: number }).version).toBe(3);
+    expect(controller.getSnapshot().state).toBe("idle");
+  });
+
+  it("R2-D：组合中 dispose：等待者 reject、不再发送新请求", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "A" }));
+    void controller.flush().catch(() => {});
+    await flushMicrotasks();
+    controller.setComposing(true);
+    controller.edit(makeEdit({ title: "B" }));
+    const flushB = controller.flush();
+
+    defers[0]!.resolve({ version: 2, updatedAt: "t1" }); // A 确认，B 不发
+    await flushMicrotasks();
+    controller.dispose();
+    await expect(flushB).rejects.toBeInstanceOf(StudyNoteDisposedError);
+    expect(save).toHaveBeenCalledTimes(1); // 无新请求
+  });
+});
+
+// ── R5：flush 回执对应「实际被确认的快照」（editSeq/version/lastSavedAt 同一次确认） ──
+
+describe("保存控制器 · R5 flush 回执绑定实际确认快照", () => {
+  it("R5-A：等待目标 1/2 被一次 seq2 确认覆盖 → 两回执 editSeq=2（实际确认序号），version/lastSavedAt 同一次确认", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.setComposing(true); // 组合中：flush 不立即发送（等 compositionend 合并发送）
+    controller.edit(makeEdit({ title: "T1" }));
+    const flush1 = controller.flush(); // 等待目标 1
+    let receipt1: { version: number; editSeq: number; lastSavedAt: string | null } | null = null;
+    void flush1.then((r) => { receipt1 = r; });
+    controller.edit(makeEdit({ title: "T2" }));
+    const flush2 = controller.flush(); // 等待目标 2
+    let receipt2: { version: number; editSeq: number; lastSavedAt: string | null } | null = null;
+    void flush2.then((r) => { receipt2 = r; });
+    controller.setComposing(false);
+
+    timers.runPending(); // 防抖 → 只发送合并后的 seq2
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect((save.mock.calls[0]![0] as StudyNoteSaveRequest).snapshot.title).toBe("T2");
+
+    defers[0]!.resolve({ version: 4, updatedAt: "2026-09-20T12:00:00.000Z" });
+    await flushMicrotasks();
+
+    expect(receipt1).not.toBeNull();
+    expect(receipt2).not.toBeNull();
+    expect(receipt1!.editSeq).toBe(2); // 旧实现：混用等待目标序号（1）
+    expect(receipt2!.editSeq).toBe(2);
+    expect(receipt1!.version).toBe(4); // 与实际确认快照同一次
+    expect(receipt1!.lastSavedAt).toBe("2026-09-20T12:00:00.000Z");
+    expect(receipt2!.version).toBe(4);
+    expect(receipt2!.lastSavedAt).toBe("2026-09-20T12:00:00.000Z");
+    expect(controller.getSnapshot().savedSeq).toBe(2);
+  });
+
+  it("R5-B：两次分次确认 → 各自回执 editSeq 为其确认时刻的 savedSeq（version/时间同步）", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "T1" }));
+    const flush1 = controller.flush();
+    let r1: { version: number; editSeq: number; lastSavedAt: string | null } | null = null;
+    void flush1.then((r) => { r1 = r; });
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(1);
+    defers[0]!.resolve({ version: 4, updatedAt: "t1" });
+    await flushMicrotasks();
+    expect(r1!.editSeq).toBe(1);
+    expect(r1!.version).toBe(4);
+    expect(r1!.lastSavedAt).toBe("t1");
+
+    controller.edit(makeEdit({ title: "T2" }));
+    const flush2 = controller.flush();
+    let r2: { version: number; editSeq: number; lastSavedAt: string | null } | null = null;
+    void flush2.then((r) => { r2 = r; });
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    defers[1]!.resolve({ version: 5, updatedAt: "t2" });
+    await flushMicrotasks();
+    expect(r2!.editSeq).toBe(2);
+    expect(r2!.version).toBe(5);
+    expect(r2!.lastSavedAt).toBe("t2");
+  });
+
+  it("R5-C：已有确认时 flush 立即 resolve，回执指向实际确认序号（不产生假目标序号）", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const controller = setupController(save, timers);
+
+    controller.edit(makeEdit({ title: "T1" }));
+    const first = controller.flush();
+    await flushMicrotasks();
+    defers[0]!.resolve({ version: 4, updatedAt: "t1" });
+    await first;
+
+    const receipt = await controller.flush(); // 无待发内容
+    expect(receipt.editSeq).toBe(1); // = savedSeq
+    expect(receipt.version).toBe(4);
+    expect(receipt.lastSavedAt).toBe("t1");
+  });
+});

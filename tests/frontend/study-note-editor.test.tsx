@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { StudyNoteEditor } from "@/frontend/components/studyNotes/StudyNoteEditor";
-import { useStudyNoteEditor } from "@/frontend/hooks/useStudyNoteEditor";
+import { useStudyNoteEditor, type UseStudyNoteEditorResult } from "@/frontend/hooks/useStudyNoteEditor";
 import type { StudyNoteDto } from "@/domain/l3-study-notes";
 
 const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -432,5 +432,351 @@ describe("StudyNoteEditor · 引用占位预览", () => {
     expect(placeholders[0]!.textContent).toContain("来源A");
     expect(placeholders[1]!.textContent).toContain("引用已失效");
     expect(screen.queryByTestId("note-body")).toBeNull(); // 预览态替换编辑区
+  });
+});
+
+describe("StudyNoteEditor · R1 服务端确定拒绝恢复", () => {
+  it("R1：真实拒绝分类可读（非『网络或服务异常』）→ 修正后重试提交最新内容", async () => {
+    const { client, get, save } = makeClient();
+    get.mockResolvedValue({ item: makeDto() });
+    save.mockRejectedValueOnce(
+      new BrowserApiError(422, { error: "标题超过上限", code: "VALIDATION_ERROR", details: { field: "title" } }),
+    );
+    await renderEditor(client);
+    await waitFor(() => expect(screen.getByTestId("note-title")).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("note-title"), { target: { value: "x".repeat(121) } });
+    });
+    await waitFor(() => expect(screen.getByTestId("error-panel")).toBeTruthy(), { timeout: 3000 });
+    const panel = screen.getByTestId("error-panel");
+    expect(panel.textContent).toContain("标题超过上限"); // 服务端可读原因（旧实现：无法读取）
+    expect(panel.textContent).toContain("服务端拒绝"); // 分类文案（旧实现：无分类）
+    expect(panel.textContent).not.toContain("网络或服务异常"); // 旧实现：一律网络/服务异常
+
+    // 修正为合法标题 → 重试保存 → 提交最新内容
+    save.mockResolvedValueOnce({ item: makeDto({ version: 4, updatedAt: "2026-09-20T09:00:00.000Z" }) });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("note-title"), { target: { value: "修正标题" } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "重试保存" }));
+    });
+    await waitFor(() => expect(screen.getByTestId("save-state").textContent).toContain("已保存"), { timeout: 3000 });
+    const [, secondInput] = save.mock.calls[1] as [string, Record<string, unknown>];
+    expect(secondInput.title).toBe("修正标题"); // 旧实现：重发 121 字旧载荷 → 再失败
+  });
+});
+
+describe("StudyNoteEditor · R3 reload 保护未保存输入", () => {
+  const NOTE_B_ID = "00000000-0000-4000-8000-000000000702";
+
+  function HookHost(props: {
+    client: StudyNotesClient;
+    noteId: string;
+    holder: { current: UseStudyNoteEditorResult | null };
+  }): ReturnType<typeof createElement> | null {
+    const editor = useStudyNoteEditor({ noteId: props.noteId, client: props.client });
+    props.holder.current = editor;
+    return null;
+  }
+
+  it("R3-A：dirty 时 reload 不销毁控制器、不丢本地输入（reload 仅用于初始化失败重试）", async () => {
+    const { client, get, save } = makeClient();
+    get.mockResolvedValue({ item: makeDto() });
+    save.mockResolvedValue({ item: makeDto({ version: 4, updatedAt: "2026-09-20T10:00:00.000Z" }) });
+    const holder: { current: UseStudyNoteEditorResult | null } = { current: null };
+
+    await act(async () => {
+      root.render(createElement(HookHost, { client, noteId: NOTE_ID, holder }));
+    });
+    await waitFor(() => expect(holder.current?.snapshot).not.toBeNull());
+
+    await act(async () => {
+      holder.current!.setTitle("local unsaved");
+    });
+    expect(holder.current!.snapshot!.edit.title).toBe("local unsaved");
+
+    await act(async () => {
+      holder.current!.reload();
+    });
+    await waitFor(() => expect(holder.current?.snapshot).not.toBeNull());
+    expect(holder.current!.snapshot!.edit.title).toBe("local unsaved"); // 旧实现：回服务器值（丢输入）
+    expect(get).toHaveBeenCalledTimes(1); // 不重复取数
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 3000 }); // 控制器仍活：可自动保存
+    expect((save.mock.calls[0] as [string, Record<string, unknown>])[1].title).toBe("local unsaved");
+  });
+
+  it("R3-B：在途保存时 reload 不中断、不丢在途内容", async () => {
+    const { client, get, save } = makeClient();
+    get.mockResolvedValue({ item: makeDto() });
+    const pending = defer<{ item: StudyNoteDto }>();
+    save.mockReturnValueOnce(pending.promise);
+    const holder: { current: UseStudyNoteEditorResult | null } = { current: null };
+
+    await act(async () => {
+      root.render(createElement(HookHost, { client, noteId: NOTE_ID, holder }));
+    });
+    await waitFor(() => expect(holder.current?.snapshot).not.toBeNull());
+
+    await act(async () => {
+      holder.current!.setTitle("在途内容");
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 3000 });
+
+    await act(async () => {
+      holder.current!.reload();
+    });
+    await act(async () => {
+      pending.resolve({ item: makeDto({ version: 4, updatedAt: "2026-09-20T10:01:00.000Z" }) });
+    });
+    await waitFor(() => expect(holder.current!.snapshot!.state).toBe("idle"));
+    expect(holder.current!.snapshot!.edit.title).toBe("在途内容"); // 旧实现：新控制器回服务器标题
+    expect(get).toHaveBeenCalledTimes(1); // 旧实现：reload 触发第二次 GET
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("R3-C：error 态 reload 保留失败态与本地输入", async () => {
+    const { client, get, save } = makeClient();
+    get.mockResolvedValue({ item: makeDto() });
+    save.mockRejectedValueOnce(new BrowserApiError(422, { error: "invalid", code: "VALIDATION_ERROR" }));
+    const holder: { current: UseStudyNoteEditorResult | null } = { current: null };
+
+    await act(async () => {
+      root.render(createElement(HookHost, { client, noteId: NOTE_ID, holder }));
+    });
+    await waitFor(() => expect(holder.current?.snapshot).not.toBeNull());
+    await act(async () => {
+      holder.current!.setTitle("失败内容");
+    });
+    await waitFor(() => expect(holder.current!.snapshot!.state).toBe("error"), { timeout: 3000 });
+
+    await act(async () => {
+      holder.current!.reload();
+    });
+    await waitFor(() => expect(holder.current?.snapshot).not.toBeNull());
+    expect(holder.current!.snapshot!.state).toBe("error"); // 旧实现：重建后 idle
+    expect(holder.current!.snapshot!.edit.title).toBe("失败内容");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("R3-C2：conflict 态 reload 保留冲突态（不作重置后门）", async () => {
+    const { client, get, save } = makeClient();
+    get.mockResolvedValue({ item: makeDto() });
+    save.mockRejectedValueOnce(
+      new BrowserApiError(409, { error: "conflict", code: "CONFLICT", details: { currentVersion: 9 } }),
+    );
+    const holder: { current: UseStudyNoteEditorResult | null } = { current: null };
+
+    await act(async () => {
+      root.render(createElement(HookHost, { client, noteId: NOTE_ID, holder }));
+    });
+    await waitFor(() => expect(holder.current?.snapshot).not.toBeNull());
+    await act(async () => {
+      holder.current!.setTitle("本地改");
+    });
+    await waitFor(() => expect(holder.current!.snapshot!.state).toBe("conflict"), { timeout: 3000 });
+
+    await act(async () => {
+      holder.current!.reload();
+    });
+    await waitFor(() => expect(holder.current?.snapshot).not.toBeNull());
+    expect(holder.current!.snapshot!.state).toBe("conflict"); // 旧实现：重建后 idle（丢弃冲突上下文）
+    expect(holder.current!.snapshot!.edit.title).toBe("本地改");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("R3-D：换 note 正常重新加载；旧笔记迟到保存响应不污染新笔记", async () => {
+    const { client, get, save } = makeClient();
+    get.mockImplementation(async (id: string) =>
+      id === NOTE_ID
+        ? { item: makeDto() }
+        : { item: makeDto({ id: NOTE_B_ID, title: "乙笔记", version: 1 }) },
+    );
+    const pendingA = defer<{ item: StudyNoteDto }>();
+    save.mockReturnValueOnce(pendingA.promise);
+    const holder: { current: UseStudyNoteEditorResult | null } = { current: null };
+
+    await act(async () => {
+      root.render(createElement(HookHost, { client, noteId: NOTE_ID, holder }));
+    });
+    await waitFor(() => expect(holder.current?.snapshot).not.toBeNull());
+    await act(async () => {
+      holder.current!.setTitle("甲改");
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 3000 });
+
+    // 换 note：重新加载乙
+    await act(async () => {
+      root.render(createElement(HookHost, { client, noteId: NOTE_B_ID, holder }));
+    });
+    await waitFor(() => expect(holder.current!.snapshot?.edit.title).toBe("乙笔记"));
+
+    // 旧笔记的迟到保存响应 → 不得污染新笔记
+    await act(async () => {
+      pendingA.resolve({ item: makeDto({ version: 9, title: "甲已保存" }) });
+    });
+    expect(holder.current!.snapshot!.edit.title).toBe("乙笔记");
+  });
+});
+
+describe("StudyNoteEditor · R2 在途 IME 交错与导航协同", () => {
+  it("R2 组件级：A 在途进入组合 → A 响应后不发 B、状态未保存 → compositionend 后发送完整 B", async () => {
+    const { client, get, save } = makeClient();
+    get.mockResolvedValue({ item: makeDto() });
+    const first = defer<{ item: StudyNoteDto }>();
+    const second = defer<{ item: StudyNoteDto }>();
+    save.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    await renderEditor(client);
+    await waitFor(() => expect(screen.getByTestId("note-title")).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("note-title"), { target: { value: "A" } });
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 3000 });
+
+    // A 在途：开始组合并输入未完成 B
+    await act(async () => {
+      fireEvent.compositionStart(screen.getByTestId("note-title"));
+      fireEvent.change(screen.getByTestId("note-title"), { target: { value: "未完成B" } });
+    });
+
+    await act(async () => {
+      first.resolve({ item: makeDto({ version: 4, updatedAt: "2026-09-20T11:00:00.000Z" }) });
+      await new Promise((resolve) => setTimeout(resolve, 60)); // 等待 A 确认流程处理完
+    });
+    expect(save).toHaveBeenCalledTimes(1); // 旧实现：A 确认后立刻发送组合中的 B（2 次）
+    expect(screen.getByTestId("save-state").textContent).not.toContain("已保存"); // B 未保存
+
+    await act(async () => {
+      fireEvent.compositionEnd(screen.getByTestId("note-title"));
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    expect((save.mock.calls[1] as [string, Record<string, unknown>])[1].title).toBe("未完成B");
+
+    await act(async () => {
+      second.resolve({ item: makeDto({ version: 5, updatedAt: "2026-09-20T11:05:00.000Z" }) });
+    });
+    await waitFor(() => expect(screen.getByTestId("save-state").textContent).toContain("已保存"));
+  });
+
+  function makeImeNavHost(client: StudyNotesClient, onNavigated: () => void) {
+    return function ImeNavHost(): ReturnType<typeof createElement> {
+      const editor = useStudyNoteEditor({ noteId: NOTE_ID, client });
+      return createElement(
+        "div",
+        null,
+        createElement("button", { onClick: () => void editor.requestNavigation(() => { onNavigated(); }) }, "goto"),
+        createElement("button", { onClick: () => editor.onCompositionStart() }, "ime-start"),
+        createElement("button", { onClick: () => editor.onCompositionEnd() }, "ime-end"),
+        createElement("button", { onClick: () => editor.setTitle("组合中内容") }, "change"),
+        editor.navigationLocked ? createElement("span", { "data-testid": "nav-locked" }, "locked") : null,
+        editor.navigationError ? createElement("span", { "data-testid": "nav-error" }, editor.navigationError) : null,
+      );
+    };
+  }
+
+  it("R2 导航协同：组合中导航被明确拒绝（不锁死输入、不永久 pending）；完成组合保存后可导航", async () => {
+    const { client, get, save } = makeClient();
+    get.mockResolvedValue({ item: makeDto() });
+    save.mockResolvedValue({ item: makeDto({ version: 4, updatedAt: "t" }) });
+    const onNavigated = vi.fn();
+    const Host = makeImeNavHost(client, onNavigated);
+
+    await act(async () => {
+      root.render(createElement(Host));
+    });
+    await waitFor(() => expect(screen.getByText("goto")).toBeTruthy());
+
+    // 开始组合并输入（未完成）
+    await act(async () => {
+      fireEvent.click(screen.getByText("ime-start"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("change"));
+    });
+
+    // 组合中导航 → 拒绝并提示，不进入锁等待
+    await act(async () => {
+      fireEvent.click(screen.getByText("goto"));
+    });
+    await waitFor(() => expect(screen.getByTestId("nav-error")).toBeTruthy());
+    expect(screen.getByTestId("nav-error").textContent).toContain("输入法");
+    expect(onNavigated).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("nav-locked")).toBeNull(); // 未锁死输入（可完成组合）
+
+    // 完成组合 → 保存 → 导航成功（不永久 pending）
+    await act(async () => {
+      fireEvent.click(screen.getByText("ime-end"));
+    });
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    await act(async () => {
+      fireEvent.click(screen.getByText("goto"));
+    });
+    await waitFor(() => expect(onNavigated).toHaveBeenCalledTimes(1), { timeout: 3000 });
+  });
+});
+
+describe("StudyNoteEditor · R4 预览 marker 识别与域合同一致", () => {
+  it("R4-A：缩进代码中的 marker 是代码（域合同），预览不显示占位卡", async () => {
+    const bodyMd = `正文开头\n\n    [[ref:${REF_ID}]]\n\n正文结尾`;
+    const { client, get } = makeClient();
+    get.mockResolvedValue({ item: makeDto({ bodyMd, references: [] }) });
+    await renderEditor(client);
+    await waitFor(() => expect(screen.getByTestId("note-body")).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "预览" }));
+    });
+    expect(screen.queryAllByTestId("reference-placeholder").length).toBe(0); // 旧实现：误识别为 1
+    // 代码文本保留（真实渲染；不退化）
+    await waitFor(
+      () => expect(screen.getByTestId("note-preview").textContent).toContain("[[ref:"),
+      { timeout: 3000 },
+    );
+  });
+
+  it("R4-B：合法独立顶层 marker 变占位卡（大写 UUID 归一小写匹配快照）；无快照显示未找到", async () => {
+    const upper = REF_ID.toUpperCase();
+    const bodyMd = `正文\n\n[[ref:${upper}]]\n\n[[ref:${REF2_ID}]]\n\n结尾`;
+    const { client, get } = makeClient();
+    get.mockResolvedValue({
+      item: makeDto({
+        bodyMd,
+        references: [makeDto().references[0]!], // 仅 REF_ID 有快照；REF2 缺失
+      }),
+    });
+    await renderEditor(client);
+    await waitFor(() => expect(screen.getByTestId("note-body")).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "预览" }));
+    });
+    const placeholders = screen.getAllByTestId("reference-placeholder");
+    expect(placeholders.length).toBe(2);
+    expect(placeholders[0]!.getAttribute("data-ref-id")).toBe(REF_ID); // 小写归一
+    expect(placeholders[0]!.textContent).toContain("来源A"); // 快照匹配（大小写不敏感）
+    expect(placeholders[1]!.getAttribute("data-ref-id")).toBe(REF2_ID);
+    expect(placeholders[1]!.textContent).toContain("未找到快照"); // 缺失引用如实展示
+  });
+
+  it("R4-C：HTML/XSS 净化保持（预览不注入脚本/事件属性）", async () => {
+    const bodyMd = `正文\n\n<script>window.__xss=1</script>\n\n<img src=x onerror="window.__xss=2">\n\n[[ref:${REF_ID}]]`;
+    const { client, get } = makeClient();
+    get.mockResolvedValue({ item: makeDto({ bodyMd, references: [makeDto().references[0]!] }) });
+    await renderEditor(client);
+    await waitFor(() => expect(screen.getByTestId("note-body")).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "预览" }));
+    });
+    await waitFor(
+      () => expect(screen.getByTestId("note-preview").textContent).toContain("正文"),
+      { timeout: 3000 },
+    );
+    const preview = screen.getByTestId("note-preview");
+    expect(preview.querySelector("script")).toBeNull();
+    expect(preview.querySelector("img[onerror]")).toBeNull();
+    expect(preview.querySelectorAll('[data-testid="reference-placeholder"]').length).toBe(1);
   });
 });

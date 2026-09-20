@@ -4,20 +4,22 @@
  *
  * 纪律：
  *  - 编辑状态真源 = `useStudyNoteEditor`（controller 快照）；本组件不另造保存逻辑；
- *  - 预览：普通段落走 `Markdown`（marked + DOMPurify）；顶层 `[[ref:…]]` 一行渲染为
- *    **只读占位卡**（快照摘要；unavailable 显示「已失效」但仍保留摘录），绝不作为 HTML 注入；
+ *  - 预览（R4）：与 domain 同一 lexer 语义（`splitStudyNotePreviewBlocks`）——仅
+ *    **顶层 paragraph 完全等于 `[[ref:…]]`** 渲染为只读占位卡（快照摘要；unavailable
+ *    显示「已失效」但仍保留摘录），缩进代码/围栏/列表/引用块等一律保持普通 Markdown，
+ *    绝不作为 HTML 注入；
  *  - 引用深度编辑（新 capture/完整卡片/显式移除）后置 Task 09，本组件不提供假入口；
  *  - 冲突面板：复制本地内容（失败给可见文本备选）/ 显式载入服务器版本（锁编辑）；
  *  - marker 集合被手动破坏时由保存预检阻止 PUT 并给出恢复指引（invalid 面板）。
  */
 import { useMemo, useState } from "react";
 import type { ReferencePreview } from "@/domain/l3-study-notes";
-import { parseReferenceIds } from "@/domain/l3-study-notes";
 import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { Button } from "@/frontend/components/ui/Button";
 import { useStudyNoteEditor } from "@/frontend/hooks/useStudyNoteEditor";
 import type { StudyNoteSaveState } from "@/frontend/state/studyNoteSaveController";
+import { splitStudyNotePreviewBlocks } from "@/frontend/utils/studyNotePreviewBlocks";
 
 export interface StudyNoteEditorProps {
   noteId: string;
@@ -48,55 +50,6 @@ function formatSavedAt(value: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return `最近保存于 ${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
-}
-
-/** 单行是否为「顶层引用标记」（复用域纯函数识别；识别不了（如输入中途）按普通文本）。 */
-function extractMarkerLine(line: string): string | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("[[ref:") || !trimmed.endsWith("]]")) return null;
-  try {
-    const ids = parseReferenceIds(trimmed);
-    return ids.length === 1 ? ids[0]! : null;
-  } catch {
-    return null;
-  }
-}
-
-type BodyBlock = { kind: "markdown"; text: string } | { kind: "reference"; refId: string };
-
-/** 将正文拆为「Markdown 段」与「引用占位」块（跳过代码围栏内的同形文本）。 */
-function splitBodyBlocks(bodyMd: string): BodyBlock[] {
-  const lines = bodyMd.split("\n");
-  const blocks: BodyBlock[] = [];
-  let buffer: string[] = [];
-  let inFence = false;
-
-  const flushMarkdown = (): void => {
-    if (buffer.length === 0) return;
-    const text = buffer.join("\n");
-    if (text.trim()) blocks.push({ kind: "markdown", text });
-    buffer = [];
-  };
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
-      inFence = !inFence;
-      buffer.push(line);
-      continue;
-    }
-    if (!inFence) {
-      const refId = extractMarkerLine(line);
-      if (refId) {
-        flushMarkdown();
-        blocks.push({ kind: "reference", refId });
-        continue;
-      }
-    }
-    buffer.push(line);
-  }
-  flushMarkdown();
-  return blocks;
 }
 
 function referenceSummary(meta: ReferencePreview): string {
@@ -139,7 +92,7 @@ export function StudyNoteEditor({ noteId, client, leaveAction }: StudyNoteEditor
 
   const snapshot = editor.snapshot;
   const blocks = useMemo(
-    () => (snapshot && showPreview ? splitBodyBlocks(snapshot.edit.bodyMd) : []),
+    () => (snapshot && showPreview ? splitStudyNotePreviewBlocks(snapshot.edit.bodyMd) : []),
     [snapshot, showPreview],
   );
 
@@ -316,10 +269,14 @@ export function StudyNoteEditor({ noteId, client, leaveAction }: StudyNoteEditor
         </div>
       )}
 
-      {/* 保存失败提示 */}
+      {/* 保存失败提示（R1：区分服务端确定拒绝 / 身份失败 / 结果不明，字段错误可读） */}
       {state === "error" && (
         <p className="text-xs text-[var(--color-accent-2)]" role="alert" data-testid="error-panel">
-          保存失败（网络或服务异常）：本地输入已保留；可点「重试保存」继续。若持续失败，建议先复制内容留存。
+          {snapshot.errorKind === "rejected"
+            ? `保存被服务端拒绝${snapshot.lastErrorMessage ? `（${snapshot.lastErrorMessage}）` : ""}：本地输入已保留；请修正内容后点「重试保存」提交当前最新内容。`
+            : snapshot.errorKind === "auth"
+              ? "登录状态或权限已失效：本地输入已保留；请重新登录后点「重试保存」继续。"
+              : "保存失败（网络或服务异常）：本地输入已保留；可点「重试保存」继续。若持续失败，建议先复制内容留存。"}
         </p>
       )}
 

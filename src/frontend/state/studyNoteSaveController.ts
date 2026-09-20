@@ -7,9 +7,17 @@
  *  - 同一时刻至多一个 PUT 在途；edit 只覆盖「待发送快照」并推进 editSeq；
  *    发送时冻结 payload/requestId/expectedVersion（调用方后续修改原对象不影响发送）；
  *  - 响应只确认其「发送序号」：旧响应不覆盖之后的本地输入、不把新输入标为已保存；
- *  - 结果不明（断网/超时/5xx）→ 原样重试同请求，退避 1/2/4s 共 3 次自动重试；
- *    429 尊重服务端 Retry-After 且保持有界；401/403/400/404/422 等确定失败不盲重试；
- *  - 409 → 立即停止自动写进入 conflict（保留本地输入）；**不猜测服务器版本继续覆盖**；
+ *  - 失败按「服务端确定拒绝 / 结果不明 / 身份失败」分流（R1 补修）：
+ *    · rejected（可信业务拒绝：400/404/422 等，本次尝试未提交）→ **不保留**旧载荷的
+ *      原样重试权；用户修正后显式 retry 以「最新完整快照 + 新 requestId + 最近已确认
+ *      expectedVersion」提交（旧载荷已不可成功，禁止永久保留）；
+ *    · unknown（断网/超时/5xx 耗尽/429 耗尽/成功响应格式非法）→ **保留**原 payload/
+ *      requestId/expectedVersion，自动退避 1/2/4s 至多 3 次，耗尽后显式 retry 原样重发
+ *      （服务端幂等去重；重放遇到他端新写入的 409 属正常冲突路径）；
+ *    · auth（401/403）→ 不盲重试、保留未确认请求（身份恢复语义，UI 给登录恢复引导）；
+ *    · 409 → 立即停止自动写进入 conflict（保留本地输入）；**不猜测服务器版本继续覆盖**；
+ *  - error 态快照携带 errorKind（rejected/unknown/auth）与可读 lastErrorMessage，
+ *    面板据此给出正确恢复指引（不把确定拒绝一律写成「网络或服务异常」）；
  *  - flush() 等待「调用时刻 editSeq」被确认才 resolve；失败/冲突/dispose 一律 reject，
  *    不留永远 pending；回执 {version, editSeq, lastSavedAt}，lastSavedAt 来自成功 DTO.updatedAt；
  *  - 订阅在「释放 inFlight 后」的稳定终态帧必发；dispose 后不再通知，旧回包被丢弃；
@@ -28,6 +36,14 @@ import type { L3QuestionType } from "@/domain/l3-question-types";
 // ── 状态与快照模型 ──────────────────────────────────────────────────────────
 
 export type StudyNoteSaveState = "idle" | "dirty" | "saving" | "retrying" | "error" | "conflict" | "invalid";
+
+/**
+ * error 态失败分类（R1）：
+ * - `rejected`：服务端确定拒绝本次写入（可信业务 4xx，本次尝试未提交）→ 修正后重试最新快照；
+ * - `unknown`：提交结果不明（网络/超时/5xx/429/成功响应格式非法）→ 原样重试（幂等语义）；
+ * - `auth`：身份/权限失败（401/403）→ 保留请求，待身份恢复后重试。
+ */
+export type StudyNoteSaveErrorKind = "rejected" | "unknown" | "auth";
 
 /** precheck 结果：ok=false 时阻止发送（不 PUT），reason 供 UI 展示恢复指引。 */
 export type StudyNoteSavePrecheckResult = { ok: true } | { ok: false; reason: string };
@@ -54,15 +70,30 @@ export interface StudyNoteSaveSnapshot {
   lastSavedAt: string | null;
   /** 仅 conflict 态非 null；409 未携带 currentVersion 时为 null（不猜数值）。 */
   conflictCurrentVersion: number | null;
+  /**
+   * 仅 error 态非 null：失败分类（rejected/unknown/auth）。
+   * UI 据此给出正确恢复指引（rejected=修正后重试；unknown=原样重试；auth=重新登录）。
+   */
+  errorKind: StudyNoteSaveErrorKind | null;
+  /** 仅 error 态非 null：可读错误消息（服务端 message 优先；技术性兜底不展示）。 */
+  lastErrorMessage: string | null;
   /** 仅 invalid 态非 null：保存前预检（marker 集合一致性）未通过的原因。 */
   invalidReason: string | null;
+  /** 当前 IME 组合状态（导航守卫与状态呈现使用；组合中不发送新的编辑快照）。 */
+  composing: boolean;
   /** 当前编辑快照（受控 UI 的渲染真源；含尚未确认的本地输入）。 */
   edit: StudyNoteEditSnapshot;
 }
 
 export interface StudyNoteFlushReceipt {
+  /** 与实际确认快照绑定的版本（同一次确认；不是等待目标意义上的版本）。 */
   version: number;
+  /**
+   * **实际被确认的快照序号**（savedSeq，R5）——不混用「等待目标序号」；
+   * 等待目标仅在内部作为 resolve 条件（waiter.targetSeq <= savedSeq）。
+   */
   editSeq: number;
+  /** 同一次确认的服务端时间（成功 DTO.updatedAt）。 */
   lastSavedAt: string | null;
 }
 
@@ -106,7 +137,11 @@ export interface StudyNoteSaveController {
   edit(snapshot: StudyNoteEditSnapshot): void;
   /** IME 合成标记：composing 期间不发送；compositionend 后按防抖补发。 */
   setComposing(value: boolean): void;
-  /** 等待「调用时刻 editSeq」被确认；失败/冲突 reject，不留 pending。 */
+  /**
+   * 等待「调用时刻 editSeq（目标）」被确认覆盖后 resolve（R5）：
+   * 回执 editSeq=**实际确认的快照序号**（savedSeq），version/lastSavedAt 与同一次确认绑定；
+   * 失败/冲突/dispose 一律 reject，不留永远 pending。
+   */
   flush(): Promise<StudyNoteFlushReceipt>;
   /**
    * 显式重试：error 态继续**同一未确认请求**（同 payload/requestId/expectedVersion）；
@@ -201,6 +236,41 @@ function isRetryableStatus(status: number | null): boolean {
 
 function isConflictStatus(status: number | null): boolean {
   return status === 409;
+}
+
+/** INVALID_RESPONSE：服务端 2xx 但成功响应与契约不符 → 提交结果不明（可能已提交）。 */
+function isInvalidResponseError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  return (err as { code?: unknown }).code === "INVALID_RESPONSE";
+}
+
+/**
+ * 「服务端确定拒绝本次写入」判定（R1）：
+ * 可信业务 4xx（400/404/422 等，且本次尝试确定未提交）→ 清除旧载荷原样重试权；
+ * 其余（结果不明/身份/暂态）不在此列：
+ * - 网络/超时（无 status）→ unknown；
+ * - 5xx/429/408/425（自动重试仍耗尽）→ unknown（保留原样重试）；
+ * - INVALID_RESPONSE（2xx 响应非法，可能已提交）→ unknown（保守）；
+ * - 401/403 → auth（身份恢复语义，同样保留未确认请求，UI 单独引导）。
+ */
+function classifyConfirmedRejection(error: unknown): "rejected" | "unknown" | "auth" {
+  if (isInvalidResponseError(error)) return "unknown";
+  const status = errorStatus(error);
+  if (status === null || status === 0 || status >= 500) return "unknown";
+  if (status === 408 || status === 425 || status === 429) return "unknown";
+  if (status === 401 || status === 403) return "auth";
+  return "rejected";
+}
+
+/** 可读错误消息：服务端 message 优先；技术性兜底（Request failed with status N）不展示。 */
+function extractErrorMessage(err: unknown): string | null {
+  if (!err || typeof err !== "object") return null;
+  const message = (err as { message?: unknown }).message;
+  if (typeof message !== "string") return null;
+  const trimmed = message.trim();
+  if (!trimmed) return null;
+  if (/^Request failed with status \d+$/i.test(trimmed)) return null;
+  return trimmed;
 }
 
 /** 409 的 meta.currentVersion（details.currentVersion）；缺失/非数字时 null（不猜）。 */
@@ -325,7 +395,12 @@ interface InFlightRequest {
 type SendOutcome =
   | { kind: "success"; version: number; updatedAt: string }
   | { kind: "conflict"; currentVersion: number | null }
-  | { kind: "failed"; error: unknown }
+  /** 服务端确定拒绝本次写入（可信业务 4xx，本次未提交）：不保留旧载荷原样重试权。 */
+  | { kind: "rejected"; error: unknown }
+  /** 结果不明（网络/超时/5xx/429/成功响应格式非法）：保留未确认请求，原样重试。 */
+  | { kind: "unknown"; error: unknown }
+  /** 身份/权限失败（401/403）：不盲重试、保留未确认请求（身份恢复语义）。 */
+  | { kind: "auth"; error: unknown }
   | { kind: "aborted" };
 
 export function createStudyNoteSaveController(
@@ -351,9 +426,11 @@ export function createStudyNoteSaveController(
   let inFlight = false;
   let disposed = false;
 
-  /** 结果不明的未确认请求（error 态保留；retry 原样重发）。 */
+  /** 结果不明的未确认请求（error 态保留；retry 原样重发）。仅 unknown/auth 类保留。 */
   let unconfirmed: InFlightRequest | null = null;
   let lastError: unknown = null;
+  let errorKind: StudyNoteSaveErrorKind | null = null;
+  let lastErrorMessage: string | null = null;
   let conflictCurrentVersion: number | null = null;
   let invalidReason: string | null = null;
   /** 代际：adopt 之外的旧回包丢弃依据（防污染新基线）。 */
@@ -386,7 +463,10 @@ export function createStudyNoteSaveController(
       version,
       lastSavedAt,
       conflictCurrentVersion,
+      errorKind,
+      lastErrorMessage,
       invalidReason,
+      composing,
       edit: freezeSnapshot(editSnapshot),
     };
   }
@@ -398,13 +478,14 @@ export function createStudyNoteSaveController(
     };
   }
 
-  /** 结算「目标序号已被确认」的等待者——回执取「该确认生效时」的 version/lastSavedAt。 */
+  /** 结算「目标序号已被确认」的等待者（R5）——回执 editSeq=**实际确认的快照序号**（savedSeq），
+   *  version/lastSavedAt 来自同一次确认（调用点均在「确认已生效」之后）。 */
   function resolveEligibleWaiters(): void {
     if (waiters.length === 0) return;
     const remaining: FlushWaiter[] = [];
     for (const waiter of waiters) {
       if (waiter.targetSeq <= savedSeq) {
-        waiter.resolve({ version, editSeq: waiter.targetSeq, lastSavedAt });
+        waiter.resolve({ version, editSeq: savedSeq, lastSavedAt });
       } else {
         remaining.push(waiter);
       }
@@ -456,12 +537,15 @@ export function createStudyNoteSaveController(
           return { kind: "conflict", currentVersion: extractCurrentVersion(error) };
         }
         if (!isRetryableStatus(status)) {
-          // 确定失败（401/403/400/404/422…）：不盲重试
-          return { kind: "failed", error };
+          // 确定失败（400/404/422…）或 2xx 响应非法（INVALID_RESPONSE）→ 先分类，不盲重试
+          const kind = classifyConfirmedRejection(error);
+          if (kind === "rejected") return { kind, error };
+          if (kind === "auth") return { kind, error };
+          return { kind: "unknown", error };
         }
         if (retryCount >= MAX_AUTO_RETRIES) {
-          // 自动重试耗尽：保持「未确认请求」，等待显式 retry
-          return { kind: "failed", error };
+          // 自动重试耗尽：结果不明，保持「未确认请求」，等待显式 retry 原样重发
+          return { kind: "unknown", error };
         }
         retryCount += 1;
         setState("retrying");
@@ -481,8 +565,13 @@ export function createStudyNoteSaveController(
       while (!disposed && myEpoch === epoch) {
         let request: InFlightRequest;
         if (unconfirmed) {
-          request = unconfirmed; // 显式 retry：继续同一未确认请求
+          request = unconfirmed; // 显式 retry：继续同一未确认请求（冻结载荷，与组合无关）
         } else if (editSeq > savedSeq) {
+          if (composing) {
+            // R2：新的编辑快照可能处于输入法组合中（不完整）——停止管道，
+            // 等 compositionend 后的防抖补发（setComposing(false) → scheduleAutosave）。
+            break;
+          }
           request = {
             seq: editSeq,
             requestId: generateRequestId(),
@@ -497,6 +586,8 @@ export function createStudyNoteSaveController(
         if (!check.ok) {
           unconfirmed = null; // 不为未通过预检的载荷保留重试权（等修复后的新编辑）
           invalidReason = check.reason;
+          errorKind = null;
+          lastErrorMessage = null;
           setState("invalid");
           rejectWaiters(new StudyNotePrecheckError(check.reason));
           notify();
@@ -512,6 +603,8 @@ export function createStudyNoteSaveController(
         if (outcome.kind === "success") {
           unconfirmed = null;
           lastError = null;
+          errorKind = null;
+          lastErrorMessage = null;
           savedSeq = request.seq;
           version = outcome.version;
           lastSavedAt = outcome.updatedAt;
@@ -528,9 +621,17 @@ export function createStudyNoteSaveController(
           return;
         }
 
-        // failed：确定失败或自动重试耗尽
-        unconfirmed = request;
+        // rejected/unknown/auth（R1 分流）：
+        // rejected=服务端确定拒绝 → 清除旧载荷原样重试权（修正后以最新快照重发）；
+        // unknown/auth → 保留未确认请求，显式 retry 原样重发（幂等 / 身份恢复）。
+        if (outcome.kind === "rejected") {
+          unconfirmed = null;
+        } else {
+          unconfirmed = request;
+        }
         lastError = outcome.error;
+        errorKind = outcome.kind;
+        lastErrorMessage = extractErrorMessage(outcome.error);
         setState("error");
         rejectWaiters(outcome.error instanceof Error ? outcome.error : new StudyNoteSaveFailedError());
         return;
@@ -653,7 +754,8 @@ export function createStudyNoteSaveController(
     }
     const targetSeq = editSeq;
     if (targetSeq <= savedSeq && !inFlight && unconfirmed === null) {
-      return Promise.resolve({ version, editSeq: targetSeq, lastSavedAt });
+      // 已有确认：立即 resolve，回执指向实际确认序号（R5）
+      return Promise.resolve({ version, editSeq: savedSeq, lastSavedAt });
     }
     // 先登记等待者再启动管道：即便 save 立即 settle，也不遗漏本等待者。
     const promise = new Promise<StudyNoteFlushReceipt>((resolve, reject) => {
@@ -691,6 +793,8 @@ export function createStudyNoteSaveController(
     lastSavedAt = dto.updatedAt;
     unconfirmed = null;
     lastError = null;
+    errorKind = null;
+    lastErrorMessage = null;
     conflictCurrentVersion = null;
     invalidReason = null;
     if (debounceTimer !== null) {

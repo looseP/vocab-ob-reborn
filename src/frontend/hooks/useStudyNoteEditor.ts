@@ -4,6 +4,9 @@
  * 职责与纪律：
  *  - 初始化 **只 GET**（校验 note 身份与请求代际；失败显示错误/重试；不落回空笔记、
  *    不自动 POST）；已有本地更新时不直接覆盖；同一 note 的重复取数不重建并丢弃 dirty 控制器；
+ *  - reload 语义（R3）：仅用于**初始化失败后的重试**；已有活跃控制器时 no-op——
+ *    不销毁、不覆盖 dirty/inFlight/error/conflict，不触发重复取数（放弃本地内容只走
+ *    `loadServerVersion` → `adoptServerSnapshot`，不让普通 reload 成为丢失内容的后门）；
  *  - controller 生命周期与 effect 一致（不在 render 重建）；StrictMode 双挂载安全
  *    （旧实例 dispose / 代际丢弃，新实例接管）；旧回包不污染新实例；
  *  - 保存逻辑只用 `studyNoteSaveController`（防抖/退避/IME/flush 语义在其中），不另造；
@@ -48,6 +51,7 @@ export interface CopyLocalResult {
 export interface UseStudyNoteEditorResult {
   loadState: StudyNoteEditorLoadState;
   loadError: string | null;
+  /** 初始化失败后的重试（无活跃控制器时生效；已有活跃控制器时 no-op——不丢本地输入）。 */
   reload(): void;
 
   /** 控制器快照（加载完成前为 null）。 */
@@ -306,7 +310,17 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
     }
   }, []);
 
+  /**
+   * 初始化失败后的重试入口（R3 语义收窄）：
+   * - **仅当当前无活跃控制器时有效**（加载失败/首次加载中）；
+   * - 已有活跃控制器时 **no-op**：不销毁、不覆盖任何 dirty/inFlight/error/conflict 内容，
+   *   不触发重复取数——同身份刷新不承担「放弃本地修改」职责；
+   * - 显式放弃本地内容仍走 `loadServerVersion()` → `adoptServerSnapshot`（唯一入口）。
+   * Task 08 接入注意：不得把本方法复用为「同笔记刷新/丢弃本地」的后门。
+   */
   const reload = useCallback(() => {
+    const controller = controllerRef.current;
+    if (controller && !controller.isDisposed()) return;
     setLoadNonce((value) => value + 1);
   }, []);
 
@@ -367,6 +381,13 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
     try {
       const controller = controllerRef.current;
       if (controller && !controller.isDisposed()) {
+        if (controller.getSnapshot().composing) {
+          // R2 协同：组合中的编辑不完整，不进入「锁输入 + flush 等待」流程
+          //（禁用输入会让 compositionend 缺席 → flush 永久 pending，也不可用超时
+          // 把半成品当完整内容保存）。明确拒绝并留原位；输入保持可用，
+          // 用户完成组合（内容可保存）后再导航。
+          throw new Error("正在输入法组合输入中：请先完成当前输入（确认候选词或按 Esc 取消）再离开。");
+        }
         for (let guard = 0; guard < 20; guard += 1) {
           const snap = controller.getSnapshot();
           if (snap.state === "conflict" || snap.state === "error" || snap.state === "invalid") {
@@ -379,8 +400,10 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
             );
           }
           if (snap.editSeq <= snap.savedSeq && !snap.inFlight) break;
-          const receipt = await controller.flush();
-          if (receipt.editSeq < snap.editSeq) continue; // 期间又有新编辑：继续核对循环
+          await controller.flush();
+          // R5 回执语义：receipt.editSeq = 实际确认序号（≥ flush 目标）；不再据此做序号
+          // 比较（防回执语义变化导致提前导航）；一律以最新快照「无未保存、无在途」为
+          // 离开条件；期间新增编辑由循环继续核对（不循环等待旧目标）。
           const after = controller.getSnapshot();
           if (after.editSeq <= after.savedSeq && !after.inFlight) break;
         }

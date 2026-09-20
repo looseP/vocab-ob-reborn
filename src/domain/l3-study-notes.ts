@@ -262,6 +262,26 @@ const UUID_SCHEMA = z.string().uuid();
 const REF_MARKER_SHAPE = /^\[\[ref:([\s\S]*)\]\]$/;
 
 /**
+ * 单个段落文本与引用标记形状的匹配结果（**单真源**：`parseReferenceIds` 与前端预览共用）：
+ * - `none`：不是标记形状；
+ * - `marker`：合法标记（refId 已归一为小写）；
+ * - `invalid`：形如标记但内容不是合法 UUID（域合同下为错误，由调用方决定抛错或按普通文本处理）。
+ */
+export type ReferenceMarkerMatch =
+  | { kind: "none" }
+  | { kind: "marker"; refId: string }
+  | { kind: "invalid" };
+
+/** 判定「顶层 paragraph 的 text」是否为引用标记（与 parseReferenceIds 同一语义）。 */
+export function matchReferenceMarkerText(text: string): ReferenceMarkerMatch {
+  const match = REF_MARKER_SHAPE.exec(text);
+  if (!match) return { kind: "none" };
+  const parsed = UUID_SCHEMA.safeParse(match[1]);
+  if (!parsed.success) return { kind: "invalid" };
+  return { kind: "marker", refId: parsed.data.toLowerCase() };
+}
+
+/**
  * 解析正文中的引用标记 id（按出现顺序；合法 UUID 归一为小写）。
  * - 仅识别 marked lexer 顶层 paragraph token 且 text 完全等于标记的文本；
  * - 顶层段落形如标记但内容非法 UUID → 抛 ReferenceContractError（未知标记）；
@@ -274,15 +294,14 @@ export function parseReferenceIds(bodyMd: string): string[] {
     if (token.type !== "paragraph") continue;
     const text = (token as { text?: unknown }).text;
     if (typeof text !== "string") continue;
-    const match = REF_MARKER_SHAPE.exec(text);
-    if (!match) continue;
-    const parsed = UUID_SCHEMA.safeParse(match[1]);
-    if (!parsed.success) {
+    const match = matchReferenceMarkerText(text);
+    if (match.kind === "none") continue;
+    if (match.kind === "invalid") {
       throw new ReferenceContractError(
         "正文中存在未知引用标记 [[ref:…]]：标记内容必须是合法 UUID",
       );
     }
-    ids.push(parsed.data.toLowerCase());
+    ids.push(match.refId);
   }
   return ids;
 }
