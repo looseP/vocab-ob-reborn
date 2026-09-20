@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiFetch } from "@/frontend/api/client";
 import type { L3FrontendClient } from "@/l3/frontend/contract";
@@ -16,10 +16,13 @@ import { L3PracticePage } from "@/frontend/pages/L3PracticePage";
 import { L3ProposalPage } from "@/frontend/pages/L3ProposalPage";
 import { L3RecommendationPage } from "@/frontend/pages/L3RecommendationPage";
 import { L3SessionPage } from "@/frontend/pages/L3SessionPage";
+import { L3StudyNotesPage } from "@/frontend/pages/L3StudyNotesPage";
 import { L3WordSpacePage } from "@/frontend/pages/L3WordSpacePage";
 import { L3WritingPage } from "@/frontend/pages/L3WritingPage";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
+import type { StudyNoteLeaveBarrier } from "@/frontend/components/studyNotes/StudyNoteEditor";
 import { isWritingSection, WRITING_SECTION } from "@/frontend/viewModels/writingNavigation";
+import { buildStudyNoteUrl, isStudyNotesSection } from "@/frontend/viewModels/studyNoteNavigation";
 import {
   markActiveReadStaleAfterManualCommand,
   markActiveReadStaleAfterProposalConfirm,
@@ -54,6 +57,13 @@ export function L3Page() {
   const [focusContext, setFocusContext] = useState<{ contextId: string; nonce: number } | null>(null);
   const [activeReadStale, setActiveReadStale] = useState<L3ActiveReadStaleState | null>(null);
   const l3Client = useMemo<L3FrontendClient>(() => createBrowserL3Client(), []);
+
+  // Task 08：学习笔记子空间——shell 离开时的导航屏障（由 L3StudyNotesPage 注册；
+  // 未保存内容经 flush 成功才允许切走；与页内导航、浏览器前进后退共用同一屏障）。
+  const studyNotesLeaveRef = useRef<StudyNoteLeaveBarrier | null>(null);
+  const registerStudyNotesBarrier = useCallback((barrier: StudyNoteLeaveBarrier | null) => {
+    studyNotesLeaveRef.current = barrier;
+  }, []);
 
   // P0-2（2026-09-08 评估）：?contextId= 深链不再落工程检查器——先解析 context→source，
   // 落到对应来源的阅读视图并滚动+闪高亮该语境。这是 L2 Drill「查看原文」与复习卡
@@ -97,6 +107,7 @@ export function L3Page() {
   // 自动打开目标文件；同 contextId/sourceId 的 handoff 模式）。
   // F-1（回看闭环）：?sheet=<id> 回看深链 / ?paper=<id> 卷深链——同模式落到试卷台。
   // 作文子空间 v1（W7）：section=writing 优先选择作文宿主（不被旧 sheet effect 抢回）。
+  // Task 08：section=study-notes 优先于旧 venue/file 深链；同一 query 只触发一个导航 effect。
   const deepLinkVenue = searchParams.get("venue");
   const deepLinkFile = searchParams.get("file");
   const deepLinkSheet = searchParams.get("sheet");
@@ -106,16 +117,23 @@ export function L3Page() {
   // I3：返回原题恢复参数（?resumeSheet=<id>；按 ID 读面——draft 可编辑 / sealed 只读）。
   const deepLinkResumeSheet = searchParams.get("resumeSheet");
   const writingSectionPreferred = isWritingSection(searchParams);
+  const studyNotesPreferred = isStudyNotesSection(searchParams);
   const writingTaskIdParam = searchParams.get("writingTaskId");
 
   useEffect(() => {
     if (writingSectionPreferred || writingTaskIdParam) setSection(WRITING_SECTION as L3ShellSection);
   }, [writingSectionPreferred, writingTaskIdParam]);
 
+  // Task 08：section=study-notes 深链/刷新恢复（与 writing 同款，单一 effect）。
+  useEffect(() => {
+    if (studyNotesPreferred) setSection("studyNotes");
+  }, [studyNotesPreferred]);
+
   // 纯 ?sheet=<id> 分流（只读）：先 GET 判 scope——file/paper 沿用 F-1 落试卷台；
   // writing 记录只读解析 taskId 并 replace 为作文规范 URL，**不调用 openSheet、不建纸**。
   useEffect(() => {
     if (!deepLinkSheet || writingSectionPreferred || deepLinkVenue || deepLinkPaper) return;
+    if (studyNotesPreferred) return; // 学习笔记优先（不抢导航）
     let cancelled = false;
     apiFetch<{ sheet?: { scope?: string; writing_task_id?: string | null } }>(
       `/l3/sheets/${encodeURIComponent(deepLinkSheet)}`,
@@ -137,14 +155,15 @@ export function L3Page() {
         if (!cancelled) setSection("papers"); // 判读失败交回 F-1 原路（其自带 404 空态）
       });
     return () => { cancelled = true; };
-  }, [deepLinkSheet, writingSectionPreferred, deepLinkVenue, deepLinkPaper, navigate]);
+  }, [deepLinkSheet, writingSectionPreferred, deepLinkVenue, deepLinkPaper, studyNotesPreferred, navigate]);
 
   useEffect(() => {
     if (!deepLinkVenue && !deepLinkSheet && !deepLinkPaper) return;
     if (writingSectionPreferred) return; // 作文宿主优先
+    if (studyNotesPreferred) return; // 学习笔记优先（venue 深链由学习笔记页消费）
     if (deepLinkSheet && !deepLinkVenue && !deepLinkPaper) return; // 分流 effect 处理
     setSection("papers");
-  }, [deepLinkVenue, deepLinkSheet, deepLinkPaper, writingSectionPreferred]);
+  }, [deepLinkVenue, deepLinkSheet, deepLinkPaper, writingSectionPreferred, studyNotesPreferred]);
 
   const openProposal = (proposalId: string) => {
     setSelectedProposalId(proposalId);
@@ -185,6 +204,32 @@ export function L3Page() {
       setSection("recommendations");
     }
   };
+
+  /** Task 08：shell 导航——离开学习笔记前经其屏障（未保存内容 flush 成功才切走）。 */
+  const handleShellNavigate = useCallback(
+    (next: L3ShellSection) => {
+      if (next === section) return;
+      if (section === "studyNotes") {
+        const action = () => {
+          navigate("/l3"); // 离开子空间：清 section=study-notes（防刷新回卷）再切 section
+          setSection(next);
+        };
+        const barrier = studyNotesLeaveRef.current;
+        if (barrier) {
+          void barrier(action);
+          return;
+        }
+        action();
+        return;
+      }
+      if (next === "studyNotes") {
+        navigate(buildStudyNoteUrl({})); // 规范 URL；section effect 负责落 studyNotes
+        return;
+      }
+      setSection(next);
+    },
+    [section, navigate],
+  );
 
   const page = {
     // B1 素材宇宙：默认落地（设计基线 IA-1）；从这里可直接打开某篇来源的阅读视图
@@ -230,6 +275,9 @@ export function L3Page() {
     // 作文子空间 v1（W7）：宿主页（section=writing 优先；搜索参数由页面自身消费，
     // 查看稿零创建、新稿只由显式 POST）。
     writing: <L3WritingPage />,
+    // 学习笔记子空间（Task 08）：/l3?section=study-notes 宿主（列表/专题/深链/离页屏障；
+    // 浏览零创建、显式「新建笔记」才 POST；离开屏障注册给 shell 导航复用）。
+    studyNotes: <L3StudyNotesPage onRegisterLeaveBarrier={registerStudyNotesBarrier} />,
     practice: <L3PracticePage client={l3Client} onNavigate={navigateL3} />,
     errorBook: <L3ErrorBookPage client={l3Client} onNavigate={navigateL3} />,
     session: <L3SessionPage client={l3Client} onNavigate={navigateL3} />,
@@ -247,7 +295,7 @@ export function L3Page() {
   }[section];
 
   return (
-    <L3Shell activeSection={section} onNavigate={setSection}>
+    <L3Shell activeSection={section} onNavigate={handleShellNavigate}>
       {page}
     </L3Shell>
   );

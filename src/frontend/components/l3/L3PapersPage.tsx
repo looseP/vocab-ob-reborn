@@ -11,6 +11,7 @@ import {
   type WritingEntryState,
 } from "@/frontend/components/writing/WritingQuestionEntry";
 import type { WritingOrigin, WritingOriginQuestionType } from "@/frontend/viewModels/writingNavigation";
+import { buildStudyNoteUrl } from "@/frontend/viewModels/studyNoteNavigation";
 import type { WritingQuestionTaskSummary } from "@/domain";
 
 /**
@@ -519,6 +520,22 @@ function FilesTab({ deepLink }: {
     return (
       <div className="space-y-3">
         <button type="button" onClick={() => setVenue(null)} className="text-xs text-[var(--color-accent)]">← 返回专题全景</button>
+        {/* Task 08 入口：题型内「题目素材 / 学习笔记」页签（学习笔记 = /l3?section=study-notes&venue=…） */}
+        <div className="flex gap-1.5" role="tablist" aria-label="题型视图">
+          <button type="button" role="tab" aria-selected={true} className="rounded-full bg-[var(--color-accent)] px-3 py-1 text-xs text-[var(--color-accent-contrast,var(--color-surface))]">
+            题目素材
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={false}
+            className="rounded-full border border-[var(--color-border)] px-3 py-1 text-xs text-[var(--color-ink-soft)] hover:border-[var(--color-accent)]"
+            onClick={() => navigate(buildStudyNoteUrl({ venue }))}
+            data-testid="venue-study-notes-tab"
+          >
+            学习笔记
+          </button>
+        </div>
         <div className="flex items-center gap-3 rounded-xl bg-gradient-to-br from-[var(--color-accent-soft,var(--color-surface))] to-transparent p-4 ring-1 ring-[var(--color-border)]">
           <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--color-accent)] text-base font-bold text-[var(--color-accent-contrast,var(--color-surface))]">
             {meta.name.slice(0, 1)}

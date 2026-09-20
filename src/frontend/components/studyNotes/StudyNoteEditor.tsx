@@ -12,7 +12,7 @@
  *  - 冲突面板：复制本地内容（失败给可见文本备选）/ 显式载入服务器版本（锁编辑）；
  *  - marker 集合被手动破坏时由保存预检阻止 PUT 并给出恢复指引（invalid 面板）。
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReferencePreview } from "@/domain/l3-study-notes";
 import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { Markdown } from "@/frontend/components/ui/Markdown";
@@ -20,6 +20,9 @@ import { Button } from "@/frontend/components/ui/Button";
 import { useStudyNoteEditor } from "@/frontend/hooks/useStudyNoteEditor";
 import type { StudyNoteSaveState } from "@/frontend/state/studyNoteSaveController";
 import { splitStudyNotePreviewBlocks } from "@/frontend/utils/studyNotePreviewBlocks";
+
+/** 导航屏障：flush 成功且无未保存/无在途才执行 action；失败留在原位（错误经 hook 呈现）。 */
+export type StudyNoteLeaveBarrier = (action: () => void | Promise<void>) => Promise<void>;
 
 export interface StudyNoteEditorProps {
   noteId: string;
@@ -30,6 +33,11 @@ export interface StudyNoteEditorProps {
    * flush 成功且无未保存/无在途才执行；失败释放锁并留在原位（navigationError 呈现）。
    */
   leaveAction?: { label: string; onLeave: () => void | Promise<void> };
+  /**
+   * Task 08：把导航屏障（= hook 的 requestNavigation）注册给宿主——
+   * 页面把同一屏障复用于 history guard（前进/后退）与站内导航（列表打开/返回列表）。
+   */
+  onRegisterLeaveBarrier?: (barrier: StudyNoteLeaveBarrier | null) => void;
 }
 
 const SAVE_STATE_LABELS: Record<StudyNoteSaveState, string> = {
@@ -85,10 +93,18 @@ function ReferencePlaceholder({ refId, meta }: { refId: string; meta: ReferenceP
   );
 }
 
-export function StudyNoteEditor({ noteId, client, leaveAction }: StudyNoteEditorProps) {
+export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBarrier }: StudyNoteEditorProps) {
   const editor = useStudyNoteEditor({ noteId, client });
   const [showPreview, setShowPreview] = useState(false);
   const [copyState, setCopyState] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Task 08：把导航屏障注册给宿主（requestNavigation 稳定标识；卸载时解除）。
+  const requestNavigation = editor.requestNavigation;
+  useEffect(() => {
+    if (!onRegisterLeaveBarrier) return;
+    onRegisterLeaveBarrier(requestNavigation);
+    return () => onRegisterLeaveBarrier(null);
+  }, [onRegisterLeaveBarrier, requestNavigation]);
 
   const snapshot = editor.snapshot;
   const blocks = useMemo(

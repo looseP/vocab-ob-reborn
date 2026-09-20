@@ -1,0 +1,310 @@
+/**
+ * 学习笔记专题协调器（Task 08）——专题元数据与成员的串行写通道（纯 TS，不读 React/DOM）。
+ *
+ * 纪律（§3.4）：
+ *  - 同一时刻**至多一个写操作在途**（串行队列；跨专题亦串行，天然满足「同专题至多一个」）；
+ *  - `expectedVersion` 在**执行时**读取「本地最近服务端版本」；每个响应即更新本地记录
+ *    （版本一律来自服务端返回，不在前端推测顺序或版本）；
+ *  - 409 → 停止自动写（本协调器从不自动重试）+ 标记冲突；显式刷新（load/refresh）前，
+ *    该专题的后续写操作被拒绝（`StudyTopicWriteConflictError`，不发请求）；
+ *  - 创建：requestId 在同一标题的重试间复用；双击守卫（在途时复用同一承诺）；
+ *  - 成员加入/移动透传 `beforeNoteId`（null = 移到末尾）；移出不删除笔记（服务端保证）。
+ */
+import type { L3QuestionType } from "@/domain/l3-question-types";
+import type { StudyTopicDto, StudyTopicStatus } from "@/domain/l3-study-notes";
+import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
+
+export class StudyTopicWriteConflictError extends Error {
+  readonly topicId: string;
+
+  constructor(topicId: string, message = "专题已被其他位置修改：请先刷新专题后重试。") {
+    super(message);
+    this.name = "StudyTopicWriteConflictError";
+    this.topicId = topicId;
+  }
+}
+
+export type StudyTopicsState = "idle" | "loading" | "ready" | "error";
+
+export interface StudyTopicsSnapshot {
+  topics: StudyTopicDto[];
+  state: StudyTopicsState;
+  error: string | null;
+  /** 409 后需显式刷新才恢复写。 */
+  conflictTopicId: string | null;
+  createPending: boolean;
+  createError: string | null;
+  /** 当前在途写操作的 topicId（null = 无）。 */
+  writePendingTopicId: string | null;
+}
+
+export interface StudyTopicCoordinatorOptions {
+  client: Pick<
+    StudyNotesClient,
+    "listTopics" | "createTopic" | "saveTopic" | "moveTopicMember" | "removeTopicMember"
+  >;
+  generateRequestId?: () => string;
+}
+
+export interface StudyTopicCoordinator {
+  load(venue: L3QuestionType): Promise<void>;
+  refresh(): Promise<void>;
+  createTopic(title: string): Promise<StudyTopicDto>;
+  saveTopic(topicId: string, input: { title: string; status: StudyTopicStatus }): Promise<StudyTopicDto>;
+  moveMember(topicId: string, noteId: string, beforeNoteId: string | null): Promise<StudyTopicDto>;
+  removeMember(topicId: string, noteId: string): Promise<StudyTopicDto>;
+  getSnapshot(): StudyTopicsSnapshot;
+  subscribe(listener: () => void): () => void;
+  dispose(): void;
+  isDisposed(): boolean;
+}
+
+function describeError(error: unknown): string {
+  if (error && typeof error === "object") {
+    const status = (error as { status?: unknown }).status;
+    if (status === 409) return "已被其他位置修改：请刷新后重试。";
+    if (status === 422) return "操作被拒绝（内容不合法或超出限制）。";
+    if (status === 404) return "专题不存在或已被移除。";
+  }
+  const message = (error as { message?: unknown } | null)?.message;
+  if (typeof message === "string" && message.trim()) return message;
+  return "操作失败，请重试。";
+}
+
+function isConflictError(error: unknown): boolean {
+  return (error as { status?: unknown } | null)?.status === 409;
+}
+
+export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOptions): StudyTopicCoordinator {
+  const generateRequestId = options.generateRequestId ?? (() => crypto.randomUUID());
+
+  let topics: StudyTopicDto[] = [];
+  let state: StudyTopicsState = "idle";
+  let error: string | null = null;
+  let conflictTopicId: string | null = null;
+  let createPending = false;
+  let createError: string | null = null;
+  let writePendingTopicId: string | null = null;
+  let venue: L3QuestionType | null = null;
+  let pendingCreate: { requestId: string; title: string; venue: L3QuestionType } | null = null;
+  let createFlight: Promise<StudyTopicDto> | null = null;
+  let chain: Promise<unknown> = Promise.resolve();
+  let loadSeq = 0;
+  let disposed = false;
+  const subscribers = new Set<() => void>();
+
+  function notify(): void {
+    for (const listener of [...subscribers]) listener();
+  }
+
+  function upsertTopic(item: StudyTopicDto): void {
+    const index = topics.findIndex((topic) => topic.id === item.id);
+    if (index >= 0) {
+      topics = topics.map((topic, i) => (i === index ? item : topic));
+    } else {
+      topics = [item, ...topics];
+    }
+    notify();
+  }
+
+  async function load(nextVenue: L3QuestionType): Promise<void> {
+    if (disposed) return;
+    venue = nextVenue;
+    const seq = ++loadSeq;
+    state = "loading";
+    error = null;
+    notify();
+    try {
+      const page = await options.client.listTopics({ venue: nextVenue });
+      if (disposed || seq !== loadSeq) return;
+      topics = page.items;
+      // 显式刷新：若冲突专题出现在刷新结果中，视为已对齐，可恢复写
+      if (conflictTopicId && topics.some((topic) => topic.id === conflictTopicId)) {
+        conflictTopicId = null;
+      }
+      state = "ready";
+    } catch (caught) {
+      if (disposed || seq !== loadSeq) return;
+      state = "error";
+      error = describeError(caught);
+    }
+    notify();
+  }
+
+  function refresh(): Promise<void> {
+    if (venue === null) return Promise.resolve();
+    return load(venue);
+  }
+
+  /** 串行队列：同一时刻至多一个写操作在途；执行时读取最新版本。 */
+  function enqueue<T>(topicId: string, run: () => Promise<T>): Promise<T> {
+    const task = chain.then(async () => {
+      if (disposed) throw new Error("协调器已销毁。");
+      if (conflictTopicId === topicId) throw new StudyTopicWriteConflictError(topicId);
+      writePendingTopicId = topicId;
+      notify();
+      try {
+        return await run();
+      } finally {
+        writePendingTopicId = null;
+        notify();
+      }
+    });
+    chain = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    return task;
+  }
+
+  function requireTopic(topicId: string): StudyTopicDto {
+    const topic = topics.find((item) => item.id === topicId);
+    if (!topic) throw new Error("专题不存在或尚未加载。");
+    return topic;
+  }
+
+  function saveTopic(topicId: string, input: { title: string; status: StudyTopicStatus }): Promise<StudyTopicDto> {
+    return enqueue(topicId, async () => {
+      const topic = requireTopic(topicId); // 执行时取最新版本
+      try {
+        const { item } = await options.client.saveTopic(topicId, {
+          requestId: generateRequestId(),
+          expectedVersion: topic.version,
+          title: input.title,
+          status: input.status,
+        });
+        if (disposed) throw new Error("协调器已销毁。");
+        upsertTopic(item);
+        return item;
+      } catch (caught) {
+        if (isConflictError(caught)) {
+          conflictTopicId = topicId;
+          notify();
+        }
+        throw caught;
+      }
+    });
+  }
+
+  function moveMember(topicId: string, noteId: string, beforeNoteId: string | null): Promise<StudyTopicDto> {
+    return enqueue(topicId, async () => {
+      const topic = requireTopic(topicId);
+      try {
+        const { item } = await options.client.moveTopicMember(topicId, noteId, {
+          requestId: generateRequestId(),
+          expectedVersion: topic.version,
+          beforeNoteId,
+        });
+        if (disposed) throw new Error("协调器已销毁。");
+        upsertTopic(item);
+        return item;
+      } catch (caught) {
+        if (isConflictError(caught)) {
+          conflictTopicId = topicId;
+          notify();
+        }
+        throw caught;
+      }
+    });
+  }
+
+  function removeMember(topicId: string, noteId: string): Promise<StudyTopicDto> {
+    return enqueue(topicId, async () => {
+      const topic = requireTopic(topicId);
+      try {
+        const { item } = await options.client.removeTopicMember(topicId, noteId, {
+          requestId: generateRequestId(),
+          expectedVersion: topic.version,
+        });
+        if (disposed) throw new Error("协调器已销毁。");
+        upsertTopic(item);
+        return item;
+      } catch (caught) {
+        if (isConflictError(caught)) {
+          conflictTopicId = topicId;
+          notify();
+        }
+        throw caught;
+      }
+    });
+  }
+
+  function createTopic(title: string): Promise<StudyTopicDto> {
+    if (disposed) return Promise.reject(new Error("协调器已销毁。"));
+    if (createFlight) return createFlight; // 双击守卫：在途复用同一承诺
+    if (!venue) return Promise.reject(new Error("尚未加载专题（venue 未设置）。"));
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return Promise.reject(new Error("专题名称不能为空。"));
+
+    const currentVenue = venue;
+    const reuse =
+      pendingCreate !== null && pendingCreate.title === trimmedTitle && pendingCreate.venue === currentVenue;
+    const requestId = reuse ? pendingCreate!.requestId : generateRequestId();
+    pendingCreate = { requestId, title: trimmedTitle, venue: currentVenue };
+
+    createPending = true;
+    createError = null;
+    notify();
+
+    const flight = (async () => {
+      try {
+        const { item } = await options.client.createTopic({
+          requestId,
+          venue: currentVenue,
+          title: trimmedTitle,
+        });
+        if (disposed) throw new Error("协调器已销毁。");
+        pendingCreate = null; // 成功：幂等键完成使命
+        upsertTopic(item);
+        return item;
+      } catch (caught) {
+        if (!disposed) createError = describeError(caught);
+        throw caught;
+      } finally {
+        createPending = false;
+        createFlight = null;
+        notify();
+      }
+    })();
+    createFlight = flight;
+    return flight;
+  }
+
+  function getSnapshot(): StudyTopicsSnapshot {
+    return {
+      topics: [...topics],
+      state,
+      error,
+      conflictTopicId,
+      createPending,
+      createError,
+      writePendingTopicId,
+    };
+  }
+
+  function subscribe(listener: () => void): () => void {
+    subscribers.add(listener);
+    return () => {
+      subscribers.delete(listener);
+    };
+  }
+
+  function dispose(): void {
+    disposed = true;
+    subscribers.clear();
+    loadSeq += 1;
+  }
+
+  return {
+    load,
+    refresh,
+    createTopic,
+    saveTopic,
+    moveMember,
+    removeMember,
+    getSnapshot,
+    subscribe,
+    dispose,
+    isDisposed: () => disposed,
+  };
+}
