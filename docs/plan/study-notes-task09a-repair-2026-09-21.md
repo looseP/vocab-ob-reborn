@@ -177,8 +177,11 @@ E2E 新增 4 场景（库核）：
   `bb01252aeb21a8ddcbb4d4c38f891078d65176ba`**（Git 写后核验）。
 - PR **#129**：draft / OPEN / base `study-notes-n1-task08`（**未 retarget**）/
   head=`bb01252`；描述已补「补修 R1–R4」章节（含验证、门禁、遗留）。
-- **CI（只读查询，终态 head `bb01252`）**：`Writing E2E` = **in_progress（pending，不记绿）**；
-  `Engineering Gate` / `Browser E2E` 为 main-only，本 PR base 不触发（如实说明，不冒充通过）。
+- **CI（只读查询）**：
+  - 功能提交 `47b1e2f`/`bb01252`：`Writing E2E` = **completed / success**（已绿）；
+  - 台账提交 `2c30ae5`（纯 docs，无源码变更）：`Writing E2E` = **in_progress → 记 pending**，
+    不预记绿；最终以 GitHub 为准。
+  - `Engineering Gate` / `Browser E2E` 为 main-only，本 PR base 不触发（如实说明，不冒充通过）。
 - 停在此处：**不进入 Task 09B**，不合并/不部署/不推 main/不开导出与 N2。
 - 推送注意：本机 git 全局代理 `127.0.0.1:17891` 当时不可达，本次推送以
   `git -c http.proxy= -c https.proxy=` 绕过（直连 GitHub 正常）；**未修改仓库/全局代理配置**。
