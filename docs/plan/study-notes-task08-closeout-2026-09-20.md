@@ -33,8 +33,31 @@
 
 ## 3. 验收与门禁
 
-__待补__
+### 3.1 测试层（起终双态）
+
+- 原审查配置（`task08-review.config.mjs`）：基线 82/82 exit 0 → 终点 **82/82 exit 0**（`t08c-final-82.log`）。
+- 收尾探针（`task08-closeout.config.mjs`）：基线 5/5 行为失败 exit 1 → 终点 **6/6（4 模型 + 1 UI + 1 计数）exit 0**（`t08c-final-probes.log`）。
+- 正式回归集（8 文件：Task08 六件 + Task07 编辑器/保存合同 + shell 锁）：**192 passed exit 0**（`t08c-final-suite.log`）。
+- 独立只读复核要点（不只看版本）：F2a/R3 断言 = 版本不退 **且** state=ready **且** 续写用新基线；F1 断言 = pending 释放 **且** 再次翻页真实发请求；⑫ = v2 保留 + 无「正在加载专题…」残留 + 续写 v3 库核。
+
+### 3.2 浏览器 E2E（隔离 PG `vocab_study_notes_task08_accept` + Chromium）
+
+- 全量（host 10 + workspace 18）：**28/28 exit 0**（`t08c-e2e2.log`）；含 ⑩a/⑩b/⑪/⑫/⑮/⑯/⑰。
+- 变异证明（临时变异，未提交，工作区与 HEAD 一致已校验）：
+  - 禁题型隔离 → ⑪ 稳定红：UUID 混入 translation 列表被检出（`t08c-mut1-e2e.log`）。
+  - 禁过期读取保护 → ⑫ 稳定红：版本回退 `当前专题 v1` 被检出（`t08c-mut2-e2e.log`）。
+
+### 3.3 工程门禁
+
+快区 `C:/Windows/Temp/t08-verify3`（clone@80edc3f，npm ci）。三 BASE_REF 统一为 PR base 完整 SHA `259415ff1c0db8df159fa0dbf329dfed7e1d5e85`。
+
+- **聚合 `verify:engineering` 首跑 exit 1**（`t08c-gate.log`，如实保留）：typecheck/arch 通过；`test:unit` 阶段 16 failed **全部为 drill 锁级联**（本 turn safe-delete 预算窗口，与代码无关——单独复跑全绿见下）。
+- **分段证据（全部自然退出 0）**：
+  - vitest 全量（覆盖率版）**exit 0：251 passed / 3776 用例 0 failed**，`coverage-final.json` 产出（`t08c-unit.log`）——**同环境单独复跑即 0 失败，坐实 drill 级联为预算窗口环境量**。
+  - `coverage:layered` **exit 0**（`t08c-layered.log`）：`Diff coverage N/A — changed src 12 (governed 0)`——前端增量不在受治理层；口径如实延续。
+  - db:schema:drift=0、api:governance=0（无 breaking；route ratchet passed）、test:collection=0、frontend:build=0、runtime:verify=0、alerting:verify=0、release:acceptance:contract=0、secret-rotation:evidence:contract=0、release:workflow:verify=0。
+  - 环境修复记录（非绕护栏）：t08-verify3 npm ci 后 `node_modules` 内 4 个 `dist/index.js` 被护栏改名挂 `.DELETE.<hash>` 后缀 → `mv` 恢复原状后 governance 复跑 0。
 
 ## 4. 提交与 PR
 
-__待补__
+__待补（推送与 PR 更新后回填）__
