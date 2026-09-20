@@ -389,3 +389,135 @@ describe("studyTopicCoordinator · 专题分页（R1 补修）", () => {
     expect(client.saveTopic).not.toHaveBeenCalled();
   });
 });
+
+describe("studyTopicCoordinator · 读写代际（R2/R3 补修）", () => {
+  it("迟到创建回包不注入新题型视图；切回原题型可读到（不重复创建）（探针2正式化）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValue({ items: [], nextCursor: null, total: 0 });
+    await coordinator.load("cloze");
+
+    const d = defer<{ item: StudyTopicDto; created: boolean }>();
+    client.createTopic.mockReturnValueOnce(d.promise);
+    const creating = coordinator.createTopic("旧题型专题");
+
+    client.listTopics.mockResolvedValue({
+      items: [topicDto({ id: TOPIC2_ID, questionType: "sentence_translation", title: "译题" })],
+      nextCursor: null,
+      total: 1,
+    });
+    await coordinator.load("sentence_translation"); // 切题型并加载完成
+
+    d.resolve({ item: topicDto({ id: TOPIC_ID, title: "旧题型专题" }), created: true });
+    await creating; // 迟到回包：真实成功
+
+    // 当前视图仅 sentence_translation，cloze 不混入
+    expect(coordinator.getSnapshot().topics.map((item) => item.questionType)).toEqual(["sentence_translation"]);
+
+    // 切回 cloze：服务端真实状态可读，无需重复创建
+    client.listTopics.mockResolvedValueOnce({
+      items: [topicDto({ id: TOPIC_ID, title: "旧题型专题" })],
+      nextCursor: null,
+      total: 1,
+    });
+    await coordinator.load("cloze");
+    expect(coordinator.getSnapshot().topics.map((item) => item.id)).toEqual([TOPIC_ID]);
+    expect(client.createTopic).toHaveBeenCalledTimes(1);
+  });
+
+  it("迟到写回包（save/move/remove）不注入新题型列表；失败与 finally 不清除新代状态", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics
+      .mockResolvedValueOnce({ items: [topicDto({ version: 5 })], nextCursor: null, total: 1 })
+      .mockResolvedValueOnce({
+        items: [topicDto({ id: TOPIC2_ID, questionType: "sentence_translation", title: "译题", version: 1 })],
+        nextCursor: null,
+        total: 1,
+      });
+    await coordinator.load("cloze");
+
+    const d = defer<{ item: StudyTopicDto }>();
+    client.saveTopic.mockReturnValueOnce(d.promise);
+    const saving = coordinator.saveTopic(TOPIC_ID, { title: "改名", status: "active" });
+    await coordinator.load("sentence_translation");
+    const stableSnapshot = coordinator.getSnapshot();
+
+    d.resolve({ item: topicDto({ version: 6, title: "改名" }) });
+    await saving;
+
+    // 迟到回包不注入；新列表原样
+    const snapshot = coordinator.getSnapshot();
+    expect(snapshot.topics.map((item) => item.id)).toEqual([TOPIC2_ID]);
+    expect(snapshot.topics[0]!.version).toBe(stableSnapshot.topics[0]!.version);
+    expect(snapshot.writePendingTopicId).toBe(null); // finally 复位（不残留旧代 busy）
+  });
+
+  it("迟到刷新不回退已确认版本；下一次写使用已确认的新版本（探针3正式化）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto({ version: 1 })], nextCursor: null, total: 1 });
+    await coordinator.load("cloze");
+
+    const d = defer<{ items: StudyTopicDto[]; nextCursor: string | null; total: number }>();
+    client.listTopics.mockReturnValueOnce(d.promise);
+    const refreshing = coordinator.refresh(); // 读到 v1 挂起
+
+    client.saveTopic.mockResolvedValueOnce({ item: topicDto({ version: 2, title: "v2" }) });
+    await coordinator.saveTopic(TOPIC_ID, { title: "v2", status: "active" }); // 确认 v2
+
+    d.resolve({ items: [topicDto({ version: 1 })], nextCursor: null, total: 1 });
+    await refreshing; // 迟到回包 v1
+
+    expect(coordinator.getSnapshot().topics[0]!.version).toBe(2); // 不倒退
+
+    // 下一次写必须基于 v2（不制造自冲突）
+    client.saveTopic.mockResolvedValueOnce({ item: topicDto({ version: 3, title: "v3" }) });
+    await coordinator.saveTopic(TOPIC_ID, { title: "v3", status: "active" });
+    expect(client.saveTopic).toHaveBeenLastCalledWith(
+      TOPIC_ID,
+      expect.objectContaining({ expectedVersion: 2 }),
+    );
+  });
+
+  it("新鲜刷新仍采纳他端更高版本（不因代际保护而永远忽略刷新）", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto({ version: 1 })], nextCursor: null, total: 1 });
+    await coordinator.load("cloze");
+
+    client.saveTopic.mockResolvedValueOnce({ item: topicDto({ version: 2, title: "本端 v2" }) });
+    await coordinator.saveTopic(TOPIC_ID, { title: "本端 v2", status: "active" });
+
+    // 他端推进到 v9 的最新快照：新鲜刷新必须采纳
+    client.listTopics.mockResolvedValueOnce({ items: [topicDto({ version: 9, title: "他端 v9" })], nextCursor: null, total: 1 });
+    await coordinator.refresh();
+    expect(coordinator.getSnapshot().topics[0]).toMatchObject({ version: 9, title: "他端 v9" });
+  });
+
+  it("切题型后创建不复用旧题型在途 flight；旧 flight 错误不显示到新视图", async () => {
+    const client = makeClient();
+    const coordinator = createStudyTopicCoordinator({ client, generateRequestId: nextRequestId });
+    client.listTopics.mockResolvedValue({ items: [], nextCursor: null, total: 0 });
+    await coordinator.load("cloze");
+
+    const d = defer<{ item: StudyTopicDto; created: boolean }>();
+    client.createTopic.mockReturnValueOnce(d.promise);
+    // 旧 flight 的 rejection 由本测试显式处置；断言对象是 createError 的视图归属
+    coordinator.createTopic("旧题型专题").catch(() => {});
+
+    await coordinator.load("sentence_translation");
+    // 新题型可立即发起创建（不复用旧 flight、不发旧 requestId）
+    client.createTopic.mockResolvedValueOnce({
+      item: topicDto({ id: TOPIC2_ID, questionType: "sentence_translation", title: "新译题" }),
+    });
+    await coordinator.createTopic("新译题");
+    expect(client.createTopic).toHaveBeenLastCalledWith(expect.objectContaining({ venue: "sentence_translation" }));
+
+    // 旧 flight 失败：错误不显示到新视图
+    d.reject(new Error("旧题型创建失败"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(coordinator.getSnapshot().createError).toBe(null);
+  });
+});

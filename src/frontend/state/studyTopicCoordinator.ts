@@ -90,7 +90,6 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
   let state: StudyTopicsState = "idle";
   let error: string | null = null;
   let conflictTopicId: string | null = null;
-  let createPending = false;
   let createError: string | null = null;
   let writePendingTopicId: string | null = null;
   let venue: L3QuestionType | null = null;
@@ -98,7 +97,9 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
   let nextCursor: string | null = null;
   let loadingMoreTopics = false;
   let pendingCreate: { requestId: string; title: string; venue: L3QuestionType } | null = null;
-  let createFlight: Promise<StudyTopicDto> | null = null;
+  /** 在途创建 flight（身份化记账：跨题型/跨标题不误复用、完成时只清自己）。 */
+  let createFlight: { id: number; venue: L3QuestionType; promise: Promise<StudyTopicDto> } | null = null;
+  let createKeySeq = 0;
   let chain: Promise<unknown> = Promise.resolve();
   let loadSeq = 0;
   /** 专题翻页代际：load(切题型/刷新) 推进后，在途续取回包整体丢弃（R1/R2）。 */
@@ -111,6 +112,12 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
   }
 
   function upsertTopic(item: StudyTopicDto): void {
+    // R3：写确认即推进读代际——此前发起、仍在途的 load/refresh 回包整体失效，
+    // 防止旧快照覆盖已确认的新版本；之后发起的新鲜刷新不受影响（仍采纳他端更高版本）。
+    loadSeq += 1;
+    // R2：迟到写回包的 venue 归属判定——真实成功保留在服务端（切回原题型可读），
+    // 但不得注入当前已切换到的其他题型视图。
+    if (item.questionType !== venue) return;
     const index = topics.findIndex((topic) => topic.id === item.id);
     if (index >= 0) {
       topics = topics.map((topic, i) => (i === index ? item : topic));
@@ -127,6 +134,7 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
     topicsPageSeq += 1; // 切题型/刷新：失效在途专题续取（旧代回包不污染新列表）
     state = "loading";
     error = null;
+    createError = null; // 切题型/刷新：旧视图的创建错误不带到新视图（R2）
     notify();
     try {
       const page = await options.client.listTopics({ venue: nextVenue });
@@ -252,7 +260,7 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
         upsertTopic(item);
         return item;
       } catch (caught) {
-        if (isConflictError(caught)) {
+        if (isConflictError(caught) && topic.questionType === venue) { // R2：跨题型迟到回包不标记当前视图冲突
           conflictTopicId = topicId;
           notify();
         }
@@ -274,7 +282,7 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
         upsertTopic(item);
         return item;
       } catch (caught) {
-        if (isConflictError(caught)) {
+        if (isConflictError(caught) && topic.questionType === venue) { // R2：跨题型迟到回包不标记当前视图冲突
           conflictTopicId = topicId;
           notify();
         }
@@ -295,7 +303,7 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
         upsertTopic(item);
         return item;
       } catch (caught) {
-        if (isConflictError(caught)) {
+        if (isConflictError(caught) && topic.questionType === venue) { // R2：跨题型迟到回包不标记当前视图冲突
           conflictTopicId = topicId;
           notify();
         }
@@ -306,19 +314,32 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
 
   function createTopic(title: string): Promise<StudyTopicDto> {
     if (disposed) return Promise.reject(new Error("协调器已销毁。"));
-    if (createFlight) return createFlight; // 双击守卫：在途复用同一承诺
     if (!venue) return Promise.reject(new Error("尚未加载专题（venue 未设置）。"));
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return Promise.reject(new Error("专题名称不能为空。"));
 
     const currentVenue = venue;
-    const reuse =
-      pendingCreate !== null && pendingCreate.title === trimmedTitle && pendingCreate.venue === currentVenue;
-    const requestId = reuse ? pendingCreate!.requestId : generateRequestId();
+    // 双击守卫：同一题型、同一标题且在途 → 复用同一承诺（R2：跨题型/跨标题不复用）
+    if (
+      createFlight !== null &&
+      createFlight.venue === currentVenue &&
+      pendingCreate !== null &&
+      pendingCreate.venue === currentVenue &&
+      pendingCreate.title === trimmedTitle
+    ) {
+      return createFlight.promise;
+    }
+    // 失败重试：flight 已结束、幂等键仍在 → 复用同一 requestId（否则生成新键）
+    const reuseKey =
+      createFlight === null &&
+      pendingCreate !== null &&
+      pendingCreate.venue === currentVenue &&
+      pendingCreate.title === trimmedTitle;
+    const requestId = reuseKey && pendingCreate ? pendingCreate.requestId : generateRequestId();
+    const keyId = ++createKeySeq;
     pendingCreate = { requestId, title: trimmedTitle, venue: currentVenue };
 
-    createPending = true;
-    createError = null;
+    createError = null; // 新发起：清当前视图错误
     notify();
 
     const flight = (async () => {
@@ -329,19 +350,25 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
           title: trimmedTitle,
         });
         if (disposed) throw new Error("协调器已销毁。");
-        pendingCreate = null; // 成功：幂等键完成使命
-        upsertTopic(item);
+        upsertTopic(item); // venue 归属判定 + 读代际推进（R2/R3）
+        if (
+          pendingCreate !== null &&
+          pendingCreate.venue === currentVenue &&
+          pendingCreate.requestId === requestId
+        ) {
+          pendingCreate = null; // 幂等键完成使命（仅当仍属于本 flight）
+        }
         return item;
       } catch (caught) {
-        if (!disposed) createError = describeError(caught);
+        // R2：仅当仍在发起视图时显示错误；切题型后旧 flight 错误不注入新视图
+        if (!disposed && venue === currentVenue) createError = describeError(caught);
         throw caught;
       } finally {
-        createPending = false;
-        createFlight = null;
+        if (createFlight !== null && createFlight.id === keyId) createFlight = null; // 身份化清理，不误清新 flight
         notify();
       }
     })();
-    createFlight = flight;
+    createFlight = { id: keyId, venue: currentVenue, promise: flight };
     return flight;
   }
 
@@ -351,7 +378,9 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
       state,
       error,
       conflictTopicId,
-      createPending,
+      // R2：createPending 按视图归属推导——旧题型的在途创建不禁用新视图的创建按钮
+      createPending:
+        createFlight !== null && pendingCreate !== null && pendingCreate.venue === venue,
       createError,
       writePendingTopicId,
       total,
