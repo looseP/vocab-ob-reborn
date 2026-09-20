@@ -29,7 +29,83 @@ export class ReferenceMarkerPositionError extends Error {
   }
 }
 
+// ── 解析坐标 → 原文坐标（单真源容器/区间规则）──────────────────────────────
+
+/**
+ * 正文的行分隔符模式：LF-only / CRLF-only / 混合（持久化正文不保证 LF-only）。
+ * 仅用于**识别**，不用于把整篇正文归一化——归一化会改写非目标正文（逐字保留是硬约束）。
+ */
+function newlineMode(text: string): "lf" | "crlf" | "mixed" {
+  const hasCrlf = text.includes("\r\n");
+  if (!hasCrlf) return "lf";
+  // 去掉所有 CRLF 后仍有 `\n`（或仍有裸 `\r`）→ 混合换行。
+  const rest = text.split("\r\n").join("");
+  return rest.includes("\n") || rest.includes("\r") ? "mixed" : "crlf";
+}
+
+/** 追加时使用的换行（保持既有产物风格：LF-only 文档用 LF，CRLF-only 文档用 CRLF）。 */
+function insertionNewline(text: string): string {
+  return newlineMode(text) === "crlf" ? "\r\n" : "\n";
+}
+
+/**
+ * 顶层 token 的**原文区间**（半开区间）。marked 的 raw 是解析坐标，两个端点都映射回
+ * 原文后长度可能不等（CRLF 正文每行多 1 个字符）。
+ */
+interface TokenExtent {
+  token: Token;
+  /** 原文坐标下的起始偏移（inclusive）。 */
+  start: number;
+  /** 原文坐标下的结束偏移（exclusive）。 */
+  end: number;
+}
+
+/**
+ * 把 lexer 的 token 流映射回**原文坐标**：每个顶层 token 得到其原文起止偏移
+ * （`start` 含 inclusive，`end` 为 exclusive；原文长度可大于 `token.raw.length`）。
+ *
+ * marked 会把 `\r\n`/`\r` 归一为 `\n` 再产出 `token.raw`，因此 `token.raw.length`
+ * 不是原文推进量（CRLF 正文里每行少算 1 个字符）——旧实现按 raw 长度累加，导致
+ * CRLF 正文中的顶层 marker 永远定位不到。此处改为**逐行对齐**：
+ * - `token.raw` 与原文按行一一对应，行分隔符形态不同不算不匹配（CRLF/CR/LF 等价）；
+ * - 行内容不同 → 拒绝该容器（返回 null），退化为「不识别该容器」，绝不猜偏移；
+ * - 映射量超出原文（词法层消费量超过文本）→ 拒绝。
+ */
+function mapTokensToSource(body: string, tokens: readonly Token[]): TokenExtent[] | null {
+  const mapped: TokenExtent[] = [];
+  let cursor = 0;
+  for (const token of tokens) {
+    const raw = typeof token.raw === "string" ? token.raw : "";
+    if (raw.length === 0) continue;
+    const start = cursor;
+    if (body.slice(cursor, cursor + raw.length) === raw) {
+      // 快路径：字面量逐字相等 → 原文区间就是该长度。
+      cursor += raw.length;
+    } else {
+      // 逐行对齐：行内容必须逐行相等，仅行分隔符形态可不同。
+      const rawLines = raw.split("\n");
+      for (let index = 0; index < rawLines.length; index += 1) {
+        const line = rawLines[index];
+        if (line.length > 0 && !body.startsWith(line, cursor)) return null;
+        cursor += line.length;
+        if (index < rawLines.length - 1) {
+          if (body.startsWith("\r\n", cursor)) cursor += 2;
+          else if (body.startsWith("\n", cursor) || body.startsWith("\r", cursor)) cursor += 1;
+          else return null;
+        }
+      }
+    }
+    mapped.push({ token, start, end: cursor });
+  }
+  return cursor <= body.length ? mapped : null;
+}
+
 // ── 顶层 marker 定位（单真源语义）────────────────────────────────────────────
+
+/** 偏移是否落在行的起点（文首，或行分隔符 `\n`/`\r` 之后）。 */
+function isAtLineStart(body: string, offset: number): boolean {
+  return offset === 0 || body[offset - 1] === "\n" || body[offset - 1] === "\r";
+}
 
 /** 顶层段落且 text 完全等于合法 marker → 命中（与 parseReferenceIds 同一判定）。 */
 function matchTopLevelMarker(token: Token, refId: string): boolean {
@@ -41,18 +117,19 @@ function matchTopLevelMarker(token: Token, refId: string): boolean {
 }
 
 /**
- * 真实顶层 marker 的原始区间：用 token.raw 在原文中**按序**推进定位（不用 indexOf 猜，
- * 避免同名文本出现在代码块里时定位到错误的字符偏移）。
+ * 真实顶层 marker 的原始区间：先按序映射到原文坐标，再返回该 token 的原文区间
+ * （不用 indexOf 猜，避免同名文本出现在代码块里时定位到错误的字符偏移）。
+ * 无法逐字对齐（词法层与原文不一致）时返回 null。
  */
 function locateMarkerRange(body: string, refId: string): { start: number; end: number } | null {
-  let cursor = 0;
-  for (const token of lexer(body)) {
-    const raw = typeof token.raw === "string" ? token.raw : "";
-    if (raw.length === 0) continue;
-    if (raw === body.slice(cursor, cursor + raw.length) && matchTopLevelMarker(token, refId)) {
-      return { start: cursor, end: cursor + raw.length };
-    }
-    cursor += raw.length;
+  const mapped = mapTokensToSource(body, lexer(body));
+  if (!mapped) return null;
+  for (const current of mapped) {
+    if (!matchTopLevelMarker(current.token, refId)) continue;
+    // 标记段落必须同时是独立行：起点只能是文首或行分隔符（\n / \r）之后，否则说明
+    // 该「标记段落」实际上是上一行（如前一行是链接定义时 marked 会把定义行吞进 raw）。
+    if (!isAtLineStart(body, current.start)) continue;
+    return { start: current.start, end: current.end };
   }
   return null;
 }
@@ -118,32 +195,43 @@ function isStandaloneTopLevelMarker(body: string, refId: string): boolean {
  *   `ReferenceMarkerPositionError`（调用方给出可见反馈并保持正文完全不变）；
  * - 光标落在既有引用标记段落内部 → 抛错（标记必须独占段落）；
  * - 结果无法构成「独立顶层段落」（如与相邻标记连成同一段落）→ 抛错。
+ *
+ * 与删除/转换**共用同一套容器位置规则**（`mapTokensToSource` 的原文区间 + 半开
+ * `(start, end]` 的「尾部换行归属前一个 token」口径），因此 CRLF/CR/混合换行的
+ * 正文里容器判定同样准确。
  */
 export function insertReferenceMarker(bodyMd: string, refId: string, cursor: number | null): string {
   const body = typeof bodyMd === "string" ? bodyMd : "";
   const marker = markerText(refId);
   const at = cursor === null || !Number.isFinite(cursor) ? body.length : Math.max(0, Math.min(body.length, cursor));
 
-  // 找到覆盖光标的顶层 token（raw 区间含尾随换行）。
-  let offset = 0;
-  let covering: Token | null = null;
-  for (const token of lexer(body)) {
-    const raw = typeof token.raw === "string" ? token.raw : "";
-    const start = offset;
-    const end = offset + raw.length;
-    offset = end;
-    if (at > start && at <= end) {
-      covering = token;
+  const mapped = mapTokensToSource(body, lexer(body));
+  if (!mapped) {
+    throw new ReferenceMarkerPositionError(
+      "无法解析当前正文的块结构，已在原处取消插入（正文未改动）。请检查正文中的换行。",
+    );
+  }
+
+  // 找到覆盖光标的顶层 token（与删除/转换**同一套原文区间规则**：区间为
+  // `(start, end]`，即每个 token 的原文区间含其尾随换行；光标落在块间空行上时
+  // 归前一个 token，与旧实现的光标语义一致，但坐标来自原文映射而非 raw 长度）。
+  let covering: TokenExtent | null = null;
+  for (let index = 0; index < mapped.length; index += 1) {
+    const current = mapped[index];
+    const end = index + 1 < mapped.length ? mapped[index + 1].start : body.length;
+    if (at > current.start && at <= end) {
+      covering = current;
       break;
     }
   }
 
-  if (covering && CONTAINER_TOKEN_TYPES.has(covering.type)) {
+  if (covering && CONTAINER_TOKEN_TYPES.has(covering.token.type)) {
+    const described = describeTokenType(covering.token.type);
     throw new ReferenceMarkerPositionError(
-      `无法在${describeTokenType(covering.type)}内部插入引用：引用标记必须是独立段落。请把光标移到正文段落中，或移到该${describeTokenType(covering.type)}之外。`,
+      `无法在${described}内部插入引用：引用标记必须是独立段落。请把光标移到正文段落中，或移到该${described}之外。`,
     );
   }
-  if (covering && isMarkerParagraph(covering)) {
+  if (covering && isMarkerParagraph(covering.token)) {
     throw new ReferenceMarkerPositionError(
       "无法在已有引用标记内部插入新引用：引用标记必须独占段落。请把光标放到其他正文段落。",
     );
@@ -152,7 +240,7 @@ export function insertReferenceMarker(bodyMd: string, refId: string, cursor: num
   const prefix = body.slice(0, at);
   const suffix = body.slice(at);
   if (prefix === "" && suffix === "") return marker;
-  const newline = "\n";
+  const newline = insertionNewline(body);
   const gap = newline + newline;
   const before = prefix === "" || prefix.endsWith(gap) ? "" : prefix.endsWith(newline) ? newline : gap;
   const after = suffix === "" || suffix.startsWith(gap) ? "" : suffix.startsWith(newline) ? newline : gap;
@@ -185,13 +273,21 @@ export function removeReferenceMarker(bodyMd: string, refId: string): string {
 
   let start = range.start;
   let end = range.end;
-  while (end < body.length && body[end] === "\n") end += 1; // 先试：消费标记后的换行
+  // 换行按「整行分隔符」消费：CRLF 正文里吞掉 `\r` 会留下孤立 `\n`（正文被改写）。
+  const isLineBreak = (ch: string): boolean => ch === "\n" || ch === "\r";
+  const eatLineBreak = (offset: number): number => {
+    if (body.startsWith("\r\n", offset)) return offset + 2;
+    return isLineBreak(body[offset]) ? offset + 1 : offset;
+  };
+  while (end < body.length && isLineBreak(body[end])) end = eatLineBreak(end); // 先试：消费标记后的换行
   let afterTrimmed = end;
-  while (afterTrimmed < body.length && body[afterTrimmed] === "\n") afterTrimmed += 1;
+  while (afterTrimmed < body.length && isLineBreak(body[afterTrimmed])) afterTrimmed = eatLineBreak(afterTrimmed);
   if (afterTrimmed >= body.length) {
     // 文末标记：后面已无内容 → 改为消费标记前的换行（保持段落整齐）
     let beforeTrimmed = start;
-    while (beforeTrimmed > 0 && body[beforeTrimmed - 1] === "\n") beforeTrimmed -= 1;
+    while (beforeTrimmed > 0 && isLineBreak(body[beforeTrimmed - 1])) {
+      beforeTrimmed -= body[beforeTrimmed - 1] === "\n" && beforeTrimmed > 1 && body[beforeTrimmed - 2] === "\r" ? 2 : 1;
+    }
     start = beforeTrimmed;
     end = range.end;
   }
