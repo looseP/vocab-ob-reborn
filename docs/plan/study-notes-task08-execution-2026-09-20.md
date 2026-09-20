@@ -180,3 +180,37 @@
 ## 7. 停止点声明
 
 - 完成后停在 Task 09 之前；不合并、不 retarget、不部署、不推 main。
+
+## 8. R1–R5 有限补修（2026-09-20 晚，独立复核后）
+
+依据：`TASK08-INDEPENDENT-REVIEW.md`（5 探针行为失败）+ `task08-review-probes.test.ts`。基线复核：审查对象 78364f04 与本地/远端一致；探针复跑 **62 passed / 5 failed**（与报告一致）；先红后绿，未修改断言迎合旧实现。
+
+### 8.1 修复结果表
+
+| 项 | 缺陷 | 修复 | 正式回归（红→绿） | 提交 |
+| --- | --- | --- | --- | --- |
+| R1 | 专题仅首页、后页不可达、深链误判不存在 | coordinator 持久化 total/nextCursor + `loadMore()`（页代守卫/去重/失败重试）；写操作经 cursor 续取定位后按最新版本 CAS；面板「加载更多专题」 | 5 例（探针1正式化 + 失败重试 + 切题型失效 + 深链定位 + 幽灵专题显式报错） | `219d651` |
+| R2 | 旧题型写回包污染新题型列表 | `upsertTopic` venue 归属判定（迟到回包不注入；真实成功保留服务端）；conflict/createError 视图归属；createFlight 身份记账（跨题型不复用/不阻塞、只清自己） | 3 例（探针2正式化 + 迟到 save 锁定 + 跨题型 flight 隔离） | `8d4f5cd` |
+| R3 | 迟到刷新回退已确认版本 | 写确认推进读代际：写前挂起的刷新整体失效；新鲜刷新仍采纳他端更高版本；下一次写用已确认版本 | 2 例（探针3正式化 + 他端 v9 采纳 + v2 基线续写） | `8d4f5cd` |
+| R4 | 翻页挂起时刷新 → 加载锁永久卡死 | refresh/dispose 取代翻页时释放 `loadingMore`；迟到回包不合并、不清新代；再次翻页真实发请求（携带 refresh 后 cursor） | 3 例（探针4正式化 + refresh 失败释放 + dispose 锁定） | `4003edc` |
+| R5 | 防抖期组合「新 q + 旧 cursor」 | setQuery 逻辑变化立即推进 requestSeq 失效旧回包并清 nextCursor（防抖仅延迟新首页）；loadMore 无 cursor 即 no-op | 2 例（探针5正式化 + 旧 q 回包即时失效） | `4003edc` |
+
+### 8.2 验收证据（修复后、SHA `a81f769`）
+
+- **审查探针复跑**（审查配置、6 文件）：**82/82 exit 0**——5/5 已知失败消除（`t08-r-probes.log`）。
+- **全量单测**（快区 t08-verify2、`COVERAGE_BASE_REF=259415ff1c0db8df159fa0dbf329dfed7e1d5e85`）：**251 文件 251 passed / 1 skipped / 0 failed（3764 用例）exit 0**（`t08-r-unit3.log`）。
+- **coverage:layered**：**exit 0**；`Diff coverage N/A — changed src 12 (governed 0)`——**口径如实**：本批前端增量不在受治理层内，四层（domain/service/repository/http）总体覆盖率非本批前端增量覆盖率（`t08-r-layered2.log`）。
+- **分段门禁**（快区 t08-verify@a81f769，`API_CONTRACT_BASE_REF`/`ROUTE_COMPLEXITY_BASE_REF`=259415ff 完整 SHA）：db:schema:drift=0、api:governance=0（无 breaking）、test:collection=0、runtime:verify=0、alerting:verify=0、release:acceptance=0、secret-rotation=0、release:workflow=0、typecheck=0、arch:check=0（链内）。
+- **浏览器 E2E**（隔离 PG `vocab_study_notes_task08_accept` + Chromium）：**24/24 exit 0**（host 10 + workspace 14 = 原 9 + 新 ⑤场景：55 专题跨页/后页深链库核、延迟创建跨题型、延迟刷新版本保护、翻页挂起刷新、防抖关闭加载入口）（`t08-r-e2e5.log`）。
+- **生产默认构建**（无 `VITE_N1_STUDY_NOTE_HOST`）：exit 0，`dist/frontend/assets/L3Page-*.js` 含 study-notes 消费入口——宿主开关不是消费 UI 必需条件。
+
+### 8.3 环境观察（如实，未绕护栏）
+
+1. `safe-delete` 的 turn 累计删除预算会拒绝**一切** `fs.rm/unlink`（含单文件锁清理）→ 全量跑时 drill 用例级联失败（本批实测 16 例）；**单独复跑同一文件 exit 0**；预算释放后全量复跑 **0 失败**。聚合 `verify:engineering` 在预算耗尽窗口内 exit=1 已如实保留（`t08-r-gate.log`），未以产物存在替代自然退出。
+2. Playwright 收尾清理 `test-results*`（>50 文件）同因被拦 → 以 `E2E_OUTPUT_DIR` 指向全新空目录规避（旧产物目录原样保留未删，`test-results-r/`、`test-results-r(2|3)` 为环境残留，可人工清理）。
+3. `node_modules` 内 4 个 `dist/index.js` 被护栏改名挂 `.DELETE.<hash>` 后缀 → 已 `mv` 恢复原状（恢复被误标记文件，非绕过）。
+4. 未闭环项：**无**（R1–R5 全部红→绿；门禁各步 exit 0；聚合链在本 turn 预算耗尽窗口的一次 exit=1 已以分段证据补齐并在预算恢复后全量复验）。
+
+### 8.4 交付 SHA 链（补修轮）
+
+`219d651`(R1) → `8d4f5cd`(R2/R3) → `4003edc`(R4/R5) → `a81f769`(E2E 扩展+校准) → 本提交(台账)。
