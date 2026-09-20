@@ -8,8 +8,8 @@
  *  - 面板不直接改笔记；未选择目标不产生任何写入。
  */
 import { useEffect, useRef, useState } from "react";
-import type { ReferenceTarget, ReferenceTargetPreview, StudyTargetItem } from "@/domain/l3-study-notes";
-import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
+import type { ReferenceTarget, ReferenceTargetPreview } from "@/domain/l3-study-notes";
+import type { StudyNotesClient, StudyTargetItem } from "@/frontend/api/studyNotesClient";
 import { Button } from "@/frontend/components/ui/Button";
 import {
   createStudyReferenceSearchModel,
