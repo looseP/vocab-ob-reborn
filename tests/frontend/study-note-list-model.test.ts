@@ -308,3 +308,116 @@ describe("studyNoteListModel · 错误与生命周期", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+// ── R4/R5 补修：请求代际与防抖失效 ───────────────────────────────────────────
+
+describe("studyNoteListModel · 请求代际（R4/R5 补修）", () => {
+  it("refresh 取代挂起翻页：释放 loadingMore、旧回包不合并；再次加载确实发请求（探针4正式化）", async () => {
+    const h = harness();
+    h.model.setVenue("cloze");
+    h.deferreds[0]!.resolve({ items: [makeNote(ID_A)], total: 3, nextCursor: "p2" });
+    await flushMicrotasks();
+
+    const more = h.model.loadMore(); // 翻页挂起（deferreds[1]）
+    expect(h.model.getSnapshot().loadingMore).toBe(true);
+
+    const refreshing = h.model.refresh(); // refresh（deferreds[2]）
+    h.deferreds[2]!.resolve({ items: [makeNote(ID_A)], total: 3, nextCursor: "p2r" });
+    await refreshing;
+    expect(h.model.getSnapshot().loadingMore).toBe(false); // refresh 释放旧代翻页标记
+
+    h.deferreds[1]!.resolve({ items: [makeNote(ID_B)], total: 3, nextCursor: "p3" }); // 旧翻页迟到回包
+    await more;
+    await flushMicrotasks();
+
+    const snapshot = h.model.getSnapshot();
+    expect(snapshot.loadingMore).toBe(false);
+    expect(snapshot.items.map((note) => note.id)).toEqual([ID_A]); // 旧回包不合并
+    expect(snapshot.nextCursor).toBe("p2r"); // refresh 的 cursor 保留
+
+    // 再次加载：真实发请求（携带 refresh 后的 cursor）
+    const reload = h.model.loadMore();
+    expect(h.calls.length).toBe(4); // 首页 + 挂起翻页 + refresh + 本次
+    expect(h.calls[h.calls.length - 1]!.cursor).toBe("p2r");
+    h.deferreds[3]!.resolve({ items: [makeNote(ID_B)], total: 3, nextCursor: null });
+    await reload;
+    await flushMicrotasks();
+    expect(h.model.getSnapshot().loadingMore).toBe(false);
+    expect(h.model.getSnapshot().items.map((note) => note.id)).toEqual([ID_A, ID_B]);
+  });
+
+  it("refresh 失败同样释放挂起翻页标记；旧翻页迟到回包不制造假成功", async () => {
+    const h = harness();
+    h.model.setVenue("cloze");
+    h.deferreds[0]!.resolve({ items: [makeNote(ID_A)], total: 2, nextCursor: "p2" });
+    await flushMicrotasks();
+
+    const more = h.model.loadMore();
+    const refreshing = h.model.refresh();
+    h.deferreds[2]!.reject(new Error("refresh failed"));
+    await refreshing.catch(() => {}); // refresh 失败由测试显式处置
+    h.deferreds[1]!.resolve({ items: [makeNote(ID_B)], total: 2, nextCursor: null });
+    await more;
+
+    const snapshot = h.model.getSnapshot();
+    expect(snapshot.loadingMore).toBe(false);
+    expect(snapshot.items.map((note) => note.id)).toEqual([ID_A]); // 旧回包不注入
+  });
+
+  it("防抖期点击加载更多：不发『新 q + 旧 cursor』错配请求（探针5正式化）", async () => {
+    const h = harness();
+    h.model.setVenue("cloze");
+    h.deferreds[0]!.resolve({ items: [makeNote(ID_A)], total: 2, nextCursor: "old-filter-cursor" });
+    await flushMicrotasks();
+
+    h.model.setQuery("new query"); // 逻辑筛选已变，防抖挂起
+    await h.model.loadMore(); // 必须为 no-op
+    expect(h.calls.length).toBe(1); // 未发任何新请求（错配请求被禁止）
+
+    h.timers.runPending(); // 防抖到期：新首页带新 q、无 cursor
+    await flushMicrotasks();
+    expect(h.calls.length).toBe(2);
+    expect(h.calls[1]!.q).toBe("new query");
+    expect(h.calls[1]!.cursor).toBeUndefined();
+    h.deferreds[1]!.resolve({ items: [makeNote(ID_B)], total: 1, nextCursor: null });
+    await flushMicrotasks();
+    expect(h.model.getSnapshot().items.map((note) => note.id)).toEqual([ID_B]); // 新结果非旧筛选
+  });
+
+  it("setQuery 立即失效旧 q 在途回包与游标：旧响应不覆盖新搜索态", async () => {
+    const h = harness();
+    h.model.setVenue("cloze"); // 首页在途（deferreds[0]）
+    h.model.setQuery("latest"); // 逻辑筛选变化（防抖挂起）
+
+    h.deferreds[0]!.resolve({ items: [makeNote(ID_A)], total: 1, nextCursor: "stale-cursor" }); // 旧 q 回包
+    await flushMicrotasks();
+    const snapshot = h.model.getSnapshot();
+    expect(snapshot.items).toEqual([]); // 旧回包被丢弃
+    expect(snapshot.nextCursor).toBe(null); // 错配 cursor 已清除
+
+    h.timers.runPending();
+    await flushMicrotasks();
+    expect(h.calls[1]!.q).toBe("latest");
+    h.deferreds[1]!.resolve({ items: [makeNote(ID_B)], total: 1, nextCursor: null });
+    await flushMicrotasks();
+    expect(h.model.getSnapshot().items.map((note) => note.id)).toEqual([ID_B]);
+  });
+
+  it("dispose 后在途翻页回包丢弃且无未处理异常；状态不再变化", async () => {
+    const h = harness();
+    h.model.setVenue("cloze");
+    h.deferreds[0]!.resolve({ items: [makeNote(ID_A)], total: 3, nextCursor: "p2" });
+    await flushMicrotasks();
+
+    const more = h.model.loadMore();
+    h.model.dispose();
+    h.deferreds[1]!.resolve({ items: [makeNote(ID_B)], total: 3, nextCursor: null });
+    await more;
+    await flushMicrotasks();
+
+    const snapshot = h.model.getSnapshot();
+    expect(snapshot.items.map((note) => note.id)).toEqual([ID_A]); // dispose 后回包不注入
+    expect(snapshot.loadingMore).toBe(false);
+    expect(h.model.isDisposed()).toBe(true);
+  });
+});

@@ -167,12 +167,14 @@ export function createStudyNoteListModel(options: StudyNoteListModelOptions): St
     notify();
   }
 
-  /** refresh：保留旧列表直至新数据到达（不闪空）。 */
+  /** refresh：保留旧列表直至新数据到达（不闪空）；取代在途翻页时释放其 loading 标记（R4）。 */
   async function refresh(): Promise<void> {
     if (disposed) return;
     const query = buildQuery(null);
     if (!query) return;
     const seq = ++requestSeq;
+    loadingMore = false; // R4：翻页在途时发起刷新 → 旧翻页代失效，标记随即释放（可再次翻页）
+    notify();
     try {
       const page = await options.fetchPage(query);
       if (disposed || seq !== requestSeq) return;
@@ -262,6 +264,11 @@ export function createStudyNoteListModel(options: StudyNoteListModelOptions): St
     if (normalized === filters.q) return;
     filters.q = normalized;
     cancelDebounce();
+    // R5：逻辑筛选已变——旧 q 的在途回包立即失效、旧 cursor 立即清除，
+    // 防抖仅延迟「新首页请求」的启动；期间 loadMore 因无 cursor 而 no-op（不发错配请求）。
+    requestSeq += 1;
+    nextCursor = null;
+    loadingMore = false;
     if (filters.venue) {
       debounceHandle = options.setTimer(() => {
         debounceHandle = null;
@@ -309,6 +316,7 @@ export function createStudyNoteListModel(options: StudyNoteListModelOptions): St
     cancelDebounce();
     subscribers.clear();
     requestSeq += 1; // 令在途响应全部失效
+    loadingMore = false; // R4：dispose 释放在途翻页标记
   }
 
   return {
