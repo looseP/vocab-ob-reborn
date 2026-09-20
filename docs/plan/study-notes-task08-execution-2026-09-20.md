@@ -154,6 +154,12 @@
 
 提交后核验：`git status` 干净；`git fsck --no-dangling` 无损坏；分支 `study-notes-n1-task08`（HEAD=4deb972）。
 
+### 5.2 推送与 PR
+
+- 推送：`study-notes-n1-task08` → `origin`（新分支，upstream 已设；后补 `1f589be` 前的 4 提交一次推送）。
+- PR：**#128**（draft）`study-notes-n1-task08` → `study-notes-n1-editor`，https://github.com/looseP/vocab-ob-reborn/pull/128 ，依赖 #127 → #126 → #125。
+- CI：三项必需检查由 PR 触发，本地不等候（以本地等价验证为准，见 §4）。
+
 ## 6. 未覆盖项与观察项
 
 **本批未覆盖（边界声明）**
