@@ -60,4 +60,8 @@
 
 ## 4. 提交与 PR
 
-__待补（推送与 PR 更新后回填）__
+- 提交链：`3427fcd`(F1–F3) → `f31a107`(F4) → `80edc3f`(E2E 修正) → `280ab63`(台账)。
+- 推送：`d3aaa73..280ab63` 快进；**local HEAD = ls-remote = `280ab632d2665da627f26479c5ec2a2bd5a01dd5`**。
+- PR：**#128**（draft、OPEN）head=`280ab63`，base=`study-notes-n1-editor`（259415ff）；描述已更新（含 F1–F4、变异证明、门禁分段与口径）。
+- CI（只读查询）：**Writing E2E pass（1m58s）**；Engineering Gate / Browser E2E 为 main-only，不触发（如实标记）；学习笔记 E2E 独立配置不在默认收集内。
+- 纪律：未 merge、未 retarget、未部署、未推 main；未进入 Task 09/10/N2。
