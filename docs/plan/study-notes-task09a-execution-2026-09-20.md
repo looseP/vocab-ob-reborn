@@ -24,7 +24,7 @@
 
 - [x] 正文与引用**原子保存**（同一 PUT；插入/移除/转换后预检通过、无分叉保存）——E2E ①（capture 行 kind/source_id 库核）+ 组件"capture write 随保存提交"
 - [x] **刷新重开一致**（保存后 reload/F5：marker、卡片、状态、计数一致）——E2E ①②③④ 均含 reload；组件"重开一致"用例
-- [x] **current/changed/unavailable 正确**（changed 显示 liveTitle；unavailable 保留旧摘录、可 keep/移除/转换，禁止 re-capture）——E2E ①（current）/④（unavailable 被拒题目：显示已失效+旧摘录+可移除）；组件 changed/unavailable 对照用例
+- [x] **current/changed/unavailable 正确**（changed 显示 liveTitle；unavailable 保留旧摘录、可 keep/移除/转换，禁止 re-capture）——E2E ①（current）/④（unavailable 被拒题目：显示已失效+旧摘录+可移除）/⑤（changed：徽标「内容已变化」+「当前来源：新标题」+快照保留）；组件 changed/unavailable 对照用例
 - [x] **409 与未知结果重试不丢引用**——组件"重试载荷逐字节相同（含 references）"（未知结果）；组件"09A 插入流×409"（冲突面板 + 本地两枚 marker 保留 + 复制本地内容含引用清单含新引用 + 不自动重试）；editor 既有 409 复制本地含引用清单契约保持
 
 ## 3. 测试计划与结果
@@ -35,7 +35,7 @@
 | 模型 | `tests/frontend/study-reference-search.test.ts` | R1–R5 + 分页去重 + 防抖 + 400 + venue 归属（source 下不发请求） | ✅ 8 例绿（含复核补修 1） |
 | 组件 | `tests/frontend/study-note-reference-ui.test.tsx` | picker 全流程（搜索→预览→插入→marker+计数）、卡片（状态徽标/移除/转换）、重开一致性、重试逐字节相同、409 保留引用、**StrictMode 可用性/预览时效/插入时光标** | ✅ 12 例绿（含 409 与复核补修 3） |
 | 保存 | 既有 save/editor 合同测试 | 含引用载荷重试逐字节相同；409 复制文本含引用 | ✅ 合同保持 |
-| E2E | `e2e-study-notes/study-notes-reference-loop.spec.ts` | 真实 PG：搜索→预览→插入→保存→重开（marker+卡片）→移除→重开→转换→重开→库核 references 行；unavailable 被拒题目卡片与移除 | ✅ 4/4 绿（`D:/tmp/t09a-e2e3.log`） |
+| E2E | `e2e-study-notes/study-notes-reference-loop.spec.ts` | 真实 PG：搜索→预览→插入→保存→重开（marker+卡片）→移除→重开→转换→重开→库核 references 行；unavailable 被拒题目卡片与移除；**changed（来源改名+改正文）徽标+liveTitle 对照+快照保留** | ✅ **5/5 绿**（`D:/tmp/t09a-e2e-ch2.log`） |
 
 - 分层回归（5 文件：09A 三件 + editor/save 合同）：**96/96 exit 0**（`D:/tmp/t09a-fix-all.log`；复核补修前 92/92）。
 - E2E 修正记录（先红后绿，测试问题为主）：① question seed 缺 `source_id` 违反 `l3_questions` identity_check → 挂 source；② 用例 ④ PUT 用了过期 `expectedVersion`（seed 命名已推进 v2）→ 动态取当前版本。
@@ -48,7 +48,7 @@
 
 ### 5.1 浏览器 E2E（隔离 PG `vocab_study_notes_task08_accept` + 真实 Chromium）
 
-- 全量（host 10 + reference-loop 4 + workspace 18）：**32/32 exit 0**（`D:/tmp/t09a-e2e-full.log`，3.4m）。reference-loop 单独复跑亦 4/4（`D:/tmp/t09a-e2e3.log`）。
+- 全量（host 10 + reference-loop 5 + workspace 18）：**33/33 exit 0**（`D:/tmp/t09a-e2e-full3.log`，2.6m）。reference-loop 单独复跑亦 5/5（`D:/tmp/t09a-e2e-ch2.log`）。
 
 ### 5.2 工程门禁（三 BASE_REF=PR base 完整 SHA `832192943496099e53b3330bd0d2e7fb85b925c2`）
 
@@ -62,7 +62,7 @@
 ### 5.3 提交、推送与 PR
 
 - 提交链：`663bdab`（域+模型）→ `9bf7310`（picker/hook/editor）→ `e91e5df`（import 对齐）→ `6a679a4`（E2E+409）→ `e7b91dc`（复核补修）→ `67625d9`（台账）→ `037136c`（R3 口径同步+二次复核记录）。
-- 推送：`git push -u origin study-notes-n1-task09a`；推送链 `037136c..859022e`（含本台账提交）。**核验时 local HEAD = ls-remote = `859022e49a5eb81674b2dadff6d662a2e784502d`**；门禁证据对应 `037136c`，其后的提交均为 docs 纯文档增量（不影响任何门禁）。
+- 推送：`git push -u origin study-notes-n1-task09a`；推送链 `037136c..58178be..<本台账提交>`。门禁证据对应 `037136c`；其后的提交为 E2E 用例与 docs 增量（E2E spec 不参与任何门禁运行；`58178be` 后 typecheck/collection/layered 已复跑见下）。
 - PR：**#129**（draft、OPEN、base=`study-notes-n1-task08`），依赖 #128→#127→#126→#125；描述含交付、测试证据、门禁口径与环境说明；CI 只读：Writing E2E pending（已触发），Engineering Gate / Browser E2E 为 main-only 不触发。
 
 ## 6. 独立只读复核与补修（2026-09-20 晚）
@@ -77,7 +77,7 @@
 | 4 | 次要 | source kind 下 `setVenue` 触发与请求无关的重复请求 | 仅记录筛选待用；切入 question 时随首屏携带（R3 语义限定为 question kind，文档同步） | 模型用例 R3b |
 
 - 复核另注：同一目标可重复插入（不同摘录）——`l3_study_note_references` 无 (note,target) 唯一约束、服务端只校验 marker/id 集合一致，属**设计允许**，不拦截。
-- 复核对测试质量的结论：409 用例为真断言（非假绿）；E2E 四场景逐条扎实并带 PG 库核；changed 的 liveTitle 由组件层覆盖（E2E 未单独覆盖 changed，作为已知覆盖边界记录）。
+- 复核对测试质量的结论：409 用例为真断言（非假绿）；E2E 四场景逐条扎实并带 PG 库核；changed 的 liveTitle 原仅组件层覆盖——**已补 E2E ⑤（`58178be`）闭合该边界**（服务端 changed 判定哈希 `content_text`、liveTitle 取标题；场景两者皆改并断言徽标+新标题对照+快照保留）。
 - 补修后：5 文件 **96/96 exit 0**、typecheck=0、前端重建 exit 0、全量 E2E 复验 **32/32**（`D:/tmp/t09a-e2e-full2.log`）。
 
 ### 6.1 补修提交的二次复核（对 `e7b91dc` 单提交）
