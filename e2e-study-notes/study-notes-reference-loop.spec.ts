@@ -309,3 +309,45 @@ test("④ unavailable 目标（被拒题目）：卡片显示已失效、保留�
   const persisted = await fetchNoteBody(noteId);
   expect(persisted.bodyMd).not.toContain("[[ref:");
 });
+
+test("⑤ changed 目标（来源被改名）：卡片显示已变化 + liveTitle 对照，快照旧摘录保留", async ({ authedPage: page }) => {
+  test.setTimeout(120_000);
+  const marker = `T09A-CH-${Date.now()}`;
+  const sourceId = await seedSource(marker);
+  const noteId = await apiSeedNote(page, `${marker} 变化用例`);
+
+  // 经真实 API capture（同 ④：命名已推进到 v2，动态取当前版本）
+  await page.goto(`/l3?section=study-notes&venue=cloze`);
+  const refId = randomUUID();
+  const current = await fetchNoteBody(noteId);
+  const withRef = await pageApiCall(page, `/api/l3/study-notes/${noteId}`, {
+    method: "PUT",
+    body: {
+      expectedVersion: current.version,
+      requestId: randomUUID(),
+      title: `${marker} 变化用例`,
+      bodyMd: `正文\n\n[[ref:${refId}]]\n`,
+      venues: ["cloze"],
+      pinned: false,
+      status: "active",
+      references: [{ id: refId, action: "capture", target: { kind: "source", sourceId } }],
+    },
+  });
+  expect(withRef.status).toBe(200);
+
+  // 来源正文与标题均改 → 服务端 preview 判定 changed（content_text 哈希不符；liveTitle=新标题）
+  await withAdmin(async (client) => {
+    await client.query("UPDATE l3_sources SET title = $1, content_text = $2 WHERE id = $3::uuid", [
+      `改名后 ${marker}`,
+      `改后正文 ${marker}`,
+      sourceId,
+    ]);
+  });
+
+  await openNote(page, noteId);
+  await page.getByText("预览").click();
+  const card = page.getByTestId("reference-placeholder");
+  await expect(card).toContainText("内容已变化");
+  await expect(card).toContainText(`来源 ${marker}`); // 快照旧标题/摘录保留
+  await expect(card).toContainText(`当前来源：改名后 ${marker}`); // liveTitle 对照
+});
