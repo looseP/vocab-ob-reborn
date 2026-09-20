@@ -524,3 +524,117 @@ describe("L3StudyNotesPage · 专题协调", () => {
     expect((removeTopicMember.mock.calls[0]! as [string, string, Record<string, unknown>])[0]).toBe(TOPIC_ID);
   });
 });
+
+// ── F4 收尾：后页专题深链自动定位 ────────────────────────────────────────────
+
+describe("L3StudyNotesPage · 后页深链定位（F4 收尾）", () => {
+  const TOPIC_A = "00000000-0000-4000-8000-000000000902";
+
+  it("后页 topicId 深链：自动续取定位 → 显示目标标题/版本/重命名入口（无需手动翻页；探针迁移）", async () => {
+    const { client, list, listTopics } = makeClient();
+    list.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    listTopics
+      .mockResolvedValueOnce({
+        items: [makeTopic({ id: TOPIC_A, title: "首页专题" })],
+        total: 2,
+        nextCursor: "page-two",
+      })
+      .mockResolvedValueOnce({ items: [makeTopic()], total: 2, nextCursor: null });
+
+    await renderPage(`${LIST_URL}&topicId=${TOPIC_ID}`, client);
+    await waitFor(() => expect(screen.queryByTestId("topic-rename-input")).not.toBeNull());
+    expect(listTopics).toHaveBeenCalledWith(expect.objectContaining({ cursor: "page-two" }));
+    expect(screen.getByTestId("topic-version").textContent).toContain("v4"); // 服务端真实版本
+    expect(screen.queryByTestId("topic-locate-error")).toBeNull();
+  });
+
+  it("定位成功后重命名：经真实页面入口，使用服务端 status/version（不假设 active）", async () => {
+    const { client, list, listTopics, saveTopic } = makeClient();
+    list.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    listTopics
+      .mockResolvedValueOnce({
+        items: [makeTopic({ id: TOPIC_A, title: "首页专题" })],
+        total: 2,
+        nextCursor: "page-two",
+      })
+      .mockResolvedValueOnce({
+        items: [makeTopic({ status: "archived", version: 7 })],
+        total: 2,
+        nextCursor: null,
+      });
+    saveTopic.mockResolvedValue({
+      item: makeTopic({ title: "改名后", status: "archived", version: 8 }),
+    });
+
+    await renderPage(`${LIST_URL}&topicId=${TOPIC_ID}`, client);
+    await waitFor(() => expect(screen.queryByTestId("topic-rename-input")).not.toBeNull());
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("topic-rename-input"), { target: { value: "改名后" } });
+      fireEvent.click(screen.getByTestId("topic-rename-submit"));
+    });
+    await waitFor(() => expect(saveTopic).toHaveBeenCalledTimes(1));
+    expect(saveTopic).toHaveBeenCalledWith(
+      TOPIC_ID,
+      expect.objectContaining({ expectedVersion: 7, status: "archived", title: "改名后" }),
+    );
+  });
+
+  it("定位期间切换 topicId：旧代结果不消费、不报错、不混入", async () => {
+    const { client, list, listTopics } = makeClient();
+    list.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    const walk = defer<{ items: StudyTopicDto[]; total: number; nextCursor: string | null }>();
+    listTopics
+      .mockResolvedValueOnce({
+        items: [makeTopic({ id: TOPIC_A, title: "首页专题" })],
+        total: 2,
+        nextCursor: "page-two",
+      })
+      .mockReturnValueOnce(walk.promise);
+
+    const TOPIC_B = "00000000-0000-4000-8000-000000000903";
+    await renderPage(`${LIST_URL}&topicId=${TOPIC_B}`, client);
+    await waitFor(() => expect(screen.queryByTestId("topic-locating")).not.toBeNull());
+
+    // 用户切换选中（topicId → A，A 在首页可见）
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("topic-item"));
+    });
+    expect(locationText()).toContain(`topicId=${TOPIC_A}`);
+
+    // 旧代定位回包迟到：不消费、不报错、不把 B 的元数据填入
+    await act(async () => {
+      walk.resolve({ items: [makeTopic({ id: TOPIC_B, title: "后页专题B" })], total: 2, nextCursor: null });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId("topic-locate-error")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("topic-rename-input")).not.toBeNull());
+    expect((screen.getByTestId("topic-rename-input") as HTMLInputElement).value).toBe("首页专题");
+  });
+
+  it("定位取尽仍无目标：显式错误可见、零写入、不创建", async () => {
+    const { client, list, listTopics, saveTopic, createTopic, moveTopicMember, removeTopicMember } = makeClient();
+    list.mockResolvedValue({ items: [], total: 0, nextCursor: null });
+    listTopics
+      .mockResolvedValueOnce({
+        items: [makeTopic({ id: TOPIC_A, title: "首页专题" })],
+        total: 2,
+        nextCursor: "page-two",
+      })
+      .mockResolvedValueOnce({
+        items: [makeTopic({ id: "00000000-0000-4000-8000-000000000905", title: "末页专题" })],
+        total: 2,
+        nextCursor: null,
+      });
+
+    await renderPage(`${LIST_URL}&topicId=${TOPIC_ID}`, client);
+    await waitFor(() => expect(screen.queryByTestId("topic-locate-error")).not.toBeNull());
+    expect(screen.getByTestId("topic-locate-error").textContent).toContain("不存在");
+    expect(saveTopic).not.toHaveBeenCalled();
+    expect(createTopic).not.toHaveBeenCalled();
+    expect(moveTopicMember).not.toHaveBeenCalled();
+    expect(removeTopicMember).not.toHaveBeenCalled();
+  });
+});

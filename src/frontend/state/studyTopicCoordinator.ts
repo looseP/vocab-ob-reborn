@@ -57,6 +57,11 @@ export interface StudyTopicCoordinator {
   refresh(): Promise<void>;
   /** 续取专题下一页（R1：cursor 合同；取尽或未 ready 时为 no-op）。 */
   loadMore(): Promise<void>;
+  /**
+   * F4 深链定位：目标不在当前列表时按读取代际合同经 cursor 续取定位（结果并入列表）。
+   * 页面在消费该结果（标题/版本/状态）后才开放依赖它的操作；上下文切换/取尽/无权显式拒绝。
+   */
+  ensureTopic(topicId: string): Promise<StudyTopicDto>;
   createTopic(title: string): Promise<StudyTopicDto>;
   saveTopic(topicId: string, input: { title: string; status: StudyTopicStatus }): Promise<StudyTopicDto>;
   moveMember(topicId: string, noteId: string, beforeNoteId: string | null): Promise<StudyTopicDto>;
@@ -439,6 +444,7 @@ export function createStudyTopicCoordinator(options: StudyTopicCoordinatorOption
     load,
     refresh,
     loadMore,
+    ensureTopic: ensureTopicLoaded,
     createTopic,
     saveTopic,
     moveMember,

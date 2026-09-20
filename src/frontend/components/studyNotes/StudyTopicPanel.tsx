@@ -24,6 +24,9 @@ export interface StudyTopicPanelProps {
   nextCursor?: string | null;
   loadingMoreTopics?: boolean;
   onLoadMoreTopics?: () => void;
+  /** F4 深链定位：选中专题不在当前列表时的加载/失败可见状态。 */
+  locatingTopicId?: string | null;
+  locateError?: string | null;
   create: {
     pending: boolean;
     error: string | null;
@@ -50,6 +53,9 @@ export function StudyTopicPanel(props: StudyTopicPanelProps) {
   }, [selected?.id, selected?.title]);
 
   const conflict = selected !== null && props.conflictTopicId === selected.id;
+  // F4：深链目标不在已加载列表时（定位中/失败）——不静默，给可见状态
+  const locating = props.selectedTopicId !== null && selected === null && props.locatingTopicId === props.selectedTopicId;
+  const locateFailed = props.selectedTopicId !== null && selected === null && typeof props.locateError === "string";
 
   return (
     <aside className="space-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3" data-testid="topic-panel">
@@ -114,6 +120,16 @@ export function StudyTopicPanel(props: StudyTopicPanelProps) {
               ? "加载中…"
               : `加载更多专题${typeof props.total === "number" ? `（${props.topics.length}/${props.total}）` : ""}`}
           </Button>
+        )}
+        {locating && (
+          <p className="text-[11px] text-[var(--color-ink-soft)]" role="status" data-testid="topic-locating">
+            正在定位专题…
+          </p>
+        )}
+        {locateFailed && (
+          <p className="text-[11px] text-[var(--color-accent-2)]" role="alert" data-testid="topic-locate-error">
+            {props.locateError}
+          </p>
         )}
       </div>
 

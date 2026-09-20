@@ -149,6 +149,54 @@ export function L3StudyNotesPage({ client, onRegisterLeaveBarrier }: L3StudyNote
     void topics.load(nav.venue);
   }, [nav.venue, modelGen]);
 
+  // ── F4：URL topicId 深链定位（后页专题自动续取；加载/失败可见，不静默）────────
+  const [topicLocate, setTopicLocate] = useState<{
+    id: string;
+    status: "idle" | "locating" | "error";
+    error: string | null;
+  }>({ id: "", status: "idle", error: null });
+  const locateSeqRef = useRef(0);
+  const locatingRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const topics = topicsRef.current;
+    if (!topics || !nav.venue || !nav.topicId) {
+      locateSeqRef.current += 1; // 无目标：作废在途定位
+      locatingRef.current = null;
+      setTopicLocate((prev) => (prev.status === "idle" && prev.id === "" ? prev : { id: "", status: "idle", error: null }));
+      return;
+    }
+    const targetId = nav.topicId;
+    if (topicsSnap.state !== "ready") return; // 首页读取完成后才能续取定位
+    if (topicsSnap.topics.some((item) => item.id === targetId)) {
+      locateSeqRef.current += 1; // 已可见：作废在途定位
+      locatingRef.current = null;
+      setTopicLocate((prev) => (prev.status === "idle" && prev.id === targetId ? prev : { id: targetId, status: "idle", error: null }));
+      return;
+    }
+    if (locatingRef.current === targetId) return; // 同一目标已在途定位：不重复发起
+    locateSeqRef.current += 1;
+    locatingRef.current = targetId;
+    const seq = locateSeqRef.current;
+    setTopicLocate({ id: targetId, status: "locating", error: null });
+    void topics
+      .ensureTopic(targetId)
+      .then(() => {
+        if (locateSeqRef.current !== seq) return; // 切题型/换 topicId：放弃旧代结果
+        locatingRef.current = null;
+        setTopicLocate({ id: targetId, status: "idle", error: null });
+      })
+      .catch((error) => {
+        if (locateSeqRef.current !== seq) return;
+        locatingRef.current = null;
+        setTopicLocate({
+          id: targetId,
+          status: "error",
+          error: error instanceof Error && error.message ? error.message : "专题定位失败，请重试。",
+        });
+      });
+  }, [nav.venue, nav.topicId, modelGen, topicsSnap.state, topicsSnap.topics]);
+
   // ── 深链校验（GET-only；先身份/所有权，后挂载编辑器）───────────────────────
   const [pane, setPane] = useState<NotePaneState>({ status: "idle" });
   const [paneNonce, setPaneNonce] = useState(0);
@@ -397,9 +445,17 @@ export function L3StudyNotesPage({ client, onRegisterLeaveBarrier }: L3StudyNote
       const topicId = nav.topicId;
       const coordinator = topicsRef.current;
       if (!topicId || !coordinator) return;
-      const topic = coordinator.getSnapshot().topics.find((item) => item.id === topicId);
-      if (!topic) return;
       setTopicOpError(null);
+      // F4：本地未加载（后被深链）时经代际合同定位，不再静默 return；失败显式报错
+      let topic = coordinator.getSnapshot().topics.find((item) => item.id === topicId);
+      if (!topic) {
+        try {
+          topic = await coordinator.ensureTopic(topicId);
+        } catch (error) {
+          setTopicOpError(describeOpError(error, "专题定位失败"));
+          return;
+        }
+      }
       try {
         await coordinator.saveTopic(topicId, { title, status: topic.status });
       } catch (error) {
@@ -538,6 +594,8 @@ export function L3StudyNotesPage({ client, onRegisterLeaveBarrier }: L3StudyNote
               nextCursor={topicsSnap.nextCursor}
               loadingMoreTopics={topicsSnap.loadingMoreTopics}
               onLoadMoreTopics={() => void topicsRef.current?.loadMore()}
+              locatingTopicId={topicLocate.status === "locating" ? topicLocate.id : null}
+              locateError={topicLocate.status === "error" ? (topicLocate.error ?? "专题定位失败。") : null}
               create={{
                 pending: topicsSnap.createPending,
                 error: topicsSnap.createError ?? topicOpError,
