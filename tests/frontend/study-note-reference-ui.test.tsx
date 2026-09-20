@@ -13,6 +13,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { StudyNoteEditor } from "@/frontend/components/studyNotes/StudyNoteEditor";
 import type { StudyNoteDto } from "@/domain/l3-study-notes";
 import { parseReferenceIds } from "@/domain/l3-study-notes";
@@ -358,5 +359,61 @@ describe("StudyReferenceCard · 状态与操作", () => {
       fireEvent.click(screen.getByText("预览"));
     });
     expect(screen.getAllByTestId("reference-placeholder")).toHaveLength(1);
+  });
+});
+
+describe("StudyNoteEditor · 409 与引用保留（09A 验收）", () => {
+  it("插入引用后 409：冲突面板出现、本地 marker 保留、复制本地内容含新引用、不自动重试", async () => {
+    const { client, get, save, searchTargets, preview } = makeClient();
+    get.mockResolvedValue({ item: makeDto() });
+    searchTargets.mockResolvedValue({
+      items: [{ id: SOURCE_ID, title: "来源A", createdAt: "2026-09-20T00:00:00.000Z" }],
+      total: 1,
+      nextCursor: null,
+    });
+    preview.mockResolvedValue({
+      target: { kind: "source", sourceId: SOURCE_ID },
+      displaySnapshot: { kind: "source", title: "来源A", excerpt: "摘录A" },
+      liveTitle: "来源A",
+    });
+    save.mockRejectedValueOnce(
+      new BrowserApiError(409, { error: "conflict", code: "CONFLICT", details: { noteId: NOTE_ID, currentVersion: 9 } }),
+    );
+    const clipboardWrite = vi.fn(async (_text: string) => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: clipboardWrite }, configurable: true });
+
+    await renderEditor(client);
+    await openPicker();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-item"));
+    });
+    await waitFor(() => expect(screen.queryByTestId("ref-preview-card")).not.toBeNull());
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("ref-picker-insert"));
+    });
+
+    // 冲突面板出现；本地 marker（含新引用）保留
+    await waitFor(() => expect(screen.getByTestId("conflict-panel")).toBeTruthy(), { timeout: 3000 });
+    const body = bodyValue();
+    const ids = parseReferenceIds(body);
+    expect(ids).toHaveLength(2); // 原 1 + 新 1 均未丢
+    expect(screen.getByText(/引用 2 条/)).toBeTruthy();
+
+    // 复制本地内容：含新引用的引用清单
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制本地内容" }));
+    });
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledTimes(1));
+    const copied = clipboardWrite.mock.calls[0]![0] as string;
+    expect(copied).toContain("引用清单（2 条）");
+    const newRefId = ids.find((id) => id !== REF_ID)!;
+    expect(copied).toContain(`[[ref:${newRefId}]]`);
+    expect(copied).toContain(`[[ref:${REF_ID}]]`);
+
+    // 冲突态不自动重试：等待超过自动重试窗口，save 仍只调用过一次
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+    });
+    expect(save).toHaveBeenCalledTimes(1);
   });
 });
