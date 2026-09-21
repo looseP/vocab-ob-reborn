@@ -42,6 +42,26 @@ function itemLabel(item: StudyTargetItem): string {
   return "title" in item ? item.title : item.stem;
 }
 
+/**
+ * 目标**身份串**：用于判断「是否同一个目标」，避免宿主每次渲染新建的对象字面量
+ * 触发重复预览请求。覆盖 N1 全部五种引用种类。
+ */
+function targetIdentityKey(target: ReferenceTarget | null): string | null {
+  if (!target) return null;
+  switch (target.kind) {
+    case "source":
+      return `source:${target.sourceId}`;
+    case "question":
+      return `question:${target.questionId}`;
+    case "source_quote":
+      return `source_quote:${target.sourceId}:${target.start}:${target.end}`;
+    case "stem_quote":
+      return `stem_quote:${target.questionId}:${target.start}:${target.end}`;
+    case "option_quote":
+      return `option_quote:${target.questionId}:${target.optionKey}:${target.start}:${target.end}`;
+  }
+}
+
 function previewSummary(preview: ReferenceTargetPreview): string {
   const snapshot = preview.displaySnapshot;
   switch (snapshot.kind) {
@@ -136,11 +156,7 @@ export function StudyReferencePicker({ client, onInsert, onClose, initialTarget 
    * 依赖用**身份串**而非对象引用：宿主每次渲染新建的对象字面量不应触发重复请求；
    * 同一身份只预览一次，身份变化（换题/换素材）才重新取。
    */
-  const presetKey = initialTarget
-    ? initialTarget.kind === "source"
-      ? `source:${initialTarget.sourceId}`
-      : `question:${initialTarget.questionId}`
-    : null;
+  const presetKey = targetIdentityKey(initialTarget);
   const presetSeqRef = useRef(0);
 
   useEffect(() => {

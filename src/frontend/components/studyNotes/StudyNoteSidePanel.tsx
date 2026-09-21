@@ -81,13 +81,17 @@ export function toNoteLeaveBarrier(
   barrier: StudyNoteLeaveBarrier,
   readNavigationError: () => string | null,
 ): NoteLeaveBarrier {
-  return async () => {
+  return async (action) => {
     let navigated = false;
     await barrier(() => {
       navigated = true;
     });
-    if (navigated) return { ok: true };
-    return { ok: false, reason: readNavigationError() ?? "笔记保存未完成，暂不能离开。" };
+    if (!navigated) {
+      return { ok: false, reason: readNavigationError() ?? "笔记保存未完成，暂不能离开。" };
+    }
+    // 笔记侧已确认：执行调用方给的 action（合成器传 no-op；真实导航由合成器统一执行）。
+    await action();
+    return { ok: true };
   };
 }
 
@@ -221,7 +225,7 @@ export function StudyNoteSidePanel({
         await action();
         return { ok: true };
       }
-      return toNoteLeaveBarrier(barrier, () => navigationErrorRef.current)();
+      return toNoteLeaveBarrier(barrier, () => navigationErrorRef.current)(action);
     };
     onRegisterNoteBarrier(forwarder);
     return () => onRegisterNoteBarrier(null);

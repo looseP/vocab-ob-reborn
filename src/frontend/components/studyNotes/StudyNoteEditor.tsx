@@ -13,7 +13,7 @@
  *  - marker 集合被手动破坏时由保存预检阻止 PUT 并给出恢复指引（invalid 面板）。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReferencePreview } from "@/domain/l3-study-notes";
+import type { ReferencePreview, ReferenceTarget } from "@/domain/l3-study-notes";
 import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { Button } from "@/frontend/components/ui/Button";
