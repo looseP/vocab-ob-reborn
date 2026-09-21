@@ -74,8 +74,12 @@ function createUuid(): string {
  * 把编辑器注册的「吞错型」屏障（`requestNavigation` 只把失败写进 `navigationError`）
  * 适配为 `NoteLeaveBarrier` 的**显式结果**形态：合成器据此判定成败并归因。
  *
- * 判定方式：不依赖 try/catch（该函数从不 reject），而是比较**执行前后**的
- * `navigationError` 是否被刷新为非 null——成功路径不设置错误，失败路径必然设置。
+ * 成败判定：不依赖 try/catch（该函数从不 reject），而是看传给屏障的 action 是否被真正执行
+ * （失败路径绝不执行 action → 我们传入的探针保持未触发）。
+ *
+ * 原因来源：优先读屏障上挂的 `getNavigationError()`（**ref 同步镜像**，当次即可读）；
+ * 缺失时回落到宿主上报的最近原因，最后才是通用文案。不能只读 React 状态——状态传播
+ * 晚于 `await` 结算，会把 IME/冲突等具体原因误报成通用文案。
  */
 export function toNoteLeaveBarrier(
   barrier: StudyNoteLeaveBarrier,
@@ -87,7 +91,10 @@ export function toNoteLeaveBarrier(
       navigated = true;
     });
     if (!navigated) {
-      return { ok: false, reason: readNavigationError() ?? "笔记保存未完成，暂不能离开。" };
+      const sync = (barrier as StudyNoteLeaveBarrier & { getNavigationError?: () => string | null })
+        .getNavigationError;
+      const reason = (sync ? sync() : null) ?? readNavigationError() ?? "笔记保存未完成，暂不能离开。";
+      return { ok: false, reason };
     }
     // 笔记侧已确认：执行调用方给的 action（合成器传 no-op；真实导航由合成器统一执行）。
     await action();
@@ -122,10 +129,14 @@ export function StudyNoteSidePanel({
 
   /** 编辑器注册的原始屏障（用于「关闭/切换前先确认」）。 */
   const editorBarrierRef = useRef<StudyNoteLeaveBarrier | null>(null);
-  /** 编辑器最近一次导航错误（适配层据此判定成败）。 */
+  /** 编辑器最近一次导航错误（适配层据此判定成败并给出**真实**原因）。 */
   const navigationErrorRef = useRef<string | null>(null);
+  const handleNavigationBlocked = useCallback((reason: string | null) => {
+    navigationErrorRef.current = reason;
+  }, []);
   const handleRegisterEditorBarrier = useCallback((barrier: StudyNoteLeaveBarrier | null) => {
     editorBarrierRef.current = barrier;
+    if (!barrier) navigationErrorRef.current = null; // 卸载即清：旧原因不得用于新身份
   }, []);
 
   // ── 列表模型（Task 08 原样复用；浏览/搜索/分页零创建）──────────────────────
@@ -249,6 +260,7 @@ export function StudyNoteSidePanel({
               client={resolvedClient}
               onRegisterLeaveBarrier={handleRegisterEditorBarrier}
               presetReferenceTarget={presetReference?.target ?? null}
+              onNavigationBlocked={handleNavigationBlocked}
             />
           </div>
         </div>
@@ -331,6 +343,7 @@ export function StudyNoteSidePanel({
     handleSelect,
     handleCreate,
     handleRegisterEditorBarrier,
+    handleNavigationBlocked,
     closing,
     presetReference,
   ]);
