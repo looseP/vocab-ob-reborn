@@ -105,6 +105,11 @@ export function StudyNoteSidePanel({
   clientRef.current = resolvedClient;
 
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(initialNoteId);
+  /**
+   * 题型筛选（默认取卷面当前题型；用户可在侧栏内改）。
+   * 整卷混合题型时允许选择筛选/创建题型——但**不**擅自给现有笔记新增归属。
+   */
+  const [filterVenue, setFilterVenue] = useState<L3QuestionType | null>(venue);
   const [snapshot, setSnapshot] = useState<StudyNoteListSnapshot | null>(null);
   const [createPending, setCreatePending] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -141,8 +146,8 @@ export function StudyNoteSidePanel({
 
   useEffect(() => {
     // 题型筛选：只影响列表查询，**不**写回任何笔记归属。
-    list.setVenue(venue ?? null);
-  }, [list, venue]);
+    list.setVenue(filterVenue);
+  }, [list, filterVenue]);
 
   // ── 关闭/切换前先确认当前笔记（干净零写；脏则保存成功后才放行）─────────────
   const [closing, setClosing] = useState(false);
@@ -169,7 +174,7 @@ export function StudyNoteSidePanel({
   }, [closing, confirmCurrent, onRequestClose]);
 
   const handleSelect = useCallback(
-    async (noteId: string): Promise<void> => {
+    async (noteId: string | null): Promise<void> => {
       if (noteId === selectedNoteId) return;
       const ok = await confirmCurrent();
       if (!ok) return; // 切笔记同样先确认；失败不换身份（不丢本地输入）
@@ -182,7 +187,8 @@ export function StudyNoteSidePanel({
   // ── 显式创建（唯一 POST；requestId 重试间稳定；双击守卫）───────────────────
   const handleCreate = useCallback(async (): Promise<void> => {
     if (createPendingRef.current) return;
-    const targetVenue = venue ?? L3_QUESTION_TYPES[0];
+    // 创建用**用户当前选择的筛选题型**（整卷混合题型时不得擅自决定归属）。
+    const targetVenue = filterVenue ?? venue ?? L3_QUESTION_TYPES[0];
     if (!targetVenue) return;
     createPendingRef.current = true;
     setCreatePending(true);
@@ -204,7 +210,7 @@ export function StudyNoteSidePanel({
       createPendingRef.current = false;
       setCreatePending(false);
     }
-  }, [venue, confirmCurrent, onNoteSelected, list]);
+  }, [filterVenue, venue, confirmCurrent, onNoteSelected, list]);
 
   // ── 屏障上报：把「显式结果」形态交给卷面宿主合成 ─────────────────────────────
   useEffect(() => {
@@ -229,7 +235,7 @@ export function StudyNoteSidePanel({
       return (
         <div className="flex min-h-0 flex-1 flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
-            <Button size="sm" variant="ghost" onClick={() => void handleSelect("")} disabled={closing}>
+            <Button size="sm" variant="ghost" onClick={() => void handleSelect(null)} disabled={closing} data-testid="study-note-panel-back">
               返回列表
             </Button>
           </div>
@@ -250,17 +256,23 @@ export function StudyNoteSidePanel({
           <label className="sr-only" htmlFor="study-note-panel-venue">
             按题型筛选
           </label>
+          {/*
+            题型筛选：只改**列表查询**（model.setVenue），不写回任何笔记归属——
+            不给现有笔记新增或移除归属，也不因此创建笔记。
+          */}
           <select
             id="study-note-panel-venue"
             data-testid="study-note-panel-venue"
-            className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs text-[var(--color-ink)]"
-            value={venue ?? ""}
-            onChange={() => {
-              // 筛选只读列表；不修改任何笔记归属（本批不给现有笔记新增归属）。
-            }}
-            disabled
+            className="min-w-0 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs text-[var(--color-ink)]"
+            value={filterVenue ?? ""}
+            onChange={(event) => setFilterVenue((event.target.value || null) as L3QuestionType | null)}
           >
-            <option value={venue ?? ""}>{venue ? L3_QUESTION_TYPE_LABELS[venue] : "全部题型"}</option>
+            <option value="">全部题型</option>
+            {L3_QUESTION_TYPES.map((option) => (
+              <option key={option} value={option}>
+                {L3_QUESTION_TYPE_LABELS[option]}
+              </option>
+            ))}
           </select>
           <Button size="sm" onClick={() => void handleCreate()} disabled={createPending} data-testid="study-note-panel-create">
             {createPending ? "创建中…" : "新建笔记"}
@@ -305,7 +317,7 @@ export function StudyNoteSidePanel({
   }, [
     selectedNoteId,
     resolvedClient,
-    venue,
+    filterVenue,
     createPending,
     createError,
     showEmpty,
