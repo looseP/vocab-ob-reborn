@@ -168,3 +168,19 @@ app 角色可见 49 表）。服务端口 3098，`NODE_ENV=test SERVE_FRONTEND=t
 | `test:integration` | `permission denied for function word_similarity` | `TEST_DATABASE_URL` 用了 `vocab_migration`（无该函数 EXECUTE；授权只给 `vocab_app`） | 改用文档指定的 admin/角色组合后 139/141 |
 | `test:integration`（余 2 例） | `expected 0 to be greater than 0` / `expected 3 to be 1` | repair 用例自带**库身份守卫**；l2-drill 计数敏感于共享库状态 | repair 用其指定库 **15/15**；l2-drill 在**基线 SHA 同样失败**（`5 to be 1`）→ 判定既有问题 |
 | `test:db-roles` / `test:capacity` | 缺 `DATABASE_ADMIN_URL` / 库名守卫拒绝 | 需显式环境变量与合规库名 | 补齐后均 **exit 0** |
+
+---
+
+## 5. 推送阻塞（如实登记，2026-09-21）
+
+本轮全部验收与门禁完成后，**普通推送失败**：本机 Git 配置的代理
+`http://127.0.0.1:17891` 已停止监听（`netstat` 无该端口；`--noproxy '*'` 直连亦不可达），
+`git push` 报 `Failed to connect to github.com port 443 via 127.0.0.1`。
+
+- 已连续重试 5 次（间隔数秒），均同一错误 → 判定为**环境性网络阻塞**，非仓库问题。
+- 影响：远端 `origin/study-notes-n1-task09b` 仍停在 `98810690`；
+  本批 5 个提交（`652c69d`→`d48e930`）**已全部本地提交、工作区 clean、fsck 无错误**，
+  未丢失。
+- 恢复网络后需执行：`git push origin study-notes-n1-task09b`（普通推送，不强推），
+  随后更新 PR #131 描述。
+- **未执行**：推送、PR #131 描述更新、远端/PR head 一致性核对（因网络阻塞）。
