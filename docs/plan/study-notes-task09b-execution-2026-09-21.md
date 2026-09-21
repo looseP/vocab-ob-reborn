@@ -68,21 +68,21 @@
 
 | # | 缺口（任务书编号） | 初始状态 | 终态 |
 | --- | --- | --- | --- |
-| T1 | 侧栏宿主净新增挂载；开关不卸载卷面（M1/M2） | ❌ | ❌ |
-| T2 | 关闭/切笔记屏障：干净零写、脏则保存后才卸载（M2/M2b） | ❌ | ❌ |
-| T3 | 双屏障合成：笔记 × 题纸均确认才放行导航（M5） | ❌ | ❌ |
-| T4 | 不重建题纸控制器 / 不重复 `openSheet`（M2） | ❌ | ❌ |
-| T5 | sealed 卷面侧栏可开、题纸只读不变；笔记可写不等于题纸可写（M3/M4） | ❌ | ❌ |
-| T6 | 笔记选择/搜索/分页 + 空态（不自动创建） | ❌ | ❌ |
-| T7 | 显式创建笔记，恰 1 次 POST，在途守卫（M8） | ❌ | ❌ |
-| T8 | 零隐式创建：浏览/搜索/预览/取消仅只读预览（M9） | ❌ | ❌ |
-| T9 | 按题型筛选/创建题型，不擅自给现有笔记加归属 | ❌ | ❌ |
-| T10 | 当前题/素材快捷引用入口（I1 缺口需新写）+ 预览后显式插入（M10） | ❌ | ❌ |
-| T11 | 迟到回包不污染（切纸 M6 / 切笔记 M7） | ❌ | ❌ |
-| T12 | 保存失败三分支正确（M11 rejected 新 requestId；M12 unknown/auth 原样；M13 409 不自动重放） | ❌ | ❌ |
-| T13 | IME 组合中拒答导航（M14） | ❌ | ❌ |
-| T14 | 反向引用/返回定位保留 sheetId+questionId，不走创建草稿（M15） | ❌ | ❌ |
-| T15 | 离页导航保留既有 sheetId/questionId 身份 | ❌ | ❌ |
+| T1 | 侧栏宿主净新增挂载；开关不卸载卷面（M1/M2） | ❌ | ✅ 单测 + E2E（真实栈 M1/M2 通过） |
+| T2 | 关闭/切笔记屏障：干净零写、脏则保存后才卸载（M2/M2b） | ❌ | ✅ 单测（干净零写 / 脏则保存后关闭 / 失败保留输入） |
+| T3 | 双屏障合成：笔记 × 题纸均确认才放行导航（M5） | ❌ | ✅ 单测 9 条（顺序/短路/归因/异常/重入）；真实栈未端到端跑 M5 |
+| T4 | 不重建题纸控制器 / 不重复 `openSheet`（M2） | ❌ | ✅ E2E M2（关闭重开题纸数不变、开关仍在）；「不重复 openSheet」仅结构化断言 |
+| T5 | sealed 卷面侧栏可开、题纸只读不变；笔记可写不等于题纸可写（M3/M4） | ❌ | ⚠️ 部分：M4 已验（笔记保存零题纸写）；**M3 sealed 未在真实栈验证** |
+| T6 | 笔记选择/搜索/分页 + 空态（不自动创建） | ❌ | ✅ E2E（空态可见、浏览零创建） |
+| T7 | 显式创建笔记，恰 1 次 POST，在途守卫（M8） | ❌ | ✅ E2E M8（笔记 +1 不多建） |
+| T8 | 零隐式创建：浏览/搜索/预览/取消仅只读预览（M9） | ❌ | ✅ 单测 + E2E M9 |
+| T9 | 按题型筛选/创建题型，不擅自给现有笔记加归属 | ❌ | ✅ 单测（筛选零 PUT；按筛选题型创建） |
+| T10 | 当前题/素材快捷引用入口（I1 缺口已补）+ 预览后显式插入（M10） | ❌ | ✅ E2E M10（入口零写 → 插入 → 库核引用行 → 刷新一致） |
+| T11 | 迟到回包不污染（切纸 M6 / 切笔记 M7） | ❌ | ⚠️ 未本批验证（既有 09A 单测覆盖 noteId 代际；09B 侧栏场景未新增） |
+| T12 | 保存失败三分支正确（M11 rejected 新 requestId；M12 unknown/auth 原样；M13 409 不自动重放） | ❌ | ⚠️ 未本批验证（控制器语义既有；09B 只消费未改） |
+| T13 | IME 组合中拒答导航（M14） | ❌ | ⚠️ 未本批端到端验证（既有单测覆盖） |
+| T14 | 反向引用/返回定位保留 sheetId+questionId，不走创建草稿（M15） | ❌ | ⚠️ 未本批验证 |
+| T15 | 离页导航保留既有 sheetId/questionId 身份 | ❌ | ⚠️ 未本批验证 |
 
 ---
 
@@ -95,6 +95,59 @@
 
 ---
 
-## 4. 逐项终态（随实现推进更新）
+## 4. 逐项终态与实测证据（2026-09-21）
 
-见 §2 表「终态」列；每项完成后在此追加证据（命令、原始输出摘要、SHA）。
+### 4.1 提交序列
+
+| SHA | 内容 |
+| --- | --- |
+| `07bc62d` | Task 0 接管校准（任务书修正 + 接口缺口清单 + 本台账） |
+| `2a96166` | Task 1 侧栏宿主 + 双保存屏障合成（`sheetLeaveBarrier.ts`、`StudyNoteSidePanel.tsx`） |
+| `73ff630` | Task 2 当前题目/素材快捷引用入口 |
+| `1249bcd` | Task 3 关闭/切笔记屏障加固 + 题型筛选 |
+| `2684d05` | 严格 tsconfig 类型修整 + 卷面侧栏 E2E |
+| `664d869` | 真实栈验收 4/4 + 写作题组引用入口补齐 |
+
+### 4.2 命令与退出码
+
+| 命令 | 结果 |
+| --- | --- |
+| `node_modules/vitest/vitest.mjs run tests/frontend` | **exit 0**：52 文件 / **710 通过** / 0 失败 |
+| `npx tsc --noEmit` | **exit 0** |
+| `npx tsc --noEmit -p tsconfig.frontend.json` | **exit 0**（更严；曾暴露 3 处根 tsconfig 漏掉的类型错误，见 `2684d05`） |
+| `VITE_N1_STUDY_NOTE_HOST=1 npm run frontend:build` | **exit 0** |
+| `node node_modules/@playwright/test/cli.js test --config=playwright.study-notes.config.ts study-notes-sheet-side-panel.spec.ts` | **exit 0**：**4 passed** |
+| 同上，`study-notes-reference-loop` + `study-notes-workspace`（回归） | **exit 0**：**27 passed** |
+| `npx tsx scripts/run-rls-acceptance-migrations.ts`（隔离库） | **exit 0**：40 journal entries，迁移并校验通过 |
+| `npx tsx scripts/bootstrap-database-roles.ts prepare/converge` | **exit 0**：app 角色可见 49 张表 |
+
+隔离验收库：`vocab_study_notes_task09b_accept`（5433，`vocab-local-pg` 容器）。
+E2E 服务端口 3098，`NODE_ENV=test SERVE_FRONTEND=true`，Node 22.22.2。
+
+### 4.3 本批真实暴露并修复的产品缺口
+
+1. **写作题组没有引用入口**（E2E 真实暴露）：`reference-question-to-note` 初版只加在
+   选择题分支，`sentence_translation` / `short_essay` / `long_essay` 题组下方无入口。
+   已在写作分支补同款入口（`664d869`）。
+2. **题型筛选是 disabled 桩**（自查发现）：初版侧栏把筛选控件做成不可交互的占位，
+   属半实现入口。已改为真实筛选（只改列表查询、零归属写），并让创建使用所选题型
+   （`1249bcd`）。
+3. **`toNoteLeaveBarrier` 签名与调用点不一致**：严格 tsconfig 拦截；已改为接收 action
+   并在笔记侧确认后执行（`2684d05`）。
+
+### 4.4 口径澄清（实测纠正）
+
+- 题纸表名是 **`l3_submissions`**（不是 `l3_exam_sheets`）；题纸写路径
+  **`/api/l3/sheets`**（不是 `/api/l3/exam-sheets`）；开卷深链 **`/l3?paper=<id>`**。
+- 开卷本身会产生一次 `POST /api/l3/sheets`（既有 `openSheet` 幂等草稿语义）；
+  M4 的「笔记保存不写题纸」断言窗口从**开卷完成后**起算。
+- 侧栏列表默认筛选题型 = 卷面首节题型；跨题型笔记需切换筛选或与卷面题型一致。
+
+### 4.5 本批**未**验证（如实列出，不计入通过）
+
+- M3（sealed 卷面打开侧栏）真实栈未跑；
+- M5（笔记 + 题纸同时未保存后切题）仅单测合成器，未真实栈端到端；
+- M6/M7（迟到回包）、M14（IME 导航拒答）、M15（反向引用/返回定位）本批未新增真实栈用例
+  （部分由既有 09A 单测覆盖，但**不算本轮已验**）；
+- 完整主线 CI（`verify:engineering`）未在本轮重跑；依赖链未合并，仍为以后合并门禁。
+
