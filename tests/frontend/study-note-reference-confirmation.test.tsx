@@ -207,6 +207,26 @@ async function releaseAndSettle(release: (call: number) => void, target: number)
   });
 }
 
+/**
+ * **忠实**放行被挂起的响应：`release` 在 `act()` **之外**调用。
+ *
+ * 为什么不能用 `releaseAndSettle`：React 18 的 `act()` 会延迟提交，`act()` **返回前**
+ * 该 act 作用域内产生的 state 更新**尚未提交**（`editor.referencesMeta` 仍是进入 act 前
+ * 的那一帧）。因此在 `act()` 内放行后立刻断言，读到的可能还是「移除之后、确认之前」的
+ * 旧值 `[]`——即使迟到回包已经把 A 复活。这会让断言在「A 确实被复活」的实现上也变绿，
+ * 失去判别力。
+ *
+ * 这里：先 drain 让保存管道把在途请求发完（PUT 2 也会在此发起），`act()` 退出即完成提交，
+ * 于是下一步读到的 `editor.referencesMeta` 就是迟到的、仍含 A 的确认**真实提交后**的状态。
+ * 不额外等待超过 drain 所需，确保断言时点紧贴「放行仍含 A 的迟到载荷」之后。
+ */
+async function releaseFaithfully(release: (call: number) => void, target: number): Promise<void> {
+  release(target);
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+}
+
 it("确认后仅改标题：新引用第二次 PUT 必须 keep（不再重采集）", async () => {
   await boot();
   await insert();
@@ -399,18 +419,34 @@ it("迟到的确认不得复活在途移除的引用元数据", async () => {
   });
   expect(editor.snapshot!.edit.references).toEqual([]);
   expect(editor.referencesMeta).toEqual([]);
+  // 移除推进 editSeq 但不推进 savedSeq：空引用内容仍是未保存的
+  expect(editor.snapshot!.editSeq).toBeGreaterThan(editor.snapshot!.savedSeq);
 
-  // 空引用的编辑已脏，先把 flush 挂起（第二次 PUT 需要的确认），再放行 A 的迟到响应——
-  // 制造「A 的确认落在移除之后」的真实交错。
-  const emptyFlush = editor.snapshot!.editSeq > editor.snapshot!.savedSeq ? flush() : Promise.resolve();
-  await releaseAndSettle(release, 1);
+  // 先挂起 flush（= 空引用内容需要在放行 A 之前送到服务端），再放行 A 的迟到响应——
+  // 制造「A 的确认落在移除之后、而空引用内容尚未提交」的真实交错。
+  // 关键：这个 flush 确保 `savedSeq` 不会在 A 的回包被处理之前就跳过当前 editSeq
+  // （即 `applyConfirmedReferences` 里 `liveIds` 是从「已移除 A」的编辑集合算出来的）。
+  const emptyFlush = flush();
+  // 放行**不是**经过 requestNavigation：在途阶段用忠实放行（act 之外），
+  // 让迟到回包的提交在断言前真正落地（见 releaseFaithfully 注释）。
+  await releaseFaithfully(release, 1);
   await emptyFlush;
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2), { timeout: 3000 });
+  // PUT 1 的冻结载荷**仍含 A**（这正是迟到回包）；PUT 2 的载荷已经是空引用。
+  // 放行的是 PUT 1 这枚「仍含 A」的回包：它正是旧实现把 A 复活的那条路径
+  // （窄修只清「空引用响应」，对仍含 A 的迟到回包无效）——本用例断言 A 不得以任何形式回来。
+  expect(save.mock.calls[0]![1].references.map((w: any) => w.id)).toEqual([idA]);
+  expect(save.mock.calls[1]![1].references).toEqual([]);
+  expect(save.mock.calls.length).toBe(2);
 
   // 四条硬断言：两份状态都必须是空，且 A 不得以任何形式回到元数据
   expect(save).toHaveBeenCalledTimes(2);
   expect(save.mock.calls[1]![1].references).toEqual([]);
   expect(editor.snapshot!.edit.references).toEqual([]);
   expect(editor.referencesMeta).toEqual([]);
+  // 收尾阶段（PUT 2 的空回包落地后）A 也不得回来
+  await flush();
+  expect(editor.referencesMeta).toEqual([]);
   await settleAutosave();
+  expect(editor.referencesMeta).toEqual([]);
 });
