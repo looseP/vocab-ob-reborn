@@ -3,6 +3,11 @@ import { buildPassageSpans, enclosingSentence, groupSpansIntoParagraphs, type Pa
 import type { ExamPaper as ExamPaperType, ExamQuestion, ExamSection } from "./examTypes";
 import { L3QuestionAnalysis } from "./L3QuestionAnalysis";
 import { L3SourceNotesDrawer } from "./L3SourceNotesDrawer";
+import { StudyNoteSidePanel } from "@/frontend/components/studyNotes/StudyNoteSidePanel";
+import {
+  composeSheetLeaveBarrier,
+  type NoteLeaveBarrier,
+} from "@/frontend/state/sheetLeaveBarrier";
 import { apiFetch } from "@/frontend/api/client";
 import {
   createExamSheetSaveController,
@@ -1073,6 +1078,15 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
   const [exportOpen, setExportOpen] = useState(false);
   const [exportWithAnswers, setExportWithAnswers] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  // ── Task 09B：卷面内学习笔记侧栏（纯 UI 状态，不参与任何保存；不卸载题纸）──
+  const [notesPanelOpen, setNotesPanelOpen] = useState(false);
+  /** 侧栏笔记屏障（由侧栏注册；卷面用于与题纸屏障合成）。 */
+  const noteBarrierRef = useRef<NoteLeaveBarrier | null>(null);
+  const handleRegisterNoteBarrier = useCallback((barrier: NoteLeaveBarrier | null) => {
+    noteBarrierRef.current = barrier;
+  }, []);
+  /** 关闭后重开可重新读取最后选择的笔记（本批不落 URL，仅内存记忆）。 */
+  const [lastNoteId, setLastNoteId] = useState<string | null>(null);
   // ── 批次二：作答历史（徽标/modal/派生渲染）──
   const [attempts, setAttempts] = useState<L3Attempt[]>([]);
   const [historyQuestionId, setHistoryQuestionId] = useState<string | null>(null);
@@ -1449,6 +1463,36 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
       return false;
     }
   }, [flushAnswers, addToast]);
+
+  /**
+   * Task 09B：离开卷面的**双屏障合成**——侧栏笔记（附带面）与题纸作答（主面）都确认
+   * 才执行真实导航。侧栏未打开时 `noteBarrierRef` 为 null，退化为既有纯题纸语义。
+   * 失败按来源给出可归因提示（笔记冲突 ≠ 题纸未保存，恢复路径不同）。
+   */
+  const leavePaperBarrier = useMemo(
+    () =>
+      composeSheetLeaveBarrier({
+        sheetBarrier: jumpBarrier,
+        // 读取时取 ref：屏障注册晚于本 memo 创建，不能在依赖里固化 null。
+        noteBarrier: (action) => {
+          const barrier = noteBarrierRef.current;
+          if (!barrier) {
+            return Promise.resolve({ ok: true as const });
+          }
+          return barrier(action);
+        },
+      }),
+    [jumpBarrier],
+  );
+
+  /** 经双屏障离开卷面（onBack 等卷面级导航的唯一入口）。 */
+  const guardedBack = useCallback(() => {
+    void leavePaperBarrier(onBack).then((result) => {
+      if (!result.ok && result.failedBy === "note") {
+        addToast("error", result.reason ?? "笔记尚未保存成功，暂不能离开本页。");
+      }
+    });
+  }, [leavePaperBarrier, onBack, addToast]);
 
   /**
    * v2 草稿答案状态机：完整对象浅 merge → prune（空键清理）→ 整题入队 pending
@@ -1901,7 +1945,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={onBack} className="text-xs text-[var(--color-accent)]">{fileVenue ? "← 返回题型空间" : "← 返回试卷列表"}</button>
+        <button type="button" onClick={guardedBack} className="text-xs text-[var(--color-accent)]">{fileVenue ? "← 返回题型空间" : "← 返回试卷列表"}</button>
       </div>
 
       {sheet && (
@@ -1909,6 +1953,15 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
           <span className="font-semibold">题纸</span>
           <span className="text-[var(--color-ink-soft)]">{fileVenue ? "文件" : "整卷"} · {paper.title}</span>
           <span className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setNotesPanelOpen((open) => !open)}
+              aria-expanded={notesPanelOpen}
+              data-testid="sheet-study-notes-toggle"
+              className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 font-medium text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            >
+              学习笔记
+            </button>
             <button
               type="button"
               onClick={openExportModal}
@@ -2040,6 +2093,10 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
         </div>
       </header>
 
+      {/* Task 09B：宽屏侧栏与卷面并列；窄屏覆盖展示。不通过路由切页，也不替换卷面节点——
+          题纸节点与保存控制器始终挂载（侧栏开关只增删旁路 <aside>）。 */}
+      <div className="flex flex-col gap-4 lg:flex-row">
+      <div className="min-w-0 flex-1 space-y-4">
       {/* 节导航 */}
       <nav className="sticky top-0 z-20 -mx-1 flex gap-1.5 overflow-x-auto rounded-xl bg-[var(--color-surface)] px-1 py-2 shadow-sm ring-1 ring-[var(--color-border)]" aria-label="卷面章节">
         {paper.sections.map((section, i) => {
@@ -2221,6 +2278,23 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
             </section>
           );
         })}
+      </div>
+      </div>
+
+      {/* 侧栏：独立的 <aside>，挂载/卸载不影响左侧卷面节点与题纸控制器。 */}
+      {notesPanelOpen && (
+        <aside className="w-full shrink-0 lg:w-96 lg:max-w-[40%]">
+          <div className="lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)]">
+            <StudyNoteSidePanel
+              venue={fileVenue ? null : (paper.sections[0]?.questionType ?? null)}
+              onRequestClose={() => setNotesPanelOpen(false)}
+              onRegisterNoteBarrier={handleRegisterNoteBarrier}
+              initialNoteId={lastNoteId}
+              onNoteSelected={setLastNoteId}
+            />
+          </div>
+        </aside>
+      )}
       </div>
 
       {sheet && sheet.status === "draft" && (
