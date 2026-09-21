@@ -118,9 +118,12 @@ export function StudyNoteSidePanel({
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(initialNoteId);
   /**
    * 题型筛选（默认取卷面当前题型；用户可在侧栏内改）。
-   * 整卷混合题型时允许选择筛选/创建题型——但**不**擅自给现有笔记新增归属。
+   *
+   * 兜底：列表查询契约要求 `venue` 必填（`l3StudyNoteListQuerySchema`），若上游给 null
+   * 会导致模型 `buildQuery` 返回 null → **永不取数**（空白面板，连空态都不出现）。
+   * 这里回落到首个题型，保证侧栏始终能取到列表与空态；不改后端合同、不擅自给笔记加归属。
    */
-  const [filterVenue, setFilterVenue] = useState<L3QuestionType | null>(venue);
+  const [filterVenue, setFilterVenue] = useState<L3QuestionType | null>(venue ?? L3_QUESTION_TYPES[0] ?? null);
   const [snapshot, setSnapshot] = useState<StudyNoteListSnapshot | null>(null);
   const [createPending, setCreatePending] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);

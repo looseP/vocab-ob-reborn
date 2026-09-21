@@ -2335,7 +2335,10 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
         <aside className="w-full shrink-0 lg:w-96 lg:max-w-[40%]">
           <div className="lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)]">
             <StudyNoteSidePanel
-              venue={fileVenue ? null : (paper.sections[0]?.questionType ?? null)}
+              /* 题型筛选默认值：**必须有具体题型**——列表查询契约要求 venue 必填
+                 （`l3StudyNoteListQuerySchema`），传 null 会导致侧栏永不取数（空白面板、
+                 连空态都不出现）。文件题型空间用该文件自身题型；整卷用首节题型。 */
+              venue={fileVenue ? fileVenue.questionType : (paper.sections[0]?.questionType ?? null)}
               onRequestClose={() => setNotesPanelOpen(false)}
               onRegisterNoteBarrier={handleRegisterNoteBarrier}
               initialNoteId={lastNoteId}
