@@ -70,7 +70,7 @@
 | H | 回归：09B 侧栏 E2E | ❌ 未执行 | ✅ 6/6 |
 | I | `npm run verify:engineering`（BASE_REF=8f48761…） | ❌ 未执行 | ✅ exit 0（20 阶段） |
 | J | `npm run test:e2e`（默认 Playwright） | ❌ 未执行 | ✅ exit 0（14 passed / 7 skipped） |
-| K | `npm run verify:db` | ❌ 未执行 | ⚠️ 聚合入口非 0（环境/分工原因）；四个子门禁分别实测见 §4.4 |
+| K | `npm run verify:db` | ❌ 未执行 | ✅ **已闭合（整改轮）**：同构隔离库 + `STUDY_NOTES_REPAIR_DB` 规范配置下**聚合自然 exit 0**；见 §7.2 |
 
 ---
 
@@ -197,6 +197,7 @@ app 角色可见 49 表）。服务端口 3098，`NODE_ENV=test SERVE_FRONTEND=t
 - 最终 head 完整 SHA：**`fda42948718ebaf0b110bbe8bc216f48f9bc204e`**（本地 = 远端 = PR head，三者一致）。
 - 依赖 **#130**（head `8f48761`，draft/OPEN）未改动；#129 未改动；`origin/main` 未动。
 - 待办：完成 PR 审查后，再决定是否合并 09B。
+- **2026-09-21 晚更新（整改轮）**：独立审查已完成——结论=**未发现 P0/P1**；两项 UI 问题（F1/F2）经「先红后绿 + 变异验证」整改并复跑门禁（见 §7）。审查报告（工作区）：`build-analysis/status-2026-09-21/TASK09B-INDEPENDENT-REVIEW.md`。PR 保持 **draft**，继续停在合并前。
 
 ### 6.2 `verify:db` 聚合门禁口径（已定性的精确范围）
 
@@ -229,3 +230,52 @@ app 角色可见 49 表）。服务端口 3098，`NODE_ENV=test SERVE_FRONTEND=t
 2. **保持现状并如实登记**：`verify:db` 聚合入口维持非 0，文档记录「分段通过」。
 
 当前本批采用**口径 2**，并在 §4.4 与 §5 如实标注。
+
+> **2026-09-21 晚更新（整改轮）**：经批准改用测试守卫**自带的规范配置**——全新隔离库 +
+> `STUDY_NOTES_REPAIR_DB=<库名>`（`tests/l3-study-notes-repair.integration.test.ts:47` 的既定
+> 覆盖出路；前提=已用仓库迁移/角色引导建库，正是该库建成方式；**非绕过、非门禁脚本变更**）。
+> `npm run verify:db` **聚合自然 exit 0**（14 文件 / 156 用例；四段全绿）→
+> **「09B 同构环境下 verify:db 全链通过」成立**，口径 2 已被替代（证据见 §7.2）。
+
+---
+
+## 7. 审查整改与门禁复跑（2026-09-21 晚，整改轮）
+
+触发：独立审查 PR #131 发现两项真实 UI 问题；按用户指令整改。**未合并、未部署、未推 main；PR #131 保持 draft；未进入 Task 10。**
+
+### 7.0 两项整改（先红后绿 + 变异验证）
+
+| # | 问题（审查实测） | 修复 | 提交 |
+| --- | --- | --- | --- |
+| F1 | 侧栏「全部题型」空选项 → 选择后**零请求**且显示假空态（列表契约 `venue` 必填；与 D2 同合同的漏网路径） | 移除空选项；onChange 拒绝空值（不构造 null-venue 查询）；同源修正 E2E 注释 | `864c075` |
+| F2 | 侧栏行内「归档/恢复」为**静默空操作**（未接入生命周期却渲染控件） | `StudyNoteList` 归档控件改为**按 handler 存在性渲染**（`onArchiveToggle` 可选）；侧栏不再传 no-op | `68b7240` |
+
+### 7.1 红 / 绿 / 变异证据（日志在 `build-analysis/status-2026-09-21/`）
+
+| 阶段 | 结果 | 日志 |
+| --- | --- | --- |
+| F1 红 | **2 failed**（空选项存在；选择空值零请求） | `task09b-fix-f1-red.log` |
+| F1 绿 / 恢复 | **8 passed** | `task09b-fix-f1-green.log` / `task09b-fix-f1-restore.log` |
+| F1 变异（回插选项） | **2 failed**（复现） | `task09b-fix-f1-mutation.log` |
+| F2 红 | **2 failed**（侧栏渲染 2 个归档按钮；无 handler 仍渲染） | `task09b-fix-f2-red.log` |
+| F2 绿 / 恢复 | **10 passed** | `task09b-fix-f2-green.log` / `task09b-fix-f2-restore.log` |
+| F2 变异（撤销条件渲染） | **2 failed**（`expected … length of +0 but got 2`） | `task09b-fix-f2-mutation.log` |
+
+审查方探针复证（仓库外，同一探针整改前 2 枚全红）：整改后 **2 passed**——
+`P1: rowCountAfter=2 / emptyStateVisible=false`；`P2: archiveButtonsRendered=0`（`task09b-fix-probes-green.log`）。
+
+### 7.2 门禁复跑（整改提交后，Node 22.22.2 / npm 10.9.7）
+
+| 门禁 | 命令/环境 | 结果 |
+| --- | --- | --- |
+| 前端全量 | `vitest run tests/frontend` | **55 files / 728 passed**（724+4），exit 0 |
+| 09B 侧栏 E2E | `playwright.study-notes.config.ts`；库 `vocab_study_notes_task09b_accept2`；3098 预启 | **6 passed（24.0s）**，exit 0 |
+| verify:engineering | 三个 BASE_REF=`8f48761cc0e88c59817ab6e033cb7b8f80a581b6` | **exit 0** — 20 阶段全跑；unit 261 files / **3894 passed** / 6 skipped；coverage:layered ratchet PASS（前端层外 N/A）；collection 262/262 |
+| verify:db（同构） | 全新隔离库 `vocab_task09b_verify_test` + `STUDY_NOTES_REPAIR_DB=<库名>`；五步引导全 exit 0 | **聚合自然 exit 0**（14 文件 / 156 用例；四段全绿）；证据 `D:/tmp/t09b-verify-db.log` |
+| Writing E2E | CI（推送后自动触发） | 结果以 PR #131 checks 为准（本台账不再为此追加提交） |
+
+### 7.3 停点
+
+- PR #131 保持 **draft**；**未合并、未部署、未推 main**；#129/#130 未改动。
+- 仍停在 Task 09B **合并前**；未进入 Task 10。
+- 依赖链合并、最终 PR 接 main 后，按既定顺序触发三项必需 CI。
