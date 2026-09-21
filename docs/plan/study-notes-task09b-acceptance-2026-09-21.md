@@ -184,3 +184,48 @@ app 角色可见 49 表）。服务端口 3098，`NODE_ENV=test SERVE_FRONTEND=t
 - 恢复网络后需执行：`git push origin study-notes-n1-task09b`（普通推送，不强推），
   随后更新 PR #131 描述。
 - **未执行**：推送、PR #131 描述更新、远端/PR head 一致性核对（因网络阻塞）。
+
+---
+
+## 6. 停在合并前 — 待处理两项（不在本批执行）
+
+本批已按指令停在 Task 09B **合并前**：不合并、不部署、不推 main、不进入 Task 10。
+
+### 6.1 PR 审查（下一批前置）
+
+- PR **#131**，draft/OPEN，head=`study-notes-n1-task09b`，base=`task09a-unified`。
+- 最终 head 完整 SHA：**`fda42948718ebaf0b110bbe8bc216f48f9bc204e`**（本地 = 远端 = PR head，三者一致）。
+- 依赖 **#130**（head `8f48761`，draft/OPEN）未改动；#129 未改动；`origin/main` 未动。
+- 待办：完成 PR 审查后，再决定是否合并 09B。
+
+### 6.2 `verify:db` 聚合门禁口径（已定性的精确范围）
+
+**结论：只能记录为「分段门禁通过」，不得宣称整链通过。**
+
+`verify:db` = `test:db-release && test:integration && test:db-roles && test:capacity`。
+
+| 子门禁 | 本轮实测 | 口径 |
+| --- | --- | --- |
+| `test:db-release` | exit 0 | ✅ 通过 |
+| `test:db-roles` | exit 0（全不变量 true） | ✅ 通过（需全角色 URL） |
+| `test:capacity` | exit 0 | ✅ 通过（需 `_capacity` 库名 + `CAPACITY_TEST_CONFIRM`） |
+| `test:integration` | **exit 非 0** | ⚠️ **口径未统一** |
+
+`test:integration` 非 0 的**确定原因**（实测，非推断）：
+
+- 该步骤用**单一固定 env** 运行全部 12 个 `*.integration.test.ts`；
+- 其中 `tests/l3-study-notes-repair.integration.test.ts` **自带库身份守卫**：
+  默认只接受 `vocab_study_notes_repair_accept`，其它库直接抛错（明确设计为
+  「不 skip、不退回个人 DATABASE_URL」）。用统一 env 运行时**必然**在该文件失败；
+- 另有 `tests/l2-drill-fr12.integration.test.ts` 计数敏感（`expected N to be 1`）：
+  已在**基线 SHA `8f48761`** 的临时工作树上复跑，**同样失败**（`5 to be 1`）→
+  判定为既有状态累积问题，与本批无关。
+
+两个可选口径（**需在合并 09B 前决定，本批不擅自实施**）：
+
+1. **按库分工**：`test:integration` 拆分为「通用库用例」+「自带守卫用例（各自指定库）」
+   两组，`verify:db` 依次运行；需改 package.json / CI（属**门禁脚本变更**，
+   本批约束明确禁止「修改门禁脚本」，故未做）。
+2. **保持现状并如实登记**：`verify:db` 聚合入口维持非 0，文档记录「分段通过」。
+
+当前本批采用**口径 2**，并在 §4.4 与 §5 如实标注。
