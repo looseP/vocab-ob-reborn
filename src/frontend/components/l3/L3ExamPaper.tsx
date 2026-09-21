@@ -2180,6 +2180,18 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
                         data-focused={focused ? "true" : undefined}
                         className={`space-y-3 rounded-xl ${focused ? "ring-1 ring-[var(--color-accent)]" : ""}`}
                       >
+                        {/* Task 09B：本题引用入口（写作题组同样提供；传真实 questionId）。 */}
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => requestReferenceToNote({ kind: "question", questionId: q.id })}
+                            data-testid="reference-question-to-note"
+                            data-question-id={q.id}
+                            className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[11px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                          >
+                            引用本题到笔记
+                          </button>
+                        </div>
                         <WrittenQuestion
                           question={q}
                           kind={section.questionType === "sentence_translation" ? "translation" : "essay"}

@@ -116,7 +116,7 @@ async function pageApiCall(
   );
 }
 
-async function apiSeedNote(page: Page, title: string, venue = "cloze"): Promise<string> {
+async function apiSeedNote(page: Page, title: string, venue = "sentence_translation"): Promise<string> {
   const created = await pageApiCall(page, "/api/l3/study-notes", {
     method: "POST",
     body: { requestId: randomUUID(), venue },
@@ -153,25 +153,64 @@ async function cleanupOwner(page: Page, noteIds: string[]): Promise<void> {
   void page;
 }
 
-/** 打开卷面（题纸）并等待其装配完成。 */
-async function openPaperAndNotesPanel(page: Page): Promise<void> {
-  const paperId = await withAdmin(async (client) => {
-    const result = await client.query<{ id: string }>(
-      "SELECT id::text AS id FROM l3_papers ORDER BY created_at LIMIT 1",
-    );
-    return result.rows[0]?.id ?? null;
+/**
+ * 种子：经真实 POST /api/l3/papers 建一份最小试卷（翻译题组，题面自足）。
+ * 返回 paperId；本批仅需「能进卷面」，不校验题面内容。
+ */
+async function apiSeedPaper(page: Page, title: string): Promise<string> {
+  const created = await pageApiCall(page, "/api/l3/papers", {
+    method: "POST",
+    body: {
+      title,
+      direction: "通用",
+      sections: [
+        {
+          title: "翻译",
+          questionType: "sentence_translation",
+          fileKey: `e2e-09b-${randomUUID()}`,
+          questions: [
+            {
+              ordinal: 0,
+              stem: "01. 这是一道用于 09B 侧栏验收的翻译题。",
+              answer: { text: "参考答案" },
+            },
+          ],
+        },
+      ],
+    },
   });
-  if (!paperId) throw new Error("验收库中没有 l3_papers 行：本 E2E 需要一份试卷以进入卷面");
+  if (created.status !== 201) {
+    throw new Error(`建卷失败：${created.status} ${JSON.stringify(created.body)}`);
+  }
+  const paper = (created.body as { paper?: { id?: string } }).paper;
+  const id = paper?.id ?? (created.body as { id?: string }).id;
+  if (!id) throw new Error(`建卷响应缺少试卷 id：${JSON.stringify(created.body)}`);
+  return id;
+}
+
+/** 打开卷面（题纸）并等待其装配完成。 */
+async function openPaperAndNotesPanel(page: Page): Promise<string> {
+  const paperId = await apiSeedPaper(page, `09B 卷面 ${randomUUID().slice(0, 8)}`);
   await page.goto(`/l3?paper=${encodeURIComponent(paperId)}`);
   await expect(page.getByTestId("sheet-study-notes-toggle")).toBeVisible({ timeout: 25_000 });
   await page.getByTestId("sheet-study-notes-toggle").click();
   await expect(page.getByTestId("study-note-side-panel")).toBeVisible({ timeout: 15_000 });
+  return paperId;
+}
+
+/** 在侧栏列表内按标题选中一篇笔记（不离开卷面；侧栏是卷面级表面）。 */
+async function selectNoteInSidebar(page: Page, title: string): Promise<void> {
+  const search = page.getByTestId("study-note-panel-venue");
+  void search; // 题型筛选用默认（= 卷面题型）；如需跨题型可见可改选「全部题型」
+  const row = page.getByTestId("study-note-row").filter({ hasText: title }).first();
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await row.getByTestId("row-open").click();
+  await expect(page.getByTestId("note-body")).toBeVisible({ timeout: 15_000 });
 }
 
 test.describe("Task 09B · 卷面内学习笔记侧栏", () => {
   test("M1/M2：打开侧栏零创建；关闭重开后题纸未卸载、题纸数不变", async ({ page }) => {
     const notesBefore = await countOwnerNotes();
-    const sheetsBefore = await countOwnerSheets();
 
     const writes: string[] = [];
     page.on("request", (request) => {
@@ -183,6 +222,8 @@ test.describe("Task 09B · 卷面内学习笔记侧栏", () => {
 
     await loginAsOwner(page);
     await openPaperAndNotesPanel(page);
+    // 开卷本身会为试卷建草稿题纸（既有语义）；「侧栏不改变题纸数」从此刻起算。
+    const sheetsBefore = await countOwnerSheets();
 
     // M1：打开侧栏无**创建**写请求
     expect(writes.filter((entry) => entry === "POST /api/l3/study-notes")).toEqual([]);
@@ -248,30 +289,35 @@ test.describe("Task 09B · 卷面内学习笔记侧栏", () => {
 
   test("M4：侧栏内编辑保存——仅笔记 PUT，题纸行未被写", async ({ page }) => {
     await loginAsOwner(page);
-    const noteId = await apiSeedNote(page, `09B 编辑用 ${randomUUID().slice(0, 8)}`);
+    const noteTitle = `09B 编辑用 ${randomUUID().slice(0, 8)}`;
+    const noteId = await apiSeedNote(page, noteTitle);
 
     try {
       const sheetWrites: string[] = [];
       page.on("request", (request) => {
         const path = new URL(request.url()).pathname;
-        if (path.startsWith("/api/l3/exam-sheets") && request.method() !== "GET") {
+        if (path.startsWith("/api/l3/sheets") && request.method() !== "GET") {
           sheetWrites.push(`${request.method()} ${path}`);
         }
       });
 
-      await openPaperAndNotesPanel(page);
-      // 打开该笔记
-      await page.goto(`/l3?section=study-notes&noteId=${noteId}`);
-      await expect(page.getByTestId("note-body")).toBeVisible({ timeout: 15_000 });
+      const paperId = await apiSeedPaper(page, `09B 卷面 ${randomUUID().slice(0, 8)}`);
+      await page.goto(`/l3?paper=${encodeURIComponent(paperId)}`);
+      await expect(page.getByTestId("sheet-study-notes-toggle")).toBeVisible({ timeout: 25_000 });
+      await page.getByTestId("sheet-study-notes-toggle").click();
+      await expect(page.getByTestId("study-note-side-panel")).toBeVisible({ timeout: 15_000 });
+      await selectNoteInSidebar(page, noteTitle);
 
       const before = await fetchNote(noteId);
+      // 从「笔记保存动作开始」起计：开卷自身的 POST /api/l3/sheets（草稿题纸）不计入。
+      sheetWrites.length = 0;
       await page.getByTestId("note-body").fill(`09B 侧栏编辑 ${randomUUID().slice(0, 6)}`);
       await expect(page.getByTestId("save-state")).toContainText("已保存", { timeout: 15_000 });
 
       const after = await fetchNote(noteId);
       expect(after.version).toBeGreaterThan(before.version);
       expect(after.body_md).toContain("09B 侧栏编辑");
-      // 题纸未被本次笔记保存写入
+      // 笔记保存不得写题纸（开卷后的这一段窗口内零题纸写）
       expect(sheetWrites).toEqual([]);
     } finally {
       await cleanupOwner(page, [noteId]);
@@ -280,7 +326,8 @@ test.describe("Task 09B · 卷面内学习笔记侧栏", () => {
 
   test("M10：当前题目快捷引用——入口零写，显式插入后保存并重开一致", async ({ page }) => {
     await loginAsOwner(page);
-    const noteId = await apiSeedNote(page, `09B 引用用 ${randomUUID().slice(0, 8)}`);
+    const noteTitle = `09B 引用用 ${randomUUID().slice(0, 8)}`;
+    const noteId = await apiSeedNote(page, noteTitle);
 
     try {
       await openPaperAndNotesPanel(page);
@@ -295,36 +342,50 @@ test.describe("Task 09B · 卷面内学习笔记侧栏", () => {
       // 打开的是侧栏（不离开卷面）
       await expect(page.getByTestId("study-note-side-panel")).toBeVisible();
 
-      // 选择种子笔记
-      await page.goto(`/l3?section=study-notes&noteId=${noteId}`);
-      await expect(page.getByTestId("note-body")).toBeVisible({ timeout: 15_000 });
+      // 选择种子笔记（仍在卷面内）
+      await selectNoteInSidebar(page, noteTitle);
       const beforeInsert = await fetchNote(noteId);
 
-      // 打开引用面板并预置当前题目标
+      // 打开引用面板（问题 kind：搜索本卷题目）
       await page.getByTestId("insert-reference-button").click();
       await expect(page.getByTestId("reference-picker")).toBeVisible();
+      await page.getByTestId("ref-picker-kind-question").click();
 
       // 入口本身零写：正文未变
       const midInsert = await fetchNote(noteId);
       expect(midInsert.body_md).toBe(beforeInsert.body_md);
       expect(midInsert.version).toBe(beforeInsert.version);
 
-      // 显式插入引用（若面板有候选则先选一个再插入；否则关闭即零写）
+      // 必须有候选题（本卷已建题）；选中 → 预览 → 显式插入
       const candidates = page.getByTestId("ref-picker-item");
-      if (await candidates.count()) {
-        await candidates.first().click();
-        await expect(page.getByTestId("ref-preview-card")).toBeVisible({ timeout: 10_000 });
-        await page.getByTestId("ref-picker-insert").click();
-        await expect(page.getByTestId("save-state")).toContainText("已保存", { timeout: 15_000 });
+      await expect(candidates.first()).toBeVisible({ timeout: 15_000 });
+      await candidates.first().click();
+      await expect(page.getByTestId("ref-preview-card")).toBeVisible({ timeout: 10_000 });
+      await page.getByTestId("ref-picker-insert").click();
+      await expect(page.getByTestId("save-state")).toContainText("已保存", { timeout: 15_000 });
 
-        const afterInsert = await fetchNote(noteId);
-        expect(afterInsert.version).toBeGreaterThan(beforeInsert.version);
-        expect(afterInsert.body_md).toContain("[[ref:");
-      } else {
-        await page.getByTestId("ref-picker-close").click();
-        const afterCancel = await fetchNote(noteId);
-        expect(afterCancel.version).toBe(beforeInsert.version); // 取消零写
-      }
+      const afterInsert = await fetchNote(noteId);
+      expect(afterInsert.version).toBeGreaterThan(beforeInsert.version);
+      expect(afterInsert.body_md).toContain("[[ref:");
+
+      // 库核：引用行已落库
+      const refCount = await withAdmin(async (client) => {
+        const result = await client.query<{ n: number }>(
+          "SELECT count(*)::int AS n FROM l3_study_note_references WHERE note_id = $1::uuid",
+          [noteId],
+        );
+        return result.rows[0]!.n;
+      });
+      expect(refCount).toBe(1);
+
+      // 重开一致：刷新后卷面恢复（本批不持久化侧栏选中态，符合任务书 §1.10），
+      // 重新在侧栏内选中同一笔记，marker 仍在且引用卡片可见。
+      await page.reload();
+      await expect(page.getByTestId("sheet-study-notes-toggle")).toBeVisible({ timeout: 25_000 });
+      await page.getByTestId("sheet-study-notes-toggle").click();
+      await expect(page.getByTestId("study-note-side-panel")).toBeVisible({ timeout: 15_000 });
+      await selectNoteInSidebar(page, noteTitle);
+      await expect(page.getByTestId("note-body")).toHaveValue(/\[\[ref:/, { timeout: 15_000 });
     } finally {
       await cleanupOwner(page, [noteId]);
     }
