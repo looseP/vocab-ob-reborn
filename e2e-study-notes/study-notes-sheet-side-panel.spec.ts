@@ -188,6 +188,38 @@ async function apiSeedPaper(page: Page, title: string): Promise<string> {
   return id;
 }
 
+/** 该 owner 的作答行数（题纸作答不因侧栏操作增减）。 */
+async function countOwnerAttempts(): Promise<number> {
+  return withAdmin(async (client) => {
+    const result = await client.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM l3_question_attempts WHERE user_id = $1::uuid",
+      [OWNER_ID],
+    );
+    return result.rows[0]!.n;
+  });
+}
+
+/** 种子：经真实 API 把指定题纸定格（sealed），返回 seal 响应状态。 */
+async function apiSealSheet(page: Page, sheetId: string): Promise<number> {
+  // 先取当前版本作为 CAS 基线（定格要求 expectedVersion）
+  const current = await page.evaluate(async (id) => {
+    const res = await fetch(`/api/l3/sheets/${encodeURIComponent(id)}`);
+    return { status: res.status, body: await res.text() };
+  }, sheetId);
+  if (current.status !== 200) throw new Error(`读题纸失败：${current.status} ${current.body.slice(0, 200)}`);
+  // 定格 CAS 锚点是 `draft_version`（公开响应字段；不是 `version`）
+  const version = (JSON.parse(current.body) as { sheet: { draft_version: number } }).sheet.draft_version;
+
+  const sealed = await pageApiCall(page, `/api/l3/sheets/${encodeURIComponent(sheetId)}/seal`, {
+    method: "POST",
+    body: { expectedVersion: version, mode: "full", acknowledgeUnanswered: true },
+  });
+  if (sealed.status !== 200) {
+    throw new Error(`定格失败：${sealed.status} ${JSON.stringify(sealed.body).slice(0, 300)}`);
+  }
+  return sealed.status;
+}
+
 /** 打开卷面（题纸）并等待其装配完成。 */
 async function openPaperAndNotesPanel(page: Page): Promise<string> {
   const paperId = await apiSeedPaper(page, `09B 卷面 ${randomUUID().slice(0, 8)}`);
@@ -389,5 +421,96 @@ test.describe("Task 09B · 卷面内学习笔记侧栏", () => {
     } finally {
       await cleanupOwner(page, [noteId]);
     }
+  });
+  test("M3：sealed 题纸打开侧栏——题纸只读、零题纸写、题纸与作答数不变", async ({ page }) => {
+    await loginAsOwner(page);
+    const paperId = await apiSeedPaper(page, `09B sealed ${randomUUID().slice(0, 8)}`);
+
+    // 开卷 → 取本卷 sheetId → 定格
+    await page.goto(`/l3?paper=${encodeURIComponent(paperId)}`);
+    await expect(page.getByTestId("sheet-study-notes-toggle")).toBeVisible({ timeout: 25_000 });
+    const sheetId = await page.evaluate(async (pid) => {
+      const res = await fetch("/api/l3/sheets?limit=100");
+      if (!res.ok) return null;
+      const body = (await res.json()) as { items?: Array<{ id: string; paper_id: string | null; status: string }> };
+      return body.items?.find((row) => row.paper_id === pid && row.status === "draft")?.id ?? null;
+    }, paperId);
+    expect(sheetId).toBeTruthy();
+
+    const sealStatus = await apiSealSheet(page, sheetId!);
+    expect([200, 201]).toContain(sealStatus);
+
+    // 定格后经**只读回看深链** `?sheet=<id>` 打开（F-1 合同：不调 openSheet、不新建草稿）
+    const notesBefore = await countOwnerNotes();
+    const sheetsBefore = await countOwnerSheets();
+    const attemptsBefore = await countOwnerAttempts();
+
+    const sheetWrites: string[] = [];
+    page.on("request", (request) => {
+      const method = request.method();
+      const path = new URL(request.url()).pathname;
+      if (method !== "GET" && path.startsWith("/api/l3/sheets")) {
+        sheetWrites.push(`${method} ${path}`);
+      }
+    });
+
+    await page.goto(`/l3?sheet=${encodeURIComponent(sheetId!)}`);
+    await expect(page.getByTestId("sheet-study-notes-toggle")).toBeVisible({ timeout: 25_000 });
+
+    // 题纸处于只读（sealed）状态：显示「已定格」，且不再出现「定格题纸」入口
+    await expect(page.getByText("已定格").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "定格题纸" })).toHaveCount(0);
+
+    // 打开侧栏（sealed 卷面同样可用）
+    await page.getByTestId("sheet-study-notes-toggle").click();
+    await expect(page.getByTestId("study-note-side-panel")).toBeVisible({ timeout: 15_000 });
+
+    // 侧栏可用：列表或空态可见（绝不自动创建）
+    const listOrEmpty = page.getByTestId("study-note-list").or(page.getByTestId("study-note-panel-empty"));
+    await expect(listOrEmpty.first()).toBeVisible({ timeout: 15_000 });
+
+    // sealed 题纸不得被侧栏写入：零题纸 POST/PUT/PATCH/DELETE，且数量不变
+    expect(sheetWrites).toEqual([]);
+    expect(await countOwnerSheets()).toBe(sheetsBefore);
+    expect(await countOwnerAttempts()).toBe(attemptsBefore);
+    expect(await countOwnerNotes()).toBe(notesBefore); // 只读浏览零创建
+  });
+
+  test("M15：从侧栏笔记引用后返回定位——保留 sheetId/questionId、零新题纸", async ({ page }) => {
+    await loginAsOwner(page);
+    const paperId = await apiSeedPaper(page, `09B 定位 ${randomUUID().slice(0, 8)}`);
+
+    await page.goto(`/l3?paper=${encodeURIComponent(paperId)}`);
+    await expect(page.getByTestId("sheet-study-notes-toggle")).toBeVisible({ timeout: 25_000 });
+
+    const sheetsBefore = await countOwnerSheets();
+    const attemptsBefore = await countOwnerAttempts();
+
+    // 记录返回定位相关请求：?question= 深链不得触发创建草稿（POST /sheets）
+    const sheetPosts: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && new URL(request.url()).pathname === "/api/l3/sheets") {
+        sheetPosts.push(request.url());
+      }
+    });
+
+    // 取一道真实题目 id（从卷面 DOM 的引用入口拿，确保是真实 questionId）
+    await page.getByTestId("sheet-study-notes-toggle").click();
+    await expect(page.getByTestId("study-note-side-panel")).toBeVisible({ timeout: 15_000 });
+    const entry = page.getByTestId("reference-question-to-note").first();
+    await expect(entry).toBeVisible({ timeout: 15_000 });
+    const questionId = await entry.getAttribute("data-question-id");
+    expect(questionId).toMatch(/^[0-9a-f-]{36}$/i);
+
+    // 经返回定位深链回到该题（零创建路径）
+    await page.goto(`/l3?paper=${encodeURIComponent(paperId)}&question=${encodeURIComponent(questionId!)}`);
+    await expect(page.getByTestId("sheet-study-notes-toggle")).toBeVisible({ timeout: 25_000 });
+
+    // 定位到位：该题节点存在且被聚焦高亮
+    await expect(page.locator(`#question-${questionId}`)).toBeVisible({ timeout: 15_000 });
+
+    // 零创建草稿：题纸数与作答数不变（开卷复用幂等草稿，不新建）
+    expect(await countOwnerSheets()).toBe(sheetsBefore);
+    expect(await countOwnerAttempts()).toBe(attemptsBefore);
   });
 });
