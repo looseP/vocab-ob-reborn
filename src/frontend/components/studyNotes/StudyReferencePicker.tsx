@@ -23,6 +23,14 @@ export interface StudyReferencePickerProps {
   /** 插入：宿主把 (target, preview) 写入编辑器（capture + marker）；返回 false 表示被锁。 */
   onInsert: (target: ReferenceTarget, preview: ReferenceTargetPreview) => boolean;
   onClose: () => void;
+  /**
+   * Task 09B：预置「当前题目/当前素材」为目标（卷面快捷引用入口）。
+   *
+   * 纪律：只负责**真实身份传递与预览**——挂载即经只读 `preview(target)` 取预览，
+   * **不写正文、不新建引用**；插入仍须用户显式点「插入引用」。
+   * 身份必须是 questionId/sourceId 本体；纸张 ID、attempt ID、展示序号一律不得传入。
+   */
+  initialTarget?: ReferenceTarget | null;
 }
 
 function targetOf(item: StudyTargetItem): ReferenceTarget {
@@ -50,7 +58,7 @@ function previewSummary(preview: ReferenceTargetPreview): string {
   }
 }
 
-export function StudyReferencePicker({ client, onInsert, onClose }: StudyReferencePickerProps) {
+export function StudyReferencePicker({ client, onInsert, onClose, initialTarget = null }: StudyReferencePickerProps) {
   const modelRef = useRef<ReferenceSearchModel | null>(null);
   const ensureModel = (): ReferenceSearchModel => {
     const existing = modelRef.current;
@@ -122,6 +130,45 @@ export function StudyReferencePicker({ client, onInsert, onClose }: StudyReferen
       onClose();
     }
   };
+
+  /**
+   * Task 09B：预置目标 → 只读预览（挂载即取，供用户确认后再显式插入）。
+   * 依赖用**身份串**而非对象引用：宿主每次渲染新建的对象字面量不应触发重复请求；
+   * 同一身份只预览一次，身份变化（换题/换素材）才重新取。
+   */
+  const presetKey = initialTarget
+    ? initialTarget.kind === "source"
+      ? `source:${initialTarget.sourceId}`
+      : `question:${initialTarget.questionId}`
+    : null;
+  const presetSeqRef = useRef(0);
+
+  useEffect(() => {
+    if (!presetKey || !initialTarget) return;
+    const seq = ++presetSeqRef.current;
+    setPreviewState({ phase: "loading", target: initialTarget });
+    void client
+      .preview(initialTarget)
+      .then((preview) => {
+        if (presetSeqRef.current !== seq) return;
+        setPreviewState({ phase: "ready", target: initialTarget, preview });
+      })
+      .catch((error: unknown) => {
+        if (presetSeqRef.current !== seq) return;
+        const status = (error as { status?: unknown } | null)?.status;
+        setPreviewState({
+          phase: "error",
+          message:
+            status === 404
+              ? "该目标当前不可用（可能已删除或未发布）。"
+              : error instanceof Error && error.message
+                ? error.message
+                : "预览失败，请重试。",
+        });
+      });
+    // initialTarget 的身份由 presetKey 完全决定；对象引用变化不重复请求。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetKey, client]);
 
   const filters = snapshot.filters;
   return (

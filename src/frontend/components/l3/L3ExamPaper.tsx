@@ -8,6 +8,7 @@ import {
   composeSheetLeaveBarrier,
   type NoteLeaveBarrier,
 } from "@/frontend/state/sheetLeaveBarrier";
+import type { ReferenceTarget } from "@/domain/l3-study-notes";
 import { apiFetch } from "@/frontend/api/client";
 import {
   createExamSheetSaveController,
@@ -1087,6 +1088,18 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
   }, []);
   /** 关闭后重开可重新读取最后选择的笔记（本批不落 URL，仅内存记忆）。 */
   const [lastNoteId, setLastNoteId] = useState<string | null>(null);
+  /** 卷面「引用到笔记」发起的预置目标（真实 questionId/sourceId；nonce 表示新一次发起）。 */
+  const [presetReference, setPresetReference] = useState<{ target: ReferenceTarget; nonce: number } | null>(null);
+
+  /**
+   * 从卷面发起「引用到笔记」：携带**真实身份**（questionId/sourceId）打开侧栏。
+   * 点击入口本身不写正文、不新建引用——侧栏内的引用面板只做只读预览，
+   * 插入必须由用户显式点「插入引用」。
+   */
+  const requestReferenceToNote = useCallback((target: ReferenceTarget) => {
+    setPresetReference((prev) => ({ target, nonce: (prev?.nonce ?? 0) + 1 }));
+    setNotesPanelOpen(true);
+  }, []);
   // ── 批次二：作答历史（徽标/modal/派生渲染）──
   const [attempts, setAttempts] = useState<L3Attempt[]>([]);
   const [historyQuestionId, setHistoryQuestionId] = useState<string | null>(null);
@@ -2135,6 +2148,18 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
                 <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--color-accent)] text-xs font-bold text-[var(--color-accent-contrast,var(--color-surface))]">{sectionIndex + 1}</span>
                 <h3 className="text-base font-bold">{section.title}</h3>
                 <span className="text-xs text-[var(--color-ink-soft)]">{SECTION_POINTS[section.questionType]} 分</span>
+                {/* Task 09B：素材引用入口——仅在素材有**真实 sourceId** 时提供。 */}
+                {section.sourceId && (
+                  <button
+                    type="button"
+                    onClick={() => requestReferenceToNote({ kind: "source", sourceId: section.sourceId! })}
+                    data-testid="reference-material-to-note"
+                    data-source-id={section.sourceId}
+                    className="ml-auto rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-xs text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                  >
+                    引用本素材到笔记
+                  </button>
+                )}
               </div>
 
               {section.missing && (
@@ -2224,6 +2249,18 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
                         onMouseEnter={() => ["cloze", "new_question"].includes(section.questionType) && setActiveBlank(section.questionType === "new_question" ? q.ordinal + 41 : qi + 1)}
                         onMouseLeave={() => setActiveBlank(null)}
                         className="scroll-mt-20">
+                        {/* Task 09B：本题引用入口——传递**真实 questionId**（不是纸张 ID/attempt ID/展示序号）。 */}
+                        <div className="mb-1 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => requestReferenceToNote({ kind: "question", questionId: q.id })}
+                            data-testid="reference-question-to-note"
+                            data-question-id={q.id}
+                            className="rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[11px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                          >
+                            引用本题到笔记
+                          </button>
+                        </div>
                         <ChoiceQuestion
                           question={q}
                           index={section.questionType === "new_question" ? q.ordinal + 41 : qi + 1}
@@ -2291,6 +2328,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
               onRegisterNoteBarrier={handleRegisterNoteBarrier}
               initialNoteId={lastNoteId}
               onNoteSelected={setLastNoteId}
+              presetReference={presetReference}
             />
           </div>
         </aside>

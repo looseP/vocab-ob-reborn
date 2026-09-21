@@ -22,8 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { L3QuestionType } from "@/domain/l3-question-types";
 import { L3_QUESTION_TYPES, L3_QUESTION_TYPE_LABELS } from "@/domain/l3-question-types";
-import type { StudyNoteSummary } from "@/domain/l3-study-notes";
-import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNotesClient";
+import type { ReferenceTarget, StudyNoteSummary } from "@/domain/l3-study-notes";import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { Button } from "@/frontend/components/ui/Button";
 import { StudyNoteEditor, type StudyNoteLeaveBarrier } from "@/frontend/components/studyNotes/StudyNoteEditor";
 import { StudyNoteList } from "@/frontend/components/studyNotes/StudyNoteList";
@@ -46,6 +45,12 @@ export interface StudyNoteSidePanelProps {
   initialNoteId?: string | null;
   /** 选择的笔记变化时通知卷面宿主（仅内存记忆，不入 URL）。 */
   onNoteSelected?: (noteId: string | null) => void;
+  /**
+   * 卷面「引用到笔记」发起的预置目标（当前题目/当前素材的真实身份）。
+   * 经编辑器透传给引用面板做初始预览；插入仍须用户显式点击。
+   * `nonce` 变化表示发起了一次新请求（同一目标重复发起也应重新对准）。
+   */
+  presetReference?: { target: ReferenceTarget; nonce: number } | null;
 }
 
 function describeOpError(error: unknown, fallback: string): string {
@@ -93,6 +98,7 @@ export function StudyNoteSidePanel({
   onRegisterNoteBarrier,
   initialNoteId = null,
   onNoteSelected,
+  presetReference = null,
 }: StudyNoteSidePanelProps) {
   const resolvedClient = client ?? studyNotesClient;
   const clientRef = useRef<StudyNotesClient>(resolvedClient);
@@ -232,6 +238,7 @@ export function StudyNoteSidePanel({
               noteId={selectedNoteId}
               client={resolvedClient}
               onRegisterLeaveBarrier={handleRegisterEditorBarrier}
+              presetReferenceTarget={presetReference?.target ?? null}
             />
           </div>
         </div>
@@ -309,6 +316,7 @@ export function StudyNoteSidePanel({
     handleCreate,
     handleRegisterEditorBarrier,
     closing,
+    presetReference,
   ]);
 
   return (

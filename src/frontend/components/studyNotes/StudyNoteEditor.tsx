@@ -39,6 +39,11 @@ export interface StudyNoteEditorProps {
    * 页面把同一屏障复用于 history guard（前进/后退）与站内导航（列表打开/返回列表）。
    */
   onRegisterLeaveBarrier?: (barrier: StudyNoteLeaveBarrier | null) => void;
+  /**
+   * Task 09B：卷面快捷引用入口——打开引用面板时预置「当前题目/当前素材」为目标
+   * （真实 questionId/sourceId）。只影响**打开面板时的初始预览**；插入仍须显式点击。
+   */
+  presetReferenceTarget?: ReferenceTarget | null;
 }
 
 const SAVE_STATE_LABELS: Record<StudyNoteSaveState, string> = {
@@ -146,7 +151,7 @@ function ReferencePlaceholder({
   );
 }
 
-export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBarrier }: StudyNoteEditorProps) {
+export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBarrier, presetReferenceTarget = null }: StudyNoteEditorProps) {
   const editor = useStudyNoteEditor({ noteId, client });
   const activeClient = client ?? studyNotesClient;
   const [showPreview, setShowPreview] = useState(false);
@@ -342,6 +347,7 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
             return editor.insertReference(target, preview, cursor) !== null;
           }}
           onClose={() => setShowPicker(false)}
+          initialTarget={presetReferenceTarget}
         />
       )}
 
