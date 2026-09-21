@@ -233,7 +233,7 @@ async function openPaperAndNotesPanel(page: Page): Promise<string> {
 /** 在侧栏列表内按标题选中一篇笔记（不离开卷面；侧栏是卷面级表面）。 */
 async function selectNoteInSidebar(page: Page, title: string): Promise<void> {
   const search = page.getByTestId("study-note-panel-venue");
-  void search; // 题型筛选用默认（= 卷面题型）；如需跨题型可见可改选「全部题型」
+  void search; // 题型筛选用默认（= 卷面题型）；选项均为真实题型（列表契约 venue 必填，无「全部题型」选项）
   const row = page.getByTestId("study-note-row").filter({ hasText: title }).first();
   await expect(row).toBeVisible({ timeout: 15_000 });
   await row.getByTestId("row-open").click();

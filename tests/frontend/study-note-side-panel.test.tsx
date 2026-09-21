@@ -14,6 +14,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { L3_QUESTION_TYPES } from "@/domain/l3-question-types";
 import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { StudyNoteSidePanel } from "@/frontend/components/studyNotes/StudyNoteSidePanel";
 
@@ -242,5 +243,46 @@ describe("StudyNoteSidePanel · 关闭/切换屏障与筛选", () => {
 
     await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
     expect(client.create.mock.calls[0][0].venue).toBe("long_essay");
+  });
+
+  // ── 审查整改 F1（先红后绿）：题型筛选不得包含无后端语义的「全部题型」空值选项 ──
+  // 契约：列表查询要求 venue 必填（l3StudyNoteListQuerySchema）；空值会落入
+  // 「永不取数」路径并显示假空态（"还没有学习笔记"）。
+  it("F1 回归：题型筛选不含空值选项（选项必须全部是真实题型）", async () => {
+    const client = makeClient();
+
+    await render(
+      createElement(StudyNoteSidePanel, { client, onRequestClose: () => {}, venue: "cloze" }),
+    );
+    await waitFor(() => expect(screen.getByTestId("study-note-panel-venue")).toBeTruthy());
+
+    const select = screen.getByTestId("study-note-panel-venue") as HTMLSelectElement;
+    const values = Array.from(select.options).map((option) => option.value);
+    expect(values).not.toContain("");
+    expect(values.every((value) => (L3_QUESTION_TYPES as readonly string[]).includes(value))).toBe(true);
+  });
+
+  it("F1 回归：每个筛选项都必须取数（不允许存在选择后不产生任何请求的选项）", async () => {
+    const client = makeClient();
+    await render(
+      createElement(StudyNoteSidePanel, { client, onRequestClose: () => {}, venue: "cloze" }),
+    );
+    await waitFor(() => expect(screen.getAllByTestId("study-note-row").length).toBe(2));
+
+    const select = screen.getByTestId("study-note-panel-venue") as HTMLSelectElement;
+    const values = Array.from(select.options).map((option) => option.value);
+    expect(values.length).toBeGreaterThan(0);
+
+    for (const value of values) {
+      if (value === select.value) continue; // 选择当前值属于幂等，不产生新请求
+      const before = client.list.mock.calls.length;
+      await act(async () => {
+        fireEvent.change(select, { target: { value } });
+      });
+      await waitFor(() => expect(client.list.mock.calls.length).toBeGreaterThan(before));
+      const lastQuery = client.list.mock.calls.at(-1)?.[0] as { venue?: unknown };
+      expect(lastQuery.venue).toBe(value);
+      await waitFor(() => expect(screen.getAllByTestId("study-note-row").length).toBe(2));
+    }
   });
 });

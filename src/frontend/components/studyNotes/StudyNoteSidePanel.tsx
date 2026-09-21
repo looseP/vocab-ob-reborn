@@ -278,15 +278,21 @@ export function StudyNoteSidePanel({
           {/*
             题型筛选：只改**列表查询**（model.setVenue），不写回任何笔记归属——
             不给现有笔记新增或移除归属，也不因此创建笔记。
+            选项均为**真实题型**：列表查询契约要求 venue 必填（l3StudyNoteListQuerySchema），
+            无后端语义的「全部题型」空值会让列表落入永不取数路径（假空态），故不提供；
+            onChange 同样拒绝空值（防御：任何情况下不构造 null-venue 查询）。
           */}
           <select
             id="study-note-panel-venue"
             data-testid="study-note-panel-venue"
             className="min-w-0 flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs text-[var(--color-ink)]"
             value={filterVenue ?? ""}
-            onChange={(event) => setFilterVenue((event.target.value || null) as L3QuestionType | null)}
+            onChange={(event) => {
+              const nextVenue = event.target.value;
+              if (!nextVenue) return; // 契约：venue 必填；空值不得进入查询路径
+              setFilterVenue(nextVenue as L3QuestionType);
+            }}
           >
-            <option value="">全部题型</option>
             {L3_QUESTION_TYPES.map((option) => (
               <option key={option} value={option}>
                 {L3_QUESTION_TYPE_LABELS[option]}
