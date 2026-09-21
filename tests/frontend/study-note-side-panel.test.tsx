@@ -15,7 +15,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { fireEvent, screen, waitFor } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { L3_QUESTION_TYPES } from "@/domain/l3-question-types";
+import type { StudyNoteSummary } from "@/domain/l3-study-notes";
 import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
+import { StudyNoteList } from "@/frontend/components/studyNotes/StudyNoteList";
 import { StudyNoteSidePanel } from "@/frontend/components/studyNotes/StudyNoteSidePanel";
 
 const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -284,5 +286,52 @@ describe("StudyNoteSidePanel · 关闭/切换屏障与筛选", () => {
       expect(lastQuery.venue).toBe(value);
       await waitFor(() => expect(screen.getAllByTestId("study-note-row").length).toBe(2));
     }
+  });
+});
+
+// ── 审查整改 F2（先红后绿）：未接入归档生命周期的宿主不得渲染归档/恢复控件 ──
+describe("StudyNoteList · 归档入口按 handler 存在性渲染（审查整改 F2）", () => {
+  const summaryRow: StudyNoteSummary = {
+    id: NOTE_A,
+    title: "笔记A",
+    venues: ["cloze"],
+    status: "active",
+    pinned: false,
+    updatedAt: "2026-09-20T00:00:00.000Z",
+  };
+
+  it("F2 回归：侧栏列表不渲染归档/恢复入口（无行为控件不得出现）", async () => {
+    const client = makeClient();
+    await render(createElement(StudyNoteSidePanel, { client, onRequestClose: () => {} }));
+    await waitFor(() => expect(screen.getAllByTestId("study-note-row").length).toBe(2));
+
+    expect(screen.queryAllByTestId("row-archive")).toHaveLength(0);
+    expect(screen.queryAllByTestId("row-restore")).toHaveLength(0);
+  });
+
+  it("F2 回归（列表组件合同）：无 onArchiveToggle 时隐藏归档控件；提供时才渲染", async () => {
+    const baseProps = {
+      items: [summaryRow],
+      total: 1,
+      state: "ready" as const,
+      error: null,
+      loadingMore: false,
+      nextCursor: null,
+      activeNoteId: null,
+      onOpen: vi.fn(),
+      onLoadMore: vi.fn(),
+      onRetry: vi.fn(),
+      rowBusyId: null,
+      rowError: null,
+    };
+
+    // 未提供 handler：不得渲染归档控件（无行为入口）
+    await render(createElement(StudyNoteList, baseProps));
+    await waitFor(() => expect(screen.getAllByTestId("study-note-row").length).toBe(1));
+    expect(screen.queryAllByTestId("row-archive")).toHaveLength(0);
+
+    // 提供 handler（笔记子空间等页面宿主）：恢复既有渲染
+    await render(createElement(StudyNoteList, { ...baseProps, onArchiveToggle: vi.fn() }));
+    await waitFor(() => expect(screen.getAllByTestId("row-archive").length).toBe(1));
   });
 });

@@ -329,9 +329,8 @@ export function StudyNoteSidePanel({
               onOpen={(row: StudyNoteSummary) => void handleSelect(row.id)}
               onLoadMore={() => void list.loadMore()}
               onRetry={() => void list.refresh()}
-              onArchiveToggle={() => {
-                // 归档/恢复不在侧栏范围（列表只承担选择）；避免出现半实现入口。
-              }}
+              /* 归档/恢复不在侧栏范围（本批未接入生命周期）：不提供 handler，
+                 列表据此隐藏该入口（不得出现无行为控件）。 */
               rowBusyId={null}
               rowError={null}
             />
