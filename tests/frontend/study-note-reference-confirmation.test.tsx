@@ -10,10 +10,16 @@
  * `confirmed` 标记（R2 的「待确认 vs 已确认」区分），因此按字段断言
  * 「服务端值全部生效、预览值全部消失」，而不是要求对象形状与 DTO 逐字节相同。
  *
- * DEFECT 1（P2，2026-09-21 后续补修）追加两例：**迟到的确认不得复活已移除引用的元数据**。
+ * DEFECT 1（P2，2026-09-21 后续补修）追加三例：**迟到的确认不得复活已移除引用的元数据**。
  * 根因在 `applyConfirmedReferences` 的元数据「补齐」循环：升级（升级已有条目）与补齐
  * （推送响应里多余条目）都没有按「当前有效引用集合」过滤，所以一次在途移除之后再返回的
  * 响应会把已删除的 A 重新塞回 `referencesMeta`（且 `confirmed: true`）。
+ *
+ * 第三例（2026-09-21 独立复核后加严）是**窄修判别用例**：前两例中「迟到的确认不得复活
+ * 在途移除的引用元数据」并不能判出窄修——它的收尾恰好是一次空引用 PUT，空响应会触发窄修
+ * 的清理而蒙混过关（实测：窄修下该例仍绿）。第三例把迟到回包构造成**同时含 A 与 B**，
+ * 且续发载荷是 **[B]（非空）**，不给窄修任何顺带清理的机会；实测旧实现与窄修都红、
+ * 真修绿（三向判别，命令与输出见提交说明）。
  */
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -402,6 +408,89 @@ it("A 确认在途时移除 A 并插入 B：B 的正文/采集保留，A 不复�
   expect(editor.snapshot!.edit.bodyMd).toBe(bodyAfter);
 });
 
+// ── DEFECT 1（P2）：窄修判别用例（审查要求的强 A/B 交错）─────────────────────
+//
+// 为什么上面的用例判不出「窄修」：它的收尾恰好是一次**空引用** PUT（PUT 2），
+// 空响应会触发窄修（`if (confirmed.references.length === 0) return []`）的清理，
+// 于是观察到的终态与真修一致。要判别窄修，交错必须满足三条：
+//   (a) 迟到的 PUT 1 回包**同时含 A 与 B**（不能只有 A，也不能是空）；
+//   (b) 移除 A 之后管道**不再产生任何空引用 PUT**——真修下续发的只会是 [[B]]（非空），
+//       窄修「只清空响应」的分支永远不触发，A 无处可清；
+//   (c) 断言必须落在迟到回包**真正提交之后**（放行在 act 之外，见 releaseFaithfully）。
+//
+// 本用例正是按这三条构造的 A/B 交错：
+//   1. 先插 A（`insertAtEnd`）→ PUT 1 挂起；
+//   2. 与 A 同在防抖窗口内插入 B（cursor=1，段落内的安全位置），使 PUT 1 **冻结时同时含 A 与 B**；
+//   3. PUT 1 在途时移除 A（editSeq 推进、savedSeq 不动、inFlight 仍为 PUT 1，故不调度新 PUT）；
+//   4. 放行 PUT 1：其冻结载荷与回包**同时含 A 和 B**，逐条快照带各自 id 后缀
+//      （`SERVER_<id 后 4 位>`）可判来源；真修续发的下一枚载荷是 **[B]（非空）**，不给窄修兜底。
+// 终态只应保留 B 的元数据（且 B 的正式快照来自它自己那次确认）。
+it("A/B 交错：PUT 1 仍含 A 与 B 的迟到回包不得复活 A，也不得把 B 误标为已确认", async () => {
+  const { save, release } = makeGatedSave({ holdCalls: [1] });
+
+  await bootWith(save, "00000000-0000-4000-8000-0000000007d2");
+
+  // ① 先插 A（文末）、再插 B（段落内）——**都在防抖窗口内**，所以 PUT 1 的冻结载荷
+  //    同时含 A 与 B。这是本用例与「迟到的确认不得复活在途移除的引用元数据」的关键差别：
+  //    那一例的 PUT 1 只含 A，收尾又是一次空引用 PUT，窄修可由空响应顺带清理而蒙混过关。
+  const idA = await insertAtEnd();
+  const idB = await insert();
+  expect(idB).not.toBe(idA);
+  expect(editor.snapshot!.edit.references.map((w: any) => w.id)).toEqual([idA, idB]);
+  expect(save).not.toHaveBeenCalled(); // 防抖未到：还没有任何 PUT
+  const suffixA = idA.slice(-4);
+  const suffixB = idB.slice(-4);
+  expect(suffixB).not.toBe(suffixA);
+
+  // ② 等真实防抖（800ms）走完 → PUT 1 发起并被挂起；其冻结载荷**同时含 A 与 B**
+  await settleAutosave();
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 3000 });
+  expect(save.mock.calls[0]![1].references.map((w: any) => w.id)).toEqual([idA, idB]);
+
+  // ③ PUT 1 在途时移除 A：B 保持原位（本地仍是待确认的 capture）
+  await act(async () => {
+    expect(editor.removeReference(idA)).toBe(true);
+  });
+  expect(editor.snapshot!.edit.references).toEqual([{ id: idB, action: "capture", target }]);
+  const bodyAfterRemoval = editor.snapshot!.edit.bodyMd;
+  expect(bodyAfterRemoval).not.toContain(`[[ref:${idA}]]`);
+  expect(bodyAfterRemoval).toContain(`[[ref:${idB}]]`);
+
+  // ④ 放行 PUT 1 这枚**同时含 A 与 B**的迟到回包（act 之外放行 = 忠实放行，见 releaseFaithfully）：
+  //    断言点必须落在这次迟到确认真正提交之后，否则读到的是「移除后、确认前」的旧帧。
+  await releaseFaithfully(release, 1);
+
+  // PUT 1 的冻结载荷与回包同时含 A 与 B —— 迟到回包本体，已由③②核对
+  expect(save.mock.calls[0]![1].references.map((w: any) => w.id)).toEqual([idA, idB]);
+
+  // ⑤ 核心断言（旧实现与窄修都在此变红）：管道的续发能力用完并稳定后，
+  //    最终状态只能保留 B 一条元数据。
+  await settleAutosave();
+  await waitFor(() => expect(editor.snapshot!.state).toBe("idle"), { timeout: 3000 });
+  expect(editor.referencesMeta.map((meta) => meta.id)).toEqual([idB]);
+
+  // ⑥ A 不得以任何形式回来：既不能自己复活，也不能有别的条目挂着 A 的服务端快照
+  //    （换 id 复活 A 的来源同样要被抓到）。细修只清「空引用响应」，
+  //    而这里 PUT 1 之后的续发载荷是**[B]（非空）**，故窄修无从清理，A 必然残留。
+  const serializedMeta = JSON.stringify(editor.referencesMeta);
+  expect(serializedMeta).not.toContain(idA);
+  expect(serializedMeta).not.toContain(suffixA);
+  expect(serializedMeta).not.toContain(`SERVER_${suffixA}`);
+
+  // ⑦ B 的正式快照只能来自 B **自己**的那一次确认：第一次确认（PUT 1，仍含 A 的迟到回包）
+  //    绝不能把 B 提前标成已确认——它服务的引用集合与本次编排不一致。
+  expect(save.mock.calls.length).toBeGreaterThanOrEqual(2);
+  const finalPayload = save.mock.calls.at(-1)![1];
+  expect(finalPayload.references.map((w: any) => w.id)).toEqual([idB]);
+  expect(finalPayload.references.some((w: any) => w.id === idA)).toBe(false);
+
+  // ⑧ 正文与编辑集合都只含 B；A 不残留在任何状态里。
+  //    B 此刻已是 keep——它自己的确认（PUT 2）成功，之后不再重复采集。
+  expect(editor.snapshot!.edit.references.map((w: any) => w.id)).toEqual([idB]);
+  expect(editor.snapshot!.edit.bodyMd).toBe(bodyAfterRemoval);
+  expect(editor.snapshot!.edit.bodyMd).not.toContain(idA);
+});
+
 it("迟到的确认不得复活在途移除的引用元数据", async () => {
   const { save, release } = makeGatedSave({ holdCalls: [1] });
 
@@ -433,8 +522,13 @@ it("迟到的确认不得复活在途移除的引用元数据", async () => {
   await emptyFlush;
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2), { timeout: 3000 });
   // PUT 1 的冻结载荷**仍含 A**（这正是迟到回包）；PUT 2 的载荷已经是空引用。
-  // 放行的是 PUT 1 这枚「仍含 A」的回包：它正是旧实现把 A 复活的那条路径
-  // （窄修只清「空引用响应」，对仍含 A 的迟到回包无效）——本用例断言 A 不得以任何形式回来。
+  // 放行的是 PUT 1 这枚「仍含 A」的回包，本用例断言 A 不得以任何形式回来。
+  //
+  // 注（2026-09-21 更正）：早先此处曾写「窄修只清『空引用响应』，对仍含 A 的迟到回包无效」。
+  // 该说法已被实测证伪——在本用例的交错下（迟到回包后管道立刻续发一次**空引用** PUT 2，
+  // 其空响应会触发窄修的清理）窄修同样能通过（实测：窄修下本用例仍绿）。
+  // 真正能判别窄修的交错见下方「A/B 交错：PUT 1 仍含 A 与 B 的迟到回包不得复活 A，
+  // 也不得把 B 误标为已确认」一例：那一例的续发载荷是 **[B]（非空）**，窄修无从清理。
   expect(save.mock.calls[0]![1].references.map((w: any) => w.id)).toEqual([idA]);
   expect(save.mock.calls[1]![1].references).toEqual([]);
   expect(save.mock.calls.length).toBe(2);
