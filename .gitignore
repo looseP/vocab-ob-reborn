@@ -21,6 +21,7 @@ vite.review.config.ts
 coverage/
 playwright-report/
 test-results/
+test-results-*/
 sbom-*.cdx.json
 release-manifest.json
 tests/scripts/.alerting-drill-test-*.lock*
