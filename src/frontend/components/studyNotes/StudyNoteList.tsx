@@ -2,8 +2,8 @@
  * 学习笔记列表（Task 08，展示型组件；数据与操作经 props 注入）。
  *
  * 展示：标题 / 归属题型 / 状态（已归档 · 置顶）/ 更新时间；当前打开笔记高亮（data-active）。
- * 行为入口：打开、加载更多、重试、归档/恢复（经页面保存通道）、专题成员操作（上移/下移/移出）、
- * 未整理视图的「加入专题」。
+ * 行为入口：打开、加载更多、重试、归档/恢复（经页面保存通道；**未提供 handler 的宿主不渲染该入口**，
+ * 不得保留无行为控件）、专题成员操作（上移/下移/移出）、未整理视图的「加入专题」。
  */
 import { useState } from "react";
 import { L3_QUESTION_TYPE_LABELS } from "@/domain/l3-question-types";
@@ -37,7 +37,11 @@ export interface StudyNoteListProps {
   onOpen: (row: StudyNoteSummary) => void;
   onLoadMore: () => void;
   onRetry: () => void;
-  onArchiveToggle: (row: StudyNoteSummary) => void;
+  /**
+   * 归档/恢复（经页面保存通道）。**未提供时不渲染归档控件**：未接入归档生命周期的宿主
+   * （如卷面侧栏）不得出现无行为入口；提供 handler 的宿主（笔记子空间等）行为不变。
+   */
+  onArchiveToggle?: (row: StudyNoteSummary) => void;
   rowBusyId: string | null;
   rowError: string | null;
   member?: StudyNoteListMemberActions;
@@ -203,15 +207,17 @@ export function StudyNoteList(props: StudyNoteListProps) {
                     {props.join && (
                       <JoinTopicControl row={row} topics={props.join.topics} busy={props.join.busy} onJoin={props.join.onJoin} />
                     )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => props.onArchiveToggle(row)}
-                      data-testid={row.status === "active" ? "row-archive" : "row-restore"}
-                    >
-                      {busy ? "处理中…" : row.status === "active" ? "归档" : "恢复"}
-                    </Button>
+                    {props.onArchiveToggle && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => props.onArchiveToggle?.(row)}
+                        data-testid={row.status === "active" ? "row-archive" : "row-restore"}
+                      >
+                        {busy ? "处理中…" : row.status === "active" ? "归档" : "恢复"}
+                      </Button>
+                    )}
                   </div>
                 </div>
               </li>

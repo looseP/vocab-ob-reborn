@@ -125,6 +125,11 @@ export interface UseStudyNoteEditorResult {
   requestNavigation(action: () => void | Promise<void>): Promise<void>;
   navigationLocked: boolean;
   navigationError: string | null;
+  /**
+   * Task 09B 补批：**同步**读取当次导航拒绝原因（ref 镜像）。
+   * 宿主在屏障返回的同一时刻归因时使用；状态版 `navigationError` 传播晚于 await 结算。
+   */
+  getNavigationError(): string | null;
   dismissNavigationError(): void;
 
   /** 是否有未保存内容（dirty/saving/retrying/error/conflict/invalid 非 idle 即包含）。 */
@@ -285,6 +290,18 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [navigationLocked, setNavigationLocked] = useState(false);
   const [navigationError, setNavigationError] = useState<string | null>(null);
+  /**
+   * Task 09B 补批：`navigationError` 的**同步镜像**。
+   *
+   * `requestNavigation` 失败不 reject，只写状态；而 React 状态传播晚于 `await` 结算，
+   * 宿主在屏障返回的那一刻读到的是旧值。宿主需要**当次**拒绝原因来归因（IME/冲突/
+   * 需修复/保存失败指引不同），故以 ref 同步记录，供 `getNavigationError()` 立即读取。
+   */
+  const navigationErrorRef = useRef<string | null>(null);
+  const setNavigationErrorSync = useCallback((message: string | null) => {
+    navigationErrorRef.current = message;
+    setNavigationError(message);
+  }, []);
   const [loadNonce, setLoadNonce] = useState(0);
   const [referenceError, setReferenceError] = useState<string | null>(null);
 
@@ -635,7 +652,7 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
     if (navigationLockRef.current) return; // 事件同 tick / 重复导航守卫
     navigationLockRef.current = true;
     setNavigationLocked(true);
-    setNavigationError(null);
+    setNavigationErrorSync(null);
     try {
       const controller = controllerRef.current;
       if (controller && !controller.isDisposed()) {
@@ -672,14 +689,16 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
       }
       await action();
     } catch (error) {
-      setNavigationError(error instanceof Error ? error.message : "无法离开：保存未完成。");
+      setNavigationErrorSync(error instanceof Error ? error.message : "无法离开：保存未完成。");
     } finally {
       navigationLockRef.current = false;
       setNavigationLocked(false);
     }
   }, []);
 
-  const dismissNavigationError = useCallback(() => setNavigationError(null), []);
+  const dismissNavigationError = useCallback(() => setNavigationErrorSync(null), [setNavigationErrorSync]);
+  /** Task 09B 补批：同步读取**当次**导航拒绝原因（不依赖 React 状态传播）。 */
+  const getNavigationError = useCallback(() => navigationErrorRef.current, []);
 
   const hasUnsavedChanges = snapshot !== null && snapshot.state !== "idle";
 
@@ -707,6 +726,7 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
     requestNavigation,
     navigationLocked,
     navigationError,
+    getNavigationError,
     dismissNavigationError,
     hasUnsavedChanges,
   };

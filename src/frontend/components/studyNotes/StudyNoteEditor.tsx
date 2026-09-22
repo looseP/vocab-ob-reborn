@@ -13,7 +13,7 @@
  *  - marker 集合被手动破坏时由保存预检阻止 PUT 并给出恢复指引（invalid 面板）。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReferencePreview } from "@/domain/l3-study-notes";
+import type { ReferencePreview, ReferenceTarget } from "@/domain/l3-study-notes";
 import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { Button } from "@/frontend/components/ui/Button";
@@ -39,6 +39,16 @@ export interface StudyNoteEditorProps {
    * 页面把同一屏障复用于 history guard（前进/后退）与站内导航（列表打开/返回列表）。
    */
   onRegisterLeaveBarrier?: (barrier: StudyNoteLeaveBarrier | null) => void;
+  /**
+   * Task 09B：卷面快捷引用入口——打开引用面板时预置「当前题目/当前素材」为目标
+   * （真实 questionId/sourceId）。只影响**打开面板时的初始预览**；插入仍须显式点击。
+   */
+  presetReferenceTarget?: ReferenceTarget | null;
+  /**
+   * Task 09B 补批：上报最近一次**导航被拒**的真实原因（null = 无拒绝）。
+   * 宿主据此在合成屏障时给出可归因提示（IME / 冲突 / 需修复 / 保存失败各不相同）。
+   */
+  onNavigationBlocked?: (reason: string | null) => void;
 }
 
 const SAVE_STATE_LABELS: Record<StudyNoteSaveState, string> = {
@@ -146,7 +156,7 @@ function ReferencePlaceholder({
   );
 }
 
-export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBarrier }: StudyNoteEditorProps) {
+export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBarrier, presetReferenceTarget = null, onNavigationBlocked }: StudyNoteEditorProps) {
   const editor = useStudyNoteEditor({ noteId, client });
   const activeClient = client ?? studyNotesClient;
   const [showPreview, setShowPreview] = useState(false);
@@ -155,13 +165,29 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const insertCursorRef = useRef<number | null>(null);
 
-  // Task 08：把导航屏障注册给宿主（requestNavigation 稳定标识；卸载时解除）。
+  /**
+   * Task 09B 补批：注册给宿主的**可归因**屏障。
+   *
+   * `requestNavigation` 失败时只写 `navigationError`（不 reject），宿主无法据此判定成败，
+   * 且 React 状态传播晚于 `await` 结算。故把 `getNavigationError`（ref 同步镜像）挂到注册的
+   * 屏障上，宿主即可在屏障返回的**同一时刻**读到当次真实原因并归因（IME/冲突/需修复/保存失败）。
+   */
   const requestNavigation = editor.requestNavigation;
+  const getNavigationError = editor.getNavigationError;
   useEffect(() => {
     if (!onRegisterLeaveBarrier) return;
-    onRegisterLeaveBarrier(requestNavigation);
+    const barrier = Object.assign(
+      (action: () => void | Promise<void>) => requestNavigation(action),
+      { getNavigationError },
+    ) as StudyNoteLeaveBarrier;
+    onRegisterLeaveBarrier(barrier);
     return () => onRegisterLeaveBarrier(null);
-  }, [onRegisterLeaveBarrier, requestNavigation]);
+  }, [onRegisterLeaveBarrier, requestNavigation, getNavigationError]);
+
+  const editorNavigationError = editor.navigationError;
+  useEffect(() => {
+    onNavigationBlocked?.(editorNavigationError);
+  }, [editorNavigationError, onNavigationBlocked]);
 
   const snapshot = editor.snapshot;
   const blocks = useMemo(
@@ -342,6 +368,7 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
             return editor.insertReference(target, preview, cursor) !== null;
           }}
           onClose={() => setShowPicker(false)}
+          initialTarget={presetReferenceTarget}
         />
       )}
 
