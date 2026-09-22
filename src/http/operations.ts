@@ -208,6 +208,7 @@ import {
   l3StudyReferenceTargetSchema,
   l3StudyReferenceTargetQuerySchema,
   l3StudyBacklinkQuerySchema,
+  l3StudyNoteExportQuerySchema,
   l3ProposalCreateSchema,
   l3ProposalListQuerySchema,
   l3ProposalRejectSchema,
@@ -587,6 +588,10 @@ export const apiOperations = [
   operation("get", "/api/l3/study-notes/reference-targets", "searchL3ReferenceTargets", "owner", "owner", "none", { query: l3StudyReferenceTargetQuerySchema }, 200, l3ReferenceTargetListResponseSchema),
   operation("post", "/api/l3/study-notes/reference-preview", "previewL3ReferenceTarget", "owner", "owner", "sessionMutation", { body: l3StudyReferenceTargetSchema }, 200, l3ReferenceTargetPreviewResponseSchema),
   operation("get", "/api/l3/study-notes/backlinks", "listL3StudyBacklinks", "owner", "owner", "none", { query: l3StudyBacklinkQuerySchema }, 200, l3StudyBacklinkListResponseSchema),
+  // N1/Task 10：笔记导出（只出不进；text/markdown + 版本/schema/sha256 响应头，
+  // 对齐题纸/作文导出先例）。登记于固定路径之后、/:noteId 动态段之前；实际路由由
+  // study-notes-export.ts 在 server.ts 中先于 study-notes.ts 挂载（见 server.ts 注释）。
+  operation("get", "/api/l3/study-notes/:noteId/export", "exportL3StudyNote", "owner", "owner", "none", { query: l3StudyNoteExportQuerySchema }, 200, z.string(), "text/markdown"),
   operation("get", "/api/l3/study-notes/:noteId", "getL3StudyNote", "owner", "owner", "none", undefined, 200, l3StudyNoteItemResponseSchema),
   operation("put", "/api/l3/study-notes/:noteId", "saveL3StudyNote", "owner", "owner", "sessionMutation", { body: l3StudyNoteSaveSchema }, 200, l3StudyNoteItemResponseSchema),
   operation("post", "/api/l3/study-topics", "createL3StudyTopic", "owner", "owner", "sessionMutation", { body: l3StudyTopicCreateSchema }, 201, l3StudyTopicCreateResponseSchema),

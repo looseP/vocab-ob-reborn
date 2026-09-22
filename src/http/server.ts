@@ -47,6 +47,7 @@ import { writingSheetsRoutes } from "./routes/l3/writing-sheets";
 import { writingFeedbackRoutes } from "./routes/l3/writing-feedback";
 import { studyReferencesRoutes } from "./routes/l3/study-references";
 import { studyNotesRoutes } from "./routes/l3/study-notes";
+import { studyNotesExportRoutes } from "./routes/l3/study-notes-export";
 import { studyTopicsRoutes } from "./routes/l3/study-topics";
 import { writingExportRoutes } from "./routes/l3/writing-export";
 import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
@@ -185,7 +186,11 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
 
   // 学习笔记（N1）三薄路由，同挂 /api/l3（**references 组先于 notes 注册**——
   // 静态 /study-notes/reference-targets 等不得被动态 /study-notes/:noteId 吞掉）。
+  // N1/Task 10：导出路由（study-notes.ts 棘轮外拆分）紧随 references 组、仍在
+  // studyNotesRoutes **之前**挂载——/study-notes/:noteId/export 与三个固定路径
+  // 全部先于动态 /study-notes/:noteId 注册（注册序即匹配优先级）。
   app.route("/api/l3", studyReferencesRoutes(services));
+  app.route("/api/l3", studyNotesExportRoutes(services));
   app.route("/api/l3", studyNotesRoutes(services));
   app.route("/api/l3", studyTopicsRoutes(services));
 

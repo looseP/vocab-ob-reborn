@@ -877,7 +877,10 @@ describe("I3/C 原卷作文入口与返回恢复", () => {
     expect(locText()).not.toContain("writingTaskId=");
 
     // 重试：复用已创建任务（createTask 恰一次）→ 确认通过 → 导航
-    fireEvent.click(screen.getByRole("button", { name: /重试进入写作/ }));
+    // 提示是副作用先于 React 提交「重试」按钮；必须等按钮真正出现再点（否则在慢机器上
+    // 拿到的是提交前的 "进入中…" 帧，getByRole 抛错——与本用例要验证的语义无关）。
+    const retryButton = await waitFor(() => screen.getByRole("button", { name: /重试进入写作/ }));
+    fireEvent.click(retryButton);
     await waitFor(() => expect(locText()).toContain(`writingTaskId=${TASK_W}`));
     expect(createTaskMock()).toHaveBeenCalledTimes(1);
   });

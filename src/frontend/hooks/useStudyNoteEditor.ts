@@ -27,7 +27,13 @@ import {
   type StudyNoteSaveController,
   type StudyNoteSaveSnapshot,
 } from "@/frontend/state/studyNoteSaveController";
-import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNotesClient";
+import { studyNotesClient, type StudyNotesClient, type StudyNoteExportResult } from "@/frontend/api/studyNotesClient";
+import {
+  createSingleFlightGate,
+  downloadMarkdownBlob,
+  flushThenExportNote,
+  type StudyNoteExportOutcome,
+} from "@/frontend/state/studyNoteExportFlusher";
 import {
   assertReferenceSet,
   normalizeStudyUuid,
@@ -71,6 +77,16 @@ export interface UseStudyNoteEditorOptions {
   noteId: string;
   /** 注入客户端（测试）；默认单例。 */
   client?: StudyNotesClient;
+  /**
+   * Task 10：下载效果注入（测试不触碰真实 DOM）。缺省 = Blob + `a[download]`
+   * （文件名来自服务端 `Content-Disposition`）。
+   */
+  downloadExport?: (result: StudyNoteExportResult) => void;
+  /**
+   * Task 10：对**已校验**的服务端文件名/哈希做一次观察（宿主可记台账；测试可断言
+   * 「下载用的就是服务端给的名字」）。仅成功路径调用。
+   */
+  onExportReady?: (info: { filename: string; sha256: string | null; schemaVersion: number | null }) => void;
 }
 
 export interface CopyLocalResult {
@@ -134,6 +150,24 @@ export interface UseStudyNoteEditorResult {
 
   /** 是否有未保存内容（dirty/saving/retrying/error/conflict/invalid 非 idle 即包含）。 */
   hasUnsavedChanges: boolean;
+
+  /**
+   * Task 10：导出（`await flush() → receipt.version → GET export → Blob 下载`）。
+   *
+   * 顺序与失败面由共享流水线 `flushThenExportNote` 唯一实现（编辑器页与 09B 侧栏同源）：
+   * - flush 成功前不发起导出请求；
+   * - `expectedVersion` 只取本次回执；409/网络错误/响应非法/笔记被切换**一律不下载**；
+   * - 双击由单飞闸门吞掉（返回 `ok:false, reason:"busy"`，不重复 flush/GET）；
+   * - 期间锁编辑与离页（复用既有 action lock 语义），结束（成功或失败）恢复。
+   */
+  exportNote(): Promise<StudyNoteExportOutcome>;
+  /** 导出中（工具栏显示「导出中…」并禁用）。 */
+  exportBusy: boolean;
+  /** 导出失败的可见原因（成功或下次导出时清空）。 */
+  exportError: string | null;
+  /** 导出成功提示（含服务端文件名；空串表示无提示）。 */
+  exportNotice: string | null;
+  dismissExportFeedback(): void;
 }
 
 // ── 文案与工具 ──────────────────────────────────────────────────────────────
@@ -304,6 +338,21 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
   }, []);
   const [loadNonce, setLoadNonce] = useState(0);
   const [referenceError, setReferenceError] = useState<string | null>(null);
+  // ── Task 10：导出（复用既有 action lock 语义）────────────────────────────
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  /** 已挂载（未卸载）的编辑器实例：响应回来前若已卸载（侧栏关闭）则丢弃结果。 */
+  const mountedRef = useRef(true);
+  /** 笔记身份代际：切笔记后旧响应一律不下载（与列表竞态同一纪律）。 */
+  const noteIdRef = useRef(noteId);
+  noteIdRef.current = noteId;
+  /** 导出单飞闸门（与按钮层的同步锁互补：hook 层保证「重复调用不重复 flush」）。 */
+  const exportGateRef = useRef(createSingleFlightGate());
+  const downloadExportRef = useRef(options.downloadExport ?? downloadMarkdownBlob);
+  downloadExportRef.current = options.downloadExport ?? downloadMarkdownBlob;
+  const onExportReadyRef = useRef(options.onExportReady);
+  onExportReadyRef.current = options.onExportReady;
 
   const controllerRef = useRef<StudyNoteSaveController | null>(null);
   const generationRef = useRef(0);
@@ -414,6 +463,14 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- client 经 ref 读取；noteId/loadNonce 驱动重取
   }, [noteId, loadNonce]);
+
+  // ── 挂载标记（Task 10）：导出响应回来前若已卸载（侧栏关闭），结果一律丢弃 ────
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // ── beforeunload：诚实提示（不承诺关闭后异步保存成功）────────────────────
   useEffect(() => {
@@ -647,6 +704,71 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
 
   const dismissRecoveryError = useCallback(() => setRecoveryError(null), []);
 
+  // ── Task 10：导出（flush → receipt.version → GET → Blob 下载）──────────────
+  /**
+   * 导出实现**只此一处**：`flushThenExportNote`（共享流水线）。本 hook 提供：
+   *  - 身份/活动性核对（`isCurrent`：编辑器仍挂载、同一实例代际、noteId 未变）；
+   *  - 单飞闸门（双击/重复调用不重复 flush、不重复 GET）；
+   *  - 既有 action lock 的导出面：导出期间以 `exportBusy` 锁编辑入口（两侧按钮与
+   *    输入框据此禁用），避免「导出在途时继续改内容」造成版本错配；
+   *  - 可见反馈（成功提示服务端文件名；失败给出可归因原因）。
+   */
+  const exportNote = useCallback(async (): Promise<StudyNoteExportOutcome> => {
+    const controller = controllerRef.current;
+    if (!controller || controller.isDisposed()) {
+      const outcome: StudyNoteExportOutcome = {
+        ok: false,
+        reason: "flush",
+        message: "笔记尚未就绪，无法导出。",
+      };
+      setExportError(outcome.message);
+      return outcome;
+    }
+    setExportError(null);
+    setExportNotice(null);
+    setExportBusy(true);
+    const generation = generationRef.current;
+    const startedNoteId = noteIdRef.current;
+    try {
+      const outcome = await flushThenExportNote(
+        {
+          noteId: startedNoteId,
+          generation,
+          // 响应回来时：编辑器仍挂载、仍是同一实例代际、仍是同一篇笔记
+          isCurrent: (expected) =>
+            mountedRef.current &&
+            !controller.isDisposed() &&
+            expected === generationRef.current &&
+            noteIdRef.current === startedNoteId,
+        },
+        {
+          flush: () => controller.flush(),
+          exportNote: (id, expectedVersion) => clientRef.current.exportNote(id, expectedVersion),
+          download: (result) => downloadExportRef.current(result),
+        },
+        exportGateRef.current,
+      );
+      if (outcome.ok) {
+        setExportNotice(`已开始下载 ${outcome.filename}`);
+        onExportReadyRef.current?.({
+          filename: outcome.filename,
+          sha256: outcome.sha256,
+          schemaVersion: outcome.schemaVersion,
+        });
+      } else if (outcome.reason !== "busy") {
+        setExportError(outcome.message);
+      }
+      return outcome;
+    } finally {
+      setExportBusy(false);
+    }
+  }, []);
+
+  const dismissExportFeedback = useCallback(() => {
+    setExportError(null);
+    setExportNotice(null);
+  }, []);
+
   // ── 导航辅助 ────────────────────────────────────────────────────────────
   const requestNavigation = useCallback(async (action: () => void | Promise<void>): Promise<void> => {
     if (navigationLockRef.current) return; // 事件同 tick / 重复导航守卫
@@ -701,7 +823,6 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
   const getNavigationError = useCallback(() => navigationErrorRef.current, []);
 
   const hasUnsavedChanges = snapshot !== null && snapshot.state !== "idle";
-
   return {
     loadState,
     loadError,
@@ -729,6 +850,11 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
     getNavigationError,
     dismissNavigationError,
     hasUnsavedChanges,
+    exportNote,
+    exportBusy,
+    exportError,
+    exportNotice,
+    dismissExportFeedback,
   };
 }
 

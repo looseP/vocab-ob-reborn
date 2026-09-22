@@ -36,7 +36,7 @@ export type BrowserRequestOptions = RequestInit & {
   timeoutMs?: number;
 };
 
-export type BrowserResponse<T> = { data: T; status: number };
+export type BrowserResponse<T> = { data: T; status: number; headers: Headers };
 export type BrowserRequest = <T>(input: string, init?: BrowserRequestOptions) => Promise<T>;
 export type BrowserResponseRequest = <T>(input: string, init?: BrowserRequestOptions) => Promise<BrowserResponse<T>>;
 
@@ -123,7 +123,15 @@ export function createBrowserResponseRequest(dependencies: BrowserRequestDepende
       if (timer) clearTimeout(timer);
       outerSignal?.removeEventListener("abort", onOuterAbort);
     }
-    if (response.status === 204) return { data: undefined as T, status: response.status };
+    // 只读快照：部分测试桩/受限环境不实现 `Response.headers`（getter 抛错），
+    // 此时回落为空 Headers，避免基础请求面因非契约字段而整体不可用。
+    let responseHeaders: Headers;
+    try {
+      responseHeaders = new Headers(response.headers ?? undefined);
+    } catch {
+      responseHeaders = new Headers();
+    }
+    if (response.status === 204) return { data: undefined as T, status: response.status, headers: responseHeaders };
 
     const rawBody = await response.text();
     let body: unknown = rawBody || undefined;
@@ -139,9 +147,9 @@ export function createBrowserResponseRequest(dependencies: BrowserRequestDepende
       if (response.status === 401 && !input.startsWith(AUTH_PATH_PREFIX) && typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
       }
-      throw new BrowserApiError(response.status, body, response.headers);
+      throw new BrowserApiError(response.status, body, responseHeaders);
     }
-    return { data: body as T, status: response.status };
+    return { data: body as T, status: response.status, headers: responseHeaders };
   };
 }
 

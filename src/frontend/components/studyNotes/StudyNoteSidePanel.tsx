@@ -22,11 +22,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { L3QuestionType } from "@/domain/l3-question-types";
 import { L3_QUESTION_TYPES, L3_QUESTION_TYPE_LABELS } from "@/domain/l3-question-types";
-import type { ReferenceTarget, StudyNoteSummary } from "@/domain/l3-study-notes";import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNotesClient";
+import type { ReferenceTarget, StudyNoteSummary } from "@/domain/l3-study-notes";import { studyNotesClient, type StudyNoteExportResult, type StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { Button } from "@/frontend/components/ui/Button";
-import { StudyNoteEditor, type StudyNoteLeaveBarrier } from "@/frontend/components/studyNotes/StudyNoteEditor";
+import { StudyNoteEditor, type StudyNoteExportAction, type StudyNoteLeaveBarrier } from "@/frontend/components/studyNotes/StudyNoteEditor";
+import { StudyNoteExportButton } from "@/frontend/components/studyNotes/StudyNoteExportButton";
 import { StudyNoteList } from "@/frontend/components/studyNotes/StudyNoteList";
-import type { NoteLeaveBarrier } from "@/frontend/state/sheetLeaveBarrier";
+import type { NoteBarrierOutcome, NoteLeaveBarrier } from "@/frontend/state/sheetLeaveBarrier";
 import { createStudyNoteListModel, type StudyNoteListModel, type StudyNoteListSnapshot } from "@/frontend/state/studyNoteListModel";
 
 export interface StudyNoteSidePanelProps {
@@ -51,6 +52,20 @@ export interface StudyNoteSidePanelProps {
    * `nonce` 变化表示发起了一次新请求（同一目标重复发起也应重新对准）。
    */
   presetReference?: { target: ReferenceTarget; nonce: number } | null;
+  /** 选择笔记后，把**导出动作**暴露给宿主（可选）。
+   *
+   * 用途：卷面宿主可把该动作挂到自己的「从笔记导出」入口（不经卷面保存屏障）。
+   * 动作即编辑器唯一的 `useStudyNoteEditor.exportNote` → `flushThenExportNote`
+   * （flush → receipt.version → GET → Blob 下载）；宿主不得绕过它自行发导出请求。
+   * `null` = 编辑器已卸载（关闭/返回列表），宿主据此隐藏或禁用入口。
+   */
+  onRegisterExportAction?: (action: StudyNoteExportAction | null) => void;
+  /**
+   * Task 10：下载效果注入（测试/宿主联调用；缺省 = Blob + `a[download]`）。
+   * 侧栏**只把它透传**给编辑器——导出逻辑与页面版是同一份实现
+   * （`useStudyNoteEditor.exportNote` → `flushThenExportNote`）。
+   */
+  downloadExport?: (result: StudyNoteExportResult) => void;
 }
 
 function describeOpError(error: unknown, fallback: string): string {
@@ -84,8 +99,9 @@ function createUuid(): string {
 export function toNoteLeaveBarrier(
   barrier: StudyNoteLeaveBarrier,
   readNavigationError: () => string | null,
+  exportActionSource?: { getExportAction: () => StudyNoteExportAction | null },
 ): NoteLeaveBarrier {
-  return async (action) => {
+  const composite: NoteLeaveBarrier = async (action) => {
     let navigated = false;
     await barrier(() => {
       navigated = true;
@@ -100,6 +116,22 @@ export function toNoteLeaveBarrier(
     await action();
     return { ok: true };
   };
+
+  return Object.assign(composite, {
+    /**
+     * Task 10：卷面「从笔记导出」——**不导航**，只借用同一个导出动作
+     * （flush → receipt.version → GET → Blob 下载）。动作不存在（未选笔记/已卸载）
+     * 时返回 `{ok:false}`，绝不产生假成功。
+     */
+    confirmOnly: async (): Promise<NoteBarrierOutcome> => {
+      const action = exportActionSource?.getExportAction() ?? null;
+      if (typeof action !== "function") {
+        return { ok: false, reason: "尚未打开笔记或编辑器已卸载，无法导出。" };
+      }
+      const result = await action();
+      return result.ok ? { ok: true } : { ok: false, reason: "笔记保存未完成或导出失败，已取消下载。" };
+    },
+  });
 }
 
 export function StudyNoteSidePanel({
@@ -110,6 +142,8 @@ export function StudyNoteSidePanel({
   initialNoteId = null,
   onNoteSelected,
   presetReference = null,
+  onRegisterExportAction,
+  downloadExport,
 }: StudyNoteSidePanelProps) {
   const resolvedClient = client ?? studyNotesClient;
   const clientRef = useRef<StudyNotesClient>(resolvedClient);
@@ -132,6 +166,31 @@ export function StudyNoteSidePanel({
 
   /** 编辑器注册的原始屏障（用于「关闭/切换前先确认」）。 */
   const editorBarrierRef = useRef<StudyNoteLeaveBarrier | null>(null);
+  /**
+   * Task 10：编辑器注册的**导出动作**（= `useStudyNoteEditor.exportNote` → 共享流水线
+   * `flushThenExportNote`）。卷面与侧栏经同一个动作导出，不再各写一份顺序实现。
+   */
+  const exportActionRef = useRef<StudyNoteExportAction | null>(null);
+  /** 宿主注册回调经 ref 读取（避免把回调放进 useMemo 依赖导致重建整棵工具栏）。 */
+  const onRegisterExportActionRef = useRef<((action: StudyNoteExportAction | null) => void) | undefined>(
+    onRegisterExportAction,
+  );
+  useEffect(() => {
+    onRegisterExportActionRef.current = onRegisterExportAction;
+  }, [onRegisterExportAction]);
+  /** 编辑器是否有导出动作（列表态 = 无）——驱动导出按钮的可用性。 */
+  const [exportReady, setExportReady] = useState(false);
+  const handleRegisterExportAction = useCallback((action: StudyNoteExportAction | null) => {
+    exportActionRef.current = action;
+    setExportReady(action !== null);
+    onRegisterExportActionRef.current?.(action);
+  }, []);
+  /** 编辑器卸载：对外解除动作注册（宿主不得再触发导出）。 */
+  useEffect(() => {
+    return () => {
+      onRegisterExportActionRef.current?.(null);
+    };
+  }, []);
   /** 编辑器最近一次导航错误（适配层据此判定成败并给出**真实**原因）。 */
   const navigationErrorRef = useRef<string | null>(null);
   const handleNavigationBlocked = useCallback((reason: string | null) => {
@@ -239,7 +298,11 @@ export function StudyNoteSidePanel({
         await action();
         return { ok: true };
       }
-      return toNoteLeaveBarrier(barrier, () => navigationErrorRef.current)(action);
+      // Task 10：同一屏障同时承载「导出动作」——卷面导出与侧栏导出走同一条实现。
+      // 经 getter 读取：动作在编辑器挂载/卸载之间变化，屏障实例保持不变。
+      return toNoteLeaveBarrier(barrier, () => navigationErrorRef.current, {
+        getExportAction: () => exportActionRef.current,
+      })(action);
     };
     onRegisterNoteBarrier(forwarder);
     return () => onRegisterNoteBarrier(null);
@@ -262,8 +325,10 @@ export function StudyNoteSidePanel({
               noteId={selectedNoteId}
               client={resolvedClient}
               onRegisterLeaveBarrier={handleRegisterEditorBarrier}
+              onRegisterExportAction={handleRegisterExportAction}
               presetReferenceTarget={presetReference?.target ?? null}
               onNavigationBlocked={handleNavigationBlocked}
+              downloadExport={downloadExport}
             />
           </div>
         </div>
@@ -352,9 +417,26 @@ export function StudyNoteSidePanel({
     handleCreate,
     handleRegisterEditorBarrier,
     handleNavigationBlocked,
+    handleRegisterExportAction,
     closing,
     presetReference,
+    downloadExport,
   ]);
+
+  /** Task 10：面板头部的退出/导出动作。导出与编辑器工具栏**同一个**动作实现。 */
+  const panelActions = (
+    <div className="flex items-center gap-2">
+      <Button size="sm" variant="ghost" onClick={() => void handleClose()} disabled={closing} data-testid="study-note-panel-close" aria-label="关闭学习笔记侧栏">
+        {closing ? "保存中…" : "关闭"}
+      </Button>
+      <StudyNoteExportButton
+        onExport={() => (exportActionRef.current ? exportActionRef.current() : Promise.resolve({ ok: false }))}
+        disabled={closing || !exportReady}
+        disabledReason={exportReady ? null : "打开一篇笔记后才能导出"}
+        testId="study-note-panel-export"
+      />
+    </div>
+  );
 
   return (
     <aside
@@ -364,16 +446,7 @@ export function StudyNoteSidePanel({
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-medium text-[var(--color-ink)]">学习笔记</h2>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => void handleClose()}
-          disabled={closing}
-          data-testid="study-note-panel-close"
-          aria-label="关闭学习笔记侧栏"
-        >
-          {closing ? "保存中…" : "关闭"}
-        </Button>
+        {panelActions}
       </div>
       {body}
     </aside>
