@@ -12,8 +12,10 @@ export class BrowserApiError extends Error {
   readonly details?: unknown;
   readonly requestId?: string;
   readonly body: unknown;
+  /** 原始响应 headers（可选；如 429 的 Retry-After——保存控制器的有界重试输入）。 */
+  readonly headers?: Headers;
 
-  constructor(status: number, body: unknown) {
+  constructor(status: number, body: unknown, headers?: Headers) {
     const error = isRecord(body) ? body as ApiErrorBody : {};
     const textMessage = typeof body === "string" && body.trim() ? body : undefined;
     super(error.message ?? error.error ?? textMessage ?? `Request failed with status ${status}`);
@@ -23,6 +25,7 @@ export class BrowserApiError extends Error {
     this.details = error.details;
     this.requestId = error.requestId;
     this.body = body;
+    this.headers = headers;
   }
 }
 
@@ -136,7 +139,7 @@ export function createBrowserResponseRequest(dependencies: BrowserRequestDepende
       if (response.status === 401 && !input.startsWith(AUTH_PATH_PREFIX) && typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
       }
-      throw new BrowserApiError(response.status, body);
+      throw new BrowserApiError(response.status, body, response.headers);
     }
     return { data: body as T, status: response.status };
   };

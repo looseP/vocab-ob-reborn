@@ -25,6 +25,11 @@ const CapturePage = lazy(() => import("./pages/CapturePage").then((m) => ({ defa
 const L3Page = lazy(() => import("./pages/L3Page").then((m) => ({ default: m.L3Page })));
 // 升级工作台（ADR-0018）：待升级清单 + 工单工作台，独立 chunk。
 const UpgradePage = lazy(() => import("./pages/UpgradePage").then((m) => ({ default: m.UpgradePage })));
+// 学习笔记联调宿主（Task 07，测试专用）：仅当 VITE_N1_STUDY_NOTE_HOST=1 构建时注册；
+// 生产构建下该条件为编译期常量 false，宿主页面与路由不会进入产物（无生产入口）。
+const StudyNoteHostPage = import.meta.env.VITE_N1_STUDY_NOTE_HOST === "1"
+  ? lazy(() => import("./pages/StudyNoteHostPage").then((m) => ({ default: m.StudyNoteHostPage })))
+  : null;
 
 /** 路由懒加载的降级态：占满内容区居中显示加载指示，避免布局跳动。 */
 function PageSuspense({ children }: { children: ReactNode }) {
@@ -63,6 +68,9 @@ export function App() {
               <Route path="/capture" element={<PageSuspense><CapturePage /></PageSuspense>} />
               <Route path="/l3" element={<SiteFrame><PageSuspense><L3Page /></PageSuspense></SiteFrame>} />
               <Route path="/upgrade" element={<SiteFrame><PageSuspense><UpgradePage /></PageSuspense></SiteFrame>} />
+              {StudyNoteHostPage ? (
+                <Route path="/study-note-host" element={<PageSuspense><StudyNoteHostPage /></PageSuspense>} />
+              ) : null}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             <OmniPalette />

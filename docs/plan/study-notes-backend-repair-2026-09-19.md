@@ -92,7 +92,7 @@
 
 > **未达 exit 0 的唯一命令**：`vitest run --coverage`（收尾阶段挂死——本机已知环境现象）。任务规则要求"修正执行环境/报告器后重跑，或明确留下未通过项"：本批已执行报告器修正重跑（去 html、直启二进制），挂死复现；测试全绿与新鲜产物完整（已驱动下游 `coverage:layered` 通过），但该命令本身**不记 exit0**；其余 12 步以等价分步执行且各自 exit 0。
 >
-> **后续结论（2026-09-20，另见 `study-notes-engineering-closeout-2026-09-20.md`）**：挂死机制与根因已定位——coverage 收尾 `cleanAfterRun()` 的 `fs.rm(.tmp,{recursive:true})` 中一个未完成的 `rmdir`（async_hooks 创建栈实证，`internal/fs/rimraf`）进入永久 pending，流程走不到 vitest 的退出兜底（`exit()` 的 teardownTimeout 从未被设置）；独立最小复现（不涉 vitest）证明 **D 卷上 node fs 删除异常缓慢（≈32–38ms/次，C 卷≈0.2ms）+ 偶发永久挂起，C 卷同操作正常**。又：原「去 html」尝试中 `--coverage.reporter=json,text` 一次实为参数误用（istanbul `Cannot find module 'json,text'`），未构成有效对照；reporter 组合与挂死无因果。工程门禁验收改经「隔离运行路径」（C 盘独立 clone、同 SHA/lock/config）完成，结果与证据见 closeout 文档 §4。
+> **后续结论（2026-09-20，另见 `study-notes-engineering-closeout-2026-09-20.md`；「根因」口径经 2026-09-20 Task07 轮校准）**：挂死机制与**挂起点**已定位（系统层根因未闭环）——coverage 收尾 `cleanAfterRun()` 的 `fs.rm(.tmp,{recursive:true})` 中一个未完成的 `rmdir`（async_hooks 创建栈实证，`internal/fs/rimraf`）进入永久 pending，流程走不到 vitest 的退出兜底（`exit()` 的 teardownTimeout 从未被设置）；独立最小复现（不涉 vitest）证明 **本机 fs 删除行为按目录位置分化（Temp 类目录 ≈20–35ms/轮；多数其它位置 ≈4.1s/轮）+ 慢区偶发永久挂起**（定量地图见 closeout §2.3/§2.5）。又：原「去 html」尝试中 `--coverage.reporter=json,text` 一次实为参数误用（istanbul `Cannot find module 'json,text'`），未构成有效对照；reporter 组合与挂死无因果。工程门禁验收改经「隔离运行路径」（独立 clone、同 SHA/lock/config）完成，结果与证据见 closeout 文档 §4。
 
 ### 6.3 独立只读复核（本批 diff 全量复审）
 - 范围：`git diff 555ae18..HEAD -- src/`（953 行）+ tests/docs；重点＝失败事务查询 / GET 一致性 / actor·RLS 边界 / 锁键一致性 / keep 语义。
