@@ -98,20 +98,20 @@ tests/services/l3-study-note-export.test.ts
 
 | # | 命令 | 退出码 | passed | failed | skipped | retried | 判定 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| G1 | `npm run verify:engineering` | **0** | 3968 | 0 | 6 | — | ✅ 通过（聚合入口） |
+| G1 | `npm run verify:engineering` | **0** | 3973 | 0 | 6 | — | ✅ 通过（聚合入口） |
 | G2 | `npm run verify:db` | **1** | 161 | 1 | 0 | — | ❌ 失败（既有环境问题，见 §3.2） |
 | G3a | `npx playwright test`（默认套件） | **1** | 1 | 13 | 7 | 0 | ❌ 失败（既有环境问题，见 §3.2） |
 | G3b | `npx playwright test --config playwright.study-notes.config.ts`（全 7 spec） | **0** | 54 | 0 | 0 | 0 | ✅ 通过 |
 
-G1 明细（`test:unit` 段）：Test Files 265 passed / 1 skipped（共 266）；
-Tests 3968 passed / 6 skipped（共 3974）。分层覆盖率与本批 diff 覆盖率：
+G1 明细（`test:unit` 段，**收口轮新增 C12 用例后的实测值**）：Test Files 266 passed / 1 skipped（共 267）；
+Tests 3973 passed / 6 skipped（共 3979）。分层覆盖率与本批 diff 覆盖率：
 
 ```
 Baseline ratchet gate: PASS
 Final target status:   PASS
-Diff coverage (>=85%): 92.42% (PASS)
+Diff coverage (>=85%): 92.7% (PASS)
 Diff coverage scope: base ref 48d7f6…；changed src files 16（governed 6 / outside 10）；
-                     changed executable lines 356（covered 329）；uncommitted src files 0
+                     changed executable lines 356（covered 330）；uncommitted src files 0
 | domain | 98.18% | service | 95.11% | repository | 93.84% | http | 91.71% |  ← 四层 baseline 全 PASS
 ```
 
@@ -156,7 +156,7 @@ RLS 验收库（`RLS_ACCEPTANCE_DATABASE_URL`），本机手建库不满足；G3
 
 | 命令 | 结果 |
 | --- | --- |
-| `npm run verify:engineering`（三基线 ref 均设为 `48d7f60…`） | exit **0**；3968 passed / 6 skipped；diff coverage 92.42% PASS |
+| `npm run verify:engineering`（三基线 ref 均设为 `48d7f60…`） | exit **0**；3973 passed / 6 skipped；diff coverage 92.7% PASS |
 | `npm run verify:db`（隔离库，admin 连接播种） | exit **1**；161 passed / 1 failed（`transaction-rls`） |
 | `npx playwright test`（默认套件） | exit **1**；1 passed / 13 failed（登录 500）/ 7 skipped |
 | `npx playwright test --config playwright.study-notes.config.ts`（全 7 spec） | exit **0**；**54 passed** / 0 failed / 0 skipped |
@@ -196,7 +196,7 @@ RLS 验收库（`RLS_ACCEPTANCE_DATABASE_URL`），本机手建库不满足；G3
 | U1 | `npm run verify:db` 聚合通过 | ❌ **未通过**（exit=1，161/162） | `tests/db/transaction-rls.integration.test.ts` 需其**专属已播种 RLS 验收库**；本机手建库不满足。**基线对照已证明在 `48d7f60` 上逐字重现**；本批未触碰 `tests/db/`（diff 为空）。见 §3.2 |
 | U2 | 默认 Playwright 套件通过 | ❌ **未通过**（exit=1，1/14） | 13 例在登录处 500；需 `e2e/global-setup.ts` 播种后登录。**基线对照同样重现**；本批未触碰 `e2e/`（diff 为空）。见 §3.2 |
 | U3 | 任务书 C4（`coverage:layered` + `test:collection`）/ C6（`api:governance`） | ✅ **已随 G1 实跑**（原记「未逐条实跑」有误，已更正） | 二者均在 `verify:engineering` 的 `test:unit` / `api:governance` 段内，G1 exit=0 即已实跑；C4 的数值见 §3 的 ratchet 与 diff coverage 输出 |
-| U4 | 覆盖率 diff ratchet 具体数值 | ✅ **已核**（原记「未核」） | `92.42% (PASS)`，四层 baseline 全 PASS，changed executable lines 356（covered 329），见 §3 |
+| U4 | 覆盖率 diff ratchet 具体数值 | ✅ **已核**（原记「未核」） | `92.7% (PASS)`，四层 baseline 全 PASS，changed executable lines 356（covered 330），见 §3 |
 | U5 | 变异检查留痕 | ⚠️ **部分** | 本批留痕 **M2（版本校验）** 与 **stale-download 守卫** 两组红→绿→还原；任务书 §4.2 的 M1/M3–M10 未逐条实跑 |
 | U6 | 真库只读性 B9/B10/B12 | ✅ **已实跑** | `tests/l3-study-note-export.integration.test.ts` 6/6 通过（含 submissions / attempts 行数不变）；另有一次性驱动脚本对 11 张表前后计行一致 |
 | U7 | 主线 CI | ✅ **已完成**（原记「未触发」） | PR #132 三项必需检查全 pass（run `35721275373` / `35721275291`）；分支仍未合并，**不得据此记为已合并** |

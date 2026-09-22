@@ -153,8 +153,8 @@
 | --- | --- | --- | --- |
 | C1 | 类型 | `npm run typecheck` | ✅ 已跑（含在 G1 内，exit 0） |
 | C2 | 架构依赖约束 | `npm run arch:check` | ✅ 已跑（含在 G1 内，exit 0） |
-| C3 | 单元 + 覆盖率 | `npx --no-install vitest run --coverage --maxWorkers=1` | ✅ 已跑（含在 G1：3968 passed / 6 skipped） |
-| C4 | 分层覆盖率 + 用例收集 | `npm run coverage:layered` && `npm run test:collection` | ✅ 已跑（含在 G1 的 `test:unit` 内）：ratchet PASS、diff coverage **92.42% PASS**、collection 266/266。**原记「未逐条实跑」有误，已更正** |
+| C3 | 单元 + 覆盖率 | `npx --no-install vitest run --coverage --maxWorkers=1` | ✅ 已跑（含在 G1：3973 passed / 6 skipped） |
+| C4 | 分层覆盖率 + 用例收集 | `npm run coverage:layered` && `npm run test:collection` | ✅ 已跑（含在 G1 的 `test:unit` 内）：ratchet PASS、diff coverage **92.7% PASS**、collection 266/266。**原记「未逐条实跑」有误，已更正** |
 | C5 | schema 漂移 | `npm run db:schema:drift` | ✅ 已跑（含在 G1 内，exit 0） |
 | C6 | API 治理（openapi/client/合同/breaking） | `npm run api:governance` | ✅ 已跑（含在 G1 内，exit 0）。**原与 C4 同列为「未跑」有误，已更正** |
 | C7 | 前端构建 | `npm run frontend:build` | ✅ 已跑（含在 G1 内，exit 0） |
