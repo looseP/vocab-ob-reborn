@@ -1,5 +1,12 @@
 # Task 10 任务书 —— 导出与生命周期闭环（2026-09-22）
 
+> **【实现轮回填 — 2026-09-22】执行台账见 `docs/plan/study-notes-task10-ledger-2026-09-22.md`**：
+> 提交序列、门禁实测（`verify:engineering` exit 0 / `verify:db` exit 1 / Playwright exit 1）、
+> 独立验收库 `vocab_study_notes_task10_verify`、未覆盖项 U1–U7。**本任务书 §3 矩阵中标记
+> 「待实现轮实跑」的行，终态以台账为准；门禁未过，本任务不宣告验收通过。**
+> 回填口径（如实）：§3.3 的 C1–C11 **未逐条实跑**，仅有 `verify:engineering` 的聚合通过
+> 结果；不得据聚合结果推断 C4/C9/C10/C11 已跑。
+>
 > **本文件性质：任务书（开工前定稿）**。只做决策与验收定义，**不含实现代码**。
 > **本轮提交纪律**：本文件是 Task 10 分支的**第一个提交**且**只含本文件**（`docs(plan)`），
 > 不含任何功能代码、schema/HTTP 合同变更、客户端 stub 或 openapi 生成物改动。
@@ -209,8 +216,29 @@
 ### 5.1 提交记录（回填）
 
 - 提交信息：`docs(plan): Task 10 任务书 — 导出与生命周期闭环`
-- 提交 SHA：见提交后回填（本文件所在提交即该 SHA）
+- 提交 SHA：**`3cab33f`**
 - 变更文件清单：`docs/plan/study-notes-task10-execution-2026-09-22.md`（唯一）
+- 起点基线校验：`git rev-parse HEAD` == `48d7f60180cfee94f905a5f20c88cc62f9ceb83d` ✅（见 §5）
+- **实现轮功能提交（已落地，回填）**：`923ff4d8e06a4912f12ac8d1cef7423d5f1e8160`
+  `feat(notes): export portable notes with citation evidence`（27 文件，`+4552/-32`）。
+- **实现轮补充提交（回填）**：`d9eb2ac` `test(l3): await retry button before clicking in
+  writing-entry retry case`（唯一文件 `tests/frontend/l3-papers.test.tsx`）。
+
+### 5.2 验收矩阵终态回填（2026-09-22）
+
+> 逐行终态以执行台账 `docs/plan/study-notes-task10-ledger-2026-09-22.md` §3/§5 为准。
+> **不逐行复制「通过」**——门禁面（C 表）与真库面（B9/B10/B12）**未通过或未实跑**，
+> 故本任务书对应行的判定保持「未通过 / 未跑」，不得据聚合门禁推断为通过。
+
+| 面 | 终态 |
+| --- | --- |
+| A1–A17（服务/HTTP/前端目标用例） | 用例**已随 `923ff4d` 落地**；本轮回填只声明「用例存在且用例名可检索」，**未在实现轮逐条复跑留痕** |
+| A18（OpenAPI + client check） | 归入 `verify:engineering` 聚合（含 `api:governance`），**exit 0**；未单独留痕 |
+| B9/B10/B12（真库零写三证） | 用例已写（`tests/l3-study-note-export.integration.test.ts:200,216,224`）；**未在真库实跑**（依赖 `verify:db`） |
+| C1/C2/C3（含于 `verify:engineering`） | **exit 0**（passed=265 / failed=null / skipped=1） |
+| C4/C9/C10/C11 | **未逐条实跑**（C9/C10 关联 `verify:db` exit 1、Playwright exit 1） |
+| C5–C8（含于 `verify:engineering`） | **exit 0**（聚合内） |
+| D1–D3（任务书自身） | **已实跑**（见 §5） |
 
 ---
 
