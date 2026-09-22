@@ -11,6 +11,7 @@ import {
   StudyNoteConflictError,
   StudyNoteDisposedError,
   createStudyNoteSaveController,
+  type StudyNoteConfirmedSnapshot,
   type StudyNoteEditSnapshot,
   type StudyNoteSaveController,
   type StudyNoteSaveRequest,
@@ -1108,5 +1109,198 @@ describe("保存控制器 · R5 flush 回执绑定实际确认快照", () => {
     expect(receipt.editSeq).toBe(1); // = savedSeq
     expect(receipt.version).toBe(4);
     expect(receipt.lastSavedAt).toBe("t1");
+  });
+});
+
+describe("保存控制器 · R1/R2 真实确认协议（recapture 防护）", () => {
+  const REF_NEW = "00000000-0000-4000-8000-0000000008ff";
+  const newCapture = () => ({
+    id: REF_NEW,
+    action: "capture" as const,
+    target: { kind: "source" as const, sourceId: SOURCE_ID },
+  });
+
+  it("成功确认回调携带被确认的冻结快照与正式元数据（capture 在载荷中可见）", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const confirmed: StudyNoteConfirmedSnapshot[] = [];
+    let requestCounter = 0;
+    const controller = createStudyNoteSaveController({
+      noteId: NOTE_ID,
+      version: 3,
+      baseline: makeEdit(),
+      save,
+      onConfirmed: (value) => confirmed.push(value),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+      generateRequestId: () => `req-${++requestCounter}`,
+    });
+
+    controller.edit(makeEdit({ title: "T1", references: [newCapture()] }));
+    const flush = controller.flush();
+    await flushMicrotasks();
+    timers.runPending(); // 防抖
+    await flushMicrotasks();
+    defers[0]!.resolve({
+      version: 4,
+      updatedAt: "2026-09-21T01:00:00.000Z",
+      references: [
+        {
+          id: REF_NEW,
+          target: { kind: "source", sourceId: SOURCE_ID },
+          status: "current",
+          capturedAt: "2026-09-21T01:00:00.000Z",
+          displaySnapshot: { kind: "source", title: "服务端快照", excerpt: "摘录" },
+          liveTitle: "服务端快照",
+        },
+      ],
+    });
+    await flush;
+
+    expect(confirmed).toHaveLength(1);
+    // 载荷是**本次发送的冻结快照**（capture 仍为 capture——确认前的原样载荷）
+    expect(confirmed[0]!.snapshot.references).toEqual([newCapture()]);
+    expect(confirmed[0]!.version).toBe(4);
+    expect(confirmed[0]!.updatedAt).toBe("2026-09-21T01:00:00.000Z");
+    expect(confirmed[0]!.references[0]!.displaySnapshot).toEqual({
+      kind: "source",
+      title: "服务端快照",
+      excerpt: "摘录",
+    });
+  });
+
+  it("markConfirmed 只改本地簿记：capture→keep、**不推进 editSeq、不产生第二次 PUT**", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    let requestCounter = 0;
+    const controller = createStudyNoteSaveController({
+      noteId: NOTE_ID,
+      version: 3,
+      baseline: makeEdit(),
+      save,
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+      generateRequestId: () => `req-${++requestCounter}`,
+    });
+
+    controller.edit(makeEdit({ title: "T1", references: [newCapture()] }));
+    const flush = controller.flush();
+    await flushMicrotasks();
+    timers.runPending();
+    await flushMicrotasks();
+    defers[0]!.resolve({ version: 4, updatedAt: "t1" });
+    await flush;
+
+    const before = controller.getSnapshot();
+    controller.markConfirmed([REF_NEW]);
+    const after = controller.getSnapshot();
+
+    expect(after.edit.references).toEqual([{ id: REF_NEW, action: "keep" }]);
+    expect(after.editSeq).toBe(before.editSeq); // 簿记不产生新编辑代际
+    expect(after.savedSeq).toBe(before.savedSeq);
+    expect(after.state).toBe("idle");
+
+    // 后续普通编辑不再重采集：capture 已转 keep
+    controller.edit(makeEdit({ title: "T2", references: [{ id: REF_NEW, action: "keep" }] }));
+    const flush2 = controller.flush();
+    await flushMicrotasks();
+    timers.runPending();
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect((save.mock.calls[1]![0] as StudyNoteSaveRequest).snapshot.references).toEqual([
+      { id: REF_NEW, action: "keep" },
+    ]);
+    defers[1]!.resolve({ version: 5, updatedAt: "t2" });
+    await flush2;
+  });
+
+  it("未确认的引用不因他人的确认回调被转 keep（按引用身份，不整包覆盖）", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const REF_B = "00000000-0000-4000-8000-0000000008fe";
+    let requestCounter = 0;
+    const controller = createStudyNoteSaveController({
+      noteId: NOTE_ID,
+      version: 3,
+      baseline: makeEdit(),
+      save,
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+      generateRequestId: () => `req-${++requestCounter}`,
+    });
+
+    controller.edit(makeEdit({ title: "T1", references: [newCapture()] }));
+    controller.flush().catch(() => undefined);
+    await flushMicrotasks();
+    timers.runPending();
+    await flushMicrotasks();
+
+    // A 在途期间用户新增 B（仍为 capture，尚未提交给服务端）
+    controller.edit(
+      makeEdit({
+        title: "T1",
+        references: [newCapture(), { id: REF_B, action: "capture", target: { kind: "source", sourceId: SOURCE_ID } }],
+      }),
+    );
+
+    defers[0]!.resolve({ version: 4, updatedAt: "t1" });
+    await flushMicrotasks();
+    // 仅把本次确认过的 A 转 keep；B 保持 capture 等待自己的确认
+    controller.markConfirmed([REF_NEW]);
+    const snapshot = controller.getSnapshot();
+    expect(snapshot.edit.references.filter((write) => write.action === "capture")).toEqual([
+      { id: REF_B, action: "capture", target: { kind: "source", sourceId: SOURCE_ID } },
+    ]);
+    expect(snapshot.edit.references.find((write) => write.id === REF_NEW)?.action).toBe("keep");
+  });
+
+  it("未知结果不触发确认：失败期间 capture 保持 capture，原样重试载荷不含 keep", async () => {
+    const timers = makeFakeTimers();
+    const { save, defers } = deferredSave();
+    const confirmed: StudyNoteConfirmedSnapshot[] = [];
+    let requestCounter = 0;
+    const controller = createStudyNoteSaveController({
+      noteId: NOTE_ID,
+      version: 3,
+      baseline: makeEdit(),
+      save,
+      onConfirmed: (value) => confirmed.push(value),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+      generateRequestId: () => `req-${++requestCounter}`,
+    });
+
+    controller.edit(makeEdit({ title: "T1", references: [newCapture()] }));
+    const flush = controller.flush();
+    await flushMicrotasks();
+    timers.runPending(); // 防抖到期 → 首次发送
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // 结果不明（网络错误）→ 未确认真实成功
+    defers[0]!.reject(new Error("network down"));
+    await flushMicrotasks();
+    expect(confirmed).toHaveLength(0);
+    expect(controller.getSnapshot().edit.references).toEqual([newCapture()]);
+
+    // 显式重试：原样重发（同 requestId/expectedVersion/payload），成功后本次才确认
+    const retrying = controller.retry();
+    await flushMicrotasks();
+    timers.runPending();
+    await flushMicrotasks();
+    expect(save).toHaveBeenCalledTimes(2);
+    defers[1]!.resolve({ version: 4, updatedAt: "t1" });
+    await retrying;
+    await flush;
+
+    const first = (save.mock.calls[0]![0] as StudyNoteSaveRequest);
+    const second = (save.mock.calls[1]![0] as StudyNoteSaveRequest);
+    // 两次载荷逐字节一致：重试期间仍是 capture（未确认绝不改载荷）
+    expect(second.snapshot).toEqual(first.snapshot);
+    expect(second.snapshot.references).toEqual([newCapture()]);
+    expect(second.requestId).toBe(first.requestId);
+    expect(second.expectedVersion).toBe(first.expectedVersion);
+    expect(confirmed).toHaveLength(1); // 仅真实成功确认一次
+    expect(confirmed[0]!.snapshot.references).toEqual([newCapture()]);
   });
 });

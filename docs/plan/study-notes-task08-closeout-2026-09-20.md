@@ -14,7 +14,6 @@
 
 | 项 | 状态 | 正式回归 | 提交 |
 | --- | --- | --- | --- |
-| F1 专题翻页被取代后 loadingMoreTopics 不释放 | __待补__ | 探针1迁移 | — |
 | F1 专题翻页被取代后 loadingMoreTopics 不释放 | ✅ 转绿 | 探针1迁移 + F1b（不清新代 busy）等 2 例 | `3427fcd` |
 | F2a 写确认作废读请求后丢失加载终态 | ✅ 转绿 | 探针2迁移（settleSupersededLoad：outstanding=0 才结算） | `3427fcd` |
 | F2b 旧题型写确认作废新题型首屏读取 | ✅ 转绿 | 探针3迁移（venue 判定先于 loadSeq 推进） | `3427fcd` |
@@ -36,7 +35,7 @@
 ### 3.1 测试层（起终双态）
 
 - 原审查配置（`task08-review.config.mjs`）：基线 82/82 exit 0 → 终点 **82/82 exit 0**（`t08c-final-82.log`）。
-- 收尾探针（`task08-closeout.config.mjs`）：基线 5/5 行为失败 exit 1 → 终点 **6/6（4 模型 + 1 UI + 1 计数）exit 0**（`t08c-final-probes.log`）。
+- 收尾探针（`task08-closeout.config.mjs`）：基线 5/5 行为失败 exit 1 → 终点 **5/5（4 模型 + 1 UI）exit 0**（`t08c-final-probes.log`，2 文件全过）。
 - 正式回归集（8 文件：Task08 六件 + Task07 编辑器/保存合同 + shell 锁）：**192 passed exit 0**（`t08c-final-suite.log`）。
 - 独立只读复核要点（不只看版本）：F2a/R3 断言 = 版本不退 **且** state=ready **且** 续写用新基线；F1 断言 = pending 释放 **且** 再次翻页真实发请求；⑫ = v2 保留 + 无「正在加载专题…」残留 + 续写 v3 库核。
 
@@ -60,8 +59,8 @@
 
 ## 4. 提交与 PR
 
-- 提交链：`3427fcd`(F1–F3) → `f31a107`(F4) → `80edc3f`(E2E 修正) → `280ab63`(台账)。
-- 推送：`d3aaa73..280ab63` 快进；**local HEAD = ls-remote = `280ab632d2665da627f26479c5ec2a2bd5a01dd5`**。
-- PR：**#128**（draft、OPEN）head=`280ab63`，base=`study-notes-n1-editor`（259415ff）；描述已更新（含 F1–F4、变异证明、门禁分段与口径）。
+- 提交链：`3427fcd`(F1–F3) → `f31a107`(F4) → `80edc3f`(E2E 修正) → `280ab63`(台账验收) → `8321929`(台账 §4 收口)。
+- 推送：`d3aaa73..8321929` 快进；**local HEAD = ls-remote = `832192943496099e53b3330bd0d2e7fb85b925c2`**。
+- PR：**#128**（draft、OPEN）head=`8321929`，base=`study-notes-n1-editor`（259415ff）；描述已更新（含 F1–F4、变异证明、门禁分段与口径）。
 - CI（只读查询）：**Writing E2E pass（1m58s）**；Engineering Gate / Browser E2E 为 main-only，不触发（如实标记）；学习笔记 E2E 独立配置不在默认收集内。
 - 纪律：未 merge、未 retarget、未部署、未推 main；未进入 Task 09/10/N2。

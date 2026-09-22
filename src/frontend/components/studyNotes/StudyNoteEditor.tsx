@@ -12,11 +12,12 @@
  *  - 冲突面板：复制本地内容（失败给可见文本备选）/ 显式载入服务器版本（锁编辑）；
  *  - marker 集合被手动破坏时由保存预检阻止 PUT 并给出恢复指引（invalid 面板）。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReferencePreview } from "@/domain/l3-study-notes";
-import type { StudyNotesClient } from "@/frontend/api/studyNotesClient";
+import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNotesClient";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { Button } from "@/frontend/components/ui/Button";
+import { StudyReferencePicker } from "@/frontend/components/studyNotes/StudyReferencePicker";
 import { useStudyNoteEditor } from "@/frontend/hooks/useStudyNoteEditor";
 import type { StudyNoteSaveState } from "@/frontend/state/studyNoteSaveController";
 import { splitStudyNotePreviewBlocks } from "@/frontend/utils/studyNotePreviewBlocks";
@@ -76,27 +77,83 @@ function referenceSummary(meta: ReferencePreview): string {
   }
 }
 
-function ReferencePlaceholder({ refId, meta }: { refId: string; meta: ReferencePreview | undefined }) {
-  const statusLabel = meta === undefined ? "未找到快照" : meta.status === "changed" ? "内容已变化" : meta.status === "unavailable" ? "引用已失效" : null;
+function ReferencePlaceholder({
+  refId,
+  meta,
+  onRemove,
+  onConvert,
+}: {
+  refId: string;
+  meta: ReferencePreview & { confirmed?: boolean } | undefined;
+  onRemove?: (refId: string) => void;
+  onConvert?: (refId: string) => void;
+}) {
+  const pending = meta !== undefined && meta.confirmed === false;
+  const statusLabel =
+    meta === undefined
+      ? "未找到快照"
+      : pending
+        ? "待确认"
+        : meta.status === "changed"
+          ? "内容已变化"
+          : meta.status === "unavailable"
+            ? "引用已失效"
+            : null;
   return (
     <div
       className="my-2 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-ink)]"
       data-testid="reference-placeholder"
       data-ref-id={refId}
+      data-ref-confirmed={meta === undefined ? "unknown" : pending ? "pending" : "confirmed"}
     >
       <div className="flex items-center gap-2">
         <span className="rounded bg-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-soft)]">引用</span>
         <span className="min-w-0 flex-1 truncate">{meta ? referenceSummary(meta) : refId}</span>
         {statusLabel && <span className="shrink-0 text-[10px] text-[var(--color-accent-2)]">{statusLabel}</span>}
       </div>
+      {meta?.status === "changed" && meta.liveTitle && (
+        <p className="mt-1 text-[10px] text-[var(--color-ink-soft)]" data-testid="ref-card-live-title">
+          当前来源：{meta.liveTitle}
+        </p>
+      )}
+      {meta && (onRemove || onConvert) && (
+        <div className="mt-1 flex items-center gap-2">
+          {onConvert && (
+            <button
+              type="button"
+              className="rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-soft)] hover:border-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => onConvert(refId)}
+              disabled={pending}
+              title={pending ? "该引用尚未保存确认：请先保存后再转为普通摘录" : undefined}
+              data-testid="ref-card-convert"
+            >
+              转普通摘录
+            </button>
+          )}
+          {onRemove && (
+            <button
+              type="button"
+              className="rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-soft)] hover:border-[var(--color-accent-2)]"
+              onClick={() => onRemove(refId)}
+              data-testid="ref-card-remove"
+            >
+              移除
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBarrier }: StudyNoteEditorProps) {
   const editor = useStudyNoteEditor({ noteId, client });
+  const activeClient = client ?? studyNotesClient;
   const [showPreview, setShowPreview] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
   const [copyState, setCopyState] = useState<{ ok: boolean; text: string } | null>(null);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const insertCursorRef = useRef<number | null>(null);
 
   // Task 08：把导航屏障注册给宿主（requestNavigation 稳定标识；卸载时解除）。
   const requestNavigation = editor.requestNavigation;
@@ -167,6 +224,20 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
               重试保存
             </Button>
           )}
+          {!showPreview && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                insertCursorRef.current = bodyRef.current?.selectionStart ?? null;
+                setShowPicker(true);
+              }}
+              disabled={editingLocked}
+              data-testid="insert-reference-button"
+            >
+              插入引用
+            </Button>
+          )}
           <Button size="sm" variant={showPreview ? "primary" : "ghost"} onClick={() => setShowPreview((value) => !value)}>
             {showPreview ? "返回编辑" : "预览"}
           </Button>
@@ -212,6 +283,12 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
                   key={index}
                   refId={block.refId}
                   meta={editor.referencesMeta.find((reference) => reference.id.toLowerCase() === block.refId.toLowerCase())}
+                  onRemove={(refId) => {
+                    editor.removeReference(refId);
+                  }}
+                  onConvert={(refId) => {
+                    editor.convertReferenceToExcerpt(refId);
+                  }}
                 />
               ),
             )
@@ -222,6 +299,7 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
       ) : (
         <div>
           <textarea
+            ref={bodyRef}
             className="min-h-[240px] w-full resize-y rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 font-mono text-sm text-[var(--color-ink)] outline-none focus:border-[var(--color-accent)]"
             placeholder="在这里写正文…（支持 Markdown）"
             value={edit.bodyMd}
@@ -234,6 +312,37 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
           />
           {overBody && <p className="mt-1 text-[11px] text-[var(--color-accent-2)]">正文超过 {BODY_MAX} 字符上限，保存将被拒绝；请先精简。</p>}
         </div>
+      )}
+
+      {/* Task 09A：引用操作拒绝/未确认反馈（可见原因，不只返回 false/null） */}
+      {editor.referenceError && (
+        <div
+          className="flex items-start justify-between gap-2 rounded-lg border border-[var(--color-accent-2)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-ink)]"
+          role="alert"
+          data-testid="reference-error"
+        >
+          <span className="min-w-0 flex-1">{editor.referenceError}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-ink-soft)]"
+            onClick={editor.dismissReferenceError}
+          >
+            知道了
+          </button>
+        </div>
+      )}
+
+      {/* Task 09A：引用选择面板（搜索 → 预览 → 插入；插入经 hook 原子 patch） */}
+      {showPicker && (
+        <StudyReferencePicker
+          client={activeClient}
+          onInsert={(target, preview) => {
+            // 以「插入时刻」的选区为准（面板打开期间光标可能已移动）；textarea 不可用时回退到打开时快照
+            const cursor = bodyRef.current?.selectionStart ?? insertCursorRef.current;
+            return editor.insertReference(target, preview, cursor) !== null;
+          }}
+          onClose={() => setShowPicker(false)}
+        />
       )}
 
       {/* 冲突面板（复制本地内容 / 显式载入服务器版本；无「确认已合并后重试」） */}
