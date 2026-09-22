@@ -89,73 +89,121 @@ tests/services/l3-study-note-export.test.ts
 
 ---
 
-## 3. 门禁实测结果（本批如实记录）
+## 3. 门禁实测结果（第二轮，全部为本轮实跑）
 
-> 下列结果由本批交付指令**给定**为真实门禁结果，逐条登记；**本轮未重跑**
-> `verify:db` 与 Playwright（原因见 §4），故**不计入「本轮已实跑通过」**。
+> **本节已于收口轮重写。**第一版 §3 登记的是交付指令**给定**的数字（G1 计 265/1），
+> 未实跑 G2/G3 且未定位失败原因；该口径已作废。下列每一行都来自本机**实跑日志**，
+> 环境为隔离库，执行运行时 `D:/Temp/node22-runtime/node-v22.22.2-win-x64`（node v22.22.2 / npm 10.9.7）。
+> 计数取自各命令 stdout 的 vitest / Playwright 汇总行。
 
 | # | 命令 | 退出码 | passed | failed | skipped | retried | 判定 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| G1 | `npm run verify:engineering` | **0** | 265 | — | 1 | — | ✅ 通过 |
-| G2 | `npm run verify:db` | **1** | — | — | — | — | ❌ **失败**（未提供失败明细） |
-| G3 | `npx playwright test`（默认套件 + study-notes 套件） | **1** | — | — | — | — | ❌ **失败**（未提供失败明细） |
+| G1 | `npm run verify:engineering` | **0** | 3968 | 0 | 6 | — | ✅ 通过（聚合入口） |
+| G2 | `npm run verify:db` | **1** | 161 | 1 | 0 | — | ❌ 失败（既有环境问题，见 §3.2） |
+| G3a | `npx playwright test`（默认套件） | **1** | 1 | 13 | 7 | 0 | ❌ 失败（既有环境问题，见 §3.2） |
+| G3b | `npx playwright test --config playwright.study-notes.config.ts`（全 7 spec） | **0** | 54 | 0 | 0 | 0 | ✅ 通过 |
 
-`npm run verify:engineering` 的脚本构成（`package.json:98`）为
-`typecheck && arch:check && test:unit && db:schema:drift && api:governance && frontend:build
-&& runtime:verify && alerting:verify && release:acceptance:contract
-&& secret-rotation:evidence:contract && release:workflow:verify`。
+G1 明细（`test:unit` 段）：Test Files 265 passed / 1 skipped（共 266）；
+Tests 3968 passed / 6 skipped（共 3974）。分层覆盖率与本批 diff 覆盖率：
 
-`npm run verify:db` 的脚本构成（`package.json:100`）为
-`test:db-release && test:integration && test:db-roles && test:capacity`。
+```
+Baseline ratchet gate: PASS
+Final target status:   PASS
+Diff coverage (>=85%): 92.42% (PASS)
+Diff coverage scope: base ref 48d7f6…；changed src files 16（governed 6 / outside 10）；
+                     changed executable lines 356（covered 329）；uncommitted src files 0
+| domain | 98.18% | service | 95.11% | repository | 93.84% | http | 91.71% |  ← 四层 baseline 全 PASS
+```
 
-> **G2/G3 失败原因未定位。** 简报只给出 `exit=1` 与全 `null` 计数，未给失败用例名、
-> 失败模块或 stderr 摘要。台账**不猜**根因：既不记为「环境噪声」，也不记为「产品缺陷」。
-> 未覆盖项据此登记在 §5。
+G3b 明细（全 7 spec，`ok` 计数）：导出 5 / host 10 / 引用选择器关闭 3 / 引用回路 9 /
+卷面侧栏 6 / Task08 回归 3 / 工作区 18 ＝ **54**，failed 0，skipped 0。
 
-### 3.1 本轮实际执行的命令（仅限本台账写作所需的只读核对）
+### 3.1 双重口径（聚合入口非 0 ↔ 主线 CI 全绿）
+
+G2/G3a 在本机非 0，但**同一 commit 的主线 CI 三项必需检查全部通过**：
+
+| CI 检查 | 结论 | 运行 |
+| --- | --- | --- |
+| Engineering Gate + Migration Rehearsal | pass（6m52s） | run `35721275373` |
+| Browser E2E (Playwright) | pass（1m50s） | run `35721275373` |
+| Writing E2E（真环境闭环 + 故障矩阵） | pass（2m12s） | run `35721275291` |
+
+两个口径**并存且都如实登记**，不得任取其一：
+- CI 通过说明：在 CI 的规范供给环境（迁移镜像建库 + 角色引导）里，聚合门禁与浏览器 E2E 是绿的；
+- 本机非 0 说明：本机手建隔离库不满足 G2/G3a 的**前置供给**，与产品代码无关（§3.2 已用基线对照证明）。
+- 因此本台账**既不**把 CI 全绿当作「本机聚合门禁已通过」，**也不**把本机非 0 当作 Task 10 回归。
+
+### 3.2 G2 / G3a 失败根因（基线对照实验，已定位）
+
+**结论：两项均为既有环境问题，不是 Task 10 引入的回归。** 证明方式为基线对照——
+把未改动的基线提交 `48d7f60180cfee94f905a5f20c88cc62f9ceb83d` 单独检出为 worktree 并配独立库重跑。
+
+| 项 | 症状 | 基线对照结果 | 本批是否触碰 |
+| --- | --- | --- | --- |
+| G2 | `tests/db/transaction-rls.integration.test.ts:138` → PG `23503`（`daily_forecast_snapshots_user_id_fkey`），161/162 通过 | **在 `48d7f60` 上逐字重现同一失败** | `git diff --stat origin/main..HEAD -- tests/db/ scripts/` **为空** |
+| G3a | 13/14 用例在 `e2e/fixtures.ts:20` 抛 `Browser session login failed: 500` | **在 `48d7f60` 上同样 13 例同样报错** | `git diff --stat origin/main..HEAD -- e2e/` **为空**；本批只在 `e2e-study-notes/` **新增** 1 个 spec |
+
+根因属**建库供给**而非代码：G2 的 `transaction-rls.integration.test.ts:17` 要求其**专属**已播种
+RLS 验收库（`RLS_ACCEPTANCE_DATABASE_URL`），本机手建库不满足；G3a 的默认套件需
+`e2e/global-setup.ts:10,16` 播种 `users`/`profiles` 后登录才返回 201。
+另注：`test:db-roles` 断言的是**精确**权限矩阵，用 `GRANT … ON ALL TABLES` 宽授权会被正确拒绝，
+须走仓内 `scripts/bootstrap-database-roles.ts`（prepare + converge）与 `db-roles:acceptance` 受控供给。
+
+> 组织上仍以本机聚合入口为交付判据，故 G2/G3a **不计为通过**，如实留在 §5 未覆盖/未通过项；
+> 但按上述对照实验，也**不记为 Task 10 缺陷**。
+
+### 3.3 收口轮实跑的命令（本台账全部数字的来源）
 
 | 命令 | 结果 |
 | --- | --- |
-| `git -C D:/Temp/vocab-ob-t10-clone status --porcelain` | 接管时 1 行；提交后 0 行 |
-| `git -C … rev-parse HEAD` | `923ff4d…`（提交后 `d9eb2ac…`） |
-| `git -C … ls-remote --heads origin study-notes-n1-task10` | `48d7f60…`（接管时；推送后见 §4） |
-| `git -C … show --name-only 923ff4d` | 27 行，见 §2.1 |
-| `git -C … merge-base HEAD origin/main` | `48d7f60180cfee94f905a5f20c88cc62f9ceb83d` |
-| `gh pr list --head study-notes-n1-task10 --state all` | `[]`（无既有 PR） |
+| `npm run verify:engineering`（三基线 ref 均设为 `48d7f60…`） | exit **0**；3968 passed / 6 skipped；diff coverage 92.42% PASS |
+| `npm run verify:db`（隔离库，admin 连接播种） | exit **1**；161 passed / 1 failed（`transaction-rls`） |
+| `npx playwright test`（默认套件） | exit **1**；1 passed / 13 failed（登录 500）/ 7 skipped |
+| `npx playwright test --config playwright.study-notes.config.ts`（全 7 spec） | exit **0**；**54 passed** / 0 failed / 0 skipped |
+| `tests/http/study-note-export-version-chain.test.ts` | exit **0**；5 passed |
+| 同上，**变异**（短路 `note.version !== expectedVersion`） | exit **1**；**2 failed** / 3 passed |
+| 同上，**还原后** | exit **0**；5 passed；`git diff --stat` 空（逐字还原） |
+| `git -C … rev-parse HEAD` / `ls-remote` | 本地＝远端＝PR head（见 §7） |
+| `git -C … fsck` | exit 0（仅 2 个 dangling commit，无损坏） |
+| `gh pr checks 132` | 三项必需检查全 pass |
 
 ---
 
-## 4. 环境限制
+## 4. 环境限制（收口轮更新）
 
-1. **本机 Node 默认 `v24.15.0`**，而 Task 09B 台账登记的执行运行时为
-   `v22.22.2`（`D:/Temp/node22-runtime/node-v22.22.2-win-x64`，不在系统 PATH）。
-   `verify:db` / Playwright 对 Node 版本与 DB 连接敏感，**版本漂移是本轮 G2/G3 未复跑的
-   原因之一，但未定位为根因**。
-2. **`verify:db` 需要真库环境变量。** 集成用例（`tests/l3-study-note-export.integration.test.ts:10`）
-   规定 `TEST_DATABASE_URL` / `TEST_APP_DATABASE_URL` 缺失即失败、**不 skip**；
-   克隆内无 `.env.local`。本机 `vocab-local-pg`（5433）可达，且已存在
-   `vocab_study_notes_task10_verify` 与 `vocab_study_notes_task10_accept` 两库，
-   但**本轮未据此重跑 G2**。
-3. **Playwright 需要启动真实栈**（E2E 服务端口 + `SERVE_FRONTEND=true`），
-   且 `e2e-study-notes/study-note-export.spec.ts:20` 要求库名为
-   `vocab_study_notes_task10_accept`（`STUDY_NOTES_E2E_DB` 可覆写）。
-   本轮未启动栈，未复跑 G3。
-4. **`build-analysis/` 不在克隆内**（`D:/Temp/vocab-ob-t10-clone/build-analysis` 不存在）——
-   与任务书文首「盘点文件位置说明」一致。
+1. **执行运行时须显式指定。** 本机默认 Node 为 `v24.15.0` / npm 11.12.1，不符合仓内
+   `engines`（`>=22.22.0 <23` / npm `>=10.9.0 <11`）。全部实跑使用
+   `D:/Temp/node22-runtime/node-v22.22.2-win-x64`（node v22.22.2 / npm 10.9.7）。
+2. **Windows 上 `npm` 不能直接 spawn。** npm 是 `.cmd` 垫片，直接调用报
+   `spawn … npm ENOENT`；须经 `cmd /c cd /d <clone> && <...>/npm.cmd …`。
+   `world.run` 以工作区根为 cwd，不 `cd /d` 会把 npm 解析到无 `package.json` 的目录（ENOENT -4058）。
+3. **门禁输出超harness单流上限。** `verify:engineering` 实测 stdout 87KB、**stderr 392KB**，
+   超过 256KB 上限，故实跑一律 `> log 2>&1` 后读取有界摘要。
+4. **`verify:db` 需要发布级供给的库**，不是「建库 + 手写授权」：`test:db-roles` 断言**精确**权限矩阵，
+   宽授权（`GRANT … ON ALL TABLES`）会被正确拒绝；须走 `scripts/bootstrap-database-roles.ts`
+   （prepare + converge）或 `db-roles:acceptance` 受控 Compose 供给。
+5. **本机有两个 postgres 实例**：`vocab-local-pg`（127.0.0.1:**5433**，本批隔离库所在）与
+   `vocab-observatory-postgres-1`（127.0.0.1:**5432**，另一实例、角色口令不同）。
+   首次误连 5432 曾得到 PG `28P01`；隔离库一律固定在 5433。
+6. **`build-analysis/` 不在克隆内**——与任务书文首「盘点文件位置说明」一致。
 
 ---
 
-## 5. 未覆盖项（如实列出，不计入通过）
+## 5. 未覆盖 / 未通过项（如实列出，不计入通过）
 
 | # | 项 | 状态 | 原因 |
 | --- | --- | --- | --- |
-| U1 | `npm run verify:db` 通过 | ❌ **未通过**（exit=1） | 真实门禁失败；失败明细未提供，根因未定位 |
-| U2 | Playwright（默认 + study-notes）通过 | ❌ **未通过**（exit=1） | 同上 |
-| U3 | 任务书 C1–C11 逐条门禁 | ⚠️ **未逐条实跑** | 仅 `verify:engineering`（含 C1/C2/C3 面、C5/C6/C7/C8 面）有聚合通过结果；C4（`coverage:layered` + `test:collection`）、C9（真库集成）、C10（浏览器）、C11（授权登记独立跑）**未逐条实跑**，不得据聚合结果推断为已跑 |
-| U4 | 覆盖率 diff ratchet（受治理文件 lines ≥85% / branches ≥75%） | ⚠️ **未核** | `verify:engineering` 的 `test:unit` 通过不等于 ratchet 达标数值已核验 |
-| U5 | 变异检查 M1–M10（任务书 §4.2）留痕 | ⚠️ **未核** | 本轮未逐条实跑变异并留痕 |
-| U6 | 真库只读性 B9/B10/B12（`submissions` / `l3_question_attempts` / notes·venues·topics·refs 零写） | ⚠️ **用例已写，未在真库实跑** | 依赖 U1；用例存在于 `tests/l3-study-note-export.integration.test.ts:200,216,224` |
-| U7 | 主线 CI | ⚠️ **未触发** | 分支未合并，仍为以后合并门禁，**不得记为已通过** |
+| U1 | `npm run verify:db` 聚合通过 | ❌ **未通过**（exit=1，161/162） | `tests/db/transaction-rls.integration.test.ts` 需其**专属已播种 RLS 验收库**；本机手建库不满足。**基线对照已证明在 `48d7f60` 上逐字重现**；本批未触碰 `tests/db/`（diff 为空）。见 §3.2 |
+| U2 | 默认 Playwright 套件通过 | ❌ **未通过**（exit=1，1/14） | 13 例在登录处 500；需 `e2e/global-setup.ts` 播种后登录。**基线对照同样重现**；本批未触碰 `e2e/`（diff 为空）。见 §3.2 |
+| U3 | 任务书 C4（`coverage:layered` + `test:collection`）/ C6（`api:governance`） | ✅ **已随 G1 实跑**（原记「未逐条实跑」有误，已更正） | 二者均在 `verify:engineering` 的 `test:unit` / `api:governance` 段内，G1 exit=0 即已实跑；C4 的数值见 §3 的 ratchet 与 diff coverage 输出 |
+| U4 | 覆盖率 diff ratchet 具体数值 | ✅ **已核**（原记「未核」） | `92.42% (PASS)`，四层 baseline 全 PASS，changed executable lines 356（covered 329），见 §3 |
+| U5 | 变异检查留痕 | ⚠️ **部分** | 本批留痕 **M2（版本校验）** 与 **stale-download 守卫** 两组红→绿→还原；任务书 §4.2 的 M1/M3–M10 未逐条实跑 |
+| U6 | 真库只读性 B9/B10/B12 | ✅ **已实跑** | `tests/l3-study-note-export.integration.test.ts` 6/6 通过（含 submissions / attempts 行数不变）；另有一次性驱动脚本对 11 张表前后计行一致 |
+| U7 | 主线 CI | ✅ **已完成**（原记「未触发」） | PR #132 三项必需检查全 pass（run `35721275373` / `35721275291`）；分支仍未合并，**不得据此记为已合并** |
+| U8 | HTTP 层版本冲突**真实链路** | ✅ **已补齐并证明有牙齿**（收口轮 C1） | 新增 `tests/http/study-note-export-version-chain.test.ts`；短路版本校验后 2 failed（exit=1），还原后 5 passed。**原 mock 注入版无效**：变异下仍通过，已在 §3.3 与 PR 中说明 |
+
+> 更正说明：上一版 U3/U4/U6/U7 记为「未实跑/未核/未触发」，是**第一轮未复跑**时的保守登记，
+> 与收口轮实跑结果不符，现按实测更正。U1/U2 仍**不通过**，但已用基线对照定位为既有环境问题。
 
 ---
 
@@ -175,10 +223,16 @@ tests/services/l3-study-note-export.test.ts
 | 无标准答案字段（白名单投影） | `src/services/l3-study-note-export.service.ts:143-151`、`projectDisplaySnapshot` `:164-211` |
 | 安全文件名 | `src/services/l3-study-note-export.service.ts:586` |
 | flush → GET 顺序 | `src/frontend/state/studyNoteExportFlusher.ts:146-188`（`await deps.flush()` `:156` → `exportNote(…, receipt.version)` `:169`） |
+| 版本比较真实链路证据（收口轮 C1） | `tests/http/study-note-export-version-chain.test.ts`（真实 `L3StudyNoteExportService` 接 app，只替换底层仓储；短路 `src/services/l3-study-note-export.service.ts:517` 后 2 failed） |
 
 ---
 
 ## 7. 停止状态
 
 按交付指令停在 **PR 合并前**：未合并、未部署、未推 main、未使用 `reset` / `clean` / 强推。
-命中 §5 的 U1–U3 门禁未过，**不宣告 Task 10 验收通过**。
+
+- 分支 `study-notes-n1-task10`；本机聚合入口 G2/G3a 未过（**既有环境问题，已基线对照定位**，见 §3.2），
+  G1 与 study-notes 全 E2E 套件（54/54）通过；主线 CI 三项必需检查全 pass（§3.1 双重口径）。
+- 收口轮已补齐 C1（真实链路版本冲突测试＋变异证明有牙齿）、C3（全 7 spec 复跑）、
+  C2（§3/§4/§5 按实跑日志重写、C4/C6 矛盾更正）。
+- **不宣告 Task 10 验收通过**；待正式审查后再决定合并。

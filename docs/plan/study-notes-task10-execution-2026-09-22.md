@@ -33,7 +33,7 @@
 | --- | --- | --- |
 | **P1** 引用块与来源清单版式 | **按 `kind` 分五型渲染引用块，仅对顶层 paragraph 且 text 完全等于 `[[ref:<uuid>]]` 的位置替换**；每块含 `kind` 标签、来源标题（`displaySnapshot.title` / `sourceTitle`）、已存快照摘要、`capturedAt`（标「引用时间」）、`status`（`current`/`changed`/`unavailable`）；**`unavailable` 保留占位块**（写明「目标已不可用，以下为引用时摘录」）而非删除或改写；文末追加「来源清单」按 `capturedAt` 升序、`referenceId` 去重。 | 与 domain 单一真源 `matchReferenceMarkerText`/`parseReferenceIds`（`src/domain/l3-study-notes.ts:276,290`）同语义，且 `unavailable` 必须与编辑器占位卡行为一致（ADR `:28`、`:40`：保留原摘录、不以旧 offset 套新文本）。 |
 | **P2** 末尾 JSON 块 schema 与「无标准答案字段」边界 | **JSON 块字段冻结为 `exportSchemaVersion`(1) / `kind`(`"study-note"`) / `exportedAt` / `note`{`id,title,status,pinned,version,venues`} / `references[]`{`referenceId,kind,status,capturedAt,displaySnapshot,target{sourceId\|questionId,optionKey,startOffset,endOffset},liveTitle`} / `bodyMd` / `bodySha256`**；`displaySnapshot` **原样序列化**（其类型 `QuestionReferenceSnapshot` 字段为 `{stem,options,questionType,sourceTitle}`，`options` 为 `L3QuestionOption[]`）；**导出器不得自造新字段**，尤其不得输出 `answer`/`answerIndex`/`explanation`/`evidence`/`correctOption` 等标准答案面字段。 | 快照生成侧已「服务端白名单组装（不含标准答案/explanation/evidence）」（`src/domain/l3-study-notes.ts:116` 注释），导出只需**独立断言**这一既有边界、不得回填（盘点 §5 P2 明示「编辑器预览已排除；导出需独立断言」）。 |
-| **P3** `expectedVersion` 缺失/旧版的状态码 | **对齐 sheet V 合同：缺失/非数字 → 400（`ValidationError`，字段 `expectedVersion`）；与当前 `note.version` 不一致 → 409（带 `meta.currentVersion`，不回传服务器正文）**；`expectedVersion` 携带即核，不因 note 状态（含归档）豁免。 | 先例 `l3-sheet-export.service.ts:585-596` 即为「缺失拒/旧版 409」，且笔记侧 409 语义已冻结为「只返回 currentVersion，不自动返回内容」（frontend-tasks §0.2 `:40`）。 |
+| **P3** `expectedVersion` 缺失/旧版的状态码 | **缺失/非数字 → 422（`ValidationError.httpStatus`，字段 `expectedVersion`）；与当前 `note.version` 不一致 → 409（带 `meta.currentVersion`，不回传服务器正文）**；`expectedVersion` 携带即核，不因 note 状态（含归档）豁免。**收口轮更正：原写 400，实现为 422（`src/errors/index.ts:52`），与题纸先例同口径。** | 先例 `l3-sheet-export.service.ts:585-596` 即「缺失拒/旧版 409」，且笔记侧 409 语义已冻结为「只返回 currentVersion，不自动返回内容」（frontend-tasks §0.2 `:40`）。 |
 | **P4** 导出按钮生效范围 | **仅在页面版编辑器 `StudyNoteEditor.tsx` 工具栏（`insert-reference-button` 同行）新增 `export-note-button`；09B 卷面/阅读侧栏编辑器本任务不新增出口**。 | 侧栏的职责是「不触发题纸 flush/seal/openSheet」（execution-plan `:298`）；导出若在侧栏出现就必须在同处 await flush，会把副作用面引入侧栏，收益不抵风险，故收窄并在验收中显式断言。 |
 | **P5** 归档 note 可导出 | **允许导出，且 200**：归档只影响列表可见性与编辑入口，不影响只读导出；导出页眉/JSON 显式标注 `note.status = "archived"`（不静默把归档伪装成活动笔记）。 | ADR `:20` 明确「笔记/专题只有归档恢复、无硬删入口」，无删除态可拒；execution-plan 验收①本身要求测试归档导出，故按允许落地并用测试固化。 |
 | **P6** FOR SHARE 锁 | **新增独立方法 `lockForShare(userId, noteId)`（`... FOR SHARE`），导出事务调用它；保存路径现有 `FOR UPDATE` 锁 `lock()`（`src/repositories/l3-study-notes.repository.ts:166-171`）一律不改、不改名、不加参数。** | 导出是只读事务，锁语义应与读面匹配（规格原文「service 在同一 actor 事务锁 note FOR SHARE」，execution-plan `:310`）；**改保存路径的锁是并发保存正确性的回归面，本任务不碰**——新增方法把风险面收敛为零。 |
@@ -72,7 +72,7 @@
 ### P2 HTTP 与治理（端点、OpenAPI、client、授权登记）
 - **目的**：把 service 挂上冻结合同。
 - **触碰面**：`src/schemas/http/index.ts`（`parseStudyNoteExportExpectedVersion`，对齐 `parseSheetExportExpectedVersion`）；路由 `src/http/routes/l3/study-notes.ts` 或新 `study-notes-export.ts`（**固定路径段必须注册在 `/:noteId` 之前**，与既有 reference-targets/backlinks 同纪律，见 `src/http/operations.ts:583-591`）；`src/http/operations.ts`（`exportL3StudyNote`，`owner/owner/none`，`200 z.string()` + `text/markdown`，对齐 `exportL3Sheet` 行）；`src/http/server.ts` 注册；`tests/http/authorization-registry.test.ts` 增 `exportL3StudyNote`；`npm run api:openapi` → `npm run api:client:generate` → `npm run api:client:check`；客户端 `fetchStudyNoteExport`（`parseJson:false`，**本阶段才允许存在**，不得先留 stub）。
-- **门（G2）**：`npm run api:governance` 通过（含 openapi/client check/合同/breaking/complexity）；端点级测试覆盖 200 四件响应头、400（缺 `expectedVersion`）、409（旧版本）、404（非本人/不存在）、403（agent）、401（未认证）。
+- **门（G2）**：`npm run api:governance` 通过（含 openapi/client check/合同/breaking/complexity）；端点级测试覆盖 200 四件响应头、422（缺 `expectedVersion`）、409（旧版本）、404（非本人/不存在）、403（agent）、401（未认证）。
 
 ### P3 前端下载（flush 屏障）
 - **目的**：UI 侧「先 await flush 再 GET」，失败绝不下载旧文。
@@ -147,19 +147,30 @@
 
 ### 3.3 门禁与验证（不可由目标测试替代）
 
+> 收口轮已实跑；数值以本机日志为准，详见台账 §3 与 §3.3。
+
 | # | 验收项 | 命令 | 判定 |
 | --- | --- | --- | --- |
-| C1 | 类型 | `npm run typecheck` | 未跑 |
-| C2 | 架构依赖约束 | `npm run arch:check` | 未跑 |
-| C3 | 单元 + 覆盖率 | `npx --no-install vitest run --coverage --maxWorkers=1` | 未跑 |
-| C4 | 分层覆盖率 + 用例收集 | `npm run coverage:layered` && `npm run test:collection` | 未跑 |
-| C5 | schema 漂移 | `npm run db:schema:drift` | 未跑 |
-| C6 | API 治理（openapi/client/合同/breaking） | `npm run api:governance` | 未跑 |
-| C7 | 前端构建 | `npm run frontend:build` | 未跑 |
-| C8 | 运行时/告警/发布合同 | `npm run runtime:verify` && `npm run alerting:verify` && `npm run release:acceptance:contract` && `npm run secret-rotation:evidence:contract` && `npm run release:workflow:verify` | 未跑 |
-| C9 | 真库集成（串行；缺 DB 必须失败不 skip） | `npx --no-install vitest run --config vitest.integration.config.ts tests/l3-study-notes.integration.test.ts --maxWorkers=1` | 未跑 |
-| C10 | 浏览器导出链（Task 11 前置，若在 Task 10 内跑则用该命令） | `npx --no-install playwright test --config playwright.study-notes.config.ts` | 未跑 |
-| C11 | 授权登记（导出端点 owner-only） | `npx --no-install vitest run tests/http/authorization-registry.test.ts --coverage.enabled=false` | 未跑 |
+| C1 | 类型 | `npm run typecheck` | ✅ 已跑（含在 G1 内，exit 0） |
+| C2 | 架构依赖约束 | `npm run arch:check` | ✅ 已跑（含在 G1 内，exit 0） |
+| C3 | 单元 + 覆盖率 | `npx --no-install vitest run --coverage --maxWorkers=1` | ✅ 已跑（含在 G1：3968 passed / 6 skipped） |
+| C4 | 分层覆盖率 + 用例收集 | `npm run coverage:layered` && `npm run test:collection` | ✅ 已跑（含在 G1 的 `test:unit` 内）：ratchet PASS、diff coverage **92.42% PASS**、collection 266/266。**原记「未逐条实跑」有误，已更正** |
+| C5 | schema 漂移 | `npm run db:schema:drift` | ✅ 已跑（含在 G1 内，exit 0） |
+| C6 | API 治理（openapi/client/合同/breaking） | `npm run api:governance` | ✅ 已跑（含在 G1 内，exit 0）。**原与 C4 同列为「未跑」有误，已更正** |
+| C7 | 前端构建 | `npm run frontend:build` | ✅ 已跑（含在 G1 内，exit 0） |
+| C8 | 运行时/告警/发布合同 | `npm run runtime:verify` && `npm run alerting:verify` && `npm run release:acceptance:contract` && `npm run secret-rotation:evidence:contract` && `npm run release:workflow:verify` | ✅ 已跑（含在 G1 内，exit 0） |
+| C9 | 真库集成（串行；缺 DB 必须失败不 skip） | `npx --no-install vitest run --config vitest.integration.config.ts tests/l3-study-notes.integration.test.ts --maxWorkers=1` | ✅ 已跑（本批新增 `tests/l3-study-note-export.integration.test.ts` 6/6；既有 `l3-study-notes.integration.test.ts` 34/34） |
+| C10 | 浏览器导出链 | `npx --no-install playwright test --config playwright.study-notes.config.ts` | ✅ **全 7 spec 已跑**：54 passed / 0 failed / 0 skipped（导出 5 · host 10 · 选择器关闭 3 · 引用回路 9 · 卷面侧栏 6 · Task08 回归 3 · 工作区 18） |
+| C11 | 授权登记（导出端点 owner-only） | `npx --no-install vitest run tests/http/authorization-registry.test.ts --coverage.enabled=false` | ✅ 已跑（12/12） |
+| C12 | **版本冲突真实链路**（收口轮新增） | `npx --no-install vitest run tests/http/study-note-export-version-chain.test.ts --coverage.enabled=false` | ✅ 5/5；**短路 `l3-study-note-export.service.ts:517` 后 2 failed**，还原后 5/5（证明测试有牙齿） |
+
+> **口径更正（P3 / B4）**：任务书 §1 P3 与本表 B4 原写「缺/非法 `expectedVersion` → 400」，
+> 实现为 **422**（`ValidationError.httpStatus = 422`，`src/errors/index.ts:52`），与题纸导出
+> 先例 `tests/http/l3-sheet.test.ts:305` 同口径。**以实现为准，此处更正为 422。**
+>
+> **HTTP 层版本冲突测试的有效性更正**：`tests/http/study-note-export.test.ts` 中的 409 用例
+> 注入的是**直接抛 `ConflictError` 的 mock service**，短路真实版本比较后**仍然通过**——
+> 它证明的是错误映射，不是版本合同。真实链路的守卫由新增 C12 用例承担。
 
 ### 3.4 本任务书自身的验收（本轮）
 
@@ -186,7 +197,7 @@
 
 | 变异（M） | 操作 | 必须变红的用例 |
 | --- | --- | --- |
-| **M1** 删掉 `expectedVersion` 缺失校验 | 移除「缺失 → ValidationError」分支 | `rejects missing expectedVersion with 400`（A18/B4 面） |
+| **M1** 删掉 `expectedVersion` 缺失校验 | 移除「缺失 → ValidationError」分支 | `rejects missing expectedVersion with 422`（A18/B4 面） |
 | **M2** 删掉 `expectedVersion` 旧版比对 | 移除「`note.version !== expectedVersion` → 409」分支 | `rejects stale expectedVersion with 409 and currentVersion only`（B4） |
 | **M3** 回退 `lockForShare` 为 `lock()`（FOR UPDATE 旧实现） | 导出事务改调 `repos.studyNotes.lock` | `locks the note with for share inside the actor transaction`（A9）——断言的是**方法身份**，故 FOR UPDATE 回退必红 |
 | **M4** 把「内容校验」行纳入 hash 面 | 用含校验行全文计 sha256（破坏双段渲染） | `sha256 recomputes after deleting the checksum line` + `X-Export-Sha256 equals the in-body checksum`（A14/B8） |
