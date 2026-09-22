@@ -231,6 +231,10 @@ jobs:
           # cannot cross user boundaries.
           TEST_APP_DATABASE_URL: "${{ env.APP_DATABASE_URL }}"
           RLS_ACCEPTANCE_DATABASE_URL: postgresql://vocab_rls_acceptance:vocab_rls_acceptance_local_only@localhost:5432/vocab
+          # tests/l3-study-notes-repair.integration.test.ts fails closed without this:
+          # its guard requires the acceptance database to be declared explicitly;
+          # the CI `vocab` database built by this job's migrations/roles satisfies it.
+          STUDY_NOTES_REPAIR_DB: vocab
         run: npm run verify:db
 
       - name: Migration replay is a no-op
