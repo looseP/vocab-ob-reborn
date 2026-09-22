@@ -1439,6 +1439,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/l3/writing/tasks/question-summaries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listL3WritingQuestionSummaries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/l3/sheets/{id}/export": {
         parameters: {
             query?: never;
@@ -15866,6 +15882,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -16112,6 +16129,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -16330,6 +16348,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17223,6 +17242,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17406,6 +17426,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17587,6 +17608,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    expectedVersion: number;
                     answers: {
                         [key: string]: {
                             choice?: string;
@@ -17628,6 +17650,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17792,6 +17815,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    expectedVersion: number;
                     /** @enum {string} */
                     mode: "full" | "incremental" | "summary";
                     summary?: string;
@@ -17821,6 +17845,7 @@ export interface operations {
                             paper_id: string | null;
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
+                            draft_version: number;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -21536,9 +21561,189 @@ export interface operations {
             };
         };
     };
+    listL3WritingQuestionSummaries: {
+        parameters: {
+            query: {
+                direction: "通用" | "考研" | "雅思";
+                kind: "whole" | "paragraph" | "free";
+                questionId: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** Format: uuid */
+                            questionId: string;
+                            tasks: {
+                                /** Format: uuid */
+                                taskId: string;
+                                /** @enum {string} */
+                                taskStatus: "active" | "archived";
+                                draftSheetId: string | null;
+                                latestSubmittedSheetId: string | null;
+                                latestRevisionNo: number | null;
+                                revisionCount: number;
+                                feedbackState: ("pending" | "ready" | "unavailable") | null;
+                                contentStatus: ("available" | "cleared") | null;
+                            }[];
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     exportL3Sheet: {
         parameters: {
             query?: {
+                expectedVersion?: string;
                 withAnswers?: "0" | "1";
             };
             header?: never;
@@ -21702,10 +21907,12 @@ export interface operations {
         parameters: {
             query?: {
                 direction?: "通用" | "考研" | "雅思";
+                fileKey?: string;
                 limit?: number;
                 offset?: number;
                 q?: string;
                 questionType?: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                sourceId?: string;
             };
             header?: never;
             path?: never;

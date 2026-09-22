@@ -334,6 +334,34 @@ export interface WritingRevisionSummary {
   feedbackState: "pending" | "ready" | "unavailable";
 }
 
+/** 反馈态（稿级派生；pending=尚未有反馈、ready=已有、unavailable=正文已清理）。 */
+export type WritingFeedbackState = "pending" | "ready" | "unavailable";
+
+/**
+ * A2：原题入口的按题进度摘要（owner-only 批量读面；**只含状态，不含正文/反馈文本**）。
+ * draft 与最新已提交稿分开表达；多匹配任务返回列表，不替客户端挑选。
+ */
+export interface WritingQuestionTaskSummary {
+  taskId: string;
+  taskStatus: WritingTaskStatus;
+  /** 进行中草稿 sheet（无 → null）。 */
+  draftSheetId: string | null;
+  /** 最新已提交稿（无 → null）。 */
+  latestSubmittedSheetId: string | null;
+  latestRevisionNo: number | null;
+  /** 已提交 + 已丢弃稿次总数（归档任务同样累计）。 */
+  revisionCount: number;
+  /** **最新已提交稿**的反馈态（无已提交稿 → null；清理后为 unavailable，不转显旧反馈）。 */
+  feedbackState: WritingFeedbackState | null;
+  /** **最新已提交稿**的正文可用性（无已提交稿 → null）。 */
+  contentStatus: WritingContentStatus | null;
+}
+
+export interface WritingQuestionSummary {
+  questionId: string;
+  tasks: WritingQuestionTaskSummary[];
+}
+
 export interface WritingTaskDetail {
   task: WritingTaskDto;
   draftSummary: WritingSheetDto | null;

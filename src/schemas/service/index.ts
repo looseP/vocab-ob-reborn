@@ -811,6 +811,9 @@ export interface ListL3PracticeFilesInput {
   questionType?: L3QuestionType | null;
   direction?: Direction | null;
   q?: string | null;
+  /** R3：精确来源过滤（与文件键/来源 id 精确匹配；精确读面用）。 */
+  sourceId?: string | null;
+  fileKey?: string | null;
   limit: number;
   offset: number;
 }
@@ -852,7 +855,8 @@ export type PutL3AssessmentInput = {
 
 // ── 批次二（0034）：题纸与作答历史（ADR-0034）────────────────────────────
 export type OpenL3SheetInput = { userId: string } & SheetOpenInput;
-export type PatchL3SheetInput = { userId: string; sheetId: string; answers: SheetPatchInput["answers"] };
+/** V（2026-09-19）：expectedVersion 为客户端确认版本（必填），随 answers 一并进入 CAS 合并。 */
+export type PatchL3SheetInput = { userId: string; sheetId: string } & SheetPatchInput;
 export type SealL3SheetInput = { userId: string; sheetId: string } & SheetSealInput;
 
 // ── 批次三①（0036）：评卷执行面（ADR-0035）──────────────────────────────

@@ -20,13 +20,14 @@ function spec(status: SpecStatus) {
   return { tests: [{ status }] };
 }
 
-/** 与 playwright --reporter=json 同形；默认 4 用例全过，且带一层嵌套套件（覆盖递归收集）。 */
+/** 与 playwright --reporter=json 同形；默认 EXPECTED 个用例全过，且带一层嵌套套件（覆盖递归收集）。 */
 function report(options: {
   statuses?: SpecStatus[];
   errors?: unknown[];
   unexpected?: number;
 } = {}): Record<string, unknown> {
-  const statuses = options.statuses ?? ["expected", "expected", "expected", "expected"];
+  const statuses = options.statuses
+    ?? Array.from({ length: EXPECTED_WRITING_E2E_SPECS }, () => "expected" as SpecStatus);
   return {
     config: { version: "1.61.1" },
     suites: [{ suites: [{ specs: statuses.map((status) => spec(status)) }] }],
@@ -45,12 +46,16 @@ function failText(result: ReturnType<typeof validateWritingE2EReport>): string {
 }
 
 describe("validateWritingE2EReport（fail-closed 校验器）", () => {
-  it("场景① 正常通过：4/4 expected + PW_EXIT=0 → ok，计数行正确", () => {
+  it("场景① 正常通过：EXPECTED/EXPECTED expected + PW_EXIT=0 → ok，计数行正确", () => {
     const result = validateWritingE2EReport(report(), "0");
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
-    expect(result.line).toBe("collected=4 executed=4 skipped=0 failed=0 passed=4 (pw_exit=0)");
-    expect(EXPECTED_WRITING_E2E_SPECS).toBe(4);
+    // 计数行按 EXPECTED 动态推导（防固定数字漂移）；下方钉住与 spec 文件集合的同步关系。
+    expect(result.line).toBe(
+      `collected=${EXPECTED_WRITING_E2E_SPECS} executed=${EXPECTED_WRITING_E2E_SPECS} skipped=0 failed=0 passed=${EXPECTED_WRITING_E2E_SPECS} (pw_exit=0)`,
+    );
+    // 4（writing.spec：主旅程/故障矩阵/分页/清理）+ 3（writing-origin.spec：B/C/反馈闭环）
+    expect(EXPECTED_WRITING_E2E_SPECS).toBe(7);
   });
 
   it("场景② 零收集：无 specs → fail（收集数不符）", () => {
@@ -63,7 +68,7 @@ describe("validateWritingE2EReport（fail-closed 校验器）", () => {
 
   it("场景③ 存在跳过：任一 spec skipped → fail", () => {
     const result = validateWritingE2EReport(
-      report({ statuses: ["expected", "expected", "expected", "skipped"] }),
+      report({ statuses: [...Array.from({ length: EXPECTED_WRITING_E2E_SPECS - 1 }, () => "expected" as SpecStatus), "skipped"] }),
       "0",
     );
     expect(result.ok).toBe(false);
@@ -73,13 +78,13 @@ describe("validateWritingE2EReport（fail-closed 校验器）", () => {
 
   it("场景④ 用例失败：任一 spec 非 expected/skipped → fail（含 stats.unexpected 口径）", () => {
     const byStatus = validateWritingE2EReport(
-      report({ statuses: ["expected", "expected", "expected", "unexpected"] }),
+      report({ statuses: [...Array.from({ length: EXPECTED_WRITING_E2E_SPECS - 1 }, () => "expected" as SpecStatus), "unexpected"] }),
       "0",
     );
     expect(byStatus.ok).toBe(false);
     expect(failText(byStatus)).toContain("失败用例");
 
-    const byStats = validateWritingE2EReport(report({ statuses: ["expected", "expected", "expected", "expected"], unexpected: 1 }), "0");
+    const byStats = validateWritingE2EReport(report({ unexpected: 1 }), "0");
     expect(byStats.ok).toBe(false);
   });
 

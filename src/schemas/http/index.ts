@@ -25,6 +25,7 @@ import {
   L3_SUB_SPACES,
 } from "../../services/l3-practice.service";
 import { L3_QUESTION_TYPES, questionTypeAllowsSourceless } from "../../domain/l3-question-types";
+import { WRITING_DIRECTIONS, WRITING_KINDS } from "../../domain/l3-writing";
 import {
   L3_SESSION_DEFAULT_CONTEXTS,
   L3_SESSION_END_STATUSES,
@@ -334,11 +335,14 @@ export const l3PaperCreateSchema = z.object({
   sections: z.array(l3PaperSectionSchema).min(1).max(20),
 });
 
-/** GET /l3/practice-files：题型空间的文件管理列表（派生视图）。 */
+/** GET /l3/practice-files：题型空间的文件管理列表（派生视图）。
+ *  R3：sourceId/fileKey 为**精确来源过滤**（精确读面——不依赖 limit 扫描取单文件方向/标题）。 */
 export const l3PracticeFileListQuerySchema = z.object({
   questionType: l3QuestionTypeSchema.optional(),
   direction: directionSchema.optional(),
   q: z.string().trim().max(200).optional(),
+  sourceId: z.string().uuid().optional(),
+  fileKey: z.string().trim().min(1).max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -814,14 +818,26 @@ export const l3WritingRevisionListQuerySchema = z.object({
   cursor: z.string().trim().max(500).optional(),
 });
 
+/**
+ * A2：GET /l3/writing/tasks/question-summaries（owner-only 批量进度读面）。
+ * questionId 可重复传入（原始数量与去重后数量均 ≤100）；kind/direction 严格枚举。
+ */
+export const l3WritingQuestionSummariesQuerySchema = z.object({
+  questionId: z.array(z.string().uuid()).min(1).max(100),
+  kind: z.enum(WRITING_KINDS),
+  direction: z.enum(WRITING_DIRECTIONS),
+});
+
 /** GET /l3/sheets：题纸档案列表 query（F-1 回看闭环；owner-only，新→旧）。 */
 export const l3SheetListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
-/** GET /l3/sheets/:id/export?withAnswers=0|1 的 query 契约（v2 §6；文档登记用）。 */
+/** GET /l3/sheets/:id/export?withAnswers=0|1 的 query 契约（v2 §6；文档登记用）。
+ *  V（2026-09-19）：expectedVersion 为 draft 导出版本核对参数（sealed 归档忽略）。 */
 export const l3SheetExportQuerySchema = z.object({
   withAnswers: z.enum(["0", "1"]).optional(),
+  expectedVersion: z.string().regex(/^\d+$/).optional(),
 });
 
 /**
@@ -833,6 +849,18 @@ export function parseSheetExportWithAnswers(raw: string | undefined): boolean | 
   if (raw === "1") return true;
   if (raw === "0") return false;
   throw new ValidationError("withAnswers must be 0 or 1", "withAnswers");
+}
+
+/**
+ * V（2026-09-19）：draft 导出核对版本参数——缺省返回 undefined（由 service 对
+ * draft 拒绝、对 sealed 忽略）；非法值抛校验错误（422 惯例，勿宽容吞掉）。
+ */
+export function parseSheetExportExpectedVersion(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  if (!/^\d+$/.test(raw)) {
+    throw new ValidationError("expectedVersion must be a non-negative integer", "expectedVersion");
+  }
+  return Number(raw);
 }
 
 /** GET /l3/attempts?questionIds=<uuid,uuid,...>：1–200 个 uuid（对齐注记批量口径）。 */
