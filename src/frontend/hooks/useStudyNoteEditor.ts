@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createStudyNoteSaveController,
   StudyNotePrecheckError,
+  type StudyNoteConfirmedSnapshot,
   type StudyNoteEditSnapshot,
   type StudyNoteFlushReceipt,
   type StudyNoteSaveController,
@@ -30,11 +31,41 @@ import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNot
 import {
   assertReferenceSet,
   normalizeStudyUuid,
+  STUDY_REFERENCE_MAX_PER_NOTE,
   type ReferencePreview,
+  type ReferenceTarget,
+  type ReferenceTargetPreview,
+  type ReferenceWrite,
   type StudyNoteDto,
 } from "@/domain/l3-study-notes";
+import {
+  excerptLinesFromSnapshot,
+  insertReferenceMarker,
+  removeReferenceMarker,
+  replaceMarkerWithExcerpt,
+} from "@/frontend/utils/studyNoteReferenceOps";
 
 export type StudyNoteEditorLoadState = "loading" | "ready" | "error";
+
+/**
+ * 引用卡片元数据：`ReferencePreview` + **确认状态**（R2）。
+ *
+ * - `confirmed: true`：来自服务端 DTO（GET 或保存成功响应）——`capturedAt` 是服务端
+ *   capture 时间，`displaySnapshot` 是已落库快照，可安全用于「转普通摘录」；
+ * - `confirmed: false`：仅本机预览（插入后尚未保存确认），`capturedAt` 为空串且
+ *   **不使用本机时间冒充服务端时间**；UI 必须显式标明「待确认」，转换被拒绝。
+ */
+export type StudyNoteReferenceMeta = ReferencePreview & { confirmed: boolean };
+
+/** 服务端 DTO → 已确认元数据（唯一产生 `confirmed: true` 的来源）。 */
+function toConfirmedMeta(references: readonly ReferencePreview[]): StudyNoteReferenceMeta[] {
+  return references.map((reference) => ({ ...reference, confirmed: true }));
+}
+
+/** 是否可用于生成摘录（只认服务端确认的内容）。 */
+function isReferenceConfirmed(meta: StudyNoteReferenceMeta | ReferencePreview): boolean {
+  return (meta as StudyNoteReferenceMeta).confirmed === true;
+}
 
 export interface UseStudyNoteEditorOptions {
   noteId: string;
@@ -57,13 +88,30 @@ export interface UseStudyNoteEditorResult {
   /** 控制器快照（加载完成前为 null）。 */
   snapshot: StudyNoteSaveSnapshot | null;
   /** 引用元数据（加载/载入服务器版本时保留；正文 marker 占位与复制文本使用）。 */
-  referencesMeta: ReferencePreview[];
+  referencesMeta: StudyNoteReferenceMeta[];
 
   setTitle(value: string): void;
   setBodyMd(value: string): void;
   onCompositionStart(): void;
   onCompositionEnd(): void;
   retry(): Promise<void>;
+
+  /**
+   * Task 09A：引用编辑（经同一 applyEdit 通道，与正文原子保存）。
+   * 插入：新 refId + capture write + marker（光标处）。失败返回 null 并给出
+   * `referenceError` 可见原因（被锁/超限/光标位置不安全）；**拒绝时不改本地状态**。
+   */
+  insertReference(target: ReferenceTarget, preview: ReferenceTargetPreview, cursor: number | null): string | null;
+  /** 移除：marker 与 write 同次移除；marker 缺失/被锁返回 false（不静默部分修改）。 */
+  removeReference(refId: string): boolean;
+  /**
+   * 转普通摘录：marker 替换为引文行 + write 移除。
+   * **只消费已确认快照**（R2）：未确认的待确认引用不转换（返回 false 并给出可见原因）。
+   */
+  convertReferenceToExcerpt(refId: string): boolean;
+  /** 引用操作拒绝原因（插入/移除/转换失败时的可见反馈；下一步操作时清空）。 */
+  referenceError: string | null;
+  dismissReferenceError(): void;
 
   /** 冲突面板：复制本地内容（ok=false 时展示 text 作为可见备选）。 */
   copyLocalContent(): Promise<CopyLocalResult>;
@@ -103,7 +151,7 @@ function isAbortLikeError(error: unknown): boolean {
 }
 
 /** 本地内容副本文本（包含标题/归属/置顶/归档/引用清单——不只正文）。 */
-function buildLocalCopyText(snapshot: StudyNoteSaveSnapshot, referencesMeta: ReferencePreview[]): string {
+function buildLocalCopyText(snapshot: StudyNoteSaveSnapshot, referencesMeta: readonly StudyNoteReferenceMeta[]): string {
   const { edit } = snapshot;
   const lines: string[] = [];
   lines.push(`# ${edit.title.trim() ? edit.title : "（无标题）"}`);
@@ -149,6 +197,79 @@ function referencePrecheck(snapshot: StudyNoteEditSnapshot): { ok: true } | { ok
   }
 }
 
+/** 引用身份归一（大小写不敏感比较）。 */
+const sameRef = (a: string, b: string): boolean => normalizeStudyUuid(a) === normalizeStudyUuid(b);
+
+/**
+ * 消费一次**真实成功确认**（R1/R2）。**只做「升级」，绝不做删除或回退**：
+ *
+ * 1. capture → keep：仅当该引用「本次确实以 capture 提交」且「仍在当前编辑集合中」。
+ *    —— 已确认内容不再重新采集；在途移除的引用不被复活；尚未确认的新引用保持 capture。
+ * 2. 正式元数据：按引用身份用本次确认 DTO 覆盖本地条目（displaySnapshot/capturedAt/
+ *    status/liveTitle，且 confirmed:true）。**响应里缺失的引用一律保留本地条目**：
+ *    响应未覆盖某个引用属服务端/适配器异常，绝不能据此删除本地引用或回退正文/快照。
+ * 3. 正文绝不改写：确认只影响 references 动作与引用元数据；本地并发输入（在途 B、
+ *    已移除的 A、更新的正文）一律优先，不被整包服务器快照覆盖。
+ */
+function applyConfirmedReferences(
+  controller: StudyNoteSaveController,
+  confirmed: StudyNoteConfirmedSnapshot,
+  setReferencesMeta: (updater: (previous: StudyNoteReferenceMeta[]) => StudyNoteReferenceMeta[]) => void,
+  referencesMetaRef: { current: StudyNoteReferenceMeta[] },
+): void {
+  // 「当前有效引用集合」：确认回包只能作用于**此刻仍在编辑中的**引用身份。
+  // 在途移除的 A 已不在集合内——它既不能被升级，也不能被下面的「补齐」循环复活。
+  // 只按身份过滤，不从迟到的服务器快照整体覆写本地编辑态（本地并发输入优先）。
+  const liveIds = new Set(controller.getSnapshot().edit.references.map((write) => normalizeStudyUuid(write.id)));
+  const upgraded = new Map<string, StudyNoteReferenceMeta>(
+    confirmed.references
+      .filter((reference) => liveIds.has(normalizeStudyUuid(reference.id)))
+      .map((reference) => [normalizeStudyUuid(reference.id), { ...reference, confirmed: true }]),
+  );
+
+  referencesMetaRef.current = referencesMetaRef.current.map((meta) => {
+    const fresh = upgraded.get(normalizeStudyUuid(meta.id));
+    return fresh ? { ...fresh, id: meta.id } : meta;
+  });
+  setReferencesMeta((previous) => {
+    const next = previous.map((meta) => {
+      const fresh = upgraded.get(normalizeStudyUuid(meta.id));
+      return fresh ? { ...fresh, id: meta.id } : meta;
+    });
+    // 响应确认存在的引用若本地元数据缺失则补入（同样只限仍在编辑集合中的身份）；
+    // **不删除任何本地条目**。
+    for (const reference of confirmed.references) {
+      if (!liveIds.has(normalizeStudyUuid(reference.id))) continue;
+      if (!next.some((meta) => sameRef(meta.id, reference.id))) next.push({ ...reference, confirmed: true });
+    }
+    return next;
+  });
+
+  // capture → keep：用 markConfirmed 做**本地簿记**（不推进 editSeq、不多打一次 PUT）——
+  // 服务端已持有正确内容，后续载荷不再重复采集即可。仅本次载荷中确为 capture 的引用生效。
+  const confirmedCaptureIds = confirmed.snapshot.references
+    .filter((sent) => sent.action === "capture")
+    .map((sent) => sent.id)
+    .filter((id) =>
+      controller.getSnapshot().edit.references.some((write) => sameRef(write.id, id)),
+    );
+  if (confirmedCaptureIds.length > 0) controller.markConfirmed(confirmedCaptureIds);
+}
+
+/** 引用集合等价（顺序敏感；capture 目标按 JSON 比较）。 */
+function referencesEqual(a: readonly ReferenceWrite[], b: readonly ReferenceWrite[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    const left = a[index]!;
+    const right = b[index]!;
+    if (left.id !== right.id || left.action !== right.action) return false;
+    if (left.action === "capture" && right.action === "capture") {
+      if (JSON.stringify(left.target) !== JSON.stringify(right.target)) return false;
+    }
+  }
+  return true;
+}
+
 // ── hook ────────────────────────────────────────────────────────────────────
 
 export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudyNoteEditorResult {
@@ -159,12 +280,13 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
   const [loadState, setLoadState] = useState<StudyNoteEditorLoadState>("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<StudyNoteSaveSnapshot | null>(null);
-  const [referencesMeta, setReferencesMeta] = useState<ReferencePreview[]>([]);
+  const [referencesMeta, setReferencesMeta] = useState<StudyNoteReferenceMeta[]>([]);
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [navigationLocked, setNavigationLocked] = useState(false);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const [loadNonce, setLoadNonce] = useState(0);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
 
   const controllerRef = useRef<StudyNoteSaveController | null>(null);
   const generationRef = useRef(0);
@@ -172,6 +294,9 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
   const navigationLockRef = useRef(false);
   const snapshotRef = useRef<StudyNoteSaveSnapshot | null>(null);
   snapshotRef.current = snapshot;
+  /** 引用元数据镜像（确认回调里同步读取，避免闭包拿到过期 state）。 */
+  const referencesMetaRef = useRef<StudyNoteReferenceMeta[]>(referencesMeta);
+  referencesMetaRef.current = referencesMeta;
 
   // ── 加载 / controller 生命周期（与 effect 一致；不在 render 重建）────────
   useEffect(() => {
@@ -210,7 +335,7 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
           const isClean = snap.state === "idle" && snap.editSeq === snap.savedSeq;
           if (isClean) {
             existing.adoptServerSnapshot(item); // 仅干净态采纳服务器快照刷新基线
-            setReferencesMeta(item.references);
+            setReferencesMeta(toConfirmedMeta(item.references));
           }
           setLoadState("ready");
           return;
@@ -238,14 +363,20 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
               status: input.snapshot.status,
               references: input.snapshot.references,
             });
-            return { version: saved.version, updatedAt: saved.updatedAt };
+            return { version: saved.version, updatedAt: saved.updatedAt, references: saved.references };
           },
           precheck: referencePrecheck,
+          // R1/R2：仅在**真实成功确认**后把本次 capture 转 keep，并把服务端正式快照回填。
+          onConfirmed: (confirmed) => {
+            if (generation === generationRef.current && !cancelled) {
+              applyConfirmedReferences(controller, confirmed, setReferencesMeta, referencesMetaRef);
+            }
+          },
           setTimer: (fn, ms) => setTimeout(fn, ms),
           clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
         });
         attach(controller);
-        setReferencesMeta(item.references);
+        setReferencesMeta(toConfirmedMeta(item.references));
         setLoadState("ready");
       } catch (error) {
         if (cancelled || generation !== generationRef.current) return;
@@ -297,6 +428,133 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
 
   const setTitle = useCallback((value: string) => applyEdit({ title: value }), [applyEdit]);
   const setBodyMd = useCallback((value: string) => applyEdit({ bodyMd: value }), [applyEdit]);
+
+  // ── Task 09A：引用编辑（marker 与 references 同一次 patch；与正文原子保存）────
+  const insertReference = useCallback(
+    (target: ReferenceTarget, preview: ReferenceTargetPreview, cursor: number | null): string | null => {
+      const controller = controllerRef.current;
+      if (!controller || controller.isDisposed() || editingLocked()) {
+        setReferenceError("当前不可编辑（正在恢复/离开流程中），请稍后再插入引用。");
+        return null;
+      }
+      const current = controller.getSnapshot().edit;
+      if (current.references.length >= STUDY_REFERENCE_MAX_PER_NOTE) {
+        setReferenceError(`引用数量已达上限（${STUDY_REFERENCE_MAX_PER_NOTE} 条），请先移除部分引用。`);
+        return null;
+      }
+      const refId = crypto.randomUUID();
+      let nextBodyMd: string;
+      try {
+        // R4：解析完整 Markdown 后再定位——光标处在代码块/列表/引用块等无法安全插入的
+        // 容器内时**明确拒绝且不改动任何本地状态**（不写入后再靠预检兜底）。
+        nextBodyMd = insertReferenceMarker(current.bodyMd, refId, cursor);
+      } catch (error) {
+        setReferenceError(error instanceof Error ? error.message : "无法在此处插入引用标记。");
+        return null;
+      }
+      const nextReferences = [...current.references, { id: refId, action: "capture" as const, target }];
+      // 原子提交前用真实语义复核（marker 集合 == references 集合）。
+      try {
+        assertReferenceSet(nextBodyMd, nextReferences);
+      } catch (error) {
+        setReferenceError(error instanceof Error ? error.message : "插入结果未通过引用预检，已取消。");
+        return null;
+      }
+      // 仅在确定提交时才建立「待确认」元数据；本机时间**不冒充**服务端 capture 时间。
+      setReferencesMeta((previous) => [
+        ...previous,
+        {
+          id: refId,
+          target,
+          status: "current",
+          capturedAt: "",
+          confirmed: false,
+          displaySnapshot: preview.displaySnapshot,
+          liveTitle: preview.liveTitle,
+        },
+      ]);
+      controller.edit({ ...current, bodyMd: nextBodyMd, references: nextReferences });
+      setReferenceError(null);
+      return refId;
+    },
+    [editingLocked],
+  );
+
+  const removeReference = useCallback(
+    (refId: string): boolean => {
+      const controller = controllerRef.current;
+      if (!controller || controller.isDisposed() || editingLocked()) {
+        setReferenceError("当前不可编辑（正在恢复/离开流程中），请稍后再试。");
+        return false;
+      }
+      const current = controller.getSnapshot().edit;
+      let nextBodyMd: string;
+      try {
+        nextBodyMd = removeReferenceMarker(current.bodyMd, refId);
+      } catch (error) {
+        setReferenceError(error instanceof Error ? error.message : "引用标记不存在，未做修改。");
+        return false; // marker 缺失：不静默部分修改（保存预检兜底提示）
+      }
+      const nextReferences = current.references.filter(
+        (write) => normalizeStudyUuid(write.id) !== normalizeStudyUuid(refId),
+      );
+      controller.edit({ ...current, bodyMd: nextBodyMd, references: nextReferences });
+      setReferencesMeta((previous) =>
+        previous.filter((meta) => normalizeStudyUuid(meta.id) !== normalizeStudyUuid(refId)),
+      );
+      setReferenceError(null);
+      return true;
+    },
+    [editingLocked],
+  );
+
+  const convertReferenceToExcerpt = useCallback(
+    (refId: string): boolean => {
+      const controller = controllerRef.current;
+      if (!controller || controller.isDisposed() || editingLocked()) {
+        setReferenceError("当前不可编辑（正在恢复/离开流程中），请稍后再试。");
+        return false;
+      }
+      const current = controller.getSnapshot().edit;
+      const meta = referencesMeta.find(
+        (reference) => normalizeStudyUuid(reference.id) === normalizeStudyUuid(refId),
+      );
+      if (!meta) {
+        setReferenceError("没有可用的引用快照，无法生成摘录（不猜测内容）。");
+        return false;
+      }
+      // R2：转换只消费**已确认**快照——预览可能早于真实 capture，来源可在两者之间变化。
+      if (!isReferenceConfirmed(meta)) {
+        setReferenceError("该引用尚未保存确认：请先保存（或等待自动保存完成）后再转为普通摘录。");
+        return false;
+      }
+      const excerptLines = excerptLinesFromSnapshot(meta);
+      let nextBodyMd: string;
+      try {
+        nextBodyMd = replaceMarkerWithExcerpt(current.bodyMd, refId, excerptLines);
+      } catch (error) {
+        setReferenceError(error instanceof Error ? error.message : "引用标记不存在，未做修改。");
+        return false;
+      }
+      const nextReferences = current.references.filter(
+        (write) => normalizeStudyUuid(write.id) !== normalizeStudyUuid(refId),
+      );
+      try {
+        assertReferenceSet(nextBodyMd, nextReferences);
+      } catch (error) {
+        setReferenceError(error instanceof Error ? error.message : "转换结果未通过引用预检，已取消。");
+        return false;
+      }
+      controller.edit({ ...current, bodyMd: nextBodyMd, references: nextReferences });
+      setReferencesMeta((previous) =>
+        previous.filter((reference) => normalizeStudyUuid(reference.id) !== normalizeStudyUuid(refId)),
+      );
+      setReferenceError(null);
+      return true;
+    },
+    [editingLocked, referencesMeta],
+  );
+  const dismissReferenceError = useCallback(() => setReferenceError(null), []);
   const onCompositionStart = useCallback(() => controllerRef.current?.setComposing(true), []);
   const onCompositionEnd = useCallback(() => controllerRef.current?.setComposing(false), []);
 
@@ -361,7 +619,7 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
         return;
       }
       controller.adoptServerSnapshot(item);
-      setReferencesMeta(item.references);
+      setReferencesMeta(toConfirmedMeta(item.references));
     } catch (error) {
       setRecoveryError(describeError(error, "载入服务器版本失败"));
     } finally {
@@ -433,6 +691,11 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
     referencesMeta,
     setTitle,
     setBodyMd,
+    insertReference,
+    removeReference,
+    convertReferenceToExcerpt,
+    referenceError,
+    dismissReferenceError,
     onCompositionStart,
     onCompositionEnd,
     retry,

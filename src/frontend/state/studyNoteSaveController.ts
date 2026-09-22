@@ -26,6 +26,7 @@
  * 控制器自身不发网络请求（save 由调用方注入）；不读 React/DOM/localStorage。
  */
 import type {
+  ReferencePreview,
   ReferenceTarget,
   ReferenceWrite,
   StudyNoteDto,
@@ -109,6 +110,12 @@ export interface StudyNoteSaveResult {
   version: number;
   /** 服务端确认时间（DTO.updatedAt）——lastSavedAt 的唯一来源。 */
   updatedAt: string;
+  /**
+   * 服务端确认的引用元数据（成功 DTO.references，R2）——调用方据此把「已确认」的
+   * 正式快照（displaySnapshot/capturedAt/status/liveTitle/target）回填到 UI。
+   * 旧实现只回传 version/updatedAt，导致确认后的正式快照被丢弃、未确认预览冒充已保存内容。
+   */
+  references?: ReferencePreview[];
 }
 
 export interface CreateStudyNoteSaveControllerOptions {
@@ -130,11 +137,38 @@ export interface CreateStudyNoteSaveControllerOptions {
    * 保留本地输入；内容修复（edit 后重检通过）自动回到 dirty。不做自动修正。
    */
   precheck?: (snapshot: StudyNoteEditSnapshot) => StudyNoteSavePrecheckResult;
+  /**
+   * 每次「真实成功确认」后回调（R1/R2）：载荷为**本次被确认的冻结快照**与**该次确认
+   * 携带的服务端引用元数据**。调用方据此把已确认的 capture 转为 keep、并按引用身份
+   * 回填正式快照。仅在服务端确认成功后触发——未知结果/重试/409/401 一律不触发。
+   */
+  onConfirmed?: (confirmed: StudyNoteConfirmedSnapshot) => void;
+}
+
+/** 一次真实成功确认的内容（成功 DTO + 被确认的冻结快照）。 */
+export interface StudyNoteConfirmedSnapshot {
+  /** 被确认的载荷（发送时冻结；与本次 PUT 逐字节一致）。 */
+  snapshot: StudyNoteEditSnapshot;
+  /** 确认版本（DTO.version）。 */
+  version: number;
+  /** 确认时间（DTO.updatedAt）。 */
+  updatedAt: string;
+  /** 确认引用的正式元数据（DTO.references；缺失时为空数组——调用方不得据此删除本地引用）。 */
+  references: ReferencePreview[];
 }
 
 export interface StudyNoteSaveController {
   /** 每次输入变更，覆盖待发送快照并推进 editSeq（无变化时不推进、不发送）。 */
   edit(snapshot: StudyNoteEditSnapshot): void;
+  /**
+   * 把「本次服务端确认过的 capture」在**本地待发送快照**里标记为 confirmed id
+   * （R1）——这些引用已落库，不再需要 capture。**不推进 editSeq、不调度发送**：
+   * 服务端内容已经正确，无需为「本地簿记」多打一次 PUT。
+   *
+   * 仅对 `ids` 中列出的、且当前仍为 capture 的引用生效；已移除/未确认的引用不受影响。
+   * 若本地已有更新的编辑（editSeq > savedSeq）仍照常发送，只把动作改为 keep。
+   */
+  markConfirmed(ids: readonly string[]): void;
   /** IME 合成标记：composing 期间不发送；compositionend 后按防抖补发。 */
   setComposing(value: boolean): void;
   /**
@@ -346,8 +380,7 @@ function freezeSnapshot(source: StudyNoteEditSnapshot): StudyNoteEditSnapshot {
   };
 }
 
-function snapshotEquals(a: StudyNoteEditSnapshot, b: StudyNoteEditSnapshot): boolean {
-  if (a.title !== b.title || a.bodyMd !== b.bodyMd || a.pinned !== b.pinned || a.status !== b.status) {
+function snapshotEquals(a: StudyNoteEditSnapshot, b: StudyNoteEditSnapshot): boolean {  if (a.title !== b.title || a.bodyMd !== b.bodyMd || a.pinned !== b.pinned || a.status !== b.status) {
     return false;
   }
   if (a.venues.length !== b.venues.length || a.venues.some((venue, index) => venue !== b.venues[index])) {
@@ -363,6 +396,11 @@ function snapshotEquals(a: StudyNoteEditSnapshot, b: StudyNoteEditSnapshot): boo
     }
   }
   return true;
+}
+
+/** 交给 `onConfirmed` 的快照副本：调用方可能保留引用，故再克隆一层（防外部改动内部状态）。 */
+function snapshotForCallback(source: StudyNoteEditSnapshot): StudyNoteEditSnapshot {
+  return freezeSnapshot(source);
 }
 
 /** 服务器 DTO → 编辑快照（既有 references 一律 keep，不重 capture）。 */
@@ -393,7 +431,7 @@ interface InFlightRequest {
 }
 
 type SendOutcome =
-  | { kind: "success"; version: number; updatedAt: string }
+  | { kind: "success"; version: number; updatedAt: string; references: ReferencePreview[] }
   | { kind: "conflict"; currentVersion: number | null }
   /** 服务端确定拒绝本次写入（可信业务 4xx，本次未提交）：不保留旧载荷原样重试权。 */
   | { kind: "rejected"; error: unknown }
@@ -411,6 +449,7 @@ export function createStudyNoteSaveController(
     baseline,
     save,
     precheck,
+    onConfirmed,
     setTimer = defaultSetTimer,
     clearTimer = defaultClearTimer,
     generateRequestId = () => crypto.randomUUID(),
@@ -529,7 +568,12 @@ export function createStudyNoteSaveController(
           snapshot: request.payload,
         });
         if (disposed || myEpoch !== epoch) return { kind: "aborted" };
-        return { kind: "success", version: result.version, updatedAt: result.updatedAt };
+        return {
+          kind: "success",
+          version: result.version,
+          updatedAt: result.updatedAt,
+          references: result.references ?? [],
+        };
       } catch (error) {
         if (disposed || myEpoch !== epoch) return { kind: "aborted" };
         const status = errorStatus(error);
@@ -608,6 +652,16 @@ export function createStudyNoteSaveController(
           savedSeq = request.seq;
           version = outcome.version;
           lastSavedAt = outcome.updatedAt;
+          // R1/R2：先让调用方消费本次确认（capture → keep、回填正式快照），再结算 waiter。
+          // 回调内若产生编辑，editSeq > savedSeq，flush 循环会继续为最新内容收尾。
+          if (onConfirmed) {
+            onConfirmed({
+              snapshot: snapshotForCallback(request.payload),
+              version: outcome.version,
+              updatedAt: outcome.updatedAt,
+              references: outcome.references,
+            });
+          }
           // 立刻结算 eligible waiters：回执与「该序号确认时」的 version 绑定
           resolveEligibleWaiters();
           continue;
@@ -726,6 +780,24 @@ export function createStudyNoteSaveController(
     notify();
   }
 
+  /**
+   * 本地簿记：把已确认的 capture 标记为 keep。**不推进 editSeq、不触发新 PUT**
+   * （服务端已持有正确内容；这只是让后续载荷不再重复采集）。
+   */
+  function markConfirmed(ids: readonly string[]): void {
+    if (disposed || ids.length === 0) return;
+    const target = new Set(ids.map((id) => id.toLowerCase()));
+    let changed = false;
+    const nextReferences = editSnapshot.references.map((write) => {
+      if (write.action !== "capture" || !target.has(write.id.toLowerCase())) return write;
+      changed = true;
+      return { id: write.id, action: "keep" as const };
+    });
+    if (!changed) return;
+    editSnapshot = { ...editSnapshot, references: nextReferences };
+    notify();
+  }
+
   function setComposing(value: boolean): void {
     if (disposed) return;
     if (value === composing) return;
@@ -827,6 +899,7 @@ export function createStudyNoteSaveController(
 
   return {
     edit,
+    markConfirmed,
     setComposing,
     flush,
     retry,
