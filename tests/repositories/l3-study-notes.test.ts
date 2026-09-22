@@ -1,7 +1,7 @@
 /**
  * L3StudyNoteRepository 单元测试（fake PoolClient，无真实 DB）：
- * create/get/lock/updateIfVersion CAS/replaceVenues/list（venue 过滤、q 转义、
- * topicId position 排序、unfiled 子查询、keyset、limit）/listTopicBlockers。
+ * create/get/lock/lockForShare/updateIfVersion CAS/replaceVenues/list（venue 过滤、
+ * q 转义、topicId position 排序、unfiled 子查询、keyset、limit）/listTopicBlockers。
  * SQL 形态与参数顺序断言（真实 PG 行为见 l3-study-notes.integration.test.ts）。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -70,6 +70,20 @@ describe("get / lock", () => {
     expect(querySpy.mock.calls[0]![0]).toContain("FOR UPDATE");
     const noTx = new L3StudyNoteRepository();
     await expect(noTx.lock(USER, NOTE)).rejects.toThrow(/requires an active transaction/);
+  });
+
+  it("lockForShare 带 FOR SHARE（非 FOR UPDATE）；未绑定事务时拒绝（requireTx）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [noteRow()] }));
+    await repo.lockForShare(USER, NOTE);
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("FROM l3_study_notes");
+    expect(text).toContain("id = $1::uuid AND user_id = $2::uuid");
+    expect(text).toContain("FOR SHARE");
+    // 导出锁必须是共享锁：不得退化为保存路径的排他行锁。
+    expect(text).not.toContain("FOR UPDATE");
+    expect(params).toEqual([NOTE, USER]);
+    const noTx = new L3StudyNoteRepository();
+    await expect(noTx.lockForShare(USER, NOTE)).rejects.toThrow(/requires an active transaction/);
   });
 });
 

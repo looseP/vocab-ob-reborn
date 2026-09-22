@@ -310,6 +310,9 @@ const OWNER_READS = [
   "searchL3ReferenceTargets",
   "listL3StudyBacklinks",
   "listL3StudyTopics",
+  // N1/Task 10：笔记导出（owner-only；agent 无导出权限，与 exportL3Sheet /
+  // exportL3WritingSheet 同口径——私人笔记档案不对 agent 开放）。
+  "exportL3StudyNote",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {

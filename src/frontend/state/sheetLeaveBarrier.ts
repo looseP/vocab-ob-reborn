@@ -25,7 +25,17 @@
 export type NoteBarrierOutcome = { ok: true } | { ok: false; reason: string };
 
 /** 笔记侧屏障：调用方传入**已执行 action** 的语义——成功才视为放行。 */
-export type NoteLeaveBarrier = (action: () => void | Promise<void>) => Promise<NoteBarrierOutcome>;
+export type NoteLeaveBarrier = ((action: () => void | Promise<void>) => Promise<NoteBarrierOutcome>) & {
+  /**
+   * Task 10（可选）：**不导航**，只借同一条导出口径执行「保存确认 + 导出」。
+   *
+   * 存在意义：卷面需要「从笔记导出」时，必须复用笔记侧那份**唯一**的
+   * `flushThenExportNote` 顺序实现（flush → receipt.version → GET → Blob 下载），
+   * 而不是在卷面另写一份。屏障不暴露 flush 回执、也不暴露版本号——调用方只能
+   * 触发动作并拿到成败，无法把版本搬到别处去发第二个请求。
+   */
+  confirmOnly?: () => Promise<NoteBarrierOutcome>;
+};
 
 /** 题纸侧屏障：沿用既有 `jumpBarrier` 形态（true=放行；false=拒答，已自行呈现）。 */
 export type SheetLeaveBarrier = () => Promise<boolean>;

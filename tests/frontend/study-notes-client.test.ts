@@ -392,18 +392,111 @@ describe("studyNotesClient（请求构建）", () => {
   });
 });
 
+describe("studyNotesClient（导出：Task 10）", () => {
+  const markdown = "# 学习笔记档案（study-note v1）\n\n- 笔记: " + NOTE_ID + "\n";
+
+  function markdownResponse(body: string, status = 200, headers: Record<string, string> = {}): Response {
+    return new Response(body, {
+      status,
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Content-Disposition": `attachment; filename="study-note-${NOTE_ID}.md"`,
+        "X-Export-Schema-Version": "1",
+        "X-Export-Sha256": "a".repeat(64),
+        ...headers,
+      },
+    });
+  }
+
+  it("exportNote：GET + expectedVersion query；解析服务端文件名/头；markdown 为原文（不 JSON 解析）", async () => {
+    const { client, calls } = captureClient(() => markdownResponse(markdown));
+    const result = await client.exportNote(NOTE_ID, 7);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.init.method).toBe("GET");
+    expect(calls[0]!.url).toBe(`/api/l3/study-notes/${NOTE_ID}/export?expectedVersion=7`);
+    // 正文未走 JSON.parse：含 `#`/`:`/换行等的 Markdown 原样返回（parseJson:false）
+    expect(result.markdown).toBe(markdown);
+    // 下载文件名来自服务端（Content-Disposition），不是客户端自造
+    expect(result.filename).toBe(`study-note-${NOTE_ID}.md`);
+    expect(result.sha256).toBe("a".repeat(64));
+    expect(result.schemaVersion).toBe(1);
+  });
+
+  it("exportNote：非法/缺失 Content-Disposition → INVALID_RESPONSE，不产生下载（不猜文件名）", async () => {
+    const missing = captureClient(() =>
+      new Response(markdown, { status: 200, headers: { "Content-Type": "text/markdown; charset=utf-8" } }),
+    );
+    await expect(missing.client.exportNote(NOTE_ID, 7)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+
+    const absolutized = captureClient(() =>
+      new Response(markdown, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Content-Disposition": `attachment; filename="/etc/study-note-${NOTE_ID}.md"`,
+        },
+      }),
+    );
+    await expect(absolutized.client.exportNote(NOTE_ID, 7)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+
+  it("exportNote：空正文 → INVALID_RESPONSE（绝不把空文档当成功下载）", async () => {
+    const { client } = captureClient(() => markdownResponse(""));
+    await expect(client.exportNote(NOTE_ID, 7)).rejects.toMatchObject({ code: "INVALID_RESPONSE" });
+  });
+
+  it("exportNote：409 版本冲突 → BrowserApiError(409, details.currentVersion 权威)，markdown 不可得", async () => {
+    // 服务端 409 只回 currentVersion（`ConflictError` meta → 响应体 details），不回正文。
+    const { client } = captureClient(() =>
+      jsonResponse(
+        {
+          error: "Note version conflict: export aborted",
+          code: "CONFLICT",
+          details: { noteId: NOTE_ID, currentVersion: 9 },
+        },
+        409,
+        // 导出端点是 text/markdown：错误响应同样可能带 markdown content-type，
+        // 客户端**不得**因 content-type 把错误体当成可下载正文（见下方断言）。
+        { "Content-Type": "text/markdown; charset=utf-8" },
+      ),
+    );
+    const caught = (await client
+      .exportNote(NOTE_ID, 7)
+      .catch((error: unknown) => error)) as BrowserApiError & { markdown?: unknown };
+    expect(caught).toBeInstanceOf(BrowserApiError);
+    expect(caught.status).toBe(409);
+    // 409 错误体（原始字符串）不得被当成可下载正文：`parseJson:true` 的错误响应
+    // 在 content-type 为 markdown 时也不解析，调用方拿不到 markdown 字段。
+    expect(typeof caught.body).toBe("string");
+    expect(caught.markdown).toBeUndefined();
+    expect(caught.body as string).toContain("currentVersion");
+  });
+
+  it("exportNote：网络错误从 fetch 原样上抛（调用方据此不下载）", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const client = createStudyNotesClient({ fetch: fetchMock as unknown as typeof fetch });
+    await expect(client.exportNote(NOTE_ID, 3)).rejects.toBeInstanceOf(TypeError);
+  });
+});
+
 describe("studyNotesClient（负向约束）", () => {
-  it("不提供 export/未实现端点的客户端函数；方法面 = 12 个既有操作", () => {
+  /**
+   * Task 10 校准：端点已在 P2 落地（`GET /api/l3/study-notes/:noteId/export`），
+   * 故「不得预留成功假象接口」的守卫从「不存在 export」改为「不存在**假** export」：
+   * 方法面精确等于 13 个操作，且 `exportNote` 必须真的发一次 GET（无 stub、无假成功）。
+   */
+  it("方法面 = 13 个已实现操作（Task 10 新增 exportNote，其余不含未实现端点）", () => {
     const client = createStudyNotesClient();
     const keys = Object.keys(client).sort();
     expect(keys).toEqual(
       [
-        "backlinks", "create", "createTopic", "get", "list", "listTopics",
+        "backlinks", "create", "createTopic", "exportNote", "get", "list", "listTopics",
         "moveTopicMember", "preview", "removeTopicMember", "save", "saveTopic", "searchTargets",
       ].sort(),
     );
     expect("exportSheet" in client).toBe(false);
-    expect("exportNote" in client).toBe(false);
     expect("export" in client).toBe(false);
   });
 });

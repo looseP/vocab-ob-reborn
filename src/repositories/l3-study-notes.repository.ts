@@ -96,6 +96,15 @@ export interface IL3StudyNoteRepository {
   findByCreateRequestId(userId: string, requestId: string): Promise<L3StudyNoteRow | null>;
   /** 笔记行锁（保存路径第一步）。requireTx。 */
   lock(userId: string, noteId: string): Promise<L3StudyNoteRow | null>;
+  /**
+   * 笔记行**共享**锁（只读导出事务第一步；`FOR SHARE`）。requireTx。
+   *
+   * 与 `lock`（保存路径的 `FOR UPDATE` 排他锁）**语义不同、互不替代**：
+   * 导出只读，共享锁允许并发导出并存，同时阻塞并发保存的排他锁直到导出事务
+   * 结束——导出的正文与引用版本取自同一提交。`lock` 的 FOR UPDATE 契约
+   * 一字不动（保存并发正确性靠它）。
+   */
+  lockForShare(userId: string, noteId: string): Promise<L3StudyNoteRow | null>;
   /** CAS：仅当 version=expectedVersion 才更新；不匹配返回 null（service 转 409）。requireTx。 */
   updateIfVersion(
     userId: string,
@@ -169,6 +178,17 @@ export class L3StudyNoteRepository extends BaseRepository implements IL3StudyNot
       `SELECT * FROM l3_study_notes
         WHERE id = $1::uuid AND user_id = $2::uuid
         FOR UPDATE`,
+      [noteId, userId],
+    );
+  }
+
+  /** 共享行锁（导出只读事务；`FOR SHARE`——见接口注释，与 lock 互不替代）。 */
+  async lockForShare(userId: string, noteId: string): Promise<L3StudyNoteRow | null> {
+    this.requireTx();
+    return this.queryOne<L3StudyNoteRow>(
+      `SELECT * FROM l3_study_notes
+        WHERE id = $1::uuid AND user_id = $2::uuid
+        FOR SHARE`,
       [noteId, userId],
     );
   }

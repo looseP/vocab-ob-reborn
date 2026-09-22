@@ -923,3 +923,27 @@ export const l3StudyBacklinkQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
   cursor: z.string().trim().max(800).optional(),
 });
+
+/**
+ * GET /l3/study-notes/:noteId/export?expectedVersion=N 的 query 契约
+ * （文档登记用；对齐 `l3SheetExportQuerySchema` 的 V 合同口径）。
+ *
+ * 笔记导出**无** sealed/draft 分流：任何状态都核对版本，故 `expectedVersion`
+ * 是必填语义（缺失由 service 抛 ValidationError → 422）。
+ */
+export const l3StudyNoteExportQuerySchema = z.object({
+  expectedVersion: z.string().regex(/^\d+$/),
+});
+
+/**
+ * V（2026-09-19 先例，笔记侧对齐）：导出核对版本参数——缺省返回 undefined
+ * （由 service 拒绝：笔记导出必须携带客户端已保存版本）；非法值抛校验错误
+ * （422 惯例，勿宽容吞掉）。
+ */
+export function parseStudyNoteExportExpectedVersion(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  if (!/^\d+$/.test(raw)) {
+    throw new ValidationError("expectedVersion must be a non-negative integer", "expectedVersion");
+  }
+  return Number(raw);
+}

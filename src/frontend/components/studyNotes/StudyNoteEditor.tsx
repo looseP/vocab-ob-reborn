@@ -14,9 +14,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReferencePreview, ReferenceTarget } from "@/domain/l3-study-notes";
-import { studyNotesClient, type StudyNotesClient } from "@/frontend/api/studyNotesClient";
+import { studyNotesClient, type StudyNotesClient, type StudyNoteExportResult } from "@/frontend/api/studyNotesClient";
 import { Markdown } from "@/frontend/components/ui/Markdown";
 import { Button } from "@/frontend/components/ui/Button";
+import { StudyNoteExportButton } from "@/frontend/components/studyNotes/StudyNoteExportButton";
 import { StudyReferencePicker } from "@/frontend/components/studyNotes/StudyReferencePicker";
 import { useStudyNoteEditor } from "@/frontend/hooks/useStudyNoteEditor";
 import type { StudyNoteSaveState } from "@/frontend/state/studyNoteSaveController";
@@ -49,7 +50,23 @@ export interface StudyNoteEditorProps {
    * 宿主据此在合成屏障时给出可归因提示（IME / 冲突 / 需修复 / 保存失败各不相同）。
    */
   onNavigationBlocked?: (reason: string | null) => void;
+  /**
+   * Task 10：下载效果注入（测试用；缺省 = Blob + `a[download]`，文件名取服务端）。
+   */
+  downloadExport?: (result: StudyNoteExportResult) => void;
+  /**
+   * Task 10（可选）：把编辑器的**导出动作**交给宿主复用（卷面「从笔记导出」）。
+   *
+   * 边界：宿主只在用户显式点击时调用该动作；该动作内部即
+   * `useStudyNoteEditor.exportNote` → 共享流水线 `flushThenExportNote`
+   * （flush → receipt.version → GET → Blob 下载）。**不自动 flush、不自动导出**；
+   * 09B 侧栏与卷面因此共用同一份导出实现与同一套失败分支。
+   */
+  onRegisterExportAction?: (action: StudyNoteExportAction | null) => void;
 }
+
+/** 编辑器对外暴露的导出动作（宿主经 `onRegisterExportAction` 取得）。 */
+export type StudyNoteExportAction = () => Promise<{ ok: boolean }>;
 
 const SAVE_STATE_LABELS: Record<StudyNoteSaveState, string> = {
   idle: "已保存",
@@ -156,8 +173,8 @@ function ReferencePlaceholder({
   );
 }
 
-export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBarrier, presetReferenceTarget = null, onNavigationBlocked }: StudyNoteEditorProps) {
-  const editor = useStudyNoteEditor({ noteId, client });
+export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBarrier, presetReferenceTarget = null, onNavigationBlocked, downloadExport, onRegisterExportAction }: StudyNoteEditorProps) {
+  const editor = useStudyNoteEditor({ noteId, client, downloadExport });
   const activeClient = client ?? studyNotesClient;
   const [showPreview, setShowPreview] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -188,6 +205,20 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
   useEffect(() => {
     onNavigationBlocked?.(editorNavigationError);
   }, [editorNavigationError, onNavigationBlocked]);
+
+  /**
+   * Task 10：把导出动作注册给宿主（卷面「从笔记导出」）。空壳/占位一律不注册：
+   * 传 null 让宿主隐藏入口，绝不出现「点了没反应」的控件。
+   */
+  const exportNote = editor.exportNote;
+  useEffect(() => {
+    if (!onRegisterExportAction) return;
+    onRegisterExportAction(async () => {
+      const outcome = await exportNote();
+      return { ok: outcome.ok };
+    });
+    return () => onRegisterExportAction(null);
+  }, [onRegisterExportAction, exportNote]);
 
   const snapshot = editor.snapshot;
   const blocks = useMemo(
@@ -224,6 +255,16 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
 
   const { edit, state } = snapshot;
   const editingLocked = editor.recoveryLoading || editor.navigationLocked;
+  /**
+   * Task 10：导出出口的可用性 = 既有可编辑锁（恢复/导航）+ 导出在途 + 内容未通过预检。
+   * 预检未通过（invalid）说明正文与引用清单不一致，导出会与保存口径分叉：禁用并给原因。
+   */
+  const exportDisabledReason = editingLocked
+    ? "正在保存/恢复中，暂不能导出"
+    : state === "invalid"
+      ? "内容未通过保存前预检，请先修复再导出"
+      : null;
+  const exportDisabled = exportDisabledReason !== null;
   const overTitle = edit.title.length > TITLE_MAX;
   const overBody = edit.bodyMd.length > BODY_MAX;
 
@@ -267,6 +308,13 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
           <Button size="sm" variant={showPreview ? "primary" : "ghost"} onClick={() => setShowPreview((value) => !value)}>
             {showPreview ? "返回编辑" : "预览"}
           </Button>
+          {/* Task 10：导出出口（flush → 服务端版本核对 → Blob 下载；失败不下载旧文） */}
+          <StudyNoteExportButton
+            onExport={() => editor.exportNote()}
+            disabled={exportDisabled}
+            disabledReason={exportDisabledReason}
+            testId="export-note-button"
+          />
           {leaveAction && (
             <Button
               size="sm"
@@ -443,6 +491,17 @@ export function StudyNoteEditor({ noteId, client, leaveAction, onRegisterLeaveBa
       {editor.navigationLocked && (
         <p className="text-xs text-[var(--color-ink-soft)]" role="status">
           正在保存并确认未保存内容，请稍候…
+        </p>
+      )}
+      {/* Task 10：导出反馈（成功给服务端文件名；失败给可归因原因——绝不静默） */}
+      {editor.exportNotice && (
+        <p className="text-xs text-[var(--color-ink-soft)]" role="status" data-testid="export-notice">
+          {editor.exportNotice}
+        </p>
+      )}
+      {editor.exportError && (
+        <p className="text-xs text-[var(--color-accent-2)]" role="alert" data-testid="export-error">
+          {editor.exportError}
         </p>
       )}
       {editor.navigationError && (

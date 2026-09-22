@@ -9,7 +9,8 @@
  *   `response-contract`（2026-09-20 核对，含两处对旧任务书的校准）：
  *   ① `reference-preview` 请求体为 `ReferenceTarget` 本体（无 `{target}` 包装）；
  *   ② 列表布尔 query 为 `"1"`/`"0"`（非 `true`/`false`）；
- * - 不提供 export/未实现端点的客户端函数（Task 10 前不写「假成功」接口）；
+ * - Task 10：新增**第 13 个**操作 `exportNote`（`GET /:noteId/export`，`parseJson:false`），
+ *   仅导出已保存内容；仍**不提供**任何未实现端点的客户端函数（无 stub、无假成功）；
  * - 写操作不自动重试（写重试由保存控制器唯一负责）。
  */
 import { z } from "zod";
@@ -123,6 +124,39 @@ export interface StudyTopicItemResult {
 
 export type StudyTargetItem = StudySourceTargetItem | StudyQuestionTargetItem;
 
+// ── 导出结果（Task 10）──────────────────────────────────────────────────────
+
+/**
+ * 学习笔记导出（`GET /api/l3/study-notes/:noteId/export`）的客户端结果。
+ *
+ * - `markdown`：响应正文原文（`parseJson:false`，**不做任何解析/归一**；空正文按非法响应拒绝）；
+ * - `filename`：**服务端** `Content-Disposition` 提供的安全文件名（缺头/含路径分隔符 →
+ *   非法响应；客户端**不**自造文件名，见 `parseExportFilename`）；
+ * - `sha256` / `schemaVersion`：来自 `X-Export-Sha256` / `X-Export-Schema-Version`
+ *   响应头（用于与正文「内容校验」行互证；客户端不重算、不假设同名文件）。
+ */
+export interface StudyNoteExportResult {
+  markdown: string;
+  filename: string;
+  sha256: string | null;
+  schemaVersion: number | null;
+}
+
+/** 服务端安全文件名形状：`study-note-<uuid>.md`（不含路径分隔符、不含引号）。 */
+const EXPORT_FILENAME_PATTERN = /^study-note-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.md$/i;
+
+/**
+ * `Content-Disposition` → 服务端文件名。任何不符合冻结形状（含路径分隔符、缺引号、
+ * 非法 uuid）的值一律视为非法响应——**绝不用客户端自造名兜底**（那会掩盖服务端合同破损）。
+ */
+function parseExportFilename(header: string | null): string | null {
+  if (!header) return null;
+  const match = /\bfilename="([^"]+)"/i.exec(header);
+  const filename = match?.[1];
+  if (!filename || !EXPORT_FILENAME_PATTERN.test(filename)) return null;
+  return filename;
+}
+
 // ── query 序列化 ────────────────────────────────────────────────────────────
 
 /**
@@ -172,6 +206,13 @@ export function createStudyNotesClient(options: { baseUrl?: string; fetch?: type
     return parsed.data;
   }
 
+  /**
+   * 非法 200（HTTP 2xx 但正文/响应头不符合冻结合同）——与 `call` 的契约校验同一条纪律：
+   * **绝不归一为「空文档 / 客户端自造文件名」**，让调用方据此拒绝下载。
+   */
+  function invalidResponse(status: number, message: string, details?: unknown): BrowserApiError {
+    return new BrowserApiError(status, { code: "INVALID_RESPONSE", message, details });
+  }
   const enc = encodeURIComponent;
   const notes = (suffix: string): string => `${NOTES_BASE}${suffix}`;
   const topics = (suffix: string): string => `${TOPICS_BASE}${suffix}`;
@@ -212,6 +253,41 @@ export function createStudyNotesClient(options: { baseUrl?: string; fetch?: type
      */
     save: (noteId: string, input: SaveNoteInput, signal?: AbortSignal): Promise<StudyNoteItemResult> =>
       call(l3StudyNoteItemResponseSchema, notes(`/${enc(noteId)}`), { method: "PUT", body: input, signal }),
+
+    /**
+     * GET /api/l3/study-notes/:noteId/export?expectedVersion=N（Task 10）——
+     * 导出**已保存**内容（只出不进；归档笔记同样可导出）。
+     *
+     * 纪律：
+     * - `expectedVersion` 是**调用方 flush 成功后的回执版本**（本方法不猜、不省略）；
+     *   服务端据此核对，不一致返回 409（不回传正文）——版本不合就**没有可下载的旧文**；
+     * - `parseJson:false`：Markdown 原文，不用 JSON.parse 破坏正文；
+     * - 空正文 / 缺 `Content-Disposition` / 文件名非冻结形状 → `INVALID_RESPONSE`：
+     *   宁可失败也不下载来路不明的文件；
+     * - 不重试、不静默降级（导出是只读 GET，但「旧版本导出成功」比失败更危险）。
+     */
+    exportNote: async (noteId: string, expectedVersion: number, signal?: AbortSignal): Promise<StudyNoteExportResult> => {
+      const response = await request<unknown>(
+        notes(`/${enc(noteId)}/export${buildQuery({ expectedVersion })}`),
+        { parseJson: false, signal },
+      );
+      const markdown = response.data;
+      if (typeof markdown !== "string" || markdown.length === 0) {
+        throw invalidResponse(response.status, "导出响应正文为空或非文本");
+      }
+      const filename = parseExportFilename(response.headers.get("Content-Disposition"));
+      if (!filename) {
+        throw invalidResponse(response.status, "导出响应缺少合法的 Content-Disposition 文件名");
+      }
+      const sha256 = response.headers.get("X-Export-Sha256");
+      const schemaVersion = Number(response.headers.get("X-Export-Schema-Version"));
+      return {
+        markdown,
+        filename,
+        sha256: sha256 && sha256.trim() ? sha256 : null,
+        schemaVersion: Number.isInteger(schemaVersion) ? schemaVersion : null,
+      };
+    },
 
     // ── 引用（3）───────────────────────────────────────────────────────────
 

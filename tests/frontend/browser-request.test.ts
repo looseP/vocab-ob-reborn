@@ -92,7 +92,8 @@ describe("browser API request", () => {
     const payload = { created: true };
     const fetchImpl = vi.fn(async () => response(payload, 201)) as unknown as typeof fetch;
     const result = await createBrowserResponseRequest({ fetch: fetchImpl })("/api/items", { method: "POST", body: "{}" });
-    expect(result).toEqual({ data: payload, status: 201 });
+    // Task 10：响应面新增 headers（导出需要 Content-Disposition 文件名）；本桩无 headers → 空 Headers
+    expect(result).toEqual({ data: payload, status: 201, headers: new Headers() });
   });
 
   it("aborts a hanging request after timeoutMs and surfaces a readable TIMEOUT error", async () => {
