@@ -30,6 +30,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
  */
 export interface TransactionOptions {
   actorId?: string;
+  /**
+   * F2：一致读取快照——以 `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`
+   * 开启事务。用于"同一提交的多次读取"（如笔记详情聚合：正文/归属/引用必须
+   * 属于同一快照）；默认 false 保持既有 BEGIN 行为。仅读事务使用，写路径不得启用。
+   */
+  readSnapshot?: boolean;
 }
 
 export type TransactionCallback<T> = (tx: PoolClient) => Promise<T>;
@@ -61,7 +67,11 @@ export async function withTransaction<T>(
 
   const client = await getPool().connect();
   try {
-    await client.query("BEGIN");
+    await client.query(
+      options.readSnapshot
+        ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
+        : "BEGIN",
+    );
     if (actorId) {
       await client.query(
         "SELECT set_config('request.jwt.claim.sub', $1, true)",

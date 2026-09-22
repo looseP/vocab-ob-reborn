@@ -51,6 +51,12 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   { file: "src/http/routes/l3/writing-export.ts", maxLines: 55, maxRoutes: 2 },
   // A2（2026-09-19）：按题批量进度读面（独立薄路由；实测 ~33 行、1 路由）。
   { file: "src/http/routes/l3/writing-summaries.ts", maxLines: 45, maxRoutes: 1 },
+  // 2026-09-19 学习笔记 N1（ADR《study-notes-workspace》）：笔记/专题/引用三独立薄路由
+  // （同棘轮约束，沿 writing-* 先例拆分；bootstrap 限额按实测留一档余量——
+  // 实测 50/73/43 行、4/5/3 路由；校验：ROUTE_COMPLEXITY_BASE_REF=<新增前 ref> 走 bootstrap 分支）。
+  { file: "src/http/routes/l3/study-notes.ts", maxLines: 65, maxRoutes: 4 },
+  { file: "src/http/routes/l3/study-topics.ts", maxLines: 90, maxRoutes: 5 },
+  { file: "src/http/routes/l3/study-references.ts", maxLines: 55, maxRoutes: 3 },
   { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
   { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },

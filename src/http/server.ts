@@ -45,6 +45,9 @@ import { writingSummariesRoutes } from "./routes/l3/writing-summaries";
 import { writingTasksRoutes } from "./routes/l3/writing-tasks";
 import { writingSheetsRoutes } from "./routes/l3/writing-sheets";
 import { writingFeedbackRoutes } from "./routes/l3/writing-feedback";
+import { studyReferencesRoutes } from "./routes/l3/study-references";
+import { studyNotesRoutes } from "./routes/l3/study-notes";
+import { studyTopicsRoutes } from "./routes/l3/study-topics";
 import { writingExportRoutes } from "./routes/l3/writing-export";
 import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
 import { l3PracticeRoutes } from "./routes/l3-practice";
@@ -179,6 +182,12 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3/writing", writingSheetsRoutes(services));
   app.route("/api/l3/writing", writingFeedbackRoutes(services));
   app.route("/api/l3/writing", writingExportRoutes(services));
+
+  // 学习笔记（N1）三薄路由，同挂 /api/l3（**references 组先于 notes 注册**——
+  // 静态 /study-notes/reference-targets 等不得被动态 /study-notes/:noteId 吞掉）。
+  app.route("/api/l3", studyReferencesRoutes(services));
+  app.route("/api/l3", studyNotesRoutes(services));
+  app.route("/api/l3", studyTopicsRoutes(services));
 
   // W3/T09：升级工单 / L3 练习记录 / L3 会话计划 / 一键遗忘（独立薄路由，
   // 全部位于 owner 鉴权挂载之后）。
