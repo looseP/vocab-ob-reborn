@@ -7,6 +7,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PoolClient } from "pg";
+import { ValidationError } from "@/errors";
 import { L3StudyReferenceRepository } from "@/repositories/l3-study-references.repository";
 
 const USER = "00000000-0000-4000-8000-0000000000a1";
@@ -307,5 +308,62 @@ describe("补齐：引用归属回查 / 搜索与反向引用游标", () => {
     const listCall = querySpy.mock.calls.find((c) => (c[0] as string).includes("ORDER BY"))!;
     expect(listCall[0]).toContain("(n.updated_at, n.id) <");
     expect(items[0]!.updated_at).toBe("2026-09-19T00:00:00Z");
+  });
+});
+
+describe("N2 评析目标（第一条垂直链）", () => {
+  const ASSESSMENT = "00000000-0000-4000-8000-000000000221";
+
+  it("searchTargets 拒绝 assessment：fail-closed，不退化成题目查询", async () => {
+    await expect(
+      repo.searchTargets({ userId: USER, kind: "assessment", q: "题眼", limit: 20 } as never),
+    ).rejects.toThrow(ValidationError);
+    // 不发出任何查询——退化成 question 搜索会把评析面悄悄塞进搜索结果
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+
+  it("loadTargets 装载评析：JOIN 所属题取上下文，键为 assessment:<id>", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [{
+        id: ASSESSMENT, question_id: QUESTION, content_md: "评析正文",
+        updated_at: "2026-09-20T00:00:00Z", stem: "题干", question_type: "reading_choice", source_title: null,
+      }],
+    }));
+    const map = await repo.loadTargets(USER, [{ kind: "assessment", id: ASSESSMENT }]);
+
+    expect(map.get(`assessment:${ASSESSMENT}`)).toEqual({
+      kind: "assessment", id: ASSESSMENT, question_id: QUESTION, content_md: "评析正文",
+      updated_at: "2026-09-20T00:00:00Z", question_stem: "题干",
+      question_type: "reading_choice", source_title: null,
+    });
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("FROM l3_question_assessments a");
+    // 题与评析必须同属主，否则引用可把他人评析挂到自己的题下
+    expect(text).toContain("JOIN l3_questions q ON q.id = a.question_id AND q.user_id = a.user_id");
+    expect(params).toEqual([USER, [ASSESSMENT]]);
+  });
+
+  it("lockTargets 对评析取 advisory 锁（l3_assessment: 前缀，与题目锁并存）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.lockTargets(USER, [
+      { kind: "question", id: QUESTION },
+      { kind: "assessment", id: ASSESSMENT },
+    ]);
+    const lockKeys = querySpy.mock.calls
+      .filter((c) => (c[0] as string).includes("pg_advisory_xact_lock"))
+      .map((c) => (c[1] as unknown[])[0]);
+    expect(lockKeys).toEqual([`l3_question:${QUESTION}`, `l3_assessment:${ASSESSMENT}`]);
+  });
+
+  it("question 删除 blocker 计入「经评析」的引用（评析随题级联删除）", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [{ note_id: NOTE, title: "T", status: "active", reference_count: 1 }],
+    }));
+    const blockers = await repo.getQuestionDeleteBlockers(USER, QUESTION);
+
+    expect(blockers).toHaveLength(1);
+    const [text] = querySpy.mock.calls[0]!;
+    // 只按 question_id 计会漏掉子评析引用，删的时候直接撞 RESTRICT 而非给出 blocker
+    expect(text).toContain("r.assessment_id IN (SELECT id FROM l3_question_assessments");
   });
 });
