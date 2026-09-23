@@ -49,6 +49,8 @@ export const STUDY_PAGE_LIMIT_MAX = 50;
 export const STUDY_SEARCH_Q_MAX = 100;
 /** 来源整体快照摘要长度（前 280 code units）。 */
 export const STUDY_SOURCE_EXCERPT_MAX = 280;
+/** N2：评析展示快照的摘录上限（评析比来源正文更聚焦，取同一量级）。 */
+export const STUDY_ASSESSMENT_EXCERPT_MAX = 280;
 
 // ── 枚举（单一真源；与 DB CHECK 同步）───────────────────────────────────────
 
@@ -58,15 +60,33 @@ export type StudyNoteStatus = (typeof STUDY_NOTE_STATUSES)[number];
 export const STUDY_TOPIC_STATUSES = ["active", "archived"] as const;
 export type StudyTopicStatus = (typeof STUDY_TOPIC_STATUSES)[number];
 
-/** 五种引用严格枚举（N1 不预留可任意写 JSON 的后门）。 */
+/**
+ * 五种引用严格枚举（N1 不预留可任意写 JSON 的后门）。
+ *
+ * N2 第一条垂直链新增 `assessment`（评析），沿用同一套列式 target + CHECK 收口，
+ * 不引入自由 JSON。评析是 `UNIQUE(user_id, question_id)` 的 latest-wins 记录
+ * （任务书 §5.1 D3-1），因此 target 必须同时带 questionId 与 assessmentId——
+ * 后者才是可被核验的具体身份，只允许 questionId 会退化成「引用某题的当前评析」。
+ */
 export const REFERENCE_KINDS = [
   "source",
   "source_quote",
   "question",
   "stem_quote",
   "option_quote",
+  "assessment",
 ] as const;
 export type ReferenceKind = (typeof REFERENCE_KINDS)[number];
+
+/** N1 冻结的五种（导出 v1 只允许这五种出现在 payload 里；见 P4-1）。 */
+export const N1_REFERENCE_KINDS = [
+  "source",
+  "source_quote",
+  "question",
+  "stem_quote",
+  "option_quote",
+] as const;
+export type N1ReferenceKind = (typeof N1_REFERENCE_KINDS)[number];
 
 /** 引用状态：字段 hash 不同 → changed；直接数据库越过应用的缺失 → unavailable。 */
 export const REFERENCE_STATUSES = ["current", "changed", "unavailable"] as const;
@@ -86,7 +106,9 @@ export type ReferenceTarget =
       start: number;
       end: number;
       quote: string;
-    };
+    }
+  /** N2 第一条链：评析（`l3_question_assessments` 的某一行，非「某题当前评析」）。 */
+  | { kind: "assessment"; questionId: string; assessmentId: string };
 
 /** 前端构建 capture 载荷用（与 ReferenceWrite 的 capture 分支同构）。 */
 export interface ReferenceInput {
@@ -150,12 +172,24 @@ export interface OptionQuoteReferenceSnapshot {
   sourceTitle: string | null;
 }
 
+/**
+ * N2：评析引用快照。只放 capture 当时摘录的 `excerpt`（不含完整 contentMd），
+ * 评析被覆写后它**保持不变**，状态由 `changed` 表达（D3-2）。
+ */
+export interface AssessmentReferenceSnapshot {
+  kind: "assessment";
+  excerpt: string;
+  questionType: L3QuestionType;
+  sourceTitle: string | null;
+}
+
 export type ReferenceDisplaySnapshot =
   | SourceReferenceSnapshot
   | SourceQuoteReferenceSnapshot
   | QuestionReferenceSnapshot
   | StemQuoteReferenceSnapshot
-  | OptionQuoteReferenceSnapshot;
+  | OptionQuoteReferenceSnapshot
+  | AssessmentReferenceSnapshot;
 
 /** 引用预览（详情/导出/反向引用共用；不泄露 service 端 hash 与请求键）。 */
 export interface ReferencePreview {
@@ -407,6 +441,14 @@ export const referenceTargetSchema = z
         questionId: z.string().uuid(),
         optionKey: z.string().min(1).max(STUDY_OPTION_KEY_MAX),
         ...quoteFields,
+      })
+      .strict(),
+    // N2：评析——questionId 给出上下文/属主链，assessmentId 才是被引用行的身份。
+    z
+      .object({
+        kind: z.literal("assessment"),
+        questionId: z.string().uuid(),
+        assessmentId: z.string().uuid(),
       })
       .strict(),
   ])

@@ -26,6 +26,7 @@ import {
   STUDY_PAGE_LIMIT_DEFAULT,
   STUDY_PAGE_LIMIT_MAX,
   STUDY_SOURCE_EXCERPT_MAX,
+  STUDY_ASSESSMENT_EXCERPT_MAX,
   type ReferenceDisplaySnapshot,
   type ReferencePreview,
   type ReferenceStatus,
@@ -91,6 +92,11 @@ export function currentFieldText(
   if (kind === "source" || kind === "source_quote") {
     return target.kind === "source" ? (target.content_text ?? "") : null;
   }
+  if (target.kind === "assessment") {
+    // N2：评析的 hash 输入写死为 content_md（A2）；评析是 latest-wins 覆写，
+    // 覆写后当前文本变化 → 已存引用转 changed，旧 content 快照保持不动（D3-2）。
+    return kind === "assessment" ? target.content_md : null;
+  }
   if (target.kind !== "question") return null;
   if (kind === "question") return questionFieldText(target);
   if (kind === "stem_quote") return target.stem;
@@ -127,12 +133,36 @@ function assertQuote(field: string, start: number, end: number, quote: string): 
   }
 }
 
-/** 输入 target → ({kind,id}) 的 loadTargets 键（F5：UUID 身份规范小写，与 DB 返回形态一致）。 */
-function targetRefOf(target: ReferenceTarget): { kind: "source" | "question"; id: string } {
+/**
+ * 输入 target → loadTargets/lockTargets 的键集合（F5：UUID 身份规范小写，
+ * 与 DB 返回形态一致）。
+ *
+ * N2：评析目标返回**两**个键——评析自身（装载/锁）与其所属题（锁）。后者让
+ * 「capture 评析」与「删题级联删评析」共用 `l3_question:<id>` advisory 键，
+ * 否则并发窗口内会撞 FK 而不是被 blocker 拦下。
+ */
+/** loadTargets 返回的 map 键（与 repository 装载时写入的键同构）。 */
+export function targetKeyOf(target: ReferenceTarget): string {
   if (target.kind === "source" || target.kind === "source_quote") {
-    return { kind: "source", id: normalizeStudyUuid(target.sourceId) };
+    return `source:${normalizeStudyUuid(target.sourceId)}`;
   }
-  return { kind: "question", id: normalizeStudyUuid(target.questionId) };
+  if (target.kind === "assessment") {
+    return `assessment:${normalizeStudyUuid(target.assessmentId)}`;
+  }
+  return `question:${normalizeStudyUuid(target.questionId)}`;
+}
+
+export function targetRefsOf(target: ReferenceTarget): { kind: "source" | "question" | "assessment"; id: string }[] {
+  if (target.kind === "source" || target.kind === "source_quote") {
+    return [{ kind: "source", id: normalizeStudyUuid(target.sourceId) }];
+  }
+  if (target.kind === "assessment") {
+    return [
+      { kind: "question", id: normalizeStudyUuid(target.questionId) },
+      { kind: "assessment", id: normalizeStudyUuid(target.assessmentId) },
+    ];
+  }
+  return [{ kind: "question", id: normalizeStudyUuid(target.questionId) }];
 }
 
 /** 引用行 → 重建输入 target（响应与 resolve 用）。 */
@@ -167,6 +197,12 @@ export function referenceRowToTarget(row: L3StudyNoteReferenceRow): ReferenceTar
         end: row.end_offset!,
         quote: row.quote_snapshot!,
       };
+    case "assessment":
+      return {
+        kind: "assessment",
+        questionId: row.question_id!,
+        assessmentId: row.assessment_id!,
+      };
   }
 }
 
@@ -190,11 +226,11 @@ export class L3StudyReferenceService {
     input: CaptureReferenceInput,
     repos: StudyReferenceRepos,
   ): Promise<StudyReferenceInsertRow> {
-    const ref = targetRefOf(input.target);
-    const loaded = await repos.studyReferences.loadTargets(userId, [ref]);
-    const target = loaded.get(`${ref.kind}:${ref.id}`);
+    const refs = targetRefsOf(input.target);
+    const loaded = await repos.studyReferences.loadTargets(userId, refs);
+    const target = loaded.get(targetKeyOf(input.target));
     if (!target) {
-      throw new NotFoundError("StudyReferenceTarget", `${ref.kind}:${ref.id}`);
+      throw new NotFoundError("StudyReferenceTarget", targetKeyOf(input.target));
     }
     return {
       id: normalizeStudyUuid(input.id),
@@ -214,6 +250,7 @@ export class L3StudyReferenceService {
           kind: "source",
           source_id: loaded.id,
           question_id: null,
+          assessment_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -238,6 +275,7 @@ export class L3StudyReferenceService {
           kind: "source_quote",
           source_id: loaded.id,
           question_id: null,
+          assessment_id: null,
           option_key: null,
           start_offset: target.start,
           end_offset: target.end,
@@ -254,6 +292,7 @@ export class L3StudyReferenceService {
           kind: "question",
           source_id: null,
           question_id: loaded.id,
+          assessment_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -277,6 +316,7 @@ export class L3StudyReferenceService {
           kind: "stem_quote",
           source_id: null,
           question_id: loaded.id,
+          assessment_id: null,
           option_key: null,
           start_offset: target.start,
           end_offset: target.end,
@@ -285,6 +325,37 @@ export class L3StudyReferenceService {
           display_snapshot: {
             kind: "stem_quote",
             quote: target.quote,
+            questionType: loaded.question_type,
+            sourceTitle: loaded.source_title,
+          },
+        };
+      }
+      case "assessment": {
+        if (
+          loaded.kind !== "assessment" ||
+          loaded.id !== normalizeStudyUuid(target.assessmentId) ||
+          loaded.question_id !== normalizeStudyUuid(target.questionId)
+        ) {
+          // 题与评析不匹配 → 404（不可见/不存在），不做「按题找最新评析」的兜底：
+          // 那会把「引用某条评析」悄悄变成「引用当前评析」，违背 D3-2。
+          throw new NotFoundError(
+            "StudyReferenceTarget",
+            `assessment:${target.assessmentId}`,
+          );
+        }
+        return {
+          kind: "assessment",
+          source_id: null,
+          question_id: loaded.question_id,
+          assessment_id: loaded.id,
+          option_key: null,
+          start_offset: null,
+          end_offset: null,
+          quote_snapshot: null,
+          field_hash: sha256Hex(loaded.content_md),
+          display_snapshot: {
+            kind: "assessment",
+            excerpt: safeExcerpt(loaded.content_md, STUDY_ASSESSMENT_EXCERPT_MAX),
             questionType: loaded.question_type,
             sourceTitle: loaded.source_title,
           },
@@ -303,6 +374,7 @@ export class L3StudyReferenceService {
           kind: "option_quote",
           source_id: null,
           question_id: loaded.id,
+          assessment_id: null,
           option_key: target.optionKey,
           start_offset: target.start,
           end_offset: target.end,
@@ -340,10 +412,7 @@ export class L3StudyReferenceService {
     );
 
     return rows.map((row) => {
-      const key = row.kind === "source" || row.kind === "source_quote"
-        ? `source:${row.source_id}`
-        : `question:${row.question_id}`;
-      const target = loaded.get(key);
+      const target = loaded.get(targetKeyOf(referenceRowToTarget(row)));
       let status: ReferenceStatus;
       let liveTitle: string | null = null;
       if (!target) {
@@ -372,11 +441,10 @@ export class L3StudyReferenceService {
     return this.txRunner(
       async (tx) => {
         const repos = this.reposFactory(tx);
-        const ref = targetRefOf(target);
-        const loaded = await repos.studyReferences.loadTargets(userId, [ref]);
-        const loadedTarget = loaded.get(`${ref.kind}:${ref.id}`);
+        const loaded = await repos.studyReferences.loadTargets(userId, targetRefsOf(target));
+        const loadedTarget = loaded.get(targetKeyOf(target));
         if (!loadedTarget) {
-          throw new NotFoundError("StudyReferenceTarget", `${ref.kind}:${ref.id}`);
+          throw new NotFoundError("StudyReferenceTarget", targetKeyOf(target));
         }
         const preview = this.captureAgainst(target, loadedTarget);
         return {
