@@ -39,6 +39,7 @@ import {
   type ReferencePreview,
   type ReferenceStatus,
   type ReferenceTarget,
+  N1_REFERENCE_KINDS,
 } from "../domain/l3-study-notes";
 import type { L3QuestionOption, L3QuestionType } from "../domain/l3-question-types";
 import {
@@ -59,6 +60,13 @@ type TxRunner = typeof withTransaction;
 
 /** 导出工件契约版本（区别于题纸 v2 / 作文 v1）。 */
 export const STUDY_NOTE_EXPORT_SCHEMA_VERSION = 1;
+/**
+ * N2（P4）：v2 为**显式**协议——由调用方显式选择，不按笔记内容自动切换。
+ * v1 字段与语义永久冻结（P4-1）。
+ */
+export const STUDY_NOTE_EXPORT_SCHEMA_VERSION_V2 = 2;
+export const STUDY_NOTE_EXPORT_SCHEMA_VERSIONS = [1, 2] as const;
+export type StudyNoteExportSchemaVersion = (typeof STUDY_NOTE_EXPORT_SCHEMA_VERSIONS)[number];
 /** 工件类型标签（JSON 块 `kind`）。 */
 export const STUDY_NOTE_EXPORT_ARTIFACT_TYPE = "study-note";
 
@@ -117,6 +125,39 @@ export interface StudyNoteExportPayload {
   bodySha256: string;
 }
 
+/** v2 target：带 `kind` 判别字段的扩展联合（P4-4）。 */
+export type StudyNoteExportTargetV2 =
+  | { kind: "source"; sourceId: string }
+  | { kind: "source_quote"; sourceId: string; startOffset: number; endOffset: number }
+  | { kind: "question"; questionId: string }
+  | { kind: "stem_quote"; questionId: string; startOffset: number; endOffset: number }
+  | { kind: "option_quote"; questionId: string; optionKey: string; startOffset: number; endOffset: number }
+  | { kind: "assessment"; questionId: string; assessmentId: string };
+
+export interface StudyNoteExportReferenceV2 {
+  referenceId: string;
+  kind: ReferenceKind;
+  status: ReferenceStatus;
+  capturedAt: string;
+  displaySnapshot: ReferenceDisplaySnapshot;
+  target: StudyNoteExportTargetV2;
+  liveTitle: string | null;
+}
+
+/**
+ * v2 payload（P4-3）：`bodyMd` 更名为 `renderedBodyMarkdown`，明确它是
+ * marker 已被替换为引用块之后的正文（顺带闭合遗留观察 F-1）。
+ */
+export interface StudyNoteExportPayloadV2 {
+  exportSchemaVersion: 2;
+  kind: "study-note";
+  exportedAt: string;
+  note: StudyNoteExportNote;
+  references: StudyNoteExportReferenceV2[];
+  renderedBodyMarkdown: string;
+  renderedBodySha256: string;
+}
+
 export interface L3StudyNoteExportResult {
   markdown: string;
   filename: string;
@@ -127,7 +168,8 @@ export interface L3StudyNoteExportResult {
 
 /** 渲染输入（纯函数；service 组装后交由渲染）。 */
 export interface StudyNoteExportRenderInput {
-  payload: StudyNoteExportPayload;
+  payload: StudyNoteExportPayload | StudyNoteExportPayloadV2;
+  /** 已渲染（marker → 引用块）的正文；两个版本共用同一份字节。 */
   bodyMd: string;
 }
 
@@ -205,6 +247,14 @@ export function projectDisplaySnapshot(
         questionType: raw["questionType"] as L3QuestionType,
         sourceTitle: asNullableText(raw["sourceTitle"]),
       };
+    // N2：评析同样按白名单显式重建（只留摘录 + 题型 + 来源标题）。
+    case "assessment":
+      return {
+        kind: "assessment",
+        excerpt: asTextField(raw["excerpt"], "excerpt", referenceId),
+        questionType: raw["questionType"] as L3QuestionType,
+        sourceTitle: asNullableText(raw["sourceTitle"]),
+      };
     default:
       throw new ValidationError("引用快照 kind 非法", "displaySnapshot");
   }
@@ -254,6 +304,7 @@ const KIND_LABELS: Record<ReferenceKind, string> = {
   question: "题目",
   stem_quote: "题干摘录",
   option_quote: "选项摘录",
+  assessment: "评析",
 };
 
 const STATUS_LABELS: Record<ReferenceStatus, string> = {
@@ -275,6 +326,8 @@ function snapshotSummary(snapshot: ReferenceDisplaySnapshot): string {
       return snapshot.quote;
     case "option_quote":
       return `选项 ${snapshot.optionKey}「${snapshot.quote}」`;
+    case "assessment":
+      return snapshot.excerpt;
   }
 }
 
@@ -296,6 +349,61 @@ function toExportTarget(row: L3StudyNoteReferenceRow): StudyNoteExportTarget {
         startOffset: row.start_offset!,
         endOffset: row.end_offset!,
       };
+    case "assessment":
+      // v1 形状冻结（P4-1），且调用前 assertV1Kinds 已拦下；这里不新增形状，
+      // 直接 fail-closed——宁可拒绝，也不让 v1 产物出现未定义字段。
+      throw new ValidationError(
+        "该笔记包含 N2 引用型，v1 导出不可用（请显式指定 schemaVersion=2）",
+        "schemaVersion",
+      );
+  }
+}
+
+/** v2 target：带 `kind` 判别字段（P4-4），旧客户端按 v1 解析不受影响。 */
+function toExportTargetV2(row: L3StudyNoteReferenceRow): StudyNoteExportTargetV2 {
+  switch (row.kind) {
+    case "source":
+      return { kind: "source", sourceId: row.source_id! };
+    case "source_quote":
+      return {
+        kind: "source_quote",
+        sourceId: row.source_id!,
+        startOffset: row.start_offset!,
+        endOffset: row.end_offset!,
+      };
+    case "question":
+      return { kind: "question", questionId: row.question_id! };
+    case "stem_quote":
+      return {
+        kind: "stem_quote",
+        questionId: row.question_id!,
+        startOffset: row.start_offset!,
+        endOffset: row.end_offset!,
+      };
+    case "option_quote":
+      return {
+        kind: "option_quote",
+        questionId: row.question_id!,
+        optionKey: row.option_key!,
+        startOffset: row.start_offset!,
+        endOffset: row.end_offset!,
+      };
+    case "assessment":
+      return { kind: "assessment", questionId: row.question_id!, assessmentId: row.assessment_id! };
+  }
+}
+
+/**
+ * P4-1/P4-2：v1 遇到 N2 引用型**不**静默降级（不丢引用、不改字段形状），
+ * 直接拒绝并指明显式选择 v2——离线档案的形状必须由请求者决定，不是由内容决定。
+ */
+function assertV1Kinds(rows: readonly L3StudyNoteReferenceRow[]): void {
+  const unsupported = rows.find((row) => !(N1_REFERENCE_KINDS as readonly string[]).includes(row.kind));
+  if (unsupported) {
+    throw new ValidationError(
+      "该笔记包含 N2 引用型，v1 导出不可用（请显式指定 schemaVersion=2）",
+      "schemaVersion",
+    );
   }
 }
 
@@ -327,6 +435,10 @@ function renderReferenceBlock(reference: ReferencePreview): string[] {
     if (snapshot.sourceTitle) lines.push(`> 来源: ${snapshot.sourceTitle}`);
     lines.push(`> 题型: ${snapshot.questionType}`);
     lines.push(`> 题干摘录: ${snapshot.quote}`);
+  } else if (snapshot.kind === "assessment") {
+    if (snapshot.sourceTitle) lines.push(`> 来源: ${snapshot.sourceTitle}`);
+    lines.push(`> 题型: ${snapshot.questionType}`);
+    lines.push(`> 评析摘录: ${snapshot.excerpt}`);
   } else {
     if (snapshot.sourceTitle) lines.push(`> 来源: ${snapshot.sourceTitle}`);
     lines.push(`> 题型: ${snapshot.questionType}`);
@@ -437,7 +549,7 @@ function renderBody(
 function renderCore(input: StudyNoteExportRenderInput, contentSha256: string | null): string {
   const { payload } = input;
   const lines: string[] = [];
-  lines.push("# 学习笔记档案（study-note v1）", "");
+  lines.push(`# 学习笔记档案（study-note v${payload.exportSchemaVersion}）`, "");
   lines.push(`- 笔记: ${payload.note.id}`);
   lines.push(`- 标题: ${payload.note.title || "（无标题笔记）"}`);
   lines.push(`- 状态: ${payload.note.status}`);
@@ -448,7 +560,8 @@ function renderCore(input: StudyNoteExportRenderInput, contentSha256: string | n
   lines.push(`- 导出 schema 版本: ${payload.exportSchemaVersion}`);
   lines.push(`- 工件类型: ${payload.kind}`);
   lines.push(`- 导出时间: ${payload.exportedAt}`);
-  lines.push(`- 正文 sha256: ${payload.bodySha256}`);
+  const bodyHash = payload.exportSchemaVersion === 2 ? payload.renderedBodySha256 : payload.bodySha256;
+  lines.push(`- 正文 sha256: ${bodyHash}`);
   if (contentSha256) lines.push(`- 内容校验: sha256:${contentSha256}（删除本行后可复算）`);
   lines.push("");
 
@@ -512,11 +625,14 @@ export class L3StudyNoteExportService {
    * 失败面：note 不存在/非本人 → 404；`expectedVersion` 缺失/非数字 → 422
    * （ValidationError）；与当前 version 不一致 → 409（只带 currentVersion，
    * 不回传服务器正文；归档笔记同样核对，不豁免）。
+   *
+   * `schemaVersion`（P4）：**显式**选择 1 或 2，默认 1（旧客户端兼容）。
+   * v1 遇到 N2 引用型 → 422，不做内容驱动的版本切换。
    */
   async export(
     userId: string,
     noteId: string,
-    options: { expectedVersion?: number },
+    options: { expectedVersion?: number; schemaVersion?: StudyNoteExportSchemaVersion },
   ): Promise<L3StudyNoteExportResult> {
     const id = normalizeStudyUuid(noteId);
     return this.withActor(userId, async (repos) => {
@@ -528,6 +644,13 @@ export class L3StudyNoteExportService {
       // 2) 归属 + 引用行（同一事务、同一提交视图）
       const venues = await repos.studyNotes.listVenues(userId, id);
       const refRows = await repos.studyReferences.listForNote(userId, id);
+
+      // 3a) 版本选择（P4-2）：显式入参，非法值 422；v1 冻结面不含 N2 引用型。
+      const schemaVersion = options.schemaVersion ?? STUDY_NOTE_EXPORT_SCHEMA_VERSION;
+      if (schemaVersion !== 1 && schemaVersion !== 2) {
+        throw new ValidationError("schemaVersion 只支持 1 或 2", "schemaVersion");
+      }
+      if (schemaVersion === 1) assertV1Kinds(refRows);
 
       // 3) 版本合同（P3）：缺失拒；不一致 409 且只回 currentVersion。
       if (options.expectedVersion == null) {
@@ -552,39 +675,57 @@ export class L3StudyNoteExportService {
       // 6) JSON 块 references：正文出现顺序、按 referenceId 去重；快照走白名单投影
       const seen = new Set<string>();
       const references: StudyNoteExportReference[] = [];
+      const referencesV2: StudyNoteExportReferenceV2[] = [];
       for (const refId of order) {
         if (seen.has(refId)) continue;
         seen.add(refId);
         const preview = previewById.get(refId)!;
         const row = rowById.get(refId)!;
-        references.push({
+        const base = {
           referenceId: preview.id,
           kind: row.kind,
           status: preview.status,
           capturedAt: preview.capturedAt,
           displaySnapshot: projectDisplaySnapshot(preview.displaySnapshot, preview.id),
-          target: toExportTarget(row),
           liveTitle: preview.liveTitle,
-        });
+        };
+        if (schemaVersion === 2) {
+          referencesV2.push({ ...base, target: toExportTargetV2(row) });
+        } else {
+          references.push({ ...base, target: toExportTarget(row) });
+        }
       }
 
       const exportedAt = new Date().toISOString();
-      const payload: StudyNoteExportPayload = {
-        exportSchemaVersion: STUDY_NOTE_EXPORT_SCHEMA_VERSION,
-        kind: STUDY_NOTE_EXPORT_ARTIFACT_TYPE,
-        exportedAt,
-        note: {
-          id: note.id,
-          title: note.title,
-          status: note.status,
-          pinned: note.pinned,
-          version: note.version,
-          venues: orderVenues(venues),
-        },
-        references,
-        bodyMd,
-        bodySha256: createHash("sha256").update(bodyMd, "utf8").digest("hex"),
+      const bodySha256 = createHash("sha256").update(bodyMd, "utf8").digest("hex");
+      const noteBlock: StudyNoteExportNote = {
+        id: note.id,
+        title: note.title,
+        status: note.status,
+        pinned: note.pinned,
+        version: note.version,
+        venues: orderVenues(venues),
       };
+      const payload: StudyNoteExportPayload | StudyNoteExportPayloadV2 =
+        schemaVersion === 2
+          ? {
+              exportSchemaVersion: STUDY_NOTE_EXPORT_SCHEMA_VERSION_V2,
+              kind: STUDY_NOTE_EXPORT_ARTIFACT_TYPE,
+              exportedAt,
+              note: noteBlock,
+              references: referencesV2,
+              renderedBodyMarkdown: bodyMd,
+              renderedBodySha256: bodySha256,
+            }
+          : {
+              exportSchemaVersion: STUDY_NOTE_EXPORT_SCHEMA_VERSION,
+              kind: STUDY_NOTE_EXPORT_ARTIFACT_TYPE,
+              exportedAt,
+              note: noteBlock,
+              references,
+              bodyMd,
+              bodySha256,
+            };
 
       const { markdown, sha256 } = renderStudyNoteExportMarkdown({ payload, bodyMd });
 
@@ -594,8 +735,8 @@ export class L3StudyNoteExportService {
         userId,
         version: note.version,
         status: note.status,
-        referenceCount: references.length,
-        schemaVersion: STUDY_NOTE_EXPORT_SCHEMA_VERSION,
+        referenceCount: schemaVersion === 2 ? referencesV2.length : references.length,
+        schemaVersion,
         sha256,
         exportedAt,
       });
@@ -604,7 +745,7 @@ export class L3StudyNoteExportService {
         markdown,
         filename: `study-note-${note.id}.md`,
         sha256,
-        schemaVersion: STUDY_NOTE_EXPORT_SCHEMA_VERSION,
+        schemaVersion,
         version: note.version,
       };
     });

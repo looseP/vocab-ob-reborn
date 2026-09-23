@@ -61,7 +61,11 @@ import {
   encodeStudyCursor,
   studyFilterFingerprint,
 } from "../repositories/l3-study-cursor";
-import { L3StudyReferenceService } from "./l3-study-reference.service";
+import {
+  L3StudyReferenceService,
+  targetKeyOf,
+  targetRefsOf,
+} from "./l3-study-reference.service";
 
 type TxRunner = typeof withTransaction;
 
@@ -130,6 +134,13 @@ export function canonicalTarget(target: ReferenceTarget): Record<string, unknown
         end: target.end,
         quote: target.quote,
       };
+    // N2：评析标识为「具体评析行」，不按题兜底。
+    case "assessment":
+      return {
+        kind: "assessment",
+        questionId: target.questionId.toLowerCase(),
+        assessmentId: target.assessmentId.toLowerCase(),
+      };
   }
 }
 
@@ -187,13 +198,8 @@ export function computeMemberOpHash(input: {
   }));
 }
 
-/** 目标引用 → loadTargets 键（F5：UUID 身份规范小写，与仓储返回的 DB 形态一致）。 */
-function targetKey(target: ReferenceTarget): { kind: "source" | "question"; id: string } {
-  if (target.kind === "source" || target.kind === "source_quote") {
-    return { kind: "source", id: normalizeStudyUuid(target.sourceId) };
-  }
-  return { kind: "question", id: normalizeStudyUuid(target.questionId) };
-}
+// 目标键/键集合由引用服务导出的真源提供（N2 评析目标需要「评析 + 所属题」两把锁），
+// 这里不另起一套，避免两端锁键漂移。
 
 // ── Service ──────────────────────────────────────────────────────────────
 
@@ -789,7 +795,7 @@ export class L3StudyNoteService {
     );
     let loaded = new Map<string, LoadedTarget>();
     if (captureWrites.length > 0) {
-      const targets = captureWrites.map((write) => targetKey(write.target));
+      const targets = captureWrites.flatMap((write) => targetRefsOf(write.target));
       await repos.studyReferences.lockTargets(userId, targets);
       loaded = await repos.studyReferences.loadTargets(userId, targets);
     }
@@ -805,6 +811,7 @@ export class L3StudyNoteService {
           kind: existing.kind,
           source_id: existing.source_id,
           question_id: existing.question_id,
+          assessment_id: existing.assessment_id,
           option_key: existing.option_key,
           start_offset: existing.start_offset,
           end_offset: existing.end_offset,
@@ -814,10 +821,10 @@ export class L3StudyNoteService {
           captured_at: existing.captured_at,
         });
       } else {
-        const ref = targetKey(write.target);
-        const target = loaded.get(`${ref.kind}:${ref.id}`);
+        const key = targetKeyOf(write.target);
+        const target = loaded.get(key);
         if (!target) {
-          throw new NotFoundError("StudyReferenceTarget", `${ref.kind}:${ref.id}`);
+          throw new NotFoundError("StudyReferenceTarget", key);
         }
         const core = this.referenceService.captureAgainst(write.target, target);
         rows.push({ id, ...core, captured_at: nowIso });

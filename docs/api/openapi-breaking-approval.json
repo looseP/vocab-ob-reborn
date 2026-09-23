@@ -1,17 +1,47 @@
 {
   "version": 1,
-  "baseSha256": "2c6970d29dfb1ab6ec7b661a65ac91caa513dae20dfbc2956a073c17cedc361f",
-  "currentSha256": "cbc264da6fc929298b78ca1cee4a24bf72c06c39b4001a57ef77600b9ff8e007",
+  "baseSha256": "008b2ea5a13ff31c9acf3cedde9ef04c431c12b10543bf3b128c929f16dba7a8",
+  "currentSha256": "9e1e0d90d6e0199ac016d09ac900939a3b6c8f9eac7985ef49d49f5dd11a65ec",
   "issues": [
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}.patch.requestBody.content.application/json.schema.properties.expectedVersion",
-      "message": "新增 required request field"
+      "location": "paths./api/l3/study-notes.post.responses.201.content.application/json.schema.properties.item.properties.references.items.properties.target",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}/seal.post.requestBody.content.application/json.schema.properties.expectedVersion",
-      "message": "新增 required request field"
+      "location": "paths./api/l3/study-notes.post.responses.201.content.application/json.schema.properties.item.properties.references.items.properties.displaySnapshot",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/study-notes/reference-preview.post.responses.200.content.application/json.schema.properties.preview.properties.target",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/study-notes/reference-preview.post.responses.200.content.application/json.schema.properties.preview.properties.displaySnapshot",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/study-notes/{noteId}.get.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.target",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/study-notes/{noteId}.get.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.displaySnapshot",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/study-notes/{noteId}.put.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.target",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
+    },
+    {
+      "kind": "breaking",
+      "location": "paths./api/l3/study-notes/{noteId}.put.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.displaySnapshot",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     }
   ]
 }

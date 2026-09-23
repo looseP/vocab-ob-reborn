@@ -422,6 +422,23 @@ describe("studyNotesClient（导出：Task 10）", () => {
     expect(result.schemaVersion).toBe(1);
   });
 
+  it("exportNote：显式 schemaVersion=2 → query 带上（N2/P4：版本由调用方决定）", async () => {
+    const { client, calls } = captureClient(() =>
+      markdownResponse(markdown, 200, { "X-Export-Schema-Version": "2" }),
+    );
+    const result = await client.exportNote(NOTE_ID, 7, { schemaVersion: 2 });
+    expect(calls[0]!.url).toBe(
+      `/api/l3/study-notes/${NOTE_ID}/export?expectedVersion=7&schemaVersion=2`,
+    );
+    expect(result.schemaVersion).toBe(2);
+  });
+
+  it("exportNote：未显式选版 → query 不带 schemaVersion（服务端按 v1 冻结面）", async () => {
+    const { client, calls } = captureClient(() => markdownResponse(markdown));
+    await client.exportNote(NOTE_ID, 7);
+    expect(calls[0]!.url).toBe(`/api/l3/study-notes/${NOTE_ID}/export?expectedVersion=7`);
+  });
+
   it("exportNote：非法/缺失 Content-Disposition → INVALID_RESPONSE，不产生下载（不猜文件名）", async () => {
     const missing = captureClient(() =>
       new Response(markdown, { status: 200, headers: { "Content-Type": "text/markdown; charset=utf-8" } }),

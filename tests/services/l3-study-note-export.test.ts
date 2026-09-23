@@ -151,7 +151,7 @@ function optionQuoteSnapshot(optionKey: string, quote: string): ReferenceDisplay
 function refRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
   return {
     id: REF_SOURCE, note_id: NOTE, user_id: USER, kind: "source",
-    source_id: SOURCE, question_id: null, option_key: null,
+    source_id: SOURCE, question_id: null, assessment_id: null, option_key: null,
     start_offset: null, end_offset: null, quote_snapshot: null,
     field_hash: "f".repeat(64), display_snapshot: asJson(sourceSnapshot("来源标题", "来源摘要")),
     captured_at: CAPTURED_AT,
@@ -1236,6 +1236,176 @@ describe("只读纪律（零业务写入）", () => {
     } finally {
       infoSpy.mockRestore();
     }
+  });
+});
+
+
+describe("N2 导出 v2（P4 显式版本 · 验收 V-9…V-14）", () => {
+  const ASSESSMENT = "00000000-0000-4000-8000-000000000221";
+  const REF_ASSESSMENT = "00000000-0000-4000-8000-000000000006";
+
+  function assessmentRow(): L3StudyNoteReferenceRow {
+    return refRow({
+      id: REF_ASSESSMENT,
+      kind: "assessment",
+      source_id: null,
+      question_id: QUESTION,
+      assessment_id: ASSESSMENT,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      display_snapshot: asJson({
+        kind: "assessment",
+        excerpt: "评析摘要",
+        questionType: "reading_choice",
+        sourceTitle: "Fox source",
+      }),
+    });
+  }
+
+  function noteWithAssessmentBody(): string {
+    return ["前言。", "", `[[ref:${REF_ASSESSMENT}]]`, "", "后语。"].join("\n");
+  }
+
+  async function versionOf(fake: FakeRepos): Promise<number> {
+    const lock = fake.studyNotes.lockForShare as unknown as () => Promise<{ version: number }>;
+    const note = await lock();
+    return note.version;
+  }
+
+  function fakeWithAssessment(): FakeRepos {
+    const fake = fakeRepos({ refRows: [assessmentRow()] });
+    // 正文带 marker：引用只有真正被渲染进正文才进来源清单（既有口径）。
+    fake.studyNotes.lockForShare = vi.fn(async () => noteRow({ body_md: noteWithAssessmentBody() })) as never;
+    return fake;
+  }
+
+  it("schemaVersion=2：payload 用 renderedBodyMarkdown、target 带 kind 判别，且不再出现 bodyMd", async () => {
+    const fake = fakeWithAssessment();
+    const serviceV2 = makeService(fake);
+    const result = await serviceV2.export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 2,
+    });
+
+    expect(result.schemaVersion).toBe(2);
+    const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+    expect(payload.exportSchemaVersion).toBe(2);
+    expect(typeof payload.renderedBodyMarkdown).toBe("string");
+    expect(payload).not.toHaveProperty("bodyMd");
+    expect(payload.references[0].target).toEqual({
+      kind: "assessment",
+      questionId: QUESTION,
+      assessmentId: ASSESSMENT,
+    });
+    expect(payload.references[0].kind).toBe("assessment");
+  });
+
+  it("v2 双段 hash 可复算，且标准答案面字段不出现（V-13/V-14）", async () => {
+    const fake = fakeWithAssessment();
+    const serviceV2 = makeService(fake);
+    const result = await serviceV2.export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 2,
+    });
+
+    expect(recomputeSha(result.markdown)).toBe(result.sha256);
+    const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+    const text = JSON.stringify(payload);
+    for (const forbidden of FORBIDDEN_ANSWER_FIELD_NAMES) {
+      expect(text.toLowerCase()).not.toContain(forbidden.toLowerCase());
+    }
+  });
+
+  it("同一笔记显式请求 v1：N2 引用型不静默降级，直接 422 并指明显式选 v2（V-9/V-10）", async () => {
+    const fake = fakeWithAssessment();
+    const serviceV1 = makeService(fake);
+    const error = await serviceV1
+      .export(USER, NOTE, { expectedVersion: await versionOf(fake), schemaVersion: 1 })
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(ValidationError);
+    // 不切版本、不丢引用——正文与 payload 一律不产出
+    expect((error as { field?: string }).field).toBe("schemaVersion");
+  });
+
+  it("v1 通道不受 v2 影响：纯 N1 引用的笔记按 v1 导出仍是冻结形状（V-15）", async () => {
+    const fake = fakeRepos({ refRows: [refRow()] });
+    const body = ["第一段。", "", `[[ref:${REF_SOURCE}]]`, "", "第二段。"].join("\n");
+    fake.studyNotes.lockForShare = vi.fn(async () => noteRow({ body_md: body })) as never;
+    const serviceV1 = makeService(fake);
+    const result = await serviceV1.export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 1,
+    });
+
+    expect(result.schemaVersion).toBe(1);
+    const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+    expect(payload.exportSchemaVersion).toBe(1);
+    expect(payload).toHaveProperty("bodyMd");
+    expect(payload).not.toHaveProperty("renderedBodyMarkdown");
+    // v1 target 冻结：不带 kind 判别字段
+    expect(payload.references[0].target).toEqual({ sourceId: SOURCE });
+  });
+
+  it("v2 对 N1 五种引用型一律带 kind 判别（V-11：v2 不是评析专用通道）", async () => {
+    const rows: L3StudyNoteReferenceRow[] = [
+      refRow({
+        id: REF_SOURCE, kind: "source", source_id: SOURCE, question_id: null,
+        display_snapshot: asJson(sourceSnapshot("来源标题", "来源摘要")),
+      }),
+      refRow({
+        id: REF_SOURCE_QUOTE, kind: "source_quote", source_id: SOURCE, question_id: null,
+        start_offset: 0, end_offset: 3, quote_snapshot: "The",
+        display_snapshot: asJson(sourceQuoteSnapshot("来源标题", "The")),
+      }),
+      refRow({
+        id: REF_QUESTION, kind: "question", source_id: null, question_id: QUESTION,
+        display_snapshot: asJson(questionSnapshot()),
+      }),
+      refRow({
+        id: REF_STEM_QUOTE, kind: "stem_quote", source_id: null, question_id: QUESTION,
+        start_offset: 0, end_offset: 2, quote_snapshot: "下列",
+        display_snapshot: asJson(stemQuoteSnapshot("下列")),
+      }),
+      refRow({
+        id: REF_OPTION_QUOTE, kind: "option_quote", source_id: null, question_id: QUESTION,
+        option_key: "A", start_offset: 0, end_offset: 1, quote_snapshot: "第",
+        display_snapshot: asJson(optionQuoteSnapshot("A", "第一项")),
+      }),
+    ];
+    // marker 只有独占一个顶层段落才被识别，故每个标记之间留空行
+    const body = ["前言。", "", ...rows.flatMap((row) => [`[[ref:${row.id}]]`, ""]), "后语。"].join("\n");
+    const fake = fakeRepos({ refRows: rows });
+    fake.studyNotes.lockForShare = vi.fn(async () => noteRow({ body_md: body })) as never;
+    const result = await makeService(fake).export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 2,
+    });
+
+    expect(result.schemaVersion).toBe(2);
+    const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+    expect(payload.exportSchemaVersion).toBe(2);
+    expect(payload.references.map((ref: any) => ref.target.kind)).toEqual([
+      "source", "source_quote", "question", "stem_quote", "option_quote",
+    ]);
+    expect(payload.references[0].target).toEqual({ kind: "source", sourceId: SOURCE });
+    expect(payload.references[1].target).toEqual({ kind: "source_quote", sourceId: SOURCE, startOffset: 0, endOffset: 3 });
+    expect(payload.references[2].target).toEqual({ kind: "question", questionId: QUESTION });
+    expect(payload.references[3].target).toEqual({ kind: "stem_quote", questionId: QUESTION, startOffset: 0, endOffset: 2 });
+    expect(payload.references[4].target).toEqual({
+      kind: "option_quote", questionId: QUESTION, optionKey: "A", startOffset: 0, endOffset: 1,
+    });
+  });
+
+  it("schemaVersion 只接受 1/2：非法值 422 且拒绝前不做内容推断（V-10）", async () => {
+    const fake = fakeWithAssessment();
+    const error = await makeService(fake)
+      .export(USER, NOTE, { expectedVersion: await versionOf(fake), schemaVersion: 3 as never })
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as { field?: string }).field).toBe("schemaVersion");
   });
 });
 

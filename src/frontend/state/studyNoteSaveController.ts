@@ -361,6 +361,12 @@ function cloneTarget(target: ReferenceTarget): ReferenceTarget {
         end: target.end,
         quote: target.quote,
       };
+    case "assessment":
+      return {
+        kind: "assessment",
+        questionId: target.questionId,
+        assessmentId: target.assessmentId,
+      };
   }
 }
 

@@ -10,7 +10,10 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
-import type { StudyNoteExportResult } from "@/frontend/api/studyNotesClient";
+import type {
+  StudyNoteExportResult,
+  StudyNoteExportSchemaVersion,
+} from "@/frontend/api/studyNotesClient";
 import {
   createSingleFlightGate,
   flushThenExportNote,
@@ -34,16 +37,29 @@ function exportResult(overrides: Partial<StudyNoteExportResult> = {}): StudyNote
 /** 记录调用顺序的统一 harness：flush / GET / download 三个探针共享一条时间线。 */
 function harness(options: {
   flush?: () => Promise<{ version: number }>;
-  exportNote?: (noteId: string, expectedVersion: number) => Promise<StudyNoteExportResult>;
+  exportNote?: (
+    noteId: string,
+    expectedVersion: number,
+    options?: { schemaVersion?: StudyNoteExportSchemaVersion },
+  ) => Promise<StudyNoteExportResult>;
   isCurrent?: (generation: number) => boolean;
   generation?: number;
-}) {
+} = {}) {
   const timeline: string[] = [];
-  const exportNoteSpy = vi.fn(async (noteId: string, expectedVersion: number) => {
-    timeline.push(`GET:${noteId}:${expectedVersion}`);
-    if (options.exportNote) return options.exportNote(noteId, expectedVersion);
-    return exportResult();
-  });
+  const exportNoteSpy = vi.fn(
+    async (
+      noteId: string,
+      expectedVersion: number,
+      options2?: { schemaVersion?: StudyNoteExportSchemaVersion },
+    ) => {
+      timeline.push(`GET:${noteId}:${expectedVersion}`);
+      if (options2?.schemaVersion !== undefined) {
+        timeline.push(`schemaVersion:${options2.schemaVersion}`);
+      }
+      if (options.exportNote) return options.exportNote(noteId, expectedVersion, options2);
+      return exportResult();
+    },
+  );
   const downloadSpy = vi.fn((_result: StudyNoteExportResult) => {
     timeline.push("download");
   });
@@ -59,9 +75,17 @@ function harness(options: {
   };
   const gate = createSingleFlightGate();
   const depsRef = { deps, gate, timeline, exportNoteSpy, downloadSpy, flushSpy };
-  const run = (generation = options.generation ?? 1): ReturnType<typeof flushThenExportNote> =>
+  const run = (
+    generation = options.generation ?? 1,
+    schemaVersion?: StudyNoteExportSchemaVersion,
+  ): ReturnType<typeof flushThenExportNote> =>
     flushThenExportNote(
-      { noteId: NOTE_ID, generation, isCurrent: options.isCurrent ?? (() => true) },
+      {
+        noteId: NOTE_ID,
+        generation,
+        isCurrent: options.isCurrent ?? (() => true),
+        schemaVersion,
+      },
       deps,
       gate,
     );
@@ -267,5 +291,31 @@ describe("studyNoteExportFlusher（双击与单飞）", () => {
     fail = false;
     await expect(h.run()).resolves.toMatchObject({ ok: true });
     expect(h.downloadSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("studyNoteExportFlusher（N2/P4：schemaVersion 显式选版透传）", () => {
+  it("input.schemaVersion=2 → 原样透传给导出请求（不替调用方升级/降级）", async () => {
+    const h = harness();
+    await h.run(1, 2);
+    expect(h.exportNoteSpy.mock.calls[0]![2]).toEqual({ schemaVersion: 2 });
+  });
+
+  it("未显式选版 → 透传 undefined（服务端按 v1 冻结面处理，客户端不猜）", async () => {
+    const h = harness();
+    await h.run();
+    expect(h.exportNoteSpy.mock.calls[0]![2]).toEqual({ schemaVersion: undefined });
+  });
+
+  it("v2 请求失败（422 等）不退回 v1：只导出一次且失败可见", async () => {
+    const h = harness({
+      exportNote: async () => {
+        throw new Error("422 schemaVersion");
+      },
+    });
+    await expect(h.run(1, 2)).resolves.toMatchObject({ ok: false, reason: "request" });
+    expect(h.exportNoteSpy).toHaveBeenCalledTimes(1);
+    expect(h.exportNoteSpy.mock.calls[0]![2]).toEqual({ schemaVersion: 2 });
+    expect(h.downloadSpy).not.toHaveBeenCalled();
   });
 });

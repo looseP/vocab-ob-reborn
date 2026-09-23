@@ -41,10 +41,23 @@ function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-function loadedMap(...targets: LoadedTarget[]): Map<string, LoadedTarget> {
+/**
+ * **忠实装载**替身：只返回**被请求**的目标（键 `<kind>:<id>`）。
+ *
+ * 反例教训（N2 评析）：无条件按 targets 建键的替身会掩盖「装载请求本身就没带
+ * 正确 kind/id」的缺陷——`resolve()` 曾对评析引用只装载 question 键，却在忠实
+ * 装载下按 `assessment:<id>` 取值，生产环境必然取不到。替身必须按入参过滤。
+ */
+function loadedMap(
+  requested: readonly { kind: string; id: string }[],
+  targets: readonly LoadedTarget[],
+): Map<string, LoadedTarget> {
+  const available = new Map(targets.map((target) => [`${target.kind}:${target.id}`, target]));
   const map = new Map<string, LoadedTarget>();
-  for (const target of targets) {
-    map.set(`${target.kind}:${target.id}`, target);
+  for (const request of requested) {
+    const key = `${request.kind}:${request.id}`;
+    const hit = available.get(key);
+    if (hit) map.set(key, hit);
   }
   return map;
 }
@@ -55,7 +68,9 @@ function fakeRepos(targets: LoadedTarget[]): StudyReferenceRepos {
       listForNote: vi.fn(),
       replaceForNote: vi.fn(),
       searchTargets: vi.fn(),
-      loadTargets: vi.fn(async () => loadedMap(...targets)),
+      loadTargets: vi.fn(async (_userId: string, requested: readonly { kind: string; id: string }[]) =>
+        loadedMap(requested, targets),
+      ),
       lockTargets: vi.fn(),
       listBacklinks: vi.fn(),
       getSourceDeleteBlockers: vi.fn(),
@@ -72,7 +87,7 @@ function makeService(repos: StudyReferenceRepos): L3StudyReferenceService {
 function refRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
   return {
     id: REF, note_id: "n", user_id: USER, kind: "stem_quote", source_id: null, question_id: QUESTION,
-    option_key: null, start_offset: 0, end_offset: 4, quote_snapshot: "What",
+    assessment_id: null, option_key: null, start_offset: 0, end_offset: 4, quote_snapshot: "What",
     field_hash: sha256Hex("What does the fox do?"), display_snapshot: { kind: "stem_quote" },
     captured_at: "2026-09-19T00:00:00Z",
     ...overrides,
@@ -540,5 +555,100 @@ describe("F4 游标绑定目标搜索过滤条件", () => {
     await expect(
       service.search(USER, { kind: "source", q: "x", limit: 1, cursor: encodeCursor("2026-09-19T00:00:00Z", SOURCE) }),
     ).rejects.toThrow(ValidationError);
+  });
+});
+
+describe("N2 评析引用（第一条垂直链 · 验收 V-4/V-5/V-6/V-7）", () => {
+  const ASSESSMENT = "00000000-0000-4000-8000-000000000221";
+  const OTHER_QUESTION = "00000000-0000-4000-8000-000000000212";
+
+  const ASSESSMENT_TARGET: LoadedTarget = {
+    kind: "assessment",
+    id: ASSESSMENT,
+    question_id: QUESTION,
+    content_md: "评析初稿：定位题眼",
+    updated_at: "2026-09-20T00:00:00Z",
+    question_stem: "What does the fox do?",
+    question_type: "reading_choice",
+    source_title: "Fox source",
+  };
+
+  const target = { kind: "assessment", questionId: QUESTION, assessmentId: ASSESSMENT } as const;
+
+  it("capture：hash 输入写死为 content_md；target 同时带 questionId 与 assessmentId（不退化成只引用题目）", async () => {
+    const repos = fakeRepos([ASSESSMENT_TARGET]);
+    const service = makeService(repos);
+    const row = await service.capture(USER, { id: REF, target }, repos);
+
+    expect(row.kind).toBe("assessment");
+    expect(row.question_id).toBe(QUESTION);
+    expect(row.assessment_id).toBe(ASSESSMENT);
+    expect(row.field_hash).toBe(sha256Hex("评析初稿：定位题眼"));
+    expect(row.display_snapshot).toEqual({
+      kind: "assessment",
+      excerpt: "评析初稿：定位题眼",
+      questionType: "reading_choice",
+      sourceTitle: "Fox source",
+    });
+  });
+
+  it("题与评析不匹配 → 404（拒绝「按题兜底找当前评析」的隐式降级）", async () => {
+    const repos = fakeRepos([ASSESSMENT_TARGET]);
+    const service = makeService(repos);
+    await expect(
+      service.capture(USER, { id: REF, target: { kind: "assessment", questionId: OTHER_QUESTION, assessmentId: ASSESSMENT } }, repos),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("评析被覆写 → resolve 转 changed，而 displaySnapshot / capturedAt / fieldHash 逐字节不变（D3-2）", async () => {
+    const row = refRow({
+      kind: "assessment",
+      question_id: QUESTION,
+      assessment_id: ASSESSMENT,
+      source_id: null,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      field_hash: sha256Hex("评析初稿：定位题眼"),
+      display_snapshot: { kind: "assessment", excerpt: "评析初稿：定位题眼", questionType: "reading_choice", sourceTitle: "Fox source" },
+    });
+    const before = JSON.stringify([row.display_snapshot, row.captured_at, row.field_hash]);
+
+    // 当前评析已被 latest-wins 覆写
+    const repos = fakeRepos([{ ...ASSESSMENT_TARGET, content_md: "评析改稿：换了个角度" }]);
+    const [preview] = await makeService(repos).resolve(USER, [row], repos);
+
+    expect(preview.status).toBe("changed");
+    expect(preview.target).toEqual({ kind: "assessment", questionId: QUESTION, assessmentId: ASSESSMENT });
+    // V-5：快照三件套未被回写（引用写路径不得按当前目标重算）
+    expect(JSON.stringify([preview.displaySnapshot, preview.capturedAt, row.field_hash])).toBe(before);
+  });
+
+  it("currentFieldText：评析的 hash 字段文本就是 content_md（A2 写死）", () => {
+    expect(currentFieldText("assessment", null, ASSESSMENT_TARGET)).toBe("评析初稿：定位题眼");
+    // 交叉防御：评析 target 配非评析 kind → null（不会拿题干当评析内容）
+    expect(currentFieldText("question", null, ASSESSMENT_TARGET)).toBeNull();
+  });
+
+  it("resolve 装载键与取值键同源：评析引用在忠实装载下为 current（防复发回归）", async () => {
+    const row = refRow({
+      kind: "assessment",
+      question_id: QUESTION,
+      assessment_id: ASSESSMENT,
+      source_id: null,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      field_hash: sha256Hex("评析初稿：定位题眼"),
+      display_snapshot: { kind: "assessment", excerpt: "评析初稿：定位题眼", questionType: "reading_choice", sourceTitle: "Fox source" },
+    });
+    const repos = fakeRepos([ASSESSMENT_TARGET]);
+    const [preview] = await makeService(repos).resolve(USER, [row], repos);
+
+    // 取值键是 assessment:<assessment_id>；若装载只请求 question 键，忠实装载下必然
+    // 取不到 → 被误判为 unavailable（N2 审查 P1-1）。
+    expect(preview.status).toBe("current");
+    const requested = (repos.studyReferences.loadTargets as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(requested).toEqual(expect.arrayContaining([{ kind: "assessment", id: ASSESSMENT }]));
   });
 });

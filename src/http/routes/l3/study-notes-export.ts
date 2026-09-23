@@ -21,17 +21,21 @@
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AppEnv } from "../words";
-import { parseStudyNoteExportExpectedVersion } from "@/schemas/http";
+import {
+  parseStudyNoteExportExpectedVersion,
+  parseStudyNoteExportSchemaVersion,
+} from "@/schemas/http";
 
 export function studyNotesExportRoutes(services: Services) {
   const app = new Hono<AppEnv>();
 
   app.get("/study-notes/:noteId/export", async (c) => {
     const expectedVersion = parseStudyNoteExportExpectedVersion(c.req.query("expectedVersion"));
+    const schemaVersion = parseStudyNoteExportSchemaVersion(c.req.query("schemaVersion"));
     const result = await services.l3StudyNoteExport.export(
       c.get("userId"),
       c.req.param("noteId"),
-      { expectedVersion },
+      { expectedVersion, schemaVersion },
     );
     return c.body(result.markdown, 200, {
       "Content-Type": "text/markdown; charset=utf-8",

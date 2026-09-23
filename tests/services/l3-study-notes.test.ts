@@ -823,3 +823,84 @@ describe("F2 一致详情：readSnapshot / 复用锁序", () => {
     expect(result.item).toMatchObject({ version: 3, memberCount: 2 });
   });
 });
+
+describe("N2 评析引用（服务装配层 · 第一条垂直链）", () => {
+  const ASSESSMENT = "00000000-0000-4000-8000-000000000221";
+
+  const assessmentTarget = { kind: "assessment" as const, questionId: QUESTION, assessmentId: ASSESSMENT };
+
+  function assessmentCaptureAgainst() {
+    referenceService.captureAgainst = vi.fn(() => ({
+      kind: "assessment" as const,
+      source_id: null,
+      question_id: QUESTION,
+      assessment_id: ASSESSMENT,
+      option_key: null,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      field_hash: "f".repeat(64),
+      display_snapshot: { kind: "assessment", excerpt: "评析摘要" },
+    })) as never;
+  }
+
+  it("capture 评析：锁/装载键为「所属题 + 评析行」两把，写入行带 assessment_id", async () => {
+    assessmentCaptureAgainst();
+    repos.studyReferences.loadTargets = vi.fn(async () =>
+      new Map([[
+        `assessment:${ASSESSMENT}`,
+        { kind: "assessment", id: ASSESSMENT, questionId: QUESTION, content_md: "评析正文", question_type: "reading_choice", source_title: "Fox source" },
+      ]]) as never,
+    );
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF_B}]]`,
+      references: [{ id: REF_B, action: "capture", target: assessmentTarget }],
+    });
+    await service.save(USER, NOTE, input);
+
+    // 锁序与仓储一致：评析随题级联删除，故两端都要锁
+    expect(repos.studyReferences.lockTargets).toHaveBeenCalledWith(USER, [
+      { kind: "question", id: QUESTION },
+      { kind: "assessment", id: ASSESSMENT },
+    ]);
+    const rows = repos.studyReferences.replaceForNote.mock.calls[0]![2] as { assessment_id: string | null }[];
+    expect(rows[0]!.assessment_id).toBe(ASSESSMENT);
+  });
+
+  it("keep 评析引用：保留原 assessment_id 与 capturedAt（不重读评析）", async () => {
+    const existing = {
+      id: REF, note_id: NOTE, user_id: USER, kind: "assessment" as const,
+      source_id: null, question_id: QUESTION, assessment_id: ASSESSMENT,
+      option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
+      field_hash: "e".repeat(64),
+      display_snapshot: { kind: "assessment", excerpt: "评析摘要" },
+      captured_at: "2026-09-01T00:00:00.000Z",
+    };
+    repos.studyReferences.listForNote = vi.fn(async () => [existing] as never);
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF}]]`,
+      references: [{ id: REF, action: "keep" }],
+    });
+    await service.save(USER, NOTE, input);
+
+    const rows = repos.studyReferences.replaceForNote.mock.calls[0]![2] as { assessment_id: string | null; captured_at: string }[];
+    expect(rows[0]).toMatchObject({ assessment_id: ASSESSMENT, captured_at: "2026-09-01T00:00:00.000Z" });
+    expect(repos.studyReferences.lockTargets).not.toHaveBeenCalled();
+  });
+
+  it("capture 评析但目标未装载 → 404（键为 assessment:<id>，不退化成按题命中）", async () => {
+    assessmentCaptureAgainst();
+    // 装载只给了「题目」键：评析引用不得按题兜底命中
+    repos.studyReferences.loadTargets = vi.fn(async () =>
+      new Map([[`question:${QUESTION}`, { kind: "question", id: QUESTION }]]) as never,
+    );
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF_B}]]`,
+      references: [{ id: REF_B, action: "capture", target: assessmentTarget }],
+    });
+    const error = await service.save(USER, NOTE, input).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(NotFoundError);
+    expect((error as { message: string }).message).toContain(`assessment:${ASSESSMENT}`);
+  });
+});

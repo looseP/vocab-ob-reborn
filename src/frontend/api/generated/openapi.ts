@@ -22141,6 +22141,13 @@ export interface operations {
                                     start: number;
                                     end: number;
                                     quote: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "assessment";
+                                    /** Format: uuid */
+                                    questionId: string;
+                                    /** Format: uuid */
+                                    assessmentId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -22178,6 +22185,13 @@ export interface operations {
                                     kind: "option_quote";
                                     optionKey: string;
                                     quote: string;
+                                    /** @enum {string} */
+                                    questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                                    sourceTitle: string | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "assessment";
+                                    excerpt: string;
                                     /** @enum {string} */
                                     questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                     sourceTitle: string | null;
@@ -22553,6 +22567,13 @@ export interface operations {
                     start: number;
                     end: number;
                     quote: string;
+                } | {
+                    /** @constant */
+                    kind: "assessment";
+                    /** Format: uuid */
+                    questionId: string;
+                    /** Format: uuid */
+                    assessmentId: string;
                 };
             };
         };
@@ -22600,6 +22621,13 @@ export interface operations {
                                 start: number;
                                 end: number;
                                 quote: string;
+                            } | {
+                                /** @constant */
+                                kind: "assessment";
+                                /** Format: uuid */
+                                questionId: string;
+                                /** Format: uuid */
+                                assessmentId: string;
                             };
                             displaySnapshot: {
                                 /** @constant */
@@ -22634,6 +22662,13 @@ export interface operations {
                                 kind: "option_quote";
                                 optionKey: string;
                                 quote: string;
+                                /** @enum {string} */
+                                questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                                sourceTitle: string | null;
+                            } | {
+                                /** @constant */
+                                kind: "assessment";
+                                excerpt: string;
                                 /** @enum {string} */
                                 questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                 sourceTitle: string | null;
@@ -22962,6 +22997,7 @@ export interface operations {
         parameters: {
             query: {
                 expectedVersion: string;
+                schemaVersion?: "1" | "2";
             };
             header?: never;
             path: {
@@ -23188,6 +23224,13 @@ export interface operations {
                                     start: number;
                                     end: number;
                                     quote: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "assessment";
+                                    /** Format: uuid */
+                                    questionId: string;
+                                    /** Format: uuid */
+                                    assessmentId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -23225,6 +23268,13 @@ export interface operations {
                                     kind: "option_quote";
                                     optionKey: string;
                                     quote: string;
+                                    /** @enum {string} */
+                                    questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                                    sourceTitle: string | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "assessment";
+                                    excerpt: string;
                                     /** @enum {string} */
                                     questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                     sourceTitle: string | null;
@@ -23441,6 +23491,13 @@ export interface operations {
                             start: number;
                             end: number;
                             quote: string;
+                        } | {
+                            /** @constant */
+                            kind: "assessment";
+                            /** Format: uuid */
+                            questionId: string;
+                            /** Format: uuid */
+                            assessmentId: string;
                         };
                     })[];
                 };
@@ -23504,6 +23561,13 @@ export interface operations {
                                     start: number;
                                     end: number;
                                     quote: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "assessment";
+                                    /** Format: uuid */
+                                    questionId: string;
+                                    /** Format: uuid */
+                                    assessmentId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -23541,6 +23605,13 @@ export interface operations {
                                     kind: "option_quote";
                                     optionKey: string;
                                     quote: string;
+                                    /** @enum {string} */
+                                    questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                                    sourceTitle: string | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "assessment";
+                                    excerpt: string;
                                     /** @enum {string} */
                                     questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                     sourceTitle: string | null;

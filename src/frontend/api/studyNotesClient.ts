@@ -142,6 +142,18 @@ export interface StudyNoteExportResult {
   schemaVersion: number | null;
 }
 
+/**
+ * 导出 schema 版本（N2 / P4）：**调用方显式选择**。
+ *
+ * - `1`：v1 冻结面（正文字段 `bodyMd`），**不接受 N2 引用型**（评析）→ 服务端 422；
+ * - `2`：v2 协议（正文 `renderedBodyMarkdown`、target 带 `kind` 判别）；
+ * - 缺省（不传）：服务端按 v1 处理，含评析引用的笔记会被 422 拒绝。
+ *
+ * 契约要点：版本由**请求方**决定，不由笔记内容隐式决定；客户端据此选择，
+ * 服务端不替调用方升级。
+ */
+export type StudyNoteExportSchemaVersion = 1 | 2;
+
 /** 服务端安全文件名形状：`study-note-<uuid>.md`（不含路径分隔符、不含引号）。 */
 const EXPORT_FILENAME_PATTERN = /^study-note-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.md$/i;
 
@@ -255,21 +267,28 @@ export function createStudyNotesClient(options: { baseUrl?: string; fetch?: type
       call(l3StudyNoteItemResponseSchema, notes(`/${enc(noteId)}`), { method: "PUT", body: input, signal }),
 
     /**
-     * GET /api/l3/study-notes/:noteId/export?expectedVersion=N（Task 10）——
+     * GET /api/l3/study-notes/:noteId/export?expectedVersion=N[&schemaVersion=1|2]（Task 10 + N2）——
      * 导出**已保存**内容（只出不进；归档笔记同样可导出）。
      *
      * 纪律：
      * - `expectedVersion` 是**调用方 flush 成功后的回执版本**（本方法不猜、不省略）；
      *   服务端据此核对，不一致返回 409（不回传正文）——版本不合就**没有可下载的旧文**；
+     * - `schemaVersion`（N2/P4）由**调用方显式选择**：含 N2 引用型（评析）的笔记必须传
+     *   `2`，否则服务端按 v1 冻结面处理并 422；不传 = 不发送该 query（服务端默认 v1）。
+     *   客户端**不**按内容偷偷升级，也不做「v2 失败退回 v1」的静默降级；
      * - `parseJson:false`：Markdown 原文，不用 JSON.parse 破坏正文；
      * - 空正文 / 缺 `Content-Disposition` / 文件名非冻结形状 → `INVALID_RESPONSE`：
      *   宁可失败也不下载来路不明的文件；
      * - 不重试、不静默降级（导出是只读 GET，但「旧版本导出成功」比失败更危险）。
      */
-    exportNote: async (noteId: string, expectedVersion: number, signal?: AbortSignal): Promise<StudyNoteExportResult> => {
+    exportNote: async (
+      noteId: string,
+      expectedVersion: number,
+      options: { schemaVersion?: StudyNoteExportSchemaVersion; signal?: AbortSignal } = {},
+    ): Promise<StudyNoteExportResult> => {
       const response = await request<unknown>(
-        notes(`/${enc(noteId)}/export${buildQuery({ expectedVersion })}`),
-        { parseJson: false, signal },
+        notes(`/${enc(noteId)}/export${buildQuery({ expectedVersion, schemaVersion: options.schemaVersion })}`),
+        { parseJson: false, signal: options.signal },
       );
       const markdown = response.data;
       if (typeof markdown !== "string" || markdown.length === 0) {

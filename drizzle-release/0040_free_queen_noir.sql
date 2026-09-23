@@ -1,0 +1,1 @@
+ALTER TABLE "l3_question_assessments" ADD CONSTRAINT "l3_question_assessments_id_user_id_unique" UNIQUE("id","user_id");

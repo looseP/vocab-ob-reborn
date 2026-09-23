@@ -46430,6 +46430,31 @@
                                       "quote"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "assessment"
+                                      },
+                                      "questionId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "assessmentId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "questionId",
+                                      "assessmentId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -46632,6 +46657,47 @@
                                       "kind",
                                       "optionKey",
                                       "quote",
+                                      "questionType",
+                                      "sourceTitle"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "assessment"
+                                      },
+                                      "excerpt": {
+                                        "type": "string"
+                                      },
+                                      "questionType": {
+                                        "type": "string",
+                                        "enum": [
+                                          "cloze",
+                                          "reading_choice",
+                                          "new_question",
+                                          "sentence_translation",
+                                          "short_essay",
+                                          "long_essay",
+                                          "grammar_blank"
+                                        ]
+                                      },
+                                      "sourceTitle": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "excerpt",
                                       "questionType",
                                       "sourceTitle"
                                     ],
@@ -48065,6 +48131,31 @@
                       "quote"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "assessment"
+                      },
+                      "questionId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "assessmentId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "questionId",
+                      "assessmentId"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               }
@@ -48231,6 +48322,31 @@
                                 "start",
                                 "end",
                                 "quote"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "assessment"
+                                },
+                                "questionId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "assessmentId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "questionId",
+                                "assessmentId"
                               ],
                               "additionalProperties": false
                             }
@@ -48424,6 +48540,47 @@
                                 "kind",
                                 "optionKey",
                                 "quote",
+                                "questionType",
+                                "sourceTitle"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "assessment"
+                                },
+                                "excerpt": {
+                                  "type": "string"
+                                },
+                                "questionType": {
+                                  "type": "string",
+                                  "enum": [
+                                    "cloze",
+                                    "reading_choice",
+                                    "new_question",
+                                    "sentence_translation",
+                                    "short_essay",
+                                    "long_essay",
+                                    "grammar_blank"
+                                  ]
+                                },
+                                "sourceTitle": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "excerpt",
                                 "questionType",
                                 "sourceTitle"
                               ],
@@ -49175,6 +49332,18 @@
               "type": "string",
               "pattern": "^\\d+$"
             }
+          },
+          {
+            "in": "query",
+            "name": "schemaVersion",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1",
+                "2"
+              ]
+            }
           }
         ],
         "responses": {
@@ -49707,6 +49876,31 @@
                                       "quote"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "assessment"
+                                      },
+                                      "questionId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "assessmentId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "questionId",
+                                      "assessmentId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -49909,6 +50103,47 @@
                                       "kind",
                                       "optionKey",
                                       "quote",
+                                      "questionType",
+                                      "sourceTitle"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "assessment"
+                                      },
+                                      "excerpt": {
+                                        "type": "string"
+                                      },
+                                      "questionType": {
+                                        "type": "string",
+                                        "enum": [
+                                          "cloze",
+                                          "reading_choice",
+                                          "new_question",
+                                          "sentence_translation",
+                                          "short_essay",
+                                          "long_essay",
+                                          "grammar_blank"
+                                        ]
+                                      },
+                                      "sourceTitle": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "excerpt",
                                       "questionType",
                                       "sourceTitle"
                                     ],
@@ -50505,6 +50740,31 @@
                                     "quote"
                                   ],
                                   "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "assessment"
+                                    },
+                                    "questionId": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    },
+                                    "assessmentId": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "questionId",
+                                    "assessmentId"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               ]
                             }
@@ -50754,6 +51014,31 @@
                                       "quote"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "assessment"
+                                      },
+                                      "questionId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "assessmentId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "questionId",
+                                      "assessmentId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -50956,6 +51241,47 @@
                                       "kind",
                                       "optionKey",
                                       "quote",
+                                      "questionType",
+                                      "sourceTitle"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "assessment"
+                                      },
+                                      "excerpt": {
+                                        "type": "string"
+                                      },
+                                      "questionType": {
+                                        "type": "string",
+                                        "enum": [
+                                          "cloze",
+                                          "reading_choice",
+                                          "new_question",
+                                          "sentence_translation",
+                                          "short_essay",
+                                          "long_essay",
+                                          "grammar_blank"
+                                        ]
+                                      },
+                                      "sourceTitle": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "excerpt",
                                       "questionType",
                                       "sourceTitle"
                                     ],

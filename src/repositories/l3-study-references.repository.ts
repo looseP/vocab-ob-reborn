@@ -15,6 +15,7 @@ import type { L3QuestionOption, L3QuestionType } from "../domain";
 import type { ReferenceKind } from "../domain";
 import type { Json } from "../domain";
 import { normalizeStudyUuid } from "../domain/l3-study-notes";
+import { ValidationError } from "../errors";
 import { BaseRepository } from "./base";
 
 export interface NewL3StudyNoteReference {
@@ -24,6 +25,8 @@ export interface NewL3StudyNoteReference {
   kind: ReferenceKind;
   source_id: string | null;
   question_id: string | null;
+  /** N2：评析引用（`kind='assessment'`）的目标行，其余 kind 恒 null。 */
+  assessment_id: string | null;
   option_key: string | null;
   start_offset: number | null;
   end_offset: number | null;
@@ -48,6 +51,7 @@ export interface L3StudyNoteReferenceRow {
   kind: ReferenceKind;
   source_id: string | null;
   question_id: string | null;
+  assessment_id: string | null;
   option_key: string | null;
   start_offset: number | null;
   end_offset: number | null;
@@ -57,7 +61,7 @@ export interface L3StudyNoteReferenceRow {
   captured_at: string;
 }
 
-export type ReferenceTargetKind = "source" | "question";
+export type ReferenceTargetKind = "source" | "question" | "assessment";
 
 export interface LoadedSourceTarget {
   kind: "source";
@@ -76,7 +80,23 @@ export interface LoadedQuestionTarget {
   source_title: string | null;
 }
 
-export type LoadedTarget = LoadedSourceTarget | LoadedQuestionTarget;
+/**
+ * N2：评析目标。评析是 `UNIQUE(user_id, question_id)` 的 latest-wins 记录
+ * （内容可被覆写），因此装载时把 `content_md` / `updated_at` 一并取出——
+ * `field_hash` 输入就是 `content_md`（A2 写死），覆写后旧引用转 `changed`。
+ */
+export interface LoadedAssessmentTarget {
+  kind: "assessment";
+  id: string;
+  question_id: string;
+  content_md: string;
+  updated_at: string;
+  question_stem: string;
+  question_type: L3QuestionType;
+  source_title: string | null;
+}
+
+export type LoadedTarget = LoadedSourceTarget | LoadedQuestionTarget | LoadedAssessmentTarget;
 
 export interface StudySourceTargetRow {
   id: string;
@@ -193,6 +213,7 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
       kind: row.kind,
       source_id: row.source_id,
       question_id: row.question_id,
+      assessment_id: row.assessment_id,
       option_key: row.option_key,
       start_offset: row.start_offset,
       end_offset: row.end_offset,
@@ -203,12 +224,12 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     }));
     await this.query(
       `INSERT INTO l3_study_note_references
-         (id, note_id, user_id, kind, source_id, question_id, option_key,
+         (id, note_id, user_id, kind, source_id, question_id, assessment_id, option_key,
           start_offset, end_offset, quote_snapshot, field_hash, display_snapshot, captured_at)
-       SELECT x.id, $1::uuid, $2::uuid, x.kind, x.source_id, x.question_id, x.option_key,
+       SELECT x.id, $1::uuid, $2::uuid, x.kind, x.source_id, x.question_id, x.assessment_id, x.option_key,
               x.start_offset, x.end_offset, x.quote_snapshot, x.field_hash, x.display_snapshot, x.captured_at
          FROM jsonb_to_recordset($3::jsonb) AS x(
-           id uuid, kind text, source_id uuid, question_id uuid, option_key text,
+           id uuid, kind text, source_id uuid, question_id uuid, assessment_id uuid, option_key text,
            start_offset integer, end_offset integer, quote_snapshot text,
            field_hash text, display_snapshot jsonb, captured_at timestamptz
          )`,
@@ -219,6 +240,12 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
   async searchTargets(
     input: SearchTargetsInput,
   ): Promise<{ items: StudySourceTargetRow[] | StudyQuestionTargetRow[]; total: number }> {
+    // N2：评析不作为搜索目标（它的身份依附具体题，搜索面仍只有 source/question）；
+    // 走到这里是调用方 bug，fail-closed 而不是退化成 question 查询。
+    if (input.kind === "assessment") {
+      throw new ValidationError("评析目标不支持搜索", "kind");
+    }
+
     const params: unknown[] = [input.userId];
     const filters: string[] = ["user_id = $1::uuid"];
     if (input.q && input.q.trim()) {
@@ -285,6 +312,7 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     if (targets.length === 0) return map;
     const sourceIds = [...new Set(targets.filter((t) => t.kind === "source").map((t) => t.id))];
     const questionIds = [...new Set(targets.filter((t) => t.kind === "question").map((t) => t.id))];
+    const assessmentIds = [...new Set(targets.filter((t) => t.kind === "assessment").map((t) => t.id))];
 
     if (sourceIds.length > 0) {
       const rows = await this.query<{ id: string; title: string; content_text: string | null }>(
@@ -330,6 +358,40 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
         });
       }
     }
+    if (assessmentIds.length > 0) {
+      // JOIN 到所属题：既校验 question_id 一致（引用不能把 A 题评析挂到 B 题），
+      // 又顺带取出题干上下文（stem / source_title）；q.status='active' 沿用 F3。
+      const rows = await this.query<{
+        id: string;
+        question_id: string;
+        content_md: string;
+        updated_at: string;
+        stem: string;
+        question_type: L3QuestionType;
+        source_title: string | null;
+      }>(
+        `SELECT a.id, a.question_id, a.content_md, a.updated_at,
+                q.stem, q.question_type, s.title AS source_title
+           FROM l3_question_assessments a
+           JOIN l3_questions q ON q.id = a.question_id AND q.user_id = a.user_id
+           LEFT JOIN l3_sources s ON s.id = q.source_id AND s.user_id = q.user_id
+          WHERE a.user_id = $1::uuid AND a.id = ANY($2::uuid[])
+            AND q.status = 'active'`,
+        [userId, assessmentIds],
+      );
+      for (const row of rows) {
+        map.set(`assessment:${row.id}`, {
+          kind: "assessment",
+          id: row.id,
+          question_id: row.question_id,
+          content_md: row.content_md,
+          updated_at: row.updated_at,
+          question_stem: row.stem,
+          question_type: row.question_type,
+          source_title: row.source_title,
+        });
+      }
+    }
     return map;
   }
 
@@ -342,6 +404,9 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     // 两端必须使用同一 advisory 键（`l3_question:<小写uuid>`），否则并发不再串行。
     const sourceIds = [...new Set(targets.filter((t) => t.kind === "source").map((t) => normalizeStudyUuid(t.id)))].sort();
     const questionIds = [...new Set(targets.filter((t) => t.kind === "question").map((t) => normalizeStudyUuid(t.id)))].sort();
+    // N2：评析同样无 UPDATE 授权路径可依赖，且删除主要经「question 级联」发生——
+    // 服务层对评析目标会同时给出所属 question 键，两把锁合起来覆盖「capture × 级联删」。
+    const assessmentIds = [...new Set(targets.filter((t) => t.kind === "assessment").map((t) => normalizeStudyUuid(t.id)))].sort();
 
     if (sourceIds.length > 0) {
       // 稳定顺序（id ASC）批量共享锁；DELETE 的排他锁将等待锁释放。
@@ -358,6 +423,11 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     for (const questionId of questionIds) {
       await this.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
         `l3_question:${questionId}`,
+      ]);
+    }
+    for (const assessmentId of assessmentIds) {
+      await this.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `l3_assessment:${assessmentId}`,
       ]);
     }
   }
@@ -410,12 +480,21 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     );
   }
 
+  /**
+   * N2：题目删除会级联删掉它的评析（`l3_question_assessments.question_id` cascade），
+   * 而引用评析的行又 RESTRICT 到评析——若无预检，question 删除会撞 FK 而不是给出
+   * blocker。所以这里把「引用该题子评析」的笔记一并计入，与 source blocker 计入
+   * 子题引用同款（A3）。
+   */
   async getQuestionDeleteBlockers(userId: string, questionId: string): Promise<DeleteBlockerRow[]> {
     return this.query<DeleteBlockerRow>(
       `SELECT n.id AS note_id, n.title, n.status, count(r.id)::int AS reference_count
          FROM l3_study_note_references r
          JOIN l3_study_notes n ON n.id = r.note_id AND n.user_id = r.user_id
-        WHERE r.user_id = $1::uuid AND r.question_id = $2::uuid
+        WHERE r.user_id = $1::uuid
+          AND (r.question_id = $2::uuid
+               OR r.assessment_id IN (SELECT id FROM l3_question_assessments
+                                       WHERE user_id = $1::uuid AND question_id = $2::uuid))
         GROUP BY n.id, n.title, n.status, n.updated_at
         ORDER BY n.updated_at DESC, n.id DESC`,
       [userId, questionId],

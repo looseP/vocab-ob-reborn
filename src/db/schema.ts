@@ -1520,6 +1520,9 @@ export const l3QuestionAssessments = pgTable("l3_question_assessments", {
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 }, (table) => [
 	unique("l3_question_assessments_user_question_unique").on(table.userId, table.questionId),
+	// N2：'(id, user_id)' 唯一键——被引用的评析需要同款「跨表属主一致性复合外键」，
+	// 即引用只能通过 (assessment_id, user_id) 复合匹配到自己的行，无法挂到他人行上。
+	unique("l3_question_assessments_id_user_id_unique").on(table.id, table.userId),
 	pgPolicy("l3_question_assessments_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 	check("l3_question_assessments_last_editor_check", sql`last_editor = ANY (ARRAY['owner'::text, 'agent'::text])`),
 ]);
@@ -1688,6 +1691,10 @@ export const l3StudyTopicNotes = pgTable("l3_study_topic_notes", {
 // 快照）；quote 类携带 UTF-16 坐标与摘录，option_quote 另带 option_key；
 // field_hash 为原字段 UTF-8 SHA256（changed 判定）；display_snapshot 为白名单
 // 组装的展示快照（不含标准答案/解析/evidence）。恰一 target 由 CHECK 收口。
+// N2：assessment_id 为评析引用（N2 第一条链）的目标列；评析本身是
+// l3_question_assessments 的一行（UNIQUE(user_id, question_id) latest-wins），
+// 所以引用同时带 question_id（属主链/blocker）与 assessment_id（稳定行身份）。
+// 恰一 target 由 CHECK 收口。
 export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 	id: uuid("id").defaultRandom().primaryKey().notNull(),
 	noteId: uuid("note_id").notNull(),
@@ -1695,6 +1702,7 @@ export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 	kind: text("kind").notNull(),
 	sourceId: uuid("source_id"),
 	questionId: uuid("question_id"),
+	assessmentId: uuid("assessment_id"),
 	optionKey: text("option_key"),
 	startOffset: integer("start_offset"),
 	endOffset: integer("end_offset"),
@@ -1722,10 +1730,18 @@ export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 		foreignColumns: [l3Questions.id, l3Questions.userId],
 		name: "l3_study_note_references_question_owner_fk",
 	}).onDelete("restrict"),
+	// 评析引用：question 删除会级联删 assessment（question_id → cascade），而应用层
+	// 没有删评析的入口，所以这里的 RESTRICT 只在「级联删 assessment」时兜底；正常路径
+	// 由 getQuestionDeleteBlockers 预检拦下（它已按 question_id 计入子评析的引用）。
+	foreignKey({
+		columns: [table.assessmentId, table.userId],
+		foreignColumns: [l3QuestionAssessments.id, l3QuestionAssessments.userId],
+		name: "l3_study_note_references_assessment_owner_fk",
+	}).onDelete("restrict"),
 	pgPolicy("l3_study_note_references_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
-	check("l3_study_note_references_kind_check", sql`kind = ANY (ARRAY['source'::text, 'source_quote'::text, 'question'::text, 'stem_quote'::text, 'option_quote'::text])`),
-	check("l3_study_note_references_target_check", sql`(kind = ANY (ARRAY['source'::text, 'source_quote'::text]) AND source_id IS NOT NULL AND question_id IS NULL) OR (kind = ANY (ARRAY['question'::text, 'stem_quote'::text, 'option_quote'::text]) AND question_id IS NOT NULL AND source_id IS NULL)`),
-	check("l3_study_note_references_quote_check", sql`(kind = ANY (ARRAY['source_quote'::text, 'stem_quote'::text, 'option_quote'::text]) AND start_offset IS NOT NULL AND end_offset IS NOT NULL AND quote_snapshot IS NOT NULL) OR (kind = ANY (ARRAY['source'::text, 'question'::text]) AND start_offset IS NULL AND end_offset IS NULL AND quote_snapshot IS NULL)`),
+	check("l3_study_note_references_kind_check", sql`kind = ANY (ARRAY['source'::text, 'source_quote'::text, 'question'::text, 'stem_quote'::text, 'option_quote'::text, 'assessment'::text])`),
+	check("l3_study_note_references_target_check", sql`(kind = ANY (ARRAY['source'::text, 'source_quote'::text]) AND source_id IS NOT NULL AND question_id IS NULL AND assessment_id IS NULL) OR (kind = ANY (ARRAY['question'::text, 'stem_quote'::text, 'option_quote'::text]) AND question_id IS NOT NULL AND source_id IS NULL AND assessment_id IS NULL) OR (kind = 'assessment'::text AND question_id IS NOT NULL AND assessment_id IS NOT NULL AND source_id IS NULL)`),
+	check("l3_study_note_references_quote_check", sql`(kind = ANY (ARRAY['source_quote'::text, 'stem_quote'::text, 'option_quote'::text]) AND start_offset IS NOT NULL AND end_offset IS NOT NULL AND quote_snapshot IS NOT NULL) OR (kind = ANY (ARRAY['source'::text, 'question'::text, 'assessment'::text]) AND start_offset IS NULL AND end_offset IS NULL AND quote_snapshot IS NULL)`),
 	check("l3_study_note_references_option_key_check", sql`(kind = 'option_quote'::text AND option_key IS NOT NULL) OR (kind <> 'option_quote'::text AND option_key IS NULL)`),
 	check("l3_study_note_references_offset_check", sql`start_offset IS NULL OR (start_offset >= 0 AND end_offset > start_offset)`),
 	check("l3_study_note_references_field_hash_check", sql`char_length(field_hash) = 64`),
