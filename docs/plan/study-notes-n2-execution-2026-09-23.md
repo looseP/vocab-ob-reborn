@@ -157,3 +157,24 @@
 - [ ] D3-a **签字**（暂定：只引用当前评卷；暂定态不足以开第 4 条链）
 - [ ] 第 1 条垂直链走完 §6 的 V-1…V-15 中适用项
 - [ ] 不 push、不建 PR、不合并、不部署——待用户授权
+
+## 9. 第一条链实现纪要（2026-09-23）
+
+分支 `study-notes-n2-chain01`（draft PR #134，取 CI 证据用，未合并）。
+
+- **迁移拆两段**（0040 / 0041）：单文件 `0040` 在真实 PostgreSQL 上红——drizzle 把复合外键
+  排在它所依赖的 UNIQUE 之前，同批执行撞 `no unique constraint matching given keys`，
+  Writing E2E 因此失败。0040 只加 `l3_question_assessments(id,user_id)` 唯一键，
+  0041 再加 `assessment_id`、复合 RESTRICT 外键与三个 CHECK。
+  真实库复制（`vocab_n2_chain01_verify`）应用 40+41 **7/7 约束验收 PASS**；
+  权威迁移计数 41 → 42。
+- **前端两处 switch 补 assessment 穷尽分支**：`StudyReferencePicker.targetIdentityKey`
+  与两处 `previewSummary/referenceSummary`，否则 `tsc -p tsconfig.frontend.json` 红
+  （Browser E2E）。identity 键取 `assessment:<assessmentId>`，不按题兜底合并。
+- **diff coverage 69.2% → 97.56%**（受治理层 domain/service/repository/http）：
+  补仓储层评析 4 例、服务装配层 3 例、导出 v2 投影 2 例（v2 对 N1 五种引用型同样带
+  `kind` 判别；`schemaVersion=3` 走 422）。
+  剩余 7 行未覆盖 = v1 投影里评析分支的 **fail-closed throw**，
+  `assertV1Kinds` 先拒，该分支按设计不可达，属纵深防御。
+- **仍未裁决**：D1-a（草稿稿次可引用性）、D3-a **签字**（暂定只引用当前评卷）。
+  两者签字前不开第 4/5 条链；本链结论不因两者改变。
