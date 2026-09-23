@@ -402,13 +402,13 @@ export class L3StudyReferenceService {
     repos: StudyReferenceRepos,
   ): Promise<ReferencePreview[]> {
     if (rows.length === 0) return [];
+    // N2：装载键集合必须与取值键（targetKeyOf）同源——评析引用取的是
+    // `assessment:<assessment_id>`，若这里仍按「非 source 即 question」装载，
+    // 忠实装载下必然取不到 → 评析引用恒被误判为 unavailable。
+    // 统一走 targetRefsOf（评析同时装载所属题与评析自身，与 lockTargets 同口径）。
     const loaded = await repos.studyReferences.loadTargets(
       userId,
-      rows.map((row) =>
-        row.kind === "source" || row.kind === "source_quote"
-          ? { kind: "source" as const, id: row.source_id! }
-          : { kind: "question" as const, id: row.question_id! },
-      ),
+      rows.flatMap((row) => targetRefsOf(referenceRowToTarget(row))),
     );
 
     return rows.map((row) => {
