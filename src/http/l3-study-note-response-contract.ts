@@ -42,6 +42,12 @@ const referenceTargetResponseSchema = z.discriminatedUnion("kind", [
     end: z.number().int().positive(),
     quote: z.string(),
   }).strict(),
+  // N2：评析——assessmentId 才是被引用行的身份，questionId 给上下文。
+  z.object({
+    kind: z.literal("assessment"),
+    questionId: z.string().uuid(),
+    assessmentId: z.string().uuid(),
+  }).strict(),
 ]);
 
 const optionSchema = z.object({ key: z.string(), text: z.string() }).strict();
@@ -66,6 +72,12 @@ const referenceDisplaySnapshotSchema = z.discriminatedUnion("kind", [
     kind: z.literal("option_quote"),
     optionKey: z.string().min(1).max(8),
     quote: z.string(),
+    questionType: venueSchema,
+    sourceTitle: z.string().nullable(),
+  }).strict(),
+  z.object({
+    kind: z.literal("assessment"),
+    excerpt: z.string(),
     questionType: venueSchema,
     sourceTitle: z.string().nullable(),
   }).strict(),

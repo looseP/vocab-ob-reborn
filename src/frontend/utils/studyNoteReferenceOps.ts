@@ -347,5 +347,11 @@ export function excerptLinesFromSnapshot(meta: ReferencePreview): string[] {
         ...quoteBlockLines(snapshot.quote),
         `> —— 选项 ${snapshot.optionKey}（${snapshot.questionType}）${sourceSuffix(snapshot.sourceTitle)}`,
       ];
+    // N2：评析转普通摘录——落的是引用当时的摘录（快照不可变，D3-2）。
+    case "assessment":
+      return [
+        ...blockLines(snapshot.excerpt),
+        `> —— 评析（${snapshot.questionType}）${sourceSuffix(snapshot.sourceTitle)}`,
+      ];
   }
 }

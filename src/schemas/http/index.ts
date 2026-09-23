@@ -863,6 +863,19 @@ export function parseSheetExportExpectedVersion(raw: string | undefined): number
   return Number(raw);
 }
 
+/**
+ * N2（P4）：导出 schema 版本——调用方**显式**选择，缺省 1（v1 冻结，旧客户端兼容）。
+ * v2 是另一份协议（正文字段 `renderedBodyMarkdown`、target 带 `kind` 判别），
+ * 不能由笔记内容隐式决定。
+ */
+export function parseStudyNoteExportSchemaVersion(raw: string | undefined): 1 | 2 | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  if (raw !== "1" && raw !== "2") {
+    throw new ValidationError("schemaVersion must be 1 or 2", "schemaVersion");
+  }
+  return raw === "2" ? 2 : 1;
+}
+
 /** GET /l3/attempts?questionIds=<uuid,uuid,...>：1–200 个 uuid（对齐注记批量口径）。 */
 export const l3AttemptListQuerySchema = z.object({
   questionIds: z.string().trim().min(1).max(12_000)
@@ -933,6 +946,8 @@ export const l3StudyBacklinkQuerySchema = z.object({
  */
 export const l3StudyNoteExportQuerySchema = z.object({
   expectedVersion: z.string().regex(/^\d+$/),
+  // N2（P4）：显式选择 1 或 2；缺省 1。除 1/2 之外一律 422——不做内容驱动的切换。
+  schemaVersion: z.enum(["1", "2"]).optional(),
 });
 
 /**
