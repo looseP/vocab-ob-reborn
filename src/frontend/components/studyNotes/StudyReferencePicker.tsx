@@ -59,6 +59,9 @@ function targetIdentityKey(target: ReferenceTarget | null): string | null {
       return `stem_quote:${target.questionId}:${target.start}:${target.end}`;
     case "option_quote":
       return `option_quote:${target.questionId}:${target.optionKey}:${target.start}:${target.end}`;
+    // N2：评析身份是具体评析行（assessmentId），不能退化成只按题目判等。
+    case "assessment":
+      return `assessment:${target.assessmentId}`;
   }
 }
 
@@ -75,6 +78,8 @@ function previewSummary(preview: ReferenceTargetPreview): string {
       return `「${snapshot.quote}」`;
     case "option_quote":
       return `选项 ${snapshot.optionKey}「${snapshot.quote}」`;
+    case "assessment":
+      return `评析「${snapshot.excerpt}」`;
   }
 }
 
