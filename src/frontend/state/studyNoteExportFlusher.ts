@@ -20,14 +20,27 @@
  *  4. 点击去重（同一次在途导出内的重复点击/双击 = no-op）与笔记身份核对（generation）
  *     由本模块负责；IME 组合由调用方在点击入口拦下（见两侧按钮的 `isComposing`）。
  */
-import type { StudyNoteExportResult, StudyNotesClient } from "@/frontend/api/studyNotesClient";
+import type {
+  StudyNoteExportResult,
+  StudyNoteExportSchemaVersion,
+  StudyNotesClient,
+} from "@/frontend/api/studyNotesClient";
 
 /** 导出流水线依赖（全部可注入，故可用 spy 直接断言调用次数与顺序）。 */
 export interface StudyNoteExportDeps {
   /** 等待在途保存确认；成功回执携带**本次确认的版本**。 */
   flush: () => Promise<{ version: number }>;
-  /** 导出客户端（`studyNotesClient.exportNote` 或其替身）。 */
-  exportNote: (noteId: string, expectedVersion: number, signal?: AbortSignal) => Promise<StudyNoteExportResult>;
+  /**
+   * 导出客户端（`studyNotesClient.exportNote` 或其替身）。
+   *
+   * N2/P4：`schemaVersion` 由调用方显式选择（含 N2 引用型 → 2，否则 1）；
+   * 流水线只透传，不猜测、不做「v2 失败退回 v1」的静默降级。
+   */
+  exportNote: (
+    noteId: string,
+    expectedVersion: number,
+    options?: { schemaVersion?: StudyNoteExportSchemaVersion; signal?: AbortSignal },
+  ) => Promise<StudyNoteExportResult>;
   /** 触发浏览器下载（默认 `downloadMarkdownBlob`；测试注入 spy 以断言「从未被调用」）。 */
   download: (result: StudyNoteExportResult) => void;
   /** 可读错误提示（默认不弹；两侧组件各自接到自己的提示条）。 */
@@ -144,7 +157,13 @@ function failure(
  * ```
  */
 export async function flushThenExportNote(
-  input: { noteId: string; generation: number; isCurrent: (generation: number) => boolean },
+  input: {
+    noteId: string;
+    generation: number;
+    isCurrent: (generation: number) => boolean;
+    /** N2/P4：导出 schema 版本（调用方显式选择；缺省不发送 → 服务端按 v1）。 */
+    schemaVersion?: StudyNoteExportSchemaVersion;
+  },
   deps: StudyNoteExportDeps,
   gate: { begin(): boolean; end(): void },
 ): Promise<StudyNoteExportOutcome> {
@@ -164,9 +183,10 @@ export async function flushThenExportNote(
     }
 
     // 3) 以该版本 GET 导出：服务端核对，不一致只会 409（没有旧正文可下载）。
+    //    schemaVersion 原样透传（调用方显式选择，流水线不替它升级/降级）。
     let result: StudyNoteExportResult;
     try {
-      result = await deps.exportNote(input.noteId, receipt.version);
+      result = await deps.exportNote(input.noteId, receipt.version, { schemaVersion: input.schemaVersion });
     } catch (error) {
       const status = statusOf(error);
       if (status === 409) return report(deps, failure("conflict", error));

@@ -9,6 +9,7 @@ import { assertReferenceSet, parseReferenceIds, ReferenceContractError } from "@
 import type { ReferencePreview } from "@/domain/l3-study-notes";
 import {
   excerptLinesFromSnapshot,
+  exportSchemaVersionForReferences,
   insertReferenceMarker,
   ReferenceMarkerPositionError,
   removeReferenceMarker,
@@ -395,5 +396,38 @@ describe("studyNoteReferenceOps · DEFECT2 CRLF 原文坐标", () => {
         },
       ]),
     ).not.toThrow();
+  });
+});
+
+describe("studyNoteReferenceOps · 导出 schema 版本选择（N2/P4）", () => {
+  const previewWith = (displaySnapshot: ReferencePreview["displaySnapshot"]): ReferencePreview => ({
+    id: REF_A,
+    target: { kind: "source", sourceId: "00000000-0000-4000-8000-000000000001" },
+    status: "current",
+    capturedAt: "2026-09-20T00:00:00.000Z",
+    liveTitle: null,
+    displaySnapshot,
+  });
+
+  it("纯 N1 引用型 → 1（v1 冻结面，旧客户端兼容）", () => {
+    expect(
+      exportSchemaVersionForReferences([
+        previewWith({ kind: "source", title: "T", excerpt: "x" }),
+        previewWith({ kind: "question", stem: "S", options: [], questionType: "cloze", sourceTitle: null }),
+      ]),
+    ).toBe(1);
+  });
+
+  it("含评析（N2）引用 → 2（v1 冻结面不接受，不静默降级）", () => {
+    expect(
+      exportSchemaVersionForReferences([
+        previewWith({ kind: "source", title: "T", excerpt: "x" }),
+        previewWith({ kind: "assessment", excerpt: "评析", questionType: "cloze", sourceTitle: null }),
+      ]),
+    ).toBe(2);
+  });
+
+  it("无引用 → 1（不因空集合选 v2）", () => {
+    expect(exportSchemaVersionForReferences([])).toBe(1);
   });
 });

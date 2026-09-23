@@ -46,6 +46,7 @@ import {
 } from "@/domain/l3-study-notes";
 import {
   excerptLinesFromSnapshot,
+  exportSchemaVersionForReferences,
   insertReferenceMarker,
   removeReferenceMarker,
   replaceMarkerWithExcerpt,
@@ -736,6 +737,9 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
         {
           noteId: startedNoteId,
           generation,
+          // N2/P4：显式选版——含评析（N2）引用 → v2；纯 N1 引用 → 保持 v1 冻结面。
+          // 取 ref 而非 state：导出动作在 useCallback([]) 里，不能用快照态。
+          schemaVersion: exportSchemaVersionForReferences(referencesMetaRef.current),
           // 响应回来时：编辑器仍挂载、仍是同一实例代际、仍是同一篇笔记
           isCurrent: (expected) =>
             mountedRef.current &&
@@ -745,7 +749,8 @@ export function useStudyNoteEditor(options: UseStudyNoteEditorOptions): UseStudy
         },
         {
           flush: () => controller.flush(),
-          exportNote: (id, expectedVersion) => clientRef.current.exportNote(id, expectedVersion),
+          exportNote: (id, expectedVersion, options) =>
+            clientRef.current.exportNote(id, expectedVersion, options),
           download: (result) => downloadExportRef.current(result),
         },
         exportGateRef.current,

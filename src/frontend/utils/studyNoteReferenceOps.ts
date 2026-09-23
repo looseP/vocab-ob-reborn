@@ -355,3 +355,27 @@ export function excerptLinesFromSnapshot(meta: ReferencePreview): string[] {
       ];
   }
 }
+
+// ── 导出 schema 版本选择（N2 / P4）───────────────────────────────────────────
+
+/** N1 冻结的五种引用型（与服务端 `N1_REFERENCE_KINDS` 同口径）。 */
+const N1_REFERENCE_KINDS = new Set<string>([
+  "source", "source_quote", "question", "stem_quote", "option_quote",
+]);
+
+/**
+ * 导出 schema 版本：**调用方显式选择**——服务端不做内容驱动的隐式升级。
+ *
+ * - 全是 N1 引用型 → `1`（v1 冻结面，旧客户端兼容）；
+ * - 出现任何 N1 之外的引用型（N2+，当前为评析）→ `2`：v1 冻结面不接受，会被 422 拒绝。
+ *   按「非白名单即 v2」判定，后续新增引用型无需再改这里。
+ *
+ * 判据取自引用**快照的 kind**（`displaySnapshot.kind`）——它与引用型一一对应，
+ * 且是 UI 已在用的字段；不看 status（目标是否可用与协议版本无关）。
+ */
+export function exportSchemaVersionForReferences(references: readonly ReferencePreview[]): 1 | 2 {
+  const hasN2 = references.some(
+    (reference) => !N1_REFERENCE_KINDS.has(reference.displaySnapshot.kind),
+  );
+  return hasN2 ? 2 : 1;
+}
