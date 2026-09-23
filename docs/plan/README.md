@@ -13,6 +13,9 @@
 | `l3-experience-remediation-report-2026-09-13.md` | D0–D4 交付与核验记录（含 47 张截图索引） |
 | `l3-d5-information-design-card-2026-09-13.md` | D5 信息设计卡（R1 推荐页 / R2 图页载入 / R3 工具页中文化 / R4 读面重写；含三项待拍板） |
 | `study-notes-task10-execution-2026-09-22.md` | Task 10 学习笔记导出任务书（P1–P7 决策与验收矩阵；含 §7 P4 扩展裁决补登记） |
+| `study-notes-followups-2026-09-23.md` | 学习笔记线遗留观察登记（F-1 `bodyMd` 命名 / F-2 来源清单 / F-3 范围变更登记；F-4 PR #129 待授权） |
+| `study-notes-n2-inventory-2026-09-23.md` | N2 只读盘点与四项冻结要求（数据模型 / 权限 / 引用版本 / 导出兼容） |
+| `study-notes-n2-execution-2026-09-23.md` | N2 任务书（历史学习引用）：接入顺序、五件套、冻结门禁与待拍板 P1–P5 |
 
 **设计基线（L3 体验层标尺）**：`docs/design/l3-space/baseline.md`
 **架构决策**：`docs/adr/`
