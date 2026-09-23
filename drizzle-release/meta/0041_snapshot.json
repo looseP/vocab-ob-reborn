@@ -1,6 +1,6 @@
 {
-  "id": "e08fd394-e32e-4414-9140-84c3de8205d6",
-  "prevId": "fcdca6a3-f728-4fe1-a2f8-3d4bb1fb128a",
+  "id": "773dd0da-b800-44cf-b1b5-0f9be99dad51",
+  "prevId": "e08fd394-e32e-4414-9140-84c3de8205d6",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4717,6 +4717,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "assessment_id": {
+          "name": "assessment_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "option_key": {
           "name": "option_key",
           "type": "text",
@@ -4890,6 +4896,21 @@
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
+        },
+        "l3_study_note_references_assessment_owner_fk": {
+          "name": "l3_study_note_references_assessment_owner_fk",
+          "tableFrom": "l3_study_note_references",
+          "tableTo": "l3_question_assessments",
+          "columnsFrom": [
+            "assessment_id",
+            "user_id"
+          ],
+          "columnsTo": [
+            "id",
+            "user_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4909,15 +4930,15 @@
       "checkConstraints": {
         "l3_study_note_references_kind_check": {
           "name": "l3_study_note_references_kind_check",
-          "value": "kind = ANY (ARRAY['source'::text, 'source_quote'::text, 'question'::text, 'stem_quote'::text, 'option_quote'::text])"
+          "value": "kind = ANY (ARRAY['source'::text, 'source_quote'::text, 'question'::text, 'stem_quote'::text, 'option_quote'::text, 'assessment'::text])"
         },
         "l3_study_note_references_target_check": {
           "name": "l3_study_note_references_target_check",
-          "value": "(kind = ANY (ARRAY['source'::text, 'source_quote'::text]) AND source_id IS NOT NULL AND question_id IS NULL) OR (kind = ANY (ARRAY['question'::text, 'stem_quote'::text, 'option_quote'::text]) AND question_id IS NOT NULL AND source_id IS NULL)"
+          "value": "(kind = ANY (ARRAY['source'::text, 'source_quote'::text]) AND source_id IS NOT NULL AND question_id IS NULL AND assessment_id IS NULL) OR (kind = ANY (ARRAY['question'::text, 'stem_quote'::text, 'option_quote'::text]) AND question_id IS NOT NULL AND source_id IS NULL AND assessment_id IS NULL) OR (kind = 'assessment'::text AND question_id IS NOT NULL AND assessment_id IS NOT NULL AND source_id IS NULL)"
         },
         "l3_study_note_references_quote_check": {
           "name": "l3_study_note_references_quote_check",
-          "value": "(kind = ANY (ARRAY['source_quote'::text, 'stem_quote'::text, 'option_quote'::text]) AND start_offset IS NOT NULL AND end_offset IS NOT NULL AND quote_snapshot IS NOT NULL) OR (kind = ANY (ARRAY['source'::text, 'question'::text]) AND start_offset IS NULL AND end_offset IS NULL AND quote_snapshot IS NULL)"
+          "value": "(kind = ANY (ARRAY['source_quote'::text, 'stem_quote'::text, 'option_quote'::text]) AND start_offset IS NOT NULL AND end_offset IS NOT NULL AND quote_snapshot IS NOT NULL) OR (kind = ANY (ARRAY['source'::text, 'question'::text, 'assessment'::text]) AND start_offset IS NULL AND end_offset IS NULL AND quote_snapshot IS NULL)"
         },
         "l3_study_note_references_option_key_check": {
           "name": "l3_study_note_references_option_key_check",
