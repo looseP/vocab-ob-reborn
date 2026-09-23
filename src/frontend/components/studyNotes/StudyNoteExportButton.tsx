@@ -3,7 +3,7 @@
  *
  * 宿主：
  *  - 页面版编辑器工具栏（`StudyNoteEditor` → 验收 `export-note-button`）；
- *  - 09B 卷面侧栏编辑器（`StudyNoteSecondaryExportButton`，供卷面宿主在需要时使用）。
+ *  - 09B 卷面侧栏（`StudyNoteSidePanel` 面板头部按钮，复用本组件）。
  *
  * 两者都调用本组件的 `onExport`，而两侧的 `onExport` 都只做一件事：
  * `flushThenExportNote(...)`（`@/frontend/state/studyNoteExportFlusher`）——

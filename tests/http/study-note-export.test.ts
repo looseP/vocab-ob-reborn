@@ -52,8 +52,10 @@ afterAll(() => {
 const AUTH_HEADERS = { Authorization: `Bearer ${OWNER_TOKEN}` };
 const EXPORT_PATH = `/api/l3/study-notes/${NOTE_ID}/export`;
 
-const CHECKSUM_LINE =
-  "内容校验（sha256，删除本行后重算应等于此值）：aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SHA256 = "a".repeat(64);
+
+/** 与 service 真实渲染同形的内容校验行（`l3-study-note-export.service.ts`，ASCII 冒号 + `sha256:` 前缀）。 */
+const CHECKSUM_LINE = `- 内容校验: sha256:${SHA256}（删除本行后可复算）`;
 
 /** 与 service 渲染同形的终稿：正文 + 内容校验行 + JSON 块。 */
 const MARKDOWN = [
@@ -68,8 +70,6 @@ const MARKDOWN = [
   "```",
   "",
 ].join("\n");
-
-const SHA256 = "a".repeat(64);
 
 function exportResult(overrides: Record<string, unknown> = {}) {
   return {
@@ -107,9 +107,11 @@ describe("GET /api/l3/study-notes/:noteId/export（200 四件响应头）", () =
     const res = await app.request(`${EXPORT_PATH}?expectedVersion=3`, { headers: AUTH_HEADERS });
     const body = await res.text();
 
-    const inBody = body.split("\n").find((line) => line.startsWith("内容校验"));
+    // 真实行形如：`- 内容校验: sha256:<64hex>（删除本行后可复算）`
+    // （`l3-study-note-export.service.ts`，ASCII 冒号；与 version-chain 测试同口径）。
+    const inBody = body.split("\n").find((line) => line.includes("内容校验"));
     expect(inBody).toBeTruthy();
-    const inBodyHash = inBody!.split("：").pop()!.trim();
+    const inBodyHash = /sha256:([0-9a-f]{64})/.exec(inBody!)![1]!;
     expect(inBodyHash).toBe(res.headers.get("X-Export-Sha256"));
   });
 
