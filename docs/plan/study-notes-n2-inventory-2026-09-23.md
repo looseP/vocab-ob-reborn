@@ -33,7 +33,7 @@
 | 评卷 | `l3_grading_results` | `sheet+question` unique、`verdict` check |
 | 作文任务 / 反馈 | `l3_writing_tasks`、`l3_writing_feedback` | `l3_writing_feedback_sheet_owner_fk` |
 
-写作「稿次」本体未以独立 `l3_writing_sheets` 形式出现（见 §6 待定项 D1）。
+写作「稿次」本体未以独立 `l3_writing_sheets` 形式出现（**已裁决：保持如此**，见 §8 D1）。
 
 ## 3. 冻结项 A — 数据模型
 
@@ -64,8 +64,9 @@
   payload 字段冻结（P2 决策表）、响应头 `X-Export-Sha256` / `X-Export-Schema-Version`、双段 hash + 内容校验行、
   marker→五型引用块渲染、JSON 围栏自适应。
 - **D2** 新引用型必然改变 `payload.references[].kind` 取值域与 `target` 形状 →
-  **必须显式升 schema 版本（或加类型判别）**，不得在 v1 上就地塞新形状。
-  这是 N2 与 F-1（`bodyMd` 命名）合并处理的唯一自然时机。
+  **必须显式升 schema 版本**，不得在 v1 上就地塞新形状。
+  **已裁决（用户，2026-09-23）**：升 **`exportSchemaVersion = 2`**，v1 永久冻结、v2 显式选择
+  （详见任务书 §5.1 P4）。这是顺带闭合 F-1（`bodyMd` → v2 内更名 `renderedBodyMarkdown`）的唯一时机。
 
 ## 7. 只读导航（F-1 回看协议，N2 复用不自造）
 
@@ -75,9 +76,15 @@
 
 ## 8. 待定项（设计阶段必须先拍板，未定不写实现）
 
-| # | 待定 | 影响 |
-|---|---|---|
-| D1 | 作文「稿次」本体是哪张表（submission 还是独立实体） | 目标形状、`field_hash` 输入、导出 target |
-| D2 | 笔记互链：新建链接表，还是扩展 `l3_study_note_references` | 后者会动 N1 冻结的 kind 枚举与导出 v1 |
-| D3 | 注记可编辑 / 评析可改判 → 快照与 `changed` 用哪些字段 | C2/C3 |
-| D4 | 历史 attempt 引用是否要求「只读回看」先落地验收 | 启动条件（design `:23`） |
+| # | 待定 | 影响 | 裁决（2026-09-23） |
+|---|---|---|---|
+| D1 | 作文「稿次」本体是哪张表 | 目标形状、`field_hash` 输入、导出 target | ✅ **`l3_submissions`**（identity = `{ submissionId, revisionNo }`，writing 必带 revisionNo；`draft_version` 不作身份）；详见任务书 §5.1 D1 |
+| D2 | 笔记互链：新建链接表还是扩展 `l3_study_note_references` | 后者会动 N1 冻结的 kind 枚举与导出 v1 | ⏳ **仍未裁决** |
+| D3 | 注记可编辑 / 评析可改判 → 快照与 `changed` 用哪些字段 | C2/C3 | ✅ **当前结果可更新（沿用既有 latest-wins 合同）+ 引用快照不可变**（转 `changed`，不覆盖旧摘录）；详见任务书 §5.1 D3 |
+| D4 | 历史 attempt 引用是否要求「只读回看」先落地验收 | 启动条件（design `:23`） | ⏳ **仍未裁决** |
+
+**裁决后新开的待确认项**（详见任务书 §5.1 尾部，均只阻塞后半链）：
+
+- **D1-a**：是否只允许引用 sealed 稿（倾向「是」，属产品取舍）。
+- **D3-a**：`l3_grading_results` 无历史版本列，「引用某历史评卷版本」在现模型下不可表达
+  ——要么 N2 只做「当前评卷」引用，要么新增版本列。
