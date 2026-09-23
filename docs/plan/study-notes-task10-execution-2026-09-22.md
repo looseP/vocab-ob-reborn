@@ -34,7 +34,7 @@
 | **P1** 引用块与来源清单版式 | **按 `kind` 分五型渲染引用块，仅对顶层 paragraph 且 text 完全等于 `[[ref:<uuid>]]` 的位置替换**；每块含 `kind` 标签、来源标题（`displaySnapshot.title` / `sourceTitle`）、已存快照摘要、`capturedAt`（标「引用时间」）、`status`（`current`/`changed`/`unavailable`）；**`unavailable` 保留占位块**（写明「目标已不可用，以下为引用时摘录」）而非删除或改写；文末追加「来源清单」按 `capturedAt` 升序、`referenceId` 去重。 | 与 domain 单一真源 `matchReferenceMarkerText`/`parseReferenceIds`（`src/domain/l3-study-notes.ts:276,290`）同语义，且 `unavailable` 必须与编辑器占位卡行为一致（ADR `:28`、`:40`：保留原摘录、不以旧 offset 套新文本）。 |
 | **P2** 末尾 JSON 块 schema 与「无标准答案字段」边界 | **JSON 块字段冻结为 `exportSchemaVersion`(1) / `kind`(`"study-note"`) / `exportedAt` / `note`{`id,title,status,pinned,version,venues`} / `references[]`{`referenceId,kind,status,capturedAt,displaySnapshot,target{sourceId\|questionId,optionKey,startOffset,endOffset},liveTitle`} / `bodyMd` / `bodySha256`**；`displaySnapshot` **原样序列化**（其类型 `QuestionReferenceSnapshot` 字段为 `{stem,options,questionType,sourceTitle}`，`options` 为 `L3QuestionOption[]`）；**导出器不得自造新字段**，尤其不得输出 `answer`/`answerIndex`/`explanation`/`evidence`/`correctOption` 等标准答案面字段。 | 快照生成侧已「服务端白名单组装（不含标准答案/explanation/evidence）」（`src/domain/l3-study-notes.ts:116` 注释），导出只需**独立断言**这一既有边界、不得回填（盘点 §5 P2 明示「编辑器预览已排除；导出需独立断言」）。 |
 | **P3** `expectedVersion` 缺失/旧版的状态码 | **缺失/非数字 → 422（`ValidationError.httpStatus`，字段 `expectedVersion`）；与当前 `note.version` 不一致 → 409（带 `meta.currentVersion`，不回传服务器正文）**；`expectedVersion` 携带即核，不因 note 状态（含归档）豁免。**收口轮更正：原写 400，实现为 422（`src/errors/index.ts:52`），与题纸先例同口径。** | 先例 `l3-sheet-export.service.ts:585-596` 即「缺失拒/旧版 409」，且笔记侧 409 语义已冻结为「只返回 currentVersion，不自动返回内容」（frontend-tasks §0.2 `:40`）。 |
-| **P4** 导出按钮生效范围 | **仅在页面版编辑器 `StudyNoteEditor.tsx` 工具栏（`insert-reference-button` 同行）新增 `export-note-button`；09B 卷面/阅读侧栏编辑器本任务不新增出口**。 | 侧栏的职责是「不触发题纸 flush/seal/openSheet」（execution-plan `:298`）；导出若在侧栏出现就必须在同处 await flush，会把副作用面引入侧栏，收益不抵风险，故收窄并在验收中显式断言。 |
+| **P4** 导出按钮生效范围 | **仅在页面版编辑器 `StudyNoteEditor.tsx` 工具栏（`insert-reference-button` 同行）新增 `export-note-button`；09B 卷面/阅读侧栏编辑器本任务不新增出口**。**[2026-09-23 补登记]** 实现超范围新增侧栏出口，经裁决保留（见 §7）。 | 侧栏的职责是「不触发题纸 flush/seal/openSheet」（execution-plan `:298`）；导出若在侧栏出现就必须在同处 await flush，会把副作用面引入侧栏，收益不抵风险，故收窄并在验收中显式断言。 |
 | **P5** 归档 note 可导出 | **允许导出，且 200**：归档只影响列表可见性与编辑入口，不影响只读导出；导出页眉/JSON 显式标注 `note.status = "archived"`（不静默把归档伪装成活动笔记）。 | ADR `:20` 明确「笔记/专题只有归档恢复、无硬删入口」，无删除态可拒；execution-plan 验收①本身要求测试归档导出，故按允许落地并用测试固化。 |
 | **P6** FOR SHARE 锁 | **新增独立方法 `lockForShare(userId, noteId)`（`... FOR SHARE`），导出事务调用它；保存路径现有 `FOR UPDATE` 锁 `lock()`（`src/repositories/l3-study-notes.repository.ts:166-171`）一律不改、不改名、不加参数。** | 导出是只读事务，锁语义应与读面匹配（规格原文「service 在同一 actor 事务锁 note FOR SHARE」，execution-plan `:310`）；**改保存路径的锁是并发保存正确性的回归面，本任务不碰**——新增方法把风险面收敛为零。 |
 | **P7** JSON 块与 fence 自适应 | **移植先例 `fenceFor`（`l3-writing-export.service.ts:68-72`：`Math.max(3, 最长反引号串 + 1)`），正文/引用摘录/JSON 块三者各自独立计算围栏长度并包裹**；JSON 围栏为 `` `${fence}json` ``。 | 该实现已被作文导出的单测覆盖且满足规格「fence 长度大于内容中最长反引号串」（execution-plan `:311`），自研等价逻辑只是多一份待验证代码。 |
@@ -262,3 +262,14 @@
 - 不新增表、不新增迁移、不预占迁移编号。
 - 不 push、不改 main、不触碰 PR #129/#130/#131。
 - 不写实现代码到本任务书提交中（本提交唯一文件为本文档）。
+
+---
+
+## 7. P4 扩展裁决补登记（2026-09-23，Task 11 收口轮）
+
+> 本节为合并后补登记，非实现期变更；事实与裁决记录如下。
+
+- **事实**：实现超出 §1 P4 决策范围——新增 ① 侧栏面板头部导出按钮（`study-note-panel-export`，`StudyNoteSidePanel` 复用 `StudyNoteExportButton`，含测试）；② 卷面宿主导出动作注册机制（`onRegisterExportAction`/`confirmOnly`）。实现期未在本任务书或台账登记。
+- **正式审查**（2026-09-22，`build-analysis/status-2026-09-22/TASK10-FORMAL-REVIEW.md` §5）将其登记为 **P2-1**（决策-实现偏差；不阻塞）。
+- **评估**：功能正确——侧栏出口复用同一 `flushThenExportNote` 流水线与同一导出按钮组件（无第二份顺序实现），失败面完备；P4 担忧的「flush 副作用面引入侧栏」经分析不成立。
+- **裁决（2026-09-22，用户）**：**保留功能**；补登记本节、台账变更记录（`study-notes-task10-ledger-2026-09-22.md` §8）与 `docs/plan/README.md` 索引。

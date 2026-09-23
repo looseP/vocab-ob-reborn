@@ -12,6 +12,7 @@
 | `l3-visual-audit-report-2026-09-12.md` | 视觉走查报告（G-P1-3 读面三页＝工程检查器 / G-P1-4 推荐页裸 JSON / G-P2-3 空态语言不统一 等） |
 | `l3-experience-remediation-report-2026-09-13.md` | D0–D4 交付与核验记录（含 47 张截图索引） |
 | `l3-d5-information-design-card-2026-09-13.md` | D5 信息设计卡（R1 推荐页 / R2 图页载入 / R3 工具页中文化 / R4 读面重写；含三项待拍板） |
+| `study-notes-task10-execution-2026-09-22.md` | Task 10 学习笔记导出任务书（P1–P7 决策与验收矩阵；含 §7 P4 扩展裁决补登记） |
 
 **设计基线（L3 体验层标尺）**：`docs/design/l3-space/baseline.md`
 **架构决策**：`docs/adr/`
