@@ -448,6 +448,75 @@ describe("Markdown 保真", () => {
   });
 });
 
+describe("空行压缩边界（P3-4：块间规整、块内保真）", () => {
+  it("keeps consecutive blank lines inside a markdown block byte-for-byte", async () => {
+    const body = "段一\n\n\n\n段二"; // 段间 3 个空行：块内部，不得压缩
+    repos = fakeRepos({ note: noteRow({ body_md: body }), refRows: [] });
+    service = makeService();
+    const result = await service.export(userId(), NOTE, { expectedVersion: 3 });
+
+    const bodyBlock = fenceBlocks(section(result.markdown, "正文"))[0]!;
+    expect(bodyBlock.body).toContain("段一\n\n\n\n段二");
+    const payload = extractLastJsonBlock(result.markdown) as unknown as StudyNoteExportPayload;
+    expect(payload.bodyMd).toBe("段一\n\n\n\n段二");
+  });
+
+  it("keeps blank lines inside a fenced code block of the note body", async () => {
+    const body = "```txt\na\n\n\n\nb\n```"; // 代码块内部 3 个空行：原样保留
+    repos = fakeRepos({ note: noteRow({ body_md: body }), refRows: [] });
+    service = makeService();
+    const result = await service.export(userId(), NOTE, { expectedVersion: 3 });
+
+    const bodyBlock = fenceBlocks(section(result.markdown, "正文"))[0]!;
+    expect(bodyBlock.body).toContain("a\n\n\n\nb");
+    const payload = extractLastJsonBlock(result.markdown) as unknown as StudyNoteExportPayload;
+    expect(payload.bodyMd).toBe("```txt\na\n\n\n\nb\n```");
+  });
+
+  it("collapses blank runs only at seams between markdown and reference blocks", async () => {
+    const body = `段一\n\n\n\n[[ref:${REF_SOURCE}]]\n\n\n\n段二`;
+    repos = fakeRepos({ note: noteRow({ body_md: body }), refRows: [refRow()] });
+    service = makeService();
+    const result = await service.export(userId(), NOTE, { expectedVersion: 3 });
+
+    const bodyText = fenceBlocks(section(result.markdown, "正文"))[0]!.body;
+    // 接缝：段一 与引用块之间恰好一个空行（不堆积、也不吞没）
+    expect(bodyText).toContain("段一\n\n> **引用 · 来源**");
+    // 接缝：引用块 与 段二之间恰好一个空行
+    expect(bodyText).toContain("\n\n段二");
+    // 接缝处不得残留 3+ 连续换行（两侧块内空行已被规整）
+    expect(bodyText).not.toContain("段一\n\n\n");
+    expect(bodyText).not.toContain("\n\n\n段二");
+  });
+});
+
+describe("缺失引用快照（marker 有、引用行已被应用外删改）", () => {
+  it("keeps a readable placeholder block instead of dropping the marker", async () => {
+    // 正文含 REF_SOURCE_QUOTE 的 marker，但 repository 只回 REF_SOURCE 一行
+    const body = `段一\n\n[[ref:${REF_SOURCE_QUOTE}]]\n\n段二`;
+    repos = fakeRepos({ note: noteRow({ body_md: body }), refRows: [refRow()] });
+    service = makeService();
+    const result = await service.export(userId(), NOTE, { expectedVersion: 3 });
+
+    const bodyText = fenceBlocks(section(result.markdown, "正文"))[0]!.body;
+    // 保留可读占位（含 refId），不静默吞掉、也不留裸 marker
+    expect(bodyText).toContain(`> **引用 · 未找到快照** \`${REF_SOURCE_QUOTE}\``);
+    expect(bodyText).not.toContain(`[[ref:${REF_SOURCE_QUOTE}]]`);
+    // 占位块两侧接缝各恰好一个空行（与正常引用块同形）
+    expect(bodyText).toContain("段一\n\n> **引用 · 未找到快照**");
+    expect(bodyText).toContain("\n\n段二");
+    // 来源清单只列正文中实际渲染成功的引用；未找到快照的 marker 无快照可列，
+    // 也不得凭 repository 里其它引用行回填（bodyMd 仍逐字保留原 marker）。
+    const payload = extractLastJsonBlock(result.markdown) as unknown as StudyNoteExportPayload;
+    expect(payload.references).toEqual([]);
+    // JSON 块的 bodyMd 是「渲染后正文」（marker 已替换为引用块），原样带占位块、
+    // 不带裸 marker——与页面渲染同形，不回退成未渲染的原文。
+    expect(payload.bodyMd).toBe(
+      `段一\n\n> **引用 · 未找到快照** \`${REF_SOURCE_QUOTE}\`\n\n段二`,
+    );
+  });
+});
+
 // ── 三态引用块 ─────────────────────────────────────────────────────────────
 
 describe("引用块三态", () => {

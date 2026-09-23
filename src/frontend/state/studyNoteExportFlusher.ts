@@ -6,7 +6,7 @@
  *    → Blob → 下载；任何一步失败都**不得**产生下载（版本不符时服务端只会 409，
  *    根本没有旧正文可拿）；
  *  - 编辑器页（`StudyNoteEditor`，Task 10 P4 决策的出口）与 09B 卷面侧栏
- *    （`StudyNoteSecondaryExportButton`）必须复用**同一份**实现——组件里各写一遍
+ *    （`StudyNoteSidePanel` 复用 `StudyNoteExportButton`）必须复用**同一份**实现——组件里各写一遍
  *    必然出现两份顺序与两份失败分支；
  *  - 纯 TS、不依赖 React/DOM 之外的东西（DOM 效果经注入），可用假时钟与 spy 直接
  *    举证「persist reject → 导出未被调用」。

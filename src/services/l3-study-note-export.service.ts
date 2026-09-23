@@ -389,28 +389,47 @@ function splitBodyBlocks(bodyMd: string): BodyBlock[] {
   return blocks;
 }
 
-/** 正文正文段（marker 替换为引用块后的 Markdown 文本）。 */
+/**
+ * 正文段（marker 替换为引用块后的 Markdown 文本）。
+ *
+ * 空行策略（P3-4）：**块内字节保真，仅块间接缝规整**——markdown 块内部
+ * （含 fenced code 内容、段落间空行）原样保留；块首尾与块间接缝处的空行
+ * 堆积规整为恰好一个空行（相邻块首尾任一侧有空行即落一个）。此前的全局
+ * `\n{3,}` 压缩会触达块内部，造成字节级保真损失（罕见输入）。
+ */
 function renderBody(
   bodyMd: string,
   referenceMap: Map<string, ReferencePreview>,
   order: string[],
 ): string {
   const lines: string[] = [];
+  let seamBlank = false; // 接缝是否落一个空行（上一块尾部或当前块首部有空行）
   for (const block of splitBodyBlocks(bodyMd)) {
+    let text: string;
     if (block.kind === "markdown") {
-      lines.push(block.text);
-      continue;
+      text = block.text;
+    } else {
+      const reference = referenceMap.get(block.refId);
+      if (!reference) {
+        // 标记对应的引用行缺失（应用外删改）：保留可读占位，不静默吞掉
+        // （尾随空行与正常引用块一致）。
+        text = `> **引用 · 未找到快照** \`${block.refId}\`\n`;
+      } else {
+        text = renderReferenceBlock(reference).join("\n");
+        order.push(reference.id);
+      }
     }
-    const reference = referenceMap.get(block.refId);
-    if (!reference) {
-      // 标记对应的引用行缺失（应用外删改）：保留可读占位，不静默吞掉。
-      lines.push(`> **引用 · 未找到快照** \`${block.refId}\``, "");
-      continue;
-    }
-    lines.push(...renderReferenceBlock(reference));
-    order.push(reference.id);
+    const blockLines = text.split("\n");
+    let head = 0;
+    while (head < blockLines.length && blockLines[head] === "") head += 1;
+    let tail = blockLines.length;
+    while (tail > head && blockLines[tail - 1] === "") tail -= 1;
+    if (head > 0) seamBlank = true; // 当前块首部有空行 → 接缝落一个空行
+    if (seamBlank) lines.push("");
+    lines.push(...blockLines.slice(head, tail));
+    seamBlank = tail < blockLines.length; // 本块尾部空行 → 下一接缝落一个空行
   }
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n+$/, "");
+  return lines.join("\n");
 }
 
 // ── 渲染（纯函数；双段 hash 供单测）────────────────────────────────────────
@@ -490,7 +509,7 @@ export class L3StudyNoteExportService {
   /**
    * 导出笔记（只读事务）。返回 markdown（双段渲染终稿）、sha256、version。
    *
-   * 失败面：note 不存在/非本人 → 404；`expectedVersion` 缺失 → 400 语义
+   * 失败面：note 不存在/非本人 → 404；`expectedVersion` 缺失/非数字 → 422
    * （ValidationError）；与当前 version 不一致 → 409（只带 currentVersion，
    * 不回传服务器正文；归档笔记同样核对，不豁免）。
    */
