@@ -15,6 +15,8 @@ type Direction = "request" | "response";
 
 const HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"] as const;
 const UNSUPPORTED_SCHEMA_KEYS = ["oneOf", "anyOf", "allOf", "not", "if", "then", "else", "dependentSchemas", "unevaluatedProperties", "propertyNames"] as const;
+/** 可为「变体数组」的组合键——只有它们的纯新增是可判定的（其余组合键一律 fail-closed）。 */
+const UNION_KEYS = ["oneOf", "anyOf"] as const;
 const LOWER_BOUND_KEYS = ["minimum", "exclusiveMinimum", "minLength", "minItems", "minProperties"] as const;
 const UPPER_BOUND_KEYS = ["maximum", "exclusiveMaximum", "maxLength", "maxItems", "maxProperties"] as const;
 const FAIL_CLOSED_ON_CHANGE_KEYS = [
@@ -54,6 +56,21 @@ function issue(issues: OpenApiIssue[], kind: OpenApiIssue["kind"], location: str
   issues.push({ kind, location, message });
 }
 
+/** 该键是否为「两侧都是变体数组」的联合键（oneOf/anyOf）。 */
+function isUnionArray(base: JsonObject, current: JsonObject, key: string): boolean {
+  if (!UNION_KEYS.includes(key as (typeof UNION_KEYS)[number])) return false;
+  return Array.isArray(base[key]) && Array.isArray(current[key]);
+}
+
+/**
+ * 变体数组的**纯新增**：base 的每个变体在 current 中仍按同一稳定序列化存在（只多不少）。
+ * 变体被删或被改写都不是纯新增。
+ */
+function isVariantAddition(before: unknown[], after: unknown[]): boolean {
+  const afterKeys = new Set(after.map((variant) => stable(variant)));
+  return before.every((variant) => afterKeys.has(stable(variant)));
+}
+
 function compareSchema(
   baseDocument: JsonObject,
   currentDocument: JsonObject,
@@ -85,12 +102,40 @@ function compareSchema(
   // （如未变化的 propertyNames / anyOf 包裹）不构成变化源，继续按常规键比较。
   // 2026-09-17（T11）：answers 收窄到显式键契约时，其 propertyNames 未变却被
   // 旧检查整体放弃（误报 UNKNOWN）；剔除误报、保留“组合键真变即 fail-closed”。
-  const changedUnsupported = UNSUPPORTED_SCHEMA_KEYS.some(
+  const changedUnsupported = UNSUPPORTED_SCHEMA_KEYS.filter(
     (key) => (key in base || key in current) && stable(base[key]) !== stable(current[key]),
   );
-  if (changedUnsupported) {
-    issue(issues, "unknown", location, "受影响 schema 使用了无法安全比较的组合/条件关键字");
-    return;
+  if (changedUnsupported.length > 0) {
+    // N2（2026-09-23）：联合变体的变化在结构可比时给出**确定判定**，不再笼统 UNKNOWN——
+    //   · 纯新增变体：request = 放宽（旧客户端不受影响）；response = breaking
+    //     （旧客户端可能收到不认识的变体，可经重锚 approval 豁免）；
+    //   · 变体数相同：逐位递归，覆盖「变体内嵌联合纯新增」（如 PUT 请求体 capture
+    //     变体内的 target 联合多出评析变体）——被删改的变体递归后仍按常规键出确定判定；
+    //   · 变体数变少，或同时动了其它组合/条件键（not/if/…）：无法配对 → 原 fail-closed。
+    if (!changedUnsupported.every((key) => isUnionArray(base, current, key))) {
+      issue(issues, "unknown", location, "受影响 schema 使用了无法安全比较的组合/条件关键字");
+      return;
+    }
+    for (const key of changedUnsupported) {
+      const before = base[key] as unknown[];
+      const after = current[key] as unknown[];
+      if (isVariantAddition(before, after)) {
+        if (direction === "response") {
+          issue(issues, "breaking", location, "response 联合新增变体（旧客户端可能无法解析）");
+        }
+        continue;
+      }
+      if (before.length !== after.length) {
+        issue(issues, "unknown", location, "受影响 schema 使用了无法安全比较的组合/条件关键字");
+        return;
+      }
+      before.forEach((variant, index) => {
+        compareSchema(
+          baseDocument, currentDocument, variant, after[index], direction,
+          `${location}.${key}[${index}]`, issues, seen,
+        );
+      });
+    }
   }
 
   if (stable(base.type) !== stable(current.type)) {

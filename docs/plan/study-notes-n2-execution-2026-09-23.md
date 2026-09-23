@@ -178,3 +178,14 @@
   `assertV1Kinds` 先拒，该分支按设计不可达，属纵深防御。
 - **仍未裁决**：D1-a（草稿稿次可引用性）、D3-a **签字**（暂定只引用当前评卷）。
   两者签字前不开第 4/5 条链；本链结论不因两者改变。
+- **openapi-breaking 门禁裁决（用户 2026-09-23，选项 A）**：N2 给 `target` / `displaySnapshot`
+  的 `oneOf` 联合纯新增 `assessment` 变体（base 5 → 6，`removed: []` 已核验），原比较器把
+  「组合键自身变化」一律判 UNKNOWN，而 `applyBreakingApproval` 明令 UNKNOWN 不可豁免 → EG 硬红。
+  扩展 `scripts/verify-openapi-breaking.ts`（**只放宽判定精度，不放宽语义**）：
+  - 纯新增变体：request = 放宽（非 breaking）；response = **breaking**（旧客户端可能不认，可豁免）；
+  - 变体数相同：逐位递归（覆盖「变体内嵌联合纯新增」——PUT 请求体 capture 变体内 target 多出评析变体）；
+  - 变体数变少 / 同时动其它组合条件键（not/if/…）/ 非联合键 → **仍 fail-closed UNKNOWN**。
+  补 5 条工具用例（含反向：删变体、变体数变少、条件键并存均仍 UNKNOWN）。
+  按三元组**重锚** `docs/api/openapi-breaking-approval.json`：`baseSha256`=openapi@04abb4f5、
+  `currentSha256`=openapi@HEAD、`issues`=实测 8 条 response 联合新增（无 UNKNOWN 残留）。
+  影响面：本批 8 条均为**响应面新增变体**，v1 客户端按既有 5 型解析不受影响（v1 通道不产出评析引用）。

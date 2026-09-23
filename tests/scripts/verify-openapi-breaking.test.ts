@@ -181,6 +181,92 @@ describe("compareOpenApiDocuments", () => {
     expect(compareOpenApiDocuments(base, structuredClone(base))).toEqual([]);
   });
 
+  // N2（2026-09-23）：联合变体「纯新增」此前一律 UNKNOWN（不可豁免），把可判定
+  // 的加宽/新增与真正无法比较的删改分开——删改仍 fail-closed。
+  describe("联合变体纯新增（N2 口径）", () => {
+    const plain = { type: "object", properties: { id: { type: "string" } } };
+
+    /** 只在 requestBody 里放联合，响应面保持不变。 */
+    function requestOnly(schema: Record<string, unknown>): Record<string, any> {
+      const doc = document(plain);
+      doc.paths["/words"].post.requestBody = { content: { "application/json": { schema } } };
+      return doc;
+    }
+
+    /** 只在 200 响应里放联合，请求面保持不变。 */
+    function responseOnly(schema: Record<string, unknown>): Record<string, any> {
+      const doc = document(plain);
+      doc.paths["/words"].post.responses["200"] = {
+        description: "ok",
+        content: { "application/json": { schema } },
+      };
+      return doc;
+    }
+
+    const variants = (...list: unknown[]) => ({ oneOf: list });
+
+    it("request 方向新增变体 = 放宽，不报 issue", () => {
+      const base = requestOnly(variants({ type: "string" }, { type: "number" }));
+      const current = requestOnly(variants({ type: "string" }, { type: "number" }, { type: "boolean" }));
+      expect(compareOpenApiDocuments(base, current)).toEqual([]);
+    });
+
+    it("response 方向新增变体 = breaking（旧客户端可能不认）", () => {
+      const base = responseOnly(variants({ type: "string" }, { type: "number" }));
+      const current = responseOnly(variants({ type: "string" }, { type: "number" }, { type: "boolean" }));
+      const issues = compareOpenApiDocuments(base, current);
+      expect(issues).toEqual([
+        {
+          kind: "breaking",
+          location: "paths./words.post.responses.200.content.application/json.schema",
+          message: "response 联合新增变体（旧客户端可能无法解析）",
+        },
+      ]);
+    });
+
+    it("变体数变少且非纯新增 → fail-closed UNKNOWN（无法逐位配对）", () => {
+      const base = responseOnly(variants({ type: "string" }, { type: "number" }, { type: "boolean" }));
+      const current = responseOnly(variants({ type: "string" }, { type: "integer" }));
+      const issues = compareOpenApiDocuments(base, current);
+      expect(issues.some((entry) => entry.kind === "unknown" && entry.message.includes("无法安全比较"))).toBe(true);
+    });
+
+    it("等长但变体被改写：逐位递归给出确定判定（type 变化不放行）", () => {
+      const base = requestOnly(variants({ type: "string" }, { type: "number" }));
+      const current = requestOnly(variants({ type: "string" }, { type: "integer" }));
+      const issues = compareOpenApiDocuments(base, current);
+      expect(issues.some((entry) => entry.kind === "unknown")).toBe(false);
+      expect(issues.map((entry) => entry.message)).toContain("schema type 发生变化");
+    });
+
+    // N2 实测场景：PUT /api/l3/study-notes/{noteId} 请求体的 capture 变体内，
+    // target 联合多出评析变体——联合数组本身不是纯新增（变体被改写），但语义是放宽。
+    it("变体内嵌联合纯新增：request 不报、response 报 breaking", () => {
+      const writeUnion = (target: Record<string, unknown>) => ({
+        oneOf: [
+          { type: "object", properties: { action: { type: "string", const: "keep" } }, required: ["action"] },
+          { type: "object", properties: { action: { type: "string", const: "capture" }, target }, required: ["action", "target"] },
+        ],
+      });
+      const narrow = { oneOf: [{ type: "string" }, { type: "number" }] };
+      const wider = { oneOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }] };
+
+      expect(compareOpenApiDocuments(requestOnly(writeUnion(narrow)), requestOnly(writeUnion(wider)))).toEqual([]);
+
+      const issues = compareOpenApiDocuments(responseOnly(writeUnion(narrow)), responseOnly(writeUnion(wider)));
+      expect(issues).toHaveLength(1);
+      expect(issues[0]).toMatchObject({ kind: "breaking", message: "response 联合新增变体（旧客户端可能无法解析）" });
+      expect(issues[0]!.location).toContain(".oneOf[1].properties.target");
+    });
+
+    it("组合键与条件键同时变化 → 仍 fail-closed UNKNOWN（不因纯新增被放行）", () => {
+      const base = requestOnly({ oneOf: [{ type: "string" }], if: { type: "object" } });
+      const current = requestOnly({ oneOf: [{ type: "string" }, { type: "number" }], if: { type: "array" } });
+      const issues = compareOpenApiDocuments(base, current);
+      expect(issues.some((entry) => entry.kind === "unknown" && entry.message.includes("无法安全比较"))).toBe(true);
+    });
+  });
+
   it("组合键自身未变化时不再整体放弃：常规键照常比较（T11 误报剔除）", () => {
     // 模拟 answers 场景：propertyNames 未变、常规键 type 变化 → 应出精准 breaking
     const propertyNames = { type: "string", format: "uuid" };
