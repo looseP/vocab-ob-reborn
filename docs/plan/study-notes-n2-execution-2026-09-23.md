@@ -189,3 +189,43 @@
   按三元组**重锚** `docs/api/openapi-breaking-approval.json`：`baseSha256`=openapi@04abb4f5、
   `currentSha256`=openapi@HEAD、`issues`=实测 8 条 response 联合新增（无 UNKNOWN 残留）。
   影响面：本批 8 条均为**响应面新增变体**，v1 客户端按既有 5 型解析不受影响（v1 通道不产出评析引用）。
+
+## 10. PR #134 审查与 P1 修复纪要（2026-09-23，审查后整改）
+
+**审查**（只读，报告在仓库外 `D:/tmp/n2-review-134/REVIEW-PR134-2026-09-23.md`）：
+head `be97f11` 无漂移、CI 三项全绿、迁移真库 13/13 + 顺序 A/B、comparator 四组变异全红、
+ approval 三元组独立核对一致 —— 但 **Verdict = BLOCKED: P0/P1 found**（P1 两条）。用户裁决：
+**两条 P1 均并入本链修复**，不合并到 main，修完重跑单测与三项 CI 再定。
+
+### P1-1：`resolve()` 装载键与取值键不同源（评析引用恒 `unavailable`）
+
+- 缺陷：`src/services/l3-study-reference.service.ts` 的 `resolve()` 仍按「非 source 即 question」
+  拼装载入参，而取值用 `targetKeyOf(referenceRowToTarget(row))`（评析 → `assessment:<id>`）。
+  仓储按传入 kind 分组（`loadTargets:307-313`）→ 忠实装载下必然取不到 →
+  笔记详情/反向引用（`l3-study-notes.service.ts:851`）与导出（`l3-study-note-export.service.ts:667`）
+  把评析引用状态标成 `unavailable`，导出正文还会渲染「目标已不可用」占位。
+- 修复：装载入参改为 `rows.flatMap((row) => targetRefsOf(referenceRowToTarget(row)))`——
+  与 `capture()/preview()/lockTargets` 同口径（评析同时装载所属题与评析自身）。
+- **根因防线**：`tests/services/l3-study-reference.test.ts` 的替身原先**无条件**按
+  `<kind>:<id>` 建键，掩盖了「装载请求本身就没带正确 kind」。改为**忠实装载**（只返回被请求的
+  target），并新增防复发用例：断言装载请求**含** `{ kind: "assessment", id }`、且状态为 `current`。
+  纪律：装载替身必须忠实，不得无条件造键。
+
+### P1-2：前端未随 P4 显式选版（含评析引用的笔记 UI 导出 422）
+
+- 缺陷：`studyNotesClient.exportNote` 只发 `expectedVersion`，服务端缺省按 v1 冻结面，
+  `assertV1Kinds` 对评析引用 422 → 该笔记从界面**完全导不出**。
+- 修复（**不改服务端合同**：版本仍由调用方显式选择，服务端不替调用方升级，也不做 v2→v1 静默降级）：
+  - `studyNotesClient.exportNote(noteId, expectedVersion, { schemaVersion?, signal? })`：
+    第三参改为 options（原 signal 无调用者），`schemaVersion` 缺省**不发送**该 query；
+  - `flushThenExportNote` input 增 `schemaVersion?`，**原样透传**（不猜、不兜底）；
+  - `useStudyNoteEditor.exportNote` 用新增的 `exportSchemaVersionForReferences()` 判定：
+    出现任何 N1 五种之外（白名单取反）的引用型 → `2`，否则 `1`（读 `referencesMetaRef`，
+    不用快照态，避免 `useCallback([])` 里的 stale）。
+- 新增用例：分流器透传 3 例（含「v2 失败不退回 v1，只请求一次」）、客户端 query 2 例、
+  版本判定 3 例（纯 N1 → 1 / 含评析 → 2 / 空集合 → 1）。
+
+### 未受影响
+
+迁移（0040/0041）、`docs/api/openapi.json`、breaking approval 三元组均未改动，无需重锚。
+受治理层仅 `src/services/l3-study-reference.service.ts` 一处逻辑变更（diff coverage 由 CI 复核）。
