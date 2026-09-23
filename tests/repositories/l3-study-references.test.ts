@@ -58,7 +58,7 @@ describe("replaceForNote", () => {
     await repo.replaceForNote(USER, NOTE, [
       {
         id: REF, kind: "source_quote",
-        source_id: SOURCE, question_id: null, option_key: null,
+        source_id: SOURCE, question_id: null, assessment_id: null, option_key: null,
         start_offset: 0, end_offset: 3, quote_snapshot: "The",
         field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
         captured_at: "2026-09-19T00:00:00.000Z",
@@ -74,7 +74,7 @@ describe("replaceForNote", () => {
     expect(insertCall[1]![1]).toBe(USER);
     const payload = JSON.parse(insertCall[1]![2] as string) as Record<string, unknown>[];
     expect(payload).toEqual([{
-      id: REF, kind: "source_quote", source_id: SOURCE, question_id: null, option_key: null,
+      id: REF, kind: "source_quote", source_id: SOURCE, question_id: null, assessment_id: null, option_key: null,
       start_offset: 0, end_offset: 3, quote_snapshot: "The",
       field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
       captured_at: "2026-09-19T00:00:00.000Z",
