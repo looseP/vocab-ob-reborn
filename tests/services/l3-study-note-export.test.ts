@@ -151,7 +151,7 @@ function optionQuoteSnapshot(optionKey: string, quote: string): ReferenceDisplay
 function refRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
   return {
     id: REF_SOURCE, note_id: NOTE, user_id: USER, kind: "source",
-    source_id: SOURCE, question_id: null, assessment_id: null, option_key: null,
+    source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null, option_key: null,
     start_offset: null, end_offset: null, quote_snapshot: null,
     field_hash: "f".repeat(64), display_snapshot: asJson(sourceSnapshot("来源标题", "来源摘要")),
     captured_at: CAPTURED_AT,
@@ -1406,6 +1406,87 @@ describe("N2 导出 v2（P4 显式版本 · 验收 V-9…V-14）", () => {
 
     expect(error).toBeInstanceOf(ValidationError);
     expect((error as { field?: string }).field).toBe("schemaVersion");
+  });
+});
+
+describe("N2 笔记互链导出（第二条垂直链 · v2 显式选版 / v1 冻结）", () => {
+  const TARGET_NOTE = "00000000-0000-4000-8000-000000000231";
+  const REF_NOTE = "00000000-0000-4000-8000-000000000007";
+
+  function noteRefRow(): L3StudyNoteReferenceRow {
+    return refRow({
+      id: REF_NOTE,
+      kind: "note",
+      source_id: null,
+      question_id: null,
+      assessment_id: null,
+      target_note_id: TARGET_NOTE,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      display_snapshot: asJson({
+        kind: "note",
+        title: "被引用笔记",
+        excerpt: "被引用正文",
+      }),
+    });
+  }
+
+  function fakeWithNoteRef(): FakeRepos {
+    const fake = fakeRepos({ refRows: [noteRefRow()] });
+    const body = ["前言。", "", `[[ref:${REF_NOTE}]]`, "", "后语。"].join("\n");
+    fake.studyNotes.lockForShare = vi.fn(async () => noteRow({ body_md: body })) as never;
+    return fake;
+  }
+
+  async function versionOf(fake: FakeRepos): Promise<number> {
+    const lock = fake.studyNotes.lockForShare as unknown as () => Promise<{ version: number }>;
+    const note = await lock();
+    return note.version;
+  }
+
+  it("v2：note 引用 target 带 kind 判别且只含 noteId（不递归展开目标笔记内部引用）", async () => {
+    const fake = fakeWithNoteRef();
+    const result = await makeService(fake).export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 2,
+    });
+
+    expect(result.schemaVersion).toBe(2);
+    const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+    expect(payload.references[0].kind).toBe("note");
+    expect(payload.references[0].target).toEqual({ kind: "note", noteId: TARGET_NOTE });
+    // 只展开一层：快照不得携带目标笔记自身的引用集合
+    expect(payload.references[0].displaySnapshot).toEqual({
+      kind: "note",
+      title: "被引用笔记",
+      excerpt: "被引用正文",
+    });
+    expect(payload.references[0].displaySnapshot).not.toHaveProperty("references");
+  });
+
+  it("v1：含 note 引用的笔记显式请求 v1 → 422，不静默切版、不丢引用", async () => {
+    const fake = fakeWithNoteRef();
+    const error = await makeService(fake)
+      .export(USER, NOTE, { expectedVersion: await versionOf(fake), schemaVersion: 1 })
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as { field?: string }).field).toBe("schemaVersion");
+  });
+
+  it("v1 通道不受影响：纯 N1 引用仍按冻结形状导出（升级不改 v1）", async () => {
+    const fake = fakeRepos({ refRows: [refRow()] });
+    const body = ["第一段。", "", `[[ref:${REF_SOURCE}]]`, "", "第二段。"].join("\n");
+    fake.studyNotes.lockForShare = vi.fn(async () => noteRow({ body_md: body })) as never;
+    const result = await makeService(fake).export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 1,
+    });
+
+    expect(result.schemaVersion).toBe(1);
+    const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+    expect(payload.references[0].target).toEqual({ sourceId: SOURCE });
   });
 });
 

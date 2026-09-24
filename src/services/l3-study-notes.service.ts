@@ -134,6 +134,9 @@ export function canonicalTarget(target: ReferenceTarget): Record<string, unknown
         end: target.end,
         quote: target.quote,
       };
+    // N2 第二条链：笔记目标身份就是目标笔记自身 id（不按标题/序号兜底）。
+    case "note":
+      return { kind: "note", noteId: target.noteId.toLowerCase() };
     // N2：评析标识为「具体评析行」，不按题兜底。
     case "assessment":
       return {
@@ -812,6 +815,7 @@ export class L3StudyNoteService {
           source_id: existing.source_id,
           question_id: existing.question_id,
           assessment_id: existing.assessment_id,
+          target_note_id: existing.target_note_id,
           option_key: existing.option_key,
           start_offset: existing.start_offset,
           end_offset: existing.end_offset,
@@ -821,6 +825,14 @@ export class L3StudyNoteService {
           captured_at: existing.captured_at,
         });
       } else {
+        // N2 第二条链：禁止自引用。数据库另有 CHECK 兜底（`target_note_id <> note_id`），
+        // 这里先给出可读的 422——否则会撞 CHECK 变成 500。UUID 按 F5 规范化比较。
+        if (
+          write.target.kind === "note" &&
+          normalizeStudyUuid(write.target.noteId) === normalizeStudyUuid(noteId)
+        ) {
+          throw new ValidationError("笔记不能引用自身", "references");
+        }
         const key = targetKeyOf(write.target);
         const target = loaded.get(key);
         if (!target) {

@@ -103,6 +103,8 @@ function referenceSummary(meta: ReferencePreview): string {
       return `选项 ${snapshot.optionKey}「${snapshot.quote}」`;
     case "assessment":
       return `评析「${snapshot.excerpt}」`;
+    case "note":
+      return `笔记「${snapshot.title}」`;
   }
 }
 

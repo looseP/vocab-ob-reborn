@@ -62,6 +62,9 @@ function targetIdentityKey(target: ReferenceTarget | null): string | null {
     // N2：评析身份是具体评析行（assessmentId），不能退化成只按题目判等。
     case "assessment":
       return `assessment:${target.assessmentId}`;
+    // N2 第二条链：笔记身份就是目标笔记 id，不按标题判等（标题可改）。
+    case "note":
+      return `note:${target.noteId}`;
   }
 }
 
@@ -80,6 +83,8 @@ function previewSummary(preview: ReferenceTargetPreview): string {
       return `选项 ${snapshot.optionKey}「${snapshot.quote}」`;
     case "assessment":
       return `评析「${snapshot.excerpt}」`;
+    case "note":
+      return `笔记「${snapshot.title}」`;
   }
 }
 

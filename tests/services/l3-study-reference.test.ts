@@ -87,7 +87,7 @@ function makeService(repos: StudyReferenceRepos): L3StudyReferenceService {
 function refRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
   return {
     id: REF, note_id: "n", user_id: USER, kind: "stem_quote", source_id: null, question_id: QUESTION,
-    assessment_id: null, option_key: null, start_offset: 0, end_offset: 4, quote_snapshot: "What",
+    assessment_id: null, target_note_id: null, option_key: null, start_offset: 0, end_offset: 4, quote_snapshot: "What",
     field_hash: sha256Hex("What does the fox do?"), display_snapshot: { kind: "stem_quote" },
     captured_at: "2026-09-19T00:00:00Z",
     ...overrides,
@@ -650,5 +650,169 @@ describe("N2 评析引用（第一条垂直链 · 验收 V-4/V-5/V-6/V-7）", ()
     expect(preview.status).toBe("current");
     const requested = (repos.studyReferences.loadTargets as ReturnType<typeof vi.fn>).mock.calls[0][1];
     expect(requested).toEqual(expect.arrayContaining([{ kind: "assessment", id: ASSESSMENT }]));
+  });
+});
+
+describe("N2 笔记互链（第二条垂直链 · note 引用型）", () => {
+  const TARGET_NOTE = "00000000-0000-4000-8000-000000000231";
+  const OTHER_USER = "00000000-0000-4000-8000-0000000000b2";
+
+  const NOTE_TARGET = {
+    kind: "note",
+    id: TARGET_NOTE,
+    title: "被引用笔记",
+    body_md: "被引用正文：一句话。",
+    status: "active",
+  } as const;
+
+  const target = { kind: "note", noteId: TARGET_NOTE } as const;
+
+  /**
+   * **带归属**的忠实装载替身：真实 SQL 用 `WHERE user_id = $1` 限定属主，
+   * 所以替身也必须按 userId 过滤——否则「跨用户不可见」这条合同在单测里
+   * 永远测不出来（宽松 mock 掩盖真实缺陷，与 P1-1 同款教训）。
+   */
+  function ownedRepos(owner: string, targets: readonly LoadedTarget[]): StudyReferenceRepos {
+    return {
+      studyReferences: {
+        listForNote: vi.fn(),
+        replaceForNote: vi.fn(),
+        searchTargets: vi.fn(),
+        loadTargets: vi.fn(async (userId: string, requested: readonly { kind: string; id: string }[]) =>
+          userId === owner ? loadedMap(requested, targets) : new Map<string, LoadedTarget>(),
+        ),
+        lockTargets: vi.fn(),
+        listBacklinks: vi.fn(),
+        getSourceDeleteBlockers: vi.fn(),
+        getQuestionDeleteBlockers: vi.fn(),
+      } as unknown as StudyReferenceRepos["studyReferences"],
+    };
+  }
+
+  function noteRefRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
+    return refRow({
+      kind: "note",
+      source_id: null,
+      question_id: null,
+      assessment_id: null,
+      target_note_id: TARGET_NOTE,
+      option_key: null,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      field_hash: sha256Hex(JSON.stringify({ title: NOTE_TARGET.title, bodyMd: NOTE_TARGET.body_md })),
+      display_snapshot: { kind: "note", title: "被引用笔记", excerpt: "被引用正文：一句话。" },
+      ...overrides,
+    } as Partial<L3StudyNoteReferenceRow>);
+  }
+
+  it("capture：hash 输入写死为服务端存储的标题+正文；target 落 target_note_id，其余 target 列全 null", async () => {
+    const repos = fakeRepos([NOTE_TARGET]);
+    const row = await makeService(repos).capture(USER, { id: REF, target }, repos);
+
+    expect(row.kind).toBe("note");
+    expect((row as { target_note_id: string | null }).target_note_id).toBe(TARGET_NOTE);
+    expect(row.source_id).toBeNull();
+    expect(row.question_id).toBeNull();
+    expect(row.assessment_id).toBeNull();
+    expect(row.field_hash).toBe(
+      sha256Hex(JSON.stringify({ title: "被引用笔记", bodyMd: "被引用正文：一句话。" })),
+    );
+    expect(row.display_snapshot).toEqual({
+      kind: "note",
+      title: "被引用笔记",
+      excerpt: "被引用正文：一句话。",
+    });
+  });
+
+  it("capture：快照摘录沿用现有摘录上限（280）且不切代理对", async () => {
+    const long = "字".repeat(400);
+    const repos = fakeRepos([{ ...NOTE_TARGET, body_md: long }]);
+    const row = await makeService(repos).capture(USER, { id: REF, target }, repos);
+
+    const snapshot = row.display_snapshot as { excerpt: string };
+    expect(snapshot.excerpt.length).toBe(280);
+    // hash 仍取完整正文（摘录只影响展示，不影响 changed 判定）
+    expect(row.field_hash).toBe(sha256Hex(JSON.stringify({ title: "被引用笔记", bodyMd: long })));
+  });
+
+  it("capture：目标笔记已归档 → 404（只有 active 才能新建引用）", async () => {
+    const repos = fakeRepos([{ ...NOTE_TARGET, status: "archived" }]);
+    await expect(makeService(repos).capture(USER, { id: REF, target }, repos)).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+
+  it("capture：他人笔记 → 404（装载按 user_id 过滤，不按当前用户兜底）", async () => {
+    const repos = ownedRepos(USER, [NOTE_TARGET]);
+    await expect(
+      makeService(repos).capture(OTHER_USER, { id: REF, target }, repos),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("resolve 装载键与取值键同源：note 引用在忠实装载下为 current（防 P1-1 复发）", async () => {
+    const row = noteRefRow();
+    const repos = fakeRepos([NOTE_TARGET]);
+    const [preview] = await makeService(repos).resolve(USER, [row], repos);
+
+    expect(preview.status).toBe("current");
+    expect(preview.target).toEqual({ kind: "note", noteId: TARGET_NOTE });
+    const requested = (repos.studyReferences.loadTargets as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(requested).toEqual(expect.arrayContaining([{ kind: "note", id: TARGET_NOTE }]));
+  });
+
+  it("目标改名/改正文 → resolve 转 changed，且快照三件套逐字节不变（快照不可变）", async () => {
+    const row = noteRefRow();
+    const before = JSON.stringify([row.display_snapshot, row.captured_at, row.field_hash]);
+
+    // 正文已改：标题不变、正文变
+    const repos = fakeRepos([{ ...NOTE_TARGET, body_md: "被引用正文：改写了。" }]);
+    const [preview] = await makeService(repos).resolve(USER, [row], repos);
+
+    expect(preview.status).toBe("changed");
+    // 快照仍是引用当时那份，不按当前正文回套
+    expect(preview.displaySnapshot).toEqual({ kind: "note", title: "被引用笔记", excerpt: "被引用正文：一句话。" });
+    expect(JSON.stringify([preview.displaySnapshot, preview.capturedAt, row.field_hash])).toBe(before);
+  });
+
+  it("目标之后归档 → 仍按快照 hash 解析为 current（不撤销引用、不转 unavailable）", async () => {
+    const row = noteRefRow();
+    const repos = fakeRepos([{ ...NOTE_TARGET, status: "archived" }]);
+    const [preview] = await makeService(repos).resolve(USER, [row], repos);
+
+    expect(preview.status).toBe("current");
+    expect(preview.liveTitle).toBe("被引用笔记");
+  });
+
+  it("目标被他人持有 → resolve 转 unavailable（跨用户不可见）", async () => {
+    const row = noteRefRow();
+    const repos = ownedRepos(USER, [NOTE_TARGET]);
+    const [preview] = await makeService(repos).resolve(OTHER_USER, [row], repos);
+
+    expect(preview.status).toBe("unavailable");
+    expect(preview.liveTitle).toBeNull();
+  });
+
+  it("currentFieldText：note 的 hash 字段文本就是 {title, bodyMd} 固定键序", () => {
+    expect(currentFieldText("note", null, NOTE_TARGET)).toBe(
+      JSON.stringify({ title: "被引用笔记", bodyMd: "被引用正文：一句话。" }),
+    );
+    // 交叉防御：note target 配非 note kind → null
+    expect(currentFieldText("source", null, NOTE_TARGET)).toBeNull();
+  });
+
+  it("preview：只读预览 note 目标（快照与 capture 同口径，不持久化）", async () => {
+    const repos = fakeRepos([NOTE_TARGET]);
+    const { preview } = await makeService(repos).preview(USER, target);
+
+    expect(preview.target).toEqual({ kind: "note", noteId: TARGET_NOTE });
+    expect(preview.displaySnapshot).toEqual({
+      kind: "note",
+      title: "被引用笔记",
+      excerpt: "被引用正文：一句话。",
+    });
+    expect(preview.liveTitle).toBe("被引用笔记");
+    // 零写：预览不得触碰 replaceForNote
+    expect(repos.studyReferences.replaceForNote).not.toHaveBeenCalled();
   });
 });

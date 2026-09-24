@@ -46455,6 +46455,25 @@
                                       "assessmentId"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "note"
+                                      },
+                                      "noteId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "noteId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -46700,6 +46719,27 @@
                                       "excerpt",
                                       "questionType",
                                       "sourceTitle"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "note"
+                                      },
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "excerpt": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "title",
+                                      "excerpt"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -48349,6 +48389,25 @@
                                 "assessmentId"
                               ],
                               "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "note"
+                                },
+                                "noteId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "noteId"
+                              ],
+                              "additionalProperties": false
                             }
                           ]
                         },
@@ -48583,6 +48642,27 @@
                                 "excerpt",
                                 "questionType",
                                 "sourceTitle"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "note"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "excerpt": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "title",
+                                "excerpt"
                               ],
                               "additionalProperties": false
                             }
@@ -49901,6 +49981,25 @@
                                       "assessmentId"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "note"
+                                      },
+                                      "noteId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "noteId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -50146,6 +50245,27 @@
                                       "excerpt",
                                       "questionType",
                                       "sourceTitle"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "note"
+                                      },
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "excerpt": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "title",
+                                      "excerpt"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -51039,6 +51159,25 @@
                                       "assessmentId"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "note"
+                                      },
+                                      "noteId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "noteId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -51284,6 +51423,27 @@
                                       "excerpt",
                                       "questionType",
                                       "sourceTitle"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "note"
+                                      },
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "excerpt": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "title",
+                                      "excerpt"
                                     ],
                                     "additionalProperties": false
                                   }

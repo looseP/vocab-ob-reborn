@@ -367,6 +367,8 @@ function cloneTarget(target: ReferenceTarget): ReferenceTarget {
         questionId: target.questionId,
         assessmentId: target.assessmentId,
       };
+    case "note":
+      return { kind: "note", noteId: target.noteId };
   }
 }
 
