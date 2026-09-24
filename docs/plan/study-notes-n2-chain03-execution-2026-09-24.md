@@ -345,3 +345,32 @@ side-panel `6 passed (21.5s)`；export `5 passed (23.0s)`）。
 
 本链创建 draft PR 后即停止：**不转 ready、不合并、不部署**；不启动 N2 第四、第五条链；
 不处理 #129。独立审查与单独合并授权前保持 draft。
+
+## 12. 审查结论与观察登记（2026-09-24）
+
+**审查结论（独立审查者）**：**无 P0、无 P1，建议合并（READY FOR MERGE）**。确认点：
+
+- 0043/0044 迁移顺序、复合 FK、CHECK、索引与 RLS 护栏符合合同；
+- `sheet` 仅允许 sealed，writing 稿次校验 `revisionNo`；`attempt` 仅按 `attemptId` 装载；
+- attempt 删除先加锁、查询 blocker，再决定软删，409 payload 与既有合同一致；
+- v1 对新类型继续 422，v2 schema 与快照白名单包含 `sheet`/`attempt`；
+- 解析逻辑使用同源 target key，软删 attempt 保留快照并返回 `unavailable`；
+- 本地 `npm run typecheck` exit 0，`git diff --check` 通过，工作区 clean。
+
+**非阻塞观察（P3，本链不处理，登记后续项）**
+
+| 编号 | 观察 | 处置 |
+|---|---|---|
+| P3-R1 | `targetKeyOf(sheet)` 只含 `submissionId`，`revisionNo` 由 capture 校验并纳入 hash；**resolve 侧缺一条 revision 不匹配回归测试** | 登记为 chain03 后续项；属测试加固，不改行为，不阻塞本链 |
+| P3-R2 | HTTP 409 用例 mock 了 service，真实删除顺序由 service 测试覆盖；**可补一条更接近生产装配的链路测试** | 登记为 chain03 后续项；本链 service 层已有真实顺序断言，不阻塞 |
+| P3-R3 | 审查者本机 Vitest 受 `node_modules/.vite-temp` Windows `EPERM` 阻止启动 | **环境问题，非代码失败**；与 §7.0.4 E-6 同类，以 CI 证据为准（本链三项必需检查全绿） |
+
+**远端只读核验补证（2026-09-24，审查者因网络凭据未能自查，由实现方代查，只读）**
+
+- PR #136：`headRefOid=8925b8291fe00d5bfc6c9b01727cc09522867880`（= 本地 HEAD）、`isDraft=true`、
+  `state=OPEN`、`mergeable=MERGEABLE`、`reviews=[]`（审查为线下进行，无 GitHub review 记录）；
+- CI（同一 head `8925b82`）：`CI` run `35981670021` success（内含 Engineering Gate + Migration Rehearsal、
+  Browser E2E 两 job 均 success）、`Writing E2E` run `35981670033` success。
+
+**状态**：审查结论为「建议合并」，但**单独合并授权尚未发出**——按 §11 纪律，本提交仅做观察登记，
+不转 ready、不合并、不部署。等待单独合并授权指令。
