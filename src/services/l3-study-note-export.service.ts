@@ -272,6 +272,21 @@ export function projectDisplaySnapshot(
         title: asTextField(raw["title"], "title", referenceId),
         excerpt: asTextField(raw["excerpt"], "excerpt", referenceId),
       };
+    // N2 第三条链：稿次快照按白名单显式重建（只留 scope + 小结摘录）。
+    // `answers` / 评卷字段在**源头上就不在白名单里**，这里显式重建等于第二道防线。
+    case "sheet":
+      return {
+        kind: "sheet",
+        scope: asTextField(raw["scope"], "scope", referenceId),
+        summaryExcerpt: asTextField(raw["summaryExcerpt"], "summaryExcerpt", referenceId),
+      };
+    // N2 第三条链：作答快照按白名单显式重建（只留 venue + 作答摘录）。
+    case "attempt":
+      return {
+        kind: "attempt",
+        venue: asTextField(raw["venue"], "venue", referenceId),
+        answerExcerpt: asTextField(raw["answerExcerpt"], "answerExcerpt", referenceId),
+      };
     default:
       throw new ValidationError("引用快照 kind 非法", "displaySnapshot");
   }
