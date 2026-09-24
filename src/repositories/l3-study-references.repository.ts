@@ -29,6 +29,12 @@ export interface NewL3StudyNoteReference {
   assessment_id: string | null;
   /** N2 第二条链：笔记互链（`kind='note'`）的目标笔记行，其余 kind 恒 null。 */
   target_note_id: string | null;
+  /** N2 第三条链：sheet 引用（`kind='sheet'`）的目标稿次行，其余 kind 恒 null。 */
+  submission_id: string | null;
+  /** N2 第三条链：writing 稿次的 revision 半片身份；非 writing 恒 null。 */
+  submission_revision_no: number | null;
+  /** N2 第三条链：attempt 引用（`kind='attempt'`）的目标作答行，其余 kind 恒 null。 */
+  attempt_id: string | null;
   option_key: string | null;
   start_offset: number | null;
   end_offset: number | null;
@@ -55,6 +61,9 @@ export interface L3StudyNoteReferenceRow {
   question_id: string | null;
   assessment_id: string | null;
   target_note_id: string | null;
+  submission_id: string | null;
+  submission_revision_no: number | null;
+  attempt_id: string | null;
   option_key: string | null;
   start_offset: number | null;
   end_offset: number | null;
@@ -64,7 +73,13 @@ export interface L3StudyNoteReferenceRow {
   captured_at: string;
 }
 
-export type ReferenceTargetKind = "source" | "question" | "assessment" | "note" | "attempt";
+export type ReferenceTargetKind =
+  | "source"
+  | "question"
+  | "assessment"
+  | "note"
+  | "sheet"
+  | "attempt";
 
 export interface LoadedSourceTarget {
   kind: "source";
@@ -115,11 +130,46 @@ export interface LoadedNoteTarget {
   status: string;
 }
 
+/**
+ * N2 第三条链：sheet 目标（`l3_submissions` 的 sealed 稿次）。
+ *
+ * 装载**只取 `status='sealed'`**（D1-a / K1）：draft / discarded 不是合法目标，
+ * 直接取不到 → 404（不是 409）。`status` 仍随行带出，capture 侧再断言一次，
+ * 防止日后放宽装载条件时 draft 被静默认为稳定身份（K2）。
+ *
+ * 白名单字段刻意**不含** `answers`（用户作答内容）与任何评卷列（K7 / K14）。
+ */
+export interface LoadedSheetTarget {
+  kind: "sheet";
+  id: string;
+  scope: string;
+  status: string;
+  revision_no: number | null;
+  summary: string | null;
+}
+
+/**
+ * N2 第三条链：attempt 目标（`l3_question_attempts` 的作答记录）。
+ *
+ * 装载**只取 `status='active'`**（K10）：软删行取不到 → 已存引用按 `unavailable`
+ * 呈现并保留快照；capture 也因此无法新建对已删 attempt 的引用。
+ * `answer` 是 attempt 自有作答（attempt 表无判定列），不含标准答案 / 解析。
+ */
+export interface LoadedAttemptTarget {
+  kind: "attempt";
+  id: string;
+  venue: string;
+  answer: unknown;
+  status: string;
+}
+
 export type LoadedTarget =
   | LoadedSourceTarget
   | LoadedQuestionTarget
   | LoadedAssessmentTarget
-  | LoadedNoteTarget;
+  | LoadedNoteTarget
+  | LoadedSheetTarget
+  | LoadedAttemptTarget;
 
 export interface StudySourceTargetRow {
   id: string;
@@ -243,6 +293,9 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
       question_id: row.question_id,
       assessment_id: row.assessment_id,
       target_note_id: row.target_note_id,
+      submission_id: row.submission_id,
+      submission_revision_no: row.submission_revision_no,
+      attempt_id: row.attempt_id,
       option_key: row.option_key,
       start_offset: row.start_offset,
       end_offset: row.end_offset,
@@ -253,12 +306,15 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     }));
     await this.query(
       `INSERT INTO l3_study_note_references
-         (id, note_id, user_id, kind, source_id, question_id, assessment_id, target_note_id, option_key,
+         (id, note_id, user_id, kind, source_id, question_id, assessment_id, target_note_id,
+          submission_id, submission_revision_no, attempt_id, option_key,
           start_offset, end_offset, quote_snapshot, field_hash, display_snapshot, captured_at)
-       SELECT x.id, $1::uuid, $2::uuid, x.kind, x.source_id, x.question_id, x.assessment_id, x.target_note_id, x.option_key,
+       SELECT x.id, $1::uuid, $2::uuid, x.kind, x.source_id, x.question_id, x.assessment_id, x.target_note_id,
+              x.submission_id, x.submission_revision_no, x.attempt_id, x.option_key,
               x.start_offset, x.end_offset, x.quote_snapshot, x.field_hash, x.display_snapshot, x.captured_at
          FROM jsonb_to_recordset($3::jsonb) AS x(
-           id uuid, kind text, source_id uuid, question_id uuid, assessment_id uuid, target_note_id uuid, option_key text,
+           id uuid, kind text, source_id uuid, question_id uuid, assessment_id uuid, target_note_id uuid,
+           submission_id uuid, submission_revision_no integer, attempt_id uuid, option_key text,
            start_offset integer, end_offset integer, quote_snapshot text,
            field_hash text, display_snapshot jsonb, captured_at timestamptz
          )`,
@@ -278,6 +334,11 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     // 调用方改走既有的 GET /study-notes?q= 列表选取目标笔记，不在这里另起一套搜索面。
     if (input.kind === "note") {
       throw new ValidationError("笔记目标不支持搜索", "kind");
+    }
+    // N2 第三条链：sheet / attempt 同样不作为搜索目标（fail-closed）。
+    // 本链**不新增**搜索面——HTTP 查询枚举仍只有 source/question（R-2 同款纪律）。
+    if (input.kind === "sheet" || input.kind === "attempt") {
+      throw new ValidationError("该目标型不支持搜索", "kind");
     }
 
     const params: unknown[] = [input.userId];
@@ -348,6 +409,8 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     const questionIds = [...new Set(targets.filter((t) => t.kind === "question").map((t) => t.id))];
     const assessmentIds = [...new Set(targets.filter((t) => t.kind === "assessment").map((t) => t.id))];
     const noteIds = [...new Set(targets.filter((t) => t.kind === "note").map((t) => t.id))];
+    const submissionIds = [...new Set(targets.filter((t) => t.kind === "sheet").map((t) => t.id))];
+    const attemptIds = [...new Set(targets.filter((t) => t.kind === "attempt").map((t) => t.id))];
 
     if (sourceIds.length > 0) {
       const rows = await this.query<{ id: string; title: string; content_text: string | null }>(
@@ -452,6 +515,62 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
         });
       }
     }
+
+    if (submissionIds.length > 0) {
+      // N2 第三条链：sheet 目标白名单只取 id/scope/status/revision_no/summary。
+      // **只装载 sealed**（D1-a / K1）：draft / discarded 不是合法目标，取不到即
+      // 404（不是 409）。刻意**不取** `answers`（用户作答内容）与任何评卷列（K7）。
+      // 不 JOIN、不按 writing task / parent sheet / 题目兜底（K5）。
+      const rows = await this.query<{
+        id: string;
+        scope: string;
+        status: string;
+        revision_no: number | null;
+        summary: string | null;
+      }>(
+        `SELECT id, scope, status, revision_no, summary FROM l3_submissions
+          WHERE user_id = $1::uuid AND id = ANY($2::uuid[])
+            AND status = 'sealed'`,
+        [userId, submissionIds],
+      );
+      for (const row of rows) {
+        map.set(`sheet:${row.id}`, {
+          kind: "sheet",
+          id: row.id,
+          scope: row.scope,
+          status: row.status,
+          revision_no: row.revision_no,
+          summary: row.summary,
+        });
+      }
+    }
+
+    if (attemptIds.length > 0) {
+      // N2 第三条链：attempt 目标白名单只取 id/venue/answer/status。
+      // **只装载 active**（K10）：软删行取不到 → 已存引用按 unavailable 呈现，
+      // 也无法新建对已删 attempt 的引用。attempt 表无判定列（verdict 真源在
+      // l3_grading_results），故 answer 不含标准答案/解析（K7 / K14）。
+      const rows = await this.query<{
+        id: string;
+        venue: string;
+        answer: unknown;
+        status: string;
+      }>(
+        `SELECT id, venue, answer, status FROM l3_question_attempts
+          WHERE user_id = $1::uuid AND id = ANY($2::uuid[])
+            AND status = 'active'`,
+        [userId, attemptIds],
+      );
+      for (const row of rows) {
+        map.set(`attempt:${row.id}`, {
+          kind: "attempt",
+          id: row.id,
+          venue: row.venue,
+          answer: row.answer,
+          status: row.status,
+        });
+      }
+    }
     return map;
   }
 
@@ -468,8 +587,11 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     // 服务层对评析目标会同时给出所属 question 键，两把锁合起来覆盖「capture × 级联删」。
     const assessmentIds = [...new Set(targets.filter((t) => t.kind === "assessment").map((t) => normalizeStudyUuid(t.id)))].sort();
     const noteIds = [...new Set(targets.filter((t) => t.kind === "note").map((t) => normalizeStudyUuid(t.id)))].sort();
-    // N2 第三条链：attempt 软删端点真实存在，capture 与软删必须共用同一把
-    // `l3_attempt:<id>` 事务级锁，否则「引用刚写入 / 软删刚执行」会漏过预检。
+    // N2 第三条链（K17）：sheet 用 `l3_submission:<id>`、attempt 用 `l3_attempt:<id>`。
+    // attempt 软删端点真实存在，capture 与软删必须共用 `l3_attempt:<id>`，
+    // 否则「引用刚写入 / 软删刚执行」会漏过预检。sheet 侧当前没有删除端点
+    // （sealed 不可弃），这把锁是同款串行化准备，不依赖任何尚不存在的路径。
+    const submissionIds = [...new Set(targets.filter((t) => t.kind === "sheet").map((t) => normalizeStudyUuid(t.id)))].sort();
     const attemptIds = [...new Set(targets.filter((t) => t.kind === "attempt").map((t) => normalizeStudyUuid(t.id)))].sort();
 
     if (sourceIds.length > 0) {
@@ -501,6 +623,11 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
         `l3_study_note:${noteId}`,
       ]);
     }
+    for (const submissionId of submissionIds) {
+      await this.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `l3_submission:${submissionId}`,
+      ]);
+    }
     for (const attemptId of attemptIds) {
       await this.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
         `l3_attempt:${attemptId}`,
@@ -515,7 +642,11 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
         ? "r.source_id"
         : input.targetKind === "note"
           ? "r.target_note_id"
-          : "r.question_id";
+          : input.targetKind === "sheet"
+            ? "r.submission_id"
+            : input.targetKind === "attempt"
+              ? "r.attempt_id"
+              : "r.question_id";
     const filters = [`r.user_id = $1::uuid`, `${targetColumn} = $2::uuid`];
     if (!input.includeArchived) filters.push(`n.status = 'active'`);
     const fromWhere = `

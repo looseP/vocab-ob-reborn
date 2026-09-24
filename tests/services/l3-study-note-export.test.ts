@@ -151,7 +151,8 @@ function optionQuoteSnapshot(optionKey: string, quote: string): ReferenceDisplay
 function refRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
   return {
     id: REF_SOURCE, note_id: NOTE, user_id: USER, kind: "source",
-    source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null, option_key: null,
+    source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null,
+    submission_id: null, submission_revision_no: null, attempt_id: null, option_key: null,
     start_offset: null, end_offset: null, quote_snapshot: null,
     field_hash: "f".repeat(64), display_snapshot: asJson(sourceSnapshot("来源标题", "来源摘要")),
     captured_at: CAPTURED_AT,

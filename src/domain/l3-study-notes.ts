@@ -59,6 +59,15 @@ export const STUDY_ASSESSMENT_EXCERPT_MAX = 280;
  * `STUDY_SNAPSHOT_BYTES_MAX` 兜底。
  */
 export const STUDY_NOTE_EXCERPT_MAX = 280;
+/**
+ * N2 第三条链：sheet（sealed 稿次）展示快照的摘录上限。
+ *
+ * 沿用同一量级（280）——不新增存储限制、不改动 `STUDY_NOTE_BODY_MAX` 与
+ * `STUDY_SNAPSHOT_BYTES_MAX`（K13）。
+ */
+export const STUDY_SHEET_EXCERPT_MAX = 280;
+/** N2 第三条链：attempt（作答记录）展示快照的摘录上限（同量级 280）。 */
+export const STUDY_ATTEMPT_EXCERPT_MAX = 280;
 
 // ── 枚举（单一真源；与 DB CHECK 同步）───────────────────────────────────────
 
@@ -75,6 +84,9 @@ export type StudyTopicStatus = (typeof STUDY_TOPIC_STATUSES)[number];
  * 不引入自由 JSON。评析是 `UNIQUE(user_id, question_id)` 的 latest-wins 记录
  * （任务书 §5.1 D3-1），因此 target 必须同时带 questionId 与 assessmentId——
  * 后者才是可被核验的具体身份，只允许 questionId 会退化成「引用某题的当前评析」。
+ *
+ * N2 第二条链新增 `note`（笔记互链）；第三条链新增 `sheet`（= `l3_submissions`
+ * 的 **sealed** 稿次）与 `attempt`（= `l3_question_attempts` 的作答记录）。
  */
 export const REFERENCE_KINDS = [
   "source",
@@ -84,6 +96,8 @@ export const REFERENCE_KINDS = [
   "option_quote",
   "assessment",
   "note",
+  "sheet",
+  "attempt",
 ] as const;
 export type ReferenceKind = (typeof REFERENCE_KINDS)[number];
 
@@ -124,7 +138,23 @@ export type ReferenceTarget =
    * 身份就是目标笔记自身 id——不按标题、不按展示序号、不按专题位置兜底。
    * 只允许引用**当前用户且 active** 的目标；目标之后归档不撤销引用。
    */
-  | { kind: "note"; noteId: string };
+  | { kind: "note"; noteId: string }
+  /**
+   * N2 第三条链：sheet = `l3_submissions` 的 **sealed 稿次**（D1-a / K1）。
+   *
+   * 身份遵循 K3：writing 稿次 = `{ submissionId, revisionNo }`（`revisionNo` 必填
+   * 且 >0）；非 writing（file / paper）= `{ submissionId }`，`revisionNo` 为 NULL。
+   * `draft_version` 不进身份（K4），也不按 writing task / parent sheet / 题目 /
+   * 最近一次稿次兜底匹配（K5）。
+   */
+  | { kind: "sheet"; submissionId: string; revisionNo?: number | null }
+  /**
+   * N2 第三条链：attempt = `l3_question_attempts` 的作答记录。
+   *
+   * 身份是 `{ attemptId }` **单值**（K9）——不拼 question / sheet / venue，也不存在
+   * 「按题目找最新一次 attempt」的回退路径。
+   */
+  | { kind: "attempt"; attemptId: string };
 
 /** 前端构建 capture 载荷用（与 ReferenceWrite 的 capture 分支同构）。 */
 export interface ReferenceInput {
@@ -211,6 +241,29 @@ export interface NoteReferenceSnapshot {
   excerpt: string;
 }
 
+/**
+ * N2 第三条链：sheet 引用快照 = `{ scope, summaryExcerpt }`（K14）。
+ *
+ * **不含** `answers`、题目答案 / 解析 / evidence，也不含任何评卷字段（K7）。
+ */
+export interface SheetReferenceSnapshot {
+  kind: "sheet";
+  scope: string;
+  summaryExcerpt: string;
+}
+
+/**
+ * N2 第三条链：attempt 引用快照 = `{ venue, answerExcerpt }`（K14）。
+ *
+ * `answerExcerpt` 是 attempt 自有作答 JSON 的规范化文本截断；attempt 行不可变
+ * （K12），故 `changed` 不可达。
+ */
+export interface AttemptReferenceSnapshot {
+  kind: "attempt";
+  venue: string;
+  answerExcerpt: string;
+}
+
 export type ReferenceDisplaySnapshot =
   | SourceReferenceSnapshot
   | SourceQuoteReferenceSnapshot
@@ -218,7 +271,9 @@ export type ReferenceDisplaySnapshot =
   | StemQuoteReferenceSnapshot
   | OptionQuoteReferenceSnapshot
   | AssessmentReferenceSnapshot
-  | NoteReferenceSnapshot;
+  | NoteReferenceSnapshot
+  | SheetReferenceSnapshot
+  | AttemptReferenceSnapshot;
 
 /** 引用预览（详情/导出/反向引用共用；不泄露 service 端 hash 与请求键）。 */
 export interface ReferencePreview {
@@ -443,8 +498,11 @@ const quoteFields = {
 };
 
 /**
- * 引用目标（设计 §3）。五种 kind 严格枚举：
- * source / source_quote / question / stem_quote / option_quote。
+ * 引用目标（设计 §3）。严格枚举（N1 五种 + N2 评析 / 笔记 / sheet / attempt）。
+ *
+ * 判别式 union `.strict()`：新两型同样**不**接受其它型的字段——sheet 不得夹带
+ * questionId / attemptId，attempt 不得夹带 questionId / submissionId（K5 / K9
+ * 无身份兜底）。
  */
 export const referenceTargetSchema = z
   .discriminatedUnion("kind", [
@@ -480,6 +538,17 @@ export const referenceTargetSchema = z
         assessmentId: z.string().uuid(),
       })
       .strict(),
+    // N2 第三条链：sheet（sealed 稿次）。revisionNo 仅 writing 稿次携带且必须 >0
+    // （DB `revision_no_check` 同口径）；非 writing 省略或显式 null。
+    z
+      .object({
+        kind: z.literal("sheet"),
+        submissionId: z.string().uuid(),
+        revisionNo: z.number().int().positive().nullable().optional(),
+      })
+      .strict(),
+    // N2 第三条链：attempt（作答记录）——单值身份，不拼 question / sheet / venue。
+    z.object({ kind: z.literal("attempt"), attemptId: z.string().uuid() }).strict(),
   ])
   .superRefine((value, ctx) => {
     if ("start" in value && "end" in value && value.end <= value.start) {

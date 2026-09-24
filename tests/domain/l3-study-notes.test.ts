@@ -21,6 +21,9 @@ import {
   moveStudyTopicMemberSchema,
   removeStudyTopicMemberSchema,
   normalizeStudyUuid,
+  REFERENCE_KINDS,
+  STUDY_SHEET_EXCERPT_MAX,
+  STUDY_ATTEMPT_EXCERPT_MAX,
 } from "@/domain/l3-study-notes";
 import {
   QUESTION_ID,
@@ -353,6 +356,75 @@ describe("study topic schemas", () => {
 });
 
 // ── F5（补修批次）：UUID 身份规范化合同 ─────────────────────────────────────
+
+// ── N2 第三条链：sheet / attempt 目标（红测先行，实现见 §7.0.3）──────────────
+
+const SUBMISSION = "00000000-0000-4000-8000-000000000321";
+const ATTEMPT = "00000000-0000-4000-8000-000000000331";
+
+describe("referenceTargetSchema · sheet / attempt（N2 第三条链）", () => {
+  it("REFERENCE_KINDS 扩到九值（与 DB kind_check 同口径：新增 sheet / attempt）", () => {
+    expect(REFERENCE_KINDS).toEqual([
+      "source",
+      "source_quote",
+      "question",
+      "stem_quote",
+      "option_quote",
+      "assessment",
+      "note",
+      "sheet",
+      "attempt",
+    ]);
+  });
+
+  it("sheet 非 writing：只有 submissionId（revisionNo 省略或显式 null 皆可）", () => {
+    expect(referenceTargetSchema.safeParse({ kind: "sheet", submissionId: SUBMISSION }).success).toBe(true);
+    expect(
+      referenceTargetSchema.safeParse({ kind: "sheet", submissionId: SUBMISSION, revisionNo: null }).success,
+    ).toBe(true);
+  });
+
+  it("sheet writing：revisionNo 为正整数（>0，与 DB revision_no_check 同口径）", () => {
+    expect(
+      referenceTargetSchema.safeParse({ kind: "sheet", submissionId: SUBMISSION, revisionNo: 2 }).success,
+    ).toBe(true);
+  });
+
+  it("sheet：revisionNo 为 0 / 负数 / 非整数 / 字符串 → 拒绝", () => {
+    for (const revisionNo of [0, -1, 1.5, "2"]) {
+      expect(
+        referenceTargetSchema.safeParse({ kind: "sheet", submissionId: SUBMISSION, revisionNo }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("sheet 不得携带其它目标型字段（strict；K5 无身份兜底）", () => {
+    expect(
+      referenceTargetSchema.safeParse({ kind: "sheet", submissionId: SUBMISSION, questionId: QUESTION_ID }).success,
+    ).toBe(false);
+    expect(
+      referenceTargetSchema.safeParse({ kind: "sheet", submissionId: SUBMISSION, attemptId: ATTEMPT }).success,
+    ).toBe(false);
+    expect(
+      referenceTargetSchema.safeParse({ kind: "sheet", submissionId: SUBMISSION, sourceId: SOURCE_ID }).success,
+    ).toBe(false);
+  });
+
+  it("attempt：只有 attemptId（K9 不拼 question / sheet / venue）", () => {
+    expect(referenceTargetSchema.safeParse({ kind: "attempt", attemptId: ATTEMPT }).success).toBe(true);
+    expect(
+      referenceTargetSchema.safeParse({ kind: "attempt", attemptId: ATTEMPT, questionId: QUESTION_ID }).success,
+    ).toBe(false);
+    expect(
+      referenceTargetSchema.safeParse({ kind: "attempt", attemptId: ATTEMPT, submissionId: SUBMISSION }).success,
+    ).toBe(false);
+  });
+
+  it("快照摘录预算族：sheet / attempt 与既有同量级 280（K13）", () => {
+    expect(STUDY_SHEET_EXCERPT_MAX).toBe(280);
+    expect(STUDY_ATTEMPT_EXCERPT_MAX).toBe(280);
+  });
+});
 
 describe("normalizeStudyUuid（F5 UUID 身份）", () => {
   // 含 a–f 的样例 UUID（纯数字 UUID 无法暴露大小写问题）

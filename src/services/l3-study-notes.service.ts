@@ -144,6 +144,17 @@ export function canonicalTarget(target: ReferenceTarget): Record<string, unknown
         questionId: target.questionId.toLowerCase(),
         assessmentId: target.assessmentId.toLowerCase(),
       };
+    // N2 第三条链：sheet 的幂等/请求 hash 只认 `{ submissionId, revisionNo }`
+    // （K3 / K4：`draft_version` 不进身份）。
+    case "sheet":
+      return {
+        kind: "sheet",
+        submissionId: target.submissionId.toLowerCase(),
+        revisionNo: target.revisionNo ?? null,
+      };
+    // N2 第三条链：attempt 身份是单值 attemptId（K9）。
+    case "attempt":
+      return { kind: "attempt", attemptId: target.attemptId.toLowerCase() };
   }
 }
 
@@ -816,6 +827,9 @@ export class L3StudyNoteService {
           question_id: existing.question_id,
           assessment_id: existing.assessment_id,
           target_note_id: existing.target_note_id,
+          submission_id: existing.submission_id,
+          submission_revision_no: existing.submission_revision_no,
+          attempt_id: existing.attempt_id,
           option_key: existing.option_key,
           start_offset: existing.start_offset,
           end_offset: existing.end_offset,

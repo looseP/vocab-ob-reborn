@@ -369,6 +369,11 @@ function cloneTarget(target: ReferenceTarget): ReferenceTarget {
       };
     case "note":
       return { kind: "note", noteId: target.noteId };
+    // N2 第三条链：仅做载荷克隆（本链不新增前端出口，见任务书 §3.3 R-2）。
+    case "sheet":
+      return { kind: "sheet", submissionId: target.submissionId, revisionNo: target.revisionNo ?? null };
+    case "attempt":
+      return { kind: "attempt", attemptId: target.attemptId };
   }
 }
 

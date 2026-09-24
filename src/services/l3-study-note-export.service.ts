@@ -134,7 +134,14 @@ export type StudyNoteExportTargetV2 =
   | { kind: "option_quote"; questionId: string; optionKey: string; startOffset: number; endOffset: number }
   | { kind: "assessment"; questionId: string; assessmentId: string }
   /** N2 第二条链：笔记互链目标只带目标笔记 id（不递归展开其内部引用）。 */
-  | { kind: "note"; noteId: string };
+  | { kind: "note"; noteId: string }
+  /**
+   * N2 第三条链：sheet 目标 = sealed 稿次。`revisionNo` 一律显式给出（非 writing
+   * 为 null）——v2 形状允许 null，让「有 / 无 revision 半片身份」在产物里可辨（K16）。
+   */
+  | { kind: "sheet"; submissionId: string; revisionNo: number | null }
+  /** N2 第三条链：attempt 目标 = 作答记录，单值身份（K9）。 */
+  | { kind: "attempt"; attemptId: string };
 
 export interface StudyNoteExportReferenceV2 {
   referenceId: string;
@@ -316,6 +323,9 @@ const KIND_LABELS: Record<ReferenceKind, string> = {
   option_quote: "选项摘录",
   assessment: "评析",
   note: "笔记",
+  // N2 第三条链：题纸稿次（sealed）与作答记录。
+  sheet: "题纸稿次",
+  attempt: "作答记录",
 };
 
 const STATUS_LABELS: Record<ReferenceStatus, string> = {
@@ -341,6 +351,11 @@ function snapshotSummary(snapshot: ReferenceDisplaySnapshot): string {
       return snapshot.excerpt;
     case "note":
       return snapshot.title;
+    // N2 第三条链：稿次无标题列，摘要取 summary 摘录；作答取作答摘录。
+    case "sheet":
+      return snapshot.summaryExcerpt;
+    case "attempt":
+      return snapshot.answerExcerpt;
   }
 }
 
@@ -364,8 +379,11 @@ function toExportTarget(row: L3StudyNoteReferenceRow): StudyNoteExportTarget {
       };
     case "assessment":
     case "note":
+    case "sheet":
+    case "attempt":
       // v1 形状冻结（P4-1），且调用前 assertV1Kinds 已拦下；这里不新增形状，
-      // 直接 fail-closed——宁可拒绝，也不让 v1 产物出现未定义字段。
+      // 直接 fail-closed——宁可拒绝，也不让 v1 产物出现未定义字段（K16：新 kind
+      // 不会被悄悄降级进 v1）。
       throw new ValidationError(
         "该笔记包含 N2 引用型，v1 导出不可用（请显式指定 schemaVersion=2）",
         "schemaVersion",
@@ -406,6 +424,15 @@ function toExportTargetV2(row: L3StudyNoteReferenceRow): StudyNoteExportTargetV2
       return { kind: "assessment", questionId: row.question_id!, assessmentId: row.assessment_id! };
     case "note":
       return { kind: "note", noteId: row.target_note_id! };
+    // N2 第三条链：revisionNo 显式为 null（非 writing 稿次），不做省略（K16 / V-25）。
+    case "sheet":
+      return {
+        kind: "sheet",
+        submissionId: row.submission_id!,
+        revisionNo: row.submission_revision_no ?? null,
+      };
+    case "attempt":
+      return { kind: "attempt", attemptId: row.attempt_id! };
   }
 }
 
@@ -459,6 +486,14 @@ function renderReferenceBlock(reference: ReferencePreview): string[] {
     // N2 第二条链：笔记引用只展开一层——标题 + 摘录，不嵌入目标笔记内部引用。
     lines.push(`> 笔记标题: ${snapshot.title}`);
     lines.push(`> 摘录: ${snapshot.excerpt}`);
+  } else if (snapshot.kind === "sheet") {
+    // N2 第三条链：稿次只落 scope + summary 摘录（不含 answers / 评卷字段，K7/K14）。
+    lines.push(`> 稿次范围: ${snapshot.scope}`);
+    lines.push(`> 小结摘录: ${snapshot.summaryExcerpt}`);
+  } else if (snapshot.kind === "attempt") {
+    // N2 第三条链：作答只落 venue + 作答摘录（attempt 表无判定列）。
+    lines.push(`> 场景: ${snapshot.venue}`);
+    lines.push(`> 作答摘录: ${snapshot.answerExcerpt}`);
   } else {
     if (snapshot.sourceTitle) lines.push(`> 来源: ${snapshot.sourceTitle}`);
     lines.push(`> 题型: ${snapshot.questionType}`);

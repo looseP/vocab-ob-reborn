@@ -105,6 +105,11 @@ function referenceSummary(meta: ReferencePreview): string {
       return `评析「${snapshot.excerpt}」`;
     case "note":
       return `笔记「${snapshot.title}」`;
+    // N2 第三条链：只做展示摘要（本链不新增前端出口）。
+    case "sheet":
+      return `题纸稿次（${snapshot.scope}）「${snapshot.summaryExcerpt}」`;
+    case "attempt":
+      return `作答记录（${snapshot.venue}）「${snapshot.answerExcerpt}」`;
   }
 }
 

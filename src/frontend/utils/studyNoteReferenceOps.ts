@@ -356,6 +356,12 @@ export function excerptLinesFromSnapshot(meta: ReferencePreview): string[] {
     // N2 第二条链：笔记互链转普通摘录——只落标题与引用当时摘录，不递归展开。
     case "note":
       return [...blockLines(snapshot.excerpt), `> —— 笔记「${snapshot.title}」`];
+    // N2 第三条链：稿次转普通摘录——只落 scope + 小结摘录（不含 answers / 评卷）。
+    case "sheet":
+      return [...blockLines(snapshot.summaryExcerpt), `> —— 题纸稿次（${snapshot.scope}）`];
+    // N2 第三条链：作答转普通摘录——只落 venue + 作答摘录。
+    case "attempt":
+      return [...blockLines(snapshot.answerExcerpt), `> —— 作答记录（${snapshot.venue}）`];
   }
 }
 

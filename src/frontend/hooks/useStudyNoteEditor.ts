@@ -217,7 +217,11 @@ function buildLocalCopyText(snapshot: StudyNoteSaveSnapshot, referencesMeta: rea
                 ? meta.displaySnapshot.excerpt
                 : meta.displaySnapshot.kind === "note"
                   ? meta.displaySnapshot.title
-                  : meta.displaySnapshot.quote;
+                  : meta.displaySnapshot.kind === "sheet"
+                    ? meta.displaySnapshot.summaryExcerpt
+                    : meta.displaySnapshot.kind === "attempt"
+                      ? meta.displaySnapshot.answerExcerpt
+                      : meta.displaySnapshot.quote;
         lines.push(`- [[ref:${write.id}]] ${label}（状态：${meta.status}${meta.capturedAt ? ` · ${meta.capturedAt}` : ""}）`);
       } else {
         lines.push(`- [[ref:${write.id}]]`);
