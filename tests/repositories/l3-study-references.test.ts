@@ -24,7 +24,7 @@ function fakeClient(): PoolClient {
 function refRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: REF, note_id: NOTE, user_id: USER, kind: "source_quote",
-    source_id: SOURCE, question_id: null, option_key: null,
+    source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null, option_key: null,
     start_offset: 0, end_offset: 3, quote_snapshot: "The",
     field_hash: "a".repeat(64), display_snapshot: {}, captured_at: "2026-09-19T00:00:00Z",
     ...overrides,
@@ -59,7 +59,7 @@ describe("replaceForNote", () => {
     await repo.replaceForNote(USER, NOTE, [
       {
         id: REF, kind: "source_quote",
-        source_id: SOURCE, question_id: null, assessment_id: null, option_key: null,
+        source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null, option_key: null,
         start_offset: 0, end_offset: 3, quote_snapshot: "The",
         field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
         captured_at: "2026-09-19T00:00:00.000Z",
@@ -75,7 +75,8 @@ describe("replaceForNote", () => {
     expect(insertCall[1]![1]).toBe(USER);
     const payload = JSON.parse(insertCall[1]![2] as string) as Record<string, unknown>[];
     expect(payload).toEqual([{
-      id: REF, kind: "source_quote", source_id: SOURCE, question_id: null, assessment_id: null, option_key: null,
+      id: REF, kind: "source_quote", source_id: SOURCE, question_id: null, assessment_id: null,
+      target_note_id: null, option_key: null,
       start_offset: 0, end_offset: 3, quote_snapshot: "The",
       field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
       captured_at: "2026-09-19T00:00:00.000Z",
@@ -365,5 +366,82 @@ describe("N2 评析目标（第一条垂直链）", () => {
     const [text] = querySpy.mock.calls[0]!;
     // 只按 question_id 计会漏掉子评析引用，删的时候直接撞 RESTRICT 而非给出 blocker
     expect(text).toContain("r.assessment_id IN (SELECT id FROM l3_question_assessments");
+  });
+});
+
+describe("N2 笔记互链（仓储层 · 第二条垂直链）", () => {
+  const TARGET_NOTE = "00000000-0000-4000-8000-000000000231";
+
+  it("loadTargets note 分支：白名单只取 id/title/body_md/status，不按 status 过滤（归档目标仍可解析）", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [{ id: TARGET_NOTE, title: "被引用笔记", body_md: "正文", status: "archived" }],
+    }));
+    const map = await repo.loadTargets(USER, [{ kind: "note", id: TARGET_NOTE }]);
+
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("FROM l3_study_notes");
+    // 与 question 的 F3 不同：笔记目标归档后引用仍要能解析出 current/changed
+    expect(text).not.toContain("status = 'active'");
+    // 只展开一层：不 JOIN、不取目标笔记自身的引用集合
+    expect(text).not.toContain("JOIN");
+    expect(params).toEqual([USER, [TARGET_NOTE]]);
+    expect(map.get(`note:${TARGET_NOTE}`)).toMatchObject({
+      kind: "note",
+      id: TARGET_NOTE,
+      title: "被引用笔记",
+      body_md: "正文",
+      status: "archived",
+    });
+  });
+
+  it("lockTargets note 分支：advisory 键 l3_study_note:<小写 uuid>（与 question/assessment 同款）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.lockTargets(USER, [{ kind: "note", id: "BEEFCAFE-2345-4789-8ABC-000000000231" }]);
+
+    const lockCalls = querySpy.mock.calls.filter((c) => (c[0] as string).includes("pg_advisory_xact_lock"));
+    expect(lockCalls.length).toBe(1);
+    expect(lockCalls[0]![1]).toEqual(["l3_study_note:beefcafe-2345-4789-8abc-000000000231"]);
+  });
+
+  it("replaceForNote：载荷与 INSERT 列携带 target_note_id（note_id/user_id 仍由参数注入）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.replaceForNote(USER, NOTE, [{
+      id: REF, kind: "note",
+      source_id: null, question_id: null, assessment_id: null, target_note_id: TARGET_NOTE,
+      option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
+      field_hash: "a".repeat(64), display_snapshot: { kind: "note" },
+      captured_at: "2026-09-19T00:00:00.000Z",
+    }]);
+
+    const insertCall = querySpy.mock.calls.find((c) => (c[0] as string).includes("INSERT INTO"))!;
+    expect(insertCall[0]).toContain("target_note_id");
+    const payload = JSON.parse(insertCall[1]![2] as string) as Record<string, unknown>[];
+    expect(payload[0]!.target_note_id).toBe(TARGET_NOTE);
+    // 归属列不得出现在 JSON 载荷里
+    expect(payload[0]).not.toHaveProperty("note_id");
+    expect(payload[0]).not.toHaveProperty("user_id");
+  });
+
+  it("listBacklinks：note 目标走 r.target_note_id 列", async () => {
+    querySpy.mockImplementation(async (text: string) => {
+      if ((text as string).includes("count(DISTINCT")) return { rows: [{ total: "1" }] };
+      return { rows: [{ note_id: NOTE, title: "笔记", status: "active", reference_count: 1, ref_ids: [REF] }] };
+    });
+    await repo.listBacklinks({
+      userId: USER, targetKind: "note", targetId: TARGET_NOTE, cursor: null, limit: 21,
+    });
+
+    const text = querySpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(text).toContain("r.target_note_id = $2::uuid");
+    expect(text).not.toContain("r.source_id = $");
+  });
+
+  it("searchTargets：note 目标不支持搜索 → fail-closed（不退化成别的 kind 查询）", async () => {
+    await expect(
+      repo.searchTargets({
+        userId: USER, kind: "note", q: null, venue: null, cursor: null, limit: 21,
+      }),
+    ).rejects.toThrow(ValidationError);
+    expect(querySpy.mock.calls.length).toBe(0);
   });
 });

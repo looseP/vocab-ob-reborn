@@ -132,7 +132,9 @@ export type StudyNoteExportTargetV2 =
   | { kind: "question"; questionId: string }
   | { kind: "stem_quote"; questionId: string; startOffset: number; endOffset: number }
   | { kind: "option_quote"; questionId: string; optionKey: string; startOffset: number; endOffset: number }
-  | { kind: "assessment"; questionId: string; assessmentId: string };
+  | { kind: "assessment"; questionId: string; assessmentId: string }
+  /** N2 第二条链：笔记互链目标只带目标笔记 id（不递归展开其内部引用）。 */
+  | { kind: "note"; noteId: string };
 
 export interface StudyNoteExportReferenceV2 {
   referenceId: string;
@@ -255,6 +257,14 @@ export function projectDisplaySnapshot(
         questionType: raw["questionType"] as L3QuestionType,
         sourceTitle: asNullableText(raw["sourceTitle"]),
       };
+    // N2 第二条链：笔记快照按白名单显式重建（只留标题 + 摘录）。
+    // 目标笔记自身的引用集合不在这里出现——导出只展开一层，绝不递归。
+    case "note":
+      return {
+        kind: "note",
+        title: asTextField(raw["title"], "title", referenceId),
+        excerpt: asTextField(raw["excerpt"], "excerpt", referenceId),
+      };
     default:
       throw new ValidationError("引用快照 kind 非法", "displaySnapshot");
   }
@@ -305,6 +315,7 @@ const KIND_LABELS: Record<ReferenceKind, string> = {
   stem_quote: "题干摘录",
   option_quote: "选项摘录",
   assessment: "评析",
+  note: "笔记",
 };
 
 const STATUS_LABELS: Record<ReferenceStatus, string> = {
@@ -328,6 +339,8 @@ function snapshotSummary(snapshot: ReferenceDisplaySnapshot): string {
       return `选项 ${snapshot.optionKey}「${snapshot.quote}」`;
     case "assessment":
       return snapshot.excerpt;
+    case "note":
+      return snapshot.title;
   }
 }
 
@@ -350,6 +363,7 @@ function toExportTarget(row: L3StudyNoteReferenceRow): StudyNoteExportTarget {
         endOffset: row.end_offset!,
       };
     case "assessment":
+    case "note":
       // v1 形状冻结（P4-1），且调用前 assertV1Kinds 已拦下；这里不新增形状，
       // 直接 fail-closed——宁可拒绝，也不让 v1 产物出现未定义字段。
       throw new ValidationError(
@@ -390,6 +404,8 @@ function toExportTargetV2(row: L3StudyNoteReferenceRow): StudyNoteExportTargetV2
       };
     case "assessment":
       return { kind: "assessment", questionId: row.question_id!, assessmentId: row.assessment_id! };
+    case "note":
+      return { kind: "note", noteId: row.target_note_id! };
   }
 }
 
@@ -439,6 +455,10 @@ function renderReferenceBlock(reference: ReferencePreview): string[] {
     if (snapshot.sourceTitle) lines.push(`> 来源: ${snapshot.sourceTitle}`);
     lines.push(`> 题型: ${snapshot.questionType}`);
     lines.push(`> 评析摘录: ${snapshot.excerpt}`);
+  } else if (snapshot.kind === "note") {
+    // N2 第二条链：笔记引用只展开一层——标题 + 摘录，不嵌入目标笔记内部引用。
+    lines.push(`> 笔记标题: ${snapshot.title}`);
+    lines.push(`> 摘录: ${snapshot.excerpt}`);
   } else {
     if (snapshot.sourceTitle) lines.push(`> 来源: ${snapshot.sourceTitle}`);
     lines.push(`> 题型: ${snapshot.questionType}`);

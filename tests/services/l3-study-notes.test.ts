@@ -904,3 +904,144 @@ describe("N2 评析引用（服务装配层 · 第一条垂直链）", () => {
     expect((error as { message: string }).message).toContain(`assessment:${ASSESSMENT}`);
   });
 });
+
+describe("N2 笔记互链（服务装配层 · 第二条垂直链）", () => {
+  const TARGET_NOTE = "00000000-0000-4000-8000-000000000231";
+
+  const noteTarget = { kind: "note" as const, noteId: TARGET_NOTE };
+
+  function noteCaptureAgainst() {
+    referenceService.captureAgainst = vi.fn(() => ({
+      kind: "note" as const,
+      source_id: null,
+      question_id: null,
+      assessment_id: null,
+      target_note_id: TARGET_NOTE,
+      option_key: null,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      field_hash: "f".repeat(64),
+      display_snapshot: { kind: "note", title: "被引用笔记", excerpt: "被引用正文" },
+    })) as never;
+  }
+
+  it("capture 笔记：装载键为 note:<id>，写入行带 target_note_id", async () => {
+    noteCaptureAgainst();
+    repos.studyReferences.loadTargets = vi.fn(async () =>
+      new Map([[
+        `note:${TARGET_NOTE}`,
+        { kind: "note", id: TARGET_NOTE, title: "被引用笔记", body_md: "被引用正文", status: "active" },
+      ]]) as never,
+    );
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF_B}]]`,
+      references: [{ id: REF_B, action: "capture", target: noteTarget }],
+    });
+    await service.save(USER, NOTE, input);
+
+    expect(repos.studyReferences.lockTargets).toHaveBeenCalledWith(USER, [
+      { kind: "note", id: TARGET_NOTE },
+    ]);
+    const rows = repos.studyReferences.replaceForNote.mock.calls[0]![2] as {
+      target_note_id: string | null;
+      display_snapshot: Record<string, unknown>;
+    }[];
+    expect(rows[0]!.target_note_id).toBe(TARGET_NOTE);
+    // 只展开一层：快照里不得出现目标笔记自身的引用集合
+    expect(rows[0]!.display_snapshot).not.toHaveProperty("references");
+  });
+
+  it("自引用 → 422（笔记不能引用自身）", async () => {
+    noteCaptureAgainst();
+    repos.studyReferences.loadTargets = vi.fn(async () =>
+      new Map([[
+        `note:${NOTE}`,
+        { kind: "note", id: NOTE, title: "自己", body_md: "自己", status: "active" },
+      ]]) as never,
+    );
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF_B}]]`,
+      references: [{ id: REF_B, action: "capture", target: { kind: "note", noteId: NOTE } }],
+    });
+    const error = await service.save(USER, NOTE, input).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as { field?: string }).field).toBe("references");
+    expect(repos.studyReferences.replaceForNote).not.toHaveBeenCalled();
+  });
+
+  it("自引用大小写不敏感：UUID 大写形式同样被拒（F5 身份规范化）", async () => {
+    noteCaptureAgainst();
+    repos.studyReferences.loadTargets = vi.fn(async () =>
+      new Map([[
+        `note:${NOTE}`,
+        { kind: "note", id: NOTE, title: "自己", body_md: "自己", status: "active" },
+      ]]) as never,
+    );
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF_B}]]`,
+      references: [{ id: REF_B, action: "capture", target: { kind: "note", noteId: NOTE.toUpperCase() } }],
+    });
+    await expect(service.save(USER, NOTE, input)).rejects.toThrow(ValidationError);
+  });
+
+  it("成环允许：目标笔记反向引用当前笔记不构成错误（只解一层，不递归展开）", async () => {
+    noteCaptureAgainst();
+    // 已存引用表明「目标笔记也引用了当前笔记」——环不被禁止
+    repos.studyReferences.listForNote = vi.fn(async () => [
+      {
+        id: REF, note_id: NOTE, user_id: USER, kind: "note" as const,
+        source_id: null, question_id: null, assessment_id: null, target_note_id: TARGET_NOTE,
+        option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
+        field_hash: "e".repeat(64),
+        display_snapshot: { kind: "note", title: "被引用笔记", excerpt: "被引用正文" },
+        captured_at: "2026-09-01T00:00:00.000Z",
+      },
+    ] as never);
+    repos.studyReferences.loadTargets = vi.fn(async () =>
+      new Map([[
+        `note:${TARGET_NOTE}`,
+        { kind: "note", id: TARGET_NOTE, title: "被引用笔记", body_md: "被引用正文", status: "active" },
+      ]]) as never,
+    );
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF}]]`,
+      references: [{ id: REF, action: "capture", target: noteTarget }],
+    });
+    await service.save(USER, NOTE, input);
+
+    const rows = repos.studyReferences.replaceForNote.mock.calls[0]![2] as {
+      target_note_id: string | null;
+    }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.target_note_id).toBe(TARGET_NOTE);
+  });
+
+  it("keep 笔记引用：保留原 target_note_id 与 capturedAt（不重读目标）", async () => {
+    const existing = {
+      id: REF, note_id: NOTE, user_id: USER, kind: "note" as const,
+      source_id: null, question_id: null, assessment_id: null, target_note_id: TARGET_NOTE,
+      option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
+      field_hash: "e".repeat(64),
+      display_snapshot: { kind: "note", title: "被引用笔记", excerpt: "被引用正文" },
+      captured_at: "2026-09-01T00:00:00.000Z",
+    };
+    repos.studyReferences.listForNote = vi.fn(async () => [existing] as never);
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF}]]`,
+      references: [{ id: REF, action: "keep" }],
+    });
+    await service.save(USER, NOTE, input);
+
+    const rows = repos.studyReferences.replaceForNote.mock.calls[0]![2] as {
+      target_note_id: string | null;
+      captured_at: string;
+    }[];
+    expect(rows[0]).toMatchObject({
+      target_note_id: TARGET_NOTE,
+      captured_at: "2026-09-01T00:00:00.000Z",
+    });
+    expect(repos.studyReferences.lockTargets).not.toHaveBeenCalled();
+  });
+});

@@ -27,6 +27,7 @@ import {
   STUDY_PAGE_LIMIT_MAX,
   STUDY_SOURCE_EXCERPT_MAX,
   STUDY_ASSESSMENT_EXCERPT_MAX,
+  STUDY_NOTE_EXCERPT_MAX,
   type ReferenceDisplaySnapshot,
   type ReferencePreview,
   type ReferenceStatus,
@@ -83,6 +84,16 @@ export function questionFieldText(target: LoadedQuestionTarget): string {
   });
 }
 
+/**
+ * N2 第二条链：笔记引用的 hash 输入 = 服务端存储的**标题 + 正文**（固定键序 JSON）。
+ *
+ * 与 `questionFieldText` 同款规范化；**不含** version（CAS 并发版本，按 D1-3 同款
+ * 理由不作身份/版本）、不含归档状态与更新时间——后者变化不应让引用转 changed。
+ */
+export function noteFieldText(target: Extract<LoadedTarget, { kind: "note" }>): string {
+  return JSON.stringify({ title: target.title, bodyMd: target.body_md });
+}
+
 /** 按引用 kind 取"当前字段文本"（与 capture 的 hash 口径一致）；不可得返回 null。 */
 export function currentFieldText(
   kind: ReferenceKind,
@@ -91,6 +102,9 @@ export function currentFieldText(
 ): string | null {
   if (kind === "source" || kind === "source_quote") {
     return target.kind === "source" ? (target.content_text ?? "") : null;
+  }
+  if (kind === "note") {
+    return target.kind === "note" ? noteFieldText(target) : null;
   }
   if (target.kind === "assessment") {
     // N2：评析的 hash 输入写死为 content_md（A2）；评析是 latest-wins 覆写，
@@ -107,9 +121,11 @@ export function currentFieldText(
   return null;
 }
 
-/** 目标"当前标题"（source=标题；question=可读来源标题，可能 null）。 */
+/** 目标"当前标题"（source=标题；note=笔记标题；question=可读来源标题，可能 null）。 */
 function liveTitleOf(target: LoadedTarget): string | null {
-  return target.kind === "source" ? target.title : target.source_title;
+  if (target.kind === "source") return target.title;
+  if (target.kind === "note") return target.title;
+  return target.source_title;
 }
 
 /** 摘要截断不切代理对（前 max 个 UTF-16 code unit）。 */
@@ -149,10 +165,14 @@ export function targetKeyOf(target: ReferenceTarget): string {
   if (target.kind === "assessment") {
     return `assessment:${normalizeStudyUuid(target.assessmentId)}`;
   }
+  if (target.kind === "note") {
+    // N2 第二条链：笔记目标自带完整身份，不需要第二个键（不像评析还要锁所属题）。
+    return `note:${normalizeStudyUuid(target.noteId)}`;
+  }
   return `question:${normalizeStudyUuid(target.questionId)}`;
 }
 
-export function targetRefsOf(target: ReferenceTarget): { kind: "source" | "question" | "assessment"; id: string }[] {
+export function targetRefsOf(target: ReferenceTarget): { kind: "source" | "question" | "assessment" | "note"; id: string }[] {
   if (target.kind === "source" || target.kind === "source_quote") {
     return [{ kind: "source", id: normalizeStudyUuid(target.sourceId) }];
   }
@@ -161,6 +181,9 @@ export function targetRefsOf(target: ReferenceTarget): { kind: "source" | "quest
       { kind: "question", id: normalizeStudyUuid(target.questionId) },
       { kind: "assessment", id: normalizeStudyUuid(target.assessmentId) },
     ];
+  }
+  if (target.kind === "note") {
+    return [{ kind: "note", id: normalizeStudyUuid(target.noteId) }];
   }
   return [{ kind: "question", id: normalizeStudyUuid(target.questionId) }];
 }
@@ -203,6 +226,8 @@ export function referenceRowToTarget(row: L3StudyNoteReferenceRow): ReferenceTar
         questionId: row.question_id!,
         assessmentId: row.assessment_id!,
       };
+    case "note":
+      return { kind: "note", noteId: row.target_note_id! };
   }
 }
 
@@ -251,6 +276,7 @@ export class L3StudyReferenceService {
           source_id: loaded.id,
           question_id: null,
           assessment_id: null,
+          target_note_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -276,6 +302,7 @@ export class L3StudyReferenceService {
           source_id: loaded.id,
           question_id: null,
           assessment_id: null,
+          target_note_id: null,
           option_key: null,
           start_offset: target.start,
           end_offset: target.end,
@@ -293,6 +320,7 @@ export class L3StudyReferenceService {
           source_id: null,
           question_id: loaded.id,
           assessment_id: null,
+          target_note_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -317,6 +345,7 @@ export class L3StudyReferenceService {
           source_id: null,
           question_id: loaded.id,
           assessment_id: null,
+          target_note_id: null,
           option_key: null,
           start_offset: target.start,
           end_offset: target.end,
@@ -348,6 +377,7 @@ export class L3StudyReferenceService {
           source_id: null,
           question_id: loaded.question_id,
           assessment_id: loaded.id,
+          target_note_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -358,6 +388,34 @@ export class L3StudyReferenceService {
             excerpt: safeExcerpt(loaded.content_md, STUDY_ASSESSMENT_EXCERPT_MAX),
             questionType: loaded.question_type,
             sourceTitle: loaded.source_title,
+          },
+        };
+      }
+      case "note": {
+        if (loaded.kind !== "note" || loaded.id !== normalizeStudyUuid(target.noteId)) {
+          throw new NotFoundError("StudyReferenceTarget", `note:${target.noteId}`);
+        }
+        // 合同：目标必须属于当前用户且为 active 才能新建引用。归档目标不可新建——
+        // 但**已存**引用不撤销（resolve 仍按快照 hash 出 current/changed，见上）。
+        if (loaded.status !== "active") {
+          throw new NotFoundError("StudyReferenceTarget", `note:${target.noteId}`);
+        }
+        return {
+          kind: "note",
+          source_id: null,
+          question_id: null,
+          assessment_id: null,
+          target_note_id: loaded.id,
+          option_key: null,
+          start_offset: null,
+          end_offset: null,
+          quote_snapshot: null,
+          field_hash: sha256Hex(noteFieldText(loaded)),
+          // 只展开一层：不读取、不嵌入目标笔记自身的引用集合。
+          display_snapshot: {
+            kind: "note",
+            title: loaded.title,
+            excerpt: safeExcerpt(loaded.body_md, STUDY_NOTE_EXCERPT_MAX),
           },
         };
       }
@@ -375,6 +433,7 @@ export class L3StudyReferenceService {
           source_id: null,
           question_id: loaded.id,
           assessment_id: null,
+          target_note_id: null,
           option_key: target.optionKey,
           start_offset: target.start,
           end_offset: target.end,

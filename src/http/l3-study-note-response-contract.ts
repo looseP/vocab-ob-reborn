@@ -48,6 +48,11 @@ const referenceTargetResponseSchema = z.discriminatedUnion("kind", [
     questionId: z.string().uuid(),
     assessmentId: z.string().uuid(),
   }).strict(),
+  // N2 第二条链：笔记互链——noteId 即目标笔记身份（不按标题/序号兜底）。
+  z.object({
+    kind: z.literal("note"),
+    noteId: z.string().uuid(),
+  }).strict(),
 ]);
 
 const optionSchema = z.object({ key: z.string(), text: z.string() }).strict();
@@ -80,6 +85,11 @@ const referenceDisplaySnapshotSchema = z.discriminatedUnion("kind", [
     excerpt: z.string(),
     questionType: venueSchema,
     sourceTitle: z.string().nullable(),
+  }).strict(),
+  z.object({
+    kind: z.literal("note"),
+    title: z.string(),
+    excerpt: z.string(),
   }).strict(),
 ]);
 

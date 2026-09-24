@@ -22148,6 +22148,11 @@ export interface operations {
                                     questionId: string;
                                     /** Format: uuid */
                                     assessmentId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "note";
+                                    /** Format: uuid */
+                                    noteId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -22195,6 +22200,11 @@ export interface operations {
                                     /** @enum {string} */
                                     questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                     sourceTitle: string | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "note";
+                                    title: string;
+                                    excerpt: string;
                                 };
                                 liveTitle: string | null;
                             }[];
@@ -22628,6 +22638,11 @@ export interface operations {
                                 questionId: string;
                                 /** Format: uuid */
                                 assessmentId: string;
+                            } | {
+                                /** @constant */
+                                kind: "note";
+                                /** Format: uuid */
+                                noteId: string;
                             };
                             displaySnapshot: {
                                 /** @constant */
@@ -22672,6 +22687,11 @@ export interface operations {
                                 /** @enum {string} */
                                 questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                 sourceTitle: string | null;
+                            } | {
+                                /** @constant */
+                                kind: "note";
+                                title: string;
+                                excerpt: string;
                             };
                             liveTitle: string | null;
                         };
@@ -23231,6 +23251,11 @@ export interface operations {
                                     questionId: string;
                                     /** Format: uuid */
                                     assessmentId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "note";
+                                    /** Format: uuid */
+                                    noteId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -23278,6 +23303,11 @@ export interface operations {
                                     /** @enum {string} */
                                     questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                     sourceTitle: string | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "note";
+                                    title: string;
+                                    excerpt: string;
                                 };
                                 liveTitle: string | null;
                             }[];
@@ -23568,6 +23598,11 @@ export interface operations {
                                     questionId: string;
                                     /** Format: uuid */
                                     assessmentId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "note";
+                                    /** Format: uuid */
+                                    noteId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -23615,6 +23650,11 @@ export interface operations {
                                     /** @enum {string} */
                                     questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                     sourceTitle: string | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "note";
+                                    title: string;
+                                    excerpt: string;
                                 };
                                 liveTitle: string | null;
                             }[];

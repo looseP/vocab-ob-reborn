@@ -353,6 +353,9 @@ export function excerptLinesFromSnapshot(meta: ReferencePreview): string[] {
         ...blockLines(snapshot.excerpt),
         `> —— 评析（${snapshot.questionType}）${sourceSuffix(snapshot.sourceTitle)}`,
       ];
+    // N2 第二条链：笔记互链转普通摘录——只落标题与引用当时摘录，不递归展开。
+    case "note":
+      return [...blockLines(snapshot.excerpt), `> —— 笔记「${snapshot.title}」`];
   }
 }
 

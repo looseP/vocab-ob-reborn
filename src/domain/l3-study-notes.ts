@@ -51,6 +51,14 @@ export const STUDY_SEARCH_Q_MAX = 100;
 export const STUDY_SOURCE_EXCERPT_MAX = 280;
 /** N2：评析展示快照的摘录上限（评析比来源正文更聚焦，取同一量级）。 */
 export const STUDY_ASSESSMENT_EXCERPT_MAX = 280;
+/**
+ * N2 第二条链：笔记互链展示快照的摘录上限。
+ *
+ * 沿用来源/评析的**同量级摘录口径**（280）——不新增存储限制、不改动 API；
+ * 笔记正文本身的上限仍是 `STUDY_NOTE_BODY_MAX`，快照总量另有
+ * `STUDY_SNAPSHOT_BYTES_MAX` 兜底。
+ */
+export const STUDY_NOTE_EXCERPT_MAX = 280;
 
 // ── 枚举（单一真源；与 DB CHECK 同步）───────────────────────────────────────
 
@@ -75,6 +83,7 @@ export const REFERENCE_KINDS = [
   "stem_quote",
   "option_quote",
   "assessment",
+  "note",
 ] as const;
 export type ReferenceKind = (typeof REFERENCE_KINDS)[number];
 
@@ -108,7 +117,14 @@ export type ReferenceTarget =
       quote: string;
     }
   /** N2 第一条链：评析（`l3_question_assessments` 的某一行，非「某题当前评析」）。 */
-  | { kind: "assessment"; questionId: string; assessmentId: string };
+  | { kind: "assessment"; questionId: string; assessmentId: string }
+  /**
+   * N2 第二条链：笔记互链（`l3_study_notes` 的某一行）。
+   *
+   * 身份就是目标笔记自身 id——不按标题、不按展示序号、不按专题位置兜底。
+   * 只允许引用**当前用户且 active** 的目标；目标之后归档不撤销引用。
+   */
+  | { kind: "note"; noteId: string };
 
 /** 前端构建 capture 载荷用（与 ReferenceWrite 的 capture 分支同构）。 */
 export interface ReferenceInput {
@@ -183,13 +199,26 @@ export interface AssessmentReferenceSnapshot {
   sourceTitle: string | null;
 }
 
+/**
+ * N2 第二条链：笔记引用快照。
+ *
+ * 只放 capture 当时的**标题 + 正文摘录**（280 上限）。**不展开目标笔记内部引用**
+ * ——快照/引用卡片/导出一律只解一层，避免递归与体积失控。
+ */
+export interface NoteReferenceSnapshot {
+  kind: "note";
+  title: string;
+  excerpt: string;
+}
+
 export type ReferenceDisplaySnapshot =
   | SourceReferenceSnapshot
   | SourceQuoteReferenceSnapshot
   | QuestionReferenceSnapshot
   | StemQuoteReferenceSnapshot
   | OptionQuoteReferenceSnapshot
-  | AssessmentReferenceSnapshot;
+  | AssessmentReferenceSnapshot
+  | NoteReferenceSnapshot;
 
 /** 引用预览（详情/导出/反向引用共用；不泄露 service 端 hash 与请求键）。 */
 export interface ReferencePreview {

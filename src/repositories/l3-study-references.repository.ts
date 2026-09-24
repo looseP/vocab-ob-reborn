@@ -27,6 +27,8 @@ export interface NewL3StudyNoteReference {
   question_id: string | null;
   /** N2：评析引用（`kind='assessment'`）的目标行，其余 kind 恒 null。 */
   assessment_id: string | null;
+  /** N2 第二条链：笔记互链（`kind='note'`）的目标笔记行，其余 kind 恒 null。 */
+  target_note_id: string | null;
   option_key: string | null;
   start_offset: number | null;
   end_offset: number | null;
@@ -52,6 +54,7 @@ export interface L3StudyNoteReferenceRow {
   source_id: string | null;
   question_id: string | null;
   assessment_id: string | null;
+  target_note_id: string | null;
   option_key: string | null;
   start_offset: number | null;
   end_offset: number | null;
@@ -61,7 +64,7 @@ export interface L3StudyNoteReferenceRow {
   captured_at: string;
 }
 
-export type ReferenceTargetKind = "source" | "question" | "assessment";
+export type ReferenceTargetKind = "source" | "question" | "assessment" | "note";
 
 export interface LoadedSourceTarget {
   kind: "source";
@@ -96,7 +99,27 @@ export interface LoadedAssessmentTarget {
   source_title: string | null;
 }
 
-export type LoadedTarget = LoadedSourceTarget | LoadedQuestionTarget | LoadedAssessmentTarget;
+/**
+ * N2 第二条链：笔记目标。
+ *
+ * 装载**不按 status 过滤**——与 question 的 F3「非 active 不可装载」不同：
+ * 笔记只会归档、不会硬删（无删除端点），目标归档后已存引用仍要解析出
+ * current/changed。「必须 active 才能新建」由 capture 侧判定（见 service）。
+ * `status` 因此随行带出，供 capture 判定使用。
+ */
+export interface LoadedNoteTarget {
+  kind: "note";
+  id: string;
+  title: string;
+  body_md: string;
+  status: string;
+}
+
+export type LoadedTarget =
+  | LoadedSourceTarget
+  | LoadedQuestionTarget
+  | LoadedAssessmentTarget
+  | LoadedNoteTarget;
 
 export interface StudySourceTargetRow {
   id: string;
@@ -214,6 +237,7 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
       source_id: row.source_id,
       question_id: row.question_id,
       assessment_id: row.assessment_id,
+      target_note_id: row.target_note_id,
       option_key: row.option_key,
       start_offset: row.start_offset,
       end_offset: row.end_offset,
@@ -224,12 +248,12 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     }));
     await this.query(
       `INSERT INTO l3_study_note_references
-         (id, note_id, user_id, kind, source_id, question_id, assessment_id, option_key,
+         (id, note_id, user_id, kind, source_id, question_id, assessment_id, target_note_id, option_key,
           start_offset, end_offset, quote_snapshot, field_hash, display_snapshot, captured_at)
-       SELECT x.id, $1::uuid, $2::uuid, x.kind, x.source_id, x.question_id, x.assessment_id, x.option_key,
+       SELECT x.id, $1::uuid, $2::uuid, x.kind, x.source_id, x.question_id, x.assessment_id, x.target_note_id, x.option_key,
               x.start_offset, x.end_offset, x.quote_snapshot, x.field_hash, x.display_snapshot, x.captured_at
          FROM jsonb_to_recordset($3::jsonb) AS x(
-           id uuid, kind text, source_id uuid, question_id uuid, assessment_id uuid, option_key text,
+           id uuid, kind text, source_id uuid, question_id uuid, assessment_id uuid, target_note_id uuid, option_key text,
            start_offset integer, end_offset integer, quote_snapshot text,
            field_hash text, display_snapshot jsonb, captured_at timestamptz
          )`,
@@ -244,6 +268,11 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     // 走到这里是调用方 bug，fail-closed 而不是退化成 question 查询。
     if (input.kind === "assessment") {
       throw new ValidationError("评析目标不支持搜索", "kind");
+    }
+    // N2 第二条链：笔记互链同样不作为搜索目标（与评析同款 fail-closed）。
+    // 调用方改走既有的 GET /study-notes?q= 列表选取目标笔记，不在这里另起一套搜索面。
+    if (input.kind === "note") {
+      throw new ValidationError("笔记目标不支持搜索", "kind");
     }
 
     const params: unknown[] = [input.userId];
@@ -313,6 +342,7 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     const sourceIds = [...new Set(targets.filter((t) => t.kind === "source").map((t) => t.id))];
     const questionIds = [...new Set(targets.filter((t) => t.kind === "question").map((t) => t.id))];
     const assessmentIds = [...new Set(targets.filter((t) => t.kind === "assessment").map((t) => t.id))];
+    const noteIds = [...new Set(targets.filter((t) => t.kind === "note").map((t) => t.id))];
 
     if (sourceIds.length > 0) {
       const rows = await this.query<{ id: string; title: string; content_text: string | null }>(
@@ -392,6 +422,31 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
         });
       }
     }
+
+    if (noteIds.length > 0) {
+      // N2 第二条链：笔记目标白名单只取 id/title/body_md/status。
+      // **不按 status 过滤**（见 LoadedNoteTarget 注释）、**不 JOIN**、**不取目标
+      // 笔记自身的引用集合**——互链快照只展开一层，不递归。
+      const rows = await this.query<{
+        id: string;
+        title: string;
+        body_md: string;
+        status: string;
+      }>(
+        `SELECT id, title, body_md, status FROM l3_study_notes
+          WHERE user_id = $1::uuid AND id = ANY($2::uuid[])`,
+        [userId, noteIds],
+      );
+      for (const row of rows) {
+        map.set(`note:${row.id}`, {
+          kind: "note",
+          id: row.id,
+          title: row.title,
+          body_md: row.body_md,
+          status: row.status,
+        });
+      }
+    }
     return map;
   }
 
@@ -407,6 +462,7 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     // N2：评析同样无 UPDATE 授权路径可依赖，且删除主要经「question 级联」发生——
     // 服务层对评析目标会同时给出所属 question 键，两把锁合起来覆盖「capture × 级联删」。
     const assessmentIds = [...new Set(targets.filter((t) => t.kind === "assessment").map((t) => normalizeStudyUuid(t.id)))].sort();
+    const noteIds = [...new Set(targets.filter((t) => t.kind === "note").map((t) => normalizeStudyUuid(t.id)))].sort();
 
     if (sourceIds.length > 0) {
       // 稳定顺序（id ASC）批量共享锁；DELETE 的排他锁将等待锁释放。
@@ -430,11 +486,23 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
         `l3_assessment:${assessmentId}`,
       ]);
     }
+    // N2 第二条链：笔记目标用同款事务级 advisory 键。当前没有笔记硬删除端点，
+    // 这把锁是「未来若引入删除」时的串行化准备，不依赖任何尚不存在的路径。
+    for (const noteId of noteIds) {
+      await this.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `l3_study_note:${noteId}`,
+      ]);
+    }
   }
 
   async listBacklinks(input: ListBacklinksInput): Promise<{ items: StudyBacklinkRow[]; total: number }> {
     const params: unknown[] = [input.userId, input.targetId];
-    const targetColumn = input.targetKind === "source" ? "r.source_id" : "r.question_id";
+    const targetColumn =
+      input.targetKind === "source"
+        ? "r.source_id"
+        : input.targetKind === "note"
+          ? "r.target_note_id"
+          : "r.question_id";
     const filters = [`r.user_id = $1::uuid`, `${targetColumn} = $2::uuid`];
     if (!input.includeArchived) filters.push(`n.status = 'active'`);
     const fromWhere = `
