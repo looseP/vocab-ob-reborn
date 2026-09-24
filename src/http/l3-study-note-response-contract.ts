@@ -53,6 +53,17 @@ const referenceTargetResponseSchema = z.discriminatedUnion("kind", [
     kind: z.literal("note"),
     noteId: z.string().uuid(),
   }).strict(),
+  // N2 第三条链：sheet = sealed 稿次；revisionNo 显式可空（writing 稿次为 >0 整数）。
+  z.object({
+    kind: z.literal("sheet"),
+    submissionId: z.string().uuid(),
+    revisionNo: z.number().int().positive().nullable(),
+  }).strict(),
+  // N2 第三条链：attempt = 作答记录，单值身份（K9）。
+  z.object({
+    kind: z.literal("attempt"),
+    attemptId: z.string().uuid(),
+  }).strict(),
 ]);
 
 const optionSchema = z.object({ key: z.string(), text: z.string() }).strict();
@@ -90,6 +101,18 @@ const referenceDisplaySnapshotSchema = z.discriminatedUnion("kind", [
     kind: z.literal("note"),
     title: z.string(),
     excerpt: z.string(),
+  }).strict(),
+  // N2 第三条链：稿次快照只有 scope + 小结摘录（不含 answers / 评卷字段，K7 / K14）。
+  z.object({
+    kind: z.literal("sheet"),
+    scope: z.string(),
+    summaryExcerpt: z.string(),
+  }).strict(),
+  // N2 第三条链：作答快照只有 venue + 作答摘录。
+  z.object({
+    kind: z.literal("attempt"),
+    venue: z.string(),
+    answerExcerpt: z.string(),
   }).strict(),
 ]);
 
