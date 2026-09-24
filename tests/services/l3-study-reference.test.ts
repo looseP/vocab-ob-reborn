@@ -915,6 +915,26 @@ describe("capture · sheet（D1-a：只认 sealed 稿次）", () => {
     ).rejects.toThrow(NotFoundError);
   });
 
+  it("装载侧若放宽（返回 draft / discarded 稿次）：capture 仍按 sealed 断言 → 404（K2 双保险）", async () => {
+    // 变异锚点：装载只取 sealed 是**第一道**闸门；这里是第二道——日后若把装载条件
+    // 放宽（例如为了支持「引用草稿」），这条会立刻变红，draft 不会被静默认为稳定身份。
+    for (const status of ["draft", "discarded"]) {
+      const loose = {
+        kind: "sheet",
+        id: SHEET,
+        scope: "file",
+        status,
+        revision_no: null,
+        summary: "未定稿",
+      } as unknown as LoadedTarget;
+      const repos = fakeRepos([loose]);
+      const service = makeService(repos);
+      await expect(
+        service.capture(USER, { id: REF, target: { kind: "sheet", submissionId: SHEET } }, repos),
+      ).rejects.toThrow(NotFoundError);
+    }
+  });
+
   it("writing sealed 缺 revisionNo 或 ≤0 → 422（V-17）", async () => {
     const repos = fakeRepos([SHEET_WRITING_TARGET]);
     const service = makeService(repos);

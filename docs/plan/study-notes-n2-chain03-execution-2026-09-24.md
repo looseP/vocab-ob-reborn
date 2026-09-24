@@ -201,6 +201,106 @@ diff 收敛为 `src/db/schema.ts` **+35/-3**）。
 
 **字节卫生**：14 个改动文件 CRLF=0、无 BOM（node 直读统计，非 `grep -c $'\r'` 误报口径）。
 
+## 7.0.3 步骤 B–D 实现与验证（2026-09-24，提交 2–4）
+
+**B · 领域层（红测先行）**
+
+- 红：`npx vitest run tests/domain/l3-study-notes.test.ts tests/services/l3-study-reference.test.ts --coverage.enabled=false`
+  → **exit 1，17 failed / 88 passed**。失败原因逐条核对均为合同未实现（`REFERENCE_KINDS` 仅 7 值、schema REJECT
+  未知 kind、`STUDY_SHEET/ATTEMPT_EXCERPT_MAX` undefined、`targetKeyOf` 对新品类 TypeError），**非测试缺陷**；
+  既有 88 条保持通过 → 红测未破坏现有行为。
+- 绿：同命令 → **exit 0，105 passed**。
+- 实现点：`STUDY_SHEET_EXCERPT_MAX/STUDY_ATTEMPT_EXCERPT_MAX=280`；`REFERENCE_KINDS` 7→**9**；
+  `ReferenceTarget` 增 `sheet{submissionId, revisionNo?}` 与 `attempt{attemptId}`（均 `.strict()`）；
+  `SheetReferenceSnapshot{scope, summaryExcerpt}` / `AttemptReferenceSnapshot{venue, answerExcerpt}`。
+- 类型收口：`npm run typecheck` 首轮 20+ 错误（`LoadedTarget` 联合扩型后各处 switch 缺穷尽分支、
+  插入行/返回行缺三列）→ 逐处补齐（export / service / frontend 五处 switch + 三处 refRow）→ **exit 0**；
+  `npx tsc --noEmit -p tsconfig.frontend.json`（首轮 3 处 TS2366）→ 补分支后 **exit 0**。
+
+**C · 仓储与服务（同源 target key）**
+
+- `loadTargets` 两段 SQL 均带 `user_id = $1::uuid`（sheet 段另加 `status = 'sealed'`，attempt 段加 `status = 'active'`）；
+  `lockTargets` 增 `l3_submission:<uuid>` / `l3_attempt:<uuid>` 两把事务级 advisory 锁；
+  `listBacklinks` 的 `targetColumn` 显式映射 sheet→`r.submission_id`、attempt→`r.attempt_id`；
+  `searchTargets` 对 sheet/attempt 抛 `ValidationError`（fail-closed，不静默返回空）。
+- `targetKeyOf` / `targetRefsOf` 共用同一键式（`sheet:<id>` / `attempt:<id>`），**无兜底**：不通过题目、
+  sheet 或当前 attempt 反推身份（`targetRefsOf` 返回类型收紧为 `{kind, id}[]`）。
+- 服务装配层新增 4 条真实用例（`tests/services/l3-study-notes.test.ts`，含 `faithfulLoadTargets`
+  **忠实装载替身**——只返回实际请求的目标，不做无条件全量建键）→ 该文件 **57 passed**。
+- 未使用 `mock ConflictError` 证明生产链路；attempt unavailable / sheet sealed 均以真实服务断言覆盖。
+
+**D · 导出与契约**
+
+| 命令 | 结果 |
+|---|---|
+| `npm run api:openapi` | **exit 0**（`docs/api/openapi.json` +472） |
+| `npm run api:client:generate` | **exit 0**（`src/frontend/api/generated/openapi.ts` +106） |
+| `npm run api:client:check` | **exit 0** |
+| `npx vitest run tests/http/… api:contract 相关` | **exit 0，10 passed** |
+| breaking 探针（文件版 base loader 复算） | RAW_ISSUES=**8** 全 breaking，**UNKNOWN_COUNT=0** |
+| 重锚 approval 后门禁 | GATE_ISSUES=**0** / UNKNOWN_COUNT=**0** |
+
+- **R-1 硬门槛未触发**（实测非 UNKNOWN）：8 条 issue 全部被判定器识别为「响应联合变体新增」，
+  按用户裁决 A 属可豁免 response 类；三元组已重锚（`baseSha256=848280f4…`、`currentSha256=8dc9465d…`，
+  issues 8 条不变）。若判定为 UNKNOWN 本应停下，此处**无需停下**，但结论基于实测而非假定。
+- 导出：v2 增 `sheet` / `attempt` 判别变体；**v1 对两个新 kind 继续 422**（`assertV1Kinds` fail-closed）；
+  `projectDisplaySnapshot` 补齐两支白名单重建（缺支曾抛「引用快照 kind 非法」）。导出测试 **49 passed**。
+- 生成物由命令产出，**未手改**。
+
+## 7.0.4 步骤 E 验证记录（2026-09-24）
+
+**E-1 静态与定向测试**
+
+| 项 | 结果 |
+|---|---|
+| `npm run typecheck` | **exit 0** |
+| 定向 9 文件（domain / repositories / services×4 / http / scripts×2） | **exit 0，9 files / 315 passed** |
+
+**E-2 隔离真库**（`vocab_n2_chain03_a`，45 段）：见 §7.0.2（S1–S7、F1–F10、RLS 结构三表 `relrowsecurity=t`）。
+
+**E-3 RLS 运行时隔离**（双用户探针 `verify-rls.sql`）
+
+- R1 用户 A 可见引用行 2 / sheet 1 / attempt 1；R2 切 B 后**全 0**，且 A 的具体行按 id 精确查也**全 0**；
+- R3 B 插入「属主为 A」的行被 RLS `WITH CHECK` 拒；R4 空身份全 0；
+- 负对照：B 自己的 attempt 仍可见（1）→ 证明 R2 的 0 来自属主隔离而非装载条件。
+
+**E-4 变异验证（6/6 全部被捕获 → RED）**
+
+| 编号 | 变异 | 结果 |
+|---|---|---|
+| M1 | sheet/writing 忽略 revisionNo | **caught** |
+| M2 | 装载侧放行 draft / discarded | **caught**（首轮未捕获 → 新增「装载侧若放宽，capture 仍按 sealed 断言」用例后 RED） |
+| M3 | attempt 软删放行（blocker 漏计） | **caught** |
+| M4 | attempt 装载放宽（deleted 可见） | **caught** |
+| M5 | sheet 装载放宽 | **caught** |
+| M6 | v1 闸门放行 sheet/attempt | **caught** |
+
+**E-5 study-notes E2E（7 spec / 54 tests，全部 exit 0）**
+
+7 个 spec 各自绑定**专属验收库**（spec 内显式断言库名），故按库分批、每批重启服务并换新 `E2E_OUTPUT_DIR`。
+前置：`VITE_N1_STUDY_NOTE_HOST=1 npm run frontend:build` → **exit 0**；四个库均 `drizzle-kit migrate` 至 **45 段**。
+
+| spec | 库（迁移后段数） | 结果 |
+|---|---|---|
+| `study-note-host.spec.ts` | `…task07_accept`（45） | **10 passed** |
+| `study-notes-ref-picker-close.spec.ts` | `…task08_accept`（45） | **3 passed** |
+| `study-notes-reference-loop.spec.ts` | `…task08_accept`（45） | **4 passed** |
+| `study-notes-task08-fix-regression.spec.ts` | `…task08_accept`（45） | **3 passed** |
+| `study-notes-workspace.spec.ts` | `…task08_accept`（45） | **23 passed** |
+| `study-notes-sheet-side-panel.spec.ts` | `…task09b_accept`（45） | **6 passed** |
+| `study-note-export.spec.ts` | `…task10_accept`（45） | **5 passed** |
+
+合计 **54 passed / 0 failed**（task08 四 spec 合批 `33 passed (3.9m)`；host `10 passed (59.0s)`；
+side-panel `6 passed (21.5s)`；export `5 passed (23.0s)`）。
+
+**E-6 环境限制（基线对照登记，不写伪通过）**
+
+- `npm run db:schema:drift` / `api:breaking` / `complexity:routes` / `coverage:layered` / `test:collection`
+  的**脚本版**在本机恒失败：node 内 `spawnSync` 子进程返回 `status=null`（EBUSY），与基线分支同样表现 →
+  **非本链回归**；其实质已分别由 `drizzle-kit generate`（`No schema changes`，exit 0）、真库 45 段迁移、
+  文件版 base loader 复算三路佐证，最终以 CI 证据为准。
+- E2E 一次全跑会失败（7 spec 绑 4 个不同库）→ 按库分批是本仓既有约束，非本链引入。
+
 ## 7. TDD 顺序（不得跳跃）
 
 1. 红：迁移/RLS/FK/CHECK/索引（真库探针脚本 + `db:schema:drift`）
@@ -221,3 +321,27 @@ diff 收敛为 `src/db/schema.ts` **+35/-3**）。
 - **R-2**：attempt 无 per-id 只读 GET → attempt 引用卡片不提供深链（sheet 深链走既有 `/l3?sheet=`）。
   不新增路由、不新增前端出口；登记为 U 项。
 - **R-3**：本机 `tests/scripts/*` 子进程 EBUSY 环境限制仍可能存在 → 一律以基线对照 + CI 证据区分，不写伪通过。
+  （实测已确认：非本链回归，见 §7.0.4 E-6。）
+
+## 9. 未覆盖项（本链显式登记，非遗漏）
+
+| 编号 | 项 | 说明 |
+|---|---|---|
+| U-1 | chain02 的 `note` 型引用**未进 schema 层唯一性** | 沿用 chain02 既有合同，本链不改写；不扩大范围 |
+| U-2 | attempt **无 per-id 深链**（R-2） | 无只读 GET → 引用卡片不提供深链，不新增路由/前端出口 |
+| U-3 | sheet / attempt **不进搜索枚举** | `searchTargets` 显式 fail-closed 抛错，不静默返回空 |
+| U-4 | `listBacklinks` 的 assessment 分支仍落 `question_id` 兜底 | chain01 既有行为，本链不动（新增 sheet/attempt 已显式映射） |
+| U-5 | grading / writingTask / writingSheet / feedback 四类引用 | 属第四、第五条链，本链不启动 |
+
+## 10. 提交划分（5 个）
+
+1. `cb62c3a` 阶段 1–6 数据层与 attempt 删除 blocker（schema / 迁移 0043+0044 / 仓储 blocker / 服务 409 / HTTP）
+2. `0219a88` 领域类型与 target key（domain types / 快照投影 / schema 校验两支 / 仓储装载与锁键 / 前端穷尽分支）
+3. `3a8822e` 响应契约与生成物（HTTP contract / openapi.json / generated client / approval 重锚）
+4. `8e2d7e3` 服务装配层 / 导出 v2 变体 / v1 冻结用例
+5. （本提交）测试、台账与证据（M2 补测 + §7.0.3 / §7.0.4 / §9 / §10）
+
+## 11. 停止条件声明
+
+本链创建 draft PR 后即停止：**不转 ready、不合并、不部署**；不启动 N2 第四、第五条链；
+不处理 #129。独立审查与单独合并授权前保持 draft。
