@@ -59,7 +59,8 @@ describe("replaceForNote", () => {
     await repo.replaceForNote(USER, NOTE, [
       {
         id: REF, kind: "source_quote",
-        source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null, option_key: null,
+        source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null,
+        submission_id: null, submission_revision_no: null, attempt_id: null, option_key: null,
         start_offset: 0, end_offset: 3, quote_snapshot: "The",
         field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
         captured_at: "2026-09-19T00:00:00.000Z",
@@ -76,7 +77,9 @@ describe("replaceForNote", () => {
     const payload = JSON.parse(insertCall[1]![2] as string) as Record<string, unknown>[];
     expect(payload).toEqual([{
       id: REF, kind: "source_quote", source_id: SOURCE, question_id: null, assessment_id: null,
-      target_note_id: null, option_key: null,
+      // N2 第三条链：新三列对所有既有 kind 恒 null（载荷形状同步扩展）。
+      target_note_id: null, submission_id: null, submission_revision_no: null, attempt_id: null,
+      option_key: null,
       start_offset: 0, end_offset: 3, quote_snapshot: "The",
       field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
       captured_at: "2026-09-19T00:00:00.000Z",
@@ -408,6 +411,7 @@ describe("N2 笔记互链（仓储层 · 第二条垂直链）", () => {
     await repo.replaceForNote(USER, NOTE, [{
       id: REF, kind: "note",
       source_id: null, question_id: null, assessment_id: null, target_note_id: TARGET_NOTE,
+      submission_id: null, submission_revision_no: null, attempt_id: null,
       option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
       field_hash: "a".repeat(64), display_snapshot: { kind: "note" },
       captured_at: "2026-09-19T00:00:00.000Z",
@@ -443,5 +447,157 @@ describe("N2 笔记互链（仓储层 · 第二条垂直链）", () => {
       }),
     ).rejects.toThrow(ValidationError);
     expect(querySpy.mock.calls.length).toBe(0);
+  });
+});
+
+describe("N2 第三条链（仓储层 · sheet / attempt 装载与锁键）", () => {
+  const SHEET = "00000000-0000-4000-8000-000000000321";
+  const ATTEMPT = "00000000-0000-4000-8000-000000000331";
+
+  it("loadTargets sheet 分支：只装载 sealed（draft/discarded 取不到）、白名单不含 answers、键为 sheet:<id>", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [{ id: SHEET, scope: "file", status: "sealed", revision_no: null, summary: "小结" }],
+    }));
+    const map = await repo.loadTargets(USER, [{ kind: "sheet", id: SHEET }]);
+
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("FROM l3_submissions");
+    // D1-a / K1：draft / discarded 不是合法目标
+    expect(text).toContain("status = 'sealed'");
+    // K7 / K14：白名单不含 answers（用户作答）与任何评卷列
+    expect(text).not.toContain("answers");
+    expect(params).toEqual([USER, [SHEET]]);
+    expect(map.get(`sheet:${SHEET}`)).toMatchObject({
+      kind: "sheet",
+      id: SHEET,
+      scope: "file",
+      status: "sealed",
+      revision_no: null,
+      summary: "小结",
+    });
+  });
+
+  it("loadTargets attempt 分支：只装载 active（软删取不到 → unavailable）、键为 attempt:<id>", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [{ id: ATTEMPT, venue: "file", answer: { value: "A" }, status: "active" }],
+    }));
+    const map = await repo.loadTargets(USER, [{ kind: "attempt", id: ATTEMPT }]);
+
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("FROM l3_question_attempts");
+    // K10：软删行不装载
+    expect(text).toContain("status = 'active'");
+    expect(params).toEqual([USER, [ATTEMPT]]);
+    expect(map.get(`attempt:${ATTEMPT}`)).toMatchObject({
+      kind: "attempt",
+      id: ATTEMPT,
+      venue: "file",
+      status: "active",
+    });
+  });
+
+  it("lockTargets：sheet 用 l3_submission:<小写 uuid>、attempt 用 l3_attempt:<小写 uuid>（K17）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.lockTargets(USER, [
+      { kind: "sheet", id: "BEEFCAFE-2345-4789-8ABC-000000000321" },
+      { kind: "attempt", id: "BEEFCAFE-2345-4789-8ABC-000000000331" },
+    ]);
+
+    const keys = querySpy.mock.calls
+      .filter((c) => (c[0] as string).includes("pg_advisory_xact_lock"))
+      .map((c) => (c[1] as unknown[])[0]);
+    expect(keys).toEqual([
+      "l3_submission:beefcafe-2345-4789-8abc-000000000321",
+      "l3_attempt:beefcafe-2345-4789-8abc-000000000331",
+    ]);
+  });
+
+  it("listBacklinks：sheet 走 r.submission_id、attempt 走 r.attempt_id（不退化成 question_id）", async () => {
+    querySpy.mockImplementation(async (text: string) => {
+      if ((text as string).includes("count(DISTINCT")) return { rows: [{ total: "1" }] };
+      return { rows: [{ note_id: NOTE, title: "笔记", status: "active", reference_count: 1, ref_ids: [REF] }] };
+    });
+
+    await repo.listBacklinks({ userId: USER, targetKind: "sheet", targetId: SHEET, cursor: null, limit: 21 });
+    const sheetText = querySpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(sheetText).toContain("r.submission_id = $2::uuid");
+    expect(sheetText).not.toContain("r.question_id = $2");
+
+    querySpy.mockClear();
+    querySpy.mockImplementation(async (text: string) => {
+      if ((text as string).includes("count(DISTINCT")) return { rows: [{ total: "1" }] };
+      return { rows: [{ note_id: NOTE, title: "笔记", status: "active", reference_count: 1, ref_ids: [REF] }] };
+    });
+    await repo.listBacklinks({ userId: USER, targetKind: "attempt", targetId: ATTEMPT, cursor: null, limit: 21 });
+    const attemptText = querySpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(attemptText).toContain("r.attempt_id = $2::uuid");
+    expect(attemptText).not.toContain("r.question_id = $2");
+  });
+
+  it("searchTargets：sheet / attempt 不支持搜索 → fail-closed（不新增搜索面，R-2 同款纪律）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    for (const kind of ["sheet", "attempt"] as const) {
+      await expect(
+        repo.searchTargets({ userId: USER, kind, q: null, venue: null, cursor: null, limit: 21 }),
+      ).rejects.toThrow(ValidationError);
+    }
+    expect(querySpy.mock.calls.length).toBe(0);
+  });
+
+  it("replaceForNote：载荷与 INSERT 列携带 submission_id / submission_revision_no / attempt_id（归属仍由参数注入）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.replaceForNote(USER, NOTE, [{
+      id: REF, kind: "sheet",
+      source_id: null, question_id: null, assessment_id: null, target_note_id: null,
+      submission_id: SHEET, submission_revision_no: 2, attempt_id: null,
+      option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
+      field_hash: "a".repeat(64), display_snapshot: { kind: "sheet" },
+      captured_at: "2026-09-19T00:00:00.000Z",
+    }]);
+
+    const insertCall = querySpy.mock.calls.find((c) => (c[0] as string).includes("INSERT INTO"))!;
+    expect(insertCall[0]).toContain("submission_id");
+    expect(insertCall[0]).toContain("submission_revision_no");
+    expect(insertCall[0]).toContain("attempt_id");
+    const payload = JSON.parse(insertCall[1]![2] as string) as Record<string, unknown>[];
+    expect(payload[0]!.submission_id).toBe(SHEET);
+    expect(payload[0]!.submission_revision_no).toBe(2);
+    expect(payload[0]!.attempt_id).toBeNull();
+    expect(payload[0]).not.toHaveProperty("note_id");
+    expect(payload[0]).not.toHaveProperty("user_id");
+  });
+});
+
+// N2 第三条垂直链：attempt 软删 blocker（M-0044 之后才有 attempt_id 列；
+// 这两条是本链的**红测**——方法尚未实现，先锁死口径再动实现）。
+const ATTEMPT = "00000000-0000-4000-8000-000000000221";
+const NOTE_B = "00000000-0000-4000-8000-000000000102";
+
+describe("getAttemptDeleteBlockers（N2 第三条链 · attempt 软删 blocker）", () => {
+  it("按 attempt_id 聚合引用它的笔记：逐笔记计数、含归档、不含身份兜底", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [
+        { note_id: NOTE, title: "卷面整理", status: "active", reference_count: 2 },
+        { note_id: NOTE_B, title: "作文复盘", status: "archived", reference_count: 1 },
+      ],
+    }));
+    const blockers = await repo.getAttemptDeleteBlockers(USER, ATTEMPT);
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("FROM l3_study_note_references r");
+    expect(text).toContain("r.attempt_id = $2::uuid");
+    expect(text).toMatch(/count\(r\.id\)|COUNT\(r\.id\)/i);
+    expect(text).toContain("GROUP BY");
+    expect(params).toEqual([USER, ATTEMPT]);
+    expect(blockers).toEqual([
+      { note_id: NOTE, title: "卷面整理", status: "active", reference_count: 2 },
+      { note_id: NOTE_B, title: "作文复盘", status: "archived", reference_count: 1 },
+    ]);
+  });
+
+  it("不得按 question_id / submission_id / sheet_id 兜底计引用（attempt 身份只能是 attempt_id）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.getAttemptDeleteBlockers(USER, ATTEMPT);
+    const [text] = querySpy.mock.calls[0]!;
+    expect(text).not.toMatch(/r\.question_id = \$2|r\.submission_id = \$2/);
   });
 });

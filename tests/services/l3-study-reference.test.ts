@@ -11,6 +11,11 @@ import {
   L3StudyReferenceService,
   currentFieldText,
   questionFieldText,
+  sheetFieldText,
+  attemptFieldText,
+  targetKeyOf,
+  targetRefsOf,
+  referenceRowToTarget,
   type StudyReferenceRepos,
 } from "@/services/l3-study-reference.service";
 import type {
@@ -87,7 +92,8 @@ function makeService(repos: StudyReferenceRepos): L3StudyReferenceService {
 function refRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
   return {
     id: REF, note_id: "n", user_id: USER, kind: "stem_quote", source_id: null, question_id: QUESTION,
-    assessment_id: null, target_note_id: null, option_key: null, start_offset: 0, end_offset: 4, quote_snapshot: "What",
+    assessment_id: null, target_note_id: null, submission_id: null, submission_revision_no: null, attempt_id: null,
+    option_key: null, start_offset: 0, end_offset: 4, quote_snapshot: "What",
     field_hash: sha256Hex("What does the fox do?"), display_snapshot: { kind: "stem_quote" },
     captured_at: "2026-09-19T00:00:00Z",
     ...overrides,
@@ -814,5 +820,212 @@ describe("N2 笔记互链（第二条垂直链 · note 引用型）", () => {
     expect(preview.liveTitle).toBe("被引用笔记");
     // 零写：预览不得触碰 replaceForNote
     expect(repos.studyReferences.replaceForNote).not.toHaveBeenCalled();
+  });
+});
+
+// ── N2 第三条链：sheet（sealed 稿次）/ attempt（作答记录）────────────────────
+// 红测先行：以下用例在实现前必须**全部按合同失败**（typecheck 亦红——新类型尚未
+// 落地），实现后转绿并同步去掉红测期的 `as unknown as` 断言。
+
+const SHEET = "00000000-0000-4000-8000-000000000321";
+const SHEET_WRITING = "00000000-0000-4000-8000-000000000322";
+const ATTEMPT = "00000000-0000-4000-8000-000000000331";
+
+/** 非 writing（file）sealed 稿次。 */
+const SHEET_TARGET: LoadedTarget = {
+  kind: "sheet",
+  id: SHEET,
+  scope: "file",
+  status: "sealed",
+  revision_no: null,
+  summary: "卷面总结：三次 cloze 全对",
+};
+
+/** writing sealed 稿次（revision_no = 2）。 */
+const SHEET_WRITING_TARGET: LoadedTarget = {
+  kind: "sheet",
+  id: SHEET_WRITING,
+  scope: "writing",
+  status: "sealed",
+  revision_no: 2,
+  summary: "第二稿：论证段重写",
+};
+
+const ATTEMPT_TARGET: LoadedTarget = {
+  kind: "attempt",
+  id: ATTEMPT,
+  venue: "file",
+  answer: { value: "A" },
+  status: "active",
+};
+
+describe("target key helpers · sheet / attempt（N2 第三条链）", () => {
+  it("targetKeyOf：sheet=sheet:<submissionId>、attempt=attempt:<attemptId>", () => {
+    expect(targetKeyOf({ kind: "sheet", submissionId: SHEET })).toBe(`sheet:${SHEET}`);
+    expect(targetKeyOf({ kind: "attempt", attemptId: ATTEMPT })).toBe(`attempt:${ATTEMPT}`);
+  });
+
+  it("targetRefsOf：sheet / attempt 各只返回自身键，无 question / submission 兜底（K5 / K9）", () => {
+    expect(targetRefsOf({ kind: "sheet", submissionId: SHEET })).toEqual([{ kind: "sheet", id: SHEET }]);
+    expect(targetRefsOf({ kind: "attempt", attemptId: ATTEMPT })).toEqual([{ kind: "attempt", id: ATTEMPT }]);
+  });
+
+  it("referenceRowToTarget：sheet 行保留 revisionNo（null 也保留），attempt 行只有 attemptId", () => {
+    const sheetRow = {
+      ...refRow(),
+      kind: "sheet",
+      submission_id: SHEET,
+      submission_revision_no: 2,
+    } as L3StudyNoteReferenceRow;
+    expect(referenceRowToTarget(sheetRow)).toEqual({ kind: "sheet", submissionId: SHEET, revisionNo: 2 });
+
+    const attemptRow = { ...refRow(), kind: "attempt", attempt_id: ATTEMPT } as L3StudyNoteReferenceRow;
+    expect(referenceRowToTarget(attemptRow)).toEqual({ kind: "attempt", attemptId: ATTEMPT });
+  });
+});
+
+describe("capture · sheet（D1-a：只认 sealed 稿次）", () => {
+  it("sealed 非 writing：快照={scope,summaryExcerpt}、submission_revision_no 落 null、hash 可复算", async () => {
+    const repos = fakeRepos([SHEET_TARGET]);
+    const service = makeService(repos);
+    const row = await service.capture(USER, { id: REF, target: { kind: "sheet", submissionId: SHEET } }, repos);
+
+    expect(row.submission_id).toBe(SHEET);
+    expect(row.submission_revision_no).toBeNull();
+    expect(row.attempt_id).toBeNull();
+    expect(row.display_snapshot).toEqual({
+      kind: "sheet",
+      scope: "file",
+      summaryExcerpt: "卷面总结：三次 cloze 全对",
+    });
+    // hash 可复算（K15：{scope, revisionNo, summary} 固定键序）
+    expect(row.field_hash).toBe(sha256Hex(sheetFieldText(SHEET_TARGET)));
+    // 快照白名单不含 answers / grading 字段（K7 / K14）
+    expect(row.display_snapshot).not.toHaveProperty("answers");
+    expect(row.display_snapshot).not.toHaveProperty("verdict");
+    // 装载请求必须是 sheet 键本身（忠实替身下写错键必然取不到）
+    expect(repos.studyReferences.loadTargets).toHaveBeenCalledWith(USER, [{ kind: "sheet", id: SHEET }]);
+  });
+
+  it("draft / discarded 稿次：忠实装载取不到 → 404（不是 409，K1）", async () => {
+    const repos = fakeRepos([]);
+    const service = makeService(repos);
+    await expect(
+      service.capture(USER, { id: REF, target: { kind: "sheet", submissionId: SHEET } }, repos),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("装载侧若放宽（返回 draft / discarded 稿次）：capture 仍按 sealed 断言 → 404（K2 双保险）", async () => {
+    // 变异锚点：装载只取 sealed 是**第一道**闸门；这里是第二道——日后若把装载条件
+    // 放宽（例如为了支持「引用草稿」），这条会立刻变红，draft 不会被静默认为稳定身份。
+    for (const status of ["draft", "discarded"]) {
+      const loose = {
+        kind: "sheet",
+        id: SHEET,
+        scope: "file",
+        status,
+        revision_no: null,
+        summary: "未定稿",
+      } as unknown as LoadedTarget;
+      const repos = fakeRepos([loose]);
+      const service = makeService(repos);
+      await expect(
+        service.capture(USER, { id: REF, target: { kind: "sheet", submissionId: SHEET } }, repos),
+      ).rejects.toThrow(NotFoundError);
+    }
+  });
+
+  it("writing sealed 缺 revisionNo 或 ≤0 → 422（V-17）", async () => {
+    const repos = fakeRepos([SHEET_WRITING_TARGET]);
+    const service = makeService(repos);
+    await expect(
+      service.capture(USER, { id: REF, target: { kind: "sheet", submissionId: SHEET_WRITING } }, repos),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("writing sealed revisionNo 不匹配 → 404（身份不兜底，K3 / 变异防线）", async () => {
+    const repos = fakeRepos([SHEET_WRITING_TARGET]);
+    const service = makeService(repos);
+    await expect(
+      service.capture(
+        USER,
+        { id: REF, target: { kind: "sheet", submissionId: SHEET_WRITING, revisionNo: 1 } },
+        repos,
+      ),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("非 writing 稿次传 revisionNo → 404（该稿次无 revision 身份，K3）", async () => {
+    const repos = fakeRepos([SHEET_TARGET]);
+    const service = makeService(repos);
+    await expect(
+      service.capture(USER, { id: REF, target: { kind: "sheet", submissionId: SHEET, revisionNo: 1 } }, repos),
+    ).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe("capture · attempt（K9 / K10）", () => {
+  it("active：快照={venue,answerExcerpt}、attempt_id 落地、hash 可复算", async () => {
+    const repos = fakeRepos([ATTEMPT_TARGET]);
+    const service = makeService(repos);
+    const row = await service.capture(USER, { id: REF, target: { kind: "attempt", attemptId: ATTEMPT } }, repos);
+
+    expect(row.attempt_id).toBe(ATTEMPT);
+    expect(row.submission_id).toBeNull();
+    expect(row.display_snapshot).toEqual({ kind: "attempt", venue: "file", answerExcerpt: `{"value":"A"}` });
+    expect(row.field_hash).toBe(sha256Hex(attemptFieldText(ATTEMPT_TARGET)));
+    expect(repos.studyReferences.loadTargets).toHaveBeenCalledWith(USER, [{ kind: "attempt", id: ATTEMPT }]);
+  });
+
+  it("已软删（装载过滤 deleted）→ 404，不做「按题找最新一次」兜底", async () => {
+    const repos = fakeRepos([]);
+    const service = makeService(repos);
+    await expect(
+      service.capture(USER, { id: REF, target: { kind: "attempt", attemptId: ATTEMPT } }, repos),
+    ).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe("resolve · sheet / attempt 状态语义（§5）", () => {
+  it("快照与 hash 一致 → current；两者 changed 均不可达（不可变事实）", async () => {
+    const repos = fakeRepos([SHEET_TARGET, ATTEMPT_TARGET]);
+    const service = makeService(repos);
+    const sheetRow = {
+      ...refRow(),
+      kind: "sheet",
+      submission_id: SHEET,
+      submission_revision_no: null,
+      field_hash: sha256Hex(sheetFieldText(SHEET_TARGET)),
+      display_snapshot: { kind: "sheet", scope: "file", summaryExcerpt: "卷面总结" },
+    } as L3StudyNoteReferenceRow;
+    const attemptRow = {
+      ...refRow(),
+      id: "00000000-0000-4000-8000-000000000002",
+      kind: "attempt",
+      attempt_id: ATTEMPT,
+      field_hash: sha256Hex(attemptFieldText(ATTEMPT_TARGET)),
+      display_snapshot: { kind: "attempt", venue: "file", answerExcerpt: `{"value":"A"}` },
+    } as L3StudyNoteReferenceRow;
+
+    const resolved = await service.resolve(USER, [sheetRow, attemptRow], repos);
+    expect(resolved.map((item) => item.status)).toEqual(["current", "current"]);
+  });
+
+  it("attempt 软删后 → unavailable，快照与 capturedAt 逐字节保留（K10）", async () => {
+    const repos = fakeRepos([]);
+    const service = makeService(repos);
+    const snapshot = { kind: "attempt", venue: "file", answerExcerpt: `{"value":"A"}` };
+    const attemptRow = {
+      ...refRow(),
+      kind: "attempt",
+      attempt_id: ATTEMPT,
+      display_snapshot: snapshot,
+      captured_at: "2026-09-20T00:00:00Z",
+    } as L3StudyNoteReferenceRow;
+
+    const resolved = await service.resolve(USER, [attemptRow], repos);
+    expect(resolved[0]!.status).toBe("unavailable");
+    expect(resolved[0]!.displaySnapshot).toEqual(snapshot);
+    expect(resolved[0]!.capturedAt).toBe("2026-09-20T00:00:00Z");
   });
 });

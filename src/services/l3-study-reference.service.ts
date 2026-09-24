@@ -28,6 +28,8 @@ import {
   STUDY_SOURCE_EXCERPT_MAX,
   STUDY_ASSESSMENT_EXCERPT_MAX,
   STUDY_NOTE_EXCERPT_MAX,
+  STUDY_SHEET_EXCERPT_MAX,
+  STUDY_ATTEMPT_EXCERPT_MAX,
   type ReferenceDisplaySnapshot,
   type ReferencePreview,
   type ReferenceStatus,
@@ -45,7 +47,9 @@ import {
   L3StudyReferenceRepository,
   type IL3StudyReferenceRepository,
   type L3StudyNoteReferenceRow,
+  type LoadedAttemptTarget,
   type LoadedQuestionTarget,
+  type LoadedSheetTarget,
   type LoadedTarget,
   type ReferenceTargetKind,
   type StudyReferenceInsertRow,
@@ -94,6 +98,55 @@ export function noteFieldText(target: Extract<LoadedTarget, { kind: "note" }>): 
   return JSON.stringify({ title: target.title, bodyMd: target.body_md });
 }
 
+/**
+ * 递归稳定化 JSON（对象键按字典序，数组保序）。
+ *
+ * hash 输入必须**可复算**：PG `jsonb` 的输出键序是实现细节（按长度再按字节序），
+ * 直接 stringify 解析结果会把「同一份 JSON 换一个键序」误判成 changed；而 attempt
+ * `answer` 是用户作答 JSON，键序不受我们控制。
+ */
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => canonicalJson(item));
+  if (value !== null && typeof value === "object") {
+    const source = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) out[key] = canonicalJson(source[key]);
+    return out;
+  }
+  return value;
+}
+
+/** 稳定化 JSON 文本（供摘录与人工核对；hash 输入另有固定键序包装）。 */
+function canonicalJsonText(value: unknown): string {
+  return JSON.stringify(canonicalJson(value));
+}
+
+/**
+ * N2 第三条链：sheet 引用的 hash 输入（K15 写死）= `{ scope, revisionNo, summary }`
+ * 固定键序 JSON。
+ *
+ * **不含** `draft_version`（K4，它是 CAS 乐观锁不是版本）与 `answers`（K7），
+ * 也不含任何评卷字段。sealed 稿次不可变 → `changed` 不可达（§5 承认的事实）。
+ */
+export function sheetFieldText(target: Extract<LoadedTarget, { kind: "sheet" }>): string {
+  return JSON.stringify({
+    scope: target.scope,
+    revisionNo: target.revision_no ?? null,
+    summary: target.summary ?? null,
+  });
+}
+
+/**
+ * N2 第三条链：attempt 引用的 hash 输入（K15 写死）= `{ venue, answer }`，
+ * `answer` 先做键序稳定化（同上，保证可复算）。
+ *
+ * **不含** `deleted_at` / `created_at` / `self_assessment`；attempt 行不可变
+ * （K12）→ `changed` 不可达。
+ */
+export function attemptFieldText(target: Extract<LoadedTarget, { kind: "attempt" }>): string {
+  return JSON.stringify({ venue: target.venue, answer: canonicalJson(target.answer) });
+}
+
 /** 按引用 kind 取"当前字段文本"（与 capture 的 hash 口径一致）；不可得返回 null。 */
 export function currentFieldText(
   kind: ReferenceKind,
@@ -105,6 +158,12 @@ export function currentFieldText(
   }
   if (kind === "note") {
     return target.kind === "note" ? noteFieldText(target) : null;
+  }
+  if (kind === "sheet") {
+    return target.kind === "sheet" ? sheetFieldText(target) : null;
+  }
+  if (kind === "attempt") {
+    return target.kind === "attempt" ? attemptFieldText(target) : null;
   }
   if (target.kind === "assessment") {
     // N2：评析的 hash 输入写死为 content_md（A2）；评析是 latest-wins 覆写，
@@ -121,10 +180,16 @@ export function currentFieldText(
   return null;
 }
 
-/** 目标"当前标题"（source=标题；note=笔记标题；question=可读来源标题，可能 null）。 */
+/**
+ * 目标"当前标题"（source=标题；note=笔记标题；question/评析=可读来源标题，可能 null）。
+ *
+ * N2 第三条链：sheet / attempt **没有**标题列（稿次是 scope+summary，作答是
+ * venue+answer），返回 null——不拼造一个伪标题，避免与 `liveTitle` 的语义混淆。
+ */
 function liveTitleOf(target: LoadedTarget): string | null {
   if (target.kind === "source") return target.title;
   if (target.kind === "note") return target.title;
+  if (target.kind === "sheet" || target.kind === "attempt") return null;
   return target.source_title;
 }
 
@@ -169,10 +234,20 @@ export function targetKeyOf(target: ReferenceTarget): string {
     // N2 第二条链：笔记目标自带完整身份，不需要第二个键（不像评析还要锁所属题）。
     return `note:${normalizeStudyUuid(target.noteId)}`;
   }
+  if (target.kind === "sheet") {
+    // N2 第三条链：sheet 身份是稿次行自身（`submission_id`）——revisionNo 是
+    // writing 稿次的**半片**身份（存在引用行里备查），不参与装载键：同一稿次行的
+    // revision 是它自己的属性，不是另一条装载路径。
+    return `sheet:${normalizeStudyUuid(target.submissionId)}`;
+  }
+  if (target.kind === "attempt") {
+    // N2 第三条链：attempt 身份就是 attemptId 单值（K9），不按 question / sheet 兜底。
+    return `attempt:${normalizeStudyUuid(target.attemptId)}`;
+  }
   return `question:${normalizeStudyUuid(target.questionId)}`;
 }
 
-export function targetRefsOf(target: ReferenceTarget): { kind: "source" | "question" | "assessment" | "note"; id: string }[] {
+export function targetRefsOf(target: ReferenceTarget): { kind: ReferenceTargetKind; id: string }[] {
   if (target.kind === "source" || target.kind === "source_quote") {
     return [{ kind: "source", id: normalizeStudyUuid(target.sourceId) }];
   }
@@ -184,6 +259,14 @@ export function targetRefsOf(target: ReferenceTarget): { kind: "source" | "quest
   }
   if (target.kind === "note") {
     return [{ kind: "note", id: normalizeStudyUuid(target.noteId) }];
+  }
+  if (target.kind === "sheet") {
+    // 只返回自身键——不额外装载其题目 / 来源（K5 无身份兜底）。
+    return [{ kind: "sheet", id: normalizeStudyUuid(target.submissionId) }];
+  }
+  if (target.kind === "attempt") {
+    // 只返回自身键——不装载 question / sheet（K9）。
+    return [{ kind: "attempt", id: normalizeStudyUuid(target.attemptId) }];
   }
   return [{ kind: "question", id: normalizeStudyUuid(target.questionId) }];
 }
@@ -228,6 +311,14 @@ export function referenceRowToTarget(row: L3StudyNoteReferenceRow): ReferenceTar
       };
     case "note":
       return { kind: "note", noteId: row.target_note_id! };
+    case "sheet":
+      return {
+        kind: "sheet",
+        submissionId: row.submission_id!,
+        revisionNo: row.submission_revision_no ?? null,
+      };
+    case "attempt":
+      return { kind: "attempt", attemptId: row.attempt_id! };
   }
 }
 
@@ -277,6 +368,9 @@ export class L3StudyReferenceService {
           question_id: null,
           assessment_id: null,
           target_note_id: null,
+          submission_id: null,
+          submission_revision_no: null,
+          attempt_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -303,6 +397,9 @@ export class L3StudyReferenceService {
           question_id: null,
           assessment_id: null,
           target_note_id: null,
+          submission_id: null,
+          submission_revision_no: null,
+          attempt_id: null,
           option_key: null,
           start_offset: target.start,
           end_offset: target.end,
@@ -321,6 +418,9 @@ export class L3StudyReferenceService {
           question_id: loaded.id,
           assessment_id: null,
           target_note_id: null,
+          submission_id: null,
+          submission_revision_no: null,
+          attempt_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -346,6 +446,9 @@ export class L3StudyReferenceService {
           question_id: loaded.id,
           assessment_id: null,
           target_note_id: null,
+          submission_id: null,
+          submission_revision_no: null,
+          attempt_id: null,
           option_key: null,
           start_offset: target.start,
           end_offset: target.end,
@@ -378,6 +481,9 @@ export class L3StudyReferenceService {
           question_id: loaded.question_id,
           assessment_id: loaded.id,
           target_note_id: null,
+          submission_id: null,
+          submission_revision_no: null,
+          attempt_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -406,6 +512,9 @@ export class L3StudyReferenceService {
           question_id: null,
           assessment_id: null,
           target_note_id: loaded.id,
+          submission_id: null,
+          submission_revision_no: null,
+          attempt_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -416,6 +525,86 @@ export class L3StudyReferenceService {
             kind: "note",
             title: loaded.title,
             excerpt: safeExcerpt(loaded.body_md, STUDY_NOTE_EXCERPT_MAX),
+          },
+        };
+      }
+      case "sheet": {
+        if (loaded.kind !== "sheet" || loaded.id !== normalizeStudyUuid(target.submissionId)) {
+          throw new NotFoundError("StudyReferenceTarget", `sheet:${target.submissionId}`);
+        }
+        // D1-a / K1：只有 sealed 稿次是合法目标。draft / discarded 一律 404
+        // （不是 409——「还不存在稳定身份」不是冲突）。装载侧已过滤，这里是双保险，
+        // 防止日后放宽装载条件时 draft 被静默认为稳定身份（K2）。
+        if (loaded.status !== "sealed") {
+          throw new NotFoundError("StudyReferenceTarget", `sheet:${target.submissionId}`);
+        }
+        const revisionNo = target.revisionNo ?? null;
+        if (loaded.scope === "writing") {
+          // K3 / V-17：writing 稿次身份 = { submissionId, revisionNo }；
+          // 缺 revisionNo → 422（输入形态错误），与已存 revision 不符 → 404
+          // （身份不匹配，**不**退化为「引用该稿次当前 revision」）。
+          if (revisionNo == null || revisionNo <= 0) {
+            throw new ValidationError("writing 稿次引用必须带 revisionNo（正整数）", "revisionNo");
+          }
+          if (loaded.revision_no !== revisionNo) {
+            throw new NotFoundError("StudyReferenceTarget", `sheet:${target.submissionId}`);
+          }
+        } else if (revisionNo != null) {
+          // 非 writing（file / paper）稿次没有 revision 身份；传了即身份不匹配。
+          throw new NotFoundError("StudyReferenceTarget", `sheet:${target.submissionId}`);
+        }
+        return {
+          kind: "sheet",
+          source_id: null,
+          question_id: null,
+          assessment_id: null,
+          target_note_id: null,
+          submission_id: loaded.id,
+          submission_revision_no: loaded.revision_no ?? null,
+          attempt_id: null,
+          option_key: null,
+          start_offset: null,
+          end_offset: null,
+          quote_snapshot: null,
+          field_hash: sha256Hex(sheetFieldText(loaded)),
+          // K14 / K7：快照只有 scope + summary 摘录——不含 answers、题目答案、
+          // 解析、evidence，也不含任何评卷字段。
+          display_snapshot: {
+            kind: "sheet",
+            scope: loaded.scope,
+            summaryExcerpt: safeExcerpt(loaded.summary, STUDY_SHEET_EXCERPT_MAX),
+          },
+        };
+      }
+      case "attempt": {
+        if (loaded.kind !== "attempt" || loaded.id !== normalizeStudyUuid(target.attemptId)) {
+          throw new NotFoundError("StudyReferenceTarget", `attempt:${target.attemptId}`);
+        }
+        // K10：软删（status='deleted'）不可新建引用；装载侧已过滤，这里是双保险，
+        // 且**不**做「按题目找最新一次 attempt」的兜底（K9）。
+        if (loaded.status !== "active") {
+          throw new NotFoundError("StudyReferenceTarget", `attempt:${target.attemptId}`);
+        }
+        return {
+          kind: "attempt",
+          source_id: null,
+          question_id: null,
+          assessment_id: null,
+          target_note_id: null,
+          submission_id: null,
+          submission_revision_no: null,
+          attempt_id: loaded.id,
+          option_key: null,
+          start_offset: null,
+          end_offset: null,
+          quote_snapshot: null,
+          field_hash: sha256Hex(attemptFieldText(loaded)),
+          // K14 / K7：快照只有 venue + 作答 JSON 摘录（attempt 表无判定列），
+          // 不含标准答案 / 解析 / evidence / 评卷字段。
+          display_snapshot: {
+            kind: "attempt",
+            venue: loaded.venue,
+            answerExcerpt: safeExcerpt(canonicalJsonText(loaded.answer), STUDY_ATTEMPT_EXCERPT_MAX),
           },
         };
       }
@@ -434,6 +623,9 @@ export class L3StudyReferenceService {
           question_id: loaded.id,
           assessment_id: null,
           target_note_id: null,
+          submission_id: null,
+          submission_revision_no: null,
+          attempt_id: null,
           option_key: target.optionKey,
           start_offset: target.start,
           end_offset: target.end,

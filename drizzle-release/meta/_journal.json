@@ -302,6 +302,20 @@
       "when": 1790171539051,
       "tag": "0042_cultured_praxagora",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1790227876045,
+      "tag": "0043_warm_banshee",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1790227980879,
+      "tag": "0044_cold_the_spike",
+      "breakpoints": true
     }
   ]
 }

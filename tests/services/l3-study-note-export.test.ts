@@ -151,7 +151,8 @@ function optionQuoteSnapshot(optionKey: string, quote: string): ReferenceDisplay
 function refRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
   return {
     id: REF_SOURCE, note_id: NOTE, user_id: USER, kind: "source",
-    source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null, option_key: null,
+    source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null,
+    submission_id: null, submission_revision_no: null, attempt_id: null, option_key: null,
     start_offset: null, end_offset: null, quote_snapshot: null,
     field_hash: "f".repeat(64), display_snapshot: asJson(sourceSnapshot("来源标题", "来源摘要")),
     captured_at: CAPTURED_AT,
@@ -1487,6 +1488,124 @@ describe("N2 笔记互链导出（第二条垂直链 · v2 显式选版 / v1 冻
     expect(result.schemaVersion).toBe(1);
     const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
     expect(payload.references[0].target).toEqual({ sourceId: SOURCE });
+  });
+});
+
+describe("N2 第三条链导出（sheet / attempt · v2 显式选版 / v1 冻结）", () => {
+  const SHEET = "00000000-0000-4000-8000-000000000321";
+  const ATTEMPT = "00000000-0000-4000-8000-000000000331";
+  const REF_SHEET = "00000000-0000-4000-8000-000000000008";
+  const REF_ATTEMPT = "00000000-0000-4000-8000-000000000009";
+
+  function sheetRefRow(revisionNo: number | null): L3StudyNoteReferenceRow {
+    return refRow({
+      id: REF_SHEET,
+      kind: "sheet",
+      source_id: null,
+      question_id: null,
+      assessment_id: null,
+      target_note_id: null,
+      submission_id: SHEET,
+      submission_revision_no: revisionNo,
+      attempt_id: null,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      display_snapshot: asJson({
+        kind: "sheet",
+        scope: "file",
+        summaryExcerpt: "卷面小结",
+      }),
+    });
+  }
+
+  function attemptRefRow(): L3StudyNoteReferenceRow {
+    return refRow({
+      id: REF_ATTEMPT,
+      kind: "attempt",
+      source_id: null,
+      question_id: null,
+      assessment_id: null,
+      target_note_id: null,
+      submission_id: null,
+      submission_revision_no: null,
+      attempt_id: ATTEMPT,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      display_snapshot: asJson({
+        kind: "attempt",
+        venue: "file",
+        answerExcerpt: `{"value":"A"}`,
+      }),
+    });
+  }
+
+  async function versionOf(fake: FakeRepos): Promise<number> {
+    const lock = fake.studyNotes.lockForShare as unknown as () => Promise<{ version: number }>;
+    const note = await lock();
+    return note.version;
+  }
+
+  it("v2：sheet 引用 target 带 kind 判别，revisionNo 显式可空（V-25）", async () => {
+    for (const revisionNo of [null, 2]) {
+      const fake = fakeRepos({ refRows: [sheetRefRow(revisionNo)] });
+      const body = ["前言。", "", `[[ref:${REF_SHEET}]]`, ""].join("\n");
+      fake.studyNotes.lockForShare = vi.fn(async () => noteRow({ body_md: body })) as never;
+
+      const result = await makeService(fake).export(USER, NOTE, {
+        expectedVersion: await versionOf(fake),
+        schemaVersion: 2,
+      });
+      const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+      expect(payload.references[0].kind).toBe("sheet");
+      expect(payload.references[0].target).toEqual({
+        kind: "sheet",
+        submissionId: SHEET,
+        revisionNo,
+      });
+      // 快照白名单：只有 scope + summary 摘录，不含 answers / 评卷字段（K7 / K14）
+      expect(payload.references[0].displaySnapshot).toEqual({
+        kind: "sheet",
+        scope: "file",
+        summaryExcerpt: "卷面小结",
+      });
+      expect(payload.references[0].displaySnapshot).not.toHaveProperty("answers");
+      // 正文引用块与来源列表同源（marker 被替换为引用块）
+      expect(payload.renderedBodyMarkdown).toContain("稿次范围: file");
+    }
+  });
+
+  it("v2：attempt 引用 target 只含 attemptId（K9 单值身份）", async () => {
+    const fake = fakeRepos({ refRows: [attemptRefRow()] });
+    const body = ["前言。", "", `[[ref:${REF_ATTEMPT}]]`, ""].join("\n");
+    fake.studyNotes.lockForShare = vi.fn(async () => noteRow({ body_md: body })) as never;
+
+    const result = await makeService(fake).export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 2,
+    });
+    const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+    expect(payload.references[0].kind).toBe("attempt");
+    expect(payload.references[0].target).toEqual({ kind: "attempt", attemptId: ATTEMPT });
+    expect(payload.references[0].displaySnapshot).toEqual({
+      kind: "attempt",
+      venue: "file",
+      answerExcerpt: `{"value":"A"}`,
+    });
+    expect(payload.renderedBodyMarkdown).toContain("场景: file");
+  });
+
+  it("v1：含 sheet / attempt 引用的笔记显式请求 v1 → 422（K16 不静默降级）", async () => {
+    for (const row of [sheetRefRow(null), attemptRefRow()]) {
+      const fake = fakeRepos({ refRows: [row] });
+      const error = await makeService(fake)
+        .export(USER, NOTE, { expectedVersion: await versionOf(fake), schemaVersion: 1 })
+        .catch((err: unknown) => err);
+
+      expect(error).toBeInstanceOf(ValidationError);
+      expect((error as { field?: string }).field).toBe("schemaVersion");
+    }
   });
 });
 

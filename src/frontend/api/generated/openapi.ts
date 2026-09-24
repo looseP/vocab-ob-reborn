@@ -22153,6 +22153,17 @@ export interface operations {
                                     kind: "note";
                                     /** Format: uuid */
                                     noteId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "sheet";
+                                    /** Format: uuid */
+                                    submissionId: string;
+                                    revisionNo: number | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "attempt";
+                                    /** Format: uuid */
+                                    attemptId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -22205,6 +22216,16 @@ export interface operations {
                                     kind: "note";
                                     title: string;
                                     excerpt: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "sheet";
+                                    scope: string;
+                                    summaryExcerpt: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "attempt";
+                                    venue: string;
+                                    answerExcerpt: string;
                                 };
                                 liveTitle: string | null;
                             }[];
@@ -22584,6 +22605,17 @@ export interface operations {
                     questionId: string;
                     /** Format: uuid */
                     assessmentId: string;
+                } | {
+                    /** @constant */
+                    kind: "sheet";
+                    /** Format: uuid */
+                    submissionId: string;
+                    revisionNo?: number | null;
+                } | {
+                    /** @constant */
+                    kind: "attempt";
+                    /** Format: uuid */
+                    attemptId: string;
                 };
             };
         };
@@ -22643,6 +22675,17 @@ export interface operations {
                                 kind: "note";
                                 /** Format: uuid */
                                 noteId: string;
+                            } | {
+                                /** @constant */
+                                kind: "sheet";
+                                /** Format: uuid */
+                                submissionId: string;
+                                revisionNo: number | null;
+                            } | {
+                                /** @constant */
+                                kind: "attempt";
+                                /** Format: uuid */
+                                attemptId: string;
                             };
                             displaySnapshot: {
                                 /** @constant */
@@ -22692,6 +22735,16 @@ export interface operations {
                                 kind: "note";
                                 title: string;
                                 excerpt: string;
+                            } | {
+                                /** @constant */
+                                kind: "sheet";
+                                scope: string;
+                                summaryExcerpt: string;
+                            } | {
+                                /** @constant */
+                                kind: "attempt";
+                                venue: string;
+                                answerExcerpt: string;
                             };
                             liveTitle: string | null;
                         };
@@ -23256,6 +23309,17 @@ export interface operations {
                                     kind: "note";
                                     /** Format: uuid */
                                     noteId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "sheet";
+                                    /** Format: uuid */
+                                    submissionId: string;
+                                    revisionNo: number | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "attempt";
+                                    /** Format: uuid */
+                                    attemptId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -23308,6 +23372,16 @@ export interface operations {
                                     kind: "note";
                                     title: string;
                                     excerpt: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "sheet";
+                                    scope: string;
+                                    summaryExcerpt: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "attempt";
+                                    venue: string;
+                                    answerExcerpt: string;
                                 };
                                 liveTitle: string | null;
                             }[];
@@ -23528,6 +23602,17 @@ export interface operations {
                             questionId: string;
                             /** Format: uuid */
                             assessmentId: string;
+                        } | {
+                            /** @constant */
+                            kind: "sheet";
+                            /** Format: uuid */
+                            submissionId: string;
+                            revisionNo?: number | null;
+                        } | {
+                            /** @constant */
+                            kind: "attempt";
+                            /** Format: uuid */
+                            attemptId: string;
                         };
                     })[];
                 };
@@ -23603,6 +23688,17 @@ export interface operations {
                                     kind: "note";
                                     /** Format: uuid */
                                     noteId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "sheet";
+                                    /** Format: uuid */
+                                    submissionId: string;
+                                    revisionNo: number | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "attempt";
+                                    /** Format: uuid */
+                                    attemptId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -23655,6 +23751,16 @@ export interface operations {
                                     kind: "note";
                                     title: string;
                                     excerpt: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "sheet";
+                                    scope: string;
+                                    summaryExcerpt: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "attempt";
+                                    venue: string;
+                                    answerExcerpt: string;
                                 };
                                 liveTitle: string | null;
                             }[];

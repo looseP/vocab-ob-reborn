@@ -51,7 +51,11 @@ describe("existing local volume role upgrade", () => {
     // 0042: l3_study_note_references.target_note_id + 笔记复合 FK + 禁自引用 CHECK
     //       + 三个 CHECK 重建（N2 第二条链·笔记互链）。前置 UNIQUE(id,user_id) 在
     //       l3_study_notes 上早已存在，故本链**单段迁移**即可，无需 0040 那种拆分。
-    expect(authoritativeMigrationCount()).toBe(43);
+    // 0043: l3_question_attempts(id,user_id) 唯一（N2 第三条链·attempt 引用的复合 FK 前置依赖）
+    // 0044: l3_study_note_references.submission_id / submission_revision_no / attempt_id
+    //       + sheet/attempt 复合属主 FK（RESTRICT）+ 三个 CHECK 重建 + 两个索引 + revision 正值 CHECK。
+    //       拆两步的原因与 0040/0041 同：drizzle 生成的 FK 语句排在同批 UNIQUE 之前。
+    expect(authoritativeMigrationCount()).toBe(45);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

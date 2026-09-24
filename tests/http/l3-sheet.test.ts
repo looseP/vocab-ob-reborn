@@ -3,6 +3,7 @@ import { createApp } from "@/http/server";
 import type { Services } from "@/services";
 import { createMockPool } from "../helpers/mock-db";
 import type { L3QuestionAttemptRow, L3SubmissionRow } from "@/domain";
+import { ConflictError } from "@/errors";
 
 const mockDb = createMockPool();
 vi.mock("@/db/connection", () => ({
@@ -241,6 +242,25 @@ describe("DELETE /api/l3/attempts/:id", () => {
     const res = await app.request(`/api/l3/attempts/${ATTEMPT_ID}`, { method: "DELETE", headers: AUTH_HEADERS });
     expect(res.status).toBe(204);
     expect(deleteAttempt).toHaveBeenCalledWith("user-123", ATTEMPT_ID);
+  });
+
+  // N2 第三条链 K11：attempt 是真实存在删除端点的目标，命中引用必须 409 而不是静默软删。
+  it("returns 409 with blocker details when study notes reference the attempt", async () => {
+    const deleteAttempt = vi.fn(async () => {
+      throw new ConflictError("Cannot delete L3 attempt referenced by study notes", undefined, {
+        entityType: "attempt",
+        id: ATTEMPT_ID,
+        blockers: { studyNotes: [{ id: "n1", title: "卷面整理", status: "active", referenceCount: 2 }] },
+        resolution: "remove_references_or_convert_to_plain_excerpt",
+      });
+    });
+    const app = createApp(makeServices({ deleteAttempt }));
+    const res = await app.request(`/api/l3/attempts/${ATTEMPT_ID}`, { method: "DELETE", headers: AUTH_HEADERS });
+    expect(res.status).toBe(409);
+    const body = await res.json() as { details?: { blockers?: unknown } };
+    expect(body.details?.blockers).toEqual({
+      studyNotes: [{ id: "n1", title: "卷面整理", status: "active", referenceCount: 2 }],
+    });
   });
 });
 

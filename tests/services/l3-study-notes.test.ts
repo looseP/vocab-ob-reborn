@@ -1045,3 +1045,153 @@ describe("N2 笔记互链（服务装配层 · 第二条垂直链）", () => {
     expect(repos.studyReferences.lockTargets).not.toHaveBeenCalled();
   });
 });
+
+describe("N2 第三条链（服务装配层 · sheet / attempt）", () => {
+  const SHEET = "00000000-0000-4000-8000-000000000321";
+  const ATTEMPT = "00000000-0000-4000-8000-000000000331";
+  const LOADED_SHEET = {
+    kind: "sheet", id: SHEET, scope: "file", status: "sealed", revision_no: null, summary: "小结",
+  };
+  const LOADED_ATTEMPT = {
+    kind: "attempt", id: ATTEMPT, venue: "file", answer: { value: "A" }, status: "active",
+  };
+
+  /**
+   * 忠实装载替身：只返回**被请求**的键。
+   *
+   * 若装载请求写错 kind/id（如退化成按 question 装载），这里必然取不到，
+   * 引用就会被判 unavailable / 404——正是 P1-1 同款防复发断言。
+   */
+  function faithfulLoadTargets(available: Record<string, unknown>) {
+    repos.studyReferences.loadTargets = vi.fn(
+      async (_userId: string, requested: readonly { kind: string; id: string }[]) => {
+        const map = new Map<string, unknown>();
+        for (const req of requested) {
+          const key = `${req.kind}:${req.id}`;
+          const hit = available[key];
+          if (hit) map.set(key, hit);
+        }
+        return map;
+      },
+    ) as never;
+  }
+
+  function sheetCaptureAgainst(revisionNo: number | null = null) {
+    referenceService.captureAgainst = vi.fn(() => ({
+      kind: "sheet",
+      source_id: null, question_id: null, assessment_id: null, target_note_id: null,
+      submission_id: SHEET, submission_revision_no: revisionNo, attempt_id: null,
+      option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
+      field_hash: "f".repeat(64),
+      display_snapshot: { kind: "sheet", scope: "file", summaryExcerpt: "小结" },
+    })) as never;
+  }
+
+  function attemptCaptureAgainst() {
+    referenceService.captureAgainst = vi.fn(() => ({
+      kind: "attempt",
+      source_id: null, question_id: null, assessment_id: null, target_note_id: null,
+      submission_id: null, submission_revision_no: null, attempt_id: ATTEMPT,
+      option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
+      field_hash: "f".repeat(64),
+      display_snapshot: { kind: "attempt", venue: "file", answerExcerpt: `{"value":"A"}` },
+    })) as never;
+  }
+
+  it("capture sheet：锁键与装载键同为 sheet:<id>，写入行带 submission_id / revision", async () => {
+    sheetCaptureAgainst();
+    faithfulLoadTargets({ [`sheet:${SHEET}`]: LOADED_SHEET });
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF_B}]]`,
+      references: [{ id: REF_B, action: "capture", target: { kind: "sheet", submissionId: SHEET } }],
+    });
+    await service.save(USER, NOTE, input);
+
+    expect(repos.studyReferences.lockTargets).toHaveBeenCalledWith(USER, [
+      { kind: "sheet", id: SHEET },
+    ]);
+    const rows = repos.studyReferences.replaceForNote.mock.calls[0]![2] as {
+      submission_id: string | null;
+      submission_revision_no: number | null;
+      attempt_id: string | null;
+    }[];
+    expect(rows[0]).toMatchObject({
+      submission_id: SHEET,
+      submission_revision_no: null,
+      attempt_id: null,
+    });
+  });
+
+  it("capture attempt：锁键与装载键同为 attempt:<id>，写入行带 attempt_id（K9 单值身份）", async () => {
+    attemptCaptureAgainst();
+    faithfulLoadTargets({ [`attempt:${ATTEMPT}`]: LOADED_ATTEMPT });
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF_B}]]`,
+      references: [{ id: REF_B, action: "capture", target: { kind: "attempt", attemptId: ATTEMPT } }],
+    });
+    await service.save(USER, NOTE, input);
+
+    expect(repos.studyReferences.lockTargets).toHaveBeenCalledWith(USER, [
+      { kind: "attempt", id: ATTEMPT },
+    ]);
+    const rows = repos.studyReferences.replaceForNote.mock.calls[0]![2] as {
+      submission_id: string | null;
+      attempt_id: string | null;
+    }[];
+    expect(rows[0]).toMatchObject({ submission_id: null, attempt_id: ATTEMPT });
+  });
+
+  it("忠实装载替身下装载键写错 → 404（sheet 不按 question 兜底、attempt 不按 question 兜底）", async () => {
+    sheetCaptureAgainst();
+    // 只提供「题目」键：sheet 引用不得按题兜底命中（K5）
+    faithfulLoadTargets({ [`question:${SOURCE}`]: { kind: "question", id: SOURCE } });
+    const sheetInput = baseSaveInput({
+      bodyMd: `[[ref:${REF_B}]]`,
+      references: [{ id: REF_B, action: "capture", target: { kind: "sheet", submissionId: SHEET } }],
+    });
+    const sheetError = await service.save(USER, NOTE, sheetInput).catch((e: unknown) => e);
+    expect(sheetError).toBeInstanceOf(NotFoundError);
+    expect((sheetError as { message: string }).message).toContain(`sheet:${SHEET}`);
+
+    attemptCaptureAgainst();
+    faithfulLoadTargets({ [`question:${SOURCE}`]: { kind: "question", id: SOURCE } });
+    const attemptInput = baseSaveInput({
+      bodyMd: `[[ref:${REF_B}]]`,
+      references: [{ id: REF_B, action: "capture", target: { kind: "attempt", attemptId: ATTEMPT } }],
+    });
+    const attemptError = await service.save(USER, NOTE, attemptInput).catch((e: unknown) => e);
+    expect(attemptError).toBeInstanceOf(NotFoundError);
+    expect((attemptError as { message: string }).message).toContain(`attempt:${ATTEMPT}`);
+    expect(repos.studyReferences.replaceForNote).not.toHaveBeenCalled();
+  });
+
+  it("keep sheet / attempt 引用：保留原目标列与 capturedAt，不重读目标", async () => {
+    const existingSheet = {
+      id: REF, note_id: NOTE, user_id: USER, kind: "sheet" as const,
+      source_id: null, question_id: null, assessment_id: null, target_note_id: null,
+      submission_id: SHEET, submission_revision_no: 2, attempt_id: null,
+      option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
+      field_hash: "e".repeat(64),
+      display_snapshot: { kind: "sheet", scope: "writing", summaryExcerpt: "第二稿" },
+      captured_at: "2026-09-01T00:00:00.000Z",
+    };
+    repos.studyReferences.listForNote = vi.fn(async () => [existingSheet] as never);
+    const input = baseSaveInput({
+      bodyMd: `[[ref:${REF}]]`,
+      references: [{ id: REF, action: "keep" }],
+    });
+    await service.save(USER, NOTE, input);
+
+    const rows = repos.studyReferences.replaceForNote.mock.calls[0]![2] as {
+      submission_id: string | null;
+      submission_revision_no: number | null;
+      captured_at: string;
+    }[];
+    expect(rows[0]).toMatchObject({
+      submission_id: SHEET,
+      submission_revision_no: 2,
+      captured_at: "2026-09-01T00:00:00.000Z",
+    });
+    expect(repos.studyReferences.lockTargets).not.toHaveBeenCalled();
+  });
+});

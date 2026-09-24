@@ -65,6 +65,11 @@ function targetIdentityKey(target: ReferenceTarget | null): string | null {
     // N2 第二条链：笔记身份就是目标笔记 id，不按标题判等（标题可改）。
     case "note":
       return `note:${target.noteId}`;
+    // N2 第三条链：稿次身份 = 稿次行（+ writing 的 revision 半片），作答身份 = attemptId。
+    case "sheet":
+      return `sheet:${target.submissionId}:${target.revisionNo ?? "null"}`;
+    case "attempt":
+      return `attempt:${target.attemptId}`;
   }
 }
 
@@ -85,6 +90,11 @@ function previewSummary(preview: ReferenceTargetPreview): string {
       return `评析「${snapshot.excerpt}」`;
     case "note":
       return `笔记「${snapshot.title}」`;
+    // N2 第三条链：只读摘要，不新增搜索/选取出口。
+    case "sheet":
+      return `题纸稿次（${snapshot.scope}）「${snapshot.summaryExcerpt}」`;
+    case "attempt":
+      return `作答记录（${snapshot.venue}）「${snapshot.answerExcerpt}」`;
   }
 }
 
