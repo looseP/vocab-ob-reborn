@@ -1694,6 +1694,10 @@ export const l3StudyTopicNotes = pgTable("l3_study_topic_notes", {
 // N2：assessment_id 为评析引用（N2 第一条链）的目标列；评析本身是
 // l3_question_assessments 的一行（UNIQUE(user_id, question_id) latest-wins），
 // 所以引用同时带 question_id（属主链/blocker）与 assessment_id（稳定行身份）。
+// N2 第二条链：target_note_id 为笔记互链的目标列，指向另一篇 l3_study_notes。
+// 笔记只会归档、不会硬删（无删除端点），FK 仍取 RESTRICT——未来若引入硬删除，
+// 必须先实现引用 blocker（登记在案，本链不虚构删除面）。
+// 自引用由 no_self_check 拦下（target_note_id <> note_id）。
 // 恰一 target 由 CHECK 收口。
 export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 	id: uuid("id").defaultRandom().primaryKey().notNull(),
@@ -1703,6 +1707,7 @@ export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 	sourceId: uuid("source_id"),
 	questionId: uuid("question_id"),
 	assessmentId: uuid("assessment_id"),
+	targetNoteId: uuid("target_note_id"),
 	optionKey: text("option_key"),
 	startOffset: integer("start_offset"),
 	endOffset: integer("end_offset"),
@@ -1713,6 +1718,7 @@ export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 }, (table) => [
 	index("idx_l3_study_note_references_user_source").on(table.userId, table.sourceId, table.noteId),
 	index("idx_l3_study_note_references_user_question").on(table.userId, table.questionId, table.noteId),
+	index("idx_l3_study_note_references_user_target_note").on(table.userId, table.targetNoteId, table.noteId),
 	index("idx_l3_study_note_references_note").on(table.noteId),
 	foreignKey({
 		columns: [table.noteId, table.userId],
@@ -1738,10 +1744,19 @@ export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 		foreignColumns: [l3QuestionAssessments.id, l3QuestionAssessments.userId],
 		name: "l3_study_note_references_assessment_owner_fk",
 	}).onDelete("restrict"),
+	// N2 第二条链：笔记互链的跨表属主复合 FK（B1）。目标笔记与引用同属主，
+	// RESTRICT 兜底——目标笔记若将来可被硬删，删前须先移除引用（或显式转普通摘录）。
+	foreignKey({
+		columns: [table.targetNoteId, table.userId],
+		foreignColumns: [l3StudyNotes.id, l3StudyNotes.userId],
+		name: "l3_study_note_references_target_note_owner_fk",
+	}).onDelete("restrict"),
 	pgPolicy("l3_study_note_references_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
-	check("l3_study_note_references_kind_check", sql`kind = ANY (ARRAY['source'::text, 'source_quote'::text, 'question'::text, 'stem_quote'::text, 'option_quote'::text, 'assessment'::text])`),
-	check("l3_study_note_references_target_check", sql`(kind = ANY (ARRAY['source'::text, 'source_quote'::text]) AND source_id IS NOT NULL AND question_id IS NULL AND assessment_id IS NULL) OR (kind = ANY (ARRAY['question'::text, 'stem_quote'::text, 'option_quote'::text]) AND question_id IS NOT NULL AND source_id IS NULL AND assessment_id IS NULL) OR (kind = 'assessment'::text AND question_id IS NOT NULL AND assessment_id IS NOT NULL AND source_id IS NULL)`),
-	check("l3_study_note_references_quote_check", sql`(kind = ANY (ARRAY['source_quote'::text, 'stem_quote'::text, 'option_quote'::text]) AND start_offset IS NOT NULL AND end_offset IS NOT NULL AND quote_snapshot IS NOT NULL) OR (kind = ANY (ARRAY['source'::text, 'question'::text, 'assessment'::text]) AND start_offset IS NULL AND end_offset IS NULL AND quote_snapshot IS NULL)`),
+	check("l3_study_note_references_kind_check", sql`kind = ANY (ARRAY['source'::text, 'source_quote'::text, 'question'::text, 'stem_quote'::text, 'option_quote'::text, 'assessment'::text, 'note'::text])`),
+	check("l3_study_note_references_target_check", sql`(kind = ANY (ARRAY['source'::text, 'source_quote'::text]) AND source_id IS NOT NULL AND question_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL) OR (kind = ANY (ARRAY['question'::text, 'stem_quote'::text, 'option_quote'::text]) AND question_id IS NOT NULL AND source_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL) OR (kind = 'assessment'::text AND question_id IS NOT NULL AND assessment_id IS NOT NULL AND source_id IS NULL AND target_note_id IS NULL) OR (kind = 'note'::text AND target_note_id IS NOT NULL AND source_id IS NULL AND question_id IS NULL AND assessment_id IS NULL)`),
+	check("l3_study_note_references_quote_check", sql`(kind = ANY (ARRAY['source_quote'::text, 'stem_quote'::text, 'option_quote'::text]) AND start_offset IS NOT NULL AND end_offset IS NOT NULL AND quote_snapshot IS NOT NULL) OR (kind = ANY (ARRAY['source'::text, 'question'::text, 'assessment'::text, 'note'::text]) AND start_offset IS NULL AND end_offset IS NULL AND quote_snapshot IS NULL)`),
+	// 禁止自引用（应用层另有可读 422；这里是结构兜底，应用绕过也写不进去）。
+	check("l3_study_note_references_no_self_note_check", sql`target_note_id IS NULL OR target_note_id <> note_id`),
 	check("l3_study_note_references_option_key_check", sql`(kind = 'option_quote'::text AND option_key IS NOT NULL) OR (kind <> 'option_quote'::text AND option_key IS NULL)`),
 	check("l3_study_note_references_offset_check", sql`start_offset IS NULL OR (start_offset >= 0 AND end_offset > start_offset)`),
 	check("l3_study_note_references_field_hash_check", sql`char_length(field_hash) = 64`),

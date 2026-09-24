@@ -48,7 +48,10 @@ describe("existing local volume role upgrade", () => {
     // 0041: l3_study_note_references.assessment_id + 评析复合 FK + 三个 CHECK（N2 评析引用）
     // 拆两步的原因：drizzle 生成的 FK 语句排在同批 UNIQUE 之前，同批内会撞
     // “no unique constraint matching given keys”（真实 PostgreSQL 已复现）。
-    expect(authoritativeMigrationCount()).toBe(42);
+    // 0042: l3_study_note_references.target_note_id + 笔记复合 FK + 禁自引用 CHECK
+    //       + 三个 CHECK 重建（N2 第二条链·笔记互链）。前置 UNIQUE(id,user_id) 在
+    //       l3_study_notes 上早已存在，故本链**单段迁移**即可，无需 0040 那种拆分。
+    expect(authoritativeMigrationCount()).toBe(43);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
