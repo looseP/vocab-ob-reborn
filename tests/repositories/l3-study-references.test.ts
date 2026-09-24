@@ -445,3 +445,37 @@ describe("N2 笔记互链（仓储层 · 第二条垂直链）", () => {
     expect(querySpy.mock.calls.length).toBe(0);
   });
 });
+
+// N2 第三条垂直链：attempt 软删 blocker（M-0044 之后才有 attempt_id 列；
+// 这两条是本链的**红测**——方法尚未实现，先锁死口径再动实现）。
+const ATTEMPT = "00000000-0000-4000-8000-000000000221";
+const NOTE_B = "00000000-0000-4000-8000-000000000102";
+
+describe("getAttemptDeleteBlockers（N2 第三条链 · attempt 软删 blocker）", () => {
+  it("按 attempt_id 聚合引用它的笔记：逐笔记计数、含归档、不含身份兜底", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [
+        { note_id: NOTE, title: "卷面整理", status: "active", reference_count: 2 },
+        { note_id: NOTE_B, title: "作文复盘", status: "archived", reference_count: 1 },
+      ],
+    }));
+    const blockers = await repo.getAttemptDeleteBlockers(USER, ATTEMPT);
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("FROM l3_study_note_references r");
+    expect(text).toContain("r.attempt_id = $2::uuid");
+    expect(text).toMatch(/count\(r\.id\)|COUNT\(r\.id\)/i);
+    expect(text).toContain("GROUP BY");
+    expect(params).toEqual([USER, ATTEMPT]);
+    expect(blockers).toEqual([
+      { note_id: NOTE, title: "卷面整理", status: "active", reference_count: 2 },
+      { note_id: NOTE_B, title: "作文复盘", status: "archived", reference_count: 1 },
+    ]);
+  });
+
+  it("不得按 question_id / submission_id / sheet_id 兜底计引用（attempt 身份只能是 attempt_id）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.getAttemptDeleteBlockers(USER, ATTEMPT);
+    const [text] = querySpy.mock.calls[0]!;
+    expect(text).not.toMatch(/r\.question_id = \$2|r\.submission_id = \$2/);
+  });
+});

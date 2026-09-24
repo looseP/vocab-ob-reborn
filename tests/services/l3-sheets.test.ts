@@ -8,6 +8,7 @@ import type {
   IL3PaperRepository,
   IL3SheetRepository,
 } from "@/repositories/interfaces";
+import type { IL3StudyReferenceRepository } from "@/repositories/l3-study-references.repository";
 import { L3SheetService } from "@/services/l3-sheets.service";
 
 const USER = "00000000-0000-4000-8000-000000000001";
@@ -139,11 +140,24 @@ function makeAnnotationRepo(overrides: Partial<IL3AnnotationRepository> = {}): I
   } as unknown as IL3AnnotationRepository;
 }
 
+/** 引用仓储替身：默认「无 blocker」，用例可覆盖 getAttemptDeleteBlockers。 */
+function makeStudyReferenceRepo(
+  overrides: Partial<Record<keyof IL3StudyReferenceRepository, unknown>> = {},
+): IL3StudyReferenceRepository {
+  return {
+    lockTargets: vi.fn(async () => undefined),
+    getAttemptDeleteBlockers: vi.fn(async () => []),
+    getQuestionDeleteBlockers: vi.fn(async () => []),
+    ...overrides,
+  } as unknown as IL3StudyReferenceRepository;
+}
+
 function makeService(
   sheetRepo: IL3SheetRepository,
   paperRepo: IL3PaperRepository = makePaperRepo(),
   annotationRepo: IL3AnnotationRepository = makeAnnotationRepo(),
   contextRepo: IL3ContextRepository = makeContextRepo({ id: SOURCE }),
+  studyReferences: IL3StudyReferenceRepository = makeStudyReferenceRepo(),
 ): L3SheetService {
   return new L3SheetService(
     sheetRepo,
@@ -155,6 +169,7 @@ function makeService(
       l3Paper: paperRepo,
       l3Annotations: annotationRepo,
       l3Context: contextRepo,
+      studyReferences,
     } as unknown as IRepositories),
   );
 }
@@ -539,13 +554,59 @@ describe("L3SheetService.listAttempts", () => {
 });
 
 describe("L3SheetService.deleteAttempt", () => {
+  const ATTEMPT = "00000000-0000-4000-8000-000000000501";
+
   it("soft-deletes and 404s on a second delete", async () => {
     const ok = makeService(makeSheetRepo({ softDeleteAttempt: vi.fn(async () => true) }));
-    await expect(ok.deleteAttempt(USER, "00000000-0000-4000-8000-000000000501")).resolves.toEqual({ deleted: true });
+    await expect(ok.deleteAttempt(USER, ATTEMPT)).resolves.toEqual({ deleted: true });
 
     const missing = makeService(makeSheetRepo({ softDeleteAttempt: vi.fn(async () => false) }));
-    await expect(missing.deleteAttempt(USER, "00000000-0000-4000-8000-000000000501"))
+    await expect(missing.deleteAttempt(USER, ATTEMPT))
       .rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  // N2 第三条链 K11 / K17：软删不撞 RESTRICT（真库探针 F9），所以删除面必须自带预检。
+  it("先取 l3_attempt 锁再查 blocker（与 capture 共用同一把锁键）", async () => {
+    const lockTargets = vi.fn(async () => undefined);
+    const service = makeService(
+      makeSheetRepo({ softDeleteAttempt: vi.fn(async () => true) }),
+      undefined,
+      undefined,
+      undefined,
+      makeStudyReferenceRepo({ lockTargets }),
+    );
+    await service.deleteAttempt(USER, ATTEMPT);
+    expect(lockTargets).toHaveBeenCalledWith(USER, [{ kind: "attempt", id: ATTEMPT }]);
+  });
+
+  it("被笔记引用时抛 409 且带可读 blocker 列表，软删不执行", async () => {
+    const softDeleteAttempt = vi.fn(async () => true);
+    const service = makeService(
+      makeSheetRepo({ softDeleteAttempt }),
+      undefined,
+      undefined,
+      undefined,
+      makeStudyReferenceRepo({
+        getAttemptDeleteBlockers: vi.fn(async () => [
+          { note_id: "00000000-0000-4000-8000-000000000601", title: "卷面整理", status: "active", reference_count: 2 },
+          { note_id: "00000000-0000-4000-8000-000000000602", title: "作文复盘", status: "archived", reference_count: 1 },
+        ]),
+      }),
+    );
+    const error = await service.deleteAttempt(USER, ATTEMPT).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(ConflictError);
+    expect((error as { meta?: unknown }).meta).toEqual({
+      entityType: "attempt",
+      id: ATTEMPT,
+      blockers: {
+        studyNotes: [
+          { id: "00000000-0000-4000-8000-000000000601", title: "卷面整理", status: "active", referenceCount: 2 },
+          { id: "00000000-0000-4000-8000-000000000602", title: "作文复盘", status: "archived", referenceCount: 1 },
+        ],
+      },
+      resolution: "remove_references_or_convert_to_plain_excerpt",
+    });
+    expect(softDeleteAttempt).not.toHaveBeenCalled();
   });
 });
 

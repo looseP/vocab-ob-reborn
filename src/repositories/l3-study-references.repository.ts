@@ -64,7 +64,7 @@ export interface L3StudyNoteReferenceRow {
   captured_at: string;
 }
 
-export type ReferenceTargetKind = "source" | "question" | "assessment" | "note";
+export type ReferenceTargetKind = "source" | "question" | "assessment" | "note" | "attempt";
 
 export interface LoadedSourceTarget {
   kind: "source";
@@ -193,6 +193,11 @@ export interface IL3StudyReferenceRepository {
   getSourceDeleteBlockers(userId: string, sourceId: string): Promise<DeleteBlockerRow[]>;
   /** question 删除 blocker：直接引用其的 note（去重）。 */
   getQuestionDeleteBlockers(userId: string, questionId: string): Promise<DeleteBlockerRow[]>;
+  /**
+   * N2 第三条链：attempt 软删 blocker——只按 `attempt_id` 聚合引用它的笔记。
+   * attempt 删除端点真实存在且是软删，不会撞 RESTRICT，因此删除面必须预检。
+   */
+  getAttemptDeleteBlockers(userId: string, attemptId: string): Promise<DeleteBlockerRow[]>;
 }
 
 export class L3StudyReferenceRepository extends BaseRepository implements IL3StudyReferenceRepository {
@@ -463,6 +468,9 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     // 服务层对评析目标会同时给出所属 question 键，两把锁合起来覆盖「capture × 级联删」。
     const assessmentIds = [...new Set(targets.filter((t) => t.kind === "assessment").map((t) => normalizeStudyUuid(t.id)))].sort();
     const noteIds = [...new Set(targets.filter((t) => t.kind === "note").map((t) => normalizeStudyUuid(t.id)))].sort();
+    // N2 第三条链：attempt 软删端点真实存在，capture 与软删必须共用同一把
+    // `l3_attempt:<id>` 事务级锁，否则「引用刚写入 / 软删刚执行」会漏过预检。
+    const attemptIds = [...new Set(targets.filter((t) => t.kind === "attempt").map((t) => normalizeStudyUuid(t.id)))].sort();
 
     if (sourceIds.length > 0) {
       // 稳定顺序（id ASC）批量共享锁；DELETE 的排他锁将等待锁释放。
@@ -491,6 +499,11 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     for (const noteId of noteIds) {
       await this.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
         `l3_study_note:${noteId}`,
+      ]);
+    }
+    for (const attemptId of attemptIds) {
+      await this.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `l3_attempt:${attemptId}`,
       ]);
     }
   }
@@ -566,6 +579,31 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
         GROUP BY n.id, n.title, n.status, n.updated_at
         ORDER BY n.updated_at DESC, n.id DESC`,
       [userId, questionId],
+    );
+  }
+
+  /**
+   * N2 第三条链：attempt 软删 blocker（K11 / A3）。
+   *
+   * attempt 有**真实**的删除端点（`DELETE /api/l3/attempts/:id`，服务侧软删），
+   * 而软删只是改 `status`/`deleted_at`，**不会**撞 RESTRICT 外键（真库探针 F9 已证实
+   * UPDATE 1 通过）。所以删除面上必须有预检：命中引用就 409 + 可读 blocker 列表，
+   * 由用户先清理引用，而不是让笔记里的引用悄悄变成 unavailable。
+   *
+   * 口径（V-21）：只按 `r.attempt_id` 聚合——attempt 身份就是 attempt_id 本身，
+   * **不**按 question_id / submission_id / sheet_id 兜底计引用（K9）。
+   * 归档笔记同样计入（与既有 blocker 同款，不做 status 过滤）。
+   */
+  async getAttemptDeleteBlockers(userId: string, attemptId: string): Promise<DeleteBlockerRow[]> {
+    return this.query<DeleteBlockerRow>(
+      `SELECT n.id AS note_id, n.title, n.status, count(r.id)::int AS reference_count
+         FROM l3_study_note_references r
+         JOIN l3_study_notes n ON n.id = r.note_id AND n.user_id = r.user_id
+        WHERE r.user_id = $1::uuid
+          AND r.attempt_id = $2::uuid
+        GROUP BY n.id, n.title, n.status, n.updated_at
+        ORDER BY n.updated_at DESC, n.id DESC`,
+      [userId, attemptId],
     );
   }
 }

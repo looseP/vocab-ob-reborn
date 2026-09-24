@@ -294,9 +294,22 @@ export class L3SheetService {
     }));
   }
 
-  /** 软删单条历史（再删 404）：删除改管理视图，不级联改写已发生的成绩。 */
+  /**
+   * 软删单条历史（再删 404）：删除改管理视图，不级联改写已发生的成绩。
+   *
+   * N2 第三条链（K11 / K17）：attempt 是**真实**存在删除端点的目标，而软删只改
+   * `status`/`deleted_at`、**不会**撞 RESTRICT 外键（真库探针 F9：UPDATE 1 通过），
+   * 所以删除面上必须有预检：先与 capture 共用 `l3_attempt:<id>` 事务级锁串行化，
+   * 再查引用 blocker；命中则 409 + 可读列表，由用户先清理引用——而不是让笔记里的
+   * 引用悄悄变成 unavailable。sheet 侧没有删除端点，故**没有** sheet blocker。
+   */
   async deleteAttempt(userId: string, attemptId: string): Promise<{ deleted: true }> {
     return this.withActor(userId, async (repos) => {
+      await repos.studyReferences.lockTargets(userId, [{ kind: "attempt", id: attemptId }]);
+      const blockers = await repos.studyReferences.getAttemptDeleteBlockers(userId, attemptId);
+      if (blockers.length > 0) {
+        throw attemptStudyNoteConflict(attemptId, blockers);
+      }
       const deleted = await repos.l3Sheets.softDeleteAttempt(userId, attemptId);
       if (!deleted) throw new NotFoundError("L3QuestionAttempt", attemptId);
       return { deleted: true };
@@ -309,4 +322,27 @@ export class L3SheetService {
       items: await repos.l3Sheets.listArchive(userId, query.limit),
     }));
   }
+}
+
+/**
+ * 学习笔记引用阻止 attempt 软删（N2 第三条链）：可读笔记标题/引用数 + 处理入口提示。
+ * 与 `questionStudyNoteConflict`（N1）同款 payload 形状，前端 blocker 呈现可复用。
+ */
+function attemptStudyNoteConflict(
+  attemptId: string,
+  noteBlockers: readonly { note_id: string; title: string; status: string; reference_count: number }[],
+): ConflictError {
+  return new ConflictError("Cannot delete L3 attempt referenced by study notes", undefined, {
+    entityType: "attempt",
+    id: attemptId,
+    blockers: {
+      studyNotes: noteBlockers.map((note) => ({
+        id: note.note_id,
+        title: note.title,
+        status: note.status,
+        referenceCount: note.reference_count,
+      })),
+    },
+    resolution: "remove_references_or_convert_to_plain_excerpt",
+  });
 }

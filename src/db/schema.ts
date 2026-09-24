@@ -1425,6 +1425,10 @@ export const l3Submissions = pgTable("l3_submissions", {
 // 归 l3_grading_results（批次三建），attempt 不写判定避免改判两处同步腐化。
 // 软删（status/deleted_at）照注记先例；结果页从 attempts 按 sheet_id 派生渲染，
 // attempt 行不可变，串行即天然快照；统计同源现算（软删行仍在库）。
+//
+// N2 第三条链：(id,user_id) 唯一是「引用行 → attempt」跨表属主复合外键的前置依赖，
+// 必须**单独一段迁移**先落地（0043）——drizzle 会把复合 FK 排在同批 UNIQUE 之前，
+// 同批执行在真实 PostgreSQL 上直接红（chain01 0040/0041 教训）。
 export const l3QuestionAttempts = pgTable("l3_question_attempts", {
 	id: uuid("id").defaultRandom().primaryKey().notNull(),
 	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
@@ -1440,6 +1444,8 @@ export const l3QuestionAttempts = pgTable("l3_question_attempts", {
 }, (table) => [
 	index("idx_l3_question_attempts_user_question_created").on(table.userId, table.questionId, table.createdAt),
 	index("idx_l3_question_attempts_sheet").on(table.sheetId),
+	// N2 第三条链：跨表属主复合外键的前置依赖（见表注释，必须独立成段迁移）。
+	unique("l3_question_attempts_id_user_id_unique").on(table.id, table.userId),
 	// 作文（W1）：一个 writing sheet 只物化一个 attempt（只约束 writing venue，
 	// 普通题纸数据不受影响）。
 	uniqueIndex("l3_question_attempts_writing_sheet_unique").on(table.sheetId).where(sql`venue = 'writing'`),
@@ -1708,6 +1714,12 @@ export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 	questionId: uuid("question_id"),
 	assessmentId: uuid("assessment_id"),
 	targetNoteId: uuid("target_note_id"),
+	// N2 第三条链：sheet（sealed 稿次）与 attempt（作答记录）目标。
+	// submission_revision_no 是 writing 稿次身份的半片：{submissionId, revisionNo}；
+	// 非 writing（file/paper）稿次 revision_no 恒为 NULL（库 CHECK 已如此）。
+	submissionId: uuid("submission_id"),
+	submissionRevisionNo: integer("submission_revision_no"),
+	attemptId: uuid("attempt_id"),
 	optionKey: text("option_key"),
 	startOffset: integer("start_offset"),
 	endOffset: integer("end_offset"),
@@ -1719,6 +1731,8 @@ export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 	index("idx_l3_study_note_references_user_source").on(table.userId, table.sourceId, table.noteId),
 	index("idx_l3_study_note_references_user_question").on(table.userId, table.questionId, table.noteId),
 	index("idx_l3_study_note_references_user_target_note").on(table.userId, table.targetNoteId, table.noteId),
+	index("idx_l3_study_note_references_user_submission").on(table.userId, table.submissionId, table.noteId),
+	index("idx_l3_study_note_references_user_attempt").on(table.userId, table.attemptId, table.noteId),
 	index("idx_l3_study_note_references_note").on(table.noteId),
 	foreignKey({
 		columns: [table.noteId, table.userId],
@@ -1751,10 +1765,28 @@ export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 		foreignColumns: [l3StudyNotes.id, l3StudyNotes.userId],
 		name: "l3_study_note_references_target_note_owner_fk",
 	}).onDelete("restrict"),
+	// N2 第三条链：sheet 目标（sealed 稿次）。稿次没有删除端点、sealed 不可弃（discard
+	// 仅允许 draft），所以这里只有结构兜底，应用层**没有** sheet blocker ——
+	// 不为不存在的删除面虚构 blocker。
+	foreignKey({
+		columns: [table.submissionId, table.userId],
+		foreignColumns: [l3Submissions.id, l3Submissions.userId],
+		name: "l3_study_note_references_submission_owner_fk",
+	}).onDelete("restrict"),
+	// attempt 目标（作答记录）：attempt 有真实删除端点（软删），故另一侧必须有 blocker
+	// 预检（getAttemptDeleteBlockers），这里的 RESTRICT 只作结构兜底。
+	foreignKey({
+		columns: [table.attemptId, table.userId],
+		foreignColumns: [l3QuestionAttempts.id, l3QuestionAttempts.userId],
+		name: "l3_study_note_references_attempt_owner_fk",
+	}).onDelete("restrict"),
 	pgPolicy("l3_study_note_references_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
-	check("l3_study_note_references_kind_check", sql`kind = ANY (ARRAY['source'::text, 'source_quote'::text, 'question'::text, 'stem_quote'::text, 'option_quote'::text, 'assessment'::text, 'note'::text])`),
-	check("l3_study_note_references_target_check", sql`(kind = ANY (ARRAY['source'::text, 'source_quote'::text]) AND source_id IS NOT NULL AND question_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL) OR (kind = ANY (ARRAY['question'::text, 'stem_quote'::text, 'option_quote'::text]) AND question_id IS NOT NULL AND source_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL) OR (kind = 'assessment'::text AND question_id IS NOT NULL AND assessment_id IS NOT NULL AND source_id IS NULL AND target_note_id IS NULL) OR (kind = 'note'::text AND target_note_id IS NOT NULL AND source_id IS NULL AND question_id IS NULL AND assessment_id IS NULL)`),
-	check("l3_study_note_references_quote_check", sql`(kind = ANY (ARRAY['source_quote'::text, 'stem_quote'::text, 'option_quote'::text]) AND start_offset IS NOT NULL AND end_offset IS NOT NULL AND quote_snapshot IS NOT NULL) OR (kind = ANY (ARRAY['source'::text, 'question'::text, 'assessment'::text, 'note'::text]) AND start_offset IS NULL AND end_offset IS NULL AND quote_snapshot IS NULL)`),
+	check("l3_study_note_references_kind_check", sql`kind = ANY (ARRAY['source'::text, 'source_quote'::text, 'question'::text, 'stem_quote'::text, 'option_quote'::text, 'assessment'::text, 'note'::text, 'sheet'::text, 'attempt'::text])`),
+	// target_check：九型目标「恰一」，新两型与既有型互不相容（既有支行为不变，只把新列显式写 IS NULL）。
+	check("l3_study_note_references_target_check", sql`(kind = ANY (ARRAY['source'::text, 'source_quote'::text]) AND source_id IS NOT NULL AND question_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL AND submission_id IS NULL AND attempt_id IS NULL) OR (kind = ANY (ARRAY['question'::text, 'stem_quote'::text, 'option_quote'::text]) AND question_id IS NOT NULL AND source_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL AND submission_id IS NULL AND attempt_id IS NULL) OR (kind = 'assessment'::text AND question_id IS NOT NULL AND assessment_id IS NOT NULL AND source_id IS NULL AND target_note_id IS NULL AND submission_id IS NULL AND attempt_id IS NULL) OR (kind = 'note'::text AND target_note_id IS NOT NULL AND source_id IS NULL AND question_id IS NULL AND assessment_id IS NULL AND submission_id IS NULL AND attempt_id IS NULL) OR (kind = 'sheet'::text AND submission_id IS NOT NULL AND source_id IS NULL AND question_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL AND attempt_id IS NULL) OR (kind = 'attempt'::text AND attempt_id IS NOT NULL AND source_id IS NULL AND question_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL AND submission_id IS NULL)`),
+	check("l3_study_note_references_quote_check", sql`(kind = ANY (ARRAY['source_quote'::text, 'stem_quote'::text, 'option_quote'::text]) AND start_offset IS NOT NULL AND end_offset IS NOT NULL AND quote_snapshot IS NOT NULL) OR (kind = ANY (ARRAY['source'::text, 'question'::text, 'assessment'::text, 'note'::text, 'sheet'::text, 'attempt'::text]) AND start_offset IS NULL AND end_offset IS NULL AND quote_snapshot IS NULL)`),
+	// D1-1：writing 稿次身份含 revision_no（sealed 时 >0）；非 writing 恒 NULL。
+	check("l3_study_note_references_revision_no_check", sql`submission_revision_no IS NULL OR submission_revision_no > 0`),
 	// 禁止自引用（应用层另有可读 422；这里是结构兜底，应用绕过也写不进去）。
 	check("l3_study_note_references_no_self_note_check", sql`target_note_id IS NULL OR target_note_id <> note_id`),
 	check("l3_study_note_references_option_key_check", sql`(kind = 'option_quote'::text AND option_key IS NOT NULL) OR (kind <> 'option_quote'::text AND option_key IS NULL)`),
