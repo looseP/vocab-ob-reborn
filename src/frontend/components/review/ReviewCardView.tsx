@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/frontend/components/ui/Button";
 import { Card } from "@/frontend/components/ui/Card";
@@ -18,7 +18,7 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import type { ReviewCard, ReviewNoteEntry } from "@/frontend/hooks/useReview";
+import type { Rating, ReviewCard, ReviewNoteEntry } from "@/frontend/hooks/useReview";
 import { labelReviewState } from "@/frontend/hooks/useReview";
 import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
 import { apiFetch } from "@/frontend/api/client";
@@ -65,6 +65,200 @@ function extractMnemonicCore(raw: string | null | undefined): string | null {
     (segment) => !segment.startsWith("词源锚") && !segment.startsWith("画面锚"),
   );
   return core || null;
+}
+
+// ── T3 提示分级 Hint Ladder（2026-09-25，t3-hint-ladder-design）──────────
+// 四级提示：H1 例句（无例句降级 H1′ 语义链）→ H2 原型意象（isSpoiler 剧透跳级）
+// → H3 助记锚（复用卡背核心行提取）→ H4 翻卡。成本化评分：每消费一级提示，
+// 评分上限下降（0 级→easy / 1 级→good / ≥2 级→hard）；提示穷尽后经 H4 翻卡
+// 强制 again。直接翻卡（未用满提示）= 验证回忆，上限不降。
+
+type HintStep =
+  | { kind: "example"; text: string; translation: string | null }
+  | { kind: "chain"; text: string }
+  | { kind: "prototype"; text: string }
+  | { kind: "mnemonic"; text: string; mtype: string | null };
+
+const STEP_LABEL: Record<HintStep["kind"], string> = {
+  example: "H1 例句",
+  chain: "H1′ 语义链",
+  prototype: "H2 原型",
+  mnemonic: "H3 助记锚",
+};
+
+/** 评分上限序（again < hard < good < easy），超上限按钮禁用。 */
+const HINT_CAP_RANK: Record<Rating, number> = { again: 0, hard: 1, good: 2, easy: 3 };
+const HINT_CAP_LABEL: Record<Rating, string> = { again: "重来", hard: "困难", good: "良好", easy: "轻松" };
+
+function hintCapNow(level: number, viaH4: boolean): Rating {
+  if (viaH4) return "again";
+  return level === 0 ? "easy" : level === 1 ? "good" : "hard";
+}
+
+/**
+ * isSpoiler：提示文本与短释义的剧透重合检测（设计稿 v2 口径）——
+ * 释义中任一 ≥2 连续汉字串出现在提示文本（去空白/记号）中 → 判剧透。
+ */
+function isSpoiler(hintText: string, shortDefinition: string | null | undefined): boolean {
+  if (!shortDefinition) return false;
+  const runs = shortDefinition.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+  if (runs.length === 0) return false;
+  const stripped = hintText.replace(/[\s*`·]/g, "").toLowerCase();
+  return runs.some((run) => stripped.includes(run));
+}
+
+/** 由 queue 直载的 word 字段动态构建提示步（降级链：缺失级自动跳过）。 */
+function buildHintSteps(word: ReviewCard["word"] | null | undefined): HintStep[] {
+  if (!word) return [];
+  const steps: HintStep[] = [];
+  const example = (word.examples ?? []).find(
+    (e): e is { text: string; translation?: unknown } =>
+      typeof e === "object" && e !== null &&
+      typeof (e as { text?: unknown }).text === "string" &&
+      ((e as { text: string }).text.trim().length > 0),
+  );
+  if (example) {
+    steps.push({
+      kind: "example",
+      text: example.text,
+      translation:
+        typeof example.translation === "string" && example.translation.trim().length > 0
+          ? example.translation
+          : null,
+    });
+  } else if (word.semantic_chain && word.semantic_chain.trim().length > 0) {
+    steps.push({ kind: "chain", text: word.semantic_chain });
+  }
+  if (
+    word.prototype_text && word.prototype_text.trim().length > 0 &&
+    !isSpoiler(word.prototype_text, word.short_definition)
+  ) {
+    steps.push({ kind: "prototype", text: word.prototype_text });
+  }
+  const mnemonicCore = extractMnemonicCore(word.mnemonic_text ?? null);
+  if (mnemonicCore) {
+    steps.push({ kind: "mnemonic", text: mnemonicCore, mtype: word.mnemonic_type ?? null });
+  }
+  return steps;
+}
+
+/** H2 原型遮罩：模糊态点击揭示（mask 玩法）。 */
+function PrototypeMask({ text }: { text: string }) {
+  const [shown, setShown] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => setShown((v) => !v)}
+      title={shown ? "点击遮回" : "点击揭示原型意象"}
+      className={
+        "max-w-full text-left text-[12.5px] leading-relaxed text-[var(--color-ink)] transition-all duration-200 " +
+        (shown ? "" : "select-none blur-[5px] hover:blur-[3px]")
+      }
+    >
+      {text.replace(/\*\*/g, "").replace(/`/g, "")}
+    </button>
+  );
+}
+
+function HintStepContent({ step }: { step: HintStep }) {
+  if (step.kind === "example") {
+    return (
+      <div className="rounded-lg bg-[var(--color-surface-muted)] px-3 py-2">
+        <p className="text-[13px] leading-relaxed text-[var(--color-ink)]">{step.text}</p>
+        {step.translation && (
+          <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--color-ink-soft)]">{step.translation}</p>
+        )}
+      </div>
+    );
+  }
+  if (step.kind === "chain") {
+    const nodes = step.text.split("->").map((n) => n.trim()).filter(Boolean);
+    return (
+      <div className="rounded-lg bg-[var(--color-surface-muted)] px-3 py-2">
+        <p className="font-mono text-xs leading-relaxed text-[var(--color-ink)]">
+          {nodes.map((node, i) => (
+            <span key={`${node}-${i}`}>
+              {i > 0 && <span className="px-1 font-bold text-[var(--color-accent)]">→</span>}
+              {node}
+            </span>
+          ))}
+        </p>
+      </div>
+    );
+  }
+  if (step.kind === "prototype") {
+    return (
+      <div className="flex items-start gap-2 rounded-lg bg-[var(--color-surface-muted)] px-3 py-2">
+        <span aria-hidden className="pt-0.5">🎯</span>
+        <PrototypeMask text={step.text} />
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-start gap-2 rounded-lg bg-[var(--color-surface-muted)] px-3 py-2">
+      <span aria-hidden className="pt-0.5">💡</span>
+      <span className="text-[12.5px] leading-relaxed text-[var(--color-ink)]">
+        {step.text}
+        {step.mtype && <span className="ml-1.5 text-[10px] text-[var(--color-ink-soft)]">（{step.mtype}）</span>}
+      </span>
+    </div>
+  );
+}
+
+/** 正面提示面板：已消费步逐条展示 + 下一步按钮（穷尽后变 H4 翻卡）。 */
+function HintLadderPanel({
+  steps,
+  level,
+  onConsume,
+  onFlipH4,
+}: {
+  steps: HintStep[];
+  level: number;
+  onConsume: () => void;
+  onFlipH4: () => void;
+}) {
+  const exhausted = level >= steps.length;
+  return (
+    <div
+      className="mt-4 w-full rounded-xl border border-dashed border-[var(--color-border-strong)] p-3 text-left"
+      data-no-flip
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] uppercase tracking-wider text-[var(--color-ink-soft)] opacity-70">
+          提示阶梯 · 每用一级，评分上限下降
+        </p>
+        <span className="shrink-0 text-[10px] text-[var(--color-ink-soft)]">
+          {level}/{steps.length} 级
+        </span>
+      </div>
+      {level > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {steps.slice(0, level).map((step, i) => (
+            <HintStepContent key={`${step.kind}-${i}`} step={step} />
+          ))}
+        </div>
+      )}
+      {!exhausted ? (
+        <Button variant="secondary" size="sm" className="mt-2" onClick={onConsume}>
+          <Zap className="h-3 w-3" />
+          提示 {level + 1} · {STEP_LABEL[steps[level].kind]}
+          <Kbd>N</Kbd>
+        </Button>
+      ) : (
+        <Button variant="secondary" size="sm" className="mt-2" onClick={onFlipH4}>
+          <Eye className="h-3 w-3" />
+          H4 · 翻卡（上限：重来）
+          <Kbd>Space</Kbd>
+        </Button>
+      )}
+      {level === 0 && (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--color-ink-soft)] opacity-70">
+          不用提示直接翻卡 = 验证回忆，评分上限「轻松」保持；用满全部提示后翻卡按「重来」计。
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** Tier 1 锚点胶囊:原型 / 记忆锚 —— 巩固用的记忆钩子,低调常驻,单行截断悬停看全文。 */
@@ -255,7 +449,8 @@ interface ReviewCardViewProps {
   error: string | null;
   /** Free browse mode — hide rating, use prev/next navigation, no persistence. */
   preview?: boolean;
-  onAnswer: (rating: "again" | "hard" | "good" | "easy") => void;
+  /** T3 Hint 阶梯：rating 附带提示消费埋点（hintLevel = 已消费级数，viaH4 = 穷尽翻卡）。 */
+  onAnswer: (rating: "again" | "hard" | "good" | "easy", hint?: { hintLevel: number; viaH4?: boolean }) => void;
   onSkip: () => void;
   onPrev?: () => void;
   onNext?: () => void;
@@ -319,6 +514,9 @@ export function ReviewCardView({
   const [noteEntries, setNoteEntries] = useState<ReviewNoteEntry[]>(card?.note_entries ?? []);
   // 首学徽标：标记升级请求进行中（防连点）
   const [markingUpgrade, setMarkingUpgrade] = useState(false);
+  // T3 Hint 阶梯：已消费提示级数 + 提示穷尽后经 H4/直翻的翻卡标记
+  const [hintLevel, setHintLevel] = useState(0);
+  const [viaH4, setViaH4] = useState(false);
   const { addToast } = useToast();
 
   // 操作区容器：评分/跳过/挂起/撤销/翻页后把焦点移回这里，
@@ -338,8 +536,27 @@ export function ReviewCardView({
     setRevealed(false);
     setNoteEntries(card?.note_entries ?? []);
     setQuickDraft("");
+    setHintLevel(0);
+    setViaH4(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card?.progressId]);
+
+  // T3 Hint 阶梯：提示步（缺失级自动降级跳过）与评分上限
+  const hintSteps = useMemo(() => (preview ? [] : buildHintSteps(card?.word)), [card, preview]);
+  const cap = hintCapNow(hintLevel, viaH4);
+
+  // 翻卡统一入口：提示已全部消费时任何翻卡都标记 viaH4（防绕过 again 强制）；
+  // 未用满提示的直翻 = 验证回忆，上限保持。
+  const flipCard = () => {
+    if (revealed) {
+      setRevealed(false);
+      return;
+    }
+    if (hintSteps.length > 0 && hintLevel >= hintSteps.length) {
+      setViaH4(true);
+    }
+    setRevealed(true);
+  };
 
   const commitQuickNote = useCallback(async () => {
     const content = quickDraft.trim();
@@ -363,8 +580,14 @@ export function ReviewCardView({
 
   const handleAnswer = async (rating: "again" | "hard" | "good" | "easy") => {
     await commitQuickNote();
-    onAnswer(rating);
+    // T3 Hint 阶梯埋点：hintLevel=0（直翻验证）也上报
+    onAnswer(rating, { hintLevel, viaH4 });
     refocusActions();
+  };
+  const consumeHint = () => setHintLevel((v) => Math.min(v + 1, hintSteps.length));
+  const flipViaH4 = () => {
+    setViaH4(true);
+    setRevealed(true);
   };
   const handleSkip = async () => {
     await commitQuickNote();
@@ -451,13 +674,19 @@ export function ReviewCardView({
           return;
         }
         event.preventDefault();
-        setRevealed((v) => !v);
+        flipCard();
         return;
       }
       if (!card || loading) return;
       if (key === "1" || key === "2" || key === "3" || key === "4") {
         event.preventDefault();
         void handleAnswer(ratings[Number(key) - 1].value);
+      } else if (key === "n") {
+        // T3 Hint 阶梯：N 推进下一条提示（背面不推进）
+        if (revealed) return;
+        if (hintSteps.length === 0 || hintLevel >= hintSteps.length) return;
+        event.preventDefault();
+        setHintLevel((v) => Math.min(v + 1, hintSteps.length));
       } else if (key === "s") {
         event.preventDefault();
         void handleSkip();
@@ -473,7 +702,7 @@ export function ReviewCardView({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, loading, preview, onAnswer, onSkip, onSuspend, onUndo, canUndo, onPrev, onNext, commitQuickNote]);
+  }, [card, loading, preview, onAnswer, onSkip, onSuspend, onUndo, canUndo, onPrev, onNext, commitQuickNote, flipCard, handleAnswer, hintSteps, hintLevel, revealed]);
 
   if (loading && !card) {
     return (
@@ -537,6 +766,12 @@ export function ReviewCardView({
           >
             {/* ── Tier 0 答案焦点区:徽章 + 短释主行(居中)── */}
             <div className="flex flex-col items-center text-center">
+              {(hintLevel > 0 || viaH4) && (
+                <p className="mb-1.5 text-[11px] text-[var(--color-ink-soft)]">
+                  提示已用 {hintLevel}/{hintSteps.length} 级
+                  {viaH4 ? " · H4 翻卡" : ""} · 评分上限「{HINT_CAP_LABEL[cap]}」
+                </p>
+              )}
               <div className="flex flex-wrap items-center justify-center gap-2">
                 {card.word.pos && <Badge>{card.word.pos}</Badge>}
                 {card.word.cefr && <Badge tone="warm">CEFR {card.word.cefr}</Badge>}
@@ -601,6 +836,12 @@ export function ReviewCardView({
             {card.word.ipa && (
               <span className="mt-2 font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
             )}
+            <HintLadderPanel
+              steps={hintSteps}
+              level={hintLevel}
+              onConsume={consumeHint}
+              onFlipH4={flipViaH4}
+            />
             <span className="mt-4 inline-flex items-center gap-1 text-xs text-[var(--color-ink-soft)] opacity-70">
               <Eye className="h-3.5 w-3.5" /> 点击显示释义
             </span>
@@ -631,12 +872,12 @@ export function ReviewCardView({
       "relative flex min-h-[14rem] w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-6 py-6 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2",
     onClick: (e: ReactMouseEvent) => {
       if (shouldSkipFlip(e.target)) return;
-      setRevealed((v) => !v);
+      flipCard();
     },
     onKeyDown: (e: ReactKeyboardEvent) => {
       if ((e.key === " " || e.key === "Enter") && !shouldSkipFlip(e.target)) {
         e.preventDefault();
-        setRevealed((v) => !v);
+        flipCard();
       }
     },
   };
@@ -788,7 +1029,12 @@ export function ReviewCardView({
                 key={r.value}
                 variant={r.variant}
                 size="lg"
-                disabled={loading}
+                disabled={loading || HINT_CAP_RANK[r.value] > HINT_CAP_RANK[cap]}
+                title={
+                  HINT_CAP_RANK[r.value] > HINT_CAP_RANK[cap]
+                    ? `已用 ${hintLevel} 级提示，评分上限「${HINT_CAP_LABEL[cap]}」`
+                    : undefined
+                }
                 onClick={() => void handleAnswer(r.value)}
               >
                 {r.label}
@@ -809,7 +1055,8 @@ export function ReviewCardView({
           </div>
 
           <p className="text-center text-xs text-[var(--color-ink-soft)] opacity-70">
-            空格 翻转 · 1-4 评分 · S 跳过 · P 挂起 · H 历史{canUndo ? " · U / Ctrl+Z 撤销上一张" : ""}
+            评分上限「{HINT_CAP_LABEL[cap]}」
+            {hintLevel > 0 ? ` · 已用 ${hintLevel} 级提示` : ""} · 空格 翻转 · N 提示 · 1-4 评分 · S 跳过 · P 挂起 · H 历史{canUndo ? " · U / Ctrl+Z 撤销上一张" : ""}
           </p>
         </>
       )}

@@ -79,6 +79,17 @@ type ReviewCardQueryRow = UserWordProgressRow & {
    */
   content_hash?: string;
   l1_content_hash?: string | null;
+  /**
+   * T3 Hint 阶梯（2026-09-25）：words 侧提示字段。仅 queue 系查询
+   * （findDueCards/findPracticeCards/findDueCandidates/findWordsByIds）选取；
+   * mnemonic/chain 从 words.metadata 派生（SQL 内 COALESCE，沿用
+   * findForgettingPreviewRows 的取数先例），drill/leeches 查询不选。
+   */
+  examples?: Json | null;
+  prototype_text?: string | null;
+  mnemonic_text?: string | null;
+  mnemonic_type?: string | null;
+  semantic_chain?: string | null;
 };
 
 export class ReviewRepository extends BaseRepository implements IReviewRepository {
@@ -94,7 +105,11 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     const rows = await this.query<ReviewCardQueryRow>(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
               w.id AS w_id, w.slug, w.title, w.lemma,
-              w.short_definition, w.ipa, w.pos, w.cefr
+              w.short_definition, w.ipa, w.pos, w.cefr,
+              w.examples, w.prototype_text,
+              COALESCE(w.metadata->>'mnemonic_text', w.metadata->>'mnemonic') AS mnemonic_text,
+              w.metadata->>'mnemonic_type' AS mnemonic_type,
+              w.metadata->>'semantic_chain' AS semantic_chain
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
@@ -121,7 +136,11 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     const rows = await this.query<ReviewCardQueryRow>(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
               w.id AS w_id, w.slug, w.title, w.lemma,
-              w.short_definition, w.ipa, w.pos, w.cefr
+              w.short_definition, w.ipa, w.pos, w.cefr,
+              w.examples, w.prototype_text,
+              COALESCE(w.metadata->>'mnemonic_text', w.metadata->>'mnemonic') AS mnemonic_text,
+              w.metadata->>'mnemonic_type' AS mnemonic_type,
+              w.metadata->>'semantic_chain' AS semantic_chain
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
@@ -147,11 +166,15 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     userId: string,
     wordbookId: string,
     limit: number,
-  ): Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>> {
+  ): Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>> {
     const rows = await this.query<ReviewCardQueryRow>(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
               w.id AS w_id, w.slug, w.title, w.lemma,
               w.short_definition, w.ipa, w.pos, w.cefr,
+              w.examples, w.prototype_text,
+              COALESCE(w.metadata->>'mnemonic_text', w.metadata->>'mnemonic') AS mnemonic_text,
+              w.metadata->>'mnemonic_type' AS mnemonic_type,
+              w.metadata->>'semantic_chain' AS semantic_chain,
               w.content_hash, w.l1_content_hash
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
@@ -177,14 +200,22 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
    */
   async findWordsByIds(
     wordIds: string[],
-  ): Promise<Array<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }>> {
+  ): Promise<Array<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null }>> {
     if (wordIds.length === 0) return [];
-    return this.query<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }>(
-      `SELECT id, slug, title, lemma, short_definition, ipa, pos, cefr
+    const rows = await this.query<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: Json | null; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null }>(
+      `SELECT id, slug, title, lemma, short_definition, ipa, pos, cefr,
+              examples, prototype_text,
+              COALESCE(metadata->>'mnemonic_text', metadata->>'mnemonic') AS mnemonic_text,
+              metadata->>'mnemonic_type' AS mnemonic_type,
+              metadata->>'semantic_chain' AS semantic_chain
        FROM words
        WHERE id = ANY($1::uuid[]) AND is_published = true AND is_deleted = false`,
       [wordIds],
     );
+    return rows.map((row) => ({
+      ...row,
+      examples: Array.isArray(row.examples) ? (row.examples as unknown[]) : [],
+    }));
   }
 
   /**
@@ -220,12 +251,20 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
 
   private mapReviewCardRows<T extends UserWordProgressRow = UserWordProgressRow>(
     rows: Array<ReviewCardQueryRow>,
-  ): Array<{ progress: T; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }> {
+  ): Array<{ progress: T; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }> {
     return rows.map((r) => {
-      const { slug, title, lemma, w_id, short_definition, ipa, pos, cefr, ...progress } = r;
+      const { slug, title, lemma, w_id, short_definition, ipa, pos, cefr, examples, prototype_text, mnemonic_text, mnemonic_type, semantic_chain, ...progress } = r;
       return {
         progress: progress as unknown as T,
-        word: { id: w_id, slug, title, lemma, short_definition, ipa, pos, cefr },
+        word: {
+          id: w_id, slug, title, lemma, short_definition, ipa, pos, cefr,
+          // T3 Hint 阶梯：examples jsonb notNull；非数组防御归一（旧数据形态兜底）
+          examples: Array.isArray(examples) ? (examples as unknown[]) : [],
+          prototype_text: prototype_text ?? null,
+          mnemonic_text: mnemonic_text ?? null,
+          mnemonic_type: mnemonic_type ?? null,
+          semantic_chain: semantic_chain ?? null,
+        },
       };
     });
   }

@@ -257,6 +257,45 @@ describe("ReviewService.submitAnswer", () => {
     }));
   });
 
+  it("records hint ladder telemetry in review log metadata (T3, 2026-09-25)", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const reviewRepo = makeMockReviewRepo({
+      findProgressForUpdate: vi.fn(async () => makeMockProgress()),
+    });
+    mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = makeMockSessionRepo();
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+
+    // 带提示埋点的作答：hintLevel=2（消费到 H2）、H4 翻卡
+    await service.submitAnswer({
+      progressId: "p1", rating: "hard", sessionId: "s1", hintLevel: 2, viaH4: true,
+    }, "u1");
+    const saveInput = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[0][0] as SaveAnswerInput;
+    expect(saveInput.logMetadata).toEqual(expect.objectContaining({
+      hint_level: 2,
+      hint_via_h4: true,
+    }));
+
+    // 直翻验证（未用提示）：hintLevel=0 上报、非 H4
+    await service.submitAnswer({
+      progressId: "p1", rating: "easy", sessionId: "s1", hintLevel: 0,
+    }, "u1");
+    const directInput = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[1][0] as SaveAnswerInput;
+    expect(directInput.logMetadata).toEqual(expect.objectContaining({
+      hint_level: 0,
+      hint_via_h4: false,
+    }));
+
+    // 旧客户端缺省 → null/false（不破坏既有埋点消费方）
+    await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1");
+    const legacyInput = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[2][0] as SaveAnswerInput;
+    expect(legacyInput.logMetadata).toEqual(expect.objectContaining({
+      hint_level: null,
+      hint_via_h4: false,
+    }));
+  });
+
   it("writes the outbox event before the transaction callback returns", async () => {
     const { adapter } = makeMockFsrsAdapter();
     const enqueuePhases: boolean[] = [];
@@ -506,7 +545,7 @@ describe("ReviewService — rebuild read methods", () => {
     const { adapter } = makeMockFsrsAdapter();
     const findDueCards = vi.fn(async () => [{
       progress: makeProgressRow(),
-      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1" },
+      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1", examples: [], prototype_text: null, mnemonic_text: null, mnemonic_type: null, semantic_chain: null },
     }]);
     const getOrCreateTodaySession = vi.fn(async () => ({
       id: "s1", user_id: "u1", wordbook_id: "wb1", mode: "cram",
@@ -518,7 +557,7 @@ describe("ReviewService — rebuild read methods", () => {
 
     expect(queue.items).toEqual([{
       progressId: "p1",
-      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1" },
+      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1", examples: [], prototype_text: null, mnemonic_text: null, mnemonic_type: null, semantic_chain: null },
       state: "review",
       dueAt: "2026-01-01T00:00:00Z",
       lastRating: "good",
@@ -661,7 +700,7 @@ describe("ReviewService — P0 practice-mode behavior", () => {
   function makePracticeCard() {
     return {
       progress: makeProgressRow(),
-      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1" },
+      word: { id: "w-9", slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1", examples: [], prototype_text: null, mnemonic_text: null, mnemonic_type: null, semantic_chain: null },
     };
   }
 
@@ -835,7 +874,7 @@ describe("ReviewService — P1 queue-priority routing", () => {
   }
 
   function makeWord(id = "w-1") {
-    return { id, slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1" };
+    return { id, slug: "abound", title: "Abound", lemma: "abound", short_definition: "def", ipa: null, pos: "verb", cefr: "C1", examples: [], prototype_text: null, mnemonic_text: null, mnemonic_type: null, semantic_chain: null };
   }
 
   function makeSession(mode: string) {
@@ -1037,7 +1076,7 @@ describe("ReviewService — P1 queue-priority routing", () => {
 // ── P2: free-review selection (wordIds) ──────────────────────────────────
 describe("ReviewService — P2 free-review selection", () => {
   function makeWord(id: string) {
-    return { id, slug: `slug-${id}`, title: `Title ${id}`, lemma: `lemma-${id}`, short_definition: "def", ipa: null, pos: "verb", cefr: "C1" };
+    return { id, slug: `slug-${id}`, title: `Title ${id}`, lemma: `lemma-${id}`, short_definition: "def", ipa: null, pos: "verb", cefr: "C1", examples: [], prototype_text: null, mnemonic_text: null, mnemonic_type: null, semantic_chain: null };
   }
 
   function makeSession() {

@@ -1,0 +1,110 @@
+{
+  "capturedAt": "2026-09-19T08:05:49Z",
+  "kind": "local closeout re-verification snapshot; remote state not revalidated",
+  "repository": "https://github.com/looseP/vocab-ob-reborn",
+  "tools": {
+    "node": "22.22.2",
+    "npm": "10.9.7",
+    "git": "2.53.0.windows.2",
+    "postgresMajor": 17
+  },
+  "worktrees": [
+    {
+      "directory": "wt-main",
+      "head": "ccc6fb4c90f45c6e13f0d581298bb617a79baac2",
+      "branch": "main",
+      "status": [
+        "M docs/plan/README.md",
+        "?? docs/handoff/README.md",
+        "?? docs/handoff/feature-map.md",
+        "?? docs/handoff/machine-migration.md",
+        "?? docs/handoff/workspace-snapshot.json",
+        "?? docs/plan/machine-handoff-execution-plan-2026-09-19.md",
+        "?? docs/plan/reliability-batch-dispatch-2026-09-19.md",
+        "?? docs/plan/reliability-closeout-execution-plan-2026-09-19.md",
+        "?? docs/plan/reliability-closeout-start-prompt-2026-09-19.md",
+        "?? docs/plan/study-notes-design-2026-09-18.md",
+        "?? docs/plan/study-notes-execution-plan-2026-09-18.md",
+        "?? docs/plan/study-notes-start-prompt-2026-09-18.md",
+        "?? scripts/tmp-2025-en2-fulltext.txt",
+        "?? scripts/tmp-2025-seed.json",
+        "?? scripts/tmp-extract-pdf.py",
+        "?? scripts/tmp-local-db-setup.ps1",
+        "?? scripts/tmp-parse-2025.py",
+        "?? scripts/tmp-seed-2025.ts"
+      ],
+      "privateConfigFilesPresent": [
+        ".env (contains DATAMUSE_ENABLED only)"
+      ],
+      "localAssetDirectoriesPresent": [
+        "backups",
+        ".tmp",
+        ".learnings"
+      ]
+    },
+    {
+      "directory": "wt-reliability",
+      "head": "b96b972669a8af5257ed35dab4b33f7d0afc7ee2",
+      "branch": "reliability-batch",
+      "status": [],
+      "privateConfigFilesPresent": [],
+      "localAssetDirectoriesPresent": [
+        "test-results"
+      ]
+    },
+    {
+      "directory": "wt-practice",
+      "head": "b11f3ee8e748fc0652f26e7392a709854a7eb0c7",
+      "branch": "writing-practice-v1",
+      "status": [],
+      "privateConfigFilesPresent": [],
+      "localAssetDirectoriesPresent": [
+        ".tmp",
+        "test-results"
+      ]
+    },
+    {
+      "directory": "wt-writing",
+      "head": "baf971eb1d4cfa4057567beb3160101ac11ff888",
+      "branch": "writing-v1",
+      "status": [],
+      "privateConfigFilesPresent": [],
+      "localAssetDirectoriesPresent": [
+        ".tmp",
+        "test-results"
+      ]
+    }
+  ],
+  "refs": [
+    "ccc6fb4c90f45c6e13f0d581298bb617a79baac2 refs/heads/main",
+    "b96b972669a8af5257ed35dab4b33f7d0afc7ee2 refs/heads/reliability-batch",
+    "b11f3ee8e748fc0652f26e7392a709854a7eb0c7 refs/heads/writing-practice-v1",
+    "baf971eb1d4cfa4057567beb3160101ac11ff888 refs/heads/writing-v1",
+    "b96b972669a8af5257ed35dab4b33f7d0afc7ee2 refs/remotes/origin/reliability-batch"
+  ],
+  "fsck": {
+    "command": "git fsck --full --no-reflogs (default parameters)",
+    "exit": 0,
+    "note": "single dangling commit a8fd8927e80458433065e32efbe018e3463a386a remains as a known observation item; no reachable object loss"
+  },
+  "closeout": {
+    "documentationBranch": "local-closeout-2026-09-19",
+    "documentationCommit": "initial a2db849; follow-up doc revisions and the GitHub handoff are recorded in docs/handoff/README.md; SHA list also in the outer closeout pack report",
+    "databaseBackupsCreated": true,
+    "restoreDrillPassed": "vocab_practice_accept only; the other two database backups are verified but have no completed drill",
+    "details": "see docs/handoff/local-closeout-facts-2026-09-19.md"
+  },
+  "excludes": [
+    "real environment contents",
+    "database dump",
+    "raw learning corpus",
+    "screenshots",
+    "temporary scripts",
+    "reflog",
+    "index staging state",
+    "global Git config",
+    "node_modules",
+    "dist"
+  ],
+  "databaseMigration": "local closeout 2026-09-19: backups created for three user-data databases; isolated restore drill completed for vocab_practice_accept only (preparation-stage while sources keep accepting writes). Databases stay on the old machine and are not part of the GitHub code handoff; final cutover snapshot still requires a write-stop backup"
+}

@@ -275,7 +275,7 @@ export interface UndoRpcResult {
 
 export interface IReviewRepository {
   findDueCards(userId: string, wordbookId: string, limit: number): Promise<
-    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
+    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>
   >;
 
   /**
@@ -284,17 +284,17 @@ export interface IReviewRepository {
    * derive "content changed" at read time (ADR-0021).
    */
   findDueCandidates(userId: string, wordbookId: string, limit: number): Promise<
-    Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
+    Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>
   >;
 
   /** All active (non-suspended) cards regardless of due_at — used by cram/preview practice modes. */
   findPracticeCards(userId: string, wordbookId: string, limit: number): Promise<
-    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>
+    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>
   >;
 
   /** Free-review selection: fetch words by ids directly (published only), independent of review progress. */
   findWordsByIds(wordIds: string[]): Promise<
-    Array<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }>
+    Array<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null }>
   >;
 
   /** Drill candidates: already-reviewed words joined with examples for cloze resolution. */

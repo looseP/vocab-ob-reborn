@@ -54,6 +54,8 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     expect(cards[0].word).toEqual({
       id: "w-9", slug: "abound", title: "Abound", lemma: "abound",
       short_definition: "exist in large numbers", ipa: null, pos: "verb", cefr: "C1",
+      // T3 Hint 阶梯：queue 系查询新增 words 侧提示字段（mock 行未选 → 防御归一）
+      examples: [], prototype_text: null, mnemonic_text: null, mnemonic_type: null, semantic_chain: null,
     });
     expect(cards[0].progress.id).toBe("p1");
     expect(cards[0].progress).not.toHaveProperty("slug");

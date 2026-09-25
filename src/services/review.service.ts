@@ -58,10 +58,32 @@ export interface EnqueueCardResult {
   progressId: string;
 }
 
+/**
+ * T3 Hint 阶梯（2026-09-25）：队列 word 载荷 —— 基础 8 字段 + 提示字段
+ * （examples / prototype_text / mnemonic_text+type / semantic_chain），
+ * 由 queue 系 SQL 携带（方案 A：单次查询，不做二次 useWordDetail 补拉）。
+ * examples 未回灌批次为空数组；mnemonic/chain 缺失为 null，前端逐级降级。
+ */
+export type ReviewQueueWord = {
+  id: string;
+  slug: string;
+  title: string;
+  lemma: string;
+  short_definition: string | null;
+  ipa: string | null;
+  pos: string | null;
+  cefr: string | null;
+  examples: unknown[];
+  prototype_text: string | null;
+  mnemonic_text: string | null;
+  mnemonic_type: string | null;
+  semantic_chain: string | null;
+};
+
 /** 复习队列项 DTO —— review/zen 模式携带优先级元数据（P1）。 */
 export interface ReviewQueueItemDto {
   progressId: string;
-  word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null };
+  word: ReviewQueueWord;
   state: ReviewState;
   dueAt: string | null;
   lastRating: ReviewRating | null;
@@ -130,18 +152,18 @@ export interface ReviewServiceDeps {
   /** Load wordbook-level FSRS weights (returns null if not configured) */
   loadWeights: (wordbookId: string) => Promise<number[] | null>;
   /** Find due cards for a user in a wordbook (optional: tests may omit) */
-  findDueCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
+  findDueCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: ReviewQueueWord }>>;
   /**
    * Due candidate pool (P1): a larger pool that the queue-priority builder
    * buckets/sorts and applies the new-card quota to before returning the
    * final batch for review/zen modes. Carries needs_recheck (人工标记) plus
    * the words-side hashes needed for the read-time derivation (ADR-0021).
    */
-  findDueCandidates?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
+  findDueCandidates?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: ReviewQueueWord }>>;
   /** Find all active cards regardless of due_at — used by cram/preview practice modes. */
-  findPracticeCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }>>;
+  findPracticeCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: ReviewQueueWord }>>;
   /** Free-review selection: fetch words by ids (published only), independent of review progress. */
-  findWordsByIds?: (userId: string, wordIds: string[]) => Promise<Array<{ id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }>>;
+  findWordsByIds?: (userId: string, wordIds: string[]) => Promise<Array<ReviewQueueWord>>;
   /** 主动晋升入口（Phase F）：读 L1 进度行（actor 事务内执行）。 */
   findProgressByUserWordbookWord?: (userId: string, wordbookId: string, wordId: string) => Promise<UserWordProgressRow | null>;
   /** Drill candidates: already-reviewed words joined with examples for cloze resolution. */
@@ -301,7 +323,7 @@ export class ReviewService {
   }
 
   /** 练习模式（cram/preview）的队列项 —— 无优先级元数据。 */
-  private toQueueItem(card: { progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } }): ReviewQueueItemDto {
+  private toQueueItem(card: { progress: UserWordProgressRow; word: ReviewQueueWord }): ReviewQueueItemDto {
     return {
       progressId: card.progress.id,
       word: card.word,
@@ -324,8 +346,8 @@ export class ReviewService {
    * 与 docs/adr/0021-needs-recheck-derivation.md。
    */
   private toQueueCandidate(
-    card: { progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null } },
-  ): ReviewQueueCandidate & { progressId: string; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null }; lastRating: ReviewRating | null; l1WeakSignal: boolean; stability: number | null } {
+    card: { progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: ReviewQueueWord },
+  ): ReviewQueueCandidate & { progressId: string; word: ReviewQueueWord; lastRating: ReviewRating | null; l1WeakSignal: boolean; stability: number | null } {
     const derivedNeedsRecheck = deriveContentStaleness({
       contentHash: card.progress.content_hash,
       l1ContentHash: card.progress.l1_content_hash,
@@ -499,6 +521,11 @@ export class ReviewService {
         desired_retention: progress.desired_retention,
         progress_id: progress.id,
         retrievability: scheduling.retrievability,
+        // T3 Hint 阶梯埋点（2026-09-25）：作答时已消费的最高提示级与是否
+        // 提示穷尽后经 H4 翻卡。旧客户端缺省 → null/false（reviewLogs.metadata
+        // 为 jsonb 宽松结构，无需迁移）。
+        hint_level: input.hintLevel ?? null,
+        hint_via_h4: input.viaH4 ?? false,
       };
 
       // 7. Persist (UPDATE progress + INSERT review_log in same tx)

@@ -98,6 +98,12 @@ export const reviewAnswerSchema = z.object({
   idempotencyKey: z.string().min(1).max(200).optional(),
   // Mode-aware side-effect boundary (P0): cram is a no-persistence self-test.
   mode: z.enum(["review", "cram", "preview", "zen"]).optional(),
+  // T3 Hint 阶梯埋点（2026-09-25，request 纯新增 = 非 breaking）：
+  // hintLevel = 作答时已消费的最高提示级（0=未用提示直翻，1=H1 例句/语义链，
+  // 2=H2 原型，3=H3 助记锚）；viaH4 = 提示穷尽后经 H4 翻卡（区别于直翻验证）。
+  // 旧客户端缺省 → 服务端落 null/false。
+  hintLevel: z.number().int().min(0).max(3).optional(),
+  viaH4: z.boolean().optional(),
 });
 
 export const reviewSkipSchema = z.object({
