@@ -12,8 +12,10 @@ export class BrowserApiError extends Error {
   readonly details?: unknown;
   readonly requestId?: string;
   readonly body: unknown;
+  /** 原始响应 headers（可选；如 429 的 Retry-After——保存控制器的有界重试输入）。 */
+  readonly headers?: Headers;
 
-  constructor(status: number, body: unknown) {
+  constructor(status: number, body: unknown, headers?: Headers) {
     const error = isRecord(body) ? body as ApiErrorBody : {};
     const textMessage = typeof body === "string" && body.trim() ? body : undefined;
     super(error.message ?? error.error ?? textMessage ?? `Request failed with status ${status}`);
@@ -23,6 +25,7 @@ export class BrowserApiError extends Error {
     this.details = error.details;
     this.requestId = error.requestId;
     this.body = body;
+    this.headers = headers;
   }
 }
 
@@ -33,7 +36,7 @@ export type BrowserRequestOptions = RequestInit & {
   timeoutMs?: number;
 };
 
-export type BrowserResponse<T> = { data: T; status: number };
+export type BrowserResponse<T> = { data: T; status: number; headers: Headers };
 export type BrowserRequest = <T>(input: string, init?: BrowserRequestOptions) => Promise<T>;
 export type BrowserResponseRequest = <T>(input: string, init?: BrowserRequestOptions) => Promise<BrowserResponse<T>>;
 
@@ -120,7 +123,15 @@ export function createBrowserResponseRequest(dependencies: BrowserRequestDepende
       if (timer) clearTimeout(timer);
       outerSignal?.removeEventListener("abort", onOuterAbort);
     }
-    if (response.status === 204) return { data: undefined as T, status: response.status };
+    // 只读快照：部分测试桩/受限环境不实现 `Response.headers`（getter 抛错），
+    // 此时回落为空 Headers，避免基础请求面因非契约字段而整体不可用。
+    let responseHeaders: Headers;
+    try {
+      responseHeaders = new Headers(response.headers ?? undefined);
+    } catch {
+      responseHeaders = new Headers();
+    }
+    if (response.status === 204) return { data: undefined as T, status: response.status, headers: responseHeaders };
 
     const rawBody = await response.text();
     let body: unknown = rawBody || undefined;
@@ -136,9 +147,9 @@ export function createBrowserResponseRequest(dependencies: BrowserRequestDepende
       if (response.status === 401 && !input.startsWith(AUTH_PATH_PREFIX) && typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
       }
-      throw new BrowserApiError(response.status, body);
+      throw new BrowserApiError(response.status, body, responseHeaders);
     }
-    return { data: body as T, status: response.status };
+    return { data: body as T, status: response.status, headers: responseHeaders };
   };
 }
 

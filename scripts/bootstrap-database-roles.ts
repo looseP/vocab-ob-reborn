@@ -361,6 +361,19 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     -- 0038（作文 W1）：作文反馈（一稿一条 upsert + 正文清理时同事务删除反馈行，
     -- 故四权齐备；行锁与 WITH CHECK 同 0035/0036 惯例）。
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_writing_feedback TO vocab_app;
+    -- 0039（N1 学习笔记）：跨材料笔记/专题——只归档不硬删（无 DELETE 路径）；
+    -- 保存为 CAS UPDATE（version=version+1）且锁行（SELECT ... FOR UPDATE）要求
+    -- UPDATE 权限（0021 同款行锁陷阱）。
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_study_notes TO vocab_app;
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.l3_study_topics TO vocab_app;
+    -- 0039：题型归属（replaceVenues = DELETE + INSERT，无原地 UPDATE 语义）。
+    GRANT SELECT, INSERT, DELETE ON TABLE public.l3_study_note_venues TO vocab_app;
+    -- 0039：专题成员（加入 INSERT / 移出 DELETE / 重排写 position UPDATE；列表读走
+    -- SELECT；锁 topic 后整体重排需要写权）。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_study_topic_notes TO vocab_app;
+    -- 0039：引用行（replaceForNote = DELETE + INSERT；capture-更新已有引用走
+    -- UPDATE/upsert；keep 保留原摘录；行锁读走 SELECT）。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_study_note_references TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;

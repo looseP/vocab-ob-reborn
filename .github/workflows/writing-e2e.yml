@@ -116,7 +116,7 @@ jobs:
       # 手动预占 3099 会导致 webServer 启动冲突 → 0 收集）。agent 开口所需的
       # AGENT_API_TOKENS 经 webServer env 白名单透传（playwright.config.ts）。
       # 校验器为仓库脚本 scripts/verify-writing-e2e-report.ts（单一真源，含回归测试）：
-      # PW_EXIT 缺失/非法/非 0、全局 errors 非空、收集≠4、跳过≠0、失败≠0 一律红灯。
+      # PW_EXIT 缺失/非法/非 0、全局 errors 非空、收集≠7（4 writing + 3 origin）、跳过≠0、失败≠0 一律红灯。
       - name: Run writing E2E (gated + fail-closed validation)
         env:
           E2E_WRITING_SMOKE: "1"
@@ -128,7 +128,7 @@ jobs:
           WRITING_SHOT_DIR: /tmp/writing-shots
         run: |
           set +e
-          npx playwright test e2e/writing.spec.ts --reporter=json > /tmp/pw-writing.json
+          npx playwright test e2e/writing.spec.ts e2e/writing-origin.spec.ts --reporter=json > /tmp/pw-writing.json
           export PW_EXIT=$?
           set -e
           npx tsx scripts/verify-writing-e2e-report.ts /tmp/pw-writing.json

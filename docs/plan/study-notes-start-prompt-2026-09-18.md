@@ -16,6 +16,8 @@
 
 首先刷新git状态、已合并HEAD、现存迁移与运行时。计划观察HEAD为219be04，但执行不得假定它仍为最新。工作区可能有F-1、review_sheet_id及作文任务进行中；按执行技能建立隔离checkout，不提交、重置或覆盖他人的改动。
 
+**执行校准（2026-09-19）**：实际开工于独立 clone `D:/Temp/vocab-ob-n1`（不含斜杠分支 `study-notes-n1-backend`），依赖基线 `integration/l3-reliability-writing@b7dcea4e`（PR #125 draft、未合并）。F-1 深链（`?sheet=`/`?paper=`）与作文稿次协议已随整合合并；历史迁移 0000–0038 已应用（39个），本批迁移从实际生成结果起。旧共享工作区（`wt-main`/`wt-integration`/`wt-writing`/`wt-practice`）为本批只读参照，未修改、未切换分支。
+
 执行范围：独立自由笔记、七题型归属、平面专题、精确source/question引用、反向引用、原位侧栏、并发保存、导出。N2历史题纸/作答/评卷与作文稿次引用不在本次实现范围；它们有明确的后续接口前置，不用unknown JSON提前糊进去。
 
 按Task00–11执行，每项先写有意义的失败测试，再落实现，验证后以精确文件清单提交。默认单执行者串行；需要委派时先遵守会话授权，不因本指令自行开多个任务。schema、迁移journal、operations与L3Page等共享集成点必须协调，迁移号以实际生成结果为准，绝不预占0037/0038。

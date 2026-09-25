@@ -193,6 +193,16 @@ const OTHER_OWNER_WRITES = [
   "discardL3WritingSheet",
   // 作文子空间 v1（W9）：正文清理（soft-delete attempt + 同事务删反馈；sealed 限定）。
   "clearL3WritingSheetContent",
+  // 学习笔记（N1，ADR《study-notes-workspace》/ 设计 §7）：私人笔记工作台 owner 写面
+  // ——全部新端点 owner-only（agent 一律 403；未认证 401；他人资源 404）。
+  // previewL3ReferenceTarget 为 POST 只读（零写不持久化），但非 GET → 归写面分类。
+  "createL3StudyNote",
+  "saveL3StudyNote",
+  "previewL3ReferenceTarget",
+  "createL3StudyTopic",
+  "saveL3StudyTopic",
+  "moveL3StudyTopicMember",
+  "removeL3StudyTopicMember",
 ] as const;
 
 const OWNER_WRITE_OPERATION_IDS = sorted([
@@ -291,6 +301,18 @@ const OWNER_READS = [
   "getL3WritingFeedback",
   // 作文子空间 v1（W9）：单稿导出（owner-only；agent 无导出权限）。
   "exportL3WritingSheet",
+  // A2（2026-09-19）：按题批量进度读面（owner-only；agent 无权限，零写、零创建）。
+  "listL3WritingQuestionSummaries",
+  // 学习笔记（N1）：笔记空间为私人数据——读面同样 owner-only（agent 无权限；
+  // 引用目标搜索/反向引用亦不例外；全部 GET 零写）。
+  "listL3StudyNotes",
+  "getL3StudyNote",
+  "searchL3ReferenceTargets",
+  "listL3StudyBacklinks",
+  "listL3StudyTopics",
+  // N1/Task 10：笔记导出（owner-only；agent 无导出权限，与 exportL3Sheet /
+  // exportL3WritingSheet 同口径——私人笔记档案不对 agent 开放）。
+  "exportL3StudyNote",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {

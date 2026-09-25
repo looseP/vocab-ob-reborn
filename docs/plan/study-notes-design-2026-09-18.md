@@ -4,10 +4,10 @@
 
 ## 0. 基线与项目关系
 
-- 观察 HEAD：`main@219be04`，PR #120 已合并。
-- 工作区正在推进 F-1 历史题纸、review_sheet_id 与并发修补；`0037_strong_boomerang.sql` 及 journal 已被其他任务占用。执行时从已集成提交重新核对，不提交、不覆盖这些进行中的改动。
-- 计划编写末次复查：F-1 的未提交前端已出现 `/l3?sheet=<id>`、`?paper=<id>`、`L3ExamPaper.replaySheetId` 与“刷新评卷”。这是进行中的接口观察，不是合并或验收结论。N1导航必须兼容这些参数，N2复用最终合并的回看协议，不自行改名为另一套sheet参数。
-- 同日存在 `writing-space-design-2026-09-18.md`。它负责作文任务/稿次/反馈，本设计负责跨材料学习笔记；不建立第二份作文正文或作答历史。
+- 编写时观察 HEAD：`main@219be04`，PR #120 已合并。**执行校准（2026-09-19）**：实际开工基线为 `integration/l3-reliability-writing@b7dcea4e`（PR #125，draft 未合并）；整合批次已含 reliability-batch、writing-practice-v1 与 Task C。
+- 编写时工作区正在推进 F-1 历史题纸、review_sheet_id 与并发修补；`0037_strong_boomerang.sql` 及 journal 已被其他任务占用。**执行校准**：`0037_strong_boomerang.sql` 与 `0038_empty_blink.sql` 均已随历史批次应用（39 迁移）；本批迁移号从实际生成结果起（0039），不预占。
+- 编写时末次复查记录：F-1 前端出现 `/l3?sheet=<id>`、`?paper=<id>`、`L3ExamPaper.replaySheetId` 与“刷新评卷”。**执行校准**：该深链协议已随整合合并，为已核验的稳定协议（不再标注“进行中”）。N1导航必须兼容这些参数，N2复用最终合并的回看协议，不自行改名为另一套sheet参数。
+- 同日存在 `writing-space-design-2026-09-18.md`。它负责作文任务/稿次/反馈，本设计负责跨材料学习笔记；不建立第二份作文正文或作答历史。**执行校准**：作文稿次协议（task/sheet/origin/resume）已随整合合并；N2 的历史引用合同按已合并接口对齐。
 - 当前 `note_entries` 依附词/词书；annotations 依附题目；assessments 为单题评析；`context_type=note` 依附 source、随 source 删除级联，均不适合作为独立跨题长篇笔记。
 - ADR-0019 明确独立生命周期可拆知识点实体。执行时新增非编号 ADR `docs/adr/study-notes-workspace.md`，修订其知识笔记范围，不复活已退役的单词 notes/note_revisions 模型。
 - 仓内规范要求新计划统一放 `docs/plan/`，因此不另建重复的 superpowers 计划副本。
@@ -108,6 +108,7 @@ type ReferenceWrite =
 - 每条保存引用含 capturedAt、fieldHash、displaySnapshot 和定位。全部 snapshot 序列化总量上限2 MiB，超出422；避免100个整题造成无限放大。
 - `keep` 引用必须已经属于当前笔记，只保留原摘录，不自动重新截取。`capture` 可新建或显式更新当前引用；已被其他笔记使用的引用 id 返回409。
 - 引用状态：current / changed / unavailable。字段hash不同标changed；旧摘录仍显示，但不把旧offset套到新正文。v1不自动重锚，用户重新选择更新引用。
+- 题目可用性（2026-09-19 补修 F3 校准）：仅 `status='active'` 的题可被搜索、预览与新增 capture；pending/rejected 目标按不可用目标 404（不区分存在性）。目标后来非 active：已保存引用照常保留（resolve=unavailable，旧摘录/capturedAt 不变），允许 keep 与移除，禁止显式重新 capture。`unavailable` 同时覆盖「目标被数据库直删」与「目标非 active」两种来源，前端按同一占位展示（原始摘录仍可读），不使整篇笔记不可读或不可保存。
 - 只读预览与定位由独立面板承担，不调用 openSheet。来源可跳既有阅读深链；整题/选项通过新只读题目预览定位，避免去做题文件时顺带创建草稿。
 
 ## 4. 删除与授权的 v1 明确取舍

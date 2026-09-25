@@ -1,0 +1,546 @@
+// @vitest-environment jsdom
+/**
+ * Task 09A 补修 · 引用确认快照回归（由独立复核探针转化，2026-09-21）。
+ *
+ * 覆盖审查 R1/R2 的两个核心断言：
+ *  - 保存确认后仅改标题，新引用必须 keep（不再重采集）——探针 1；
+ *  - 保存确认返回的服务端快照/时间替换插入时的临时预览——探针 2。
+ *
+ * 与探针的差别仅在于**不使用整对象 toEqual**：正式元数据带一个显式的
+ * `confirmed` 标记（R2 的「待确认 vs 已确认」区分），因此按字段断言
+ * 「服务端值全部生效、预览值全部消失」，而不是要求对象形状与 DTO 逐字节相同。
+ *
+ * DEFECT 1（P2，2026-09-21 后续补修）追加三例：**迟到的确认不得复活已移除引用的元数据**。
+ * 根因在 `applyConfirmedReferences` 的元数据「补齐」循环：升级（升级已有条目）与补齐
+ * （推送响应里多余条目）都没有按「当前有效引用集合」过滤，所以一次在途移除之后再返回的
+ * 响应会把已删除的 A 重新塞回 `referencesMeta`（且 `confirmed: true`）。
+ *
+ * 第三例（2026-09-21 独立复核后加严）是**窄修判别用例**：前两例中「迟到的确认不得复活
+ * 在途移除的引用元数据」并不能判出窄修——它的收尾恰好是一次空引用 PUT，空响应会触发窄修
+ * 的清理而蒙混过关（实测：窄修下该例仍绿）。第三例把迟到回包构造成**同时含 A 与 B**，
+ * 且续发载荷是 **[B]（非空）**，不给窄修任何顺带清理的机会；实测旧实现与窄修都红、
+ * 真修绿（三向判别，命令与输出见提交说明）。
+ */
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { waitFor } from "@testing-library/dom";
+import { useStudyNoteEditor, type UseStudyNoteEditorResult } from "@/frontend/hooks/useStudyNoteEditor";
+
+const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+
+const NOTE = "00000000-0000-4000-8000-000000000701";
+const SOURCE = "00000000-0000-4000-8000-000000000901";
+const target = { kind: "source" as const, sourceId: SOURCE };
+const preview = {
+  target,
+  displaySnapshot: { kind: "source" as const, title: "PREVIEW_OLD", excerpt: "PREVIEW_EXCERPT" },
+  liveTitle: "PREVIEW_OLD",
+};
+const dto = {
+  id: NOTE,
+  title: "initial",
+  bodyMd: "body",
+  venues: ["cloze"] as const,
+  pinned: false,
+  status: "active",
+  version: 1,
+  createdAt: "2026-09-20T00:00:00Z",
+  updatedAt: "2026-09-20T00:00:00Z",
+  references: [] as unknown[],
+};
+
+let editor: UseStudyNoteEditorResult;
+let root: Root;
+let container: HTMLDivElement;
+let save: ReturnType<typeof vi.fn>;
+let stored: any;
+
+function Harness({ client, noteId }: { client: any; noteId?: string }): null {
+  editor = useStudyNoteEditor({ noteId: noteId ?? NOTE, client });
+  return null;
+}
+
+beforeEach(() => {
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  // 防跨用例串味：先放一个 loading 哨兵，否则 waitFor 会立刻看到上一条用例残留的
+  // "ready"，新挂载的 effect 还没跑（client.get 未调用）就往下走，读到已 dispose 的控制器。
+  editor = { loadState: "loading" } as unknown as UseStudyNoteEditorResult;
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  container.remove();
+});
+
+async function boot(): Promise<void> {
+  stored = structuredClone(dto);
+  save = vi.fn(async (_: string, input: any) => {
+    stored = {
+      ...stored,
+      ...input,
+      version: stored.version + 1,
+      updatedAt: "2026-09-21T01:00:00Z",
+      // 服务端口径：capture → 服务端快照 + 服务端 capturedAt
+      references: input.references.map((r: any) => ({
+        id: r.id,
+        target,
+        status: "current",
+        capturedAt: "2026-09-21T01:00:00Z",
+        displaySnapshot: { kind: "source", title: "SERVER_CONFIRMED", excerpt: "SERVER_EXCERPT" },
+        liveTitle: "SERVER_CONFIRMED",
+      })),
+    };
+    return { item: structuredClone(stored) };
+  });
+  const client = { get: vi.fn(async () => ({ item: structuredClone(dto) })), save };
+  await act(async () => root.render(createElement(Harness, { client })));
+  await waitFor(() => expect(editor.loadState).toBe("ready"));
+}
+
+/**
+ * 在正文**普通段落**处插入（cursor=1：段落文本内，非文末/非既有 marker 处）。
+ * 传 null（追加到文末）会紧邻上一枚 marker 而被正确拒绝——那不是本用例要覆盖的路径。
+ */
+async function insert(): Promise<string> {
+  let id: string | null = null;
+  await act(async () => {
+    id = editor.insertReference(target, preview, 1);
+  });
+  return id!;
+}
+
+/**
+ * 在正文**末尾段落之后**追加引用（新 marker 成为文末顶层块）。
+ *
+ * DEFECT 1 的两个用例都要「插入 A → 再移除 A」：只有当 marker 是最后一个顶层块时，
+ * 移除才会把正文还原成干净的前文（删除语义为「标记段落 + 其相邻空行」）。用 `insert()`
+ * 的 cursor=1 会把首段切成两半（`b\n\n[[ref:A]]\n\nody`），移除后中途拼回 `b]]…`——
+ * 那是**另一个**既有缺陷（删除区间起点回溯换行导致残留 `]]`），不属本缺陷范围，
+ * 不应把本回归测试建立在它之上。
+ */
+async function insertAtEnd(): Promise<string> {
+  let id: string | null = null;
+  await act(async () => {
+    const end = editor.snapshot!.edit.bodyMd.length;
+    id = editor.insertReference(target, preview, end);
+  });
+  return id!;
+}
+
+async function flush(): Promise<void> {
+  await act(async () => {
+    await editor.requestNavigation(() => {});
+  });
+  expect(editor.navigationError).toBeNull();
+}
+
+/**
+ * 受控保存桩：第 `holdCalls` 次起的**响应投递**由测试用 `release(call)` 放行（deferred
+ * latch），其余次立即返回。注意挂起的是「响应送达」，不是「处理函数执行」——因此挂起期间
+ * 后续 PUT 仍会真正发起（计入 `save.mock.calls`），这正是复现交错所需的时序。
+ * 服务端逐条回显 references（capture → 快照 + 服务端 capturedAt）。
+ */
+function makeGatedSave(options: { holdCalls: number[] }): {
+  save: ReturnType<typeof vi.fn>;
+  release: (call: number) => void;
+} {
+  const gates = new Map<number, { promise: Promise<void>; resolve: () => void }>();
+  for (const call of options.holdCalls) {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    gates.set(call, { promise, resolve });
+  }
+  let call = 0;
+  let stored: any = structuredClone(dto);
+  const save = vi.fn((_: string, input: any) => {
+    call += 1;
+    const myCall = call;
+    stored = {
+      ...stored,
+      ...input,
+      version: stored.version + 1,
+      updatedAt: `2026-09-21T0${myCall}:00:00Z`,
+      references: input.references.map((r: any) => ({
+        id: r.id,
+        target,
+        status: "current",
+        capturedAt: `2026-09-21T0${myCall}:00:00Z`,
+        // 每条引用的正式快照带各自 id 后缀，便于区分「来自哪一次确认」
+        displaySnapshot: { kind: "source", title: `SERVER_${r.id.slice(-4)}`, excerpt: "SERVER_EXCERPT" },
+        liveTitle: `SERVER_${r.id.slice(-4)}`,
+      })),
+    };
+    const item = structuredClone(stored);
+    const gate = gates.get(myCall);
+    return gate ? gate.promise.then(() => ({ item })) : Promise.resolve({ item });
+  });
+  return { save, release: (target) => gates.get(target)?.resolve() };
+}
+
+/**
+ * 渲染并等到 ready（自定义 save 桩版本，用于需要控制请求时序的用例）。
+ * 与 `boot()` 同一挂载方式；用例名不同的 noteId 让 hook 状态完全隔离。
+ */
+async function bootWith(save: ReturnType<typeof vi.fn>, noteId: string = NOTE): Promise<void> {
+  const client = { get: vi.fn(async () => ({ item: structuredClone({ ...dto, id: noteId }) })), save };
+  await act(async () => {
+    root.render(createElement(Harness, { client, noteId }));
+  });
+  await waitFor(() => expect(editor.loadState).toBe("ready"), { timeout: 3000 });
+}
+
+/** 等真实防抖（800ms）走完并让自动 PUT 落地；不使用 requestNavigation（它会锁编辑）。 */
+async function settleAutosave(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  });
+}
+
+/**
+ * 放行被挂起的响应，并等待 hook 侧的确认回调 + 订阅重渲染落地。
+ * **不使用 requestNavigation**（它会按设计锁编辑、且在这里会与在途请求争抢管道）。
+ */
+async function releaseAndSettle(release: (call: number) => void, target: number): Promise<void> {
+  await act(async () => {
+    release(target);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+}
+
+/**
+ * **忠实**放行被挂起的响应：`release` 在 `act()` **之外**调用。
+ *
+ * 为什么不能用 `releaseAndSettle`：React 18 的 `act()` 会延迟提交，`act()` **返回前**
+ * 该 act 作用域内产生的 state 更新**尚未提交**（`editor.referencesMeta` 仍是进入 act 前
+ * 的那一帧）。因此在 `act()` 内放行后立刻断言，读到的可能还是「移除之后、确认之前」的
+ * 旧值 `[]`——即使迟到回包已经把 A 复活。这会让断言在「A 确实被复活」的实现上也变绿，
+ * 失去判别力。
+ *
+ * 这里：先 drain 让保存管道把在途请求发完（PUT 2 也会在此发起），`act()` 退出即完成提交，
+ * 于是下一步读到的 `editor.referencesMeta` 就是迟到的、仍含 A 的确认**真实提交后**的状态。
+ * 不额外等待超过 drain 所需，确保断言时点紧贴「放行仍含 A 的迟到载荷」之后。
+ */
+async function releaseFaithfully(release: (call: number) => void, target: number): Promise<void> {
+  release(target);
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+}
+
+it("确认后仅改标题：新引用第二次 PUT 必须 keep（不再重采集）", async () => {
+  await boot();
+  await insert();
+  await flush();
+  await act(async () => editor.setTitle("second title"));
+  await flush();
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save.mock.calls[0]![1].references[0].action).toBe("capture");
+  expect(save.mock.calls[1]![1].references[0].action).toBe("keep");
+});
+
+it("服务端确认的快照与 capture 时间替换临时预览（预览值全部消失）", async () => {
+  await boot();
+  const id = await insert();
+  await flush();
+  const meta = editor.referencesMeta.find((reference) => reference.id === id)!;
+
+  // 服务端值生效
+  expect(meta.confirmed).toBe(true);
+  expect(meta.capturedAt).toBe("2026-09-21T01:00:00Z");
+  expect(meta.displaySnapshot).toEqual({ kind: "source", title: "SERVER_CONFIRMED", excerpt: "SERVER_EXCERPT" });
+  expect(meta.liveTitle).toBe("SERVER_CONFIRMED");
+  expect(meta.status).toBe("current");
+  expect(meta.target).toEqual(target);
+  // 预览值不再残留（本机时间也不冒充服务端时间）
+  const serialized = JSON.stringify(meta);
+  expect(serialized).not.toContain("PREVIEW_OLD");
+  expect(serialized).not.toContain("PREVIEW_EXCERPT");
+});
+
+it("未确认前是待确认预览：capturedAt 为空、confirmed=false，转换被拒绝", async () => {
+  await boot();
+  const id = await insert();
+  const meta = editor.referencesMeta.find((reference) => reference.id === id)!;
+  expect(meta.confirmed).toBe(false);
+  expect(meta.capturedAt).toBe(""); // 不用本机时间冒充服务端 capture 时间
+  expect(meta.displaySnapshot).toEqual(preview.displaySnapshot);
+  let accepted = true;
+  await act(async () => {
+    accepted = editor.convertReferenceToExcerpt(id);
+  });
+  expect(accepted).toBe(false);
+  expect(editor.referenceError).toBeTruthy();
+});
+
+it("A 保存挂起时新插 B：A 确认只把 A 转 keep，B 仍 capture 且正文保留", async () => {
+  // 受控响应：第一次 PUT 挂起，直到测试显式放行
+  let releaseFirst: (() => void) | null = null;
+  const gate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let call = 0;
+  stored = structuredClone(dto);
+  save = vi.fn(async (_: string, input: any) => {
+    call += 1;
+    if (call === 1) await gate; // A 的响应挂起
+    stored = {
+      ...stored,
+      ...input,
+      version: (stored.version ?? 1) + 1,
+      updatedAt: `2026-09-21T0${call}:00:00Z`,
+      references: input.references.map((r: any) => ({
+        id: r.id,
+        target: r.target,
+        status: "current",
+        capturedAt: `2026-09-21T0${call}:00:00Z`,
+        displaySnapshot: { kind: "source", title: `SERVER_${r.id.slice(-4)}`, excerpt: "SERVER_EXCERPT" },
+        liveTitle: `SERVER_${r.id.slice(-4)}`,
+      })),
+    };
+    return { item: structuredClone(stored) };
+  });
+  const client = { get: vi.fn(async () => ({ item: structuredClone(dto) })), save };
+  await act(async () => root.render(createElement(Harness, { client })));
+  await waitFor(() => expect(editor.loadState).toBe("ready"));
+
+  // 插入 A；等待防抖自动发起保存（不使用 requestNavigation——那会按设计锁编辑）
+  const idA = await insert();
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 3000 });
+  expect(save.mock.calls[0]![1].references.find((w: any) => w.id === idA).action).toBe("capture");
+
+  // A 在途期间插入 B（保存仍挂起）
+  const idB = await insert();
+  expect(idB).not.toBe(idA);
+
+  // 放行 A 的确认，并等待管道收尾（B 会随后发起自己的保存）
+  releaseFirst!();
+  // A 的确认回包 + 管道续发 B（防抖 800ms）
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  });
+  await waitFor(() => expect(save.mock.calls.length).toBeGreaterThanOrEqual(2), { timeout: 3000 });
+
+  // 关键不变量（R1）：A 的确认**只**结算 A——B 必须走它自己的 capture 往返，
+  // 不得因 A 的确认被误标为已确认/误转 keep。
+  const bodyNow = editor.snapshot!.edit.bodyMd;
+  expect(bodyNow).toContain(`[[ref:${idA}]]`);
+  expect(bodyNow).toContain(`[[ref:${idB}]]`);
+
+  // 第一次 PUT（A）时 B 尚未存在；第二次 PUT 必须把 B 作为 capture 提交
+  const firstPayload = save.mock.calls[0]![1];
+  expect(firstPayload.references.map((w: any) => w.id)).toEqual([idA]);
+  const laterPayloads = save.mock.calls.slice(1).map((c: any) => c[1]);
+  const payloadWithB = laterPayloads.find((p: any) => p.references.some((w: any) => w.id === idB));
+  expect(payloadWithB).toBeTruthy();
+  // B 在**它自己的**提交里仍是 capture（没有被 A 的确认提前转 keep）
+  expect(payloadWithB.references.find((w: any) => w.id === idB).action).toBe("capture");
+  // A 在后续载荷里已是 keep（已确认，不再重采集）
+  expect(payloadWithB.references.find((w: any) => w.id === idA).action).toBe("keep");
+
+  const metaA = editor.referencesMeta.find((r) => r.id === idA)!;
+  const metaB = editor.referencesMeta.find((r) => r.id === idB)!;
+  expect(metaA.confirmed).toBe(true);
+  // B 的正式元数据只能来自 B 自己的确认（服务端标题带各自 id 后缀，可区分来源）
+  expect(metaA.displaySnapshot).toMatchObject({ title: expect.stringContaining(idA.slice(-4)) });
+  expect(metaB.displaySnapshot).toMatchObject({ title: expect.stringContaining(idB.slice(-4)) });
+});
+
+// ── DEFECT 1（P2）：迟到的确认不得复活已移除引用的元数据 ─────────────────────
+//
+// 复现（独立复核 + 本地实测）：插入 A → A 的自动 PUT 被挂起 → 移除 A（本地元数据清空）
+// → 放行 A 的响应 → 空引用保存完成。最终 edit.references 与第二次 PUT 载荷都正确为空，
+// 但 `referencesMeta` 把 A 带了回来且 confirmed=true。根因：capture→keep 路径按当前编辑
+// 集合过滤，元数据「补齐」循环没有；随后的空响应也不做清理。
+
+it("A 确认在途时移除 A 并插入 B：B 的正文/采集保留，A 不复活，B 仍等自己的确认", async () => {
+  const { save, release } = makeGatedSave({ holdCalls: [1, 2] });
+
+  await bootWith(save, "00000000-0000-4000-8000-0000000007d2");
+
+  // 插入 A → 自动 PUT 1（挂起）：等真实防抖（800ms）走完，不靠 requestNavigation。
+  const idA = await insertAtEnd();
+  await settleAutosave();
+  expect(save).toHaveBeenCalledTimes(1);
+
+  // A 在途：移除 A，再插入 B
+  await act(async () => {
+    expect(editor.removeReference(idA)).toBe(true);
+  });
+  expect(editor.snapshot!.edit.bodyMd).toBe("body");
+  const idB = await insertAtEnd();
+  expect(idB).not.toBe(idA);
+  expect(editor.snapshot!.edit.references).toEqual([{ id: idB, action: "capture", target }]);
+  const bodyAfter = editor.snapshot!.edit.bodyMd;
+  expect(bodyAfter).not.toContain(`[[ref:${idA}]]`);
+  expect(bodyAfter).toContain(`[[ref:${idB}]]`);
+
+  // 放行 A 的迟到确认：A 已不在集合中，不得复活；B 保持待确认（capture + confirmed=false）。
+  // B 自己的 PUT 2 会在 A 结算后被立刻续发，但它的响应同样被挂起——所以此刻 B 只能还停在
+  // 「待确认」，这正是「B 的确认只能来自 B 自己的确认」这一要求。
+  await releaseAndSettle(release, 1);
+  expect(editor.referencesMeta.map((meta) => meta.id)).toEqual([idB]);
+  expect(editor.referencesMeta[0]!.confirmed).toBe(false);
+  expect(editor.snapshot!.edit.bodyMd).toBe(bodyAfter);
+
+  // B 走自己的确认往返（capture）：A 的确认结算后管道会续发 B 的 PUT 2（响应仍被挂起）。
+  await waitFor(() => expect(save.mock.calls.length).toBeGreaterThanOrEqual(2), { timeout: 3000 });
+  const payloadWithB = save.mock.calls
+    .slice(1)
+    .map((c: any) => c[1])
+    .find((p: any) => p.references.some((w: any) => w.id === idB))!;
+  expect(payloadWithB.references).toEqual([{ id: idB, action: "capture", target }]);
+  expect(payloadWithB.references.some((w: any) => w.id === idA)).toBe(false);
+
+  // 放行 B 自己的确认之前，B 仍是待确认（服务端尚未确认 B 的正式快照）
+  expect(editor.referencesMeta.find((m) => m.id === idB)!.confirmed).toBe(false);
+  await releaseAndSettle(release, 2);
+  await waitFor(() => expect(editor.referencesMeta.find((m) => m.id === idB)!.confirmed).toBe(true), {
+    timeout: 3000,
+  });
+  expect(editor.referencesMeta.map((meta) => meta.id)).toEqual([idB]);
+  expect(editor.referencesMeta[0]!.capturedAt).toBe("2026-09-21T02:00:00Z");
+  expect(editor.snapshot!.edit.bodyMd).toBe(bodyAfter);
+});
+
+// ── DEFECT 1（P2）：窄修判别用例（审查要求的强 A/B 交错）─────────────────────
+//
+// 为什么上面的用例判不出「窄修」：它的收尾恰好是一次**空引用** PUT（PUT 2），
+// 空响应会触发窄修（`if (confirmed.references.length === 0) return []`）的清理，
+// 于是观察到的终态与真修一致。要判别窄修，交错必须满足三条：
+//   (a) 迟到的 PUT 1 回包**同时含 A 与 B**（不能只有 A，也不能是空）；
+//   (b) 移除 A 之后管道**不再产生任何空引用 PUT**——真修下续发的只会是 [[B]]（非空），
+//       窄修「只清空响应」的分支永远不触发，A 无处可清；
+//   (c) 断言必须落在迟到回包**真正提交之后**（放行在 act 之外，见 releaseFaithfully）。
+//
+// 本用例正是按这三条构造的 A/B 交错：
+//   1. 先插 A（`insertAtEnd`）→ PUT 1 挂起；
+//   2. 与 A 同在防抖窗口内插入 B（cursor=1，段落内的安全位置），使 PUT 1 **冻结时同时含 A 与 B**；
+//   3. PUT 1 在途时移除 A（editSeq 推进、savedSeq 不动、inFlight 仍为 PUT 1，故不调度新 PUT）；
+//   4. 放行 PUT 1：其冻结载荷与回包**同时含 A 和 B**，逐条快照带各自 id 后缀
+//      （`SERVER_<id 后 4 位>`）可判来源；真修续发的下一枚载荷是 **[B]（非空）**，不给窄修兜底。
+// 终态只应保留 B 的元数据（且 B 的正式快照来自它自己那次确认）。
+it("A/B 交错：PUT 1 仍含 A 与 B 的迟到回包不得复活 A，也不得把 B 误标为已确认", async () => {
+  const { save, release } = makeGatedSave({ holdCalls: [1] });
+
+  await bootWith(save, "00000000-0000-4000-8000-0000000007d2");
+
+  // ① 先插 A（文末）、再插 B（段落内）——**都在防抖窗口内**，所以 PUT 1 的冻结载荷
+  //    同时含 A 与 B。这是本用例与「迟到的确认不得复活在途移除的引用元数据」的关键差别：
+  //    那一例的 PUT 1 只含 A，收尾又是一次空引用 PUT，窄修可由空响应顺带清理而蒙混过关。
+  const idA = await insertAtEnd();
+  const idB = await insert();
+  expect(idB).not.toBe(idA);
+  expect(editor.snapshot!.edit.references.map((w: any) => w.id)).toEqual([idA, idB]);
+  expect(save).not.toHaveBeenCalled(); // 防抖未到：还没有任何 PUT
+  const suffixA = idA.slice(-4);
+  const suffixB = idB.slice(-4);
+  expect(suffixB).not.toBe(suffixA);
+
+  // ② 等真实防抖（800ms）走完 → PUT 1 发起并被挂起；其冻结载荷**同时含 A 与 B**
+  await settleAutosave();
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 3000 });
+  expect(save.mock.calls[0]![1].references.map((w: any) => w.id)).toEqual([idA, idB]);
+
+  // ③ PUT 1 在途时移除 A：B 保持原位（本地仍是待确认的 capture）
+  await act(async () => {
+    expect(editor.removeReference(idA)).toBe(true);
+  });
+  expect(editor.snapshot!.edit.references).toEqual([{ id: idB, action: "capture", target }]);
+  const bodyAfterRemoval = editor.snapshot!.edit.bodyMd;
+  expect(bodyAfterRemoval).not.toContain(`[[ref:${idA}]]`);
+  expect(bodyAfterRemoval).toContain(`[[ref:${idB}]]`);
+
+  // ④ 放行 PUT 1 这枚**同时含 A 与 B**的迟到回包（act 之外放行 = 忠实放行，见 releaseFaithfully）：
+  //    断言点必须落在这次迟到确认真正提交之后，否则读到的是「移除后、确认前」的旧帧。
+  await releaseFaithfully(release, 1);
+
+  // PUT 1 的冻结载荷与回包同时含 A 与 B —— 迟到回包本体，已由③②核对
+  expect(save.mock.calls[0]![1].references.map((w: any) => w.id)).toEqual([idA, idB]);
+
+  // ⑤ 核心断言（旧实现与窄修都在此变红）：管道的续发能力用完并稳定后，
+  //    最终状态只能保留 B 一条元数据。
+  await settleAutosave();
+  await waitFor(() => expect(editor.snapshot!.state).toBe("idle"), { timeout: 3000 });
+  expect(editor.referencesMeta.map((meta) => meta.id)).toEqual([idB]);
+
+  // ⑥ A 不得以任何形式回来：既不能自己复活，也不能有别的条目挂着 A 的服务端快照
+  //    （换 id 复活 A 的来源同样要被抓到）。细修只清「空引用响应」，
+  //    而这里 PUT 1 之后的续发载荷是**[B]（非空）**，故窄修无从清理，A 必然残留。
+  const serializedMeta = JSON.stringify(editor.referencesMeta);
+  expect(serializedMeta).not.toContain(idA);
+  expect(serializedMeta).not.toContain(suffixA);
+  expect(serializedMeta).not.toContain(`SERVER_${suffixA}`);
+
+  // ⑦ B 的正式快照只能来自 B **自己**的那一次确认：第一次确认（PUT 1，仍含 A 的迟到回包）
+  //    绝不能把 B 提前标成已确认——它服务的引用集合与本次编排不一致。
+  expect(save.mock.calls.length).toBeGreaterThanOrEqual(2);
+  const finalPayload = save.mock.calls.at(-1)![1];
+  expect(finalPayload.references.map((w: any) => w.id)).toEqual([idB]);
+  expect(finalPayload.references.some((w: any) => w.id === idA)).toBe(false);
+
+  // ⑧ 正文与编辑集合都只含 B；A 不残留在任何状态里。
+  //    B 此刻已是 keep——它自己的确认（PUT 2）成功，之后不再重复采集。
+  expect(editor.snapshot!.edit.references.map((w: any) => w.id)).toEqual([idB]);
+  expect(editor.snapshot!.edit.bodyMd).toBe(bodyAfterRemoval);
+  expect(editor.snapshot!.edit.bodyMd).not.toContain(idA);
+});
+
+it("迟到的确认不得复活在途移除的引用元数据", async () => {
+  const { save, release } = makeGatedSave({ holdCalls: [1] });
+
+  await bootWith(save, "00000000-0000-4000-8000-0000000007d1");
+
+  // 插入 A；等真实防抖走完、自动 PUT 发起（响应被挂起）
+  const idA = await insertAtEnd();
+  await settleAutosave();
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save.mock.calls[0]![1].references.map((w: any) => w.id)).toEqual([idA]);
+
+  // A 在途时移除 A：本地引用集合与元数据都必须立刻清空
+  await act(async () => {
+    expect(editor.removeReference(idA)).toBe(true);
+  });
+  expect(editor.snapshot!.edit.references).toEqual([]);
+  expect(editor.referencesMeta).toEqual([]);
+  // 移除推进 editSeq 但不推进 savedSeq：空引用内容仍是未保存的
+  expect(editor.snapshot!.editSeq).toBeGreaterThan(editor.snapshot!.savedSeq);
+
+  // 先挂起 flush（= 空引用内容需要在放行 A 之前送到服务端），再放行 A 的迟到响应——
+  // 制造「A 的确认落在移除之后、而空引用内容尚未提交」的真实交错。
+  // 关键：这个 flush 确保 `savedSeq` 不会在 A 的回包被处理之前就跳过当前 editSeq
+  // （即 `applyConfirmedReferences` 里 `liveIds` 是从「已移除 A」的编辑集合算出来的）。
+  const emptyFlush = flush();
+  // 放行**不是**经过 requestNavigation：在途阶段用忠实放行（act 之外），
+  // 让迟到回包的提交在断言前真正落地（见 releaseFaithfully 注释）。
+  await releaseFaithfully(release, 1);
+  await emptyFlush;
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2), { timeout: 3000 });
+  // PUT 1 的冻结载荷**仍含 A**（这正是迟到回包）；PUT 2 的载荷已经是空引用。
+  // 放行的是 PUT 1 这枚「仍含 A」的回包，本用例断言 A 不得以任何形式回来。
+  //
+  // 注（2026-09-21 更正）：早先此处曾写「窄修只清『空引用响应』，对仍含 A 的迟到回包无效」。
+  // 该说法已被实测证伪——在本用例的交错下（迟到回包后管道立刻续发一次**空引用** PUT 2，
+  // 其空响应会触发窄修的清理）窄修同样能通过（实测：窄修下本用例仍绿）。
+  // 真正能判别窄修的交错见下方「A/B 交错：PUT 1 仍含 A 与 B 的迟到回包不得复活 A，
+  // 也不得把 B 误标为已确认」一例：那一例的续发载荷是 **[B]（非空）**，窄修无从清理。
+  expect(save.mock.calls[0]![1].references.map((w: any) => w.id)).toEqual([idA]);
+  expect(save.mock.calls[1]![1].references).toEqual([]);
+  expect(save.mock.calls.length).toBe(2);
+
+  // 四条硬断言：两份状态都必须是空，且 A 不得以任何形式回到元数据
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save.mock.calls[1]![1].references).toEqual([]);
+  expect(editor.snapshot!.edit.references).toEqual([]);
+  expect(editor.referencesMeta).toEqual([]);
+  // 收尾阶段（PUT 2 的空回包落地后）A 也不得回来
+  await flush();
+  expect(editor.referencesMeta).toEqual([]);
+  await settleAutosave();
+  expect(editor.referencesMeta).toEqual([]);
+});

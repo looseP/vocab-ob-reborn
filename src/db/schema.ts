@@ -1425,6 +1425,10 @@ export const l3Submissions = pgTable("l3_submissions", {
 // 归 l3_grading_results（批次三建），attempt 不写判定避免改判两处同步腐化。
 // 软删（status/deleted_at）照注记先例；结果页从 attempts 按 sheet_id 派生渲染，
 // attempt 行不可变，串行即天然快照；统计同源现算（软删行仍在库）。
+//
+// N2 第三条链：(id,user_id) 唯一是「引用行 → attempt」跨表属主复合外键的前置依赖，
+// 必须**单独一段迁移**先落地（0043）——drizzle 会把复合 FK 排在同批 UNIQUE 之前，
+// 同批执行在真实 PostgreSQL 上直接红（chain01 0040/0041 教训）。
 export const l3QuestionAttempts = pgTable("l3_question_attempts", {
 	id: uuid("id").defaultRandom().primaryKey().notNull(),
 	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
@@ -1440,6 +1444,8 @@ export const l3QuestionAttempts = pgTable("l3_question_attempts", {
 }, (table) => [
 	index("idx_l3_question_attempts_user_question_created").on(table.userId, table.questionId, table.createdAt),
 	index("idx_l3_question_attempts_sheet").on(table.sheetId),
+	// N2 第三条链：跨表属主复合外键的前置依赖（见表注释，必须独立成段迁移）。
+	unique("l3_question_attempts_id_user_id_unique").on(table.id, table.userId),
 	// 作文（W1）：一个 writing sheet 只物化一个 attempt（只约束 writing venue，
 	// 普通题纸数据不受影响）。
 	uniqueIndex("l3_question_attempts_writing_sheet_unique").on(table.sheetId).where(sql`venue = 'writing'`),
@@ -1520,6 +1526,9 @@ export const l3QuestionAssessments = pgTable("l3_question_assessments", {
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 }, (table) => [
 	unique("l3_question_assessments_user_question_unique").on(table.userId, table.questionId),
+	// N2：'(id, user_id)' 唯一键——被引用的评析需要同款「跨表属主一致性复合外键」，
+	// 即引用只能通过 (assessment_id, user_id) 复合匹配到自己的行，无法挂到他人行上。
+	unique("l3_question_assessments_id_user_id_unique").on(table.id, table.userId),
 	pgPolicy("l3_question_assessments_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 	check("l3_question_assessments_last_editor_check", sql`last_editor = ANY (ARRAY['owner'::text, 'agent'::text])`),
 ]);
@@ -1574,5 +1583,214 @@ export const l3WritingFeedback = pgTable("l3_writing_feedback", {
 	check("l3_writing_feedback_version_check", sql`version > 0`),
 	check("l3_writing_feedback_text_sha256_check", sql`char_length(text_sha256) = 64`),
 	check("l3_writing_feedback_last_editor_check", sql`char_length(last_editor) BETWEEN 1 AND 64`),
+]);
+
+// ═══ 学习笔记（N1，ADR《study-notes-workspace》/ study-notes-design §5）════════
+// 跨材料自由笔记：独立于词/题/作文的题型空间实体（不建第二份题库/正文/作答）。
+// 五张表全部 owner RLS + 复合 owner FK；引用 source/question 方向 RESTRICT——
+// 被引用对象需先移除引用或显式转普通摘录才能删源（删除保护兜底并发竞态）。
+// 笔记/专题只归档不硬删；创造/保存幂等列（requestId + inputHash）见设计 §6。
+
+export const l3StudyNotes = pgTable("l3_study_notes", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	// 0–120 UTF-16 code units；空标题合法（界面显示「无标题笔记」）。
+	title: text("title").notNull(),
+	bodyMd: text("body_md").notNull(),
+	status: text("status").default('active').notNull(),
+	pinned: boolean("pinned").default(false).notNull(),
+	// CAS 版本：保存以 expectedVersion 比对命中 +1；旧版本不得覆盖新版本。
+	version: integer("version").default(1).notNull(),
+	// 创建幂等：同 requestId 同输入重放返回当前笔记；不同输入 409。
+	createRequestId: uuid("create_request_id").notNull(),
+	createInputHash: text("create_input_hash").notNull(),
+	// 仅保证「最后一次请求」的幂等（不宣称全历史去重，设计 §6）。
+	lastWriteRequestId: uuid("last_write_request_id"),
+	lastWriteHash: text("last_write_hash"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	// 默认更新时间倒序列表（降序索引与 cursor 语义一致）；置顶仅作筛选/徽标。
+	index("idx_l3_study_notes_user_status_updated").on(table.userId, table.status, table.updatedAt.desc(), table.id.desc()),
+	// 搜索标题与正文（pg_trgm GIN；同 l3_sources 先例，扩展由 0000 baseline 创建）。
+	index("idx_l3_study_notes_title_trgm").using("gin", table.title.asc().nullsLast().op("gin_trgm_ops")),
+	index("idx_l3_study_notes_body_trgm").using("gin", table.bodyMd.asc().nullsLast().op("gin_trgm_ops")),
+	unique("l3_study_notes_user_create_request_unique").on(table.userId, table.createRequestId),
+	unique("l3_study_notes_id_user_id_unique").on(table.id, table.userId),
+	pgPolicy("l3_study_notes_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_study_notes_status_check", sql`status = ANY (ARRAY['active'::text, 'archived'::text])`),
+	check("l3_study_notes_version_check", sql`version >= 1`),
+	check("l3_study_notes_title_check", sql`char_length(title) <= 120`),
+	check("l3_study_notes_body_check", sql`char_length(body_md) <= 100000`),
+	check("l3_study_notes_create_input_hash_check", sql`char_length(create_input_hash) = 64`),
+	check("l3_study_notes_last_write_hash_check", sql`last_write_hash IS NULL OR char_length(last_write_hash) = 64`),
+]);
+
+// 1–7 个题型归属（至少一个由唯一应用写入口在事务内保持；最后一归属不得移除）。
+export const l3StudyNoteVenues = pgTable("l3_study_note_venues", {
+	noteId: uuid("note_id").notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	questionType: text("question_type").notNull(),
+}, (table) => [
+	primaryKey({ columns: [table.noteId, table.questionType], name: "l3_study_note_venues_pkey" }),
+	index("idx_l3_study_note_venues_user_type").on(table.userId, table.questionType, table.noteId),
+	foreignKey({
+		columns: [table.noteId, table.userId],
+		foreignColumns: [l3StudyNotes.id, l3StudyNotes.userId],
+		name: "l3_study_note_venues_note_owner_fk",
+	}).onDelete("cascade"),
+	pgPolicy("l3_study_note_venues_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_study_note_venues_type_check", sql`question_type = ANY (ARRAY['cloze'::text, 'reading_choice'::text, 'new_question'::text, 'sentence_translation'::text, 'short_essay'::text, 'long_essay'::text, 'grammar_blank'::text])`),
+]);
+
+// 平面专题：属唯一题型；同名允许（不靠标题作身份）；归档不删成员。
+export const l3StudyTopics = pgTable("l3_study_topics", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	questionType: text("question_type").notNull(),
+	title: text("title").notNull(),
+	status: text("status").default('active').notNull(),
+	version: integer("version").default(1).notNull(),
+	createRequestId: uuid("create_request_id").notNull(),
+	createInputHash: text("create_input_hash").notNull(),
+	lastWriteRequestId: uuid("last_write_request_id"),
+	lastWriteHash: text("last_write_hash"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_study_topics_user_type_status_updated").on(table.userId, table.questionType, table.status, table.updatedAt, table.id),
+	unique("l3_study_topics_user_create_request_unique").on(table.userId, table.createRequestId),
+	unique("l3_study_topics_id_user_id_unique").on(table.id, table.userId),
+	pgPolicy("l3_study_topics_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_study_topics_status_check", sql`status = ANY (ARRAY['active'::text, 'archived'::text])`),
+	check("l3_study_topics_version_check", sql`version >= 1`),
+	check("l3_study_topics_title_check", sql`char_length(title) BETWEEN 1 AND 120`),
+	check("l3_study_topics_type_check", sql`question_type = ANY (ARRAY['cloze'::text, 'reading_choice'::text, 'new_question'::text, 'sentence_translation'::text, 'short_essay'::text, 'long_essay'::text, 'grammar_blank'::text])`),
+]);
+
+// 专题成员与排序：position 非唯一（排序键 (position, note_id)）；成员最多 500 由
+// service 收口；重排由 service 锁 topic 后传入完整有序 id 列表重分配 0..n-1。
+export const l3StudyTopicNotes = pgTable("l3_study_topic_notes", {
+	topicId: uuid("topic_id").notNull(),
+	noteId: uuid("note_id").notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	position: integer("position").default(0).notNull(),
+}, (table) => [
+	primaryKey({ columns: [table.topicId, table.noteId], name: "l3_study_topic_notes_pkey" }),
+	index("idx_l3_study_topic_notes_topic_position").on(table.topicId, table.position, table.noteId),
+	index("idx_l3_study_topic_notes_user_note").on(table.userId, table.noteId),
+	foreignKey({
+		columns: [table.topicId, table.userId],
+		foreignColumns: [l3StudyTopics.id, l3StudyTopics.userId],
+		name: "l3_study_topic_notes_topic_owner_fk",
+	}).onDelete("cascade"),
+	foreignKey({
+		columns: [table.noteId, table.userId],
+		foreignColumns: [l3StudyNotes.id, l3StudyNotes.userId],
+		name: "l3_study_topic_notes_note_owner_fk",
+	}).onDelete("cascade"),
+	pgPolicy("l3_study_topic_notes_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_study_topic_notes_position_check", sql`position >= 0`),
+]);
+
+// 引用快照与定位：capture 由服务端读取真实目标生成（客户端不得指定出处/hash/
+// 快照）；quote 类携带 UTF-16 坐标与摘录，option_quote 另带 option_key；
+// field_hash 为原字段 UTF-8 SHA256（changed 判定）；display_snapshot 为白名单
+// 组装的展示快照（不含标准答案/解析/evidence）。恰一 target 由 CHECK 收口。
+// N2：assessment_id 为评析引用（N2 第一条链）的目标列；评析本身是
+// l3_question_assessments 的一行（UNIQUE(user_id, question_id) latest-wins），
+// 所以引用同时带 question_id（属主链/blocker）与 assessment_id（稳定行身份）。
+// N2 第二条链：target_note_id 为笔记互链的目标列，指向另一篇 l3_study_notes。
+// 笔记只会归档、不会硬删（无删除端点），FK 仍取 RESTRICT——未来若引入硬删除，
+// 必须先实现引用 blocker（登记在案，本链不虚构删除面）。
+// 自引用由 no_self_check 拦下（target_note_id <> note_id）。
+// 恰一 target 由 CHECK 收口。
+export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	noteId: uuid("note_id").notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	kind: text("kind").notNull(),
+	sourceId: uuid("source_id"),
+	questionId: uuid("question_id"),
+	assessmentId: uuid("assessment_id"),
+	targetNoteId: uuid("target_note_id"),
+	// N2 第三条链：sheet（sealed 稿次）与 attempt（作答记录）目标。
+	// submission_revision_no 是 writing 稿次身份的半片：{submissionId, revisionNo}；
+	// 非 writing（file/paper）稿次 revision_no 恒为 NULL（库 CHECK 已如此）。
+	submissionId: uuid("submission_id"),
+	submissionRevisionNo: integer("submission_revision_no"),
+	attemptId: uuid("attempt_id"),
+	optionKey: text("option_key"),
+	startOffset: integer("start_offset"),
+	endOffset: integer("end_offset"),
+	quoteSnapshot: text("quote_snapshot"),
+	fieldHash: text("field_hash").notNull(),
+	displaySnapshot: jsonb("display_snapshot").notNull(),
+	capturedAt: timestamp("captured_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_l3_study_note_references_user_source").on(table.userId, table.sourceId, table.noteId),
+	index("idx_l3_study_note_references_user_question").on(table.userId, table.questionId, table.noteId),
+	index("idx_l3_study_note_references_user_target_note").on(table.userId, table.targetNoteId, table.noteId),
+	index("idx_l3_study_note_references_user_submission").on(table.userId, table.submissionId, table.noteId),
+	index("idx_l3_study_note_references_user_attempt").on(table.userId, table.attemptId, table.noteId),
+	index("idx_l3_study_note_references_note").on(table.noteId),
+	foreignKey({
+		columns: [table.noteId, table.userId],
+		foreignColumns: [l3StudyNotes.id, l3StudyNotes.userId],
+		name: "l3_study_note_references_note_owner_fk",
+	}).onDelete("cascade"),
+	// RESTRICT：被引用的 source/question 要先移除引用（或显式转普通摘录）才能删。
+	foreignKey({
+		columns: [table.sourceId, table.userId],
+		foreignColumns: [l3Sources.id, l3Sources.userId],
+		name: "l3_study_note_references_source_owner_fk",
+	}).onDelete("restrict"),
+	foreignKey({
+		columns: [table.questionId, table.userId],
+		foreignColumns: [l3Questions.id, l3Questions.userId],
+		name: "l3_study_note_references_question_owner_fk",
+	}).onDelete("restrict"),
+	// 评析引用：question 删除会级联删 assessment（question_id → cascade），而应用层
+	// 没有删评析的入口，所以这里的 RESTRICT 只在「级联删 assessment」时兜底；正常路径
+	// 由 getQuestionDeleteBlockers 预检拦下（它已按 question_id 计入子评析的引用）。
+	foreignKey({
+		columns: [table.assessmentId, table.userId],
+		foreignColumns: [l3QuestionAssessments.id, l3QuestionAssessments.userId],
+		name: "l3_study_note_references_assessment_owner_fk",
+	}).onDelete("restrict"),
+	// N2 第二条链：笔记互链的跨表属主复合 FK（B1）。目标笔记与引用同属主，
+	// RESTRICT 兜底——目标笔记若将来可被硬删，删前须先移除引用（或显式转普通摘录）。
+	foreignKey({
+		columns: [table.targetNoteId, table.userId],
+		foreignColumns: [l3StudyNotes.id, l3StudyNotes.userId],
+		name: "l3_study_note_references_target_note_owner_fk",
+	}).onDelete("restrict"),
+	// N2 第三条链：sheet 目标（sealed 稿次）。稿次没有删除端点、sealed 不可弃（discard
+	// 仅允许 draft），所以这里只有结构兜底，应用层**没有** sheet blocker ——
+	// 不为不存在的删除面虚构 blocker。
+	foreignKey({
+		columns: [table.submissionId, table.userId],
+		foreignColumns: [l3Submissions.id, l3Submissions.userId],
+		name: "l3_study_note_references_submission_owner_fk",
+	}).onDelete("restrict"),
+	// attempt 目标（作答记录）：attempt 有真实删除端点（软删），故另一侧必须有 blocker
+	// 预检（getAttemptDeleteBlockers），这里的 RESTRICT 只作结构兜底。
+	foreignKey({
+		columns: [table.attemptId, table.userId],
+		foreignColumns: [l3QuestionAttempts.id, l3QuestionAttempts.userId],
+		name: "l3_study_note_references_attempt_owner_fk",
+	}).onDelete("restrict"),
+	pgPolicy("l3_study_note_references_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("l3_study_note_references_kind_check", sql`kind = ANY (ARRAY['source'::text, 'source_quote'::text, 'question'::text, 'stem_quote'::text, 'option_quote'::text, 'assessment'::text, 'note'::text, 'sheet'::text, 'attempt'::text])`),
+	// target_check：九型目标「恰一」，新两型与既有型互不相容（既有支行为不变，只把新列显式写 IS NULL）。
+	check("l3_study_note_references_target_check", sql`(kind = ANY (ARRAY['source'::text, 'source_quote'::text]) AND source_id IS NOT NULL AND question_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL AND submission_id IS NULL AND attempt_id IS NULL) OR (kind = ANY (ARRAY['question'::text, 'stem_quote'::text, 'option_quote'::text]) AND question_id IS NOT NULL AND source_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL AND submission_id IS NULL AND attempt_id IS NULL) OR (kind = 'assessment'::text AND question_id IS NOT NULL AND assessment_id IS NOT NULL AND source_id IS NULL AND target_note_id IS NULL AND submission_id IS NULL AND attempt_id IS NULL) OR (kind = 'note'::text AND target_note_id IS NOT NULL AND source_id IS NULL AND question_id IS NULL AND assessment_id IS NULL AND submission_id IS NULL AND attempt_id IS NULL) OR (kind = 'sheet'::text AND submission_id IS NOT NULL AND source_id IS NULL AND question_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL AND attempt_id IS NULL) OR (kind = 'attempt'::text AND attempt_id IS NOT NULL AND source_id IS NULL AND question_id IS NULL AND assessment_id IS NULL AND target_note_id IS NULL AND submission_id IS NULL)`),
+	check("l3_study_note_references_quote_check", sql`(kind = ANY (ARRAY['source_quote'::text, 'stem_quote'::text, 'option_quote'::text]) AND start_offset IS NOT NULL AND end_offset IS NOT NULL AND quote_snapshot IS NOT NULL) OR (kind = ANY (ARRAY['source'::text, 'question'::text, 'assessment'::text, 'note'::text, 'sheet'::text, 'attempt'::text]) AND start_offset IS NULL AND end_offset IS NULL AND quote_snapshot IS NULL)`),
+	// D1-1：writing 稿次身份含 revision_no（sealed 时 >0）；非 writing 恒 NULL。
+	check("l3_study_note_references_revision_no_check", sql`submission_revision_no IS NULL OR submission_revision_no > 0`),
+	// 禁止自引用（应用层另有可读 422；这里是结构兜底，应用绕过也写不进去）。
+	check("l3_study_note_references_no_self_note_check", sql`target_note_id IS NULL OR target_note_id <> note_id`),
+	check("l3_study_note_references_option_key_check", sql`(kind = 'option_quote'::text AND option_key IS NOT NULL) OR (kind <> 'option_quote'::text AND option_key IS NULL)`),
+	check("l3_study_note_references_offset_check", sql`start_offset IS NULL OR (start_offset >= 0 AND end_offset > start_offset)`),
+	check("l3_study_note_references_field_hash_check", sql`char_length(field_hash) = 64`),
 ]);
 

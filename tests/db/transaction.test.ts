@@ -107,3 +107,39 @@ describe("withTransaction RLS actor propagation", () => {
     }
   });
 });
+
+// ── F2（补修批次）：详情读取的一致快照（显式、局部、只读）──────────────────────
+
+describe("withTransaction readSnapshot（F2 一致详情）", () => {
+  beforeEach(() => mock.reset());
+
+  it("readSnapshot:true → BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY（actor claim 仍先于数据读取）", async () => {
+    await withTransaction(async (tx) => {
+      await tx.query("SELECT n.title FROM l3_study_notes n");
+    }, { actorId: ACTOR_A, readSnapshot: true });
+
+    expect(mock.calls).toEqual([
+      { text: "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", params: [] },
+      {
+        text: "SELECT set_config('request.jwt.claim.sub', $1, true)",
+        params: [ACTOR_A],
+      },
+      { text: "SELECT n.title FROM l3_study_notes n", params: [] },
+      { text: "COMMIT", params: [] },
+    ]);
+  });
+
+  it("未启用 readSnapshot 时保持普通 BEGIN；异常路径同样回滚（不泄漏只读状态）", async () => {
+    await withTransaction(async () => undefined);
+    expect(mock.calls[0]!.text).toBe("BEGIN");
+
+    mock.reset();
+    await expect(withTransaction(async () => {
+      throw new Error("stop");
+    }, { readSnapshot: true })).rejects.toThrow("stop");
+    expect(mock.calls.map((call) => call.text)).toEqual([
+      "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
+      "ROLLBACK",
+    ]);
+  });
+});

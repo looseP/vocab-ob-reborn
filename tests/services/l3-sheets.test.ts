@@ -8,6 +8,7 @@ import type {
   IL3PaperRepository,
   IL3SheetRepository,
 } from "@/repositories/interfaces";
+import type { IL3StudyReferenceRepository } from "@/repositories/l3-study-references.repository";
 import { L3SheetService } from "@/services/l3-sheets.service";
 
 const USER = "00000000-0000-4000-8000-000000000001";
@@ -81,12 +82,16 @@ function attemptRow(overrides: Partial<L3QuestionAttemptRow> = {}): L3QuestionAt
 }
 
 function makeSheetRepo(overrides: Partial<IL3SheetRepository> = {}): IL3SheetRepository {
-  return {
+  // Task B（2026-09-19）：定格临界区改为经 getSheetForUpdate（FOR UPDATE）读取权威
+  // 行；默认让 getSheetForUpdate 镜像 getSheet 夹具，使既有 seal 测试（多覆盖 getSheet
+  // 以给定 answers/version）无需逐条改写即观察到相同数据。显式覆盖 getSheetForUpdate 时优先。
+  const getSheet = overrides.getSheet ?? vi.fn(async () => submissionRow());
+  const repo: IL3SheetRepository = {
     findDraftByScopeKey: vi.fn(async () => null),
     openSheet: vi.fn(async () => ({ row: submissionRow(), created: true })),
     patchAnswers: vi.fn(async () => submissionRow()),
     sealSheet: vi.fn(async () => submissionRow({ status: "sealed" })),
-    getSheet: vi.fn(async () => submissionRow()),
+    getSheet,
     insertAttempts: vi.fn(async () => []),
     listForQuestions: vi.fn(async () => []),
     softDeleteAttempt: vi.fn(async () => true),
@@ -95,6 +100,7 @@ function makeSheetRepo(overrides: Partial<IL3SheetRepository> = {}): IL3SheetRep
     listArchive: vi.fn(async () => []),
     ...overrides,
   } as IL3SheetRepository;
+  return repo;
 }
 
 function makePaperRepo(overrides: Partial<IL3PaperRepository> = {}): IL3PaperRepository {
@@ -134,11 +140,24 @@ function makeAnnotationRepo(overrides: Partial<IL3AnnotationRepository> = {}): I
   } as unknown as IL3AnnotationRepository;
 }
 
+/** 引用仓储替身：默认「无 blocker」，用例可覆盖 getAttemptDeleteBlockers。 */
+function makeStudyReferenceRepo(
+  overrides: Partial<Record<keyof IL3StudyReferenceRepository, unknown>> = {},
+): IL3StudyReferenceRepository {
+  return {
+    lockTargets: vi.fn(async () => undefined),
+    getAttemptDeleteBlockers: vi.fn(async () => []),
+    getQuestionDeleteBlockers: vi.fn(async () => []),
+    ...overrides,
+  } as unknown as IL3StudyReferenceRepository;
+}
+
 function makeService(
   sheetRepo: IL3SheetRepository,
   paperRepo: IL3PaperRepository = makePaperRepo(),
   annotationRepo: IL3AnnotationRepository = makeAnnotationRepo(),
   contextRepo: IL3ContextRepository = makeContextRepo({ id: SOURCE }),
+  studyReferences: IL3StudyReferenceRepository = makeStudyReferenceRepo(),
 ): L3SheetService {
   return new L3SheetService(
     sheetRepo,
@@ -150,6 +169,7 @@ function makeService(
       l3Paper: paperRepo,
       l3Annotations: annotationRepo,
       l3Context: contextRepo,
+      studyReferences,
     } as unknown as IRepositories),
   );
 }
@@ -267,12 +287,15 @@ describe("L3SheetService.getSheet", () => {
 
 describe("L3SheetService.patchSheet", () => {
   it("returns the merged sheet when the conditional update wins", async () => {
-    const sheetRepo = makeSheetRepo({
-      patchAnswers: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "C" } } })),
-    });
+    const patchAnswers = vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "C" } }, draft_version: 4 }));
+    const sheetRepo = makeSheetRepo({ patchAnswers });
     const service = makeService(sheetRepo);
-    const result = await service.patchSheet({ userId: USER, sheetId: SHEET, answers: { [Q1]: { choice: "C" } } });
+    const result = await service.patchSheet({
+      userId: USER, sheetId: SHEET, expectedVersion: 3, answers: { [Q1]: { choice: "C" } },
+    });
     expect(result.sheet.answers[Q1]).toEqual({ choice: "C" });
+    // V：客户端确认版本透传进条件合并
+    expect(patchAnswers).toHaveBeenCalledWith(USER, SHEET, { [Q1]: { choice: "C" } }, 3);
   });
 
   it("404s when the sheet is missing and 409s when it is settled", async () => {
@@ -280,15 +303,31 @@ describe("L3SheetService.patchSheet", () => {
       patchAnswers: vi.fn(async () => null),
       getSheet: vi.fn(async () => null),
     }));
-    await expect(missing.patchSheet({ userId: USER, sheetId: SHEET, answers: { [Q1]: null } }))
+    await expect(missing.patchSheet({ userId: USER, sheetId: SHEET, expectedVersion: 0, answers: { [Q1]: null } }))
       .rejects.toBeInstanceOf(NotFoundError);
 
     const settled = makeService(makeSheetRepo({
       patchAnswers: vi.fn(async () => null),
       getSheet: vi.fn(async () => submissionRow({ status: "sealed" })),
     }));
-    await expect(settled.patchSheet({ userId: USER, sheetId: SHEET, answers: { [Q1]: null } }))
+    await expect(settled.patchSheet({ userId: USER, sheetId: SHEET, expectedVersion: 0, answers: { [Q1]: null } }))
       .rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("V：draft 且条件合并落空 = 版本已前进 → 409 DRAFT_VERSION_CONFLICT（不泄露服务器版本）", async () => {
+    const sheetRepo = makeSheetRepo({
+      patchAnswers: vi.fn(async () => null),
+      getSheet: vi.fn(async () => submissionRow({ draft_version: 5 })),
+    });
+    const service = makeService(sheetRepo);
+    const rejected = await service.patchSheet({
+      userId: USER, sheetId: SHEET, expectedVersion: 3, answers: { [Q1]: { choice: "B" } },
+    }).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(ConflictError);
+    expect((rejected as ConflictError).meta).toMatchObject({ code: "DRAFT_VERSION_CONFLICT" });
+    // 不泄露服务器当前版本（无 currentVersion / draft_version 字段）
+    expect((rejected as ConflictError).meta).not.toHaveProperty("currentVersion");
+    expect((rejected as ConflictError).meta).not.toHaveProperty("draft_version");
   });
 });
 
@@ -310,7 +349,7 @@ describe("L3SheetService 通用写面 vs writing 稿（W3 旁路封堵）", () =
       getSheet: vi.fn(async () => writingDraft()),
     });
     const service = makeService(sheetRepo);
-    await expect(service.patchSheet({ userId: USER, sheetId: SHEET, answers: { [Q1]: null } }))
+    await expect(service.patchSheet({ userId: USER, sheetId: SHEET, expectedVersion: 0, answers: { [Q1]: null } }))
       .rejects.toMatchObject({ httpStatus: 409, meta: { code: "WRITING_ENDPOINT_REQUIRED" } });
   });
 
@@ -319,7 +358,7 @@ describe("L3SheetService 通用写面 vs writing 稿（W3 旁路封堵）", () =
       getSheet: vi.fn(async () => writingDraft()),
     });
     const service = makeService(sheetRepo);
-    await expect(service.sealSheet({ userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false }))
+    await expect(service.sealSheet({ userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false }))
       .rejects.toMatchObject({ httpStatus: 409, meta: { code: "WRITING_ENDPOINT_REQUIRED" } });
   });
 });
@@ -327,11 +366,11 @@ describe("L3SheetService 通用写面 vs writing 稿（W3 旁路封堵）", () =
 describe("L3SheetService.sealSheet", () => {
   it("404s for a missing sheet and 409s for a settled one", async () => {
     const missing = makeService(makeSheetRepo({ getSheet: vi.fn(async () => null) }));
-    await expect(missing.sealSheet({ userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false }))
+    await expect(missing.sealSheet({ userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false }))
       .rejects.toBeInstanceOf(NotFoundError);
 
     const settled = makeService(makeSheetRepo({ getSheet: vi.fn(async () => submissionRow({ status: "sealed" })) }));
-    await expect(settled.sealSheet({ userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false }))
+    await expect(settled.sealSheet({ userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false }))
       .rejects.toBeInstanceOf(ConflictError);
   });
 
@@ -341,14 +380,14 @@ describe("L3SheetService.sealSheet", () => {
     });
     const service = makeService(sheetRepo, fileScopedPaperRepo());
     const rejected = await service.sealSheet({
-      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false,
     }).catch((error: unknown) => error);
     expect(rejected).toBeInstanceOf(ConflictError);
     expect((rejected as ConflictError).meta).toMatchObject({ unansweredCount: 1 });
     expect(sheetRepo.sealSheet).not.toHaveBeenCalled();
 
     const confirmed = await service.sealSheet({
-      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: true,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: true,
     });
     expect(confirmed.unansweredCount).toBe(1);
   });
@@ -365,7 +404,7 @@ describe("L3SheetService.sealSheet", () => {
     const annotationRepo = makeAnnotationRepo({ promoteBySheet: promoteBySheet as unknown as IL3AnnotationRepository["promoteBySheet"] });
     const service = makeService(sheetRepo, fileScopedPaperRepo(), annotationRepo);
 
-    const result = await service.sealSheet({ userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false });
+    const result = await service.sealSheet({ userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false });
     expect(result.sheet.status).toBe("sealed");
     expect(result.materializedCount).toBe(2);
     expect(result.promotedAnnotationCount).toBe(1);
@@ -375,7 +414,34 @@ describe("L3SheetService.sealSheet", () => {
     ]);
     expect(sheetRepo.sealSheet).toHaveBeenCalledWith(USER, SHEET, expect.objectContaining({
       status: "sealed", seal_mode: "full", summary: null,
-    }));
+    }), expect.any(Number));
+  });
+
+  it("V：以 input.expectedVersion（客户端确认版本）作为最终 CAS 基线传给 sealSheet", async () => {
+    const sheetRepo = makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" } }, draft_version: 7 })),
+      sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full" })),
+    });
+    const service = makeService(sheetRepo, fileScopedPaperRepo());
+    await service.sealSheet({ userId: USER, sheetId: SHEET, expectedVersion: 7, mode: "full", acknowledgeUnanswered: true });
+    expect(sheetRepo.sealSheet).toHaveBeenCalledWith(
+      USER, SHEET, expect.objectContaining({ status: "sealed", seal_mode: "full" }), 7,
+    );
+  });
+
+  it("V：input.expectedVersion 与读取行不一致（客户端确认后、读取前的并发写入）→ 409 且不物化", async () => {
+    const sheetRepo = makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" } }, draft_version: 2 })),
+      sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full" })),
+    });
+    const service = makeService(sheetRepo, fileScopedPaperRepo());
+    const rejected = await service.sealSheet({
+      userId: USER, sheetId: SHEET, expectedVersion: 1, mode: "full", acknowledgeUnanswered: true,
+    }).catch((error: unknown) => error);
+    expect(rejected).toBeInstanceOf(ConflictError);
+    expect((rejected as ConflictError).meta).toMatchObject({ code: "DRAFT_VERSION_CONFLICT" });
+    expect(sheetRepo.sealSheet).not.toHaveBeenCalled(); // 不抢占、不物化
+    expect(sheetRepo.insertAttempts).not.toHaveBeenCalled();
   });
 
   it("full mode skips unanswered questions when materializing", async () => {
@@ -387,7 +453,7 @@ describe("L3SheetService.sealSheet", () => {
     });
     const service = makeService(sheetRepo, fileScopedPaperRepo());
     const result = await service.sealSheet({
-      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: true,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: true,
     });
     expect(result.unansweredCount).toBe(1);
     expect(result.materializedCount).toBe(1);
@@ -405,7 +471,7 @@ describe("L3SheetService.sealSheet", () => {
     const service = makeService(sheetRepo, fileScopedPaperRepo(), annotationRepo);
 
     const result = await service.sealSheet({
-      userId: USER, sheetId: SHEET, mode: "incremental", acknowledgeUnanswered: true,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "incremental", acknowledgeUnanswered: true,
     });
     expect(result.sheet.status).toBe("discarded");
     expect(result.materializedCount).toBe(0);
@@ -413,7 +479,7 @@ describe("L3SheetService.sealSheet", () => {
     expect(sheetRepo.insertAttempts).not.toHaveBeenCalled();
     expect(sheetRepo.sealSheet).toHaveBeenCalledWith(USER, SHEET, expect.objectContaining({
       status: "discarded", seal_mode: "incremental", summary: null,
-    }));
+    }), expect.any(Number));
   });
 
   it("summary mode pins the summary note to the first scoped question", async () => {
@@ -426,7 +492,7 @@ describe("L3SheetService.sealSheet", () => {
     const service = makeService(sheetRepo, fileScopedPaperRepo(), annotationRepo);
 
     const result = await service.sealSheet({
-      userId: USER, sheetId: SHEET, mode: "summary", summary: "本次全对，只留元认知", acknowledgeUnanswered: true,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "summary", summary: "本次全对，只留元认知", acknowledgeUnanswered: true,
     });
     expect(result.sheet.status).toBe("discarded");
     expect(insertSummaryAnnotation).toHaveBeenCalledWith({
@@ -444,7 +510,7 @@ describe("L3SheetService.sealSheet", () => {
     });
     const service = makeService(sheetRepo, fileScopedPaperRepo());
     await expect(service.sealSheet({
-      userId: USER, sheetId: SHEET, mode: "summary", acknowledgeUnanswered: true,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "summary", acknowledgeUnanswered: true,
     })).rejects.toBeInstanceOf(ValidationError);
     expect(sheetRepo.sealSheet).not.toHaveBeenCalled();
   });
@@ -456,7 +522,7 @@ describe("L3SheetService.sealSheet", () => {
     });
     const service = makeService(sheetRepo, fileScopedPaperRepo());
     await expect(service.sealSheet({
-      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false,
     })).rejects.toBeInstanceOf(ConflictError);
     expect(sheetRepo.insertAttempts).not.toHaveBeenCalled();
   });
@@ -467,7 +533,7 @@ describe("L3SheetService.sealSheet", () => {
     });
     const service = makeService(sheetRepo, makePaperRepo()); // 空题组
     await expect(service.sealSheet({
-      userId: USER, sheetId: SHEET, mode: "summary", summary: "总结", acknowledgeUnanswered: false,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "summary", summary: "总结", acknowledgeUnanswered: false,
     })).rejects.toBeInstanceOf(ValidationError);
     expect(sheetRepo.sealSheet).not.toHaveBeenCalled();
   });
@@ -488,13 +554,59 @@ describe("L3SheetService.listAttempts", () => {
 });
 
 describe("L3SheetService.deleteAttempt", () => {
+  const ATTEMPT = "00000000-0000-4000-8000-000000000501";
+
   it("soft-deletes and 404s on a second delete", async () => {
     const ok = makeService(makeSheetRepo({ softDeleteAttempt: vi.fn(async () => true) }));
-    await expect(ok.deleteAttempt(USER, "00000000-0000-4000-8000-000000000501")).resolves.toEqual({ deleted: true });
+    await expect(ok.deleteAttempt(USER, ATTEMPT)).resolves.toEqual({ deleted: true });
 
     const missing = makeService(makeSheetRepo({ softDeleteAttempt: vi.fn(async () => false) }));
-    await expect(missing.deleteAttempt(USER, "00000000-0000-4000-8000-000000000501"))
+    await expect(missing.deleteAttempt(USER, ATTEMPT))
       .rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  // N2 第三条链 K11 / K17：软删不撞 RESTRICT（真库探针 F9），所以删除面必须自带预检。
+  it("先取 l3_attempt 锁再查 blocker（与 capture 共用同一把锁键）", async () => {
+    const lockTargets = vi.fn(async () => undefined);
+    const service = makeService(
+      makeSheetRepo({ softDeleteAttempt: vi.fn(async () => true) }),
+      undefined,
+      undefined,
+      undefined,
+      makeStudyReferenceRepo({ lockTargets }),
+    );
+    await service.deleteAttempt(USER, ATTEMPT);
+    expect(lockTargets).toHaveBeenCalledWith(USER, [{ kind: "attempt", id: ATTEMPT }]);
+  });
+
+  it("被笔记引用时抛 409 且带可读 blocker 列表，软删不执行", async () => {
+    const softDeleteAttempt = vi.fn(async () => true);
+    const service = makeService(
+      makeSheetRepo({ softDeleteAttempt }),
+      undefined,
+      undefined,
+      undefined,
+      makeStudyReferenceRepo({
+        getAttemptDeleteBlockers: vi.fn(async () => [
+          { note_id: "00000000-0000-4000-8000-000000000601", title: "卷面整理", status: "active", reference_count: 2 },
+          { note_id: "00000000-0000-4000-8000-000000000602", title: "作文复盘", status: "archived", reference_count: 1 },
+        ]),
+      }),
+    );
+    const error = await service.deleteAttempt(USER, ATTEMPT).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(ConflictError);
+    expect((error as { meta?: unknown }).meta).toEqual({
+      entityType: "attempt",
+      id: ATTEMPT,
+      blockers: {
+        studyNotes: [
+          { id: "00000000-0000-4000-8000-000000000601", title: "卷面整理", status: "active", referenceCount: 2 },
+          { id: "00000000-0000-4000-8000-000000000602", title: "作文复盘", status: "archived", referenceCount: 1 },
+        ],
+      },
+      resolution: "remove_references_or_convert_to_plain_excerpt",
+    });
+    expect(softDeleteAttempt).not.toHaveBeenCalled();
   });
 });
 
@@ -509,7 +621,7 @@ describe("L3SheetService.sealSheet（v2 §4.6/§10：旗标物化与待复查计
       sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full" })),
     });
     const full = await makeService(fullRepo, fileScopedPaperRepo()).sealSheet({
-      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false,
     });
     expect(full.recheckCount).toBe(1);
 
@@ -518,7 +630,7 @@ describe("L3SheetService.sealSheet（v2 §4.6/§10：旗标物化与待复查计
       getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B", flags: { recheck: true } } } })),
     });
     const rejected = await makeService(softRepo, fileScopedPaperRepo()).sealSheet({
-      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false,
     }).catch((error: unknown) => error);
     expect(rejected).toBeInstanceOf(ConflictError);
     expect((rejected as ConflictError).meta).toMatchObject({ unansweredCount: 1, recheckCount: 1 });
@@ -544,7 +656,7 @@ describe("L3SheetService.sealSheet（v2 §4.6/§10：旗标物化与待复查计
       insertAttempts,
     });
     const service = makeService(sheetRepo, fileScopedPaperRepo());
-    await service.sealSheet({ userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false });
+    await service.sealSheet({ userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false });
 
     expect(insertAttempts).toHaveBeenCalledWith(USER, [
       expect.objectContaining({
@@ -577,13 +689,13 @@ describe("L3SheetService.sealSheet（v2 §4.6/§10：旗标物化与待复查计
 
     // 旧口径把「仅有痕迹」误判为已答（不弹软确认）；修正后计入未答。
     const rejected = await service.sealSheet({
-      userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: false,
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: false,
     }).catch((error: unknown) => error);
     expect(rejected).toBeInstanceOf(ConflictError);
     expect((rejected as ConflictError).meta).toMatchObject({ unansweredCount: 1 });
 
     // 确认后：Q1 仍物化（痕迹不丢）——answer 精确为空对象（主观字段不进作答事实）、痕迹进 self_assessment。
-    await service.sealSheet({ userId: USER, sheetId: SHEET, mode: "full", acknowledgeUnanswered: true });
+    await service.sealSheet({ userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: true });
     const lastCall = insertAttempts.mock.calls[insertAttempts.mock.calls.length - 1]!;
     const rows = lastCall[1] as unknown as Array<{ question_id: string; answer: unknown; self_assessment: unknown }>;
     expect(rows).toHaveLength(2);

@@ -20,6 +20,8 @@ export const l3SubmissionResponseSchema = z.object({
   question_type: z.enum(L3_QUESTION_TYPES).nullable(),
   paper_id: z.string().uuid().nullable(),
   status: z.enum(SHEET_STATUSES),
+  /** V（2026-09-19）：逐题合并递增的版本基线——公开响应必含（定格 CAS 的客户端锚点）。 */
+  draft_version: z.number().int().nonnegative(),
   /** 仅 draft 期非空；定格物化后恒 `{}`（attempts 是唯一作答真源）。 */
   answers: z.record(z.string(), jsonValueSchema),
   seal_mode: z.enum(SEAL_MODES).nullable(),

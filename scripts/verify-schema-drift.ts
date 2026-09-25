@@ -44,6 +44,23 @@ export const AUTHORITATIVE_ANNOTATIONS_RLS =
 export const AUTHORITATIVE_ANNOTATIONS_POLICY =
   `CREATE POLICY "word_annotations_own_all" ON "word_annotations" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id))`;
 
+/**
+ * 0039（N1 学习笔记）五张表的 owner RLS 契约——regenerate 时逐条比对，
+ * 防止保存/引用路径的隔离面被静默改动。
+ */
+export const AUTHORITATIVE_STUDY_NOTES_RLS_CONTRACTS = [
+  `ALTER TABLE "l3_study_notes" ENABLE ROW LEVEL SECURITY`,
+  `CREATE POLICY "l3_study_notes_own_all" ON "l3_study_notes" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id))`,
+  `ALTER TABLE "l3_study_note_venues" ENABLE ROW LEVEL SECURITY`,
+  `CREATE POLICY "l3_study_note_venues_own_all" ON "l3_study_note_venues" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id))`,
+  `ALTER TABLE "l3_study_topics" ENABLE ROW LEVEL SECURITY`,
+  `CREATE POLICY "l3_study_topics_own_all" ON "l3_study_topics" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id))`,
+  `ALTER TABLE "l3_study_topic_notes" ENABLE ROW LEVEL SECURITY`,
+  `CREATE POLICY "l3_study_topic_notes_own_all" ON "l3_study_topic_notes" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id))`,
+  `ALTER TABLE "l3_study_note_references" ENABLE ROW LEVEL SECURITY`,
+  `CREATE POLICY "l3_study_note_references_own_all" ON "l3_study_note_references" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id))`,
+] as const;
+
 const REFRESH_L2_CACHE_FUNCTION_CONTRACT = [
   "CREATE OR REPLACE FUNCTION public.refresh_l2_cache(p_word_id uuid)",
   "RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public",
@@ -174,6 +191,7 @@ export function compareOwnerRlsContract(generatedSql: string): boolean {
     AUTHORITATIVE_HIGHLIGHTS_POLICY,
     AUTHORITATIVE_ANNOTATIONS_RLS,
     AUTHORITATIVE_ANNOTATIONS_POLICY,
+    ...AUTHORITATIVE_STUDY_NOTES_RLS_CONTRACTS,
   ].every((contract) => normalized.includes(normalizeSql(contract)));
 }
 

@@ -12,6 +12,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import type { WritingSheetDetail, WritingTaskDetail } from "@/domain";
 import { writingClient } from "@/frontend/api/writingClient";
+import { apiFetch } from "@/frontend/api/client";
+import { fetchSheet } from "@/frontend/api/l3Client";
 import { Button } from "@/frontend/components/ui/Button";
 import { WritingComparison } from "@/frontend/components/writing/WritingComparison";
 import { WritingEditor } from "@/frontend/components/writing/WritingEditor";
@@ -21,9 +23,11 @@ import { WritingReviewInstruction } from "@/frontend/components/writing/WritingR
 import { WritingStartDialog } from "@/frontend/components/writing/WritingStartDialog";
 import { WritingTaskList } from "@/frontend/components/writing/WritingTaskList";
 import {
+  buildWritingOriginReturnUrl,
   buildWritingUrl,
   parseWritingSearch,
   revisionLabel,
+  WRITING_ORIGIN_TYPE_LABELS,
   writingKindLabel,
 } from "@/frontend/viewModels/writingNavigation";
 
@@ -58,6 +62,85 @@ export function L3WritingPage() {
   const taskId = location.taskId;
   const sheetId = location.sheetId;
   const compareTo = location.compareTo;
+  const origin = location.origin;
+  const originInvalid = location.originInvalid;
+
+  type OriginCheck =
+    | { status: "none" }
+    | { status: "checking" }
+    | {
+        status: "ok";
+        title: string;
+        /** 原题纸恢复态：none=来源本无原纸（按契约正常返回）；ok=已验证可恢复；unavailable=有原纸但读失败/不匹配/discarded。 */
+        sheet: "none" | "ok" | "unavailable";
+      }
+    | { status: "degraded" };
+  const [originCheck, setOriginCheck] = useState<OriginCheck>(origin ? { status: "checking" } : { status: "none" });
+  /** 原题纸不可用时的重试脉冲（重跑来源关系与题纸校验）。 */
+  const [originCheckNonce, setOriginCheckNonce] = useState(0);
+
+  /**
+   * R2：来源关系验证——task.questionId = origin.questionId；question 属于指定文件/试卷。
+   * 关系不符或读面失败 → 仅降级来源功能（隐藏返回原题），稿件与编辑不受影响。
+   * R2 收口：原题纸（origin.sheetId 存在时）读取失败/不匹配/discarded → **不删参放行**，
+   * 标记 sheet=unavailable（「原题纸暂不可用」+重试+安全列表）；来源本无 sheetId → 按契约正常返回。
+   */
+  useEffect(() => {
+    if (!origin) { setOriginCheck({ status: "none" }); return; }
+    if (tasks.status !== "ready") { setOriginCheck({ status: "checking" }); return; }
+    let cancelled = false;
+    setOriginCheck({ status: "checking" });
+    (async () => {
+      try {
+        if (tasks.data.task.questionId !== origin.questionId) {
+          if (!cancelled) setOriginCheck({ status: "degraded" });
+          return;
+        }
+        let title: string;
+        if (origin.kind === "file") {
+          const params = new URLSearchParams({ questionType: origin.questionType });
+          if (origin.sourceId) params.set("sourceId", origin.sourceId);
+          else if (origin.fileKey) params.set("fileKey", origin.fileKey);
+          const body = await apiFetch<{
+            source: { title: string } | null;
+            file_key: string | null;
+            questions: Array<{ id: string }>;
+          }>(`/l3/practice-files/detail?${params.toString()}`);
+          if (!Array.isArray(body.questions) || !body.questions.some((q) => q.id === origin.questionId)) {
+            if (!cancelled) setOriginCheck({ status: "degraded" });
+            return;
+          }
+          title = body.source?.title ?? body.file_key ?? "";
+        } else {
+          const paper = await apiFetch<{
+            title: string;
+            sections: Array<{ questionIds: string[] }>;
+          }>(`/l3/papers/${encodeURIComponent(origin.paperId)}`);
+          if (!paper.sections?.some((section) => section.questionIds?.includes(origin.questionId))) {
+            if (!cancelled) setOriginCheck({ status: "degraded" });
+            return;
+          }
+          title = paper.title;
+        }
+        let sheet: "none" | "ok" | "unavailable" = "none";
+        if (origin.sheetId) {
+          try {
+            const { sheet: row } = await fetchSheet(origin.sheetId);
+            const compatible = origin.kind === "file"
+              ? row.scope === "file" && row.source_id === origin.sourceId && row.question_type === origin.questionType
+              : row.scope === "paper" && row.paper_id === origin.paperId;
+            sheet = compatible && row.status !== "discarded" ? "ok" : "unavailable";
+          } catch {
+            sheet = "unavailable"; // 读失败 ≠ 可恢复：不删参放行（原题纸暂不可用 + 重试）
+          }
+        }
+        if (!cancelled) setOriginCheck({ status: "ok", title, sheet });
+      } catch {
+        if (!cancelled) setOriginCheck({ status: "degraded" });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [origin, tasks, originCheckNonce]);
 
   const loadTask = useCallback(async (id: string) => {
     setTasks({ status: "loading" });
@@ -111,9 +194,9 @@ export function L3WritingPage() {
     if (!taskId || sheetId || tasks.status !== "ready") return;
     const draft = tasks.data.draftSummary;
     if (draft) {
-      navigate(buildWritingUrl({ taskId, sheetId: draft.id }), { replace: true });
+      navigate(buildWritingUrl({ taskId, sheetId: draft.id, origin: location.origin }), { replace: true });
     }
-  }, [taskId, sheetId, tasks, navigate]);
+  }, [taskId, sheetId, tasks, navigate, location.origin]);
 
   const guardedNavigate = useCallback((url: string, replace = false) => {
     if (dirtyRef.current) {
@@ -125,20 +208,73 @@ export function L3WritingPage() {
 
   const goList = () => guardedNavigate("/l3?section=writing");
 
+  // I3/I4：来源条——专项写作身份 + 精确返回原题（依 origin 生成站内 URL；禁任意 returnUrl）。
+  // R2：来源经关系验证（task.questionId / 所属文件|试卷）；不符或读取失败仅降级来源功能（隐藏
+  // 返回），稿件与编辑不受影响；标题显示真实来源名称。
+  // R2 收口：原题纸读取失败/不匹配/discarded → 不删参放行——显示「原题纸暂不可用」+重试+安全列表。
+  const originBanner = origin ? (
+    originCheck.status === "degraded" ? (
+      <p className="text-xs text-[var(--color-ink-soft)]" data-testid="writing-origin-bar">
+        来源不可用，已降级（不影响本稿写作与稿件）。
+      </p>
+    ) : (
+      <div
+        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2"
+        data-testid="writing-origin-bar"
+      >
+        <span className="text-xs text-[var(--color-ink-soft)]">
+          专项写作 · 来自{WRITING_ORIGIN_TYPE_LABELS[origin.questionType]}
+          {originCheck.status === "ok" && originCheck.title ? `「${originCheck.title}」` : ""}
+        </span>
+        {originCheck.status === "ok" && originCheck.sheet === "unavailable" ? (
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-[var(--color-accent-2)]">原题纸暂不可用</span>
+            <Button size="sm" variant="secondary" onClick={() => setOriginCheckNonce((n) => n + 1)}>
+              重试
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => guardedNavigate(origin.kind === "file"
+                ? `/l3?venue=${encodeURIComponent(origin.questionType)}`
+                : "/l3")}
+            >
+              {origin.kind === "file" ? "题型空间列表" : "试卷台列表"}
+            </Button>
+          </span>
+        ) : originCheck.status === "ok" ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => guardedNavigate(buildWritingOriginReturnUrl(
+              originCheck.sheet === "ok" ? origin : { ...origin, sheetId: null },
+            ))}
+          >
+            返回原题
+          </Button>
+        ) : null}
+      </div>
+    )
+  ) : originInvalid ? (
+    <p className="text-xs text-[var(--color-ink-soft)]" data-testid="writing-origin-bar">
+      来源信息无效，已忽略（不影响写作与稿件）。
+    </p>
+  ) : null;
+
   const openSheet = (targetSheetId: string) =>
-    guardedNavigate(buildWritingUrl({ taskId, sheetId: targetSheetId }));
+    guardedNavigate(buildWritingUrl({ taskId, sheetId: targetSheetId, origin }));
 
   const startRevisionFrom = async (parentSheetId: string) => {
     if (!taskId) return;
     setNotice(null);
     try {
       const result = await writingClient.createDraft(taskId, { parentSheetId, seed: "copy" });
-      navigate(buildWritingUrl({ taskId, sheetId: result.sheet.id }), { replace: true });
+      navigate(buildWritingUrl({ taskId, sheetId: result.sheet.id, origin }), { replace: true });
     } catch (error) {
       const details = (error as { details?: { code?: string; draftSheetId?: string } }).details;
       if ((error as { status?: number }).status === 409 && details?.code === "ACTIVE_DRAFT_EXISTS" && details.draftSheetId) {
         setNotice("已有基于其他稿的草稿，未自动覆盖；已带你前往现有草稿。");
-        navigate(buildWritingUrl({ taskId, sheetId: details.draftSheetId }), { replace: true });
+        navigate(buildWritingUrl({ taskId, sheetId: details.draftSheetId, origin }), { replace: true });
         return;
       }
       setNotice("创建修改稿失败，请重试。");
@@ -204,7 +340,7 @@ export function L3WritingPage() {
       onOpenSheet={openSheet}
       onCompareWith={(otherId) => {
         if (!sheetId) return;
-        guardedNavigate(buildWritingUrl({ taskId, sheetId, compareTo: otherId }));
+        guardedNavigate(buildWritingUrl({ taskId, sheetId, compareTo: otherId, origin }));
       }}
       onCleared={async () => { if (sheetId) await loadSheet(taskId, sheetId); }}
     />
@@ -215,6 +351,7 @@ export function L3WritingPage() {
     const latest = tasks.data.latestSubmittedSheetId;
     return (
       <div className="space-y-4">
+        {originBanner}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-lg font-semibold text-[var(--color-ink)]">{task.title}</h2>
@@ -223,8 +360,8 @@ export function L3WritingPage() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={goList}>返回列表</Button>
-            {latest && <Button size="sm" onClick={() => void startRevisionFrom(latest)}>开始修改（第二稿）</Button>}
+            <Button size="sm" variant="secondary" onClick={goList}>{origin ? "全部作文" : "返回列表"}</Button>
+            {latest && <Button size="sm" onClick={() => void startRevisionFrom(latest)}>开始修改</Button>}
           </div>
         </div>
         {notice && <p className="text-xs text-[var(--color-accent-2)]">{notice}</p>}
@@ -241,9 +378,10 @@ export function L3WritingPage() {
   if (compareTo) {
     return (
       <div className="space-y-3">
+        {originBanner}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold text-[var(--color-ink)]">{task.title}</h2>
-          <Button size="sm" variant="secondary" onClick={() => guardedNavigate(buildWritingUrl({ taskId, sheetId }))}>
+          <Button size="sm" variant="secondary" onClick={() => guardedNavigate(buildWritingUrl({ taskId, sheetId, origin }))}>
             返回稿件
           </Button>
         </div>
@@ -251,7 +389,7 @@ export function L3WritingPage() {
           taskId={taskId}
           leftSheetId={sheetId}
           rightSheetId={compareTo}
-          onClose={() => guardedNavigate(buildWritingUrl({ taskId, sheetId }))}
+          onClose={() => guardedNavigate(buildWritingUrl({ taskId, sheetId, origin }))}
         />
       </div>
     );
@@ -266,7 +404,7 @@ export function L3WritingPage() {
       onSubmitted={async () => {
         await loadSheet(taskId, sheetId);
         await loadTask(taskId);
-        navigate(buildWritingUrl({ taskId, sheetId }), { replace: true });
+        navigate(buildWritingUrl({ taskId, sheetId, origin }), { replace: true });
       }}
       onLoadServerVersion={async () => {
         await loadSheet(taskId, sheetId);
@@ -304,6 +442,7 @@ export function L3WritingPage() {
 
   return (
     <div className="space-y-3">
+      {originBanner}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold text-[var(--color-ink)]">{task.title}</h2>
@@ -313,9 +452,9 @@ export function L3WritingPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="secondary" onClick={goList}>返回列表</Button>
+          <Button size="sm" variant="secondary" onClick={goList}>{origin ? "全部作文" : "返回列表"}</Button>
           {sealed && (
-            <Button size="sm" onClick={() => void startRevisionFrom(detail.sheet.id)}>开始修改（第二稿）</Button>
+            <Button size="sm" onClick={() => void startRevisionFrom(detail.sheet.id)}>开始修改</Button>
           )}
         </div>
       </div>

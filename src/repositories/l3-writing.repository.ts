@@ -14,7 +14,9 @@ import type {
   L3QuestionAttemptRow,
   L3QuestionRow,
   L3SubmissionRow,
+  WritingContentStatus,
   WritingDirection,
+  WritingFeedbackState,
   WritingKind,
   WritingTaskStatus,
 } from "../domain";
@@ -83,7 +85,9 @@ export interface IL3WritingRepository {
   ): Promise<L3WritingTaskRow | null>;
   /** 任务行锁（task→sheet 锁序第一步）。requireTx。 */
   lockTask(userId: string, taskId: string): Promise<L3WritingTaskRow | null>;
-  /** owner+question 事务锁（题路径并发创建复用保护）。requireTx。 */
+  /** owner+question 事务锁（题路径并发创建复用保护）。requireTx。
+   *  实现为事务级 advisory 锁 + 无锁 SELECT——角色模型对 l3_questions 仅授
+   *  SELECT/INSERT/DELETE（行锁 FOR UPDATE 需表级 UPDATE 权限，实际环境必 permission denied）。 */
   lockQuestion(userId: string, questionId: string): Promise<L3QuestionRow | null>;
   updateTaskTitle(userId: string, taskId: string, title: string): Promise<L3WritingTaskRow | null>;
   setTaskStatus(
@@ -157,12 +161,30 @@ export interface IL3WritingRepository {
   ): Promise<{ items: WritingRevisionListRow[]; total: number }>;
   /** W9 正文清理：soft-delete active writing attempt（幂等；无 active 行返回 false）。 */
   softDeleteWritingAttempt(userId: string, sheetId: string): Promise<boolean>;
+  /** A2：按题批量进度摘要（owner 范围**单条集合查询**；只读零写、JOIN 不放大、一稿一行）。 */
+  listQuestionTaskSummaries(
+    userId: string,
+    input: { questionIds: string[]; kind: WritingKind; direction: WritingDirection },
+  ): Promise<WritingQuestionTaskSummaryRow[]>;
 }
 
 /** listRevisions 投影行：稿行 + 派生计数（只读，不写反馈表）。 */
 export interface WritingRevisionListRow extends L3SubmissionRow {
   active_attempt_count: number;
   feedback_count: number;
+}
+
+/** A2：按题进度摘要投影行（单条集合查询的原始投影；服务层再派生 feedbackState/contentStatus）。 */
+export interface WritingQuestionTaskSummaryRow {
+  question_id: string;
+  taskId: string;
+  taskStatus: WritingTaskStatus;
+  draftSheetId: string | null;
+  latestSubmittedSheetId: string | null;
+  latestRevisionNo: number | null;
+  revisionCount: number;
+  feedbackState: WritingFeedbackState | null;
+  contentStatus: WritingContentStatus | null;
 }
 
 function mapWritingTaskRow(row: L3WritingTaskRow): L3WritingTaskRow {
@@ -247,9 +269,13 @@ export class L3WritingRepository extends BaseRepository implements IL3WritingRep
 
   async lockQuestion(userId: string, questionId: string): Promise<L3QuestionRow | null> {
     const tx = this.requireTx();
+    // B 批真环境修复：l3_questions 的角色模型仅授 SELECT/INSERT/DELETE——FOR UPDATE 需表级
+    // UPDATE 权限，在 dev/acceptance 双库实测必然 permission denied（按题创建作文任务 500）。
+    // 改用事务级 advisory 锁串行化「owner × question」并发创建：等价互斥、零行级权限依赖。
+    await this.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${userId}:${questionId}`]);
     const row = await this.queryOne<L3QuestionRow>(
       `SELECT * FROM l3_questions
-        WHERE id = $1::uuid AND user_id = $2::uuid FOR UPDATE`,
+        WHERE id = $1::uuid AND user_id = $2::uuid`,
       [questionId, userId],
     );
     void tx;
@@ -589,5 +615,82 @@ export class L3WritingRepository extends BaseRepository implements IL3WritingRep
       [userId, sheetId],
     );
     return Boolean(row);
+  }
+
+  async listQuestionTaskSummaries(
+    userId: string,
+    input: { questionIds: string[]; kind: WritingKind; direction: WritingDirection },
+  ): Promise<WritingQuestionTaskSummaryRow[]> {
+    // A2：**单条集合查询**完成聚合（避免逐题 N+1）；JOIN 全部为 单行 LATERAL 或标量计数，不放大：
+    //  - d：进行中草稿（至多 1 行）
+    //  - s：最新已提交稿（revision_no DESC, created_at DESC, id DESC；至多 1 行）
+    //  - rc：sealed + discarded 稿次计数（标量）
+    //  - f：**仅关联 s** 的反馈（l3_writing_feedback 一稿一条 ⇒ 至多 1 行；清理事务已删行）
+    //  - ac：s 的 active writing attempt 计数（标量；0 → 正文已清理）
+    const rows = await this.query<{
+      question_id: string;
+      task_id: string;
+      task_status: WritingTaskStatus;
+      draft_sheet_id: string | null;
+      latest_submitted_sheet_id: string | null;
+      latest_revision_no: number | null;
+      revision_count: number;
+      feedback_id: string | null;
+      active_attempt_count: number;
+    }>(
+      `SELECT t.question_id,
+              t.id AS task_id,
+              t.status AS task_status,
+              d.id AS draft_sheet_id,
+              s.id AS latest_submitted_sheet_id,
+              s.revision_no AS latest_revision_no,
+              COALESCE(rc.cnt, 0)::int AS revision_count,
+              f.id AS feedback_id,
+              COALESCE(ac.cnt, 0)::int AS active_attempt_count
+         FROM l3_writing_tasks t
+         LEFT JOIN LATERAL (
+           SELECT id FROM l3_submissions
+            WHERE user_id = t.user_id AND writing_task_id = t.id AND status = 'draft'
+            LIMIT 1
+         ) d ON true
+         LEFT JOIN LATERAL (
+           SELECT id, revision_no FROM l3_submissions
+            WHERE user_id = t.user_id AND writing_task_id = t.id AND status = 'sealed'
+            ORDER BY revision_no DESC, created_at DESC, id DESC
+            LIMIT 1
+         ) s ON true
+         LEFT JOIN LATERAL (
+           SELECT count(*)::int AS cnt FROM l3_submissions
+            WHERE user_id = t.user_id AND writing_task_id = t.id AND status IN ('sealed', 'discarded')
+         ) rc ON true
+         LEFT JOIN l3_writing_feedback f ON f.user_id = t.user_id AND f.sheet_id = s.id
+         LEFT JOIN LATERAL (
+           SELECT count(*)::int AS cnt FROM l3_question_attempts
+            WHERE user_id = t.user_id AND sheet_id = s.id AND venue = 'writing' AND status = 'active'
+         ) ac ON true
+        WHERE t.user_id = $1::uuid AND t.question_id = ANY($2::uuid[]) AND t.kind = $3 AND t.direction = $4
+        ORDER BY (t.status = 'archived'), t.updated_at DESC, t.id DESC`,
+      [userId, input.questionIds, input.kind, input.direction],
+    );
+    return rows.map((row) => {
+      const hasLatest = row.latest_submitted_sheet_id !== null;
+      const contentStatus: WritingContentStatus | null = hasLatest
+        ? (row.active_attempt_count > 0 ? "available" : "cleared")
+        : null;
+      const feedbackState: WritingFeedbackState | null = hasLatest
+        ? (contentStatus === "cleared" ? "unavailable" : (row.feedback_id !== null ? "ready" : "pending"))
+        : null;
+      return {
+        question_id: row.question_id,
+        taskId: row.task_id,
+        taskStatus: row.task_status,
+        draftSheetId: row.draft_sheet_id,
+        latestSubmittedSheetId: row.latest_submitted_sheet_id,
+        latestRevisionNo: row.latest_revision_no === null ? null : Number(row.latest_revision_no),
+        revisionCount: Number(row.revision_count),
+        feedbackState,
+        contentStatus,
+      };
+    });
   }
 }

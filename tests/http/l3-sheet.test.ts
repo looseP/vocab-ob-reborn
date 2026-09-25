@@ -3,6 +3,7 @@ import { createApp } from "@/http/server";
 import type { Services } from "@/services";
 import { createMockPool } from "../helpers/mock-db";
 import type { L3QuestionAttemptRow, L3SubmissionRow } from "@/domain";
+import { ConflictError } from "@/errors";
 
 const mockDb = createMockPool();
 vi.mock("@/db/connection", () => ({
@@ -127,27 +128,42 @@ describe("GET /api/l3/sheets/:id", () => {
 });
 
 describe("PATCH /api/l3/sheets/:id", () => {
-  it("merges per-question answers and returns the sheet", async () => {
-    const patchSheet = vi.fn(async () => ({ sheet: sheetItem({ answers: { [QUESTION_ID]: { choice: "C" } } }) }));
+  it("merges per-question answers and returns the sheet with its draft_version", async () => {
+    const patchSheet = vi.fn(async () => ({
+      sheet: sheetItem({ answers: { [QUESTION_ID]: { choice: "C" } }, draft_version: 3 }),
+    }));
     const app = createApp(makeServices({ patchSheet }));
     const res = await app.request(`/api/l3/sheets/${SHEET_ID}`, {
       method: "PATCH",
       headers: AUTH_HEADERS,
-      body: JSON.stringify({ answers: { [QUESTION_ID]: { choice: "C" }, [PAPER_ID]: null } }),
+      body: JSON.stringify({ expectedVersion: 2, answers: { [QUESTION_ID]: { choice: "C" }, [PAPER_ID]: null } }),
     });
     expect(res.status).toBe(200);
+    const body = await res.json() as { sheet: { draft_version: number } };
+    expect(body.sheet.draft_version).toBe(3); // V：公开响应必含 draft_version（定格基线）
     expect(patchSheet).toHaveBeenCalledWith(expect.objectContaining({
       userId: "user-123",
       sheetId: SHEET_ID,
+      expectedVersion: 2,
       answers: { [QUESTION_ID]: { choice: "C" }, [PAPER_ID]: null },
     }));
+  });
+
+  it("rejects a patch without the client-confirmed expectedVersion（缺版本 400，无旁路）", async () => {
+    const patchSheet = vi.fn();
+    const app = createApp(makeServices({ patchSheet }));
+    const res = await app.request(`/api/l3/sheets/${SHEET_ID}`, {
+      method: "PATCH", headers: AUTH_HEADERS, body: JSON.stringify({ answers: { [QUESTION_ID]: { choice: "C" } } }),
+    });
+    expect(res.status).toBe(400);
+    expect(patchSheet).not.toHaveBeenCalled();
   });
 
   it("rejects an empty answers merge", async () => {
     const patchSheet = vi.fn();
     const app = createApp(makeServices({ patchSheet }));
     const res = await app.request(`/api/l3/sheets/${SHEET_ID}`, {
-      method: "PATCH", headers: AUTH_HEADERS, body: JSON.stringify({ answers: {} }),
+      method: "PATCH", headers: AUTH_HEADERS, body: JSON.stringify({ expectedVersion: 0, answers: {} }),
     });
     expect(res.status).toBe(400);
     expect(patchSheet).not.toHaveBeenCalled();
@@ -155,7 +171,7 @@ describe("PATCH /api/l3/sheets/:id", () => {
 });
 
 describe("POST /api/l3/sheets/:id/seal", () => {
-  it("seals with the chosen mode and returns the counters", async () => {
+  it("seals with the chosen mode, the confirmed version and returns the counters", async () => {
     const sealSheet = vi.fn(async () => ({
       sheet: sheetItem({ status: "sealed", seal_mode: "full" }),
       unansweredCount: 0,
@@ -167,22 +183,32 @@ describe("POST /api/l3/sheets/:id/seal", () => {
     const res = await app.request(`/api/l3/sheets/${SHEET_ID}/seal`, {
       method: "POST",
       headers: AUTH_HEADERS,
-      body: JSON.stringify({ mode: "full" }),
+      body: JSON.stringify({ expectedVersion: 1, mode: "full" }),
     });
     expect(res.status).toBe(200);
     const body = await res.json() as { materializedCount: number; unansweredCount: number; recheckCount: number };
     expect(body.materializedCount).toBe(2);
     expect(body.recheckCount).toBe(1);
     expect(sealSheet).toHaveBeenCalledWith(expect.objectContaining({
-      userId: "user-123", sheetId: SHEET_ID, mode: "full", acknowledgeUnanswered: false,
+      userId: "user-123", sheetId: SHEET_ID, expectedVersion: 1, mode: "full", acknowledgeUnanswered: false,
     }));
+  });
+
+  it("rejects a seal without the client-confirmed expectedVersion（缺版本 400）", async () => {
+    const sealSheet = vi.fn();
+    const app = createApp(makeServices({ sealSheet }));
+    const res = await app.request(`/api/l3/sheets/${SHEET_ID}/seal`, {
+      method: "POST", headers: AUTH_HEADERS, body: JSON.stringify({ mode: "full" }),
+    });
+    expect(res.status).toBe(400);
+    expect(sealSheet).not.toHaveBeenCalled();
   });
 
   it("rejects the summary mode without summary text", async () => {
     const sealSheet = vi.fn();
     const app = createApp(makeServices({ sealSheet }));
     const res = await app.request(`/api/l3/sheets/${SHEET_ID}/seal`, {
-      method: "POST", headers: AUTH_HEADERS, body: JSON.stringify({ mode: "summary" }),
+      method: "POST", headers: AUTH_HEADERS, body: JSON.stringify({ expectedVersion: 0, mode: "summary" }),
     });
     expect(res.status).toBe(400);
     expect(sealSheet).not.toHaveBeenCalled();
@@ -216,6 +242,25 @@ describe("DELETE /api/l3/attempts/:id", () => {
     const res = await app.request(`/api/l3/attempts/${ATTEMPT_ID}`, { method: "DELETE", headers: AUTH_HEADERS });
     expect(res.status).toBe(204);
     expect(deleteAttempt).toHaveBeenCalledWith("user-123", ATTEMPT_ID);
+  });
+
+  // N2 第三条链 K11：attempt 是真实存在删除端点的目标，命中引用必须 409 而不是静默软删。
+  it("returns 409 with blocker details when study notes reference the attempt", async () => {
+    const deleteAttempt = vi.fn(async () => {
+      throw new ConflictError("Cannot delete L3 attempt referenced by study notes", undefined, {
+        entityType: "attempt",
+        id: ATTEMPT_ID,
+        blockers: { studyNotes: [{ id: "n1", title: "卷面整理", status: "active", referenceCount: 2 }] },
+        resolution: "remove_references_or_convert_to_plain_excerpt",
+      });
+    });
+    const app = createApp(makeServices({ deleteAttempt }));
+    const res = await app.request(`/api/l3/attempts/${ATTEMPT_ID}`, { method: "DELETE", headers: AUTH_HEADERS });
+    expect(res.status).toBe(409);
+    const body = await res.json() as { details?: { blockers?: unknown } };
+    expect(body.details?.blockers).toEqual({
+      studyNotes: [{ id: "n1", title: "卷面整理", status: "active", referenceCount: 2 }],
+    });
   });
 });
 
@@ -259,6 +304,28 @@ describe("GET /api/l3/sheets/:id/export", () => {
     const exportSheet = vi.fn();
     const app = createApp({ l3SheetExport: { exportSheet } } as unknown as Services);
     const res = await app.request(`/api/l3/sheets/${SHEET_ID}/export?withAnswers=2`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(422);
+    expect(exportSheet).not.toHaveBeenCalled();
+  });
+
+  it("V：透传 expectedVersion（数值化）供 draft 版本核对", async () => {
+    const exportSheet = vi.fn(async () => ({
+      markdown: "x", filename: "x.md", sha256: "c".repeat(64), schemaVersion: 2,
+      stats: { attempts: 0, cleared: 0, annotations: 0, assessments: 0 },
+    }));
+    const app = createApp({ l3SheetExport: { exportSheet } } as unknown as Services);
+    const res = await app.request(`/api/l3/sheets/${SHEET_ID}/export?expectedVersion=7`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(exportSheet).toHaveBeenLastCalledWith("user-123", SHEET_ID, {
+      withAnswers: undefined,
+      expectedVersion: 7,
+    });
+  });
+
+  it("V：非法 expectedVersion → 422（不静默吞掉）", async () => {
+    const exportSheet = vi.fn();
+    const app = createApp({ l3SheetExport: { exportSheet } } as unknown as Services);
+    const res = await app.request(`/api/l3/sheets/${SHEET_ID}/export?expectedVersion=abc`, { headers: AUTH_HEADERS });
     expect(res.status).toBe(422);
     expect(exportSheet).not.toHaveBeenCalled();
   });

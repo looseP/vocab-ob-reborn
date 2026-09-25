@@ -20,7 +20,7 @@
  */
 import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
-import { ConflictError, NotFoundError } from "../errors";
+import { ConflictError, NotFoundError, ValidationError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import type {
@@ -511,10 +511,12 @@ export function renderSheetExportMarkdown(input: L3SheetExportInput): { markdown
 
 export class L3SheetExportService {
   constructor(
-    private readonly sheetRepo: IL3SheetRepository,
-    private readonly paperRepo: IL3PaperRepository,
-    private readonly annotationRepo: IL3AnnotationRepository,
-    private readonly contextRepo: IL3ContextRepository,
+    // 四个仓储参数当前不直接读取（业务一律经 withActor → repositoryFactory(tx) 取
+    // 事务绑定仓储），保留为可选：组合根/单测显式注入、集成测试沿用零参构造先例。
+    private readonly sheetRepo?: IL3SheetRepository,
+    private readonly paperRepo?: IL3PaperRepository,
+    private readonly annotationRepo?: IL3AnnotationRepository,
+    private readonly contextRepo?: IL3ContextRepository,
     private readonly txRunner: TxRunner = withTransaction,
     private readonly repositoryFactory: RepositoryFactory = createRepositories,
   ) {}
@@ -555,7 +557,7 @@ export class L3SheetExportService {
   async exportSheet(
     userId: string,
     sheetId: string,
-    options: { withAnswers?: boolean } = {},
+    options: { withAnswers?: boolean; expectedVersion?: number } = {},
   ): Promise<L3SheetExportResult> {
     return this.withActor(userId, async (repos) => {
       const sheet = await repos.l3Sheets.getSheet(userId, sheetId);
@@ -576,6 +578,21 @@ export class L3SheetExportService {
           undefined,
           { sheetId, status: sheet.status },
         );
+      }
+      // V（2026-09-19）：draft 快照导出必须核对客户端确认版本——缺失版本拒绝（400
+      // 语义）；旧版本 409（他处已写入，不得导出半成品）。核对与下方 answers 生成
+      // 共用同一次读取的 sheet（不核对 A 却读 B 导出）。
+      if (sheet.status === "draft") {
+        if (options.expectedVersion == null) {
+          throw new ValidationError("draft 导出必须携带 expectedVersion（客户端确认版本）", "expectedVersion");
+        }
+        if (sheet.draft_version !== options.expectedVersion) {
+          throw new ConflictError(
+            "题纸已在其他地方更新，导出已中止；请重新载入后再导出",
+            undefined,
+            { code: "DRAFT_VERSION_CONFLICT", sheetId },
+          );
+        }
       }
       const withAnswers = options.withAnswers ?? (sheet.status === "sealed");
 

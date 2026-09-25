@@ -1,57 +1,47 @@
 {
   "version": 1,
-  "baseSha256": "7115f2ad5375a7ed0bf9e484fa86a3cbb85cc23315b59a723150d9af172321ea",
-  "currentSha256": "2c6970d29dfb1ab6ec7b661a65ac91caa513dae20dfbc2956a073c17cedc361f",
+  "baseSha256": "848280f446c9576fc06694b3f467fdd5959cb7f401cf58db1d7c9ec7622dbd65",
+  "currentSha256": "8dc9465d3f80349bda916ea2206cf96253c598d58b45168a8fbc50bf4ccb08db",
   "issues": [
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}/grading-context.get.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/study-notes.post.responses.201.content.application/json.schema.properties.item.properties.references.items.properties.target",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}/grading.get.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/study-notes.post.responses.201.content.application/json.schema.properties.item.properties.references.items.properties.displaySnapshot",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}/grading.post.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/study-notes/reference-preview.post.responses.200.content.application/json.schema.properties.preview.properties.target",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets.get.responses.200.content.application/json.schema.properties.items.items.properties.scope",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/study-notes/reference-preview.post.responses.200.content.application/json.schema.properties.preview.properties.displaySnapshot",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets.post.responses.201.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/study-notes/{noteId}.get.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.target",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}.get.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/study-notes/{noteId}.get.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.displaySnapshot",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}.get.responses.200.content.application/json.schema.properties.attempts.items.properties.venue",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/study-notes/{noteId}.put.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.target",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}.patch.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/sheets/{id}/seal.post.responses.200.content.application/json.schema.properties.sheet.properties.scope",
-      "message": "response enum 新增未声明值"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/attempts.get.responses.200.content.application/json.schema.properties.items.items.properties.venue",
-      "message": "response enum 新增未声明值"
+      "location": "paths./api/l3/study-notes/{noteId}.put.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.displaySnapshot",
+      "message": "response 联合新增变体（旧客户端可能无法解析）"
     }
   ]
 }

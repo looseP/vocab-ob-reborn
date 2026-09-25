@@ -43,7 +43,19 @@ describe("existing local volume role upgrade", () => {
     // 0036: l3_grading_results 评卷结果（批次三①，UNIQUE(sheet_id,question_id) 同键覆写 + graded_by 留痕）
     // 0037: l3_question_annotations.review_sheet_id 评审来源列（F-1 回看闭环，SET NULL 外键）
     // 0038: l3_writing_tasks/l3_writing_feedback + l3_submissions 四元数据与 l3_question_attempts venue 扩 writing（作文子空间 W1）
-    expect(authoritativeMigrationCount()).toBe(39);
+    // 0039: l3_study_notes/l3_study_note_venues/l3_study_topics/l3_study_topic_notes/l3_study_note_references 五表（N1 学习笔记：owner RLS + 复合 FK + 引用 RESTRICT 删除保护）
+    // 0040: l3_question_assessments(id,user_id) 唯一（N2 评析引用的复合 FK 前置依赖）
+    // 0041: l3_study_note_references.assessment_id + 评析复合 FK + 三个 CHECK（N2 评析引用）
+    // 拆两步的原因：drizzle 生成的 FK 语句排在同批 UNIQUE 之前，同批内会撞
+    // “no unique constraint matching given keys”（真实 PostgreSQL 已复现）。
+    // 0042: l3_study_note_references.target_note_id + 笔记复合 FK + 禁自引用 CHECK
+    //       + 三个 CHECK 重建（N2 第二条链·笔记互链）。前置 UNIQUE(id,user_id) 在
+    //       l3_study_notes 上早已存在，故本链**单段迁移**即可，无需 0040 那种拆分。
+    // 0043: l3_question_attempts(id,user_id) 唯一（N2 第三条链·attempt 引用的复合 FK 前置依赖）
+    // 0044: l3_study_note_references.submission_id / submission_revision_no / attempt_id
+    //       + sheet/attempt 复合属主 FK（RESTRICT）+ 三个 CHECK 重建 + 两个索引 + revision 正值 CHECK。
+    //       拆两步的原因与 0040/0041 同：drizzle 生成的 FK 语句排在同批 UNIQUE 之前。
+    expect(authoritativeMigrationCount()).toBe(45);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

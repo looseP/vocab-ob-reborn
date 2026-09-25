@@ -80,6 +80,9 @@ import type {
 import type { OtherBookL2Signal } from "../domain/upgrade-suggestion";
 import type { IL3WritingRepository } from "./l3-writing.repository";
 import type { IL3WritingFeedbackRepository } from "./l3-writing-feedback.repository";
+import type { IL3StudyNoteRepository } from "./l3-study-notes.repository";
+import type { IL3StudyTopicRepository } from "./l3-study-topics.repository";
+import type { IL3StudyReferenceRepository } from "./l3-study-references.repository";
 
 // ── Word ────────────────────────────────────────────────────────────────
 export interface IWordRepository {
@@ -1486,6 +1489,9 @@ export interface L3PracticeFileLookup {
   questionType?: string | null;
   direction?: string | null;
   q?: string | null;
+  /** R3：精确来源过滤（q.source_id / q.file_key 精确匹配；精确读面用）。 */
+  sourceId?: string | null;
+  fileKey?: string | null;
   limit: number;
   offset: number;
 }
@@ -1670,10 +1676,20 @@ export interface IL3SheetRepository {
   findDraftByScopeKey(userId: string, scopeKey: string): Promise<L3SubmissionRow | null>;
   /** 开纸：部分唯一索引 ON CONFLICT 冲突复用既有行（created=false）。 */
   openSheet(input: NewL3Submission): Promise<L3SheetOpenResult>;
-  /** 条件 UPDATE（WHERE status='draft'）：非 draft/不存在返回 null（service 分派 404/409）。 */
-  patchAnswers(userId: string, sheetId: string, answers: Record<string, unknown>): Promise<L3SubmissionRow | null>;
-  /** 定格（requireTx）：状态流转 + 定格元数据 + answers 清空（attempts 为唯一作答真源）。 */
-  sealSheet(userId: string, sheetId: string, seal: L3SheetSealUpdate): Promise<L3SubmissionRow | null>;
+  /** 条件 UPDATE（WHERE status='draft'）：非 draft/不存在返回 null（service 分派 404/409）。
+   *  每次 merge 推进 draft_version（定格 CAS 护栏）。
+   *  V（2026-09-19）：expectedDraftVersion 为客户端确认版本的 CAS 条件——旧版本
+   *  的合并落空返回 null，由 service 区分 404/409（不泄露服务器当前版本）。 */
+  patchAnswers(
+    userId: string,
+    sheetId: string,
+    answers: Record<string, unknown>,
+    expectedDraftVersion: number,
+  ): Promise<L3SubmissionRow | null>;
+  /** 定格（requireTx）：状态流转 + 定格元数据 + answers 清空（attempts 为唯一作答真源）。
+   *  expectedDraftVersion 为 CAS 护栏——仅当当前 draft_version 匹配才抢占成功。 */
+  sealSheet(userId: string, sheetId: string, seal: L3SheetSealUpdate, expectedDraftVersion: number): Promise<L3SubmissionRow | null>;
+  /** 题纸详情读（非锁，仅供定格读取基线 / 结果页派生）。 */
   getSheet(userId: string, sheetId: string): Promise<L3SubmissionRow | null>;
   /** 批量物化（seal 事务内）：一批 attempts 单语句插入。 */
   insertAttempts(userId: string, attempts: readonly NewL3QuestionAttempt[]): Promise<L3QuestionAttemptRow[]>;
@@ -1738,6 +1754,10 @@ export interface IRepositories {
   // 作文子空间 v1（W6 注册）：写作任务/稿次 + 作文反馈（自包含接口定义于各自 repo 文件）。
   l3Writing: IL3WritingRepository;
   l3Feedback: IL3WritingFeedbackRepository;
+  // 学习笔记（N1 注册）：笔记 / 平面专题 / 引用快照（自包含接口定义于各自 repo 文件）。
+  studyNotes: IL3StudyNoteRepository;
+  studyTopics: IL3StudyTopicRepository;
+  studyReferences: IL3StudyReferenceRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
 }

@@ -1,0 +1,10 @@
+{
+  "extends": "../e2e/tsconfig.json",
+  "include": [
+    "./**/*.ts",
+    "../e2e/fixtures.ts",
+    "../e2e/constants.ts",
+    "../e2e/global-setup.ts",
+    "../playwright.study-notes.config.ts"
+  ]
+}

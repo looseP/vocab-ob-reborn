@@ -35,9 +35,8 @@ export function sheetsRoutes(services: Services) {
     const parsed = l3SheetPatchSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return validationError(c, parsed.error.flatten());
     return c.json(await services.l3Sheets.patchSheet({
-      userId: c.get("userId"),
-      sheetId: c.req.param("id"),
-      answers: parsed.data.answers,
+      userId: c.get("userId"), sheetId: c.req.param("id"),
+      expectedVersion: parsed.data.expectedVersion, answers: parsed.data.answers,
     }));
   });
 

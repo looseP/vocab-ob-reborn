@@ -92,6 +92,22 @@ function makeContextRepo(overrides: Partial<IL3ContextRepository> = {}): IL3Cont
   } as unknown as IL3ContextRepository;
 }
 
+/** 学习笔记引用向的窄 fake（N1）：默认无 blocker、lockTargets 空实现。 */
+function makeStudyRefRepo(overrides: Record<string, unknown> = {}) {
+  return {
+    lockTargets: vi.fn(async () => undefined),
+    getQuestionDeleteBlockers: vi.fn(async () => []),
+    ...overrides,
+  };
+}
+
+let studyRefRepo: Record<string, unknown>;
+
+/** F1：deleteQuestion 的 FK 兜底需要事务连接可用（SAVEPOINT/ROLLBACK TO/RELEASE）。 */
+function makeTx() {
+  return { query: vi.fn(async () => ({})) } as never;
+}
+
 function makeService(
   paperRepo: IL3PaperRepository,
   contextRepo: IL3ContextRepository,
@@ -99,8 +115,8 @@ function makeService(
   return new L3PaperService(
     paperRepo,
     contextRepo,
-    async (callback) => callback({} as never),
-    () => ({ l3Paper: paperRepo, l3Context: contextRepo } as unknown as IRepositories),
+    async (callback) => callback(makeTx()),
+    () => ({ l3Paper: paperRepo, l3Context: contextRepo, studyReferences: studyRefRepo } as unknown as IRepositories),
   );
 }
 
@@ -111,6 +127,7 @@ let service: L3PaperService;
 beforeEach(() => {
   paperRepo = makePaperRepo();
   contextRepo = makeContextRepo();
+  studyRefRepo = makeStudyRefRepo();
   service = makeService(paperRepo, contextRepo);
 });
 
@@ -304,6 +321,143 @@ describe("deleteQuestion", () => {
       meta: { blockers: { writingTasks: [{ id: "wt-1", title: "我的写作任务" }] } },
     });
     expect(repo.deleteQuestion).not.toHaveBeenCalled();
+  });
+
+  it("blocks deletion with a study-note blocker when referenced by a learning note (N1)，并先取 capture 同款 advisory 锁", async () => {
+    const qid = "00000000-0000-4000-8000-000000000401";
+    const repo = makePaperRepo({ findQuestionById: vi.fn(async () => questionRow({ id: qid })) });
+    studyRefRepo = makeStudyRefRepo({
+      getQuestionDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-1", title: "我的学习笔记", status: "active", reference_count: 2 },
+      ]),
+    });
+    await expect(makeService(repo, contextRepo).deleteQuestion({
+      userId: USER_ID, questionId: qid,
+    })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: {
+        blockers: {
+          studyNotes: [{ id: "note-1", title: "我的学习笔记", status: "active", referenceCount: 2 }],
+        },
+      },
+    });
+    expect(studyRefRepo.lockTargets).toHaveBeenCalledWith(USER_ID, [{ kind: "question", id: qid }]);
+    expect(repo.deleteQuestion).not.toHaveBeenCalled();
+  });
+
+  it("FK RESTRICT 并发兜底：删除报 23503 → 重查 blocker 转 409；无 blocker 原样透传", async () => {
+    const qid = "00000000-0000-4000-8000-000000000402";
+    const repo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: qid })),
+      deleteQuestion: vi.fn(async () => {
+        throw Object.assign(new Error("fk violation"), { code: "23503" });
+      }),
+    });
+    studyRefRepo = makeStudyRefRepo({
+      getQuestionDeleteBlockers: vi.fn(async () => [
+        { note_id: "note-3", title: "题笔记", status: "active", reference_count: 1 },
+      ]),
+    });
+    await expect(makeService(repo, contextRepo).deleteQuestion({
+      userId: USER_ID, questionId: qid,
+    })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: { blockers: { studyNotes: [expect.objectContaining({ id: "note-3" })] } },
+    });
+
+    studyRefRepo = makeStudyRefRepo({ getQuestionDeleteBlockers: vi.fn(async () => []) });
+    await expect(makeService(repo, contextRepo).deleteQuestion({
+      userId: USER_ID, questionId: qid,
+    })).rejects.toThrow("fk violation");
+  });
+
+  it("F1：DELETE 报 23503 后先回滚保存点再重查 blocker（顺序留证；不落 25P02）", async () => {
+    const qid = "00000000-0000-4000-8000-000000000413";
+    let poisoned = false;
+    let blockerCalls = 0;
+    const events: string[] = [];
+    const tx = {
+      query: vi.fn(async (sql: string) => {
+        const text = String(sql);
+        events.push(`tx:${text}`);
+        if (text.trim().toUpperCase().startsWith("ROLLBACK TO SAVEPOINT")) poisoned = false;
+        return {};
+      }),
+    };
+    const txRunner = (async (cb: (t: unknown) => Promise<unknown>) => cb(tx)) as never;
+    const repo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: qid })),
+      deleteQuestion: vi.fn(async () => {
+        poisoned = true; // 模拟真实 PG：FK 异常中止当前事务
+        throw Object.assign(new Error("fk violation"), { code: "23503" });
+      }),
+    });
+    studyRefRepo = makeStudyRefRepo({
+      getQuestionDeleteBlockers: vi.fn(async () => {
+        events.push("blocker-query");
+        if (poisoned) throw Object.assign(new Error("current transaction is aborted"), { code: "25P02" });
+        blockerCalls += 1;
+        // 预检查（第 1 次）：并发引用尚不可见 → 空；恢复后重查（第 2 次）：命中真实 blocker
+        return blockerCalls === 1
+          ? []
+          : [{ note_id: "note-3", title: "题笔记", status: "active", reference_count: 1 }];
+      }),
+    });
+    const service = new L3PaperService(
+      repo,
+      contextRepo,
+      txRunner,
+      () => ({ l3Paper: repo, l3Context: contextRepo, studyReferences: studyRefRepo } as unknown as IRepositories),
+    );
+
+    await expect(service.deleteQuestion({ userId: USER_ID, questionId: qid })).rejects.toMatchObject({
+      httpStatus: 409,
+      meta: { blockers: { studyNotes: [expect.objectContaining({ id: "note-3" })] } },
+    });
+    expect(events).toContain("tx:SAVEPOINT study_note_delete");
+    expect(events).toContain("tx:RELEASE SAVEPOINT study_note_delete");
+    expect(events.indexOf("tx:ROLLBACK TO SAVEPOINT study_note_delete"))
+      .toBeLessThan(events.lastIndexOf("blocker-query"));
+    expect(events.lastIndexOf("blocker-query"))
+      .toBeGreaterThan(events.indexOf("tx:RELEASE SAVEPOINT study_note_delete"));
+  });
+
+  it("F1：无 blocker 的原错误透传路径同样先恢复保存点（不伪造笔记阻塞）", async () => {
+    const qid = "00000000-0000-4000-8000-000000000414";
+    let poisoned = false;
+    const events: string[] = [];
+    const tx = {
+      query: vi.fn(async (sql: string) => {
+        const text = String(sql);
+        events.push(`tx:${text}`);
+        if (text.trim().toUpperCase().startsWith("ROLLBACK TO SAVEPOINT")) poisoned = false;
+        return {};
+      }),
+    };
+    const txRunner = (async (cb: (t: unknown) => Promise<unknown>) => cb(tx)) as never;
+    const repo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: qid })),
+      deleteQuestion: vi.fn(async () => {
+        poisoned = true;
+        throw Object.assign(new Error("fk violation"), { code: "23503" });
+      }),
+    });
+    studyRefRepo = makeStudyRefRepo({
+      getQuestionDeleteBlockers: vi.fn(async () => {
+        if (poisoned) throw Object.assign(new Error("current transaction is aborted"), { code: "25P02" });
+        return [];
+      }),
+    });
+    const service = new L3PaperService(
+      repo,
+      contextRepo,
+      txRunner,
+      () => ({ l3Paper: repo, l3Context: contextRepo, studyReferences: studyRefRepo } as unknown as IRepositories),
+    );
+
+    await expect(service.deleteQuestion({ userId: USER_ID, questionId: qid }))
+      .rejects.toThrow("fk violation");
+    expect(events).toContain("tx:ROLLBACK TO SAVEPOINT study_note_delete");
   });
 
   it("deletes an unreferenced question", async () => {

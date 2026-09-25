@@ -274,6 +274,48 @@
       "when": 1789712381543,
       "tag": "0038_empty_blink",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1789817697815,
+      "tag": "0039_redundant_imperial_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1790140014534,
+      "tag": "0040_free_queen_noir",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790140030389,
+      "tag": "0041_peaceful_norrin_radd",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1790171539051,
+      "tag": "0042_cultured_praxagora",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1790227876045,
+      "tag": "0043_warm_banshee",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1790227980879,
+      "tag": "0044_cold_the_spike",
+      "breakpoints": true
     }
   ]
 }

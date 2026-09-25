@@ -13,12 +13,12 @@
 - 唯一N1设计基线：`docs/plan/study-notes-design-2026-09-18.md`；其中§3–§7限额、数据字段、错误码语义与接口是本计划任务的共同契约。
 - Node `>=22.22.0 <23`，`.nvmrc=22.22.2`；npm `>=10.9.0 <11`，packageManager `npm@10.9.7`。默认系统Node24/npm11不作为验收基线。
 - 单owner、多设备、在线优先；不新增离线写队列、FSRS字段、自动agent权限、编辑器依赖或新调度器。
-- 观察HEAD `219be04`；执行前重新定位已合并基线。进行中的F-1、review_sheet_id、作文设计不属于本任务；不覆盖、不混提、不抢0037迁移编号。
+- 编写时观察HEAD `219be04`；执行前重新定位已合并基线。**执行校准（2026-09-19）**：实际依赖基线 `integration/l3-reliability-writing@b7dcea4e`（PR #125 draft，未合并 → 依赖PR处理）；F-1 深链与作文协议已随整合合并，不再标注“进行中”；历史迁移已应用39个，本批迁移号从实际生成结果起（0039），不预占0037/0038。
 - 已有服务、认证、设计token与错误封装复用；现有词汇notes/单题annotations/assessments不迁移为新笔记。
 - 新合同camelCase；内部DB snake_case映射显式；服务不直接写SQL，repo写必须requireTx。
 - 新端点全部owner-only；新表owner RLS与复合owner FK；无凭据进代码、日志或截图。
 - 所有UI任务遵守 `docs/plan/l3-upgrade-task-breakdown-2026-09-11.md` §0 的设计锚点与截图纪律。
-- 下文路径均相对 `D:/Temp/Myawesomeapp/vocab-ob'/wt-main/`。若执行在隔离worktree，以其Git根替换，不跨树运行npm。
+- 下文路径均相对 `D:/Temp/Myawesomeapp/vocab-ob'/wt-main/`。若执行在隔离worktree，以其Git根替换，不跨树运行npm。**执行校准**：本批（Task 00–06 后端合同批次）执行于独立 clone `D:/Temp/vocab-ob-n1`（分支 `study-notes-n1-backend`）；Task 07–11 的前端路径仍留在未来批次。
 
 ---
 
@@ -69,7 +69,7 @@ flowchart LR
 
 ## Task 00：锁定可执行基线与验证环境
 
-**Files:** Read `docs/plan/study-notes-design-2026-09-18.md`、`writing-space-design-2026-09-18.md`、`docs/plan/l3-upgrade-task-breakdown-2026-09-11.md`、`package.json`、`.nvmrc`；Create `docs/plan/study-notes-validation-2026-09-18.md`（执行证据台账，不预填PASS）。
+**Files:** Read `docs/plan/study-notes-design-2026-09-18.md`、`writing-space-design-2026-09-18.md`、`docs/plan/l3-upgrade-task-breakdown-2026-09-11.md`、`package.json`、`.nvmrc`；Create `docs/plan/study-notes-validation-2026-09-18.md`（执行证据台账，不预填PASS）。**执行校准（2026-09-19）**：本批（Task 00–06）台账落为 `docs/plan/study-notes-backend-execution-2026-09-19.md`；Task 07–11 保留未来批次时另建。
 
 - [ ] 在包根读取当前事实：
 
@@ -132,7 +132,7 @@ it('rejects a marker without its stored reference', () => {
 
 **Files:** Modify `src/db/schema.ts`、`scripts/bootstrap-database-roles.ts`、`scripts/verify-database-roles.ts`、`scripts/verify-schema-drift.ts`、`tests/scripts/verify-existing-volume-role-upgrade.test.ts`；Generate next migration与对应snapshot/journal；Create `tests/scripts/l3-study-notes-migration.test.ts`、`tests/l3-study-notes.integration.test.ts`、`tests/helpers/study-notes-db.ts`。
 
-**Consumes:** Task01 enums/设计§5。**Produces:** 5表+role grants；执行时生成的实际迁移路径记入证据台账，禁止预写0038或修改0037。
+**Consumes:** Task01 enums/设计§5。**Produces:** 5表+role grants；执行时生成的实际迁移路径记入证据台账。**执行校准（2026-09-19）**：历史迁移 0000–0038 已应用（39个），本批新迁移从实际 `db:generate` 结果起（预期 `0039_*`）；禁止预写编号或修改任何已应用迁移字节。
 
 - [ ] 先建立真实restricted app连接fixture，要求 `TEST_DATABASE_URL` 与 `TEST_APP_DATABASE_URL`，缺失即失败；A/B owner使用随机UUID。写跨owner reference插入拒绝、note无source可创建、FK阻止源删除测试。
 - [ ] 在隔离库跑新文件，确认缺表失败；不要修改测试让它skip。
@@ -230,6 +230,8 @@ const fieldHash = createHash('sha256').update(fieldText, 'utf8').digest('hex');
 
 ## Task 07：可靠编辑与保存控制器
 
+> **执行校准（2026-09-20）**：Task 07–08（含 Task 06 延期的手写 `studyNotesClient.ts`）的**可独立执行版本**见 `docs/plan/study-notes-frontend-tasks-2026-09-20.md`。该版本在本文基础上增补硬性要求：完整状态快照保存（正文/归属/置顶/归档共享单一控制器）、A/B 交错语义（固定 payload/requestId/expectedVersion、原样重试、新编辑排队、409 停自动写）、flush 回执（version/editSeq/真实 lastSavedAt、失败 reject）、首次加载的 note 身份与请求代际校验（GET 一致 ≠ 响应永新）、冲突恢复前本地副本保全与恢复期间输入保护、引用保全（keep 不重 capture；打开/保存不得清空 references 或破坏 marker 集合）。与本文冲突处以校准版为准；本文保留历史叙述。
+
 **Files:** Create `src/frontend/state/studyNoteSaveController.ts`、`src/frontend/hooks/useStudyNoteEditor.ts`、`src/frontend/components/studyNotes/StudyNoteEditor.tsx`、`tests/frontend/study-note-save.test.ts`、`study-note-editor.test.tsx`。
 
 **Interfaces:**
@@ -270,6 +272,8 @@ it('does not finish flush while the current save is in flight', async () => {
 - [ ] Commit `feat(notes): implement reliable single-writer editing`。
 
 ## Task 08：笔记空间、专题、分页与导航
+
+> **执行校准（2026-09-20）**：见 `docs/plan/study-notes-frontend-tasks-2026-09-20.md` §3——创建纪律（GET/F5/历史返回不得创建，仅显式操作创建）、深链合法性（noteId 归属/venue 组合校验）、筛选变化清 cursor 与请求序号守卫、专题元数据与成员共享 topic 版本串行、跨页排序用服务端 `beforeNoteId` 合同（不得用当前页顺序覆盖全量）、切 topic/venue 不丢未保存编辑。
 
 **Files:** Create `L3StudyNotesPage.tsx`、`StudyNoteList.tsx`、`StudyTopicPanel.tsx`、`src/frontend/viewModels/studyNoteNavigation.ts`、`tests/frontend/study-notes-page.test.tsx`、`study-note-navigation.test.ts`；Modify `L3Page.tsx`、`L3PapersPage.tsx`、`l3ShellViewModel.ts`、`docs/design/l3-space/baseline.md`。
 

@@ -25,6 +25,7 @@ import {
   L3_SUB_SPACES,
 } from "../../services/l3-practice.service";
 import { L3_QUESTION_TYPES, questionTypeAllowsSourceless } from "../../domain/l3-question-types";
+import { WRITING_DIRECTIONS, WRITING_KINDS } from "../../domain/l3-writing";
 import {
   L3_SESSION_DEFAULT_CONTEXTS,
   L3_SESSION_END_STATUSES,
@@ -340,11 +341,14 @@ export const l3PaperCreateSchema = z.object({
   sections: z.array(l3PaperSectionSchema).min(1).max(20),
 });
 
-/** GET /l3/practice-files：题型空间的文件管理列表（派生视图）。 */
+/** GET /l3/practice-files：题型空间的文件管理列表（派生视图）。
+ *  R3：sourceId/fileKey 为**精确来源过滤**（精确读面——不依赖 limit 扫描取单文件方向/标题）。 */
 export const l3PracticeFileListQuerySchema = z.object({
   questionType: l3QuestionTypeSchema.optional(),
   direction: directionSchema.optional(),
   q: z.string().trim().max(200).optional(),
+  sourceId: z.string().uuid().optional(),
+  fileKey: z.string().trim().min(1).max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -820,14 +824,26 @@ export const l3WritingRevisionListQuerySchema = z.object({
   cursor: z.string().trim().max(500).optional(),
 });
 
+/**
+ * A2：GET /l3/writing/tasks/question-summaries（owner-only 批量进度读面）。
+ * questionId 可重复传入（原始数量与去重后数量均 ≤100）；kind/direction 严格枚举。
+ */
+export const l3WritingQuestionSummariesQuerySchema = z.object({
+  questionId: z.array(z.string().uuid()).min(1).max(100),
+  kind: z.enum(WRITING_KINDS),
+  direction: z.enum(WRITING_DIRECTIONS),
+});
+
 /** GET /l3/sheets：题纸档案列表 query（F-1 回看闭环；owner-only，新→旧）。 */
 export const l3SheetListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
-/** GET /l3/sheets/:id/export?withAnswers=0|1 的 query 契约（v2 §6；文档登记用）。 */
+/** GET /l3/sheets/:id/export?withAnswers=0|1 的 query 契约（v2 §6；文档登记用）。
+ *  V（2026-09-19）：expectedVersion 为 draft 导出版本核对参数（sealed 归档忽略）。 */
 export const l3SheetExportQuerySchema = z.object({
   withAnswers: z.enum(["0", "1"]).optional(),
+  expectedVersion: z.string().regex(/^\d+$/).optional(),
 });
 
 /**
@@ -841,6 +857,31 @@ export function parseSheetExportWithAnswers(raw: string | undefined): boolean | 
   throw new ValidationError("withAnswers must be 0 or 1", "withAnswers");
 }
 
+/**
+ * V（2026-09-19）：draft 导出核对版本参数——缺省返回 undefined（由 service 对
+ * draft 拒绝、对 sealed 忽略）；非法值抛校验错误（422 惯例，勿宽容吞掉）。
+ */
+export function parseSheetExportExpectedVersion(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  if (!/^\d+$/.test(raw)) {
+    throw new ValidationError("expectedVersion must be a non-negative integer", "expectedVersion");
+  }
+  return Number(raw);
+}
+
+/**
+ * N2（P4）：导出 schema 版本——调用方**显式**选择，缺省 1（v1 冻结，旧客户端兼容）。
+ * v2 是另一份协议（正文字段 `renderedBodyMarkdown`、target 带 `kind` 判别），
+ * 不能由笔记内容隐式决定。
+ */
+export function parseStudyNoteExportSchemaVersion(raw: string | undefined): 1 | 2 | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  if (raw !== "1" && raw !== "2") {
+    throw new ValidationError("schemaVersion must be 1 or 2", "schemaVersion");
+  }
+  return raw === "2" ? 2 : 1;
+}
+
 /** GET /l3/attempts?questionIds=<uuid,uuid,...>：1–200 个 uuid（对齐注记批量口径）。 */
 export const l3AttemptListQuerySchema = z.object({
   questionIds: z.string().trim().min(1).max(12_000)
@@ -848,3 +889,82 @@ export const l3AttemptListQuerySchema = z.object({
     .refine((ids) => ids.length >= 1 && ids.length <= 200, { message: "questionIds 需为 1–200 个 uuid" })
     .refine((ids) => ids.every((id) => uuidSchema.safeParse(id).success), { message: "questionIds 含非法 uuid" }),
 });
+
+// ── 学习笔记（N1，ADR《study-notes-workspace》/ 设计 §7）────────────────────
+// body 契约复用 domain zod（单一真源）；查询契约就地定义。
+export {
+  createStudyNoteSchema as l3StudyNoteCreateSchema,
+  saveStudyNoteSchema as l3StudyNoteSaveSchema,
+  createStudyTopicSchema as l3StudyTopicCreateSchema,
+  saveStudyTopicSchema as l3StudyTopicSaveSchema,
+  moveStudyTopicMemberSchema as l3StudyTopicMemberMoveSchema,
+  removeStudyTopicMemberSchema as l3StudyTopicMemberRemoveSchema,
+  referenceTargetSchema as l3StudyReferenceTargetSchema,
+} from "../../domain/l3-study-notes";
+
+/** GET /l3/study-notes?venue&q&status&pinned&topicId&unfiled&limit&cursor（topicId 与 unfiled 互斥）。 */
+export const l3StudyNoteListQuerySchema = z
+  .object({
+    venue: l3QuestionTypeSchema,
+    q: z.string().trim().max(100).optional(),
+    status: z.enum(["active", "archived"]).optional(),
+    pinned: z.enum(["0", "1"]).optional().transform((value) => (value === undefined ? null : value === "1")),
+    topicId: uuidSchema.optional(),
+    unfiled: z.enum(["0", "1"]).optional().transform((value) => value === "1"),
+    limit: z.coerce.number().int().min(1).max(50).optional(),
+    cursor: z.string().trim().max(800).optional(),
+  })
+  .refine((value) => !(value.topicId !== undefined && value.unfiled === true), {
+    message: "topicId 与 unfiled 互斥",
+  });
+
+/** GET /l3/study-topics?venue&status&limit&cursor。 */
+export const l3StudyTopicListQuerySchema = z.object({
+  venue: l3QuestionTypeSchema,
+  status: z.enum(["active", "archived"]).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().max(800).optional(),
+});
+
+/** GET /l3/study-notes/reference-targets?q&kind&venue&limit&cursor（每次只查一个 kind）。 */
+export const l3StudyReferenceTargetQuerySchema = z.object({
+  q: z.string().trim().max(200).optional(),
+  kind: z.enum(["source", "question"]),
+  venue: l3QuestionTypeSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().max(800).optional(),
+});
+
+/** GET /l3/study-notes/backlinks?targetKind&targetId&limit&cursor。 */
+export const l3StudyBacklinkQuerySchema = z.object({
+  targetKind: z.enum(["source", "question"]),
+  targetId: uuidSchema,
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().trim().max(800).optional(),
+});
+
+/**
+ * GET /l3/study-notes/:noteId/export?expectedVersion=N 的 query 契约
+ * （文档登记用；对齐 `l3SheetExportQuerySchema` 的 V 合同口径）。
+ *
+ * 笔记导出**无** sealed/draft 分流：任何状态都核对版本，故 `expectedVersion`
+ * 是必填语义（缺失由 service 抛 ValidationError → 422）。
+ */
+export const l3StudyNoteExportQuerySchema = z.object({
+  expectedVersion: z.string().regex(/^\d+$/),
+  // N2（P4）：显式选择 1 或 2；缺省 1。除 1/2 之外一律 422——不做内容驱动的切换。
+  schemaVersion: z.enum(["1", "2"]).optional(),
+});
+
+/**
+ * V（2026-09-19 先例，笔记侧对齐）：导出核对版本参数——缺省返回 undefined
+ * （由 service 拒绝：笔记导出必须携带客户端已保存版本）；非法值抛校验错误
+ * （422 惯例，勿宽容吞掉）。
+ */
+export function parseStudyNoteExportExpectedVersion(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  if (!/^\d+$/.test(raw)) {
+    throw new ValidationError("expectedVersion must be a non-negative integer", "expectedVersion");
+  }
+  return Number(raw);
+}

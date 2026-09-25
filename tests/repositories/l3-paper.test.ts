@@ -38,6 +38,34 @@ describe("L3PaperRepository.listPracticeFiles（内部写作题排除）", () =>
     expect(params).toEqual([USER, "reading_choice", "通用", "%50\\%\\_x%", 10, 5]);
     expect(page.items[0]!.question_count).toBe(2);
   });
+
+  it("R3：sourceId/fileKey 精确过滤追加 WHERE（精确读面，不依赖 limit 扫描）", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue({ total: "0" });
+    await repo.listPracticeFiles({
+      userId: USER, sourceId: "00000000-0000-4000-8000-0000000000d2", fileKey: null,
+      questionType: "short_essay", direction: null, q: null, limit: 1, offset: 0,
+    });
+    const [sql, params] = querySpy.mock.calls[0]!;
+    expect(sql).toContain("q.source_id = $3");
+    expect(params).toEqual([USER, "short_essay", "00000000-0000-4000-8000-0000000000d2", 1, 0]);
+
+    const repo2 = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy2 = vi.spyOn(repo2 as any, "query").mockResolvedValue([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(repo2 as any, "queryOne").mockResolvedValue({ total: "0" });
+    await repo2.listPracticeFiles({
+      userId: USER, sourceId: null, fileKey: "k-1",
+      questionType: "short_essay", direction: null, q: null, limit: 1, offset: 0,
+    });
+    const [sql2, params2] = spy2.mock.calls[0]!;
+    expect(sql2).toContain("q.file_key = $3");
+    expect(params2).toEqual([USER, "short_essay", "k-1", 1, 0]);
+  });
 });
 
 describe("L3PaperRepository.listWritingTaskRefs / deleteQuestion", () => {

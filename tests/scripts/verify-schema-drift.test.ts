@@ -7,6 +7,7 @@ import {
   AUTHORITATIVE_PROFILES_SELECT_POLICY,
   AUTHORITATIVE_HIGHLIGHTS_POLICY,
   AUTHORITATIVE_ANNOTATIONS_POLICY,
+  AUTHORITATIVE_STUDY_NOTES_RLS_CONTRACTS,
   normalizeSql,
   extractSearchVectorColumnSql,
   extractSearchIndexSql,
@@ -39,6 +40,16 @@ ALTER TABLE "word_highlights" ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "word_highlights_own_all" ON "word_highlights" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id));
 ALTER TABLE "word_annotations" ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "word_annotations_own_all" ON "word_annotations" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id));
+ALTER TABLE "l3_study_notes" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "l3_study_notes_own_all" ON "l3_study_notes" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id));
+ALTER TABLE "l3_study_note_venues" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "l3_study_note_venues_own_all" ON "l3_study_note_venues" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id));
+ALTER TABLE "l3_study_topics" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "l3_study_topics_own_all" ON "l3_study_topics" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id));
+ALTER TABLE "l3_study_topic_notes" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "l3_study_topic_notes_own_all" ON "l3_study_topic_notes" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id));
+ALTER TABLE "l3_study_note_references" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "l3_study_note_references_own_all" ON "l3_study_note_references" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id)) WITH CHECK ((auth.uid() = user_id));
 `;
 
 const SECURITY_FUNCTION_SQL = `
@@ -132,12 +143,15 @@ describe("compareL2ProgressRlsContract", () => {
 });
 
 describe("compareOwnerRlsContract", () => {
-  it("requires exact owner predicates for profiles, highlights, and annotations", () => {
+  it("requires exact owner predicates for profiles, highlights, annotations, and study notes", () => {
     expect(compareOwnerRlsContract(SAMPLE_SQL)).toBe(true);
     expect(compareOwnerRlsContract(SAMPLE_SQL.replace(AUTHORITATIVE_PROFILES_SELECT_POLICY, ""))).toBe(false);
     expect(compareOwnerRlsContract(SAMPLE_SQL.replace(AUTHORITATIVE_HIGHLIGHTS_POLICY, ""))).toBe(false);
     expect(compareOwnerRlsContract(SAMPLE_SQL.replace(AUTHORITATIVE_ANNOTATIONS_POLICY, ""))).toBe(false);
     expect(compareOwnerRlsContract(SAMPLE_SQL.replace("auth.uid() = id", "true"))).toBe(false);
+    // 0039（N1 学习笔记）：五表 RLS 契约任一条从 regenerated DDL 中缺失即失败
+    expect(compareOwnerRlsContract(SAMPLE_SQL.replace(AUTHORITATIVE_STUDY_NOTES_RLS_CONTRACTS[1], ""))).toBe(false);
+    expect(compareOwnerRlsContract(SAMPLE_SQL.replace(AUTHORITATIVE_STUDY_NOTES_RLS_CONTRACTS[9], ""))).toBe(false);
   });
 });
 
