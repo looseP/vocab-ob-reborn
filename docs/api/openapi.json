@@ -9212,6 +9212,56 @@
                                     "type": "null"
                                   }
                                 ]
+                              },
+                              "examples": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                }
+                              },
+                              "prototype_text": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "mnemonic_text": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "mnemonic_type": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "semantic_chain": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
                               }
                             },
                             "required": [
@@ -9222,7 +9272,12 @@
                               "short_definition",
                               "ipa",
                               "pos",
-                              "cefr"
+                              "cefr",
+                              "examples",
+                              "prototype_text",
+                              "mnemonic_text",
+                              "mnemonic_type",
+                              "semantic_chain"
                             ],
                             "additionalProperties": false
                           },
@@ -11634,6 +11689,14 @@
                       "preview",
                       "zen"
                     ]
+                  },
+                  "hintLevel": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 3
+                  },
+                  "viaH4": {
+                    "type": "boolean"
                   }
                 },
                 "required": [

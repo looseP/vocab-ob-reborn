@@ -20,6 +20,17 @@ export interface ReviewCard {
     ipa: string | null;
     pos: string | null;
     cefr: string | null;
+    // ── T3 Hint 阶梯（2026-09-25）：queue 方案 A 直载。可选 = 兼容旧
+    // sessionStorage 缓存（TTL 30min 内的会话恢复不含新字段）──
+    /** H1 例句（未回灌批次为空数组）。 */
+    examples?: unknown[];
+    /** H2 原型意象原文（前端遮罩 + isSpoiler）。 */
+    prototype_text?: string | null;
+    /** H3 助记锚（words.metadata 派生）。 */
+    mnemonic_text?: string | null;
+    mnemonic_type?: string | null;
+    /** H1′ 语义场降级链（无例句时的 H1 降级内容）。 */
+    semantic_chain?: string | null;
   };
   state: string;
   dueAt: string | null;
@@ -270,7 +281,7 @@ export function useReview() {
    */
   const busyRef = useRef(false);
 
-  const answer = useCallback(async (rating: Rating) => {
+  const answer = useCallback(async (rating: Rating, hint?: { hintLevel: number; viaH4?: boolean }) => {
     if (!currentCard || !sessionId) return;
     if (busyRef.current) return;
     busyRef.current = true;
@@ -285,6 +296,8 @@ export function useReview() {
           sessionId,
           mode,
           idempotencyKey,
+          // T3 Hint 阶梯埋点：hintLevel=0（直翻验证）也上报，缺省仅旧缓存路径
+          ...(hint !== undefined ? { hintLevel: hint.hintLevel, ...(hint.viaH4 ? { viaH4: true } : {}) } : {}),
         }),
       });
       // cram 返回合成 reviewLogId，服务端无日志可撤销；仅真实评分记录撤销目标

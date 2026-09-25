@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   reviewAnswerResponseSchema,
   reviewDashboardStatsResponseSchema,
+  reviewQueueResponseSchema,
   reviewSimpleResponseSchema,
 } from "../../src/http/review-response-contract";
 
@@ -68,5 +69,47 @@ describe("Review response contracts", () => {
     expect(() => reviewDashboardStatsResponseSchema.parse({ ...response, extra: true })).toThrow();
     expect(() => reviewDashboardStatsResponseSchema.parse({ ...response, ratingDist: { ...response.ratingDist, medium: 1 } })).toThrow();
     expect(() => reviewDashboardStatsResponseSchema.parse({ ...response, forecast: { ...response.forecast, due3d: 30 } })).toThrow();
+  });
+
+  it("parses the queue response with hint ladder word fields (T3, 2026-09-25)", () => {
+    const response = {
+      items: [{
+        progressId: "p1",
+        word: {
+          id: "w1", slug: "alleviate", title: "Alleviate", lemma: "alleviate",
+          short_definition: "减轻", ipa: null, pos: "verb", cefr: "C1",
+          examples: [{ text: "The drug alleviates the pain." }],
+          prototype_text: "alleviate = 一只手把重物缓缓放下的画面",
+          mnemonic_text: "al+lev（举）+iate → 把负担举走",
+          mnemonic_type: "etymology",
+          semantic_chain: "lev轻->relieve缓解->alleviate减轻",
+        },
+        state: "review",
+        dueAt: null,
+        lastRating: "good",
+        reviewCount: 3,
+        stability: null,
+        note_entries: [],
+        l3_contexts: [],
+      }],
+      session: { id: "s1", mode: "review", cardsSeen: 0 },
+      stats: { total: 1, remaining: 1 },
+      hasMore: false,
+    } as const;
+
+    expect(reviewQueueResponseSchema.parse(response)).toEqual(response);
+
+    // strict：word 缺 hint 字段（旧响应形态）→ 拒绝
+    const { examples: _ex, prototype_text: _pt, mnemonic_text: _mt, mnemonic_type: _mty, semantic_chain: _sc, ...legacyWord } = response.items[0].word;
+    expect(() => reviewQueueResponseSchema.parse({
+      ...response,
+      items: [{ ...response.items[0], word: legacyWord }],
+    })).toThrow();
+
+    // examples 非数组 → 拒绝
+    expect(() => reviewQueueResponseSchema.parse({
+      ...response,
+      items: [{ ...response.items[0], word: { ...response.items[0].word, examples: "not-array" } }],
+    })).toThrow();
   });
 });

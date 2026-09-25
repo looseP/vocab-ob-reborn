@@ -33,6 +33,17 @@ const queueCardWordSchema = z.object({
   ipa: z.string().nullable(),
   pos: z.string().nullable(),
   cefr: z.string().nullable(),
+  // ── T3 Hint 阶梯（2026-09-25）：response 新增字段 = breaking，走
+  // API_CONTRACT_BASE_REF 豁免流程（PR 描述注明）。──
+  /** H1 例句（H1 产线回灌；未回灌批次为空数组，best-effort 结构）。 */
+  examples: z.array(z.record(z.string(), z.unknown())),
+  /** H2 原型意象原文（前端做遮罩 + isSpoiler 剧透检测）。 */
+  prototype_text: z.string().nullable(),
+  /** H3 助记锚核心行 + 类型（words.metadata 派生，COALESCE mnemonic_text/mnemonic）。 */
+  mnemonic_text: z.string().nullable(),
+  mnemonic_type: z.string().nullable(),
+  /** H1′ 语义场降级链（"a->b->c"），无例句时的 H1 降级内容。 */
+  semantic_chain: z.string().nullable(),
 }).strict();
 
 export const reviewQueueResponseSchema = z.object({

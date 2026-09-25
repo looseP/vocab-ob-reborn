@@ -6310,6 +6310,13 @@ export interface operations {
                                 ipa: string | null;
                                 pos: string | null;
                                 cefr: string | null;
+                                examples: {
+                                    [key: string]: unknown;
+                                }[];
+                                prototype_text: string | null;
+                                mnemonic_text: string | null;
+                                mnemonic_type: string | null;
+                                semantic_chain: string | null;
                             };
                             /** @enum {string} */
                             state: "new" | "learning" | "review" | "relearning";
@@ -7363,6 +7370,8 @@ export interface operations {
                     idempotencyKey?: string;
                     /** @enum {string} */
                     mode?: "review" | "cram" | "preview" | "zen";
+                    hintLevel?: number;
+                    viaH4?: boolean;
                 };
             };
         };
