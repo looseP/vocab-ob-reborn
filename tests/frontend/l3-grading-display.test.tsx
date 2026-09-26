@@ -112,6 +112,8 @@ function gradingFixture(overrides: Record<string, unknown> = {}): Record<string,
 type MockOptions = {
   sheet?: Record<string, unknown>;
   gradingResults?: unknown[];
+  /** 可评数（ADR-0038 决策 8）：缺省取已评条数，避免历史夹具全部失效。 */
+  gradableCount?: number;
   /** 契约漂移注入：直接提供读面原始响应（含非法形状），优先于 gradingResults。 */
   gradingRaw?: () => unknown;
   annotations?: unknown[];
@@ -128,7 +130,13 @@ function setupMock(options: MockOptions = {}) {
     if (String(path) === `/l3/sheets/${SHEET_ID}/grading` && !init?.method) {
       state.gradingCalls += 1;
       if (options.gradingRaw) return options.gradingRaw();
-      return { sheet: sheetFixture(), results: options.gradingResults ?? [] };
+      // gradableCount 是契约的一部分（ADR-0038 决策 8）：缺它时客户端 fail-closed 报错，
+    // 页面显示「评卷加载失败」而不是误导为「还没有评卷」（OB-2/3 纪律）。
+    return {
+      sheet: sheetFixture(),
+      results: options.gradingResults ?? [],
+      gradableCount: options.gradableCount ?? options.gradingResults?.length ?? 0,
+    };
     }
     if (path === "/l3/sheets" && (!init || init.method === "POST")) {
       state.openSheetCalls += 1;
@@ -273,7 +281,7 @@ describe("F-1 评卷协作闭环（刷新评卷 / 回看 / 再做一次）", () 
     setupMock({
       gradingRaw: () => {
         if (failMode) throw new Error("down");
-        return { sheet: sheetFixture(), results: [gradingFixture()] };
+        return { sheet: sheetFixture(), results: [gradingFixture()], gradableCount: 2 };
       },
     });
     await renderPaper(8);
@@ -287,7 +295,7 @@ describe("F-1 评卷协作闭环（刷新评卷 / 回看 / 再做一次）", () 
 
   it("改判后手动「刷新评卷」拉到新 verdict（latest-wins 消费链）", async () => {
     let verdict = "wrong";
-    setupMock({ gradingRaw: () => ({ sheet: sheetFixture(), results: [gradingFixture({ verdict })] }) });
+    setupMock({ gradingRaw: () => ({ sheet: sheetFixture(), results: [gradingFixture({ verdict })], gradableCount: 1 }) });
     await renderPaper(6);
     await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
     await click(screen.getByRole("button", { name: "显示全部答案与解析" }));
@@ -460,6 +468,7 @@ function archiveItem(overrides: Record<string, unknown> = {}): Record<string, un
     seal_mode: "full",
     sealed_at: "2026-09-18T00:10:00.000Z",
     created_at: "2026-09-18T00:00:00.000Z",
+    gradable_count: 3,
     graded_count: 3,
     venue_title: "WA 阅读理解文件",
     ...overrides,
@@ -489,6 +498,46 @@ describe("F-1 题纸档案与回看深链（L3PapersPage）", () => {
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
     });
   }
+
+  /**
+   * ADR-0038 决策 3：owner 需要一个能直接递给本地 agent 的抓手。
+   *
+   * 评卷是**拉取式**触发（无 webhook/轮询），所以「知道该评哪张」与「能开始评」之间
+   * 隔着一次人工转述。复制一行指令就是把这个转述压到一次粘贴。
+   */
+  it("未评完的题纸出现「复制评卷指令」，复制内容含 sheetId 与两个端点", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    apiFetchMock().mockImplementation(async (path: string) => {
+      if (String(path).startsWith("/l3/sheets?")) {
+        return { items: [archiveItem({ graded_count: 0, gradable_count: 4 })] };
+      }
+      return { items: [] };
+    });
+    await renderPapers();
+    await click(screen.getByRole("tab", { name: "题纸档案" }));
+    const button = await screen.findByText("复制评卷指令");
+    await act(async () => { button.click(); });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const text = String(writeText.mock.calls[0]![0]);
+    expect(text).toContain("00000000-0000-4000-8000-000000000401");
+    expect(text).toContain("grading-context");
+    expect(text).toContain("gradable=true");
+  });
+
+  it("已评完的题纸不出现该按钮（评完再提示是噪声）", async () => {
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn() }, configurable: true });
+    apiFetchMock().mockImplementation(async (path: string) => {
+      if (String(path).startsWith("/l3/sheets?")) {
+        return { items: [archiveItem({ graded_count: 3, gradable_count: 3 })] };
+      }
+      return { items: [] };
+    });
+    await renderPapers();
+    await click(screen.getByRole("tab", { name: "题纸档案" }));
+    await screen.findByText("查看解析");
+    expect(screen.queryByText("复制评卷指令")).toBeNull();
+  });
 
   it("档案页签：渲染「待评卷/已评 n 题」状态与「查看解析」深链（?sheet=）", async () => {
     apiFetchMock().mockImplementation(async (path: string) => {
@@ -536,7 +585,7 @@ describe("F-1 题纸档案与回看深链（L3PapersPage）", () => {
         return { sheet: sheetFixture(), attempts: [] };
       }
       if (String(path) === `/l3/sheets/${SHEET_ID}/grading`) {
-        return { sheet: sheetFixture(), results: [gradingFixture()] };
+        return { sheet: sheetFixture(), results: [gradingFixture()], gradableCount: 2 };
       }
       if (String(path).startsWith(`/l3/papers/${PAPER_ID}`)) return paper;
       if (String(path).startsWith("/l3/attempts")) return { items: [] };

@@ -37,9 +37,21 @@ import type {
   L3SubmissionRow,
   L3GradingResultRow,
 } from "../domain";
-import { findOutOfScopeIds, nextAnnotationStage, toStoredAnnotationReview } from "../domain/l3-grading";
+import {
+  findOutOfScopeIds,
+  gradableQuestionIds,
+  nextAnnotationStage,
+  toStoredAnnotationReview,
+} from "../domain/l3-grading";
 import { resolveSheetScopedQuestions } from "./l3-sheet-scope";
-import type { SubmitL3GradingInput } from "../schemas/service";
+import type { PendingGradingItem, SubmitL3GradingInput } from "../schemas/service";
+
+/** 缺参 fail-closed（与 l3-paper.service 同款；不引新模块为一个 5 行守卫）。 */
+function requireNonEmpty(value: string, field: string): void {
+  if (value.trim().length === 0) {
+    throw new BusinessRuleError(`${field} cannot be empty`, field);
+  }
+}
 
 type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
@@ -56,6 +68,11 @@ export interface GradingContextQuestion {
   answerIndex: L3QuestionAnswer;
   explanation: string | null;
   source_id: string | null;
+  /**
+   * 可评标记（ADR-0038 决策 4）：`false` = 该题在这张题纸上没有 active attempt，
+   * 提交 verdict 会被 422 拒。显式给出是让 agent **不必试错**。
+   */
+  gradable: boolean;
   /** 该题纸内最新一条 active attempt 的作答事实与主观快照；无则 null。 */
   attempt: { answer: Json; self_assessment: Json | null; created_at: string } | null;
   /** 该题纸 stage='submitted' 注记（提交即授权收口；历史正式注记群不开放）。 */
@@ -163,6 +180,12 @@ export class L3GradingService {
             answerIndex: question.answer,
             explanation: question.explanation,
             source_id: question.source_id,
+            /**
+             * 可评标记（ADR-0038 决策 4）：`false` = 该题在这张题纸上没有 active
+             * attempt，提交 verdict 会被 422 拒。显式给出是让 agent **不必试错** ——
+             * 否则它只能靠一次被拒的提交才发现「未作答不评」。
+             */
+            gradable: attempt !== null,
             attempt: attempt
               ? { answer: attempt.answer, self_assessment: attempt.self_assessment, created_at: attempt.created_at }
               : null,
@@ -178,6 +201,12 @@ export class L3GradingService {
   async getGradingResults(userId: string, sheetId: string): Promise<{
     sheet: L3SubmissionRow;
     results: L3GradingResultRow[];
+    /**
+     * 可评题数（ADR-0038 决策 8）= 该题纸已物化 active attempt 的题数。
+     * 「已评 n/m」的 `m` 必须是它：未作答的题不参与评卷，用题单总数当分母会让 UI
+     * 永久显示一个补不齐的缺口。
+     */
+    gradableCount: number;
   }> {
     return this.withActor(userId, async (repos) => {
       const sheet = await repos.l3Sheets.getSheet(userId, sheetId);
@@ -190,8 +219,33 @@ export class L3GradingService {
         });
       }
       this.assertSealed(sheet, "grading results");
-      return { sheet, results: await repos.l3Grading.listBySheet(userId, sheetId) };
+      const [results, scoped, attempts] = await Promise.all([
+        repos.l3Grading.listBySheet(userId, sheetId),
+        resolveSheetScopedQuestions(repos, userId, sheet),
+        repos.l3Sheets.listBySheet(userId, sheetId),
+      ]);
+      return {
+        sheet,
+        results,
+        gradableCount: gradableQuestionIds(scoped.map((question) => question.id), attempts).length,
+      };
     });
+  }
+
+  /**
+   * 待评卷清单（ADR-0038 决策 2）——agent 可读的**发现面**。
+   *
+   * 解决的具体问题：`GET /api/l3/sheets/:id/grading-context` 需要 sheetId，而 agent
+   * 此前拿不到「有哪些题纸待评卷」（档案面 owner-only；error-book 只列已评且判错的）
+   * ⇒ owner 必须口头报 id。本方法只回答「该评哪张」，取料仍走 grading-context。
+   */
+  async listPendingGrading(userId: string, limit: number): Promise<{
+    items: PendingGradingItem[];
+  }> {
+    requireNonEmpty(userId, "userId");
+    return this.withActor(userId, async (repos) => ({
+      items: await repos.l3Sheets.listPendingGradingSheets(userId, limit),
+    }));
   }
 
   /** 写面：评卷提交（事务内 results upsert + 注记 review 写入 + stage 流转）。 */
@@ -223,6 +277,24 @@ export class L3GradingService {
         throw new BusinessRuleError("questionId is outside the sheet question scope", undefined, {
           outOfScopeQuestionIds: outOfScopeQuestions,
         });
+      }
+
+      // ①-b 可评性校验（ADR-0038 决策 4）：作用域内**未作答**的题不接受 verdict。
+      // verdict 判的是用户作答；没有作答就没有可判的对象，让 agent 提交等于让它编。
+      // 收窄的连带好处：「已评 ⇒ 有 attempt ⇒ 题面已被 409 冻结」自动成立。
+      const attempts = await repos.l3Sheets.listBySheet(input.userId, input.sheetId);
+      const gradable = new Set(
+        gradableQuestionIds(scoped.map((question) => question.id), attempts),
+      );
+      const ungradable = input.results
+        .map((result) => result.questionId)
+        .filter((questionId) => !gradable.has(questionId));
+      if (ungradable.length > 0) {
+        throw new BusinessRuleError(
+          "未作答的题不参与评卷（verdict 判的是作答；请只提交该题纸已作答的题）",
+          undefined,
+          { ungradableQuestionIds: ungradable },
+        );
       }
 
       // ② annotationId 越集校验（该题纸已提交注记集合：submitted/confirmed 可评，

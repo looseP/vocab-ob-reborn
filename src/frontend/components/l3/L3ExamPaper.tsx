@@ -1127,6 +1127,8 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
   const [gradingResults, setGradingResults] = useState<Record<string, L3GradingResult>>({});
   /** F-1：评卷加载态机——idle（非 sealed）/ loading / ready / error（显式失败 + 重试，替代静默）。 */
   const [gradingPhase, setGradingPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  // ADR-0038 决策 8：可评数（来自 grading 读面；null = 尚未取到，回退题单总数）
+  const [gradingCoverageCount, setGradingCoverageCount] = useState<number | null>(null);
   /** 题纸单在途写屏障控制器（Task B）：输入序号 + 单在途，flush 即定格/导出屏障。 */
   const sheetSave = useRef<ExamSheetSaveController | null>(null);
   /** 未确认（非 clean）标记：离页守卫读取（订阅回调维护）。 */
@@ -1148,10 +1150,11 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
   const loadGradingResults = useCallback(async (sheetId: string) => {
     setGradingPhase("loading");
     try {
-      const rows = await fetchSheetGrading(sheetId);
+      const { results: rows, gradableCount } = await fetchSheetGrading(sheetId);
       const map: Record<string, L3GradingResult> = {};
       for (const row of rows) map[row.question_id] = row;
       setGradingResults(map);
+      setGradingCoverageCount(gradableCount);
       setGradingPhase("ready");
     } catch {
       setGradingPhase("error");
@@ -1908,6 +1911,12 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
 
   // F-1：评卷覆盖度（已评 n/m）与最近评卷时间（graded_at 最大者）——题纸栏状态条数据源。
   const gradedCount = Object.keys(gradingResults).length;
+  /**
+   * 可评数（ADR-0038 决策 8）。**未作答的题不参与评卷**，所以分母不是题单总数 ——
+   * 用总数会让「已评 n/m」永远差几题，而那几题并不是漏评，是没做。
+   * 取不到时回退题单总数（宁可粗略也不显示 0）。
+   */
+  const gradableTotal = gradingCoverageCount ?? totalQuestionCount;
   const lastGradedAt = useMemo(() => {
     let latest: string | null = null;
     for (const row of Object.values(gradingResults)) {
@@ -2071,7 +2080,7 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
                         )
                         : (
                           <>
-                            已评 <strong className="text-[var(--color-ink)]">{gradedCount}/{totalQuestionCount}</strong> 题
+                            已评 <strong className="text-[var(--color-ink)]">{gradedCount}/{gradableTotal}</strong> 题
                             {lastGradedAt ? ` · 最近评卷 ${formatSavedAt(lastGradedAt)}` : ""}
                           </>
                         ))}

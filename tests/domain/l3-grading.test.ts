@@ -4,9 +4,11 @@ import {
   GRADING_SUBMIT_RESULT_LIMIT,
   GRADING_VERDICTS,
   findOutOfScopeIds,
+  gradableQuestionIds,
   gradingSubmitInputSchema,
   nextAnnotationStage,
   toStoredAnnotationReview,
+  ungradableQuestionIds,
 } from "@/domain/l3-grading";
 
 const Q1 = "00000000-0000-4000-8000-000000000101";
@@ -106,5 +108,39 @@ describe("l3-grading domain contracts", () => {
       .toEqual({ verdict: "sound", corrected_tags: ["细节题"], comment: "ok" });
     expect(toStoredAnnotationReview({ annotationId: A1, verdict: "questionable" }))
       .toEqual({ verdict: "questionable" });
+  });
+});
+
+/**
+ * ADR-0038 决策 4：可评题集合的纯函数。
+ *
+ * 单一实现的理由：service 的上下文组装与提交校验**必须**用同一套判定，否则会出现
+ * 「agent 在上下文里看见 attempt=null 却仍被接受」或反之（两处口径漂移过一次）。
+ */
+describe("gradableQuestionIds / ungradableQuestionIds（ADR-0038 决策 4）", () => {
+  const A = "q1";
+  const B = "q2";
+  const C = "q3";
+
+  it("只认 active attempt；软删的不算（与读面同口径）", () => {
+    const attempts = [
+      { question_id: A, status: "active" },
+      { question_id: B, status: "deleted" },
+    ];
+    expect(gradableQuestionIds([A, B, C], attempts)).toEqual([A]);
+    expect(ungradableQuestionIds([A, B, C], attempts)).toEqual([B, C]);
+  });
+
+  it("保持作用域顺序（verdict 与上下文顺序一致，agent 不会对不上号）", () => {
+    const attempts = [{ question_id: C, status: "active" }, { question_id: A, status: "active" }];
+    expect(gradableQuestionIds([A, B, C], attempts)).toEqual([A, C]);
+  });
+
+  it("attempt 指向作用域外的题时不污染可评集（作用域才是权威）", () => {
+    expect(gradableQuestionIds([A], [{ question_id: "stranger", status: "active" }])).toEqual([]);
+  });
+
+  it("零作答 → 可评集为空（此时任何 verdict 都该被拒，而不是「都算对」）", () => {
+    expect(gradableQuestionIds([A, B], [])).toEqual([]);
   });
 });

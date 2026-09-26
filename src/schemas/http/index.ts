@@ -404,6 +404,12 @@ export const l3PaperUpdateSchema = z.object({
   sections: z.array(l3PaperUpdateSectionSchema).min(1).max(20),
 }).strict();
 
+// ── 待评卷清单（ADR-0038 决策 2）───────────────────────────────────────
+
+/** GET /l3/sheets/pending-grading：只接受 limit（上限 100，防止一次性拉全量档案）。 */
+export const l3PendingGradingQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+}).strict();
 // ── 待录 / 采纳（ADR-0037 决策 4、6）───────────────────────────────────
 // 待录列表是 owner 的**核对面**，所以它必须带足核对所需的事实：答案键 + 每条
 // 证据锚点在原文里的**实际切片**（服务端算，不让前端自己按 offset 猜 —— 猜错

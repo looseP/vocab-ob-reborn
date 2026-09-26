@@ -42,6 +42,11 @@ const l3GradingContextQuestionSchema = z.object({
   answerIndex: l3QuestionAnswerResponseSchema,
   explanation: z.string().nullable(),
   source_id: z.string().uuid().nullable(),
+  /**
+   * 可评标记（ADR-0038 决策 4）：false = 该题在这张题纸上没有 active attempt，
+   * 提交 verdict 会被 422 拒。显式给出是让 agent 不必靠一次被拒的提交才发现。
+   */
+  gradable: z.boolean(),
   attempt: z.object({
     answer: jsonValueSchema,
     self_assessment: jsonValueSchema.nullable(),
@@ -77,4 +82,29 @@ export const l3GradingSubmitResponseSchema = z.object({
 export const l3GradingResultsResponseSchema = z.object({
   sheet: l3SubmissionResponseSchema,
   results: z.array(l3GradingResultResponseSchema),
+  /**
+   * 可评题数（ADR-0038 决策 8）= 已物化 active attempt 的题数。「已评 n/m」的 m
+   * 必须是它：未作答的题不参与评卷，用题单总数当分母会显示一个补不齐的缺口。
+   */
+  gradableCount: z.number().int().nonnegative(),
+}).strict();
+
+/**
+ * GET /l3/sheets/pending-grading（ADR-0038 决策 2；agent 可读发现面）。
+ *
+ * **只给身份与计数**：不含题干/选项/答案/解析/作答/注记。取料走 grading-context
+ * （那里带答案，是 D8 的显式例外面）；本面只回答「agent 该评哪张」。
+ */
+export const l3PendingGradingItemResponseSchema = z.object({
+  id: z.string().uuid(),
+  scope: z.string(),
+  sealed_at: z.string(),
+  graded_count: z.number().int().nonnegative(),
+  gradable_count: z.number().int().nonnegative(),
+  question_count: z.number().int().nonnegative(),
+  venue_title: z.string().nullable(),
+}).strict();
+
+export const l3PendingGradingListResponseSchema = z.object({
+  items: z.array(l3PendingGradingItemResponseSchema),
 }).strict();

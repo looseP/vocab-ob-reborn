@@ -348,6 +348,23 @@ export class L3PaperService {
         );
       }
 
+      // 护栏（ADR-0038 决策 5）：已有评卷结果的题也不可改。
+      // 正常数据下「已评 ⇒ 有 attempt ⇒ 上一条已拦」，本条防的是**本 ADR 之前**
+      // 写入的「有 verdict 无 attempt」行 —— 那类行题面本可改，改了之后判定就
+      // 指向另一道题（错题库里会留下一条关于旧题面的判定）。
+      const gradingCount = await repos.l3Paper.countQuestionGradings(input.userId, input.questionId);
+      if (gradingCount > 0) {
+        throw new ConflictError(
+          "Cannot edit a question that already has grading results（判定对象必须稳定；请复制为新题）",
+          undefined,
+          {
+            entityType: "question",
+            id: input.questionId,
+            blockers: { gradings: gradingCount },
+          },
+        );
+      }
+
       const writingRefs = await repos.l3Paper.listWritingTaskRefs(input.userId, input.questionId);
       if (writingRefs.length > 0) {
         throw new ConflictError("Cannot edit a question referenced by an active writing task", undefined, {
@@ -672,7 +689,16 @@ export class L3PaperService {
     });
   }
 
-  /** 删题护栏③：active 卷面引用中的题 / 被作文任务引用的题不可删，409 带引用清单（中文化在 HTTP 层）。 */
+  /**
+   * 删题护栏（409 家族）：被作文任务 / active 卷面 / 学习笔记引用的题不可删
+   * （中文化在 HTTP 层）。
+   *
+   * **护栏④（ADR-0038 决策 6）**：已有**题级作答**或**评卷结果**的题不可删。
+   * 二者都是已发生的事实，而删题是销毁：`l3_grading_results.question_id` 与
+   * `l3_question_attempts.question_id` 都是 `onDelete:"cascade"`，此前删题会
+   * **静默**吃掉它们 —— 错题库无声缩小、档案 `graded_count` 下降，用户看不出任何
+   * 东西被销毁。这条与 P3-1 的「答案历史不可改写」同一纪律：改不得，删更不得。
+   */
   async deleteQuestion(input: DeleteL3QuestionInput): Promise<{ deleted: true }> {
     return this.withActor(input.userId, async (repos, tx) => {
       const question = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
@@ -712,6 +738,25 @@ export class L3PaperService {
       const noteBlockers = await repos.studyReferences.getQuestionDeleteBlockers(input.userId, input.questionId);
       if (noteBlockers.length > 0) {
         throw questionStudyNoteConflict(input.questionId, noteBlockers);
+      }
+
+      // 护栏④（ADR-0038 决策 6）：已发生的事实不可被销毁。
+      // 放在笔记 blocker 之后、SAVEPOINT 之前 —— 与既有护栏同一事务内判，无窗口。
+      const attemptCount = await repos.l3Paper.countQuestionAttempts(input.userId, input.questionId);
+      const gradingCount = await repos.l3Paper.countQuestionGradings(input.userId, input.questionId);
+      if (attemptCount > 0 || gradingCount > 0) {
+        throw new ConflictError(
+          "Cannot delete L3 question that already has answer history or grading（已发生的事实不可销毁）",
+          undefined,
+          {
+            entityType: "question",
+            id: input.questionId,
+            blockers: { attempts: attemptCount, gradings: gradingCount },
+            resolution: attemptCount > 0
+              ? "keep_the_question"
+              : "grading_results_reference_this_question",
+          },
+        );
       }
 
       // F1：FK 兜底必须先恢复失败事务（保存点）再重查 blocker——aborted 事务内查询

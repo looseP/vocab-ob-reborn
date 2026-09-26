@@ -93,6 +93,8 @@ export const l3SheetArchiveItemResponseSchema = z.object({
   created_at: z.string(),
   /** 该题纸已评题数（grading_results 行数；draft 恒 0）——「待评卷/已评 n 题」数据源。 */
   graded_count: z.number().int().nonnegative(),
+  /** 可评数（ADR-0038 决策 8）：已物化 active attempt 的题数，「已评 n/m」的分母。 */
+  gradable_count: z.number().int().nonnegative(),
   /** 展示标题：file 域取来源标题、paper 域取卷标题（来源删除级联题纸，保留 nullable 兜底）。 */
   venue_title: z.string().nullable(),
 }).strict();

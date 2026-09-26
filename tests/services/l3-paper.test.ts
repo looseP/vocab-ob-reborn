@@ -67,6 +67,7 @@ function makePaperRepo(overrides: Partial<IL3PaperRepository> = {}): IL3PaperRep
       updated_at: "2026-09-16T00:00:00Z",
     })),
     listPendingQuestions: vi.fn(async () => ({ items: [], total: 0 })),
+    countQuestionGradings: vi.fn(async () => 0),
     acceptPendingQuestions: vi.fn(async () => []),
     rejectPendingQuestion: vi.fn(async () => true),
     findPaperById: vi.fn(async () => null),
@@ -1236,5 +1237,70 @@ describe("getPracticeFile（file venue 数据源）", () => {
     expect(detail.source_content).toBeNull();
     expect(detail.file_key).toBe("translation-group-1");
     expect(detail.questions).toHaveLength(1);
+  });
+});
+
+/**
+ * ADR-0038 决策 5/6：已发生的事实既不可改写（PATCH）也不可销毁（DELETE）。
+ *
+ * 背景：此前 `deleteQuestion` 的 blocker 只有作文任务 / active 卷面 / 学习笔记，
+ * **不查 attempts、不查 grading**，而两者的 FK 都是 `onDelete:"cascade"` ⇒ 删题会
+ * 静默销毁答案历史与评卷判定，错题库无声缩小。
+ */
+describe("已发生事实护栏（ADR-0038 决策 5/6）", () => {
+  const QID = "00000000-0000-4000-8000-000000000501";
+
+  it("PATCH：有评卷结果但无作答（历史脏行）→ 409（防判定指向另一道题）", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QID })),
+      countQuestionAttempts: vi.fn(async () => 0),
+      countQuestionGradings: vi.fn(async () => 1),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+    const err = await service.updateQuestion({
+      userId: USER_ID, actor: { role: "owner" }, questionId: QID, stem: "改题面",
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as { meta?: { blockers?: { gradings?: number } } }).meta?.blockers?.gradings).toBe(1);
+    expect(updateQuestion).not.toHaveBeenCalled();
+  });
+
+  it("DELETE：有作答历史 → 409（答案历史不可销毁，与「不可改写」同纪律）", async () => {
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QID })),
+      countQuestionAttempts: vi.fn(async () => 2),
+      countQuestionGradings: vi.fn(async () => 0),
+    });
+    service = makeService(paperRepo, contextRepo);
+    const err = await service.deleteQuestion({ userId: USER_ID, questionId: QID }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as { meta?: { blockers?: { attempts?: number } } }).meta?.blockers?.attempts).toBe(2);
+  });
+
+  it("DELETE：有评卷结果 → 409（判定不可被 cascade 静默吃掉）", async () => {
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QID })),
+      countQuestionAttempts: vi.fn(async () => 0),
+      countQuestionGradings: vi.fn(async () => 1),
+    });
+    service = makeService(paperRepo, contextRepo);
+    const err = await service.deleteQuestion({ userId: USER_ID, questionId: QID }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as { meta?: { resolution?: string } }).meta?.resolution).toBe("grading_results_reference_this_question");
+  });
+
+  it("DELETE：干净题仍可删（护栏④ 不误伤正常删除）", async () => {
+    const deleteQuestionRepo = vi.fn(async () => true);
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QID })),
+      countQuestionAttempts: vi.fn(async () => 0),
+      countQuestionGradings: vi.fn(async () => 0),
+      deleteQuestion: deleteQuestionRepo as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.deleteQuestion({ userId: USER_ID, questionId: QID })).resolves.toEqual({ deleted: true });
+    expect(deleteQuestionRepo).toHaveBeenCalled();
   });
 });

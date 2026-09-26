@@ -1568,6 +1568,11 @@ export interface IL3PaperRepository {
   /** 题面已有作答数（改题面护栏用；owner 作用域）。 */
   countQuestionAttempts(userId: string, questionId: string): Promise<number>;
   /**
+   * 题面已有评卷结果数（ADR-0038 决策 5/6）：改题面防历史脏行、删题防销毁判定。
+   * owner 作用域。
+   */
+  countQuestionGradings(userId: string, questionId: string): Promise<number>;
+  /**
    * 待录题（status='pending'）分页列表 —— owner 的核对面（ADR-0037 决策 6）。
    * 全库唯一显式取 pending 的读面；所有做题/错题读面仍只认 active。
    */
@@ -1597,6 +1602,7 @@ export interface IL3PaperRepository {
   /** 改卷（2026-09-26）：标题/方向/元信息/payload；条件 UPDATE 带 `status='active'`。 */
   updatePaper(input: UpdateL3Paper): Promise<L3PaperRow | null>;
   listPapers(input: L3PaperLookup): Promise<L3PaperListPage>;
+
 }
 
 /** 改题面入参（每个字段都是最终值；null = 清空）。 */
@@ -1800,6 +1806,25 @@ export interface IL3SheetRepository {
   countAnsweredBySheet(userId: string, sheetId: string): Promise<number>;
   /** F-1：题纸档案列表（回看闭环入口；draft/sealed 新→旧，含已评计数与展示标题；仅 file/paper 域）。 */
   listArchive(userId: string, limit: number): Promise<L3SheetArchiveRow[]>;
+  /**
+   * 补写题单快照（ADR-0038 决策 7）：legacy `question_ids IS NULL` 行在定格时
+   * 把当时的作用域题集写回。谓词含 `IS NULL` ⇒ 幂等且并发安全。
+   */
+  freezeQuestionIds(userId: string, sheetId: string, questionIds: readonly string[]): Promise<boolean>;
+  /**
+   * 待评卷清单（ADR-0038 决策 2）：agent 可读发现面，**只给计数与身份，不给题面**。
+   * `gradable_count` = 已物化 active attempt 的题数（可评数，决策 4/8）；未作答的题
+   * 不参与评卷，故不计入分母。
+   */
+  listPendingGradingSheets(userId: string, limit: number): Promise<Array<{
+    id: string;
+    scope: string;
+    sealed_at: string;
+    graded_count: number;
+    gradable_count: number;
+    question_count: number;
+    venue_title: string | null;
+  }>>;
   /** W3：写作任务 → question_id 只读查询（作用域解析器 writing 分支用；不触发创建）。 */
   findWritingTaskQuestionId(userId: string, taskId: string): Promise<string | null>;
 }

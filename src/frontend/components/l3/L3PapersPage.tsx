@@ -1042,6 +1042,37 @@ function formatArchiveStamp(iso: string): string {
  * F-1：题纸档案（回看闭环入口）——draft/sealed 新→旧。
  * 「查看解析」走 ?sheet= 深链（只读回看，不新建草稿）；「再做一次」走常规开纸入口。
  */
+/**
+ * 一行评卷指令（ADR-0038 决策 3）。
+ *
+ * 端点名写进文案是有意的：owner 把它粘给本地 agent 后，agent 就能自取自评闭环，
+ * 不必再口头描述「评哪张卷」。刻意**不写 schema 细节** —— 端点契约会变，指令不该
+ * 变成第二份契约。
+ */
+function gradingInstructionText(sheetId: string): string {
+  return [
+    `请评卷题纸 ${sheetId}：`,
+    `1) GET /api/l3/sheets/${sheetId}/grading-context 取评卷上下文（含标准答案；只评 gradable=true 的题）`,
+    `2) POST /api/l3/sheets/${sheetId}/grading 提交 verdict（同一端点重复提交即改判）`,
+  ].join("\n");
+}
+
+async function copyGradingInstruction(
+  item: L3SheetArchiveItem,
+  onToast: (kind: "success" | "error", msg: string) => void,
+): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(gradingInstructionText(item.id));
+    onToast("success", "评卷指令已复制，粘给本地 agent 即可");
+  } catch {
+    onToast("error", "复制失败：请手动记下题纸 id");
+  }
+}
+
+/** 可评数（未作答的题不参与评卷，ADR-0038 决策 4）。 */
+function gradableCount(item: L3SheetArchiveItem): number {
+  return item.gradable_count;
+}
 function ArchiveTab({ onToast }: { onToast: (kind: "success" | "error", msg: string) => void }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<L3SheetArchiveItem[] | null>(null);
@@ -1114,6 +1145,23 @@ function ArchiveTab({ onToast }: { onToast: (kind: "success" | "error", msg: str
                 <button type="button" onClick={() => openNormal(item)} className="font-medium text-[var(--color-accent)]">继续作答</button>
               ) : (
                 <>
+                  {/*
+                    ADR-0038 决策 3：评卷走**本地 agent 拉取**（无 webhook/轮询，ADR-0030 §4），
+                    所以 owner 需要一个能直接递给 agent 的抓手。复制的是**给人看的一行指令**
+                    （含 sheetId 与两个端点名），不是深链 —— agent 不点页面。
+                    只在「还没评完」时出现：已评完再提示评卷是噪声。
+                  */}
+                  {gradableCount(item) > item.graded_count && (
+                    <button
+                      type="button"
+                      data-action="copy-grading-instruction"
+                      onClick={() => void copyGradingInstruction(item, onToast)}
+                      className="text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+                      title="复制一行评卷指令，粘给本地 agent"
+                    >
+                      复制评卷指令
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => navigate(`/l3?sheet=${encodeURIComponent(item.id)}`)}

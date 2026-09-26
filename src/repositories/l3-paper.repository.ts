@@ -227,6 +227,25 @@ export class L3PaperRepository extends BaseRepository implements IL3PaperReposit
     return Number(row?.count ?? 0);
   }
 
+  /**
+   * 题面是否已有评卷结果（ADR-0038 决策 5/6）。
+   *
+   * 两处护栏复用：
+   *  - 改题面：正常数据下「已评 ⇒ 有 attempt ⇒ 已被 409 拦下」，本查询防的是
+   *    **本 ADR 之前**写入的「有 verdict 无 attempt」脏行 —— 那类行的题面本可被改，
+   *    改了之后判定就指向另一道题。
+   *  - 删题：评卷结果是**已发生的事实**，删题是销毁（FK cascade 会静默吃掉，
+   *    错题库无声缩小）。
+   */
+  async countQuestionGradings(userId: string, questionId: string): Promise<number> {
+    const row = await this.queryOne<{ count: string }>(
+      `SELECT count(*)::bigint AS count FROM l3_grading_results
+        WHERE user_id = $1::uuid AND question_id = $2::uuid`,
+      [userId, questionId],
+    );
+    return Number(row?.count ?? 0);
+  }
+
   /** 改卷（2026-09-26）：标题/方向/元信息/payload。条件 UPDATE 带 `status='active'`。 */
   async updatePaper(input: UpdateL3Paper): Promise<L3PaperRow | null> {
     const row = await this.queryOne<PaperDbRow>(

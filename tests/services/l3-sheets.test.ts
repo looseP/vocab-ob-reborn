@@ -99,6 +99,8 @@ function makeSheetRepo(overrides: Partial<IL3SheetRepository> = {}): IL3SheetRep
     listBySheet: vi.fn(async () => []),
     countAnsweredBySheet: vi.fn(async () => 0),
     listArchive: vi.fn(async () => []),
+    // ADR-0038 决策 7：定格补冻结（legacy question_ids IS NULL 时写回作用域题集）
+    freezeQuestionIds: vi.fn(async () => true),
     ...overrides,
   } as IL3SheetRepository;
   return repo;
@@ -451,6 +453,40 @@ describe("L3SheetService 通用写面 vs writing 稿（W3 旁路封堵）", () =
       .rejects.toMatchObject({ httpStatus: 409, meta: { code: "WRITING_ENDPOINT_REQUIRED" } });
   });
 });
+
+  /**
+   * ADR-0038 决策 7：定格时补冻结题单快照。
+   *
+   * 背景：0046 回填只覆盖「≥1 attempt」的题纸，故**零题作答的 full 档 sealed 题纸**
+   * 的 `question_ids` 恒为 null → 解析时现拉题集 → 之后改卷就能改掉一张已定格
+   * 题纸的题单，与「题单只缩不换」相悖。
+   */
+  it("legacy 题纸（question_ids=null）定格 full 时补冻结作用域题集", async () => {
+    const freezeQuestionIds = vi.fn(async () => true);
+    const service = makeService(
+      makeSheetRepo({ freezeQuestionIds: freezeQuestionIds as never }),
+      makePaperRepo({ listActiveQuestionsForFile: vi.fn(async () => [questionRow({ id: "q-a" }), questionRow({ id: "q-b" })] as never) }),
+    );
+    await service.sealSheet({
+      userId: USER, sheetId: SHEET, mode: "full", expectedVersion: 0, acknowledgeUnanswered: true,
+    } as never);
+    expect(freezeQuestionIds).toHaveBeenCalledWith(USER, SHEET, ["q-a", "q-b"]);
+  });
+
+  it("已有快照的题纸定格时**不**补冻结（谓词含 IS NULL，重复写无意义）", async () => {
+    const freezeQuestionIds = vi.fn(async () => false);
+    const service = makeService(
+      makeSheetRepo({
+        getSheet: vi.fn(async () => submissionRow({ question_ids: ["q-a"] }) as never),
+        freezeQuestionIds: freezeQuestionIds as never,
+      }),
+      makePaperRepo({ listActiveQuestionsForFile: vi.fn(async () => [questionRow({ id: "q-a" })] as never) }),
+    );
+    await service.sealSheet({
+      userId: USER, sheetId: SHEET, mode: "full", expectedVersion: 0,
+    } as never);
+    expect(freezeQuestionIds).not.toHaveBeenCalled();
+  });
 
 describe("L3SheetService.sealSheet", () => {
   it("404s for a missing sheet and 409s for a settled one", async () => {
@@ -858,6 +894,7 @@ describe("L3SheetService.listArchive（F-1 题纸档案）", () => {
       seal_mode: "full",
       sealed_at: "2026-09-18T00:10:00.000Z",
       created_at: "2026-09-18T00:00:00.000Z",
+      gradable_count: 3,
       graded_count: 3,
       venue_title: "WA 阅读理解文件",
     }];

@@ -44,8 +44,8 @@ function gradingItem(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeServices(l3Grading: Record<string, unknown>): Services {
-  return { l3Grading } as unknown as Services;
+function makeServices(l3Grading: Record<string, unknown>, l3Paper: Record<string, unknown> = {}): Services {
+  return { l3Grading, l3Paper } as unknown as Services;
 }
 
 describe("GET /api/l3/sheets/:id/grading-context（agent 面）", () => {
@@ -177,5 +177,70 @@ describe("POST /api/l3/annotations/:id/confirm（owner 处置，D18）", () => {
     }));
     const res = await app.request(`/api/l3/annotations/${ANNOTATION_ID}/confirm`, { method: "POST", headers: AUTH_HEADERS });
     expect(res.status).toBe(409);
+  });
+});
+
+/**
+ * ADR-0038 决策 2：待评卷清单的 HTTP 面。
+ *
+ * 授权判据是本组的核心断言：清单**必须**对 agent 开放（否则 agent 只能靠 owner 口头
+ * 报 sheetId，ADR-0029 决策 1「读全量」落空），且**不得**顺带把 owner 的题纸档案
+ * 一起开放。
+ */
+describe("GET /api/l3/grading/pending-sheets（待评卷清单 · ADR-0038）", () => {
+  it("agent 令牌可读（这是 agent 唯一的发现面）", async () => {
+    const listPendingGrading = vi.fn(async () => ({
+      items: [{
+        id: "00000000-0000-4000-8000-000000000401",
+        scope: "file",
+        sealed_at: "2026-09-26T00:00:00Z",
+        graded_count: 0,
+        gradable_count: 4,
+        question_count: 5,
+        venue_title: "2023 英一 Text 1",
+      }],
+    }));
+    const app = createApp(makeServices({ listPendingGrading }));
+    const res = await app.request("/api/l3/grading/pending-sheets", { headers: AGENT_HEADERS });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ gradable_count: 4, graded_count: 0 });
+    // 最小披露：响应里不得出现题面/答案/作答
+    expect(Object.keys(body.items[0]!)).toEqual([
+      "id", "scope", "sealed_at", "graded_count", "gradable_count", "question_count", "venue_title",
+    ]);
+    expect(listPendingGrading).toHaveBeenCalledWith("user-123", 50);
+  });
+
+  it("owner 令牌同样可读（判卷信箱是同一个数据源）", async () => {
+    const listPendingGrading = vi.fn(async () => ({ items: [] }));
+    const app = createApp(makeServices({ listPendingGrading }));
+    const res = await app.request("/api/l3/grading/pending-sheets", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { items: unknown[] }).toEqual({ items: [] });
+  });
+
+  it("未认证 → 401（不匿名泄漏「有几张题纸待评」）", async () => {
+    const app = createApp(makeServices({ listPendingGrading: vi.fn() }));
+    const res = await app.request("/api/l3/grading/pending-sheets");
+    expect(res.status).toBe(401);
+  });
+
+  it("limit 非法 → 400（防止一次性拉全量档案）", async () => {
+    const listPendingGrading = vi.fn();
+    const app = createApp(makeServices({ listPendingGrading }));
+    for (const query of ["?limit=0", "?limit=101", "?limit=abc", "?extra=1"]) {
+      const res = await app.request(`/api/l3/grading/pending-sheets${query}`, { headers: AUTH_HEADERS });
+      expect(res.status, query).toBe(400);
+    }
+    expect(listPendingGrading).not.toHaveBeenCalled();
+  });
+
+  it("题纸档案仍 owner-only（本卡刻意不开它）", async () => {
+    const listSheets = vi.fn();
+    const app = createApp(makeServices({}, { listPapers: listSheets }));
+    const res = await app.request("/api/l3/sheets", { headers: AGENT_HEADERS });
+    expect(res.status).toBe(403);
+    expect(listSheets).not.toHaveBeenCalled();
   });
 });
