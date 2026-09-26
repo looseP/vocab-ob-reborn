@@ -54,6 +54,12 @@
   （但 `kind` 枚举加 `grading` 仍需一次 CHECK 迁移）。ADR-0039 收紧了重开条件：若日后真的要
   「读改判前的评卷」，须**新开 ADR**，且**优先在读面放宽**（grading 读面 `?includeHistory`），
   **不**改表结构去掉 latest-wins。
+  → **2026-09-26 已交付（PR #142，迁移 0047）**：第 4 条链落地。要点回头看 —— 身份
+  `{sheetId, questionId}` 指向**当前**那一格；`field_hash` 只吃 `verdict + analysis_md`，
+  所以 `graded_by` / `graded_at` / 题序变化**不**产生 changed，而改判**必然**可见；
+  合法目标只有 `sealed` 题纸。**零新增列**：复用 `question_id + submission_id`，
+  迁移只放宽三处 CHECK。changed 在这条链上是承重路径（与 attempt 引用恰好相反 ——
+  后者不可变，所以没有 changed）。
 
 ### 3.3 D4 / P5 冻结 — attempt 身份、历史语义、归档与删除
 
