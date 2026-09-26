@@ -27,6 +27,7 @@ import {
   questionTypeAllowsSourceless,
   questionTypeSpace,
   validatePaperPayloadShape,
+  type L3EvidenceAnchor,
   type L3PaperPayload,
   type L3PaperSection,
   type L3QuestionType,
@@ -39,12 +40,51 @@ import type {
   GetL3PracticeFileInput,
   ListL3PapersInput,
   ListL3PracticeFilesInput,
+  UpdateL3PaperInput,
+  UpdateL3PaperSectionInput,
+  UpdateL3QuestionInput,
 } from "../schemas/service";
 
 type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 const DIRECTIONS = ["通用", "考研", "雅思"] as const;
+
+/**
+ * 证据锚点归一（2026-09-26）。形状已由 HTTP schema 把关（start/end/label +
+ * end>start）；这里做**读侧同一份**的防御性归一，让 service 层的两个调用点
+ * （createPaper 逐题 / updateQuestion）不必各自重复 cast。
+ * 保持顺序（阅读顺序 = 证据出现顺序），去重按 (start,end,label)。
+ */
+function normalizeEvidence(input: readonly L3EvidenceAnchor[]): L3EvidenceAnchor[] {
+  const seen = new Set<string>();
+  const out: L3EvidenceAnchor[] = [];
+  for (const anchor of input) {
+    const label = anchor.label.trim();
+    if (!Number.isInteger(anchor.start) || !Number.isInteger(anchor.end)) continue;
+    if (anchor.start < 0 || anchor.end <= anchor.start || label.length === 0) continue;
+    const key = `${anchor.start}:${anchor.end}:${label}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ start: anchor.start, end: anchor.end, label });
+  }
+  return out;
+}
+
+/** 越界证据当场 422：正文长度是用户可核对的事实，错误信息必须带上它。 */
+function assertEvidenceWithinText(
+  evidence: readonly L3EvidenceAnchor[],
+  textLength: number,
+  sourceId: string,
+): void {
+  const outOfRange = evidence.find((anchor) => anchor.end > textLength);
+  if (outOfRange) {
+    throw new ValidationError(
+      `evidence 越界：正文长度 ${textLength}，但锚点 end=${outOfRange.end}（sourceId=${sourceId}）`,
+      "evidence",
+    );
+  }
+}
 
 function requireEnum(value: string, allowed: readonly string[], field: string): void {
   if (!allowed.includes(value)) {
@@ -230,6 +270,159 @@ export class L3PaperService {
       }
 
       return { paper, questions: created, questionCount: created.length };
+    });
+  }
+
+  /**
+   * 改题面（2026-09-26）。
+   *
+   * 为什么需要：改题面此前**没有出口**——`deleteQuestion` 对"被 active 卷面/作文
+   * 任务/学习笔记引用"的题返 409，于是「卷面里一道题有错字」既不能改也不能删，
+   * 是个死胡同。
+   *
+   * 护栏（题面冻结，与删题同族但更宽——允许"没人做过"的题改）：
+   *  - **已有作答历史 → 409**：attempts 记的是"当时那道题"的作答与判分；改题面
+   *    等于让历史描述另一道题（与 ADR-0034「attempt 只存作答事实、判定归
+   *    grading_results」同源的不变式：判定的对象必须稳定）。
+   *  - **被作文任务引用 → 409**：题面冻结是《writing-workspace》§2 的钉死条款
+   *    （改题面 = 新任务）。
+   *  - **被学习笔记引用 → 放行**：那正是 N2 chain01 的 `field_hash` → `changed`
+   *    机制存在的理由（引用快照不变、状态转为"底层已改"并提示），拦下来反而
+   *    让机制无从触发。
+   *  - 被 active 卷面引用但无人作答 → 放行（题单在开纸时已定格，见 0046；改题面
+   *    不改变任何已定格的题单）。
+   */
+  async updateQuestion(input: UpdateL3QuestionInput): Promise<{ question: L3QuestionRow }> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.stem, "stem");
+
+    return this.withActor(input.userId, async (repos) => {
+      const existing = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
+      if (!existing) throw new NotFoundError("L3Question", input.questionId);
+      if (existing.status !== "active") {
+        throw new ConflictError("Only active questions can be edited", undefined, {
+          entityType: "question",
+          id: input.questionId,
+          status: existing.status,
+        });
+      }
+
+      const attemptCount = await repos.l3Paper.countQuestionAttempts(input.userId, input.questionId);
+      if (attemptCount > 0) {
+        throw new ConflictError(
+          "Cannot edit a question that already has answer history（答案历史不可改写；请复制为新题）",
+          undefined,
+          {
+            entityType: "question",
+            id: input.questionId,
+            blockers: { attempts: attemptCount },
+          },
+        );
+      }
+
+      const writingRefs = await repos.l3Paper.listWritingTaskRefs(input.userId, input.questionId);
+      if (writingRefs.length > 0) {
+        throw new ConflictError("Cannot edit a question referenced by an active writing task", undefined, {
+          entityType: "question",
+          id: input.questionId,
+          blockers: { writingTasks: writingRefs.map((t) => ({ id: t.id, title: t.title })) },
+        });
+      }
+
+      // 证据锚点：形状已由 HTTP schema 把关；这里补**越界**检查——offset 落在材料
+      // 正文之外时，读侧只会静默丢弃该锚点（buildPassageSpans.validRange），
+      // 那等于用户白填一个证据。改为当场 422 并说清正文长度。
+      const evidence = normalizeEvidence(input.evidence ?? []);
+      if (evidence.length > 0 && existing.source_id) {
+        const source = await repos.l3Context.findSourceById(input.userId, existing.source_id);
+        const textLength = source?.content_text?.length ?? null;
+        if (textLength !== null) assertEvidenceWithinText(evidence, textLength, existing.source_id);
+      }
+
+      const question = await repos.l3Paper.updateQuestion({
+        question_id: input.questionId,
+        user_id: input.userId,
+        stem: input.stem.trim(),
+        options: (input.options ?? []) as unknown as Json,
+        answer: (input.answer ?? {}) as Json,
+        explanation: input.explanation?.trim() || null,
+        evidence: evidence as unknown as Json,
+        ordinal: Number.isInteger(input.ordinal) && (input.ordinal as number) >= 0 ? (input.ordinal as number) : existing.ordinal,
+        input_hash: existing.input_hash,
+      });
+      if (!question) {
+        // 条件 UPDATE 落空 = 并发下状态已变（被删/被驳回）：与删题同款二次判别。
+        const latest = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
+        if (!latest) throw new NotFoundError("L3Question", input.questionId);
+        throw new ConflictError("L3 question is no longer active", undefined, {
+          entityType: "question",
+          id: input.questionId,
+          status: latest.status,
+        });
+      }
+      return { question };
+    });
+  }
+
+  /**
+   * 改卷（2026-09-26）：标题/方向/元信息/**题单引用**。题单改动让"从卷里换掉一道题"
+   * 成为可能（此前只能删卷重建）。归属与形状双校验：payload 过
+   * `validatePaperPayloadShape`，且所有 questionId 必须是**本 owner 的 active 题**
+   * （别人的题 id 猜到了也塞不进来）。
+   */
+  async updatePaper(input: UpdateL3PaperInput): Promise<{ paper: L3PaperRow }> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.title, "title");
+    const direction = trimOrNull(input.direction ?? null) as (typeof DIRECTIONS)[number] | null;
+    if (direction) requireEnum(direction, DIRECTIONS, "direction");
+    const payload: L3PaperPayload = {
+      version: PAPER_PAYLOAD_VERSION,
+      sections: (input.sections ?? []) as L3PaperPayload["sections"],
+    };
+    if (payload.sections.length === 0) {
+      throw new ValidationError("试卷至少包含一个 section", "sections");
+    }
+    validatePaperPayloadShape(payload);
+
+    return this.withActor(input.userId, async (repos) => {
+      const existing = await repos.l3Paper.findPaperById(input.userId, input.paperId);
+      if (!existing) throw new NotFoundError("L3Paper", input.paperId);
+      if (existing.status !== "active") {
+        throw new ConflictError("Only active papers can be edited", undefined, {
+          entityType: "paper",
+          id: input.paperId,
+          status: existing.status,
+        });
+      }
+
+      const questionIds = [...new Set(payload.sections.flatMap((section) => section.questionIds))];
+      const owned = await repos.l3Paper.findActiveQuestionsByIds(input.userId, questionIds);
+      if (owned.length !== questionIds.length) {
+        throw new ValidationError(
+          "sections 引用了不存在、非 active 或不属主的题目",
+          "sections",
+        );
+      }
+
+      const paper = await repos.l3Paper.updatePaper({
+        paper_id: input.paperId,
+        user_id: input.userId,
+        title: input.title.trim(),
+        direction,
+        metadata: (input.metadata ?? existing.metadata) as Json,
+        payload: payload as unknown as { version: number; sections: unknown[] },
+        input_hash: existing.input_hash,
+      });
+      if (!paper) {
+        const latest = await repos.l3Paper.findPaperById(input.userId, input.paperId);
+        if (!latest) throw new NotFoundError("L3Paper", input.paperId);
+        throw new ConflictError("L3 paper is no longer active", undefined, {
+          entityType: "paper",
+          id: input.paperId,
+          status: latest.status,
+        });
+      }
+      return { paper };
     });
   }
 

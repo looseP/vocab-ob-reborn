@@ -31,11 +31,13 @@ import {
 import { l3SpaceSummaryResponseSchema } from "./l3-summary-response-contract";
 import {
   l3PaperCreateResponseSchema,
+  l3PaperUpdateResponseSchema,
   l3PaperDetailResponseSchema,
   l3PaperListResponseSchema,
   l3PracticeFileDetailResponseSchema,
   l3PracticeFileListResponseSchema,
   l3QuestionCreateResponseSchema,
+  l3QuestionUpdateResponseSchema,
   l3QuestionDeleteResponseSchema,
 } from "./l3-paper-response-contract";
 import {
@@ -172,10 +174,12 @@ import {
   l3OccurrenceCreateSchema,
   l3OccurrenceListQuerySchema,
   l3PaperCreateSchema,
+  l3PaperUpdateSchema,
   l3PaperListQuerySchema,
   l3PracticeFileDetailQuerySchema,
   l3PracticeFileListQuerySchema,
   l3QuestionCreateSchema,
+  l3QuestionUpdateSchema,
   l3QuestionAnnotationCreateSchema,
   l3QuestionAnnotationListQuerySchema,
   l3QuestionAnnotationPatchSchema,
@@ -520,9 +524,14 @@ export const apiOperations = [
   operation("post", "/api/l3/sources/:id/captures", "createL3SelectionCapture", "owner", "owner", "sessionMutation", { body: l3SelectionCaptureSchema }, 201, l3SelectionCaptureResponseSchema),
   // ADR-0030：题目/试卷（V1 owner 入库面；读面对 agent 开放，与 sources 读面同口径）。
   operation("post", "/api/l3/papers", "createL3Paper", "owner", "owner", "sessionMutation", { body: l3PaperCreateSchema }, 201, l3PaperCreateResponseSchema),
+  // 改卷 / 改题面（2026-09-26）：owner-only 写面。此前只有 POST+DELETE 且 DELETE
+  // 对"被引用"的题/卷一律 409，「卷面里一道题有错字」是死胡同。护栏在 service：
+  // 有作答历史 / 被作文任务引用的题不可改（见 l3-paper.service.updateQuestion）。
+  operation("patch", "/api/l3/papers/:id", "updateL3Paper", "owner", "owner", "sessionMutation", { body: l3PaperUpdateSchema }, 200, l3PaperUpdateResponseSchema),
   operation("get", "/api/l3/papers", "listL3Papers", "owner", "agent", "none", { query: l3PaperListQuerySchema }, 200, l3PaperListResponseSchema),
   operation("get", "/api/l3/papers/:id", "getL3Paper", "owner", "agent", "none", undefined, 200, l3PaperDetailResponseSchema),
   operation("post", "/api/l3/questions", "createL3Question", "owner", "owner", "sessionMutation", { body: l3QuestionCreateSchema }, 201, l3QuestionCreateResponseSchema),
+  operation("patch", "/api/l3/questions/:id", "updateL3Question", "owner", "owner", "sessionMutation", { body: l3QuestionUpdateSchema }, 200, l3QuestionUpdateResponseSchema),
   operation("delete", "/api/l3/questions/:id", "deleteL3Question", "owner", "owner", "sessionMutation", undefined, 200, l3QuestionDeleteResponseSchema),
   // 批次一：做题注记（原文分析条目）纯 owner 做题面，锚点幂等命中 200/新建 201；软删 204。
   operation("get", "/api/l3/question-annotations", "listQuestionAnnotations", "owner", "owner", "none", { query: l3QuestionAnnotationListQuerySchema }, 200, l3QuestionAnnotationListResponseSchema),

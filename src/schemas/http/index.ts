@@ -358,6 +358,40 @@ export const l3PaperCreateSchema = z.object({
   sections: z.array(l3PaperSectionSchema).min(1).max(20),
 });
 
+// ── 改题面 / 改卷（2026-09-26）────────────────────────────────────────
+// 此前题目与试卷只有 POST + DELETE，且 DELETE 对"被引用"的题/卷一律 409，
+// 于是「卷面里一道题有错字」既不能改也不能删。以下两个 schema 补上改的面。
+//
+// ⚠️ 语义备注：路径是 PATCH 但**题面字段按全量替换**（stem/options/answer/
+// explanation/evidence 一次提交齐），不是逐字段 merge。理由：题面是一个整体
+// （选项与答案必须同批改，否则会出现"改了选项没改答案"的半截状态）。客户端
+// 读-改-写整份题面即可，比逐字段 merge 更少出错空间。
+
+/** 改题面：题面全量。ordinal 缺省沿用原值。 */
+export const l3QuestionUpdateSchema = l3QuestionBodySchema
+  .extend({ ordinal: z.number().int().min(0).max(10_000).optional() })
+  .refine((body) => (body.evidence ?? []).length <= 50, {
+    message: "evidence 最多 50 条",
+    path: ["evidence"],
+  });
+
+/** 改卷的 section：只带**题目引用**，不带题面（题库是唯一题面真源）。 */
+const l3PaperUpdateSectionSchema = z.object({
+  key: z.string().trim().min(1).max(40),
+  title: z.string().trim().min(1).max(300),
+  questionType: l3QuestionTypeSchema,
+  sourceId: uuidSchema.nullish(),
+  fileKey: z.string().trim().min(1).max(200).nullish(),
+  questionIds: z.array(uuidSchema).min(1).max(60),
+});
+
+export const l3PaperUpdateSchema = z.object({
+  title: z.string().trim().min(1).max(300),
+  direction: directionSchema.nullish(),
+  metadata: jsonRecordSchema.optional(),
+  sections: z.array(l3PaperUpdateSectionSchema).min(1).max(20),
+});
+
 /** GET /l3/practice-files：题型空间的文件管理列表（派生视图）。
  *  R3：sourceId/fileKey 为**精确来源过滤**（精确读面——不依赖 limit 扫描取单文件方向/标题）。 */
 export const l3PracticeFileListQuerySchema = z.object({

@@ -806,6 +806,42 @@ export interface CreateL3PaperInput {
   sections: CreateL3PaperSectionInput[];
 }
 
+// ── 改题面 / 改卷（2026-09-26）────────────────────────────────────────
+// 此前题目与试卷只有 POST + DELETE，且 DELETE 对"被引用"的题/卷一律 409，
+// 于是「卷面里一道题有错字」既不能改也不能删 —— 死胡同。本组入参补上改的面，
+// 护栏（作答历史 / 作文任务引用）见 l3-paper.service.updateQuestion。
+
+/** 改题面入参：题面字段全量提交（PATCH 语义在本题库按"全量替换"实现，见 ADR 语义备注）。 */
+export interface UpdateL3QuestionInput {
+  userId: string;
+  questionId: string;
+  stem: string;
+  options?: L3QuestionOption[];
+  answer?: L3QuestionAnswer;
+  explanation?: string | null;
+  evidence?: L3EvidenceAnchor[];
+  ordinal?: number;
+}
+
+export interface UpdateL3PaperSectionInput {
+  key: string;
+  title: string;
+  questionType: L3QuestionType;
+  sourceId?: string | null;
+  fileKey?: string | null;
+  questionIds: string[];
+}
+
+/** 改卷入参：sections 只带**引用**（不复制题目正文——题库是唯一题面真源）。 */
+export interface UpdateL3PaperInput {
+  userId: string;
+  paperId: string;
+  title: string;
+  direction?: Direction | null;
+  metadata?: Json;
+  sections: UpdateL3PaperSectionInput[];
+}
+
 export interface ListL3PracticeFilesInput {
   userId: string;
   questionType?: L3QuestionType | null;

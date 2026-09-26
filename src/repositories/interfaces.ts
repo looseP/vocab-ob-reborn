@@ -1549,6 +1549,14 @@ export interface L3PaperRef {
 export interface IL3PaperRepository {
   insertQuestion(input: NewL3Question): Promise<L3QuestionRow>;
   findQuestionById(userId: string, questionId: string): Promise<L3QuestionRow | null>;
+  /**
+   * 改题面（2026-09-26）。条件 UPDATE 带 `status='active'`：0 行 → null，
+   * 由 service 二次判别 404/409。**护栏在 service**：已有作答历史或被作文任务
+   * 引用时不得改（见 l3-paper.service.updateQuestion）。
+   */
+  updateQuestion(input: UpdateL3Question): Promise<L3QuestionRow | null>;
+  /** 题面已有作答数（改题面护栏用；owner 作用域）。 */
+  countQuestionAttempts(userId: string, questionId: string): Promise<number>;
   /** 按 id 批量取 active 题（保持传入顺序由调用方处理）；只返回属于该 user 的行。 */
   findActiveQuestionsByIds(userId: string, questionIds: readonly string[]): Promise<L3QuestionRow[]>;
   /** 文件题组：(source_id, question_type) 或 (file_key, question_type)，按 ordinal/创建序。 */
@@ -1567,7 +1575,33 @@ export interface IL3PaperRepository {
   listActivePaperRefsWithPayload(userId: string): Promise<Array<L3PaperRef & { payload: unknown }>>;
   insertPaper(input: NewL3Paper): Promise<L3PaperRow>;
   findPaperById(userId: string, paperId: string): Promise<L3PaperRow | null>;
+  /** 改卷（2026-09-26）：标题/方向/元信息/payload；条件 UPDATE 带 `status='active'`。 */
+  updatePaper(input: UpdateL3Paper): Promise<L3PaperRow | null>;
   listPapers(input: L3PaperLookup): Promise<L3PaperListPage>;
+}
+
+/** 改题面入参（每个字段都是最终值；null = 清空）。 */
+export interface UpdateL3Question {
+  question_id: string;
+  user_id: string;
+  stem: string;
+  options: unknown;
+  answer: unknown;
+  explanation: string | null;
+  evidence: unknown;
+  ordinal: number;
+  input_hash: string | null;
+}
+
+/** 改卷入参（payload 已在 service 过 validatePaperPayloadShape + 归属校验）。 */
+export interface UpdateL3Paper {
+  paper_id: string;
+  user_id: string;
+  title: string;
+  direction: string | null;
+  metadata: unknown;
+  payload: { version: number; sections: unknown[] };
+  input_hash: string | null;
 }
 
 // ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ─────────────────

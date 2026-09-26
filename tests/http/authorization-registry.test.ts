@@ -160,6 +160,9 @@ const OTHER_OWNER_WRITES = [
   // ADR-0030：题/卷 owner 直写面（试卷工作台 V1；agent trusted 直写后续波次再分类）。
   "createL3Paper",
   "createL3Question",
+  // 改题面 / 改卷（2026-09-26）：owner 直写受信面，护栏在 service。
+  "updateL3Paper",
+  "updateL3Question",
   "deleteL3Question",
   // 批次一：做题注记（原文分析）与规律标签字典——个人做题工作台数据，纯 owner。
   "createQuestionAnnotation",

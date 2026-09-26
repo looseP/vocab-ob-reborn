@@ -29,6 +29,8 @@ import type {
   L3PracticeFileLookup,
   NewL3Paper,
   NewL3Question,
+  UpdateL3Paper,
+  UpdateL3Question,
 } from "./interfaces";
 import { BaseRepository } from "./base";
 
@@ -121,6 +123,66 @@ export class L3PaperRepository extends BaseRepository implements IL3PaperReposit
       [questionId, userId],
     );
     return row ? mapQuestionRow(row) : null;
+  }
+
+  /**
+   * 改题面（2026-09-26）：条件 UPDATE 带 `status='active'` 谓词 —— 0 行返回 null，
+   * 由 service 二次判别（404 不存在/非属主，409 非 active）。只写题面列；
+   * `input_hash` 由调用方**沿用原值**（该列只参与部分唯一索引的建卷去重，从不被
+   * 读作语义；改题面不换身份指纹，也就不可能撞唯一索引）。
+   * **护栏在 service**：已有作答历史或被作文任务引用时不得改。
+   */
+  async updateQuestion(input: UpdateL3Question): Promise<L3QuestionRow | null> {
+    const row = await this.queryOne<QuestionDbRow>(
+      `UPDATE l3_questions
+          SET stem = $3, options = $4::jsonb, answer = $5::jsonb, explanation = $6,
+              evidence = $7::jsonb, ordinal = $8, input_hash = $9, updated_at = now()
+        WHERE id = $1::uuid AND user_id = $2::uuid AND status = 'active'
+        RETURNING *`,
+      [
+        input.question_id,
+        input.user_id,
+        input.stem,
+        JSON.stringify(input.options ?? []),
+        JSON.stringify(input.answer ?? {}),
+        input.explanation ?? null,
+        JSON.stringify(input.evidence ?? []),
+        input.ordinal,
+        input.input_hash ?? null,
+      ],
+    );
+    return row ? mapQuestionRow(row) : null;
+  }
+
+  /** 题面是否已有作答历史（改题面护栏：答案历史不可改写，见 service.updateQuestion）。 */
+  async countQuestionAttempts(userId: string, questionId: string): Promise<number> {
+    const row = await this.queryOne<{ count: string }>(
+      `SELECT count(*)::bigint AS count FROM l3_question_attempts
+        WHERE user_id = $1::uuid AND question_id = $2::uuid`,
+      [userId, questionId],
+    );
+    return Number(row?.count ?? 0);
+  }
+
+  /** 改卷（2026-09-26）：标题/方向/元信息/payload。条件 UPDATE 带 `status='active'`。 */
+  async updatePaper(input: UpdateL3Paper): Promise<L3PaperRow | null> {
+    const row = await this.queryOne<PaperDbRow>(
+      `UPDATE l3_papers
+          SET title = $3, direction = $4, metadata = $5::jsonb, payload = $6::jsonb,
+              input_hash = $7, updated_at = now()
+        WHERE id = $1::uuid AND user_id = $2::uuid AND status = 'active'
+        RETURNING *`,
+      [
+        input.paper_id,
+        input.user_id,
+        input.title,
+        input.direction ?? null,
+        JSON.stringify(input.metadata ?? {}),
+        JSON.stringify(input.payload),
+        input.input_hash ?? null,
+      ],
+    );
+    return row ? mapPaperRow(row) : null;
   }
 
   async findActiveQuestionsByIds(userId: string, questionIds: readonly string[]): Promise<L3QuestionRow[]> {

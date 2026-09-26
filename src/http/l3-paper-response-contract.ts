@@ -54,6 +54,11 @@ export const l3QuestionCreateResponseSchema = z.object({
   question: l3QuestionResponseSchema,
 }).strict();
 
+/** 改题面响应：与建题同形（单行题面），便于客户端读-改-写复用同一解析。 */
+export const l3QuestionUpdateResponseSchema = z.object({
+  question: l3QuestionResponseSchema,
+}).strict();
+
 export const l3QuestionDeleteResponseSchema = z.object({
   deleted: z.literal(true),
 }).strict();
@@ -122,6 +127,11 @@ export const l3PaperCreateResponseSchema = z.object({
   paper: l3PaperRowResponseSchema,
   questions: z.array(l3QuestionResponseSchema),
   questionCount: z.number().int().nonnegative(),
+}).strict();
+
+/** 改卷响应：单行卷（题面真源仍在题库，故不随改卷返回题目数组）。 */
+export const l3PaperUpdateResponseSchema = z.object({
+  paper: l3PaperRowResponseSchema,
 }).strict();
 
 // ── 列表 ────────────────────────────────────────────────────────────────
