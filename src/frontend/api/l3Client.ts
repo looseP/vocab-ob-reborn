@@ -169,6 +169,11 @@ export interface L3Sheet {
   status: SheetStatusValue;
   /** 定格 CAS 版本基线：每次逐题 merge +1（Task B；服务端行本就随响应返回）。 */
   draft_version: number;
+  /**
+   * 题单快照（2026-09-26）：开纸时定格的作用域题集（有序）。非空 = 本卷唯一
+   * 题集，渲染按它裁剪；null = 未定格，按作用域现渲染。
+   */
+  question_ids?: string[] | null;
   /** 仅 draft 期非空；定格后服务端清空（attempts 是唯一作答真源）。 */
   answers: Record<string, unknown>;
   seal_mode: SealModeValue | null;

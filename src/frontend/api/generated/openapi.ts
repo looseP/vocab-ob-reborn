@@ -16057,6 +16057,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
                             draft_version: number;
+                            question_ids: string[] | null;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -16304,6 +16305,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
                             draft_version: number;
+                            question_ids: string[] | null;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -16523,6 +16525,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
                             draft_version: number;
+                            question_ids: string[] | null;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17417,6 +17420,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
                             draft_version: number;
+                            question_ids: string[] | null;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17601,6 +17605,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
                             draft_version: number;
+                            question_ids: string[] | null;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -17825,6 +17830,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
                             draft_version: number;
+                            question_ids: string[] | null;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };
@@ -18020,6 +18026,7 @@ export interface operations {
                             /** @enum {string} */
                             status: "draft" | "sealed" | "discarded";
                             draft_version: number;
+                            question_ids: string[] | null;
                             answers: {
                                 [key: string]: components["schemas"]["JsonValue"];
                             };

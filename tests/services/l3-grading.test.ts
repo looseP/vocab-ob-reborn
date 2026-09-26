@@ -41,6 +41,7 @@ function sheetRow(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRow {
     parent_sheet_id: null,
     revision_no: null,
     draft_version: 0,
+    question_ids: null,
     status: "sealed",
     answers: {},
     seal_mode: "full",

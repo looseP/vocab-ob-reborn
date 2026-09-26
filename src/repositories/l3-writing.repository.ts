@@ -321,11 +321,11 @@ export class L3WritingRepository extends BaseRepository implements IL3WritingRep
       `INSERT INTO l3_submissions
          (user_id, scope, scope_key, source_id, question_type, paper_id,
           writing_task_id, parent_sheet_id, revision_no, draft_version,
-          status, answers, seal_mode, summary)
+          question_ids, status, answers, seal_mode, summary)
        VALUES ($1, 'writing', $2, NULL, NULL, NULL,
-               $3, NULL, NULL, 0, 'draft', '{}'::jsonb, NULL, NULL)
+               $3, NULL, NULL, 0, ARRAY[$4::uuid], 'draft', '{}'::jsonb, NULL, NULL)
        RETURNING *`,
-      [input.user_id, `writing:${input.task_id}`, input.task_id],
+      [input.user_id, `writing:${input.task_id}`, input.task_id, input.question_id],
     );
     if (!row) throw new Error("l3_submissions (writing draft) insert returned no row");
     return mapSubmissionRow(row);
@@ -505,12 +505,12 @@ export class L3WritingRepository extends BaseRepository implements IL3WritingRep
       `INSERT INTO l3_submissions
          (user_id, scope, scope_key, source_id, question_type, paper_id,
           writing_task_id, parent_sheet_id, revision_no, draft_version,
-          status, answers, seal_mode, summary)
+          question_ids, status, answers, seal_mode, summary)
        VALUES ($1::uuid, 'writing', $2, NULL, NULL, NULL,
-               $3::uuid, $4::uuid, NULL, 0,
-               'draft', $5::jsonb, NULL, NULL)
+               $3::uuid, $4::uuid, NULL, 0, ARRAY[$5::uuid],
+               'draft', $6::jsonb, NULL, NULL)
        RETURNING *`,
-      [input.user_id, `writing:${input.task_id}`, input.task_id, input.parent_sheet_id, JSON.stringify(input.answers)],
+      [input.user_id, `writing:${input.task_id}`, input.task_id, input.parent_sheet_id, input.question_id, JSON.stringify(input.answers)],
     );
     if (!row) throw new Error("l3_submissions (writing revision draft) insert returned no row");
     return mapSubmissionRow(row);

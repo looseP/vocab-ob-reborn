@@ -69,7 +69,9 @@ export class L3SheetService {
     return this.txRunner(async (tx) => callback(this.repositoryFactory(tx)), { actorId: userId });
   }
 
-  /** 开纸：作用域键幂等（冲突复用既有 draft 行），归属校验 404 语义同批次一。 */
+  /** 开纸：作用域键幂等（冲突复用既有 draft 行），归属校验 404 语义同批次一。
+   *  题单定格（2026-09-26）：首次开纸把作用域题集快照进 question_ids——
+   *  此后题组加题不再改变这张题纸（交卷物化/未答确认/评卷读面共用同一题集）。 */
   async openSheet(input: OpenL3SheetInput): Promise<{ sheet: L3SubmissionRow; created: boolean }> {
     if (input.scope === "file") {
       if (!input.sourceId || !input.questionType) {
@@ -80,13 +82,22 @@ export class L3SheetService {
     }
 
     return this.withActor(input.userId, async (repos) => {
+      let questionIds: string[] | null = null;
       if (input.scope === "file") {
         const source = await repos.l3Context.findSourceById(input.userId, input.sourceId as string);
         if (!source) throw new NotFoundError("L3Source", input.sourceId as string);
+        const questions = await repos.l3Paper.listActiveQuestionsForFile(input.userId, {
+          sourceId: input.sourceId as string,
+          questionType: input.questionType as string,
+        });
+        questionIds = questions.map((question) => question.id);
       } else {
         const paper = await repos.l3Paper.findPaperById(input.userId, input.paperId as string);
         if (!paper) throw new NotFoundError("L3Paper", input.paperId as string);
+        questionIds = paper.payload.sections.flatMap((section) => [...section.questionIds]);
       }
+      // 空题集不写快照（DB CHECK 拒绝空数组；且"空"与"未定格"在读侧同义——都现拉）。
+      const frozenQuestionIds = questionIds.length > 0 ? questionIds : null;
       const scopeKey = input.scope === "file"
         ? buildSheetScopeKey({ scope: "file", sourceId: input.sourceId as string, questionType: input.questionType as string })
         : buildSheetScopeKey({ scope: "paper", paperId: input.paperId as string });
@@ -97,6 +108,7 @@ export class L3SheetService {
         source_id: input.scope === "file" ? (input.sourceId as string) : null,
         question_type: input.scope === "file" ? (input.questionType as string) : null,
         paper_id: input.scope === "paper" ? (input.paperId as string) : null,
+        question_ids: frozenQuestionIds,
       });
       return { sheet: row, created };
     });

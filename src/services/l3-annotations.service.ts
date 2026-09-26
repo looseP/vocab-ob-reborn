@@ -192,6 +192,9 @@ export class L3AnnotationService {
           source_id: origin.source_id,
           question_type: origin.question_type,
           paper_id: origin.paper_id,
+          // 重开的是同一张纸的同一作用域：沿用来源纸的题单快照（不重算——
+          // 重算会把来源纸开纸之后加入的题算进来）。来源纸未定格则留 null。
+          question_ids: origin.question_ids,
         });
         sheetId = row.id;
       }

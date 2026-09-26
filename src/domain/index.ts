@@ -799,6 +799,13 @@ export interface L3SubmissionRow {
   revision_no: number | null;
   /** 作文：草稿版本（CAS expectedVersion 对照；普通题纸恒 0）。 */
   draft_version: number;
+  /**
+   * 题单快照（2026-09-26）：开纸时定格的作用域题集（有序 uuid[]）。
+   * 定格后题组加题不再改变这张题纸——交卷物化、未答软确认、评卷读面
+   * 三处都以本列为唯一题集来源，避免"开卷后加题 → 交卷时静默变卷"。
+   * `null` = 未定格（历史行 / 写作草稿另路），读侧回退按作用域现拉。
+   */
+  question_ids: string[] | null;
   status: SheetStatus;
   /** 仅 draft 期有效；定格物化 attempts 后清空（attempts 是唯一作答真源）。 */
   answers: Record<string, Json>;

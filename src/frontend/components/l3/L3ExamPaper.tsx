@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, useEffect, useCallback, type ReactNode } from "react";
 import { buildPassageSpans, enclosingSentence, groupSpansIntoParagraphs, type PassageRun } from "./examPassageSpans";
+import { scopePaperToFrozenList, countQuestionsOutsideFrozenList } from "./examTypes";
 import type { ExamPaper as ExamPaperType, ExamQuestion, ExamSection } from "./examTypes";
 import { L3QuestionAnalysis } from "./L3QuestionAnalysis";
 import { L3SourceNotesDrawer } from "./L3SourceNotesDrawer";
@@ -1030,7 +1031,7 @@ function WrittenQuestion({
   );
 }
 
-export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake, focusQuestionId, writingEntry }: {
+export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheetId, onRetake, focusQuestionId, writingEntry }: {
   paper: ExamPaperType;
   onBack: () => void;
   /** 批次二补齐：题型空间（file venue）复用本组件作单文件做题表面——
@@ -1057,7 +1058,7 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
   // 增补条 8）；picks（choice 投影）由 useMemo 派生，下游渲染与统计契约不变。
   const [answers, setAnswers] = useState<Record<string, SheetAnswer>>({});
   const [activeBlank, setActiveBlank] = useState<number | null>(null);
-  const [activeSection, setActiveSection] = useState(paper.sections[0]?.key ?? "");
+  const [activeSection, setActiveSection] = useState(sourcePaper.sections[0]?.key ?? "");
   const [locate, setLocate] = useState<LocateTarget | null>(null);
   const [annotations, setAnnotations] = useState<QuestionAnnotation[]>([]);
   const [tagDict, setTagDict] = useState<AnnotationTagDict | null>(null);
@@ -1065,6 +1066,21 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
   const [bufferedContextIds, setBufferedContextIds] = useState<ReadonlySet<string>>(new Set());
   // ── 批次二：题纸状态机与防抖保存 ──
   const [sheet, setSheet] = useState<L3Sheet | null>(null);
+  /**
+   * 题单定格（2026-09-26）：服务端开纸时冻结 `question_ids`，交卷物化与评卷
+   * 读面都以它为唯一题集。渲染必须同口径——否则用户会答到卷外的题，那些作答
+   * 在交卷时被静默丢弃。快照未定格（历史行/写作草稿）时 paper === sourcePaper。
+   */
+  const frozenQuestionIds = sheet?.question_ids ?? null;
+  const paper = useMemo(
+    () => scopePaperToFrozenList(sourcePaper, frozenQuestionIds),
+    [sourcePaper, frozenQuestionIds],
+  );
+  /** 题组在本卷之外被裁掉的题数（如实告知，不静默丢题）。 */
+  const outOfScopeQuestionCount = useMemo(
+    () => countQuestionsOutsideFrozenList(sourcePaper, frozenQuestionIds),
+    [sourcePaper, frozenQuestionIds],
+  );
   const [saveState, setSaveState] = useState<"idle" | "saving" | "retrying" | "error" | "conflict">("idle");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [sealOpen, setSealOpen] = useState(false);
@@ -1965,6 +1981,16 @@ export function L3ExamPaper({ paper, onBack, fileVenue, replaySheetId, onRetake,
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-[var(--color-surface)] px-3.5 py-2 text-xs ring-1 ring-[var(--color-border)]">
           <span className="font-semibold">题纸</span>
           <span className="text-[var(--color-ink-soft)]">{fileVenue ? "文件" : "整卷"} · {paper.title}</span>
+          {/* 题单定格（2026-09-26）：题组在本卷开纸后新增的题不属本卷——如实告知，
+              不静默隐藏（否则用户会以为题丢了/答了没算）。定格后重开本卷即包含新题。 */}
+          {outOfScopeQuestionCount > 0 && (
+            <span
+              data-testid="sheet-frozen-scope-notice"
+              className="rounded-full border border-dashed border-[var(--color-accent)] px-2 py-0.5 text-[var(--color-accent)]"
+            >
+              本卷题单已定格 · 题组另有 {outOfScopeQuestionCount} 题不在本卷
+            </span>
+          )}
           <span className="ml-auto flex items-center gap-2">
             <button
               type="button"

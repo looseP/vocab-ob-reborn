@@ -1661,6 +1661,11 @@ export interface NewL3Submission {
   source_id: string | null;
   question_type: string | null;
   paper_id: string | null;
+  /**
+   * 题单快照（开纸定格，2026-09-26）。有序 uuid[]；`null` = 不写快照，
+   * 读侧按作用域现拉（历史行回退路径）。幂等重开不覆盖既有快照。
+   */
+  question_ids: string[] | null;
 }
 
 /** 定格状态推进（service 事务内调用）：status 由 sheetStatusAfterSeal(mode) 决定。 */

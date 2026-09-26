@@ -22,6 +22,13 @@ export const l3SubmissionResponseSchema = z.object({
   status: z.enum(SHEET_STATUSES),
   /** V（2026-09-19）：逐题合并递增的版本基线——公开响应必含（定格 CAS 的客户端锚点）。 */
   draft_version: z.number().int().nonnegative(),
+  /**
+   * 题单快照（2026-09-26）：开纸时定格的作用域题集（有序）。
+   * 非空时它是本卷的**唯一**题集——客户端据此裁剪渲染范围（否则用户会答到
+   * 定格之外的题，交卷时被静默丢弃）。`null` = 未定格（历史行/写作草稿另路），
+   * 客户端按作用域自行渲染。
+   */
+  question_ids: z.array(z.string().uuid()).nullable(),
   /** 仅 draft 期非空；定格物化后恒 `{}`（attempts 是唯一作答真源）。 */
   answers: z.record(z.string(), jsonValueSchema),
   seal_mode: z.enum(SEAL_MODES).nullable(),

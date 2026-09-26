@@ -57,7 +57,10 @@ describe("existing local volume role upgrade", () => {
     //       拆两步的原因与 0040/0041 同：drizzle 生成的 FK 语句排在同批 UNIQUE 之前。
     // 0045: user_word_progress.ladder_rung smallint（ADR-0036 阶梯起步档显式列，
     //       CHECK 1..3）+ 存量幂等回填 UPDATE（f(S,rv)，二次执行零行变化）。
-    expect(authoritativeMigrationCount()).toBe(46);
+    // 0046: l3_submissions.question_ids uuid[]（题单快照：开纸定格作用域题集，
+    //       CHECK 非空数组）+ 存量幂等回填 UPDATE（由该纸已物化的 attempts 派生题单，
+    //       WHERE 只认 IS NULL，二次执行零行变化）。
+    expect(authoritativeMigrationCount()).toBe(47);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
