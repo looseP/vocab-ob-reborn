@@ -1135,7 +1135,7 @@ describe("R3 回看方向精确读取", () => {
     let metaFailuresLeft = options.metaFailFirst ? 1 : 0;
     apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
-      if (path.includes("/grading")) return { results: [] };
+      if (path.includes("/grading")) return { results: [], gradableCount: 0 };
       if (path === `/l3/sheets/${REPLAY_SHEET}` && method === "GET") return { sheet: replaySheet(), attempts: [] };
       if (path.startsWith("/l3/practice-files/detail?")) return replayDetail();
       if (path.startsWith("/l3/practice-files?")) {

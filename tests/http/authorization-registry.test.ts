@@ -311,6 +311,9 @@ const AGENT_READS = [
   "getL3QuestionAssessment",
   // 批次三①：评卷上下文读面（agent 面；🔴 含 answerIndex 的 D8 唯一例外，仅 sealed）。
   "getL3GradingContext",
+  // ADR-0038 决策 2：待评卷清单（agent 可读**发现面**）。只给身份与计数、不含题面；
+  // 此前 agent 无法自行发现待评卷题纸（档案面 owner-only、error-book 只列已评判错）。
+  "listPendingL3Grading",
   // 作文子空间 v1（W6）：agent 读面第 3 开口——只读指定 sealed 稿的评阅上下文
   // （feedback-context；draft 409、正文已清理 409、零写入）。
   "getL3WritingFeedbackContext",

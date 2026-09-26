@@ -280,6 +280,13 @@ export class L3SheetService {
       let materializedCount = 0;
       let promotedAnnotationCount = 0;
       if (input.mode === "full") {
+        // 补冻结（ADR-0038 决策 7）：legacy 行的 `question_ids` 可能为 null
+        // （0046 回填只覆盖「≥1 attempt」的题纸），于是零题作答的 sealed 题纸会
+        // 一直走**现拉**题集 —— 之后改卷就能改掉一张已定格题纸的题单，与「题单只缩
+        // 不换」相悖。此处把当时的作用域题集写回，之后该纸与新纸同口径。
+        if (!sheet.question_ids && scopedIds.length > 0) {
+          await repos.l3Sheets.freezeQuestionIds(input.userId, input.sheetId, scopedIds);
+        }
         const answeredQuestions = scoped.filter((question) => sheet.answers[question.id] != null);
         if (answeredQuestions.length > 0) {
           const rows = await repos.l3Sheets.insertAttempts(

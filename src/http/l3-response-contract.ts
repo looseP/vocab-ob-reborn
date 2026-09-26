@@ -477,6 +477,11 @@ export const l3CapabilitiesResponseSchema = z.object({
   grading: z.object({
     annotationReadScope: z.literal("submitted_sheet_drafts"),
     annotationWriteScope: z.literal("review_only"),
+    /**
+     * 待评卷清单可读级（ADR-0038 决策 9）。必须登记：能力发现是 agent 唯一的自述
+     * 入口（ADR-0029 决策 8），清单不进 capabilities 就等于不存在。
+     */
+    inbox: z.literal("agent_readable"),
   }).strict(),
   /**
    * 录题授权语义（ADR-0037 决策 8）。**单列而不并进 `access`**：录题不是 proposal ——

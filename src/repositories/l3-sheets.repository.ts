@@ -261,11 +261,16 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
       sealed_at: string | null;
       created_at: string;
       graded_count: number;
+      gradable_count: number;
       venue_title: string | null;
     }>(
       `SELECT s.id, s.scope, s.source_id, s.question_type, s.paper_id, s.status,
               s.seal_mode, s.sealed_at, s.created_at,
               (SELECT count(*)::int FROM l3_grading_results g WHERE g.sheet_id = s.id) AS graded_count,
+              -- ADR-0038 决策 8：可评数 = 已物化 active attempt 的题数（未作答不评卷，
+              -- 不计入分母，否则「已评 n/m」会显示一个永远补不齐的缺口）。
+              (SELECT count(DISTINCT a.question_id)::int FROM l3_question_attempts a
+                WHERE a.sheet_id = s.id AND a.status = 'active') AS gradable_count,
               COALESCE(src.title, p.title) AS venue_title
          FROM l3_submissions s
          LEFT JOIN l3_sources src ON src.id = s.source_id
@@ -276,7 +281,87 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
         LIMIT $2`,
       [userId, limit],
     );
-    return rows.map((row) => ({ ...row, graded_count: Number(row.graded_count) }));
+    return rows.map((row) => ({ ...row, graded_count: Number(row.graded_count), gradable_count: Number(row.gradable_count) }));
+  }
+
+  /**
+   * 待评卷清单（ADR-0038 决策 2）——agent 可读的**发现面**。
+   *
+   * 只返回「该不该评」所需的事实：哪张题纸、可评几题、已评几题、何时定格、标题。
+   * **刻意不含**题干/选项/答案/解析/作答/注记：取料走 grading-context（那里带答案，
+   * 是 D8 的显式例外面），本面只解决「agent 不知道该评哪张」。
+   *
+   * `gradable_count` = 该题纸**已物化 active attempt 的题数**（= 可评数，ADR-0038
+   * 决策 4/8）。分母用可评数而非题单总数：未作答的题不参与评卷，把它们算进分母会
+   * 让 UI 永久显示一个补不齐的缺口。`question_count` 是定格时的题单长度（legacy
+   * 无快照行回退为可评数），只作背景信息，不参与「该不该评」的判定。
+   *
+   * 只列 `sealed`：draft 未定格（评卷 409）、discarded 作答事实已弃。
+   */
+  async listPendingGradingSheets(userId: string, limit: number): Promise<Array<{
+    id: string;
+    scope: string;
+    sealed_at: string;
+    graded_count: number;
+    gradable_count: number;
+    question_count: number;
+    venue_title: string | null;
+  }>> {
+    const rows = await this.query<{
+      id: string;
+      scope: string;
+      sealed_at: string;
+      graded_count: number;
+      gradable_count: number;
+      question_count: number;
+      venue_title: string | null;
+    }>(
+      `SELECT s.id, s.scope, s.sealed_at,
+              COALESCE(src.title, p.title) AS venue_title,
+              (SELECT count(*)::int FROM l3_grading_results g
+                WHERE g.sheet_id = s.id) AS graded_count,
+              (SELECT count(DISTINCT a.question_id)::int FROM l3_question_attempts a
+                WHERE a.sheet_id = s.id AND a.status = 'active') AS gradable_count,
+              COALESCE(array_length(s.question_ids, 1),
+                       (SELECT count(DISTINCT a2.question_id)::int FROM l3_question_attempts a2
+                         WHERE a2.sheet_id = s.id AND a2.status = 'active')) AS question_count
+         FROM l3_submissions s
+         LEFT JOIN l3_sources src ON src.id = s.source_id
+         LEFT JOIN l3_papers p ON p.id = s.paper_id
+        WHERE s.user_id = $1::uuid AND s.status = 'sealed' AND s.scope IN ('file', 'paper')
+          AND (SELECT count(*)::int FROM l3_grading_results g2 WHERE g2.sheet_id = s.id)
+              < (SELECT count(DISTINCT a3.question_id)::int FROM l3_question_attempts a3
+                  WHERE a3.sheet_id = s.id AND a3.status = 'active')
+        ORDER BY s.sealed_at ASC, s.id ASC
+        LIMIT $2`,
+      [userId, limit],
+    );
+    return rows.map((row) => ({
+      ...row,
+      graded_count: Number(row.graded_count),
+      gradable_count: Number(row.gradable_count),
+      question_count: Number(row.question_count),
+    }));
+  }
+
+  /**
+   * 补写题单快照（ADR-0038 决策 7）：`question_ids IS NULL` 的 legacy 行在**定格时**
+   * 把当时的作用域题集写回，之后不再现拉。
+   *
+   * 谓词含 `question_ids IS NULL`（幂等 + 并发安全：第二个调用者 0 行），
+   * **不含 draft_version CAS** —— 定格本身已用 draft_version 做过 CAS，且本写入
+   * 只是把已定格的事实补齐，不改变定格结果。
+   */
+  async freezeQuestionIds(userId: string, sheetId: string, questionIds: readonly string[]): Promise<boolean> {
+    if (questionIds.length === 0) return false;
+    const row = await this.queryOne<{ id: string }>(
+      `UPDATE l3_submissions
+          SET question_ids = $3::uuid[]
+        WHERE id = $1::uuid AND user_id = $2::uuid AND question_ids IS NULL
+        RETURNING id`,
+      [sheetId, userId, [...questionIds]],
+    );
+    return row !== null;
   }
 
   /**

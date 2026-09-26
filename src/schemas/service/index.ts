@@ -812,6 +812,22 @@ export interface CreateL3PaperInput {
   sections: CreateL3PaperSectionInput[];
 }
 
+// ── 待评卷清单（ADR-0038 决策 2）───────────────────────────────────────
+
+/**
+ * 待评卷清单的一行：**只有身份与计数**（可评几题 / 已评几题 / 何时定格 / 标题）。
+ * 刻意不含题干、选项、答案、解析、作答、注记 —— 取料走 grading-context（那里带
+ * 答案，是 D8 的显式例外面），本行只回答「agent 该评哪张」。
+ */
+export interface PendingGradingItem {
+  id: string;
+  scope: string;
+  sealed_at: string;
+  graded_count: number;
+  gradable_count: number;
+  question_count: number;
+  venue_title: string | null;
+}
 // ── 待录 / 采纳（ADR-0037 决策 4、6）───────────────────────────────────
 
 /**

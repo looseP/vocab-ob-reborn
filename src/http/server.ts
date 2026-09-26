@@ -43,6 +43,7 @@ import { sheetsExportRoutes } from "./routes/l3/sheets-export";
 import { sheetsArchiveRoutes } from "./routes/l3/sheets-archive";
 import { assessmentsRoutes } from "./routes/l3/assessments";
 import { gradingRoutes } from "./routes/l3/grading";
+import { gradingInboxRoutes } from "./routes/l3/grading-inbox";
 import { errorBookRoutes } from "./routes/l3/error-book";
 import { writingSummariesRoutes } from "./routes/l3/writing-summaries";
 import { writingTasksRoutes } from "./routes/l3/writing-tasks";
@@ -181,6 +182,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   // 批次三①：评卷执行面（ADR-0035）——agent 读面 grading-context（D8 唯一例外，
   // 🔴 含答案）、agent 写面 grading 提交、owner 解析模式读面、owner 处置 confirm。
   app.route("/api/l3", gradingRoutes(services));
+  // ADR-0038：待评卷清单（agent 可读发现面；独立薄路由——grading.ts 受棘轮冻结）。
+  app.route("/api/l3", gradingInboxRoutes(services));
   // 错题库统一投影（句级 + 题级两腿合并；取代 /api/l3-practice/error-book 单腿口径）。
   app.route("/api/l3", errorBookRoutes(services));
 

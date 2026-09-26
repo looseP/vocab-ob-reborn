@@ -60,10 +60,13 @@ describe("GET /api/l3/capabilities", () => {
     expect(body.role).toBe("agent");
     expect(body.access).toEqual({ read: "all", write: "proposal_only", upgrade: "owner_only" });
     // 批次二（ADR-0034 §4）：评卷授权语义登记（提交即授权；执行面批次三）。
+    // ADR-0038 决策 9：清单必须登记进 capabilities，否则等于不存在（agent 唯一的自述入口）
     expect(body.grading).toEqual({
       annotationReadScope: "submitted_sheet_drafts",
       annotationWriteScope: "review_only",
+      inbox: "agent_readable",
     });
+    expect(body.grading.inbox).toBe("agent_readable");
     // ADR-0037 决策 8：录题授权语义**单列**（不并进 access —— 录题不是 proposal）。
     // 字面值必须与 domain 常量一致，故直接比常量而非硬编码字符串。
     expect(body.authoring).toEqual(L3_AUTHORING_CAPABILITIES);

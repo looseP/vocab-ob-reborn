@@ -352,6 +352,16 @@ export type AttemptQuestionIds = z.infer<typeof attemptQuestionIdsSchema>;
 export const L3_GRADING_AUTHORIZATION = {
   annotationReadScope: "submitted_sheet_drafts",
   annotationWriteScope: "review_only",
+  /**
+   * 待评卷清单可读级（ADR-0038 决策 2/9）。
+   *
+   * 此前 agent 无法自行发现「有哪些题纸待评卷」：唯一带 graded_count 的
+   * `GET /api/l3/sheets` 是 owner-only，agent 唯一能拿到 sheetId 的
+   * `GET /api/l3/error-book` 只列**已评且判错**的 —— 于是 owner 必须口头报
+   * sheetId。清单按**最小披露**开放（只有 id/计数/时间/标题，取料仍走
+   * grading-context），故 agent 不需要题纸档案的读权限。
+   */
+  inbox: "agent_readable",
 } as const;
 
 /**

@@ -371,16 +371,20 @@ export interface L3GradingResult {
 }
 
 /** 解析模式读面：sealed 题纸的 verdict 行集合（无行 → 空数组，「待评卷」提示数据源）。 */
-export async function fetchSheetGrading(sheetId: string): Promise<L3GradingResult[]> {
-  const body = await apiFetch<{ results?: L3GradingResult[] } | null>(
+export async function fetchSheetGrading(
+  sheetId: string,
+): Promise<{ results: L3GradingResult[]; gradableCount: number }> {
+  const body = await apiFetch<{ results?: L3GradingResult[]; gradableCount?: number } | null>(
     `/l3/sheets/${encodeURIComponent(sheetId)}/grading`,
   );
   // 防御（深测 OB-2）：契约漂移（200 + 非法形状）按**加载失败**处理（调用方以失败态
   // 呈现并提供重试），不得归一为空结果——否则「待评卷」提示会把数据异常误导为「还没有评卷」。
-  if (body === null || !Array.isArray(body.results)) {
+  if (body === null || !Array.isArray(body.results) || typeof body.gradableCount !== "number") {
     throw new Error("评卷结果响应形状异常");
   }
-  return body.results;
+  // 可评数（ADR-0038 决策 8）：未作答的题不参与评卷，分母用它而不是题单总数 ——
+  // 否则「已评 n/m」会显示一个永远补不齐的缺口。
+  return { results: body.results, gradableCount: body.gradableCount };
 }
 
 /** F-1：题纸档案行（回看闭环入口；仅索引元数据）。 */
@@ -396,6 +400,11 @@ export interface L3SheetArchiveItem {
   created_at: string;
   /** 该题纸已评题数（「待评卷/已评 n 题」数据源；draft 恒 0）。 */
   graded_count: number;
+  /**
+   * 该题纸已作答题数 = **可评数**（ADR-0038 决策 4/8：未作答的题不参与评卷，
+   * 不计入分母）。用于判断「还没评完」与「已评 n/m」的分母。
+   */
+  gradable_count: number;
   /** 展示标题：file 域取来源标题、paper 域取卷标题。 */
   venue_title: string | null;
 }

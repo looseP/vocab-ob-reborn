@@ -181,6 +181,7 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0034](./0034-sheet-attempt-annotation-stages.md) | 题纸 / 题级作答 / 注记 stage 三段生命周期 | 2026-09-17 |
 | [0035](./0035-agent-grading-execution.md) | agent 评卷执行面（本地 HTTP agent 闭环 + 评卷结果真源） | 2026-09-17 |
 | [0037](./0037-agent-authoring-pending-gate.md) | agent 录题通道（pending 闸门 + owner 批量采纳；`trusted_agent` 不启用） | 2026-09-26 |
+| [0038](./0038-grading-inbox-and-verdict-guards.md) | 判卷待评面与判定护栏（待评卷清单 + 评卷作用域收窄 + 删题/定格三护栏） | 2026-09-26 |
 
 ## 并行 agent 必读
 

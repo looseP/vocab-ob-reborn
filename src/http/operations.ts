@@ -58,6 +58,7 @@ import {
 import { l3AssessmentItemResponseSchema } from "./l3-assessment-response-contract";
 import {
   l3GradingContextResponseSchema,
+  l3PendingGradingListResponseSchema,
   l3GradingResultsResponseSchema,
   l3GradingSubmitResponseSchema,
 } from "./l3-grading-response-contract";
@@ -185,6 +186,7 @@ import {
   l3QuestionAnnotationCreateSchema,
   l3QuestionAnnotationListQuerySchema,
   l3PendingQuestionListQuerySchema,
+  l3PendingGradingQuerySchema,
   l3QuestionAcceptBatchSchema,
   l3QuestionAnnotationPatchSchema,
   l3QuestionAnnotationWithdrawSchema,
@@ -561,6 +563,10 @@ export const apiOperations = [
   // 批次三①：评卷执行面（ADR-0035）——agent 读 face grading-context 含标准答案
   // （D8 唯一显式例外：仅 sealed + agent 面，前端永不消费）；grading 提交为 agent
   // 写面（graded_by 服务端从 bearer agentId 认定）；解析模式读面 owner-only。
+  // ADR-0038 决策 2：待评卷清单（agent 可读**发现面**）——此前 agent 无法自行
+  // 发现「有哪些题纸待评卷」（档案面 owner-only、error-book 只列已评判错），只能靠
+  // owner 口头报 sheetId。本面**只给身份与计数**，不含题面/答案/作答。
+  operation("get", "/api/l3/grading/pending-sheets", "listPendingL3Grading", "owner", "agent", "none", { query: l3PendingGradingQuerySchema }, 200, l3PendingGradingListResponseSchema),
   operation("get", "/api/l3/sheets/:id/grading-context", "getL3GradingContext", "owner", "agent", "none", undefined, 200, l3GradingContextResponseSchema),
   operation("post", "/api/l3/sheets/:id/grading", "submitL3Grading", "owner", "agent", "sessionMutation", { body: l3GradingSubmitSchema }, 200, l3GradingSubmitResponseSchema),
   operation("get", "/api/l3/sheets/:id/grading", "getL3GradingResults", "owner", "owner", "none", undefined, 200, l3GradingResultsResponseSchema),

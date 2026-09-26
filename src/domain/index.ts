@@ -836,6 +836,12 @@ export interface L3SheetArchiveRow {
   created_at: string;
   /** 该题纸已评题数（grading_results 行数；draft 恒 0）。 */
   graded_count: number;
+  /**
+   * 可评数 = 已物化 active attempt 的题数（ADR-0038 决策 4/8）。
+   * 未作答的题不参与评卷，故不计入分母 —— 否则「已评 n/m」会显示一个永远补不齐的
+   * 缺口，且「还没评完」的判断会把已答尽的题纸误报为待评。
+   */
+  gradable_count: number;
   /** 展示标题：file 域取来源标题、paper 域取卷标题（nullable 兜底）。 */
   venue_title: string | null;
 }

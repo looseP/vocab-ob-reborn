@@ -164,7 +164,10 @@ function makeService(deps: ServiceDeps = {}): L3GradingService {
   } as IL3GradingRepository;
   const sheetRepo = {
     getSheet: vi.fn(async () => sheetRow()),
-    listBySheet: vi.fn(async () => []),
+    // ADR-0038 决策 4：评卷作用域已收窄为「已物化 active attempt 的题」——默认
+    // 给 Q1/Q2 各一条 active attempt，否则提交类测试测的是**已废除**的行为。
+    // 需要测「未作答」的场景显式覆盖本项。
+    listBySheet: vi.fn(async () => [attemptRow(Q1), attemptRow(Q2, { id: "attempt-q2" })]),
     ...deps.sheets,
   } as unknown as IL3SheetRepository;
   const paperRepo = {
@@ -451,5 +454,88 @@ describe("L3GradingService 对 writing 稿的 generic 封堵（W5 防两套反�
       gradedBy: "agent-a",
       results: [{ questionId: Q1, verdict: "correct" }],
     })).rejects.toMatchObject({ httpStatus: 409, meta: { code: "WRITING_ENDPOINT_REQUIRED" } });
+  });
+});
+
+/**
+ * ADR-0038 决策 4：评卷作用域收窄为「该题纸内已物化 active attempt 的题」。
+ *
+ * 这组断言锁的是**为什么**收窄：verdict 判的是用户作答；让 agent 对没作答的题
+ * 提交 verdict 等于让它编，而编出来的 `wrong` 会进错题库（「我没做过的错题」）。
+ */
+describe("L3GradingService 评卷作用域收窄（ADR-0038 决策 4）", () => {
+  it("未作答的题提交 verdict → 422 并点名（不落库、不写 review）", async () => {
+    const upsertResults = vi.fn(async () => []);
+    const service = makeService({
+      grading: { upsertResults: upsertResults as never },
+      // 只有 Q1 有作答；Q2 被跳过
+      sheets: { listBySheet: vi.fn(async () => [attemptRow(Q1)]) },
+    });
+    const err = await service.submitGrading({
+      userId: USER,
+      sheetId: SHEET,
+      gradedBy: "agent-a",
+      results: [{ questionId: Q2, verdict: "wrong" }],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BusinessRuleError);
+    expect((err as { meta?: { ungradableQuestionIds?: string[] } }).meta?.ungradableQuestionIds).toEqual([Q2]);
+    expect(upsertResults).not.toHaveBeenCalled();
+  });
+
+  it("软删的 attempt 不算已作答（与上下文组装同口径：agent 看得见的才能提交）", async () => {
+    const service = makeService({
+      sheets: {
+        listBySheet: vi.fn(async () => [attemptRow(Q1, { id: "attempt-deleted", status: "deleted" })]),
+      },
+    });
+    const context = await service.getGradingContext(USER, SHEET);
+    expect(context.questions.find((q) => q.id === Q1)!.gradable).toBe(false);
+    await expect(service.submitGrading({
+      userId: USER, sheetId: SHEET, gradedBy: "agent-a",
+      results: [{ questionId: Q1, verdict: "correct" }],
+    })).rejects.toBeInstanceOf(BusinessRuleError);
+  });
+
+  it("上下文逐题给 gradable 标记（agent 无需试错）", async () => {
+    const service = makeService({
+      sheets: { listBySheet: vi.fn(async () => [attemptRow(Q1)]) },
+    });
+    const context = await service.getGradingContext(USER, SHEET);
+    expect(context.questions.map((q) => [q.id, q.gradable])).toEqual([[Q1, true], [Q2, false]]);
+  });
+
+  it("可评数只数已作答题（解析模式「已评 n/m」的分母，ADR-0038 决策 8）", async () => {
+    const service = makeService({
+      sheets: { listBySheet: vi.fn(async () => [attemptRow(Q1)]) },
+    });
+    const result = await service.getGradingResults(USER, SHEET);
+    // 题单有 2 道，但只答了 1 道 ⇒ 可评 1（不是 2）
+    expect(result.gradableCount).toBe(1);
+  });
+});
+
+/** ADR-0038 决策 2：待评卷清单（agent 可读发现面）。 */
+describe("L3GradingService.listPendingGrading（待评卷清单）", () => {
+  it("只透传计数与身份，不带题面（最小披露由仓储 SQL 保证）", async () => {
+    const listPendingGradingSheets = vi.fn(async () => [{
+      id: SHEET, scope: "file", sealed_at: "2026-09-26T00:00:00Z",
+      graded_count: 1, gradable_count: 3, question_count: 5, venue_title: "2023 英一 Text 1",
+    }]);
+    const service = makeService({ sheets: { listPendingGradingSheets: listPendingGradingSheets as never } });
+    const result = await service.listPendingGrading(USER, 50);
+    expect(listPendingGradingSheets).toHaveBeenCalledWith(USER, 50);
+    expect(result.items[0]).toEqual({
+      id: SHEET, scope: "file", sealed_at: "2026-09-26T00:00:00Z",
+      graded_count: 1, gradable_count: 3, question_count: 5, venue_title: "2023 英一 Text 1",
+    });
+    // 断言形状里**没有** stem/answer/attempt —— 加字段就会被这条挡住
+    expect(Object.keys(result.items[0]!)).toEqual([
+      "id", "scope", "sealed_at", "graded_count", "gradable_count", "question_count", "venue_title",
+    ]);
+  });
+
+  it("空 userId → fail-closed（不把全库清单端点变成枚举器）", async () => {
+    const service = makeService();
+    await expect(service.listPendingGrading("  ", 50)).rejects.toBeInstanceOf(BusinessRuleError);
   });
 });

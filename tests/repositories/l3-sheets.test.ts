@@ -379,3 +379,67 @@ describe("L3SheetRepository.findWritingTaskQuestionId（W3 作用域解析只读
     expect(await repo.findWritingTaskQuestionId(USER, "00000000-0000-4000-8000-000000000601")).toBeNull();
   });
 });
+
+/**
+ * ADR-0038：两个新查询的仓储级断言。
+ *
+ * 为什么不靠 service 测试兜：service 把仓储换成了 stub，SQL 文本与谓词谁都没验过。
+ * 这两条谓词正是本 ADR 的判据所在 —— 「只列 sealed 且未评完」写错一个 `status`，
+ * 清单就会把 draft 题纸或已评完的题纸报成待评。
+ */
+describe("L3SheetRepository 待评卷清单 / 补冻结（ADR-0038）", () => {
+  it("待评卷清单：只列 sealed + file/paper，且只列「已评 < 可评」的题纸", async () => {
+    const repo = new L3SheetRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([
+      { id: SHEET, scope: "file", sealed_at: "2026-09-26T00:00:00Z", graded_count: "1", gradable_count: "3", question_count: "5", venue_title: "2023 英一" },
+    ]);
+    const rows = await repo.listPendingGradingSheets(USER, 50);
+    const [sql, params] = querySpy.mock.calls[0]!;
+    // draft 未定格（评卷 409）、discarded 作答已弃 → 都不得出现
+    expect(sql).toContain("s.status = 'sealed'");
+    expect(sql).toContain("s.scope IN ('file', 'paper')");
+    // 「已评 < 可评」是「待评」的定义；可评数 = 已物化 active attempt 的题数
+    expect(sql).toContain("FROM l3_grading_results g2 WHERE g2.sheet_id = s.id");
+    expect(sql).toContain("FROM l3_question_attempts a3");
+    expect(sql).toContain("a3.status = 'active'");
+    // 最早定格优先（先做先评）
+    expect(sql).toContain("ORDER BY s.sealed_at ASC");
+    expect(params).toEqual([USER, 50]);
+    // bigint 字符串 → number（前端拿它当分母比较，字符串会静默失效）
+    expect(rows[0]).toMatchObject({ graded_count: 1, gradable_count: 3, question_count: 5 });
+  });
+
+  it("待评卷清单：只 SELECT 身份与计数，**不带题面/答案/作答列**", async () => {
+    const repo = new L3SheetRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+    await repo.listPendingGradingSheets(USER, 10);
+    const [sql] = querySpy.mock.calls[0]!;
+    // 最小披露是授权判据的一部分（ADR-0038 决策 2）：SELECT 列表里出现题面列即越界
+    for (const forbidden of ["q.stem", "q.answer", "l3_questions q", "a.answer"]) {
+      expect(sql).not.toContain(forbidden);
+    }
+  });
+
+  it("补冻结：谓词含 question_ids IS NULL（幂等 + 并发安全），空数组不发查询", async () => {
+    const repo = new L3SheetRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const queryOneSpy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ id: SHEET });
+    expect(await repo.freezeQuestionIds(USER, SHEET, [QUESTION, QUESTION_B])).toBe(true);
+    const [sql, params] = queryOneSpy.mock.calls[0]!;
+    expect(sql).toContain("SET question_ids = $3::uuid[]");
+    // 谓词含 IS NULL ⇒ 第二个调用者 0 行，不会覆写已定格快照
+    expect(sql).toContain("question_ids IS NULL");
+    expect(params).toEqual([SHEET, USER, [QUESTION, QUESTION_B]]);
+    // 谓词含 user_id（不越权改别人的题纸）
+    expect(sql).toContain("user_id = $2::uuid");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fresh = new L3SheetRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const noQuery = vi.spyOn(fresh as any, "queryOne");
+    expect(await fresh.freezeQuestionIds(USER, SHEET, [])).toBe(false);
+    expect(noQuery).not.toHaveBeenCalled();
+  });
+});

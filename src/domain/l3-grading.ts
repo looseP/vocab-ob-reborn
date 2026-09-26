@@ -97,6 +97,45 @@ export function findOutOfScopeIds(
 }
 
 /**
+ * 可评题集合（ADR-0038 决策 4）——**评卷作用域收窄为「该题纸内已物化 active
+ * attempt 的题」**。
+ *
+ * 为什么收窄：`verdict`（correct/partial/wrong）判的是**用户的作答**。用户没作答
+ * 就没有可判的对象 —— 允许对未答题提交 verdict，agent 只能编一个。而编出来的
+ * `wrong` 会进错题库（「我没做过的错题」），且该题 attempt=0 ⇒
+ * `PATCH /api/l3/questions/:id` 的 409 护栏放行 ⇒ 题面可改 ⇒ 判定变成对另一道题
+ * 的判定。
+ *
+ * 收窄的连带好处：「已评 ⇒ 有 attempt ⇒ 题面已冻结」自动成立（不再需要给 PATCH
+ * 额外加一条评卷护栏来堵同一个洞）。
+ *
+ * ⚠️ 只认 `status === "active"` 的 attempt：软删的作答不算（`l3-grading.service`
+ * 的上下文组装同口径，两处必须一致，否则 agent 看得见却提交不了）。
+ *
+ * @param scopedIds 题纸作用域题目集（`resolveSheetScopedQuestions` 的顺序）
+ * @param attempts 该题纸的作答行（可含软删；本函数按 status 过滤）
+ */
+export function gradableQuestionIds(
+  scopedIds: readonly string[],
+  attempts: readonly { question_id: string; status: string }[],
+): string[] {
+  const answered = new Set(
+    attempts.filter((attempt) => attempt.status === "active").map((attempt) => attempt.question_id),
+  );
+  // 保持作用域顺序：verdict 结果与上下文顺序一致，agent 不会对不上号
+  return scopedIds.filter((id) => answered.has(id));
+}
+
+/** 作用域内**不可评**的题 id（未作答）——提交时用于 422 并点名。 */
+export function ungradableQuestionIds(
+  scopedIds: readonly string[],
+  attempts: readonly { question_id: string; status: string }[],
+): string[] {
+  const gradable = new Set(gradableQuestionIds(scopedIds, attempts));
+  return scopedIds.filter((id) => !gradable.has(id));
+}
+
+/**
  * 注记 review 后的目标 stage（终态不回滚，ADR-0035 §3.3）：仅「submitted + sound」
  * 升 confirmed；questionable/wrong 维持原 stage；已 confirmed 永不降级（重评只
  * 更新 review）。调用面已保证 current ∈ {submitted, confirmed}（draft 越集 422）。

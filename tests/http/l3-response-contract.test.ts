@@ -175,7 +175,7 @@ describe("L3 response contracts", () => {
       role: "agent" as const,
       access: { read: "all" as const, write: "proposal_only" as const, upgrade: "owner_only" as const },
       // 批次二（ADR-0034 §4）：评卷授权语义段（提交即授权；执行面批次三）。
-      grading: { annotationReadScope: "submitted_sheet_drafts" as const, annotationWriteScope: "review_only" as const },
+      grading: { annotationReadScope: "submitted_sheet_drafts" as const, annotationWriteScope: "review_only" as const, inbox: "agent_readable" as const },
       // 录题授权语义（ADR-0037 决策 8）：单列，不并进 access（录题不是 proposal）。
       authoring: { ...L3_AUTHORING_CAPABILITIES },
       limits: {
