@@ -92,3 +92,160 @@ describe("L3PaperRepository.listWritingTaskRefs / deleteQuestion", () => {
     expect(await repo.deleteQuestion(USER, "q-1")).toBe(false);
   });
 });
+
+/**
+ * PATCH 落库层（2026-09-26）。
+ *
+ * 为什么要仓储级单测：service 测试把 repository 换成了 stub，HTTP 测试走内存假件，
+ * 于是 updateQuestion/updatePaper 的 **SQL 文本与参数序** 谁都没验过。参数序错位在
+ * 这里不会报错，只会把 stem 写进 answer 列 —— 线上才发现题面被清空。护栏条件
+ * （owner + status='active'）同理：漏一个就是越权改别人的题。
+ */
+describe("L3PaperRepository.updateQuestion（PATCH 落库）", () => {
+  const PATCH = {
+    question_id: "00000000-0000-4000-8000-0000000000aa",
+    user_id: USER,
+    stem: "新题干",
+    options: [{ key: "A", text: "甲" }],
+    answer: { choice: "A" },
+    explanation: "官方解析",
+    evidence: [{ start: 0, end: 24, label: "首句" }],
+    ordinal: 3,
+    input_hash: "hash-1",
+  };
+
+  it("参数序 stem/options/answer/explanation/evidence/ordinal/input_hash 逐位对齐", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await repo.updateQuestion(PATCH);
+    const [sql, params] = spy.mock.calls[0]!;
+    expect(sql).toContain("SET stem = $3, options = $4::jsonb, answer = $5::jsonb, explanation = $6,");
+    expect(sql).toContain("evidence = $7::jsonb, ordinal = $8, input_hash = $9, updated_at = now()");
+    // 护栏：owner + 仅 active 可改（软删的题不许复活改写）
+    expect(sql).toContain("WHERE id = $1::uuid AND user_id = $2::uuid AND status = 'active'");
+    expect(params).toEqual([
+      PATCH.question_id,
+      USER,
+      "新题干",
+      JSON.stringify(PATCH.options),
+      JSON.stringify(PATCH.answer),
+      "官方解析",
+      JSON.stringify(PATCH.evidence),
+      3,
+      "hash-1",
+    ]);
+  });
+
+  it("可选列缺省写 null / 空数组（清空语义显式，不留旧值）", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await repo.updateQuestion({ ...PATCH, explanation: null, evidence: [], input_hash: null });
+    const [, params] = spy.mock.calls[0]! as [string, unknown[]];
+    expect(params[5]).toBeNull();
+    expect(params[6]).toBe("[]");
+    expect(params[8]).toBeNull();
+  });
+
+  it("options/answer/evidence 传 undefined 时落空值（`?? []` 右臂，不写 undefined 进 jsonb）", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await repo.updateQuestion({
+      ...PATCH, options: undefined, answer: undefined, evidence: undefined,
+    });
+    const [, params] = spy.mock.calls[0]! as [string, unknown[]];
+    // jsonb 列收 undefined 会直接报错，所以必须由仓储兜成 [] / {}
+    expect(params[3]).toBe("[]");
+    expect(params[4]).toBe("{}");
+    expect(params[6]).toBe("[]");
+  });
+
+  it("RETURNING 行经 mapQuestionRow 归一（ordinal 转 number、evidence 非数组归 [])", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue({
+      id: PATCH.question_id, user_id: USER, stem: "新题干", question_type: "reading_choice",
+      source_id: null, file_key: null, section_title: null,
+      options: [{ key: "A", text: "甲" }], answer: { choice: "A" },
+      explanation: "官方解析", evidence: { 坏形状: true }, ordinal: "3",
+      input_hash: "hash-1", status: "active", created_at: "t0", updated_at: "t1",
+    });
+    const row = await repo.updateQuestion(PATCH);
+    expect(row).toMatchObject({ ordinal: 3, evidence: [] });
+    // 无 RETURNING 行 = 题不存在/非 active/非 owner，一律 null（不抛）
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (repo as any).queryOne.mockResolvedValue(null);
+    expect(await repo.updateQuestion(PATCH)).toBeNull();
+  });
+});
+
+describe("L3PaperRepository.updatePaper / countQuestionAttempts（PATCH 落库）", () => {
+  it("updatePaper 写 title/direction/metadata/payload 且带 owner + active 护栏", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await repo.updatePaper({
+      paper_id: "00000000-0000-4000-8000-0000000000bb",
+      user_id: USER,
+      title: "新卷名",
+      direction: "考研",
+      metadata: { note: "m" },
+      payload: { version: 1, sections: [] },
+      input_hash: null,
+    });
+    const [sql, params] = spy.mock.calls[0]!;
+    expect(sql).toContain("UPDATE l3_papers");
+    expect(sql).toContain("SET title = $3, direction = $4, metadata = $5::jsonb, payload = $6::jsonb,");
+    expect(sql).toContain("WHERE id = $1::uuid AND user_id = $2::uuid AND status = 'active'");
+    expect(params).toEqual([
+      "00000000-0000-4000-8000-0000000000bb", USER, "新卷名", "考研",
+      JSON.stringify({ note: "m" }), JSON.stringify({ version: 1, sections: [] }), null,
+    ]);
+  });
+
+  it("direction/metadata 缺省 → null / {}（`?? ` 右臂）", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    await repo.updatePaper({
+      paper_id: "00000000-0000-4000-8000-0000000000bb", user_id: USER, title: "卷",
+      direction: null, metadata: undefined, payload: { version: 1, sections: [] }, input_hash: null,
+    });
+    const [, params] = spy.mock.calls[0]! as [string, unknown[]];
+    expect(params[3]).toBeNull();
+    expect(params[4]).toBe("{}");
+  });
+
+  it("RETURNING 行经 mapPaperRow 归一（无行 → null）", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue({
+      id: "00000000-0000-4000-8000-0000000000bb", user_id: USER, title: "新卷名",
+      direction: "考研", metadata: { note: "m" }, payload: { version: 1, sections: [] },
+      payload_version: 1, status: "active", created_by: "owner", input_hash: null,
+      created_at: "t0", updated_at: "t1",
+    });
+    const row = await repo.updatePaper({
+      paper_id: "00000000-0000-4000-8000-0000000000bb", user_id: USER, title: "新卷名",
+      direction: "考研", metadata: { note: "m" }, payload: { version: 1, sections: [] }, input_hash: null,
+    });
+    expect(row).toMatchObject({ id: "00000000-0000-4000-8000-0000000000bb", title: "新卷名" });
+  });
+
+  it("countQuestionAttempts 按 owner + question_id 计数，bigint 字符串转 number", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ count: "3" });
+    expect(await repo.countQuestionAttempts(USER, "q-1")).toBe(3);
+    const [sql, params] = spy.mock.calls[0]!;
+    expect(sql).toContain("FROM l3_question_attempts");
+    expect(sql).toContain("WHERE user_id = $1::uuid AND question_id = $2::uuid");
+    expect(params).toEqual([USER, "q-1"]);
+    // count(*) 恒有行；仍按 0 兜底（mock/驱动异常时 service 会误判成"无作答可改"）
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (repo as any).queryOne.mockResolvedValue(null);
+    expect(await repo.countQuestionAttempts(USER, "q-1")).toBe(0);
+  });
+});

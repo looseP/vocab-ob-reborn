@@ -397,6 +397,53 @@ describe("PATCH /api/l3/papers/:id（改卷 2026-09-26）", () => {
     });
     expect(res.status).toBe(403);
   });
+
+  /**
+   * 断 body 的 JSON 解析：`.catch(() => ({}))` 兜成空对象后由 schema 判 400。
+   * 不兜的话这里是 500 —— 手滑截断的请求体不该报服务器错。
+   */
+  it("body 不是合法 JSON → 400（解析失败兜成空对象，交给 schema 判形状）", async () => {
+    const updatePaper = vi.fn();
+    const app = createApp(makeServices({ updatePaper }));
+    const res = await app.request(`/api/l3/papers/${PAPER_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: "{ 截断的 json",
+    });
+    expect(res.status).toBe(400);
+    expect(updatePaper).not.toHaveBeenCalled();
+  });
+
+  it("缺省 direction → 落 null（不改方向），空 body 字段由 schema 兜住", async () => {
+    const updatePaper = vi.fn(async () => ({ paper: paperDetail() }));
+    const app = createApp(makeServices({ updatePaper }));
+    const res = await app.request(`/api/l3/papers/${PAPER_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "只改标题",
+        sections: [
+          { key: "s1", title: "Text 2", questionType: "reading_choice", sourceId: SOURCE_ID, questionIds: [QUESTION_ID] },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(updatePaper).toHaveBeenCalledWith(expect.objectContaining({ direction: null }));
+  });
+});
+
+describe("PATCH 请求体健壮性（2026-09-26）", () => {
+  it("题目 PATCH：body 不是合法 JSON → 400（不进 service）", async () => {
+    const updateQuestion = vi.fn();
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: "not json at all",
+    });
+    expect(res.status).toBe(400);
+    expect(updateQuestion).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/l3/questions", () => {

@@ -257,6 +257,7 @@ describe("updateQuestion（改题面 2026-09-26）", () => {
         { start: 5, end: 5, label: "空区间" },  // end<=start → 剔除
         { start: -1, end: 3, label: "负起点" }, // 负 start → 剔除
         { start: 2, end: 6, label: "  " },      // 空 label → 剔除
+        { start: 0.5, end: 6, label: "小数起点" }, // 非整数 offset → 剔除
       ],
     }));
     const call = (updateQuestion.mock.calls as unknown as Array<[{ evidence: unknown }]>)[0]![0];
@@ -270,6 +271,98 @@ describe("updateQuestion（改题面 2026-09-26）", () => {
     });
     service = makeService(paperRepo, contextRepo);
     await expect(service.updateQuestion(body())).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  /**
+   * 上面那条走的是**前门** 409（一进来就 archived），没进 `if (!question)`。
+   * 真正的竞态是：进来时 active，过护栏后 UPDATE 才落空（期间被别人删/驳回）。
+   * 两次 findQuestionById 必须给不同答案，否则这条分支永远测不到。
+   */
+  it("竞态：进来 active、UPDATE 落空 → 复判为 409 并带上最新 status", async () => {
+    const findQuestionById = vi.fn()
+      .mockResolvedValueOnce(questionRow({ id: QUESTION_ID, status: "active" }))
+      .mockResolvedValueOnce(questionRow({ id: QUESTION_ID, status: "rejected" }));
+    paperRepo = makePaperRepo({ findQuestionById: findQuestionById as never, updateQuestion: vi.fn(async () => null) });
+    service = makeService(paperRepo, contextRepo);
+
+    const err = await service.updateQuestion(body()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as { meta?: { status?: string } }).meta?.status).toBe("rejected");
+    expect(findQuestionById).toHaveBeenCalledTimes(2);
+  });
+
+  it("竞态：进来 active、UPDATE 落空、复判时题已不存在 → 404（不是 409）", async () => {
+    const findQuestionById = vi.fn()
+      .mockResolvedValueOnce(questionRow({ id: QUESTION_ID, status: "active" }))
+      .mockResolvedValueOnce(null);
+    paperRepo = makePaperRepo({ findQuestionById: findQuestionById as never, updateQuestion: vi.fn(async () => null) });
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.updateQuestion(body())).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("缺省可选列：options/answer/evidence 归零、explanation 归 null、ordinal 沿用原序", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, ordinal: 9 })),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+
+    await service.updateQuestion({
+      userId: USER_ID,
+      questionId: QUESTION_ID,
+      stem: "只改题干",
+    } as never);
+    const call = (updateQuestion.mock.calls as unknown as Array<[Record<string, unknown>]>)[0]![0];
+    expect(call.options).toEqual([]);
+    expect(call.answer).toEqual({});
+    expect(call.explanation).toBeNull();
+    expect(call.evidence).toEqual([]);
+    // ordinal 缺省 = 保持原位（PATCH 不打乱题单顺序）
+    expect(call.ordinal).toBe(9);
+  });
+
+  it("ordinal 显式给合法非负整数 → 采用新值", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, ordinal: 9 })),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+    await service.updateQuestion(body({ ordinal: 0 }));
+    const call = (updateQuestion.mock.calls as unknown as Array<[Record<string, unknown>]>)[0]![0];
+    expect(call.ordinal).toBe(0);
+  });
+
+  it("材料无正文（content_text=null）→ 跳过越界校验放行（无从核对，不假装有界）", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, source_id: SOURCE_ID })),
+      updateQuestion: updateQuestion as never,
+    });
+    // makeContextRepo 的默认 source 就是 content_text: null
+    contextRepo = makeContextRepo();
+    service = makeService(paperRepo, contextRepo);
+
+    await expect(service.updateQuestion(body({
+      evidence: [{ start: 0, end: 9999, label: "越界" }],
+    }))).resolves.toBeTruthy();
+  });
+
+  it("题无 source_id → 不查正文，越界检查整体跳过", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, source_id: null })),
+      updateQuestion: updateQuestion as never,
+    });
+    const findSourceById = vi.fn(async () => null);
+    contextRepo = makeContextRepo({ findSourceById: findSourceById as never });
+    service = makeService(paperRepo, contextRepo);
+
+    await expect(service.updateQuestion(body({
+      evidence: [{ start: 0, end: 9999, label: "越界" }],
+    }))).resolves.toBeTruthy();
+    expect(findSourceById).not.toHaveBeenCalled();
   });
 
   it("stem 必填（空题干 → 422）", async () => {
@@ -358,6 +451,42 @@ describe("updatePaper（改卷 2026-09-26）", () => {
       updatePaper: vi.fn(async () => null) as never,
     });
     await expect(service.updatePaper(body())).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  /** 同 updateQuestion：竞态分支要「两次 findPaperById 不同答案」才进得去。 */
+  it("竞态：进来 active、UPDATE 落空 → 复判 409 带最新 status", async () => {
+    const findPaperById = vi.fn()
+      .mockResolvedValueOnce(paperRow())
+      .mockResolvedValueOnce(paperRow({ status: "deleted" }));
+    withPaper({ findPaperById: findPaperById as never, updatePaper: vi.fn(async () => null) as never });
+    const err = await service.updatePaper(body()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as { meta?: { status?: string } }).meta?.status).toBe("deleted");
+  });
+
+  it("竞态：进来 active、UPDATE 落空、复判时卷已不存在 → 404", async () => {
+    const findPaperById = vi.fn().mockResolvedValueOnce(paperRow()).mockResolvedValueOnce(null);
+    withPaper({ findPaperById: findPaperById as never, updatePaper: vi.fn(async () => null) as never });
+    await expect(service.updatePaper(body())).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("缺省 direction → 落 null（不改方向，不是默认「通用」）", async () => {
+    withPaper();
+    await service.updatePaper({ userId: USER_ID, paperId: PAPER_ID, title: "只改标题", sections: body().sections } as never);
+    const call = (paperRepo.updatePaper as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { direction: unknown };
+    expect(call.direction).toBeNull();
+  });
+
+  it("缺省 metadata → 沿用原 metadata（不抹掉卷上的说明）", async () => {
+    withPaper({ findPaperById: vi.fn(async () => paperRow({ metadata: { note: "原说明" } }) as never) });
+    await service.updatePaper(body({ metadata: undefined }));
+    const call = (paperRepo.updatePaper as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { metadata: unknown };
+    expect(call.metadata).toEqual({ note: "原说明" });
+  });
+
+  it("缺省 sections → 422（`?? []` 先落地，再判空）", async () => {
+    withPaper();
+    await expect(service.updatePaper(body({ sections: undefined }))).rejects.toBeInstanceOf(ValidationError);
   });
 });
 

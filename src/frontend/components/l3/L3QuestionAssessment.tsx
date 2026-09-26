@@ -113,7 +113,8 @@ export function L3QuestionAssessment({ questionId }: { questionId: string }) {
           ) : (
             <div className="flex items-center justify-between gap-2">
               <p className="text-[11px] leading-relaxed text-[var(--color-ink-soft)]">
-                还没有评析。导出题纸发给 agent，或在这里写下你的复盘。
+                还没有评析。评卷请让本地 agent 走「评卷上下文」通道（它带标准答案；「导出」的
+                Markdown 不含答案、只供存档外发），复盘则写在这里。
               </p>
               <button type="button" onClick={startEditing}
                 className="shrink-0 rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] text-[var(--color-ink)] hover:border-[var(--color-accent)]">
