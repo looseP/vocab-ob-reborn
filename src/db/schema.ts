@@ -1381,6 +1381,12 @@ export const l3Submissions = pgTable("l3_submissions", {
 	parentSheetId: uuid("parent_sheet_id"),
 	revisionNo: integer("revision_no"),
 	draftVersion: integer("draft_version").default(0).notNull(),
+	// 题单快照（2026-09-26）：开纸时把作用域题集定格为一列有序 uuid[]。
+	// 定格后往题组加题不再改变这张已开的题纸（此前 file 作用域每次现拉，
+	// 开卷后加题会在交卷/评卷时静默改变题集）。paper 作用域写 payload 的
+	// questionIds 顺序；writing 由作文服务另路写入。NULL = 未定格（历史行 /
+	// 未快照的写作草稿），读侧回退现拉。
+	questionIds: uuid("question_ids").array(),
 	// draft（防抖自动保存）→ sealed（定格，PATCH 409）| discarded（弃，留墓碑）。
 	status: text("status").default('draft').notNull(),
 	answers: jsonb("answers").default({}).notNull(),
@@ -1422,6 +1428,7 @@ export const l3Submissions = pgTable("l3_submissions", {
 	check("l3_submissions_writing_revision_check", sql`scope <> 'writing' OR (status = 'sealed' AND revision_no IS NOT NULL AND revision_no > 0) OR (status <> 'sealed' AND revision_no IS NULL)`),
 	check("l3_submissions_status_check", sql`status = ANY (ARRAY['draft'::text, 'sealed'::text, 'discarded'::text])`),
 	check("l3_submissions_seal_mode_check", sql`seal_mode IS NULL OR seal_mode = ANY (ARRAY['full'::text, 'incremental'::text, 'summary'::text])`),
+	check("l3_submissions_question_ids_check", sql`question_ids IS NULL OR array_length(question_ids, 1) > 0`),
 ]);
 
 // 批次二（ADR-0034 §2）：作答历史题中心化——一题一条历史链，管理/删除/重做

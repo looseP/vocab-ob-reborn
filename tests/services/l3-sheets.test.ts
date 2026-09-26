@@ -31,6 +31,7 @@ function submissionRow(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRo
     parent_sheet_id: null,
     revision_no: null,
     draft_version: 0,
+    question_ids: null,
     status: "draft",
     answers: {},
     seal_mode: null,
@@ -236,7 +237,9 @@ describe("L3SheetService.openSheet", () => {
 
   it("builds the paper scope key for paper venue", async () => {
     const sheetRepo = makeSheetRepo();
-    const paperRepo = makePaperRepo({ findPaperById: vi.fn(async () => ({ id: PAPER } as never)) });
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => ({ id: PAPER, payload: { sections: [{ questionIds: [Q1, Q2] }] } } as never)),
+    });
     const service = makeService(sheetRepo, paperRepo);
     await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER });
     expect(sheetRepo.openSheet).toHaveBeenCalledWith(expect.objectContaining({
@@ -245,6 +248,25 @@ describe("L3SheetService.openSheet", () => {
       source_id: null,
       question_type: null,
     }));
+  });
+
+  it("freezes the scoped question list at open time (file scope)", async () => {
+    const sheetRepo = makeSheetRepo();
+    const paperRepo = makePaperRepo({
+      listActiveQuestionsForFile: vi.fn(async () => [questionRow({ id: Q1 }), questionRow({ id: Q2 })]),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo(), makeContextRepo({ id: SOURCE }));
+    await service.openSheet({ userId: USER, scope: "file", sourceId: SOURCE, questionType: "reading_choice" });
+    expect(sheetRepo.openSheet).toHaveBeenCalledWith(expect.objectContaining({
+      question_ids: [Q1, Q2],
+    }));
+  });
+
+  it("stores no snapshot when the scoped question list is empty", async () => {
+    const sheetRepo = makeSheetRepo();
+    const service = makeService(sheetRepo, makePaperRepo(), makeAnnotationRepo(), makeContextRepo({ id: SOURCE }));
+    await service.openSheet({ userId: USER, scope: "file", sourceId: SOURCE, questionType: "reading_choice" });
+    expect(sheetRepo.openSheet).toHaveBeenCalledWith(expect.objectContaining({ question_ids: null }));
   });
 });
 
@@ -417,8 +439,57 @@ describe("L3SheetService.sealSheet", () => {
     }), expect.any(Number));
   });
 
-  it("V：以 input.expectedVersion（客户端确认版本）作为最终 CAS 基线传给 sealSheet", async () => {
+  it("题单快照优先：开纸后题组加的题不进本卷（定格即定格）", async () => {
+    const insertAttempts = vi.fn(async (_userId: string, attempts: readonly { question_id: string }[]) =>
+      attempts.map((attempt, index) => attemptRow({ id: `00000000-0000-4000-8000-00000000061${index}`, question_id: attempt.question_id })));
     const sheetRepo = makeSheetRepo({
+      // 快照只含 Q1；作答里多写了 Q2（前端在开纸后自己看到的题）。
+      getSheet: vi.fn(async () => submissionRow({
+        question_ids: [Q1],
+        answers: { [Q1]: { choice: "B" }, [Q2]: { choice: "C" } },
+      })),
+      sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full", question_ids: [Q1] })),
+      insertAttempts,
+    });
+    // 题组现拉已含新题 Q2——快照必须压过它。
+    const paperRepo = makePaperRepo({
+      listActiveQuestionsForFile: vi.fn(async () => [questionRow({ id: Q1, ordinal: 0 }), questionRow({ id: Q2, ordinal: 1 })]),
+      findActiveQuestionsByIds: vi.fn(async (userId: string, ids: readonly string[]) =>
+        ids.map((id) => questionRow({ id }))),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo());
+
+    const result = await service.sealSheet({
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: true,
+    });
+    expect(result.materializedCount).toBe(1);
+    expect(insertAttempts).toHaveBeenCalledWith(USER, [expect.objectContaining({ question_id: Q1 })]);
+    expect(paperRepo.listActiveQuestionsForFile).not.toHaveBeenCalled();
+  });
+
+  it("题单快照剔除已删除的题（只缩不换，不会凭空多出没做的题）", async () => {
+    const insertAttempts = vi.fn(async (_userId: string, attempts: readonly { question_id: string }[]) =>
+      attempts.map((attempt, index) => attemptRow({ id: `00000000-0000-4000-8000-00000000062${index}`, question_id: attempt.question_id })));
+    const sheetRepo = makeSheetRepo({
+      getSheet: vi.fn(async () => submissionRow({ question_ids: [Q1, Q2], answers: { [Q1]: { choice: "B" }, [Q2]: { choice: "C" } } })),
+      sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full", question_ids: [Q1, Q2] })),
+      insertAttempts,
+    });
+    const paperRepo = makePaperRepo({
+      // Q2 已非 active（删除/驳回）——解析时只剩 Q1。
+      findActiveQuestionsByIds: vi.fn(async (_userId: string, ids: readonly string[]) =>
+        ids.filter((id) => id === Q1).map((id) => questionRow({ id }))),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo());
+
+    const result = await service.sealSheet({
+      userId: USER, sheetId: SHEET, expectedVersion: 0, mode: "full", acknowledgeUnanswered: true,
+    });
+    expect(insertAttempts).toHaveBeenCalledWith(USER, [expect.objectContaining({ question_id: Q1 })]);
+    expect(result.materializedCount).toBe(1);
+  });
+
+  it("V：以 input.expectedVersion（客户端确认版本）作为最终 CAS 基线传给 sealSheet", async () => {    const sheetRepo = makeSheetRepo({
       getSheet: vi.fn(async () => submissionRow({ answers: { [Q1]: { choice: "B" } }, draft_version: 7 })),
       sealSheet: vi.fn(async () => submissionRow({ status: "sealed", seal_mode: "full" })),
     });

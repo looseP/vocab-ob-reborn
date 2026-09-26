@@ -266,7 +266,7 @@ const AGENT_READS = [
   "listL3Recommendations", "getL3Recommendation", "listL3Proposals", "getL3Proposal",
   // ADR-0030：题/卷/做题文件读面对 agent 开放（拆卷评卷取料；写入仍 owner-only）。
   "listL3Papers", "getL3Paper", "listL3PracticeFiles", "getL3PracticeFile",
-  "listUpgradeWorkOrders", "listL3PracticeAttempts", "listL3PracticeErrorBook", "getL3Session",
+  "listUpgradeWorkOrders", "listL3PracticeAttempts", "listL3PracticeErrorBook", "listL3ErrorBook", "getL3Session",
   "previewForgetting",
   // 增补批：评析区读面（agent 共建工作流需要读既有评析；写入同一端点双身份）。
   "getL3QuestionAssessment",

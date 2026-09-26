@@ -22,6 +22,7 @@ import { L3WritingPage } from "@/frontend/pages/L3WritingPage";
 import { createBrowserL3Client } from "@/frontend/api/l3Client";
 import type { StudyNoteLeaveBarrier } from "@/frontend/components/studyNotes/StudyNoteEditor";
 import { isWritingSection, WRITING_SECTION } from "@/frontend/viewModels/writingNavigation";
+import { buildL3SectionUrl, parseL3SectionParam } from "@/frontend/viewModels/l3SectionNavigation";
 import { buildStudyNoteUrl, isStudyNotesSection } from "@/frontend/viewModels/studyNoteNavigation";
 import {
   markActiveReadStaleAfterManualCommand,
@@ -119,6 +120,26 @@ export function L3Page() {
   const writingSectionPreferred = isWritingSection(searchParams);
   const studyNotesPreferred = isStudyNotesSection(searchParams);
   const writingTaskIdParam = searchParams.get("writingTaskId");
+  // 做题子空间 URL 契约（2026-09-26）：试卷台/练习/错题库/会话四面的 `?section=`
+  // 深链与刷新恢复。优先级低于作文与学习笔记（它们参数更多、契约更窄），
+  // 高于 venue/paper/sheet 深链（`?section=` 是显式意图，比位置参数更具体）。
+  // 参数非法 → null = 无意图（不静默纠偏）。
+  const sectionParam = parseL3SectionParam(searchParams);
+  // 错题回流锚点（2026-09-26）：`/l3?section=practice&context=<id>` —— 练习页据此
+  // 只练这一条语境。独立于 section 契约（它是练习面的入参，不是导航目标），
+  // 故单独解析；非法值不纠偏（练习页收不到 focusContextId = 走原两轴流程）。
+  const practiceContextParam = searchParams.get("context");
+  const practiceFocusContextId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    practiceContextParam ?? "",
+  )
+    ? practiceContextParam
+    : null;
+
+  useEffect(() => {
+    if (sectionParam === null) return;
+    if (writingSectionPreferred || writingTaskIdParam || studyNotesPreferred) return;
+    setSection(sectionParam);
+  }, [sectionParam, writingSectionPreferred, writingTaskIdParam, studyNotesPreferred]);
 
   useEffect(() => {
     if (writingSectionPreferred || writingTaskIdParam) setSection(WRITING_SECTION as L3ShellSection);
@@ -211,7 +232,10 @@ export function L3Page() {
       if (next === section) return;
       if (section === "studyNotes") {
         const action = () => {
-          navigate("/l3"); // 离开子空间：清 section=study-notes（防刷新回卷）再切 section
+          // 离开子空间：清 section=study-notes（防刷新回卷）再切 section。
+          // 目标面有 URL 契约时直接写规范 URL——否则「笔记 → 练习」之后刷新会
+          // 退回空间首页（URL 里没有面的痕迹）。
+          navigate(buildL3SectionUrl(next) ?? "/l3");
           setSection(next);
         };
         const barrier = studyNotesLeaveRef.current;
@@ -226,6 +250,10 @@ export function L3Page() {
         navigate(buildStudyNoteUrl({})); // 规范 URL；section effect 负责落 studyNotes
         return;
       }
+      // 做题子空间：把当前面写进 URL（replace，不堆历史）——位置即入口，
+      // 刷新/分享/收藏都能回到同一个面。
+      const canonical = buildL3SectionUrl(next);
+      if (canonical) navigate(canonical, { replace: true });
       setSection(next);
     },
     [section, navigate],
@@ -241,7 +269,7 @@ export function L3Page() {
           setFocusContext(contextId ? { contextId, nonce: Date.now() } : null);
           setSection("source");
         }}
-        onNavigate={setSection}
+        onNavigate={handleShellNavigate}
       />
     ),
     manual: <L3ManualEditorPage client={l3Client} onManualChanged={(reason) => setActiveReadStale(markActiveReadStaleAfterManualCommand(reason))} onNavigate={navigateL3} />,
@@ -278,7 +306,7 @@ export function L3Page() {
     // 学习笔记子空间（Task 08）：/l3?section=study-notes 宿主（列表/专题/深链/离页屏障；
     // 浏览零创建、显式「新建笔记」才 POST；离开屏障注册给 shell 导航复用）。
     studyNotes: <L3StudyNotesPage onRegisterLeaveBarrier={registerStudyNotesBarrier} />,
-    practice: <L3PracticePage client={l3Client} onNavigate={navigateL3} />,
+    practice: <L3PracticePage client={l3Client} onNavigate={navigateL3} focusContextId={practiceFocusContextId} />,
     errorBook: <L3ErrorBookPage client={l3Client} onNavigate={navigateL3} />,
     session: <L3SessionPage client={l3Client} onNavigate={navigateL3} />,
     // source section：书架为前门；选中来源后整屏切换为阅读视图（返回书架清除

@@ -744,6 +744,24 @@ export const l3PracticeErrorBookQuerySchema = z.object({
     .describe("Keyset cursor over (created_at,id) from the previous page's nextCursor. Takes precedence over offset."),
 });
 
+// 错题库统一投影（2026-09-26）：句级 + 题级两腿合并的错题库口径。
+// 与上方 l3PracticeErrorBookQuerySchema（句级单腿）并存——后者进入退役窗口：
+//   ⏳ DEPRECATED(句级错题)：`GET /api/l3-practice/error-book` 只消费句级一腿，
+//   题级错题（l3_grading_results.verdict）此前全库无查询、从不进错题库。错题库
+//   口径已迁至 `GET /api/l3/error-book`（两腿合并，按 kind 分区）。保留至
+//   **0.2.0 契约窗口**——到期必须删除该端点与其 schema；删除属 breaking change，
+//   必须走 api:breaking 审批窗口，不得静默退役、也不得无限期保留。
+//   检索锚点：grep "DEPRECATED(句级错题)"。
+export const l3ErrorBookQuerySchema = z.object({
+  kind: z.enum(["sentence", "question"]).optional()
+    .describe("Leg selector. Omit for the merged error book (sentence + question)."),
+  space: z.enum(L3_SUB_SPACES).optional(),
+  direction: directionSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional()
+    .describe("Offset pagination applied AFTER the two legs are merged."),
+});
+
 // ── L3 sessions (ADR-0019 §2) ───────────────────────────────────────────
 export const l3SessionCreateSchema = z.object({
   type: z.enum(L3_SESSION_TYPES),

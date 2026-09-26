@@ -82,7 +82,7 @@ describe("insertDraft", () => {
     expect(text).toContain("'{}'::jsonb");
     expect(text).toContain("draft_version");
     // params: [user_id, scope_key, task_id]
-    expect(params).toEqual([USER, "writing:t-new", "t-new"]);
+    expect(params).toEqual([USER, "writing:t-new", "t-new", "q-1"]);
     expect(row.writing_task_id).toBe("t-new");
     expect(row.status).toBe("draft");
     expect(row.draft_version).toBe(0);
@@ -160,6 +160,7 @@ function submissionRow(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRo
     parent_sheet_id: null,
     revision_no: null,
     draft_version: 0,
+    question_ids: null,
     status: "draft",
     answers: {},
     seal_mode: null,
@@ -359,8 +360,8 @@ describe("sheet 域：CAS 与物化写（W3）", () => {
     const [text, params] = querySpy.mock.calls[0]!;
     expect(text).toContain("'writing', $2");
     expect(text).toContain("$4::uuid");
-    expect(text).toContain("$5::jsonb");
-    expect(params).toEqual([USER, "writing:t-1", "t-1", "s-0", JSON.stringify({ q: { text: "copy" } })]);
+    expect(text).toContain("$6::jsonb");
+    expect(params).toEqual([USER, "writing:t-1", "t-1", "s-0", "q-1", JSON.stringify({ q: { text: "copy" } })]);
     expect(row.parent_sheet_id).toBe("s-0");
 
     querySpy.mockImplementation(async () => ({ rows: [] }));

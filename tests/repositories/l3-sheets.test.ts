@@ -22,6 +22,7 @@ function submission(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRow {
     parent_sheet_id: null,
     revision_no: null,
     draft_version: 0,
+    question_ids: null,
     status: "draft",
     answers: {},
     seal_mode: null,
@@ -78,6 +79,7 @@ describe("L3SheetRepository.openSheet", () => {
       source_id: SOURCE,
       question_type: "reading_choice",
       paper_id: null,
+      question_ids: null,
     });
     expect(result.created).toBe(true);
     expect(result.row.id).toBe(SHEET);
@@ -99,6 +101,7 @@ describe("L3SheetRepository.openSheet", () => {
       source_id: SOURCE,
       question_type: "reading_choice",
       paper_id: null,
+      question_ids: null,
     });
     expect(result.created).toBe(false);
     expect(lookup).toHaveBeenCalledWith(USER, `file:${SOURCE}:reading_choice`);
@@ -111,6 +114,7 @@ describe("L3SheetRepository.openSheet", () => {
     await expect(repo.openSheet({
       user_id: USER, scope: "paper", scope_key: "paper:x", source_id: null,
       question_type: null, paper_id: "00000000-0000-4000-8000-000000000302",
+      question_ids: null,
     })).rejects.toThrow("sheet insert returned no row");
   });
 });

@@ -137,6 +137,132 @@ function setupMock(options: { files?: unknown[]; detail?: Record<string, unknown
   return apiFetchMock;
 }
 
+describe("L3PapersPage 文件顺序导航（2026-09-26）", () => {
+  const SECOND_SOURCE = "00000000-0000-4000-8000-000000000003";
+
+  function twoFiles() {
+    return [
+      fileItem({ source_id: SECOND_SOURCE, title: "2023 Text2 气候议题" }),
+      fileItem(), // 打开的就是这一份（列表末位）
+    ];
+  }
+
+  function detailFor(sourceId: string) {
+    return {
+      question_type: "reading_choice",
+      source: { id: sourceId, title: sourceId === SECOND_SOURCE ? "2023 Text2 气候议题" : "2025 Text1" },
+      source_content: "The passage.",
+      file_key: null,
+      questions: [questionFixture("21. 题干")],
+    };
+  }
+
+  /** 分派式 mock：按 questionType+sourceId 组合回不同文件的详情。 */
+  function setupMultiFileMock() {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    const sheet = {
+      id: "00000000-0000-4000-8000-000000000401",
+      user_id: "00000000-0000-4000-8000-000000000001",
+      scope: "file",
+      scope_key: `file:${SOURCE_ID}:reading_choice`,
+      source_id: SOURCE_ID,
+      question_type: "reading_choice",
+      paper_id: null,
+      status: "draft",
+      answers: {},
+      seal_mode: null,
+      summary: null,
+      sealed_at: null,
+      created_at: "2026-09-17T00:00:00Z",
+      updated_at: "2026-09-17T00:00:00Z",
+    };
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/l3/papers?")) return { items: [] };
+      if (path.startsWith("/l3/practice-files?")) return { items: twoFiles() };
+      if (path.startsWith("/l3/practice-files/detail?")) {
+        return path.includes(SECOND_SOURCE) ? detailFor(SECOND_SOURCE) : detailFor(SOURCE_ID);
+      }
+      if (path === "/l3/sheets") return { sheet };
+      if (path.startsWith("/l3/attempts")) return { items: [] };
+      if (path.startsWith("/l3/question-annotations")) return { items: [] };
+      if (path === "/l3/annotation-tags") return { entry: [], option: [] };
+      return {};
+    });
+    return apiFetchMock;
+  }
+
+  async function openLastFile(): Promise<void> {
+    await renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "题型空间" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /阅读理解/ }));
+    });
+    await waitFor(() => expect(screen.getByText(/2025 英语二 · Text 1 小费文化/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByText(/2025 英语二 · Text 1 小费文化/));
+    });
+    await waitFor(() => expect(screen.getByTestId("file-order-bar")).toBeTruthy());
+  }
+
+  it("打开文件后顶部出现顺序条并给出位置（第 2 / 2 份）", async () => {
+    setupMultiFileMock();
+    await openLastFile();
+    expect(screen.getByTestId("file-order-position").textContent).toBe("第 2 / 2 份");
+  });
+
+  it("末份：下一份禁用，上一份带目标文件名", async () => {
+    setupMultiFileMock();
+    await openLastFile();
+    const next = screen.getByTestId("file-order-next") as HTMLButtonElement;
+    const prev = screen.getByTestId("file-order-previous");
+    expect(next.disabled).toBe(true);
+    expect(prev.textContent).toContain("2023 Text2 气候议题");
+  });
+
+  it("点「上一份」直接打开相邻文件（不回列表、不经首页）", async () => {
+    const apiFetchMock = setupMultiFileMock();
+    await openLastFile();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("file-order-previous"));
+    });
+    await waitFor(() =>
+      expect(apiFetchMock.mock.calls.some(([p]) => String(p).includes(`/l3/practice-files/detail?`) && String(p).includes(SECOND_SOURCE))).toBe(true));
+    // 顺序条跟着换：现在是第 1 / 2 份，上一份禁用
+    await waitFor(() => expect(screen.getByTestId("file-order-position").textContent).toBe("第 1 / 2 份"));
+    expect((screen.getByTestId("file-order-previous") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("单份文件：两侧都禁用，位置是「第 1 / 1 份」（不谎报、也不给死按钮）", async () => {
+    setupMock({
+      files: [fileItem()],
+      detail: {
+        question_type: "reading_choice",
+        source: { id: SOURCE_ID, title: "2025 英语二 · Text 1 小费文化" },
+        source_content: "The passage.",
+        file_key: null,
+        questions: [questionFixture("21. 题干")],
+      },
+    });
+    await renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "题型空间" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /阅读理解/ }));
+    });
+    await waitFor(() => expect(screen.getByText(/2025 英语二 · Text 1 小费文化/)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByText(/2025 英语二 · Text 1 小费文化/));
+    });
+    await waitFor(() => expect(screen.getByTestId("file-order-bar")).toBeTruthy());
+    expect(screen.getByTestId("file-order-position").textContent).toBe("第 1 / 1 份");
+    expect((screen.getByTestId("file-order-previous") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("file-order-next") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
 describe("L3PapersPage 题型空间", () => {
   it("全景 → 单专题文件列表 → 文件详情接入做题表面（file venue 题纸）", async () => {
     const apiFetchMock = setupMock({

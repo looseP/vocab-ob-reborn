@@ -1,21 +1,18 @@
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, ClipboardType, LayoutGrid, Library, Repeat, Notebook, Settings, Upload, Users, Zap } from "lucide-react";
+import { ClipboardType } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { WordbookSwitcher } from "@/frontend/components/wordbook/WordbookSwitcher";
 import { useCaptureFloatingWindow } from "@/frontend/hooks/useCaptureFloatingWindow";
 import { useToast } from "@/frontend/components/ui/Toast";
+import { isNavEntryActive, navEntriesFor } from "@/frontend/viewModels/navigationRegistry";
+import { NAV_ICON, type NavIconName } from "@/frontend/components/layout/navIcons";
 
-const navItems = [
-  { href: "/words", label: "词条库", icon: BookOpen },
-  { href: "/plaza", label: "广场", icon: Users },
-  { href: "/review", label: "复习", icon: Repeat },
-  { href: "/l2-drill", label: "辨析", icon: Zap },
-  { href: "/l3", label: "素材", icon: Library },
-  { href: "/dashboard", label: "仪表盘", icon: LayoutGrid },
-  { href: "/notes", label: "笔记", icon: Notebook },
-  { href: "/import", label: "导入", icon: Upload },
-  { href: "/settings", label: "设置", icon: Settings },
-] as const;
+/**
+ * 桌面顶栏条目来自导航登记表（2026-09-26）——不再在本文件手写 href/标签。
+ * 顶栏是"广度"入口：只放跨层主通道；做题族在顶栏只露一个「做题」（试卷台是做题
+ * 正门），其余做题面由首页卡片、命令面板与 L3 侧栏承载。
+ */
+const navItems = navEntriesFor("topnav");
 
 export function SiteHeader() {
   const location = useLocation();
@@ -59,11 +56,11 @@ export function SiteHeader() {
 
         <nav className="hidden items-center gap-1 md:flex">
           {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname.startsWith(item.href);
+            const Icon = NAV_ICON[item.icon as NavIconName] ?? NAV_ICON.repeat;
+            const isActive = isNavEntryActive(item, location.pathname);
             return (
               <Link
-                key={item.href}
+                key={item.id}
                 to={item.href}
                 className={`group flex items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-medium transition-colors duration-150 ${
                   isActive

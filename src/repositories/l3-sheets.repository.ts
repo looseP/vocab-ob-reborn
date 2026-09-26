@@ -40,6 +40,8 @@ interface SubmissionDbRow {
   parent_sheet_id: string | null;
   revision_no: number | null;
   draft_version: number;
+  /** 题单快照（开纸定格）；null = 历史行/写作草稿，读侧回退现拉。 */
+  question_ids: string[] | null;
   status: L3SubmissionRow["status"];
   answers: unknown;
   seal_mode: SealMode | null;
@@ -90,13 +92,22 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
 
   async openSheet(input: NewL3Submission): Promise<{ row: L3SubmissionRow; created: boolean }> {
     const inserted = await this.queryOne<SubmissionDbRow>(
-      `INSERT INTO l3_submissions (user_id, scope, scope_key, source_id, question_type, paper_id)
-       VALUES ($1::uuid, $2, $3, $4, $5, $6)
+      `INSERT INTO l3_submissions (user_id, scope, scope_key, source_id, question_type, paper_id, question_ids)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])
        ON CONFLICT (user_id, scope_key) WHERE status = 'draft' DO NOTHING
        RETURNING *`,
-      [input.user_id, input.scope, input.scope_key, input.source_id, input.question_type, input.paper_id],
+      [
+        input.user_id,
+        input.scope,
+        input.scope_key,
+        input.source_id,
+        input.question_type,
+        input.paper_id,
+        input.question_ids,
+      ],
     );
     if (inserted) return { row: mapSubmissionRow(inserted), created: true };
+    // 幂等命中：复用既有 draft 行——**不**覆盖其题单快照（题单以首次开纸为准）。
     const existing = await this.findDraftByScopeKey(input.user_id, input.scope_key);
     if (!existing) throw new Error("sheet insert returned no row");
     return { row: existing, created: false };

@@ -92,13 +92,13 @@ function makeClient(overrides: Partial<L3FrontendClient> = {}): L3FrontendClient
   } as unknown as L3FrontendClient;
 }
 
-async function mount(client: L3FrontendClient): Promise<void> {
+async function mount(client: L3FrontendClient, props: { focusContextId?: string | null } = {}): Promise<void> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   mountedRoots.push({ root, container });
   await act(async () => {
-    root.render(createElement(L3PracticePage, { client, onNavigate: vi.fn() }) as ReactElement);
+    root.render(createElement(L3PracticePage, { client, onNavigate: vi.fn(), ...props }) as ReactElement);
     await Promise.resolve();
   });
 }
@@ -221,5 +221,50 @@ describe("L3PracticePage", () => {
 
     await waitFor(() => expect(screen.getByText(/HTTP 500/)).toBeTruthy());
     expect(client.recordAttempt).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 错题回流（2026-09-26）：`/l3?section=practice&context=<id>` → 只练这一条语境，
+ * 且**进入即开练**——不要求用户再点一次「开始练习」（回路的最后一段不能有额外摩擦）。
+ */
+describe("L3PracticePage · 错题回流（focusContextId）", () => {
+  const CONTEXT = "00000000-0000-4000-8000-000000000501";
+
+  it("进入即取该语境的素材，无需点「开始练习」", async () => {
+    const client = makeClient();
+    await mount(client, { focusContextId: CONTEXT });
+    await waitFor(() => expect(client.listOccurrences).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(client.listOccurrences).mock.calls[0][0]).toMatchObject({ contextId: CONTEXT });
+    await waitFor(() => expect(screen.getByText(/The ____ sunset faded\./)).toBeTruthy());
+  });
+
+  it("带 context 时不按两轴取素材（不传 space/direction）", async () => {
+    const client = makeClient();
+    await mount(client, { focusContextId: CONTEXT });
+    await waitFor(() => expect(client.listOccurrences).toHaveBeenCalledTimes(1));
+    const params = vi.mocked(client.listOccurrences).mock.calls[0][0] ?? {};
+    expect(params.space).toBeUndefined();
+    expect(params.direction).toBeUndefined();
+  });
+
+  it("回流来的语境也能记录作答（闭环真的能闭上）", async () => {
+    const client = makeClient();
+    await mount(client, { focusContextId: CONTEXT });
+    await waitFor(() => expect(screen.getByText(/The ____ sunset faded\./)).toBeTruthy());
+    await clickButton("跳过");
+    await waitFor(() => expect(client.recordAttempt).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(client.recordAttempt).mock.calls[0][0]).toMatchObject({
+      contextId: OCCURRENCE_ITEM.occurrence.context_id,
+      outcome: "skip",
+    });
+  });
+
+  it("无 focusContextId 时行为不变：仍需显式「开始练习」", async () => {
+    const client = makeClient();
+    await mount(client, { focusContextId: null });
+    expect(client.listOccurrences).not.toHaveBeenCalled();
+    await clickButton("开始练习");
+    await waitFor(() => expect(client.listOccurrences).toHaveBeenCalledTimes(1));
   });
 });

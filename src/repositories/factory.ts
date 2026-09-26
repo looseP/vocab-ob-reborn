@@ -25,6 +25,7 @@ import { L3ContextRepository } from "./l3-context.repository";
 import { L3ProposalRepository } from "./l3-proposal.repository";
 import { L3RecommendationRepository } from "./l3-recommendation.repository";
 import { L3PracticeRepository } from "./l3-practice.repository";
+import { L3ErrorBookRepository } from "./l3-error-book.repository";
 import { L3SessionRepository } from "./l3-session.repository";
 import { L3PaperRepository } from "./l3-paper.repository";
 import { L3AnnotationRepository } from "./l3-annotations.repository";
@@ -55,6 +56,7 @@ export function createRepositories(tx?: PoolClient): IRepositories {
     l3Proposal: new L3ProposalRepository(tx),
     l3Recommendation: new L3RecommendationRepository(tx),
     l3Practice: new L3PracticeRepository(tx),
+    l3ErrorBook: new L3ErrorBookRepository(tx),
     l3Sessions: new L3SessionRepository(tx),
     l3Paper: new L3PaperRepository(tx),
     l3Annotations: new L3AnnotationRepository(tx),

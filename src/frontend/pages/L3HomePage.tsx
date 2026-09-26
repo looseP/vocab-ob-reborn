@@ -19,6 +19,7 @@ import { TYPE_LABELS, type L3SourceListItem } from "@/frontend/components/l3/L3B
 import { L3GrowthChart } from "@/frontend/components/l3/L3GrowthChart";
 import { Skeleton } from "@/frontend/components/ui/Skeleton";
 import type { L3ShellSection } from "@/frontend/viewModels/l3ShellViewModel";
+import { navEntriesFor } from "@/frontend/viewModels/navigationRegistry";
 import {
   buildGrowthSeries,
   buildRecentCaptureGroups,
@@ -230,23 +231,21 @@ export function L3HomePage({ onOpenSource, onNavigate }: L3HomePageProps) {
         </>
       )}
 
-      {/* ④ 视角入口：空间 = 三个取景框（来源 / 词 / 网络） */}
+      {/* ④ 视角入口：L3 内的全部用户面（2026-09-26 起自导航登记表派生）。
+          此前只列 4 项（来源/试卷/词空间/关联图），练习、错题库、会话、作文、
+          学习笔记全都不在——而它们恰恰是"做了之后回看"的那一半。登记表里声明
+          了 l3home 的面在此全部列出，新增一个面只需改一行登记表。 */}
       <div className="flex flex-wrap gap-2">
-        {(
-          [
-            ["source", "来源书架"],
-            ["papers", "试卷台"],
-            ["word", "词空间"],
-            ["graph", "关联图"],
-          ] as Array<[L3ShellSection, string]>
-        ).map(([section, label]) => (
+        {navEntriesFor("l3home").map((entry) => (
           <button
-            key={section}
+            key={entry.id}
             type="button"
-            onClick={() => onNavigate(section)}
+            data-testid={`l3-home-chip-${entry.id}`}
+            title={entry.description}
+            onClick={() => onNavigate(entry.l3Section ?? "home")}
             className="rounded-full border border-[var(--color-border)] px-3 py-1 text-[11.5px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           >
-            {label}
+            {entry.label}
           </button>
         ))}
       </div>

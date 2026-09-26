@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
@@ -12,6 +12,15 @@ import {
 } from "@/frontend/components/writing/WritingQuestionEntry";
 import type { WritingOrigin, WritingOriginQuestionType } from "@/frontend/viewModels/writingNavigation";
 import { buildStudyNoteUrl } from "@/frontend/viewModels/studyNoteNavigation";
+import {
+  filePositionLabel,
+  fileSiblingLabel,
+  findFileSiblings,
+  type FileIdentity,
+  type FileSiblings,
+  type OrderedPracticeFile,
+} from "@/frontend/viewModels/fileOrderNavigation";
+import { buildL3SectionUrl } from "@/frontend/viewModels/l3SectionNavigation";
 import type { WritingQuestionTaskSummary } from "@/domain";
 
 /**
@@ -281,6 +290,65 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
   );
 }
 
+/**
+ * 文件顺序条（2026-09-26）——「上一份 · 第 n/m 份 · 下一份」（+ 可选返回）。
+ *
+ * 放在做题表面**之上**而不是卷面内部：换卷是一次导航动作（离开这张卷），
+ * 不该混进卷面控件里。首/末份时对应按钮禁用而非消失——位置感比省一个按钮重要。
+ *
+ * `showBack` 由宿主决定：做题表面自带「← 返回题型空间」（L3ExamPaper 内部，file
+ * venue 语义更准），所以那里 **不再重复一个同名按钮** —— 同屏两个「返回题型空间」
+ * 既让用户犹豫，也让可访问性名称/测试断言变得二义。
+ */
+function FileOrderBar({
+  siblings,
+  onBack,
+  onGoPrevious,
+  onGoNext,
+  backLabel,
+  showBack = true,
+}: {
+  siblings: FileSiblings;
+  onBack(): void;
+  onGoPrevious(): void;
+  onGoNext(): void;
+  backLabel?: string;
+  showBack?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="file-order-bar">
+      {showBack && (
+        <button type="button" onClick={onBack} className="text-[var(--color-accent)]">
+          {backLabel ?? "← 返回题型空间"}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onGoPrevious}
+        disabled={siblings.previous === null}
+        data-testid="file-order-previous"
+        title={siblings.previous ? siblings.previous.title : "已是第一份"}
+        className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[var(--color-border)] disabled:hover:text-[var(--color-ink-soft)]"
+      >
+        {fileSiblingLabel(siblings.previous, "上一份")}
+      </button>
+      <span className="text-[var(--color-ink-soft)]" data-testid="file-order-position">
+        {filePositionLabel(siblings)}
+      </span>
+      <button
+        type="button"
+        onClick={onGoNext}
+        disabled={siblings.next === null}
+        data-testid="file-order-next"
+        title={siblings.next ? siblings.next.title : "已是最后一份"}
+        className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[var(--color-border)] disabled:hover:text-[var(--color-ink-soft)]"
+      >
+        {fileSiblingLabel(siblings.next, "下一份")}
+      </button>
+    </div>
+  );
+}
+
 /** file venue 伪卷组装（题型空间文件 → 做题表面；F-1 回看复用同一形态）。 */
 function buildFileVenuePaper(
   detail: PracticeFileDetail,
@@ -444,20 +512,47 @@ function FilesTab({ deepLink }: {
     el?.scrollIntoView?.({ block: "start" });
   }, [focusedQuestionId, detail]);
 
+  // 文件顺序导航（2026-09-26）：上一份/下一份 + 位置文案。纯逻辑见 fileOrderNavigation。
+  const detailIdentity: FileIdentity | null = detail
+    ? {
+        questionType: detail.questionType,
+        sourceId: detail.sourceId,
+        // sheet 型（source 型文件）没有 fileKey；browse 型两者取其一（见 sameFileIdentity）
+        fileKey: detail.kind === "sheet" ? null : detail.fileKey,
+      }
+    : null;
+  const siblings = useMemo(
+    () => findFileSiblings(files ?? [], detailIdentity),
+    [files, detailIdentity],
+  );
+  const goSibling = useCallback((file: OrderedPracticeFile | null) => {
+    if (file == null) return;
+    void openFile(file as PracticeFile);
+  }, [openFile]);
+
   // 三级：文件详情——source 型走做题表面（file venue 题纸）；fileKey 型保留浏览
   if (detail && venue) {
     if (detail.kind === "sheet") {
       return (
-        <L3ExamPaper
-          key={`${detail.paper.id}:${retakeNonce}`}
-          paper={detail.paper}
-          fileVenue={{ sourceId: detail.sourceId, questionType: detail.questionType }}
-          {...(detail.replaySheetId ? { replaySheetId: detail.replaySheetId } : {})}
-          focusQuestionId={focusedQuestionId}
-          writingEntry={{ direction: detail.direction ?? "通用", onNavigate: (url) => navigate(url) }}
-          onBack={() => setDetail(null)}
-          onRetake={() => setRetakeNonce((n) => n + 1)}
-        />
+        <>
+          <FileOrderBar
+            siblings={siblings}
+            showBack={false}
+            onBack={() => setDetail(null)}
+            onGoPrevious={() => goSibling(siblings.previous)}
+            onGoNext={() => goSibling(siblings.next)}
+          />
+          <L3ExamPaper
+            key={`${detail.paper.id}:${retakeNonce}`}
+            paper={detail.paper}
+            fileVenue={{ sourceId: detail.sourceId, questionType: detail.questionType }}
+            {...(detail.replaySheetId ? { replaySheetId: detail.replaySheetId } : {})}
+            focusQuestionId={focusedQuestionId}
+            writingEntry={{ direction: detail.direction ?? "通用", onNavigate: (url) => navigate(url) }}
+            onBack={() => setDetail(null)}
+            onRetake={() => setRetakeNonce((n) => n + 1)}
+          />
+        </>
       );
     }
     // I3：essay 题（小/大作文）渲染共享作文入口；origin 依来源身份构造（fileKey|sourceId）。
@@ -493,8 +588,13 @@ function FilesTab({ deepLink }: {
     }
     return (
       <div className="space-y-2">
-        <button type="button" onClick={() => setDetail(null)} className="text-xs text-[var(--color-accent)]">← 返回{VENUES.find((v) => v.type === venue)?.name}空间</button>
-        <h3 className="text-base font-semibold">{detail.title}</h3>
+        <FileOrderBar
+          siblings={siblings}
+          backLabel={`← 返回${VENUES.find((v) => v.type === venue)?.name ?? ""}空间`}
+          onBack={() => setDetail(null)}
+          onGoPrevious={() => goSibling(siblings.previous)}
+          onGoNext={() => goSibling(siblings.next)}
+        />        <h3 className="text-base font-semibold">{detail.title}</h3>
         <QuestionList
           questions={detail.questions}
           focusedQuestionId={focusedQuestionId}
@@ -1088,7 +1188,7 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
   if (error) {
     return (
       <div className="space-y-2">
-        <button type="button" onClick={() => navigate("/l3")} className="text-xs text-[var(--color-accent)]">← 返回试卷台</button>
+        <button type="button" onClick={() => navigate(buildL3SectionUrl("papers") as string)} className="text-xs text-[var(--color-accent)]">← 返回试卷台</button>
         <p className="text-sm text-[var(--color-ink-soft)]">题纸回看加载失败（题纸可能已删除）。</p>
         <button type="button" onClick={() => setRetryNonce((n) => n + 1)} className="text-xs text-[var(--color-accent)]">重试</button>
       </div>

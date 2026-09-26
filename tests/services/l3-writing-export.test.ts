@@ -39,7 +39,7 @@ function sheetRow(overrides: Partial<L3SubmissionRow> = {}): L3SubmissionRow {
   return {
     id: SHEET, user_id: USER, scope: "writing", scope_key: `writing:${TASK}`,
     source_id: null, question_type: null, paper_id: null, writing_task_id: TASK,
-    parent_sheet_id: null, revision_no: 1, draft_version: 2, status: "sealed",
+    parent_sheet_id: null, revision_no: 1, draft_version: 2, question_ids: null, status: "sealed",
     answers: {}, seal_mode: "full", summary: null, sealed_at: nowIso(),
     created_at: nowIso(), updated_at: nowIso(), ...overrides,
   };

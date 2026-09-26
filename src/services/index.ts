@@ -29,6 +29,7 @@ import { CrossTrackService } from "./cross-track.service";
 import { L2DrillService } from "./l2-drill.service";
 import { UpgradeWorkOrderService } from "./upgrade-work-order.service";
 import { L3PracticeService } from "./l3-practice.service";
+import { L3ErrorBookService } from "./l3-error-book.service";
 import { L3PaperService } from "./l3-paper.service";
 import { L3AnnotationService } from "./l3-annotations.service";
 import { L3SheetService } from "./l3-sheets.service";
@@ -246,6 +247,8 @@ export function createServices(deps: ServiceDeps) {
     // createRepositories 默认，无需额外 deps。
     upgradeWorkOrders: new UpgradeWorkOrderService({ l2Transition }),
     l3Practice: new L3PracticeService(),
+    // 错题库统一投影（只读；合并句级 + 题级两腿）。
+    l3ErrorBook: new L3ErrorBookService(),
     l3Paper: new L3PaperService(repos.l3Paper, repos.l3Context),
     l3Annotations: new L3AnnotationService(repos.l3Annotations, repos.l3Paper),
     l3Sheets: new L3SheetService(repos.l3Sheets, repos.l3Paper, repos.l3Annotations),

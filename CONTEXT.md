@@ -45,8 +45,51 @@ _Avoid_: dedicated error-book table (derived, not stored)
 **Context quiz (语境自测)**: The L3 contexts area's self-test toggle on the word detail page — each context shows its original sentence (target word highlighted) while the **bound sense** is click-to-reveal hidden; the tested skill is recalling what the word meant *in that sentence* — contextualized retrieval, the reason bound-sense snapshots exist. Stateless by design (援引 Preview mode 先例): no records, no scheduling, no self-assessment buttons; occurrences with an empty bound sense fall back to the word's current short_definition with no UI distinction. The active-retrieval counterpart to Tier 2's passive revisit.
 _Avoid_: cloze (hide-the-word reverse mode is deferred — needs surface inflection matching); hosting inside the reading view (that is the capture workspace) or inside review cards (Tier 2 must stay collapsed within the <5s review pace); recording quiz history ("due for quiz" is scheduling semantics across the L3 red line)
 
-**Practice attempt (练习记录)**: One recorded answer in L3 practice (2026-09-11): targets a context (required), optionally an occurrence; may belong to a session (攻坚包 or free practice); carries an outcome; never writes FSRS. First-tier practice types: 作文句默写 and recorded 语境义自测. The word-detail Context quiz stays stateless — attempts exist only inside session-based practice surfaces.
+**Practice attempt (练习记录)**: One recorded answer in L3 practice (2026-09-11): targets a context (required), optionally an occurrence; may belong to a session (攻坚包 or free practice); carries an outcome; never writes FSRS. First-tier practice types: 作文句默写 and recorded 语境义自测. The word-detail Context quiz stays stateless — attempts exist only inside session-based practice surfaces. **Renamed scope (2026-09-26): this is the 句级 record only** — see Question attempt for the 题级 record; the two share the word "attempt" and nothing else.
 _Avoid_: scheduling semantics (attempts power views like the error book; they never compute due); target=word (L3 practice operates on contexts/sentences, not bare words)
+
+### 做题与判卷（2026-09-26 注册）
+
+这一族词此前只存在于 ADR 与 UI 文案里、未进本词汇表，导致同一件事有三四种叫法。本节把做题轴的受控词汇一次钉死；**一个概念一个词，UI 文案与本表一致**。
+
+**Practice file (做题文件)**: The unit of "something to do", identified by `(source, question_type)` — 《2023 Text2》的阅读选择题那一组。It is an **aggregation, not a table** (ADR-0030 §1: no file table, no section table); its identity is that pair, and a paper payload section uses `fileKey` for sourceless groups. Opening a practice file is what creates a sheet.
+_Avoid_: 试卷 (a hand-assembled set of questions spanning files); 题组 as a synonym for a single question's option list; treating a file as a stored row
+
+**Mock paper (试卷)**: A hand-assembled set of question **references** (`l3_papers.payload.sections[].questionIds`), re-resolved on every read — never a frozen artifact and never a copy of question bodies. A paper may span several practice files.
+_Avoid_: 题纸 (that is the answering session, not the question set); 题单 (that is one sheet's frozen question list)
+
+**Sheet (题纸)**: One row of `l3_submissions` = **one sitting of answering** one scope. Draft while answering, then 定格 (sealed) or 弃档 (discarded). A scope is a `venue`: `file` | `paper` | `writing`.
+_Avoid_: 卷面 (that is the rendered surface); session (that is a slow-learning container, ADR-0019); calling it 答卷 or 试卷
+
+**Sheet question list (题单)**: The question set of one sheet, frozen at open time into `l3_submissions.question_ids` (2026-09-26, migration 0046). It is the **single** source for the unanswered soft-confirm count, attempt materialization, grading-context and export — adding a question to the file afterwards never changes an already-open sheet. `null` = not frozen (legacy rows / writing drafts), and the reader falls back to live scope resolution.
+_Avoid_: re-resolving the file's current question set at seal or grading time (that is the bug the snapshot fixed); replacing a deleted question with another one (the list only shrinks)
+
+**Seal (定格)**: The hand-in action on a sheet, in three tiers — 完整记录 (materialize attempts, promote notes, keep sealed) / 增量条目 (no attempts, promote notes, discard) / 只留总结 (a summary note, discard). The UI word is **定格**, everywhere; 交卷 is not a second word for it.
+_Avoid_: 交卷 as a second label for the same action; 提交 (that is the writing workspace's own submit, a different endpoint family)
+
+**Question attempt (题级作答)**: One answered question inside a sheet (`l3_question_attempts`) — answer **facts only**, plus a `self_assessment` snapshot. It carries **no verdict**: re-grading must never have to keep two places in sync (ADR-0034 §2). Soft-deletable; the result page derives live from the sheet.
+_Avoid_: 练习记录 (that is the 句级 record); writing a verdict onto the attempt; hard-deleting it to "undo a score" (that is 弃档/隐藏整卷)
+
+**Verdict (判定)**: A grading outcome, per question per sheet (`l3_grading_results.verdict`). Two vocabularies exist on purpose and are **not** interchangeable: question-level `correct | partial | wrong`, annotation-level `sound | questionable | wrong`. The shared string `wrong` means different things in the two.
+_Avoid_: a single unified verdict enum; showing a verdict where no grading row exists (the UI must read 评卷中/待评卷, never a fake ✓/✗)
+
+**Grading (评卷)**: Producing verdicts plus per-question analysis, over a **sealed** sheet. Owner-dispositioned, agent-writable over HTTP; there is no platform-side LLM budget and no daemon — the trigger is the user's instruction to a local agent.
+_Avoid_: 评析 (that is the owner's own free-text reflection); 评阅 (that is the writing workspace's feedback channel)
+
+**Assessment (评析)**: One question's durable free-text reflection (`l3_question_assessments`), latest-wins, stamped with `last_editor`. It is the sediment of doing questions, not a grade.
+_Avoid_: 评卷; overwriting it per sitting (it is per question, deliberately)
+
+**Question annotation (原文分析条目)**: A note anchored to a UTF-16 range of the passage, optionally tagged with an entry-type label (细节/推断/主旨/态度/词汇/例证) and per-option error-type labels (同义替换/偷换概念/无中生有/过度推断/正反颠倒/张冠李戴/答非所问). It has a `stage` (draft → submitted → confirmed) orthogonal to its `status` (active/deleted), and an agent may only write its `review`, never the note or the tags.
+_Avoid_: 笔记 (that is 学习笔记, a separate entity); 标记 (a mark is not an asset — see Flag)
+
+**Flag (旗标)**: A subjective state captured at answer time and carried in `self_assessment` — 存疑 (doubt) / 待复查 (recheck) / 重点 (mark). Flags are **not assets**: they never enter the annotation table, are never promoted, and disappear with the sheet.
+_Avoid_: promoting a flag into an annotation to "keep it"; using a flag as a grading input
+
+**Mark (空位标注)**: A highlight on the passage or an option made while doing questions, scoped to a question. Same coordinate space as annotations, different lifecycle, and it converts to nothing.
+_Avoid_: annotation (nothing migrates mark → annotation); a mark as a study note
+
+**Wrong item (错题条目)**: One row of the 错题库 — a **derived** projection over wrong records, partitioned by kind (句级 / 题级). It is the hub the loop closes through: a wrong item must be able to send the user back into practice.
+_Avoid_: a stored error-book table; an error-book row that cannot be re-practised (that is a dead end, not a hub)
 
 **Stub entry**: A word row containing only the lemma with no content (`definition_md = ''`). Never enters the review queue.
 _Avoid_: empty card, placeholder
@@ -219,3 +262,9 @@ _Avoid_: "MCP may confirm because it is local"; treating a local bridge as privi
 - Audio article media modeling (never explicitly modeled in any historical draft; video player was deferred to Phase 4 in v2.2) — resolved 2026-09-07: **model per the audio-revisit design, implement text-first then audio**. The L3 source model treats a media reference (media ref + millisecond anchors) as first-class, unified for audio/video; MVP ships pure-text import, audio playback revisit (HTML5 audio seek + text highlight) follows as a fast-follow. The full video player (subtitle overlay, iframe embedding) stays deferred — the ASR scope-cut rationale still holds.
 - L3 capture entry paths (three material types vs scattered historical paths: text import + annotation rendering, CapturePage, golden entries, learning assets) — **revised 2026-09-07 (supersedes the same-day earlier resolution)**: the reading view + selection capture (圈记) is promoted INTO the MVP as the space's core interaction — paste-import article full text (owner direct-write, trusted foundation surface), reading view highlights only already-captured words by occurrence offsets, selection auto-expands to the containing sentence (light segmentation) or records a phrase/collocation with target-word confirmation, words not in the library get stubs first. The **Bookshelf (complete version c)** is also in MVP: user is a heavy player (2-3 imports/day ≈ 700-1000 sources/year), so type filter + title/content search + sort are core entry surface. Still deferred: TokenizerService full in-library highlighting, URL fetching (公众号反爬), audio playback. CapturePage reserved-field enablement and golden quick entries remain in MVP as complementary paths.
 - "改键" ambiguity (2026-09-11) — resolved same day: **L2 content gains a direction-variant key** (word_l2_content keyed additionally by direction; progress keys stay (user, word, wordbook), no progress migration). "L1 全局通用入口" meant every word enters through L1 in every book, not shared progress.
+- 做题轴三词同指一物（2026-09-26 解决）——resolved: **做题文件 (source × question_type，聚合非表) / 试卷 (手工装配的题目引用集) / 题纸 (一次作答 = 一行 l3_submissions) 三者各司其职**，UI 一律用「试卷台 / 试卷 / 题纸」，不再把三者混称"卷"。
+- 「交卷」与「定格」同指一键（2026-09-26 解决）——resolved: **UI 统一用「定格」**（三档：完整记录 / 增量条目 / 只留总结）；「交卷」不是第二个词。作文工作区的「提交」是另一族端点，不参与此合并。
+- 「attempt」三义（2026-09-26 解决）——resolved: **句级 = 练习记录 (l3_practice_attempts) / 题级 = 题级作答 (l3_question_attempts) / 写作 = 同一题级表 venue='writing'**。三者共享一个词、不共享真源；错题库按「句级/题级」分区消费，不建第二个错题表。
+- 两套 verdict 词表同形不同义（2026-09-26 解决）——resolved: **题级 correct|partial|wrong 与注记级 sound|questionable|wrong 刻意并行**；共享的 `wrong` 含义不同，任何"统一 verdict 枚举"的提案默认驳回（需重开 ADR）。
+- 「笔记」四义（2026-09-26 解决）——resolved: **学习笔记 (l3_study_notes，跨题长文) / 原文分析条目 (l3_question_annotations，题内锚点注记) / 笔记条目 (note_entries，词级 Annotation) / 教材笔记 (words.body_md)**。做题语境里的"笔记"默认指原文分析条目；跨题沉淀才叫学习笔记。
+- 判分三通道（2026-09-26 解决）——resolved: **评卷 (l3_grading_results，题级判定) / 评析 (l3_question_assessments，owner 复盘) / 评阅 (l3_writing_feedback，作文反馈)** 三张表三个词；写作卷走评阅，通用评卷对 writing scope 返 409。
