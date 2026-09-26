@@ -970,6 +970,30 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       [userId, wordbookId, todayStart],
     );
     const r = rows[0] ?? {};
+    // 阶梯会话分组（ADR-0036 LW-2）：metadata.source='typing' 的作答聚合，
+    // 供阶梯开关两组对比（档位分布 / 降档率 / 默写错误率）。
+    const ladderRows = await this.query<{
+      sessions: string;
+      dictation: string;
+      listen: string;
+      copy: string;
+      downgraded: string;
+      avg_wrong: string | null;
+    }>(
+      `SELECT
+        COUNT(*)::text AS sessions,
+        COUNT(*) FILTER (WHERE rl.metadata->>'tier' = 'dictation')::text AS dictation,
+        COUNT(*) FILTER (WHERE rl.metadata->>'tier' = 'listen')::text AS listen,
+        COUNT(*) FILTER (WHERE rl.metadata->>'tier' = 'copy')::text AS copy,
+        COUNT(*) FILTER (WHERE rl.metadata->>'downgraded' = 'true')::text AS downgraded,
+        AVG((rl.metadata->>'wrong_times')::numeric)::text AS avg_wrong
+       FROM review_logs rl
+       WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'
+         AND rl.rating IS NOT NULL AND rl.metadata->>'source' = 'typing'`,
+      [userId, wordbookId],
+    );
+    const lr = ladderRows[0] ?? {};
+    const sessions = parseInt(lr.sessions ?? "0", 10);
     return {
       todayCount: parseInt(r.today_count ?? "0", 10),
       totalCount: parseInt(r.total_count ?? "0", 10),
@@ -978,6 +1002,16 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         hard: parseInt(r.hard_count ?? "0", 10),
         good: parseInt(r.good_count ?? "0", 10),
         easy: parseInt(r.easy_count ?? "0", 10),
+      },
+      ladder: {
+        sessions,
+        tierDist: {
+          dictation: parseInt(lr.dictation ?? "0", 10),
+          listen: parseInt(lr.listen ?? "0", 10),
+          copy: parseInt(lr.copy ?? "0", 10),
+        },
+        downgradeRate: sessions > 0 ? Math.round((parseInt(lr.downgraded ?? "0", 10) / sessions) * 1000) / 1000 : null,
+        avgWrongTimes: lr.avg_wrong != null ? Math.round(parseFloat(lr.avg_wrong) * 100) / 100 : null,
       },
     };
   }

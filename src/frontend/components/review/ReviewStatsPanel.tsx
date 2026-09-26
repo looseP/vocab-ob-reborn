@@ -9,6 +9,13 @@ interface ReviewStats {
   todayCount: number;
   totalCount: number;
   ratingDist: { again: number; hard: number; good: number; easy: number };
+  /** 阶梯会话分组（ADR-0036 LW-2）：metadata.source='typing' 聚合，可选 = 兼容旧响应。 */
+  ladder?: {
+    sessions: number;
+    tierDist: { dictation: number; listen: number; copy: number };
+    downgradeRate: number | null;
+    avgWrongTimes: number | null;
+  };
 }
 
 export function ReviewStatsPanel() {
@@ -83,6 +90,32 @@ export function ReviewStatsPanel() {
         <div className="flex items-center gap-2 py-4 text-sm text-[var(--color-ink-soft)]">
           <AlertCircle className="h-4 w-4" />
           暂无 L1 复习记录
+        </div>
+      )}
+
+      {/* 阶梯会话分组（ADR-0036 LW-2）：source='typing' 聚合，供开关两组对比 */}
+      {stats.ladder && stats.ladder.sessions > 0 && (
+        <div className="mt-6 border-t border-[var(--color-border)] pt-4" data-testid="ladder-stats-group">
+          <p className="mb-3 text-sm font-medium text-[var(--color-ink-soft)]">阶梯会话 · 产出轮</p>
+          <div className="mb-3 grid grid-cols-3 gap-3 text-center">
+            <div className="rounded-lg bg-[var(--color-surface-muted)] px-2 py-2">
+              <p className="text-[10px] text-[var(--color-ink-soft)]">默写</p>
+              <p className="text-lg font-bold text-[var(--color-ink)]">{stats.ladder.tierDist.dictation}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--color-surface-muted)] px-2 py-2">
+              <p className="text-[10px] text-[var(--color-ink-soft)]">听写</p>
+              <p className="text-lg font-bold text-[var(--color-ink)]">{stats.ladder.tierDist.listen}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--color-surface-muted)] px-2 py-2">
+              <p className="text-[10px] text-[var(--color-ink-soft)]">照着打</p>
+              <p className="text-lg font-bold text-[var(--color-ink)]">{stats.ladder.tierDist.copy}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-4 text-xs text-[var(--color-ink-soft)]">
+            <span>产出作答 <b className="text-[var(--color-ink)]">{stats.ladder.sessions}</b></span>
+            <span>自选降档率 <b className="text-[var(--color-ink)]">{stats.ladder.downgradeRate != null ? `${Math.round(stats.ladder.downgradeRate * 100)}%` : "—"}</b></span>
+            <span>平均错键 <b className="text-[var(--color-ink)]">{stats.ladder.avgWrongTimes != null ? stats.ladder.avgWrongTimes : "—"}</b></span>
+          </div>
         </div>
       )}
     </Card>

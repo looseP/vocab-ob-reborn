@@ -6675,6 +6675,16 @@ export interface operations {
                             good: number;
                             easy: number;
                         };
+                        ladder?: {
+                            sessions: number;
+                            tierDist: {
+                                dictation: number;
+                                listen: number;
+                                copy: number;
+                            };
+                            downgradeRate: number | null;
+                            avgWrongTimes: number | null;
+                        };
                     };
                 };
             };

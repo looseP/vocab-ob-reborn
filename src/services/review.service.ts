@@ -174,7 +174,7 @@ export interface ReviewServiceDeps {
   /** Get or create today's session (optional: tests may omit) */
   getOrCreateTodaySession?: (userId: string, wordbookId: string, mode?: string) => Promise<{ id: string; user_id: string; wordbook_id: string; mode: string; cards_seen: number; started_at: string; ended_at: string | null }>;
   /** Get review stats (optional) */
-  getReviewStats?: (userId: string, wordbookId: string) => Promise<{ todayCount: number; totalCount: number; ratingDist: { again: number; hard: number; good: number; easy: number } }>;
+  getReviewStats?: (userId: string, wordbookId: string) => Promise<{ todayCount: number; totalCount: number; ratingDist: { again: number; hard: number; good: number; easy: number }; ladder?: { sessions: number; tierDist: { dictation: number; listen: number; copy: number }; downgradeRate: number | null; avgWrongTimes: number | null } }>;
   /** Find leeches (optional) */
   findLeeches?: (userId: string, wordbookId: string, limit: number) => Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
   getTimeline?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ id: string; rating: string; created_at: string; word_slug: string; word_lemma: string }>>;

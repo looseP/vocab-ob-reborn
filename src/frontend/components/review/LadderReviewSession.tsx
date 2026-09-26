@@ -19,6 +19,7 @@ import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { ReviewCardView } from "@/frontend/components/review/ReviewCardView";
 import { FollowCopyView } from "@/frontend/components/review/FollowCopyView";
 import { TypingDictationView } from "@/frontend/components/review/TypingDictationView";
+import { EncodeCardView } from "@/frontend/components/review/EncodeCardView";
 import { useReview, type Rating, type ReviewCard } from "@/frontend/hooks/useReview";
 import { buildLadderSession, type LadderSettlementRow } from "@/frontend/reviewFlow/sessionScheduler";
 import type { LadderVisit } from "@/frontend/reviewFlow/stageMap";
@@ -36,6 +37,57 @@ function newIdempotencyKey(): string {
 }
 
 const RATING_LABEL: Record<Rating, string> = { again: "重来", hard: "困难", good: "良好", easy: "轻松" };
+
+// ── 会话恢复（ADR-0036 决策 6 / LW-2）：scheduler 游标 + 暂存并入 sessionStorage ──
+// 独立前缀（不进经典 vocab:review:session: 扫描）；TTL 30min 沿用现行机制。
+const LADDER_CACHE_KEY = "vocab:review:ladder:review";
+const LADDER_CACHE_TTL_MS = 30 * 60 * 1000;
+
+interface PersistedLadderSession {
+  sessionId: string | null;
+  queue: ReviewCard[];
+  visits: LadderVisit[];
+  pos: number;
+  settlement: LadderSettlementRow[];
+  completed: boolean;
+  /** 会话内暂存（再认自评/巩固跟写/产出默写结果），恢复后逐词还原。 */
+  scratchEntries?: Array<[string, WordScratch]>;
+  savedAt: number;
+}
+
+function readLadderCache(): PersistedLadderSession | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(LADDER_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedLadderSession;
+    if (Date.now() - (parsed.savedAt ?? 0) > LADDER_CACHE_TTL_MS || !Array.isArray(parsed.visits)) {
+      window.sessionStorage.removeItem(LADDER_CACHE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeLadderCache(session: Omit<PersistedLadderSession, "savedAt">): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(LADDER_CACHE_KEY, JSON.stringify({ ...session, savedAt: Date.now() }));
+  } catch {
+    /* quota / private mode: 静默失败，行为退化为无缓存 */
+  }
+}
+
+function clearLadderCache(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(LADDER_CACHE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 /** 每词的会话内暂存（不 POST 的信号池）。 */
 interface WordScratch {
@@ -67,23 +119,59 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
   const [completed, setCompleted] = useState(false);
   const scratchRef = useRef<Map<string, WordScratch>>(new Map());
   const [settlement, setSettlement] = useState<LadderSettlementRow[]>([]);
+  // 会话恢复：挂载时命中缓存则整体还原（进度/暂存/结算一致），不再拉队列
+  const restoredRef = useRef(false);
 
-  // 进入会话：拉队列（复用现行缓存语义），成功后由 effect 排三轮。
   useEffect(() => {
-    void startReview("review");
+    const cached = readLadderCache();
+    if (cached && cached.visits.length > 0) {
+      restoredRef.current = true;
+      setVisits(cached.visits);
+      setPos(cached.pos);
+      setSettlement(cached.settlement ?? []);
+      setCompleted(cached.completed);
+      setSessionRestored(cached);
+      for (const [pid, s] of cached.scratchEntries ?? []) {
+        scratchRef.current.set(pid, s);
+      }
+      if (cached.queue.length > 0) setRestoredQueue(cached.queue);
+    } else {
+      void startReview("review");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 恢复路径的 queue/sessionId 来源（不经 useReview，避免覆盖经典缓存语义）
+  const [restored, setSessionRestored] = useState<{ sessionId: string | null } | null>(null);
+  const [restoredQueue, setRestoredQueue] = useState<ReviewCard[]>([]);
+
   useEffect(() => {
-    if (queue.length === 0 || visits.length > 0) return;
+    if (queue.length === 0 || visits.length > 0 || restoredRef.current) return;
     setVisits(buildLadderSession(queue));
   }, [queue, visits.length]);
 
+  // 会话核心进度变化 → 写缓存（scheduler 游标 + 暂存 + 结算）
+  const activeQueue = restoredQueue.length > 0 ? restoredQueue : queue;
+  const activeSessionId = restored?.sessionId ?? sessionId;
+  useEffect(() => {
+    if (activeQueue.length === 0) return;
+    if (!activeSessionId) return;
+    writeLadderCache({
+      sessionId: activeSessionId,
+      queue: activeQueue,
+      visits,
+      pos,
+      settlement,
+      completed,
+      scratchEntries: [...scratchRef.current.entries()],
+    });
+  }, [visits, pos, settlement, completed, activeSessionId, activeQueue]);
+
   const cardsByProgressId = useMemo(() => {
     const map = new Map<string, ReviewCard>();
-    for (const card of queue) map.set(card.progressId, card);
+    for (const card of activeQueue) map.set(card.progressId, card);
     return map;
-  }, [queue]);
+  }, [activeQueue]);
 
   const scratchFor = (progressId: string): WordScratch => {
     let s = scratchRef.current.get(progressId);
@@ -109,7 +197,7 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
   const submitWordAnswer = useCallback(async (visit: LadderVisit) => {
     const card = cardsByProgressId.get(visit.progressId);
     const scratch = scratchFor(visit.progressId);
-    if (!card || !sessionId || !scratch.dictResult) {
+    if (!card || !activeSessionId || !scratch.dictResult) {
       // 无会话/无默写结果：跳过调度（防御分支，正常流不触达）
       advance();
       return;
@@ -125,7 +213,7 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
         method: "POST",
         body: JSON.stringify({
           progressId: visit.progressId,
-          sessionId,
+          sessionId: activeSessionId,
           mode: "review",
           rating,
           idempotencyKey: newIdempotencyKey(),
@@ -163,7 +251,7 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
     }
     setSubmitting(false);
     advance();
-  }, [cardsByProgressId, sessionId, advance, addToast]);
+  }, [cardsByProgressId, activeSessionId, advance, addToast]);
 
   const onCardAnswer = (rating: Rating, hint?: { hintLevel: number; viaH4?: boolean }) => {
     if (!current) return;
@@ -188,7 +276,7 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
     void submitWordAnswer({ ...current, ...(card ? {} : {}) });
   };
 
-  if (loading && queue.length === 0) {
+  if (loading && activeQueue.length === 0) {
     return (
       <Card className="flex items-center justify-center py-20">
         <span className="text-[var(--color-ink-soft)]">正在加载阶梯会话…</span>
@@ -206,7 +294,7 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
       </Card>
     );
   }
-  if (!loading && queue.length === 0 && visits.length === 0) {
+  if (!loading && activeQueue.length === 0 && visits.length === 0) {
     return (
       <Card>
         <EmptyState title="没有待复习的单词" description="导入更多单词或稍后再来" />
@@ -253,7 +341,7 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
           评分 = 政策 B：min(卡面自评, 默写映射)，客观只降不升；FSRS 调度与起步档进退由服务端结算。
         </p>
         <div className="flex justify-end">
-          <Button variant="secondary" onClick={onBack}>返回</Button>
+          <Button variant="secondary" onClick={() => { clearLadderCache(); onBack(); }}>返回</Button>
         </div>
       </Card>
     );
@@ -291,6 +379,12 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
           ipa={currentCard.word.ipa}
           disabled={submitting}
           onDone={onDictationDone}
+        />
+      ) : current.stage === "card-encode" ? (
+        <EncodeCardView
+          card={currentCard}
+          disabled={submitting}
+          onRate={onCardAnswer}
         />
       ) : current.stage === "meaning" ? (
         <div data-testid="meaning-review">

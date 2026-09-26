@@ -102,6 +102,20 @@ export const reviewStatsResponseSchema = z.object({
     good: z.number().int().nonnegative(),
     easy: z.number().int().nonnegative(),
   }).strict(),
+  /**
+   * 阶梯会话分组（ADR-0036 LW-2）：metadata.source='typing' 的作答聚合
+   * （档位分布 / 降档率 / 默写错误率），供阶梯开关两组对比。可选直载。
+   */
+  ladder: z.object({
+    sessions: z.number().int().nonnegative(),
+    tierDist: z.object({
+      dictation: z.number().int().nonnegative(),
+      listen: z.number().int().nonnegative(),
+      copy: z.number().int().nonnegative(),
+    }).strict(),
+    downgradeRate: z.number().min(0).max(1).nullable(),
+    avgWrongTimes: z.number().min(0).nullable(),
+  }).optional(),
 }).strict();
 
 /**

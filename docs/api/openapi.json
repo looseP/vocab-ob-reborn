@@ -9808,6 +9808,72 @@
                         "easy"
                       ],
                       "additionalProperties": false
+                    },
+                    "ladder": {
+                      "type": "object",
+                      "properties": {
+                        "sessions": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "tierDist": {
+                          "type": "object",
+                          "properties": {
+                            "dictation": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "listen": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "copy": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "dictation",
+                            "listen",
+                            "copy"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "downgradeRate": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 1
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "avgWrongTimes": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "sessions",
+                        "tierDist",
+                        "downgradeRate",
+                        "avgWrongTimes"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [

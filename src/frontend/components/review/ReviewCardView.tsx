@@ -24,6 +24,7 @@ import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { L3ContextsFold } from "@/frontend/components/review/L3ContextsFold";
+import { buildHintSteps, extractMnemonicCore, HINT_STEP_LABEL as STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
 
 const ratings = [
   { value: "again", label: "重来", variant: "danger" as const, key: "1" },
@@ -44,47 +45,16 @@ function Kbd({ children }: { children: ReactNode }) {
 }
 
 /**
- * 记忆锚核心提取:精修版 mnemonic_text 可能是「核心 text 行 + **词源锚** + **画面锚**」
- * 拼接块(导入时词源锚/画面锚并入),而词源锚与 Tier 2 词源、画面锚与原型信息重复。
- * 只取非锚段的核心行;整块都是锚段(核心丢失)时返回 null —— 胶囊优雅缺席。
- * 同时剥离 ** 与 ` 记号,胶囊按纯文本呈现。
+ * 记忆锚核心提取等提示步工具已提取至 reviewFlow/hintSteps.ts（LW-2 共享）。
  */
-function extractMnemonicCore(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const segments = raw
-    .split(/(?=\*\*词源锚)|(?=\*\*画面锚)|\n/)
-    .map((segment) =>
-      segment
-        .replace(/\*\*/g, "")
-        .replace(/`/g, "")
-        .replace(/^- (?:text:\s*)?/, "")
-        .trim(),
-    )
-    .filter(Boolean);
-  const core = segments.find(
-    (segment) => !segment.startsWith("词源锚") && !segment.startsWith("画面锚"),
-  );
-  return core || null;
-}
 
 // ── T3 提示分级 Hint Ladder（2026-09-25，t3-hint-ladder-design）──────────
 // 四级提示：H1 例句（无例句降级 H1′ 语义链）→ H2 原型意象（isSpoiler 剧透跳级）
 // → H3 助记锚（复用卡背核心行提取）→ H4 翻卡。成本化评分：每消费一级提示，
 // 评分上限下降（0 级→easy / 1 级→good / ≥2 级→hard）；提示穷尽后经 H4 翻卡
 // 强制 again。直接翻卡（未用满提示）= 验证回忆，上限不降。
-
-type HintStep =
-  | { kind: "example"; text: string; translation: string | null }
-  | { kind: "chain"; text: string }
-  | { kind: "prototype"; text: string }
-  | { kind: "mnemonic"; text: string; mtype: string | null };
-
-const STEP_LABEL: Record<HintStep["kind"], string> = {
-  example: "H1 例句",
-  chain: "H1′ 语义链",
-  prototype: "H2 原型",
-  mnemonic: "H3 助记锚",
-};
+// 提示步构建/剧透检测/锚点提取已提取至 reviewFlow/hintSteps.ts（LW-2 共享，
+// 新词编码卡复用同链；本文件保留评分上限与面板交互）。
 
 /** 评分上限序（again < hard < good < easy），超上限按钮禁用。 */
 const HINT_CAP_RANK: Record<Rating, number> = { again: 0, hard: 1, good: 2, easy: 3 };
@@ -93,53 +63,6 @@ const HINT_CAP_LABEL: Record<Rating, string> = { again: "重来", hard: "困难"
 function hintCapNow(level: number, viaH4: boolean): Rating {
   if (viaH4) return "again";
   return level === 0 ? "easy" : level === 1 ? "good" : "hard";
-}
-
-/**
- * isSpoiler：提示文本与短释义的剧透重合检测（设计稿 v2 口径）——
- * 释义中任一 ≥2 连续汉字串出现在提示文本（去空白/记号）中 → 判剧透。
- */
-function isSpoiler(hintText: string, shortDefinition: string | null | undefined): boolean {
-  if (!shortDefinition) return false;
-  const runs = shortDefinition.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
-  if (runs.length === 0) return false;
-  const stripped = hintText.replace(/[\s*`·]/g, "").toLowerCase();
-  return runs.some((run) => stripped.includes(run));
-}
-
-/** 由 queue 直载的 word 字段动态构建提示步（降级链：缺失级自动跳过）。 */
-function buildHintSteps(word: ReviewCard["word"] | null | undefined): HintStep[] {
-  if (!word) return [];
-  const steps: HintStep[] = [];
-  const example = (word.examples ?? []).find(
-    (e): e is { text: string; translation?: unknown } =>
-      typeof e === "object" && e !== null &&
-      typeof (e as { text?: unknown }).text === "string" &&
-      ((e as { text: string }).text.trim().length > 0),
-  );
-  if (example) {
-    steps.push({
-      kind: "example",
-      text: example.text,
-      translation:
-        typeof example.translation === "string" && example.translation.trim().length > 0
-          ? example.translation
-          : null,
-    });
-  } else if (word.semantic_chain && word.semantic_chain.trim().length > 0) {
-    steps.push({ kind: "chain", text: word.semantic_chain });
-  }
-  if (
-    word.prototype_text && word.prototype_text.trim().length > 0 &&
-    !isSpoiler(word.prototype_text, word.short_definition)
-  ) {
-    steps.push({ kind: "prototype", text: word.prototype_text });
-  }
-  const mnemonicCore = extractMnemonicCore(word.mnemonic_text ?? null);
-  if (mnemonicCore) {
-    steps.push({ kind: "mnemonic", text: mnemonicCore, mtype: word.mnemonic_type ?? null });
-  }
-  return steps;
 }
 
 /** H2 原型遮罩：模糊态点击揭示（mask 玩法）。 */

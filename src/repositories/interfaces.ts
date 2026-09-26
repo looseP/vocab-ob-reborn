@@ -311,6 +311,13 @@ export interface IReviewRepository {
     todayCount: number;
     totalCount: number;
     ratingDist: { again: number; hard: number; good: number; easy: number };
+    /** 阶梯会话分组（ADR-0036 LW-2）：metadata.source='typing' 的作答聚合。 */
+    ladder?: {
+      sessions: number;
+      tierDist: { dictation: number; listen: number; copy: number };
+      downgradeRate: number | null;
+      avgWrongTimes: number | null;
+    };
   }>;
 
   findLeeches?(userId: string, wordbookId: string, limit: number): Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
