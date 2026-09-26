@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { Settings, Sun, Moon, Monitor, Target, Save, Sparkles } from "lucide-react";
+import { Settings, Sun, Moon, Monitor, Target, Save, Sparkles, Layers } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { useToast } from "@/frontend/components/ui/Toast";
 import { apiFetch } from "@/frontend/api/client";
+import { isLadderModeEnabled, setLadderModeEnabled } from "@/frontend/reviewFlow/ladderSettings";
 
 type Theme = "light" | "dark" | "system";
 
@@ -19,6 +20,8 @@ interface LlmStatus {
 export function SettingsPage() {
   const [theme, setTheme] = useState<Theme>("system");
   const [dailyLimit, setDailyLimit] = useState(50);
+  // 阶梯会话（实验）开关（ADR-0036 决策 4）：localStorage 持久化，默认关。
+  const [ladderMode, setLadderMode] = useState(false);
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const { addToast } = useToast();
 
@@ -27,6 +30,7 @@ export function SettingsPage() {
     if (saved) setTheme(saved);
     const limit = localStorage.getItem("vocab-daily-limit");
     if (limit) setDailyLimit(parseInt(limit, 10));
+    setLadderMode(isLadderModeEnabled());
   }, []);
 
   // Phase D：加载 LLM 接入状态（失败静默降级为"状态不可用"）。
@@ -134,6 +138,41 @@ export function SettingsPage() {
             <Save className="h-4 w-4" />
             保存设置
           </Button>
+
+          {/* 阶梯会话（实验）开关（ADR-0036）：默认关；关闭 = 现行复习流原样 */}
+          <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2.5">
+            <div className="min-w-0">
+              <label className="flex items-center gap-1.5 text-sm font-medium text-[var(--color-ink)]">
+                <Layers className="h-4 w-4 text-[var(--color-accent)]" />
+                阶梯会话（实验）
+              </label>
+              <p className="mt-0.5 text-xs leading-relaxed text-[var(--color-ink-soft)]">
+                三轮制复习会话：再认 → 巩固 → 产出，产出轮默写可自选降档。关闭时复习流与现行完全一致。
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={ladderMode}
+              data-testid="ladder-mode-toggle"
+              onClick={() => {
+                const next = !ladderMode;
+                setLadderMode(next);
+                setLadderModeEnabled(next);
+              }}
+              className={`ml-3 inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors ${
+                ladderMode
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent)]"
+                  : "border-[var(--color-border-strong)] bg-[var(--color-surface-muted)]"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                  ladderMode ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
         </div>
       </Card>
 

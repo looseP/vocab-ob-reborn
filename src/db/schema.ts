@@ -1,4 +1,4 @@
-import { pgTable, foreignKey, unique, pgPolicy, check, uuid, text, jsonb, timestamp, index, boolean, numeric, integer, uniqueIndex, primaryKey, date, pgEnum, customType } from "drizzle-orm/pg-core"
+import { pgTable, foreignKey, unique, pgPolicy, check, uuid, text, jsonb, timestamp, index, boolean, numeric, integer, smallint, uniqueIndex, primaryKey, date, pgEnum, customType } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 // L3 坐标空间约定（2026-09-07 计划）：content_text 导入后只读（修订=新版本）；
@@ -241,6 +241,9 @@ export const userWordProgress = pgTable("user_word_progress", {
 	skipCount: integer("skip_count").default(0).notNull(),
 	wordbookId: uuid("wordbook_id").notNull(),
 	needsRecheck: boolean("needs_recheck").default(false).notNull(),
+	// 阶梯起步档（ADR-0036 决策 1）：1=全阶梯 / 2=撤提示面板 / 3=仅产出轮。
+	// 存量由迁移 0045 幂等回填（f(S,rv)）；结算由服务端在 submitAnswer 后执行。
+	ladderRung: smallint("ladder_rung").default(1).notNull(),
 }, (table) => [
 	index("idx_progress_due").using("btree", table.userId.asc().nullsLast(), table.dueAt.asc().nullsLast()),
 	index("idx_progress_recheck").using("btree", table.userId.asc().nullsLast(), table.wordbookId.asc().nullsLast()).where(sql`(needs_recheck = true)`),
@@ -274,6 +277,7 @@ export const userWordProgress = pgTable("user_word_progress", {
 	check("user_word_progress_schedule_algo_check", sql`schedule_algo = ANY (ARRAY['leitner'::text, 'sm2'::text, 'fsrs'::text])`),
 	check("user_word_progress_state_check", sql`state = ANY (ARRAY['new'::text, 'learning'::text, 'review'::text, 'relearning'::text, 'suspended'::text])`),
 	check("user_word_progress_desired_retention_check", sql`(desired_retention >= 0.700) AND (desired_retention <= 0.990)`),
+	check("user_word_progress_ladder_rung_check", sql`ladder_rung BETWEEN 1 AND 3`),
 ]);
 
 export const notes = pgTable("notes", {

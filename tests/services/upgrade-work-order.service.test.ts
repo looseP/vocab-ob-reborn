@@ -48,6 +48,7 @@ function l1Row(overrides: Partial<UserWordProgressRow> = {}): UserWordProgressRo
     updated_at: "2026-09-01T00:00:00.000Z",
     recent_ratings: ["good", "easy"],
     l1_weak_signal: false,
+    ladder_rung: 1,
     ...overrides,
   };
 }

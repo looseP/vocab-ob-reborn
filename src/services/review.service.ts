@@ -23,6 +23,7 @@ import {
   ConflictError,
 } from "../errors";
 import type { Json, ReviewRating, ReviewState, UserWordProgressRow } from "../domain";
+import { settleLadderRung } from "../domain/ladder-rung";
 import { deriveContentStaleness } from "../domain/content-staleness";
 import type { ProgressWithContentHash } from "../repositories/interfaces";
 import {
@@ -91,6 +92,8 @@ export interface ReviewQueueItemDto {
   l1WeakSignal: boolean;
   /** Phase E 晋升可视化：L1 stability（天）。晋升门 = S≥21d ∧ reviewCount≥5。 */
   stability: number | null;
+  /** 阶梯起步档（ADR-0036）：1=全阶梯 / 2=撤提示面板 / 3=仅产出轮。可选直载。 */
+  ladderRung?: number;
   queueBucket?: ReviewQueuePriorityBucket;
   queueLabel?: string;
   queueReason?: string;
@@ -171,7 +174,7 @@ export interface ReviewServiceDeps {
   /** Get or create today's session (optional: tests may omit) */
   getOrCreateTodaySession?: (userId: string, wordbookId: string, mode?: string) => Promise<{ id: string; user_id: string; wordbook_id: string; mode: string; cards_seen: number; started_at: string; ended_at: string | null }>;
   /** Get review stats (optional) */
-  getReviewStats?: (userId: string, wordbookId: string) => Promise<{ todayCount: number; totalCount: number; ratingDist: { again: number; hard: number; good: number; easy: number } }>;
+  getReviewStats?: (userId: string, wordbookId: string) => Promise<{ todayCount: number; totalCount: number; ratingDist: { again: number; hard: number; good: number; easy: number }; ladder?: { sessions: number; tierDist: { dictation: number; listen: number; copy: number }; downgradeRate: number | null; avgWrongTimes: number | null } }>;
   /** Find leeches (optional) */
   findLeeches?: (userId: string, wordbookId: string, limit: number) => Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;
   getTimeline?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ id: string; rating: string; created_at: string; word_slug: string; word_lemma: string }>>;
@@ -303,6 +306,7 @@ export class ReviewService {
         reviewCount: item.review_count,
         l1WeakSignal: item.l1WeakSignal,
         stability: item.stability,
+        ladderRung: item.ladder_rung,
         queueBucket: priority.bucket,
         queueLabel: priority.label,
         queueReason: priority.reason,
@@ -333,6 +337,7 @@ export class ReviewService {
       reviewCount: card.progress.review_count,
       l1WeakSignal: card.progress.l1_weak_signal,
       stability: card.progress.stability,
+      ladderRung: card.progress.ladder_rung,
     };
   }
 
@@ -347,7 +352,7 @@ export class ReviewService {
    */
   private toQueueCandidate(
     card: { progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: ReviewQueueWord },
-  ): ReviewQueueCandidate & { progressId: string; word: ReviewQueueWord; lastRating: ReviewRating | null; l1WeakSignal: boolean; stability: number | null } {
+  ): ReviewQueueCandidate & { progressId: string; word: ReviewQueueWord; lastRating: ReviewRating | null; l1WeakSignal: boolean; stability: number | null; ladder_rung: number } {
     const derivedNeedsRecheck = deriveContentStaleness({
       contentHash: card.progress.content_hash,
       l1ContentHash: card.progress.l1_content_hash,
@@ -366,6 +371,7 @@ export class ReviewService {
       lastRating: card.progress.last_rating,
       l1WeakSignal: card.progress.l1_weak_signal,
       stability: card.progress.stability,
+      ladder_rung: card.progress.ladder_rung,
     };
   }
 
@@ -526,9 +532,25 @@ export class ReviewService {
         // 为 jsonb 宽松结构，无需迁移）。
         hint_level: input.hintLevel ?? null,
         hint_via_h4: input.viaH4 ?? false,
+        // 阶梯会话埋点（ADR-0036 决策 3）：每词每会话恰好一次调度提交，
+        // 再认轮自评随 metadata 搭载（card_rating），全部可选缺省 → null。
+        source: input.source ?? null,
+        tier: input.tier ?? null,
+        wrong_times: input.wrongTimes ?? null,
+        duration_ms: input.durationMs ?? null,
+        downgraded: input.downgraded ?? null,
+        card_rating: input.cardRating ?? null,
+        abandoned_chars: input.abandonedChars ?? null,
       };
 
       // 7. Persist (UPDATE progress + INSERT review_log in same tx)
+      // 阶梯起步档结算（ADR-0036 决策 1）：服务端以 domain 纯函数结算
+      // （±1 + S≥21d 单向地板），随 saveAnswer 落 ladder_rung 列。
+      const nextLadderRung = settleLadderRung(
+        (progress.ladder_rung ?? 1) as 1 | 2 | 3,
+        input.rating,
+        scheduling.stability,
+      );
       const result = await repos.reviews.saveAnswer({
         progressId: input.progressId,
         userId,
@@ -541,6 +563,7 @@ export class ReviewService {
         idempotencyKey: input.idempotencyKey ?? null,
         previousSnapshot,
         logMetadata,
+        ladderRung: nextLadderRung,
       });
 
       const eventPayload = buildReviewAnswerRecordedPayload({

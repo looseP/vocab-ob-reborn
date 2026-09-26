@@ -7,11 +7,13 @@ import { Badge } from "@/frontend/components/ui/Badge";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { ReviewCardView } from "@/frontend/components/review/ReviewCardView";
 import { DrillSession } from "@/frontend/components/review/DrillSession";
+import { LadderReviewSession } from "@/frontend/components/review/LadderReviewSession";
 import { ReviewProgressBar } from "@/frontend/components/review/ReviewProgressBar";
 import { CompletionCelebration } from "@/frontend/components/review/CompletionCelebration";
 import { ReviewHistoryDrawer, type ReviewHistoryEntry } from "@/frontend/components/review/ReviewHistoryDrawer";
 import { useReview } from "@/frontend/hooks/useReview";
 import { useUpgradeHints } from "@/frontend/hooks/useUpgradeHints";
+import { isLadderModeEnabled } from "@/frontend/reviewFlow/ladderSettings";
 
 const reviewModes = [
   { key: "review", icon: Repeat, title: "标准复习", desc: "按 FSRS 间隔重复算法安排的到期卡片", variant: "primary" as const },
@@ -57,6 +59,12 @@ function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
 }
 
 function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: string; wordIds?: string[]; onBack: () => void; force?: boolean }) {
+  // 阶梯会话开关（ADR-0036 决策 4）：仅接管「标准复习」模式；preview 不进阶梯
+  // （浏览语义）、cram/zen 走现行组件。关闭时本分支不可达 = 与 main 零差异。
+  const [ladderActive] = useState(() => reviewMode === "review" && !wordIds?.length && isLadderModeEnabled());
+  if (ladderActive) {
+    return <LadderReviewSession onBack={onBack} />;
+  }
   const {
     currentCard,
     mode,

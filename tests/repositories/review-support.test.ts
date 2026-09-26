@@ -214,15 +214,25 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
   it("getStats uses the display-timezone day boundary and parses counts", async () => {
     const repos = createRepositories();
 
+    // getStats 现发两条查询（主统计 + 阶梯会话聚合 ADR-0036 LW-2），按 SQL 子串分流
+    mock.setRowMap({
+      "metadata->>'source' = 'typing'": [{ sessions: "2", dictation: "1", listen: "1", copy: "0", downgraded: "1", avg_wrong: "1.5" }],
+    });
     mock.setRows([{ today_count: "3", total_count: "30", again_count: "1", hard_count: "2", good_count: "5", easy_count: "2" }]);
     await expect(repos.reviews.getStats!("u1", "wb1")).resolves.toEqual({
       todayCount: 3, totalCount: 30,
       ratingDist: { again: 1, hard: 2, good: 5, easy: 2 },
+      ladder: {
+        sessions: 2,
+        tierDist: { dictation: 1, listen: 1, copy: 0 },
+        downgradeRate: 0.5,
+        avgWrongTimes: 1.5,
+      },
     });
 
     // 统一口径：today 边界来自显示时区(Asia/Shanghai)当日零点，时间字段为 reviewed_at。
     // 上海零点 = 前一日 16:00 UTC（Asia/Shanghai = UTC+8）。
-    const q = mock.lastQuery!;
+    const q = mock.calls.find((c) => c.text.includes("rl.reviewed_at >= $3"))!;
     expect(q.text).toContain("rl.reviewed_at >= $3");
     expect(q.text).not.toContain("rl.created_at");
     expect(typeof q.params[2]).toBe("string");
@@ -232,11 +242,17 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     // 显式锁定两个谓词 —— rating IS NOT NULL（只计作答）且 track = 'l1'（不含 L2 慢复习）。
     expect(q.text).toContain("rl.rating IS NOT NULL");
     expect(q.text).toContain("rl.track = 'l1'");
+    // 阶梯聚合：同样 L1-only 作答口径，且只认 source='typing'
+    const lq = mock.calls.find((c) => c.text.includes("metadata->>'source' = 'typing'"))!;
+    expect(lq.text).toContain("rl.rating IS NOT NULL");
+    expect(lq.text).toContain("rl.track = 'l1'");
 
     mock.setRows([]);
+    mock.setRowMap({});
     await expect(repos.reviews.getStats!("u1", "wb1")).resolves.toEqual({
       todayCount: 0, totalCount: 0,
       ratingDist: { again: 0, hard: 0, good: 0, easy: 0 },
+      ladder: { sessions: 0, tierDist: { dictation: 0, listen: 0, copy: 0 }, downgradeRate: null, avgWrongTimes: null },
     });
   });
 

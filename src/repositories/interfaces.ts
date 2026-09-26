@@ -263,6 +263,11 @@ export interface SaveAnswerInput {
   idempotencyKey: string | null;
   previousSnapshot: Json;
   logMetadata: Record<string, unknown>;
+  /**
+   * 阶梯起步档结算结果（ADR-0036 决策 1）：服务层用 domain 纯函数结算后传入，
+   * saveAnswer 以 COALESCE 落列；null/缺省 = 保持原值（mock/旧调用兼容）。
+   */
+  ladderRung?: number | null;
 }
 
 /** Result of an undo RPC call. */
@@ -306,6 +311,13 @@ export interface IReviewRepository {
     todayCount: number;
     totalCount: number;
     ratingDist: { again: number; hard: number; good: number; easy: number };
+    /** 阶梯会话分组（ADR-0036 LW-2）：metadata.source='typing' 的作答聚合。 */
+    ladder?: {
+      sessions: number;
+      tierDist: { dictation: number; listen: number; copy: number };
+      downgradeRate: number | null;
+      avgWrongTimes: number | null;
+    };
   }>;
 
   findLeeches?(userId: string, wordbookId: string, limit: number): Promise<Array<UserWordProgressRow & { slug: string; title: string; lemma: string; w_id: string; short_definition: string | null }>>;

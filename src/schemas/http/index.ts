@@ -104,6 +104,23 @@ export const reviewAnswerSchema = z.object({
   // 旧客户端缺省 → 服务端落 null/false。
   hintLevel: z.number().int().min(0).max(3).optional(),
   viaH4: z.boolean().optional(),
+  // ── 阶梯会话埋点（ADR-0036，request 可选新增 = 非 breaking）──────────
+  // 每词每会话恰好一次调度提交（产出轮末）；rating 已由前端按政策 B
+  // 算好 = min(卡面自评, 默写映射)。以下信号全量落 review_logs.metadata。
+  // source：提交来源（card=现行卡面流 / typing=阶梯产出轮）。
+  source: z.enum(["card", "typing"]).optional(),
+  // tier：产出档（dictation=默写·无上限 / listen=听写·上限困难 / copy=照着打·上限重来）。
+  tier: z.enum(["dictation", "listen", "copy"]).optional(),
+  // wrongTimes：本档内错键数（只增不减）。
+  wrongTimes: z.number().int().min(0).optional(),
+  // durationMs：该词整会话耗时（再认→产出）。
+  durationMs: z.number().int().min(0).optional(),
+  // downgraded：是否自选降档（tier != dictation）。
+  downgraded: z.boolean().optional(),
+  // cardRating：再认轮卡面自评（政策 B 的 min 基线之一）。
+  cardRating: reviewRatingSchema.optional(),
+  // abandonedChars：切档时放弃的已键入字符数（选择即信号的差分记录）。
+  abandonedChars: z.number().int().min(0).optional(),
 });
 
 export const reviewSkipSchema = z.object({

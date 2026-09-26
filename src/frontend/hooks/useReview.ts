@@ -39,6 +39,8 @@ export interface ReviewCard {
   l1WeakSignal?: boolean;
   /** Phase E 晋升可视化：L1 stability（天），晋升门 S≥21d ∧ reviewCount≥5。 */
   stability?: number | null;
+  /** 阶梯起步档（ADR-0036）：1=全阶梯 / 2=撤提示面板 / 3=仅产出轮。可选 = 兼容旧缓存。 */
+  ladderRung?: number;
   /**
    * P3-①(条目制 2026-09-06):复习卡附带可见笔记条目,创建时间正序;
    * 无笔记为空数组。卡背提供折叠入口 + 快记。
