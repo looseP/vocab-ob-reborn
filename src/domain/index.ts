@@ -238,6 +238,11 @@ export interface UserWordProgressRow {
    * whether to re-grind L1 after seeing the flag in the UI.
    */
   l1_weak_signal: boolean;
+  /**
+   * 阶梯起步档（ADR-0036 决策 1）：1=全阶梯 / 2=撤提示面板 / 3=仅产出轮。
+   * 迁移 0045 幂等回填（f(S,rv)）；服务端 submitAnswer 后结算（±1 + 单向地板）。
+   */
+  ladder_rung: number;
 }
 
 export interface ReviewLogRow {

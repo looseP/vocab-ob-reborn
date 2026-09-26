@@ -47,7 +47,7 @@ const PROGRESS_COLUMNS_PREFIXED = `
   uwp.lapse_count, uwp.again_count, uwp.hard_count, uwp.good_count,
   uwp.easy_count, uwp.interval_days, uwp.scheduler_payload,
   uwp.content_hash_snapshot, uwp.l1_content_hash_snapshot, uwp.skip_count, uwp.created_at, uwp.updated_at,
-  uwp.recent_ratings, uwp.l1_weak_signal, uwp.needs_recheck
+  uwp.recent_ratings, uwp.l1_weak_signal, uwp.needs_recheck, uwp.ladder_rung
 `;
 
 // Bare columns for single-table queries (no JOIN ambiguity)

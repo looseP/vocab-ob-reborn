@@ -66,6 +66,7 @@ function makeMockProgress(overrides: Partial<ProgressWithContentHash> = {}): Pro
     word_lemma: "aboard",
     recent_ratings: ["good", "good", "good"],
     l1_weak_signal: false,
+    ladder_rung: 1,
     ...overrides,
   } as ProgressWithContentHash;
 }
@@ -293,6 +294,47 @@ describe("ReviewService.submitAnswer", () => {
     expect(legacyInput.logMetadata).toEqual(expect.objectContaining({
       hint_level: null,
       hint_via_h4: false,
+    }));
+  });
+
+  it("records ladder session telemetry in review log metadata (ADR-0036, 2026-09-26)", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const reviewRepo = makeMockReviewRepo({
+      findProgressForUpdate: vi.fn(async () => makeMockProgress()),
+    });
+    mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = makeMockSessionRepo();
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+
+    // 阶梯产出轮唯一一次调度提交：metadata 全量搭载（政策 B final rating + 信号）
+    await service.submitAnswer({
+      progressId: "p1", rating: "hard", sessionId: "s1",
+      source: "typing", tier: "listen", wrongTimes: 3, durationMs: 42_000,
+      downgraded: true, cardRating: "good", abandonedChars: 7,
+    }, "u1");
+    const ladderInput = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[0][0] as SaveAnswerInput;
+    expect(ladderInput.logMetadata).toEqual(expect.objectContaining({
+      source: "typing",
+      tier: "listen",
+      wrong_times: 3,
+      duration_ms: 42_000,
+      downgraded: true,
+      card_rating: "good",
+      abandoned_chars: 7,
+    }));
+
+    // 现行卡面流（旧客户端缺省）→ 全 null（不破坏既有埋点消费方）
+    await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1");
+    const cardInput = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[1][0] as SaveAnswerInput;
+    expect(cardInput.logMetadata).toEqual(expect.objectContaining({
+      source: null,
+      tier: null,
+      wrong_times: null,
+      duration_ms: null,
+      downgraded: null,
+      card_rating: null,
+      abandoned_chars: null,
     }));
   });
 
@@ -534,6 +576,7 @@ describe("ReviewService — rebuild read methods", () => {
       l1_content_hash_snapshot: null,
       recent_ratings: [],
       l1_weak_signal: false,
+      ladder_rung: 1,
       skip_count: 0,
       created_at: "2025-01-01T00:00:00Z",
       updated_at: "2025-01-02T00:00:00Z",
@@ -564,6 +607,7 @@ describe("ReviewService — rebuild read methods", () => {
       reviewCount: 3,
       l1WeakSignal: false,
       stability: 1.5,
+      ladderRung: 1,
     }]);
     expect(queue.session).toEqual({ id: "s1", mode: "cram", cardsSeen: 2 });
     expect(queue.stats).toEqual({ total: 1, remaining: 1 });
@@ -690,6 +734,7 @@ describe("ReviewService — P0 practice-mode behavior", () => {
       l1_content_hash_snapshot: null,
       recent_ratings: [],
       l1_weak_signal: false,
+      ladder_rung: 1,
       skip_count: 0,
       created_at: "2025-01-01T00:00:00Z",
       updated_at: "2025-01-02T00:00:00Z",
@@ -862,6 +907,7 @@ describe("ReviewService — P1 queue-priority routing", () => {
       l1_content_hash_snapshot: null,
       recent_ratings: [],
       l1_weak_signal: false,
+      ladder_rung: 1,
       skip_count: 0,
       created_at: "2025-01-01T00:00:00Z",
       updated_at: "2025-01-02T00:00:00Z",

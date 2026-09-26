@@ -6484,6 +6484,7 @@ export interface operations {
                             lastRating: ("again" | "hard" | "good" | "easy") | null;
                             reviewCount: number;
                             stability: number | null;
+                            ladderRung?: number;
                             note_entries: {
                                 id: string;
                                 content_md: string;
@@ -7532,6 +7533,16 @@ export interface operations {
                     mode?: "review" | "cram" | "preview" | "zen";
                     hintLevel?: number;
                     viaH4?: boolean;
+                    /** @enum {string} */
+                    source?: "card" | "typing";
+                    /** @enum {string} */
+                    tier?: "dictation" | "listen" | "copy";
+                    wrongTimes?: number;
+                    durationMs?: number;
+                    downgraded?: boolean;
+                    /** @enum {string} */
+                    cardRating?: "again" | "hard" | "good" | "easy";
+                    abandonedChars?: number;
                 };
             };
         };

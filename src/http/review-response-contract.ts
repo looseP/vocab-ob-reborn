@@ -56,6 +56,8 @@ export const reviewQueueResponseSchema = z.object({
     reviewCount: z.number().int().nonnegative(),
     /** Phase E 晋升可视化：L1 stability（天），晋升门 S≥21d ∧ reviewCount≥5。 */
     stability: z.number().nullable(),
+    /** 阶梯起步档（ADR-0036）：1=全阶梯 / 2=撤提示面板 / 3=仅产出轮。可选直载。 */
+    ladderRung: z.number().int().min(1).max(3).optional(),
     /**
      * P3-① 复习卡附带「我的笔记」(条目制 2026-09-06):可见笔记条目列表
      * (hidden_at IS NULL),创建时间正序;无笔记为空数组。
