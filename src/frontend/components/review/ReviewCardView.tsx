@@ -472,6 +472,11 @@ interface ReviewCardViewProps {
   upgradeHint?: { suggestion: string; workOrderId: string } | null;
   /** 「标记升级」动作（POST mark）；仅首学窗口 + 无工单时展示轻量入口。 */
   onMarkUpgrade?: (wordId: string) => Promise<void>;
+  /**
+   * 阶梯会话（ADR-0036 拍板③）：R2 词撤提示面板（鼓励直翻，上限保持轻松）。
+   * 仅阶梯模式 card-no-hints 档传入；现行流恒 false（行为零变化）。
+   */
+  hintLadderHidden?: boolean;
 }
 
 /** 三档升级建议文案（与后端 suggestion_snapshot.level 同值）。 */
@@ -507,6 +512,7 @@ export function ReviewCardView({
   reviewProgress,
   upgradeHint,
   onMarkUpgrade,
+  hintLadderHidden,
 }: ReviewCardViewProps) {
   const [revealed, setRevealed] = useState(false);
   // 卡背快记草稿:评分/跳过/挂起时未提交则自动插入(兜底不丢内容)
@@ -541,8 +547,12 @@ export function ReviewCardView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card?.progressId]);
 
-  // T3 Hint 阶梯：提示步（缺失级自动降级跳过）与评分上限
-  const hintSteps = useMemo(() => (preview ? [] : buildHintSteps(card?.word)), [card, preview]);
+  // T3 Hint 阶梯：提示步（缺失级自动降级跳过）与评分上限。
+  // 阶梯 R2 档（拍板③）撤提示面板：hintLadderHidden=true 时视同无提示步。
+  const hintSteps = useMemo(
+    () => (preview || hintLadderHidden ? [] : buildHintSteps(card?.word)),
+    [card, preview, hintLadderHidden],
+  );
   const cap = hintCapNow(hintLevel, viaH4);
 
   // 翻卡统一入口：提示已全部消费时任何翻卡都标记 viaH4（防绕过 again 强制）；

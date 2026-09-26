@@ -23,6 +23,7 @@ import {
   ConflictError,
 } from "../errors";
 import type { Json, ReviewRating, ReviewState, UserWordProgressRow } from "../domain";
+import { settleLadderRung } from "../domain/ladder-rung";
 import { deriveContentStaleness } from "../domain/content-staleness";
 import type { ProgressWithContentHash } from "../repositories/interfaces";
 import {
@@ -543,6 +544,13 @@ export class ReviewService {
       };
 
       // 7. Persist (UPDATE progress + INSERT review_log in same tx)
+      // 阶梯起步档结算（ADR-0036 决策 1）：服务端以 domain 纯函数结算
+      // （±1 + S≥21d 单向地板），随 saveAnswer 落 ladder_rung 列。
+      const nextLadderRung = settleLadderRung(
+        (progress.ladder_rung ?? 1) as 1 | 2 | 3,
+        input.rating,
+        scheduling.stability,
+      );
       const result = await repos.reviews.saveAnswer({
         progressId: input.progressId,
         userId,
@@ -555,6 +563,7 @@ export class ReviewService {
         idempotencyKey: input.idempotencyKey ?? null,
         previousSnapshot,
         logMetadata,
+        ladderRung: nextLadderRung,
       });
 
       const eventPayload = buildReviewAnswerRecordedPayload({

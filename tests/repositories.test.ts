@@ -1035,7 +1035,9 @@ describe("saveAnswer dual-track changes", () => {
     // Append through a dedicated text-typed parameter so PostgreSQL does not
     // infer one placeholder as both review_rating and text (SQLSTATE 42P08).
     expect(updateSql).toContain("recent_ratings || to_jsonb($16::text)");
-    expect(mock.calls[0].params).toHaveLength(16);
+    // $17 = 阶梯起步档结算结果（ADR-0036）：COALESCE($17, ladder_rung)，缺省保持原值
+    expect(updateSql).toContain("ladder_rung = COALESCE($17, ladder_rung)");
+    expect(mock.calls[0].params).toHaveLength(17);
     expect(mock.calls[0].params[4]).toBe("good");
     expect(mock.calls[0].params[15]).toBe("good");
     // cap at 5 most recent

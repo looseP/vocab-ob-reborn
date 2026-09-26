@@ -452,6 +452,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
                LIMIT 5
              ) sub
            ),
+           ladder_rung = COALESCE($17, ladder_rung),
            updated_at = $12
        WHERE id = $13::uuid AND user_id = $14::uuid AND wordbook_id = $15::uuid`,
       [
@@ -471,6 +472,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         input.userId,
         input.wordbookId,
         String(input.rating), // $16: text for JSON append; $5 remains the enum value
+        input.ladderRung ?? null, // $17: 阶梯起步档结算结果（COALESCE 保缺省原值）
       ],
     );
 

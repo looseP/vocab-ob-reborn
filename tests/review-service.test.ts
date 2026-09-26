@@ -338,6 +338,40 @@ describe("ReviewService.submitAnswer", () => {
     }));
   });
 
+  it("settles ladder_rung server-side on submitAnswer (ADR-0036 decision 1)", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const reviewRepo = makeMockReviewRepo({
+      findProgressForUpdate: vi.fn(async () => makeMockProgress()),
+    });
+    mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = makeMockSessionRepo();
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+
+    // good → +1（R1→R2）；mock FSRS stability 无地板效应（<21d）
+    await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1");
+    let saveInput = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[0][0] as SaveAnswerInput;
+    expect(saveInput.ladderRung).toBe(2);
+
+    // again → −1（R2→R1）
+    (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mockClear();
+    await service.submitAnswer({ progressId: "p1", rating: "again", sessionId: "s1" }, "u1");
+    saveInput = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[0][0] as SaveAnswerInput;
+    expect(saveInput.ladderRung).toBe(1);
+
+    // 单向地板：S≥21d 时 again 不跌破 R2（mock 返回大 stability）
+    const highAdapter: FsrsAdapterFn = () => ({
+      difficulty: 5, dueAt: new Date().toISOString(), logDueAt: null,
+      elapsedDays: 1, scheduledDays: 1, retrievability: 0.9,
+      stability: 30, state: "review", nextPayload: {},
+    });
+    const serviceHigh = new ReviewService({ fsrsAdapter: highAdapter, loadWeights: async () => null });
+    (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mockClear();
+    await serviceHigh.submitAnswer({ progressId: "p1", rating: "again", sessionId: "s1" }, "u1");
+    saveInput = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[0][0] as SaveAnswerInput;
+    expect(saveInput.ladderRung).toBe(2);
+  });
+
   it("writes the outbox event before the transaction callback returns", async () => {
     const { adapter } = makeMockFsrsAdapter();
     const enqueuePhases: boolean[] = [];

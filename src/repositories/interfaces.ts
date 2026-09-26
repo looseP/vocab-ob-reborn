@@ -263,6 +263,11 @@ export interface SaveAnswerInput {
   idempotencyKey: string | null;
   previousSnapshot: Json;
   logMetadata: Record<string, unknown>;
+  /**
+   * 阶梯起步档结算结果（ADR-0036 决策 1）：服务层用 domain 纯函数结算后传入，
+   * saveAnswer 以 COALESCE 落列；null/缺省 = 保持原值（mock/旧调用兼容）。
+   */
+  ladderRung?: number | null;
 }
 
 /** Result of an undo RPC call. */
