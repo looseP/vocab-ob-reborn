@@ -19,7 +19,11 @@ function search(query: string): URLSearchParams {
 }
 
 describe("parseL3SectionParam", () => {
-  it("四个做题面各自可解析", () => {
+  it("L3 全部用户面各自可解析", () => {
+    expect(parseL3SectionParam(search("section=home"))).toBe("home");
+    expect(parseL3SectionParam(search("section=source"))).toBe("source");
+    expect(parseL3SectionParam(search("section=word"))).toBe("word");
+    expect(parseL3SectionParam(search("section=graph"))).toBe("graph");
     expect(parseL3SectionParam(search("section=papers"))).toBe("papers");
     expect(parseL3SectionParam(search("section=practice"))).toBe("practice");
     expect(parseL3SectionParam(search("section=error-book"))).toBe("errorBook");
@@ -74,6 +78,11 @@ describe("buildL3SectionUrl", () => {
 
   it("每个有契约的 section 都能构造（无遗漏）", () => {
     const owned = L3_SHELL_SECTIONS.map((s) => s.id).filter(hasL3SectionUrl);
-    expect(owned.sort()).toEqual(["errorBook", "papers", "practice", "session"]);
+    // 覆盖 L3 的全部**用户面**；刻意不含的只有两类：
+    //  - writing / studyNotes：各有专用窄契约（携带 taskId/venue/noteId）
+    //  - context / import / manual / proposals / recommendations：工程工具面
+    expect(owned.sort()).toEqual([
+      "errorBook", "graph", "home", "papers", "practice", "session", "source", "word",
+    ]);
   });
 });

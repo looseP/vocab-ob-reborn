@@ -1,30 +1,37 @@
 /**
- * L3 做题子空间导航契约（2026-09-26）——试卷台 / 练习 / 错题库 / 会话 的 URL 单一真源。
+ * L3 做题子空间导航契约（2026-09-26）—— L3 各用户面的 URL 单一真源。
  *
- * 规范 URL：`/l3?section=<papers|practice|error-book|session>`
+ * 规范 URL：`/l3?section=<papers|practice|error-book|session|home|source|word|graph>`
  *
- * 为什么补（这四个面此前无 URL 契约）：
+ * 为什么补（这些面此前无 URL 契约）：
  *  - 不可分享：把「去做这套题」的链接发给 agent/自己另一台设备打不开；
  *  - 不可收藏：浏览器收藏夹存不到具体面；
  *  - 返回键坏：L3 子应用只在本地 state 里切 section（L3Page `useState`），
  *    浏览器前进/后退不产生任何 section 变化。
  *
- * 边界（不越权，ADR-0025 单一代码路径纪律）：
- *  - `writing` 与 `study-notes` 另有专用契约（writingNavigation /
- *    studyNoteNavigation，携带 taskId/venue/noteId 等参数），**不在此重复定义**；
- *  - `venue` / `file` / `paper` / `sheet` / `resumeSheet` / `question` 等做题
- *    深链参数由 L3PapersPage 消费，此处不解析、不改写；
- *  - 参数非法（未知 section 值）→ 返回 null，调用方按「无 section 参数」处理，
- *    **不静默纠偏到别的面**。
+ * 覆盖范围（一个用户面一个规范 URL，声明一次）：
+ *  - 本模块拥有：`home` `source` `papers` `practice` `errorBook` `session`
+ *    `word` `graph` —— 它们没有别的 URL 契约。
+ *  - 本模块**不**拥有：`writing` 与 `studyNotes`（各有专用契约，携带
+ *    taskId/venue/noteId 等参数，契约更窄 —— 一个 URL 契约一个真源，ADR-0025）。
+ *  - 故意不覆盖：`context`（语境条目 = 工程检查器，在侧栏「工程工具」折叠组内）、
+ *    `import` / `manual` / `proposals` / `recommendations`（工程工具面）。
+ *
+ * 其它深链参数（`venue` / `file` / `paper` / `sheet` / `resumeSheet` / `question`
+ * / `context`）由各消费页自己解析，此处不解析、不改写。
  */
 import type { L3ShellSection } from "./l3ShellViewModel";
 
 /** 本模块拥有的 section → URL 参数值映射（shell id → kebab-case 参数值）。 */
 const SECTION_PARAM_BY_SHELL: Partial<Record<L3ShellSection, string>> = {
+  home: "home",
+  source: "source",
   papers: "papers",
   practice: "practice",
   errorBook: "error-book",
   session: "session",
+  word: "word",
+  graph: "graph",
 };
 
 const SHELL_BY_PARAM = new Map<string, L3ShellSection>(
