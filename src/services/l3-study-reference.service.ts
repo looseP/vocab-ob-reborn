@@ -30,6 +30,7 @@ import {
   STUDY_NOTE_EXCERPT_MAX,
   STUDY_SHEET_EXCERPT_MAX,
   STUDY_ATTEMPT_EXCERPT_MAX,
+  STUDY_GRADING_EXCERPT_MAX,
   type ReferenceDisplaySnapshot,
   type ReferencePreview,
   type ReferenceStatus,
@@ -147,6 +148,19 @@ export function attemptFieldText(target: Extract<LoadedTarget, { kind: "attempt"
   return JSON.stringify({ venue: target.venue, answer: canonicalJson(target.answer) });
 }
 
+/**
+ * N2 第四条链（ADR-0039 决策 3）：评卷引用的 hash 输入 = `verdict` + `analysis_md`
+ * 固定键序 JSON。**照 `assessment` 的 `content_md` 先例**：hash 只取内容字段。
+ *
+ * - 不能只取 `analysis_md`：verdict 与 analysis 可分别改判，只 hash 分析则
+ *   「只改 verdict」不转 changed ⇒ 笔记里显示一个**已过期却无告警**的判定。
+ * - `graded_by` / `graded_at` **不进 hash**：它们是归属事实不是内容；`graded_at`
+ *   每次改判都刷新，进 hash 会让纯措辞调整也告警。两者只进快照。
+ */
+export function gradingFieldText(target: Extract<LoadedTarget, { kind: "grading" }>): string {
+  return JSON.stringify({ verdict: target.verdict, analysis_md: target.analysis_md });
+}
+
 /** 按引用 kind 取"当前字段文本"（与 capture 的 hash 口径一致）；不可得返回 null。 */
 export function currentFieldText(
   kind: ReferenceKind,
@@ -164,6 +178,10 @@ export function currentFieldText(
   }
   if (kind === "attempt") {
     return target.kind === "attempt" ? attemptFieldText(target) : null;
+  }
+  if (kind === "grading") {
+    // ADR-0039 决策 3：hash 只取 verdict + analysis_md。归属字段不进 hash。
+    return target.kind === "grading" ? gradingFieldText(target) : null;
   }
   if (target.kind === "assessment") {
     // N2：评析的 hash 输入写死为 content_md（A2）；评析是 latest-wins 覆写，
@@ -189,6 +207,9 @@ export function currentFieldText(
 function liveTitleOf(target: LoadedTarget): string | null {
   if (target.kind === "source") return target.title;
   if (target.kind === "note") return target.title;
+  // sheet / attempt / grading 三者都没有自己的标题列：稿次是 scope+summary、
+  // 作答是 venue+answer、评卷是 verdict+analysis。返回材料题源标题（可读来源），
+  // null 时不拼造伪标题（与 sheet/attempt 同款纪律）。
   if (target.kind === "sheet" || target.kind === "attempt") return null;
   return target.source_title;
 }
@@ -244,6 +265,13 @@ export function targetKeyOf(target: ReferenceTarget): string {
     // N2 第三条链：attempt 身份就是 attemptId 单值（K9），不按 question / sheet 兜底。
     return `attempt:${normalizeStudyUuid(target.attemptId)}`;
   }
+  if (target.kind === "grading") {
+    // N2 第四条链（ADR-0039 决策 2）：身份 = `{sheetId, questionId}` 复合串。
+    // 刻意**不**用 `l3_grading_results.id` 作身份：那一行在改判时被原地覆写
+    // （ON CONFLICT DO UPDATE 不换 id），钉它等于钉「那一格坐标」——语义恰好是
+    // 「当前评卷」，但坐标串可读、可核对，且不把内部行 id 泄漏进引用契约。
+    return `grading:${normalizeStudyUuid(target.sheetId)}:${normalizeStudyUuid(target.questionId)}`;
+  }
   return `question:${normalizeStudyUuid(target.questionId)}`;
 }
 
@@ -267,6 +295,14 @@ export function targetRefsOf(target: ReferenceTarget): { kind: ReferenceTargetKi
   if (target.kind === "attempt") {
     // 只返回自身键——不装载 question / sheet（K9）。
     return [{ kind: "attempt", id: normalizeStudyUuid(target.attemptId) }];
+  }
+  if (target.kind === "grading") {
+    // 只返回自身键——**不**顺带装载 question / sheet（K5 / K7 同款：一次只展开一层，
+    // 且快照白名单不得因搭便车而携带题面标准答案或作答）。
+    return [{
+      kind: "grading",
+      id: `${normalizeStudyUuid(target.sheetId)}:${normalizeStudyUuid(target.questionId)}`,
+    }];
   }
   return [{ kind: "question", id: normalizeStudyUuid(target.questionId) }];
 }
@@ -308,6 +344,13 @@ export function referenceRowToTarget(row: L3StudyNoteReferenceRow): ReferenceTar
         kind: "assessment",
         questionId: row.question_id!,
         assessmentId: row.assessment_id!,
+      };
+    case "grading":
+      // N2 第四条链：行内目标列就是 `{submission_id, question_id}`（无新增列）。
+      return {
+        kind: "grading",
+        sheetId: row.submission_id!,
+        questionId: row.question_id!,
       };
     case "note":
       return { kind: "note", noteId: row.target_note_id! };
@@ -605,6 +648,53 @@ export class L3StudyReferenceService {
             kind: "attempt",
             venue: loaded.venue,
             answerExcerpt: safeExcerpt(canonicalJsonText(loaded.answer), STUDY_ATTEMPT_EXCERPT_MAX),
+          },
+        };
+      }
+      case "grading": {
+        // N2 第四条链（ADR-0039）。身份匹配失败即 404，**不做**「按题找该题最新评卷」
+        // 或「按 sheet 找任意评卷」的兜底 —— 那会把「引用这一格的判定」悄悄变成
+        // 「引用某一时刻的判定」，违背 D3-2（快照必须对应捕获时看到的那一格）。
+        if (
+          loaded.kind !== "grading"
+          || loaded.sheet_id !== normalizeStudyUuid(target.sheetId)
+          || loaded.question_id !== normalizeStudyUuid(target.questionId)
+        ) {
+          throw new NotFoundError("StudyReferenceTarget", targetKeyOf(target));
+        }
+        // 决策 2 沿 K1：只有 sealed 稿次是合法目标（draft / discarded 一律 404，
+        // 不是 409）。装载侧已过滤，这里是双保险（K2）。
+        if (loaded.sheet_status !== "sealed") {
+          throw new NotFoundError("StudyReferenceTarget", targetKeyOf(target));
+        }
+        return {
+          kind: "grading",
+          source_id: null,
+          // 目标列复用 submission_id + question_id：**不新增列**（UNIQUE(sheet_id,
+          // question_id) 已使这一对唯一确定那一行）。
+          question_id: loaded.question_id,
+          assessment_id: null,
+          target_note_id: null,
+          submission_id: loaded.sheet_id,
+          // 决策 2：非 writing 稿次，revision 恒 null（K3 同款）。
+          submission_revision_no: null,
+          attempt_id: null,
+          option_key: null,
+          start_offset: null,
+          end_offset: null,
+          quote_snapshot: null,
+          // 决策 3：hash 只取 verdict + analysis_md。
+          field_hash: sha256Hex(gradingFieldText(loaded)),
+          // 决策 4：快照含归属事实（gradedBy / gradedAt），但它们不进 hash。
+          display_snapshot: {
+            kind: "grading",
+            verdict: loaded.verdict,
+            analysisExcerpt: safeExcerpt(loaded.analysis_md, STUDY_GRADING_EXCERPT_MAX),
+            gradedBy: loaded.graded_by,
+            gradedAt: loaded.graded_at,
+            questionOrdinal: loaded.question_ordinal,
+            questionType: loaded.question_type,
+            sourceTitle: loaded.source_title,
           },
         };
       }

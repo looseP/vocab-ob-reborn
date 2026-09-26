@@ -50277,6 +50277,31 @@
                                       "attemptId"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "grading"
+                                      },
+                                      "sheetId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "questionId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "sheetId",
+                                      "questionId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -50585,6 +50610,65 @@
                                       "kind",
                                       "venue",
                                       "answerExcerpt"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "grading"
+                                      },
+                                      "verdict": {
+                                        "type": "string"
+                                      },
+                                      "analysisExcerpt": {
+                                        "type": "string"
+                                      },
+                                      "gradedBy": {
+                                        "type": "string"
+                                      },
+                                      "gradedAt": {
+                                        "type": "string"
+                                      },
+                                      "questionOrdinal": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "questionType": {
+                                        "type": "string",
+                                        "enum": [
+                                          "cloze",
+                                          "reading_choice",
+                                          "new_question",
+                                          "sentence_translation",
+                                          "short_essay",
+                                          "long_essay",
+                                          "grammar_blank"
+                                        ]
+                                      },
+                                      "sourceTitle": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "verdict",
+                                      "analysisExcerpt",
+                                      "gradedBy",
+                                      "gradedAt",
+                                      "questionOrdinal",
+                                      "questionType",
+                                      "sourceTitle"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -52091,6 +52175,31 @@
                       "attemptId"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "grading"
+                      },
+                      "sheetId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "questionId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "sheetId",
+                      "questionId"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               }
@@ -52352,6 +52461,31 @@
                               "required": [
                                 "kind",
                                 "attemptId"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "grading"
+                                },
+                                "sheetId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "questionId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "sheetId",
+                                "questionId"
                               ],
                               "additionalProperties": false
                             }
@@ -52651,6 +52785,65 @@
                                 "kind",
                                 "venue",
                                 "answerExcerpt"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "grading"
+                                },
+                                "verdict": {
+                                  "type": "string"
+                                },
+                                "analysisExcerpt": {
+                                  "type": "string"
+                                },
+                                "gradedBy": {
+                                  "type": "string"
+                                },
+                                "gradedAt": {
+                                  "type": "string"
+                                },
+                                "questionOrdinal": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "questionType": {
+                                  "type": "string",
+                                  "enum": [
+                                    "cloze",
+                                    "reading_choice",
+                                    "new_question",
+                                    "sentence_translation",
+                                    "short_essay",
+                                    "long_essay",
+                                    "grammar_blank"
+                                  ]
+                                },
+                                "sourceTitle": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "verdict",
+                                "analysisExcerpt",
+                                "gradedBy",
+                                "gradedAt",
+                                "questionOrdinal",
+                                "questionType",
+                                "sourceTitle"
                               ],
                               "additionalProperties": false
                             }
@@ -54039,6 +54232,31 @@
                                       "attemptId"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "grading"
+                                      },
+                                      "sheetId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "questionId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "sheetId",
+                                      "questionId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -54347,6 +54565,65 @@
                                       "kind",
                                       "venue",
                                       "answerExcerpt"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "grading"
+                                      },
+                                      "verdict": {
+                                        "type": "string"
+                                      },
+                                      "analysisExcerpt": {
+                                        "type": "string"
+                                      },
+                                      "gradedBy": {
+                                        "type": "string"
+                                      },
+                                      "gradedAt": {
+                                        "type": "string"
+                                      },
+                                      "questionOrdinal": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "questionType": {
+                                        "type": "string",
+                                        "enum": [
+                                          "cloze",
+                                          "reading_choice",
+                                          "new_question",
+                                          "sentence_translation",
+                                          "short_essay",
+                                          "long_essay",
+                                          "grammar_blank"
+                                        ]
+                                      },
+                                      "sourceTitle": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "verdict",
+                                      "analysisExcerpt",
+                                      "gradedBy",
+                                      "gradedAt",
+                                      "questionOrdinal",
+                                      "questionType",
+                                      "sourceTitle"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -55016,6 +55293,31 @@
                                     "attemptId"
                                   ],
                                   "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "grading"
+                                    },
+                                    "sheetId": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    },
+                                    "questionId": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "sheetId",
+                                    "questionId"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               ]
                             }
@@ -55360,6 +55662,31 @@
                                       "attemptId"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "grading"
+                                      },
+                                      "sheetId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "questionId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "sheetId",
+                                      "questionId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -55668,6 +55995,65 @@
                                       "kind",
                                       "venue",
                                       "answerExcerpt"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "grading"
+                                      },
+                                      "verdict": {
+                                        "type": "string"
+                                      },
+                                      "analysisExcerpt": {
+                                        "type": "string"
+                                      },
+                                      "gradedBy": {
+                                        "type": "string"
+                                      },
+                                      "gradedAt": {
+                                        "type": "string"
+                                      },
+                                      "questionOrdinal": {
+                                        "type": "integer",
+                                        "minimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "questionType": {
+                                        "type": "string",
+                                        "enum": [
+                                          "cloze",
+                                          "reading_choice",
+                                          "new_question",
+                                          "sentence_translation",
+                                          "short_essay",
+                                          "long_essay",
+                                          "grammar_blank"
+                                        ]
+                                      },
+                                      "sourceTitle": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "verdict",
+                                      "analysisExcerpt",
+                                      "gradedBy",
+                                      "gradedAt",
+                                      "questionOrdinal",
+                                      "questionType",
+                                      "sourceTitle"
                                     ],
                                     "additionalProperties": false
                                   }

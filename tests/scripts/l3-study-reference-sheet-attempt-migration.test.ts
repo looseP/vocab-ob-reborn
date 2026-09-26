@@ -46,6 +46,22 @@ function migration(index: string): Migration | undefined {
   return migrations.find((entry) => entry.index === index);
 }
 
+/**
+ * 只留可执行 DDL：剥掉 `--` 行注释。
+ *
+ * 为什么必须剥：本迁移的注释里**刻意**讨论了 `l3_grading_results` 与
+ * 「无 version 列」，直接对整份 SQL 做 `not.toMatch(/version/i)` 会把自己
+ * 的设计说明判成违规 —— 断言必须看语句，不是看文档。
+ */
+function ddlOnly(entry: Migration): string {
+  return entry.sql
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 describe("N2 第三条链迁移契约（0043 → 0044）", () => {
   it("0043 存在：建 l3_question_attempts(id,user_id) 唯一键，并且不含引用它的外键", () => {
     const sql = migration("0043");
@@ -159,5 +175,57 @@ describe("N2 第三条链迁移契约（0043 → 0044）", () => {
     expect(schemaTs).toContain('pgPolicy("l3_study_note_references_own_all"');
     expect(schemaTs).toContain('pgPolicy("l3_question_attempts_own_all"');
     expect(schemaTs).toContain('pgPolicy("l3_submissions_own_all"');
+  });
+});
+
+/**
+ * N2 第四条链迁移契约（0047 · 评卷 kind）。
+ *
+ * 这一条链**不新增列**：kind 只是 CHECK 里的一个字面量。风险因此全在
+ * 「三处 CHECK 是否同步放宽」上 —— 漏改任意一处，插入 grading 引用就会被
+ * 数据库拒绝，而应用层测试（含真库 rehearsal 之外的单元测试）看不出来。
+ */
+describe("N2 评卷引用迁移契约（0047）", () => {
+  it("0047 存在且在 journal 里登记（顺序是硬合同）", () => {
+    const sql = migration("0047");
+    expect(sql, "missing 0047 — grading kind must be admitted by a CHECK widening").toBeDefined();
+    expect(sql!.tag).toBe("0047_study_note_references_grading_kind");
+    expect(journalTags).toContain("0047_study_note_references_grading_kind");
+  });
+
+  it("0047 只放宽 CHECK，不新增列、不动评卷表（决策 2：不引入版本维度）", () => {
+    const ddl = ddlOnly(migration("0047")!);
+    expect(ddl).not.toMatch(/ADD COLUMN/i);
+    // 评卷表一个字都不动：latest-wins 写路径（ADR-0035）原样成立。
+    expect(ddl).not.toMatch(/l3_grading_results/i);
+    // 决策 5 的一半：改判能力来自 UNIQUE(sheet_id,question_id)，
+    // 迁移不得偷偷给它加一列版本号。
+    expect(ddl).not.toMatch(/version/i);
+  });
+
+  it("0047 三处 CHECK 全部含 grading 分支，且与 schema.ts 同源", () => {
+    const sql = migration("0047")!;
+    // kind_check / target_check / quote_check —— 少改一处就是「有的路径能写、有的不能」。
+    expect(sql.normalized).toMatch(/kind_check[^;]*grading/);
+    expect(sql.normalized).toMatch(/target_check[^;]*grading/);
+    expect(sql.normalized).toMatch(/quote_check[^;]*grading/);
+    // schema 真源必须同样承认 grading，否则 drift 检查会在下一轮把库改回去。
+    expect(schemaTs).toMatch(/kind_check[^;]*grading/);
+    expect(schemaTs).toMatch(/target_check[^;]*grading/);
+    expect(schemaTs).toMatch(/quote_check[^;]*grading/);
+  });
+
+  it("0047 的 grading 分支钉住 {submission_id, question_id} 且稿次/作答列必须为空", () => {
+    const target = /ADD CONSTRAINT "l3_study_note_references_target_check" CHECK \((.+)\);/.exec(
+      ddlOnly(migration("0047")!),
+    )?.[1] ?? "";
+    const grading = target.split(" OR ").find((branch) => branch.includes("'grading'")) ?? "";
+    // 身份 = 题纸 + 题（决策 2）。两列都必填。
+    expect(grading).toContain("submission_id IS NOT NULL");
+    expect(grading).toContain("question_id IS NOT NULL");
+    // 稿次/作答列必须为空：否则同一条引用能同时声称「这是稿次引用」和「这是评卷引用」。
+    expect(grading).toContain("submission_revision_no IS NULL");
+    expect(grading).toContain("attempt_id IS NULL");
+    expect(grading).toContain("source_id IS NULL");
   });
 });

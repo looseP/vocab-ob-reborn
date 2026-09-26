@@ -361,9 +361,10 @@ describe("study topic schemas", () => {
 
 const SUBMISSION = "00000000-0000-4000-8000-000000000321";
 const ATTEMPT = "00000000-0000-4000-8000-000000000331";
+const GRADED_QUESTION = "00000000-0000-4000-8000-000000000341";
 
 describe("referenceTargetSchema · sheet / attempt（N2 第三条链）", () => {
-  it("REFERENCE_KINDS 扩到九值（与 DB kind_check 同口径：新增 sheet / attempt）", () => {
+  it("REFERENCE_KINDS 扩到十值（与 DB kind_check 同口径：新增 sheet / attempt / grading）", () => {
     expect(REFERENCE_KINDS).toEqual([
       "source",
       "source_quote",
@@ -374,7 +375,17 @@ describe("referenceTargetSchema · sheet / attempt（N2 第三条链）", () => 
       "note",
       "sheet",
       "attempt",
+      "grading",
     ]);
+  });
+
+  it("grading：target 只收 {sheetId, questionId}，没有版本维度（ADR-0039 决策 2）", () => {
+    const base = { kind: "grading", sheetId: SUBMISSION, questionId: GRADED_QUESTION };
+    expect(referenceTargetSchema.safeParse(base).success).toBe(true);
+    // strict：多余字段一律拒（防止前端悄悄塞一个 version 进去）。
+    expect(referenceTargetSchema.safeParse({ ...base, version: 1 }).success).toBe(false);
+    expect(referenceTargetSchema.safeParse({ ...base, gradingVersion: 1 }).success).toBe(false);
+    expect(referenceTargetSchema.safeParse({ kind: "grading", questionId: GRADED_QUESTION }).success).toBe(false);
   });
 
   it("sheet 非 writing：只有 submissionId（revisionNo 省略或显式 null 皆可）", () => {

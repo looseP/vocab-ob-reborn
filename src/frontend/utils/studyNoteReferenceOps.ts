@@ -14,6 +14,7 @@
  */
 import { lexer, type Token } from "marked";
 import type { ReferencePreview } from "@/domain/l3-study-notes";
+import { GRADING_VERDICT_LABELS } from "@/domain/l3-grading";
 import { matchReferenceMarkerText, ReferenceContractError } from "@/domain/l3-study-notes";
 
 const markerText = (refId: string): string => `[[ref:${refId.toLowerCase()}]]`;
@@ -327,6 +328,15 @@ function blockLines(text: string): string[] {
  * 从引用元数据生成「普通摘录」行（转换操作使用）。
  * 口径：文本行 + 出处行（题型/选项号/来源标题等来源描述）。
  */
+/**
+ * verdict 中文短标签（fail-closed）：快照里的 `verdict` 是**冻结数据**，类型是
+ * `string` 而非枚举 —— 契约漂移时宁可回显原始值，也不让一个未知判定被硬套成
+ * 某个已知标签（那是把「读不懂」伪装成「读得懂」）。
+ */
+function verdictLabel(verdict: string): string {
+  return GRADING_VERDICT_LABELS[verdict as keyof typeof GRADING_VERDICT_LABELS] ?? verdict;
+}
+
 export function excerptLinesFromSnapshot(meta: ReferencePreview): string[] {
   const snapshot = meta.displaySnapshot;
   const sourceSuffix = (sourceTitle: string | null): string => (sourceTitle ? `· ${sourceTitle}` : "");
@@ -362,6 +372,14 @@ export function excerptLinesFromSnapshot(meta: ReferencePreview): string[] {
     // N2 第三条链：作答转普通摘录——只落 venue + 作答摘录。
     case "attempt":
       return [...blockLines(snapshot.answerExcerpt), `> —— 作答记录（${snapshot.venue}）`];
+    // N2 第四条链（ADR-0039 决策 4/5）：带归属事实（谁在何时判的），且 verdict 用中文
+    // 标签而非裸枚举值 —— 裸 "correct/partial/wrong" 出现在笔记里要读者自己翻译。
+    case "grading":
+      return [
+        ...blockLines(snapshot.analysisExcerpt || `判定：${verdictLabel(snapshot.verdict)}`),
+        `> —— 评卷（${verdictLabel(snapshot.verdict)}）${sourceSuffix(snapshot.sourceTitle)}`,
+        `> ${snapshot.gradedBy} 评于 ${snapshot.gradedAt}`,
+      ];
   }
 }
 

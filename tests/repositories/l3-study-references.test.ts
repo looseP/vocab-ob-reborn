@@ -14,6 +14,7 @@ const USER = "00000000-0000-4000-8000-0000000000a1";
 const NOTE = "00000000-0000-4000-8000-000000000101";
 const REF = "00000000-0000-4000-8000-000000000001";
 const SOURCE = "00000000-0000-4000-8000-000000000201";
+const OTHER_QUESTION = "00000000-0000-4000-8000-000000000212";
 const SOURCE_B = "00000000-0000-4000-8000-000000000202";
 const QUESTION = "00000000-0000-4000-8000-000000000211";
 
@@ -169,6 +170,53 @@ describe("loadTargets", () => {
     const map = await repo.loadTargets(USER, []);
     expect(map.size).toBe(0);
     expect(querySpy.mock.calls.length).toBe(0);
+  });
+
+  it("grading kind：只取白名单字段，且**必须**是 sealed 题纸（ADR-0039 决策 4）", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [{
+        sheet_id: "sheet-1", question_id: QUESTION, verdict: "wrong",
+        analysis_md: "限定词读错", graded_by: "agent-1", graded_at: "2026-09-26T00:00:00Z",
+        question_ordinal: 2, question_type: "reading_choice", source_title: "来源",
+      }],
+    }));
+    const map = await repo.loadTargets(USER, [{ kind: "grading", id: `sheet-1:${QUESTION}` }]);
+    const sql = querySpy.mock.calls[0]![0] as string;
+    // 决策 4：未定格题纸引不到评卷。谓词必须落在 SQL 里（而非 service 后置过滤），
+    // 否则 draft 行会先被读进内存再丢弃，与 ①② 快照口径不同源。
+    expect(sql).toContain("l3_submissions");
+    expect(sql).toMatch(/status\s*=\s*'sealed'/);
+    // 白名单：判定与分析进 hash，归属事实（评卷人/时间/题序/来源）只进快照。
+    for (const col of ["verdict", "analysis_md", "graded_by", "graded_at", "question_ordinal", "source_title"]) {
+      expect(sql).toContain(col);
+    }
+    // 复合身份在 SQL 层展开，不能让 id 里的 `:` 混进 uuid 比较。
+    expect(sql).toContain("sheet_id");
+    expect(map.get(`grading:sheet-1:${QUESTION}`)).toMatchObject({ kind: "grading", verdict: "wrong" });
+    // 行里的复合键必须与请求键一致，否则忠实装载在生产环境取不到（K5 同款坑）。
+    expect(map.size).toBe(1);
+  });
+
+  it("grading：行里多出来的复合键被挡在 map 外（sheet 级取数 + 客户端侧 wanted 过滤）", async () => {
+    // 取数是「按 sheet 批量取」（SQL 的 = ANY($2) 只吃 sheetId），所以数据库可能
+    // 回传这张题纸上**别的**题的评卷行。装载必须按请求的复合键过滤，否则一次
+    // capture 会把整张卷的评卷都写进引用集。
+    querySpy.mockImplementation(async () => ({
+      rows: [
+        {
+          sheet_id: "sheet-1", question_id: QUESTION, sheet_status: "sealed", verdict: "wrong",
+          analysis_md: null, graded_by: "agent-1", graded_at: "2026-09-26T00:00:00Z",
+          question_ordinal: 2, question_type: "reading_choice", source_title: null,
+        },
+        {
+          sheet_id: "sheet-1", question_id: OTHER_QUESTION, sheet_status: "sealed", verdict: "correct",
+          analysis_md: null, graded_by: "agent-1", graded_at: "2026-09-26T00:00:00Z",
+          question_ordinal: 3, question_type: "reading_choice", source_title: null,
+        },
+      ],
+    }));
+    const map = await repo.loadTargets(USER, [{ kind: "grading", id: `sheet-1:${QUESTION}` }]);
+    expect([...map.keys()]).toEqual([`grading:sheet-1:${QUESTION}`]);
   });
 });
 

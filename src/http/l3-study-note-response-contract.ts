@@ -64,6 +64,12 @@ const referenceTargetResponseSchema = z.discriminatedUnion("kind", [
     kind: z.literal("attempt"),
     attemptId: z.string().uuid(),
   }).strict(),
+  // N2 第四条链（ADR-0039 决策 2）：评卷 = {sheetId, questionId}，**无版本维度**。
+  z.object({
+    kind: z.literal("grading"),
+    sheetId: z.string().uuid(),
+    questionId: z.string().uuid(),
+  }).strict(),
 ]);
 
 const optionSchema = z.object({ key: z.string(), text: z.string() }).strict();
@@ -113,6 +119,20 @@ const referenceDisplaySnapshotSchema = z.discriminatedUnion("kind", [
     kind: z.literal("attempt"),
     venue: z.string(),
     answerExcerpt: z.string(),
+  }).strict(),
+  // N2 第四条链（ADR-0039 决策 4）：判定 + 分析节选 + 归属事实。
+  // `verdict` 用 `z.string()` 而非枚举 —— 快照是**冻结数据**：契约漂移时要能原样
+  // 呈现并转 changed，而不是让 500 变成"旧笔记打不开"。
+  z.object({
+    kind: z.literal("grading"),
+    verdict: z.string(),
+    analysisExcerpt: z.string(),
+    gradedBy: z.string(),
+    gradedAt: z.string(),
+    questionOrdinal: z.number().int().nonnegative(),
+    // 题型沿用既有快照口径（venueSchema 枚举）；`verdict` 刻意留 string（见上）。
+    questionType: venueSchema,
+    sourceTitle: z.string().nullable(),
   }).strict(),
 ]);
 

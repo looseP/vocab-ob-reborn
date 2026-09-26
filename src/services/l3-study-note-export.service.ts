@@ -40,6 +40,7 @@ import {
   type ReferenceStatus,
   type ReferenceTarget,
   N1_REFERENCE_KINDS,
+  type N1ReferenceKind,
 } from "../domain/l3-study-notes";
 import type { L3QuestionOption, L3QuestionType } from "../domain/l3-question-types";
 import {
@@ -141,7 +142,13 @@ export type StudyNoteExportTargetV2 =
    */
   | { kind: "sheet"; submissionId: string; revisionNo: number | null }
   /** N2 第三条链：attempt 目标 = 作答记录，单值身份（K9）。 */
-  | { kind: "attempt"; attemptId: string };
+  | { kind: "attempt"; attemptId: string }
+  /**
+   * N2 第四条链（ADR-0039 决策 2）：评卷目标 = `{sheetId, questionId}`。
+   * **无版本维度**：`l3_grading_results` 是 latest-wins 覆写表，引用恒指向「当前
+   * 那一格」；改判后引用转 `changed` 而身份不变。
+   */
+  | { kind: "grading"; sheetId: string; questionId: string };
 
 export interface StudyNoteExportReferenceV2 {
   referenceId: string;
@@ -287,6 +294,20 @@ export function projectDisplaySnapshot(
         venue: asTextField(raw["venue"], "venue", referenceId),
         answerExcerpt: asTextField(raw["answerExcerpt"], "answerExcerpt", referenceId),
       };
+    // N2 第四条链（ADR-0039 决策 3/7）：评卷快照按白名单显式重建。
+    // 判定 + 分析 + 归属事实，**不含 field_hash 的输入以外的东西**——特别是
+    // 不带任何版本字段（决策 2 否决了 ②b，导出面不得凭空长出一个）。
+    case "grading":
+      return {
+        kind: "grading",
+        verdict: asTextField(raw["verdict"], "verdict", referenceId),
+        analysisExcerpt: asTextField(raw["analysisExcerpt"], "analysisExcerpt", referenceId),
+        gradedBy: asTextField(raw["gradedBy"], "gradedBy", referenceId),
+        gradedAt: asTextField(raw["gradedAt"], "gradedAt", referenceId),
+        questionOrdinal: raw["questionOrdinal"] as number,
+        questionType: raw["questionType"] as L3QuestionType,
+        sourceTitle: asNullableText(raw["sourceTitle"]),
+      };
     default:
       throw new ValidationError("引用快照 kind 非法", "displaySnapshot");
   }
@@ -341,6 +362,9 @@ const KIND_LABELS: Record<ReferenceKind, string> = {
   // N2 第三条链：题纸稿次（sealed）与作答记录。
   sheet: "题纸稿次",
   attempt: "作答记录",
+  // N2 第四条链（ADR-0039）：评卷判定。标签写「评卷」而不是「错题」——
+  // verdict 三值里 correct 也占一格，叫「错题」会在 correct 时误导。
+  grading: "评卷",
 };
 
 const STATUS_LABELS: Record<ReferenceStatus, string> = {
@@ -371,11 +395,24 @@ function snapshotSummary(snapshot: ReferenceDisplaySnapshot): string {
       return snapshot.summaryExcerpt;
     case "attempt":
       return snapshot.answerExcerpt;
+    // N2 第四条链：摘要 = 分析节选；无分析（纯判对错）时退回判定本身，
+    // 不留空摘要（空摘要在导出产物里读起来像"引用了但没内容"）。
+    case "grading":
+      return snapshot.analysisExcerpt || `判定：${snapshot.verdict}`;
   }
 }
 
-/** 引用行 → JSON 块 target（camelCase 投影；行内列名不出现在产物里）。 */
-function toExportTarget(row: L3StudyNoteReferenceRow): StudyNoteExportTarget {
+/**
+ * 引用行 → v1 JSON 块 target（camelCase 投影；行内列名不出现在产物里）。
+ *
+ * 参数类型是 **N1 收窄**：v1 路径上 `assertV1Kinds` 是类型守卫，先把 kind 收窄成
+ * N1ReferenceKind，本函数因此不必为每个 N2 kind 写一条「理论上到不了」的分支。
+ *
+ * 为什么值得这么做（K16）：枚举式 switch 的代价是**每加一个 kind 就要补一条臂**，
+ * 而补漏是静默的 —— 漏掉时 v1 产物里就会长出一个未定义字段。把「v1 只认 N1」
+ * 写成类型，守卫就从一个要靠人记得遵守的约定，变成编译器和运行时共同保证的事实。
+ */
+function toExportTarget(row: L3StudyNoteReferenceRow & { kind: N1ReferenceKind }): StudyNoteExportTarget {
   switch (row.kind) {
     case "source":
       return { sourceId: row.source_id! };
@@ -392,17 +429,6 @@ function toExportTarget(row: L3StudyNoteReferenceRow): StudyNoteExportTarget {
         startOffset: row.start_offset!,
         endOffset: row.end_offset!,
       };
-    case "assessment":
-    case "note":
-    case "sheet":
-    case "attempt":
-      // v1 形状冻结（P4-1），且调用前 assertV1Kinds 已拦下；这里不新增形状，
-      // 直接 fail-closed——宁可拒绝，也不让 v1 产物出现未定义字段（K16：新 kind
-      // 不会被悄悄降级进 v1）。
-      throw new ValidationError(
-        "该笔记包含 N2 引用型，v1 导出不可用（请显式指定 schemaVersion=2）",
-        "schemaVersion",
-      );
   }
 }
 
@@ -448,15 +474,41 @@ function toExportTargetV2(row: L3StudyNoteReferenceRow): StudyNoteExportTargetV2
       };
     case "attempt":
       return { kind: "attempt", attemptId: row.attempt_id! };
+    // N2 第四条链：身份 = {sheetId, questionId}（ADR-0039 决策 2；无版本维度）。
+    case "grading":
+      return {
+        kind: "grading",
+        sheetId: row.submission_id!,
+        questionId: row.question_id!,
+      };
   }
 }
 
 /**
  * P4-1/P4-2：v1 遇到 N2 引用型**不**静默降级（不丢引用、不改字段形状），
  * 直接拒绝并指明显式选择 v2——离线档案的形状必须由请求者决定，不是由内容决定。
+ *
+ * 它同时是**类型守卫**：返回后 `kind` 被收窄成 N1ReferenceKind，于是 v1 的 target
+ * 投影不必为每个 N2 kind 留一条到不了的分支（新增 kind 也不会漏）。
  */
-function assertV1Kinds(rows: readonly L3StudyNoteReferenceRow[]): void {
-  const unsupported = rows.find((row) => !(N1_REFERENCE_KINDS as readonly string[]).includes(row.kind));
+function isN1Kind(kind: ReferenceKind): kind is N1ReferenceKind {
+  return (N1_REFERENCE_KINDS as readonly string[]).includes(kind);
+}
+
+/** 单行口径：v1 路径上按行收窄（与 assertV1Kinds 共用同一谓词，不复制判定逻辑）。 */
+function assertN1Kind(row: L3StudyNoteReferenceRow): asserts row is L3StudyNoteReferenceRow & { kind: N1ReferenceKind } {
+  if (!isN1Kind(row.kind)) {
+    throw new ValidationError(
+      "该笔记包含 N2 引用型，v1 导出不可用（请显式指定 schemaVersion=2）",
+      "schemaVersion",
+    );
+  }
+}
+
+function assertV1Kinds(
+  rows: readonly L3StudyNoteReferenceRow[],
+): asserts rows is readonly (L3StudyNoteReferenceRow & { kind: N1ReferenceKind })[] {
+  const unsupported = rows.find((row) => !isN1Kind(row.kind));
   if (unsupported) {
     throw new ValidationError(
       "该笔记包含 N2 引用型，v1 导出不可用（请显式指定 schemaVersion=2）",
@@ -509,6 +561,14 @@ function renderReferenceBlock(reference: ReferencePreview): string[] {
     // N2 第三条链：作答只落 venue + 作答摘录（attempt 表无判定列）。
     lines.push(`> 场景: ${snapshot.venue}`);
     lines.push(`> 作答摘录: ${snapshot.answerExcerpt}`);
+  } else if (snapshot.kind === "grading") {
+    // N2 第四条链（ADR-0039 决策 4）：显式带**归属事实** —— 离线档案里这是唯一能判断
+    // 「这条判定后来有没有被改」的线索。gradedAt 是快照里的历史值，**不得**用它重算
+    // 「最近评卷时间」（那属于 grading 读面，不属于引用）。
+    if (snapshot.sourceTitle) lines.push(`> 来源: ${snapshot.sourceTitle}`);
+    lines.push(`> 题序: ${snapshot.questionOrdinal}`);
+    lines.push(`> 判定: ${snapshot.verdict}`);
+    lines.push(`> 评卷者: ${snapshot.gradedBy} · 评卷于: ${snapshot.gradedAt}`);
   } else {
     if (snapshot.sourceTitle) lines.push(`> 来源: ${snapshot.sourceTitle}`);
     lines.push(`> 题型: ${snapshot.questionType}`);
@@ -762,6 +822,9 @@ export class L3StudyNoteExportService {
         if (schemaVersion === 2) {
           referencesV2.push({ ...base, target: toExportTargetV2(row) });
         } else {
+          // v1：与 assertV1Kinds 同一谓词把 kind 收窄成 N1（运行时是恒真的重入，
+          // 换来的是「v1 产物只可能出现 N1 形状」由类型保证，而不是靠 switch 记得列全）。
+          assertN1Kind(row);
           references.push({ ...base, target: toExportTarget(row) });
         }
       }

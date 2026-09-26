@@ -79,7 +79,9 @@ export type ReferenceTargetKind =
   | "assessment"
   | "note"
   | "sheet"
-  | "attempt";
+  | "attempt"
+  /** N2 第四条链（ADR-0039）：评卷。内部寻址用 `{sheetId}:{questionId}` 复合 id。 */
+  | "grading";
 
 export interface LoadedSourceTarget {
   kind: "source";
@@ -163,13 +165,41 @@ export interface LoadedAttemptTarget {
   status: string;
 }
 
+/**
+ * N2 第四条链（ADR-0039）：评卷目标（`l3_grading_results` 当前那一行）。
+ *
+ * 装载**必须 JOIN `l3_submissions` 且只取 `status='sealed'`**（决策 2 沿 K1）：
+ * draft / discarded 不是合法目标，取不到即 404（不是 409）。
+ *
+ * 白名单字段 = `field_hash` 输入（`verdict` + `analysis_md`）+ 快照所需的归属事实
+ * （`graded_by` / `graded_at`）+ 题干上下文（ordinal / question_type / source_title）。
+ * 刻意**不取** `l3_questions.answer` / `explanation`（题面真源）—— 引用评卷不需要
+ * 标准答案；也不递归装载题/稿次的其他字段（K5 / K7 同款：一次只展开一层）。
+ */
+export interface LoadedGradingTarget {
+  kind: "grading";
+  /** 内部复合寻址串 `"{sheetId}:{questionId}"`（uuid 不含 `:`，拆分无歧义）。 */
+  id: string;
+  sheet_id: string;
+  question_id: string;
+  sheet_status: string;
+  verdict: string;
+  analysis_md: string | null;
+  graded_by: string;
+  graded_at: string;
+  question_ordinal: number;
+  question_type: L3QuestionType;
+  source_title: string | null;
+}
+
 export type LoadedTarget =
   | LoadedSourceTarget
   | LoadedQuestionTarget
   | LoadedAssessmentTarget
   | LoadedNoteTarget
   | LoadedSheetTarget
-  | LoadedAttemptTarget;
+  | LoadedAttemptTarget
+  | LoadedGradingTarget;
 
 export interface StudySourceTargetRow {
   id: string;
@@ -411,6 +441,11 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     const noteIds = [...new Set(targets.filter((t) => t.kind === "note").map((t) => t.id))];
     const submissionIds = [...new Set(targets.filter((t) => t.kind === "sheet").map((t) => t.id))];
     const attemptIds = [...new Set(targets.filter((t) => t.kind === "attempt").map((t) => t.id))];
+    // N2 第四条链：grading 的内部 id 是 `"{sheetId}:{questionId}"` 复合串（uuid 无 `:`）。
+    const gradingRefs = [...new Set(targets.filter((t) => t.kind === "grading").map((t) => t.id))];
+    const gradingSheetIds = [
+      ...new Set(gradingRefs.map((ref) => ref.split(":")[0]).filter((id): id is string => Boolean(id))),
+    ];
 
     if (sourceIds.length > 0) {
       const rows = await this.query<{ id: string; title: string; content_text: string | null }>(
@@ -568,6 +603,58 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
           venue: row.venue,
           answer: row.answer,
           status: row.status,
+        });
+      }
+    }
+
+    if (gradingSheetIds.length > 0) {
+      // N2 第四条链（ADR-0039 决策 2/3）：按 **sheet 集合**一次查全，再按请求的
+      // (sheet, question) 配对 —— 避免用 `sheet_id::text || ':' || question_id::text
+      // = ANY(...)` 这种不可走索引的表达式。一张题纸的评卷行数量级很小（≤ 题数）。
+      //
+      // JOIN `l3_submissions` 且 `s.status='sealed'`：draft/discarded 不是合法目标。
+      // JOIN `l3_questions` 取题干上下文（ordinal / question_type / source_title）。
+      const wanted = new Set(gradingRefs);
+      const rows = await this.query<{
+        sheet_id: string;
+        question_id: string;
+        sheet_status: string;
+        verdict: string;
+        analysis_md: string | null;
+        graded_by: string;
+        graded_at: string;
+        question_ordinal: number;
+        question_type: L3QuestionType;
+        source_title: string | null;
+      }>(
+        `SELECT g.sheet_id, g.question_id, s.status AS sheet_status,
+                g.verdict, g.analysis_md, g.graded_by, g.graded_at,
+                q.ordinal AS question_ordinal, q.question_type,
+                src.title AS source_title
+           FROM l3_grading_results g
+           JOIN l3_submissions s ON s.id = g.sheet_id AND s.user_id = g.user_id
+           JOIN l3_questions q ON q.id = g.question_id AND q.user_id = g.user_id
+           LEFT JOIN l3_sources src ON src.id = q.source_id AND src.user_id = q.user_id
+          WHERE g.user_id = $1::uuid AND g.sheet_id = ANY($2::uuid[])
+            AND s.status = 'sealed'`,
+        [userId, gradingSheetIds],
+      );
+      for (const row of rows) {
+        const composite = `${row.sheet_id}:${row.question_id}`;
+        if (!wanted.has(composite)) continue;
+        map.set(`grading:${composite}`, {
+          kind: "grading",
+          id: composite,
+          sheet_id: row.sheet_id,
+          question_id: row.question_id,
+          sheet_status: row.sheet_status,
+          verdict: row.verdict,
+          analysis_md: row.analysis_md,
+          graded_by: row.graded_by,
+          graded_at: row.graded_at,
+          question_ordinal: Number(row.question_ordinal),
+          question_type: row.question_type,
+          source_title: row.source_title,
         });
       }
     }

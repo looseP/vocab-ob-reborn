@@ -1195,3 +1195,75 @@ describe("N2 第三条链（服务装配层 · sheet / attempt）", () => {
     expect(repos.studyReferences.lockTargets).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * N2 第四条链（ADR-0039）：评卷目标的大小写归一进入**幂等 hash**。
+ *
+ * 为什么这条要在写侧钉死：幂等 hash 是「同 requestId 同 payload」的判据。如果
+ * grading 的两个 id 没被小写归一，同一次保存用大写 UUID 重试就会被判成不同
+ * payload → 409，用户看到的是「保存失败」而不是「已保存」。
+ */
+describe("N2 评卷引用的保存归一（ADR-0039）", () => {
+  const SHEET_UPPER = "00000000-0000-4000-8000-0000000003AB";
+  const QUESTION_UPPER = "00000000-0000-4000-8000-0000000002CD";
+  const SHEET_LOWER = SHEET_UPPER.toLowerCase();
+  const QUESTION_LOWER = QUESTION_UPPER.toLowerCase();
+
+  it("大写 UUID 与小写 UUID 写出同一个幂等 hash（两个 id 都要归一）", () => {
+    const upper = computeSaveRequestHash(baseSaveInput({
+      references: [{
+        id: REF,
+        action: "capture",
+        target: { kind: "grading", sheetId: SHEET_UPPER, questionId: QUESTION_UPPER },
+      }],
+    }));
+    const lower = computeSaveRequestHash(baseSaveInput({
+      references: [{
+        id: REF,
+        action: "capture",
+        target: { kind: "grading", sheetId: SHEET_LOWER, questionId: QUESTION_LOWER },
+      }],
+    }));
+    expect(lower).toBe(upper);
+  });
+
+  it("混合大小写同样归一到同一 hash（只归一其中一个 id 是半吊子，必须两个都归一）", () => {
+    const mixed = computeSaveRequestHash(baseSaveInput({
+      references: [{
+        id: REF,
+        action: "capture",
+        target: { kind: "grading", sheetId: SHEET_LOWER, questionId: QUESTION_UPPER },
+      }],
+    }));
+    const lower = computeSaveRequestHash(baseSaveInput({
+      references: [{
+        id: REF,
+        action: "capture",
+        target: { kind: "grading", sheetId: SHEET_LOWER, questionId: QUESTION_LOWER },
+      }],
+    }));
+    expect(mixed).toBe(lower);
+  });
+
+  it("归一不等于抹平身份：换一道题仍然不同 hash", () => {
+    const other = computeSaveRequestHash(baseSaveInput({
+      references: [{
+        id: REF,
+        action: "capture",
+        target: {
+          kind: "grading",
+          sheetId: SHEET_LOWER,
+          questionId: "00000000-0000-4000-8000-000000000399",
+        },
+      }],
+    }));
+    const base = computeSaveRequestHash(baseSaveInput({
+      references: [{
+        id: REF,
+        action: "capture",
+        target: { kind: "grading", sheetId: SHEET_LOWER, questionId: QUESTION_LOWER },
+      }],
+    }));
+    expect(other).not.toBe(base);
+  });
+});
