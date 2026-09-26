@@ -164,6 +164,12 @@ export function canonicalTarget(target: ReferenceTarget): Record<string, unknown
         sheetId: target.sheetId.toLowerCase(),
         questionId: target.questionId.toLowerCase(),
       };
+    // N2 第五条链（ADR-0040 决策 4）：两个 id 都要小写归一（沿 grading 同款理由 ——
+    // 否则引用行的目标列与装载键大小写不一致，派生状态会误判成 changed/unavailable）。
+    case "writing_task":
+      return { kind: "writing_task", taskId: target.taskId.toLowerCase() };
+    case "writing_feedback":
+      return { kind: "writing_feedback", sheetId: target.sheetId.toLowerCase() };
   }
 }
 
@@ -839,6 +845,7 @@ export class L3StudyNoteService {
           submission_id: existing.submission_id,
           submission_revision_no: existing.submission_revision_no,
           attempt_id: existing.attempt_id,
+          writing_task_id: existing.writing_task_id,
           option_key: existing.option_key,
           start_offset: existing.start_offset,
           end_offset: existing.end_offset,

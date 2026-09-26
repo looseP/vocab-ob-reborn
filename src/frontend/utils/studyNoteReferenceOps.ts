@@ -380,6 +380,17 @@ export function excerptLinesFromSnapshot(meta: ReferencePreview): string[] {
         `> —— 评卷（${verdictLabel(snapshot.verdict)}）${sourceSuffix(snapshot.sourceTitle)}`,
         `> ${snapshot.gradedBy} 评于 ${snapshot.gradedAt}`,
       ];
+    // N2 第五条链（ADR-0040 决策 4）：任务转普通摘录——只落标题 + 类型/方向。
+    case "writing_task":
+      return [...blockLines(snapshot.title), `> —— 写作任务（${snapshot.taskKind} · ${snapshot.direction}）`];
+    // N2 第五条链：评阅转普通摘录——summary 全文 + 维度摘录；**无分数行**
+    // （schema 显式无 score，这里出现任何「得分」都是编造）。
+    case "writing_feedback":
+      return [
+        ...blockLines(snapshot.summary),
+        ...(snapshot.excerpt ? blockLines(snapshot.excerpt) : []),
+        `> —— 评阅`,
+      ];
   }
 }
 

@@ -93,7 +93,7 @@ function makeService(repos: StudyReferenceRepos): L3StudyReferenceService {
 function refRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
   return {
     id: REF, note_id: "n", user_id: USER, kind: "stem_quote", source_id: null, question_id: QUESTION,
-    assessment_id: null, target_note_id: null, submission_id: null, submission_revision_no: null, attempt_id: null,
+    assessment_id: null, target_note_id: null, submission_id: null, submission_revision_no: null, attempt_id: null, writing_task_id: null,
     option_key: null, start_offset: 0, end_offset: 4, quote_snapshot: "What",
     field_hash: sha256Hex("What does the fox do?"), display_snapshot: { kind: "stem_quote" },
     captured_at: "2026-09-19T00:00:00Z",
@@ -1260,5 +1260,198 @@ describe("ADR-0039 · 评卷引用的 capture 写侧", () => {
     );
     // 交叉防御：非 grading kind 不得读到评卷字段（否则 sheet 引用会因评卷改判而 changed）。
     expect(currentFieldText("question", null, loaded)).toBeNull();
+  });
+});
+
+/**
+ * ADR-0040 决策 10 的九条必测矩阵（N2 第五条链：写作任务 + 评阅）。
+ *
+ * 本链的两个 kind 恰好是一对反例：
+ * - writing_task 是**稳定实体**（改题意 = 新建任务）：它的 changed 几乎不可达，
+ *   测的是「归档不告警、不撤销」；
+ * - writing_feedback 是 **latest-wins 覆写**（一纸一行）：它的 changed 必然可达，
+ *   测的是「改判可见、计数器不可见」。
+ * 两条各有各的承重路径，矩阵按此对半。
+ */
+describe("ADR-0040 · 写作引用：决策 10 九条矩阵", () => {
+  const TASK = "00000000-0000-4000-8000-000000000401";
+  const SHEET = "00000000-0000-4000-8000-000000000301";
+
+  const FEEDBACK = {
+    schemaVersion: 1,
+    summary: "论点清晰，但第二段论证跳步。",
+    strengths: ["开头点题干脆"],
+    dimensions: {
+      task_response: { applicable: true, comment: "紧扣题意，没有跑题。" },
+      organization: { applicable: true, comment: "第二段缺过渡句。" },
+      language: { applicable: false, comment: "不适用：本次只看结构。" },
+      expression: { applicable: true, comment: "句式偏单一。" },
+    },
+    priorities: [
+      { id: "p1", dimension: "organization", observation: "缺过渡", action: "加一句承上启下", anchor: null },
+    ],
+  };
+
+  function taskTarget(over: Partial<LoadedTarget> = {}): LoadedTarget {
+    return {
+      kind: "writing_task",
+      id: TASK,
+      title: "考研英语一 2023 作文",
+      task_kind: "whole",
+      direction: "考研",
+      status: "active",
+      ...over,
+    } as LoadedTarget;
+  }
+
+  // 行经真实 captureAgainst 落成 —— 测试里不复刻 hash 口径（复刻会让「实现与测试
+  // 用同一份手抄公式」互相作证，改错一处两处一起错）。
+  const probeService = makeService(fakeRepos([]));
+  function taskRow(over: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
+    const captured = probeService.captureAgainst(
+      { kind: "writing_task", taskId: TASK }, taskTarget(),
+    );
+    return refRow({
+      kind: "writing_task",
+      writing_task_id: TASK,
+      end_offset: 0,
+      quote_snapshot: null,
+      field_hash: captured.field_hash,
+      display_snapshot: captured.display_snapshot as L3StudyNoteReferenceRow["display_snapshot"],
+      ...over,
+    });
+  }
+
+  function feedbackTarget(over: Partial<LoadedTarget> = {}): LoadedTarget {
+    return {
+      kind: "writing_feedback",
+      id: SHEET,
+      sheet_id: SHEET,
+      sheet_status: "sealed",
+      feedback: FEEDBACK,
+      summary: FEEDBACK.summary,
+      ...over,
+    } as LoadedTarget;
+  }
+
+  function feedbackRow(over: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteReferenceRow {
+    const captured = probeService.captureAgainst(
+      { kind: "writing_feedback", sheetId: SHEET }, feedbackTarget(),
+    );
+    return refRow({
+      kind: "writing_feedback",
+      submission_id: SHEET,
+      question_id: null,
+      end_offset: 0,
+      quote_snapshot: null,
+      field_hash: captured.field_hash,
+      display_snapshot: captured.display_snapshot as L3StudyNoteReferenceRow["display_snapshot"],
+      ...over,
+    });
+  }
+
+  const TASK_TARGET: ReferenceTarget = { kind: "writing_task", taskId: TASK };
+  const FEEDBACK_TARGET: ReferenceTarget = { kind: "writing_feedback", sheetId: SHEET };
+
+  it("① task 改标题 → changed，且快照不被覆写", async () => {
+    const repos = fakeRepos([taskTarget({ title: "改名后的作文题" })]);
+    const service = makeService(repos);
+    const [resolved] = await service.resolve(USER, [taskRow()], repos);
+    expect(resolved!.status).toBe("changed");
+    expect((resolved!.displaySnapshot as { title: string }).title).toBe("考研英语一 2023 作文");
+  });
+
+  it("② task 归档 → 已存引用不撤销，仍按 hash 派生（沿 note 合同）", async () => {
+    const repos = fakeRepos([taskTarget({ status: "archived" })]);
+    const service = makeService(repos);
+    // 标题没变：归档本身不是内容变化 ⇒ current（不是 unavailable，更不是静默删除）。
+    const [resolved] = await service.resolve(USER, [taskRow()], repos);
+    expect(resolved!.status).toBe("current");
+    // 但归档任务不可**新建**引用。
+    expect(() => service.captureAgainst(TASK_TARGET, taskTarget({ status: "archived" })))
+      .toThrow(NotFoundError);
+  });
+
+  it("③ feedback 任一内容字段变化（维度评论改一字）→ changed", async () => {
+    const changed = structuredClone(FEEDBACK) as typeof FEEDBACK;
+    changed.dimensions.organization.comment = "第二段缺过渡句，请补上。";
+    const repos = fakeRepos([feedbackTarget({ feedback: changed })]);
+    const service = makeService(repos);
+    const [resolved] = await service.resolve(USER, [feedbackRow()], repos);
+    expect(resolved!.status).toBe("changed");
+  });
+
+  it("④ 同一份评阅换个键序 → 不转 changed；version / last_editor 根本到不了 hash", async () => {
+    // PG jsonb 的输出键序是实现细节：同一份评阅换个键序读回，必须仍是 current，
+    // 否则每次读库都可能误报 changed（这就是 hash 输入走 canonicalJson 的原因）。
+    const reordered = {
+      priorities: FEEDBACK.priorities,
+      dimensions: {
+        expression: FEEDBACK.dimensions.expression,
+        language: FEEDBACK.dimensions.language,
+        organization: FEEDBACK.dimensions.organization,
+        task_response: FEEDBACK.dimensions.task_response,
+      },
+      strengths: FEEDBACK.strengths,
+      summary: FEEDBACK.summary,
+      schemaVersion: FEEDBACK.schemaVersion,
+    };
+    const repos = fakeRepos([feedbackTarget({ feedback: reordered })]);
+    const service = makeService(repos);
+    const [resolved] = await service.resolve(USER, [feedbackRow()], repos);
+    expect(resolved!.status).toBe("current");
+    // version / last_editor 的排除是**类型级**保证：LoadedWritingFeedbackTarget
+    // 根本不携带这两列（见仓储白名单测试），想加都加不进去 —— 这里只立字为据。
+  });
+
+  it("⑤ draft sheet 上的 feedback → capture 404（装载侧已过滤，这里是双保险）", () => {
+    const service = makeService(fakeRepos([]));
+    expect(() => service.captureAgainst(FEEDBACK_TARGET, feedbackTarget({ sheet_status: "draft" })))
+      .toThrow(NotFoundError);
+    expect(() => service.captureAgainst(FEEDBACK_TARGET, feedbackTarget({ sheet_status: "discarded" })))
+      .toThrow(NotFoundError);
+  });
+
+  it("⑥ 邻接 kind 快照互不串字段：writing 快照无 verdict，grading 快照无 summary", () => {
+    const service = makeService(fakeRepos([]));
+    const taskSnap = service.captureAgainst(TASK_TARGET, taskTarget()).display_snapshot as Record<string, unknown>;
+    expect(taskSnap).not.toHaveProperty("verdict");
+    expect(taskSnap).not.toHaveProperty("analysisExcerpt");
+    expect(taskSnap).not.toHaveProperty("summary");
+    const fbSnap = service.captureAgainst(FEEDBACK_TARGET, feedbackTarget()).display_snapshot as Record<string, unknown>;
+    expect(fbSnap).not.toHaveProperty("verdict");
+    expect(fbSnap).not.toHaveProperty("title");
+    expect(fbSnap).not.toHaveProperty("gradedBy");
+  });
+
+  it("⑦ 身份串：task 按 id，feedback 按 sheet；都不退化、不拼第二份真源", () => {
+    expect(targetKeyOf(TASK_TARGET)).toBe(`writing_task:${TASK}`);
+    expect(targetKeyOf(FEEDBACK_TARGET)).toBe(`writing_feedback:${SHEET}`);
+    // 不按标题判等（标题可改）。
+    expect(targetKeyOf(TASK_TARGET)).not.toContain("考研");
+    expect(targetRefsOf(TASK_TARGET)).toEqual([{ kind: "writing_task", id: TASK }]);
+    expect(targetRefsOf(FEEDBACK_TARGET)).toEqual([{ kind: "writing_feedback", id: SHEET }]);
+  });
+
+  it("⑧ capture 落库形状：task 走独立列，feedback 复用 submission_id，其余全空", () => {
+    const service = makeService(fakeRepos([]));
+    const taskInsert = service.captureAgainst(TASK_TARGET, taskTarget());
+    expect(taskInsert.writing_task_id).toBe(TASK);
+    expect(taskInsert.submission_id).toBeNull();
+    expect(taskInsert.question_id).toBeNull();
+    const fbInsert = service.captureAgainst(FEEDBACK_TARGET, feedbackTarget());
+    expect(fbInsert.submission_id).toBe(SHEET);
+    expect(fbInsert.writing_task_id).toBeNull();
+    expect(fbInsert.question_id).toBeNull();
+    expect(fbInsert.submission_revision_no).toBeNull();
+  });
+
+  it("⑨ 快照无分数、无判定：feedback 快照只有 summary/excerpt，task 快照只有标题三件套", () => {
+    const service = makeService(fakeRepos([]));
+    const fbSnap = service.captureAgainst(FEEDBACK_TARGET, feedbackTarget()).display_snapshot as Record<string, unknown>;
+    expect(Object.keys(fbSnap).sort()).toEqual(["excerpt", "kind", "summary"]);
+    expect(fbSnap.summary).toBe(FEEDBACK.summary);
+    const taskSnap = service.captureAgainst(TASK_TARGET, taskTarget()).display_snapshot as Record<string, unknown>;
+    expect(Object.keys(taskSnap).sort()).toEqual(["direction", "kind", "taskKind", "title"]);
   });
 });

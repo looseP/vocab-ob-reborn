@@ -25,7 +25,7 @@
 2. 笔记互链
 3. 精确 sheet + attempt
 4. 对应 grading ✅（2026-09-26，PR #142 / 迁移 0047）
-5. writingTask + writingSheet + feedback ⏸ 卡在 **D1-a**（是否只允许引用 sealed 稿，未裁决）
+5. writingTask + writingSheet + feedback ✅ **已解锁（2026-09-26，ADR-0040 签字 D1-a：只允许 sealed）** —— 新增 kind 只有 `writing_task` / `writing_feedback`，writingSheet 复用 `sheet`
 
 每一类落地前都要先补齐它的五件套（§3），顺序不可跳跃——后面的目标依赖前面的
 「引用型扩展 + 导出版本」决策是否已被验证。

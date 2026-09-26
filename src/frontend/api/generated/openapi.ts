@@ -23646,6 +23646,16 @@ export interface operations {
                                     sheetId: string;
                                     /** Format: uuid */
                                     questionId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_task";
+                                    /** Format: uuid */
+                                    taskId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_feedback";
+                                    /** Format: uuid */
+                                    sheetId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -23719,6 +23729,17 @@ export interface operations {
                                     /** @enum {string} */
                                     questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                     sourceTitle: string | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_task";
+                                    title: string;
+                                    taskKind: string;
+                                    direction: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_feedback";
+                                    summary: string;
+                                    excerpt: string;
                                 };
                                 liveTitle: string | null;
                             }[];
@@ -24116,6 +24137,16 @@ export interface operations {
                     sheetId: string;
                     /** Format: uuid */
                     questionId: string;
+                } | {
+                    /** @constant */
+                    kind: "writing_task";
+                    /** Format: uuid */
+                    taskId: string;
+                } | {
+                    /** @constant */
+                    kind: "writing_feedback";
+                    /** Format: uuid */
+                    sheetId: string;
                 };
             };
         };
@@ -24193,6 +24224,16 @@ export interface operations {
                                 sheetId: string;
                                 /** Format: uuid */
                                 questionId: string;
+                            } | {
+                                /** @constant */
+                                kind: "writing_task";
+                                /** Format: uuid */
+                                taskId: string;
+                            } | {
+                                /** @constant */
+                                kind: "writing_feedback";
+                                /** Format: uuid */
+                                sheetId: string;
                             };
                             displaySnapshot: {
                                 /** @constant */
@@ -24263,6 +24304,17 @@ export interface operations {
                                 /** @enum {string} */
                                 questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                 sourceTitle: string | null;
+                            } | {
+                                /** @constant */
+                                kind: "writing_task";
+                                title: string;
+                                taskKind: string;
+                                direction: string;
+                            } | {
+                                /** @constant */
+                                kind: "writing_feedback";
+                                summary: string;
+                                excerpt: string;
                             };
                             liveTitle: string | null;
                         };
@@ -24845,6 +24897,16 @@ export interface operations {
                                     sheetId: string;
                                     /** Format: uuid */
                                     questionId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_task";
+                                    /** Format: uuid */
+                                    taskId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_feedback";
+                                    /** Format: uuid */
+                                    sheetId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -24918,6 +24980,17 @@ export interface operations {
                                     /** @enum {string} */
                                     questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                     sourceTitle: string | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_task";
+                                    title: string;
+                                    taskKind: string;
+                                    direction: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_feedback";
+                                    summary: string;
+                                    excerpt: string;
                                 };
                                 liveTitle: string | null;
                             }[];
@@ -25156,6 +25229,16 @@ export interface operations {
                             sheetId: string;
                             /** Format: uuid */
                             questionId: string;
+                        } | {
+                            /** @constant */
+                            kind: "writing_task";
+                            /** Format: uuid */
+                            taskId: string;
+                        } | {
+                            /** @constant */
+                            kind: "writing_feedback";
+                            /** Format: uuid */
+                            sheetId: string;
                         };
                     })[];
                 };
@@ -25249,6 +25332,16 @@ export interface operations {
                                     sheetId: string;
                                     /** Format: uuid */
                                     questionId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_task";
+                                    /** Format: uuid */
+                                    taskId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_feedback";
+                                    /** Format: uuid */
+                                    sheetId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -25322,6 +25415,17 @@ export interface operations {
                                     /** @enum {string} */
                                     questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                                     sourceTitle: string | null;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_task";
+                                    title: string;
+                                    taskKind: string;
+                                    direction: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "writing_feedback";
+                                    summary: string;
+                                    excerpt: string;
                                 };
                                 liveTitle: string | null;
                             }[];

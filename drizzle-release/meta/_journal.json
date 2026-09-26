@@ -335,6 +335,11 @@
       	"idx": 47,
       	"tag": "0047_study_note_references_grading_kind",
       	"when": 1790405138087
-      }
+      },
+      	{
+      		"idx": 48,
+      		"tag": "0048_study_note_references_writing_kinds",
+      		"when": 1790405138087
+      	}
   ]
 }

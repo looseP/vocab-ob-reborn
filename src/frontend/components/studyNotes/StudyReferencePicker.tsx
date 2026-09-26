@@ -74,6 +74,12 @@ function targetIdentityKey(target: ReferenceTarget | null): string | null {
     // questionId 判等 —— 同一道题可以在多张题纸里各评一次，那是不同的判定。
     case "grading":
       return `grading:${target.sheetId}:${target.questionId}`;
+    // N2 第五条链（ADR-0040 决策 4）：任务身份即任务 id（沿 note，不按标题判等）；
+    // 评阅一纸一行，身份即 sheetId。
+    case "writing_task":
+      return `writing_task:${target.taskId}`;
+    case "writing_feedback":
+      return `writing_feedback:${target.sheetId}`;
   }
 }
 
@@ -105,6 +111,14 @@ function previewSummary(preview: ReferenceTargetPreview): string {
       return snapshot.analysisExcerpt
         ? `评卷（${snapshot.verdict}）「${snapshot.analysisExcerpt}」`
         : `评卷（${snapshot.verdict}）`;
+    // N2 第五条链（ADR-0040）：任务摘要带标题；评阅摘要带 summary（无分数，
+    // schema 显式无 score —— 这里出现任何「得分」都是编造）。
+    case "writing_task":
+      return `写作任务「${snapshot.title}」`;
+    case "writing_feedback":
+      return snapshot.excerpt
+        ? `评阅「${snapshot.summary}」「${snapshot.excerpt}」`
+        : `评阅「${snapshot.summary}」`;
   }
 }
 

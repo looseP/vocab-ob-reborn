@@ -216,7 +216,7 @@ describe("N2 评卷引用迁移契约（0047）", () => {
   });
 
   it("0047 的 grading 分支钉住 {submission_id, question_id} 且稿次/作答列必须为空", () => {
-    const target = /ADD CONSTRAINT "l3_study_note_references_target_check" CHECK \((.+)\);/.exec(
+    const target = /ADD CONSTRAINT "l3_study_note_references_target_check" CHECK \((.+?)\);/.exec(
       ddlOnly(migration("0047")!),
     )?.[1] ?? "";
     const grading = target.split(" OR ").find((branch) => branch.includes("'grading'")) ?? "";
@@ -227,5 +227,74 @@ describe("N2 评卷引用迁移契约（0047）", () => {
     expect(grading).toContain("submission_revision_no IS NULL");
     expect(grading).toContain("attempt_id IS NULL");
     expect(grading).toContain("source_id IS NULL");
+  });
+});
+
+/**
+ * N2 写作引用迁移契约（0048）。
+ *
+ * 与 0047 的关键区别：本迁移**新增一列**（`writing_task_id`）—— 不是因为
+ * 「新 kind 就该有新列」，而是因为没有既有列可复用（`target_note_id` 背着
+ * RESTRICT FK）。`writing_feedback` 则复用 `submission_id`（沿 grading 先例）。
+ */
+describe("N2 写作引用迁移契约（0048）", () => {
+  it("0048 存在且在 journal 里登记（顺序是硬合同）", () => {
+    const sql = migration("0048");
+    expect(sql, "missing 0048 — writing_task / writing_feedback kinds must be admitted").toBeDefined();
+    expect(sql!.tag).toBe("0048_study_note_references_writing_kinds");
+    expect(journalTags).toContain("0048_study_note_references_writing_kinds");
+  });
+
+  it("0048 只加一列：writing_task_id；不动任务表/反馈表/评卷表", () => {
+    const ddl = ddlOnly(migration("0048")!);
+    expect(ddl).toMatch(/ADD COLUMN "writing_task_id" uuid/i);
+    // 除新列之外不得再有 ADD COLUMN（feedback 复用 submission_id，不新增列）。
+    expect(ddl.match(/ADD COLUMN/gi)?.length).toBe(1);
+    expect(ddl).not.toMatch(/l3_writing_tasks/i.source.replace("l3_writing_tasks", "ALTER TABLE \"l3_writing_tasks\""));
+    expect(ddl).not.toMatch(/ALTER TABLE "l3_writing_feedback"/i);
+    expect(ddl).not.toMatch(/ALTER TABLE "l3_grading_results"/i);
+    expect(ddl).not.toMatch(/version/i);
+  });
+
+  it("0048 三处 CHECK 全部含两新分支，且与 schema.ts 同源", () => {
+    const sql = migration("0048")!;
+    expect(sql.normalized).toMatch(/kind_check[^;]*writing_task/);
+    expect(sql.normalized).toMatch(/kind_check[^;]*writing_feedback/);
+    expect(sql.normalized).toMatch(/target_check[^;]*writing_task/);
+    expect(sql.normalized).toMatch(/target_check[^;]*writing_feedback/);
+    expect(sql.normalized).toMatch(/quote_check[^;]*writing_task/);
+    expect(sql.normalized).toMatch(/quote_check[^;]*writing_feedback/);
+    expect(schemaTs).toMatch(/kind_check[^;]*writing_task/);
+    expect(schemaTs).toMatch(/target_check[^;]*writing_feedback/);
+    expect(schemaTs).toMatch(/quote_check[^;]*writing_task/);
+  });
+
+  it("0048 的 writing_task 分支钉住独立列；writing_feedback 分支复用 submission_id", () => {
+    const target = /ADD CONSTRAINT "l3_study_note_references_target_check" CHECK \((.+?)\);/.exec(
+      ddlOnly(migration("0048")!),
+    )?.[1] ?? "";
+    const task = target.split(" OR ").find((branch) => branch.includes("'writing_task'")) ?? "";
+    // 任务 id 存独立列，其余目标列全空。
+    expect(task).toContain("writing_task_id IS NOT NULL");
+    expect(task).toContain("submission_id IS NULL");
+    expect(task).toContain("question_id IS NULL");
+    const feedback = target.split(" OR ").find((branch) => branch.includes("'writing_feedback'")) ?? "";
+    // 评阅身份即 sheet：复用列必填，任务列必须空（否则一行能同时声称两种身份）。
+    expect(feedback).toContain("submission_id IS NOT NULL");
+    expect(feedback).toContain("writing_task_id IS NULL");
+    expect(feedback).toContain("submission_revision_no IS NULL");
+  });
+
+  it("0048 既有七分支全部显式 writing_task_id IS NULL（恰一互斥不被新列打破）", () => {
+    const target = /ADD CONSTRAINT "l3_study_note_references_target_check" CHECK \((.+?)\);/.exec(
+      ddlOnly(migration("0048")!),
+    )?.[1] ?? "";
+    const branches = target.split(" OR ");
+    // 七个旧分支 + 两个新分支 = 九个。
+    expect(branches.length).toBe(9);
+    for (const branch of branches) {
+      if (branch.includes("'writing_task'")) continue;
+      expect(branch).toContain("writing_task_id IS NULL");
+    }
   });
 });

@@ -35,6 +35,8 @@ export interface NewL3StudyNoteReference {
   submission_revision_no: number | null;
   /** N2 第三条链：attempt 引用（`kind='attempt'`）的目标作答行，其余 kind 恒 null。 */
   attempt_id: string | null;
+  /** N2 第五条链：写作任务引用（`kind='writing_task'`）的目标任务行，其余 kind 恒 null。 */
+  writing_task_id: string | null;
   option_key: string | null;
   start_offset: number | null;
   end_offset: number | null;
@@ -64,6 +66,8 @@ export interface L3StudyNoteReferenceRow {
   submission_id: string | null;
   submission_revision_no: number | null;
   attempt_id: string | null;
+  /** N2 第五条链（ADR-0040）：写作任务 id（独立列；`target_note_id` 背着 RESTRICT FK，不能借）。 */
+  writing_task_id: string | null;
   option_key: string | null;
   start_offset: number | null;
   end_offset: number | null;
@@ -81,7 +85,10 @@ export type ReferenceTargetKind =
   | "sheet"
   | "attempt"
   /** N2 第四条链（ADR-0039）：评卷。内部寻址用 `{sheetId}:{questionId}` 复合 id。 */
-  | "grading";
+  | "grading"
+  /** N2 第五条链（ADR-0040）：作文任务（单值 taskId）与评阅（单值 sheetId）。 */
+  | "writing_task"
+  | "writing_feedback";
 
 export interface LoadedSourceTarget {
   kind: "source";
@@ -192,6 +199,42 @@ export interface LoadedGradingTarget {
   source_title: string | null;
 }
 
+/**
+ * N2 第五条链（ADR-0040）：作文任务目标（`l3_writing_tasks` 的某一行）。
+ *
+ * 装载**不按 status 过滤**（沿 `LoadedNoteTarget`：任务只归档不硬删；「必须 active
+ * 才能新建」由 capture 侧判定）。`status` 随行带出供 capture 使用。
+ * 刻意**不 JOIN 所属题目**：题干另有 `question` kind 可引，不拼第二份真源。
+ */
+export interface LoadedWritingTaskTarget {
+  kind: "writing_task";
+  id: string;
+  title: string;
+  task_kind: string;
+  direction: string;
+  status: string;
+}
+
+/**
+ * N2 第五条链（ADR-0040）：评阅目标（`l3_writing_feedback` 当前那一行）。
+ *
+ * `UNIQUE(user_id, sheet_id)` 使一纸恰一行（latest-wins，同款 grading）⇒ 改判
+ * 必然可达 changed。装载**必须 JOIN `l3_submissions` 且只取 `status='sealed'`**
+ * （D1-a 落地：反馈在业务上就不存在于草稿上，取不到即 404）。
+ *
+ * 白名单 = hash 输入（`feedback` 全文）+ 快照（`summary` 全文）。刻意**不取**
+ * `version` / `last_editor`（CAS 与归属，不进 hash）与稿次正文（评阅不需要原文）。
+ */
+export interface LoadedWritingFeedbackTarget {
+  kind: "writing_feedback";
+  /** 内部寻址即 sheetId（一纸一行，无复合串）。 */
+  id: string;
+  sheet_id: string;
+  sheet_status: string;
+  feedback: unknown;
+  summary: string;
+}
+
 export type LoadedTarget =
   | LoadedSourceTarget
   | LoadedQuestionTarget
@@ -199,7 +242,9 @@ export type LoadedTarget =
   | LoadedNoteTarget
   | LoadedSheetTarget
   | LoadedAttemptTarget
-  | LoadedGradingTarget;
+  | LoadedGradingTarget
+  | LoadedWritingTaskTarget
+  | LoadedWritingFeedbackTarget;
 
 export interface StudySourceTargetRow {
   id: string;
@@ -326,6 +371,7 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
       submission_id: row.submission_id,
       submission_revision_no: row.submission_revision_no,
       attempt_id: row.attempt_id,
+      writing_task_id: row.writing_task_id,
       option_key: row.option_key,
       start_offset: row.start_offset,
       end_offset: row.end_offset,
@@ -337,14 +383,14 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     await this.query(
       `INSERT INTO l3_study_note_references
          (id, note_id, user_id, kind, source_id, question_id, assessment_id, target_note_id,
-          submission_id, submission_revision_no, attempt_id, option_key,
+          submission_id, submission_revision_no, attempt_id, writing_task_id, option_key,
           start_offset, end_offset, quote_snapshot, field_hash, display_snapshot, captured_at)
        SELECT x.id, $1::uuid, $2::uuid, x.kind, x.source_id, x.question_id, x.assessment_id, x.target_note_id,
-              x.submission_id, x.submission_revision_no, x.attempt_id, x.option_key,
+              x.submission_id, x.submission_revision_no, x.attempt_id, x.writing_task_id, x.option_key,
               x.start_offset, x.end_offset, x.quote_snapshot, x.field_hash, x.display_snapshot, x.captured_at
          FROM jsonb_to_recordset($3::jsonb) AS x(
            id uuid, kind text, source_id uuid, question_id uuid, assessment_id uuid, target_note_id uuid,
-           submission_id uuid, submission_revision_no integer, attempt_id uuid, option_key text,
+           submission_id uuid, submission_revision_no integer, attempt_id uuid, writing_task_id uuid, option_key text,
            start_offset integer, end_offset integer, quote_snapshot text,
            field_hash text, display_snapshot jsonb, captured_at timestamptz
          )`,
@@ -368,6 +414,15 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     // N2 第三条链：sheet / attempt 同样不作为搜索目标（fail-closed）。
     // 本链**不新增**搜索面——HTTP 查询枚举仍只有 source/question（R-2 同款纪律）。
     if (input.kind === "sheet" || input.kind === "attempt") {
+      throw new ValidationError("该目标型不支持搜索", "kind");
+    }
+    // N2 第四条链：grading 同样不作为搜索目标（fail-closed）。
+    if (input.kind === "grading") {
+      throw new ValidationError("该目标型不支持搜索", "kind");
+    }
+    // N2 第五条链：writing_task / writing_feedback 同样不作为搜索目标（fail-closed）。
+    // 任务走既有任务列表选取，评阅从 sealed 稿次进入 —— 不在这里另起搜索面。
+    if (input.kind === "writing_task" || input.kind === "writing_feedback") {
       throw new ValidationError("该目标型不支持搜索", "kind");
     }
 
@@ -445,6 +500,12 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
     const gradingRefs = [...new Set(targets.filter((t) => t.kind === "grading").map((t) => t.id))];
     const gradingSheetIds = [
       ...new Set(gradingRefs.map((ref) => ref.split(":")[0]).filter((id): id is string => Boolean(id))),
+    ];
+    // N2 第五条链（ADR-0040）：任务单值 id；评阅单值 sheetId（与 grading 不同，
+    // 无复合串 —— 一纸一行，无需配对过滤）。
+    const writingTaskIds = [...new Set(targets.filter((t) => t.kind === "writing_task").map((t) => t.id))];
+    const writingFeedbackSheetIds = [
+      ...new Set(targets.filter((t) => t.kind === "writing_feedback").map((t) => t.id)),
     ];
 
     if (sourceIds.length > 0) {
@@ -655,6 +716,65 @@ export class L3StudyReferenceRepository extends BaseRepository implements IL3Stu
           question_ordinal: Number(row.question_ordinal),
           question_type: row.question_type,
           source_title: row.source_title,
+        });
+      }
+    }
+
+    if (writingTaskIds.length > 0) {
+      // N2 第五条链（ADR-0040 决策 4）：任务目标白名单只取四列，不 JOIN、不取题干。
+      // **不按 status 过滤**（沿 note：任务只归档不硬删；「必须 active 才能新建」
+      // 由 capture 侧判定）。`status` 随行带出供 capture 使用。
+      const rows = await this.query<{
+        id: string;
+        title: string;
+        kind: string;
+        direction: string;
+        status: string;
+      }>(
+        `SELECT id, title, kind, direction, status FROM l3_writing_tasks
+          WHERE user_id = $1::uuid AND id = ANY($2::uuid[])`,
+        [userId, writingTaskIds],
+      );
+      for (const row of rows) {
+        map.set(`writing_task:${row.id}`, {
+          kind: "writing_task",
+          id: row.id,
+          title: row.title,
+          task_kind: row.kind,
+          direction: row.direction,
+          status: row.status,
+        });
+      }
+    }
+
+    if (writingFeedbackSheetIds.length > 0) {
+      // N2 第五条链（ADR-0040 决策 1/4）：评阅一纸一行，按 sheet 批量取。
+      // JOIN `l3_submissions` 且只取 `status='sealed'` —— 反馈在业务上就不存在于
+      // 草稿上（反馈服务读前置 draft 409），取不到即 404（不是 409）。
+      // 白名单刻意**不取** `version` / `last_editor`（CAS 与归属，不进 hash）与
+      // 稿次正文（评阅不需要原文）；`summary` 全文取出（快照 headline）。
+      const rows = await this.query<{
+        sheet_id: string;
+        sheet_status: string;
+        feedback: unknown;
+        summary: string;
+      }>(
+        `SELECT f.sheet_id, s.status AS sheet_status, f.feedback,
+                f.feedback->>'summary' AS summary
+           FROM l3_writing_feedback f
+           JOIN l3_submissions s ON s.id = f.sheet_id AND s.user_id = f.user_id
+          WHERE f.user_id = $1::uuid AND f.sheet_id = ANY($2::uuid[])
+            AND s.status = 'sealed'`,
+        [userId, writingFeedbackSheetIds],
+      );
+      for (const row of rows) {
+        map.set(`writing_feedback:${row.sheet_id}`, {
+          kind: "writing_feedback",
+          id: row.sheet_id,
+          sheet_id: row.sheet_id,
+          sheet_status: row.sheet_status,
+          feedback: row.feedback,
+          summary: row.summary,
         });
       }
     }

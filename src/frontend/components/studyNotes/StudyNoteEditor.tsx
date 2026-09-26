@@ -115,6 +115,13 @@ function referenceSummary(meta: ReferencePreview): string {
       return snapshot.analysisExcerpt
         ? `评卷（${snapshot.verdict}）「${snapshot.analysisExcerpt}」`
         : `评卷（${snapshot.verdict}）`;
+    // N2 第五条链（ADR-0040）：任务摘要带标题；评阅摘要带 summary，无分数。
+    case "writing_task":
+      return `写作任务「${snapshot.title}」`;
+    case "writing_feedback":
+      return snapshot.excerpt
+        ? `评阅「${snapshot.summary}」「${snapshot.excerpt}」`
+        : `评阅「${snapshot.summary}」`;
   }
 }
 

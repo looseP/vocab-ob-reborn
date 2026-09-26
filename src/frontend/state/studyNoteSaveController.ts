@@ -377,6 +377,11 @@ function cloneTarget(target: ReferenceTarget): ReferenceTarget {
     // N2 第四条链（ADR-0039 决策 2）：身份 = {sheetId, questionId}，无版本维度。
     case "grading":
       return { kind: "grading", sheetId: target.sheetId, questionId: target.questionId };
+    // N2 第五条链（ADR-0040 决策 4）：任务 = {taskId}；评阅 = {sheetId}，无版本维度。
+    case "writing_task":
+      return { kind: "writing_task", taskId: target.taskId };
+    case "writing_feedback":
+      return { kind: "writing_feedback", sheetId: target.sheetId };
   }
 }
 

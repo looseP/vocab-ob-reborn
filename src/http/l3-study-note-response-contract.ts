@@ -70,6 +70,16 @@ const referenceTargetResponseSchema = z.discriminatedUnion("kind", [
     sheetId: z.string().uuid(),
     questionId: z.string().uuid(),
   }).strict(),
+  // N2 第五条链（ADR-0040 决策 3/4）：写作任务 = {taskId}；评阅 = {sheetId}。
+  // writingSheet 不新增 kind（复用 sheet）。
+  z.object({
+    kind: z.literal("writing_task"),
+    taskId: z.string().uuid(),
+  }).strict(),
+  z.object({
+    kind: z.literal("writing_feedback"),
+    sheetId: z.string().uuid(),
+  }).strict(),
 ]);
 
 const optionSchema = z.object({ key: z.string(), text: z.string() }).strict();
@@ -133,6 +143,21 @@ const referenceDisplaySnapshotSchema = z.discriminatedUnion("kind", [
     // 题型沿用既有快照口径（venueSchema 枚举）；`verdict` 刻意留 string（见上）。
     questionType: venueSchema,
     sourceTitle: z.string().nullable(),
+  }).strict(),
+  // N2 第五条链（ADR-0040 决策 4）：任务快照 = 标题 + 类型 + 方向；
+  // 评阅快照 = summary 全文 + 维度摘录，无分数、无判定。
+  // `taskKind` / `direction` 用 `z.string()` 而非枚举 —— 快照是冻结数据，任务类型
+  // 枚举漂移时旧笔记仍要能原样呈现（与 grading 的 verdict 同款纪律）。
+  z.object({
+    kind: z.literal("writing_task"),
+    title: z.string(),
+    taskKind: z.string(),
+    direction: z.string(),
+  }).strict(),
+  z.object({
+    kind: z.literal("writing_feedback"),
+    summary: z.string(),
+    excerpt: z.string(),
   }).strict(),
 ]);
 
