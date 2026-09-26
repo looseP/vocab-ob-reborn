@@ -60,7 +60,7 @@ describe("existing local volume role upgrade", () => {
     // 0046: l3_submissions.question_ids uuid[]（题单快照：开纸定格作用域题集，
     //       CHECK 非空数组）+ 存量幂等回填 UPDATE（由该纸已物化的 attempts 派生题单，
     //       WHERE 只认 IS NULL，二次执行零行变化）。
-    expect(authoritativeMigrationCount()).toBe(48);
+    expect(authoritativeMigrationCount()).toBe(49);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

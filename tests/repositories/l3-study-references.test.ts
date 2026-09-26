@@ -61,7 +61,7 @@ describe("replaceForNote", () => {
       {
         id: REF, kind: "source_quote",
         source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null,
-        submission_id: null, submission_revision_no: null, attempt_id: null, option_key: null,
+        submission_id: null, submission_revision_no: null, attempt_id: null, writing_task_id: null, option_key: null,
         start_offset: 0, end_offset: 3, quote_snapshot: "The",
         field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
         captured_at: "2026-09-19T00:00:00.000Z",
@@ -79,7 +79,7 @@ describe("replaceForNote", () => {
     expect(payload).toEqual([{
       id: REF, kind: "source_quote", source_id: SOURCE, question_id: null, assessment_id: null,
       // N2 第三条链：新三列对所有既有 kind 恒 null（载荷形状同步扩展）。
-      target_note_id: null, submission_id: null, submission_revision_no: null, attempt_id: null,
+      target_note_id: null, submission_id: null, submission_revision_no: null, attempt_id: null, writing_task_id: null,
       option_key: null,
       start_offset: 0, end_offset: 3, quote_snapshot: "The",
       field_hash: "a".repeat(64), display_snapshot: { kind: "source_quote" },
@@ -217,6 +217,72 @@ describe("loadTargets", () => {
     }));
     const map = await repo.loadTargets(USER, [{ kind: "grading", id: `sheet-1:${QUESTION}` }]);
     expect([...map.keys()]).toEqual([`grading:sheet-1:${QUESTION}`]);
+  });
+
+  it("writing_task kind：白名单四列、不 JOIN、不按 status 过滤（ADR-0040 决策 4）", async () => {
+    const TASK = "00000000-0000-4000-8000-000000000401";
+    querySpy.mockImplementation(async () => ({
+      rows: [{ id: TASK, title: "考研作文", kind: "whole", direction: "考研", status: "archived" }],
+    }));
+    const map = await repo.loadTargets(USER, [{ kind: "writing_task", id: TASK }]);
+    const sql = querySpy.mock.calls[0]![0] as string;
+    // 四列之外什么都不取：不 JOIN 题目（题干另有 question kind），不取 created_at 之类。
+    expect(sql).toContain("l3_writing_tasks");
+    expect(sql).not.toContain("JOIN");
+    for (const col of ["title", "kind", "direction", "status"]) {
+      expect(sql).toContain(col);
+    }
+    // 不按 status 过滤 —— 归档任务行也要装载回来（capture 侧才判 active）；
+    // 沿 note 的同一句话：目标归档后已存引用仍要解析。
+    expect(sql).not.toMatch(/status\s*=/);
+    expect(map.get(`writing_task:${TASK}`)).toMatchObject({
+      kind: "writing_task", title: "考研作文", task_kind: "whole", direction: "考研", status: "archived",
+    });
+  });
+
+  it("writing_feedback kind：JOIN 稿次且只取 sealed，白名单不含 version/last_editor", async () => {
+    const SHEET = "00000000-0000-4000-8000-000000000301";
+    querySpy.mockImplementation(async () => ({
+      rows: [{
+        sheet_id: SHEET, sheet_status: "sealed",
+        feedback: { summary: "写得不错", dimensions: {} },
+        summary: "写得不错",
+      }],
+    }));
+    const map = await repo.loadTargets(USER, [{ kind: "writing_feedback", id: SHEET }]);
+    const sql = querySpy.mock.calls[0]![0] as string;
+    // D1-a 在 SQL 层的落实：draft 稿次上的反馈行直接取不到（不是取到再丢）。
+    expect(sql).toContain("l3_writing_feedback");
+    expect(sql).toContain("l3_submissions");
+    expect(sql).toMatch(/status\s*=\s*'sealed'/);
+    // 白名单 = hash 输入（feedback 全文）+ 快照（summary 全文）。version / last_editor
+    // 是 CAS 与归属，不进 hash —— 连取都不取，想加都加不进去（决策 10-④的类型级保证）。
+    expect(sql).toContain("feedback");
+    expect(sql).toContain("summary");
+    expect(sql).not.toContain("version");
+    expect(sql).not.toContain("last_editor");
+    expect(sql).not.toContain("text_sha256");
+    // 一纸一行：map 键即 sheetId，无复合串、无配对过滤。
+    expect(map.get(`writing_feedback:${SHEET}`)).toMatchObject({ kind: "writing_feedback", summary: "写得不错" });
+    expect(map.size).toBe(1);
+  });
+
+  it("replaceForNote：载荷与 INSERT 列携带 writing_task_id（归属仍由参数注入）", async () => {
+    const TASK = "00000000-0000-4000-8000-000000000401";
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    await repo.replaceForNote(USER, NOTE, [{
+      id: REF, kind: "writing_task",
+      source_id: null, question_id: null, assessment_id: null, target_note_id: null,
+      submission_id: null, submission_revision_no: null, attempt_id: null, writing_task_id: TASK,
+      option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
+      field_hash: "a".repeat(64), display_snapshot: { kind: "writing_task" },
+      captured_at: "2026-09-19T00:00:00.000Z",
+    }]);
+
+    const insertCall = querySpy.mock.calls.find((c) => (c[0] as string).includes("INSERT INTO"))!;
+    expect(insertCall[0]).toContain("writing_task_id");
+    const payload = JSON.parse(insertCall[1]![2] as string) as Record<string, unknown>[];
+    expect(payload[0]!.writing_task_id).toBe(TASK);
   });
 });
 
@@ -459,7 +525,7 @@ describe("N2 笔记互链（仓储层 · 第二条垂直链）", () => {
     await repo.replaceForNote(USER, NOTE, [{
       id: REF, kind: "note",
       source_id: null, question_id: null, assessment_id: null, target_note_id: TARGET_NOTE,
-      submission_id: null, submission_revision_no: null, attempt_id: null,
+      submission_id: null, submission_revision_no: null, attempt_id: null, writing_task_id: null,
       option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
       field_hash: "a".repeat(64), display_snapshot: { kind: "note" },
       captured_at: "2026-09-19T00:00:00.000Z",
@@ -597,7 +663,7 @@ describe("N2 第三条链（仓储层 · sheet / attempt 装载与锁键）", ()
     await repo.replaceForNote(USER, NOTE, [{
       id: REF, kind: "sheet",
       source_id: null, question_id: null, assessment_id: null, target_note_id: null,
-      submission_id: SHEET, submission_revision_no: 2, attempt_id: null,
+      submission_id: SHEET, submission_revision_no: 2, attempt_id: null, writing_task_id: null,
       option_key: null, start_offset: null, end_offset: null, quote_snapshot: null,
       field_hash: "a".repeat(64), display_snapshot: { kind: "sheet" },
       captured_at: "2026-09-19T00:00:00.000Z",

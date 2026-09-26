@@ -364,7 +364,7 @@ const ATTEMPT = "00000000-0000-4000-8000-000000000331";
 const GRADED_QUESTION = "00000000-0000-4000-8000-000000000341";
 
 describe("referenceTargetSchema · sheet / attempt（N2 第三条链）", () => {
-  it("REFERENCE_KINDS 扩到十值（与 DB kind_check 同口径：新增 sheet / attempt / grading）", () => {
+  it("REFERENCE_KINDS 扩到十二值（与 DB kind_check 同口径：+ sheet / attempt / grading / writing_task / writing_feedback）", () => {
     expect(REFERENCE_KINDS).toEqual([
       "source",
       "source_quote",
@@ -376,6 +376,8 @@ describe("referenceTargetSchema · sheet / attempt（N2 第三条链）", () => 
       "sheet",
       "attempt",
       "grading",
+      "writing_task",
+      "writing_feedback",
     ]);
   });
 
@@ -450,5 +452,34 @@ describe("normalizeStudyUuid（F5 UUID 身份）", () => {
   it("小写输入不变；非法输入按原样返回（合法性仍由既有校验器/PG 收口，不新增错误面）", () => {
     expect(normalizeStudyUuid(LOWER)).toBe(LOWER);
     expect(normalizeStudyUuid("not-a-uuid")).toBe("not-a-uuid");
+  });
+});
+
+/**
+ * N2 第五条链（ADR-0040 决策 3/4）：新 kind 的输入契约。
+ *
+ * writingSheet 不新增 kind —— 这里同时锁定「传 writing_sheet 会被拒」，
+ * 免得有人按计划标题字面发明第四个 kind。
+ */
+describe("referenceTargetSchema · writing_task / writing_feedback（N2 第五条链）", () => {
+  const TASK = "00000000-0000-4000-8000-000000000401";
+  const SHEET = "00000000-0000-4000-8000-000000000301";
+
+  it("writing_task 只收 {taskId}，writing_feedback 只收 {sheetId}，都没有版本维度", () => {
+    expect(referenceTargetSchema.safeParse({ kind: "writing_task", taskId: TASK }).success).toBe(true);
+    expect(referenceTargetSchema.safeParse({ kind: "writing_feedback", sheetId: SHEET }).success).toBe(true);
+    // strict：多余字段一律拒（防止悄悄塞 version 进去）。
+    expect(referenceTargetSchema.safeParse({ kind: "writing_task", taskId: TASK, version: 1 }).success).toBe(false);
+    expect(referenceTargetSchema.safeParse({ kind: "writing_feedback", sheetId: SHEET, revisionNo: 2 }).success).toBe(false);
+    expect(referenceTargetSchema.safeParse({ kind: "writing_task" }).success).toBe(false);
+    expect(referenceTargetSchema.safeParse({ kind: "writing_feedback" }).success).toBe(false);
+  });
+
+  it("writingSheet 不是 kind：按计划标题字面传会失败（复用 sheet 才是正路）", () => {
+    expect(referenceTargetSchema.safeParse({ kind: "writing_sheet", submissionId: SHEET }).success).toBe(false);
+    // writing 稿次走 sheet kind + revisionNo（K3 已有约束）。
+    expect(
+      referenceTargetSchema.safeParse({ kind: "sheet", submissionId: SHEET, revisionNo: 2 }).success,
+    ).toBe(true);
   });
 });

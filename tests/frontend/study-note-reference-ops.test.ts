@@ -488,3 +488,82 @@ describe("studyNoteReferenceOps · 评卷摘录行（ADR-0039）", () => {
     expect(lines.join("\n")).not.toContain("undefined");
   });
 });
+
+/**
+ * N2 第五条链（ADR-0040 决策 4）：写作摘录行的前端口径。
+ *
+ * 承重点在**空维度摘录**分支：评阅可能只有 summary（维度全不适用），那一行
+ * 卡片不能塌成空块 —— 摘要必须仍能说明「钉的是一条评阅」；且任何分支都不得
+ * 出现分数（schema 显式无 score）。
+ */
+describe("studyNoteReferenceOps · 写作摘录行（ADR-0040）", () => {
+  const taskBase: Omit<ReferencePreview, "displaySnapshot"> = {
+    id: REF_A,
+    target: { kind: "writing_task", taskId: "00000000-0000-4000-8000-000000000401" },
+    status: "current",
+    capturedAt: "2026-09-20T00:00:00.000Z",
+    liveTitle: "考研英语一 2023 作文",
+  };
+
+  const feedbackBase: Omit<ReferencePreview, "displaySnapshot"> = {
+    id: REF_A,
+    target: { kind: "writing_feedback", sheetId: "00000000-0000-4000-8000-000000000301" },
+    status: "current",
+    capturedAt: "2026-09-20T00:00:00.000Z",
+    liveTitle: null,
+  };
+
+  it("任务：标题 + 类型/方向出处行", () => {
+    const meta: ReferencePreview = {
+      ...taskBase,
+      displaySnapshot: { kind: "writing_task", title: "考研英语一 2023 作文", taskKind: "whole", direction: "考研" },
+    };
+    const lines = excerptLinesFromSnapshot(meta);
+    expect(lines.join("\n")).toContain("考研英语一 2023 作文");
+    expect(lines.join("\n")).toContain("whole");
+    expect(lines.join("\n")).toContain("考研");
+  });
+
+  it("评阅：summary 全文 + 维度摘录 + 出处行，无分数", () => {
+    const meta: ReferencePreview = {
+      ...feedbackBase,
+      displaySnapshot: {
+        kind: "writing_feedback",
+        summary: "论点清晰，但第二段论证跳步。",
+        excerpt: "紧扣题意，没有跑题。",
+      },
+    };
+    const lines = excerptLinesFromSnapshot(meta);
+    expect(lines.join("\n")).toContain("论点清晰");
+    expect(lines.join("\n")).toContain("紧扣题意");
+    expect(lines.join("\n")).toContain("评阅");
+    expect(lines.join("\n")).not.toMatch(/得分|评分|分\b/);
+    expect(lines.join("\n")).not.toContain("undefined");
+  });
+
+  it("评阅无维度摘录：仍出 summary 行，不塌成空摘要", () => {
+    const meta: ReferencePreview = {
+      ...feedbackBase,
+      displaySnapshot: { kind: "writing_feedback", summary: "写得不错。", excerpt: "" },
+    };
+    const lines = excerptLinesFromSnapshot(meta);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.join("\n")).toContain("写得不错。");
+    expect(lines.join("\n")).not.toContain("undefined");
+  });
+
+  it("含写作引用 → 导出选 v2（非白名单即 v2，后续 kind 无需再改）", () => {
+    expect(
+      exportSchemaVersionForReferences([
+        {
+          id: REF_A,
+          target: { kind: "writing_task", taskId: "00000000-0000-4000-8000-000000000401" },
+          status: "current",
+          capturedAt: "2026-09-20T00:00:00.000Z",
+          liveTitle: null,
+          displaySnapshot: { kind: "writing_task", title: "T", taskKind: "whole", direction: "考研" },
+        },
+      ]),
+    ).toBe(2);
+  });
+});

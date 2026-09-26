@@ -31,6 +31,7 @@ import {
   STUDY_SHEET_EXCERPT_MAX,
   STUDY_ATTEMPT_EXCERPT_MAX,
   STUDY_GRADING_EXCERPT_MAX,
+  STUDY_FEEDBACK_EXCERPT_MAX,
   type ReferenceDisplaySnapshot,
   type ReferencePreview,
   type ReferenceStatus,
@@ -161,6 +162,30 @@ export function gradingFieldText(target: Extract<LoadedTarget, { kind: "grading"
   return JSON.stringify({ verdict: target.verdict, analysis_md: target.analysis_md });
 }
 
+/**
+ * N2 第五条链（ADR-0040 决策 4）：写作任务引用的 hash 输入 = `{title}` 固定键序 JSON。
+ *
+ * 沿 `noteFieldText`（只取内容字段）：`status`（active→archived）与 `updated_at`
+ * **不进 hash** —— 归档是生命周期事件不是内容变化，进 hash 会让「任务归档」把所有
+ * 引用它的笔记打成 changed（沿 note 先例的同一句话）。
+ */
+export function writingTaskFieldText(target: Extract<LoadedTarget, { kind: "writing_task" }>): string {
+  return JSON.stringify({ title: target.title });
+}
+
+/**
+ * N2 第五条链（ADR-0040 决策 4）：评阅引用的 hash 输入 = `feedback` jsonb 全文的
+ * 键序稳定化 JSON。
+ *
+ * PG jsonb 的输出键序是实现细节，直接 stringify 会把「同一份评阅换个键序」误判成
+ * changed —— 沿 `attemptFieldText` 的 `canonicalJson`。**不含** `version` /
+ * `last_editor` / `updated_at`：CAS 计数器与归属事实不是内容（沿 ADR-0039 决策 3
+ * 的 `graded_by` / `graded_at` 同款理由）。
+ */
+export function writingFeedbackFieldText(target: Extract<LoadedTarget, { kind: "writing_feedback" }>): string {
+  return canonicalJsonText(target.feedback);
+}
+
 /** 按引用 kind 取"当前字段文本"（与 capture 的 hash 口径一致）；不可得返回 null。 */
 export function currentFieldText(
   kind: ReferenceKind,
@@ -183,6 +208,14 @@ export function currentFieldText(
     // ADR-0039 决策 3：hash 只取 verdict + analysis_md。归属字段不进 hash。
     return target.kind === "grading" ? gradingFieldText(target) : null;
   }
+  if (kind === "writing_task") {
+    // ADR-0040 决策 4：hash 只取 title。status/updated_at 不进 hash（归档不告警）。
+    return target.kind === "writing_task" ? writingTaskFieldText(target) : null;
+  }
+  if (kind === "writing_feedback") {
+    // ADR-0040 决策 4：hash 取 feedback 全文（键序稳定化）。version/last_editor 不进 hash。
+    return target.kind === "writing_feedback" ? writingFeedbackFieldText(target) : null;
+  }
   if (target.kind === "assessment") {
     // N2：评析的 hash 输入写死为 content_md（A2）；评析是 latest-wins 覆写，
     // 覆写后当前文本变化 → 已存引用转 changed，旧 content 快照保持不动（D3-2）。
@@ -203,14 +236,20 @@ export function currentFieldText(
  *
  * N2 第三条链：sheet / attempt **没有**标题列（稿次是 scope+summary，作答是
  * venue+answer），返回 null——不拼造一个伪标题，避免与 `liveTitle` 的语义混淆。
+ *
+ * N2 第五条链：writing_task 有自己的标题列（沿 note）；writing_feedback 的
+ * summary 可达 1000 字，不是标题槽的形状 ⇒ 返回 null（卡片读快照里的 summary）。
  */
 function liveTitleOf(target: LoadedTarget): string | null {
   if (target.kind === "source") return target.title;
   if (target.kind === "note") return target.title;
+  if (target.kind === "writing_task") return target.title;
   // sheet / attempt / grading 三者都没有自己的标题列：稿次是 scope+summary、
   // 作答是 venue+answer、评卷是 verdict+analysis。返回材料题源标题（可读来源），
   // null 时不拼造伪标题（与 sheet/attempt 同款纪律）。
+  // writing_feedback 同款：summary 是快照 headline（可达 1000 字），不是标题槽形状。
   if (target.kind === "sheet" || target.kind === "attempt") return null;
+  if (target.kind === "writing_feedback") return null;
   return target.source_title;
 }
 
@@ -221,6 +260,34 @@ function safeExcerpt(text: string | null, max: number): string {
   const last = cut.charCodeAt(cut.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) return cut.slice(0, -1);
   return cut;
+}
+
+/**
+ * N2 第五条链：评阅快照的摘录源 = 四维度评论拼串（ADR-0040 决策 4）。
+ *
+ * 全 total 函数：jsonb 形状若不符合预期（历史行/手写行），回退到 summary，
+ * 再回退到空串 —— **快照生成永不抛错**，capture 的失败只留给身份与状态判定。
+ * 注意：这里只做摘录源选取，截断仍走 `safeExcerpt`（不切代理对）。
+ */
+function feedbackExcerptSource(feedback: unknown): string {
+  const summary = (feedback !== null && typeof feedback === "object" && !Array.isArray(feedback)
+    && typeof (feedback as Record<string, unknown>).summary === "string")
+    ? ((feedback as Record<string, unknown>).summary as string)
+    : "";
+  const dimensions = (feedback !== null && typeof feedback === "object" && !Array.isArray(feedback))
+    ? (feedback as Record<string, unknown>).dimensions
+    : null;
+  if (dimensions === null || typeof dimensions !== "object" || Array.isArray(dimensions)) {
+    return summary;
+  }
+  const parts: string[] = [];
+  for (const value of Object.values(dimensions as Record<string, unknown>)) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+    const comment = (value as Record<string, unknown>).comment;
+    if (typeof comment === "string" && comment.trim()) parts.push(comment.trim());
+  }
+  const joined = parts.join(" / ");
+  return joined || summary;
 }
 
 /** 分页上限（默认 20、最大 50，设计 §7）。 */
@@ -272,6 +339,15 @@ export function targetKeyOf(target: ReferenceTarget): string {
     // 「当前评卷」，但坐标串可读、可核对，且不把内部行 id 泄漏进引用契约。
     return `grading:${normalizeStudyUuid(target.sheetId)}:${normalizeStudyUuid(target.questionId)}`;
   }
+  if (target.kind === "writing_task") {
+    // N2 第五条链（ADR-0040 决策 4）：任务身份就是任务自身 id（沿 note，不按标题判等）。
+    return `writing_task:${normalizeStudyUuid(target.taskId)}`;
+  }
+  if (target.kind === "writing_feedback") {
+    // N2 第五条链（ADR-0040 决策 4）：一纸一行，身份 = sheetId（沿 grading 的可读坐标
+    // 纪律；不把反馈行 id 泄漏进引用契约，且装载时天然带出 sealed 过滤）。
+    return `writing_feedback:${normalizeStudyUuid(target.sheetId)}`;
+  }
   return `question:${normalizeStudyUuid(target.questionId)}`;
 }
 
@@ -303,6 +379,14 @@ export function targetRefsOf(target: ReferenceTarget): { kind: ReferenceTargetKi
       kind: "grading",
       id: `${normalizeStudyUuid(target.sheetId)}:${normalizeStudyUuid(target.questionId)}`,
     }];
+  }
+  if (target.kind === "writing_task") {
+    // 只返回自身键——不装载所属题目（题干另有 question kind 可引，不拼第二份真源）。
+    return [{ kind: "writing_task", id: normalizeStudyUuid(target.taskId) }];
+  }
+  if (target.kind === "writing_feedback") {
+    // 只返回自身键——不装载所属稿次/任务（一次只展开一层）。
+    return [{ kind: "writing_feedback", id: normalizeStudyUuid(target.sheetId) }];
   }
   return [{ kind: "question", id: normalizeStudyUuid(target.questionId) }];
 }
@@ -352,6 +436,12 @@ export function referenceRowToTarget(row: L3StudyNoteReferenceRow): ReferenceTar
         sheetId: row.submission_id!,
         questionId: row.question_id!,
       };
+    case "writing_task":
+      // N2 第五条链：任务 id 存独立列（target_note_id 背着 RESTRICT FK，不能借）。
+      return { kind: "writing_task", taskId: row.writing_task_id! };
+    case "writing_feedback":
+      // N2 第五条链：评阅身份即 sheet，复用 submission_id（沿 grading 的复用纪律）。
+      return { kind: "writing_feedback", sheetId: row.submission_id! };
     case "note":
       return { kind: "note", noteId: row.target_note_id! };
     case "sheet":
@@ -414,6 +504,7 @@ export class L3StudyReferenceService {
           submission_id: null,
           submission_revision_no: null,
           attempt_id: null,
+          writing_task_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -443,6 +534,7 @@ export class L3StudyReferenceService {
           submission_id: null,
           submission_revision_no: null,
           attempt_id: null,
+          writing_task_id: null,
           option_key: null,
           start_offset: target.start,
           end_offset: target.end,
@@ -464,6 +556,7 @@ export class L3StudyReferenceService {
           submission_id: null,
           submission_revision_no: null,
           attempt_id: null,
+          writing_task_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -492,6 +585,7 @@ export class L3StudyReferenceService {
           submission_id: null,
           submission_revision_no: null,
           attempt_id: null,
+          writing_task_id: null,
           option_key: null,
           start_offset: target.start,
           end_offset: target.end,
@@ -527,6 +621,7 @@ export class L3StudyReferenceService {
           submission_id: null,
           submission_revision_no: null,
           attempt_id: null,
+          writing_task_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -558,6 +653,7 @@ export class L3StudyReferenceService {
           submission_id: null,
           submission_revision_no: null,
           attempt_id: null,
+          writing_task_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -605,6 +701,7 @@ export class L3StudyReferenceService {
           submission_id: loaded.id,
           submission_revision_no: loaded.revision_no ?? null,
           attempt_id: null,
+          writing_task_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -637,6 +734,7 @@ export class L3StudyReferenceService {
           submission_id: null,
           submission_revision_no: null,
           attempt_id: loaded.id,
+          writing_task_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -679,6 +777,7 @@ export class L3StudyReferenceService {
           // 决策 2：非 writing 稿次，revision 恒 null（K3 同款）。
           submission_revision_no: null,
           attempt_id: null,
+          writing_task_id: null,
           option_key: null,
           start_offset: null,
           end_offset: null,
@@ -695,6 +794,79 @@ export class L3StudyReferenceService {
             questionOrdinal: loaded.question_ordinal,
             questionType: loaded.question_type,
             sourceTitle: loaded.source_title,
+          },
+        };
+      }
+      case "writing_task": {
+        // N2 第五条链（ADR-0040 决策 4）。身份匹配失败即 404，**不做**「按标题找任务」
+        // 的兜底 —— 标题可改，兜底会把「引用这个任务」悄悄变成「引用同名任务」。
+        if (loaded.kind !== "writing_task" || loaded.id !== normalizeStudyUuid(target.taskId)) {
+          throw new NotFoundError("StudyReferenceTarget", targetKeyOf(target));
+        }
+        // 沿 note 合同：目标必须 active 才能新建引用。归档目标不可新建 —— 但**已存**
+        // 引用不撤销（resolve 仍按快照 hash 出 current/changed）。
+        if (loaded.status !== "active") {
+          throw new NotFoundError("StudyReferenceTarget", targetKeyOf(target));
+        }
+        return {
+          kind: "writing_task",
+          source_id: null,
+          question_id: null,
+          assessment_id: null,
+          target_note_id: null,
+          submission_id: null,
+          submission_revision_no: null,
+          attempt_id: null,
+          // 任务 id 存独立列（target_note_id 背着 RESTRICT FK，不能借）。
+          writing_task_id: loaded.id,
+          option_key: null,
+          start_offset: null,
+          end_offset: null,
+          quote_snapshot: null,
+          // 决策 4：hash 只取 title（status/updated_at 不进 hash，归档不告警）。
+          field_hash: sha256Hex(writingTaskFieldText(loaded)),
+          display_snapshot: {
+            kind: "writing_task",
+            title: loaded.title,
+            taskKind: loaded.task_kind,
+            direction: loaded.direction,
+          },
+        };
+      }
+      case "writing_feedback": {
+        // N2 第五条链（ADR-0040 决策 1/4）。身份匹配失败即 404，**不做**「按稿次找
+        // 任意评阅」的兜底 —— 一纸一行，兜底无意义；且会把「引用这稿的评阅」变成
+        // 「引用别的稿的评阅」。
+        if (loaded.kind !== "writing_feedback" || loaded.sheet_id !== normalizeStudyUuid(target.sheetId)) {
+          throw new NotFoundError("StudyReferenceTarget", targetKeyOf(target));
+        }
+        // D1-a 落地：只有 sealed 稿次上的评阅是合法目标（draft 一律 404，不是 409）。
+        // 装载侧已 JOIN 过滤，这里是双保险（K2 同款）。
+        if (loaded.sheet_status !== "sealed") {
+          throw new NotFoundError("StudyReferenceTarget", targetKeyOf(target));
+        }
+        return {
+          kind: "writing_feedback",
+          source_id: null,
+          question_id: null,
+          assessment_id: null,
+          target_note_id: null,
+          // 评阅身份即 sheet，复用 submission_id（沿 grading 的复用纪律，不新增列）。
+          submission_id: loaded.sheet_id,
+          submission_revision_no: null,
+          attempt_id: null,
+          writing_task_id: null,
+          option_key: null,
+          start_offset: null,
+          end_offset: null,
+          quote_snapshot: null,
+          // 决策 4：hash 取 feedback 全文（键序稳定化）；version/last_editor 不进 hash。
+          field_hash: sha256Hex(writingFeedbackFieldText(loaded)),
+          // 快照 = summary 全文 + 维度评论摘录；无分数、无判定（schema 显式无 score）。
+          display_snapshot: {
+            kind: "writing_feedback",
+            summary: loaded.summary,
+            excerpt: safeExcerpt(feedbackExcerptSource(loaded.feedback), STUDY_FEEDBACK_EXCERPT_MAX),
           },
         };
       }
@@ -716,6 +888,7 @@ export class L3StudyReferenceService {
           submission_id: null,
           submission_revision_no: null,
           attempt_id: null,
+          writing_task_id: null,
           option_key: target.optionKey,
           start_offset: target.start,
           end_offset: target.end,

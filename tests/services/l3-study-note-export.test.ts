@@ -152,7 +152,7 @@ function refRow(overrides: Partial<L3StudyNoteReferenceRow> = {}): L3StudyNoteRe
   return {
     id: REF_SOURCE, note_id: NOTE, user_id: USER, kind: "source",
     source_id: SOURCE, question_id: null, assessment_id: null, target_note_id: null,
-    submission_id: null, submission_revision_no: null, attempt_id: null, option_key: null,
+    submission_id: null, submission_revision_no: null, attempt_id: null, writing_task_id: null, option_key: null,
     start_offset: null, end_offset: null, quote_snapshot: null,
     field_hash: "f".repeat(64), display_snapshot: asJson(sourceSnapshot("来源标题", "来源摘要")),
     captured_at: CAPTURED_AT,
@@ -1508,6 +1508,7 @@ describe("N2 第三条链导出（sheet / attempt · v2 显式选版 / v1 冻结
       submission_id: SHEET,
       submission_revision_no: revisionNo,
       attempt_id: null,
+      writing_task_id: null,
       start_offset: null,
       end_offset: null,
       quote_snapshot: null,
@@ -1530,6 +1531,7 @@ describe("N2 第三条链导出（sheet / attempt · v2 显式选版 / v1 冻结
       submission_id: null,
       submission_revision_no: null,
       attempt_id: ATTEMPT,
+      writing_task_id: null,
       start_offset: null,
       end_offset: null,
       quote_snapshot: null,
@@ -1696,6 +1698,119 @@ describe("N2 评卷引用导出（第四条链 · v2 承载 / v1 冻结）", () 
 
   it("v1：含评卷引用的笔记显式请求 v1 → 422，不静默切版、不降级", async () => {
     const fake = fakeWithGradingRef();
+    const error = await makeService(fake)
+      .export(USER, NOTE, { expectedVersion: await versionOf(fake), schemaVersion: 1 })
+      .catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as { field?: string }).field).toBe("schemaVersion");
+  });
+});
+
+/**
+ * N2 写作引用导出（第五条链 · v2 承载 / v1 冻结）。
+ *
+ * 两个 kind 各有各的导出断言重点：
+ * - writing_task：target 只带 {taskId}（题干不重复展开 —— 题干另有 question kind）。
+ * - writing_feedback：target 只带 {sheetId}；Markdown 块**无分数、无判定行**
+ *   （决策 10-⑨：schema 显式无 score，渲染分数即编造数据）。
+ */
+describe("N2 写作引用导出（第五条链 · v2 承载 / v1 冻结）", () => {
+  const TASK = "00000000-0000-4000-8000-000000000401";
+  const SHEET = "00000000-0000-4000-8000-000000000301";
+  const REF_TASK = "00000000-0000-4000-8000-000000000009";
+  const REF_FEEDBACK = "00000000-0000-4000-8000-000000000010";
+
+  function taskRefRow(): L3StudyNoteReferenceRow {
+    return refRow({
+      id: REF_TASK,
+      kind: "writing_task",
+      source_id: null,
+      question_id: null,
+      assessment_id: null,
+      target_note_id: null,
+      submission_id: null,
+      submission_revision_no: null,
+      attempt_id: null,
+      writing_task_id: TASK,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      display_snapshot: asJson({
+        kind: "writing_task",
+        title: "考研英语一 2023 作文",
+        taskKind: "whole",
+        direction: "考研",
+      }),
+    });
+  }
+
+  function feedbackRefRow(): L3StudyNoteReferenceRow {
+    return refRow({
+      id: REF_FEEDBACK,
+      kind: "writing_feedback",
+      source_id: null,
+      question_id: null,
+      assessment_id: null,
+      target_note_id: null,
+      submission_id: SHEET,
+      submission_revision_no: null,
+      attempt_id: null,
+      writing_task_id: null,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      display_snapshot: asJson({
+        kind: "writing_feedback",
+        summary: "论点清晰，但第二段论证跳步。",
+        excerpt: "紧扣题意，没有跑题。",
+      }),
+    });
+  }
+
+  function fakeWithWritingRefs(): FakeRepos {
+    const fake = fakeRepos({ refRows: [taskRefRow(), feedbackRefRow()] });
+    const body = ["复盘。", "", `[[ref:${REF_TASK}]]`, "", `[[ref:${REF_FEEDBACK}]]`, "", "结论。"].join("\n");
+    fake.studyNotes.lockForShare = vi.fn(async () => noteRow({ body_md: body })) as never;
+    return fake;
+  }
+
+  async function versionOf(fake: FakeRepos): Promise<number> {
+    const lock = fake.studyNotes.lockForShare as unknown as () => Promise<{ version: number }>;
+    return (await lock()).version;
+  }
+
+  it("v2：task target 只带 {taskId}，feedback target 只带 {sheetId}，都不带版本维度", async () => {
+    const fake = fakeWithWritingRefs();
+    const result = await makeService(fake).export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 2,
+    });
+    const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+    expect(payload.references[0].kind).toBe("writing_task");
+    expect(payload.references[0].target).toEqual({ kind: "writing_task", taskId: TASK });
+    expect(payload.references[0].target).not.toHaveProperty("questionId");
+    expect(payload.references[1].kind).toBe("writing_feedback");
+    expect(payload.references[1].target).toEqual({ kind: "writing_feedback", sheetId: SHEET });
+    expect(payload.references[1].target).not.toHaveProperty("version");
+    expect(payload.references[1].target).not.toHaveProperty("revisionNo");
+  });
+
+  it("Markdown 正文出现任务块与评阅块；评阅块无分数、无判定行", async () => {
+    const fake = fakeWithWritingRefs();
+    const result = await makeService(fake).export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 2,
+    });
+    expect(result.markdown).toContain("写作任务");
+    expect(result.markdown).toContain("考研英语一 2023 作文");
+    expect(result.markdown).toContain("评阅");
+    expect(result.markdown).toContain("论点清晰");
+    // 决策 10-⑨：块里一旦出现「得分/判定」，就是把评阅渲染成了评卷。
+    expect(result.markdown).not.toMatch(/得分|评分|判定/);
+  });
+
+  it("v1：含写作引用的笔记显式请求 v1 → 422，不静默切版、不降级", async () => {
+    const fake = fakeWithWritingRefs();
     const error = await makeService(fake)
       .export(USER, NOTE, { expectedVersion: await versionOf(fake), schemaVersion: 1 })
       .catch((err: unknown) => err);

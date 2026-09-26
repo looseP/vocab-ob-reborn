@@ -72,6 +72,14 @@ export const STUDY_ATTEMPT_EXCERPT_MAX = 280;
 /** N2 第四条链：评卷分析的快照节选上限（与评析区 280 同款，ADR-0039 决策 4）。 */
 export const STUDY_GRADING_EXCERPT_MAX = 280;
 
+/**
+ * N2 第五条链：评阅维度评论的快照节选上限（ADR-0040 决策 4）。
+ *
+ * 沿用同一量级（280）——评阅全文（summary + 四维度评论 + priorities）可达数 KB，
+ * 快照只保留「认得出是哪条评阅」的量，不做第二份评阅存档。
+ */
+export const STUDY_FEEDBACK_EXCERPT_MAX = 280;
+
 // ── 枚举（单一真源；与 DB CHECK 同步）───────────────────────────────────────
 
 export const STUDY_NOTE_STATUSES = ["active", "archived"] as const;
@@ -89,7 +97,9 @@ export type StudyTopicStatus = (typeof STUDY_TOPIC_STATUSES)[number];
  * 后者才是可被核验的具体身份，只允许 questionId 会退化成「引用某题的当前评析」。
  *
  * N2 第二条链新增 `note`（笔记互链）；第三条链新增 `sheet`（= `l3_submissions`
- * 的 **sealed** 稿次）与 `attempt`（= `l3_question_attempts` 的作答记录）。
+ * 的 **sealed** 稿次）与 `attempt`（= `l3_question_attempts` 的作答记录）；
+ * 第四条链新增 `grading`；第五条链新增 `writing_task` / `writing_feedback`
+ * （写作稿次复用 `sheet`，不新增 kind —— ADR-0040 决策 3）。
  */
 export const REFERENCE_KINDS = [
   "source",
@@ -104,6 +114,10 @@ export const REFERENCE_KINDS = [
   // N2 第四条链（ADR-0039）：评卷。身份 = {sheetId, questionId} 指向**当前**那一行；
   // 评卷是 latest-wins 可改判目标 ⇒ `changed` 必然可达（与 attempt 相反）。
   "grading",
+  // N2 第五条链（ADR-0040）：作文任务与评阅。任务是稳定实体（active/archived，
+  // 改题意 = 新建任务）；评阅一纸一行 latest-wins ⇒ `changed` 可达（与 grading 同款）。
+  "writing_task",
+  "writing_feedback",
 ] as const;
 export type ReferenceKind = (typeof REFERENCE_KINDS)[number];
 
@@ -168,7 +182,23 @@ export type ReferenceTarget =
    * latest-wins 覆写表，无 version 列 ⇒ 「引用某一次具体评卷」不可表达，本就不做。
    * 身份指向**当前那一行**：改判后引用转 `changed`、旧快照原样保留（D3-2）。
    */
-  | { kind: "grading"; sheetId: string; questionId: string };
+  | { kind: "grading"; sheetId: string; questionId: string }
+  /**
+   * N2 第五条链（ADR-0040 决策 4）：作文任务 = `l3_writing_tasks` 的某一行。
+   *
+   * 任务是题面真源（改题意 = 新建任务），身份就是任务自身 id —— 不按标题、
+   * 不按题干兜底。只允许引用 **active** 任务；任务之后归档不撤销引用
+   * （沿 `note` 合同：resolve 仍按 hash 派生 current/changed）。
+   */
+  | { kind: "writing_task"; taskId: string }
+  /**
+   * N2 第五条链（ADR-0040 决策 4）：评阅 = `l3_writing_feedback` 的某一稿。
+   *
+   * `UNIQUE(user_id, sheet_id)` 使一纸恰一行（latest-wins，同款 grading），
+   * 身份 = `{sheetId}`（可读、可推导，且装载时天然带出 sealed 过滤）。
+   * 只引用 sealed 稿次上的评阅 —— 反馈服务本身对 draft 409（D1-a 落地）。
+   */
+  | { kind: "writing_feedback"; sheetId: string };
 
 /** 前端构建 capture 载荷用（与 ReferenceWrite 的 capture 分支同构）。 */
 export interface ReferenceInput {
@@ -297,6 +327,33 @@ export interface GradingReferenceSnapshot {
   sourceTitle: string | null;
 }
 
+/**
+ * N2 第五条链（ADR-0040 决策 4）：作文任务引用快照。
+ *
+ * 只放 capture 当时的**标题 + 任务类型 + 方向**。题干另有 `question` kind 可引，
+ * 不在这里 JOIN 拼第二份真源；`status` / `updated_at` 不进快照（归档与时间变化
+ * 不应让引用转 changed，沿 `note` 先例）。
+ */
+export interface WritingTaskReferenceSnapshot {
+  kind: "writing_task";
+  title: string;
+  taskKind: string;
+  direction: string;
+}
+
+/**
+ * N2 第五条链（ADR-0040 决策 4）：评阅引用快照。
+ *
+ * `summary` 全文保留（≤1000，是评阅的 headline）；`excerpt` 是四维度评论拼成的
+ * 前 280。**无分数、无判定** —— `writingFeedbackSchema` 显式无 numeric score，
+ * 快照里出现任何「得分/判定」字段即编造数据（决策 10-⑨的回归锁）。
+ */
+export interface WritingFeedbackReferenceSnapshot {
+  kind: "writing_feedback";
+  summary: string;
+  excerpt: string;
+}
+
 export type ReferenceDisplaySnapshot =
   | SourceReferenceSnapshot
   | SourceQuoteReferenceSnapshot
@@ -307,7 +364,9 @@ export type ReferenceDisplaySnapshot =
   | NoteReferenceSnapshot
   | SheetReferenceSnapshot
   | AttemptReferenceSnapshot
-  | GradingReferenceSnapshot;
+  | GradingReferenceSnapshot
+  | WritingTaskReferenceSnapshot
+  | WritingFeedbackReferenceSnapshot;
 
 /** 引用预览（详情/导出/反向引用共用；不泄露 service 端 hash 与请求键）。 */
 export interface ReferencePreview {
@@ -588,6 +647,16 @@ export const referenceTargetSchema = z
       kind: z.literal("grading"),
       sheetId: z.string().uuid(),
       questionId: z.string().uuid(),
+    }).strict(),
+    // N2 第五条链（ADR-0040 决策 3/4）：写作任务 = {taskId}；评阅 = {sheetId}。
+    // writingSheet 不新增 kind（复用 sheet）。strict：多余字段一律拒，防止悄悄塞 version。
+    z.object({
+      kind: z.literal("writing_task"),
+      taskId: z.string().uuid(),
+    }).strict(),
+    z.object({
+      kind: z.literal("writing_feedback"),
+      sheetId: z.string().uuid(),
     }).strict(),
   ])
   .superRefine((value, ctx) => {

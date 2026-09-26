@@ -1267,3 +1267,27 @@ describe("N2 评卷引用的保存归一（ADR-0039）", () => {
     expect(other).not.toBe(base);
   });
 });
+
+/**
+ * N2 第五条链（ADR-0040）：写作目标的大小写归一进入**幂等 hash**（沿 grading 同款理由）。
+ */
+describe("N2 写作引用的保存归一（ADR-0040）", () => {
+  const TASK_UPPER = "00000000-0000-4000-8000-0000000004AB";
+  const SHEET_UPPER = "00000000-0000-4000-8000-0000000003AB";
+
+  it("writing_task / writing_feedback 的 id 大小写不影响幂等 hash", () => {
+    const upper = computeSaveRequestHash(baseSaveInput({
+      references: [
+        { id: REF, action: "capture", target: { kind: "writing_task", taskId: TASK_UPPER } },
+        { id: REF, action: "capture", target: { kind: "writing_feedback", sheetId: SHEET_UPPER } },
+      ],
+    }));
+    const lower = computeSaveRequestHash(baseSaveInput({
+      references: [
+        { id: REF, action: "capture", target: { kind: "writing_task", taskId: TASK_UPPER.toLowerCase() } },
+        { id: REF, action: "capture", target: { kind: "writing_feedback", sheetId: SHEET_UPPER.toLowerCase() } },
+      ],
+    }));
+    expect(lower).toBe(upper);
+  });
+});

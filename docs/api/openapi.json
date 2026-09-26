@@ -50302,6 +50302,44 @@
                                       "questionId"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_task"
+                                      },
+                                      "taskId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "taskId"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_feedback"
+                                      },
+                                      "sheetId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "sheetId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -50669,6 +50707,52 @@
                                       "questionOrdinal",
                                       "questionType",
                                       "sourceTitle"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_task"
+                                      },
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "taskKind": {
+                                        "type": "string"
+                                      },
+                                      "direction": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "title",
+                                      "taskKind",
+                                      "direction"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_feedback"
+                                      },
+                                      "summary": {
+                                        "type": "string"
+                                      },
+                                      "excerpt": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "summary",
+                                      "excerpt"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -52200,6 +52284,44 @@
                       "questionId"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "writing_task"
+                      },
+                      "taskId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "taskId"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "writing_feedback"
+                      },
+                      "sheetId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "sheetId"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               }
@@ -52486,6 +52608,44 @@
                                 "kind",
                                 "sheetId",
                                 "questionId"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "writing_task"
+                                },
+                                "taskId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "taskId"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "writing_feedback"
+                                },
+                                "sheetId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "sheetId"
                               ],
                               "additionalProperties": false
                             }
@@ -52844,6 +53004,52 @@
                                 "questionOrdinal",
                                 "questionType",
                                 "sourceTitle"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "writing_task"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "taskKind": {
+                                  "type": "string"
+                                },
+                                "direction": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "title",
+                                "taskKind",
+                                "direction"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "writing_feedback"
+                                },
+                                "summary": {
+                                  "type": "string"
+                                },
+                                "excerpt": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "summary",
+                                "excerpt"
                               ],
                               "additionalProperties": false
                             }
@@ -54257,6 +54463,44 @@
                                       "questionId"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_task"
+                                      },
+                                      "taskId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "taskId"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_feedback"
+                                      },
+                                      "sheetId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "sheetId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -54624,6 +54868,52 @@
                                       "questionOrdinal",
                                       "questionType",
                                       "sourceTitle"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_task"
+                                      },
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "taskKind": {
+                                        "type": "string"
+                                      },
+                                      "direction": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "title",
+                                      "taskKind",
+                                      "direction"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_feedback"
+                                      },
+                                      "summary": {
+                                        "type": "string"
+                                      },
+                                      "excerpt": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "summary",
+                                      "excerpt"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -55318,6 +55608,44 @@
                                     "questionId"
                                   ],
                                   "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "writing_task"
+                                    },
+                                    "taskId": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "taskId"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "writing_feedback"
+                                    },
+                                    "sheetId": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "sheetId"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               ]
                             }
@@ -55687,6 +56015,44 @@
                                       "questionId"
                                     ],
                                     "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_task"
+                                      },
+                                      "taskId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "taskId"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_feedback"
+                                      },
+                                      "sheetId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "sheetId"
+                                    ],
+                                    "additionalProperties": false
                                   }
                                 ]
                               },
@@ -56054,6 +56420,52 @@
                                       "questionOrdinal",
                                       "questionType",
                                       "sourceTitle"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_task"
+                                      },
+                                      "title": {
+                                        "type": "string"
+                                      },
+                                      "taskKind": {
+                                        "type": "string"
+                                      },
+                                      "direction": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "title",
+                                      "taskKind",
+                                      "direction"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "const": "writing_feedback"
+                                      },
+                                      "summary": {
+                                        "type": "string"
+                                      },
+                                      "excerpt": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "summary",
+                                      "excerpt"
                                     ],
                                     "additionalProperties": false
                                   }

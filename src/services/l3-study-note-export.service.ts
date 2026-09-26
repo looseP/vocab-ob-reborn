@@ -148,7 +148,13 @@ export type StudyNoteExportTargetV2 =
    * **无版本维度**：`l3_grading_results` 是 latest-wins 覆写表，引用恒指向「当前
    * 那一格」；改判后引用转 `changed` 而身份不变。
    */
-  | { kind: "grading"; sheetId: string; questionId: string };
+  | { kind: "grading"; sheetId: string; questionId: string }
+  /**
+   * N2 第五条链（ADR-0040 决策 3/4）：写作任务目标 = `{taskId}`（writingSheet
+   * 复用 `sheet`，不新增 kind）；评阅目标 = `{sheetId}`（一纸一行，无版本维度）。
+   */
+  | { kind: "writing_task"; taskId: string }
+  | { kind: "writing_feedback"; sheetId: string };
 
 export interface StudyNoteExportReferenceV2 {
   referenceId: string;
@@ -308,6 +314,23 @@ export function projectDisplaySnapshot(
         questionType: raw["questionType"] as L3QuestionType,
         sourceTitle: asNullableText(raw["sourceTitle"]),
       };
+    // N2 第五条链（ADR-0040 决策 4）：任务快照按白名单显式重建（标题 + 类型 + 方向）。
+    // 题干不在白名单里 —— 题干另有 question kind，导出面不拼第二份真源。
+    case "writing_task":
+      return {
+        kind: "writing_task",
+        title: asTextField(raw["title"], "title", referenceId),
+        taskKind: asTextField(raw["taskKind"], "taskKind", referenceId),
+        direction: asTextField(raw["direction"], "direction", referenceId),
+      };
+    // N2 第五条链：评阅快照按白名单显式重建（summary 全文 + 维度摘录）。
+    // **无分数、无判定字段可取** —— schema 显式无 score，这里多取一个就是编造。
+    case "writing_feedback":
+      return {
+        kind: "writing_feedback",
+        summary: asTextField(raw["summary"], "summary", referenceId),
+        excerpt: asTextField(raw["excerpt"], "excerpt", referenceId),
+      };
     default:
       throw new ValidationError("引用快照 kind 非法", "displaySnapshot");
   }
@@ -365,6 +388,10 @@ const KIND_LABELS: Record<ReferenceKind, string> = {
   // N2 第四条链（ADR-0039）：评卷判定。标签写「评卷」而不是「错题」——
   // verdict 三值里 correct 也占一格，叫「错题」会在 correct 时误导。
   grading: "评卷",
+  // N2 第五条链（ADR-0040）：作文任务与评阅。标签写「评阅」而不是「评分」——
+  // 反馈 schema 显式无 numeric score，叫「评分」等于暗示有一个分数。
+  writing_task: "写作任务",
+  writing_feedback: "评阅",
 };
 
 const STATUS_LABELS: Record<ReferenceStatus, string> = {
@@ -399,6 +426,12 @@ function snapshotSummary(snapshot: ReferenceDisplaySnapshot): string {
     // 不留空摘要（空摘要在导出产物里读起来像"引用了但没内容"）。
     case "grading":
       return snapshot.analysisExcerpt || `判定：${snapshot.verdict}`;
+    // N2 第五条链：任务摘要 = 标题；评阅摘要 = 维度评论摘录（无评论时退回 summary，
+    // 不留空摘要 —— 摘录源函数已保证回退，这里是第二道防线）。
+    case "writing_task":
+      return snapshot.title;
+    case "writing_feedback":
+      return snapshot.excerpt || snapshot.summary;
   }
 }
 
@@ -481,6 +514,11 @@ function toExportTargetV2(row: L3StudyNoteReferenceRow): StudyNoteExportTargetV2
         sheetId: row.submission_id!,
         questionId: row.question_id!,
       };
+    // N2 第五条链（ADR-0040 决策 3/4）：任务 = {taskId}；评阅 = {sheetId}，无版本维度。
+    case "writing_task":
+      return { kind: "writing_task", taskId: row.writing_task_id! };
+    case "writing_feedback":
+      return { kind: "writing_feedback", sheetId: row.submission_id! };
   }
 }
 
@@ -569,6 +607,17 @@ function renderReferenceBlock(reference: ReferencePreview): string[] {
     lines.push(`> 题序: ${snapshot.questionOrdinal}`);
     lines.push(`> 判定: ${snapshot.verdict}`);
     lines.push(`> 评卷者: ${snapshot.gradedBy} · 评卷于: ${snapshot.gradedAt}`);
+  } else if (snapshot.kind === "writing_task") {
+    // N2 第五条链：任务只落标题 + 类型 + 方向（题干另有 question kind 可引）。
+    lines.push(`> 任务标题: ${snapshot.title}`);
+    lines.push(`> 任务类型: ${snapshot.taskKind} · 方向: ${snapshot.direction}`);
+  } else if (snapshot.kind === "writing_feedback") {
+    // N2 第五条链（ADR-0040 决策 4）：评阅块 = summary 全文 + 维度评论摘录。
+    // **无分数、无判定行** —— 反馈 schema 显式无 score，这里出现任何「得分」都是编造。
+    lines.push(`> 评阅摘要: ${snapshot.summary}`);
+    if (snapshot.excerpt) {
+      lines.push(`> 维度摘录: ${snapshot.excerpt}`);
+    }
   } else {
     if (snapshot.sourceTitle) lines.push(`> 来源: ${snapshot.sourceTitle}`);
     lines.push(`> 题型: ${snapshot.questionType}`);
