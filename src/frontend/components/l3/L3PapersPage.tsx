@@ -21,6 +21,8 @@ import {
   type OrderedPracticeFile,
 } from "@/frontend/viewModels/fileOrderNavigation";
 import { buildL3SectionUrl } from "@/frontend/viewModels/l3SectionNavigation";
+import { QuestionEvidenceEditor, type EvidenceAnchor } from "@/frontend/components/l3/QuestionEvidenceEditor";
+import { PendingQuestionsPanel } from "@/frontend/components/l3/PendingQuestionsPanel";
 import type { WritingQuestionTaskSummary } from "@/domain";
 
 /**
@@ -162,11 +164,22 @@ interface PaperListItem {
 
 interface SourceOption { id: string; title: string }
 
+/**
+ * 草稿题（2026-09-26 补齐解析与官方证据）。
+ * 此前只有 stem/options/answer/answerText —— `explanation` 与 `evidence` 虽在
+ * API 与 schema 里，**建卷表单从不收集**，于是应用内建的题永远没有解析、也没有
+ * 官方证据，评卷读面（grading-context 带 explanation/evidence）拿不到可依据的
+ * 材料。`evidence` 走独立的框选录入器（见 QuestionEvidenceEditor）。
+ */
 interface DraftQuestion {
   stem: string;
   options: Record<string, string>;
   answer: string;
   answerText: string;
+  /** 官方解析（可空）：判卷时随 grading-context 给 agent。 */
+  explanation: string;
+  /** 官方证据锚点（原文 UTF-16 区间）。 */
+  evidence: EvidenceAnchor[];
 }
 interface DraftSection {
   title: string;
@@ -176,7 +189,9 @@ interface DraftSection {
   questions: DraftQuestion[];
 }
 
-const emptyQuestion = (): DraftQuestion => ({ stem: "", options: {}, answer: "", answerText: "" });
+const emptyQuestion = (): DraftQuestion => ({
+  stem: "", options: {}, answer: "", answerText: "", explanation: "", evidence: [],
+});
 const emptySection = (questionType: QuestionType = "reading_choice"): DraftSection => ({
   title: "",
   questionType,
@@ -243,7 +258,7 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
 } = {}) {
   const { addToast } = useToast();
   const hasFilesDeepLink = Boolean(deepLinkVenue && QUESTION_TYPES.includes(deepLinkVenue as QuestionType));
-  const [tab, setTab] = useState<"files" | "papers" | "archive" | "build">(
+  const [tab, setTab] = useState<"files" | "papers" | "archive" | "build" | "pending">(
     deepLinkSheet ? "archive" : deepLinkPaper ? "papers" : hasFilesDeepLink ? "files" : "papers",
   );
 
@@ -266,7 +281,7 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
         <h2 className="text-lg font-semibold">试卷台</h2>
       </div>
       <div className="flex flex-wrap gap-1.5" role="tablist">
-        {([["files", "题型空间"], ["papers", "我的试卷"], ["archive", "题纸档案"], ["build", "粘贴建卷"]] as const).map(([id, label]) => (
+        {([["files", "题型空间"], ["papers", "我的试卷"], ["archive", "题纸档案"], ["build", "粘贴建卷"], ["pending", "待录"]] as const).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
             className={`rounded-full px-3 py-1 text-xs ${tab === id ? "bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]" : "border border-[var(--color-border)] text-[var(--color-ink-soft)]"}`}>
             {label}
@@ -286,6 +301,8 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
       )}
       {tab === "archive" && <ArchiveTab onToast={addToast} />}
       {tab === "build" && <BuildTab onBuilt={() => setTab("papers")} onToast={addToast} />}
+      {/* ADR-0037 决策 6：待录是 owner 的核对责任面（答案键 + 证据切片必须可见）。 */}
+      {tab === "pending" && <PendingQuestionsPanel onToast={addToast} />}
     </div>
   );
 }
@@ -878,6 +895,9 @@ function BuildTab({ onBuilt, onToast }: { onBuilt: () => void; onToast: (kind: "
             : null,
           questions: section.questions.map((q) => ({
             stem: q.stem.trim(),
+            // 解析与官方证据（2026-09-26）：空值不提交（null / [] 由服务端归一）
+            ...(q.explanation.trim() ? { explanation: q.explanation.trim() } : {}),
+            ...(q.evidence.length > 0 ? { evidence: q.evidence } : {}),
             ...(choice ? {
               options: OPTION_KEYS.map((key) => ({ key, text: q.options[key] ?? "" })).filter((o) => o.text.trim()),
               answer: q.answer ? { choice: q.answer } : {},
@@ -973,6 +993,24 @@ function BuildTab({ onBuilt, onToast }: { onBuilt: () => void; onToast: (kind: "
                     rows={3} placeholder="参考译文 / 范文与评分要点"
                     className="w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs" />
                 )}
+                {/* 官方解析 + 官方证据（2026-09-26）：判卷读面（grading-context）依赖这两项，
+                    此前表单从不收集 —— 应用内建的题因此永远"无解析可依"。 */}
+                <textarea
+                  value={q.explanation}
+                  onChange={(e) => patchQuestion(si, qi, { explanation: e.target.value })}
+                  rows={2}
+                  placeholder="官方解析（可空）：为什么选它 / 错在哪"
+                  data-testid={`build-explanation-${si}-${qi}`}
+                  className="w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs"
+                />
+                <QuestionEvidenceEditor
+                  sourceId={section.sourceId || null}
+                  fileKey={section.fileKey || null}
+                  questionType={section.questionType}
+                  anchors={q.evidence}
+                  onChange={(next) => patchQuestion(si, qi, { evidence: next })}
+                  onError={(message) => onToast("error", message)}
+                />
               </div>
             ))}
             <button type="button" onClick={() => patchSection(si, { questions: [...section.questions, emptyQuestion()] })}

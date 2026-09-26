@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPassageSpans,
   enclosingSentence,
+  enclosingSentenceRange,
   groupSpansIntoParagraphs,
   type PassageAnnotationMarker,
   type PassageSpan,
@@ -170,6 +171,46 @@ describe("enclosingSentence", () => {
   it("falls back to the selection itself when no boundary exists", () => {
     const content = "no boundaries at all";
     expect(enclosingSentence(content, 3, 12)).toBe("no boundaries at all");
+  });
+});
+
+/**
+ * `enclosingSentenceRange`（2026-09-26）：官方证据锚点要的是**区间**，而
+ * `enclosingSentence` 只要文本。两者必须同源 —— 否则「圈词入笔记」取到的句子与
+ * 「证据」标到的句子会不一致。故这里逐条比对二者切片相等。
+ */
+describe("enclosingSentenceRange", () => {
+  const NL = String.fromCharCode(10);
+
+  it("区间切片 === enclosingSentence 的文本（单一实现，不漂移）", () => {
+    const content = `第一句。${NL}第二句在这里！${NL}Third sentence.`;
+    for (const [from, to] of [[0, 1], [2, 3], [0, 5], [7, 9], [0, content.length]] as const) {
+      const range = enclosingSentenceRange(content, from, to);
+      expect(content.slice(range.start, range.end)).toBe(enclosingSentence(content, from, to));
+    }
+  });
+
+  it("右边界把句读一并纳入（锚点含句末标点）", () => {
+    const content = `甲。乙！丙？`;
+    expect(enclosingSentenceRange(content, 0, 1).end).toBe(2);
+  });
+
+  it("换行是句界（多行正文不会跨行合并）", () => {
+    const content = `line one${NL}line two`;
+    const range = enclosingSentenceRange(content, 1, 4);
+    expect(content.slice(range.start, range.end)).toBe("line one");
+  });
+
+  it("区间已 trim：不含首尾空白/换行（高亮不会溢出到行首）", () => {
+    const content = `   spaced sentence.   `;
+    const range = enclosingSentenceRange(content, 5, 10);
+    expect(content.slice(range.start, range.end)).toBe("spaced sentence.");
+  });
+
+  it("非法输入夹到合法范围，不抛", () => {
+    const content = "abc";
+    expect(enclosingSentenceRange(content, -5, 99)).toEqual({ start: 0, end: 3 });
+    expect(enclosingSentenceRange(content, 2, 2)).toEqual({ start: 2, end: 2 });
   });
 });
 

@@ -3,6 +3,7 @@ import { ConflictError, NotFoundError, ValidationError } from "@/errors";
 import type { L3PaperRow, L3QuestionRow, L3SourceRow } from "@/domain";
 import type { IRepositories, IL3ContextRepository, IL3PaperRepository } from "@/repositories/interfaces";
 import { L3PaperService } from "@/services/l3-paper.service";
+import type { AuthoringActor } from "@/domain";
 import { PAPER_PAYLOAD_VERSION } from "@/domain/l3-question-types";
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
@@ -43,6 +44,8 @@ function makePaperRepo(overrides: Partial<IL3PaperRepository> = {}): IL3PaperRep
       stem: input.stem,
     })),
     findQuestionById: vi.fn(async () => questionRow()),
+    updateQuestion: vi.fn(async () => questionRow()),
+    countQuestionAttempts: vi.fn(async () => 0),
     findActiveQuestionsByIds: vi.fn(async () => []),
     listActiveQuestionsForFile: vi.fn(async () => []),
     listPracticeFiles: vi.fn(async () => ({ items: [], total: 0, limit: 50, offset: 0 })),
@@ -63,7 +66,11 @@ function makePaperRepo(overrides: Partial<IL3PaperRepository> = {}): IL3PaperRep
       created_at: "2026-09-16T00:00:00Z",
       updated_at: "2026-09-16T00:00:00Z",
     })),
+    listPendingQuestions: vi.fn(async () => ({ items: [], total: 0 })),
+    acceptPendingQuestions: vi.fn(async () => []),
+    rejectPendingQuestion: vi.fn(async () => true),
     findPaperById: vi.fn(async () => null),
+    updatePaper: vi.fn(async () => null),
     listPapers: vi.fn(async () => ({ items: [], total: 0, limit: 50, offset: 0 })),
     ...overrides,
   };
@@ -87,6 +94,7 @@ function makeContextRepo(overrides: Partial<IL3ContextRepository> = {}): IL3Cont
       updated_at: "2026-09-16T00:00:00Z",
     })),
     ensureSourceSpaces: vi.fn(async () => undefined),
+    findSourcesByIds: vi.fn(async () => []),
     replaceSourceSpaces: vi.fn(async () => undefined),
     ...overrides,
   } as unknown as IL3ContextRepository;
@@ -120,6 +128,55 @@ function makeService(
   );
 }
 
+/** 证据越界检查需要材料正文长度：就地造一个带 content_text 的 context 仓储。 */
+function withContent(contentText: string): IL3ContextRepository {
+  const base = makeContextRepo();
+  const row = { ...sourceStub(), content_text: contentText };
+  return {
+    ...base,
+    findSourceById: vi.fn(async () => row),
+    // 待录核对面走批量取源（ADR-0037）：两处必须给同一份正文，否则切片与标题对不上。
+    findSourcesByIds: vi.fn(async () => [row]),
+  } as IL3ContextRepository;
+}
+
+/** 单条 source 桩（与 makeContextRepo 的默认行同形）。 */
+function sourceStub() {
+  return {
+    id: SOURCE_ID,
+    user_id: USER_ID,
+    wordbook_id: null,
+    source_type: "article" as const,
+    title: "2023 英语一 Text 1",
+    author: null,
+    url: null,
+    language: null,
+    metadata: {},
+    content_text: null as string | null,
+    content_hash: null,
+    created_at: "2026-09-16T00:00:00Z",
+    updated_at: "2026-09-16T00:00:00Z",
+  };
+}
+
+/** 卷行最小桩（agent 建卷测试只需要 insertPaper 的入参回显）。 */
+function paperStub(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "paper-1",
+    user_id: USER_ID,
+    title: "卷",
+    direction: null,
+    metadata: {},
+    payload: { version: 1, sections: [] },
+    payload_version: 1,
+    status: "active",
+    created_by: "owner",
+    input_hash: null,
+    created_at: "2026-09-16T00:00:00Z",
+    updated_at: "2026-09-16T00:00:00Z",
+    ...overrides,
+  };
+}
 let paperRepo: IL3PaperRepository;
 let contextRepo: IL3ContextRepository;
 let service: L3PaperService;
@@ -131,10 +188,589 @@ beforeEach(() => {
   service = makeService(paperRepo, contextRepo);
 });
 
+describe("updateQuestion（改题面 2026-09-26）", () => {
+  const QUESTION_ID = "00000000-0000-4000-8000-000000000101";
+
+  function body(overrides: Record<string, unknown> = {}) {
+    return {
+      userId: USER_ID,
+      actor: { role: "owner" } as AuthoringActor,
+      questionId: QUESTION_ID,
+      stem: "  改过的题干  ",
+      options: [{ key: "A", text: "选项 A" }],
+      answer: { choice: "A" },
+      explanation: "  因为原文如此  ",
+      evidence: [] as Array<{ start: number; end: number; label: string }>,
+      ...overrides,
+    };
+  }
+
+  it("改成功：题干/解析 trim 后落库，input_hash 沿用原值", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID, stem: "改过的题干" }));
+    paperRepo = makePaperRepo({ updateQuestion: updateQuestion as never });
+    service = makeService(paperRepo, contextRepo);
+
+    const { question } = await service.updateQuestion(body());
+    expect(question.stem).toBe("改过的题干");
+    const call = (updateQuestion.mock.calls as unknown as Array<[Record<string, unknown>]>)[0]![0];
+    expect(call.stem).toBe("改过的题干");
+    expect(call.explanation).toBe("因为原文如此");
+    expect(call.input_hash).toBeNull(); // 原行沿用，不换身份指纹
+  });
+
+  it("护栏①：已有作答历史 → 409（答案历史不可改写），且不写库", async () => {
+    const updateQuestion = vi.fn(async () => questionRow());
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID })),
+      countQuestionAttempts: vi.fn(async () => 3),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+
+    await expect(service.updateQuestion(body())).rejects.toBeInstanceOf(ConflictError);
+    expect(updateQuestion).not.toHaveBeenCalled();
+  });
+
+  it("护栏②：被作文任务引用 → 409（题面冻结 = 新任务）", async () => {
+    const updateQuestion = vi.fn(async () => questionRow());
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID })),
+      listWritingTaskRefs: vi.fn(async () => [{ id: "t-1", title: "大作文 2019" }]),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+
+    await expect(service.updateQuestion(body())).rejects.toBeInstanceOf(ConflictError);
+    expect(updateQuestion).not.toHaveBeenCalled();
+  });
+
+  it("护栏③：被学习笔记引用**不**拦（field_hash → changed 机制正是为此存在）", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID })),
+      getQuestionDeleteBlockers: vi.fn(async () => [{ note_id: "n-1", title: "阅读笔记", status: "active", reference_count: 1 }]),
+      updateQuestion: updateQuestion as never,
+    } as never);
+    studyRefRepo = makeStudyRefRepo({
+      getQuestionDeleteBlockers: vi.fn(async () => [{ note_id: "n-1", title: "阅读笔记", status: "active", reference_count: 1 }]),
+    });
+    service = makeService(paperRepo, contextRepo);
+
+    await expect(service.updateQuestion(body())).resolves.toBeTruthy();
+    expect(updateQuestion).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejected 题 → 409（终态不可改）", async () => {
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, status: "rejected" })),
+    });
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.updateQuestion(body())).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("owner 可改 pending 题（ADR-0037：待录题必须能修，否则只能驳回不能改）", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID, status: "pending" }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, status: "pending" })),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.updateQuestion(body())).resolves.toBeTruthy();
+    const call = (updateQuestion.mock.calls as unknown as Array<[Record<string, unknown>]>)[0]![0];
+    expect(call.editable_statuses).toEqual(["active", "pending"]);
+  });
+
+  it("404：题不存在或非属主", async () => {
+    paperRepo = makePaperRepo({ findQuestionById: vi.fn(async () => null) });
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.updateQuestion(body())).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("证据越界 → 422 并带出正文长度（不静默丢弃用户填的锚点）", async () => {
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, source_id: SOURCE_ID })),
+      updateQuestion: vi.fn(async () => questionRow()),
+    });
+    contextRepo = withContent("短正文");
+    service = makeService(paperRepo, contextRepo);
+
+    await expect(service.updateQuestion(body({
+      evidence: [{ start: 0, end: 9999, label: "官方证据" }],
+    }))).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("证据合法 → 放行；畸形锚点被归一剔除（end<=start / 负 start / 空 label）", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, source_id: SOURCE_ID })),
+      updateQuestion: updateQuestion as never,
+    });
+    contextRepo = withContent("0123456789");
+    service = makeService(paperRepo, contextRepo);
+
+    await service.updateQuestion(body({
+      evidence: [
+        { start: 0, end: 4, label: " 证据A " },
+        { start: 0, end: 4, label: "证据A" }, // 去重
+        { start: 5, end: 5, label: "空区间" },  // end<=start → 剔除
+        { start: -1, end: 3, label: "负起点" }, // 负 start → 剔除
+        { start: 2, end: 6, label: "  " },      // 空 label → 剔除
+        { start: 0.5, end: 6, label: "小数起点" }, // 非整数 offset → 剔除
+      ],
+    }));
+    const call = (updateQuestion.mock.calls as unknown as Array<[{ evidence: unknown }]>)[0]![0];
+    expect(call.evidence).toEqual([{ start: 0, end: 4, label: "证据A" }]);
+  });
+
+  it("条件 UPDATE 落空 → 二次判别（并发下状态已变）", async () => {
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, status: "pending" })),
+      updateQuestion: vi.fn(async () => null),
+    });
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.updateQuestion(body())).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  /**
+   * 上面那条走的是**前门** 409（一进来就 archived），没进 `if (!question)`。
+   * 真正的竞态是：进来时 active，过护栏后 UPDATE 才落空（期间被别人删/驳回）。
+   * 两次 findQuestionById 必须给不同答案，否则这条分支永远测不到。
+   */
+  it("竞态：进来 active、UPDATE 落空 → 复判为 409 并带上最新 status", async () => {
+    const findQuestionById = vi.fn()
+      .mockResolvedValueOnce(questionRow({ id: QUESTION_ID, status: "active" }))
+      .mockResolvedValueOnce(questionRow({ id: QUESTION_ID, status: "rejected" }));
+    paperRepo = makePaperRepo({ findQuestionById: findQuestionById as never, updateQuestion: vi.fn(async () => null) });
+    service = makeService(paperRepo, contextRepo);
+
+    const err = await service.updateQuestion(body()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as { meta?: { status?: string } }).meta?.status).toBe("rejected");
+    expect(findQuestionById).toHaveBeenCalledTimes(2);
+  });
+
+  it("竞态：进来 active、UPDATE 落空、复判时题已不存在 → 404（不是 409）", async () => {
+    const findQuestionById = vi.fn()
+      .mockResolvedValueOnce(questionRow({ id: QUESTION_ID, status: "active" }))
+      .mockResolvedValueOnce(null);
+    paperRepo = makePaperRepo({ findQuestionById: findQuestionById as never, updateQuestion: vi.fn(async () => null) });
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.updateQuestion(body())).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("缺省可选列：options/answer/evidence 归零、explanation 归 null、ordinal 沿用原序", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, ordinal: 9 })),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+
+    await service.updateQuestion({
+      userId: USER_ID,
+      actor: { role: "owner" },
+      questionId: QUESTION_ID,
+      stem: "只改题干",
+    } as never);
+    const call = (updateQuestion.mock.calls as unknown as Array<[Record<string, unknown>]>)[0]![0];
+    expect(call.options).toEqual([]);
+    expect(call.answer).toEqual({});
+    expect(call.explanation).toBeNull();
+    expect(call.evidence).toEqual([]);
+    // ordinal 缺省 = 保持原位（PATCH 不打乱题单顺序）
+    expect(call.ordinal).toBe(9);
+  });
+
+  it("ordinal 显式给合法非负整数 → 采用新值", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, ordinal: 9 })),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+    await service.updateQuestion(body({ ordinal: 0 }));
+    const call = (updateQuestion.mock.calls as unknown as Array<[Record<string, unknown>]>)[0]![0];
+    expect(call.ordinal).toBe(0);
+  });
+
+  it("材料无正文（content_text=null）→ 跳过越界校验放行（无从核对，不假装有界）", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, source_id: SOURCE_ID })),
+      updateQuestion: updateQuestion as never,
+    });
+    // makeContextRepo 的默认 source 就是 content_text: null
+    contextRepo = makeContextRepo();
+    service = makeService(paperRepo, contextRepo);
+
+    await expect(service.updateQuestion(body({
+      evidence: [{ start: 0, end: 9999, label: "越界" }],
+    }))).resolves.toBeTruthy();
+  });
+
+  it("题无 source_id → 不查正文，越界检查整体跳过", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: QUESTION_ID }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: QUESTION_ID, source_id: null })),
+      updateQuestion: updateQuestion as never,
+    });
+    const findSourceById = vi.fn(async () => null);
+    contextRepo = makeContextRepo({ findSourceById: findSourceById as never });
+    service = makeService(paperRepo, contextRepo);
+
+    await expect(service.updateQuestion(body({
+      evidence: [{ start: 0, end: 9999, label: "越界" }],
+    }))).resolves.toBeTruthy();
+    expect(findSourceById).not.toHaveBeenCalled();
+  });
+
+  it("stem 必填（空题干 → 422）", async () => {
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.updateQuestion(body({ stem: "   " }))).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
+/**
+ * 录题闸门（ADR-0037 决策 2/3/9 的 service 侧）。
+ *
+ * 这些断言锁的是**信任模型**，不是业务规则：agent 的产物必须落 pending、
+ * created_by 必须是服务端认定的 agentId、且 agent 绝不能改 active 题。
+ * 任何一条被"顺手优化"掉，闸门就只剩 UI 提示。
+ */
+describe("录题闸门 · agent 写入（ADR-0037）", () => {
+  const AGENT = { role: "agent", agentId: "claude-code" } as const;
+
+  it("agent 录题 → status='pending' + created_by=agentId（服务端认定）", async () => {
+    const insertQuestion = vi.fn(async (input: Record<string, unknown>) => questionRow({ id: "q-1", ...input }));
+    paperRepo = makePaperRepo({ insertQuestion: insertQuestion as never });
+    service = makeService(paperRepo, contextRepo);
+
+    await service.createQuestion({
+      userId: USER_ID,
+      actor: AGENT,
+      questionType: "reading_choice",
+      sourceId: SOURCE_ID,
+      stem: "21. 题干",
+      answer: { choice: "B" },
+    });
+    const call = insertQuestion.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.status).toBe("pending");
+    expect(call.created_by).toBe("claude-code");
+  });
+
+  it("owner 录题仍 active + created_by='owner'（闸门不误伤人的通道）", async () => {
+    const insertQuestion = vi.fn(async (input: Record<string, unknown>) => questionRow({ id: "q-1", ...input }));
+    paperRepo = makePaperRepo({ insertQuestion: insertQuestion as never });
+    service = makeService(paperRepo, contextRepo);
+
+    await service.createQuestion({
+      userId: USER_ID,
+      actor: { role: "owner" },
+      questionType: "reading_choice",
+      sourceId: SOURCE_ID,
+      stem: "21. 题干",
+    });
+    const call = insertQuestion.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.status).toBe("active");
+    expect(call.created_by).toBe("owner");
+  });
+
+  it("agent 建卷 → 卷行 active、**卷内每道题** pending（闸门落在题上）", async () => {
+    const insertQuestion = vi.fn(async (input: Record<string, unknown>) => questionRow({ id: `q-${input.ordinal}`, ...input }));
+    const insertPaper = vi.fn(async (input: Record<string, unknown>) => ({ ...paperStub(), ...input }));
+    paperRepo = makePaperRepo({ insertQuestion: insertQuestion as never, insertPaper: insertPaper as never });
+    service = makeService(paperRepo, contextRepo);
+
+    await service.createPaper({
+      userId: USER_ID,
+      actor: AGENT,
+      title: "agent 建的卷",
+      sections: [{
+        title: "Text 1",
+        questionType: "reading_choice",
+        sourceId: SOURCE_ID,
+        questions: [{ stem: "第 1 题" }, { stem: "第 2 题" }],
+      }],
+    });
+    expect(insertQuestion).toHaveBeenCalledTimes(2);
+    for (const call of insertQuestion.mock.calls) {
+      expect((call[0] as Record<string, unknown>).status).toBe("pending");
+    }
+    const paperCall = insertPaper.mock.calls[0]![0] as Record<string, unknown>;
+    // 卷行本身是生命周期轴（draft|active|archived），无 pending 值；见 ADR-0037 补记一
+    expect(paperCall.status).toBe("active");
+  });
+
+  it("agent 改 pending 题 → 放行，但谓词只给 {pending}", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: "q-1", status: "pending" }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: "q-1", status: "pending" })),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+
+    await expect(service.updateQuestion({
+      userId: USER_ID, actor: AGENT, questionId: "q-1", stem: "改过的题干",
+    })).resolves.toBeTruthy();
+    const call = (updateQuestion.mock.calls as unknown as Array<[Record<string, unknown>]>)[0]![0];
+    expect(call.editable_statuses).toEqual(["pending"]);
+  });
+
+  it("agent 改 active 题 → 409（绕过采纳闸门改用户已认定的题）", async () => {
+    const updateQuestion = vi.fn(async () => questionRow({ id: "q-1", status: "active" }));
+    paperRepo = makePaperRepo({
+      findQuestionById: vi.fn(async () => questionRow({ id: "q-1", status: "active" })),
+      updateQuestion: updateQuestion as never,
+    });
+    service = makeService(paperRepo, contextRepo);
+
+    const err = await service.updateQuestion({
+      userId: USER_ID, actor: AGENT, questionId: "q-1", stem: "偷改",
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as { meta?: { status?: string } }).meta?.status).toBe("active");
+    expect(updateQuestion).not.toHaveBeenCalled();
+  });
+});
+
+/** 待录核对面（ADR-0037 决策 6）：答案键在行内，证据切片由服务端算。 */
+describe("listPendingQuestions（待录核对面）", () => {
+  it("给出每条锚点的原文切片；越界如实标 outOfRange（不静默截断）", async () => {
+    paperRepo = makePaperRepo({
+      listPendingQuestions: vi.fn(async () => ({
+        total: 1,
+        items: [questionRow({
+          id: "q-1", status: "pending", created_by: "claude-code", source_id: SOURCE_ID,
+          answer: { choice: "B" },
+          evidence: [
+            { start: 0, end: 11, label: "首句" },
+            { start: 5, end: 999, label: "越界锚点" },
+          ],
+        })],
+      })),
+    });
+    contextRepo = withContent("The passage.");
+    service = makeService(paperRepo, contextRepo);
+
+    const page = await service.listPendingQuestions({ userId: USER_ID, limit: 50, offset: 0 });
+    expect(page.total).toBe(1);
+    const item = page.items[0]!;
+    // 决策 6：答案键必须可核对，否则「采纳」是盲签
+    expect(item.question.answer).toEqual({ choice: "B" });
+    expect(item.sourceTitle).toBe("2023 英语一 Text 1");
+    expect(item.evidenceExcerpts[0]).toEqual({ excerpt: "The passage", outOfRange: false });
+    expect(item.evidenceExcerpts[1]).toEqual({ excerpt: null, outOfRange: true });
+  });
+
+  it("无 source_id 的题（fileKey 题组）→ 无正文可比对，如实标 outOfRange", async () => {
+    paperRepo = makePaperRepo({
+      listPendingQuestions: vi.fn(async () => ({
+        total: 1,
+        items: [questionRow({
+          id: "q-2", status: "pending", source_id: null, file_key: "trans-2023-1",
+          evidence: [{ start: 0, end: 4, label: "x" }],
+        })],
+      })),
+    });
+    service = makeService(paperRepo, contextRepo);
+    const page = await service.listPendingQuestions({ userId: USER_ID, limit: 50, offset: 0 });
+    expect(page.items[0]!.evidenceExcerpts[0]).toEqual({ excerpt: null, outOfRange: true });
+    expect(page.items[0]!.sourceTitle).toBeNull();
+  });
+
+  it("材料查不到 → 不编造切片（outOfRange），不抛", async () => {
+    paperRepo = makePaperRepo({
+      listPendingQuestions: vi.fn(async () => ({
+        total: 1,
+        items: [questionRow({
+          id: "q-3", status: "pending", source_id: SOURCE_ID,
+          evidence: [{ start: 0, end: 4, label: "x" }],
+        })],
+      })),
+    });
+    contextRepo = makeContextRepo({ findSourcesByIds: vi.fn(async () => []) as never });
+    service = makeService(paperRepo, contextRepo);
+    const page = await service.listPendingQuestions({ userId: USER_ID, limit: 50, offset: 0 });
+    expect(page.items[0]!.evidenceExcerpts[0]).toEqual({ excerpt: null, outOfRange: true });
+  });
+});
+
+/** 采纳 / 驳回（ADR-0037 决策 4：逐条判定，不整批静默）。 */
+describe("acceptQuestions / rejectQuestion（ADR-0037 决策 4）", () => {
+  const Q1 = "00000000-0000-4000-8000-000000000101";
+  const Q2 = "00000000-0000-4000-8000-000000000102";
+  const Q3 = "00000000-0000-4000-8000-000000000103";
+
+  it("部分成功逐条可见：1 采纳 + 1 已非 pending + 1 不存在", async () => {
+    paperRepo = makePaperRepo({
+      acceptPendingQuestions: vi.fn(async () => [Q1]),
+      findQuestionById: vi.fn(async (_userId: string, id: string) =>
+        (id === Q2 ? questionRow({ id: Q2, status: "active" }) : null),
+      ),
+    });
+    service = makeService(paperRepo, contextRepo);
+
+    const result = await service.acceptQuestions({ userId: USER_ID, questionIds: [Q1, Q2, Q3] });
+    expect(result.acceptedCount).toBe(1);
+    expect(result.results).toEqual([
+      { id: Q1, ok: true, status: "active" },
+      { id: Q2, ok: false, reason: "not_pending", status: "active" },
+      { id: Q3, ok: false, reason: "not_found" },
+    ]);
+  });
+
+  it("超过 200 条 → 422（不给一条超长 UPDATE）", async () => {
+    service = makeService(paperRepo, contextRepo);
+    const ids = Array.from({ length: 201 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    await expect(service.acceptQuestions({ userId: USER_ID, questionIds: ids })).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("驳回：pending → rejected；非 pending → 409；非属主 → 404", async () => {
+    paperRepo = makePaperRepo({
+      rejectPendingQuestion: vi.fn(async () => true),
+      findQuestionById: vi.fn(async () => questionRow({ id: Q1, status: "rejected" })),
+    });
+    service = makeService(paperRepo, contextRepo);
+    const ok = await service.rejectQuestion({ userId: USER_ID, questionId: Q1 });
+    expect(ok.question.status).toBe("rejected");
+
+    paperRepo = makePaperRepo({
+      rejectPendingQuestion: vi.fn(async () => false),
+      findQuestionById: vi.fn(async () => questionRow({ id: Q1, status: "active" })),
+    });
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.rejectQuestion({ userId: USER_ID, questionId: Q1 })).rejects.toBeInstanceOf(ConflictError);
+
+    paperRepo = makePaperRepo({ rejectPendingQuestion: vi.fn(async () => false), findQuestionById: vi.fn(async () => null) });
+    service = makeService(paperRepo, contextRepo);
+    await expect(service.rejectQuestion({ userId: USER_ID, questionId: Q1 })).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("updatePaper（改卷 2026-09-26）", () => {
+  const PAPER_ID = "00000000-0000-4000-8000-000000000201";
+  const Q1 = "00000000-0000-4000-8000-000000000101";
+  const Q2 = "00000000-0000-4000-8000-000000000102";
+
+  function paperRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: PAPER_ID,
+      user_id: USER_ID,
+      title: "2023 模拟卷",
+      direction: "考研",
+      metadata: {},
+      payload: { version: 1, sections: [] },
+      payload_version: 1,
+      status: "active",
+      created_by: "owner",
+      input_hash: null,
+      created_at: "2026-09-16T00:00:00Z",
+      updated_at: "2026-09-16T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function body(overrides: Record<string, unknown> = {}) {
+    return {
+      userId: USER_ID,
+      paperId: PAPER_ID,
+      title: "  2023 模拟卷（修订）  ",
+      direction: "考研" as const,
+      sections: [
+        { key: "s1", title: "Text 2", questionType: "reading_choice" as const, sourceId: SOURCE_ID, questionIds: [Q1, Q2] },
+      ],
+      ...overrides,
+    };
+  }
+
+  function withPaper(overrides: Partial<IL3PaperRepository> = {}) {
+    paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => paperRow() as never),
+      findActiveQuestionsByIds: vi.fn(async () => [questionRow({ id: Q1 }), questionRow({ id: Q2 })] as never),
+      updatePaper: vi.fn(async () => paperRow({ title: "2023 模拟卷（修订）" }) as never),
+      ...overrides,
+    });
+    service = makeService(paperRepo, contextRepo);
+  }
+
+  it("改成功：题单引用可换（把一道题从卷里拿掉），标题 trim", async () => {
+    withPaper();
+    const { paper } = await service.updatePaper(body());
+    expect(paper.title).toBe("2023 模拟卷（修订）");
+    const call = (paperRepo.updatePaper as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { payload: { sections: Array<{ questionIds: string[] }> } };
+    expect(call.payload.sections[0]!.questionIds).toEqual([Q1, Q2]);
+  });
+
+  it("引用了不属主/非 active 的题 → 422（别人的题 id 猜到也塞不进来）", async () => {
+    withPaper({ findActiveQuestionsByIds: vi.fn(async () => [questionRow({ id: Q1 })] as never) });
+    await expect(service.updatePaper(body())).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("空 sections → 422（卷不能没有 section）", async () => {
+    withPaper();
+    await expect(service.updatePaper(body({ sections: [] }))).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("非 active 卷 → 409", async () => {
+    withPaper({ findPaperById: vi.fn(async () => paperRow({ status: "archived" }) as never) });
+    await expect(service.updatePaper(body())).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it("404：卷不存在或非属主", async () => {
+    withPaper({ findPaperById: vi.fn(async () => null) as never });
+    await expect(service.updatePaper(body())).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("条件 UPDATE 落空 → 二次判别", async () => {
+    withPaper({
+      findPaperById: vi.fn(async () => paperRow({ status: "archived" }) as never),
+      updatePaper: vi.fn(async () => null) as never,
+    });
+    await expect(service.updatePaper(body())).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  /** 同 updateQuestion：竞态分支要「两次 findPaperById 不同答案」才进得去。 */
+  it("竞态：进来 active、UPDATE 落空 → 复判 409 带最新 status", async () => {
+    const findPaperById = vi.fn()
+      .mockResolvedValueOnce(paperRow())
+      .mockResolvedValueOnce(paperRow({ status: "deleted" }));
+    withPaper({ findPaperById: findPaperById as never, updatePaper: vi.fn(async () => null) as never });
+    const err = await service.updatePaper(body()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as { meta?: { status?: string } }).meta?.status).toBe("deleted");
+  });
+
+  it("竞态：进来 active、UPDATE 落空、复判时卷已不存在 → 404", async () => {
+    const findPaperById = vi.fn().mockResolvedValueOnce(paperRow()).mockResolvedValueOnce(null);
+    withPaper({ findPaperById: findPaperById as never, updatePaper: vi.fn(async () => null) as never });
+    await expect(service.updatePaper(body())).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("缺省 direction → 落 null（不改方向，不是默认「通用」）", async () => {
+    withPaper();
+    await service.updatePaper({ userId: USER_ID, paperId: PAPER_ID, title: "只改标题", sections: body().sections } as never);
+    const call = (paperRepo.updatePaper as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { direction: unknown };
+    expect(call.direction).toBeNull();
+  });
+
+  it("缺省 metadata → 沿用原 metadata（不抹掉卷上的说明）", async () => {
+    withPaper({ findPaperById: vi.fn(async () => paperRow({ metadata: { note: "原说明" } }) as never) });
+    await service.updatePaper(body({ metadata: undefined }));
+    const call = (paperRepo.updatePaper as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { metadata: unknown };
+    expect(call.metadata).toEqual({ note: "原说明" });
+  });
+
+  it("缺省 sections → 422（`?? []` 先落地，再判空）", async () => {
+    withPaper();
+    await expect(service.updatePaper(body({ sections: undefined }))).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
 describe("createPaper", () => {
   it("creates questions in one transaction, assembles the v1 payload and auto-tags sources", async () => {
     const result = await service.createPaper({
       userId: USER_ID,
+      actor: { role: 'owner' } as AuthoringActor,
       title: "2023 英语一真题",
       direction: "考研",
       sections: [
@@ -205,6 +841,7 @@ describe("createPaper", () => {
   it("rejects reading-type sections without a source and sourceless sections without fileKey", async () => {
     await expect(service.createPaper({
       userId: USER_ID,
+      actor: { role: 'owner' } as AuthoringActor,
       title: "坏卷",
       sections: [{ title: "Text 1", questionType: "reading_choice", questions: [{ stem: "x" }] }],
     })).rejects.toBeInstanceOf(ValidationError);
@@ -212,6 +849,7 @@ describe("createPaper", () => {
 
     await expect(service.createPaper({
       userId: USER_ID,
+      actor: { role: 'owner' } as AuthoringActor,
       title: "坏卷",
       sections: [{ title: "翻译", questionType: "sentence_translation", questions: [{ stem: "x" }] }],
     })).rejects.toBeInstanceOf(ValidationError);
@@ -222,6 +860,7 @@ describe("createPaper", () => {
     const foreignService = makeService(paperRepo, foreignContext);
     await expect(foreignService.createPaper({
       userId: USER_ID,
+      actor: { role: 'owner' } as AuthoringActor,
       title: "挂他人材料",
       sections: [{
         title: "Text 1", questionType: "reading_choice", sourceId: SOURCE_ID,
@@ -231,7 +870,7 @@ describe("createPaper", () => {
     expect(paperRepo.insertQuestion).not.toHaveBeenCalled();
 
     await expect(service.createPaper({
-      userId: USER_ID, title: "空卷", sections: [],
+      userId: USER_ID, actor: { role: "owner" } as AuthoringActor, title: "空卷", sections: [],
     })).rejects.toBeInstanceOf(ValidationError);
   });
 });
@@ -240,6 +879,7 @@ describe("createQuestion", () => {
   it("inserts a sourceless essay question into a file_key group", async () => {
     await service.createQuestion({
       userId: USER_ID,
+      actor: { role: "owner" } as AuthoringActor,
       questionType: "long_essay",
       fileKey: "essay-2023",
       stem: "图画作文题面",
@@ -255,6 +895,7 @@ describe("createQuestion", () => {
   it("requires a source for reading questions and 404s on non-owned sources", async () => {
     await expect(service.createQuestion({
       userId: USER_ID,
+      actor: { role: "owner" } as AuthoringActor,
       questionType: "cloze",
       stem: "第 1 空",
     })).rejects.toBeInstanceOf(ValidationError);
@@ -263,6 +904,7 @@ describe("createQuestion", () => {
     const foreignService = makeService(paperRepo, foreignContext);
     await expect(foreignService.createQuestion({
       userId: USER_ID,
+      actor: { role: "owner" } as AuthoringActor,
       questionType: "cloze",
       sourceId: SOURCE_ID,
       stem: "第 1 空",
@@ -272,6 +914,7 @@ describe("createQuestion", () => {
   it("tags the source space when the question hangs off a source", async () => {
     await service.createQuestion({
       userId: USER_ID,
+      actor: { role: "owner" } as AuthoringActor,
       questionType: "grammar_blank",
       sourceId: SOURCE_ID,
       stem: "语法填空",

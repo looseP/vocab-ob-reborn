@@ -60,6 +60,13 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   { file: "src/http/routes/l3/proposals.ts", maxLines: 160, maxRoutes: 8 },
   { file: "src/http/routes/l3/recommendations.ts", maxLines: 120, maxRoutes: 6 },
   { file: "src/http/routes/l3/shared.ts", maxLines: 40, maxRoutes: 0 },
+  // 2026-09-26 ADR-0037：录题族独立薄路由（建题/建卷/待录/采纳/驳回/批量采纳 6 端点）。
+  // papers.ts 受棘轮冻结在基线，录题写面必须外迁 —— 同 papers-update/grading 先例。
+  // bootstrap 限额按建文件时实测规模留一档余量（实测 ~92 行 / 6 路由）。
+  { file: "src/http/routes/l3/papers-authoring.ts", maxLines: 120, maxRoutes: 6 },
+  // 录题写入者身份（ADR-0037）：纯助手、零路由（l2-shared.ts 先例）。独立成文件是
+  // 因为 l3/shared.ts 已冻结在基线，且它与"解析助手"不同族。
+  { file: "src/http/routes/l3/authoring-actor.ts", maxLines: 30, maxRoutes: 0 },
   // 2026-09-09 棘轮扩容：把剩余三个最大路由文件按实测现状钉进棘轮
   // （bootstrap 限额 = 实测值，只许经基线比较上行，不许静默膨胀）。
   { file: "src/http/routes/review.ts", maxLines: 259, maxRoutes: 14 },

@@ -677,6 +677,13 @@ export interface L3PaperDetail extends Omit<L3PaperRow, "payload"> {
 import type { AnnotationStage } from "./l3-annotations";
 import type { SealMode, SheetScope, SheetStatus } from "./l3-sheets";
 import type { GradingVerdict } from "./l3-grading";
+export {
+  resolveAuthoringLifecycle,
+  editableQuestionStatuses,
+  agentMayWrite,
+  L3_AUTHORING_CAPABILITIES,
+} from "./l3-authoring";
+export type { AuthoringActor, AuthoringLifecycle } from "./l3-authoring";
 export type { AnnotationStage, GradingVerdict, SealMode, SheetScope, SheetStatus };
 
 // ── 作文子空间（W1 冻结，ADR《writing-workspace》）────────────────────────

@@ -393,6 +393,95 @@ describe("L3PapersPage 粘贴建卷", () => {
     });
     expect(addToastMock).toHaveBeenCalledWith("success", expect.stringContaining("已建卷"));
   });
+
+  /**
+   * 解析与官方证据（2026-09-26）：此前建卷表单**从不收集**这两项 ——
+   * API 与 schema 都接受，但 UI 没有入口，于是应用内建的题永远"无解析可依"，
+   * 评卷读面（grading-context 带 explanation/evidence）拿不到判分依据。
+   */
+  it("建卷时把官方解析与证据锚点一并提交", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [{ id: SOURCE_ID, title: "2023 英一 Text 1" }] })
+      // 点开证据编辑器时懒加载原文
+      .mockResolvedValueOnce({ source_content: "The trend will continue.", questions: [] })
+      .mockResolvedValueOnce({ paper: { id: "paper-1" }, questions: [], questionCount: 1 })
+      .mockResolvedValueOnce({ items: [] });
+
+    await renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "粘贴建卷" }));
+    });
+    await waitFor(() => expect(screen.getByText("2023 英一 Text 1")).toBeTruthy());
+
+    const sourceSelect = screen.getByText(/选择阅读材料/).closest("select") as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText(/试卷标题/), { target: { value: "2023 英语一真题" } });
+      fireEvent.change(screen.getByPlaceholderText(/节标题/), { target: { value: "Text 1" } });
+      fireEvent.change(sourceSelect, { target: { value: SOURCE_ID } });
+      fireEvent.change(screen.getByPlaceholderText("题干"), { target: { value: "21. 题干" } });
+      fireEvent.change(screen.getByPlaceholderText("选项 A"), { target: { value: "选项 A 内容" } });
+      fireEvent.click(screen.getByDisplayValue("A"));
+      fireEvent.change(screen.getByTestId("build-explanation-0-0"), {
+        target: { value: "作者态度在第三段由 will 转向 must，是关键转折。" },
+      });
+    });
+
+    // 证据编辑器：有阅读材料才出现入口；点开后按需拉原文
+    expect(screen.getByTestId("evidence-editor")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("evidence-toggle"));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("evidence-passage")).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("建卷"));
+    });
+    await waitFor(() => {
+      const post = apiFetchMock.mock.calls.find((call) => (call[1] as RequestInit | undefined)?.method === "POST");
+      expect(post).toBeTruthy();
+      const body = JSON.parse((post![1] as RequestInit).body as string);
+      const question = body.sections[0].questions[0];
+      expect(question.explanation).toBe("作者态度在第三段由 will 转向 must，是关键转折。");
+      // 未标证据时不下 evidence 键（服务端归一为 []，不制造"用户标过证据"的错觉）
+      expect(question.evidence).toBeUndefined();
+    });
+  });
+
+  it("空解析/空证据不上报文（不制造噪音字段）", async () => {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    apiFetchMock
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValueOnce({ items: [{ id: SOURCE_ID, title: "2023 英一 Text 1" }] })
+      .mockResolvedValueOnce({ paper: { id: "paper-1" }, questions: [], questionCount: 1 })
+      .mockResolvedValueOnce({ items: [] });
+
+    await renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "粘贴建卷" }));
+    });
+    await waitFor(() => expect(screen.getByText("2023 英一 Text 1")).toBeTruthy());
+    const sourceSelect = screen.getByText(/选择阅读材料/).closest("select") as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText(/试卷标题/), { target: { value: "卷" } });
+      fireEvent.change(screen.getByPlaceholderText(/节标题/), { target: { value: "Text 1" } });
+      fireEvent.change(sourceSelect, { target: { value: SOURCE_ID } });
+      fireEvent.change(screen.getByPlaceholderText("题干"), { target: { value: "题干" } });
+      fireEvent.change(screen.getByPlaceholderText("选项 A"), { target: { value: "A 内容" } });
+      fireEvent.click(screen.getByDisplayValue("A"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText("建卷"));
+    });
+    await waitFor(() => {
+      const post = apiFetchMock.mock.calls.find((call) => (call[1] as RequestInit | undefined)?.method === "POST");
+      const body = JSON.parse((post![1] as RequestInit).body as string);
+      expect(body.sections[0].questions[0].explanation).toBeUndefined();
+      expect(body.sections[0].questions[0].evidence).toBeUndefined();
+    });
+  });
 });
 
 describe("L3PapersPage 深链（批次二）", () => {

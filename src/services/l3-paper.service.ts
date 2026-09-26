@@ -3,7 +3,7 @@
  *
  * 边界：只碰 l3_questions/l3_papers 与 l3_sources/l3_source_spaces（自动打标）。
  * 不碰 context/occurrence、不碰 FSRS、不引入 LLM。owner 直写面（V1）；agent
- * 双级（pending/trusted 直写）后续波次在同一代码路径按角色分叉。
+ * 写入按 ADR-0037 的 pending 闸门在同一代码路径分叉（agent 只写 pending，owner 采纳）。
  */
 
 import type { PoolClient } from "pg";
@@ -21,17 +21,20 @@ import type {
   L3QuestionRow,
   L3SubSpace,
 } from "../domain";
+import { editableQuestionStatuses, resolveAuthoringLifecycle } from "../domain/l3-authoring";
 import {
   L3_QUESTION_TYPES,
   PAPER_PAYLOAD_VERSION,
   questionTypeAllowsSourceless,
   questionTypeSpace,
   validatePaperPayloadShape,
+  type L3EvidenceAnchor,
   type L3PaperPayload,
   type L3PaperSection,
   type L3QuestionType,
 } from "../domain/l3-question-types";
 import type {
+  AcceptQuestionOutcome,
   CreateL3PaperInput,
   CreateL3PaperSectionInput,
   CreateL3QuestionInput,
@@ -39,12 +42,52 @@ import type {
   GetL3PracticeFileInput,
   ListL3PapersInput,
   ListL3PracticeFilesInput,
+  PendingQuestionItem,
+  UpdateL3PaperInput,
+  UpdateL3PaperSectionInput,
+  UpdateL3QuestionInput,
 } from "../schemas/service";
 
 type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 
 const DIRECTIONS = ["通用", "考研", "雅思"] as const;
+
+/**
+ * 证据锚点归一（2026-09-26）。形状已由 HTTP schema 把关（start/end/label +
+ * end>start）；这里做**读侧同一份**的防御性归一，让 service 层的两个调用点
+ * （createPaper 逐题 / updateQuestion）不必各自重复 cast。
+ * 保持顺序（阅读顺序 = 证据出现顺序），去重按 (start,end,label)。
+ */
+function normalizeEvidence(input: readonly L3EvidenceAnchor[]): L3EvidenceAnchor[] {
+  const seen = new Set<string>();
+  const out: L3EvidenceAnchor[] = [];
+  for (const anchor of input) {
+    const label = anchor.label.trim();
+    if (!Number.isInteger(anchor.start) || !Number.isInteger(anchor.end)) continue;
+    if (anchor.start < 0 || anchor.end <= anchor.start || label.length === 0) continue;
+    const key = `${anchor.start}:${anchor.end}:${label}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ start: anchor.start, end: anchor.end, label });
+  }
+  return out;
+}
+
+/** 越界证据当场 422：正文长度是用户可核对的事实，错误信息必须带上它。 */
+function assertEvidenceWithinText(
+  evidence: readonly L3EvidenceAnchor[],
+  textLength: number,
+  sourceId: string,
+): void {
+  const outOfRange = evidence.find((anchor) => anchor.end > textLength);
+  if (outOfRange) {
+    throw new ValidationError(
+      `evidence 越界：正文长度 ${textLength}，但锚点 end=${outOfRange.end}（sourceId=${sourceId}）`,
+      "evidence",
+    );
+  }
+}
 
 function requireEnum(value: string, allowed: readonly string[], field: string): void {
   if (!allowed.includes(value)) {
@@ -119,6 +162,8 @@ export class L3PaperService {
         const source = await repos.l3Context.findSourceById(input.userId, sourceId);
         if (!source) throw new NotFoundError("L3Source", sourceId);
       }
+      // ADR-0037：status/created_by 由服务端按角色认定（agent → pending + agentId）。
+      const lifecycle = resolveAuthoringLifecycle(input.actor);
       const question = await repos.l3Paper.insertQuestion({
         user_id: input.userId,
         source_id: sourceId,
@@ -128,9 +173,11 @@ export class L3PaperService {
         ordinal,
         stem: input.stem.trim(),
         options: (input.options ?? []) as unknown as Json,
-        answer: (input.answer ?? {}) as Json,
+        answer: (input.answer ?? {}) as unknown as Json,
         explanation: input.explanation?.trim() || null,
         evidence: (input.evidence ?? []) as unknown as Json,
+        status: lifecycle.status,
+        created_by: lifecycle.createdBy,
       });
       if (sourceId) {
         await repos.l3Context.ensureSourceSpaces(input.userId, sourceId, [questionTypeSpace(input.questionType)]);
@@ -158,6 +205,10 @@ export class L3PaperService {
       const created: L3QuestionRow[] = [];
       const payloadSections: L3PaperSection[] = [];
       const sourceSpaces = new Map<string, Set<string>>();
+      // ADR-0037 补记一：闸门只落在**题**上。卷行立即 active（纸面 status 轴是
+      // draft|active|archived，无 pending），但 agent 建的卷里每道题都是 pending ——
+      // 于是该卷在任何读面都解析不到可做的题，「建了但还不可做」，语义正确。
+      const lifecycle = resolveAuthoringLifecycle(input.actor);
 
       for (let i = 0; i < input.sections.length; i += 1) {
         const section = input.sections[i];
@@ -188,9 +239,11 @@ export class L3PaperService {
             ordinal,
             stem: body.stem.trim(),
             options: (body.options ?? []) as unknown as Json,
-            answer: (body.answer ?? {}) as Json,
+            answer: (body.answer ?? {}) as unknown as Json,
             explanation: body.explanation?.trim() || null,
             evidence: (body.evidence ?? []) as unknown as Json,
+            status: lifecycle.status,
+            created_by: lifecycle.createdBy,
           });
           created.push(row);
           questionIds.push(row.id);
@@ -230,6 +283,278 @@ export class L3PaperService {
       }
 
       return { paper, questions: created, questionCount: created.length };
+    });
+  }
+
+  /**
+   * 改题面（2026-09-26）。
+   *
+   * 为什么需要：改题面此前**没有出口**——`deleteQuestion` 对"被 active 卷面/作文
+   * 任务/学习笔记引用"的题返 409，于是「卷面里一道题有错字」既不能改也不能删，
+   * 是个死胡同。
+   *
+   * 护栏（题面冻结，与删题同族但更宽——允许"没人做过"的题改）：
+   *  - **已有作答历史 → 409**：attempts 记的是"当时那道题"的作答与判分；改题面
+   *    等于让历史描述另一道题（与 ADR-0034「attempt 只存作答事实、判定归
+   *    grading_results」同源的不变式：判定的对象必须稳定）。
+   *  - **被作文任务引用 → 409**：题面冻结是《writing-workspace》§2 的钉死条款
+   *    （改题面 = 新任务）。
+   *  - **被学习笔记引用 → 放行**：那正是 N2 chain01 的 `field_hash` → `changed`
+   *    机制存在的理由（引用快照不变、状态转为"底层已改"并提示），拦下来反而
+   *    让机制无从触发。
+   *  - 被 active 卷面引用但无人作答 → 放行（题单在开纸时已定格，见 0046；改题面
+   *    不改变任何已定格的题单）。
+   *
+   * **角色闸门（ADR-0037）**：`editableQuestionStatuses` 给出可改状态集合 ——
+   * owner = {active, pending}、agent = {pending}。两条纪律：
+   *  - owner 能改 pending 是**必需**的：待录题就是给 owner 核对并修的，看见了错
+   *    答案键却只能驳回不能改，等于把用户逼回手录。
+   *  - agent 绝不能改 active：那等于绕过采纳闸门静默改掉用户已认定的题。闸门落在
+   *    UPDATE 谓词（见 repository.updateQuestion 的 editable_statuses），不是应用层
+   *    的「先读后判」——后者有 TOCTOU 窗口。
+   */
+  async updateQuestion(input: UpdateL3QuestionInput): Promise<{ question: L3QuestionRow }> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.stem, "stem");
+    const editableStatuses = editableQuestionStatuses(input.actor);
+
+    return this.withActor(input.userId, async (repos) => {
+      const existing = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
+      if (!existing) throw new NotFoundError("L3Question", input.questionId);
+      if (!editableStatuses.includes(existing.status)) {
+        throw new ConflictError(
+          input.actor.role === "agent"
+            ? "Agents can only edit pending（待录）题；已采纳的题面只有 owner 能改"
+            : "Only active or pending questions can be edited",
+          undefined,
+          {
+            entityType: "question",
+            id: input.questionId,
+            status: existing.status,
+          },
+        );
+      }
+
+      const attemptCount = await repos.l3Paper.countQuestionAttempts(input.userId, input.questionId);
+      if (attemptCount > 0) {
+        throw new ConflictError(
+          "Cannot edit a question that already has answer history（答案历史不可改写；请复制为新题）",
+          undefined,
+          {
+            entityType: "question",
+            id: input.questionId,
+            blockers: { attempts: attemptCount },
+          },
+        );
+      }
+
+      const writingRefs = await repos.l3Paper.listWritingTaskRefs(input.userId, input.questionId);
+      if (writingRefs.length > 0) {
+        throw new ConflictError("Cannot edit a question referenced by an active writing task", undefined, {
+          entityType: "question",
+          id: input.questionId,
+          blockers: { writingTasks: writingRefs.map((t) => ({ id: t.id, title: t.title })) },
+        });
+      }
+
+      // 证据锚点：形状已由 HTTP schema 把关；这里补**越界**检查——offset 落在材料
+      // 正文之外时，读侧只会静默丢弃该锚点（buildPassageSpans.validRange），
+      // 那等于用户白填一个证据。改为当场 422 并说清正文长度。
+      const evidence = normalizeEvidence(input.evidence ?? []);
+      if (evidence.length > 0 && existing.source_id) {
+        const source = await repos.l3Context.findSourceById(input.userId, existing.source_id);
+        const textLength = source?.content_text?.length ?? null;
+        if (textLength !== null) assertEvidenceWithinText(evidence, textLength, existing.source_id);
+      }
+
+      const question = await repos.l3Paper.updateQuestion({
+        question_id: input.questionId,
+        user_id: input.userId,
+        stem: input.stem.trim(),
+        options: (input.options ?? []) as unknown as Json,
+        answer: (input.answer ?? {}) as unknown as Json,
+        explanation: input.explanation?.trim() || null,
+        evidence: evidence as unknown as Json,
+        ordinal: Number.isInteger(input.ordinal) && (input.ordinal as number) >= 0 ? (input.ordinal as number) : existing.ordinal,
+        input_hash: existing.input_hash,
+        editable_statuses: editableStatuses,
+      });
+      if (!question) {
+        // 条件 UPDATE 落空 = 并发下状态已变（被删/被驳回/被采纳）：与删题同款二次判别。
+        const latest = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
+        if (!latest) throw new NotFoundError("L3Question", input.questionId);
+        throw new ConflictError("L3 question is no longer editable", undefined, {
+          entityType: "question",
+          id: input.questionId,
+          status: latest.status,
+        });
+      }
+      return { question };
+    });
+  }
+
+  /**
+   * 待录题列表（ADR-0037 决策 6）：owner 的**核对面**。
+   *
+   * 决策 6 的硬要求：采纳是一次可核对的判断，所以本读面必须带足核对所需的事实 ——
+   * **答案键**（question.answer 已在行内）与**每条证据锚点在原文里的实际切片**。
+   * 切片由服务端算：让前端自己按 offset 去猜，猜错就是让 owner 盲签，闸门白设。
+   * 越界锚点如实标 `outOfRange`（不静默截成一个看似合法的短句）。
+   */
+  async listPendingQuestions(input: {
+    userId: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: PendingQuestionItem[]; total: number }> {
+    requireNonEmpty(input.userId, "userId");
+    return this.withActor(input.userId, async (repos) => {
+      const page = await repos.l3Paper.listPendingQuestions({
+        user_id: input.userId,
+        limit: input.limit,
+        offset: input.offset,
+      });
+      const sourceIds = page.items.map((q) => q.source_id).filter((id): id is string => Boolean(id));
+      const sources = await repos.l3Context.findSourcesByIds(input.userId, sourceIds);
+      const titleById = new Map(sources.map((s) => [s.id, s.title]));
+      const textById = new Map(sources.map((s) => [s.id, s.content_text ?? ""]));
+      return {
+        total: page.total,
+        items: page.items.map((question) => ({
+          question,
+          sourceTitle: question.source_id ? titleById.get(question.source_id) ?? null : null,
+          evidenceExcerpts: question.evidence.map((anchor) => {
+            // 无 source_id 的题（fileKey 题组）无正文可比对：如实说"无从核对"。
+            if (!question.source_id) return { excerpt: null, outOfRange: true };
+            const text = textById.get(question.source_id);
+            if (text === undefined) return { excerpt: null, outOfRange: true };
+            if (anchor.start < 0 || anchor.end > text.length || anchor.end <= anchor.start) {
+              return { excerpt: null, outOfRange: true };
+            }
+            return { excerpt: text.slice(anchor.start, anchor.end), outOfRange: false };
+          }),
+        })),
+      };
+    });
+  }
+
+  /**
+   * 采纳待录题（ADR-0037 决策 4）：`pending → active`，owner 的唯一升级动作。
+   *
+   * 逐条判定（决策 9）：非属主/不存在 → `not_found`；已采纳/已驳回 → `not_pending`。
+   * **不整批回滚** —— 一次采纳 20 条时，18 条成功 2 条失败必须如实显示成 18/2，
+   * 整批抛错会让 owner 以为一条都没成、然后重复点。
+   */
+  async acceptQuestions(input: {
+    userId: string;
+    questionIds: readonly string[];
+  }): Promise<{ results: AcceptQuestionOutcome[]; acceptedCount: number }> {
+    requireNonEmpty(input.userId, "userId");
+    if (input.questionIds.length === 0) {
+      throw new ValidationError("questionIds 不能为空", "questionIds");
+    }
+    if (input.questionIds.length > 200) {
+      throw new ValidationError("一次最多采纳 200 条", "questionIds");
+    }
+    return this.withActor(input.userId, async (repos) => {
+      const accepted = new Set(
+        await repos.l3Paper.acceptPendingQuestions(input.userId, input.questionIds),
+      );
+      const results: AcceptQuestionOutcome[] = [];
+      for (const id of input.questionIds) {
+        if (accepted.has(id)) {
+          results.push({ id, ok: true, status: "active" });
+          continue;
+        }
+        const latest = await repos.l3Paper.findQuestionById(input.userId, id);
+        results.push(
+          latest
+            ? { id, ok: false, reason: "not_pending", status: latest.status }
+            : { id, ok: false, reason: "not_found" },
+        );
+      }
+      return { results, acceptedCount: results.filter((r) => r.ok).length };
+    });
+  }
+
+  /** 驳回单条待录题（ADR-0037 决策 4）：`pending → rejected`（终态，不回收）。 */
+  async rejectQuestion(input: { userId: string; questionId: string }): Promise<{ question: L3QuestionRow }> {
+    requireNonEmpty(input.userId, "userId");
+    return this.withActor(input.userId, async (repos) => {
+      const rejected = await repos.l3Paper.rejectPendingQuestion(input.userId, input.questionId);
+      if (!rejected) {
+        const latest = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
+        if (!latest) throw new NotFoundError("L3Question", input.questionId);
+        throw new ConflictError("Only pending questions can be rejected", undefined, {
+          entityType: "question",
+          id: input.questionId,
+          status: latest.status,
+        });
+      }
+      const question = await repos.l3Paper.findQuestionById(input.userId, input.questionId);
+      if (!question) throw new NotFoundError("L3Question", input.questionId);
+      return { question };
+    });
+  }
+
+  /**
+   * 改卷（2026-09-26）：标题/方向/元信息/**题单引用**。题单改动让"从卷里换掉一道题"
+   * 成为可能（此前只能删卷重建）。归属与形状双校验：payload 过
+   * `validatePaperPayloadShape`，且所有 questionId 必须是**本 owner 的 active 题**
+   * （别人的题 id 猜到了也塞不进来）。
+   */
+  async updatePaper(input: UpdateL3PaperInput): Promise<{ paper: L3PaperRow }> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.title, "title");
+    const direction = trimOrNull(input.direction ?? null) as (typeof DIRECTIONS)[number] | null;
+    if (direction) requireEnum(direction, DIRECTIONS, "direction");
+    const payload: L3PaperPayload = {
+      version: PAPER_PAYLOAD_VERSION,
+      sections: (input.sections ?? []) as L3PaperPayload["sections"],
+    };
+    if (payload.sections.length === 0) {
+      throw new ValidationError("试卷至少包含一个 section", "sections");
+    }
+    validatePaperPayloadShape(payload);
+
+    return this.withActor(input.userId, async (repos) => {
+      const existing = await repos.l3Paper.findPaperById(input.userId, input.paperId);
+      if (!existing) throw new NotFoundError("L3Paper", input.paperId);
+      if (existing.status !== "active") {
+        throw new ConflictError("Only active papers can be edited", undefined, {
+          entityType: "paper",
+          id: input.paperId,
+          status: existing.status,
+        });
+      }
+
+      const questionIds = [...new Set(payload.sections.flatMap((section) => section.questionIds))];
+      const owned = await repos.l3Paper.findActiveQuestionsByIds(input.userId, questionIds);
+      if (owned.length !== questionIds.length) {
+        throw new ValidationError(
+          "sections 引用了不存在、非 active 或不属主的题目",
+          "sections",
+        );
+      }
+
+      const paper = await repos.l3Paper.updatePaper({
+        paper_id: input.paperId,
+        user_id: input.userId,
+        title: input.title.trim(),
+        direction,
+        metadata: (input.metadata ?? existing.metadata) as Json,
+        payload: payload as unknown as { version: number; sections: unknown[] },
+        input_hash: existing.input_hash,
+      });
+      if (!paper) {
+        const latest = await repos.l3Paper.findPaperById(input.userId, input.paperId);
+        if (!latest) throw new NotFoundError("L3Paper", input.paperId);
+        throw new ConflictError("L3 paper is no longer active", undefined, {
+          entityType: "paper",
+          id: input.paperId,
+          status: latest.status,
+        });
+      }
+      return { paper };
     });
   }
 

@@ -17,13 +17,16 @@ vi.mock("@/db/connection", () => ({
 beforeAll(() => {
   process.env.OWNER_API_TOKEN = "test-owner";
   process.env.LOCAL_OWNER_ID = "user-123";
+  process.env.AGENT_API_TOKENS = "agent-a:test-agent-token";
 });
 afterAll(() => {
   delete process.env.OWNER_API_TOKEN;
   delete process.env.LOCAL_OWNER_ID;
+  delete process.env.AGENT_API_TOKENS;
 });
 
 const AUTH_HEADERS = { Authorization: "Bearer test-owner", "Content-Type": "application/json" };
+const AGENT_HEADERS = { Authorization: "Bearer test-agent-token", "Content-Type": "application/json" };
 const QUESTION_ID = "00000000-0000-4000-8000-000000000101";
 const PAPER_ID = "00000000-0000-4000-8000-000000000201";
 const SOURCE_ID = "00000000-0000-4000-8000-000000000002";
@@ -232,6 +235,219 @@ describe("GET /api/l3/papers/:id", () => {
   });
 });
 
+describe("PATCH /api/l3/questions/:id（改题面 2026-09-26）", () => {
+
+  it("200 + 单行题面；把 stem/options/answer/explanation/evidence 交给 service", async () => {
+    const updateQuestion = vi.fn(async () => ({ question: questionRow() }));
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({
+        stem: "改过的题干",
+        options: [{ key: "A", text: "选项 A（改）" }, { key: "B", text: "选项 B（改）" }],
+        answer: { choice: "B" },
+        explanation: "因为原文如此",
+        evidence: [{ start: 0, end: 12, label: "官方证据" }],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { question: { id: string } };
+    expect(body.question.id).toBe(QUESTION_ID);
+    expect(updateQuestion).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-123",
+      questionId: QUESTION_ID,
+      stem: "改过的题干",
+      answer: { choice: "B" },
+      explanation: "因为原文如此",
+    }));
+  });
+
+  it("非 uuid 路径参数 → 400（不猜）", async () => {
+    const updateQuestion = vi.fn();
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request("/api/l3/questions/not-a-uuid", {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({ stem: "x" }),
+    });
+    expect(res.status).toBe(400);
+    expect(updateQuestion).not.toHaveBeenCalled();
+  });
+
+  it("畸形 evidence（end<=start）→ 400（validationError 口径），不进 service", async () => {
+    const updateQuestion = vi.fn();
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({
+        stem: "x",
+        evidence: [{ start: 5, end: 5, label: "空区间" }],
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(updateQuestion).not.toHaveBeenCalled();
+  });
+
+  it("空题干 → 400（不吞）", async () => {
+    const updateQuestion = vi.fn();
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({ stem: "   " }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("service 的 409 护栏原样透出（答案历史不可改写）", async () => {
+    const updateQuestion = vi.fn(async () => {
+      throw new ConflictError("Cannot edit a question that already has answer history", undefined, {
+        entityType: "question", id: QUESTION_ID, blockers: { attempts: 3 },
+      });
+    });
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({ stem: "x" }),
+    });
+    expect(res.status).toBe(409);
+  });
+
+  it("404 语义：题不存在或非属主", async () => {
+    const updateQuestion = vi.fn(async () => {
+      throw new NotFoundError("L3Question", QUESTION_ID);
+    });
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({ stem: "x" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("agent 可写，但 service 拿到的 actor 是 {role:agent, agentId}（由 Principal 认定）", async () => {
+    const updateQuestion = vi.fn(async () => ({ question: questionRow({ status: "pending" }) }));
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "PATCH",
+      headers: AGENT_HEADERS,
+      body: JSON.stringify({ stem: "改过的题干" }),
+    });
+    expect(res.status).toBe(200);
+    expect(updateQuestion).toHaveBeenCalledWith(expect.objectContaining({
+      actor: { role: "agent", agentId: "agent-a" },
+    }));
+  });
+
+
+});
+
+describe("PATCH /api/l3/papers/:id（改卷 2026-09-26）", () => {
+  it("200 + 单行卷；sections 只带引用", async () => {
+    const updatePaper = vi.fn(async () => ({ paper: paperDetail() }));
+    const app = createApp(makeServices({ updatePaper }));
+    const res = await app.request(`/api/l3/papers/${PAPER_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "2023 模拟卷（修订）",
+        direction: "考研",
+        sections: [
+          { key: "s1", title: "Text 2", questionType: "reading_choice", sourceId: SOURCE_ID, questionIds: [QUESTION_ID] },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(updatePaper).toHaveBeenCalledWith(expect.objectContaining({
+      userId: "user-123",
+      paperId: PAPER_ID,
+      title: "2023 模拟卷（修订）",
+    }));
+  });
+
+  it("空 sections → 400；非 uuid → 400", async () => {
+    const updatePaper = vi.fn();
+    const app = createApp(makeServices({ updatePaper }));
+
+    const empty = await app.request(`/api/l3/papers/${PAPER_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({ title: "x", sections: [] }),
+    });
+    expect(empty.status).toBe(400);
+
+    const bad = await app.request("/api/l3/papers/nope", {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({ title: "x", sections: [] }),
+    });
+    expect(bad.status).toBe(400);
+    expect(updatePaper).not.toHaveBeenCalled();
+  });
+
+  it("owner-only：agent 令牌被拒", async () => {
+    const updatePaper = vi.fn();
+    const app = createApp(makeServices({ updatePaper }));
+    const res = await app.request(`/api/l3/papers/${PAPER_ID}`, {
+      method: "PATCH",
+      headers: AGENT_HEADERS,
+      body: JSON.stringify({ title: "x", sections: [] }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  /**
+   * 断 body 的 JSON 解析：`.catch(() => ({}))` 兜成空对象后由 schema 判 400。
+   * 不兜的话这里是 500 —— 手滑截断的请求体不该报服务器错。
+   */
+  it("body 不是合法 JSON → 400（解析失败兜成空对象，交给 schema 判形状）", async () => {
+    const updatePaper = vi.fn();
+    const app = createApp(makeServices({ updatePaper }));
+    const res = await app.request(`/api/l3/papers/${PAPER_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: "{ 截断的 json",
+    });
+    expect(res.status).toBe(400);
+    expect(updatePaper).not.toHaveBeenCalled();
+  });
+
+  it("缺省 direction → 落 null（不改方向），空 body 字段由 schema 兜住", async () => {
+    const updatePaper = vi.fn(async () => ({ paper: paperDetail() }));
+    const app = createApp(makeServices({ updatePaper }));
+    const res = await app.request(`/api/l3/papers/${PAPER_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "只改标题",
+        sections: [
+          { key: "s1", title: "Text 2", questionType: "reading_choice", sourceId: SOURCE_ID, questionIds: [QUESTION_ID] },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(updatePaper).toHaveBeenCalledWith(expect.objectContaining({ direction: null }));
+  });
+});
+
+describe("PATCH 请求体健壮性（2026-09-26）", () => {
+  it("题目 PATCH：body 不是合法 JSON → 400（不进 service）", async () => {
+    const updateQuestion = vi.fn();
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "PATCH",
+      headers: { ...AUTH_HEADERS, "content-type": "application/json" },
+      body: "not json at all",
+    });
+    expect(res.status).toBe(400);
+    expect(updateQuestion).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /api/l3/questions", () => {
   it("creates a standalone question and maps service errors", async () => {
     const createQuestion = vi.fn(async () => ({ question: questionRow() }));
@@ -372,5 +588,202 @@ describe("GET /api/l3/practice-files", () => {
     const res = await app.request("/api/l3/practice-files/detail?questionType=reading_choice", { headers: AUTH_HEADERS });
     await expectValidationError(res);
     expect(getPracticeFile).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 录题闸门的 HTTP 侧（ADR-0037 决策 9 的必交矩阵）。
+ *
+ * 这组断言的价值在于**它们各自对应一种绕过闸门的尝试**：
+ *  - agent 在 body 里塞 `status:'active'` → strict 拒键（决策 2）
+ *  - agent 调删题 → 403（只订正不销毁）
+ *  - agent 写 submissions → 403（ADR-0030 §5 红线，一个字没动）
+ *  - agent 读待录面 → 403（核对是 owner 的责任）
+ *  - agent 采纳 → 403（唯一把 pending 变 active 的动作只给 owner）
+ *  - 非 pending 状态查询 → 400（待录面不接受别的用途）
+ */
+describe("录题闸门 · HTTP 鉴权与 strict 拒键（ADR-0037）", () => {
+  it("agent 录题 → 200 且 actor 带 agentId（created_by 由服务端认定）", async () => {
+    const createQuestion = vi.fn(async () => ({ question: questionRow({ status: "pending", created_by: "agent-a" }) }));
+    const app = createApp(makeServices({ createQuestion }));
+    const res = await app.request("/api/l3/questions", {
+      method: "POST",
+      headers: AGENT_HEADERS,
+      body: JSON.stringify({
+        questionType: "reading_choice", sourceId: SOURCE_ID, stem: "21. 题干", answer: { choice: "B" },
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(createQuestion).toHaveBeenCalledWith(expect.objectContaining({
+      actor: { role: "agent", agentId: "agent-a" },
+    }));
+  });
+
+  it("agent body 里塞 status/created_by → 400（strict 拒越权键，不静默剥离）", async () => {
+    const createQuestion = vi.fn();
+    const createPaper = vi.fn();
+    const app = createApp(makeServices({ createQuestion, createPaper }));
+    const res = await app.request("/api/l3/questions", {
+      method: "POST",
+      headers: AGENT_HEADERS,
+      body: JSON.stringify({
+        questionType: "reading_choice", sourceId: SOURCE_ID, stem: "21. 题干", status: "active",
+      }),
+    });
+    await expectValidationError(res);
+    expect(createQuestion).not.toHaveBeenCalled();
+
+    const paperRes = await app.request("/api/l3/papers", {
+      method: "POST",
+      headers: AGENT_HEADERS,
+      body: JSON.stringify({
+        title: "卷", created_by: "agent-a",
+        sections: [{ title: "Text 1", questionType: "reading_choice", sourceId: SOURCE_ID, questions: [{ stem: "x" }] }],
+      }),
+    });
+    await expectValidationError(paperRes);
+    expect(createPaper).not.toHaveBeenCalled();
+  });
+
+  it("agent 改题面 body 带 status → 400（PATCH 同样 strict）", async () => {
+    const updateQuestion = vi.fn();
+    const app = createApp(makeServices({ updateQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "PATCH",
+      headers: AGENT_HEADERS,
+      body: JSON.stringify({ stem: "x", status: "active" }),
+    });
+    await expectValidationError(res);
+    expect(updateQuestion).not.toHaveBeenCalled();
+  });
+
+  it("agent 删题 → 403（只订正不销毁）", async () => {
+    const deleteQuestion = vi.fn();
+    const app = createApp(makeServices({ deleteQuestion }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}`, {
+      method: "DELETE",
+      headers: AGENT_HEADERS,
+    });
+    expect(res.status).toBe(403);
+    expect(deleteQuestion).not.toHaveBeenCalled();
+  });
+
+  it("agent 改卷 → 403（agent 只建卷，卷内题强制 pending）", async () => {
+    const updatePaper = vi.fn();
+    const app = createApp(makeServices({ updatePaper }));
+    const res = await app.request(`/api/l3/papers/${PAPER_ID}`, {
+      method: "PATCH",
+      headers: AGENT_HEADERS,
+      body: JSON.stringify({
+        title: "x",
+        sections: [{ key: "s1", title: "Text 1", questionType: "reading_choice", sourceId: SOURCE_ID, questionIds: [QUESTION_ID] }],
+      }),
+    });
+    expect(res.status).toBe(403);
+    expect(updatePaper).not.toHaveBeenCalled();
+  });
+
+  it("agent 写 submissions（作答）→ 403（ADR-0030 §5 红线未松动）", async () => {
+    const openSheet = vi.fn();
+    const app = createApp(makeServices({ openSheet }));
+    const res = await app.request("/api/l3/sheets", {
+      method: "POST",
+      headers: AGENT_HEADERS,
+      body: JSON.stringify({ scope: "file", sourceId: SOURCE_ID, questionType: "reading_choice" }),
+    });
+    expect(res.status).toBe(403);
+    expect(openSheet).not.toHaveBeenCalled();
+  });
+
+  it("agent 读待录面 / 采纳 / 驳回 / 批量采纳 → 全 403（核对与升级是 owner 的动作）", async () => {
+    const listPendingQuestions = vi.fn();
+    const acceptQuestions = vi.fn();
+    const rejectQuestion = vi.fn();
+    const app = createApp(makeServices({ listPendingQuestions, acceptQuestions, rejectQuestion }));
+    for (const [path, method] of [
+      ["/api/l3/questions?status=pending", "GET"],
+      [`/api/l3/questions/${QUESTION_ID}/accept`, "POST"],
+      [`/api/l3/questions/${QUESTION_ID}/reject`, "POST"],
+      ["/api/l3/questions/accept-batch", "POST"],
+    ] as const) {
+      const res = await app.request(path, { method, headers: AGENT_HEADERS });
+      expect(res.status, `${method} ${path}`).toBe(403);
+    }
+    expect(listPendingQuestions).not.toHaveBeenCalled();
+    expect(acceptQuestions).not.toHaveBeenCalled();
+    expect(rejectQuestion).not.toHaveBeenCalled();
+  });
+
+  it("owner 读待录面 → 200（核对面带答案键与证据切片）", async () => {
+    const listPendingQuestions = vi.fn(async () => ({
+      total: 1,
+      items: [{
+        question: questionRow({ status: "pending", created_by: "agent-a", answer: { choice: "B" } }),
+        sourceTitle: "2023 英语一 Text 1",
+        evidenceExcerpts: [{ excerpt: "The trend", outOfRange: false }, { excerpt: null, outOfRange: true }],
+      }],
+    }));
+    const app = createApp(makeServices({ listPendingQuestions }));
+    const res = await app.request("/api/l3/questions?status=pending", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { items: Array<{ question: { answer: unknown }; evidenceExcerpts: unknown[] }> };
+    expect(body.items[0]!.question.answer).toEqual({ choice: "B" });
+    expect(body.items[0]!.evidenceExcerpts).toHaveLength(2);
+    expect(listPendingQuestions).toHaveBeenCalledWith(expect.objectContaining({ limit: 50, offset: 0 }));
+  });
+
+  it("待录面 status 非 pending → 400（这个端点只有「待录」一个用途）", async () => {
+    const listPendingQuestions = vi.fn();
+    const app = createApp(makeServices({ listPendingQuestions }));
+    const res = await app.request("/api/l3/questions?status=active", { headers: AUTH_HEADERS });
+    await expectValidationError(res);
+    expect(listPendingQuestions).not.toHaveBeenCalled();
+  });
+
+  it("owner 采纳 → 逐条结果原样透出（部分失败不静默）", async () => {
+    const acceptQuestions = vi.fn(async () => ({
+      acceptedCount: 1,
+      results: [
+        { id: QUESTION_ID, ok: true, status: "active" },
+        { id: "00000000-0000-4000-8000-000000000102", ok: false, reason: "not_pending", status: "rejected" },
+      ],
+    }));
+    const app = createApp(makeServices({ acceptQuestions }));
+    const res = await app.request(`/api/l3/questions/${QUESTION_ID}/accept`, {
+      method: "POST", headers: AUTH_HEADERS,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { acceptedCount: number; results: Array<{ ok: boolean; reason?: string }> };
+    expect(body.acceptedCount).toBe(1);
+    expect(body.results[1]!.reason).toBe("not_pending");
+  });
+
+  it("批量采纳：重复 id → 400；超 200 条 → 400；非 uuid → 400", async () => {
+    const acceptQuestions = vi.fn();
+    const app = createApp(makeServices({ acceptQuestions }));
+    for (const body of [
+      { questionIds: [QUESTION_ID, QUESTION_ID] },
+      { questionIds: Array.from({ length: 201 }, () => QUESTION_ID) },
+      { questionIds: ["nope"] },
+      { questionIds: [] },
+    ]) {
+      const res = await app.request("/api/l3/questions/accept-batch", {
+        method: "POST", headers: AUTH_HEADERS, body: JSON.stringify(body),
+      });
+      await expectValidationError(res);
+    }
+    expect(acceptQuestions).not.toHaveBeenCalled();
+  });
+
+  it("非 uuid 路径参数 → 400（采纳/驳回都是）", async () => {
+    const acceptQuestions = vi.fn();
+    const rejectQuestion = vi.fn();
+    const app = createApp(makeServices({ acceptQuestions, rejectQuestion }));
+    for (const path of ["/api/l3/questions/nope/accept", "/api/l3/questions/nope/reject"]) {
+      const res = await app.request(path, { method: "POST", headers: AUTH_HEADERS });
+      await expectValidationError(res);
+    }
+    expect(acceptQuestions).not.toHaveBeenCalled();
+    expect(rejectQuestion).not.toHaveBeenCalled();
   });
 });

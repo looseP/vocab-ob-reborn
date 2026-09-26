@@ -54,8 +54,48 @@ export const l3QuestionCreateResponseSchema = z.object({
   question: l3QuestionResponseSchema,
 }).strict();
 
+/** 改题面响应：与建题同形（单行题面），便于客户端读-改-写复用同一解析。 */
+export const l3QuestionUpdateResponseSchema = z.object({
+  question: l3QuestionResponseSchema,
+}).strict();
+
 export const l3QuestionDeleteResponseSchema = z.object({
   deleted: z.literal(true),
+}).strict();
+
+// ── 待录 / 采纳（ADR-0037 决策 4、6）───────────────────────────────────
+
+/**
+ * 待录核对面的一行：题面（**含答案键**）+ 材料标题 + 每条证据锚点在原文里的
+ * **实际切片**。切片由服务端算（前端不按 offset 猜），越界时 excerpt=null 且
+ * outOfRange=true —— 如实说"越界"，不截成一个看似合法的短句。
+ */
+export const l3PendingQuestionResponseSchema = z.object({
+  question: l3QuestionResponseSchema,
+  sourceTitle: z.string().nullable(),
+  evidenceExcerpts: z.array(z.object({
+    excerpt: z.string().nullable(),
+    outOfRange: z.boolean(),
+  }).strict()),
+}).strict();
+
+export const l3PendingQuestionListResponseSchema = z.object({
+  items: z.array(l3PendingQuestionResponseSchema),
+  total: z.number().int().nonnegative(),
+}).strict();
+
+/**
+ * 采纳结果**逐条**给（决策 4/9：部分失败必须可见，禁止整批静默）。
+ * reason: not_found（非属主/不存在）| not_pending（已采纳或已驳回）。
+ */
+export const l3QuestionAcceptResponseSchema = z.object({
+  results: z.array(z.object({
+    id: z.string().uuid(),
+    ok: z.boolean(),
+    reason: z.enum(["not_found", "not_pending"]).optional(),
+    status: z.string().optional(),
+  }).strict()),
+  acceptedCount: z.number().int().nonnegative(),
 }).strict();
 
 // ── payload 与卷面组装 ───────────────────────────────────────────────────
@@ -122,6 +162,11 @@ export const l3PaperCreateResponseSchema = z.object({
   paper: l3PaperRowResponseSchema,
   questions: z.array(l3QuestionResponseSchema),
   questionCount: z.number().int().nonnegative(),
+}).strict();
+
+/** 改卷响应：单行卷（题面真源仍在题库，故不随改卷返回题目数组）。 */
+export const l3PaperUpdateResponseSchema = z.object({
+  paper: l3PaperRowResponseSchema,
 }).strict();
 
 // ── 列表 ────────────────────────────────────────────────────────────────

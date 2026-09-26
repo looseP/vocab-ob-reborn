@@ -9,6 +9,7 @@ import {
   l3RecommendationListResponseSchema,
 } from "../../src/http/l3-response-contract";
 import { ERROR_CODES } from "../../src/errors/codes";
+import { L3_AUTHORING_CAPABILITIES } from "../../src/domain/l3-authoring";
 import {
   API_JSON_BODY_MAX_BYTES,
   JSON_MAX_DEPTH,
@@ -175,6 +176,8 @@ describe("L3 response contracts", () => {
       access: { read: "all" as const, write: "proposal_only" as const, upgrade: "owner_only" as const },
       // 批次二（ADR-0034 §4）：评卷授权语义段（提交即授权；执行面批次三）。
       grading: { annotationReadScope: "submitted_sheet_drafts" as const, annotationWriteScope: "review_only" as const },
+      // 录题授权语义（ADR-0037 决策 8）：单列，不并进 access（录题不是 proposal）。
+      authoring: { ...L3_AUTHORING_CAPABILITIES },
       limits: {
         apiJsonBodyMaxBytes: API_JSON_BODY_MAX_BYTES,
         jsonRecordMaxBytes: JSON_RECORD_MAX_BYTES,
@@ -194,5 +197,9 @@ describe("L3 response contracts", () => {
     expect(() => l3CapabilitiesResponseSchema.parse(missingLimits)).toThrow();
     const { grading: _grading, ...missingGrading } = response;
     expect(() => l3CapabilitiesResponseSchema.parse(missingGrading)).toThrow();
+    const { authoring: _authoring, ...missingAuthoring } = response;
+    expect(() => l3CapabilitiesResponseSchema.parse(missingAuthoring)).toThrow();
+    // 字面值漂移即拒：agentCanCreate 若被改成 boolean/"active"，闸门口径就变了
+    expect(() => l3CapabilitiesResponseSchema.parse({ ...response, authoring: { ...response.authoring, agentCanCreate: "active" } })).toThrow();
   });
 });

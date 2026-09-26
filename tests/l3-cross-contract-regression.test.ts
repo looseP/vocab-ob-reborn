@@ -356,6 +356,7 @@ class L3CrossContractHarness {
       }),
       replaceSourceSpaces: vi.fn(async () => undefined),
       ensureSourceSpaces: vi.fn(async () => undefined),
+      findSourcesByIds: vi.fn(async () => []),
       createContext: vi.fn(async (input: NewL3Context) => {
         this.record("l3_contexts", "insert");
         const context: L3ContextRow = {

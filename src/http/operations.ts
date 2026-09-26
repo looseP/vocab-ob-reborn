@@ -31,12 +31,16 @@ import {
 import { l3SpaceSummaryResponseSchema } from "./l3-summary-response-contract";
 import {
   l3PaperCreateResponseSchema,
+  l3PaperUpdateResponseSchema,
   l3PaperDetailResponseSchema,
   l3PaperListResponseSchema,
   l3PracticeFileDetailResponseSchema,
   l3PracticeFileListResponseSchema,
   l3QuestionCreateResponseSchema,
+  l3QuestionUpdateResponseSchema,
   l3QuestionDeleteResponseSchema,
+  l3PendingQuestionListResponseSchema,
+  l3QuestionAcceptResponseSchema,
 } from "./l3-paper-response-contract";
 import {
   l3AnnotationTagDictResponseSchema,
@@ -172,12 +176,16 @@ import {
   l3OccurrenceCreateSchema,
   l3OccurrenceListQuerySchema,
   l3PaperCreateSchema,
+  l3PaperUpdateSchema,
   l3PaperListQuerySchema,
   l3PracticeFileDetailQuerySchema,
   l3PracticeFileListQuerySchema,
   l3QuestionCreateSchema,
+  l3QuestionUpdateSchema,
   l3QuestionAnnotationCreateSchema,
   l3QuestionAnnotationListQuerySchema,
+  l3PendingQuestionListQuerySchema,
+  l3QuestionAcceptBatchSchema,
   l3QuestionAnnotationPatchSchema,
   l3QuestionAnnotationWithdrawSchema,
   l3AnnotationTagDictSchema,
@@ -519,11 +527,27 @@ export const apiOperations = [
   operation("put", "/api/l3/sources/:id/spaces", "replaceL3SourceSpaces", "owner", "owner", "sessionMutation", { body: l3SourceSpacesReplaceSchema }, 200, l3SourceSpacesReplaceResponseSchema),
   operation("post", "/api/l3/sources/:id/captures", "createL3SelectionCapture", "owner", "owner", "sessionMutation", { body: l3SelectionCaptureSchema }, 201, l3SelectionCaptureResponseSchema),
   // ADR-0030：题目/试卷（V1 owner 入库面；读面对 agent 开放，与 sources 读面同口径）。
-  operation("post", "/api/l3/papers", "createL3Paper", "owner", "owner", "sessionMutation", { body: l3PaperCreateSchema }, 201, l3PaperCreateResponseSchema),
+  //
+  // ⚠️ ADR-0037（2026-09-26）：录题写面 minRole 由 owner 放宽为 **agent**，但
+  // 「可写」≠「可写 active」——agent 的产物一律落 status='pending'、created_by=agentId，
+  // 由 owner 在待录面逐条核对后采纳（见下方 accept/reject 四个 owner-only 端点）。
+  // 判据是「答案键一旦被作答即永久不可改」，闸门必须落在采纳之前。
+  // 删题仍 owner-only：agent 只能订正，不能销毁（ADR-0030 §5 红线）。
+  operation("post", "/api/l3/papers", "createL3Paper", "owner", "agent", "sessionMutation", { body: l3PaperCreateSchema }, 201, l3PaperCreateResponseSchema),
+  // 改卷（2026-09-26）仍 **owner-only**：agent 只建卷，卷内题强制 pending，
+  // 没有"改 active 卷"这件事给 agent（ADR-0037 补记一）。
+  operation("patch", "/api/l3/papers/:id", "updateL3Paper", "owner", "owner", "sessionMutation", { body: l3PaperUpdateSchema }, 200, l3PaperUpdateResponseSchema),
   operation("get", "/api/l3/papers", "listL3Papers", "owner", "agent", "none", { query: l3PaperListQuerySchema }, 200, l3PaperListResponseSchema),
   operation("get", "/api/l3/papers/:id", "getL3Paper", "owner", "agent", "none", undefined, 200, l3PaperDetailResponseSchema),
-  operation("post", "/api/l3/questions", "createL3Question", "owner", "owner", "sessionMutation", { body: l3QuestionCreateSchema }, 201, l3QuestionCreateResponseSchema),
+  operation("post", "/api/l3/questions", "createL3Question", "owner", "agent", "sessionMutation", { body: l3QuestionCreateSchema }, 201, l3QuestionCreateResponseSchema),
+  // 改题面：agent 开放但**只能改 pending**（service 按角色给可改状态集合，落 UPDATE 谓词）。
+  operation("patch", "/api/l3/questions/:id", "updateL3Question", "owner", "agent", "sessionMutation", { body: l3QuestionUpdateSchema }, 200, l3QuestionUpdateResponseSchema),
   operation("delete", "/api/l3/questions/:id", "deleteL3Question", "owner", "owner", "sessionMutation", undefined, 200, l3QuestionDeleteResponseSchema),
+  // ADR-0037 评审面（**全 owner-only**）：待录是 owner 的核对责任，agent 看自己的产物无意义。
+  operation("get", "/api/l3/questions", "listPendingL3Questions", "owner", "owner", "none", { query: l3PendingQuestionListQuerySchema }, 200, l3PendingQuestionListResponseSchema),
+  operation("post", "/api/l3/questions/:id/accept", "acceptL3Question", "owner", "owner", "sessionMutation", undefined, 200, l3QuestionAcceptResponseSchema),
+  operation("post", "/api/l3/questions/:id/reject", "rejectL3Question", "owner", "owner", "sessionMutation", undefined, 200, l3QuestionUpdateResponseSchema),
+  operation("post", "/api/l3/questions/accept-batch", "acceptL3QuestionsBatch", "owner", "owner", "sessionMutation", { body: l3QuestionAcceptBatchSchema }, 200, l3QuestionAcceptResponseSchema),
   // 批次一：做题注记（原文分析条目）纯 owner 做题面，锚点幂等命中 200/新建 201；软删 204。
   operation("get", "/api/l3/question-annotations", "listQuestionAnnotations", "owner", "owner", "none", { query: l3QuestionAnnotationListQuerySchema }, 200, l3QuestionAnnotationListResponseSchema),
   operation("post", "/api/l3/question-annotations", "createQuestionAnnotation", "owner", "owner", "sessionMutation", { body: l3QuestionAnnotationCreateSchema }, 201, l3QuestionAnnotationItemResponseSchema),

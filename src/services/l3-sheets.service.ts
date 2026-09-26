@@ -94,7 +94,21 @@ export class L3SheetService {
       } else {
         const paper = await repos.l3Paper.findPaperById(input.userId, input.paperId as string);
         if (!paper) throw new NotFoundError("L3Paper", input.paperId as string);
-        questionIds = paper.payload.sections.flatMap((section) => [...section.questionIds]);
+        // ⚠️ 2026-09-26（ADR-0037 补记一）：此处**必须**与 file 分支同口径——只解析
+        // active 题。原先直接取 payload 的 questionIds 不筛状态，于是 agent 建的
+        // 待录卷（卷行 active、卷内题全 pending）会开出一张"题单快照里有 id、渲染
+        // 却是空的"的题纸，用户看不到任何解释。空集在此 fail-closed 并说明原因。
+        const active = await repos.l3Paper.findActiveQuestionsByIds(
+          input.userId,
+          paper.payload.sections.flatMap((section) => [...section.questionIds]),
+        );
+        if (active.length === 0) {
+          throw new ValidationError(
+            "该试卷内没有可做的题（若为 agent 待录产物，请先在「待录」中采纳）",
+            "paperId",
+          );
+        }
+        questionIds = active.map((question) => question.id);
       }
       // 空题集不写快照（DB CHECK 拒绝空数组；且"空"与"未定格"在读侧同义——都现拉）。
       const frozenQuestionIds = questionIds.length > 0 ? questionIds : null;

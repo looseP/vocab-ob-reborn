@@ -1109,6 +1109,12 @@ export interface IL3ContextRepository {
   ): Promise<L3ImportJobRow>;
   findWordbookByIdForUser(userId: string, wordbookId: string): Promise<WordbookRow | null>;
   findSourceById(userId: string, sourceId: string): Promise<L3SourceRow | null>;
+  /**
+   * 批量取源（ADR-0037 待录核对面）：一次拿齐 ≤N 个 source_id，避免逐题 N+1 查询
+   * ——待录列表要按锚点算原文切片，200 条待录题若逐条查会打 200 次库。
+   * 只返回属于该 user 的行；入参空数组直接返回 []（不发查询）。
+   */
+  findSourcesByIds(userId: string, sourceIds: readonly string[]): Promise<L3SourceRow[]>;
   findSourceByContentHash(userId: string, contentHash: string): Promise<L3SourceRow | null>;
   listSources(input: {
     userId: string;
@@ -1549,6 +1555,27 @@ export interface L3PaperRef {
 export interface IL3PaperRepository {
   insertQuestion(input: NewL3Question): Promise<L3QuestionRow>;
   findQuestionById(userId: string, questionId: string): Promise<L3QuestionRow | null>;
+  /**
+   * 改题面（2026-09-26）。条件 UPDATE 带**可改状态集合**谓词：0 行 → null，
+   * 由 service 二次判别 404/409。**护栏在 service**：已有作答历史或被作文任务
+   * 引用时不得改（见 l3-paper.service.updateQuestion）。
+   *
+   * ⚠️ ADR-0037：谓词不再写死 `status='active'`，而是 `editable_statuses`
+   * （service 按角色给出：owner={active,pending}、agent={pending}）。闸门必须在
+   * **UPDATE 谓词**里，不能是「先读状态再判断」的应用层检查（后者有 TOCTOU 窗口）。
+   */
+  updateQuestion(input: UpdateL3Question): Promise<L3QuestionRow | null>;
+  /** 题面已有作答数（改题面护栏用；owner 作用域）。 */
+  countQuestionAttempts(userId: string, questionId: string): Promise<number>;
+  /**
+   * 待录题（status='pending'）分页列表 —— owner 的核对面（ADR-0037 决策 6）。
+   * 全库唯一显式取 pending 的读面；所有做题/错题读面仍只认 active。
+   */
+  listPendingQuestions(input: { user_id: string; limit: number; offset: number }): Promise<{ items: L3QuestionRow[]; total: number }>;
+  /** 批量采纳 pending→active，返回真正被改到的 id（谓词含 pending ⇒ 重复调用幂等）。 */
+  acceptPendingQuestions(userId: string, questionIds: readonly string[]): Promise<string[]>;
+  /** 驳回单条 pending→rejected；false = 非 pending / 非属主 / 不存在。 */
+  rejectPendingQuestion(userId: string, questionId: string): Promise<boolean>;
   /** 按 id 批量取 active 题（保持传入顺序由调用方处理）；只返回属于该 user 的行。 */
   findActiveQuestionsByIds(userId: string, questionIds: readonly string[]): Promise<L3QuestionRow[]>;
   /** 文件题组：(source_id, question_type) 或 (file_key, question_type)，按 ordinal/创建序。 */
@@ -1567,7 +1594,35 @@ export interface IL3PaperRepository {
   listActivePaperRefsWithPayload(userId: string): Promise<Array<L3PaperRef & { payload: unknown }>>;
   insertPaper(input: NewL3Paper): Promise<L3PaperRow>;
   findPaperById(userId: string, paperId: string): Promise<L3PaperRow | null>;
+  /** 改卷（2026-09-26）：标题/方向/元信息/payload；条件 UPDATE 带 `status='active'`。 */
+  updatePaper(input: UpdateL3Paper): Promise<L3PaperRow | null>;
   listPapers(input: L3PaperLookup): Promise<L3PaperListPage>;
+}
+
+/** 改题面入参（每个字段都是最终值；null = 清空）。 */
+export interface UpdateL3Question {
+  question_id: string;
+  user_id: string;
+  stem: string;
+  options: unknown;
+  answer: unknown;
+  explanation: string | null;
+  evidence: unknown;
+  ordinal: number;
+  input_hash: string | null;
+  /** ADR-0037：本次写入允许触碰的状态集合（UPDATE 谓词，非应用层判断）。 */
+  editable_statuses: readonly string[];
+}
+
+/** 改卷入参（payload 已在 service 过 validatePaperPayloadShape + 归属校验）。 */
+export interface UpdateL3Paper {
+  paper_id: string;
+  user_id: string;
+  title: string;
+  direction: string | null;
+  metadata: unknown;
+  payload: { version: number; sections: unknown[] };
+  input_hash: string | null;
 }
 
 // ── 批次一（0033）：做题注记（原文分析条目）与规律标签字典 ─────────────────

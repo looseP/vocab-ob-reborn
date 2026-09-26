@@ -13,9 +13,11 @@ import type {
   L3EvidenceAnchor,
   L3QuestionAnswer,
   L3QuestionOption,
+  L3QuestionRow,
   L3QuestionType,
   L3SubSpace,
 } from "@/domain";
+import type { AuthoringActor } from "@/domain";
 import type {
   AnnotationTagDict,
   QuestionAnnotationInput,
@@ -766,6 +768,8 @@ export interface RejectL3RecommendationInput extends L3RecommendationIdInput {
 
 export interface CreateL3QuestionInput {
   userId: string;
+  /** 写入者身份（ADR-0037）：服务端从 Principal 注入，请求体不携带。owner → active；agent → pending。 */
+  actor: AuthoringActor;
   questionType: L3QuestionType;
   /** 有正文文件：挂到材料；与 fileKey 二选一（翻译/作文可只给 fileKey）。 */
   sourceId?: string | null;
@@ -800,10 +804,72 @@ export interface CreateL3PaperSectionInput {
 
 export interface CreateL3PaperInput {
   userId: string;
+  /** 见 CreateL3QuestionInput.actor。agent 建的卷立即 active，但卷内题强制 pending。 */
+  actor: AuthoringActor;
   title: string;
   direction?: Direction | null;
   metadata?: Json;
   sections: CreateL3PaperSectionInput[];
+}
+
+// ── 待录 / 采纳（ADR-0037 决策 4、6）───────────────────────────────────
+
+/**
+ * 待录题（agent 录题产物，status='pending'）的**核对面**行。
+ * 决策 6：采纳前必须能核对答案键与证据原文，所以服务端把锚点切片算好；
+ * 越界锚点如实标 `outOfRange`（不静默截断成一个看似合法的短句）。
+ */
+export interface PendingQuestionItem {
+  question: L3QuestionRow;
+  sourceTitle: string | null;
+  /** 与 question.evidence 等长、同序；越界处 excerpt=null 且 outOfRange=true。 */
+  evidenceExcerpts: Array<{ excerpt: string | null; outOfRange: boolean }>;
+}
+
+/** 批量采纳的逐条结果（决策 4/9：部分失败必须逐条可见，禁止整批静默）。 */
+export interface AcceptQuestionOutcome {
+  id: string;
+  ok: boolean;
+  /** ok=false 时的原因：not_found（非属主/不存在）| not_pending（已采纳或已驳回）。 */
+  reason?: "not_found" | "not_pending";
+  status?: string;
+}
+// ── 改题面 / 改卷（2026-09-26）────────────────────────────────────────
+// 此前题目与试卷只有 POST + DELETE，且 DELETE 对"被引用"的题/卷一律 409，
+// 于是「卷面里一道题有错字」既不能改也不能删 —— 死胡同。本组入参补上改的面，
+// 护栏（作答历史 / 作文任务引用）见 l3-paper.service.updateQuestion。
+
+/** 改题面入参：题面字段全量提交（PATCH 语义在本题库按"全量替换"实现，见 ADR 语义备注）。 */
+export interface UpdateL3QuestionInput {
+  userId: string;
+  /** 决定可改状态集合（ADR-0037）：owner 可改 active+pending，agent 只可改 pending。 */
+  actor: AuthoringActor;
+  questionId: string;
+  stem: string;
+  options?: L3QuestionOption[];
+  answer?: L3QuestionAnswer;
+  explanation?: string | null;
+  evidence?: L3EvidenceAnchor[];
+  ordinal?: number;
+}
+
+export interface UpdateL3PaperSectionInput {
+  key: string;
+  title: string;
+  questionType: L3QuestionType;
+  sourceId?: string | null;
+  fileKey?: string | null;
+  questionIds: string[];
+}
+
+/** 改卷入参：sections 只带**引用**（不复制题目正文——题库是唯一题面真源）。 */
+export interface UpdateL3PaperInput {
+  userId: string;
+  paperId: string;
+  title: string;
+  direction?: Direction | null;
+  metadata?: Json;
+  sections: UpdateL3PaperSectionInput[];
 }
 
 export interface ListL3PracticeFilesInput {

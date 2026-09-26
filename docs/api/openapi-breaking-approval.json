@@ -1,47 +1,17 @@
 {
   "version": 1,
-  "baseSha256": "848280f446c9576fc06694b3f467fdd5959cb7f401cf58db1d7c9ec7622dbd65",
-  "currentSha256": "8dc9465d3f80349bda916ea2206cf96253c598d58b45168a8fbc50bf4ccb08db",
+  "baseSha256": "2811bf336cce2d873db6c7176c4706f1f4f2838f86c37eb3060dc6f4f62a7b53",
+  "currentSha256": "160cfaebb46a62bce1146c68229b01542bac4b20fa840dd2c2910b108c6f2fcf",
   "issues": [
     {
       "kind": "breaking",
-      "location": "paths./api/l3/study-notes.post.responses.201.content.application/json.schema.properties.item.properties.references.items.properties.target",
-      "message": "response 联合新增变体（旧客户端可能无法解析）"
+      "location": "paths./api/l3/papers.post.requestBody.content.application/json.schema",
+      "message": "request additionalProperties 被禁止"
     },
     {
       "kind": "breaking",
-      "location": "paths./api/l3/study-notes.post.responses.201.content.application/json.schema.properties.item.properties.references.items.properties.displaySnapshot",
-      "message": "response 联合新增变体（旧客户端可能无法解析）"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/study-notes/reference-preview.post.responses.200.content.application/json.schema.properties.preview.properties.target",
-      "message": "response 联合新增变体（旧客户端可能无法解析）"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/study-notes/reference-preview.post.responses.200.content.application/json.schema.properties.preview.properties.displaySnapshot",
-      "message": "response 联合新增变体（旧客户端可能无法解析）"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/study-notes/{noteId}.get.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.target",
-      "message": "response 联合新增变体（旧客户端可能无法解析）"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/study-notes/{noteId}.get.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.displaySnapshot",
-      "message": "response 联合新增变体（旧客户端可能无法解析）"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/study-notes/{noteId}.put.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.target",
-      "message": "response 联合新增变体（旧客户端可能无法解析）"
-    },
-    {
-      "kind": "breaking",
-      "location": "paths./api/l3/study-notes/{noteId}.put.responses.200.content.application/json.schema.properties.item.properties.references.items.properties.displaySnapshot",
-      "message": "response 联合新增变体（旧客户端可能无法解析）"
+      "location": "paths./api/l3/questions.post.requestBody.content.application/json.schema",
+      "message": "request additionalProperties 被禁止"
     }
   ]
 }

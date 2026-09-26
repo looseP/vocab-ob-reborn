@@ -121,17 +121,45 @@ export function buildPassageSpans(content: string, options: PassageMarkerOptions
 const SENTENCE_BOUNDARY_RE = /[。！？!?\n]/;
 
 /**
- * 取包含 [start,end) 选区的最小句段（圈词入笔记 capture 的 text 字段）：
- * 向两侧扩展到最近句读/换行；右侧把句读标点一并纳入。找不到任何边界时退化为选区本身。
+ * 取包含 [start,end) 选区的**最小句段范围**（2026-09-26）。
+ * 向两侧扩展到最近句读/换行；右侧把句读标点一并纳入。找不到边界时退化为选区本身。
+ *
+ * 为什么要有 range 版：`enclosingSentence` 只给文本，而「官方证据」锚点要的是
+ * **content 的 UTF-16 区间**。两件事共用同一套扩展逻辑 —— 拆成两个实现必然漂移
+ * （圈词入笔记取到的句子与证据锚点标到的句子会不一致）。
+ * 返回的区间已 trim 过（不含首尾空白），因此可直接作为 evidence.start/end。
  */
-export function enclosingSentence(content: string, start: number, end: number): string {
-  if (start < 0 || end > content.length || end <= start) return content.slice(start, end);
+export function enclosingSentenceRange(
+  content: string,
+  start: number,
+  end: number,
+): { start: number; end: number } {
+  if (start < 0 || end > content.length || end <= start) {
+    const s = Math.max(0, Math.min(start, content.length));
+    const e = Math.max(s, Math.min(end, content.length));
+    return { start: s, end: e };
+  }
   let s = start;
   while (s > 0 && !SENTENCE_BOUNDARY_RE.test(content[s - 1]!)) s -= 1;
   let e = end;
   while (e < content.length && !SENTENCE_BOUNDARY_RE.test(content[e]!)) e += 1;
   if (e < content.length && /[。！？!?]/.test(content[e]!)) e += 1;
-  return content.slice(s, e).trim() || content.slice(start, end);
+  // trim：把句段首尾空白排除在锚点外（否则锚点会带上换行/缩进，标注高亮会溢出到行首）
+  const raw = content.slice(s, e);
+  const leading = raw.length - raw.trimStart().length;
+  const trailing = raw.length - raw.trimEnd().length;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return { start, end };
+  return { start: s + leading, end: s + raw.length - trailing };
+}
+
+/**
+ * 取包含 [start,end) 选区的最小句段文本（圈词入笔记 capture 的 text 字段）。
+ * 语义 = `enclosingSentenceRange` 的区间切片（单一实现，见上）。
+ */
+export function enclosingSentence(content: string, start: number, end: number): string {
+  const range = enclosingSentenceRange(content, start, end);
+  return content.slice(range.start, range.end) || content.slice(start, end);
 }
 
 /** 段内渲染片段：坐标仍是 content 全局 UTF-16 偏移（换行符不属于任何 run）。 */
