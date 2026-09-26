@@ -13,6 +13,9 @@ import type {
   L3PaginatedList,
   L3PracticeAttemptPage,
   L3PracticeAttemptRow,
+  L3ErrorBookKind,
+  L3ErrorBookPage,
+  L3UnifiedErrorBookItem,
   L3PracticeErrorBookPage,
   L3PracticeOutcome,
   L3PracticeType,
@@ -274,8 +277,22 @@ export interface L3ErrorBookParams {
   cursor?: string | null;
 }
 
-export interface L3OccurrenceListParams {
-  slug?: string | null;
+/**
+ * 错题库统一投影查询参数（2026-09-26）：句级 + 题级两腿合并。
+ * 与 `L3ErrorBookParams`（句级单腿 + cursor）并存——后者随
+ * `GET /api/l3-practice/error-book` 一起进入退役窗口。
+ */
+export interface L3UnifiedErrorBookParams {
+  /** 腿选择；缺省 = 两腿合并（错题库默认口径）。 */
+  kind?: L3ErrorBookKind | null;
+  space?: L3SubSpace | null;
+  direction?: Direction | null;
+  limit?: number | null;
+  /** offset 分页（在两腿合并**之后**生效；cursor 在两腿间不成立，故不提供）。 */
+  offset?: number | null;
+}
+
+export interface L3OccurrenceListParams {  slug?: string | null;
   wordId?: string | null;
   contextId?: string | null;
   space?: L3SubSpace | null;
@@ -401,6 +418,8 @@ export interface L3FrontendClient {
   recordAttempt(input: L3PracticeAttemptCreateInput): Promise<L3PracticeAttemptRow>;
   listAttempts(params?: L3PracticeAttemptListParams): Promise<L3PracticeAttemptPage>;
   listErrorBook(params?: L3ErrorBookParams): Promise<L3PracticeErrorBookPage>;
+  /** 错题库统一投影（句级 + 题级两腿合并）。 */
+  listUnifiedErrorBook(params?: L3UnifiedErrorBookParams): Promise<L3ErrorBookPage>;
   createSession(input: L3SessionCreateInput): Promise<L3SessionRow>;
   getSession(id: string): Promise<L3SessionRenderDescription>;
   endSession(id: string, status: Extract<L3SessionStatus, "completed" | "abandoned">): Promise<L3SessionRow>;
@@ -694,6 +713,7 @@ export function createL3FrontendClient(transport: L3ClientTransport): L3Frontend
     recordAttempt: (input) => requestJson(transport, "POST", "/api/l3-practice/attempts", validatePracticeAttemptCreateInput(input)),
     listAttempts: (params) => requestJson(transport, "GET", appendQuery("/api/l3-practice/attempts", validatePracticeAttemptListParams(params))),
     listErrorBook: (params) => requestJson(transport, "GET", appendQuery("/api/l3-practice/error-book", validateErrorBookParams(params))),
+    listUnifiedErrorBook: (params) => requestJson(transport, "GET", appendQuery("/api/l3/error-book", validateUnifiedErrorBookParams(params))),
     createSession: (input) => requestJson(transport, "POST", "/api/l3-sessions", validateSessionCreateInput(input)),
     getSession: (id) => requestJson(transport, "GET", `/api/l3-sessions/${encodeURIComponent(validateExplicitId(id))}`),
     endSession: (id, status) => requestJson(transport, "POST", `/api/l3-sessions/${encodeURIComponent(validateExplicitId(id))}/end`, validateSessionEndInput({ status })),
@@ -833,6 +853,8 @@ export const L3_PRACTICE_OUTCOME_VALUES = ["correct", "wrong", "skip"] as const 
 export const L3_SUB_SPACE_VALUES = ["语法", "阅读", "作文", "翻译", "通用"] as const satisfies readonly L3SubSpace[];
 export const L3_DIRECTION_VALUES = ["通用", "考研", "雅思"] as const satisfies readonly Direction[];
 export const L3_SESSION_TYPE_VALUES = ["l2_upgrade", "l3_practice", "cram_pack", "knowledge"] as const satisfies readonly L3SessionType[];
+/** 错题库两腿（2026-09-26）：句级练习 / 题级做题判分。 */
+export const ERROR_BOOK_KIND_VALUES = ["sentence", "question"] as const satisfies readonly L3ErrorBookKind[];
 
 function requireEnumChoice<T extends string>(value: T, allowed: readonly string[], field: string): void {
   if (!allowed.includes(value)) throw frontendValidationError(field, `${field} is not a supported value.`);
@@ -898,6 +920,15 @@ export function validateErrorBookParams(params: L3ErrorBookParams = {}): L3Error
   validateLimit(params.limit, PRACTICE_LIMIT_MAX);
   validateOffset(params.offset);
   if (params.cursor !== undefined && params.cursor !== null) requireNonEmptyText(params.cursor, "cursor");
+  return params;
+}
+
+export function validateUnifiedErrorBookParams(params: L3UnifiedErrorBookParams = {}): L3UnifiedErrorBookParams {
+  validateOptionalEnumChoice(params.kind, ERROR_BOOK_KIND_VALUES, "kind");
+  validateOptionalEnumChoice(params.space, L3_SUB_SPACE_VALUES, "space");
+  validateOptionalEnumChoice(params.direction, L3_DIRECTION_VALUES, "direction");
+  validateLimit(params.limit, PRACTICE_LIMIT_MAX);
+  validateOffset(params.offset);
   return params;
 }
 

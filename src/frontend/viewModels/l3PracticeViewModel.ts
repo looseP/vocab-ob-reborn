@@ -245,43 +245,12 @@ export function buildPracticeSnapshot(input: {
   };
 }
 
-// ── 错题库展示行（聚合口径：服务端） ─────────────────────────────────────
-
-export interface ErrorBookDisplayRow {
-  contextId: string;
-  text: string;
-  target: string;
-  /** 该语境全量错误次数（服务端聚合，跨分页窗口）。 */
-  wrongCount: number;
-  /** 该语境最近一次作答结果（服务端聚合，含已答对的语境）。 */
-  latestOutcome: L3PracticeOutcome;
-  /** 与该 latestOutcome 同源的最近作答时间（服务端聚合）。 */
-  latestAt: string;
-}
-
-/**
- * 错题库条目 → 展示行：每个语境一行（同语境多条 wrong 行时取列表首条 =
- * 最近一条 wrong 行；聚合字段由服务端给出，同语境各行取值一致）。
- * 计数与最近结果不再依赖前端 ≤100 条回看窗口。
- */
-export function buildErrorBookRows(items: L3PracticeErrorBookItem[]): ErrorBookDisplayRow[] {
-  const rows: ErrorBookDisplayRow[] = [];
-  const seen = new Set<string>();
-  for (const item of items) {
-    if (seen.has(item.context_id)) continue;
-    seen.add(item.context_id);
-    const snapshot = readPracticeSnapshot(item.payload);
-    rows.push({
-      contextId: item.context_id,
-      text: snapshot.text ?? "",
-      target: snapshot.target ?? "",
-      wrongCount: item.wrongCount,
-      latestOutcome: item.latestOutcome,
-      latestAt: item.latestAt,
-    });
-  }
-  return rows;
-}
+// 错题库展示行（ErrorBookDisplayRow / buildErrorBookRows）已于 2026-09-26 移除：
+// 错题库改吃统一投影（`l3ErrorBookHubViewModel`），条目自带 target_label /
+// wrong_count / latest_outcome，两腿都在服务端聚合——前端这层"按语境去重 +
+// 读 payload 快照"的加工既成了死代码，也正是"游标按 attempts 走、显示按语境
+// 去重"这个口径分裂的来源。`readPracticeSnapshot` 保留：退役窗口内的
+// `GET /api/l3-practice/error-book` 仍返回该 payload 形状，解析契约仍被测试锁定。
 
 const OUTCOME_LABELS: Record<L3PracticeOutcome, string> = {
   correct: "正确",

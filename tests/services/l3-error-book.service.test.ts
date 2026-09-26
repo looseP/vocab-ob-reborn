@@ -16,7 +16,7 @@ function emptyPage(overrides: Partial<L3ErrorBookPage> = {}): L3ErrorBookPage {
   return { items: [], total: 0, limit: 20, offset: 0, ...overrides };
 }
 
-function makeService(listUnified = vi.fn(async () => emptyPage())) {
+function makeService(listUnified: ReturnType<typeof vi.fn> = vi.fn(async () => emptyPage())) {
   const list = listUnified;
   const service = new L3ErrorBookService({
     txRunner: (async (fn: (tx: unknown) => Promise<unknown>) => fn({})) as never,

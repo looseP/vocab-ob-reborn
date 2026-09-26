@@ -7,7 +7,7 @@
  *   用浏览器 Web Crypto 派生）；**只写 attempts，零 FSRS**；
  * - 文案：明确「只记录作答」，不暗示任何复习排程影响。
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Direction, L3PracticeOutcome, L3PracticeType, L3SubSpace } from "@/domain";
 import { L3ErrorMessage } from "../components/L3ErrorMessage";
 import { L3NavigationActions } from "../components/L3NavigationActions";
@@ -38,6 +38,12 @@ import {
 interface L3PracticePageProps {
   client: L3FrontendClient;
   onNavigate(intent: L3NavigationIntent): void;
+  /**
+   * 错题回流锚点（2026-09-26）：`/l3?section=practice&context=<id>` 的 contextId。
+   * 非空时进入即只练这一条语境（不再需要用户点「开始练习」），并按 contextId
+   * 取素材——复用既有 occurrences 端点的 contextId 参数，零新增端点。
+   */
+  focusContextId?: string | null;
 }
 
 type PracticePhase = "idle" | "loading" | "running" | "finished";
@@ -61,7 +67,7 @@ function renderHighlightedText(text: string, target: string) {
   );
 }
 
-export function L3PracticePage({ client, onNavigate }: L3PracticePageProps) {
+export function L3PracticePage({ client, onNavigate, focusContextId = null }: L3PracticePageProps) {
   const [space, setSpace] = useState<L3SubSpace | null>(null);
   const [direction, setDirection] = useState<Direction | null>(null);
   const [practiceType, setPracticeType] = useState<L3PracticeType>("essay_dictation");
@@ -84,7 +90,11 @@ export function L3PracticePage({ client, onNavigate }: L3PracticePageProps) {
     setRecordError(null);
     setPhase("loading");
     try {
-      const page = await client.listOccurrences({ space, direction, limit: L3_PRACTICE_MATERIAL_LIMIT });
+      // 错题回流（2026-09-26）：带 context 深链时只练这一条语境（复用既有
+      // listOccurrences 的 contextId 参数——零新增端点）；否则按两轴取素材。
+      const page = focusContextId
+        ? await client.listOccurrences({ contextId: focusContextId, limit: L3_PRACTICE_MATERIAL_LIMIT })
+        : await client.listOccurrences({ space, direction, limit: L3_PRACTICE_MATERIAL_LIMIT });
       const built = buildPracticeTasks(page.items, practiceType);
       setTasks(built.tasks);
       setSkipped(built.skipped);
@@ -99,6 +109,15 @@ export function L3PracticePage({ client, onNavigate }: L3PracticePageProps) {
       setPhase("idle");
     }
   };
+
+  // 错题回流：进入即开练，不要求用户再点一次「开始练习」。
+  useEffect(() => {
+    if (!focusContextId) return;
+    void start();
+    // start 依赖 practiceType：题型切换应重跑（换题型 = 换判法），其余入参在
+    // 带 context 的分支里不参与取数，故不列。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusContextId, practiceType]);
 
   const record = async (outcome: L3PracticeOutcome, userInput: string | null) => {
     if (!current || submitting) return;
