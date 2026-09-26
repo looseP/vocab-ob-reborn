@@ -208,6 +208,9 @@ function buildLocalCopyText(snapshot: StudyNoteSaveSnapshot, referencesMeta: rea
     for (const write of edit.references) {
       const meta = referencesMeta.find((reference) => normalizeStudyUuid(reference.id) === normalizeStudyUuid(write.id));
       if (meta) {
+        // 引用清单的标签取「最能认出这条引用是什么」的一段文本。判别联合的兜底分支
+        // 显式列出 grading（N2 第四条链，ADR-0039）：漏掉它会落到 option_quote 的
+        // `.quote` 上，而 grading 快照没有 quote 字段 ⇒ 运行时崩在导出/复制上。
         const label =
           meta.displaySnapshot.kind === "source" || meta.displaySnapshot.kind === "source_quote"
             ? meta.displaySnapshot.title
@@ -221,7 +224,9 @@ function buildLocalCopyText(snapshot: StudyNoteSaveSnapshot, referencesMeta: rea
                     ? meta.displaySnapshot.summaryExcerpt
                     : meta.displaySnapshot.kind === "attempt"
                       ? meta.displaySnapshot.answerExcerpt
-                      : meta.displaySnapshot.quote;
+                      : meta.displaySnapshot.kind === "grading"
+                        ? (meta.displaySnapshot.analysisExcerpt || `评卷（${meta.displaySnapshot.verdict}）`)
+                        : meta.displaySnapshot.quote;
         lines.push(`- [[ref:${write.id}]] ${label}（状态：${meta.status}${meta.capturedAt ? ` · ${meta.capturedAt}` : ""}）`);
       } else {
         lines.push(`- [[ref:${write.id}]]`);

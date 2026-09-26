@@ -69,6 +69,9 @@ export const STUDY_SHEET_EXCERPT_MAX = 280;
 /** N2 第三条链：attempt（作答记录）展示快照的摘录上限（同量级 280）。 */
 export const STUDY_ATTEMPT_EXCERPT_MAX = 280;
 
+/** N2 第四条链：评卷分析的快照节选上限（与评析区 280 同款，ADR-0039 决策 4）。 */
+export const STUDY_GRADING_EXCERPT_MAX = 280;
+
 // ── 枚举（单一真源；与 DB CHECK 同步）───────────────────────────────────────
 
 export const STUDY_NOTE_STATUSES = ["active", "archived"] as const;
@@ -98,6 +101,9 @@ export const REFERENCE_KINDS = [
   "note",
   "sheet",
   "attempt",
+  // N2 第四条链（ADR-0039）：评卷。身份 = {sheetId, questionId} 指向**当前**那一行；
+  // 评卷是 latest-wins 可改判目标 ⇒ `changed` 必然可达（与 attempt 相反）。
+  "grading",
 ] as const;
 export type ReferenceKind = (typeof REFERENCE_KINDS)[number];
 
@@ -154,7 +160,15 @@ export type ReferenceTarget =
    * 身份是 `{ attemptId }` **单值**（K9）——不拼 question / sheet / venue，也不存在
    * 「按题目找最新一次 attempt」的回退路径。
    */
-  | { kind: "attempt"; attemptId: string };
+  | { kind: "attempt"; attemptId: string }
+  /**
+   * N2 第四条链（ADR-0039 决策 2）：评卷目标 = `{sheetId, questionId}`。
+   *
+   * **不引入版本维度**：`l3_grading_results` 是 `UNIQUE(sheet_id, question_id)` 的
+   * latest-wins 覆写表，无 version 列 ⇒ 「引用某一次具体评卷」不可表达，本就不做。
+   * 身份指向**当前那一行**：改判后引用转 `changed`、旧快照原样保留（D3-2）。
+   */
+  | { kind: "grading"; sheetId: string; questionId: string };
 
 /** 前端构建 capture 载荷用（与 ReferenceWrite 的 capture 分支同构）。 */
 export interface ReferenceInput {
@@ -264,6 +278,25 @@ export interface AttemptReferenceSnapshot {
   answerExcerpt: string;
 }
 
+/**
+ * N2 第四条链（ADR-0039 决策 3/4）：评卷引用快照 = 判定 + 分析节选 + **归属事实**。
+ *
+ * `gradedBy` / `gradedAt` 是「谁在何时判的」，**不进 field_hash**（否则纯措辞调整
+ * 也会把引用打成 changed），但**必须存进快照** —— 它们是用户复盘时要看到的事实。
+ * ⚠️ `gradedAt` 是快照里的历史值：改判后 UI 只能据此显示「此评卷已被改判」，
+ * **不得**用它重算「最近评卷时间」（那属于 grading 读面，不属于引用）。
+ */
+export interface GradingReferenceSnapshot {
+  kind: "grading";
+  verdict: string;
+  analysisExcerpt: string;
+  gradedBy: string;
+  gradedAt: string;
+  questionOrdinal: number;
+  questionType: L3QuestionType;
+  sourceTitle: string | null;
+}
+
 export type ReferenceDisplaySnapshot =
   | SourceReferenceSnapshot
   | SourceQuoteReferenceSnapshot
@@ -273,7 +306,8 @@ export type ReferenceDisplaySnapshot =
   | AssessmentReferenceSnapshot
   | NoteReferenceSnapshot
   | SheetReferenceSnapshot
-  | AttemptReferenceSnapshot;
+  | AttemptReferenceSnapshot
+  | GradingReferenceSnapshot;
 
 /** 引用预览（详情/导出/反向引用共用；不泄露 service 端 hash 与请求键）。 */
 export interface ReferencePreview {
@@ -549,6 +583,12 @@ export const referenceTargetSchema = z
       .strict(),
     // N2 第三条链：attempt（作答记录）——单值身份，不拼 question / sheet / venue。
     z.object({ kind: z.literal("attempt"), attemptId: z.string().uuid() }).strict(),
+    // N2 第四条链（ADR-0039 决策 2）：评卷 = {sheetId, questionId}，无版本维度。
+    z.object({
+      kind: z.literal("grading"),
+      sheetId: z.string().uuid(),
+      questionId: z.string().uuid(),
+    }).strict(),
   ])
   .superRefine((value, ctx) => {
     if ("start" in value && "end" in value && value.end <= value.start) {

@@ -10,6 +10,7 @@ import {
   type NoteLeaveBarrier,
 } from "@/frontend/state/sheetLeaveBarrier";
 import type { ReferenceTarget } from "@/domain/l3-study-notes";
+import { GRADING_VERDICT_LABELS } from "@/domain/l3-grading";
 import { apiFetch } from "@/frontend/api/client";
 import {
   createExamSheetSaveController,
@@ -935,17 +936,24 @@ function ChoiceQuestion({
 function gradingVerdictBadge(verdict: string): { mark: string; label: string; cls: string } {
   switch (verdict) {
     case "correct":
-      return { mark: "✓", label: "评卷：对", cls: "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200" };
+      return { mark: "✓", label: `评卷：${GRADING_VERDICT_LABELS.correct}`, cls: "border-emerald-500 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200" };
     case "partial":
-      return { mark: "◐", label: "评卷：半对", cls: "border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" };
+      return { mark: "◐", label: `评卷：${GRADING_VERDICT_LABELS.partial}`, cls: "border-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" };
     case "wrong":
-      return { mark: "✗", label: "评卷：错", cls: "border-rose-500 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" };
+      return { mark: "✗", label: `评卷：${GRADING_VERDICT_LABELS.wrong}`, cls: "border-rose-500 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" };
     default:
       return { mark: "◌", label: "评卷：未知", cls: "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-ink-soft)]" };
   }
 }
 
-function L3QuestionGrading({ grading }: { grading: L3GradingResult }) {
+function L3QuestionGrading({
+  grading,
+  onReferenceToNote,
+}: {
+  grading: L3GradingResult;
+  /** N2 第四条链（ADR-0039）：把「这一格的判定」钉进笔记。传 null 则不渲染入口。 */
+  onReferenceToNote?: (() => void) | null;
+}) {
   const [expanded, setExpanded] = useState(false);
   const badge = gradingVerdictBadge(grading.verdict);
   return (
@@ -961,16 +969,33 @@ function L3QuestionGrading({ grading }: { grading: L3GradingResult }) {
           </span>
           <span className="truncate text-[10px] text-[var(--color-ink-soft)]">agent 评卷 · {grading.graded_by}</span>
         </span>
-        {grading.analysis_md && (
-          <button
-            type="button"
-            onClick={(event) => { event.stopPropagation(); setExpanded((v) => !v); }}
-            aria-expanded={expanded}
-            className="shrink-0 text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
-          >
-            {expanded ? "收起分析 ▴" : "展开分析 ▸"}
-          </button>
-        )}
+        <span className="flex shrink-0 items-center gap-2">
+          {/*
+            N2 第四条链（ADR-0039）：评卷是**可改判**目标 ⇒ 引用转 changed 必然可达
+            （与 attempt 相反）。所以入口放在判定区而不是别处：用户钉的是「这一格的
+            判定」，钉完就能在同一处看到它日后是否被改判。
+          */}
+          {onReferenceToNote && (
+            <button
+              type="button"
+              data-testid="reference-grading-to-note"
+              onClick={(event) => { event.stopPropagation(); onReferenceToNote(); }}
+              className="shrink-0 text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+            >
+              引用评卷到笔记
+            </button>
+          )}
+          {grading.analysis_md && (
+            <button
+              type="button"
+              onClick={(event) => { event.stopPropagation(); setExpanded((v) => !v); }}
+              aria-expanded={expanded}
+              className="shrink-0 text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+            >
+              {expanded ? "收起分析 ▴" : "展开分析 ▸"}
+            </button>
+          )}
+        </span>
       </div>
       {expanded && grading.analysis_md && (
         <p className="mt-1.5 whitespace-pre-wrap rounded-md bg-[var(--color-surface)] p-2 text-[11px] leading-relaxed text-[var(--color-ink)] ring-1 ring-[var(--color-border)]">
@@ -1956,7 +1981,14 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
       <>
         {/* 批次三①：解析模式判读（verdict 徽标 + agent 分析折叠区）——仅揭示后渲染，
             做题模式零变更（verdict/analysis 不进做题视图）。 */}
-        {grading && revealAll && <L3QuestionGrading grading={grading} />}
+        {grading && revealAll && (
+          <L3QuestionGrading
+            grading={grading}
+            onReferenceToNote={requestReferenceToNote
+              ? () => requestReferenceToNote({ kind: "grading", sheetId: grading.sheet_id, questionId: grading.question_id })
+              : null}
+          />
+        )}
         {tagDict && (
           <L3QuestionAnalysis
             question={q}

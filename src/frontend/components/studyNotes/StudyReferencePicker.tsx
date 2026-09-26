@@ -70,6 +70,10 @@ function targetIdentityKey(target: ReferenceTarget | null): string | null {
       return `sheet:${target.submissionId}:${target.revisionNo ?? "null"}`;
     case "attempt":
       return `attempt:${target.attemptId}`;
+    // N2 第四条链（ADR-0039 决策 2）：评卷身份 = {sheetId, questionId}。**不能**只按
+    // questionId 判等 —— 同一道题可以在多张题纸里各评一次，那是不同的判定。
+    case "grading":
+      return `grading:${target.sheetId}:${target.questionId}`;
   }
 }
 
@@ -95,6 +99,12 @@ function previewSummary(preview: ReferenceTargetPreview): string {
       return `题纸稿次（${snapshot.scope}）「${snapshot.summaryExcerpt}」`;
     case "attempt":
       return `作答记录（${snapshot.venue}）「${snapshot.answerExcerpt}」`;
+    // N2 第四条链（ADR-0039）：预览摘要带判定 —— 钉之前就看清钉的是什么，
+    // 而不是钉完才发现引的是一条空分析。
+    case "grading":
+      return snapshot.analysisExcerpt
+        ? `评卷（${snapshot.verdict}）「${snapshot.analysisExcerpt}」`
+        : `评卷（${snapshot.verdict}）`;
   }
 }
 

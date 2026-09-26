@@ -17,6 +17,19 @@ import { ANNOTATION_REVIEW_VERDICTS, type AnnotationReviewVerdict } from "./l3-s
 export const GRADING_VERDICTS = ["correct", "partial", "wrong"] as const;
 export type GradingVerdict = (typeof GRADING_VERDICTS)[number];
 
+/**
+ * verdict → 中文短标签（**单一真源**）。
+ *
+ * 徽标（`L3ExamPaper`）、笔记引用摘录（`studyNoteReferenceOps`）、离线导出共用它 ——
+ * 同一个词在三处各写一遍中文，迟早漂移成「对 / 正确 / ✓」三种说法。
+ * 徽标前缀「评卷：」由调用方加（那里需要区分判定与作答的对错）。
+ */
+export const GRADING_VERDICT_LABELS: Record<GradingVerdict, string> = {
+  correct: "对",
+  partial: "半对",
+  wrong: "错",
+};
+
 /** 复用批次二注记 review 词表（0034 review 列契约，单一真源）。 */
 export { ANNOTATION_REVIEW_VERDICTS };
 export type { AnnotationReviewVerdict };

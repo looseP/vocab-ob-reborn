@@ -23639,6 +23639,13 @@ export interface operations {
                                     kind: "attempt";
                                     /** Format: uuid */
                                     attemptId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "grading";
+                                    /** Format: uuid */
+                                    sheetId: string;
+                                    /** Format: uuid */
+                                    questionId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -23701,6 +23708,17 @@ export interface operations {
                                     kind: "attempt";
                                     venue: string;
                                     answerExcerpt: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "grading";
+                                    verdict: string;
+                                    analysisExcerpt: string;
+                                    gradedBy: string;
+                                    gradedAt: string;
+                                    questionOrdinal: number;
+                                    /** @enum {string} */
+                                    questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                                    sourceTitle: string | null;
                                 };
                                 liveTitle: string | null;
                             }[];
@@ -24091,6 +24109,13 @@ export interface operations {
                     kind: "attempt";
                     /** Format: uuid */
                     attemptId: string;
+                } | {
+                    /** @constant */
+                    kind: "grading";
+                    /** Format: uuid */
+                    sheetId: string;
+                    /** Format: uuid */
+                    questionId: string;
                 };
             };
         };
@@ -24161,6 +24186,13 @@ export interface operations {
                                 kind: "attempt";
                                 /** Format: uuid */
                                 attemptId: string;
+                            } | {
+                                /** @constant */
+                                kind: "grading";
+                                /** Format: uuid */
+                                sheetId: string;
+                                /** Format: uuid */
+                                questionId: string;
                             };
                             displaySnapshot: {
                                 /** @constant */
@@ -24220,6 +24252,17 @@ export interface operations {
                                 kind: "attempt";
                                 venue: string;
                                 answerExcerpt: string;
+                            } | {
+                                /** @constant */
+                                kind: "grading";
+                                verdict: string;
+                                analysisExcerpt: string;
+                                gradedBy: string;
+                                gradedAt: string;
+                                questionOrdinal: number;
+                                /** @enum {string} */
+                                questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                                sourceTitle: string | null;
                             };
                             liveTitle: string | null;
                         };
@@ -24795,6 +24838,13 @@ export interface operations {
                                     kind: "attempt";
                                     /** Format: uuid */
                                     attemptId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "grading";
+                                    /** Format: uuid */
+                                    sheetId: string;
+                                    /** Format: uuid */
+                                    questionId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -24857,6 +24907,17 @@ export interface operations {
                                     kind: "attempt";
                                     venue: string;
                                     answerExcerpt: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "grading";
+                                    verdict: string;
+                                    analysisExcerpt: string;
+                                    gradedBy: string;
+                                    gradedAt: string;
+                                    questionOrdinal: number;
+                                    /** @enum {string} */
+                                    questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                                    sourceTitle: string | null;
                                 };
                                 liveTitle: string | null;
                             }[];
@@ -25088,6 +25149,13 @@ export interface operations {
                             kind: "attempt";
                             /** Format: uuid */
                             attemptId: string;
+                        } | {
+                            /** @constant */
+                            kind: "grading";
+                            /** Format: uuid */
+                            sheetId: string;
+                            /** Format: uuid */
+                            questionId: string;
                         };
                     })[];
                 };
@@ -25174,6 +25242,13 @@ export interface operations {
                                     kind: "attempt";
                                     /** Format: uuid */
                                     attemptId: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "grading";
+                                    /** Format: uuid */
+                                    sheetId: string;
+                                    /** Format: uuid */
+                                    questionId: string;
                                 };
                                 /** @enum {string} */
                                 status: "current" | "changed" | "unavailable";
@@ -25236,6 +25311,17 @@ export interface operations {
                                     kind: "attempt";
                                     venue: string;
                                     answerExcerpt: string;
+                                } | {
+                                    /** @constant */
+                                    kind: "grading";
+                                    verdict: string;
+                                    analysisExcerpt: string;
+                                    gradedBy: string;
+                                    gradedAt: string;
+                                    questionOrdinal: number;
+                                    /** @enum {string} */
+                                    questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
+                                    sourceTitle: string | null;
                                 };
                                 liveTitle: string | null;
                             }[];

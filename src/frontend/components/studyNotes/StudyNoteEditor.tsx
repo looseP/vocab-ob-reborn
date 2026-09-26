@@ -110,6 +110,11 @@ function referenceSummary(meta: ReferencePreview): string {
       return `题纸稿次（${snapshot.scope}）「${snapshot.summaryExcerpt}」`;
     case "attempt":
       return `作答记录（${snapshot.venue}）「${snapshot.answerExcerpt}」`;
+    // N2 第四条链（ADR-0039）：评卷引用摘要带判定；无分析时不留空摘要。
+    case "grading":
+      return snapshot.analysisExcerpt
+        ? `评卷（${snapshot.verdict}）「${snapshot.analysisExcerpt}」`
+        : `评卷（${snapshot.verdict}）`;
   }
 }
 

@@ -431,3 +431,60 @@ describe("studyNoteReferenceOps · 导出 schema 版本选择（N2/P4）", () =>
     expect(exportSchemaVersionForReferences([])).toBe(1);
   });
 });
+
+/**
+ * N2 第四条链（ADR-0039 决策 5/8）：评卷摘录行的前端口径。
+ *
+ * 承重点在**空分析**分支：agent 常常只给判定不给分析，那一行卡片不能塌成
+ * 「undefined」或只剩一个空引用块 —— 摘要必须仍能说明「钉的是一条 wrong」。
+ */
+describe("studyNoteReferenceOps · 评卷摘录行（ADR-0039）", () => {
+  const base: Omit<ReferencePreview, "displaySnapshot"> = {
+    id: REF_A,
+    target: { kind: "grading", sheetId: "00000000-0000-4000-8000-000000000301", questionId: "00000000-0000-4000-8000-000000000211" },
+    status: "current",
+    capturedAt: "2026-09-20T00:00:00.000Z",
+    liveTitle: "第 2 题",
+  };
+
+  it("有分析：判定 + 分析摘录 + 归属行", () => {
+    const meta: ReferencePreview = {
+      ...base,
+      displaySnapshot: {
+        kind: "grading",
+        verdict: "wrong",
+        analysisExcerpt: "限定词 which 读成了 what。",
+        gradedBy: "agent-1",
+        gradedAt: "2026-09-26T00:00:00.000Z",
+        questionOrdinal: 2,
+        questionType: "reading_choice",
+        sourceTitle: "2023 Text2",
+      },
+    };
+    const lines = excerptLinesFromSnapshot(meta);
+    expect(lines[0]).toContain("限定词 which 读成了 what。");
+    expect(lines.join("\n")).toContain("agent-1");
+  });
+
+  it("无分析：仍出一行判定，不塌成空摘要", () => {
+    const meta: ReferencePreview = {
+      ...base,
+      displaySnapshot: {
+        kind: "grading",
+        verdict: "correct",
+        analysisExcerpt: "",
+        gradedBy: "agent-2",
+        gradedAt: "2026-09-26T00:00:00.000Z",
+        questionOrdinal: 2,
+        questionType: "reading_choice",
+        sourceTitle: "2023 Text2",
+      },
+    };
+    const lines = excerptLinesFromSnapshot(meta);
+    expect(lines.length).toBeGreaterThan(0);
+    // 判定走单一真源的**中文标签**（GRADING_VERDICT_LABELS），不是裸枚举值。
+    expect(lines.join("\n")).toContain("判定：对");
+    expect(lines.join("\n")).not.toContain("correct");
+    expect(lines.join("\n")).not.toContain("undefined");
+  });
+});

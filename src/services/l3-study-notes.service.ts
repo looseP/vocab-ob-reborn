@@ -155,6 +155,15 @@ export function canonicalTarget(target: ReferenceTarget): Record<string, unknown
     // N2 第三条链：attempt 身份是单值 attemptId（K9）。
     case "attempt":
       return { kind: "attempt", attemptId: target.attemptId.toLowerCase() };
+    // N2 第四条链（ADR-0039 决策 2）：两个 id 都要小写归一（UUID 大小写是同一对象，
+    // 与 F5 的身份规范化同款）——否则引用行的目标列可能与装载时的复合 key 大小写
+    // 不一致，派生状态会误判成 changed/unavailable。
+    case "grading":
+      return {
+        kind: "grading",
+        sheetId: target.sheetId.toLowerCase(),
+        questionId: target.questionId.toLowerCase(),
+      };
   }
 }
 

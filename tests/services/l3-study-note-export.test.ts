@@ -1612,3 +1612,94 @@ describe("N2 第三条链导出（sheet / attempt · v2 显式选版 / v1 冻结
 function userId(): string {
   return USER;
 }
+
+/**
+ * N2 第四条链：评卷引用的导出口径（ADR-0039 决策 6/7）。
+ *
+ * - v2 承载新 kind，target 只带 {sheetId, questionId}（**不带**版本号 —— 决策 2
+ *   否决了 ②b，所以导出里也不该凭空长出一个没有语义来源的字段）；
+ * - v1 遇到 grading 必须 422 fail-closed，而不是把它悄悄降级成别的 kind。
+ */
+describe("N2 评卷引用导出（第四条链 · v2 承载 / v1 冻结）", () => {
+  const SHEET = "00000000-0000-4000-8000-000000000301";
+  const REF_GRADING = "00000000-0000-4000-8000-000000000008";
+  const QUESTION_ID = "00000000-0000-4000-8000-000000000211";
+
+  function gradingRefRow(): L3StudyNoteReferenceRow {
+    return refRow({
+      id: REF_GRADING,
+      kind: "grading",
+      source_id: null,
+      question_id: QUESTION_ID,
+      assessment_id: null,
+      target_note_id: null,
+      submission_id: SHEET,
+      start_offset: null,
+      end_offset: null,
+      quote_snapshot: null,
+      display_snapshot: asJson({
+        kind: "grading",
+        verdict: "wrong",
+        analysisExcerpt: "限定词读错",
+        gradedBy: "agent-1",
+        gradedAt: "2026-09-26T00:00:00Z",
+        questionOrdinal: 2,
+        questionType: "reading_choice",
+        sourceTitle: "来源",
+      }),
+    });
+  }
+
+  function fakeWithGradingRef(): FakeRepos {
+    const fake = fakeRepos({ refRows: [gradingRefRow()] });
+    const body = ["复盘。", "", `[[ref:${REF_GRADING}]]`, "", "结论。"].join("\n");
+    fake.studyNotes.lockForShare = vi.fn(async () => noteRow({ body_md: body })) as never;
+    return fake;
+  }
+
+  async function versionOf(fake: FakeRepos): Promise<number> {
+    const lock = fake.studyNotes.lockForShare as unknown as () => Promise<{ version: number }>;
+    return (await lock()).version;
+  }
+
+  it("v2：target 只带 {sheetId, questionId}，快照保留判定与归属事实", async () => {
+    const fake = fakeWithGradingRef();
+    const result = await makeService(fake).export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 2,
+    });
+    const payload = extractLastJsonBlock(result.markdown) as Record<string, any>;
+    expect(payload.references[0].kind).toBe("grading");
+    expect(payload.references[0].target).toEqual({
+      kind: "grading",
+      sheetId: SHEET,
+      questionId: QUESTION_ID,
+    });
+    // 决策 2 的否决点在导出面也成立：没有版本维度可导出。
+    expect(payload.references[0].target).not.toHaveProperty("version");
+    expect(payload.references[0].target).not.toHaveProperty("gradingVersion");
+    const snapshot = payload.references[0].displaySnapshot as Record<string, unknown>;
+    expect(snapshot.verdict).toBe("wrong");
+    expect(snapshot.analysisExcerpt).toBe("限定词读错");
+    expect(snapshot.gradedBy).toBe("agent-1");
+  });
+
+  it("Markdown 正文出现评卷引用块，判定与分析可读", async () => {
+    const fake = fakeWithGradingRef();
+    const result = await makeService(fake).export(USER, NOTE, {
+      expectedVersion: await versionOf(fake),
+      schemaVersion: 2,
+    });
+    expect(result.markdown).toContain("评卷");
+    expect(result.markdown).toContain("限定词读错");
+  });
+
+  it("v1：含评卷引用的笔记显式请求 v1 → 422，不静默切版、不降级", async () => {
+    const fake = fakeWithGradingRef();
+    const error = await makeService(fake)
+      .export(USER, NOTE, { expectedVersion: await versionOf(fake), schemaVersion: 1 })
+      .catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as { field?: string }).field).toBe("schemaVersion");
+  });
+});
