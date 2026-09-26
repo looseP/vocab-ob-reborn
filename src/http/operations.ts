@@ -43,6 +43,7 @@ import {
   l3QuestionAnnotationItemResponseSchema,
   l3QuestionAnnotationListResponseSchema,
 } from "./l3-annotation-response-contract";
+import { l3UnifiedErrorBookResponseSchema } from "./l3-error-book-response-contract";
 import {
   l3AttemptListResponseSchema,
   l3SheetDetailResponseSchema,
@@ -249,6 +250,7 @@ import {
   upgradeWorkOrderListQuerySchema,
   l3PracticeAttemptCreateSchema,
   l3PracticeAttemptListQuerySchema,
+  l3ErrorBookQuerySchema,
   l3PracticeErrorBookQuerySchema,
   l3SessionCreateSchema,
   l3SessionEndSchema,
@@ -655,6 +657,9 @@ export const apiOperations = [
   // 错题库（T11 加固）：条目附服务端聚合（wrongCount/latestOutcome/latestAt），
   // cursor 纯新增、offset 保留（共存时 cursor 为准）→ 专属响应页 schema。
   operation("get", "/api/l3-practice/error-book", "listL3PracticeErrorBook", "owner", "agent", "none", { query: l3PracticeErrorBookQuerySchema }, 200, l3PracticeErrorBookPageResponseSchema),
+  // 错题库统一投影（2026-09-26）：句级 wrong + 题级 wrong/partial 合并，消费方按
+  // kind 分区。纯读派生（不建表），取代上方单腿端点的错题库口径。
+  operation("get", "/api/l3/error-book", "listL3ErrorBook", "owner", "agent", "none", { query: l3ErrorBookQuerySchema }, 200, l3UnifiedErrorBookResponseSchema),
   // ── L3 sessions (ADR-0019 §2) ───────────────────────────────────────────
   operation("post", "/api/l3-sessions", "createL3Session", "owner", "owner", "sessionMutation", { body: l3SessionCreateSchema }, 201, l3SessionRowResponseSchema),
   operation("get", "/api/l3-sessions/:id", "getL3Session", "owner", "agent", "none", undefined, 200, l3SessionRenderDescriptionResponseSchema),

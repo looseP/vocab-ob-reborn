@@ -889,6 +889,49 @@ export interface L3PracticeErrorBookPage {
   nextCursor: string | null;
 }
 
+// ── 错题库统一投影（2026-09-26）────────────────────────────────────────
+//
+// 派生视图，不建表（ADR-0019 §1）。合并两腿：句级（l3_practice_attempts 的 wrong）
+// 与题级（l3_grading_results 的 wrong/partial）。两套 attempt 共享一个词、不共享
+// 真源；合并只发生在读侧，任何一腿的写入路径都不因此改变。
+
+/** 错题条目所属腿。`sentence` = 句级练习；`question` = 题级做题判分。 */
+export type L3ErrorBookKind = "sentence" | "question";
+
+/** 两条腿的来源标题各自可能为 null（无来源的语境 / 无来源的题）。 */
+export interface L3UnifiedErrorBookItem {
+  kind: L3ErrorBookKind;
+  /** 错记录自身 id（句级 = attempt id；题级 = grading_results id）。 */
+  id: string;
+  /** 被练的实体 id：句级 = context_id；题级 = question_id。回流出口的锚点。 */
+  target_id: string;
+  /** 一行摘要：句级 = 语境原文；题级 = 题干前 120 字。 */
+  target_label: string;
+  /** 次要信息：句级 = null；题级 = question_type。 */
+  target_secondary: string | null;
+  source_id: string | null;
+  source_title: string | null;
+  question_type: string | null;
+  space: string | null;
+  direction: string | null;
+  /** 句级 = 所属会话（可为 null）；题级 = 判分所在题纸。 */
+  sheet_id: string | null;
+  /** 句级练习类型；题级为 null。 */
+  practice_type: string | null;
+  wrong_count: number;
+  /** 最近一次结果标签：句级 outcome / 题级 verdict（两套词表不同义，见 CONTEXT.md）。 */
+  latest_outcome: string;
+  latest_at: string;
+}
+
+/** 统一错题页：合并后统一排序 + offset 分页（cursor 在两腿间不成立，故不提供）。 */
+export interface L3ErrorBookPage {
+  items: L3UnifiedErrorBookItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 // ── L3 sessions（ADR-0019 §2：慢学习容器）─────────────────────────────
 export type L3SessionType = "l2_upgrade" | "l3_practice" | "cram_pack" | "knowledge";
 export type L3SessionStatus = "active" | "completed" | "abandoned";

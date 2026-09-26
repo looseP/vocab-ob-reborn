@@ -45,6 +45,8 @@ import type {
   L3QuestionRow,
   L3PracticeAttemptRow,
   L3PracticeErrorBookPage,
+  L3ErrorBookKind,
+  L3ErrorBookPage,
   L3PracticeOutcome,
   L3PracticeType,
   L3ProposalBundle,
@@ -1342,6 +1344,29 @@ export interface IL3PracticeRepository {
   listWrongAttempts(input: L3AttemptLookup): Promise<L3PracticeErrorBookPage>;
 }
 
+// ── 错题库统一投影（2026-09-26）────────────────────────────────────────
+
+/** 统一错题查询入参。`kind` = null 时两腿合并。 */
+export interface L3ErrorBookLookup {
+  userId: string;
+  /** 腿选择：null = 句级 + 题级合并（错题库默认口径）。 */
+  kind: L3ErrorBookKind | null;
+  /** 能力域：句级走 l3_source_spaces EXISTS；题级走 l3_questions.space。 */
+  space?: L3SubSpace | null;
+  /** 考试轴：两腿都取 l3_sources.direction。 */
+  direction?: Direction | null;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * 错题库统一投影仓储（**只读**）。合并句级 wrong 与题级 wrong/partial 两条腿，
+ * 合并后统一排序分页。不建表、不新增真源（见仓储文件头纪律）。
+ */
+export interface IL3ErrorBookRepository {
+  listUnified(input: L3ErrorBookLookup): Promise<L3ErrorBookPage>;
+}
+
 // ── L3 Sessions (ADR-0019 §2) ──────────────────────────────────────────
 /** 建会话输入：plan 只存实体 id 引用 + version。 */
 export interface NewL3Session {
@@ -1762,6 +1787,8 @@ export interface IRepositories {
   l3Proposal: IL3ProposalRepository;
   l3Recommendation: IL3RecommendationRepository;
   l3Practice: IL3PracticeRepository;
+  /** 错题库统一投影（只读；合并句级 + 题级两腿，见仓储文件头纪律）。 */
+  l3ErrorBook: IL3ErrorBookRepository;
   l3Sessions: IL3SessionRepository;
   l3Paper: IL3PaperRepository;
   l3Annotations: IL3AnnotationRepository;
