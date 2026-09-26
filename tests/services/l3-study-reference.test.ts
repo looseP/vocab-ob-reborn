@@ -1140,3 +1140,125 @@ describe("ADR-0039 · 评卷引用：决策 10 六条矩阵", () => {
     expect(resolved!.status).toBe("current");
   });
 });
+
+/**
+ * ADR-0039 决策 4 的写侧：capture 把「这一格的判定」落成一行引用。
+ *
+ * 与 resolve 侧那六条互补 —— 那六条证明「改判看得见」，这一条证明「钉的那一刻
+ * 快照/hash 确实是当时那一格」，否则 changed 的对照基准本身是假的。
+ */
+describe("ADR-0039 · 评卷引用的 capture 写侧", () => {
+  const SHEET = "00000000-0000-4000-8000-000000000301";
+  const GRADING_ANALYSIS = "A 是同义替换，但把 which 读成 what 就错了。";
+
+  function sealedTarget(over: Partial<LoadedTarget> = {}): LoadedTarget {
+    return {
+      kind: "grading",
+      id: `${SHEET}:${QUESTION}`,
+      sheet_id: SHEET,
+      question_id: QUESTION,
+      sheet_status: "sealed",
+      verdict: "wrong",
+      analysis_md: GRADING_ANALYSIS,
+      graded_by: "agent-1",
+      graded_at: "2026-09-26T00:00:00Z",
+      question_ordinal: 2,
+      question_type: "reading_choice",
+      source_title: "Fox source",
+      ...over,
+    } as LoadedTarget;
+  }
+
+  it("落库形状：复用 question_id + submission_id，零新增列，quote/offset 全空", () => {
+    const service = makeService(fakeRepos([]));
+    const row = service.captureAgainst({ kind: "grading", sheetId: SHEET, questionId: QUESTION }, sealedTarget());
+    expect(row.kind).toBe("grading");
+    expect(row.question_id).toBe(QUESTION);
+    expect(row.submission_id).toBe(SHEET);
+    expect(row.submission_revision_no).toBeNull();
+    expect(row.attempt_id).toBeNull();
+    expect(row.assessment_id).toBeNull();
+    expect(row.target_note_id).toBeNull();
+    expect(row.source_id).toBeNull();
+    // 非 quote 型：offset/quote 必须为空，否则 DB 的 quote_check 会拒。
+    expect(row.start_offset).toBeNull();
+    expect(row.end_offset).toBeNull();
+    expect(row.quote_snapshot).toBeNull();
+  });
+
+  it("field_hash 只由 verdict + analysis_md 决定（决策 3）", () => {
+    const service = makeService(fakeRepos([]));
+    const base = sealedTarget();
+    const a = service.captureAgainst({ kind: "grading", sheetId: SHEET, questionId: QUESTION }, base);
+    // 归属事实全变：不该动 hash。
+    const b = service.captureAgainst(
+      { kind: "grading", sheetId: SHEET, questionId: QUESTION },
+      sealedTarget({ graded_by: "agent-9", graded_at: "2026-09-28T00:00:00Z", question_ordinal: 5, source_title: "别处" }),
+    );
+    expect(b.field_hash).toBe(a.field_hash);
+    // 判定翻面：必须动 hash（否则改判不可见）。
+    const c = service.captureAgainst(
+      { kind: "grading", sheetId: SHEET, questionId: QUESTION },
+      sealedTarget({ verdict: "partial" }),
+    );
+    expect(c.field_hash).not.toBe(a.field_hash);
+  });
+
+  it("快照承载归属事实：verdict/分析摘录/评卷人/评卷时/题序/题型/来源标题", () => {
+    const service = makeService(fakeRepos([]));
+    const row = service.captureAgainst({ kind: "grading", sheetId: SHEET, questionId: QUESTION }, sealedTarget());
+    const snapshot = row.display_snapshot as Record<string, unknown>;
+    expect(snapshot).toMatchObject({
+      kind: "grading",
+      verdict: "wrong",
+      analysisExcerpt: GRADING_ANALYSIS,
+      gradedBy: "agent-1",
+      gradedAt: "2026-09-26T00:00:00Z",
+      questionOrdinal: 2,
+      questionType: "reading_choice",
+      sourceTitle: "Fox source",
+    });
+    // hash 的输入字段不得作为「可信真源」再塞进快照以外的第二处。
+    expect(snapshot).not.toHaveProperty("fieldHash");
+  });
+
+  it("超长分析按 280 截断进快照，但 hash 仍吃完整原文（决策 3 的口径分离）", () => {
+    const long = "x".repeat(400);
+    const service = makeService(fakeRepos([]));
+    const row = service.captureAgainst(
+      { kind: "grading", sheetId: SHEET, questionId: QUESTION },
+      sealedTarget({ analysis_md: long }),
+    );
+    const snapshot = row.display_snapshot as { analysisExcerpt: string };
+    expect(snapshot.analysisExcerpt).toHaveLength(280);
+    expect(row.field_hash).toBe(sha256Hex(JSON.stringify({ verdict: "wrong", analysis_md: long })));
+  });
+
+  it("身份交叉不匹配：换题 / 换题纸 / 换 kind 一律 404，绝不按题兜底找评卷", () => {
+    const service = makeService(fakeRepos([]));
+    // 同一张题纸的另一道题：不能拿「这道题的评卷」顶替。
+    expect(() => service.captureAgainst(
+      { kind: "grading", sheetId: SHEET, questionId: "00000000-0000-4000-8000-000000000399" },
+      sealedTarget(),
+    )).toThrow(NotFoundError);
+    // 另一张题纸：判卷身份含题纸，不能只看题。
+    expect(() => service.captureAgainst(
+      { kind: "grading", sheetId: "00000000-0000-4000-8000-000000000302", questionId: QUESTION },
+      sealedTarget(),
+    )).toThrow(NotFoundError);
+    // 异型 loaded（把题纸引用当评卷用）：一律 404。
+    expect(() => service.captureAgainst(
+      { kind: "grading", sheetId: SHEET, questionId: QUESTION },
+      QUESTION_TARGET,
+    )).toThrow(NotFoundError);
+  });
+
+  it("currentFieldText：grading kind 走 verdict+analysis 口径；kind 与 loaded 不匹配返回 null", () => {
+    const loaded = sealedTarget();
+    expect(currentFieldText("grading", null, loaded)).toBe(
+      JSON.stringify({ verdict: "wrong", analysis_md: GRADING_ANALYSIS }),
+    );
+    // 交叉防御：非 grading kind 不得读到评卷字段（否则 sheet 引用会因评卷改判而 changed）。
+    expect(currentFieldText("question", null, loaded)).toBeNull();
+  });
+});

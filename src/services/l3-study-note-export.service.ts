@@ -40,6 +40,7 @@ import {
   type ReferenceStatus,
   type ReferenceTarget,
   N1_REFERENCE_KINDS,
+  type N1ReferenceKind,
 } from "../domain/l3-study-notes";
 import type { L3QuestionOption, L3QuestionType } from "../domain/l3-question-types";
 import {
@@ -401,8 +402,17 @@ function snapshotSummary(snapshot: ReferenceDisplaySnapshot): string {
   }
 }
 
-/** 引用行 → JSON 块 target（camelCase 投影；行内列名不出现在产物里）。 */
-function toExportTarget(row: L3StudyNoteReferenceRow): StudyNoteExportTarget {
+/**
+ * 引用行 → v1 JSON 块 target（camelCase 投影；行内列名不出现在产物里）。
+ *
+ * 参数类型是 **N1 收窄**：v1 路径上 `assertV1Kinds` 是类型守卫，先把 kind 收窄成
+ * N1ReferenceKind，本函数因此不必为每个 N2 kind 写一条「理论上到不了」的分支。
+ *
+ * 为什么值得这么做（K16）：枚举式 switch 的代价是**每加一个 kind 就要补一条臂**，
+ * 而补漏是静默的 —— 漏掉时 v1 产物里就会长出一个未定义字段。把「v1 只认 N1」
+ * 写成类型，守卫就从一个要靠人记得遵守的约定，变成编译器和运行时共同保证的事实。
+ */
+function toExportTarget(row: L3StudyNoteReferenceRow & { kind: N1ReferenceKind }): StudyNoteExportTarget {
   switch (row.kind) {
     case "source":
       return { sourceId: row.source_id! };
@@ -419,18 +429,6 @@ function toExportTarget(row: L3StudyNoteReferenceRow): StudyNoteExportTarget {
         startOffset: row.start_offset!,
         endOffset: row.end_offset!,
       };
-    case "assessment":
-    case "note":
-    case "sheet":
-    case "attempt":
-    case "grading":
-      // v1 形状冻结（P4-1），且调用前 assertV1Kinds 已拦下；这里不新增形状，
-      // 直接 fail-closed——宁可拒绝，也不让 v1 产物出现未定义字段（K16：新 kind
-      // 不会被悄悄降级进 v1）。
-      throw new ValidationError(
-        "该笔记包含 N2 引用型，v1 导出不可用（请显式指定 schemaVersion=2）",
-        "schemaVersion",
-      );
   }
 }
 
@@ -489,9 +487,28 @@ function toExportTargetV2(row: L3StudyNoteReferenceRow): StudyNoteExportTargetV2
 /**
  * P4-1/P4-2：v1 遇到 N2 引用型**不**静默降级（不丢引用、不改字段形状），
  * 直接拒绝并指明显式选择 v2——离线档案的形状必须由请求者决定，不是由内容决定。
+ *
+ * 它同时是**类型守卫**：返回后 `kind` 被收窄成 N1ReferenceKind，于是 v1 的 target
+ * 投影不必为每个 N2 kind 留一条到不了的分支（新增 kind 也不会漏）。
  */
-function assertV1Kinds(rows: readonly L3StudyNoteReferenceRow[]): void {
-  const unsupported = rows.find((row) => !(N1_REFERENCE_KINDS as readonly string[]).includes(row.kind));
+function isN1Kind(kind: ReferenceKind): kind is N1ReferenceKind {
+  return (N1_REFERENCE_KINDS as readonly string[]).includes(kind);
+}
+
+/** 单行口径：v1 路径上按行收窄（与 assertV1Kinds 共用同一谓词，不复制判定逻辑）。 */
+function assertN1Kind(row: L3StudyNoteReferenceRow): asserts row is L3StudyNoteReferenceRow & { kind: N1ReferenceKind } {
+  if (!isN1Kind(row.kind)) {
+    throw new ValidationError(
+      "该笔记包含 N2 引用型，v1 导出不可用（请显式指定 schemaVersion=2）",
+      "schemaVersion",
+    );
+  }
+}
+
+function assertV1Kinds(
+  rows: readonly L3StudyNoteReferenceRow[],
+): asserts rows is readonly (L3StudyNoteReferenceRow & { kind: N1ReferenceKind })[] {
+  const unsupported = rows.find((row) => !isN1Kind(row.kind));
   if (unsupported) {
     throw new ValidationError(
       "该笔记包含 N2 引用型，v1 导出不可用（请显式指定 schemaVersion=2）",
@@ -805,6 +822,9 @@ export class L3StudyNoteExportService {
         if (schemaVersion === 2) {
           referencesV2.push({ ...base, target: toExportTargetV2(row) });
         } else {
+          // v1：与 assertV1Kinds 同一谓词把 kind 收窄成 N1（运行时是恒真的重入，
+          // 换来的是「v1 产物只可能出现 N1 形状」由类型保证，而不是靠 switch 记得列全）。
+          assertN1Kind(row);
           references.push({ ...base, target: toExportTarget(row) });
         }
       }
