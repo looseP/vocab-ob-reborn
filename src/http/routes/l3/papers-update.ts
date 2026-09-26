@@ -11,12 +11,16 @@
  *  - 被作文任务引用 → 409（题面冻结 = 新任务）
  *  - 证据锚点越界 → 422（带正文长度）
  *  - 引用他人/非 active 的题 → 422
+ *
+ * 角色闸门（ADR-0037）：agent 可写但**只能改 pending**（service 判，见 updateQuestion）；
+ * 删题仍 owner-only。改卷仍 owner-only（agent 只建卷，卷内题强制 pending）。
  */
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AppEnv } from "../words";
 import { l3PaperUpdateSchema, l3QuestionUpdateSchema } from "@/schemas/http";
 import { validationError } from "../../error-response";
+import { authoringActor } from "./authoring-actor";
 import { parseRouteUuid } from "./shared";
 import type { Json } from "@/domain";
 
@@ -45,6 +49,8 @@ export function papersUpdateRoutes(services: Services) {
     if (!parsed.success) return validationError(c, parsed.error.flatten());
     return c.json(await services.l3Paper.updateQuestion({
       userId: c.get("userId"),
+      // ADR-0037：agent 可写，但 service 的可改状态集合对它只给 {pending}。
+      actor: authoringActor(c),
       questionId,
       ...parsed.data,
     }));

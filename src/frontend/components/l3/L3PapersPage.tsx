@@ -22,6 +22,7 @@ import {
 } from "@/frontend/viewModels/fileOrderNavigation";
 import { buildL3SectionUrl } from "@/frontend/viewModels/l3SectionNavigation";
 import { QuestionEvidenceEditor, type EvidenceAnchor } from "@/frontend/components/l3/QuestionEvidenceEditor";
+import { PendingQuestionsPanel } from "@/frontend/components/l3/PendingQuestionsPanel";
 import type { WritingQuestionTaskSummary } from "@/domain";
 
 /**
@@ -257,7 +258,7 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
 } = {}) {
   const { addToast } = useToast();
   const hasFilesDeepLink = Boolean(deepLinkVenue && QUESTION_TYPES.includes(deepLinkVenue as QuestionType));
-  const [tab, setTab] = useState<"files" | "papers" | "archive" | "build">(
+  const [tab, setTab] = useState<"files" | "papers" | "archive" | "build" | "pending">(
     deepLinkSheet ? "archive" : deepLinkPaper ? "papers" : hasFilesDeepLink ? "files" : "papers",
   );
 
@@ -280,7 +281,7 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
         <h2 className="text-lg font-semibold">试卷台</h2>
       </div>
       <div className="flex flex-wrap gap-1.5" role="tablist">
-        {([["files", "题型空间"], ["papers", "我的试卷"], ["archive", "题纸档案"], ["build", "粘贴建卷"]] as const).map(([id, label]) => (
+        {([["files", "题型空间"], ["papers", "我的试卷"], ["archive", "题纸档案"], ["build", "粘贴建卷"], ["pending", "待录"]] as const).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
             className={`rounded-full px-3 py-1 text-xs ${tab === id ? "bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]" : "border border-[var(--color-border)] text-[var(--color-ink-soft)]"}`}>
             {label}
@@ -300,6 +301,8 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
       )}
       {tab === "archive" && <ArchiveTab onToast={addToast} />}
       {tab === "build" && <BuildTab onBuilt={() => setTab("papers")} onToast={addToast} />}
+      {/* ADR-0037 决策 6：待录是 owner 的核对责任面（答案键 + 证据切片必须可见）。 */}
+      {tab === "pending" && <PendingQuestionsPanel onToast={addToast} />}
     </div>
   );
 }

@@ -157,13 +157,14 @@ const OTHER_OWNER_WRITES = [
   "deleteL3ContextLink",
   "deleteL3Source",
   "deleteL3Context",
-  // ADR-0030：题/卷 owner 直写面（试卷工作台 V1；agent trusted 直写后续波次再分类）。
-  "createL3Paper",
-  "createL3Question",
-  // 改题面 / 改卷（2026-09-26）：owner 直写受信面，护栏在 service。
+  // 改卷（2026-09-26）仍 owner 直写：agent 只建卷，没有"改 active 卷"这件事（ADR-0037 补记一）。
   "updateL3Paper",
-  "updateL3Question",
   "deleteL3Question",
+  // ADR-0037 评审面：采纳/驳回。**全 owner-only** —— 采纳是唯一把 pending 变 active
+  // 的动作（待录读面 listPendingL3Questions 是 GET，归 OWNER_READS）。
+  "acceptL3Question",
+  "rejectL3Question",
+  "acceptL3QuestionsBatch",
   // 批次一：做题注记（原文分析）与规律标签字典——个人做题工作台数据，纯 owner。
   "createQuestionAnnotation",
   "patchQuestionAnnotation",
@@ -233,7 +234,7 @@ describe("owner-only write inventory (D5 + D6 guard)", () => {
     expect(registryOwnerWrites).toEqual(OWNER_WRITE_OPERATION_IDS);
   });
 
-  it("the only agent-writable /api/* writes are the proposal path + the assessment venue + grading + writing feedback（批次三① / W6）", () => {
+  it("the only agent-writable /api/* writes are the proposal path + the assessment venue + grading + writing feedback + pending-only authoring（批次三① / W6 / ADR-0037）", () => {
     const agentWrites = idsWhere(
       (operation) => operation.path.startsWith("/api/") && operation.method !== "get" && operation.minRole === "agent",
     );
@@ -245,14 +246,49 @@ describe("owner-only write inventory (D5 + D6 guard)", () => {
     // 开口，只写指定已提交稿的 feedback，lastEditor 服务端认定）。
     expect(agentWrites).toEqual([
       "createL2ExternalPrompt",
+      "createL3Paper",
       "createL3Proposal",
+      "createL3Question",
       "createL3RawTextImport",
       "createL3StructuredImport",
       "proposeL2Candidate",
       "putL3QuestionAssessment",
       "putL3WritingFeedback",
       "submitL3Grading",
+      // ADR-0037：录题写面第 4 组开口。**"可写"≠"可写 active"**：agent 产物一律落
+      // status='pending'、created_by=agentId，由 owner 在待录面核对后采纳（错答案键
+      // 一旦被作答即永久不可改，这是闸门的全部理由）。updateL3Paper 与
+      // deleteL3Question 不在此列：前者只给 owner，后者是销毁（agent 只订正不销毁）。
+      "updateL3Question",
     ]);
+  });
+
+  /**
+   * ADR-0037 决策 3 的**语义**守卫：minRole 只回答"能不能进路由"，不回答"能写成什么"。
+   * 录题面是唯一一组「agent 可写」的权威内容面，所以必须在这里钉死两条：
+   *  1. 写面用 `sessionMutation` 口径（CSRF 对 session 路径生效，agent bearer 不受影响）；
+   *  2. **状态闸门不靠注册表**——注册表表达不了 pending-only，靠 service 的
+   *     `editableQuestionStatuses` + UPDATE 谓词（见 l3-paper.service 与 repository）。
+   *     本断言的作用是：若哪天有人把闸门从 service 挪走，这三条 agent 写面会失去
+   *     唯一的注册表侧标记，从而被后续改动误当"普通可写面"复制。
+   */
+  it("录题三面是 agent 可写的 pending-only 面，且删除/改卷仍 owner-only", () => {
+    const authoringAgentWrites = ["createL3Paper", "createL3Question", "updateL3Question"];
+    for (const operationId of authoringAgentWrites) {
+      const operation = byId.get(operationId);
+      expect(operation, operationId).toBeDefined();
+      expect(operation?.minRole, operationId).toBe("agent");
+      // 鉴权口径是 session（浏览器路径仍受 CSRF 保护）
+      expect(operation?.auth, operationId).toBe("owner");
+    }
+    // 销毁与改卷不是 agent 面
+    expect(byId.get("deleteL3Question")?.minRole).toBe("owner");
+    expect(byId.get("updateL3Paper")?.minRole).toBe("owner");
+    // 评审面（采纳/驳回/待录读面）不是 agent 面
+    expect(byId.get("acceptL3Question")?.minRole).toBe("owner");
+    expect(byId.get("acceptL3QuestionsBatch")?.minRole).toBe("owner");
+    expect(byId.get("rejectL3Question")?.minRole).toBe("owner");
+    expect(byId.get("listPendingL3Questions")?.minRole).toBe("owner");
   });
 });
 
@@ -285,6 +321,8 @@ const OWNER_READS = [
   "getAuthSession", // /api/auth 豁免组内的 auth 态探针（非语料读面）
   // 批次一：做题注记与个人标签字典是做题台面私人数据，不对 agent 开放。
   "listQuestionAnnotations",
+  // ADR-0037：待录核对面带**答案键**，是 owner 的核对责任面，不对 agent 开放。
+  "listPendingL3Questions",
   "getAnnotationTags",
   // 批次二（ADR-0034）：题纸与作答历史——owner-only 读（个人做题台面）。
   "getL3Sheet",

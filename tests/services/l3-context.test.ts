@@ -217,6 +217,7 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
     findImportJobByInputHash: vi.fn(async () => null),
     findWordbookByIdForUser: vi.fn(async () => WORDBOOK_ROW),
     findSourceById: vi.fn(async () => SOURCE_ROW),
+    findSourcesByIds: vi.fn(async () => [SOURCE_ROW]),
     findSourceByContentHash: vi.fn(async () => null),
     listSources: vi.fn(async () => ({ items: [], total: 0, limit: 20, offset: 0 })),
     findContextById: vi.fn(async () => CONTEXT_ROW),
@@ -543,6 +544,7 @@ describe("L3ContextService", () => {
     repo = makeRepo({
       findContextWithSourceById: vi.fn(async (userId, contextId) => contextId === "ctx-1" ? { context: CONTEXT_ROW, source: SOURCE_ROW } : null),
       findSourceById: vi.fn(async () => null),
+    findSourcesByIds: vi.fn(async () => []),
     });
     service = makeService(repo);
 
@@ -912,6 +914,7 @@ describe("L3ContextService", () => {
       deleteSource: vi.fn(async () => null),
       deleteContext: vi.fn(async () => null),
       findSourceById: vi.fn(async () => null),
+    findSourcesByIds: vi.fn(async () => []),
       findContextById: vi.fn(async () => null),
     });
     service = makeService(repo);

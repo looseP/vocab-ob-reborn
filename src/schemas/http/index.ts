@@ -328,8 +328,8 @@ export const l3QuestionCreateSchema = l3QuestionBodySchema.extend({
   questionType: l3QuestionTypeSchema,
   sourceId: uuidSchema.nullish(),
   fileKey: z.string().trim().min(1).max(200).nullish(),
-}).refine((body) => Boolean(body.sourceId) || Boolean(body.fileKey), {
-  message: "sourceId 或 fileKey 至少提供一个",
+}).strict().refine((body) => Boolean(body.sourceId) || Boolean(body.fileKey), {
+  message: "sourceId 与 fileKey 至少提供一个",
   path: ["sourceId"],
 });
 
@@ -356,7 +356,7 @@ export const l3PaperCreateSchema = z.object({
   direction: directionSchema.nullish(),
   metadata: jsonRecordSchema.optional(),
   sections: z.array(l3PaperSectionSchema).min(1).max(20),
-});
+}).strict();
 
 // ── 改题面 / 改卷（2026-09-26）────────────────────────────────────────
 // 此前题目与试卷只有 POST + DELETE，且 DELETE 对"被引用"的题/卷一律 409，
@@ -367,9 +367,21 @@ export const l3PaperCreateSchema = z.object({
 // （选项与答案必须同批改，否则会出现"改了选项没改答案"的半截状态）。客户端
 // 读-改-写整份题面即可，比逐字段 merge 更少出错空间。
 
+// ── 录题闸门的请求体纪律（ADR-0037，2026-09-26）───────────────────────
+// 录题面从 owner-only 放宽为 agent 可写（只写 pending），于是「谁能写什么」不再
+// 只由路由的 minRole 决定 —— **请求体里的 status / created_by 必须被拒**，否则
+// 一个 agent 只要写 `{"stem":"…","status":"active"}` 就能绕过采纳闸门直写
+// 权威题面。因此这四个录入 schema 一律 `.strict()`（与 ADR-0035 决策 8 的
+// `graded_by` 同一信任模型：身份字段只由服务端从 Principal 注入）。
+//
+// ⚠️ 这是请求契约的**收紧**：原先多余键被静默剥离，现在返回 400。对本项目
+// 无实际影响（前端与 agent 都按契约发字段），但它是一次真实的契约变更，
+// 已由 `api:breaking` 门禁核对。
+
 /** 改题面：题面全量。ordinal 缺省沿用原值。 */
 export const l3QuestionUpdateSchema = l3QuestionBodySchema
   .extend({ ordinal: z.number().int().min(0).max(10_000).optional() })
+  .strict()
   .refine((body) => (body.evidence ?? []).length <= 50, {
     message: "evidence 最多 50 条",
     path: ["evidence"],
@@ -390,6 +402,26 @@ export const l3PaperUpdateSchema = z.object({
   direction: directionSchema.nullish(),
   metadata: jsonRecordSchema.optional(),
   sections: z.array(l3PaperUpdateSectionSchema).min(1).max(20),
+}).strict();
+
+// ── 待录 / 采纳（ADR-0037 决策 4、6）───────────────────────────────────
+// 待录列表是 owner 的**核对面**，所以它必须带足核对所需的事实：答案键 + 每条
+// 证据锚点在原文里的**实际切片**（服务端算，不让前端自己按 offset 猜 —— 猜错
+// 就等于让 owner 盲签）。锚点越界时如实标 `outOfRange`，不静默截断。
+
+/** GET /l3/questions?status=pending：只接受 pending（"待录"是唯一用途，别的状态 400）。 */
+export const l3PendingQuestionListQuerySchema = z.object({
+  status: z.literal("pending").default("pending"),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).max(100_000).default(0),
+}).strict();
+
+/** POST /l3/questions/accept-batch：一次最多 200 条；逐条判定、逐条返回。 */
+export const l3QuestionAcceptBatchSchema = z.object({
+  questionIds: z.array(uuidSchema).min(1).max(200),
+}).strict().refine((body) => new Set(body.questionIds).size === body.questionIds.length, {
+  message: "questionIds 不得重复",
+  path: ["questionIds"],
 });
 
 /** GET /l3/practice-files：题型空间的文件管理列表（派生视图）。

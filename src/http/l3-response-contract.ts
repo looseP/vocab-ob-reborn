@@ -478,6 +478,19 @@ export const l3CapabilitiesResponseSchema = z.object({
     annotationReadScope: z.literal("submitted_sheet_drafts"),
     annotationWriteScope: z.literal("review_only"),
   }).strict(),
+  /**
+   * 录题授权语义（ADR-0037 决策 8）。**单列而不并进 `access`**：录题不是 proposal ——
+   * 让「write: proposal_only」被读成也覆盖录题就是含混过去。agentCanCreate 的
+   * 字面值是 `pending`（不是布尔）：把「只能写待录」写进枚举，agent 读自己的
+   * capabilities 时不必猜 active 能不能写。
+   */
+  authoring: z.object({
+    agentCanCreate: z.literal("pending"),
+    agentCanEdit: z.literal("pending_only"),
+    agentCanDelete: z.literal(false),
+    accept: z.literal("owner_only"),
+    paperGate: z.literal("questions_pending"),
+  }).strict(),
   limits: z.object({
     apiJsonBodyMaxBytes: z.number().int().positive(),
     jsonRecordMaxBytes: z.number().int().positive(),

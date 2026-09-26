@@ -126,18 +126,25 @@ export class L3PaperRepository extends BaseRepository implements IL3PaperReposit
   }
 
   /**
-   * 改题面（2026-09-26）：条件 UPDATE 带 `status='active'` 谓词 —— 0 行返回 null，
-   * 由 service 二次判别（404 不存在/非属主，409 非 active）。只写题面列；
-   * `input_hash` 由调用方**沿用原值**（该列只参与部分唯一索引的建卷去重，从不被
-   * 读作语义；改题面不换身份指纹，也就不可能撞唯一索引）。
-   * **护栏在 service**：已有作答历史或被作文任务引用时不得改。
+   * 改题面（2026-09-26）：条件 UPDATE 带**可改状态集合**谓词 —— 0 行返回 null，
+   * 由 service 二次判别（404 不存在/非属主，409 状态不可改）。
+   *
+   * ⚠️ 2026-09-26（ADR-0037）：谓词由写死的 `status='active'` 改为
+   * `status = ANY($10::text[])`，集合由 service 按角色给出（`editableQuestionStatuses`）：
+   * owner = {active, pending}、agent = {pending}。闸门落在这一层是刻意的 ——
+   * 「agent 只能改待录题」必须是**一次 UPDATE 谓词**，而不是先读后写的应用层判断
+   * （后者有 TOCTOU 窗口：读时是 pending、改时已被采纳）。
+   *
+   * 只写题面列；`input_hash` 由调用方**沿用原值**（该列只参与部分唯一索引的建卷
+   * 去重，从不被读作语义；改题面不换身份指纹，也就不可能撞唯一索引）。
+   * **其余护栏在 service**：已有作答历史或被作文任务引用时不得改。
    */
   async updateQuestion(input: UpdateL3Question): Promise<L3QuestionRow | null> {
     const row = await this.queryOne<QuestionDbRow>(
       `UPDATE l3_questions
           SET stem = $3, options = $4::jsonb, answer = $5::jsonb, explanation = $6,
               evidence = $7::jsonb, ordinal = $8, input_hash = $9, updated_at = now()
-        WHERE id = $1::uuid AND user_id = $2::uuid AND status = 'active'
+        WHERE id = $1::uuid AND user_id = $2::uuid AND status = ANY($10::text[])
         RETURNING *`,
       [
         input.question_id,
@@ -149,9 +156,65 @@ export class L3PaperRepository extends BaseRepository implements IL3PaperReposit
         JSON.stringify(input.evidence ?? []),
         input.ordinal,
         input.input_hash ?? null,
+        [...input.editable_statuses],
       ],
     );
     return row ? mapQuestionRow(row) : null;
+  }
+
+  /**
+   * 待录题列表（ADR-0037 决策 6）：owner 的核对面。**只**取 pending，按
+   * created_at/ordinal 稳定排序（同一批 agent 产物顺序可预期，便于逐条核对）。
+   * 读面一律过滤 active 是既有纪律；这里是唯一一处显式取 pending 的查询。
+   */
+  async listPendingQuestions(input: {
+    user_id: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: L3QuestionRow[]; total: number }> {
+    const countRow = await this.queryOne<{ total: string }>(
+      `SELECT count(*)::bigint AS total FROM l3_questions
+        WHERE user_id = $1::uuid AND status = 'pending'`,
+      [input.user_id],
+    );
+    const rows = await this.query<QuestionDbRow>(
+      `SELECT * FROM l3_questions
+        WHERE user_id = $1::uuid AND status = 'pending'
+        ORDER BY created_at ASC, ordinal ASC, id ASC
+        LIMIT $2 OFFSET $3`,
+      [input.user_id, input.limit, input.offset],
+    );
+    return { items: rows.map(mapQuestionRow), total: Number(countRow?.total ?? 0) };
+  }
+
+  /**
+   * 批量采纳（ADR-0037 决策 4）：`pending → active` 的**单条** UPDATE，返回真正被
+   * 改到的 id 集合。谓词含 `status='pending'` ⇒ 重复采纳是幂等的（第二次 0 行），
+   * 且绝不把 rejected 捞回来。逐条结果由 service 用 `findQuestionById` 复判，
+   * 不在本方法里猜（猜错就会把"别人的题"报成已采纳）。
+   */
+  async acceptPendingQuestions(userId: string, questionIds: readonly string[]): Promise<string[]> {
+    if (questionIds.length === 0) return [];
+    const rows = await this.query<{ id: string }>(
+      `UPDATE l3_questions
+          SET status = 'active', updated_at = now()
+        WHERE user_id = $1::uuid AND status = 'pending' AND id = ANY($2::uuid[])
+        RETURNING id`,
+      [userId, [...questionIds]],
+    );
+    return rows.map((row) => row.id);
+  }
+
+  /** 驳回待录题（ADR-0037 决策 4）：`pending → rejected`，同样只动 pending。 */
+  async rejectPendingQuestion(userId: string, questionId: string): Promise<boolean> {
+    const row = await this.queryOne<{ id: string }>(
+      `UPDATE l3_questions
+          SET status = 'rejected', updated_at = now()
+        WHERE id = $1::uuid AND user_id = $2::uuid AND status = 'pending'
+        RETURNING id`,
+      [questionId, userId],
+    );
+    return row !== null;
   }
 
   /** 题面是否已有作答历史（改题面护栏：答案历史不可改写，见 service.updateQuestion）。 */

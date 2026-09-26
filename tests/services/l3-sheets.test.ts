@@ -185,6 +185,33 @@ function fileScopedPaperRepo(): IL3PaperRepository {
   });
 }
 
+/** 卷行桩：payload 里放两道题（其中一道在 openSheet 时会被 active 过滤掉）。 */
+function paperRow() {
+  return {
+    id: PAPER,
+    user_id: USER,
+    title: "卷",
+    direction: null,
+    metadata: {},
+    payload: {
+      version: 1,
+      sections: [{
+        key: "s1",
+        title: "Text 1",
+        questionType: "reading_choice",
+        sourceId: SOURCE,
+        fileKey: null,
+        questionIds: ["00000000-0000-4000-8000-000000000301", "00000000-0000-4000-8000-000000000302"],
+      }],
+    },
+    payload_version: 1,
+    status: "active",
+    created_by: "owner",
+    input_hash: null,
+    created_at: "2026-09-16T00:00:00Z",
+    updated_at: "2026-09-16T00:00:00Z",
+  };
+}
 describe("L3SheetService.openSheet", () => {
   it("resolves the scope key and reuses or creates by identity", async () => {
     const sheetRepo = makeSheetRepo({
@@ -225,6 +252,44 @@ describe("L3SheetService.openSheet", () => {
       .rejects.toBeInstanceOf(NotFoundError);
   });
 
+  /**
+   * ADR-0037 补记一：paper 分支必须与 file 分支**同口径**（只解析 active 题）。
+   *
+   * 原先这里直接取 payload 的 questionIds，不筛状态 —— agent 建的待录卷（卷行
+   * active、卷内题全 pending）会开出一张"快照里有 id、渲染却是空"的题纸，用户看到
+   * 的是一张没有任何解释的空题纸。这条断言就是钉住那个修复。
+   */
+  it("paper 分支只解析 active 题；全待录的卷 → 422 并说明原因（不留空题纸）", async () => {
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => paperRow() as never),
+      findActiveQuestionsByIds: vi.fn(async () => []),
+    });
+    const sheetRepo = makeSheetRepo();
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo(), makeContextRepo(null));
+    const err = await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ValidationError);
+    expect((err as Error).message).toContain("待录");
+    expect(sheetRepo.openSheet).not.toHaveBeenCalled();
+  });
+
+  it("paper 分支冻结的题单只含 active 题（不会把待录 id 定格进题单）", async () => {
+    const activeQuestion = { id: "00000000-0000-4000-8000-000000000301" };
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => paperRow() as never),
+      // 仓储已按 active 过滤：卷里 2 道题，1 道待录
+      findActiveQuestionsByIds: vi.fn(async () => [activeQuestion] as never),
+    });
+    const sheetRepo = makeSheetRepo({
+      openSheet: vi.fn(async (input) => ({ row: submissionRow(), created: true })),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo(), makeContextRepo(null));
+    await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER });
+    expect(sheetRepo.openSheet).toHaveBeenCalledWith(expect.objectContaining({
+      question_ids: [activeQuestion.id],
+    }));
+  });
+
   it("validates the scope shape before touching repositories", async () => {
     const sheetRepo = makeSheetRepo();
     const service = makeService(sheetRepo);
@@ -239,6 +304,8 @@ describe("L3SheetService.openSheet", () => {
     const sheetRepo = makeSheetRepo();
     const paperRepo = makePaperRepo({
       findPaperById: vi.fn(async () => ({ id: PAPER, payload: { sections: [{ questionIds: [Q1, Q2] }] } } as never)),
+      // ADR-0037 补记一：paper 分支经 findActiveQuestionsByIds 解析（只认 active）。
+      findActiveQuestionsByIds: vi.fn(async () => [{ id: Q1 }, { id: Q2 }] as never),
     });
     const service = makeService(sheetRepo, paperRepo);
     await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER });

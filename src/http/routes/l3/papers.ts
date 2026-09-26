@@ -1,37 +1,24 @@
 /**
- * L3 题目/试卷域路由（ADR-0030，V1 owner 入库面）：建卷 / 散题录入 / 试卷列表与详情
- * （现拉组装）/ 题型空间文件列表与详情 / 删题（卷面引用走 409）。改题面/改卷在
- * papers-update.ts（本模块受复杂度棘轮冻结）。agent 双级写入按角色分叉后续波次。
+ * L3 题目/试卷域**读面与删题**路由（ADR-0030，V1 owner 入库面）：试卷列表与详情
+ * （现拉组装）/ 题型空间文件列表与详情 / 删题（卷面引用走 409）。
+ *
+ * ⚠️ 本模块受复杂度棘轮冻结（基线 = 实际行数），且录题写面已迁出到
+ * `papers-authoring.ts`（ADR-0037）——建卷/录题/改题面/采纳都在那边。
+ * 改题面/改卷的 PATCH 在 `papers-update.ts`。
  */
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AppEnv } from "../words";
 import {
-  l3PaperCreateSchema,
   l3PaperListQuerySchema,
   l3PracticeFileDetailQuerySchema,
   l3PracticeFileListQuerySchema,
-  l3QuestionCreateSchema,
 } from "@/schemas/http";
 import { validationError } from "../../error-response";
-import type { Json } from "@/domain";
 import { parseRouteUuid } from "./shared";
 
 export function papersRoutes(services: Services) {
   const app = new Hono<AppEnv>();
-
-  app.post("/papers", async (c) => {
-    const parsed = l3PaperCreateSchema.safeParse(await c.req.json().catch(() => ({})));
-    if (!parsed.success) return validationError(c, parsed.error.flatten());
-    const result = await services.l3Paper.createPaper({
-      userId: c.get("userId"),
-      title: parsed.data.title,
-      direction: parsed.data.direction ?? null,
-      metadata: parsed.data.metadata as Json | undefined,
-      sections: parsed.data.sections,
-    });
-    return c.json(result, 201);
-  });
 
   app.get("/papers", async (c) => {
     const parsed = l3PaperListQuerySchema.safeParse(c.req.query());
@@ -43,18 +30,6 @@ export function papersRoutes(services: Services) {
     const paperId = parseRouteUuid(c.req.param("id"));
     if (!paperId) return validationError(c, { fieldErrors: { id: ["invalid uuid"] } });
     return c.json(await services.l3Paper.getPaper(c.get("userId"), paperId));
-  });
-
-  app.post("/questions", async (c) => {
-    const parsed = l3QuestionCreateSchema.safeParse(await c.req.json().catch(() => ({})));
-    if (!parsed.success) return validationError(c, parsed.error.flatten());
-    const result = await services.l3Paper.createQuestion({
-      userId: c.get("userId"),
-      ...parsed.data,
-      sourceId: parsed.data.sourceId ?? null,
-      fileKey: parsed.data.fileKey ?? null,
-    });
-    return c.json(result, 201);
   });
 
   app.delete("/questions/:id", async (c) => {

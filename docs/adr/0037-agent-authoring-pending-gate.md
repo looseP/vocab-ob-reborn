@@ -51,7 +51,26 @@
 - **前端**（P3-3 实施卡）：待录列表 + 批量采纳交互，采纳前显示答案键与证据原文（决策 6）。
 - **保留待跟踪**：若 agent 录题量增长到人工核对成为瓶颈（判据：单批 >200 条，或核对耗时 > 录入耗时），重开 ADR-0030 §5 —— 届时的证据是量，不是偏好。
 
-## 补记 · 与 ADR-0035 的口径冲突处置记录
+## 补记一 · 决策 5 的 papers 面修正（实施前回码发现，2026-09-26）
+
+**修正 A（决策 5）**：决策 5 的「agent 只能建 `pending` 卷」**不成立**，改为「agent 建的卷立即 `active`，但**卷内题强制 `pending`**」。
+**修正**：决策 5 的「agent 只能建 `pending` 卷」**不成立**，改为「agent 建的卷立即 `active`，但**卷内题强制 `pending`**」。
+
+**原因**（`src/db/schema.ts:1320`）：`l3_papers.status` 的 CHECK 是 `draft | active | archived` —— **没有 `pending` 这个值**。纸面状态轴是**生命周期**轴（草稿/生效/归档），不是**评审**轴；硬加 `pending` 需要一次迁移，而「无迁移」是决策 9 之外全篇的隐含前提。
+
+**为什么闸门只落在题上是对的，不是妥协**：
+
+1. 闸门要防的东西是**判断内容**（答案键 + 证据锚点），它只存在于题行。纸只是容器。
+2. 容器立即 `active` 但卷内题全 `pending` ⇒ 该卷在任何读面都**解析不到可做的题**（读面一律经 `findActiveQuestionsByIds` 过滤 `status='active'`），即「建了但还不可做」，语义正确。
+3. 「卷的采纳 = 卷内题全部转 active」由**批量采纳按题 id**天然覆盖，无需纸级状态。
+
+**连带必须补的一处缺陷**（否则闸门造出死胡同）：`openSheet` 的 paper 分支直接取 `payload.sections[].questionIds` **不筛 active**（`src/services/l3-sheets.service.ts:98`），而 file 分支走 `listActiveQuestionsForFile`（只含 active）—— 两分支口径不一致。agent 建的空卷开纸会得到一张**有题单快照但渲染为空**的题纸，用户看不到任何解释。故实施时把 paper 分支对齐为「只解析 active 题，且为空即 422 并说明可能待录」。
+
+**修正 B（决策 2 的落地方式，与决策文本同向但更强）**：决策 2 要求「请求体不接受 `status`/`created_by`」。实施时四个录题 schema 一律 `.strict()`，而不是只对这两个键做 `z.never()`。理由是**面向 agent 的 API 里「静默剥离未知键」本身就是缺陷**：agent 把 `evidence` 拼成 `evidnece` 时，非 strict 契约会静默丢弃，于是产出一道**没有证据的题**且不报错 —— 而"证据缺失"恰恰是本闸门要拦的东西之一。
+
+代价是一次**记录在案的 breaking change**（`POST /api/l3/papers`、`POST /api/l3/questions` 的 request `additionalProperties` 由宽松变禁止），已按 ADR-0035 §勘误 的口径**整体重锚** `openapi-breaking-approval.json`（`baseSha256`/`currentSha256`/`issues` 三元组 ≡ 相对 base 的实测集合；历史 study-notes 条目已不在实测集合内，按机制要求一并舍去）。`message` 字段参与字节级比对，故决策理由记在此处而非 approval 文件内。
+
+## 补记二 · 与 ADR-0035 的口径冲突处置记录
 
 本 ADR 决策 7 是对一处**此前未被记录的冲突**的处置，过程留档以免复发：
 

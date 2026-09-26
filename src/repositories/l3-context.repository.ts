@@ -843,6 +843,16 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     );
   }
 
+  /** 批量取源（ADR-0037）：待录核对面要按锚点算原文切片，逐题查会 N+1。 */
+  async findSourcesByIds(userId: string, sourceIds: readonly string[]): Promise<L3SourceRow[]> {
+    const unique = [...new Set(sourceIds)];
+    if (unique.length === 0) return [];
+    return this.query<L3SourceRow>(
+      `SELECT * FROM l3_sources WHERE user_id = $1::uuid AND id = ANY($2::uuid[])`,
+      [userId, unique],
+    );
+  }
+
   async findSourceByContentHash(userId: string, contentHash: string): Promise<L3SourceRow | null> {
     return this.queryOne<L3SourceRow>(
       `SELECT * FROM l3_sources WHERE user_id = $1::uuid AND content_hash = $2 LIMIT 1`,

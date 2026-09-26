@@ -35,6 +35,7 @@ import { l3SummaryRoutes } from "./routes/l3/summary";
 import { l3SourceSpacesRoutes } from "./routes/l3/spaces";
 import { papersRoutes } from "./routes/l3/papers";
 import { papersUpdateRoutes } from "./routes/l3/papers-update";
+import { papersAuthoringRoutes } from "./routes/l3/papers-authoring";
 import { annotationsRoutes } from "./routes/l3/annotations";
 import { annotationsWithdrawRoutes } from "./routes/l3/annotations-withdraw";
 import { sheetsRoutes } from "./routes/l3/sheets";
@@ -162,6 +163,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3", papersRoutes(services));
   // 改题面 / 改卷（独立薄路由：papers.ts 受复杂度棘轮冻结）。
   app.route("/api/l3", papersUpdateRoutes(services));
+  // ADR-0037：待录核对面 + 采纳/驳回（owner-only，独立薄路由）。
+  app.route("/api/l3", papersAuthoringRoutes(services));
   // 批次一：做题注记（原文分析）与规律标签字典（独立薄路由——index.ts 棘轮冻结）。
   app.route("/api/l3", annotationsRoutes(services));
   // v2 §4.7：注记撤回（annotations.ts 受棘轮约束，新端点独立薄路由拆分）。
