@@ -313,3 +313,28 @@ describe("L3PaperRepository 待录/采纳（ADR-0037）", () => {
     expect(await repo.rejectPendingQuestion(USER, "q-1")).toBe(false);
   });
 });
+
+/**
+ * ADR-0038 决策 5/6：`countQuestionGradings` 是 PATCH 与 DELETE 两处护栏的共同判据。
+ * SQL 写错的后果是「已评卷的题可被改写/销毁」——判定静默指向另一道题或消失。
+ */
+describe("L3PaperRepository.countQuestionGradings（ADR-0038）", () => {
+  it("按 owner + question_id 计数，bigint 字符串转 number", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(repo as any, "queryOne").mockResolvedValue({ count: "2" });
+    expect(await repo.countQuestionGradings(USER, "q-1")).toBe(2);
+    const [sql, params] = spy.mock.calls[0]!;
+    expect(sql).toContain("FROM l3_grading_results");
+    // owner 作用域：不越权数别人的行
+    expect(sql).toContain("WHERE user_id = $1::uuid AND question_id = $2::uuid");
+    expect(params).toEqual([USER, "q-1"]);
+  });
+
+  it("无行 → 0（护栏据此放行；count(*) 恒有行，0 是 mock/驱动异常兜底）", async () => {
+    const repo = new L3PaperRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    expect(await repo.countQuestionGradings(USER, "q-1")).toBe(0);
+  });
+});
