@@ -12,6 +12,7 @@ import {
 } from "@/frontend/components/writing/WritingQuestionEntry";
 import type { WritingOrigin, WritingOriginQuestionType } from "@/frontend/viewModels/writingNavigation";
 import { buildStudyNoteUrl } from "@/frontend/viewModels/studyNoteNavigation";
+import { buildL3SectionUrl } from "@/frontend/viewModels/l3SectionNavigation";
 import type { WritingQuestionTaskSummary } from "@/domain";
 
 /**
@@ -1088,7 +1089,7 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
   if (error) {
     return (
       <div className="space-y-2">
-        <button type="button" onClick={() => navigate("/l3")} className="text-xs text-[var(--color-accent)]">← 返回试卷台</button>
+        <button type="button" onClick={() => navigate(buildL3SectionUrl("papers") as string)} className="text-xs text-[var(--color-accent)]">← 返回试卷台</button>
         <p className="text-sm text-[var(--color-ink-soft)]">题纸回看加载失败（题纸可能已删除）。</p>
         <button type="button" onClick={() => setRetryNonce((n) => n + 1)} className="text-xs text-[var(--color-accent)]">重试</button>
       </div>
