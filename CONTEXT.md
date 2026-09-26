@@ -235,6 +235,9 @@ _Avoid_: self-declared provenance as identity; one shared anonymous agent token
 **Trusted transport (可信传输层)**: Passing through MCP changes nothing about what may be written — it is a transport, not a trust level; the trust boundary stays at the proposal (ADR-0029). A channel that would grant more is a channel that must not exist.
 _Avoid_: "MCP may confirm because it is local"; treating a local bridge as privileged
 
+**Authoring pending (录题待录)**: The state a question or paper sits in when **an agent** produced it — `l3_questions.status = 'pending'`, with `created_by` set to the server-asserted agentId (2026-09-26, ADR-0037). The owner's single upgrade action is **采纳 (accept)**, `pending → active`; rejection reuses `status='rejected'`. Ordinary `agent` bearer tokens are sufficient — there is **no `trusted_agent` role and no three-part token** (ADR-0030 §5 was declined, not deferred). Agent 录题 is the one place where "proposal-only" is realised through a **status axis rather than the `l3_proposals` table**, so it is the same discipline, not a second upgrade path. **Why a gate at all**: a wrong answer key on an `active` question becomes **permanently unfixable** the moment the user attempts it (PATCH is 409 once `l3_question_attempts` exists) — and the question attempts, the 错题库 and the grading analysis all sit on top of it. 采纳 is a *verifiable judgement*, so the pending list must show the answer key and the evidence excerpt; clicking 采纳 without seeing them is a blind signature and voids the gate.
+_Avoid_: `trusted_agent` (declined, ADR-0030 §5); a second proposal table for questions; letting an agent edit an `active` question (409, or a trusted role that may); treating 采纳 as a formality rather than the last chance to catch a wrong answer key
+
 ## Relationships
 
 - A **Word** has exactly one **Textbook note** (imported, read-only) and zero or more **note entries** (its Annotation set)

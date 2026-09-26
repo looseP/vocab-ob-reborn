@@ -176,6 +176,11 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0027](./0027-backup-failure-contract.md) | 备份失败契约（失败不删本地 + 清理按"已异地校验"推进） | 2026-09-12 |
 | [0028](./0028-word-l3-reference-integrity-and-deletion.md) | 词–L3 引用完整性（阻塞式删除 + RESTRICT 兜底，不建 orphan 池） | 2026-09-12 |
 | [0029](./0029-mcp-agent-access-boundary.md) | MCP / agent 接入边界（传输层不新增信任级 + 资源级 role 强制；修订 0008 non-goal） | 2026-09-12 |
+| [0030](./0030-l3-question-paper-venue.md) | L3 做题文件 / 试卷 / 题纸三词定界 + agent 写入红线（§5 trusted_agent 由 ADR-0037 判不启用） | 2026-09-16 |
+| [0033](./0033-exam-question-annotations.md) | 原文分析条目（注记锚点体系与「agent 永不写注记内容」） | 2026-09-16 |
+| [0034](./0034-sheet-attempt-annotation-stages.md) | 题纸 / 题级作答 / 注记 stage 三段生命周期 | 2026-09-17 |
+| [0035](./0035-agent-grading-execution.md) | agent 评卷执行面（本地 HTTP agent 闭环 + 评卷结果真源） | 2026-09-17 |
+| [0037](./0037-agent-authoring-pending-gate.md) | agent 录题通道（pending 闸门 + owner 批量采纳；`trusted_agent` 不启用） | 2026-09-26 |
 
 ## 并行 agent 必读
 
