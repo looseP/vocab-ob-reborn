@@ -115,7 +115,14 @@ export interface StudyNoteExportNote {
   venues: L3QuestionType[];
 }
 
-/** 导出 JSON 块结构（字段冻结；不允许实现期自造字段）。 */
+/**
+ * 导出 JSON 块结构（字段冻结；不允许实现期自造字段）。
+ *
+ * `bodyMd` / `bodySha256` 是**渲染后**正文（marker 已被替换为引用块），不是用户
+ * 输入的原始 markdown —— 字段名是历史遗留（遗留观察 F-1）：v1 冻结面不得改名
+ * （改名即 breaking），v2 已用 `renderedBodyMarkdown` 正名。导入/回写方不得
+ * 假设能从这里还原 marker。
+ */
 export interface StudyNoteExportPayload {
   exportSchemaVersion: 1;
   kind: "study-note";
