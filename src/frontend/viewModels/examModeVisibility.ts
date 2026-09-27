@@ -92,13 +92,19 @@ const ALL_SHOWN_ANSWER_FACE = {
 /** 三档的完整判定表。纯数据，无分支 ⇒ 逐格断言是穷尽的。 */
 const VISIBILITY: Record<ExamMode, ExamVisibility> = {
   // 纯净：干净卷面（打印 / 首看 / 重考）。用户痕迹与答案面全隐，只读。
+  //
+  // ⚠️ 评析（showAssessments）在纯净档**保持可见** —— 与设计卡 §2.4 的一处有意偏离
+  // （B3 实现期登记）。理由是 S-1 原则本身：「隐藏必须自带声明」。评析只有单题 GET
+  // （`/l3/questions/:id/assessment`），卷面载荷不带评析事实 ⇒ 父层**数不出条数**
+  // ⇒ 数不出就无法在声明条里如实告知 ⇒ 按原则不隐藏。
+  // 重开条件：出现批量评析读面时，改成「隐藏 + 计数声明」。
   pure: {
     showMaterial: true,
     showNotesPanel: true,
     showPicked: false,
     showUserMarks: false,
     showAnnotations: false,
-    showAssessments: false,
+    showAssessments: true,
     ...ALL_HIDDEN_ANSWER_FACE,
     showGradingCoverage: false,
     canAnswer: false,
@@ -149,7 +155,10 @@ export interface HiddenTraceCounts {
   marks: number;
   /** 用户注记条数。 */
   annotations: number;
-  /** 评析条数。 */
+  /**
+   * 评析条数。**当前卷面数不出**（评析只有单题 GET，卷面载荷不带该事实）⇒ 纯净档
+   * 评析不隐藏，调用方此处恒传 0；出现批量读面后才生效。
+   */
   assessments: number;
   /** 已有作答的题数（选项已选 / 译文 / 作文）。 */
   picked: number;

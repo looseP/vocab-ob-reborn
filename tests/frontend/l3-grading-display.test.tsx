@@ -172,7 +172,7 @@ async function renderPaper(flushes = 6, props: Record<string, unknown> = {}): Pr
   const root = createRoot(container);
   roots.push(root);
   await act(async () => {
-    root.render(createElement(L3ExamPaper, { paper, onBack: vi.fn(), ...props }) as ReactElement);
+    root.render(createElement(L3ExamPaper, { paper, onBack: vi.fn(), mode: "practice", ...props }) as ReactElement);
     for (let i = 0; i < flushes; i += 1) await Promise.resolve();
   });
 }
@@ -199,10 +199,14 @@ describe("L3ExamPaper 解析模式判读（批次三①）", () => {
     await renderPaper();
     await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
 
-    // 未揭示：不显示任何判读（D8 精神延伸至 verdict）。
+    // 做题档：不显示任何判读（D8 精神延伸至 verdict）。
     expect(screen.queryByText(/评卷：/)).toBeNull();
 
-    await click(screen.getByRole("button", { name: "显示全部答案与解析" }));
+    // 解析档（2026-09-27 三模式）：改由 `mode` prop 驱动，不再有「显示全部答案」按钮。
+    roots.forEach((prev) => act(() => { prev.unmount(); }));
+    document.body.innerHTML = "";
+    await renderPaper(6, { mode: "review" });
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
     expect(screen.getByText(/评卷：错/)).toBeTruthy();
     expect(screen.getByText(/agent 评卷 · agent-a/)).toBeTruthy();
 
@@ -240,7 +244,9 @@ describe("契约漂移防御（深测 OB-2/3 转正；F-1 起失败显式化）"
     await waitFor(() => expect(screen.getByText("评卷加载失败")).toBeTruthy());
     expect(screen.queryByText(/待评卷/)).toBeNull();
     expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "显示全部答案与解析" })).toBeTruthy();
+    // 2026-09-27：原「显示全部答案与解析」按钮已被三模式切换器取代；宿主未传
+    // `onModeChange`（本用例即如此）⇒ 切换器不渲染（给点了没反应的按钮更糟）。
+    expect(screen.queryByTestId("exam-mode-switcher")).toBeNull();
   });
 
   it("读面成功但形状非法（results 非数组）→ 失败态可重试，不误报「待评卷」", async () => {
@@ -262,9 +268,8 @@ describe("契约漂移防御（深测 OB-2/3 转正；F-1 起失败显式化）"
 
   it("grading 行未知 verdict（alien）→ 显示「评卷：未知」而非误导为「错」", async () => {
     setupMock({ gradingResults: [gradingFixture({ verdict: "alien" })] });
-    await renderPaper(8);
+    await renderPaper(8, { mode: "review" });
     await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
-    await click(screen.getByRole("button", { name: "显示全部答案与解析" }));
     const node = document.querySelector("[data-grading-verdict]");
     expect(node?.getAttribute("data-grading-verdict")).toBe("alien");
     expect(screen.getByText(/评卷：未知/)).toBeTruthy();
@@ -296,9 +301,8 @@ describe("F-1 评卷协作闭环（刷新评卷 / 回看 / 再做一次）", () 
   it("改判后手动「刷新评卷」拉到新 verdict（latest-wins 消费链）", async () => {
     let verdict = "wrong";
     setupMock({ gradingRaw: () => ({ sheet: sheetFixture(), results: [gradingFixture({ verdict })], gradableCount: 1 }) });
-    await renderPaper(6);
+    await renderPaper(6, { mode: "review" });
     await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
-    await click(screen.getByRole("button", { name: "显示全部答案与解析" }));
     expect(screen.getByText(/评卷：错/)).toBeTruthy();
     verdict = "partial";
     await click(screen.getByRole("button", { name: "刷新评卷" }));
@@ -308,11 +312,10 @@ describe("F-1 评卷协作闭环（刷新评卷 / 回看 / 再做一次）", () 
 
   it("回看模式（replaySheetId）：只读指定题纸——不调 openSheet（不新建草稿）、verdict 直出", async () => {
     const { state } = setupMock({ gradingResults: [gradingFixture()] });
-    await renderPaper(8, { replaySheetId: SHEET_ID });
+    await renderPaper(8, { replaySheetId: SHEET_ID, mode: "review" });
     await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
     expect(state.openSheetCalls).toBe(0);
     expect(state.gradingCalls).toBe(1);
-    await click(screen.getByRole("button", { name: "显示全部答案与解析" }));
     expect(screen.getByText(/评卷：错/)).toBeTruthy();
     expect(screen.getByText(/agent 评卷 · agent-a/)).toBeTruthy();
   });
@@ -683,12 +686,10 @@ describe("G-0 剧透门控：答对/估分只在揭示后可见", () => {
     expect(screen.queryByText(/估算/)).toBeNull();
   });
 
-  it("揭示后：答对与估分都出现", async () => {
+  it("解析档：答对与估分都出现（G-0 门控按模式而非按钮）", async () => {
     setupMock({ attempts: derivedAttempts });
-    await renderPaper();
+    await renderPaper(6, { mode: "review" });
     await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
-
-    await click(screen.getByRole("button", { name: "显示全部答案与解析" }));
     expect(screen.getByText(/答对/)).toBeTruthy();
     expect(screen.getByText(/估算/)).toBeTruthy();
   });

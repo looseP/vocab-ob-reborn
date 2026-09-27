@@ -217,7 +217,7 @@ async function renderPaper(target: ExamPaper = paper, flushes = 3, strict = fals
   const root = createRoot(container);
   roots.push(root);
   await act(async () => {
-    const el = createElement(L3ExamPaper, { paper: target, onBack: vi.fn() });
+    const el = createElement(L3ExamPaper, { paper: target, onBack: vi.fn(), mode: "practice" });
     root.render(strict ? createElement(StrictMode, null, el) : el);
     for (let i = 0; i < flushes; i += 1) await Promise.resolve();
   });
@@ -319,7 +319,7 @@ describe("F1 · StrictMode 保存生命周期", () => {
     const { root } = await renderPaper(paper);
     const paperB: ExamPaper = { ...paper, id: PAPER_B_ID, title: "2025 英语二" };
     await act(async () => {
-      root.render(createElement(L3ExamPaper, { paper: paperB, onBack: vi.fn() }));
+      root.render(createElement(L3ExamPaper, { paper: paperB, onBack: vi.fn(), mode: "practice" }));
       for (let i = 0; i < 8; i += 1) await Promise.resolve();
     });
     await click(/乙/);
