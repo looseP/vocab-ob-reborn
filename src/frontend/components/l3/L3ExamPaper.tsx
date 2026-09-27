@@ -13,7 +13,11 @@ import {
 import type { ReferenceTarget } from "@/domain/l3-study-notes";
 import { GRADING_VERDICT_LABELS } from "@/domain/l3-grading";
 import { EXAM_MODES, type ExamMode } from "@/frontend/viewModels/examModeNavigation";
-import { hiddenTraceNotice, visibilityFor } from "@/frontend/viewModels/examModeVisibility";
+import {
+  hiddenTraceNotice,
+  visibilityFor,
+  type HiddenTraceClass,
+} from "@/frontend/viewModels/examModeVisibility";
 import { apiFetch } from "@/frontend/api/client";
 import {
   createExamSheetSaveController,
@@ -122,6 +126,10 @@ function pickSheetAnswers(serverAnswers: Record<string, unknown>): Record<string
 }
 
 const OBJECTIVE_TYPES = new Set(["cloze", "reading_choice", "new_question", "grammar_blank"]);
+
+/** 标签字典的兜底空值（读失败时面板仍要能渲染「未能读取」，不能整块消失）。 */
+const EMPTY_TAG_DICT: AnnotationTagDict = { entry: [], option: [] };
+
 const SECTION_POINTS: Record<string, number> = {
   cloze: 10,
   reading_choice: 40,
@@ -1143,14 +1151,28 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
   const [locate, setLocate] = useState<LocateTarget | null>(null);
   const [annotations, setAnnotations] = useState<QuestionAnnotation[]>([]);
   /**
+   * 注记读面状态（2026-09-27）。**「读失败」不等于「没有」**：两者都让 `annotations`
+   * 为空，但前者不许拿 0 去当事实说出去 —— 那会让「原文分析 · 0」变成关于用户自己
+   * 劳动的假陈述（这正是本仓 F-1/F-2 族：行为合理但未言明 ⇒ 后来者误判为缺陷）。
+   * 三态也让纯净档的声明条能区分「确实没有」与「数不出」。
+   */
+  const [annotationsStatus, setAnnotationsStatus] = useState<"loading" | "ready" | "error">("loading");
+  /**
    * 本卷题目的评析（2026-09-27 批量读面）：`questionId → 行`。
    *
    * 它同时喂两处，必须**同源**：纯净档声明条里的「N 条评析」与解析档渲染的评析正文。
    * 两处各读一次就可能读到不同时刻的两种事实，声明与实际不符 —— 而那比不声明更坏
    * （用户会以为自己的评析丢了）。父层是唯一真源，保存后的回写也只改这里
    * （见 `upsertAssessment`），子组件不留副本。
+   *
+   * ⚠️ 读失败时**必须**与「无评析」分开：PUT 是 latest-wins upsert，若此时仍给
+   * 「写评析」入口，用户会在没看到旧内容的情况下把它覆盖 —— 那是数据丢失。
    */
   const [assessments, setAssessments] = useState<ReadonlyMap<string, L3Assessment>>(new Map());
+  const [assessmentsStatus, setAssessmentsStatus] = useState<"loading" | "ready" | "error">("loading");
+  /** 痕迹读面重试（读失败时给用户一个出口，而不是只能刷新页面）。 */
+  const [traceReadNonce, setTraceReadNonce] = useState(0);
+  const retryTraceRead = useCallback(() => setTraceReadNonce((n) => n + 1), []);
   const [tagDict, setTagDict] = useState<AnnotationTagDict | null>(null);
   /** 本会话划词「圈词入笔记」新建的 context id（抽屉打缓冲徽标）。 */
   const [bufferedContextIds, setBufferedContextIds] = useState<ReadonlySet<string>>(new Set());
@@ -1718,7 +1740,11 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
   useEffect(() => {
     let cancelled = false;
     const allQuestionIds = [...new Set(paper.sections.flatMap((section) => section.questionIds))];
-    if (allQuestionIds.length === 0) return;
+    if (allQuestionIds.length === 0) {
+      setAnnotationsStatus("ready");
+      return;
+    }
+    setAnnotationsStatus("loading");
     Promise.all([
       fetchQuestionAnnotations(allQuestionIds),
       fetchAnnotationTags(),
@@ -1726,12 +1752,15 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
       if (cancelled) return;
       // 双保险：l3Client 已做形状归一，这里再保证 state 恒为数组（防止任何脏数据进迭代）。
       setAnnotations(Array.isArray(items) ? items : []);
+      setAnnotationsStatus("ready");
       setTagDict(dict);
     }).catch(() => {
-      if (!cancelled) addToast("error", "做题注记加载失败，稍后重试");
+      if (cancelled) return;
+      setAnnotationsStatus("error");
+      addToast("error", "做题注记加载失败，稍后重试");
     });
     return () => { cancelled = true; };
-  }, [paper.id, paper.sections, addToast]);
+  }, [paper.id, paper.sections, addToast, traceReadNonce]);
 
   /**
    * 评析批量读（2026-09-27）：与注记同 effect、同 questionIds 口径，一次读完。
@@ -1741,26 +1770,33 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
    * 声明就会与实际不符，而用户看到的是「我的评析被声明隐藏了，可我切回来找不到」，
    * 那比不声明更坏。
    *
-   * 失败降级为空 Map（评析是复盘沉淀，不是做题必需品）——与注记不同，**不弹 toast**：
-   * 注记缺失会直接影响卷面锚点渲染，评析缺失只是少一段复盘，弹错误只会打断做题。
-   * ⚠️ 降级为空的代价：纯净档此时**数不出**评析 ⇒ 声明条漏报这一类。这是有意的
-   * 「读不到就不谎报」——比编一个数字诚实。
+   * 失败**不弹 toast**（评析是复盘沉淀，不是做题必需品，弹错误只会打断做题），改为
+   * 把状态标成 `error`：子区显示「未能读取 · 重试」且**不给写入口**（upsert 会覆盖
+   * 未读到的旧内容），声明条在 `unknown` 里如实说明这一类数不出。三件事都指向同一句
+   * 话：**读不到就别装作读到了。**
    */
   useEffect(() => {
     let cancelled = false;
     const allQuestionIds = [...new Set(paper.sections.flatMap((section) => section.questionIds))];
     if (allQuestionIds.length === 0) {
       setAssessments(new Map());
+      setAssessmentsStatus("ready");
       return;
     }
+    setAssessmentsStatus("loading");
     fetchQuestionAssessments(allQuestionIds)
       .then((rows) => {
         if (cancelled) return;
         setAssessments(new Map(rows.map((row) => [row.question_id, row])));
+        setAssessmentsStatus("ready");
       })
-      .catch(() => { if (!cancelled) setAssessments(new Map()); });
+      .catch(() => {
+        if (cancelled) return;
+        setAssessments(new Map());
+        setAssessmentsStatus("error");
+      });
     return () => { cancelled = true; };
-  }, [paper.id, paper.sections]);
+  }, [paper.id, paper.sections, traceReadNonce]);
 
   /** 保存评析后的唯一更新点（父层那张映射是单一真源，子组件不留副本）。 */
   const upsertAssessment = useCallback((row: L3Assessment) => {
@@ -2111,13 +2147,19 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
     // 沉淀，否则用户会看到「已隐藏 1 条评析」而切回来发现是空的）。
     const assessmentCount = [...assessments.values()]
       .filter((row) => row.content_md.trim().length > 0).length;
+    // 数不出的类别交给 `unknown`：读失败时那一类正在被隐藏（判定不看数据），
+    // 当 0 处理就是**漏报** —— 用户看不到那些内容，也没被告知。
+    const unknown: HiddenTraceClass[] = [];
+    if (annotationsStatus === "error") unknown.push("annotations");
+    if (assessmentsStatus === "error") unknown.push("assessments");
     return hiddenTraceNotice(mode, {
       marks: markCount,
       annotations: annotationCount,
       assessments: assessmentCount,
       picked: Object.keys(picks).length,
+      unknown,
     });
-  }, [mode, answers, annotations, assessments, paper.sections, picks]);
+  }, [mode, answers, annotations, annotationsStatus, assessments, assessmentsStatus, paper.sections, picks]);
 
   const renderAnalysis = (sectionKey: string, q: ExamQuestion) => {
     const grading = gradingResults[q.id];
@@ -2133,11 +2175,16 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
               : null}
           />
         )}
-        {vis.showAnnotations && tagDict && (
+        {vis.showAnnotations && (
           <L3QuestionAnalysis
             question={q}
             annotations={annotationsByQuestion[q.id] ?? []}
-            tagDict={tagDict}
+            loadState={annotationsStatus}
+            onRetry={retryTraceRead}
+            // ⚠️ 面板**不再**以 tagDict 为渲染前提：注记与标签字典是同一个 Promise.all，
+            // 读失败时两者皆空 —— 旧条件会让整块面板在失败时**无声消失**（连「未能读取」
+            // 都没有），那比谎报 0 更难排查。降级分支不碰 tagDict，兜一个空字典即可。
+            tagDict={tagDict ?? EMPTY_TAG_DICT}
             onLocate={(anchor) => setLocate({ sectionKey, ...anchor, nonce: Date.now() })}
             onCreate={handleCreateAnnotation}
             onPatch={handlePatchAnnotation}
@@ -2151,7 +2198,15 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
           />
         )}
         {/* 批次二增补：评析子区（v2 §11 挂题不挂题纸；与「原文分析」并列）。 */}
-        {vis.showAssessments && <L3QuestionAssessment questionId={q.id} assessment={assessments.get(q.id) ?? null} onSaved={upsertAssessment} />}
+        {vis.showAssessments && (
+          <L3QuestionAssessment
+            questionId={q.id}
+            assessment={assessments.get(q.id) ?? null}
+            loadState={assessmentsStatus}
+            onRetry={retryTraceRead}
+            onSaved={upsertAssessment}
+          />
+        )}
       </>
     );
   };

@@ -244,4 +244,43 @@ describe("examModeVisibility · 纯净模式的隐藏声明（签字项 S-1 / �
     expect(notice).not.toContain("-1");
     expect(notice).toContain("1 条注记");
   });
+
+  describe("读失败 ⇒ 数不出（2026-09-27）", () => {
+    it("unknown 的类别必须被点名，且不编数字", () => {
+      const notice = hiddenTraceNotice("pure", {
+        marks: 2, annotations: 0, assessments: 0, picked: 1,
+        unknown: ["annotations", "assessments"],
+      });
+      expect(notice).toContain("2 处高亮");
+      // 关键：说「未能读取」而不是把两类当 0 咽下去 —— 用户此刻正看不到那些内容
+      expect(notice).toContain("原文分析");
+      expect(notice).toContain("评析");
+      expect(notice).toContain("未能读取");
+      expect(notice).toContain("未计入其中");
+      expect(notice).not.toContain("0 条注记");
+      expect(notice).not.toContain("0 条评析");
+    });
+
+    it("全 0 但有 unknown 时仍出声明（否则「数不出」就被读成「没有」）", () => {
+      const notice = hiddenTraceNotice("pure", {
+        marks: 0, annotations: 0, assessments: 0, picked: 0, unknown: ["assessments"],
+      });
+      expect(notice).not.toBeNull();
+      expect(notice).toContain("评析");
+    });
+
+    it("unknown 为空数组等同未给（不留空尾巴）", () => {
+      const notice = hiddenTraceNotice("pure", {
+        marks: 1, annotations: 0, assessments: 0, picked: 0, unknown: [],
+      });
+      expect(notice).toContain("1 处高亮");
+      expect(notice).not.toContain("未能读取");
+    });
+
+    it("非纯净档即使有 unknown 也不出声明（做题/解析档没隐藏任何东西）", () => {
+      expect(hiddenTraceNotice("practice", {
+        marks: 0, annotations: 0, assessments: 0, picked: 0, unknown: ["assessments"],
+      })).toBeNull();
+    });
+  });
 });
