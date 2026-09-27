@@ -117,4 +117,44 @@ describe("L3AssessmentService", () => {
     })).rejects.toBeInstanceOf(NotFoundError);
     expect(repo.upsert).not.toHaveBeenCalled();
   });
+
+  describe("listForQuestions（批量 · 2026-09-27）", () => {
+    const Q2 = "00000000-0000-4000-8000-000000000102";
+
+    it("scopes the read to the actor and returns the rows", async () => {
+      const rows = [assessmentRow(), assessmentRow({ id: "00000000-0000-4000-8000-000000000702", question_id: Q2 })];
+      const repo = makeRepo({ listByQuestions: vi.fn(async () => rows) });
+      const service = makeService(repo, makePaperRepo(questionRow()));
+      await expect(service.listForQuestions(USER, [QUESTION, Q2])).resolves.toEqual({ items: rows });
+      expect(repo.listByQuestions).toHaveBeenCalledWith(USER, [QUESTION, Q2]);
+    });
+
+    it("de-dupes ids before querying（同一题在卷面里出现两次也只问一次）", async () => {
+      const repo = makeRepo();
+      const service = makeService(repo, makePaperRepo(questionRow()));
+      await service.listForQuestions(USER, [QUESTION, QUESTION, Q2]);
+      expect(repo.listByQuestions).toHaveBeenCalledWith(USER, [QUESTION, Q2]);
+    });
+
+    it("short-circuits an empty batch without a query（不为了空数组打一次库）", async () => {
+      const repo = makeRepo();
+      const service = makeService(repo, makePaperRepo(questionRow()));
+      await expect(service.listForQuestions(USER, [])).resolves.toEqual({ items: [] });
+      expect(repo.listByQuestions).not.toHaveBeenCalled();
+    });
+
+    it("caps the batch at 200 ids（schema 之外的第二道兜底）", async () => {
+      const repo = makeRepo();
+      const service = makeService(repo, makePaperRepo(questionRow()));
+      const many = Array.from({ length: 250 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+      await service.listForQuestions(USER, many);
+      expect((repo.listByQuestions as ReturnType<typeof vi.fn>).mock.calls[0][1]).toHaveLength(200);
+    });
+
+    it("does not 404 on unknown questions（批量语义：只返回读到的）", async () => {
+      const repo = makeRepo({ listByQuestions: vi.fn(async () => []) });
+      const service = makeService(repo, makePaperRepo(null));
+      await expect(service.listForQuestions(USER, [QUESTION])).resolves.toEqual({ items: [] });
+    });
+  });
 });

@@ -309,6 +309,9 @@ const AGENT_READS = [
   "previewForgetting",
   // 增补批：评析区读面（agent 共建工作流需要读既有评析；写入同一端点双身份）。
   "getL3QuestionAssessment",
+  // 2026-09-27：评析批量读面（agent 可读）。与单题读面同身份 —— 它不是新开口，
+  // 只是把「读 N 条」合成一次请求；判据不能因为「批量」就变松。
+  "listQuestionAssessments",
   // 批次三①：评卷上下文读面（agent 面；🔴 含 answerIndex 的 D8 唯一例外，仅 sealed）。
   "getL3GradingContext",
   // ADR-0038 决策 2：待评卷清单（agent 可读**发现面**）。只给身份与计数、不含题面；

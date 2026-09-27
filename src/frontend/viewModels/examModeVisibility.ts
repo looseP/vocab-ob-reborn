@@ -93,18 +93,18 @@ const ALL_SHOWN_ANSWER_FACE = {
 const VISIBILITY: Record<ExamMode, ExamVisibility> = {
   // 纯净：干净卷面（打印 / 首看 / 重考）。用户痕迹与答案面全隐，只读。
   //
-  // ⚠️ 评析（showAssessments）在纯净档**保持可见** —— 与设计卡 §2.4 的一处有意偏离
-  // （B3 实现期登记）。理由是 S-1 原则本身：「隐藏必须自带声明」。评析只有单题 GET
-  // （`/l3/questions/:id/assessment`），卷面载荷不带评析事实 ⇒ 父层**数不出条数**
-  // ⇒ 数不出就无法在声明条里如实告知 ⇒ 按原则不隐藏。
-  // 重开条件：出现批量评析读面时，改成「隐藏 + 计数声明」。
+  // 评析（showAssessments）在 B3 曾**有意偏离**为保持可见，理由是「数不出条数就无法
+  // 按 S-1 声明」——评析当时只有单题 GET。2026-09-27 补上批量读面
+  // （`GET /l3/question-assessments?questionIds=`，与注记批量口同款）后，父层能如实
+  // 数出「本卷 N 条评析」并写进隐藏声明 ⇒ **偏离关闭，回到设计卡 §2.4 的 ❌**。
+  // 顺带销掉一个 N+1：评析原先由每题的子组件各自 GET。
   pure: {
     showMaterial: true,
     showNotesPanel: true,
     showPicked: false,
     showUserMarks: false,
     showAnnotations: false,
-    showAssessments: true,
+    showAssessments: false,
     ...ALL_HIDDEN_ANSWER_FACE,
     showGradingCoverage: false,
     canAnswer: false,
@@ -156,8 +156,12 @@ export interface HiddenTraceCounts {
   /** 用户注记条数。 */
   annotations: number;
   /**
-   * 评析条数。**当前卷面数不出**（评析只有单题 GET，卷面载荷不带该事实）⇒ 纯净档
-   * 评析不隐藏，调用方此处恒传 0；出现批量读面后才生效。
+   * 评析条数（**有内容**的才算：空正文不是沉淀）。数据来自批量读面
+   * `assessments`（`questionId → 行`），与解析档渲染的评析**同源** —— 两处各读一次
+   * 就可能读到不同时刻的两种事实，声明会与实际不符。
+   *
+   * 读失败降级为空 Map 时这里恒为 0 ⇒ 声明条**漏报**这一类。这是「读不到就不谎报」：
+   * 宁可漏说，也不要编一个数字（编出来的数字会让用户去找一条并不存在的评析）。
    */
   assessments: number;
   /** 已有作答的题数（选项已选 / 译文 / 作文）。 */

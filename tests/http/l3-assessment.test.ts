@@ -69,6 +69,52 @@ describe("GET /api/l3/questions/:id/assessment", () => {
   });
 });
 
+describe("GET /api/l3/question-assessments（批量 · 2026-09-27）", () => {
+  const Q2 = "00000000-0000-4000-8000-000000000102";
+
+  it("passes the CSV questionIds through and returns { items }", async () => {
+    const listForQuestions = vi.fn(async () => ({ items: [assessmentItem()] }));
+    const app = createApp(makeServices({ listForQuestions }));
+    const res = await app.request(`/api/l3/question-assessments?questionIds=${QUESTION_ID},${Q2}`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ items: [assessmentItem()] });
+    expect(listForQuestions).toHaveBeenCalledWith("user-123", [QUESTION_ID, Q2]);
+  });
+
+  it("empty batch is an empty array, not item:null（批量空态 ≠ 单题空态）", async () => {
+    const listForQuestions = vi.fn(async () => ({ items: [] }));
+    const app = createApp(makeServices({ listForQuestions }));
+    const res = await app.request(`/api/l3/question-assessments?questionIds=${QUESTION_ID}`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ items: [] });
+  });
+
+  it("rejects a missing / non-uuid / oversized questionIds without touching the service", async () => {
+    const listForQuestions = vi.fn();
+    const app = createApp(makeServices({ listForQuestions }));
+    const missing = await app.request(`/api/l3/question-assessments`, { headers: AUTH_HEADERS });
+    expect(missing.status).toBe(400);
+    const notUuid = await app.request(`/api/l3/question-assessments?questionIds=abc`, { headers: AUTH_HEADERS });
+    expect(notUuid.status).toBe(400);
+    const tooMany = await app.request(
+      `/api/l3/question-assessments?questionIds=${Array.from({ length: 201 }, () => QUESTION_ID).join(",")}`,
+      { headers: AUTH_HEADERS },
+    );
+    expect(tooMany.status).toBe(400);
+    expect(listForQuestions).not.toHaveBeenCalled();
+  });
+
+  it("does not 404 on unknown questions（批量语义是「有哪些」而非「是否都存在」）", async () => {
+    const listForQuestions = vi.fn(async () => ({ items: [] }));
+    const app = createApp(makeServices({ listForQuestions }));
+    const res = await app.request(
+      `/api/l3/question-assessments?questionIds=${QUESTION_ID},${Q2}`,
+      { headers: AUTH_HEADERS },
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
 describe("PUT /api/l3/questions/:id/assessment", () => {
   it("upserts with the owner editor resolved from the authenticated role", async () => {
     const putAssessment = vi.fn(async () => ({ item: assessmentItem() }));

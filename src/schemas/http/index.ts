@@ -903,6 +903,9 @@ export {
 /** PUT /l3/questions/:id/assessment：评析区 upsert body（增补批 0035）。 */
 export { assessmentUpsertInputSchema as l3AssessmentUpsertSchema } from "../../domain/l3-assessments";
 
+/** GET /l3/question-assessments?questionIds=<uuid,uuid,...>（1–200 个 uuid；批量计数与渲染同源）。 */
+export { assessmentListQuerySchema as l3QuestionAssessmentListQuerySchema } from "../../domain/l3-assessments";
+
 /** POST /l3/sheets/:id/grading：评卷提交 body（批次三① 0036，ADR-0035 §3）。 */
 export { gradingSubmitInputSchema as l3GradingSubmitSchema } from "../../domain/l3-grading";
 

@@ -20,3 +20,25 @@ export const assessmentUpsertInputSchema = z.object({
 }).strict();
 
 export type AssessmentUpsertInput = z.infer<typeof assessmentUpsertInputSchema>;
+
+/**
+ * GET /l3/question-assessments?questionIds=<uuid,uuid,...> 的 query 契约（1–200 个 uuid）。
+ *
+ * **为什么需要批量口**（2026-09-27）：原本只有单题 `GET /questions/:id/assessment`，
+ * 于是「本卷有几条评析」在卷面里**数不出来** —— 父层拿不到事实，纯净模式就不敢按
+ * S-1「隐藏必须自带声明」去隐藏评析（数不出就无法在声明条里如实告知）。批量口把
+ * 「计数」与「渲染」变成**同一份数据**，那条登记在案的偏离才得以关闭。
+ *
+ * 口径沿原文分析条目（`l3QuestionAnnotationListQuerySchema`）：CSV 查询串、1–200 上限、
+ * 逐个校 uuid。不复用注记那条 schema —— 两条端点的上限将来可能各自调，绑在一起就成了
+ * 隐式耦合。
+ */
+export const assessmentListQuerySchema = z.object({
+  questionIds: z.string().trim().min(1).max(12_000)
+    .transform((raw) => raw.split(",").map((value) => value.trim()).filter(Boolean))
+    .refine((ids) => ids.length >= 1 && ids.length <= 200, { message: "questionIds 必须为 1–200 个 uuid" })
+    .refine((ids) => ids.every((id) => z.string().uuid().safeParse(id).success), { message: "questionIds 需全为 uuid" }),
+});
+
+/** 批量评析的题目数上限（与 query 契约同值；service 侧再兜一层，防绕过 schema 的调用）。 */
+export const ASSESSMENT_LIST_MAX_IDS = 200;

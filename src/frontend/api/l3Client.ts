@@ -286,12 +286,38 @@ export interface L3Assessment {
   updated_at: string;
 }
 
+/** 批量评析的题目数上限（与服务端 `ASSESSMENT_LIST_MAX_IDS` 同值；两侧都截断）。 */
+const ASSESSMENT_ID_BATCH_LIMIT = 200;
+
 /** 评析（无则 null 空态；题不存在服务端 404）。 */
 export async function fetchQuestionAssessment(questionId: string): Promise<L3Assessment | null> {
   const body = await apiFetch<{ item?: L3Assessment | null } | null>(
     `/l3/questions/${encodeURIComponent(questionId)}/assessment`,
   );
   return body?.item ?? null;
+}
+
+/**
+ * 批量评析（2026-09-27）：一次读回本卷题目的全部评析。
+ *
+ * 存在的两个理由，缺一不可：
+ *  1. **计数**（S-1）：卷面父层要如实报出「隐藏了几条评析」，单题 GET 只能一条条问、
+ *     要 N 个请求；数不出就没法声明，纯净模式就只能把评析开着（B3 登记过这条偏离）。
+ *  2. **销掉 N+1**：`L3QuestionAssessment` 原先自己逐题 GET，20 题的卷挂载即 20 个
+ *     请求。批量口让「声明条的数字」与「解析档渲染的内容」来自**同一次读** ——
+ *     两处各读一次就可能读到不同时刻的两种事实，声明会与实际不符，而那比不声明更坏
+ *     （用户会以为自己的评析真的丢了）。
+ *
+ * 上限与去重同 `fetchQuestionAnnotations`；超限截断（不抛）——题单冻结后长度有界，
+ * 截断是防御而非口径。
+ */
+export async function fetchQuestionAssessments(questionIds: readonly string[]): Promise<L3Assessment[]> {
+  const ids = [...new Set(questionIds)].slice(0, ASSESSMENT_ID_BATCH_LIMIT);
+  if (ids.length === 0) return [];
+  const body = await apiFetch<{ items?: L3Assessment[] } | null>(
+    `/l3/question-assessments?questionIds=${ids.map(encodeURIComponent).join(",")}`,
+  );
+  return Array.isArray(body?.items) ? body.items : [];
 }
 
 /** upsert（latest-wins）：owner/agent 同一端点，last_editor 服务端按身份留痕。 */
