@@ -4,6 +4,10 @@
 - **范围**：P0（题单定格 / 入口 URL / 术语注册）+ P1（错题库统一投影 / 错题库枢纽）
 - **依据**：本轮勘察结论（见下）+ 项目红线（ADR-0004 §6 零 FSRS、ADR-0019 §1 错题库不建表、ADR-0023 服务端权威、ADR-0025 单一代码路径）
 - **不在范围**：三模式可见性引擎、上一文件/下一文件、录入面（explanation/evidence/PATCH）、判卷信箱 —— 均为 P2/P3，见文末
+- **2026-09-27 更正**：本行的「上一文件/下一文件」已过期 —— 该项由 `a0942e8` 交付（`FileOrderBar` +
+  `viewModels/fileOrderNavigation.ts` + 测试），不再是未做项；四个待收口缺口见
+  `docs/plan/l3-exam-mode-engine-execution-2026-09-27.md` §3.6。**三模式仍为未做**，
+  执行文档同上（§2.4 规格来自设计卡，本轮只做实现）。
 
 ---
 
@@ -69,7 +73,7 @@ CONTEXT.md 新增「做题与判卷」一节，12 个词（做题文件/试卷/�
 
 1. **迁移 0046 本机 PG 实跑未执行** —— 本机 Docker daemon 不可用（同 09-26 阶梯批的已知环境限制）。代替证据：CHECK 与回填的 WHERE 逐分支对齐（二次执行零行变化）、`db:schema:drift` 绿、仓储测试断言 SQL 口径。**实跑责任移交 CI 的 Migration Rehearsal**（PR #138 同名 job 已实证会在真库上演练）。
 2. **新增 HTTP 端点 1 个**（`GET /api/l3/error-book`，owner/agent 可读）。`api:governance` 判定未触发 breaking（新端点 + 新可选查询参数）。
-3. **未做**：三模式可见性引擎（纯净/做题/解析）、上一文件/下一文件、`explanation`/`evidence` 录入 UI、题目/试卷 `PATCH`、判卷待办队列。理由：P0+P1 的目标是**止住正确性缺陷 + 打通回路 + 停住术语债**；其余四项各自需要独立任务书（且录入面/判卷信箱分别卡在「agent 录题通道」与「grading 版本列」两个未裁决点上）。
+3. **未做**：三模式可见性引擎（纯净/做题/解析）、`explanation`/`evidence` 录入 UI、题目/试卷 `PATCH`、判卷待办队列。理由：P0+P1 的目标是**止住正确性缺陷 + 打通回路 + 停住术语债**；其余四项各自需要独立任务书（且录入面/判卷信箱分别卡在「agent 录题通道」与「grading 版本列」两个未裁决点上）。
 4. **题级错题的 `space` 口径与句级不同源**（`l3_questions.space` vs `l3_source_spaces`）。已在本卡内显式记录，但**未**统一 —— 统一需要重开 ADR（两处都是"权威"，且题自带能力域比 source junction 更贴题）。
 
 ---
