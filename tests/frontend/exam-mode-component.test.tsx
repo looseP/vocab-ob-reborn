@@ -76,6 +76,8 @@ interface MockOptions {
   sheetOverrides?: Record<string, unknown>;
   attempts?: unknown[];
   annotations?: unknown[];
+  /** 批量评析读面（2026-09-27）：`{ items: [...] }`；缺省 = 本卷无评析。 */
+  assessments?: unknown[];
 }
 
 function sheetFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -135,6 +137,19 @@ function annotationFixture(overrides: Record<string, unknown> = {}): Record<stri
   };
 }
 
+function assessmentFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "00000000-0000-4000-8000-000000000081",
+    user_id: "00000000-0000-4000-8000-000000000001",
+    question_id: Q1,
+    content_md: "判据：题干问的是主旨，不是举例。",
+    last_editor: "owner",
+    created_at: "2026-09-27T00:00:00Z",
+    updated_at: "2026-09-27T00:00:00Z",
+    ...overrides,
+  };
+}
+
 function setupMock(options: MockOptions = {}): ReturnType<typeof vi.fn> {
   const attempts = options.attempts ?? [];
   const annotations = options.annotations ?? [];
@@ -146,6 +161,7 @@ function setupMock(options: MockOptions = {}): ReturnType<typeof vi.fn> {
     if (String(path).startsWith("/l3/attempts")) return { items: [] };
     if (String(path).includes("question-annotations")) return { items: annotations };
     if (String(path).includes("annotation-tags")) return { entry: [], option: [] };
+    if (String(path).includes("question-assessments")) return { items: options.assessments ?? [] };
     if (String(path).includes("/assessment")) return { item: null };
     if (String(path).includes("/grading")) return { results: [gradingFixture()], gradableCount: 1 };
     if (String(path).includes("/writing-tasks")) return { items: [] };
@@ -288,6 +304,37 @@ describe("B3 · 用户痕迹（划重点 / 注记）与纯净档", () => {
     await renderPaper("pure");
     await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
     expect(screen.queryByTestId("exam-mode-hidden-notice")).toBeNull();
+  });
+
+  it("评析（2026-09-27 批量读面）：纯净档隐藏评析且声明条报出条数；解析档照常给出", async () => {
+    const assessments = [assessmentFixture({ content_md: "定位偏移：把举例当论点。" })];
+    (apiFetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      setupMock({ sheetOverrides: markedSheet, annotations: [annotationFixture()], assessments }),
+    );
+    await renderPaper("pure");
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+
+    // 断言「行」而不是正文：评析默认折叠，正文在**任何档**都不渲染 —— 拿正文做断言
+    // 会让纯档那条恒真（等于没测）。行上的「已沉淀」徽标才是可见判据。
+    expect(screen.queryByText(/评析 · 已沉淀/)).toBeNull();
+    // 且如实告知藏了几条 —— 这是 S-1 的核心：数不出就不敢藏，能数出就必须说
+    const notice = screen.getByTestId("exam-mode-hidden-notice");
+    expect(notice.textContent).toContain("1 条评析");
+
+    // 同一份数据在解析档直出（计数与渲染同源，不会出现「声明说藏了、切回来没有」）
+    switchMode("review");
+    await waitFor(() => expect(screen.getByText(/评析 · 已沉淀/)).toBeTruthy());
+  });
+
+  it("评析读面只发一次批量请求（不是每题一个 GET）", async () => {
+    const apiFetchMock = setupMock({ assessments: [assessmentFixture()] }) as unknown as ReturnType<typeof vi.fn>;
+    (apiFetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(apiFetchMock);
+    await renderPaper("review");
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+    const batchCalls = apiFetchMock.mock.calls.filter(([path]) => String(path).includes("question-assessments"));
+    const singleCalls = apiFetchMock.mock.calls.filter(([path]) => /questions\/.+\/assessment/.test(String(path)));
+    expect(batchCalls).toHaveLength(1);
+    expect(singleCalls).toHaveLength(0);
   });
 });
 

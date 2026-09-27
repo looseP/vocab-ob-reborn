@@ -4,10 +4,22 @@
  * 一题一条的 owner/agent 共建沉淀：textarea 编辑 + 只读预览切换（不引 Markdown
  * 编辑器依赖，预览为纯文本 pre-wrap）；挂题不挂题纸（跨题纸、跨 venue 永存）；
  * last_editor/updated_at 留痕展示（latest-wins 无历史版本）。
+ *
+ * **2026-09-27：数据改为父层批量下发**（`assessment` prop + `onSaved` 回写）。原先本组件
+ * 挂载即自取单题 GET，20 题的卷 = 20 个请求（N+1），而父层同时**数不出**本卷有几条评析
+ * ⇒ 纯净模式不敢按 S-1「隐藏必须自带声明」隐藏评析（那条偏离登记在
+ * `examModeVisibility.ts`）。现在父层一次批量读回，同一份数据既供计数也供渲染。
+ *
+ * **本组件不再持有评析 state**：保存成功后经 `onSaved` 把行交回父层，由父层那张
+ * questionId→行 的映射做单一更新。不要为了「保存后立刻显示」把行 copy 进本地 state
+ * ——那会造出第二个真源，换卷（父层重新批量读）时它就会留下陈旧行。宁可多传一次
+ * 回调，也不要两处各存一份。
+ *
+ * 保存仍走单题 PUT（写面与读面本就是两个端点，同 `annotations`），成功后不再重发整批：
+ * 一次编辑只影响一题，重拉 20 条是为省一次回调而付 20 个请求。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
-  fetchQuestionAssessment,
   saveQuestionAssessment,
   type L3Assessment,
 } from "@/frontend/api/l3Client";
@@ -19,21 +31,18 @@ function formatEditedAt(iso: string): string {
   return `${date.getMonth() + 1}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function L3QuestionAssessment({ questionId }: { questionId: string }) {
+export function L3QuestionAssessment({ questionId, assessment, onSaved }: {
+  questionId: string;
+  /** 父层批量读回的行；`null` = 该题还没有评析（空态，不是错误）。 */
+  assessment: L3Assessment | null;
+  /** 保存成功：把服务端行交回父层（父层是唯一真源，本组件不留副本）。 */
+  onSaved: (row: L3Assessment) => void;
+}) {
   const { addToast } = useToast();
-  const [assessment, setAssessment] = useState<L3Assessment | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchQuestionAssessment(questionId)
-      .then((row) => { if (!cancelled) setAssessment(row); })
-      .catch(() => { /* 评析加载失败静默降级，不打断做题 */ });
-    return () => { cancelled = true; };
-  }, [questionId]);
 
   const startEditing = useCallback(() => {
     setDraft(assessment?.content_md ?? "");
@@ -46,8 +55,7 @@ export function L3QuestionAssessment({ questionId }: { questionId: string }) {
     if (contentMd.length === 0) return;
     setBusy(true);
     try {
-      const row = await saveQuestionAssessment(questionId, contentMd);
-      setAssessment(row);
+      onSaved(await saveQuestionAssessment(questionId, contentMd));
       setEditing(false);
       addToast("success", "评析已保存");
     } catch {
@@ -55,7 +63,7 @@ export function L3QuestionAssessment({ questionId }: { questionId: string }) {
     } finally {
       setBusy(false);
     }
-  }, [draft, questionId, addToast]);
+  }, [draft, questionId, addToast, onSaved]);
 
   const hasContent = Boolean(assessment && assessment.content_md.trim().length > 0);
 

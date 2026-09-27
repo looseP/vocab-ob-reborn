@@ -55,7 +55,7 @@ import {
   l3SheetListResponseSchema,
   l3SheetSealResponseSchema,
 } from "./l3-sheet-response-contract";
-import { l3AssessmentItemResponseSchema } from "./l3-assessment-response-contract";
+import { l3AssessmentItemResponseSchema, l3QuestionAssessmentListResponseSchema } from "./l3-assessment-response-contract";
 import {
   l3GradingContextResponseSchema,
   l3PendingGradingListResponseSchema,
@@ -197,6 +197,7 @@ import {
   l3SheetListQuerySchema,
   l3AttemptListQuerySchema,
   l3AssessmentUpsertSchema,
+  l3QuestionAssessmentListQuerySchema,
   l3GradingSubmitSchema,
   l3SheetExportQuerySchema,
   l3WritingTaskCreateSchema,
@@ -558,6 +559,9 @@ export const apiOperations = [
   // v2 §4.7 撤回：submitted→draft（重挂题纸；owner-only 做题台面）。
   operation("post", "/api/l3/question-annotations/:id/withdraw", "withdrawQuestionAnnotation", "owner", "owner", "sessionMutation", { body: l3QuestionAnnotationWithdrawSchema }, 200, l3QuestionAnnotationItemResponseSchema),
   // 批次二增补：评析区（agent 首个可写持久区，Amends ADR-0029）——owner/agent 双身份。
+  // 批量读（2026-09-27）：让卷面父层能**数出**本卷有几条评析 —— S-1「隐藏必须自带声明」
+  // 的前提是能如实报数；单题 GET 只能一条条问（N 个请求），数不出就没法声明。
+  operation("get", "/api/l3/question-assessments", "listQuestionAssessments", "owner", "agent", "none", { query: l3QuestionAssessmentListQuerySchema }, 200, l3QuestionAssessmentListResponseSchema),
   operation("get", "/api/l3/questions/:id/assessment", "getL3QuestionAssessment", "owner", "agent", "none", undefined, 200, l3AssessmentItemResponseSchema),
   operation("put", "/api/l3/questions/:id/assessment", "putL3QuestionAssessment", "owner", "agent", "sessionMutation", { body: l3AssessmentUpsertSchema }, 200, l3AssessmentItemResponseSchema),
   // 批次三①：评卷执行面（ADR-0035）——agent 读 face grading-context 含标准答案

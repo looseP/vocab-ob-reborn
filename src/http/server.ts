@@ -42,6 +42,7 @@ import { sheetsRoutes } from "./routes/l3/sheets";
 import { sheetsExportRoutes } from "./routes/l3/sheets-export";
 import { sheetsArchiveRoutes } from "./routes/l3/sheets-archive";
 import { assessmentsRoutes } from "./routes/l3/assessments";
+import { questionAssessmentsBatchRoutes } from "./routes/l3/assessments-batch";
 import { gradingRoutes } from "./routes/l3/grading";
 import { gradingInboxRoutes } from "./routes/l3/grading-inbox";
 import { errorBookRoutes } from "./routes/l3/error-book";
@@ -179,6 +180,7 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3", sheetsArchiveRoutes(services));
   // 批次二增补：评析区（agent 首个可写持久区，Amends ADR-0029；独立薄路由）。
   app.route("/api/l3", assessmentsRoutes(services));
+  app.route("/api/l3", questionAssessmentsBatchRoutes(services));
   // 批次三①：评卷执行面（ADR-0035）——agent 读面 grading-context（D8 唯一例外，
   // 🔴 含答案）、agent 写面 grading 提交、owner 解析模式读面、owner 处置 confirm。
   app.route("/api/l3", gradingRoutes(services));

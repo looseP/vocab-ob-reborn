@@ -27,6 +27,7 @@ import {
   fetchAnnotationTags,
   fetchAttempts,
   fetchQuestionAnnotations,
+  fetchQuestionAssessments,
   fetchSheet,
   fetchSheetExport,
   fetchSheetGrading,
@@ -38,6 +39,7 @@ import {
   withdrawQuestionAnnotation,
   type AnnotationTagDict,
   type CreateQuestionAnnotationRequest,
+  type L3Assessment,
   type L3Attempt,
   type L3GradingResult,
   type L3Sheet,
@@ -1140,6 +1142,15 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
   const [activeSection, setActiveSection] = useState(sourcePaper.sections[0]?.key ?? "");
   const [locate, setLocate] = useState<LocateTarget | null>(null);
   const [annotations, setAnnotations] = useState<QuestionAnnotation[]>([]);
+  /**
+   * 本卷题目的评析（2026-09-27 批量读面）：`questionId → 行`。
+   *
+   * 它同时喂两处，必须**同源**：纯净档声明条里的「N 条评析」与解析档渲染的评析正文。
+   * 两处各读一次就可能读到不同时刻的两种事实，声明与实际不符 —— 而那比不声明更坏
+   * （用户会以为自己的评析丢了）。父层是唯一真源，保存后的回写也只改这里
+   * （见 `upsertAssessment`），子组件不留副本。
+   */
+  const [assessments, setAssessments] = useState<ReadonlyMap<string, L3Assessment>>(new Map());
   const [tagDict, setTagDict] = useState<AnnotationTagDict | null>(null);
   /** 本会话划词「圈词入笔记」新建的 context id（抽屉打缓冲徽标）。 */
   const [bufferedContextIds, setBufferedContextIds] = useState<ReadonlySet<string>>(new Set());
@@ -1722,6 +1733,40 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
     return () => { cancelled = true; };
   }, [paper.id, paper.sections, addToast]);
 
+  /**
+   * 评析批量读（2026-09-27）：与注记同 effect、同 questionIds 口径，一次读完。
+   *
+   * 为什么与注记并排而不是让 `L3QuestionAssessment` 各自取：父层要**数**（纯净档声明条
+   * 的「N 条评析」），子组件只**渲染**。若两边各读，计数与内容可能来自不同时刻 ——
+   * 声明就会与实际不符，而用户看到的是「我的评析被声明隐藏了，可我切回来找不到」，
+   * 那比不声明更坏。
+   *
+   * 失败降级为空 Map（评析是复盘沉淀，不是做题必需品）——与注记不同，**不弹 toast**：
+   * 注记缺失会直接影响卷面锚点渲染，评析缺失只是少一段复盘，弹错误只会打断做题。
+   * ⚠️ 降级为空的代价：纯净档此时**数不出**评析 ⇒ 声明条漏报这一类。这是有意的
+   * 「读不到就不谎报」——比编一个数字诚实。
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const allQuestionIds = [...new Set(paper.sections.flatMap((section) => section.questionIds))];
+    if (allQuestionIds.length === 0) {
+      setAssessments(new Map());
+      return;
+    }
+    fetchQuestionAssessments(allQuestionIds)
+      .then((rows) => {
+        if (cancelled) return;
+        setAssessments(new Map(rows.map((row) => [row.question_id, row])));
+      })
+      .catch(() => { if (!cancelled) setAssessments(new Map()); });
+    return () => { cancelled = true; };
+  }, [paper.id, paper.sections]);
+
+  /** 保存评析后的唯一更新点（父层那张映射是单一真源，子组件不留副本）。 */
+  const upsertAssessment = useCallback((row: L3Assessment) => {
+    setAssessments((prev) => new Map(prev).set(row.question_id, row));
+  }, []);
+
   const upsertAnnotation = useCallback((item: QuestionAnnotation) => {
     setAnnotations((prev) => {
       const without = prev.filter((row) => row.id !== item.id);
@@ -2062,15 +2107,17 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
     const annotationCount = annotations.filter(
       (a) => a.anchor_start != null && a.anchor_end != null && a.status === "active",
     ).length;
-    // 评析恒传 0：卷面载荷不带评析事实（只有单题 GET），数不出条数 ⇒ 纯净档不隐藏评析，
-    // 声明条也就不该提它。数得出之后（批量读面）才把这里接上。
+    // 评析数 = 本卷**有内容的**评析条数（与子组件的 hasContent 同一判据：空正文不算
+    // 沉淀，否则用户会看到「已隐藏 1 条评析」而切回来发现是空的）。
+    const assessmentCount = [...assessments.values()]
+      .filter((row) => row.content_md.trim().length > 0).length;
     return hiddenTraceNotice(mode, {
       marks: markCount,
       annotations: annotationCount,
-      assessments: 0,
+      assessments: assessmentCount,
       picked: Object.keys(picks).length,
     });
-  }, [mode, answers, annotations, paper.sections, picks]);
+  }, [mode, answers, annotations, assessments, paper.sections, picks]);
 
   const renderAnalysis = (sectionKey: string, q: ExamQuestion) => {
     const grading = gradingResults[q.id];
@@ -2104,7 +2151,7 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
           />
         )}
         {/* 批次二增补：评析子区（v2 §11 挂题不挂题纸；与「原文分析」并列）。 */}
-        {vis.showAssessments && <L3QuestionAssessment questionId={q.id} />}
+        {vis.showAssessments && <L3QuestionAssessment questionId={q.id} assessment={assessments.get(q.id) ?? null} onSaved={upsertAssessment} />}
       </>
     );
   };
