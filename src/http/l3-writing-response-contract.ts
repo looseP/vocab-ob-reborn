@@ -11,6 +11,7 @@ import {
   WRITING_KINDS,
   writingFeedbackSchema,
 } from "@/domain/l3-writing";
+import { L3_QUESTION_TYPES } from "@/domain/l3-question-types";
 
 const writingKindSchema = z.enum(WRITING_KINDS);
 const writingDirectionSchema = z.enum(WRITING_DIRECTIONS);
@@ -75,6 +76,10 @@ export const l3WritingTaskListResponseSchema = z.object({
 /** GET /tasks/:taskId。 */
 export const l3WritingTaskDetailResponseSchema = z.object({
   task: l3WritingTaskResponseSchema,
+  // 所挂题目的题型（建任务时强制 short_essay / long_essay）—— 唯一用途是写作页
+  // 笔记面板的 venue 默认值（笔记 venue 即题型）。用题型枚举而非 string：
+  // 题型漂移时旧任务读不出是**应该报错**的（venue 决定笔记抽屉，不得静默错放）。
+  questionType: z.enum(L3_QUESTION_TYPES),
   draftSummary: l3WritingSheetResponseSchema.nullable(),
   revisionCount: z.number().int().nonnegative(),
   latestSubmittedSheetId: z.string().uuid().nullable(),

@@ -10,6 +10,7 @@
  */
 import { useState } from "react";
 import type { WritingFeedback, WritingSheetDetail, WritingTaskDto } from "@/domain";
+import type { ReferenceTarget } from "@/domain/l3-study-notes";
 import { Button } from "@/frontend/components/ui/Button";
 import { WRITING_TEXTAREA_ID } from "@/frontend/viewModels/writingNavigation";
 
@@ -24,6 +25,14 @@ export interface WritingFeedbackPanelProps {
   task: WritingTaskDto;
   detail: WritingSheetDetail;
   onRefresh: () => Promise<void>;
+  /**
+   * N2 第五条链：把「这一稿的评阅」钉进笔记的入口（可选；不传则不渲染）。
+   *
+   * 只在 feedback 真实存在且与当前正文一致时出现 —— hashMismatch 时隐藏：
+   * 隐藏的反馈不是合法目标（require sealed + 一致性），入口若还留着，
+   * 用户钉到的就是一条「服务会 404」的东西。
+   */
+  onReferenceToNote?: ((target: ReferenceTarget) => void) | null;
 }
 
 type RefreshState = { status: "idle" | "loading" | "error"; message?: string };
@@ -107,7 +116,7 @@ function FeedbackBody(props: { feedback: WritingFeedback }) {
   );
 }
 
-export function WritingFeedbackPanel({ task, detail, onRefresh }: WritingFeedbackPanelProps) {
+export function WritingFeedbackPanel({ task, detail, onRefresh, onReferenceToNote = null }: WritingFeedbackPanelProps) {
   const [refresh, setRefresh] = useState<RefreshState>({ status: "idle" });
   const feedback = detail.feedback;
 
@@ -139,9 +148,25 @@ export function WritingFeedbackPanel({ task, detail, onRefresh }: WritingFeedbac
         <h3 className="text-sm font-semibold text-[var(--color-ink)]">
           反馈{detail.sheet.revisionNo != null ? ` · 第 ${detail.sheet.revisionNo} 稿` : ""}
         </h3>
-        <Button size="sm" variant="secondary" onClick={runRefresh} disabled={refresh.status === "loading"}>
-          {refresh.status === "loading" ? "刷新中…" : "刷新反馈"}
-        </Button>
+        <span className="flex items-center gap-2">
+          {/*
+            N2 第五条链：引用这稿评阅的入口。只在 feedback 真实存在且一致时渲染
+            （hashMismatch / 无反馈 / 正文已清理时不出现 —— 那些都不是合法目标）。
+          */}
+          {feedback != null && !hashMismatch && onReferenceToNote && (
+            <button
+              type="button"
+              data-testid="reference-feedback-to-note"
+              onClick={() => onReferenceToNote({ kind: "writing_feedback", sheetId: detail.sheet.id })}
+              className="shrink-0 text-[11px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+            >
+              引用评阅到笔记
+            </button>
+          )}
+          <Button size="sm" variant="secondary" onClick={runRefresh} disabled={refresh.status === "loading"}>
+            {refresh.status === "loading" ? "刷新中…" : "刷新反馈"}
+          </Button>
+        </span>
       </div>
 
       {refresh.status === "error" && (

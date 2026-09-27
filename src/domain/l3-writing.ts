@@ -9,6 +9,7 @@
  *   - 反馈：结构化 WritingFeedback（无 numeric score、无 correct/partial/wrong）。
  */
 import { z } from "zod";
+import type { L3QuestionType } from "./l3-question-types";
 
 // ── 枚举 ────────────────────────────────────────────────────────────────
 
@@ -364,6 +365,14 @@ export interface WritingQuestionSummary {
 
 export interface WritingTaskDetail {
   task: WritingTaskDto;
+  /**
+   * 所挂题目的题型（建任务时强制 short_essay / long_essay）。
+   *
+   * 唯一用途：写作页笔记面板的 venue 默认值 —— 笔记的 venue 即题型（与做题页
+   * 同款语义），从写作页建的笔记天然落在 short/long_essay 抽屉里。任务行本身
+   * 不存题型（改题面不换任务，题型以题目行为准），读时现取。
+   */
+  questionType: L3QuestionType;
   draftSummary: WritingSheetDto | null;
   revisionCount: number;
   latestSubmittedSheetId: string | null;

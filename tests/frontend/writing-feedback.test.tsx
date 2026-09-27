@@ -159,3 +159,59 @@ describe("W8 评阅指令（无 token）", () => {
     await waitFor(() => { expect(writeText).toHaveBeenCalledTimes(1); });
   });
 });
+
+/**
+ * N2 第五条链：引用评阅到笔记的入口（ADR-0040）。
+ *
+ * 入口的出现条件本身就是契约：feedback 真实存在 **且** 与当前正文一致时才出现。
+ * hash 不一致 / 无反馈 / 正文已清理 / 未传回调 —— 四种情况都不该出现按钮，
+ * 否则用户钉到的就是一条「服务会 404」的东西。
+ */
+describe("N2 引用评阅到笔记入口", () => {
+  function panelProps(overrides: Record<string, unknown> = {}) {
+    return {
+      task: taskDto() as never,
+      detail: sealedDetail({ feedback: feedbackRecord() }) as never,
+      onRefresh: async () => {},
+      ...overrides,
+    };
+  }
+
+  it("feedback 存在且一致 + 传回调 → 按钮出现，点击携带 {kind, sheetId}", async () => {
+    const seen: unknown[] = [];
+    renderDirect(createElement(WritingFeedbackPanel, panelProps({
+      onReferenceToNote: (target: unknown) => { seen.push(target); },
+    })));
+    await flushAsync();
+    fireEvent.click(screen.getByRole("button", { name: "引用评阅到笔记" }));
+    expect(seen).toEqual([{ kind: "writing_feedback", sheetId: SHEET }]);
+  });
+
+  it("hash 不一致 → 不出现（隐藏的反馈不是合法目标）", async () => {
+    const seen: unknown[] = [];
+    renderDirect(createElement(WritingFeedbackPanel, panelProps({
+      detail: sealedDetail({ feedback: feedbackRecord({ textSha256: "f".repeat(64) }) }) as never,
+      onReferenceToNote: (target: unknown) => { seen.push(target); },
+    })));
+    await flushAsync();
+    expect(screen.queryByRole("button", { name: "引用评阅到笔记" })).toBeNull();
+    expect(seen).toEqual([]);
+  });
+
+  it("无反馈 / 未传回调 → 不出现", async () => {
+    renderDirect(createElement(WritingFeedbackPanel, panelProps({
+      onReferenceToNote: null,
+    })));
+    await flushAsync();
+    expect(screen.queryByRole("button", { name: "引用评阅到笔记" })).toBeNull();
+
+    renderDirect(createElement(WritingFeedbackPanel, {
+      task: taskDto() as never,
+      detail: sealedDetail() as never,
+      onRefresh: async () => {},
+      onReferenceToNote: () => { throw new Error("must not be called"); },
+    }));
+    await flushAsync();
+    expect(screen.queryByRole("button", { name: "引用评阅到笔记" })).toBeNull();
+  });
+});

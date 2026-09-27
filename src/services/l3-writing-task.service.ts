@@ -12,7 +12,7 @@
 
 import type { PoolClient } from "pg";
 import { createHash, randomUUID } from "node:crypto";
-import { ConflictError, NotFoundError, ValidationError } from "../errors";
+import { ConflictError, InternalConsistencyError, NotFoundError, ValidationError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import type { IL3ContextRepository, IL3PaperRepository } from "../repositories/interfaces";
@@ -297,11 +297,17 @@ export class L3WritingTaskService {
       const task = await repos.l3Writing.findTaskById(userId, taskId);
       if (!task) throw new NotFoundError("WritingTask", taskId);
       const question = await repos.l3Paper.findQuestionById(userId, task.question_id);
+      // 任务所挂题目被 RESTRICT 保护不得删除 —— 取不到即数据不一致（W5 同款显式报错，
+      // 不得用默认值伪造题型：venue 决定笔记住进哪个抽屉，伪造等于放错抽屉且 UI 改不了）。
+      if (!question) {
+        throw new InternalConsistencyError("writing task is missing its question", task.question_id);
+      }
       const draft = await repos.l3Writing.findDraftByTask(userId, taskId);
       const revisionCount = await repos.l3Writing.countSealedByTask(userId, taskId);
       const latest = await repos.l3Writing.findLatestSealedByTask(userId, taskId);
       return {
-        task: toTaskDto(task, question?.stem ?? ""),
+        task: toTaskDto(task, question.stem),
+        questionType: question.question_type,
         draftSummary: draft ? toSheetDto(draft) : null,
         revisionCount,
         latestSubmittedSheetId: latest ? latest.id : null,

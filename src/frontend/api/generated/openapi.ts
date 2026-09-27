@@ -20384,6 +20384,8 @@ export interface operations {
                             createdAt: string;
                             updatedAt: string;
                         };
+                        /** @enum {string} */
+                        questionType: "cloze" | "reading_choice" | "new_question" | "sentence_translation" | "short_essay" | "long_essay" | "grammar_blank";
                         draftSummary: {
                             /** Format: uuid */
                             id: string;
