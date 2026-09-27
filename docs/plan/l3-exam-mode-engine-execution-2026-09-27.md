@@ -184,6 +184,31 @@ type ExamMode = "pure" | "practice" | "review"   // 语义沿设计卡 §2.4
 | C paper venue 无顺序条 | `PapersTab`（`:818-830`）与 `SheetReplayView`（`:1284-1298`）都不渲染 `FileOrderBar` | **收口**：整卷内「上一/下一文件」= 跨 section 跳下一节的题（设计卡 §105「跨 section 即跨文件」）。这是**卷内滚动定位**，不开新题纸 |
 | D fileKey 型文件的顺序 | 顺序条照常给（`fileOrderNavigation.ts:19-20` 已声明），点进去是浏览视图 | 保持现状（与列表点它结果一致）；**不**为它造模式 |
 
+**B4 实现期结论（2026-09-27）**
+
+- **缺口 C 不做（已签字）** —— 前提已不成立：`L3ExamPaper` 早已渲染 sticky **节导航**
+  （`L3ExamPaper.tsx:2296-2309`）：列出全部 section、带序号与题数、**高亮当前节**、点击滚动
+  定位，`activeSection` 由 IntersectionObserver 真实跟踪（`:2004-2014`）。设计卡 §105 要的
+  「顶部提供上一份/下一份素材（单 step 跳 section 即可）」已被它覆盖，且**严格更强**
+  （位置 + 全目标直达 + 当前节高亮）。再加一对 `FileOrderBar` 就是同一动作的第二个控件，
+  与本仓已有纪律同族：`FileOrderBar` 自身刻意不在外面重复「返回题型空间」按钮（`:330-333`），
+  D-3 也拒绝「第二条深链机制」。故只做 A/B，C 登记为有意不做。
+  连带：必测矩阵第 12 条（paper venue 顺序条跨 section 定位）随之作废。
+- **缺口 A 用 `replace` 而非 `push`** —— `detail` 是组件 state、`?file=` 只在挂载时一次性
+  消费（`L3PapersPage.tsx:503-514`）。若 push，浏览器后退只改 URL 不改视图 ⇒ **URL 与视图
+  分叉**，刷新后落到另一份文件——比「不可后退」更坏。返回题型空间由 `onBack` 清 `?file=`
+  （同向维护），页内返回仍是 `L3ExamPaper` 的 `guardedBack`。
+- **深链触发的打开不回写 URL**（`openFile(file, { syncUrl: false })`）：那次打开**来自**
+  URL，query 里可能还带着一次性消费的 `?resumeSheet=` / `?question=`（I3 返回原题），
+  重写会抹掉它们 ⇒ 刷新后退化成另开新纸。
+- **URL 构造必须保留 `?mode=`**（B3 同 query 邻居）：按「拼一个新 URL」的写法会在切文件时
+  把用户的解析档打回做题档。故新建 `viewModels/practiceFileNavigation.ts`（增改既有 query，
+  同 `buildExamModeUrl` 口径），文件引用取 `file_key ?? source_id`（与 `sameFileIdentity` 同源）。
+- **缺口 B 复用既有屏障，不新开判定**：`L3ExamPaper` 经 `onRegisterLeaveBarrier` 把
+  `leavePaperBarrier` **注册**给宿主（prop 名与语义沿 `L3StudyNotesPage` 同名 prop，第二个
+  消费者）。宿主若自己判「有没有未保存」就会长出第二套判定 —— 同构于本仓登记过的「同屏两个
+  返回按钮」。fileKey 浏览视图没有可保存作答 ⇒ 无屏障注册 ⇒ 直接换（不误伤）。
+
 ---
 
 ## 四、护栏（每条配一个失败测试）
@@ -221,10 +246,16 @@ type ExamMode = "pure" | "practice" | "review"   // 语义沿设计卡 §2.4
 9. 痕迹为 0 的 `pure`：无声明条（G-2 反向）
 
 **文件顺序（`l3-papers.test.tsx` 追加）**
-10. 切文件写 `?file=`，刷新后停在同一份（G-缺口 A）
+10. 切文件写 `?file=`，刷新后停在同一份（G-缺口 A）—— 含「写出的 URL 回灌深链仍落在同一份」
+    与「保留 `?mode=`」两条（B3 同 query 邻居）
 11. 作答未保存时点下一份 → 屏障拦下、**不换**（G-6）
-12. paper venue 顺序条跨 section 定位（G-缺口 C）
+12. ~~paper venue 顺序条跨 section 定位（G-缺口 C）~~ —— **作废**：C 已签字不做，节导航
+    （`L3ExamPaper.tsx:2296`）已覆盖设计卡 §105 的要求，见 §3.6「B4 实现期结论」
 13. `fileKey` 型文件无模式切换器（G-7）
+
+**URL 构造（`practice-file-navigation.test.ts` 新增）**
+15. 写 `venue`/`file`、清 `file`、保留 `mode` 与 I3 回原题参数、顺序稳定、引用转义、
+    URL 自足（显式带 `section=papers`）
 
 **注册表**
 14. 导航登记表新增项的 `href` 与 `matchPrefix` 断言（若新增登记项）
