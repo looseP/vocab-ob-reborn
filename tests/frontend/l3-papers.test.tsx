@@ -47,7 +47,10 @@ function LocationProbe() {
 
 const locText = (): string => screen.getByTestId("loc").textContent ?? "";
 
-async function renderPage(props: Record<string, unknown> = {}, opts: { strict?: boolean } = {}): Promise<void> {
+async function renderPage(
+  props: Record<string, unknown> = {},
+  opts: { strict?: boolean; entry?: string } = {},
+): Promise<void> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -63,7 +66,7 @@ async function renderPage(props: Record<string, unknown> = {}, opts: { strict?: 
     root.render(
       createElement(
         MemoryRouter,
-        { initialEntries: ["/l3"] },
+        { initialEntries: [opts.entry ?? "/l3"] },
         opts.strict ? createElement(StrictMode, null, tree) : tree,
       ) as ReactElement,
     );
@@ -260,6 +263,208 @@ describe("L3PapersPage 文件顺序导航（2026-09-26）", () => {
     expect(screen.getByTestId("file-order-position").textContent).toBe("第 1 / 1 份");
     expect((screen.getByTestId("file-order-previous") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId("file-order-next") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+/**
+ * B4（2026-09-27）缺口 A「打开的文件不写 URL」+ 缺口 B「换文件不过保存屏障」。
+ * 护栏 G-6（换文件过屏障）、G-7（无卷面处不给模式切换器）。
+ */
+describe("L3PapersPage 文件定位与换卷屏障（B4）", () => {
+  const SECOND_SOURCE = "00000000-0000-4000-8000-000000000003";
+
+  function detailFor(sourceId: string) {
+    return {
+      question_type: "reading_choice",
+      source: { id: sourceId, title: sourceId === SECOND_SOURCE ? "2023 Text2 气候议题" : "2025 Text1" },
+      source_content: "The passage.",
+      file_key: null,
+      questions: [questionFixture("21. 题干")],
+    };
+  }
+
+  function twoFiles() {
+    return [
+      fileItem({ source_id: SECOND_SOURCE, title: "2023 Text2 气候议题" }),
+      fileItem(),
+    ];
+  }
+
+  function setupMultiFileMock() {
+    const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
+    const sheet = {
+      id: "00000000-0000-4000-8000-000000000401",
+      user_id: "00000000-0000-4000-8000-000000000001",
+      scope: "file",
+      scope_key: `file:${SOURCE_ID}:reading_choice`,
+      source_id: SOURCE_ID,
+      question_type: "reading_choice",
+      paper_id: null,
+      status: "draft",
+      answers: {},
+      seal_mode: null,
+      summary: null,
+      sealed_at: null,
+      created_at: "2026-09-17T00:00:00Z",
+      updated_at: "2026-09-17T00:00:00Z",
+    };
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith("/l3/papers?")) return { items: [] };
+      if (path.startsWith("/l3/practice-files?")) return { items: twoFiles() };
+      if (path.startsWith("/l3/practice-files/detail?")) {
+        return path.includes(SECOND_SOURCE) ? detailFor(SECOND_SOURCE) : detailFor(SOURCE_ID);
+      }
+      if (path === "/l3/sheets") return { sheet };
+      if (path.startsWith("/l3/attempts")) return { items: [] };
+      if (path.startsWith("/l3/question-annotations")) return { items: [] };
+      if (path === "/l3/annotation-tags") return { entry: [], option: [] };
+      return {};
+    });
+    return apiFetchMock;
+  }
+
+  /** 从题型空间列表点开指定文件（列表态 → 文件详情）。 */
+  async function openFileFromList(title: RegExp, venueName: RegExp = /阅读理解/): Promise<void> {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("tab", { name: "题型空间" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: venueName }));
+    });
+    await waitFor(() => expect(screen.getByText(title)).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByText(title));
+    });
+  }
+
+  it("缺口 A：打开文件把位置写进 URL（section + venue + file）", async () => {
+    setupMultiFileMock();
+    await renderPage();
+    await openFileFromList(/2025 英语二 · Text 1 小费文化/);
+    await waitFor(() => expect(screen.getByTestId("file-order-bar")).toBeTruthy());
+    const search = new URLSearchParams(locText().split("?")[1] ?? "");
+    expect(search.get("section")).toBe("papers");
+    expect(search.get("venue")).toBe("reading_choice");
+    expect(search.get("file")).toBe(SOURCE_ID);
+  });
+
+  it("缺口 A：写 URL 时保留 ?mode=（切文件不得把解析档打回做题档）", async () => {
+    setupMultiFileMock();
+    await renderPage({ examMode: "review", onExamModeChange: vi.fn() }, { entry: "/l3?section=papers&mode=review" });
+    await openFileFromList(/2025 英语二 · Text 1 小费文化/);
+    await waitFor(() => expect(screen.getByTestId("file-order-bar")).toBeTruthy());
+    const search = new URLSearchParams(locText().split("?")[1] ?? "");
+    expect(search.get("mode")).toBe("review");
+    expect(search.get("file")).toBe(SOURCE_ID);
+  });
+
+  it("缺口 A：写出的 URL 可回灌深链 → 刷新后停在同一份（地址是入口，不是广播）", async () => {
+    setupMultiFileMock();
+    await renderPage();
+    await openFileFromList(/2025 英语二 · Text 1 小费文化/);
+    await waitFor(() => expect(screen.getByTestId("file-order-bar")).toBeTruthy());
+    const search = new URLSearchParams(locText().split("?")[1] ?? "");
+
+    // 换一个干净的 root，把刚写出的地址当作「刷新后的地址」喂回去。
+    await act(async () => {
+      for (const root of mountedRoots.splice(0)) root.unmount();
+    });
+    document.body.innerHTML = "";
+    setupMultiFileMock();
+    await renderPage({
+      deepLinkVenue: search.get("venue"),
+      deepLinkFile: search.get("file"),
+    });
+    await waitFor(() => expect(screen.getByTestId("file-order-bar")).toBeTruthy());
+    expect(screen.getByTestId("file-order-position").textContent).toBe("第 2 / 2 份");
+  });
+
+  it("缺口 A 反向：返回题型空间清掉 ?file=（否则刷新又把刚退出的卷打开）", async () => {
+    setupMultiFileMock();
+    await renderPage();
+    await openFileFromList(/2025 英语二 · Text 1 小费文化/);
+    await waitFor(() => expect(screen.getByTestId("file-order-bar")).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /返回题型空间/ }));
+    });
+    await waitFor(() => expect(screen.queryByTestId("file-order-bar")).toBeNull());
+    const search = new URLSearchParams(locText().split("?")[1] ?? "");
+    expect(search.get("file")).toBeNull();
+    expect(search.get("venue")).toBe("reading_choice");
+  });
+
+  it("缺口 B：无未保存作答时点「上一份」照常换卷（屏障不误伤）", async () => {
+    const apiFetchMock = setupMultiFileMock();
+    await renderPage();
+    await openFileFromList(/2025 英语二 · Text 1 小费文化/);
+    await waitFor(() => expect(screen.getByTestId("file-order-bar")).toBeTruthy());
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("file-order-previous"));
+    });
+    await waitFor(() => expect(screen.getByTestId("file-order-position").textContent).toBe("第 1 / 2 份"));
+    expect(apiFetchMock.mock.calls.some(([p]) => String(p).includes(`/l3/practice-files/detail?`) && String(p).includes(SECOND_SOURCE))).toBe(true);
+  });
+
+  it("G-6：作答未保存成功时点「上一份」被拦下——不换卷、位置不变、失败可见", async () => {
+    const apiFetchMock = setupMultiFileMock();
+    await renderPage();
+    await openFileFromList(/2025 英语二 · Text 1 小费文化/);
+    await waitFor(() => expect(screen.getByTestId("file-order-bar")).toBeTruthy());
+
+    // 服务端不可重试拒绝（422）固定失败路径：不把「保存中」误判成「已保存」。
+    const base = apiFetchMock.getMockImplementation()!;
+    apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (String(path).startsWith("/l3/sheets/") && init?.method === "PATCH") {
+        throw Object.assign(new Error("save failed"), { status: 422 });
+      }
+      return base(path, init);
+    });
+
+    // 选中一个选项 → 产生未保存作答
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /A/ }));
+      await Promise.resolve();
+    });
+    // 点「上一份」：屏障必须拦住
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("file-order-previous"));
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith(
+      "error",
+      expect.stringMatching(/暂不能离开|尚未保存成功|保存失败/),
+    ));
+    // 关键断言：**没有换卷**（相邻文件详情从未被请求），位置仍是第 2 / 2 份
+    expect(apiFetchMock.mock.calls.some(([p]) => String(p).includes("/l3/practice-files/detail?") && String(p).includes(SECOND_SOURCE))).toBe(false);
+    expect(screen.getByTestId("file-order-position").textContent).toBe("第 2 / 2 份");
+  });
+
+  it("G-7：fileKey 只能浏览的文件不给模式切换器（那里没有卷面）", async () => {
+    setupMock({
+      files: [fileItem({
+        question_type: "sentence_translation",
+        source_id: null,
+        file_key: "translation-group-1",
+        title: "翻译题组 A",
+      })],
+      detail: {
+        question_type: "sentence_translation",
+        source: null,
+        source_content: null,
+        file_key: "translation-group-1",
+        questions: [{
+          id: QUESTION_ID, ordinal: 0, stem: "46. 翻译题干",
+          options: [], answer: { text: "参考译文" },
+          explanation: "解析内容", evidence: [],
+        }],
+      },
+    });
+    await renderPage({ examMode: "pure", onExamModeChange: vi.fn() });
+    await openFileFromList(/翻译题组 A/, /英译汉/);
+    await waitFor(() => expect(screen.getByText("46. 翻译题干")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /纯净/ })).toBeNull();
+    expect(screen.queryByTestId("file-order-bar")).toBeTruthy(); // 顺序条照常给（缺口 D）
   });
 });
 

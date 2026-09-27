@@ -7,6 +7,7 @@ import { L3SourceNotesDrawer } from "./L3SourceNotesDrawer";
 import { StudyNoteSidePanel } from "@/frontend/components/studyNotes/StudyNoteSidePanel";
 import {
   composeSheetLeaveBarrier,
+  type ComposedSheetLeaveBarrier,
   type NoteLeaveBarrier,
 } from "@/frontend/state/sheetLeaveBarrier";
 import type { ReferenceTarget } from "@/domain/l3-study-notes";
@@ -1079,7 +1080,7 @@ const EXAM_MODE_LABELS: Record<ExamMode, string> = {
   practice: "做题",
   review: "解析",
 };
-export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheetId, onRetake, focusQuestionId, writingEntry, mode, onModeChange }: {
+export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheetId, onRetake, focusQuestionId, writingEntry, mode, onModeChange, onRegisterLeaveBarrier }: {
   paper: ExamPaperType;
   onBack: () => void;
   /** 批次二补齐：题型空间（file venue）复用本组件作单文件做题表面——
@@ -1111,6 +1112,19 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
    * 通道时给一个点了没反应的按钮，比不给更糟（与 writingEntry 缺省不渲染入口同款）。
    */
   onModeChange?: (mode: ExamMode) => void;
+  /**
+   * B4 缺口 B / 护栏 G-6：把「离开卷面」双屏障**注册**给宿主，供宿主发起的换卷
+   * （题型空间的「上一份 / 下一份」）复用同一道门。
+   *
+   * 为什么注册而不是让宿主自己 flush：屏障要合成的两侧（题纸作答 + 侧栏学习笔记）
+   * 都只有本组件知道，且失败归因（`failedBy: note | sheet`）也只在这里能正确给出。
+   * 宿主若绕过它自己判「有没有未保存」，就会长出第二套判定——那正是本仓登记过的
+   * 「同屏两个返回」类缺陷的同构形态。
+   *
+   * prop 名与语义沿 `L3StudyNotesPage.onRegisterLeaveBarrier`（同一模式，第二个消费者）。
+   * 卸载时回注册 `null`，防止宿主拿着过期闭包放行导航。
+   */
+  onRegisterLeaveBarrier?: (barrier: ComposedSheetLeaveBarrier | null) => void;
 }) {
   const { addToast } = useToast();
   /**
@@ -1590,6 +1604,19 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
       }
     });
   }, [leavePaperBarrier, onBack, addToast]);
+
+  /**
+   * B4 缺口 B：把屏障注册给宿主（题型空间顺序条换文件要走同一道门）。
+   *
+   * 依赖 `[leavePaperBarrier]` 而不是 `[]`：屏障身份随 `flushAnswers` 变化，冻结首帧
+   * 那个会让宿主长期持有一份捕获旧闭包的屏障。清理时回注册 `null`——宿主若在卸载后
+   * 仍持有它，点「下一份」会调用一个引用已卸载组件 state 的屏障。
+   */
+  useEffect(() => {
+    if (!onRegisterLeaveBarrier) return;
+    onRegisterLeaveBarrier(leavePaperBarrier);
+    return () => { onRegisterLeaveBarrier(null); };
+  }, [leavePaperBarrier, onRegisterLeaveBarrier]);
 
   /**
    * v2 草稿答案状态机：完整对象浅 merge → prune（空键清理）→ 整题入队 pending

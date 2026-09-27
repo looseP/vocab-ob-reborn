@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { EXAM_MODE_DEFAULT, type ExamMode } from "@/frontend/viewModels/examModeNavigation";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
@@ -22,6 +22,8 @@ import {
   type OrderedPracticeFile,
 } from "@/frontend/viewModels/fileOrderNavigation";
 import { buildL3SectionUrl } from "@/frontend/viewModels/l3SectionNavigation";
+import { buildPracticeFileUrl, practiceFileRef } from "@/frontend/viewModels/practiceFileNavigation";
+import type { ComposedSheetLeaveBarrier } from "@/frontend/state/sheetLeaveBarrier";
 import { QuestionEvidenceEditor, type EvidenceAnchor } from "@/frontend/components/l3/QuestionEvidenceEditor";
 import { PendingQuestionsPanel } from "@/frontend/components/l3/PendingQuestionsPanel";
 import type { WritingQuestionTaskSummary } from "@/domain";
@@ -415,6 +417,12 @@ function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: 
 } = {}) {
   const { addToast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
+  /** 当前 href（写 URL 时在既有 query 上增改，不拼新串——见 practiceFileNavigation 文件头）。 */
+  const currentHref = useCallback(
+    () => `${location.pathname}${location.search}`,
+    [location.pathname, location.search],
+  );
   const [files, setFiles] = useState<PracticeFile[] | null>(null);
   const [venue, setVenue] = useState<QuestionType | null>(deepLink?.venue ?? null);
   const [detail, setDetail] = useState<FilesTabDetail | null>(null);
@@ -440,10 +448,17 @@ function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: 
     return () => { cancelled = true; };
   }, [addToast]);
 
-  const openFile = async (file: PracticeFile) => {
+  const openFile = async (file: PracticeFile, opts?: { syncUrl?: boolean }) => {
     const params = new URLSearchParams({ questionType: file.question_type });
     if (file.source_id) params.set("sourceId", file.source_id);
     if (file.file_key) params.set("fileKey", file.file_key);
+    /** 缺口 A：成功打开后把位置写进 URL（深链读侧一直存在，缺的只是写侧）。 */
+    const syncUrl = opts?.syncUrl !== false;
+    const fileRef = practiceFileRef(file);
+    const writeUrl = () => {
+      if (!syncUrl || fileRef == null || !venue) return;
+      navigate(buildPracticeFileUrl(currentHref(), { questionType: file.question_type, fileRef }), { replace: true });
+    };
     try {
       const body = await apiFetch<PracticeFileDetail>(`/l3/practice-files/detail?${params}`);
       // source 型文件（阅读/完形/新题型/语法填空）：组装单节伪卷，接入做题表面——
@@ -481,6 +496,7 @@ function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: 
           replaySheetId,
           paper: buildFileVenuePaper(body, file.source_id, file.question_type, file.title),
         });
+        writeUrl();
       } else {
         setDetail({
           kind: "browse",
@@ -491,11 +507,23 @@ function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: 
           sourceId: file.source_id,
           questionType: file.question_type,
         });
+        writeUrl();
       }
     } catch {
       addToast("error", "文件题组加载失败");
     }
   };
+
+  /**
+   * 缺口 A 的反向：返回题型空间时**清掉 `?file=`**。否则 URL 还停在刚退出的文件上，
+   * 一次刷新就把用户刚关掉的卷重新打开——「返回」必须真的回得去。
+   */
+  const backToList = useCallback(() => {
+    if (venue) {
+      navigate(buildPracticeFileUrl(currentHref(), { questionType: venue, fileRef: null }), { replace: true });
+    }
+    setDetail(null);
+  }, [venue, navigate, currentHref]);
 
   // 批次二深链：文件列表就绪后自动打开目标文件（?venue=<题型>&file=<source_id|file_key>）。
   // 🔴 同 PapersTab：StrictMode 下 files 双落地会双触发本效应——一次性消费，防 resumeSheet
@@ -510,7 +538,9 @@ function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: 
     const target = files.find((file) => file.question_type === venue
       && (file.source_id === pendingFileKey || file.file_key === pendingFileKey));
     setPendingFileKey(null);
-    if (target) void openFileRef.current?.(target);
+    // 这次打开**来自** URL，别再写回去：query 里可能还带着一次性消费的 ?resumeSheet=
+    // 与 ?question=（I3 返回原题），重写会把它们抹掉——刷新后就会退化成另开新纸。
+    if (target) void openFileRef.current?.(target, { syncUrl: false });
   }, [pendingFileKey, venue, files]);
 
   // I3：fileKey 作文题组——题组级**一次**批量摘要读取（重试与「返回原题」重进均重新读取，
@@ -559,10 +589,29 @@ function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: 
     () => findFileSiblings(files ?? [], detailIdentity),
     [files, detailIdentity],
   );
+  /** 缺口 B：题纸（子组件）注册上来的离开屏障；换文件前必过。 */
+  const leaveBarrierRef = useRef<ComposedSheetLeaveBarrier | null>(null);
+  const registerLeaveBarrier = useCallback((barrier: ComposedSheetLeaveBarrier | null) => {
+    leaveBarrierRef.current = barrier;
+  }, []);
   const goSibling = useCallback((file: OrderedPracticeFile | null) => {
     if (file == null) return;
-    void openFile(file as PracticeFile);
-  }, [openFile]);
+    const target = file as PracticeFile;
+    const run = () => { void openFile(target); };
+    // 缺口 B / 护栏 G-6：换文件是一次**离开卷面**，必须与 onBack 走同一道双屏障。
+    // 无屏障 = 当前不在题纸里（fileKey 浏览视图没有可保存的作答）→ 直接换。
+    const barrier = leaveBarrierRef.current;
+    if (!barrier) {
+      run();
+      return;
+    }
+    void barrier(run).then((result) => {
+      // 题纸侧失败已自行 toast（jumpBarrier 内）；只有笔记侧需要宿主补提示（同 guardedBack）。
+      if (!result.ok && result.failedBy === "note") {
+        addToast("error", result.reason ?? "笔记尚未保存成功，暂不能离开本页。");
+      }
+    });
+  }, [openFile, addToast]);
 
   // 三级：文件详情——source 型走做题表面（file venue 题纸）；fileKey 型保留浏览
   if (detail && venue) {
@@ -572,7 +621,7 @@ function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: 
           <FileOrderBar
             siblings={siblings}
             showBack={false}
-            onBack={() => setDetail(null)}
+            onBack={backToList}
             onGoPrevious={() => goSibling(siblings.previous)}
             onGoNext={() => goSibling(siblings.next)}
           />
@@ -583,8 +632,9 @@ function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: 
             {...(detail.replaySheetId ? { replaySheetId: detail.replaySheetId } : {})}
             focusQuestionId={focusedQuestionId}
             writingEntry={{ direction: detail.direction ?? "通用", onNavigate: (url) => navigate(url) }}
-            onBack={() => setDetail(null)}
+            onBack={backToList}
             onRetake={() => setRetakeNonce((n) => n + 1)}
+            onRegisterLeaveBarrier={registerLeaveBarrier}
             mode={examMode}
             onModeChange={onExamModeChange}
           />
@@ -627,7 +677,7 @@ function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: 
         <FileOrderBar
           siblings={siblings}
           backLabel={`← 返回${VENUES.find((v) => v.type === venue)?.name ?? ""}空间`}
-          onBack={() => setDetail(null)}
+          onBack={backToList}
           onGoPrevious={() => goSibling(siblings.previous)}
           onGoNext={() => goSibling(siblings.next)}
         />        <h3 className="text-base font-semibold">{detail.title}</h3>
