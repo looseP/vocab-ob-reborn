@@ -2165,10 +2165,22 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
             className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${revealAll ? "bg-[var(--color-ink)] text-[var(--color-surface)]" : "bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]"}`}>
             {revealAll ? "隐藏全部答案" : "显示全部答案与解析"}
           </button>
+          {/*
+            剧透修复：判对与估分只在**已揭示答案后**显示。
+            `stats` 按 `picks` vs `q.answer.choice` 算，未揭示时显示「答对 N / 估算 X 分」
+            等于提前告诉用户哪些选对了 —— 与同文件 `:896-902` 把选项判定锁在 `revealAll`
+            里的纪律不一致（判定色已被正确门控，header 这处是漏的）。
+            「已答 n/total」保留：那是用户自己的作答量，不剧透。
+          */}
           <span className="text-xs text-[var(--color-ink-soft)]">
-            客观题已答 <strong className="text-[var(--color-ink)]">{Object.keys(picks).length}/{stats.total}</strong> ·
-            答对 <strong className="text-emerald-600">{stats.correct}</strong>
-            {fileVenue ? null : <> · 估算 <strong>{stats.score}</strong> 分（客观题满分 60）</>}
+            客观题已答 <strong className="text-[var(--color-ink)]">{Object.keys(picks).length}/{stats.total}</strong>
+            {revealAll ? (
+              <>
+                {" · 答对 "}
+                <strong className="text-emerald-600">{stats.correct}</strong>
+                {fileVenue ? null : <> · 估算 <strong>{stats.score}</strong> 分（客观题满分 60）</>}
+              </>
+            ) : null}
           </span>
         </div>
       </header>

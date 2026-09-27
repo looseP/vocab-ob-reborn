@@ -649,3 +649,47 @@ describe("F-1 题纸档案与回看深链（L3PapersPage）", () => {
       .toBe(`/l3?venue=reading_choice&file=${SOURCE_ID}`);
   });
 });
+
+/**
+ * G-0 剧透修复：判对与估分只在**已揭示答案后**显示。
+ *
+ * 缺陷事实（2026-09-27 勘察）：`stats` 按 `picks` vs `q.answer.choice` 计算，
+ * 但 header 渲染不看 `revealAll` ⇒ 草稿态/未揭示时就能看到「答对 N」「估算 X 分」，
+ * 等于提前告诉用户哪些选对了。同文件选项判定色已被正确门控在 `revealAll`，
+ * header 这处是漏的。
+ *
+ * 本测试用**一题对（Q1 answer=B，attempt 选 B）一题不答**的 sealed 卷：
+ * 若门控失效，未揭示就会出现「答对 1」。
+ */
+describe("G-0 剧透门控：答对/估分只在揭示后可见", () => {
+  const derivedAttempts = [
+    {
+      id: "a1", user_id: "00000000-0000-4000-8000-000000000001", question_id: Q1,
+      sheet_id: SHEET_ID, venue: "paper", answer: { choice: "B" }, self_assessment: null,
+      status: "active", deleted_at: null, created_at: "2026-09-17T01:00:00Z",
+    },
+  ];
+
+  it("未揭示：只显示已答数，不含「答对」与「估算」字样", async () => {
+    setupMock({ attempts: derivedAttempts });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+
+    // 已答 1/2 可见：那是用户自己的作答量，不剧透（题干里的题号也是 1，用容器内文本断言）。
+    const header = screen.getByText(/客观题已答/).parentElement!;
+    expect(header.textContent).toContain("1/2");
+    // 判对与估分必须不可见 —— 门控失效时这里会出现「答对 1」。
+    expect(screen.queryByText(/答对/)).toBeNull();
+    expect(screen.queryByText(/估算/)).toBeNull();
+  });
+
+  it("揭示后：答对与估分都出现", async () => {
+    setupMock({ attempts: derivedAttempts });
+    await renderPaper();
+    await waitFor(() => expect(screen.getByText("已定格")).toBeTruthy());
+
+    await click(screen.getByRole("button", { name: "显示全部答案与解析" }));
+    expect(screen.getByText(/答对/)).toBeTruthy();
+    expect(screen.getByText(/估算/)).toBeTruthy();
+  });
+});
