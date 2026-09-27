@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { ConflictError, NotFoundError, ValidationError } from "@/errors";
+import { ConflictError, InternalConsistencyError, NotFoundError, ValidationError } from "@/errors";
 import type { IL3PaperRepository } from "@/repositories/interfaces";
 import type { IL3WritingRepository, WritingQuestionTaskSummaryRow } from "@/repositories/l3-writing.repository";
 import type { L3WritingTaskRow } from "@/repositories/l3-writing.types";
@@ -81,6 +81,11 @@ class FakePaperRepository {
     const q = this.questions.get(questionId);
     if (!q || q.user_id !== userId) return null;
     return q;
+  }
+
+  /** 测试专用：模拟「题目行消失」的不一致数据（生产环境被 RESTRICT FK 挡住）。 */
+  deleteQuestion(questionId: string): void {
+    this.questions.delete(questionId);
   }
 }
 
@@ -512,6 +517,24 @@ describe("get / list — 权限与作用域", () => {
     expect(detail.revisionCount).toBe(0);
     expect(detail.latestSubmittedSheetId).toBeNull();
     expect(detail.task.prompt).toBe("详情");
+  });
+
+  it("get 带出所挂题目的 questionType（写作页笔记面板的 venue 默认值）", async () => {
+    // 直接创建走内部题（默认 long_essay）；选题路径挂 beforeEach 播种的 short_essay 题。
+    // 两条路径都必须原样带出 —— 不得写死任何一端。
+    const internal = await service.create(OWNER_A, baseInput({ prompt: "内部题" }));
+    expect((await service.get(OWNER_A, internal.task.id)).questionType).toBe("long_essay");
+    const picked = await service.create(
+      OWNER_A, baseInput({ kind: "whole", direction: "通用", questionId: seedQuestionId }),
+    );
+    expect((await service.get(OWNER_A, picked.task.id)).questionType).toBe("short_essay");
+  });
+
+  it("所挂题目缺失（RESTRICT 被绕过的不一致数据）→ 显式报错，不伪造题型", async () => {
+    const created = await service.create(OWNER_A, baseInput({ prompt: "孤儿" }));
+    // 模拟题目行消失：venue 决定笔记抽屉，伪造默认值等于放错抽屉且 UI 改不了。
+    fakes.paper.deleteQuestion(created.task.questionId);
+    await expect(service.get(OWNER_A, created.task.id)).rejects.toBeInstanceOf(InternalConsistencyError);
   });
 });
 

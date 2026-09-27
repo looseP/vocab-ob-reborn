@@ -11,10 +11,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import type { WritingSheetDetail, WritingTaskDetail } from "@/domain";
+import type { ReferenceTarget } from "@/domain/l3-study-notes";
 import { writingClient } from "@/frontend/api/writingClient";
 import { apiFetch } from "@/frontend/api/client";
 import { fetchSheet } from "@/frontend/api/l3Client";
 import { Button } from "@/frontend/components/ui/Button";
+import { StudyNoteSidePanel } from "@/frontend/components/studyNotes/StudyNoteSidePanel";
+import type { NoteLeaveBarrier } from "@/frontend/state/sheetLeaveBarrier";
 import { WritingComparison } from "@/frontend/components/writing/WritingComparison";
 import { WritingEditor } from "@/frontend/components/writing/WritingEditor";
 import { WritingFeedbackPanel } from "@/frontend/components/writing/WritingFeedbackPanel";
@@ -56,8 +59,20 @@ export function L3WritingPage() {
   const [startOpen, setStartOpen] = useState(false);
   const [editorNonce, setEditorNonce] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
-  const [mobileTab, setMobileTab] = useState<"prompt" | "write" | "feedback">("write");
+  const [mobileTab, setMobileTab] = useState<"prompt" | "write" | "feedback" | "notes">("write");
   const dirtyRef = useRef(false);
+  // ── N2 第五条链：写作页内学习笔记侧栏（venue = 任务所挂题型，见 ADR-0040 决策后分析）。
+  // 纯 UI 状态，不参与稿件保存；与编辑器 dirty 屏障合成后才放行导航（下）。
+  const [notesPanelOpen, setNotesPanelOpen] = useState(false);
+  /** 侧栏笔记屏障（由侧栏注册；写作页导航需与编辑器屏障合成）。 */
+  const noteBarrierRef = useRef<NoteLeaveBarrier | null>(null);
+  const handleRegisterNoteBarrier = useCallback((barrier: NoteLeaveBarrier | null) => {
+    noteBarrierRef.current = barrier;
+  }, []);
+  /** 关闭后重开可重新读取最后选择的笔记（本批不落 URL，仅内存记忆）。 */
+  const [lastNoteId, setLastNoteId] = useState<string | null>(null);
+  /** 「引用到笔记」发起的预置目标（真实 taskId/sheetId；nonce 表示新一次发起）。 */
+  const [presetReference, setPresetReference] = useState<{ target: ReferenceTarget; nonce: number } | null>(null);
 
   const taskId = location.taskId;
   const sheetId = location.sheetId;
@@ -203,8 +218,28 @@ export function L3WritingPage() {
       const confirmed = window.confirm("有未保存的修改，离开将丢失（可先「复制正文」备份）。确定离开？");
       if (!confirmed) return;
     }
-    navigate(url, { replace });
+    const go = () => navigate(url, { replace });
+    // N2 第五条链：导航也要过笔记屏障（侧栏有未保存笔记时拦下；未打开侧栏时
+    // barrier 为 null，退化为既有纯编辑器语义）。 barrier 是异步的，失败只提示。
+    const barrier = noteBarrierRef.current;
+    if (!barrier) {
+      go();
+      return;
+    }
+    void barrier(go).then((result) => {
+      if (!result.ok) setNotice("笔记尚未保存成功，暂不能离开（稿件不受影响）。");
+    });
   }, [navigate]);
+
+  /**
+   * 从写作页发起「引用到笔记」：携带**真实身份**（taskId/sheetId）打开侧栏。
+   * 点击入口本身不写正文、不新建引用——侧栏内的引用面板只做只读预览，
+   * 插入必须由用户显式点「插入引用」（与做题卷面同款纪律）。
+   */
+  const requestReferenceToNote = useCallback((target: ReferenceTarget) => {
+    setPresetReference((prev) => ({ target, nonce: (prev?.nonce ?? 0) + 1 }));
+    setNotesPanelOpen(true);
+  }, []);
 
   const goList = () => guardedNavigate("/l3?section=writing");
 
@@ -359,13 +394,40 @@ export function L3WritingPage() {
               {writingKindLabel(task.kind)} · {task.direction} · 已提交 {tasks.data.revisionCount} 稿（无进行中草稿）
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-testid="reference-task-to-note"
+              onClick={() => requestReferenceToNote({ kind: "writing_task", taskId: task.id })}
+              className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-[11px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            >
+              引用任务到笔记
+            </button>
+            <button
+              type="button"
+              onClick={() => setNotesPanelOpen((open) => !open)}
+              aria-expanded={notesPanelOpen}
+              data-testid="writing-study-notes-toggle"
+              className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-[11px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            >
+              学习笔记
+            </button>
             <Button size="sm" variant="secondary" onClick={goList}>{origin ? "全部作文" : "返回列表"}</Button>
             {latest && <Button size="sm" onClick={() => void startRevisionFrom(latest)}>开始修改</Button>}
           </div>
         </div>
         {notice && <p className="text-xs text-[var(--color-accent-2)]">{notice}</p>}
         {revisionList}
+        {notesPanelOpen && (
+          <StudyNoteSidePanel
+            venue={tasks.data.questionType}
+            onRequestClose={() => setNotesPanelOpen(false)}
+            onRegisterNoteBarrier={handleRegisterNoteBarrier}
+            initialNoteId={lastNoteId}
+            onNoteSelected={setLastNoteId}
+            presetReference={presetReference}
+          />
+        )}
       </div>
     );
   }
@@ -426,7 +488,12 @@ export function L3WritingPage() {
 
   const feedbackPanel = sealed ? (
     <div className="space-y-3">
-      <WritingFeedbackPanel task={task} detail={detail} onRefresh={() => loadSheet(taskId, sheetId)} />
+      <WritingFeedbackPanel
+        task={task}
+        detail={detail}
+        onRefresh={() => loadSheet(taskId, sheetId)}
+        onReferenceToNote={requestReferenceToNote}
+      />
       <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
         <summary className="cursor-pointer text-xs font-semibold text-[var(--color-ink-soft)]">本地评阅助手</summary>
         <div className="mt-2">
@@ -437,6 +504,29 @@ export function L3WritingPage() {
   ) : (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs text-[var(--color-ink-soft)]">
       提交后即可获取反馈（本地评阅助手按本稿评阅）。
+    </div>
+  );
+
+  // ── N2 第五条链：笔记面板（venue = 任务所挂题型；桌面常驻 aside，手机走「笔记」页签）──
+  const notesPanel = notesPanelOpen ? (
+    <StudyNoteSidePanel
+      venue={tasks.data.questionType}
+      onRequestClose={() => setNotesPanelOpen(false)}
+      onRegisterNoteBarrier={handleRegisterNoteBarrier}
+      initialNoteId={lastNoteId}
+      onNoteSelected={setLastNoteId}
+      presetReference={presetReference}
+    />
+  ) : (
+    // 面板关闭时手机「笔记」页签不留白页 —— 给一个重新打开的入口（桌面端隐藏）。
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 md:hidden">
+      <button
+        type="button"
+        onClick={() => setNotesPanelOpen(true)}
+        className="text-xs text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
+      >
+        打开学习笔记
+      </button>
     </div>
   );
 
@@ -451,7 +541,24 @@ export function L3WritingPage() {
             {sealed ? "（已提交，只读）" : ""}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            data-testid="reference-task-to-note"
+            onClick={() => requestReferenceToNote({ kind: "writing_task", taskId: task.id })}
+            className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-[11px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          >
+            引用任务到笔记
+          </button>
+          <button
+            type="button"
+            onClick={() => setNotesPanelOpen((open) => !open)}
+            aria-expanded={notesPanelOpen}
+            data-testid="writing-study-notes-toggle"
+            className="rounded-full border border-[var(--color-border)] px-2.5 py-0.5 text-[11px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          >
+            学习笔记
+          </button>
           <Button size="sm" variant="secondary" onClick={goList}>{origin ? "全部作文" : "返回列表"}</Button>
           {sealed && (
             <Button size="sm" onClick={() => void startRevisionFrom(detail.sheet.id)}>开始修改</Button>
@@ -463,13 +570,17 @@ export function L3WritingPage() {
 
       {/* 手机页签（切页签不卸载：以 hidden 控制显隐，编辑状态保留） */}
       <div className="flex gap-1 md:hidden" role="tablist" aria-label="写作视图切换">
-        {([["prompt", "题目"], ["write", "写作"], ["feedback", "反馈"]] as const).map(([key, label]) => (
+        {([["prompt", "题目"], ["write", "写作"], ["feedback", "反馈"], ["notes", "笔记"]] as const).map(([key, label]) => (
           <button
             key={key}
             role="tab"
             aria-selected={mobileTab === key}
             className={`rounded-full px-3 py-1 text-xs ${mobileTab === key ? "bg-[var(--color-accent)] text-white" : "text-[var(--color-ink-soft)]"}`}
-            onClick={() => setMobileTab(key)}
+            onClick={() => {
+              setMobileTab(key);
+              // 点「笔记」页签即打开面板 —— 避免切过来只看到一个「打开」占位。
+              if (key === "notes") setNotesPanelOpen(true);
+            }}
           >
             {label}
           </button>
@@ -483,6 +594,7 @@ export function L3WritingPage() {
           <div className={mobileTab === "prompt" ? "block" : "hidden md:block"}>{promptPanel}</div>
           <div className={mobileTab === "feedback" ? "block" : "hidden md:block"}>{feedbackPanel}</div>
           <div className={mobileTab === "feedback" ? "block" : "hidden md:block"}>{revisionList}</div>
+          <div className={mobileTab === "notes" ? "block" : "hidden md:block"}>{notesPanel}</div>
         </aside>
       </div>
     </div>

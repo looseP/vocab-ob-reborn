@@ -42642,6 +42642,18 @@
                       ],
                       "additionalProperties": false
                     },
+                    "questionType": {
+                      "type": "string",
+                      "enum": [
+                        "cloze",
+                        "reading_choice",
+                        "new_question",
+                        "sentence_translation",
+                        "short_essay",
+                        "long_essay",
+                        "grammar_blank"
+                      ]
+                    },
                     "draftSummary": {
                       "anyOf": [
                         {
@@ -42749,6 +42761,7 @@
                   },
                   "required": [
                     "task",
+                    "questionType",
                     "draftSummary",
                     "revisionCount",
                     "latestSubmittedSheetId"

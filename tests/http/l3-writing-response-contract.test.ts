@@ -81,7 +81,12 @@ describe("作文响应契约（解析通过）", () => {
 
     expect(l3WritingTaskDetailResponseSchema.safeParse({
       task, draftSummary: sheet, revisionCount: 2, latestSubmittedSheetId: SHEET_ID,
+      // questionType 是详情独有字段（列表 summary 不带）：缺失即契约破损。
+      questionType: "long_essay",
     }).success).toBe(true);
+    expect(l3WritingTaskDetailResponseSchema.safeParse({
+      task, draftSummary: sheet, revisionCount: 2, latestSubmittedSheetId: SHEET_ID,
+    }).success).toBe(false);
 
     expect(l3WritingSaveResponseSchema.safeParse({ sheet, textSha256: SHA }).success).toBe(true);
     expect(l3WritingSubmitResponseSchema.safeParse({ sheet, attemptId: TASK_ID }).success).toBe(true);
