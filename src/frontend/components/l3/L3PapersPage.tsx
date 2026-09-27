@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { EXAM_MODE_DEFAULT, type ExamMode } from "@/frontend/viewModels/examModeNavigation";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { useToast } from "@/frontend/components/ui/Toast";
@@ -243,7 +244,7 @@ function QuestionList({ questions, writingEntryFor, focusedQuestionId }: {
   );
 }
 
-export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepLinkPaper, deepLinkQuestion, deepLinkResumeSheet }: {
+export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepLinkPaper, deepLinkQuestion, deepLinkResumeSheet, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: {
   /** 批次二深链：?venue=<题型>&file=<文件键> 直达题型空间并自动打开目标文件。 */
   deepLinkVenue?: string | null;
   deepLinkFile?: string | null;
@@ -255,6 +256,13 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
   deepLinkQuestion?: string | null;
   /** I3：?resumeSheet=<id> 返回原题恢复（draft 可编辑 / sealed 只读；一次性消费）。 */
   deepLinkResumeSheet?: string | null;
+  /**
+   * 卷面三模式（2026-09-27）：由 L3Page 从 `?mode=` 解析后下发，缺省 practice。
+   * 卷面**不碰 router**（测试直接 createRoot 渲染），故模式走 prop 而非 useSearchParams。
+   */
+  examMode?: ExamMode;
+  /** 切模式：L3Page 写 URL（push，可后退）。缺省时卷面不渲染切换器。 */
+  onExamModeChange?: (mode: ExamMode) => void;
 } = {}) {
   const { addToast } = useToast();
   const hasFilesDeepLink = Boolean(deepLinkVenue && QUESTION_TYPES.includes(deepLinkVenue as QuestionType));
@@ -271,7 +279,7 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
 
   // F-1：回看模式整体接管——按 sheetId 装配卷面（读写全走只读路径；退出/重做由内层回调导航）。
   if (deepLinkSheet) {
-    return <SheetReplayView sheetId={deepLinkSheet} />;
+    return <SheetReplayView sheetId={deepLinkSheet} examMode={examMode} onExamModeChange={onExamModeChange} />;
   }
 
   return (
@@ -289,7 +297,11 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
         ))}
       </div>
       {tab === "files" && (
-        <FilesTab deepLink={hasFilesDeepLink ? { venue: deepLinkVenue as QuestionType, file: deepLinkFile ?? null, question: deepLinkQuestion ?? null, resumeSheet: deepLinkResumeSheet ?? null } : null} />
+        <FilesTab
+          deepLink={hasFilesDeepLink ? { venue: deepLinkVenue as QuestionType, file: deepLinkFile ?? null, question: deepLinkQuestion ?? null, resumeSheet: deepLinkResumeSheet ?? null } : null}
+          examMode={examMode}
+          onExamModeChange={onExamModeChange}
+        />
       )}
       {tab === "papers" && (
         <PapersTab
@@ -297,6 +309,8 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
           deepLink={deepLinkPaper ?? null}
           deepLinkQuestion={deepLinkQuestion ?? null}
           deepLinkResumeSheet={deepLinkResumeSheet ?? null}
+          examMode={examMode}
+          onExamModeChange={onExamModeChange}
         />
       )}
       {tab === "archive" && <ArchiveTab onToast={addToast} />}
@@ -393,8 +407,11 @@ function buildFileVenuePaper(
   };
 }
 
-function FilesTab({ deepLink }: {
+function FilesTab({ deepLink, examMode = EXAM_MODE_DEFAULT, onExamModeChange }: {
   deepLink?: { venue: QuestionType; file: string | null; question?: string | null; resumeSheet?: string | null } | null;
+  /** 缺省 practice（宿主 L3Page 总会显式传；这里的默认只服务类型收口与直接调用）。 */
+  examMode?: ExamMode;
+  onExamModeChange?: (mode: ExamMode) => void;
 } = {}) {
   const { addToast } = useToast();
   const navigate = useNavigate();
@@ -568,6 +585,8 @@ function FilesTab({ deepLink }: {
             writingEntry={{ direction: detail.direction ?? "通用", onNavigate: (url) => navigate(url) }}
             onBack={() => setDetail(null)}
             onRetake={() => setRetakeNonce((n) => n + 1)}
+            mode={examMode}
+            onModeChange={onExamModeChange}
           />
         </>
       );
@@ -745,7 +764,7 @@ function FilesTab({ deepLink }: {
   );
 }
 
-function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet }: {
+function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet, examMode, onExamModeChange }: {
   onToast: (kind: "success" | "error", msg: string) => void;
   /** F-1：?paper=<id> 深链——列表就绪后自动开卷（回看重做的常规入口落点）。 */
   deepLink?: string | null;
@@ -753,6 +772,8 @@ function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet }:
   deepLinkQuestion?: string | null;
   /** I3：?resumeSheet= 返回原题恢复（按 ID 读面；一次性消费）。 */
   deepLinkResumeSheet?: string | null;
+  examMode: ExamMode;
+  onExamModeChange?: (mode: ExamMode) => void;
 }) {
   const navigate = useNavigate();
   const [papers, setPapers] = useState<PaperListItem[] | null>(null);
@@ -825,6 +846,8 @@ function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet }:
         writingEntry={{ direction: toWritingDirection(detail.direction), onNavigate: (url) => navigate(url) }}
         onBack={() => setDetail(null)}
         onRetake={() => setRetakeNonce((n) => n + 1)}
+        mode={examMode}
+        onModeChange={onExamModeChange}
       />
     );
   }
@@ -1184,7 +1207,11 @@ function ArchiveTab({ onToast }: { onToast: (kind: "success" | "error", msg: str
  * F-1：题纸回看（?sheet= 深链）——只读指定题纸：GET 单纸 + 组装卷面，
  * 不调 openSheet、不新建草稿（回看闭环的读路径唯一入口）。
  */
-function SheetReplayView({ sheetId }: { sheetId: string }) {
+function SheetReplayView({ sheetId, examMode, onExamModeChange }: {
+  sheetId: string;
+  examMode: ExamMode;
+  onExamModeChange?: (mode: ExamMode) => void;
+}) {
   const navigate = useNavigate();
   const [resolved, setResolved] = useState<{
     paper: ExamPaper;
@@ -1294,6 +1321,8 @@ function SheetReplayView({ sheetId }: { sheetId: string }) {
       }}
       onBack={() => navigate(resolved.backPath)}
       onRetake={() => navigate(resolved.retakePath)}
+      mode={examMode}
+      onModeChange={onExamModeChange}
     />
   );
 }

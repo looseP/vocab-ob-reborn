@@ -28,7 +28,8 @@ import {
 const MATRIX: Record<"pure" | "practice" | "review", ExamVisibility> = {
   pure: {
     showMaterial: true, showNotesPanel: true,
-    showPicked: false, showUserMarks: false, showAnnotations: false, showAssessments: false,
+    // 评析在纯净档**保持可见**：卷面数不出条数就无法如实声明（ADR 偏离，见实现注释）。
+    showPicked: false, showUserMarks: false, showAnnotations: false, showAssessments: true,
     showEvidence: false, showOptionVerdict: false, showExplanation: false,
     showReferenceAnswer: false, showGrading: false, showScore: false,
     showGradingCoverage: false,
@@ -186,11 +187,13 @@ describe("examModeVisibility · 矩阵（14 字段 × 3 档，表驱动）", () 
     expect(visibilityFor("pure").canAnswer).toBe(false);
   });
 
-  it("不变量：用户痕迹在纯净档全隐，在做题/解析档全显", () => {
+  it("不变量：作答痕迹（已选/划重点/注记）在纯净档全隐，在做题/解析档全显", () => {
     const pure = visibilityFor("pure");
-    for (const field of ["showPicked", "showUserMarks", "showAnnotations", "showAssessments"] as const) {
+    // 评析**不在此列**：卷面数不出条数，按 S-1 原则不隐藏（偏离已在实现注释登记）。
+    for (const field of ["showPicked", "showUserMarks", "showAnnotations"] as const) {
       expect(pure[field], field).toBe(false);
     }
+    expect(pure.showAssessments).toBe(true);
     for (const mode of ["practice", "review"] as const) {
       const vis = visibilityFor(mode);
       for (const field of ["showPicked", "showUserMarks", "showAnnotations", "showAssessments"] as const) {

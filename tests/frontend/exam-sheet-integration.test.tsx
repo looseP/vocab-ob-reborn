@@ -151,13 +151,44 @@ class ResizeObserverStub {
 (globalThis as Record<string, unknown>).IntersectionObserver ??= ResizeObserverStub;
 
 const roots: Root[] = [];
-async function renderPaper(target: ExamPaper = paper, flushes = 3): Promise<void> {
+let lastRoot: Root | null = null;
+let lastArgs: { target: ExamPaper; mode: "pure" | "practice" | "review"; extra: Record<string, unknown> } | null = null;
+
+async function renderPaper(
+  target: ExamPaper = paper,
+  flushes = 3,
+  mode: "pure" | "practice" | "review" = "practice",
+  extra: Record<string, unknown> = {},
+): Promise<void> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   roots.push(root);
+  lastRoot = root;
+  lastArgs = { target, mode, extra };
   await act(async () => {
-    root.render(createElement(L3ExamPaper, { paper: target, onBack: vi.fn() }) as ReactElement);
+    root.render(createElement(L3ExamPaper, { paper: target, onBack: vi.fn(), mode, ...extra }) as ReactElement);
+    for (let i = 0; i < flushes; i += 1) await Promise.resolve();
+  });
+}
+
+/**
+ * 切模式：**同一个根重渲染**（2026-09-27 三模式）。
+ *
+ * 为什么不用「卸载再挂载」：真实链路是 `?mode=` 变 → L3Page 重渲染 →
+ * L3PapersPage 重渲染 → **同一个 key 的同一个 L3ExamPaper 实例**（key 只含
+ * paper.id/retakeNonce），React 保留其 `useState`。卸载重挂会把用户刚点出来的
+ * 作答清掉，于是「切模式后 ✕ 应打在最终错选上」这类断言会假失败 ——
+ * 那是测试造的假象，不是产品行为。
+ */
+async function switchMode(mode: "pure" | "practice" | "review", flushes = 3): Promise<void> {
+  if (!lastRoot || !lastArgs) throw new Error("switchMode 必须在 renderPaper 之后调用");
+  await act(async () => {
+    lastRoot!.render(
+      createElement(L3ExamPaper, {
+        paper: lastArgs!.target, onBack: vi.fn(), mode, ...lastArgs!.extra,
+      }) as ReactElement,
+    );
     for (let i = 0; i < flushes; i += 1) await Promise.resolve();
   });
 }
@@ -351,10 +382,8 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
     expect(document.querySelector('[data-option-key="B"][data-selected="true"]')).toBeNull();
 
     // 显式揭示后才判才析：B 为正确答案（✓）、A 为最终错选（✕）；解析出现；选项锁定
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "显示全部答案与解析" }));
-      await Promise.resolve();
-    });
+    // 2026-09-27 三模式：原「显示全部答案与解析」按钮已换成 mode 切换器 ⇒ 按 mode="review" 重挂。
+    await switchMode("review");
     expect(screen.getAllByText("✓").length).toBeGreaterThan(0);
     expect(screen.getByText("✕")).toBeTruthy();
     expect(screen.getByText("解析")).toBeTruthy();
@@ -382,10 +411,8 @@ describe("L3ExamPaper 题纸装配（批次二）", () => {
     // 未揭示：参考译文标题不渲染（降级文案除外；含内容）
     expect(screen.queryByText("参考译文（官方解析整理）")).toBeNull();
     expect(screen.queryByText("敏捷的棕色狐狸。")).toBeNull();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "显示全部答案与解析" }));
-      await Promise.resolve();
-    });
+    // 2026-09-27 三模式：原「显示全部答案与解析」按钮已换成 mode 切换器 ⇒ 按 mode="review" 重挂。
+    await switchMode("review");
     expect(screen.getByText("参考译文（官方解析整理）")).toBeTruthy();
     expect(screen.getByText("敏捷的棕色狐狸。")).toBeTruthy();
   });
@@ -1198,10 +1225,8 @@ describe("Task C · 旧卷面诚实化", () => {
     expect(screen.getByText(/译文作答保存暂未开放/)).toBeTruthy();
     // 参考译文默认隐藏（与卷面揭示纪律一致）
     expect(screen.queryByText("敏捷的棕色狐狸。")).toBeNull();
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "显示全部答案与解析" }));
-      await Promise.resolve();
-    });
+    // 2026-09-27 三模式：原「显示全部答案与解析」按钮已换成 mode 切换器 ⇒ 按 mode="review" 重挂。
+    await switchMode("review");
     expect(screen.getByText("参考译文（官方解析整理）")).toBeTruthy();
     expect(screen.getByText("敏捷的棕色狐狸。")).toBeTruthy();
   });

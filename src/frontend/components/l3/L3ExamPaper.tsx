@@ -11,6 +11,8 @@ import {
 } from "@/frontend/state/sheetLeaveBarrier";
 import type { ReferenceTarget } from "@/domain/l3-study-notes";
 import { GRADING_VERDICT_LABELS } from "@/domain/l3-grading";
+import { EXAM_MODES, type ExamMode } from "@/frontend/viewModels/examModeNavigation";
+import { hiddenTraceNotice, visibilityFor } from "@/frontend/viewModels/examModeVisibility";
 import { apiFetch } from "@/frontend/api/client";
 import {
   createExamSheetSaveController,
@@ -161,7 +163,9 @@ interface CaptureState {
 function PassageBody({
   section,
   content,
-  revealAll,
+  showEvidence,
+  showUserMarks,
+  showAnnotations,
   activeBlank,
   annotations,
   locate,
@@ -175,7 +179,12 @@ function PassageBody({
 }: {
   section: ExamSection;
   content: string;
-  revealAll: boolean;
+  /** 官方 evidence 区间高亮（仅解析档）。 */
+  showEvidence: boolean;
+  /** 用户划重点（纯净档隐）。 */
+  showUserMarks: boolean;
+  /** 用户注记锚点（纯净档隐）。 */
+  showAnnotations: boolean;
   activeBlank: number | null;
   annotations: QuestionAnnotation[];
   locate: LocateTarget | null;
@@ -207,13 +216,17 @@ function PassageBody({
   const spans = useMemo(
     () => buildPassageSpans(content, {
       evidence,
-      annotations: annotations
-        .filter((a) => a.anchor_start != null && a.anchor_end != null)
-        .map((a) => ({ id: a.id, anchorStart: a.anchor_start, anchorEnd: a.anchor_end })),
-      marks: (passageMarks ?? []).map((mark) => ({ start: mark.start, end: mark.end })),
-      showEvidence: revealAll,
+      annotations: showAnnotations
+        ? annotations
+            .filter((a) => a.anchor_start != null && a.anchor_end != null)
+            .map((a) => ({ id: a.id, anchorStart: a.anchor_start, anchorEnd: a.anchor_end }))
+        : [],
+      marks: showUserMarks
+        ? (passageMarks ?? []).map((mark) => ({ start: mark.start, end: mark.end }))
+        : [],
+      showEvidence,
     }),
-    [content, evidence, annotations, passageMarks, revealAll],
+    [content, evidence, annotations, passageMarks, showEvidence, showUserMarks, showAnnotations],
   );
 
   // 按原文换行分段：每段独立 <p> 带段距，空行占位；run 携带全局偏移，拆段不影响选区坐标。
@@ -732,7 +745,8 @@ function OptionRow({
 function ChoiceQuestion({
   question,
   index,
-  revealAll,
+  showOptionVerdict,
+  showPicked,
   picked,
   onPick,
   analysis,
@@ -749,7 +763,10 @@ function ChoiceQuestion({
 }: {
   question: ExamQuestion;
   index: number;
-  revealAll: boolean;
+  /** 选项对错配色（仅解析档）。 */
+  showOptionVerdict: boolean;
+  /** 「已选」高亮（纯净档隐：已选即用户痕迹）。 */
+  showPicked: boolean;
   picked?: string;
   onPick: (key: string) => void;
   analysis?: ReactNode;
@@ -895,7 +912,7 @@ function ChoiceQuestion({
         {question.options.map((opt) => {
           // 判定仅在显式揭示后（revealAll）：草稿作答不判对错、不锁死（可改选）。
           let state: "idle" | "correct" | "wrong" | "muted" = "idle";
-          if (revealAll && correct) {
+          if (showOptionVerdict && correct) {
             if (opt.key === correct) state = "correct";
             else if (opt.key === picked) state = "wrong";
             else state = "muted";
@@ -906,7 +923,7 @@ function ChoiceQuestion({
               optionKey={opt.key}
               text={opt.text}
               state={state}
-              selected={!revealAll && picked === opt.key}
+              selected={showPicked && picked === opt.key}
               readOnly={readOnly}
               doubt={optionFlags?.includes(opt.key) ?? false}
               onToggleDoubt={onToggleOptionDoubt}
@@ -917,7 +934,7 @@ function ChoiceQuestion({
           );
         })}
       </div>
-      {revealAll && question.explanation && (
+      {showOptionVerdict && question.explanation && (
         <details className="group mt-2.5 rounded-lg bg-[var(--color-surface)] p-2.5 text-xs leading-relaxed text-[var(--color-ink-soft)] ring-1 ring-[var(--color-border)]" open>
           <summary className="cursor-pointer select-none font-medium text-[var(--color-ink)]">解析</summary>
           <p className="mt-1.5 whitespace-pre-wrap">{question.explanation}</p>
@@ -1016,14 +1033,14 @@ function WrittenQuestion({
   question,
   kind,
   analysis,
-  revealAll = false,
+  showReferenceAnswer = false,
   cleared = false,
 }: {
   question: ExamQuestion;
   kind: "translation" | "essay";
   analysis?: ReactNode;
-  /** 参考译文/范文仅在显式揭示后可见（与客观题同一草稿作答模型）。 */
-  revealAll?: boolean;
+  /** 参考译文/范文仅在解析档可见（与客观题同一草稿作答模型）。 */
+  showReferenceAnswer?: boolean;
   cleared?: boolean;
 }) {
   const reference = kind === "translation" ? question.answer.text : question.answer.sample;
@@ -1042,7 +1059,7 @@ function WrittenQuestion({
           当前支持查看题目与参考译文；译文作答保存暂未开放。
         </p>
       )}
-      {revealAll && reference && (
+      {showReferenceAnswer && reference && (
         <details className="rounded-xl border border-emerald-500/40 bg-emerald-50/60 p-3.5 dark:bg-emerald-950/20">
           <summary className="cursor-pointer select-none text-sm font-semibold text-emerald-700 dark:text-emerald-300">
             {kind === "translation" ? "参考译文（官方解析整理）" : "参考范文"}
@@ -1056,7 +1073,13 @@ function WrittenQuestion({
   );
 }
 
-export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheetId, onRetake, focusQuestionId, writingEntry }: {
+/** 模式切换器的中文标签（单一真源：导出的 ADR 术语与 UI 文案一致）。 */
+const EXAM_MODE_LABELS: Record<ExamMode, string> = {
+  pure: "纯净",
+  practice: "做题",
+  review: "解析",
+};
+export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheetId, onRetake, focusQuestionId, writingEntry, mode, onModeChange }: {
   paper: ExamPaperType;
   onBack: () => void;
   /** 批次二补齐：题型空间（file venue）复用本组件作单文件做题表面——
@@ -1076,9 +1099,26 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
     directionState?: "loading" | "ready" | "error";
     onRetryDirection?: () => void;
   };
+  /**
+   * 卷面三模式（2026-09-27，规格见设计卡 §2.4 / 执行文档
+   * `docs/plan/l3-exam-mode-engine-execution-2026-09-27.md`）。**必填、无默认** ——
+   * 缺省由 L3Page 从 URL 解析（`resolveExamMode`），不给兜底是为了让「忘了传」
+   * 在类型层与测试里立刻显形，而不是静默落成某一档。
+   */
+  mode: ExamMode;
+  /**
+   * 切模式（写 `?mode=`，push 可后退）。缺省时**不渲染切换器** —— 宿主没接 URL
+   * 通道时给一个点了没反应的按钮，比不给更糟（与 writingEntry 缺省不渲染入口同款）。
+   */
+  onModeChange?: (mode: ExamMode) => void;
 }) {
   const { addToast } = useToast();
-  const [revealAll, setRevealAll] = useState(false);
+  /**
+   * 可见性判定一律走 `vis`，**不复算**：矩阵是单一真源（`examModeVisibility`），
+   * 组件里出现第二处判定就会与矩阵漂移 —— 而漂移的方向通常是「多显示」，
+   * 也就是剧透。原先的 `revealAll` 布尔已于本批删除（两态 → 三档）。
+   */
+  const vis = visibilityFor(mode);
   // v2：答案本地真源 = 完整 answer 对象（choice/flags/optionFlags/marks，ADR-0034
   // 增补条 8）；picks（choice 投影）由 useMemo 派生，下游渲染与统计契约不变。
   const [answers, setAnswers] = useState<Record<string, SheetAnswer>>({});
@@ -1952,8 +1992,14 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
 
   /** 定格后卷面只读（作答输入禁用；选择仍显示用于回看）。 */
   const readOnly = sheet !== null && sheet.status !== "draft";
-  /** F2：交互锁 = 终态只读 ∪ 定格/导出在途——两者都必须封闭全部答案入口（渲染层判据）。 */
-  const interactionLocked = readOnly || actionLocked;
+  /**
+   * F2：交互锁 = 终态只读 ∪ 定格/导出在途——两者都必须封闭全部答案入口（渲染层判据）。
+   *
+   * **AND 上模式的 `canAnswer`**（护栏 G-3）：解析档与纯净档都只读。理由不是「不方便」，
+   * 而是 attempt 是不可变作答事实（ADR-0034 §2）——「切到解析顺手改答案」会绕过它，
+   * 且用户在解析态看到自己刚改的选项会以为那就是原答案。
+   */
+  const interactionLocked = readOnly || actionLocked || !vis.canAnswer;
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -1975,13 +2021,37 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
     setTimeout(() => document.getElementById(domId)?.scrollIntoView({ behavior: "smooth", block: "center" }), 250);
   };
 
+  /**
+   * 纯净模式的隐藏声明（签字项 S-1 / 护栏 G-2）。
+   *
+   * 计数必须与实际被隐藏的**同一批数据**同源：划重点取 `answers[].marks`（scope=passage）、
+   * 注记取锚定非空的 active 注记、评析取本卷相关题的评析数、已选取有 choice 的题数。
+   * 文案与拼装在纯函数层（`hiddenTraceNotice`）。
+   */
+  const hiddenNotice = useMemo(() => {
+    const markCount = Object.values(answers)
+      .flatMap((answer) => answer.marks ?? [])
+      .filter((mark) => mark.scope === "passage").length;
+    const annotationCount = annotations.filter(
+      (a) => a.anchor_start != null && a.anchor_end != null && a.status === "active",
+    ).length;
+    // 评析恒传 0：卷面载荷不带评析事实（只有单题 GET），数不出条数 ⇒ 纯净档不隐藏评析，
+    // 声明条也就不该提它。数得出之后（批量读面）才把这里接上。
+    return hiddenTraceNotice(mode, {
+      marks: markCount,
+      annotations: annotationCount,
+      assessments: 0,
+      picked: Object.keys(picks).length,
+    });
+  }, [mode, answers, annotations, paper.sections, picks]);
+
   const renderAnalysis = (sectionKey: string, q: ExamQuestion) => {
     const grading = gradingResults[q.id];
     return (
       <>
         {/* 批次三①：解析模式判读（verdict 徽标 + agent 分析折叠区）——仅揭示后渲染，
             做题模式零变更（verdict/analysis 不进做题视图）。 */}
-        {grading && revealAll && (
+        {grading && vis.showGrading && (
           <L3QuestionGrading
             grading={grading}
             onReferenceToNote={requestReferenceToNote
@@ -1989,7 +2059,7 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
               : null}
           />
         )}
-        {tagDict && (
+        {vis.showAnnotations && tagDict && (
           <L3QuestionAnalysis
             question={q}
             annotations={annotationsByQuestion[q.id] ?? []}
@@ -2007,7 +2077,7 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
           />
         )}
         {/* 批次二增补：评析子区（v2 §11 挂题不挂题纸；与「原文分析」并列）。 */}
-        <L3QuestionAssessment questionId={q.id} />
+        {vis.showAssessments && <L3QuestionAssessment questionId={q.id} />}
       </>
     );
   };
@@ -2161,20 +2231,54 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
           ))}
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <button type="button" onClick={() => setRevealAll((v) => !v)}
-            className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${revealAll ? "bg-[var(--color-ink)] text-[var(--color-surface)]" : "bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]"}`}>
-            {revealAll ? "隐藏全部答案" : "显示全部答案与解析"}
-          </button>
           {/*
-            剧透修复：判对与估分只在**已揭示答案后**显示。
-            `stats` 按 `picks` vs `q.answer.choice` 算，未揭示时显示「答对 N / 估算 X 分」
-            等于提前告诉用户哪些选对了 —— 与同文件 `:896-902` 把选项判定锁在 `revealAll`
-            里的纪律不一致（判定色已被正确门控，header 这处是漏的）。
-            「已答 n/total」保留：那是用户自己的作答量，不剧透。
+            模式切换器（设计卡 §2.4「模式切换器固定在卷面顶栏」）。
+            **只在宿主接了 URL 通道时渲染**（`onModeChange` 缺省 = 宿主不支持）——
+            给一个点了没反应的按钮比不给更糟（同 writingEntry 缺省不渲染入口）。
+          */}
+          {onModeChange && (
+            <div
+              role="radiogroup"
+              aria-label="卷面模式"
+              data-testid="exam-mode-switcher"
+              className="flex items-center gap-1 rounded-full border border-[var(--color-border)] p-0.5"
+            >
+              {EXAM_MODES.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === option}
+                  data-testid={`exam-mode-${option}`}
+                  onClick={() => onModeChange(option)}
+                  className={`rounded-full px-3 py-0.5 text-xs font-semibold transition-colors ${mode === option ? "bg-[var(--color-ink)] text-[var(--color-surface)]" : "text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"}`}
+                >
+                  {EXAM_MODE_LABELS[option]}
+                </button>
+              ))}
+            </div>
+          )}
+          {/*
+            纯净模式的隐藏声明（签字项 S-1 / 护栏 G-2）。文案与计数在纯函数层
+            （`hiddenTraceNotice`）——写在组件里会出现「组件算一套、声明条另一套」。
+            无痕迹时它返回 null，不显示无意义的「已隐藏 0 处」。
+          */}
+          {hiddenNotice && (
+            <p
+              className="w-full text-[11px] text-[var(--color-ink-soft)]"
+              data-testid="exam-mode-hidden-notice"
+            >
+              {hiddenNotice}
+            </p>
+          )}
+          {/*
+            剧透门控（G-0）：判对与估分只在**解析档**显示。`stats` 按 `picks` vs
+            `q.answer.choice` 算，练习档显示「答对 N / 估算 X 分」等于提前告诉用户
+            哪些选对了。「已答 n/total」保留：那是用户自己的作答量，不剧透。
           */}
           <span className="text-xs text-[var(--color-ink-soft)]">
             客观题已答 <strong className="text-[var(--color-ink)]">{Object.keys(picks).length}/{stats.total}</strong>
-            {revealAll ? (
+            {vis.showScore ? (
               <>
                 {" · 答对 "}
                 <strong className="text-emerald-600">{stats.correct}</strong>
@@ -2275,7 +2379,7 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
                           question={q}
                           kind={section.questionType === "sentence_translation" ? "translation" : "essay"}
                           analysis={renderAnalysis(section.key, q)}
-                          revealAll={revealAll}
+                          showReferenceAnswer={vis.showReferenceAnswer}
                           cleared={clearedQuestions.has(q.id)}
                         />
                         {isEssay && writingEntry && (
@@ -2317,7 +2421,9 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
                       <PassageBody
                         section={section}
                         content={section.source_content ?? ""}
-                        revealAll={revealAll}
+                        showEvidence={vis.showEvidence}
+                        showUserMarks={vis.showUserMarks}
+                        showAnnotations={vis.showAnnotations}
                         activeBlank={activeBlank}
                         annotations={sectionAnnotations}
                         locate={locate}
@@ -2355,7 +2461,8 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
                         <ChoiceQuestion
                           question={q}
                           index={section.questionType === "new_question" ? q.ordinal + 41 : qi + 1}
-                          revealAll={revealAll}
+                          showOptionVerdict={vis.showOptionVerdict}
+                          showPicked={vis.showPicked}
                           picked={picks[q.id]}
                           onPick={(key) => {
                             pickQuestion(q.id, key);
@@ -2385,7 +2492,8 @@ export function L3ExamPaper({ paper: sourcePaper, onBack, fileVenue, replaySheet
                       key={q.id}
                       question={q}
                       index={section.questionType === "new_question" ? q.ordinal + 41 : qi + 1}
-                      revealAll={revealAll}
+                      showOptionVerdict={vis.showOptionVerdict}
+                      showPicked={vis.showPicked}
                       picked={picks[q.id]}
                       onPick={(key) => pickQuestion(q.id, key)}
                       analysis={renderAnalysis(section.key, q)}

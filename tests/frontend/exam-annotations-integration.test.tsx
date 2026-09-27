@@ -65,7 +65,7 @@ async function render(): Promise<void> {
   const root = createRoot(container);
   roots.push(root);
   await act(async () => {
-    root.render(createElement(L3ExamPaper, { paper, onBack: vi.fn() }) as ReactElement);
+    root.render(createElement(L3ExamPaper, { paper, onBack: vi.fn(), mode: "practice" }) as ReactElement);
     await Promise.resolve();
     await Promise.resolve();
   });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { buildExamModeUrl, resolveExamMode, type ExamMode } from "@/frontend/viewModels/examModeNavigation";
 import { apiFetch } from "@/frontend/api/client";
 import type { L3FrontendClient } from "@/l3/frontend/contract";
 import { L3Bookshelf } from "@/frontend/components/l3/L3Bookshelf";
@@ -134,6 +135,20 @@ export function L3Page() {
   )
     ? practiceContextParam
     : null;
+
+  // 卷面三模式（2026-09-27，ADR 侧规格见设计卡 §2.4 / 执行文档
+  // `docs/plan/l3-exam-mode-engine-execution-2026-09-27.md`）：`?mode=pure|practice|review`。
+  //
+  // 模式**住 URL**而非组件 state —— 现状（`revealAll` 纯内存布尔）在刷新/分享/后退时
+  // 全部丢失，位置不可复现。**不落库**：它是视图状态不是用户偏好，存了会出现
+  // 「上次停在解析模式，这次打开直接看到全部答案」的意外剧透。
+  const examMode = resolveExamMode(searchParams.get("mode"));
+  // 切模式用 push 而非 replace：用户要能从解析「退回去」继续做题（文档 §3.4 记的
+  // 不可后退就是缺陷本身）。
+  const changeExamMode = (next: ExamMode) => {
+    const search = searchParams.toString();
+    navigate(buildExamModeUrl(`/l3${search.length > 0 ? `?${search}` : ""}`, next));
+  };
 
   useEffect(() => {
     if (sectionParam === null) return;
@@ -298,6 +313,8 @@ export function L3Page() {
         deepLinkPaper={deepLinkPaper}
         deepLinkQuestion={deepLinkQuestion}
         deepLinkResumeSheet={deepLinkResumeSheet}
+        examMode={examMode}
+        onExamModeChange={changeExamMode}
       />
     ),
     // 作文子空间 v1（W7）：宿主页（section=writing 优先；搜索参数由页面自身消费，
