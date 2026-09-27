@@ -60393,6 +60393,9 @@
                           },
                           "updated_at": {
                             "type": "string"
+                          },
+                          "editable": {
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -60412,7 +60415,8 @@
                           "created_by",
                           "input_hash",
                           "created_at",
-                          "updated_at"
+                          "updated_at",
+                          "editable"
                         ],
                         "additionalProperties": false
                       }

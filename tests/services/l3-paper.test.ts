@@ -34,6 +34,8 @@ function questionRow(overrides: Partial<L3QuestionRow> = {}): L3QuestionRow {
 
 function makePaperRepo(overrides: Partial<IL3PaperRepository> = {}): IL3PaperRepository {
   return {
+    // 批量作答计数（2026-09-27）：默认「无作答」—— 可改。缺键即 0 是契约。
+    countAttemptsForQuestions: vi.fn(async () => new Map<string, number>()),
     insertQuestion: vi.fn(async (input) => questionRow({
       id: `q-${input.question_type}-${input.ordinal}`,
       space: input.space as L3QuestionRow["space"],
@@ -1196,6 +1198,74 @@ describe("getPaper assembly degradation", () => {
 });
 
 describe("getPracticeFile（file venue 数据源）", () => {
+  /**
+   * `editable` 与改题护栏**必须同一组判据**（2026-09-27）。
+   *
+   * 这条测试是本字段存在的全部理由：读面告诉 UI「能不能改」，而真正把关的是
+   * `updateQuestion` 的 409。两侧一旦漂移，后果是**多出一个点了就吃 409 的改题入口**
+   * —— 而 D-2 明确否决过那个方案。所以这里不只断 `editable` 的值，还断
+   * 「editable === false 时 PATCH 必 409」。
+   */
+  describe("editable（能不能改）", () => {
+    async function detailWith(attemptCounts: Map<string, number>) {
+      const repo = makePaperRepo({
+        listActiveQuestionsForFile: vi.fn(async () => [questionRow()]),
+        countAttemptsForQuestions: vi.fn(async () => attemptCounts),
+      });
+      return makeService(repo, contextRepo).getPracticeFile({
+        userId: USER_ID, questionType: "reading_choice", sourceId: SOURCE_ID,
+      });
+    }
+
+    it("无作答 → editable: true", async () => {
+      const detail = await detailWith(new Map());
+      expect(detail.questions[0]!.editable).toBe(true);
+    });
+
+    it("有作答 → editable: false（与 updateQuestion 的 409 同一判据）", async () => {
+      const attempted = questionRow();
+      const detail = await detailWith(new Map([[attempted.id, 2]]));
+      expect(detail.questions[0]!.editable).toBe(false);
+
+      // 钉住两侧：同一道题，改题必须真的被拒
+      const repo = makePaperRepo({
+        findQuestionById: vi.fn(async () => attempted),
+        countQuestionAttempts: vi.fn(async () => 2),
+      });
+      await expect(makeService(repo, contextRepo).updateQuestion({
+        userId: USER_ID, questionId: attempted.id, actor: { role: "owner" },
+        stem: "改过的题干", options: [], answer: {},
+      })).rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it("rejected 的题 → editable: false（终态不可改，与状态集合一致）", async () => {
+      const repo = makePaperRepo({
+        listActiveQuestionsForFile: vi.fn(async () => [questionRow({ status: "rejected" })]),
+        countAttemptsForQuestions: vi.fn(async () => new Map()),
+      });
+      const detail = await makeService(repo, contextRepo).getPracticeFile({
+        userId: USER_ID, questionType: "reading_choice", sourceId: SOURCE_ID,
+      });
+      expect(detail.questions[0]!.editable).toBe(false);
+    });
+
+    it("一次分组查询取全部计数（不逐题 count —— 那是 N+1）", async () => {
+      const rows = [
+        questionRow(),
+        questionRow({ id: "00000000-0000-4000-8000-0000000000b2" }),
+      ];
+      const repo = makePaperRepo({
+        listActiveQuestionsForFile: vi.fn(async () => rows),
+        countAttemptsForQuestions: vi.fn(async () => new Map()),
+      });
+      const detail = await makeService(repo, contextRepo).getPracticeFile({
+        userId: USER_ID, questionType: "reading_choice", sourceId: SOURCE_ID,
+      });
+      expect((repo.countAttemptsForQuestions as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+      expect(detail.questions.every((q) => q.editable)).toBe(true);
+    });
+  });
+
   it("透传 source 正文（做题表面文栏渲染所需）", async () => {
     const repo = makePaperRepo({ listActiveQuestionsForFile: vi.fn(async () => [questionRow()]) });
     const withText = makeContextRepo({

@@ -21,6 +21,7 @@ const { addToastMock } = vi.hoisted(() => ({ addToastMock: vi.fn() }));
 vi.mock("@/frontend/components/ui/Toast", () => ({ useToast: () => ({ addToast: addToastMock }) }));
 
 import { apiFetch } from "@/frontend/api/client";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
 
 const SOURCE_ID = "00000000-0000-4000-8000-000000000002";
 const QUESTION_ID = "00000000-0000-4000-8000-000000000101";
@@ -35,11 +36,50 @@ class IntersectionObserverStub {
 
 const roots: Root[] = [];
 
-function setupMock(options: { sources?: unknown[]; failCreate?: boolean } = {}) {
+/** 读面题目行（`editable` 由服务端认定，测试不自己算）。 */
+function fileQuestion(overrides: Record<string, unknown> = {}) {
+  return {
+    id: QUESTION_ID,
+    user_id: "00000000-0000-4000-8000-000000000001",
+    source_id: SOURCE_ID,
+    file_key: null,
+    space: "阅读",
+    question_type: "reading_choice",
+    ordinal: 0,
+    stem: "21. 原有题干",
+    options: [{ key: "A", text: "原选项 A" }, { key: "B", text: "原选项 B" }],
+    answer: { choice: "A" },
+    explanation: "原解析",
+    evidence: [],
+    status: "active",
+    created_by: "owner",
+    input_hash: null,
+    created_at: "2026-09-27T00:00:00Z",
+    updated_at: "2026-09-27T00:00:00Z",
+    editable: true,
+    ...overrides,
+  };
+}
+
+function setupMock(options: {
+  sources?: unknown[];
+  failCreate?: boolean;
+  detailQuestions?: unknown[];
+  patchStatus?: number;
+  patchMessage?: string;
+} = {}) {
   const mock = apiFetch as ReturnType<typeof vi.fn>;
   mock.mockImplementation(async (path: string, init?: { method?: string }) => {
     if (String(path).startsWith("/l3/sources?")) {
       return { items: options.sources ?? [{ id: SOURCE_ID, title: "2023 英一 Text 1" }] };
+    }
+    if (String(path).startsWith("/l3/questions/") && init?.method === "PATCH") {
+      if (options.patchStatus) {
+        // 抛**真的** BrowserApiError：组件的 409 归因靠错误类型与 message，
+        // 抛普通 Error 会让测试通过而线上归因失效（假绿）。
+        throw new BrowserApiError(options.patchStatus, { message: options.patchMessage ?? "patch failed" });
+      }
+      return { question: { ...fileQuestion(), stem: "21. 改过的题干" } };
     }
     if (String(path) === "/l3/questions" && init?.method === "POST") {
       if (options.failCreate) throw Object.assign(new Error("boom"), { status: 500 });
@@ -54,6 +94,9 @@ function setupMock(options: { sources?: unknown[]; failCreate?: boolean } = {}) 
           created_by: "owner",
         },
       };
+    }
+    if (String(path).includes("/l3/practice-files/detail")) {
+      return { questions: options.detailQuestions ?? [] };
     }
     if (String(path).startsWith("/l3/papers?")) return { items: [] };
     return {};
@@ -303,5 +346,144 @@ describe("录题页签 · 护栏 G-A1 / G-A3（就地拦住，不发请求）", 
     await waitFor(() => expect(screen.getByTestId("record-problem")).toBeTruthy());
     expect((screen.getByPlaceholderText(/题干/) as HTMLTextAreaElement).value).toBe("21. 题干");
     expect(screen.getByTestId("record-problem").textContent).toContain("已保留");
+  });
+});
+
+/**
+ * 改题（缺口 B / D-2 / G-B1..B3）。
+ *
+ * 缺口 B 是本 epic 最重的一处：owner 手录的题**一次作答后同样永久不可改**（409），
+ * 而没有改题面就只能删题重录 —— 删题会连带丢掉这题的全部作答与评析。
+ */
+describe("录题页签 · 改题（缺口 B）", () => {
+  it("列出该文件下的题（读面用既有 detail 端点，不新开读口）", async () => {
+    const mock = setupMock({ detailQuestions: [fileQuestion()] });
+    await renderPage();
+    await pickSource();
+    await waitFor(() => expect(screen.getAllByText(/原有题干/).length).toBeGreaterThan(0));
+    expect(mock.mock.calls.some(([p]) => String(p).includes("/l3/practice-files/detail"))).toBe(true);
+  });
+
+  it("点「改」→ 表单预填现状（题干/选项/答案键/解析），提交走 PATCH", async () => {
+    const mock = setupMock({ detailQuestions: [fileQuestion()] });
+    await renderPage();
+    await pickSource();
+    await waitFor(() => expect(screen.getAllByText(/原有题干/).length).toBeGreaterThan(0));
+
+    await act(async () => { fireEvent.click(screen.getByTestId(`record-edit-${QUESTION_ID}`)); });
+    expect((screen.getByPlaceholderText(/题干/) as HTMLTextAreaElement).value).toBe("21. 原有题干");
+    expect((screen.getByPlaceholderText("选项 A") as HTMLInputElement).value).toBe("原选项 A");
+    expect((screen.getByTestId("record-explanation") as HTMLTextAreaElement).value).toBe("原解析");
+    expect((screen.getByTestId("record-submit").textContent)).toContain("保存改题");
+
+    await act(async () => {
+      fireEvent.change(screen.getByPlaceholderText(/题干/), { target: { value: "21. 改过的题干" } });
+    });
+    await clickRecord();
+
+    const call = mock.mock.calls.find(([p, i]) =>
+      String(p) === `/l3/questions/${QUESTION_ID}` && (i as { method?: string } | undefined)?.method === "PATCH");
+    expect(call).toBeTruthy();
+    const body = JSON.parse((call![1] as { body: string }).body as string);
+    expect(body.stem).toBe("21. 改过的题干");
+    // 改题**不传** questionType/sourceId（PATCH 口径不含归属；归属是文件的属性）
+    expect(body).not.toHaveProperty("questionType");
+    expect(body).not.toHaveProperty("sourceId");
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("success", "已保存改题"));
+  });
+
+  it("D-2：editable=false → **不渲染**改题入口，改为题面上一处只读说明", async () => {
+    setupMock({ detailQuestions: [fileQuestion({ editable: false })] });
+    await renderPage();
+    await pickSource();
+    await waitFor(() => expect(screen.getAllByText(/原有题干/).length).toBeGreaterThan(0));
+
+    // 不是「禁用 + 说明」—— 死控件既让用户犹豫，也让可访问性名称与测试断言变二义
+    expect(screen.queryByTestId(`record-edit-${QUESTION_ID}`)).toBeNull();
+    expect(screen.getByTestId(`record-locked-${QUESTION_ID}`).textContent).toContain("不可改题面");
+  });
+
+  it("G-B1①：409「有作答历史」→ 归因文案说清后果（不是笼统的「改题失败」）", async () => {
+    setupMock({
+      detailQuestions: [fileQuestion()],
+      patchStatus: 409,
+      patchMessage: "Cannot edit a question that already has answer history",
+    });
+    await renderPage();
+    await pickSource();
+    await waitFor(() => expect(screen.getAllByText(/原有题干/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getByTestId(`record-edit-${QUESTION_ID}`)); });
+    await clickRecord();
+
+    await waitFor(() => expect(screen.getByTestId("record-problem").textContent).toContain("作答历史"));
+    // 仍停在改题态，输入保留
+    expect((screen.getByPlaceholderText(/题干/) as HTMLTextAreaElement).value).toBe("21. 原有题干");
+  });
+
+  it("G-B1②：409「被作文任务引用」→ 另一条文案（恢复路径不同：先解引用）", async () => {
+    setupMock({
+      detailQuestions: [fileQuestion()],
+      patchStatus: 409,
+      patchMessage: "question is referenced by a writing task",
+    });
+    await renderPage();
+    await pickSource();
+    await waitFor(() => expect(screen.getAllByText(/原有题干/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getByTestId(`record-edit-${QUESTION_ID}`)); });
+    await clickRecord();
+
+    await waitFor(() => expect(screen.getByTestId("record-problem").textContent).toContain("作文任务"));
+  });
+
+  it("G-B2：evidence 越界 422 → 透传服务端给的正文长度", async () => {
+    setupMock({
+      detailQuestions: [fileQuestion()],
+      patchStatus: 422,
+      patchMessage: "evidence 越界：source 正文长度 12，锚点 end=99",
+    });
+    await renderPage();
+    await pickSource();
+    await waitFor(() => expect(screen.getAllByText(/原有题干/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getByTestId(`record-edit-${QUESTION_ID}`)); });
+    await clickRecord();
+
+    const text = screen.getByTestId("record-problem").textContent ?? "";
+    expect(text).toContain("证据锚点越界");
+    expect(text).toContain("12");
+  });
+
+  it("G-B3：改题成功 → 退出改题态、清空表单、列表重读", async () => {
+    const mock = setupMock({ detailQuestions: [fileQuestion()] });
+    await renderPage();
+    await pickSource();
+    await waitFor(() => expect(screen.getAllByText(/原有题干/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getByTestId(`record-edit-${QUESTION_ID}`)); });
+    await clickRecord();
+
+    await waitFor(() => expect(addToastMock).toHaveBeenCalledWith("success", "已保存改题"));
+    expect((screen.getByPlaceholderText(/题干/) as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByTestId("record-submit").textContent).toContain("录题");
+    const detailCalls = mock.mock.calls.filter(([p]) => String(p).includes("/l3/practice-files/detail"));
+    expect(detailCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("「取消改题」回到录题态并清空表单（不留下半截答案键）", async () => {
+    setupMock({ detailQuestions: [fileQuestion()] });
+    await renderPage();
+    await pickSource();
+    await waitFor(() => expect(screen.getAllByText(/原有题干/).length).toBeGreaterThan(0));
+    await act(async () => { fireEvent.click(screen.getByTestId(`record-edit-${QUESTION_ID}`)); });
+    await act(async () => { fireEvent.click(screen.getByTestId("record-cancel-edit")); });
+
+    expect((screen.getByPlaceholderText(/题干/) as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByTestId("record-submit").textContent).toContain("录题");
+  });
+
+  it("未选来源时不请求列表（不给「这个文件下还没有题」这种假结论）", async () => {
+    const mock = setupMock();
+    await renderPage();
+    await waitFor(() => expect(screen.getByTestId("record-question-type")).toBeTruthy());
+    expect(mock.mock.calls.some(([p]) => String(p).includes("/l3/practice-files/detail"))).toBe(false);
+    expect(screen.getByText(/选了来源\/题组键之后/)).toBeTruthy();
   });
 });

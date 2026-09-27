@@ -334,6 +334,23 @@ export async function updateL3Question(questionId: string, input: L3QuestionWrit
   return response.question;
 }
 
+/**
+ * 练习文件详情里的题目行 = 题面 + **此刻能不能改**（2026-09-27）。
+ *
+ * `editable` 由服务端用与改题护栏**同一组判据**算出（状态可编辑 ∧ 无作答历史）。
+ * 前端**不要**自己拿 attempt 计数去推 —— 那是把护栏复制一份，漂移方向通常是
+ * 「多显示一个改题入口」，而那正是 D-2 明确否决过的方案。
+ */
+export interface L3PracticeFileQuestion extends L3QuestionWritten {
+  ordinal: number;
+  stem: string;
+  options: Array<{ key: string; text: string }>;
+  answer: { choice?: string; choices?: string[]; text?: string; sample?: string; points?: string[] };
+  explanation: string | null;
+  evidence: Array<{ start: number; end: number; label: string }>;
+  editable: boolean;
+}
+
 // ── 批次二增补：评析区（agent 首个可写持久区，ADR-0034 v2 条 10/11）────────
 
 export interface L3Assessment {

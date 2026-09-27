@@ -13,7 +13,11 @@
  * 是仪式没有安全收益；真要改这条得重开 ADR-0037。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createL3Question } from "@/frontend/api/l3Client";
+import {
+  createL3Question,
+  updateL3Question,
+  type L3PracticeFileQuestion,
+} from "@/frontend/api/l3Client";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { isSourcelessQuestionType, L3_QUESTION_TYPES, type L3QuestionType } from "@/domain/l3-question-types";
@@ -51,6 +55,10 @@ export function RecordTab({ onToast, onRecorded }: RecordTabProps) {
   const [sources, setSources] = useState<SourceOption[]>([]);
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /** 正在改的题 id；`null` = 录新题模式。 */
+  const [editing, setEditing] = useState<string | null>(null);
+  /** 改题后要让列表重新读（题面变了、editable 也可能变了）。 */
+  const [listNonce, setListNonce] = useState(0);
 
   const sourceless = isSourcelessQuestionType(questionType);
 
@@ -120,29 +128,51 @@ export function RecordTab({ onToast, onRecorded }: RecordTabProps) {
           .map((key) => ({ key, text: (draft.options[key] ?? "").trim() }))
           .filter((option) => option.text.length > 0)
         : undefined;
-      const question = await createL3Question({
+      // G-A2：空值不提交 —— 提交空串等于把「没有解析」写成「解析是空的」，
+      // 将来改题时更会把它当成「用户清空过」而无法区分。
+      const body = {
+        stem,
+        ...(options && options.length > 0 ? { options } : {}),
+        ...(choice ? { answer: { choice: draft.answer } } : { answer: { text: draft.answerText.trim() } }),
+        ...(draft.explanation.trim() ? { explanation: draft.explanation.trim() } : {}),
+        ...(draft.evidence.length > 0 ? { evidence: draft.evidence } : {}),
+      };
+      if (editing) {
+        await updateL3Question(editing, body);
+        onToast("success", "已保存改题");
+        setEditing(null);
+        setDraft(emptyQuestion());
+        setListNonce((n) => n + 1);
+        onRecorded?.();
+        return;
+      }
+      await createL3Question({
         questionType,
         sourceId: sourceless ? null : sourceId,
         fileKey: sourceless ? fileKey.trim() : null,
-        stem,
-        // G-A2：空值不提交 —— 提交空串等于把「没有解析」写成「解析是空的」，
-        // 将来改题时更会把它当成「用户清空过」而无法区分。
-        ...(options && options.length > 0 ? { options } : {}),
-        ...(choice
-          ? { answer: { choice: draft.answer } }
-          : { answer: { text: draft.answerText.trim() } }),
-        ...(draft.explanation.trim() ? { explanation: draft.explanation.trim() } : {}),
-        ...(draft.evidence.length > 0 ? { evidence: draft.evidence } : {}),
+        ...body,
       });
       onToast("success", `已录题：${stem.slice(0, 20)}${stem.length > 20 ? "…" : ""}（${TYPE_LABELS[questionType]}，已生效）`);
       // 录完清空题干与答案键，但**保留题型与来源** —— 连续录同一文件的多道题是常见节奏，
       // 让用户每录一道都要重选来源是把「录题」变成折磨。
       setDraft(emptyQuestion());
+      setListNonce((n) => n + 1);
       onRecorded?.();
     } catch (err) {
-      // G-B3 同款：失败保留输入（用户在题上花的时间不能白花），就地报错而不是清空重来。
-      onToast("error", err instanceof BrowserApiError ? err.message : "录题失败，请稍后重试");
-      setProblem("录题失败，上面的内容已保留，可改后重试");
+      // G-B1：409 **按来源归因**，不把两种 409 统一渲染成「改题失败」——
+      // 「有作答历史」与「被作文任务引用」的恢复路径完全不同（前者无解，后者要先解引用）。
+      // G-B3：失败保留输入（用户在题上花的时间不能白花）。
+      const detail = err instanceof BrowserApiError ? err.message : "";
+      if (/history|attempt|作答/i.test(detail)) {
+        setProblem("这道题已有作答历史，改题会让作答与它对不上 —— 答案历史不可改写。");
+      } else if (/writing|作文|referenc/i.test(detail)) {
+        setProblem("这道题被作文任务引用，改题会让新任务拿到错判据 —— 先解掉引用再改。");
+      } else if (/evidence|越界|anchor/i.test(detail)) {
+        setProblem(`证据锚点越界：${detail}`);
+      } else {
+        onToast("error", detail.length > 0 ? detail : "保存失败，请稍后重试");
+        setProblem("保存失败，上面的内容已保留，可改后重试");
+      }
     } finally {
       setSaving(false);
     }
@@ -198,15 +228,135 @@ export function RecordTab({ onToast, onRecorded }: RecordTabProps) {
       <div className="flex items-center gap-2">
         <button type="button" disabled={saving} onClick={() => void submit()} data-testid="record-submit"
           className="rounded bg-[var(--color-accent)] px-4 py-1.5 text-xs text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50">
-          {saving ? "提交中…" : "录题"}
+          {saving ? "提交中…" : editing ? "保存改题" : "录题"}
         </button>
-        {draft.stem.trim().length > 0 && (
+        {editing && (
+          <button type="button" onClick={() => { setEditing(null); setDraft(emptyQuestion()); setProblem(null); }}
+            data-testid="record-cancel-edit"
+            className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-ink-soft)]">
+            取消改题
+          </button>
+        )}
+        {draft.stem.trim().length > 0 && !editing && (
           <button type="button" onClick={() => { setDraft(emptyQuestion()); setProblem(null); }}
             className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-ink-soft)]">
             清空
           </button>
         )}
       </div>
+
+      <MyQuestionsSection
+        questionType={questionType}
+        sourceId={sourceless ? null : sourceId}
+        fileKey={sourceless ? fileKey : null}
+        nonce={listNonce}
+        onEdit={(row) => {
+          setEditing(row.id);
+          setQuestionType(row.question_type as L3QuestionType);
+          setSourceId(row.source_id ?? "");
+          setFileKey(row.file_key ?? "");
+          setDraft({
+            stem: row.stem,
+            options: Object.fromEntries(row.options.map((option) => [option.key, option.text])),
+            answer: row.answer.choice ?? "",
+            answerText: row.answer.text ?? "",
+            explanation: row.explanation ?? "",
+            evidence: row.evidence,
+          });
+          setProblem(null);
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * 「我录的题」列表（缺口 B 的入口，与录题同面 —— 执行文档 D-4）。
+ *
+ * 读面用**既有的** `GET /practice-files/detail`（不新开读口）：它按 (来源, 题型) 返回
+ * 该文件下的全部 active 题，带 stem/答案/解析/证据，正好够预填改题表单；2026-09-27
+ * 又给它加了 `editable`（服务端按与护栏同一组判据算）。
+ */
+function MyQuestionsSection({
+  questionType,
+  sourceId,
+  fileKey,
+  nonce,
+  onEdit,
+}: {
+  questionType: L3QuestionType;
+  sourceId: string | null;
+  fileKey: string | null;
+  /** 改题成功后宿主自增 → 列表重读（题面与 editable 都可能变了）。 */
+  nonce: number;
+  onEdit: (row: L3PracticeFileQuestion) => void;
+}) {
+  const [rows, setRows] = useState<L3PracticeFileQuestion[] | null>(null);
+  const [localNonce, setLocalNonce] = useState(0);
+  // 宿主在改题成功后自增 `nonce`（题面与 editable 都可能变了），本地「刷新」钮也自增。
+  const readNonce = nonce + localNonce;
+
+  useEffect(() => {
+    if (!sourceId && !fileKey) {
+      setRows(null);
+      return;
+    }
+    let cancelled = false;
+    const params = new URLSearchParams({ questionType });
+    if (sourceId) params.set("sourceId", sourceId);
+    if (fileKey) params.set("fileKey", fileKey);
+    setRows(null);
+    apiFetch<{ questions?: L3PracticeFileQuestion[] }>(`/l3/practice-files/detail?${params.toString()}`)
+      .then((body) => { if (!cancelled) setRows(body.questions ?? []); })
+      .catch(() => { if (!cancelled) setRows([]); });
+    return () => { cancelled = true; };
+  }, [questionType, sourceId, fileKey, readNonce]);
+
+  if (!sourceId && !fileKey) {
+    return (
+      <p className="border-t border-dashed border-[var(--color-border)] pt-2 text-[11px] text-[var(--color-ink-soft)]">
+        选了来源/题组键之后，这里会列出该文件下的题，可改题。
+      </p>
+    );
+  }
+  if (rows === null) {
+    return <p className="border-t border-dashed border-[var(--color-border)] pt-2 text-[11px] text-[var(--color-ink-soft)]">题目列表加载中…</p>;
+  }
+  if (rows.length === 0) {
+    return (
+      <p className="border-t border-dashed border-[var(--color-border)] pt-2 text-[11px] text-[var(--color-ink-soft)]">
+        这个文件下还没有题。
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-1 border-t border-dashed border-[var(--color-border)] pt-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-[var(--color-ink-soft)]">这个文件下的题（{rows.length}）</span>
+        <button type="button" onClick={() => setLocalNonce((n) => n + 1)}
+          className="text-[10px] text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]">刷新</button>
+      </div>
+      {rows.map((row, index) => (
+        <div key={row.id} className="flex items-start gap-2 rounded border border-[var(--color-border)] px-2 py-1.5 text-xs">
+          <span className="shrink-0 text-[var(--color-ink-soft)]">{index + 1}.</span>
+          <span className="min-w-0 flex-1 break-words">{row.stem}</span>
+          {/*
+            D-2：不可改时**不渲染**改题入口（不是禁用 + 说明 —— 死控件既让用户犹豫，
+            也让可访问性名称与测试断言变二义）。改为题面上一处只读说明：改题会让
+            「已发生的作答」与它对不上，而作答是不可改写的历史。
+          */}
+          {row.editable ? (
+            <button type="button" onClick={() => onEdit(row)} data-testid={`record-edit-${row.id}`}
+              className="shrink-0 rounded border border-[var(--color-border)] px-2 py-0.5 text-[11px] text-[var(--color-ink)] hover:border-[var(--color-accent)]">
+              改
+            </button>
+          ) : (
+            <span className="shrink-0 text-[10px] text-[var(--color-ink-soft)]" data-testid={`record-locked-${row.id}`}>
+              已作答并定格的题不可改题面（改题会使作答与它对不上）
+            </span>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

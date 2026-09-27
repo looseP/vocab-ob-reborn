@@ -221,10 +221,31 @@ export class L3PaperRepository extends BaseRepository implements IL3PaperReposit
   async countQuestionAttempts(userId: string, questionId: string): Promise<number> {
     const row = await this.queryOne<{ count: string }>(
       `SELECT count(*)::bigint AS count FROM l3_question_attempts
-        WHERE user_id = $1::uuid AND question_id = $2::uuid`,
+       WHERE user_id = $1::uuid AND question_id = $2::uuid`,
       [userId, questionId],
     );
     return Number(row?.count ?? 0);
+  }
+
+  /**
+   * 一次取回一批题的作答计数（`questionId → count`，无作答的题**不在**返回里）。
+   *
+   * 为什么要有批量版（2026-09-27）：逐题 `countQuestionAttempts` 在 20 题的卷上是 20 次
+   * 查询 —— 与本轮刚在评析上销掉的 N+1 同族。`WHERE question_id = ANY($2)` 一次分组，
+   * 返回 `Map`（缺键 = 0，调用方不必写 `?? 0`）。
+   */
+  async countAttemptsForQuestions(
+    userId: string,
+    questionIds: readonly string[],
+  ): Promise<Map<string, number>> {
+    if (questionIds.length === 0) return new Map();
+    const rows = await this.query<{ question_id: string; count: string }>(
+      `SELECT question_id, count(*)::bigint AS count FROM l3_question_attempts
+       WHERE user_id = $1::uuid AND question_id = ANY($2::uuid[])
+       GROUP BY question_id`,
+      [userId, questionIds as string[]],
+    );
+    return new Map(rows.map((row) => [row.question_id, Number(row.count)]));
   }
 
   /**
