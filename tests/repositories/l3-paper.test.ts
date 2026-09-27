@@ -252,6 +252,38 @@ describe("L3PaperRepository.updatePaper / countQuestionAttempts（PATCH 落库�
     (repo as any).queryOne.mockResolvedValue(null);
     expect(await repo.countQuestionAttempts(USER, "q-1")).toBe(0);
   });
+
+  /**
+   * 批量版（2026-09-27）：`editable` 判定要按卷取计数，逐题 count 是 N+1。
+   * 断言的不只是返回值，还包括 **SQL 形状**——`GROUP BY` 漏了会让计数重复计行、
+   * `ANY($2)` 漏了 user 过滤会跨 owner 读数，两者都不会抛错。
+   */
+  it("countAttemptsForQuestions 一次分组取回，bigint 字符串转 number", async () => {
+    const repo = new L3PaperRepository();
+    const spy = vi.spyOn(repo as any, "query").mockResolvedValue([
+      { question_id: "q-1", count: "2" },
+      { question_id: "q-3", count: "0" },
+    ]);
+    const counts = await repo.countAttemptsForQuestions(USER, ["q-1", "q-2", "q-3"]);
+    expect(counts.get("q-1")).toBe(2);
+    expect(counts.get("q-3")).toBe(0);
+    // 无作答的题**不在返回里**（缺键即 0，调用方不必写 ?? 0）
+    expect(counts.has("q-2")).toBe(false);
+
+    const [sql, params] = spy.mock.calls[0]!;
+    expect(sql).toContain("FROM l3_question_attempts");
+    expect(sql).toContain("GROUP BY question_id");
+    expect(sql).toContain("question_id = ANY($2::uuid[])");
+    expect(sql).toContain("user_id = $1::uuid");
+    expect(params).toEqual([USER, ["q-1", "q-2", "q-3"]]);
+  });
+
+  it("countAttemptsForQuestions 空批不查库（不为空数组打一次库）", async () => {
+    const repo = new L3PaperRepository();
+    const spy = vi.spyOn(repo as any, "query");
+    expect((await repo.countAttemptsForQuestions(USER, [])).size).toBe(0);
+    expect(spy).not.toHaveBeenCalled();
+  });
 });
 
 /**
