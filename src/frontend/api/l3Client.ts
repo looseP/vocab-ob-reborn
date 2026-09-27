@@ -274,6 +274,66 @@ export async function sealSheet(id: string, input: SealSheetRequest): Promise<Se
   };
 }
 
+// ── 题目录入与改题（2026-09-27，执行文档 l3-question-authoring-ui-execution）────────
+
+/** 一道题的写入形状（`POST /questions` 与 `PATCH /questions/:id` 共用同一 body 口径）。 */
+export interface L3QuestionWrite {
+  stem: string;
+  options?: Array<{ key: string; text: string }>;
+  answer?: { choice?: string; text?: string; sample?: string };
+  explanation?: string;
+  evidence?: Array<{ start: number; end: number; label: string }>;
+  ordinal?: number;
+}
+
+/** 题目的落库视图（服务端认定，不由前端猜）。 */
+export interface L3QuestionWritten {
+  id: string;
+  source_id: string | null;
+  file_key: string | null;
+  space: string;
+  question_type: string;
+  status: "pending" | "active" | "rejected";
+  created_by: string;
+}
+
+/**
+ * 建题（`POST /l3/questions`）。
+ *
+ * **落 `active` 不是偶然**：ADR-0037 决策 2 —— owner 直写 active，agent 才落 pending 并
+ * 由 owner 采纳。owner 就是采纳人，让他自己录的题再走一遍自己的门是仪式。前端**不传**
+ * status/created_by（服务端从已解析 Principal 认定，请求体带这两个键会被 strict 拒）。
+ */
+export async function createL3Question(
+  input: L3QuestionWrite & { questionType: string; sourceId?: string | null; fileKey?: string | null },
+): Promise<L3QuestionWritten> {
+  const { questionType, sourceId, fileKey, ...body } = input;
+  const response = await apiFetch<{ question?: L3QuestionWritten } | null>(
+    "/l3/questions",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        ...body,
+        questionType,
+        ...(sourceId ? { sourceId } : {}),
+        ...(fileKey ? { fileKey } : {}),
+      }),
+    },
+  );
+  if (!response?.question) throw new Error("建题失败：响应缺少题目行");
+  return response.question;
+}
+
+/** 改题（`PATCH /l3/questions/:id`）。护栏在服务端：作答历史 409 / 作文引用 409 / 锚点越界 422。 */
+export async function updateL3Question(questionId: string, input: L3QuestionWrite): Promise<L3QuestionWritten> {
+  const response = await apiFetch<{ question?: L3QuestionWritten } | null>(
+    `/l3/questions/${encodeURIComponent(questionId)}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
+  if (!response?.question) throw new Error("改题失败：响应缺少题目行");
+  return response.question;
+}
+
 // ── 批次二增补：评析区（agent 首个可写持久区，ADR-0034 v2 条 10/11）────────
 
 export interface L3Assessment {

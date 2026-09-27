@@ -30,6 +30,7 @@ import {
   type DraftQuestion,
 } from "@/frontend/components/l3/QuestionFieldsEditor";
 import { PendingQuestionsPanel } from "@/frontend/components/l3/PendingQuestionsPanel";
+import { RecordTab } from "@/frontend/components/l3/RecordTab";
 import type { L3QuestionType, WritingQuestionTaskSummary } from "@/domain";
 
 /**
@@ -264,7 +265,7 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
 } = {}) {
   const { addToast } = useToast();
   const hasFilesDeepLink = Boolean(deepLinkVenue && QUESTION_TYPES.includes(deepLinkVenue as QuestionType));
-  const [tab, setTab] = useState<"files" | "papers" | "archive" | "build" | "pending">(
+  const [tab, setTab] = useState<"files" | "papers" | "archive" | "record" | "build" | "pending">(
     deepLinkSheet ? "archive" : deepLinkPaper ? "papers" : hasFilesDeepLink ? "files" : "papers",
   );
 
@@ -287,7 +288,7 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
         <h2 className="text-lg font-semibold">试卷台</h2>
       </div>
       <div className="flex flex-wrap gap-1.5" role="tablist">
-        {([["files", "题型空间"], ["papers", "我的试卷"], ["archive", "题纸档案"], ["build", "粘贴建卷"], ["pending", "待录"]] as const).map(([id, label]) => (
+        {([["files", "题型空间"], ["papers", "我的试卷"], ["archive", "题纸档案"], ["record", "录题"], ["build", "粘贴建卷"], ["pending", "待录"]] as const).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
             className={`rounded-full px-3 py-1 text-xs ${tab === id ? "bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]" : "border border-[var(--color-border)] text-[var(--color-ink-soft)]"}`}>
             {label}
@@ -312,6 +313,9 @@ export function L3PapersPage({ deepLinkVenue, deepLinkFile, deepLinkSheet, deepL
         />
       )}
       {tab === "archive" && <ArchiveTab onToast={addToast} />}
+      {/* 录题（2026-09-27 B2）：单题录入。题目字段与「粘贴建卷」共用 QuestionFieldsEditor；
+          落 active（ADR-0037 owner 直写），不进「待录」。 */}
+      {tab === "record" && <RecordTab onToast={addToast} />}
       {tab === "build" && <BuildTab onBuilt={() => setTab("papers")} onToast={addToast} />}
       {/* ADR-0037 决策 6：待录是 owner 的核对责任面（答案键 + 证据切片必须可见）。 */}
       {tab === "pending" && <PendingQuestionsPanel onToast={addToast} />}
