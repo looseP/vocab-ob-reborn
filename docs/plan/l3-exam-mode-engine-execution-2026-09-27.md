@@ -132,15 +132,29 @@ type ExamMode = "pure" | "practice" | "review"   // 语义沿设计卡 §2.4
   「上次是 review，这次打开直接看到答案」的意外剧透。
 
 ### 3.4 D-5 纯函数模块承载判定（不进 2538 行的组件）
-
 `L3ExamPaper.tsx` 已 2538 行 / 126 KB，而 `docs/plan/study-notes-design-2026-09-18.md:194`
 写着「新功能不得把全部逻辑塞进近两千行 L3ExamPaper」。因此：
 
-- 新建 `src/frontend/components/l3/examModeVisibility.ts`：**纯函数**，
-  导出 `EXAM_MODES` / `parseExamMode` / `buildExamModeUrl` / `visibilityFor(mode)`
-  （返回一组具名布尔：上表每行一个字段）。
+- 新建**两个**纯函数模块，职责按「URL 层 / 判定层」切：
+  - `src/frontend/viewModels/examModeNavigation.ts` — URL 层：`EXAM_MODES` / `EXAM_MODE_DEFAULT` /
+    `parseExamMode` / `resolveExamMode` / `buildExamModeUrl`
+  - `src/frontend/viewModels/examModeVisibility.ts` — 判定层：`ExamVisibility`（上表每行一个字段）/
+    `visibilityFor(mode)` / `defaultVisibility()` / `hiddenTraceNotice()`
 - 组件只 `const vis = visibilityFor(mode)`，然后用 `vis.showEvidence` 之类替换裸 `revealAll`。
 - 判定逻辑全部可单测；组件只负责渲染。
+
+> **B2 实现期偏离登记（2026-09-27；范围变更先登记再提 —— F-3 教训）**
+>
+> ① **落点改为 `viewModels/`**（本节原写 `components/l3/`）：二者都是无 React 的纯函数 VM，
+> 而 `viewModels/` 已是本仓可测推导逻辑的既定归属（`fileOrderNavigation` /
+> `l3SectionNavigation` / `studyNoteNavigation` / `writingNavigation` / `l3ErrorBookHubViewModel`）。
+> ② **模块拆两个**（本节原把四个导出都写在一个模块）：D-4 的 URL 契约与本节的渲染判定是
+> 两种关注点，合在一起会让「改 URL 参数格式」碰到「改矩阵」，评审时也看不出哪半是契约哪半是渲染。
+> ③ **解析对两端空白容忍、对大小写不容忍**：`parseL3SectionParam` 先例是 trim 的（手滑不是敌意），
+> 但大小写代表不同的词、不该蒙。此条**由 B2 的测试先失败再修正文档**——初稿注释写
+> 「带空白 → null」与实现矛盾，被表驱动测试咬了出来；先例裁定 trim 一侧胜出。
+> ④ 新增 `hiddenTraceNotice()`：签字项 S-1（G-2 声明条）的文案生成也放纯函数层 ——
+> 文案里的计数如果写在组件里，就会出现「组件算一套、声明条显示另一套」。
 
 ### 3.5 D-6 切换不丢作答（设计卡 :124）
 
