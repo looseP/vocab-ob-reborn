@@ -196,6 +196,14 @@ long_essay。
 
 ## 八、批次与停点
 
+> **B1 补记（施工时发现）**：QuestionFieldsEditor 需要题型类型，而 L3PapersPage 里的
+> QuestionType 是**本地 7 元并集**，@/domain 另有 canonical 的 L3QuestionType。B1 顺带把本地
+> 并集收敛成 	ype QuestionType = L3QuestionType（零行为变化）—— 留两份的话，加题型时 domain 会更新、本页的
+> 题型下拉不会更新，而题型分支错了**不报错**、只会静默录错题。
+> QUESTION_TYPES / TYPE_LABELS / CHOICE_TYPES / SOURCELESS_TYPES 四份本地常量同样与 domain 重复（
+> domain/l3-question-types.ts 已有 L3_QUESTION_TYPES / L3_QUESTION_TYPE_LABELS / isSourcelessQuestionType），**本轮不动**：
+> 那是独立的一次收敛，且会改到题型下拉的渲染来源，超出「B1 行为零变化」的承诺。已登记为 B2 前置。
+
 | 批次 | 内容 | 停点 |
 |---|---|---|
 | **D0** | 本文档 + D-3/D-4 签字 | 签字后才动手 |

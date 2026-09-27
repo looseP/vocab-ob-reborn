@@ -24,9 +24,13 @@ import {
 import { buildL3SectionUrl } from "@/frontend/viewModels/l3SectionNavigation";
 import { buildPracticeFileUrl, practiceFileRef } from "@/frontend/viewModels/practiceFileNavigation";
 import type { ComposedSheetLeaveBarrier } from "@/frontend/state/sheetLeaveBarrier";
-import { QuestionEvidenceEditor, type EvidenceAnchor } from "@/frontend/components/l3/QuestionEvidenceEditor";
+import {
+  emptyQuestion,
+  QuestionFieldsEditor,
+  type DraftQuestion,
+} from "@/frontend/components/l3/QuestionFieldsEditor";
 import { PendingQuestionsPanel } from "@/frontend/components/l3/PendingQuestionsPanel";
-import type { WritingQuestionTaskSummary } from "@/domain";
+import type { L3QuestionType, WritingQuestionTaskSummary } from "@/domain";
 
 /**
  * 试卷台（ADR-0030 V1 最小可用面）：
@@ -37,9 +41,14 @@ import type { WritingQuestionTaskSummary } from "@/domain";
  * 题纸自动开/作答防抖/定格/历史徽标）；fileKey 型文件（翻译/作文）保留浏览视图。
  */
 
-type QuestionType =
-  | "cloze" | "reading_choice" | "new_question" | "sentence_translation"
-  | "short_essay" | "long_essay" | "grammar_blank";
+/**
+ * 题型（**单一真源在 domain 的 `L3QuestionType`**）。
+ *
+ * 2026-09-27：此前此处是本地 7 元并集，与 domain 重复。抽 `QuestionFieldsEditor`
+ * （与「录题」页签共用）时必须决定用哪一份 —— 留两份的话，加题型时 domain 会更新、
+ * 本页的题型下拉不会更新，而题型分支错了**不报错**、只会静默录错题。
+ */
+type QuestionType = L3QuestionType;
 
 const QUESTION_TYPES: QuestionType[] = [
   "cloze", "reading_choice", "new_question", "sentence_translation",
@@ -168,22 +177,12 @@ interface PaperListItem {
 interface SourceOption { id: string; title: string }
 
 /**
- * 草稿题（2026-09-26 补齐解析与官方证据）。
- * 此前只有 stem/options/answer/answerText —— `explanation` 与 `evidence` 虽在
- * API 与 schema 里，**建卷表单从不收集**，于是应用内建的题永远没有解析、也没有
- * 官方证据，评卷读面（grading-context 带 explanation/evidence）拿不到可依据的
- * 材料。`evidence` 走独立的框选录入器（见 QuestionEvidenceEditor）。
+ * 一节的草稿（粘贴建卷）。**题目字段本身**（题干/选项/答案键/解析/证据）已移入
+ * `QuestionFieldsEditor`（2026-09-27 执行文档 D-3）——「录题」与「建卷」共用同一份字段
+ * 定义，此前 `explanation` / `evidence` 虽在 API 与 schema 里，**建卷表单从不收集**，
+ * 于是应用内建的题永远没有解析、也没有官方证据，评卷读面（grading-context 带
+ * explanation/evidence）拿不到可依据的材料。
  */
-interface DraftQuestion {
-  stem: string;
-  options: Record<string, string>;
-  answer: string;
-  answerText: string;
-  /** 官方解析（可空）：判卷时随 grading-context 给 agent。 */
-  explanation: string;
-  /** 官方证据锚点（原文 UTF-16 区间）。 */
-  evidence: EvidenceAnchor[];
-}
 interface DraftSection {
   title: string;
   questionType: QuestionType;
@@ -192,9 +191,6 @@ interface DraftSection {
   questions: DraftQuestion[];
 }
 
-const emptyQuestion = (): DraftQuestion => ({
-  stem: "", options: {}, answer: "", answerText: "", explanation: "", evidence: [],
-});
 const emptySection = (questionType: QuestionType = "reading_choice"): DraftSection => ({
   title: "",
   questionType,
@@ -1037,53 +1033,27 @@ function BuildTab({ onBuilt, onToast }: { onBuilt: () => void; onToast: (kind: "
             )}
 
             {section.questions.map((q, qi) => (
-              <div key={qi} className="space-y-1.5 rounded-lg bg-[var(--color-surface)] p-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-[var(--color-ink-soft)]">Q{qi + 1}</span>
-                  <textarea value={q.stem} onChange={(e) => patchQuestion(si, qi, { stem: e.target.value })}
-                    rows={2} placeholder="题干"
-                    className="min-w-0 flex-1 rounded border border-[var(--color-border)] px-2 py-1 text-sm" />
-                  {section.questions.length > 1 && (
-                    <button type="button" onClick={() => patchSection(si, { questions: section.questions.filter((_, j) => j !== qi) })}
-                      className="text-[11px] text-[var(--color-danger,#dc2626)]">删题</button>
-                  )}
+              <div key={qi} className="flex items-start gap-2 rounded-lg bg-[var(--color-surface)] p-2">
+                <span className="mt-2 shrink-0 text-[11px] text-[var(--color-ink-soft)]">Q{qi + 1}</span>
+                {/* 题目字段（题干/选项/答案键/解析/证据）全在 QuestionFieldsEditor，
+                    与「录题」页签共用同一份（执行文档 D-3）。宿主只留**节内序号**与
+                    「删题」—— 它们的语义属于「一节里的第几题」，不属于题目本身。 */}
+                <div className="min-w-0 flex-1">
+                  <QuestionFieldsEditor
+                    value={q}
+                    onChange={(patch) => patchQuestion(si, qi, patch)}
+                    questionType={section.questionType}
+                    sourceId={section.sourceId || null}
+                    fileKey={section.fileKey || null}
+                    radioName={`answer-${si}-${qi}`}
+                    explanationTestId={`build-explanation-${si}-${qi}`}
+                    onError={(message) => onToast("error", message)}
+                  />
                 </div>
-                {choice ? (
-                  <div className="grid gap-1 sm:grid-cols-2">
-                    {OPTION_KEYS.map((key) => (
-                      <label key={key} className="flex items-center gap-1.5 text-xs">
-                        <input type="radio" name={`answer-${si}-${qi}`} value={key} checked={q.answer === key}
-                          onChange={() => patchQuestion(si, qi, { answer: key })} />
-                        <span>{key}.</span>
-                        <input value={q.options[key] ?? ""} onChange={(e) => patchQuestion(si, qi, { options: { ...q.options, [key]: e.target.value } })}
-                          placeholder={`选项 ${key}`}
-                          className="min-w-0 flex-1 rounded border border-[var(--color-border)] px-1.5 py-1" />
-                      </label>
-                    ))}
-                  </div>
-                ) : (
-                  <textarea value={q.answerText} onChange={(e) => patchQuestion(si, qi, { answerText: e.target.value })}
-                    rows={3} placeholder="参考译文 / 范文与评分要点"
-                    className="w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs" />
+                {section.questions.length > 1 && (
+                  <button type="button" onClick={() => patchSection(si, { questions: section.questions.filter((_, j) => j !== qi) })}
+                    className="mt-2 shrink-0 text-[11px] text-[var(--color-danger,#dc2626)]">删题</button>
                 )}
-                {/* 官方解析 + 官方证据（2026-09-26）：判卷读面（grading-context）依赖这两项，
-                    此前表单从不收集 —— 应用内建的题因此永远"无解析可依"。 */}
-                <textarea
-                  value={q.explanation}
-                  onChange={(e) => patchQuestion(si, qi, { explanation: e.target.value })}
-                  rows={2}
-                  placeholder="官方解析（可空）：为什么选它 / 错在哪"
-                  data-testid={`build-explanation-${si}-${qi}`}
-                  className="w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs"
-                />
-                <QuestionEvidenceEditor
-                  sourceId={section.sourceId || null}
-                  fileKey={section.fileKey || null}
-                  questionType={section.questionType}
-                  anchors={q.evidence}
-                  onChange={(next) => patchQuestion(si, qi, { evidence: next })}
-                  onError={(message) => onToast("error", message)}
-                />
               </div>
             ))}
             <button type="button" onClick={() => patchSection(si, { questions: [...section.questions, emptyQuestion()] })}
