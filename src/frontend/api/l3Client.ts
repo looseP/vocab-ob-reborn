@@ -351,6 +351,39 @@ export interface L3PracticeFileQuestion extends L3QuestionWritten {
   editable: boolean;
 }
 
+/**
+ * 改卷（`PATCH /l3/papers/:id`）。
+ *
+ * **形状与建卷不同**（执行文档 §1.6b）：建卷的 `sections[].questions` 是内联题体（顺带建题），
+ * 改卷的 `sections[].questionIds` 是**引用**既有题。所以这里不收题体。
+ *
+ * 护栏在服务端：卷必须 active（409）；引用的题必须全部属主且 active（422）。
+ * 与 `updateL3Question` 的两个 409 **不是同一组** —— UI 按各自归因，不共用文案。
+ */
+export async function updateL3Paper(
+  paperId: string,
+  input: {
+    title: string;
+    direction?: string | null;
+    metadata?: Record<string, unknown>;
+    sections: Array<{
+      key: string;
+      title: string;
+      questionType: string;
+      sourceId?: string | null;
+      fileKey?: string | null;
+      questionIds: string[];
+    }>;
+  },
+): Promise<{ paper: { id: string }; questionCount: number }> {
+  const response = await apiFetch<{ paper?: { id: string }; questionCount?: number } | null>(
+    `/l3/papers/${encodeURIComponent(paperId)}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
+  if (!response?.paper) throw new Error("改卷失败：响应缺少试卷行");
+  return { paper: response.paper, questionCount: response.questionCount ?? 0 };
+}
+
 // ── 批次二增补：评析区（agent 首个可写持久区，ADR-0034 v2 条 10/11）────────
 
 export interface L3Assessment {
