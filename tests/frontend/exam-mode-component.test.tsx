@@ -78,6 +78,8 @@ interface MockOptions {
   annotations?: unknown[];
   /** 批量评析读面（2026-09-27）：`{ items: [...] }`；缺省 = 本卷无评析。 */
   assessments?: unknown[];
+  /** 让这些路径片段的读面抛错（验证「读不出 ≠ 没有」）。 */
+  failPaths?: string[];
 }
 
 function sheetFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -153,7 +155,12 @@ function assessmentFixture(overrides: Record<string, unknown> = {}): Record<stri
 function setupMock(options: MockOptions = {}): ReturnType<typeof vi.fn> {
   const attempts = options.attempts ?? [];
   const annotations = options.annotations ?? [];
+  /** 读面失败的路径（2026-09-27）：抛错而不是回空 —— 「读不出」必须与「没有」分开。 */
+  const failPaths = options.failPaths ?? [];
   return vi.fn(async (path: string, init?: { method?: string }) => {
+    for (const fragment of failPaths) {
+      if (String(path).includes(fragment)) throw new Error(`read failed: ${fragment}`);
+    }
     if (path === "/l3/sheets" && (!init || init.method === "POST")) {
       return { sheet: sheetFixture({ status: options.sheetStatus ?? "draft", ...options.sheetOverrides }) };
     }
@@ -335,6 +342,79 @@ describe("B3 · 用户痕迹（划重点 / 注记）与纯净档", () => {
     const singleCalls = apiFetchMock.mock.calls.filter(([path]) => /questions\/.+\/assessment/.test(String(path)));
     expect(batchCalls).toHaveLength(1);
     expect(singleCalls).toHaveLength(0);
+  });
+});
+
+/**
+ * 痕迹读面失败（2026-09-27）——「读不出」必须与「没有」分开。
+ *
+ * 两处危害，都不是 UI 小疵：
+ *  1. 谎报空态：「原文分析 · 0」/「还没有评析」是关于用户自己劳动的**假陈述**
+ *     （F-1/F-2 族：行为合理但未言明 ⇒ 后来者误判为缺陷并「修复」）。
+ *  2. 数据丢失：评析 PUT 是 latest-wins upsert。读失败时若仍给「写评析」入口，
+ *     用户在没看到旧内容的情况下就把它覆盖了。
+ */
+describe("B6 · 读失败 ≠ 没有（痕迹读面降级）", () => {
+  it("评析读失败：显示「未能读取 · 重读评析」，不谎报待沉淀，且**没有写入口**", async () => {
+    (apiFetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      setupMock({ failPaths: ["question-assessments"] }),
+    );
+    await renderPaper("review");
+    await waitFor(() => expect(screen.getAllByText(/评析 · 未能读取/).length).toBeGreaterThan(0));
+
+    // 危害 2：upsert 会覆盖未读到的旧内容 ⇒ 任何写入口都不能给
+    expect(screen.queryByRole("button", { name: "写评析" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存评析" })).toBeNull();
+    // 危害 1：不能显示成「还没有评析」
+    expect(screen.queryByText(/评析 · 待沉淀/)).toBeNull();
+    // 给一个出口，而不是让用户只能刷新整页
+    expect(screen.getAllByRole("button", { name: "重读评析" }).length).toBeGreaterThan(0);
+  });
+
+  it("注记读失败：显示「未能读取 · 重读原文分析」，不谎报 · 0，且不给新建入口", async () => {
+    (apiFetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      setupMock({ failPaths: ["question-annotations"] }),
+    );
+    await renderPaper("review");
+    await waitFor(() => expect(screen.getAllByText(/原文分析 · 未能读取/).length).toBeGreaterThan(0));
+
+    expect(screen.queryByText(/原文分析 · 0/)).toBeNull();
+    // 往一个看不见的集合里追加，追加完的计数仍是假的 ⇒ 不给入口
+    expect(screen.queryByRole("button", { name: /新建|写注记|添加注记/ })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "重读原文分析" }).length).toBeGreaterThan(0);
+  });
+
+  it("纯净档 + 读失败：声明条明说「未能读取」，不把数不出当 0（否则是静默隐藏）", async () => {
+    (apiFetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      setupMock({ failPaths: ["question-annotations", "question-assessments"] }),
+    );
+    await renderPaper("pure");
+    await waitFor(() => expect(screen.getByText("题纸")).toBeTruthy());
+
+    const notice = screen.getByTestId("exam-mode-hidden-notice");
+    expect(notice.textContent).toContain("未能读取");
+    expect(notice.textContent).toContain("未计入其中");
+    expect(notice.textContent).not.toContain("0 条评析");
+    expect(notice.textContent).not.toContain("0 条注记");
+  });
+
+  it("重试真的重发读面（不是装饰按钮）", async () => {
+    const mock = apiFetch as unknown as ReturnType<typeof vi.fn>;
+    mock.mockImplementation(setupMock({ failPaths: ["question-assessments"] }));
+    await renderPaper("review");
+    await waitFor(() => expect(screen.getAllByText(/评析 · 未能读取/).length).toBeGreaterThan(0));
+    const before = mock.mock.calls.filter(([p]) => String(p).includes("question-assessments")).length;
+
+    // 换成读得到的 mock 再点重试：effect 依赖 nonce，必须真的重发
+    mock.mockImplementation(setupMock({ assessments: [assessmentFixture()] }));
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "重读评析" })[0]!);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getAllByText(/评析 · 已沉淀/).length).toBeGreaterThan(0));
+    const after = mock.mock.calls.filter(([p]) => String(p).includes("question-assessments")).length;
+    expect(after).toBe(before + 1);
   });
 });
 

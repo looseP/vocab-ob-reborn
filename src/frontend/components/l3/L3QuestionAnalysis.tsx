@@ -41,6 +41,15 @@ interface L3QuestionAnalysisProps {
   attempts?: L3Attempt[];
   /** 批次二：点徽标打开历史 modal。 */
   onOpenHistory?: () => void;
+  /**
+   * 注记读面状态（2026-09-27）。**「读失败」不等于「没有」**：两者都让 `annotations`
+   * 为空，但显示成「原文分析 · 0」是关于用户自己劳动的假陈述（本仓 F-1/F-2 族）。
+   * `error` 时不渲染计数、不给新建入口（往一个看不见的集合里追加，追加完的计数仍是
+   * 假的），只给重试。
+   */
+  loadState?: "loading" | "ready" | "error";
+  /** 读失败时的重试出口。 */
+  onRetry?: () => void;
 }
 
 /** 批次三①：注记 review 列收窄视图（0034 形状；脏值返回 null 不渲染）。 */
@@ -215,6 +224,8 @@ export function L3QuestionAnalysis({
   onSaveTagDict,
   attempts,
   onOpenHistory,
+  loadState = "ready",
+  onRetry,
 }: L3QuestionAnalysisProps) {
   const [expanded, setExpanded] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -325,6 +336,24 @@ export function L3QuestionAnalysis({
     ? form.entryTags
     : popover?.optionKey ? (form.optionTags[popover.optionKey] ?? []) : [];
 
+  // 读失败：整块降级为「未能读取 · 重试」。**不渲染展开区** —— 展开区里的新建/编辑/
+  // 打标全都以「已知这些注记长什么样」为前提，在读不到的时候给入口就是让人在一堆
+  // 看不见的东西上动手（新建后本地计数还是假的）。
+  if (loadState === "error") {
+    return (
+      <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-dashed border-[var(--color-border)] pt-2"
+        onClick={(e) => e.stopPropagation()}>
+        <span className="text-xs font-semibold text-[var(--color-ink-soft)]">原文分析 · 未能读取</span>
+        {onRetry && (
+          <button type="button" onClick={onRetry}
+            className="shrink-0 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[11px] text-[var(--color-ink)] hover:border-[var(--color-accent)]">
+            重读原文分析
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-2.5 border-t border-dashed border-[var(--color-border)] pt-2">
       <div className="flex w-full items-center justify-between gap-2">
@@ -345,7 +374,8 @@ export function L3QuestionAnalysis({
             aria-expanded={expanded}
             className="min-w-0 truncate whitespace-nowrap text-xs font-semibold text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
           >
-            原文分析 · {annotations.length}
+            {/* 读取中不给「· 0」：那会闪一下，而且是对用户自己劳动的假陈述。 */}
+            原文分析 · {loadState === "loading" ? "读取中" : annotations.length}
           </button>
         </span>
         <button

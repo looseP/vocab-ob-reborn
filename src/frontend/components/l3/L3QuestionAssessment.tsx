@@ -31,10 +31,18 @@ function formatEditedAt(iso: string): string {
   return `${date.getMonth() + 1}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function L3QuestionAssessment({ questionId, assessment, onSaved }: {
+export function L3QuestionAssessment({ questionId, assessment, loadState = "ready", onRetry, onSaved }: {
   questionId: string;
   /** 父层批量读回的行；`null` = 该题还没有评析（空态，不是错误）。 */
   assessment: L3Assessment | null;
+  /**
+   * 读面状态（2026-09-27）。`error` 时**不给任何写入口** —— PUT 是 latest-wins
+   * upsert，用户在没看到旧内容的情况下点「写评析」就会把它覆盖，那是数据丢失。
+   * 「读失败」也不是「没有」：显示成「待沉淀」是关于用户自己劳动的假陈述。
+   */
+  loadState?: "loading" | "ready" | "error";
+  /** 读失败时的重试出口（不给的话用户只能刷新整页）。 */
+  onRetry?: () => void;
   /** 保存成功：把服务端行交回父层（父层是唯一真源，本组件不留副本）。 */
   onSaved: (row: L3Assessment) => void;
 }) {
@@ -67,6 +75,22 @@ export function L3QuestionAssessment({ questionId, assessment, onSaved }: {
 
   const hasContent = Boolean(assessment && assessment.content_md.trim().length > 0);
 
+  // 读失败：只给「重试」，不给展开（展开里的一切都以「已知旧内容」为前提）。
+  if (loadState === "error") {
+    return (
+      <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-[var(--color-surface)] px-2.5 py-1.5 text-xs ring-1 ring-[var(--color-border)]"
+        onClick={(event) => event.stopPropagation()}>
+        <span className="text-[var(--color-ink-soft)]">评析 · 未能读取</span>
+        {onRetry && (
+          <button type="button" onClick={onRetry}
+            className="shrink-0 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[11px] text-[var(--color-ink)] hover:border-[var(--color-accent)]">
+            重读评析
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-2 rounded-lg bg-[var(--color-surface)] text-xs ring-1 ring-[var(--color-border)]"
       onClick={(event) => event.stopPropagation()}>
@@ -76,7 +100,8 @@ export function L3QuestionAssessment({ questionId, assessment, onSaved }: {
         aria-expanded={expanded}
         className="flex w-full items-center justify-between gap-2 whitespace-nowrap px-2.5 py-1.5 text-xs font-semibold text-[var(--color-ink-soft)] hover:text-[var(--color-accent)]"
       >
-        <span>评析 · {hasContent ? "已沉淀" : "待沉淀"}</span>
+        {/* 读取中不给「待沉淀」：那是对用户自己劳动的假陈述，而且会闪一下。 */}
+        <span>评析 · {loadState === "loading" ? "读取中" : hasContent ? "已沉淀" : "待沉淀"}</span>
         <span className="flex items-center gap-2 text-[10px] font-normal">
           {assessment && (
             <span className="text-[var(--color-ink-soft)]">

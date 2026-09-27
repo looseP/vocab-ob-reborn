@@ -159,14 +159,29 @@ export interface HiddenTraceCounts {
    * 评析条数（**有内容**的才算：空正文不是沉淀）。数据来自批量读面
    * `assessments`（`questionId → 行`），与解析档渲染的评析**同源** —— 两处各读一次
    * 就可能读到不同时刻的两种事实，声明会与实际不符。
-   *
-   * 读失败降级为空 Map 时这里恒为 0 ⇒ 声明条**漏报**这一类。这是「读不到就不谎报」：
-   * 宁可漏说，也不要编一个数字（编出来的数字会让用户去找一条并不存在的评析）。
    */
   assessments: number;
   /** 已有作答的题数（选项已选 / 译文 / 作文）。 */
   picked: number;
+  /**
+   * **读失败因而数不出**的类别（2026-09-27）。与服务端读面同源的只有注记与评析；
+   * 划重点/已选来自本地 `answers`，永远数得出。
+   *
+   * 为什么需要它：读失败时若只把数字当 0，声明条就会**漏报**一类正在被隐藏的痕迹 ——
+   * 而用户此时既看不到那些内容、也没被告知，正是 S-1 要防的「静默隐藏用户劳动成果」。
+   * 编一个数字更糟（用户会去找一条并不存在的评析）。所以：**数不出就明说数不出**。
+   */
+  unknown?: readonly HiddenTraceClass[];
 }
+
+/** 可能读不出（即来自服务端读面）的痕迹类别。 */
+export type HiddenTraceClass = "annotations" | "assessments";
+
+/** 类别 → 声明条里的中文名（与计数文案同一套词，别让两处各写一个）。 */
+const TRACE_CLASS_LABEL: Record<HiddenTraceClass, string> = {
+  annotations: "原文分析",
+  assessments: "评析",
+};
 
 /**
  * 纯净模式的「已隐藏 N 处」声明条文案；无需声明时返回 `null`。
@@ -177,6 +192,10 @@ export interface HiddenTraceCounts {
  * 并「修复」）。所以隐藏必须**自带声明**。
  *
  * 计数为 0 的类别不出现在文案里（全 0 时返回 `null` —— 不显示无意义的「已隐藏 0 处」）。
+ *
+ * `counts.unknown` 里的类别追加一句「未能读取，未计入其中」：读失败时那些内容正在
+ * 被隐藏（纯净档判定不看数据），用户却既看不到也没被告知。**宁可承认数不出，也不
+ * 假装是 0。**
  */
 export function hiddenTraceNotice(
   mode: ExamMode,
@@ -188,6 +207,13 @@ export function hiddenTraceNotice(
   if (counts.annotations > 0) parts.push(`${counts.annotations} 条注记`);
   if (counts.assessments > 0) parts.push(`${counts.assessments} 条评析`);
   if (counts.picked > 0) parts.push(`${counts.picked} 处已选作答`);
-  if (parts.length === 0) return null;
-  return `纯净模式已隐藏你的 ${parts.join("、")}（切回做题或解析模式可见）`;
+  const unknown = (counts.unknown ?? [])
+    .map((cls) => TRACE_CLASS_LABEL[cls])
+    .filter((label): label is string => label != null);
+  if (parts.length === 0 && unknown.length === 0) return null;
+  const known = parts.length > 0
+    ? `已隐藏你的 ${parts.join("、")}（切回做题或解析模式可见）`
+    : "已隐藏你的部分痕迹（切回做题或解析模式可见）";
+  if (unknown.length === 0) return `纯净模式${known}`;
+  return `纯净模式${known}；另有${unknown.join("与")}未能读取，未计入其中`;
 }
