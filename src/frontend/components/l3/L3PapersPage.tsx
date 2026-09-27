@@ -31,6 +31,7 @@ import {
 } from "@/frontend/components/l3/QuestionFieldsEditor";
 import { PendingQuestionsPanel } from "@/frontend/components/l3/PendingQuestionsPanel";
 import { RecordTab } from "@/frontend/components/l3/RecordTab";
+import { EditPaperForm } from "@/frontend/components/l3/EditPaperForm";
 import type { L3QuestionType, WritingQuestionTaskSummary } from "@/domain";
 
 /**
@@ -830,6 +831,8 @@ function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet, e
   const [detail, setDetail] = useState<ExamPaper | null>(null);
   const [retakeNonce, setRetakeNonce] = useState(0);
   const [resumeSheetId, setResumeSheetId] = useState<string | null>(null);
+  /** 改卷中的卷（B4/D-5）：非 null 时列表让位给改卷表单。 */
+  const [editingPaper, setEditingPaper] = useState<ExamPaper | null>(null);
   const pendingResumeSheetRef = useRef<string | null>(deepLinkResumeSheet ?? null);
 
   const load = useCallback(async () => {
@@ -872,8 +875,20 @@ function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet, e
     }
   };
 
-  // F-1 深链：列表就绪后自动开卷（ref 持有最新闭包，效果只盯 deepLink/papers 变化）。
-  // 🔴 StrictMode（dev）下 load() 双跑会让 papers 两次落地 → 本效应双触发；必须一次性消费，
+  /**
+   * 改卷（2026-09-27 B4 / D-5）：先读卷详情再开表单 —— 改卷引用 `questionIds`，
+   * 表单要预填就得先有 sections（列表行只有标题/节数/题数，见 PaperListItem）。
+   */
+  const startEditPaper = async (id: string) => {
+    try {
+      const next = await apiFetch<ExamPaper>(`/l3/papers/${encodeURIComponent(id)}`);
+      setEditingPaper(next);
+    } catch {
+      onToast("error", "试卷详情加载失败，改卷需要先读到它的节与题");
+    }
+  };
+
+  // F-1 深链：列表就绪后自动开卷（ref 持有最新闭包，效果只盯 deepLink/papers 变化）。  // 🔴 StrictMode（dev）下 load() 双跑会让 papers 两次落地 → 本效应双触发；必须一次性消费，
   // 否则第二次（resumeSheet 已被消费）会退化成 openSheet——sealed 恢复场景将另建新卷（C 批实证）。
   const deepLinkOpenedRef = useRef<string | null>(null);
   const openPaperRef = useRef<typeof openPaper | null>(null);
@@ -885,6 +900,21 @@ function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet, e
     void openPaperRef.current?.(deepLink);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLink, papers]);
+
+  if (editingPaper) {
+    return (
+      <div className="space-y-2">
+        <button type="button" onClick={() => setEditingPaper(null)} data-testid="edit-paper-back"
+          className="text-xs text-[var(--color-accent)]">← 返回试卷列表</button>
+        <EditPaperForm
+          paper={editingPaper}
+          onToast={onToast}
+          onCancel={() => setEditingPaper(null)}
+          onDone={() => { setEditingPaper(null); void load(); }}
+        />
+      </div>
+    );
+  }
 
   if (detail) {
     return (
@@ -909,11 +939,17 @@ function PapersTab({ onToast, deepLink, deepLinkQuestion, deepLinkResumeSheet, e
   ) : (
     <ul className="space-y-1.5">
       {papers.map((paper) => (
-        <li key={paper.id}>
+        <li key={paper.id} className="flex items-center gap-2">
           <button type="button" onClick={() => void openPaper(paper.id)}
-            className="group flex w-full items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-left text-sm transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft,var(--color-surface))]">
+            className="group flex min-w-0 flex-1 items-center justify-between rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-left text-sm transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-soft,var(--color-surface))]">
             <span className="font-medium">{paper.title}</span>
             <span className="text-xs text-[var(--color-ink-soft)]">{paper.section_count} 节 · {paper.question_count} 题 · <span className="text-[var(--color-accent)] opacity-0 transition-opacity group-hover:opacity-100">开卷 →</span></span>
+          </button>
+          {/* 改卷入口（D-5）：就近放在列表行上，不新造页签/模式。 */}
+          <button type="button" onClick={() => void startEditPaper(paper.id)}
+            data-testid={`papers-edit-${paper.id}`}
+            className="shrink-0 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]">
+            改
           </button>
         </li>
       ))}
