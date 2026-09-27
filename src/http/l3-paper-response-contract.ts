@@ -205,11 +205,26 @@ export const l3PracticeFileListResponseSchema = z.object({
   offset: z.number().int().nonnegative(),
 }).strict();
 
+/**
+ * 练习文件详情里的题目行 = 题目行 + **能不能改**（2026-09-27）。
+ *
+ * 为什么只加在这个读面：`l3QuestionResponseSchema` 被建卷响应与卷详情复用，把
+ * `editable` 塞进去要改三个产出点；改题入口只需要这一个读面知道。
+ *
+ * `editable` 是**结论**不是原料（不给 `attempt_count`）：护栏判据在 service，
+ * 发原料让前端自己算等于把护栏复制一份。判据与 `updateQuestion` 的 409 同一组，
+ * 两侧钉在一条测试里（`editable === false` ⟺ PATCH 必 409）。
+ */
+export const l3PracticeFileQuestionSchema = l3QuestionResponseSchema.extend({
+  /** 此刻是否可改题面（服务端认定：状态可编辑 ∧ 无作答历史）。 */
+  editable: z.boolean(),
+});
+
 export const l3PracticeFileDetailResponseSchema = z.object({
   question_type: questionTypeSchema,
   source: z.object({ id: z.string().uuid(), title: z.string() }).strict().nullable(),
-  /** 原文正文：做题表面（file venue 题纸）文栏渲染所需；仅 source 型文件返回，fileKey 型为 null。 */
+  /** 原文素材的正文（file venue 做题面要；fileKey 型为 null）。 */
   source_content: z.string().nullable(),
   file_key: z.string().nullable(),
-  questions: z.array(l3QuestionResponseSchema),
+  questions: z.array(l3PracticeFileQuestionSchema),
 }).strict();

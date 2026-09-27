@@ -21,7 +21,7 @@ import type {
   L3QuestionRow,
   L3SubSpace,
 } from "../domain";
-import { editableQuestionStatuses, resolveAuthoringLifecycle } from "../domain/l3-authoring";
+import { editableQuestionStatuses, resolveAuthoringLifecycle, type AuthoringActor } from "../domain/l3-authoring";
 import {
   L3_QUESTION_TYPES,
   PAPER_PAYLOAD_VERSION,
@@ -609,7 +609,8 @@ export class L3PaperService {
     /** 原文正文（file venue 做题表面文栏数据源；fileKey 型为 null）。 */
     source_content: string | null;
     file_key: string | null;
-    questions: L3QuestionRow[];
+    /** 题目行 + `editable`（能不能改；服务端按与改题护栏同一组判据算，2026-09-27）。 */
+    questions: Array<L3QuestionRow & { editable: boolean }>;
   }> {
     requireEnum(input.questionType, L3_QUESTION_TYPES, "questionType");
     const sourceId = trimOrNull(input.sourceId ?? null);
@@ -630,7 +631,7 @@ export class L3PaperService {
           source: { id: source.id, title: source.title },
           source_content: source.content_text,
           file_key: null,
-          questions,
+          questions: await this.withEditability(repos, input.userId, questions, { role: "owner" }),
         };
       }
       const questions = await repos.l3Paper.listActiveQuestionsForFile(input.userId, {
@@ -642,9 +643,36 @@ export class L3PaperService {
         source: null,
         source_content: null,
         file_key: fileKey,
-        questions,
+        questions: await this.withEditability(repos, input.userId, questions, { role: "owner" }),
       };
     });
+  }
+
+  /**
+   * 给题目行附上 `editable`（2026-09-27）：**结论**字段，不是原料字段。
+   *
+   * 为什么给结论不给 `attempt_count`：护栏的判据在 service 里（`updateQuestion` 的
+   * 409），发原料让前端自己算等于把护栏复制一份，漂移方向通常是「多显示一个改题入口」。
+   * 与 `revealAll` → 判定表、`interactionLocked` → 同一道门同族纪律。
+   *
+   * 判据**必须**与护栏同一组：`editableQuestionStatuses(actor)` ∩ `attemptCount === 0`。
+   * 本读面按 owner 口径（`GET /practice-files/detail` 是 owner-only 面），但仍走
+   * `editableQuestionStatuses` 而不是写死 —— 写死就是第二套判据。
+   *
+   * 一次分组查询取全部计数（逐题 count 是 N+1，与本轮在评析上销掉的那个同族）。
+   */
+  private async withEditability(
+    repos: IRepositories,
+    userId: string,
+    questions: L3QuestionRow[],
+    actor: AuthoringActor,
+  ): Promise<Array<L3QuestionRow & { editable: boolean }>> {
+    const editableStatuses = new Set<string>(editableQuestionStatuses(actor));
+    const attemptCounts = await repos.l3Paper.countAttemptsForQuestions(userId, questions.map((q) => q.id));
+    return questions.map((question) => ({
+      ...question,
+      editable: editableStatuses.has(question.status) && (attemptCounts.get(question.id) ?? 0) === 0,
+    }));
   }
 
   /** 卷面现拉组装：引用缺失降级 missing 占位（ADR-0030 §2 护栏②），不抛 500。 */

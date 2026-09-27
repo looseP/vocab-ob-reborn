@@ -1568,6 +1568,11 @@ export interface IL3PaperRepository {
   /** 题面已有作答数（改题面护栏用；owner 作用域）。 */
   countQuestionAttempts(userId: string, questionId: string): Promise<number>;
   /**
+   * 批量作答计数（`questionId → count`；无作答的题不在返回里 = 缺键即 0）。
+   * 2026-09-27：改题入口的「能不能改」判定要按卷取，逐题 count 是 N+1。
+   */
+  countAttemptsForQuestions(userId: string, questionIds: readonly string[]): Promise<Map<string, number>>;
+  /**
    * 题面已有评卷结果数（ADR-0038 决策 5/6）：改题面防历史脏行、删题防销毁判定。
    * owner 作用域。
    */

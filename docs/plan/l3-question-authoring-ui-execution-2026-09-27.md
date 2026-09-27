@@ -55,9 +55,38 @@ B 是最重的一处：ADR-0037 的采纳闸门只挡 agent 产物，owner 直�
 
 即：**owner 可改 active 题**是既有裁决，不是本轮新增权限。
 
----
+### 1.6 B3 施工前发现：读面**不携带**「能不能改」的信号（2026-09-27 登记的范围变更）
 
-## 二、范围
+D-2 要求「有作答历史时**不渲染**改题入口」。而 UI 要做这个判断，需要读面告诉它
+「这道题现在能不能改」。核对下来：
+
+- 改题护栏的判据是 `countQuestionAttempts(userId, questionId) > 0` → 409
+  （`l3-paper.service.ts:339`，`blockers: { attempts: n }`）。
+- `l3QuestionResponseSchema`（`l3-paper-response-contract.ts:33`）**没有** attempt 计数，
+  也没有任何「可编辑」标记。`GET /practice-files/detail` 返回的就是它。
+- `status` 只能区分 `pending / active / rejected`，**答不了**「已被作答过」。
+
+于是 D-2 没有数据依据，只能退回到已签字否掉的 C 方案（填完表单吃 409）。
+
+**处置（须签字）**：给**练习文件详情读面**的题目行加一个 `editable: boolean`，
+由服务端用**与护栏同一组判据**算出（`editableQuestionStatuses` ∩ `attemptCount === 0`）。
+理由三条：
+
+1. **判定不进 UI**（本文件一贯纪律）。发 `attempt_count` 让前端自己算 `editable` 是把
+   护栏复制一份 —— 与 `revealAll` → 判定表、`interactionLocked` → 同一道门同族。
+   字段给**结论**（能不能改），不给**原料**（有没有作答）。
+2. **只加在这一个读面**。`l3QuestionResponseSchema` 被建卷响应与卷详情复用，把
+   `editable` 塞进去要改 3 处产出点；改为给详情读面单独
+   `l3PracticeFileQuestionSchema = l3QuestionResponseSchema.extend({ editable })`，
+   其余消费点零影响。
+3. **一次分组查询**取全部 attempt 计数，不按题逐个 count（否则 20 题的卷 = 20 次查询，
+   与本轮刚销掉的评析 N+1 同族）。
+
+**连带范围**：这是**响应契约变更**（不是写入 schema、不是护栏、不是迁移），因此 B3
+不再是「纯 UI 批次」：需动 repository（分组计数）/ service（算 editable）/
+响应契约 / OpenAPI 再生成。已在 B3 小节登记，**并加一条测试把两侧钉在一起**：
+同一题 `editable === false` ⟺ `PATCH` 必 409 —— 判据一旦漂移立刻红。
+
 
 **做**：缺口 A + B（同属「题目装配面」），C 单列一批（§八 B3）。
 
