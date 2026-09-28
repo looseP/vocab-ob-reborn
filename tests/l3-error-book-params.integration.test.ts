@@ -108,7 +108,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (!client.connected) return;
+  // pg.Client 无公开的 connected 标志；用 try/catch 兜住「连接已断」的情况即可。
+  try {
+    await client.query("SELECT 1");
+  } catch {
+    return;
+  }
   await client.query("DELETE FROM l3_grading_results WHERE user_id = $1", [OWNER]);
   await client.query("DELETE FROM l3_questions WHERE user_id = $1", [OWNER]);
   await client.query("DELETE FROM l3_practice_attempts WHERE user_id = $1", [OWNER]);
