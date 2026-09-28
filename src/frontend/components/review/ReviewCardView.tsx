@@ -46,6 +46,7 @@ type ExampleItem = {
   source_type?: unknown;
   url?: unknown;
   modified?: unknown;
+  anchor?: unknown;
   exam?: unknown;
   verified?: unknown;
 };
@@ -96,6 +97,13 @@ function parseKeyPoints(raw: unknown): Array<{ text: string; tag: string | null;
   return out;
 }
 
+/** verified.checked 条目数（产线核验留痕）：非数组/缺失一律 0。 */
+function parseVerifiedCount(raw: unknown): number {
+  if (typeof raw !== "object" || raw === null) return 0;
+  const checked = (raw as { checked?: unknown }).checked;
+  return Array.isArray(checked) ? checked.length : 0;
+}
+
 /** 轨色（切分设计说明）：main 主轨 / mod 修饰轨 / supp 补充轨。 */
 const RAIL_COLOR: Record<ExamSplitRole, string> = {
   main: "var(--color-accent)",
@@ -103,16 +111,107 @@ const RAIL_COLOR: Record<ExamSplitRole, string> = {
   supp: "rgba(103, 77, 44, 0.32)",
 };
 
-/** 切分片段渲染：[] 标记的嵌套成分以强调色显示（mock .nest 口径）。 */
-function SplitSegment({ text }: { text: string }) {
+/** 转义正则元字符（目标词可能含 . 或 -）。 */
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** 切分片段渲染：[] 标记的嵌套成分以强调色显示（mock .nest 口径）；highlight 命中词加重。 */
+function SplitSegment({ text, highlight }: { text: string; highlight?: string | null }) {
   const parts = text.split(/(\[[^\]]*\])/g);
+  const hl = highlight && highlight.trim().length > 0 ? highlight : null;
+  const hlRe = hl ? new RegExp(`(${escapeRegExp(hl)})`, "gi") : null;
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith("[") && part.endsWith("]")) {
+          return (
+            <span key={i} className="font-medium text-[var(--color-accent)]">
+              {part.slice(1, -1)}
+            </span>
+          );
+        }
+        if (!hlRe || !hl) return <span key={i}>{part}</span>;
+        return (
+          <span key={i}>
+            {part.split(hlRe).map((piece, j) =>
+              piece.toLowerCase() === hl.toLowerCase() ? (
+                <span key={j} className="font-semibold text-[var(--color-accent)]">
+                  {piece}
+                </span>
+              ) : (
+                <span key={j}>{piece}</span>
+              ),
+            )}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * 目标词遮挡文本（mock .mask 口径）：未揭示时以高亮底色隐形呈现（点击揭示），
+ * 揭示后按强调色显示。term 为空时退化为普通渲染（含 [] 嵌套着色）。
+ */
+function MaskedText({
+  text,
+  term,
+  revealed,
+  onUnmask,
+}: {
+  text: string;
+  term: string | null;
+  revealed: boolean;
+  onUnmask?: () => void;
+}) {
+  if (!term || term.trim().length === 0) return <SplitSegment text={text} />;
+  if (revealed) return <SplitSegment text={text} highlight={term} />;
+  const parts = text.split(new RegExp(`(${escapeRegExp(term)})`, "gi"));
   return (
     <>
       {parts.map((part, i) =>
-        part.startsWith("[") && part.endsWith("]") ? (
-          <span key={i} className="font-medium text-[var(--color-accent)]">
-            {part.slice(1, -1)}
+        part.toLowerCase() === term.toLowerCase() ? (
+          <span
+            key={i}
+            role="button"
+            tabIndex={0}
+            title="点击揭示词形（消耗 H1 提示）"
+            className="inline-block min-w-[4.2em] cursor-pointer rounded-md px-1 text-center align-baseline transition-colors"
+            style={{ background: "var(--color-highlight)", color: "var(--color-highlight)" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onUnmask?.();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                onUnmask?.();
+              }
+            }}
+          >
+            {part}
           </span>
+        ) : (
+          <SplitSegment key={i} text={part} />
+        ),
+      )}
+    </>
+  );
+}
+
+/** 卡背完整例句：目标词以 <mark> 高亮（mock .ex-sentence mark 口径）。 */
+function MarkedSentence({ text, term }: { text: string; term: string | null }) {
+  if (!term || term.trim().length === 0) return <>{text}</>;
+  const parts = text.split(new RegExp(`(${escapeRegExp(term)})`, "gi"));
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === term.toLowerCase() ? (
+          <mark key={i} className="rounded px-0.5 font-semibold" style={{ background: "var(--color-highlight)" }}>
+            {part}
+          </mark>
         ) : (
           <span key={i}>{part}</span>
         ),
@@ -163,21 +262,13 @@ function extractMnemonicCore(raw: string | null | undefined): string | null {
 // 强制 again。直接翻卡（未用满提示）= 验证回忆，上限不降。
 
 type HintStep =
-  | {
-      kind: "example";
-      text: string;
-      translation: string | null;
-      exam: ExamLayer | null;
-      source: string | null;
-      sourceType: string | null;
-      url: string | null;
-    }
+  | { kind: "example"; anchor: string | null }
   | { kind: "chain"; text: string }
   | { kind: "prototype"; text: string }
   | { kind: "mnemonic"; text: string; mtype: string | null };
 
 const STEP_LABEL: Record<HintStep["kind"], string> = {
-  example: "H1 例句",
+  example: "H1 揭示词形",
   chain: "H1′ 语义链",
   prototype: "H2 原型",
   mnemonic: "H3 助记锚",
@@ -212,15 +303,8 @@ function buildHintSteps(word: ReviewCard["word"] | null | undefined): HintStep[]
     .map(parseExampleItem)
     .find((e): e is ExampleItem => e !== null && asString(e.text) !== null);
   if (exampleRaw) {
-    steps.push({
-      kind: "example",
-      text: asString(exampleRaw.text)!,
-      translation: asString(exampleRaw.translation),
-      exam: parseExamLayer(exampleRaw.exam),
-      source: asString(exampleRaw.source),
-      sourceType: asString(exampleRaw.source_type),
-      url: asString(exampleRaw.url),
-    });
+    // H1 = 揭示词形：例句已在正面线索区呈现（目标词遮盖），此级只负责解锁词形
+    steps.push({ kind: "example", anchor: asString(exampleRaw.anchor) ?? word.lemma ?? null });
   } else if (word.semantic_chain && word.semantic_chain.trim().length > 0) {
     steps.push({ kind: "chain", text: word.semantic_chain });
   }
@@ -255,8 +339,18 @@ function PrototypeMask({ text }: { text: string }) {
   );
 }
 
-/** 轨色切分行（mock .clue-split 口径）：main/mod/supp 三轨 + 角色标签 + [] 嵌套着色。 */
-function SplitLines({ exam }: { exam: ExamLayer }) {
+/** 轨色切分行（mock .clue-split 口径）：main/mod/supp 三轨 + 角色标签 + [] 嵌套着色 + 目标词遮挡。 */
+function SplitLines({
+  exam,
+  maskTerm,
+  maskRevealed,
+  onUnmask,
+}: {
+  exam: ExamLayer;
+  maskTerm?: string | null;
+  maskRevealed?: boolean;
+  onUnmask?: () => void;
+}) {
   const split = Array.isArray(exam.reading?.split) ? exam.reading.split : [];
   const lines = split.filter((s): s is string => typeof s === "string");
   const roles = parseSplitRoles(exam.reading?.split_roles);
@@ -274,7 +368,12 @@ function SplitLines({ exam }: { exam: ExamLayer }) {
               style={{ background: RAIL_COLOR[role] }}
             />
             <span className="min-w-0 flex-1 text-[13px] leading-relaxed text-[var(--color-ink)]">
-              <SplitSegment text={seg} />
+              <MaskedText
+                text={seg}
+                term={maskTerm ?? null}
+                revealed={maskRevealed ?? true}
+                onUnmask={onUnmask}
+              />
             </span>
             {label && (
               <span className="max-w-[11em] flex-none text-right text-[10px] leading-snug text-[var(--color-ink-soft)] opacity-85">
@@ -291,15 +390,14 @@ function SplitLines({ exam }: { exam: ExamLayer }) {
 function HintStepContent({ step }: { step: HintStep }) {
   if (step.kind === "example") {
     return (
-      <div className="rounded-lg bg-[var(--color-surface-muted)] px-3 py-2">
-        {step.exam ? (
-          <SplitLines exam={step.exam} />
-        ) : (
-          <p className="text-[13px] leading-relaxed text-[var(--color-ink)]">{step.text}</p>
-        )}
-        {step.translation && (
-          <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--color-ink-soft)]">{step.translation}</p>
-        )}
+      <div className="flex items-center gap-2 rounded-lg bg-[var(--color-surface-muted)] px-3 py-2">
+        <span aria-hidden>👁</span>
+        <span className="text-[12.5px] leading-relaxed text-[var(--color-ink)]">
+          词形已揭示 —— 回到上方例句核对语境与搭配
+          {step.anchor && (
+            <span className="ml-1.5 font-semibold text-[var(--color-accent)]">{step.anchor}</span>
+          )}
+        </span>
       </div>
     );
   }
@@ -607,97 +705,179 @@ interface ReviewCardViewProps {
 }
 
 /** 三档升级建议文案（与后端 suggestion_snapshot.level 同值）。 */
-/** 例句精讲（exam 三层：切分 / 译点 / 骨架）—— 数据来自 examples[0] 的 exam/verified（H1 产线 v2）。 */
-function ExamFold({ example }: { example: ExampleItem | null }) {
-  const exam = example ? parseExamLayer(example.exam) : null;
-  if (!example || !exam) return null;
-  const split = Array.isArray(exam.reading?.split) ? exam.reading.split : [];
-  const lines = split.filter((s): s is string => typeof s === "string");
-  const structure = asString(exam.reading?.structure);
-  const kps = parseKeyPoints(exam.translation?.key_points);
-  const model = asString(exam.translation?.model);
-  const fn = asString(exam.writing?.function);
-  const pattern = asString(exam.writing?.pattern);
-  const usage = asString(exam.writing?.usage);
-  const imit = asString(exam.writing?.imitating_example);
-  const source = asString(example.source);
-  const sourceType = asString(example.source_type);
-  const url = asString(example.url);
-  const hasAny = lines.length > 0 || kps.length > 0 || pattern !== null;
-  if (!hasAny) return null;
+/**
+ * 正面「例句线索区」（mock .clue-zone 口径）：目标词遮盖 + 轨色切分，先在语境里回忆。
+ * 无 exam 切分数据时退化为整句遮盖（v1 批次仅句子层）。
+ */
+function ClueZone({
+  example,
+  maskTerm,
+  maskRevealed,
+  onUnmask,
+}: {
+  example: ExampleItem;
+  maskTerm: string | null;
+  maskRevealed: boolean;
+  onUnmask: () => void;
+}) {
+  const exam = parseExamLayer(example.exam);
+  const split = exam && Array.isArray(exam.reading?.split) ? exam.reading.split : [];
+  const hasSplit = split.some((s) => typeof s === "string");
+  const text = asString(example.text);
   return (
-    <details className="group mt-3 w-full rounded-xl border border-dashed border-[var(--color-border)]" data-no-flip>
+    <div
+      className="mt-4 w-full rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[rgba(255,253,248,0.55)] px-3.5 py-3 text-left"
+      data-no-flip
+      onClick={(e) => e.stopPropagation()}
+    >
+      <p className="mb-1.5 flex items-center gap-1.5 text-[11px] text-[var(--color-ink-soft)]">
+        <span className="rounded bg-[var(--color-accent-2)] px-1 py-px text-[10px] font-bold tracking-wider text-white">NEW</span>
+        例句线索（H1）· 目标词已遮盖 · 先在语境里回忆
+      </p>
+      {hasSplit && exam ? (
+        <SplitLines exam={exam} maskTerm={maskTerm} maskRevealed={maskRevealed} onUnmask={onUnmask} />
+      ) : text ? (
+        <p className="text-[13.5px] leading-relaxed text-[var(--color-ink)]">
+          <MaskedText text={text} term={maskTerm} revealed={maskRevealed} onUnmask={onUnmask} />
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 正面「训练扩展」折叠（mock fold 口径）：译点与骨架自检 —— 译点参考处理以
+ * 金块遮盖（点一下揭示，"先猜后看"）；骨架句式直接可见，附适用与核验状态。
+ */
+function TrainingFold({ example }: { example: ExampleItem | null }) {
+  const [revealed, setRevealed] = useState<Set<number>>(new Set());
+  const exam = example ? parseExamLayer(example.exam) : null;
+  const kps = parseKeyPoints(exam?.translation?.key_points);
+  const pattern = asString(exam?.writing?.pattern);
+  const usage = asString(exam?.writing?.usage);
+  const imit = asString(exam?.writing?.imitating_example);
+  const fn = asString(exam?.writing?.function);
+  const verifiedCount = parseVerifiedCount(example?.verified);
+  if (!example || !exam || (kps.length === 0 && !pattern)) return null;
+  const toggle = (index: number) =>
+    setRevealed((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  const KHOLE = { background: "rgba(243,220,162,0.72)", color: "rgba(243,220,162,0.72)" } as const;
+  return (
+    <details className="group mt-2.5 w-full rounded-xl border border-dashed border-[var(--color-border)]" data-no-flip>
       <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs text-[var(--color-ink-soft)] transition-colors hover:text-[var(--color-accent)]">
         <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-        例句精讲 · 切分 / 译点 / 骨架
+        训练扩展 · 译点与骨架（点金块自检 · 先猜后看）
       </summary>
-      <div className="flex flex-col gap-3 border-t border-[var(--color-border)] px-3 py-2.5 text-left text-[12.5px] leading-relaxed">
-        {lines.length > 0 && (
-          <section aria-label="句法切分">
-            <SplitLines exam={exam} />
-            {structure && (
-              <p className="mt-1 text-[11px] leading-relaxed text-[var(--color-ink-soft)]">结构：{structure}</p>
-            )}
-          </section>
-        )}
+      <div className="flex flex-col gap-2.5 border-t border-[var(--color-border)] px-3 py-2.5 text-left text-[12.5px] leading-relaxed">
         {kps.length > 0 && (
-          <section aria-label="译点采分点">
-            <ul className="space-y-1.5">
+          <div className="flex gap-2">
+            <span className="w-11 flex-none pt-0.5 text-right text-[11px] text-[var(--color-ink-soft)]">译点</span>
+            <div className="min-w-0 flex-1 space-y-1.5">
               {kps.map((kp, i) => (
-                <li key={i} className="relative pl-3.5">
-                  <span aria-hidden className="absolute left-0 top-0 text-[var(--color-accent)]">▸</span>
+                <div
+                  key={i}
+                  className="cursor-pointer"
+                  onClick={() => toggle(i)}
+                  title={revealed.has(i) ? "点击遮回" : "点击揭示参考处理"}
+                >
                   <span className="font-semibold text-[var(--color-ink)]">{kp.text}</span>
-                  {kp.tag && (
+                  {kp.translation && (
+                    <>
+                      <span className="mx-1 text-[var(--color-accent)]">→</span>
+                      <span
+                        className="inline-block rounded px-1 transition-colors"
+                        style={revealed.has(i) ? undefined : KHOLE}
+                      >
+                        {kp.translation}
+                      </span>
+                    </>
+                  )}
+                  {revealed.has(i) && kp.tag && (
                     <span className="ml-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1 py-px font-mono text-[10px] text-[var(--color-ink-soft)]">
                       {kp.tag}
                     </span>
                   )}
-                  {kp.translation && (
-                    <span className="ml-1.5 rounded bg-[rgba(243,220,162,0.72)] px-1 py-px text-[var(--color-ink)]">
-                      {kp.translation}
-                    </span>
+                  {revealed.has(i) && kp.note && (
+                    <span className="ml-1.5 text-[11px] text-[var(--color-ink-soft)]">{kp.note}</span>
                   )}
-                  {kp.note && <span className="ml-1.5 text-[11px] text-[var(--color-ink-soft)]">{kp.note}</span>}
-                </li>
+                </div>
               ))}
-            </ul>
-            {model && <p className="mt-1.5 text-[11.5px] text-[var(--color-ink-soft)]">参考译文：{model}</p>}
-          </section>
+            </div>
+          </div>
         )}
         {pattern && (
-          <section aria-label="写作骨架">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {fn && <Badge tone="warm">{fn}</Badge>}
-              {usage && <span className="text-[11px] text-[var(--color-ink-soft)]">适用：{usage}</span>}
-            </div>
-            <pre className="mt-1.5 whitespace-pre-wrap break-words rounded-lg bg-[#2a2118] px-3 py-2 font-mono text-[11.5px] leading-relaxed text-[#f2e7d3]">
-              {pattern}
-            </pre>
-            {imit && (
-              <p className="mt-1.5 rounded-md border-l-[3px] border-[rgba(15,111,98,0.55)] bg-[rgba(15,111,98,0.06)] px-2.5 py-1.5 text-[11.5px] leading-relaxed text-[var(--color-ink)]">
-                <b className="mr-1.5 text-[11px] font-semibold text-[var(--color-accent)]">仿写</b>
-                {imit}
+          <div className="flex gap-2">
+            <span className="w-11 flex-none pt-0.5 text-right text-[11px] text-[var(--color-ink-soft)]">骨架</span>
+            <div className="min-w-0 flex-1">
+              <pre className="whitespace-pre-wrap break-words rounded-lg bg-[#2a2118] px-3 py-2 font-mono text-[11.5px] leading-relaxed text-[#f2e7d3]">
+                {pattern}
+              </pre>
+              <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-ink-soft)]">
+                {fn && <Badge tone="warm">{fn}</Badge>}
+                {usage && <span>适用：{usage}</span>}
+                {imit && <span className="text-[var(--color-ink)]">仿写：{imit}</span>}
+                {verifiedCount > 0 && (
+                  <b className="text-[var(--color-accent-2)]">✓ 已核验</b>
+                )}
               </p>
-            )}
-          </section>
-        )}
-        {(source || url) && (
-          <p className="text-[11px] text-[var(--color-ink-soft)]">
-            来源：{sourceType ?? "web"}
-            {source && ` · ${source}`}
-            {example.modified === true && "（来源·改）"}
-            {url && (
-              <>
-                {" · "}
-                <a href={url} target="_blank" rel="noreferrer" className="underline transition-colors hover:text-[var(--color-accent)]">
-                  原文
-                </a>
-              </>
-            )}
-          </p>
+            </div>
+          </div>
         )}
       </div>
     </details>
+  );
+}
+
+/** 卡背「例句层」（mock .ex-layer 口径）：完整例句（目标词 mark 高亮）+ 译文 + 来源/核验。 */
+function ExampleLayerBlock({ example }: { example: ExampleItem | null }) {
+  const text = example ? asString(example.text) : null;
+  if (!example || !text) return null;
+  const translation = asString(example.translation);
+  const source = asString(example.source);
+  const sourceType = asString(example.source_type);
+  const url = asString(example.url);
+  const term = asString(example.anchor);
+  const verifiedCount = parseVerifiedCount(example.verified);
+  return (
+    <div
+      className="mt-3 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3 text-left"
+      data-no-flip
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-ink)]">
+          <span className="rounded bg-[var(--color-accent-2)] px-1 py-px text-[10px] font-bold tracking-wider text-white">NEW</span>
+          例句 · H1
+        </span>
+        <span className="text-right text-[11px] text-[var(--color-ink-soft)]">
+          {[sourceType, source].filter(Boolean).join(" · ")}
+        </span>
+      </div>
+      <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--color-ink)]">
+        <MarkedSentence text={text} term={term} />
+      </p>
+      {translation && (
+        <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--color-ink-soft)]">{translation}</p>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {verifiedCount > 0 && <Badge>✓ 已核验</Badge>}
+        {example.modified === true && <Badge tone="warm">来源·改</Badge>}
+        {url && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[11px] text-[var(--color-ink-soft)] underline transition-colors hover:text-[var(--color-accent)]"
+          >
+            原文
+          </a>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -743,6 +923,8 @@ export function ReviewCardView({
   // T3 Hint 阶梯：已消费提示级数 + 提示穷尽后经 H4/直翻的翻卡标记
   const [hintLevel, setHintLevel] = useState(0);
   const [viaH4, setViaH4] = useState(false);
+  // 正面线索区目标词揭示态（H1 提示的实际效果）
+  const [wordUnmasked, setWordUnmasked] = useState(false);
   const { addToast } = useToast();
 
   // 操作区容器：评分/跳过/挂起/撤销/翻页后把焦点移回这里，
@@ -764,6 +946,7 @@ export function ReviewCardView({
     setQuickDraft("");
     setHintLevel(0);
     setViaH4(false);
+    setWordUnmasked(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card?.progressId]);
 
@@ -771,14 +954,16 @@ export function ReviewCardView({
   const hintSteps = useMemo(() => (preview ? [] : buildHintSteps(card?.word)), [card, preview]);
   const cap = hintCapNow(hintLevel, viaH4);
 
-  // 卡背「例句精讲」数据源：与正面 H1 例句同一条（首条带 text 的 example）
-  const backExample = useMemo(
+  // 例句数据源：正面线索区与卡背例句层共用同一条（首条带 text 的 example）
+  const cardExample = useMemo(
     () =>
       (card?.word.examples ?? [])
         .map(parseExampleItem)
         .find((e): e is ExampleItem => e !== null && asString(e.text) !== null) ?? null,
     [card],
   );
+  // 正面线索区遮盖的目标词：优先例句 anchor（词形屈折），兜底 lemma
+  const maskTerm = cardExample ? (asString(cardExample.anchor) ?? card?.word.lemma ?? null) : null;
 
   // 翻卡统一入口：提示已全部消费时任何翻卡都标记 viaH4（防绕过 again 强制）；
   // 未用满提示的直翻 = 验证回忆，上限保持。
@@ -819,7 +1004,21 @@ export function ReviewCardView({
     onAnswer(rating, { hintLevel, viaH4 });
     refocusActions();
   };
-  const consumeHint = () => setHintLevel((v) => Math.min(v + 1, hintSteps.length));
+  const consumeHint = () => {
+    const next = Math.min(hintLevel + 1, hintSteps.length);
+    setHintLevel(next);
+    // H1 = 揭示词形：消费第 1 级同时解锁线索区遮盖
+    if (next >= 1 && hintSteps[0]?.kind === "example") setWordUnmasked(true);
+  };
+  // 线索区点击遮盖词：已消费 H1 则直接揭示，否则等价于消费 H1
+  const handleUnmaskWord = () => {
+    if (hintSteps[0]?.kind !== "example") {
+      setWordUnmasked(true);
+      return;
+    }
+    if (hintLevel >= 1) setWordUnmasked(true);
+    else consumeHint();
+  };
   const flipViaH4 = () => {
     setViaH4(true);
     setRevealed(true);
@@ -1028,15 +1227,15 @@ export function ReviewCardView({
               </div>
             )}
 
+            {/* ── Tier 0.5 例句层:完整例句(mark 高亮) + 译文 + 来源/核验(mock .ex-layer)── */}
+            <ExampleLayerBlock example={cardExample} />
+
             {/* ── Tier 1 锚点:原型 + 记忆锚(数据未到/字段缺失时整体缺席)── */}
             <AnchorPills
               prototype={detailWord?.prototype_text ?? null}
               mnemonic={meta?.mnemonic_text ?? null}
               mnemonicType={meta?.mnemonic_type ?? null}
             />
-
-            {/* ── Tier 1.5 例句精讲:切分 / 译点 / 骨架(产线 v2 exam 层,默认收起)── */}
-            <ExamFold example={backExample} />
 
             {/* ── Tier 2 网络:词源 / 语义链 / 词根词族(默认收起)── */}
             <NetworkFold detail={detailWord} />
@@ -1074,6 +1273,17 @@ export function ReviewCardView({
             {card.word.ipa && (
               <span className="mt-2 font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
             )}
+            {/* ── 正面例句线索区:目标词遮盖 + 轨色切分(H1 语境回忆) ── */}
+            {cardExample && (
+              <ClueZone
+                example={cardExample}
+                maskTerm={maskTerm}
+                maskRevealed={wordUnmasked}
+                onUnmask={handleUnmaskWord}
+              />
+            )}
+            {/* ── 正面训练扩展:译点金块自检 + 写作骨架 ── */}
+            <TrainingFold example={cardExample} key={`train-${card.progressId}`} />
             <HintLadderPanel
               steps={hintSteps}
               level={hintLevel}
