@@ -8,7 +8,7 @@
  * - 完成即回调 onDone（一次性，重入安全）。
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface TypingFlowState {
   /** 已正确键入的位（含最后一次错键的闪示位由 wrongFlash 标注）。 */
@@ -86,6 +86,25 @@ export function useTypingFlow(
     setWrongTimes(0);
     setWrongFlash(null);
   }, []);
+
+  /**
+   * 纵深防御：目标词变化即清零跟写进度。
+   *
+   * 跟写进度只对当前目标词有意义——`typedLength` 是「已键入位数」，换词后它描述的是
+   * 另一个字符串。不重置会有两类故障：
+   * - 新词比旧词短 → `done` 立即为真 → 输入框消失 + `onDone` 不再触发（死锁）；
+   * - 新词比旧词长 → 带着旧进度开局，用户看到无关字符被「已正确」高亮。
+   *
+   * 根因修复仍在调用方：视图必须给 `key` 以重置组件内**其它**本地状态
+   * （本 hook 管不到 `finished`）。见 LadderReviewSession.tsx 的 cardKey。
+   * 此处只保证本 hook 自身的不变量，不替代 key。
+   */
+  const lastTargetRef = useRef(target);
+  useEffect(() => {
+    if (lastTargetRef.current === target) return;
+    lastTargetRef.current = target;
+    reset();
+  }, [target, reset]);
 
   return { typedLength, expectedChar, wrongFlash, wrongTimes, done, handleKey, reset };
 }
