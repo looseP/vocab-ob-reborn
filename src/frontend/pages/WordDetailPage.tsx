@@ -14,6 +14,8 @@ import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { WordNotes } from "@/frontend/components/words/WordNotes";
 import { WordL3Contexts } from "@/frontend/components/words/WordL3Contexts";
 import { WordL2Content, ProvenanceBadge } from "@/frontend/components/words/WordL2Content";
+import { WordExamPanel } from "@/frontend/components/words/WordExamPanel";
+import { parseWordExam } from "@/domain/word-exam";
 import { WordL2Composer } from "@/frontend/components/words/WordL2Composer";
 import { PromoteL2Button } from "@/frontend/components/words/PromoteL2Button";
 import { AddToReviewButton } from "@/frontend/components/words/AddToReviewButton";
@@ -135,6 +137,8 @@ interface UnifiedExample {
   translation?: string;
   origin: "l1" | "l2";
   provenance?: L2Provenance;
+  /** L1 例句自带的 exam 扩展（jsonb 原样；渲染前须经 parseWordExam 校验）。 */
+  exam?: unknown;
 }
 
 function buildUnifiedExamples(word: WordDetail): UnifiedExample[] {
@@ -142,6 +146,7 @@ function buildUnifiedExamples(word: WordDetail): UnifiedExample[] {
     text: ex.text,
     translation: ex.translation,
     origin: "l1",
+    exam: ex.exam,
   }));
   const l2Items: UnifiedExample[] = (word.l2_content?.corpus_items ?? []).map((item) => ({
     text: item.text,
@@ -498,6 +503,9 @@ export function WordDetailPage() {
                     <ProvenanceBadge item={{ provenance: ex.provenance }} />
                   )}
                 </div>
+                {/* exam 扩展：逐块语法 / 译解 / 句式。默认折叠，展开不计入
+                    任何提示或评分（这里是深读区，不是提示阶梯的一级）。 */}
+                <WordExamPanel exam={parseWordExam(ex.exam)} className="mt-2" defaultOpen />
               </div>
             ))}
           </div>

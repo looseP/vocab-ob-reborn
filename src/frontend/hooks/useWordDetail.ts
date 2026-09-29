@@ -64,7 +64,12 @@ export interface WordDetail {
   short_definition: string | null;
   definition_md: string;
   body_md: string;
-  examples: Array<{ text: string; translation?: string }>;
+  /**
+   * L1 例句。`exam` 是 jsonb 里的 exam 扩展（reading/translation/writing 三层），
+   * 形状不受类型系统保护 —— 一律用 `parseWordExam` 校验后再渲染，
+   * 不要在这里直接展开 `ex.exam.reading.split`。
+   */
+  examples: Array<{ text: string; translation?: string; exam?: unknown }>;
   prototype_text?: string | null;
   aliases: string[];
   /** 核心释义义项列表（圈记条释义行下拉）。 */

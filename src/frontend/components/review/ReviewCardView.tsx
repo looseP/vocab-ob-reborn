@@ -25,6 +25,8 @@ import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { L3ContextsFold } from "@/frontend/components/review/L3ContextsFold";
 import { buildHintSteps, extractMnemonicCore, HINT_STEP_LABEL as STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
+import { WordExamPanel } from "@/frontend/components/words/WordExamPanel";
+import { pickPrimaryExam } from "@/domain/word-exam";
 
 const ratings = [
   { value: "again", label: "重来", variant: "danger" as const, key: "1" },
@@ -475,6 +477,12 @@ export function ReviewCardView({
   const hintSteps = useMemo(
     () => (preview || hintLadderHidden ? [] : buildHintSteps(card?.word)),
     [card, preview, hintLadderHidden],
+  );
+  // exam 扩展：解析既有预取的词条详情，解析失败/无数据即不渲染。
+  // useWordDetail 返回 { word, loading, ... } —— exam 在 word.examples 上。
+  const examPanel = useMemo(
+    () => pickPrimaryExam(detail?.word?.examples),
+    [detail?.word?.examples],
   );
   const cap = hintCapNow(hintLevel, viaH4);
 
@@ -932,6 +940,18 @@ export function ReviewCardView({
       ) : (
         <div className="relative flex min-h-[14rem] w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-6 py-6 text-left">
           {flipBody}
+        </div>
+      )}
+
+      {/* ── exam 扩展（L1 词卡的低频深读区）─────────────────────────────────
+          放在翻面容器**之外**，卡正面/背面都可见：精讲是"记住之后回看"的内容，
+          不该要求先翻卡才够得着；放在里面还会随翻卡动画卸载/重挂，丢展开状态。
+          数据来自既有 useWordDetail 预取（GET /words/:slug 已带 examples[].exam），
+          不新增请求。**刻意不挂在提示阶梯上**：展开不消耗提示级数、不改
+          hintLevel、不影响评分上限——阶梯负责低成本回忆，exam 负责深读。 */}
+      {examPanel && (
+        <div className="mt-3 w-full">
+          <WordExamPanel exam={examPanel} />
         </div>
       )}
 
