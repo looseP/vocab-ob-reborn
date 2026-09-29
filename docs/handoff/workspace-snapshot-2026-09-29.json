@@ -4,8 +4,12 @@
   "supersedes": null,
   "note": "按 README 维护约定『迁移现场快照另存日期版本』，本文件不覆盖 workspace-snapshot.json（那是 2026-09-19 的历史快照）。本轮在 F:\\dev\\vocab-ob 机器上完成接管与修复，旧机数据类资产未触及。",
   "repository": "https://github.com/looseP/vocab-ob-reborn",
-  "main": "e08915493f789bd4b108945a84e39851cbb9079c",
-  "mainMessage": "fix(l3): 错题库统一投影参数编号 — 消除 500 与静默错页 (#159)",
+  "main": "f7e2d1cdd78c9a24bd564794539cd57af2778896",
+  "mainMessage": "docs(handoff): 固化 2026-09-28/29 实况，含两处已撤回的错误结论 (#160)",
+  "mainHistory": [
+    "f7e2d1c docs(handoff): 固化 2026-09-28/29 实况 (#160)",
+    "e089154 fix(l3): 错题库统一投影参数编号 — 消除 500 与静默错页 (#159)"
+  ],
   "tools": {
     "git": "2.55.0.windows.3 (installed this round; was absent)",
     "nodeHost": "v22.20.0 at C:\\Users\\20564\\AppData\\Local\\Programs\\nodejs22 (NOT on PATH; below engines range >=22.22.0 <23)",
@@ -18,7 +22,7 @@
   "worktrees": {
     "registeredCount": 5,
     "all": [
-      { "directory": "wt-main", "head": "e089154", "branch": "main", "clean": true },
+      { "directory": "wt-main", "head": "f7e2d1c", "branch": "main", "clean": true },
       { "directory": "wt-integration", "head": "b7dcea4", "branch": "integration/l3-reliability-writing" },
       { "directory": "wt-practice", "head": "b11f3ee", "branch": "writing-practice-v1" },
       { "directory": "wt-reliability", "head": "b96b972", "branch": "reliability-batch" },

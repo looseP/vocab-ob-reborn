@@ -94,7 +94,7 @@
 ## 4. 本轮服务与数据状态（实测）
 
 ```
-main                e089154（含 PR #159）
+main                f7e2d1c（含 PR #159 error-book 修复、PR #160 本文件）
 compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 容器                web / review-outbox-worker / llm-reservation-reaper /
                     backup-scheduler / postgres —— 全 healthy
@@ -118,7 +118,7 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 
 ```
 注册 worktree（5 个，均健指 F:/dev/vocab-ob/wt-main/.git/worktrees/）
-  wt-main        e089154  [main]
+  wt-main        f7e2d1c  [main]        ← 本文件自身提交后的 main
   wt-integration b7dcea4  [integration/l3-reliability-writing]
   wt-practice    b11f3ee  [writing-practice-v1]
   wt-reliability b96b972  [reliability-batch]
@@ -144,8 +144,11 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 
 ## 7. 遗留（按建议优先级）
 
-### 7.1 PR #159 已合并，CI 全绿
-`main@e089154` 三项必需检查（Engineering Gate + Migration Rehearsal / Browser E2E / Writing E2E）全 success。
+### 7.1 本轮两个 PR 均已合并，CI 全绿
+- **PR #159** `fix(l3): 错题库统一投影参数编号` → `main@e089154`
+- **PR #160** `docs(handoff): 固化本轮实况` → `main@f7e2d1c`（即本文件自身）
+
+两者三项必需检查（Engineering Gate + Migration Rehearsal / Browser E2E / Writing E2E）全 success。#159 的门禁数字：`Baseline ratchet gate PASS`、`Diff coverage 91.67% PASS`（changed src files 1、changed executable lines 24 / covered 22）。
 
 ### 7.2 H1 产线：exam 回填 340 词在途
 - 池 360 词；`eu-01`（20 词）已回收入账并三闸门全 PASS。
