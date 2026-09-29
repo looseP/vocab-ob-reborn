@@ -63,17 +63,18 @@
 
 ## 3. ⚠️ 我判断错误并已撤回的结论
 
-> **本轮共撤回 4 条。它们的共同根因值得单独记：**
+> **本轮共撤回 5 条。它们的共同根因值得单独记：**
 > **用局部证据下全局结论** —— 分别是「用体积推断丢数据」「用 grep 范围推断未接线」
-> 「用未完成的操作序列推断功能有 bug」「用『页面上看不到』推断『功能不存在』」。
-> 最后一条尤其危险：圈词浮层需**真实选区 + mouseup** 才出现，仅程序化设 selection
-> 而不派发事件时它不显示 —— 我据此连误判三次（以为进的是详情预览、以为圈词入口不存在）。
+> 「用未完成的操作序列推断功能有 bug」「用『页面上看不到』推断『功能不存在』」
+> 「拿两个不同时刻的观测做比对」。
+> 最后一条尤其隐蔽，见 §3.5。
 >
 > **给后续工作的纪律**：
 > 1. 断言「功能不存在」前，先**触发**它一次，不只看代码或页面；
 > 2. 断言「某层没接线」前，grep **全调用链**（路由→service→repository），不是只 grep 路由层；
 > 3. 断言「数据丢了」前，先查**时间线**（数据何时写入 vs 备份何时生成）；
-> 4. 报告缺陷时附**基线对照**（本 PR 未改动的 `origin/main` 上是否同样复现）。
+> 4. 报告缺陷时附**基线对照**（本 PR 未改动的 `origin/main` 上是否同样复现）；
+> 5. 比对两个观测前，先确认**它们描述同一个状态**（见 §3.5 的教训）。
 
 
 ### 3.1 「自动备份丢失全部例句数据」——**误判，撤回**
@@ -126,12 +127,39 @@
 那次导入在提交前表单被重渲染，勾选状态已丢失。**粘贴建卷后实测 `l3_questions.space=阅读`**，
 能力域正确落库（同批 `status=active`，符合 ADR-0037 owner 直写）。
 
+### 3.5 「错题库页面空但 API 有数据」——**我的测试自己污染了状态**
+
+判卷打通后我先后做了两次观测，得出"前端空、后端有 1 条 ⇒ 前端消费链有 bug"，
+并准备按 P0 上报。**两个观测描述的不是同一个状态**：
+
+```
+T1  API 观测   → verdict=wrong  / grader-local  → error-book items=1   ✅
+T2  浏览器观测 → verdict=correct / owner        → error-book items=0   ✅ 正确行为
+```
+
+中间发生了什么：T1 之后我写的「负向验证」脚本里，为了确认 owner 身份能否调
+`POST /grading`，**顺手提交了一条 `verdict: "correct"`**。该表有
+`UNIQUE (sheet_id, question_id)`（幂等覆盖，见 §7.7a），于是把 `wrong` 覆盖成了 `correct`。
+错题库只收 `latest_outcome='wrong'`，所以**正确地**不再显示它。
+
+**三重错误**：
+1. **没有意识到自己的验证脚本会改状态** —— 所谓"负向验证"用的是 `owner` 身份，
+   而 owner 提交是**合法的**（ADR-0035：owner 与 agent 同一 actorId），根本不是负向用例；
+2. **拿 T1 与 T2 比对**，没确认两者状态一致；
+3. 差点又一次把**测试污染**当成产品缺陷 —— 与前四条同类，但这条最不该犯：
+   **缺陷报告的对象本该是产品，而不是我自己刚写的数据。**
+
+**新增纪律 5（见 §3 开头）**：比对两个观测前，先确认它们描述同一个状态。
+**更根本的纪律**：任何"验证/探针"脚本若会写数据，必须与只读检查分开，
+否则它既是测量工具也是污染源。
+
 ---
 
 ## 4. 本轮服务与数据状态（实测）
 
 ```
-main                8c15b15（含 #159 error-book 修复、#160/#161 本文件、#162 L3 分页契约）
+main                09c099c（含 #159 error-book 修复、#160/#161 本文件、#162 L3 分页契约、
+                    #163 L3 链路实测、#164 agent 判卷通道）
 compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 容器                web / review-outbox-worker / llm-reservation-reaper /
                     backup-scheduler / postgres —— 全 healthy
@@ -141,7 +169,9 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
                     对账：6767 = 6531 + 236  ✓
 使用痕迹            review_logs=2  user_word_progress=3  ladder_rung 已写入
                     L3：sources=1 contexts=1 occurrences=1 papers=1 questions=1
-                        submissions=1(sealed) question_attempts=1 grading=0
+                        submissions=1(sealed) question_attempts=1
+                        **grading=1（wrong / grader-local）**  ← L3 七环打通
+agent 接入           AGENT_API_TOKENS 已配（agentId=grader-local，值只在 .env，gitignore 排除）
 备份                backups/ 共 56 文件；本轮新增两份经恢复验证的 dump
                     emergency-vocab-20260928-202923.dump   8,414,510
                     postfix-vocab-20260928-203409.dump     8,420,081
@@ -195,7 +225,7 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 | ④ 开卷做题 | ✅ | 三模式（纯净/做题/解析）齐全，作答 1/1 |
 | ⑤ 定格题纸 | ✅ | `status=sealed`、`seal_mode=full`、**迁移 0046 的 `question_ids=1` 定格生效** |
 | ⑥ 解析模式 | ✅ | 正确显示 `✕ B`（答错）/ `✓ C`（正确）+ 录入的解析 |
-| ⑦ 判卷 → 错题库 | ⛔ | **设计边界非缺陷**：`POST /grading` 是 agent 写面（ADR-0035 owner 不自判卷），本机无 agent token。题级错题真源是 `l3_grading_results.verdict` |
+| ⑦ 判卷 → 错题库 | ✅ | **补配 agent token 后打通**（见 §7.6）。`l3_grading_results` 落 `verdict=wrong / graded_by=grader-local`，`/l3/error-book` 投影 1 条，错题库页面显示「已加载 1 / 共 1 条 · 题级 1 条 · 最近判定：错 · 错误 1 次」 |
 
 **PR #162** `fix(l3): 素材列表分页契约漂移` → `main@8c15b15`。P0 缺陷：前端硬编码
 `/l3/sources?limit=100` 越过后端上限 50 → 400 → 素材下拉恒空 → 建卷无法选材料 →
@@ -203,11 +233,13 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 `src/domain/l3-list-limits.ts` 作契约单一真源（前后端共用），并用测试 G-1 扫源码
 **禁止硬编码 `limit=\d`**。**同类漂移已全仓排查，仅此一处。**
 
-### 7.1 三个 PR 均已合并，CI 全绿
+### 7.1 五个 PR 均已合并，CI 全绿
 - **PR #159** `fix(l3): 错题库统一投影参数编号` → `main@e089154`
 - **PR #160** `docs(handoff): 固化本轮实况` → `main@f7e2d1c`
 - **PR #161** 同步 main 值 → `main@ccda0ac`
 - **PR #162** `fix(l3): 素材列表分页契约漂移` → `main@8c15b15`
+- **PR #163** 登记 L3 全链路实测 → `main@09c099c`
+- **PR #164** `feat(compose): 透传 AGENT_API_TOKENS`（本节 §7.6）→ 唯一代码改动
 
 全部三项必需检查（Engineering Gate + Migration Rehearsal / Browser E2E / Writing E2E）全 success。#159 的门禁数字：`Baseline ratchet gate PASS`、`Diff coverage 91.67% PASS`。
 
@@ -233,18 +265,74 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 （见 §7.0），L3 六张表**全部有数据**：`l3_sources=1 / l3_contexts=1 / l3_occurrences=1 /
 l3_papers=1 / l3_questions=1 / l3_submissions=1(sealed) / l3_question_attempts=1`。
 
-**仍未打通的最后一环是 agent 判卷通道**：`capabilities.grading.inbox="agent_readable"`
-已就绪（ADR-0038 已交付），但**本机无 agent token**（容器只有 `OWNER_API_TOKEN` 与
-`METRICS_BEARER_TOKEN`），而 `POST /sheets/:id/grading` 是 agent 写面
-（ADR-0035 —— owner 不自判卷）。故题级错题库为空。**这是配置缺口，不是代码缺陷。**
+**agent 判卷通道已于同日补配打通**（详见 §7.6）。故题级错题库已非空。
 
-结论：L3 已从"建成未用"进入"可用待判卷"。下一步是配 agent token 打通判卷，
-而非讨论是否灌数据。
+结论：L3 七环已全部走通 —— 从"建成未用"进入"端到端可用"。
 
-### 7.6 分支清理（需授权）
+### 7.6 agent 判卷通道：配置缺口已补（PR #164）
+
+**先纠正一个理解偏差**：判卷**不经 MCP**。ADR-0035 明确「agent 静态形态 = **无可改的
+MCP server 包装层**，agent = HTTP Bearer 客户端」。实测 `scripts/run-mcp-server.mjs` 的
+13 个工具全是 L2 内容 / L3 语料 / proposal 类，`grep grading|assessment|sheet|paper|question`
+**零命中** —— 与 ADR-0029 决策 3 一致（写入仍限 proposal，`confirm`/`accept`/`validate` 不进 MCP）。
+
+**也不需要任何 LLM API key**：判卷内容由客户端自行生成，服务器侧只需一个 agent token
+认证 + 一个 `grading-context` 端点喂数据，两者代码里都已实现。缺的只是**部署配置**。
+
+三处缺口，只有一处是代码：
+
+| # | 缺口 | 性质 | 处置 |
+|---|---|---|---|
+| 1 | `compose.yaml` web 服务**未透传** `AGENT_API_TOKENS` | **代码层**（代码侧 4 处都读，只有 compose 没传） | 加 `AGENT_API_TOKENS: ${AGENT_API_TOKENS:-}` |
+| 2 | `.env` 无该键 | 配置 | 加 `AGENT_API_TOKENS=grader-local:<32 字符 base64url>` |
+| 3 | 本机无 agent 客户端 | 配置 | 一次性脚本（规则判卷，未接 LLM） |
+
+**实测验证（5 项）**：
+
+1. agent 身份 `GET /api/l3/capabilities` → 200，`role=agent`，
+   `grading.inbox="agent_readable"`、`annotationWriteScope="review_only"`
+2. agent 身份 `GET /api/l3/sheets/:id/grading-context` → 200，`questions=1 / sources=1`，
+   单题含 `stem / options / answerIndex / attempt.answer / explanation / gradable / space` —— **判卷输入齐备**
+3. agent 身份 `POST /api/l3/sheets/:id/grading` → 200，库落 `verdict=wrong / graded_by=grader-local`
+   （`graded_by` 由服务端从 `Principal.agentId` 认定，非调用方自述 —— ADR-0035 要求）
+4. `/api/l3/error-book` 投影正确：`kind=question / latest_outcome=wrong / wrong_count=1 /
+   space=阅读 / source_title=Nada Hassanein, USA TODAY, 26 Feb. 2023`
+5. 负向：伪造 token → 401
+
+**契约细节（首次提交踩到）**：`results[].answerIndex` **不被接受**（`.strict()` 拒绝），
+答案比对是**客户端责任**，服务端不重复校验。字段是驼峰 `analysisMd` 非 `analysis_md`。
+正确形状见 `src/domain/l3-grading.ts:61` `gradingResultInputSchema`。
+`superRefine` 另对 `questionId` 与 `annotationId` 做**批内去重**（fail-closed）。
+
+**⚠️ ADR-0029 Tradeoffs 明示的风险**：agent token 读权限是**全量语料**。本机 `127.0.0.1`
+绑定下风险低；一旦走 ADR-0024 公网暴露，**token 泄漏 = 全量语料可读**。故该值只进 `.env`
+（已被 `.gitignore:30` 排除），不进文档、不回显、不入库。
+
+### 7.7 两个附带发现（均非本轮引入）
+
+**(a) 重复判卷是覆盖不是追加 —— 设计如此，非缺陷。**
+`l3_grading_results` 有 `UNIQUE (sheet_id, question_id)`（约束名
+`l3_grading_results_sheet_question_unique`），判卷按题纸粒度**幂等 upsert**。
+实测：同一题先由 `grader-local` 判 `wrong`、再由 owner 判 `correct` → 行被覆盖，
+`graded_by` 变为 `owner`，全表仍 1 行。计数范围是"这张题纸内"，重新作答产生新
+`sheet_id` 故天然隔离。**符合 ADR-0035 的题纸定稿判一次语义。**
+
+**(b) 题级 `wrong_count` 结构性恒 ≤1 —— 语义与页面文案有错配，列为待确认。**
+`l3-error-book.repository.ts` 两条腿算法不同：
+- 句级 L183：`count(*) FILTER (WHERE w.outcome='wrong')` —— **真计数**，可 >1
+- 题级 L237：`count(*)::int` —— 因上述 UNIQUE 约束，**恒为 1**
+
+而页面文案写「每条给出最近判定、**错误次数**与来源」，卡面渲染「错误 N 次」。
+**题级的 N 永远显示 1。** 这算缺陷还是文案问题，取决于设计意图 ——
+而代码注释引用的设计文档 `eb1-error-book-aggregation-cursor-2026-09-12.md`
+**不在仓库内**（全仓 `*.md` 搜 `eb1` 零命中），无法据以定性。
+**处置：登记为 P3 待确认项，不擅自改语义。** 若要真计数，需把约束放宽到
+`(user_id, question_id)` 或引入判卷历史表 —— 那属独立设计决策，不在 bug 修复范围。
+
+### 7.8 分支清理（需授权）
 远端 20+ 个分支已完全合入 main（`ahead=0`），可删。保留：`main`、`backup/hint-ladder-unpushed-2026-09-28`、以及记录未整合成果的 `reliability-batch` / `writing-practice-v1` / `local-closeout-2026-09-19`。
 
-### 7.7 FR-12 接线1（L1 复习卡消费 L3 语境）
+### 7.9 FR-12 接线1（L1 复习卡消费 L3 语境）
 实测 `review.service.ts` 对 L3 零引用。**注意**：§3.2 已说明 `feature-map.md` 原表述需收紧。
 
 ---
