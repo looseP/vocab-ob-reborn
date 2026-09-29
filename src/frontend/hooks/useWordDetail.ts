@@ -68,8 +68,21 @@ export interface WordDetail {
    * L1 例句。`exam` 是 jsonb 里的 exam 扩展（reading/translation/writing 三层），
    * 形状不受类型系统保护 —— 一律用 `parseWordExam` 校验后再渲染，
    * 不要在这里直接展开 `ex.exam.reading.split`。
+   *
+   * `anchor`（例句里被遮盖的目标词）、`source`/`url`/`modified`/`verified` 是
+   * wordcard-mock 卡面三件套（ClueZone/TrainingFold/ExampleLayerBlock）所需。
    */
-  examples: Array<{ text: string; translation?: string; exam?: unknown }>;
+  examples: Array<{
+    text: string;
+    translation?: string;
+    exam?: unknown;
+    anchor?: string;
+    source?: string;
+    source_type?: string;
+    url?: string;
+    modified?: boolean;
+    verified?: unknown;
+  }>;
   prototype_text?: string | null;
   aliases: string[];
   /** 核心释义义项列表（圈记条释义行下拉）。 */
