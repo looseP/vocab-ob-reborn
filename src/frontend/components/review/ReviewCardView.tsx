@@ -50,7 +50,7 @@ function Kbd({ children }: { children: ReactNode }) {
  */
 
 // ── T3 提示分级 Hint Ladder（2026-09-25，t3-hint-ladder-design）──────────
-// 四级提示：H1 例句（无例句降级 H1′ 语义链）→ H2 原型意象（isSpoiler 剧透跳级）
+// 四级提示：H1 揭示词形（无例句降级 H1′ 语义链）→ H2 原型意象（isSpoiler 剧透跳级）
 // → H3 助记锚（复用卡背核心行提取）→ H4 翻卡。成本化评分：每消费一级提示，
 // 评分上限下降（0 级→easy / 1 级→good / ≥2 级→hard）；提示穷尽后经 H4 翻卡
 // 强制 again。直接翻卡（未用满提示）= 验证回忆，上限不降。

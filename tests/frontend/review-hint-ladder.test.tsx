@@ -3,7 +3,7 @@
 
 /**
  * T3 提示分级 Hint Ladder（2026-09-25）组件测试：
- * - 正面提示面板逐级推进（H1 例句 → H2 原型 → H3 助记锚）；
+ * - 正面提示面板逐级推进（H1 揭示词形 → H2 原型 → H3 助记锚）；
  * - isSpoiler 剧透跳级（原型文本含释义 ≥2 字中文串 → 无 H2 步）；
  * - 成本化评分上限：0 级→easy / 1 级→good / ≥2 级→hard / H4 翻卡→again；
  * - 作答回调携带 {hintLevel, viaH4} 埋点。
@@ -205,7 +205,7 @@ describe("ReviewCardView Hint Ladder", () => {
     });
     await renderCard({ card });
 
-    await consumeHint(); // H1 例句
+    await consumeHint(); // H1 揭示词形
     // 下一按钮直接是 H3（H2 被跳过）
     expect(screen.getByRole("button", { name: /提示 2 · H3 助记锚/ })).toBeTruthy();
   });
