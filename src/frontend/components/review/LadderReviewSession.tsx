@@ -184,6 +184,22 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
 
   const current = !completed && pos < visits.length ? visits[pos] : null;
   const currentCard = current ? cardsByProgressId.get(current.progressId) ?? null : null;
+  /**
+   * 视图重挂载键：换卡或换 stage 必须重挂载，否则各视图的本地 useState 会跨卡残留。
+   *
+   * 曾经没有 key，React 按位置复用组件实例，导致四类污染（P0 卡死 + 调度污染）：
+   * - `FollowCopyView` / `TypingDictationView`：`finished` 与 `useTypingFlow` 的
+   *   `typedLength`/`doneRef` 残留 → 上一卡已 completed 的卡进到下一卡时输入框消失、
+   *   `onDone` 因 `doneRef` 已置位永不重触发 → **会话死锁，无任何按钮可点**。
+   * - `ReviewCardView`：`hintLevel`/`viaH4` 残留 → 上一卡用了几级提示就带进下一卡，
+   *   评分上限被无理由压低（每用一级降一档），污染 FSRS 调度；`revealed`/`shown` 残留
+   *   还会让释义提前出现（剧透）。
+   * - `EncodeCardView`：`revealed` 残留 → 同上剧透。
+   *
+   * stage 也要进 key：最后一个 else 分支被多个 stage 共用（`card` / `card-no-hints` …），
+   * 换 stage 时同为 ReviewCardView、位置不变，仅靠 progressId 不足以触发重挂载。
+   */
+  const cardKey = current ? `${current.progressId}:${current.stage}` : "ladder-empty";
 
   const advance = useCallback(() => {
     setPos((p) => {
@@ -363,6 +379,7 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
 
       {current.stage === "follow" ? (
         <FollowCopyView
+          key={cardKey}
           lemma={currentCard.word.lemma}
           definition={currentCard.word.short_definition}
           ipa={currentCard.word.ipa}
@@ -374,6 +391,7 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
         />
       ) : current.stage === "dictation" ? (
         <TypingDictationView
+          key={cardKey}
           lemma={currentCard.word.lemma}
           definition={currentCard.word.short_definition}
           ipa={currentCard.word.ipa}
@@ -382,14 +400,16 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
         />
       ) : current.stage === "card-encode" ? (
         <EncodeCardView
+          key={cardKey}
           card={currentCard}
           disabled={submitting}
           onRate={onCardAnswer}
         />
       ) : current.stage === "meaning" ? (
-        <div data-testid="meaning-review">
+        <div key={cardKey} data-testid="meaning-review">
           <Badge tone="accent">词义卡复核（无调度语义）</Badge>
           <ReviewCardView
+            key={cardKey}
             card={currentCard}
             loading={loading}
             error={null}
@@ -401,6 +421,7 @@ export function LadderReviewSession({ onBack }: { onBack: () => void }) {
         </div>
       ) : (
         <ReviewCardView
+          key={cardKey}
           card={currentCard}
           loading={loading}
           error={null}

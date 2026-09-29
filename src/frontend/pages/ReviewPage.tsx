@@ -213,7 +213,11 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
       ) : (
         <>
           <ReviewProgressBar completed={stats.reviewed} remaining={remaining} />
+          {/* key 必需：ReviewCardView 的 hintLevel/revealed/shown 等本地状态只对当前卡有效。
+              缺 key 时 React 按位置复用实例，跨卡残留会导致「上一卡用了几级提示 → 下一卡
+              未用提示就被压低评分上限」，污染 FSRS 调度；onUndo 回退到上一张卡时同样中招。 */}
           <ReviewCardView
+            key={currentCard?.progressId ?? "review-no-card"}
             card={currentCard}
             loading={loading}
             error={error}
