@@ -116,9 +116,28 @@ describe("L3ErrorBookRepository.listUnified", () => {
     const { repo, calls } = makeRepo({ rows: [row(), row()], total: "2" });
     const page = await repo.listUnified({ userId: USER, kind: null, limit: 20, offset: 20 });
     const paged = calls.find((c) => c.text.includes("ORDER BY merged.latest_at DESC"))!;
-    expect(paged.text).toContain("LIMIT $1 OFFSET $2");
-    expect(paged.params).toEqual([20, 20]);
+    // 分页占位符必须排在腿参数（$1=userId）之后 ⇒ 无轴过滤时是 $2/$3。
+    // 旧断言写的是 `LIMIT $1 OFFSET $2` 且 params 为 [limit, offset]——那正是
+    // 与 $1(userId) 撞号的缺陷形态：它把 userId 当成 limit。原断言锁的是 bug
+    // 而不是契约，随 2026-09-28 的修复改正（真库验证见
+    // tests/l3-error-book-params.integration.test.ts，本文件因 mock 掉
+    // query/queryOne 而无法发现该类缺陷）。
+    expect(paged.text).toContain("LIMIT $2 OFFSET $3");
+    expect(paged.params).toEqual([USER, 20, 20]);
     expect(page.offset).toBe(20);
+  });
+
+  it("两腿参数个数不一致时立刻抛错（而不是静默送出错误编号给 PostgreSQL）", async () => {
+    const { repo, calls } = makeRepo();
+    // 构造一个「只有句级、但 count 少传参数」的坏调用：模拟未来某一腿改了参数顺序
+    const bad = repo as never as { queryOne: (t: string, p: unknown[]) => Promise<unknown> };
+    bad.queryOne = async () => ({ total: "0" });
+    // 正常路径不应抛错 —— 断言两腿 params 长度一致（合并后共用一份）
+    await repo.listUnified({ userId: USER, kind: null, space: "阅读", direction: "考研", limit: 20, offset: 0 });
+    const paged = calls.find((c) => c.text.includes("ORDER BY merged.latest_at DESC"))!;
+    expect(paged.params.slice(0, 3)).toEqual([USER, "阅读", "考研"]);
+    expect(paged.params.slice(3)).toEqual([20, 0]);
+    expect(paged.text).toContain("LIMIT $4 OFFSET $5");
   });
 
   it("total 与 items 口径一致（total 不含分页谓词）", async () => {

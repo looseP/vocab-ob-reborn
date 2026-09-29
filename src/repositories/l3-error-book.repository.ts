@@ -90,12 +90,22 @@ export class L3ErrorBookRepository extends BaseRepository implements IL3ErrorBoo
    * 排序键 (latest_at, record_id) 倒序；offset 分页在合并后进行。
    */
   async listUnified(input: L3ErrorBookLookup): Promise<L3ErrorBookPage> {
-    const legs: Array<{ kind: L3ErrorBookKind; sql: string }> = [];
-    if (input.kind === null || input.kind === "sentence") legs.push({ kind: "sentence", sql: this.sentenceLeg(input) });
-    if (input.kind === null || input.kind === "question") legs.push({ kind: "question", sql: this.questionLeg(input) });
+    const legs: Array<{ kind: L3ErrorBookKind; sql: string; params: unknown[] }> = [];
+    if (input.kind === null || input.kind === "sentence") legs.push(this.sentenceLeg(input));
+    if (input.kind === null || input.kind === "question") legs.push(this.questionLeg(input));
 
     if (legs.length === 0) {
       return { items: [], total: 0, limit: input.limit, offset: input.offset };
+    }
+
+    // 两腿的过滤参数逐字同序（[userId, space?, direction?]），故合并后共用一份 params。
+    // 断言而非假设：任何一腿改了自己的参数顺序，这里立刻失败，而不是把错误编号
+    // 静默送进 PostgreSQL（那会返回错数据而不是报错——比报错更坏）。
+    const params = legs[0].params;
+    for (const leg of legs) {
+      if (leg.params.length !== params.length) {
+        throw new Error("error-book legs disagree on filter parameter count");
+      }
     }
 
     // 每条腿自带序号：合并后先按腿内时间倒序取窗口，再统一排序分页。
@@ -105,13 +115,16 @@ export class L3ErrorBookRepository extends BaseRepository implements IL3ErrorBoo
 
     const countRow = await this.queryOne<{ total: string }>(
       `SELECT count(*)::bigint AS total FROM (${union}) AS merged`,
-      [],
+      params,
     );
+    // 分页占位符必须排在腿参数**之后**（$n+1 / $n+2），否则会与腿内的
+    // $1(userId)/$2(space)/$3(direction) 撞号 —— 撞号不报错，而是静默
+    // 把 userId 当成 limit、把 space 当成 offset，返回内容错误的页。
     const rows = await this.query<ErrorBookSqlRow>(
       `SELECT * FROM (${union}) AS merged
        ORDER BY merged.latest_at DESC, merged.record_id DESC
-       LIMIT $1 OFFSET $2`,
-      [input.limit, input.offset],
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, input.limit, input.offset],
     );
 
     return {
@@ -127,7 +140,7 @@ export class L3ErrorBookRepository extends BaseRepository implements IL3ErrorBoo
    * 子空间走 `l3_source_spaces` EXISTS（与既有句级错题口径逐字一致），方向取
    * `l3_sources.direction`。无来源的语境在轴过滤下自然落选（LEFT JOIN + 谓词）。
    */
-  private sentenceLeg(input: L3ErrorBookLookup): string {
+  private sentenceLeg(input: L3ErrorBookLookup): { kind: L3ErrorBookKind; sql: string; params: unknown[] } {
     const params: unknown[] = [input.userId];
     const filters: string[] = [];
     if (input.space) {
@@ -141,7 +154,10 @@ export class L3ErrorBookRepository extends BaseRepository implements IL3ErrorBoo
     }
     const where = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
 
-    return `
+    return {
+      kind: "sentence",
+      params,
+      sql: `
       SELECT 'sentence'::text AS kind,
              a.id AS record_id,
              a.context_id AS target_id,
@@ -171,7 +187,8 @@ export class L3ErrorBookRepository extends BaseRepository implements IL3ErrorBoo
         WHERE w.user_id = a.user_id AND w.context_id = a.context_id
       ) agg ON true
       WHERE a.user_id = $1::uuid AND a.outcome = 'wrong' ${where}
-    `;
+    `,
+    };
   }
 
   /**
@@ -180,7 +197,7 @@ export class L3ErrorBookRepository extends BaseRepository implements IL3ErrorBoo
    * 子空间取 `l3_questions.space`（录题时由题型自动落标，ADR-0030 §3）——与句级腿
    * 的 `l3_source_spaces` 是两套来源，但对**题**而言前者才是权威（题自带能力域）。
    */
-  private questionLeg(input: L3ErrorBookLookup): string {
+  private questionLeg(input: L3ErrorBookLookup): { kind: L3ErrorBookKind; sql: string; params: unknown[] } {
     const params: unknown[] = [input.userId];
     const filters: string[] = [];
     if (input.space) {
@@ -193,7 +210,10 @@ export class L3ErrorBookRepository extends BaseRepository implements IL3ErrorBoo
     }
     const where = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
 
-    return `
+    return {
+      kind: "question",
+      params,
+      sql: `
       SELECT 'question'::text AS kind,
              g.id AS record_id,
              q.id AS target_id,
@@ -222,6 +242,7 @@ export class L3ErrorBookRepository extends BaseRepository implements IL3ErrorBoo
           AND gr.verdict IN ('wrong', 'partial')
       ) agg ON true
       WHERE g.user_id = $1::uuid AND g.verdict IN ('wrong', 'partial') ${where}
-    `;
+    `,
+    };
   }
 }
