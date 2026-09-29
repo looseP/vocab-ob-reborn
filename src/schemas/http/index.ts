@@ -8,6 +8,7 @@
 
 import { z } from "zod";
 import { ValidationError } from "@/errors";
+import { L3_SOURCE_LIST_LIMIT_MAX } from "../../domain/l3-list-limits";
 import {
   assertJsonResourceBudget,
   JSON_MAX_DEPTH,
@@ -573,7 +574,9 @@ export const l3SourceListQuerySchema = z.object({
   // ADR-0029 §6②：按方向 / 子空间过滤（"按空间方向列料"，与练习线两轴同义）。
   direction: directionSchema.optional(),
   space: z.enum(L3_SUB_SPACES).optional(),
-  limit: z.coerce.number().int().min(1).max(50).default(20),
+  // 上限取自 domain 单一真源（2026-09-29）：前端曾硬编码 limit=100 越界 → 400 →
+  // 素材下拉恒空 → 粘贴建卷无法选材料。改由常量同源，杜绝前后端各写一份。
+  limit: z.coerce.number().int().min(1).max(L3_SOURCE_LIST_LIMIT_MAX).default(20),
   offset: z.coerce.number().int().min(0).default(0),
 });
 

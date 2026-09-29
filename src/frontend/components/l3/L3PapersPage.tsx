@@ -33,6 +33,7 @@ import { PendingQuestionsPanel } from "@/frontend/components/l3/PendingQuestions
 import { RecordTab } from "@/frontend/components/l3/RecordTab";
 import { EditPaperForm } from "@/frontend/components/l3/EditPaperForm";
 import type { L3QuestionType, WritingQuestionTaskSummary } from "@/domain";
+import { L3_SOURCE_LIST_LIMIT_MAX } from "@/domain/l3-list-limits";
 
 /**
  * 试卷台（ADR-0030 V1 最小可用面）：
@@ -965,9 +966,18 @@ function BuildTab({ onBuilt, onToast }: { onBuilt: () => void; onToast: (kind: "
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    apiFetch<{ items: SourceOption[] }>("/l3/sources?limit=100&sort=recent")
+    // limit 取 domain 单一真源，不再写裸数字（2026-09-29：曾硬编码 100，越过后端
+    // 上限 50 → 400 → 下拉恒空 → 建卷无法选材料）。
+    apiFetch<{ items: SourceOption[] }>(
+      `/l3/sources?limit=${L3_SOURCE_LIST_LIMIT_MAX}&sort=recent`,
+    )
       .then((page) => setSources(page.items))
-      .catch(() => setSources([]));
+      // 失败**不再静默吞成空数组**：空数组与「真的没有素材」在 UI 上完全一样，
+      // 用户只会看到下拉空着而无从判断原因。至少要在控制台留痕。
+      .catch((err) => {
+        console.error("[L3PapersPage] 素材列表加载失败，建卷将无法选择阅读材料", err);
+        setSources([]);
+      });
   }, []);
 
   const patchSection = (index: number, patch: Partial<DraftSection>) =>
