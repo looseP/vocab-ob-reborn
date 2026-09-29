@@ -63,17 +63,18 @@
 
 ## 3. ⚠️ 我判断错误并已撤回的结论
 
-> **本轮共撤回 10 条。共同根因与三类纪律：**
+> **本轮共撤回 12 条。共同根因与三类纪律：**
 > - **用局部证据下全局结论** —— 「用体积推断丢数据」「用 grep 范围推断未接线」
 >   「用未完成的操作序列推断功能有 bug」「用『页面上看不到』推断『功能不存在』」
 >   「拿两个不同时刻的观测做比对」（§3.5）
 > - **没先确认测量环境与目标环境一致** —— §3.6 与 §3.7：把容器 `NODE_ENV` 差异
 >   当成代码缺陷；把自动化脚本不认识某个组件的 DOM 标记当成产品死锁。
-> - **证据指向了错误的层面**（§3.8-3.10，第二轮追加）—— 这三条与第一类同族，
+> - **证据指向了错误的层面**（§3.8-3.10、§3.11-3.12，第二三轮追加）—— 这五条与第一类同族，
 >   但不是"证据不足就推广"，而是**证据本身查错了层**：
 >   只查数据层没查门控（§3.8）、只做单侧 grep 没做双侧（§3.9）、
->   只读文档没验现状（§3.10）。共同的正确动作是**往下再走一层**：
->   读调用点、两侧对照、验证现象当前仍存在。
+>   只读文档没验现状（§3.10）、**把手上正在查的对象当成了查询结果**（§3.11）、
+>   **把上下文里的词当成了被搜的东西**（§3.12）。共同的正确动作是**往下再走一层**：
+>   读调用点、两侧对照、验证现象当前仍存在、**让结果带上被检查对象的标识**。
 >
 > **给后续工作的纪律**：
 > 1. 断言「功能不存在」前，先**触发**它一次，不只看代码或页面；
@@ -281,9 +282,50 @@ session restore 与 encode card 功能未进 main"。
 **新增纪律 10**：文档写下的缺陷/未做项，动手前**先验证现象当前仍存在**。
 文档的未决清单是**待核假设**，不是事实。
 
-> 3.8 / 3.9 / 3.10 与 §3.1-3.5 同族（**用局部证据下全局结论**），
-> 但触发面不同：那几条是"证据不足就推广"，这三条是
-> **证据本身指向了错误的层面**（数据层 / 符号层 / 文档层），
+### 3.11 「`bear` / `abide` 释义互相污染」——**把手上正在查的对象当成了查询结果**
+
+查 `words.core_definitions` 是否有重复内容时，我跑
+`group by core_definitions::text having count(*) > 1`，得到「**1 组，2 词**」。
+因为此刻我正在查 `bear` 与 `abide`，**没让结果打印 slug 就认定那 2 个词就是它们**，
+据此上报「两个词的释义互相污染」并准备排查导入器。
+
+**错。** 补上 slug 后：
+
+```
+真正重复的：enormous / huge（各 1 义项，逐字相同）
+abide      3 义项  sense0="忍受；容忍"  en0="to tolerate or put up with something"
+bear       3 义项  sense0=空           en0="large mammal of family Ursidae"
+```
+
+两者 `core_definitions::text` **并不相同**。污染不存在。
+
+**根因**：SQL 返回了一个**不带被检查对象标识**的聚合结果，我却用"上下文里正在看
+什么"去补全这个标识。上下文不是证据。
+
+**新增纪律 11**：任何"哪些对象有问题"的查询，**必须让结果自带对象标识**
+（`select slug, ...`），不能用"我正在查谁"来推断。
+
+### 3.12 「`a/b/c` 就是 tag 映射」——**把上下文里的词当成了被搜的东西**
+
+定位 `core → A/B/C` 的转换代码时，我 grep `"A".*"B".*"C"`，
+命中 `h1-work/kit/work/h1p13_final_check.py` L13。**没看上下文就断定**
+"转换规则在这行"，差点顺着它去改。
+
+**错。** 打开看：那是**批次文件名**（`pilot-P13a/b/c-sourced-*.json`），
+文档头写的是「P13 全片兜底：30 词分 a/b/c 三批 + skips」。**与 tag 无关。**
+
+顺带查出真正的位置线索：该文件里 `KIT = Path(r"D:/tmp/h1-kit")`，
+而 **`D:\tmp\h1-kit` 已不存在** —— A/B/C 转换工具随那个一次性目录消失了。
+
+**根因**：grep 命中只说明"这些字符同处一行/一片"，不说明"它们构成同一个概念"。
+必须看**命中的那一行的语义**，而不是它在什么文件里。
+
+**新增纪律 12**：grep 命中后**必须读那一行 / 那一段的语义**再下结论。
+同处一行不等于构成同一概念。
+
+> 3.8-3.12 与 §3.1-3.5 同族（**用局部证据下全局结论**），
+> 但触发面不同：那几条是"证据不足就推广"，这五条是
+> **证据本身指向了错误的层面**（数据层 / 符号层 / 文档层 / 标识层 / 语义层），
 > 而正确的层面要靠**读代码调用点**才能拿到。
 
 ---
@@ -304,6 +346,13 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
                     （本文件初稿写的是 6531 / 6171 / empty 236，那是 15:12 前的
                       快照；H1 产线随后补完 eu-10~eu-21，台账 `running: None`、
                       `done: 6767`，6767 条全部带 `exam`）
+core_definitions    6767/6767 非空；重复组 0（enormous/huge 已差异化，见 #173）
+tags 形态 ⚠️        **库里只有 A / B / C 三种**（A=源 tag 含 `core`；B/C=其余）
+                    **源 markdown 有 67 种语义 tag**（n/v/adj/abstract/object/
+                    person/formal/historical/manner/physical…，11023 义项），
+                    导入时被压成一个比特。
+                    **A/B/C 转换代码已随 `D:\tmp\h1-kit` 一次性工具消失**，
+                    `src/` 内无此转换（`collection-parser.ts:145` 只做 trim）。
 使用痕迹            user_word_progress=501（其中 497 立即到期）ladder_rung 已写入
                     ↑ 2026-09-29 下午 500 词试点入队所致；入队前仅 4 条。
                       试点动因：到期卡查询硬绑 `user_word_progress`，
@@ -472,8 +521,17 @@ MCP server 包装层**，agent = HTTP Bearer 客户端」。实测 `scripts/run-
 **处置：登记为 P3 待确认项，不擅自改语义。** 若要真计数，需把约束放宽到
 `(user_id, question_id)` 或引入判卷历史表 —— 那属独立设计决策，不在 bug 修复范围。
 
-### 7.8 分支清理（需授权）
-远端 20+ 个分支已完全合入 main（`ahead=0`），可删。保留：`main`、`backup/hint-ladder-unpushed-2026-09-28`、以及记录未整合成果的 `reliability-batch` / `writing-practice-v1` / `local-closeout-2026-09-19`。
+### 7.8 分支清理（已完成，删 38 个）
+远端 37 个分支经 `git branch -r --merged origin/main` + `git merge-base --is-ancestor`
+**逐个二次验证**后删除（open PR 为 0）。其中 `feat/ladder-review-workflow`
+虽 `merge-base` 判为未合入，但 **41/41 文件 + `ladder-encode-card.test.ts` +
+`LadderReviewSession.tsx` 的 sessionStorage 全在 main 上** ⇒ squash 造成的历史错位，可删。
+删除清单存 `%TEMP%\opencode\deleted-branches.txt`。
+
+**未删 3 个**（都不是「已合入」，超出当时授权）：
+- `plan/exam-mode-engine` —— 已于本轮后续删除（三模式引擎 219 行已在 main，文档使命完成）
+- `backup/hint-ladder-unpushed-2026-09-28` —— PR #168 移植源，**唯一一份原始形态存档**，建议长期保留
+- `wip/wordbook-crud-0903` —— 提交信息自标 `unfinished work, parked`，是待续工作而非垃圾
 
 ### 7.9 FR-12 接线1（L1 复习卡消费 L3 语境）
 实测 `review.service.ts` 对 L3 零引用。**注意**：§3.2 已说明 `feature-map.md` 原表述需收紧。
@@ -525,6 +583,60 @@ frontend tsc 零错误。
 **教训**：React 列表/条件渲染里，**任何带本地状态的组件都必须有 key**。
 本项目四个复习视图全部漏了，而单测因 `act` 假故障（§3.6）从未真正执行过组件层断言 ——
 **测试没跑过 = 缺陷可以长期潜伏**。
+
+### 7.11 ⚠️【回归风险】重跑导入会改变 `tags` 形态
+
+`core_definitions[].tags` 当前只有 `A` / `B` / `C`（§4）。**若将来重跑词条导入，
+这批数据的 `tags` 会变成源 markdown 里的原始 67 种语义 tag**
+（`n` / `v` / `adj` / `abstract` / `object` / `person` / `formal` / `historical` /
+`manner` / `physical` …），因为：
+
+- 源文件（`h1-outbound-l0-024/data/corpus/**/*.md`，**不在 git 内**）里就是这 67 种，
+  11023 个义项；`l1_entries.json` 6767 条零重复 lemma。
+- `collection-parser.ts:145` 对 `tags` **只做 `trim`，不做任何映射**。
+- A/B/C 转换发生在 `D:\tmp\h1-kit` 的一次性导入工具里，**该目录已不存在**，
+  `src/` 内无此逻辑 —— 也就是说**转换代码已经找不回来了**。
+
+**为什么要记这条**：UI 侧已按「`tags` 冗余于 `priority`、不渲染徽章」定稿（#173）。
+重跑导入会让 `tags` 从 3 个值变成 67 个值，届时**没有基准可比对**，
+下一个人只能重新调查一遍（本轮已花掉十余次查询）。
+
+**处置：不立项恢复**（UI 当前不消费它，价值为零）。但重跑导入前必须知道：
+① `tags` 形态会变；② 转换代码已丢，需要先决定是恢复语义还是重新实现 A/B/C 映射。
+
+### 7.12 附带发现（未修，仅登记）
+- **源 markdown 有 95 处 `tags` 行混入 `### Prototype`**（24 个文件）——
+  部分词条的 `### Core Definitions` 段缺终止标记，解析时把下一节标题吃进了 tag 列表。
+  **未进库**（库内 `tags` 仅 3 种值、零个 `#` 开头），故当前无实际危害。
+  修法很轻（解析器过滤 `#` 开头的 token），但没有使用方之前不值得动。
+- **`bear` 的 `core_definitions[0].sense` 为空**，而 `en` 是正确的
+  `large mammal of family Ursidae`（熊科）。源条目来自
+  `L1_雅思词汇_动物保护.md`（`field_name = 动物保护`，`senses = 1`），
+  中文义项本就可能缺失。属源数据质量，未修。
+
+### 7.13 义项列表去 markdown 化（PR #172 / #173）
+`definition_md` 是 `core_definitions` 的**有损 markdown 投影**
+（`collection-parser.ts:183` `renderDefinitionMd` 把结构化字段压成
+`1. 义项` + `- en:` / `- priority:` / `- tags:` 三个 bullet），
+导致复习卡「显示释义」区每义项 4 行、`priority` 与 `tags` 各占一整行。
+
+`core_definitions` 覆盖率 **6767/6767**（实测），故改为结构化渲染
+（新增 `SenseList`），`definition_md` 保留为降级路径（stub 词条）。
+`priority` 不再显示（`sortByPriority` 已保证顺序，`prio=1` 恒为 `A` ⇒ 与顺序完全等价）；
+`tags` 亦不显示（A/B/C 只表达「是否核心义项」，是 `priority` 的函数）。
+
+顺带修数据：`enormous` 与 `huge` 的 `Core Definitions` 在**两个不同源文件里逐字相同**
+（`L0_基础词_e_第二.md` / `L0_基础词_h_第四.md`），属源数据问题而非导入 bug；
+已按各自词源补差异化义项（`enormous` 走程度/超出常规轴、`huge` 走物理体量/数量轴），
+源文件与库同步，**全库重复组数归 0**。
+
+`content_hash` 刻意不动：导入路径**未使用**当前的 `computeFullHash` ——
+试了 6 个变体在 4 个探针词上全部无法复现，且 `l1_content_hash` / `l2_content_hash`
+全表为 `null`。两词 `user_word_progress` 行数为 0 ⇒ 无快照 ⇒
+`deriveContentStaleness`（`content-staleness.ts:56`「任一侧缺失 → 不派生」）返回 false，
+`needs_recheck` 不会触发；且 `content_hash` 带 UNIQUE 约束（`schema.ts:208`），
+两词本就不同，不动不违反。全表重算留给 `content-staleness.ts:52` 已记录的
+「P2 补齐 L1 hash 产出链」。
 
 ---
 
