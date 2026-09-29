@@ -5,6 +5,7 @@ import { Card } from "@/frontend/components/ui/Card";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Spinner } from "@/frontend/components/ui/Spinner";
 import { Markdown } from "@/frontend/components/ui/Markdown";
+import { SenseList } from "@/frontend/components/words/SenseList";
 import { useToast } from "@/frontend/components/ui/Toast";
 import { Link } from "react-router-dom";
 import {
@@ -705,7 +706,11 @@ export function ReviewCardView({
   const detailWord: WordDetail | null = detail.word;
   const meta = detailWord?.metadata ?? null;
   const definitionMd = detailWord?.definition_md ?? "";
-  const hasDefinitionMd = definitionMd.trim().length > 0;
+  // 结构化义项优先，`definition_md` 仅作降级（core_definitions 覆盖 6767/6767，
+  // 降级只服务 stub 词条 —— 见 WordDetailPage `isStub` 的同一判据）。
+  const senses = detailWord?.core_definitions ?? null;
+  const hasSenses = Array.isArray(senses) && senses.length > 0;
+  const hasDefinitionMd = !hasSenses && definitionMd.trim().length > 0;
 
   // ── 例句三件套数据（wordcard-mock 口径，移植 86d9b3f）────────────────────
   // 例句取词条详情的第一条（详情 API 已带 exam/anchor/verified），未到达时安静缺席。
@@ -774,7 +779,14 @@ export function ReviewCardView({
               )}
             </div>
 
-            {/* ── Tier 0 义项行:Core Definitions(definition_md),阅读区左对齐 ── */}
+            {/* ── Tier 0 义项行:Core Definitions,阅读区左对齐 ──
+                结构化渲染（SenseList）：tags 提到义项行右端、priority 由序号隐含，
+                每个义项 2 行而非 4 行。降级才走 definition_md 的 markdown。 */}
+            {hasSenses && (
+              <div className="mt-3 w-full rounded-xl bg-[var(--color-surface-muted)] px-3 py-2.5 text-left">
+                <SenseList senses={senses} />
+              </div>
+            )}
             {hasDefinitionMd && (
               <div className="mt-3 w-full rounded-xl bg-[var(--color-surface-muted)] px-3 py-2 text-left text-[12.5px] leading-relaxed text-[var(--color-ink)]">
                 <Markdown content={definitionMd} />
