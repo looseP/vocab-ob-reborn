@@ -123,6 +123,11 @@ services:
       APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:${APP_PORT:-3001}}
       # Local-only examples; production overrides must supply real secrets.
       OWNER_API_TOKEN: ${OWNER_API_TOKEN:-local-owner-api-token-only-0001}
+      # Agent 接入（ADR-0029 决策 5 / ADR-0035 agent 静态形态）。格式 `agentId:token,...`；
+      # 留空 = 本机无 agent 接入（合法，`parseAgentTokens` 返回空数组）。
+      # ⚠️ ADR-0029 Tradeoffs 明示：agent token 读权限是**全量语料**——一旦走 ADR-0024
+      # 的公网暴露，token 泄漏 = 全量语料可读。值只进 .env，绝不进 Git。
+      AGENT_API_TOKENS: ${AGENT_API_TOKENS:-}
       METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
       LOCAL_OWNER_ID: ${LOCAL_OWNER_ID:-00000000-0000-4000-8000-000000000001}
       READINESS_TIMEOUT_MS: ${READINESS_TIMEOUT_MS:-500}
