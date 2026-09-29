@@ -13,7 +13,7 @@ import { CompletionCelebration } from "@/frontend/components/review/CompletionCe
 import { ReviewHistoryDrawer, type ReviewHistoryEntry } from "@/frontend/components/review/ReviewHistoryDrawer";
 import { useReview } from "@/frontend/hooks/useReview";
 import { useUpgradeHints } from "@/frontend/hooks/useUpgradeHints";
-import { isLadderModeEnabled } from "@/frontend/reviewFlow/ladderSettings";
+import { isLadderModeEnabled, setLadderModeEnabled } from "@/frontend/reviewFlow/ladderSettings";
 
 const reviewModes = [
   { key: "review", icon: Repeat, title: "标准复习", desc: "按 FSRS 间隔重复算法安排的到期卡片", variant: "primary" as const },
@@ -22,7 +22,15 @@ const reviewModes = [
   { key: "zen", icon: InfinityIcon, title: "禅模式", desc: "无限循环复习，巩固记忆", variant: "secondary" as const },
 ] as const;
 
-function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
+function ReviewModeSelector({
+  onStart,
+  ladderMode,
+  setLadderMode,
+}: {
+  onStart: (mode: string) => void;
+  ladderMode: boolean;
+  setLadderMode: (next: boolean) => void;
+}) {
   return (
     <div className="space-y-6">
       <Card
@@ -44,11 +52,57 @@ function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {reviewModes.map((m) => {
           const Icon = m.icon;
+          // 阶梯会话（实验）默认关闭，且开关只在设置页 —— 用户从复习页完全看不出
+          // 「为什么没有打字流」。标准复习是它唯一接管的模式（ADR-0036 决策 4），
+          // 所以状态徽标 + 就地开关放在这张卡上，而不是让人去设置页找。
+          const ladderRelevant = m.key === "review";
+          const ladderOn = ladderRelevant && ladderMode;
           return (
             <Card key={m.key} className="h-full">
               <Icon className="mb-3 h-6 w-6 text-[var(--color-accent)]" />
               <h3 className="mb-1 text-lg font-semibold text-[var(--color-ink)]">{m.title}</h3>
               <p className="mb-4 text-sm text-[var(--color-ink-soft)]">{m.desc}</p>
+              {ladderRelevant && (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={ladderOn}
+                  data-testid="ladder-mode-toggle-inline"
+                  title="阶梯会话（实验）：再认 → 巩固 → 产出三轮，含跟写与默写"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setLadderModeEnabled(!ladderOn);
+                    setLadderMode(!ladderOn);
+                  }}
+                  className={`mb-3 flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
+                    ladderOn
+                      ? "border-[var(--color-accent)]/50 bg-[var(--color-accent-soft)]"
+                      : "border-dashed border-[var(--color-border)]"
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-[12px] font-medium text-[var(--color-ink)]">
+                      阶梯会话（实验）
+                    </span>
+                    <span className="block text-[10.5px] leading-snug text-[var(--color-ink-soft)]">
+                      {ladderOn ? "已开启 · 含跟写与默写" : "关闭 · 无跟写/默写"}
+                    </span>
+                  </span>
+                  <span
+                    className={`inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+                      ladderOn
+                        ? "border-[var(--color-accent)] bg-[var(--color-accent)]"
+                        : "border-[var(--color-border-strong)] bg-[var(--color-surface-muted)]"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+                        ladderOn ? "translate-x-5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </span>
+                </button>
+              )}
               <Button size="sm" variant={m.variant} onClick={() => onStart(m.key)}>开始</Button>
             </Card>
           );
@@ -267,6 +321,16 @@ export function ReviewPage() {
   const freeWordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
   const [mode, setMode] = useState<"select" | "session">("select");
   const [reviewMode, setReviewMode] = useState("review");
+  /**
+   * 阶梯会话开关的本地镜像。
+   *
+   * 真源是 `localStorage`（`setLadderModeEnabled`），而 `ReviewSession` 用
+   * `useState(() => isLadderModeEnabled())` 在**挂载时**取一次 —— 若模式选择页没有
+   * 本地状态，用户在这里拨开关后 `ladderActive` 不会重算，得退回选择页再进才生效，
+   * 表现为"开关拨了但没反应"。本地状态解决这个即时反馈问题，
+   * 持久化仍由 localStorage 承担（跨会话一致）。
+   */
+  const [ladderMode, setLadderMode] = useState(() => isLadderModeEnabled());
   // 检测到未完成的复习会话时，不静默进入；先展示"继续上次 / 重新开始"确认条。
   const [pendingRestore, setPendingRestore] = useState<{ mode: string; reviewed: number; total: number } | null>(null);
 
@@ -392,7 +456,7 @@ export function ReviewPage() {
               </div>
             </Card>
           )}
-          <ReviewModeSelector onStart={handleStart} />
+          <ReviewModeSelector onStart={handleStart} ladderMode={ladderMode} setLadderMode={setLadderMode} />
         </>
       ) : isFreeSelection ? (
         <ReviewSession reviewMode="preview" wordIds={freeWordIds} onBack={() => setMode("select")} />
