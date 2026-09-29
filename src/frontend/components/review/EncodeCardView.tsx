@@ -2,7 +2,7 @@
  * EncodeCardView —— 新词 T3 初见编码卡（ADR-0036 LW-2，VISIT_TEMPLATE.NEW 首段）。
  *
  * state=new 词在再认轮的编码形态：自动逐级展开全部可用提示
- * （H1 例句 → H1′ 语义链 → H2 原型 → H3 助记锚，复用 buildHintSteps 降级链：
+ * （H1 揭示词形 → H1′ 语义链 → H2 原型 → H3 助记锚，复用 buildHintSteps 降级链：
  * 数据缺失级自动跳过、isSpoiler 剧透过滤）+ 词义翻卡（H4）。
  * 「我认识」跳过提示直接首评（偏 easy）；翻卡后四键首评。
  * 首评不 POST（会话内唯一一次调度提交仍在产出轮末）。

@@ -25,8 +25,7 @@ import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { L3ContextsFold } from "@/frontend/components/review/L3ContextsFold";
 import { buildHintSteps, extractMnemonicCore, HINT_STEP_LABEL as STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
-import { WordExamPanel } from "@/frontend/components/words/WordExamPanel";
-import { pickPrimaryExam } from "@/domain/word-exam";
+import { ClueZone, TrainingFold, ExampleLayerBlock, parseWordExam, parseVerifiedCount } from "@/frontend/components/review/WordCardExamLayers";
 
 const ratings = [
   { value: "again", label: "重来", variant: "danger" as const, key: "1" },
@@ -51,7 +50,7 @@ function Kbd({ children }: { children: ReactNode }) {
  */
 
 // ── T3 提示分级 Hint Ladder（2026-09-25，t3-hint-ladder-design）──────────
-// 四级提示：H1 例句（无例句降级 H1′ 语义链）→ H2 原型意象（isSpoiler 剧透跳级）
+// 四级提示：H1 揭示词形（无例句降级 H1′ 语义链）→ H2 原型意象（isSpoiler 剧透跳级）
 // → H3 助记锚（复用卡背核心行提取）→ H4 翻卡。成本化评分：每消费一级提示，
 // 评分上限下降（0 级→easy / 1 级→good / ≥2 级→hard）；提示穷尽后经 H4 翻卡
 // 强制 again。直接翻卡（未用满提示）= 验证回忆，上限不降。
@@ -87,12 +86,17 @@ function PrototypeMask({ text }: { text: string }) {
 
 function HintStepContent({ step }: { step: HintStep }) {
   if (step.kind === "example") {
+    // H1 = 揭示词形：例句已在正面「例句线索区」呈现（目标词遮盖），
+    // 此级不再重复整句，只确认词形已解锁并指回语境核对处。
     return (
-      <div className="rounded-lg bg-[var(--color-surface-muted)] px-3 py-2">
-        <p className="text-[13px] leading-relaxed text-[var(--color-ink)]">{step.text}</p>
-        {step.translation && (
-          <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--color-ink-soft)]">{step.translation}</p>
-        )}
+      <div className="flex items-center gap-2 rounded-lg bg-[var(--color-surface-muted)] px-3 py-2" data-testid="h1-reveal">
+        <span aria-hidden>👁</span>
+        <span className="text-[12.5px] leading-relaxed text-[var(--color-ink)]">
+          词形已揭示 —— 回到上方例句核对语境与搭配
+          {step.anchor && (
+            <span className="ml-1.5 font-semibold text-[var(--color-accent)]">{step.anchor}</span>
+          )}
+        </span>
       </div>
     );
   }
@@ -478,12 +482,6 @@ export function ReviewCardView({
     () => (preview || hintLadderHidden ? [] : buildHintSteps(card?.word)),
     [card, preview, hintLadderHidden],
   );
-  // exam 扩展：解析既有预取的词条详情，解析失败/无数据即不渲染。
-  // useWordDetail 返回 { word, loading, ... } —— exam 在 word.examples 上。
-  const examPanel = useMemo(
-    () => pickPrimaryExam(detail?.word?.examples),
-    [detail?.word?.examples],
-  );
   const cap = hintCapNow(hintLevel, viaH4);
 
   // 翻卡统一入口：提示已全部消费时任何翻卡都标记 viaH4（防绕过 again 强制）；
@@ -692,6 +690,38 @@ export function ReviewCardView({
   const definitionMd = detailWord?.definition_md ?? "";
   const hasDefinitionMd = definitionMd.trim().length > 0;
 
+  // ── 例句三件套数据（wordcard-mock 口径，移植 86d9b3f）────────────────────
+  // 例句取词条详情的第一条（详情 API 已带 exam/anchor/verified），未到达时安静缺席。
+  // jsonb 字段一律走 `asString` 式窄化，不做裸类型断言（tsc 会拒绝"两类型无重叠"的强转）。
+  const exampleItem = useMemo(() => {
+    const first = detailWord?.examples?.[0] as Record<string, unknown> | undefined;
+    if (!first || typeof first.text !== "string" || first.text.trim() === "") return null;
+    const s = (v: unknown): string | null =>
+      typeof v === "string" && v.trim().length > 0 ? v : null;
+    return {
+      text: first.text,
+      translation: s(first.translation),
+      source: s(first.source),
+      sourceType: s(first.source_type),
+      url: s(first.url),
+      modified: first.modified === true,
+      anchor: s(first.anchor),
+      verifiedCount: parseVerifiedCount(first.verified),
+    };
+  }, [detailWord?.examples]);
+  const exampleExam = useMemo(() => {
+    const first = detailWord?.examples?.[0] as Record<string, unknown> | undefined;
+    return first ? parseWordExam(first.exam) : null;
+  }, [detailWord?.examples]);
+  // 遮盖揭示与提示阶梯**共用一个状态**：点遮盖块与消费 H1 都是"解锁词形"，
+  // 因此 maskRevealed 直接由 hintLevel>0 推导 —— 不会出现"没消费提示却已揭示"
+  // 或"提示已消费但仍遮着"两种自相矛盾的状态。
+  const maskRevealed = hintLevel > 0 || viaH4;
+  const unmaskClue = useCallback(() => {
+    if (maskRevealed) return;
+    setHintLevel((v) => (v >= 1 ? v : 1));
+  }, [maskRevealed]);
+
   // 卡片主体内容：aria-live 区域在翻转时向读屏播报词形↔释义切换。
   const flipBody = (
     <span aria-live="polite" className="block w-full">
@@ -732,6 +762,20 @@ export function ReviewCardView({
               <div className="mt-3 w-full rounded-xl bg-[var(--color-surface-muted)] px-3 py-2 text-left text-[12.5px] leading-relaxed text-[var(--color-ink)]">
                 <Markdown content={definitionMd} />
               </div>
+            )}
+
+            {/* ── 例句层（mock .ex-layer 口径）：完整例句 + 译文 + 来源/核验 ── */}
+            {exampleItem && (
+              <ExampleLayerBlock
+                text={exampleItem.text}
+                translation={exampleItem.translation}
+                term={exampleItem.anchor}
+                source={exampleItem.source}
+                sourceType={exampleItem.sourceType}
+                url={exampleItem.url}
+                modified={exampleItem.modified}
+                verifiedCount={exampleItem.verifiedCount}
+              />
             )}
 
             {/* ── Tier 1 锚点:原型 + 记忆锚(数据未到/字段缺失时整体缺席)── */}
@@ -777,6 +821,24 @@ export function ReviewCardView({
             {card.word.ipa && (
               <span className="mt-2 font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
             )}
+
+            {/* ── 例句线索区（mock .clue-zone 口径）──────────────────────────
+                例句**先出现**但目标词被遮盖：记忆任务从"看整句回想"变成
+                "在语境里回想词形"。点遮盖块或消费 H1 都解锁词形（同一状态）。
+                无 exam 切分数据的 v1 批次退化为整句遮盖。 */}
+            {exampleItem && (
+              <div className="w-full">
+                <ClueZone
+                  exam={exampleExam}
+                  text={exampleItem.text}
+                  maskTerm={exampleItem.anchor}
+                  maskRevealed={maskRevealed}
+                  onUnmask={unmaskClue}
+                />
+                <TrainingFold exam={exampleExam} verifiedCount={exampleItem.verifiedCount} />
+              </div>
+            )}
+
             <HintLadderPanel
               steps={hintSteps}
               level={hintLevel}
@@ -940,18 +1002,6 @@ export function ReviewCardView({
       ) : (
         <div className="relative flex min-h-[14rem] w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-6 py-6 text-left">
           {flipBody}
-        </div>
-      )}
-
-      {/* ── exam 扩展（L1 词卡的低频深读区）─────────────────────────────────
-          放在翻面容器**之外**，卡正面/背面都可见：精讲是"记住之后回看"的内容，
-          不该要求先翻卡才够得着；放在里面还会随翻卡动画卸载/重挂，丢展开状态。
-          数据来自既有 useWordDetail 预取（GET /words/:slug 已带 examples[].exam），
-          不新增请求。**刻意不挂在提示阶梯上**：展开不消耗提示级数、不改
-          hintLevel、不影响评分上限——阶梯负责低成本回忆，exam 负责深读。 */}
-      {examPanel && (
-        <div className="mt-3 w-full">
-          <WordExamPanel exam={examPanel} />
         </div>
       )}
 

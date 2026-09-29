@@ -74,8 +74,10 @@ describe("EncodeCardView（新词 T3 初见编码卡）", () => {
       }),
       onRate: vi.fn(),
     }));
-    expect(screen.getByText("H1 例句")).toBeTruthy();
     expect(screen.getByText("H3 助记锚")).toBeTruthy();
+    // H1 标签随 2026-09-29 的语义变更（wordcard-mock 移植）从「H1 例句」改为
+    // 「H1 揭示词形」：首学编码卡复用同一条提示阶梯，标签随之更新。
+    expect(screen.getByText("H1 揭示词形")).toBeTruthy();
     expect(screen.queryByText("H1′ 语义链")).toBeNull();
     expect(screen.queryByText("H2 原型")).toBeNull();
   });

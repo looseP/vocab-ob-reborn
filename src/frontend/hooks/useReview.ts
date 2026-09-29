@@ -22,7 +22,7 @@ export interface ReviewCard {
     cefr: string | null;
     // ── T3 Hint 阶梯（2026-09-25）：queue 方案 A 直载。可选 = 兼容旧
     // sessionStorage 缓存（TTL 30min 内的会话恢复不含新字段）──
-    /** H1 例句（未回灌批次为空数组）。 */
+    /** H1 例句（未回灌批次为空数组）。exam 扩展见 @/domain/word-exam。 */
     examples?: unknown[];
     /** H2 原型意象原文（前端遮罩 + isSpoiler）。 */
     prototype_text?: string | null;

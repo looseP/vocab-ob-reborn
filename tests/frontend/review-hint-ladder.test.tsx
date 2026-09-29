@@ -3,7 +3,7 @@
 
 /**
  * T3 提示分级 Hint Ladder（2026-09-25）组件测试：
- * - 正面提示面板逐级推进（H1 例句 → H2 原型 → H3 助记锚）；
+ * - 正面提示面板逐级推进（H1 揭示词形 → H2 原型 → H3 助记锚）；
  * - isSpoiler 剧透跳级（原型文本含释义 ≥2 字中文串 → 无 H2 步）；
  * - 成本化评分上限：0 级→easy / 1 级→good / ≥2 级→hard / H4 翻卡→again；
  * - 作答回调携带 {hintLevel, viaH4} 埋点。
@@ -141,8 +141,12 @@ describe("ReviewCardView Hint Ladder", () => {
   it("ladders hint steps: example → prototype → mnemonic, then H4 flip", async () => {
     const container = await renderCard();
 
-    await consumeHint(); // H1 例句
-    expect(screen.getByText("Music can alleviate stress.")).toBeTruthy();
+    await consumeHint(); // H1 揭示词形
+    // H1 语义变更（2026-09-29，移植 wordcard-mock）：例句已由正面「例句线索区」呈现且
+    // 目标词遮盖，H1 面板**不再重复整句**，只确认词形已解锁并指回语境。
+    expect(screen.getByTestId("h1-reveal")).toBeTruthy();
+    expect(bodyText(container)).toContain("词形已揭示");
+    expect(bodyText(container)).not.toContain("提示 1 · H1 例句");
     await consumeHint(); // H2 原型
     expect(screen.getByText(/一只手把重物缓缓放下的画面/)).toBeTruthy();
     await consumeHint(); // H3 助记锚
@@ -201,7 +205,7 @@ describe("ReviewCardView Hint Ladder", () => {
     });
     await renderCard({ card });
 
-    await consumeHint(); // H1 例句
+    await consumeHint(); // H1 揭示词形
     // 下一按钮直接是 H3（H2 被跳过）
     expect(screen.getByRole("button", { name: /提示 2 · H3 助记锚/ })).toBeTruthy();
   });

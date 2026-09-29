@@ -1,21 +1,30 @@
 /**
  * hintSteps —— T3 提示步构建与剧透检测（共享模块，LW-2 从 ReviewCardView 提取）。
  *
- * 降级链：H1 例句（缺失降级 H1′ 语义链）→ H2 原型意象（isSpoiler 剧透跳级）
+ * 降级链：H1 **揭示词形**（缺失降级 H1′ 语义链）→ H2 原型意象（isSpoiler 剧透跳级）
  * → H3 助记锚。数据缺失级自动跳过（ADR-0036 LW-2：新词编码卡复用同链）。
- * 逻辑与 ReviewCardView 原实现逐行等价（提取重构，行为零变化）。
+ *
+ * **H1 语义变更（2026-09-29，移植未合并的 86d9b3f / wordcard-mock 对齐）**：
+ * 例句已由正面「例句线索区」（ClueZone）呈现且目标词被遮盖，H1 不再重复给整句，
+ * 只负责**解锁词形**（`anchor`）。评分上限经济学**不变**：0→easy / 1→good / ≥2→hard。
+ * 提示面板同步改为「👁 词形已揭示 — 回到上方例句核对语境与搭配」。
  */
 
 import type { ReviewCard } from "@/frontend/hooks/useReview";
 
 export type HintStep =
-  | { kind: "example"; text: string; translation: string | null }
+  /**
+   * H1 = 揭示词形。`anchor` 是被遮盖的目标词锚（例句里的原形/变形），
+   * 为 null 时表示例句无可遮盖目标词（此时面板只给"已揭示"提示，不重复原文）。
+   * 保留 `text`/`translation` 是为了让降级路径（无遮盖锚的 v1 批次）仍能给出上下文。
+   */
+  | { kind: "example"; text: string; translation: string | null; anchor: string | null }
   | { kind: "chain"; text: string }
   | { kind: "prototype"; text: string }
   | { kind: "mnemonic"; text: string; mtype: string | null };
 
 export const HINT_STEP_LABEL: Record<HintStep["kind"], string> = {
-  example: "H1 例句",
+  example: "H1 揭示词形",
   chain: "H1′ 语义链",
   prototype: "H2 原型",
   mnemonic: "H3 助记锚",
@@ -60,7 +69,7 @@ export function buildHintSteps(word: ReviewCard["word"] | null | undefined): Hin
   if (!word) return [];
   const steps: HintStep[] = [];
   const example = (word.examples ?? []).find(
-    (e): e is { text: string; translation?: unknown } =>
+    (e): e is { text: string; translation?: unknown; anchor?: unknown } =>
       typeof e === "object" && e !== null &&
       typeof (e as { text?: unknown }).text === "string" &&
       ((e as { text: string }).text.trim().length > 0),
@@ -72,6 +81,12 @@ export function buildHintSteps(word: ReviewCard["word"] | null | undefined): Hin
       translation:
         typeof example.translation === "string" && example.translation.trim().length > 0
           ? example.translation
+          : null,
+      // H1 只解锁词形：anchor 是例句里被遮盖的目标词（v1 批次可能缺失 → null，
+      // 此时面板退化为纯"已揭示"提示，不重复给整句）。
+      anchor:
+        typeof example.anchor === "string" && example.anchor.trim().length > 0
+          ? example.anchor
           : null,
     });
   } else if (word.semantic_chain && word.semantic_chain.trim().length > 0) {
