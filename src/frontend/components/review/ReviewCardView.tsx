@@ -524,7 +524,24 @@ export function ReviewCardView({
     refocusActions();
   };
   const consumeHint = () => setHintLevel((v) => Math.min(v + 1, hintSteps.length));
+  /**
+   * H4「翻卡」按钮。
+   *
+   * 正常阶梯（提示步 > 0）：H4 是提示耗尽后的翻卡入口，标记 viaH4 并翻到卡背，
+   * 由用户在卡背评分——与 `flipCard` 的 viaH4 语义一致。
+   *
+   * `card-no-hints` 阶段（`hintSteps.length === 0`，阶梯会话 rung=2 的第一轮
+   * **按设计不给提示**，见 sessionScheduler `stageForRung`）：此前 H4 仍只翻面，
+   * 于是「H4」成了该阶段唯一出口却表现为"点了没反应"——翻到卡背后仍需再找评分区，
+   * 实测极易被读成死锁（用户 2026-09-29 报「打字流没了」的根因之一）。
+   * 该阶段没有提示可耗，`viaH4`（= 强制 again 封顶）也无从谈起，故**直接按上限
+   * 结算并推进**，不制造中间态。
+   */
   const flipViaH4 = () => {
+    if (hintSteps.length === 0) {
+      onAnswer(hintCapNow(0, false), { hintLevel: 0, viaH4: false });
+      return;
+    }
     setViaH4(true);
     setRevealed(true);
   };
