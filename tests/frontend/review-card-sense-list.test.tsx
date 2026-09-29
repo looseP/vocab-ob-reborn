@@ -136,11 +136,12 @@ describe("复习卡卡背 · 义项区分支选择", () => {
     // markdown 投影的字段前缀不得出现在 DOM
     expect(list!.textContent).not.toMatch(/priority:/);
     expect(list!.textContent).not.toMatch(/tags:/);
-    // tags 走徽章，不是列表行
-    const badges = Array.from(list!.querySelectorAll("span.rounded-full")).map((b) =>
-      b.textContent?.trim(),
-    );
-    expect(badges).toEqual(["A", "B", "B"]);
+    // tags 不渲染（冗余于 priority，详见 SenseList 文件头）
+    expect(list!.querySelectorAll("span.rounded-full")).toHaveLength(0);
+    // 但英文释义必须都在
+    for (const en of ["to tolerate or put up with something", "to act in accordance with a rule", "to remain or continue"]) {
+      expect(list!.textContent).toContain(en);
+    }
   });
 
   it("无 core_definitions → 降级 definition_md（不空白）", async () => {
@@ -174,10 +175,10 @@ describe("复习卡卡背 · 义项区分支选择", () => {
     expect(rows).toHaveLength(1);
     // 序号列在单义项时不渲染（没有兄弟可比，序号是纯噪音）
     expect(rows[0]!.querySelector("span.tabular-nums")).toBeNull();
-    // 结构断言而非整串比对：徽章在「义项行」内，与 en 分属两行
+    // 结构断言而非整串比对：tags 不渲染，DOM 只有「义项行 + en 行」
     const paras = rows[0]!.querySelectorAll("p");
     expect(paras[0]!.textContent).toBe("唯一义项");
     expect(paras[1]!.textContent).toBe("only sense");
-    expect(Array.from(rows[0]!.querySelectorAll("span.rounded-full")).map((b) => b.textContent)).toEqual(["A"]);
+    expect(rows[0]!.querySelectorAll("span.rounded-full")).toHaveLength(0);
   });
 });

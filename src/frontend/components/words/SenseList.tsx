@@ -18,17 +18,39 @@ import { Badge } from "@/frontend/components/ui/Badge";
  * ## 紧凑度约定
  *
  * - 义项**两行**：`义项（中文）` + `en（英文）`。
- * - `tags` 提到义项行**右端**，与义项同行 —— 它是分类标签，不是独立信息。
- * - `priority` **默认不显示**：`parseCoreDefinitions` 内部已 `sortByPriority`
+ * - `priority` **不显示**：`parseCoreDefinitions` 内部已 `sortByPriority`
  *   （`collection-parser.ts:164`），列表顺序本身即是优先级表达，单独再写一遍
  *   `priority: 1` 是纯冗余。仅当它与「序号隐含的权重」不一致时才出徽章
  *   （正常数据不会发生，见 `weightMismatch`），以免静默丢信息。
+ * - `tags` **不显示**（2026-09-29 二次核查后移除，理由见下）。
+ *
+ * ## 为什么 `tags` 不显示
+ *
+ * 上一版把它渲染成徽章，注释写的是「分类标签，不按值映射颜色」—— **那个判断是错的**：
+ * A/B/C 确实是分级（源 tag 含 `core` → A）。但正因如此，它更不该显示：
+ *
+ * ```
+ * 全库实测：prio=1 → 100% ["A"]（6767 = 全库词数）
+ *           prio=2 → B 2433 / C 1488；prio=3 → B 558 / C 556
+ * 源数据 tag：core(8458) / n(1561) / abstract(924) / v(610) / adj(433) /
+ *             object(258) / person(234) / extension(228) / action(187) …
+ * ```
+ *
+ * 源里 10+ 类**语义**标签（词性、抽象性、论元角色，且常多 tag 组合）导入时
+ * 被压成**一个比特**：「含 `core` → A，否则 B/C」。所以：
+ *
+ * 1. `A` 与「第一个义项」**完全等价**（`prio=1` 恒为 `A`），是 `priority` 的函数；
+ * 2. 屏上那个孤零零的 `A` 徽章不携带任何学习价值 —— 用户已经能从位置知道谁是主义项。
+ *
+ * 保留 `tags` 字段在数据里（`CoreSense` 仍接收它），只是不渲染；
+ * 将来导入器若恢复语义标签，这里可以再放出真正的分类徽章。
  */
 
 export interface CoreSense {
   sense: string;
   en: string | null;
   priority: number | null;
+  /** 当前**不渲染**（冗余于 priority，见文件头）。保留在类型里以便将来恢复语义标签。 */
   tags: string[];
 }
 
@@ -52,8 +74,8 @@ export function SenseList({ senses, className, dense = false }: SenseListProps) 
       className={clsx("space-y-1.5", className)}
     >
       {senses.map((d, i) => {
-        const tags = d.tags.filter((t) => t.trim().length > 0);
         // 序号已按 priority 升序；这里只捕捉「实际权重 ≠ 位置」的异常。
+        // 正常数据不会触发（实测 prio=1 恒为 A、顺序由 sortByPriority 保证）。
         const weightMismatch = d.priority != null && d.priority !== i + 1;
         return (
           <li
@@ -84,24 +106,10 @@ export function SenseList({ senses, className, dense = false }: SenseListProps) 
                 >
                   {d.sense}
                 </p>
-                {(tags.length > 0 || weightMismatch) && (
-                  <span className="flex shrink-0 flex-wrap items-center justify-end gap-1 pt-[1px]">
-                    {weightMismatch && (
-                      <Badge tone="warm" className="px-1.5 py-0 text-[10px]">
-                        权重 {d.priority}
-                      </Badge>
-                    )}
-                    {tags.map((t) => (
-                      <Badge
-                        key={t}
-                        // tags 是分类标签而非分级，**不按值映射颜色** ——
-                        // 那会暗示一种数据里并不存在的语义顺序（同义标签颜色不同）。
-                        className="px-1.5 py-0 text-[10px]"
-                      >
-                        {t}
-                      </Badge>
-                    ))}
-                  </span>
+                {weightMismatch && (
+                  <Badge tone="warm" className="shrink-0 px-1.5 py-0 text-[10px]">
+                    权重 {d.priority}
+                  </Badge>
                 )}
               </div>
               {d.en && (

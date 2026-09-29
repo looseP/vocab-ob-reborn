@@ -74,15 +74,14 @@ describe("SenseList · 紧凑度与信息完整性", () => {
     expect(c.textContent).toContain("停留；持续");
   });
 
-  it("tags 渲染为徽章，与义项同行（不是独立列表行）", () => {
+  it("tags 不渲染（冗余于 priority：实测 prio=1 恒为 A）", () => {
     const c = mount(createElement(SenseList, { senses: BEAR }));
-    // 3 个义项共 3 个 tag 徽章
-    expect(badges(c)).toEqual(["A", "B", "B"]);
-    // 徽章挂在义项行的容器内，不在 <p> 里
-    const firstRow = items(c)[0]!;
-    const p = firstRow.querySelector("p")!;
-    expect(p.querySelector("span.rounded-full")).toBeNull();
-    expect(firstRow.querySelector("span.rounded-full")).toBeTruthy();
+    // 源数据 10+ 类语义 tag 导入时被压成「含 core → A，否则 B/C」，
+    // A 与「第一个义项」完全等价，屏上徽章零学习价值。
+    expect(badges(c)).toEqual([]);
+    expect(c.textContent).not.toContain("tags:");
+    // tags 仍可从入参传入（接口保留），只是不落到 DOM
+    expect(BEAR[0]!.tags).toEqual(["A"]);
   });
 
   it("priority 正常时不显示（顺序已由 sortByPriority 表达）", () => {
@@ -135,15 +134,16 @@ describe("SenseList · 紧凑度与信息完整性", () => {
     expect(mount(createElement(SenseList, {})).innerHTML).toBe("");
   });
 
-  it("en 缺失时不留空行；空 tags 不留空徽章位", () => {
+  it("en 缺失时不留空行", () => {
     const sparse: CoreSense[] = [
-      { sense: "无英文", en: null, priority: 1, tags: ["  ", ""] },
-      { sense: "有英文", en: "has en", priority: 2, tags: [] },
+      { sense: "无英文", en: null, priority: 1, tags: ["A"] },
+      { sense: "有英文", en: "has en", priority: 2, tags: ["B"] },
     ];
     const c = mount(createElement(SenseList, { senses: sparse }));
     expect(items(c)[0]!.querySelectorAll("p")).toHaveLength(1);
-    expect(badges(c)).toEqual([]);
     expect(items(c)[1]!.querySelectorAll("p")).toHaveLength(2);
+    // tags 与 weightMismatch 都不出现时，义项行不留空徽章位
+    expect(badges(c)).toEqual([]);
   });
 
   it("stable key：同义项文本重复时仍全部渲染", () => {
