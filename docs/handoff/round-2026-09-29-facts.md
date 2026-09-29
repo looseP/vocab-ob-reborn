@@ -63,6 +63,19 @@
 
 ## 3. ⚠️ 我判断错误并已撤回的结论
 
+> **本轮共撤回 4 条。它们的共同根因值得单独记：**
+> **用局部证据下全局结论** —— 分别是「用体积推断丢数据」「用 grep 范围推断未接线」
+> 「用未完成的操作序列推断功能有 bug」「用『页面上看不到』推断『功能不存在』」。
+> 最后一条尤其危险：圈词浮层需**真实选区 + mouseup** 才出现，仅程序化设 selection
+> 而不派发事件时它不显示 —— 我据此连误判三次（以为进的是详情预览、以为圈词入口不存在）。
+>
+> **给后续工作的纪律**：
+> 1. 断言「功能不存在」前，先**触发**它一次，不只看代码或页面；
+> 2. 断言「某层没接线」前，grep **全调用链**（路由→service→repository），不是只 grep 路由层；
+> 3. 断言「数据丢了」前，先查**时间线**（数据何时写入 vs 备份何时生成）；
+> 4. 报告缺陷时附**基线对照**（本 PR 未改动的 `origin/main` 上是否同样复现）。
+
+
 ### 3.1 「自动备份丢失全部例句数据」——**误判，撤回**
 
 我曾断言 09-28 12:43 的自动备份（274 KB）"丢了 101 MB 的例句数据"，并推测根因是 `postgres-backup.ts` 的 `pg_dump` 未指定连接身份。**两者都不成立。**
@@ -89,12 +102,36 @@
 
 **准确表述**：FR-12 **接线2（L2 辨析读 L3 语境）已交付**；**接线1（L1 复习卡读 L3 语境）仍未接线**。
 
+### 3.3 「阶梯结算表恒为空」与「服务端不感知 ladder」——两次误判
+
+实测阶梯会话（`vocab-ladder-mode=on`）走完一轮后，我断言：① 结算表「0 词已调度」是缺陷；
+② grep `src/http/routes/review.ts` 零命中，据此说"服务端完全不感知 ladder、`RUNG_SHIFT` 是死代码"。**两条都错**：
+
+- ① 结算表**只统计产出轮**（`L3ReviewSession` 的 `setSettlement` 仅在默写 `dictResult` 分支调用）。
+  我全程点「我认识 / 良好」，走的是再认轮与首学编码轮，**从未进入产出轮** → `settlement.length===0` 是**正确行为**。
+- ② 我只 grep 了**路由层**。服务层完整接线：`review.service.ts:549` 调用
+  `settleLadderRung(rung, input.rating, scheduling.stability)` → `saveAnswer` →
+  `review.repository.ts:455` 的 `COALESCE($17, ladder_rung)` 落库。
+  且 `abnormal` 实测 `rv=2, S=0.21d, last=hard → rung=1`，代入 `shiftLadderRung(1,"hard")=clamp(1+0)=1`
+  **完全正确**（`hard` 位移为 0 是设计）。
+
+**根因**：① 用**未完成的操作序列**推断功能有 bug；② 用 **grep 范围不足**推断未接线。
+
+**顺带确认阶梯引擎可用**：双通路（再认轮 / 首学编码轮）、四级提示、缺失级自动跳过、
+评分上限随用级下降（用 1 级后「轻松」被禁用）、揭示前无剧透、无 exam 层时降级 —— 均实测通过。
+
+### 3.4 「能力域勾选不生效」——误判
+
+我在导入表单勾了「阅读」，入库 `direction` 是「通用」，据此断言勾选项不生效。**错**：
+那次导入在提交前表单被重渲染，勾选状态已丢失。**粘贴建卷后实测 `l3_questions.space=阅读`**，
+能力域正确落库（同批 `status=active`，符合 ADR-0037 owner 直写）。
+
 ---
 
 ## 4. 本轮服务与数据状态（实测）
 
 ```
-main                f7e2d1c（含 PR #159 error-book 修复、PR #160 本文件）
+main                8c15b15（含 #159 error-book 修复、#160/#161 本文件、#162 L3 分页契约）
 compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 容器                web / review-outbox-worker / llm-reservation-reaper /
                     backup-scheduler / postgres —— 全 healthy
@@ -102,7 +139,9 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 迁移 journal        49（0046/0047/0048 已应用）
 数据                words 6767 / with_examples 6531 / with_exam 6171 / empty 236
                     对账：6767 = 6531 + 236  ✓
-使用痕迹            review_logs=0  user_word_progress=0  l3_* 全 0
+使用痕迹            review_logs=2  user_word_progress=3  ladder_rung 已写入
+                    L3：sources=1 contexts=1 occurrences=1 papers=1 questions=1
+                        submissions=1(sealed) question_attempts=1 grading=0
 备份                backups/ 共 56 文件；本轮新增两份经恢复验证的 dump
                     emergency-vocab-20260928-202923.dump   8,414,510
                     postfix-vocab-20260928-203409.dump     8,420,081
@@ -144,11 +183,33 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 
 ## 7. 遗留（按建议优先级）
 
-### 7.1 本轮两个 PR 均已合并，CI 全绿
-- **PR #159** `fix(l3): 错题库统一投影参数编号` → `main@e089154`
-- **PR #160** `docs(handoff): 固化本轮实况` → `main@f7e2d1c`（即本文件自身）
+### 7.0 本轮实测的 L3 全链路（浏览器真实操作，真实语料）
 
-两者三项必需检查（Engineering Gate + Migration Rehearsal / Browser E2E / Writing E2E）全 success。#159 的门禁数字：`Baseline ratchet gate PASS`、`Diff coverage 91.67% PASS`（changed src files 1、changed executable lines 24 / covered 22）。
+用真实语料（USA TODAY 关于 abnormal 脂肪水平的句子，非造数据）走完整链路：
+
+| 步骤 | 结果 | 落库证据 |
+|---|---|---|
+| ① 导入素材 | ✅ | `l3_sources=1` |
+| ② 粘贴建卷 | ✅（**修完 PR #162 后**才通） | `l3_papers=1` / `l3_questions=1`（`space=阅读`、`status=active`，符合 ADR-0037 owner 直写） |
+| ③ 圈记语境 | ✅ | `l3_contexts=1` / `l3_occurrences=1`（**L3 语境层首次有数据**） |
+| ④ 开卷做题 | ✅ | 三模式（纯净/做题/解析）齐全，作答 1/1 |
+| ⑤ 定格题纸 | ✅ | `status=sealed`、`seal_mode=full`、**迁移 0046 的 `question_ids=1` 定格生效** |
+| ⑥ 解析模式 | ✅ | 正确显示 `✕ B`（答错）/ `✓ C`（正确）+ 录入的解析 |
+| ⑦ 判卷 → 错题库 | ⛔ | **设计边界非缺陷**：`POST /grading` 是 agent 写面（ADR-0035 owner 不自判卷），本机无 agent token。题级错题真源是 `l3_grading_results.verdict` |
+
+**PR #162** `fix(l3): 素材列表分页契约漂移` → `main@8c15b15`。P0 缺陷：前端硬编码
+`/l3/sources?limit=100` 越过后端上限 50 → 400 → 素材下拉恒空 → 建卷无法选材料 →
+点击「建卷」零请求零提示（`.catch(() => setSources([]))` 吞掉 400）。修法是引入
+`src/domain/l3-list-limits.ts` 作契约单一真源（前后端共用），并用测试 G-1 扫源码
+**禁止硬编码 `limit=\d`**。**同类漂移已全仓排查，仅此一处。**
+
+### 7.1 三个 PR 均已合并，CI 全绿
+- **PR #159** `fix(l3): 错题库统一投影参数编号` → `main@e089154`
+- **PR #160** `docs(handoff): 固化本轮实况` → `main@f7e2d1c`
+- **PR #161** 同步 main 值 → `main@ccda0ac`
+- **PR #162** `fix(l3): 素材列表分页契约漂移` → `main@8c15b15`
+
+全部三项必需检查（Engineering Gate + Migration Rehearsal / Browser E2E / Writing E2E）全 success。#159 的门禁数字：`Baseline ratchet gate PASS`、`Diff coverage 91.67% PASS`。
 
 ### 7.2 H1 产线：exam 回填 340 词在途
 - 池 360 词；`eu-01`（20 词）已回收入账并三闸门全 PASS。
@@ -167,10 +228,18 @@ compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 
 **强行解冲突 = 把两代架构焊死，是负资产。** 正确处置：按 main 新架构重做"exam 三层上阶梯"，先写执行文档（沿用 `docs/plan/` 纪律）。参考材料在 `backup/hint-ladder-unpushed-2026-09-28`。
 
-### 7.5 L3 引擎零数据 —— 先验证路径，再决定是否灌数
-`l3_sources / l3_contexts / l3_questions / l3_sheets / l3_submissions / l3_study_notes / wordbooks / notes` **全为 0 行**；`review_logs` / `user_word_progress` 亦为 0。这是一个**建成但尚未开始使用**的系统。
+### 7.5 L3 引擎已从零数据走到可用（2026-09-29 更新，推翻本节原结论）
+**原结论已过时**：本节原写"全为 0 行，建议先走一遍链路裁决去留"。实测已完成该链路
+（见 §7.0），L3 六张表**全部有数据**：`l3_sources=1 / l3_contexts=1 / l3_occurrences=1 /
+l3_papers=1 / l3_questions=1 / l3_submissions=1(sealed) / l3_question_attempts=1`。
 
-9 月底一整轮 L3 工程投入（三模式引擎、题目录入改题、判卷信箱、N2 学习笔记）回答的是"能不能建"，不是"用不用"。**建议先在浏览器真实走一遍"导入 → 建卷 → 做题 → 判卷 → 错题回看"，用一个月真实使用裁决 L3 去留**，而不是现在灌入 6171 条例句。
+**仍未打通的最后一环是 agent 判卷通道**：`capabilities.grading.inbox="agent_readable"`
+已就绪（ADR-0038 已交付），但**本机无 agent token**（容器只有 `OWNER_API_TOKEN` 与
+`METRICS_BEARER_TOKEN`），而 `POST /sheets/:id/grading` 是 agent 写面
+（ADR-0035 —— owner 不自判卷）。故题级错题库为空。**这是配置缺口，不是代码缺陷。**
+
+结论：L3 已从"建成未用"进入"可用待判卷"。下一步是配 agent token 打通判卷，
+而非讨论是否灌数据。
 
 ### 7.6 分支清理（需授权）
 远端 20+ 个分支已完全合入 main（`ahead=0`），可删。保留：`main`、`backup/hint-ladder-unpushed-2026-09-28`、以及记录未整合成果的 `reliability-batch` / `writing-practice-v1` / `local-closeout-2026-09-19`。
