@@ -13,7 +13,7 @@ import { act } from "react";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import { ClueZone, TrainingFold } from "@/frontend/components/review/WordCardExamLayers";
+import { ClueZone, TrainingFold, ExampleLayerBlock } from "@/frontend/components/review/WordCardExamLayers";
 import { parseWordExam } from "@/domain/word-exam";
 
 const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -201,5 +201,78 @@ describe("TrainingFold（训练扩展 · mock fold）", () => {
       mount(createElement(TrainingFold, { exam: parseWordExam({ reading: { split: ["A"] } }), verifiedCount: 0 }))
         .innerHTML,
     ).toBe("");
+  });
+});
+
+/**
+ * 例句层（`.ex-layer`）的补测。
+ *
+ * 补的缘由（2026-09-29）：浏览器实测 497 张带 exam 的到期卡时发现 `clue-zone` /
+ * `training-fold` / `pattern-box` 全部渲染，而 `ex-layer` 不在 DOM 里。
+ * 读代码确认**不是缺陷** —— `ExampleLayerBlock` 挂在 `ReviewCardView` 的
+ * `flipBody` 的 `showDefinition`（卡背）分支，与 ClueZone（卡正面遮盖线索）
+ * 是互补的两面。但当时 `ex-layer` 在本文件里**零覆盖**，无法用测试锁证，
+ * 于是补上，避免下次真出问题时又只能靠翻卡肉眼确认。
+ */
+describe("ExampleLayerBlock（例句层 · mock .ex-layer）", () => {
+  const base = {
+    text: TEXT,
+    translation: "参考译文",
+    term: TERM,
+    source: "COCA",
+    sourceType: "corpus",
+    url: "https://example.com/src",
+    modified: false,
+    verifiedCount: 0,
+  };
+
+  it("完整例句 + 目标词高亮 + 译文 + 来源/核验徽章", () => {
+    const c = mount(createElement(ExampleLayerBlock, { ...base, verifiedCount: 2 }));
+    const layer = c.querySelector('[data-testid="ex-layer"]');
+    expect(layer, "例句层应渲染").toBeTruthy();
+    // 目标词被 MarkedSentence 高亮（<mark> 或强调色元素），不是纯文本
+    expect(layer!.querySelector("mark")?.textContent ?? layer!.innerHTML).toContain(TERM);
+    expect(layer!.textContent).toContain("参考译文");
+    expect(layer!.textContent).toContain("例句 · H1");
+    // 来源类型 + 来源名都出现
+    expect(layer!.textContent).toContain("corpus");
+    expect(layer!.textContent).toContain("COCA");
+    // verifiedCount > 0 才出「已核」
+    expect(layer!.textContent).toContain("已核");
+  });
+
+  it("无译文 / 未核验 / 未改写 / 无原文链接 → 对应徽章与链接都不出现", () => {
+    const c = mount(
+      createElement(ExampleLayerBlock, {
+        ...base,
+        translation: null,
+        url: null,
+        modified: false,
+        verifiedCount: 0,
+      }),
+    );
+    const layer = c.querySelector('[data-testid="ex-layer"]')!;
+    expect(layer.textContent).toContain(TEXT);
+    expect(layer.textContent).not.toContain("已核");
+    expect(layer.textContent).not.toContain("来源·改");
+    expect(layer.querySelector("a")).toBeNull();
+  });
+
+  it("modified → 出「来源·改」徽章（提示译文被改写过）", () => {
+    const c = mount(createElement(ExampleLayerBlock, { ...base, modified: true }));
+    expect(c.querySelector('[data-testid="ex-layer"]')!.textContent).toContain("来源·改");
+  });
+
+  it("有原文链接 → 外链带 target=_blank + rel=noreferrer", () => {
+    const c = mount(createElement(ExampleLayerBlock, base));
+    const a = c.querySelector('[data-testid="ex-layer"] a') as HTMLAnchorElement | null;
+    expect(a?.getAttribute("href")).toBe("https://example.com/src");
+    expect(a?.getAttribute("target")).toBe("_blank");
+    expect(a?.getAttribute("rel")).toContain("noreferrer");
+  });
+
+  it("无正文 → 整体缺席（不渲染空壳）", () => {
+    expect(mount(createElement(ExampleLayerBlock, { ...base, text: null })).innerHTML).toBe("");
+    expect(mount(createElement(ExampleLayerBlock, { ...base, text: "" })).innerHTML).toBe("");
   });
 });
