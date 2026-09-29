@@ -63,12 +63,17 @@
 
 ## 3. ⚠️ 我判断错误并已撤回的结论
 
-> **本轮共撤回 7 条。共同根因与两类纪律：**
+> **本轮共撤回 10 条。共同根因与三类纪律：**
 > - **用局部证据下全局结论** —— 「用体积推断丢数据」「用 grep 范围推断未接线」
 >   「用未完成的操作序列推断功能有 bug」「用『页面上看不到』推断『功能不存在』」
 >   「拿两个不同时刻的观测做比对」（§3.5）
 > - **没先确认测量环境与目标环境一致** —— §3.6 与 §3.7：把容器 `NODE_ENV` 差异
 >   当成代码缺陷；把自动化脚本不认识某个组件的 DOM 标记当成产品死锁。
+> - **证据指向了错误的层面**（§3.8-3.10，第二轮追加）—— 这三条与第一类同族，
+>   但不是"证据不足就推广"，而是**证据本身查错了层**：
+>   只查数据层没查门控（§3.8）、只做单侧 grep 没做双侧（§3.9）、
+>   只读文档没验现状（§3.10）。共同的正确动作是**往下再走一层**：
+>   读调用点、两侧对照、验证现象当前仍存在。
 >
 > **给后续工作的纪律**：
 > 1. 断言「功能不存在」前，先**触发**它一次，不只看代码或页面；
@@ -204,24 +209,110 @@ React 的 `act` 只存在于 **development** 构建；migration 镜像的环境�
 **新增纪律 7**：自动化探针报"无反应"时，先确认探针能看见目标组件
 （用 evaluate 直接查 DOM，而不是只匹配自己熟悉的 aria-label）。
 
+### 3.8 「例句层 `ex-layer` 不在 DOM = 移植漏了」——**假设链太长，每一环都没验证**
+
+500 词试点入队后实测：`clue-zone` / `clue-split` / `clue-mask` /
+`training-fold` / `key-point` ×2 / `pattern-box` 全在，唯独 `[data-testid="ex-layer"]`
+计数为 0。我判定 PR #168 的移植漏了例句层，并连排三个假设去找证据：
+
+| 我假设的原因 | 查证结果 |
+|---|---|
+| `examples[0].text` 缺失 | **假** —— 库查询 `6767/6767` 都有 `text` |
+| testid 记错了 | **假** —— 核对源码 `data-testid="ex-layer"` 确实存在 |
+| 漏了 `data-testid` 属性 | **假** —— 属性在，且带 `data-no-flip` |
+
+**真相**：`ExampleLayerBlock` 挂在 `ReviewCardView` 的 `flipBody` 里
+`showDefinition ?` 的**卡背分支**（`L3ExamPaper` 无关，此处为 `ReviewCardView.tsx:785`），
+而 `ClueZone` 在卡正面 —— 正面给遮盖后的语境线索、背面才给完整例句 + 译文 + 来源徽章。
+**是互补的两面，不是遗漏。**
+
+**更该记的是**：我想翻卡验证，但空格键与评分按钮**都推不动卡**（自动化能力不足），
+于是"验证手段失效"与"结论未坐实"叠在一起。补了 5 例
+`ExampleLayerBlock` 组件测试（#170）才把结论锁住。
+
+**根因**：没先读**调用点的门控条件**就下结论。假设链一长，每一环都建立在
+上一环未验证的前提上，纠错成本指数上升。
+
+**新增纪律 8**：判定"某组件不渲染"前，**先读调用点**（它在哪个 JSX 分支 /
+被哪个 state 门控），再查数据。数据对而组件不出现，答案几乎总在门控里。
+
+### 3.9 「`restoreSession` / `encodeCard` 在 main 命中 0 = 阶梯功能缺失」——**把描述词当符号**
+
+清理分支时查 `feat/ladder-review-workflow`（3 个提交、13613 行、落后 main 83 个提交），
+`git grep` 这些符号在 main 上命中 **0 个文件**，我据此准备上报"阶梯会话的
+session restore 与 encode card 功能未进 main"。
+
+**错。** 回到该分支上 grep 同样两个词 —— **也是 0 命中**。它们根本不是代码符号，
+而是**提交信息里的自然语言描述**（`58d70e6 ... encode card + TTS dictation + session restore`）。
+实际功能在：`tests/frontend/ladder-encode-card.test.ts` 在 main 上（我当天跑过，PASS），
+`LadderReviewSession.tsx` 用了 `sessionStorage`（会话恢复在），`reviewFlow/` 5 个文件全在。
+
+**根因**：只做**单侧 grep** 就下结论。符号是否存在，只能靠"目标侧与参照侧都比一次"来判定；
+单侧命中 0 与"符号根本不存在"无法区分。
+
+**新增纪律 9**：用符号名做存在性/缺失判断时，**必须两侧都 grep**（目标与参照）。
+单侧 0 命中只能证明"目标侧没有"，不能推出"功能缺失"。
+
+### 3.10 「待签字文档里的剧透 bug = 当前仍存在」——**文档的未决清单会过期**
+
+`plan/exam-mode-engine` 分支里的执行文档（2026-09-27）写着：
+
+> 发现一处*当前就存在的剧透 bug*：`stats` 的计算与渲染**都不受 `revealAll`**，
+> 草稿态用户未揭示答案时就能看到「答对 N」「估算 X 分」。
+
+我读 `L3ExamPaper.tsx` 看到 `L2413` 裸渲染 `{stats.correct}`，判断**两天过去仍未修**。
+
+**错。** 读到 `L2403-2417` 才看清：
+
+```tsx
+{/* 剧透门控（G-0）：判对与估分只在**解析档**显示。 */}
+{vis.showScore ? (… 答对 {stats.correct} … 估算 {stats.score} …) : null}
+```
+
+`vis = visibilityFor(mode)` 来自 `src/frontend/viewModels/examModeVisibility.ts` ——
+**219 行纯逻辑模块已完整落地**，`practice` / `pure` 两档统一走 `ALL_HIDDEN_ANSWER_FACE`
+（`showScore: false`），三档判定表 `VISIBILITY` 逐字段对齐设计卡 §2.4。
+`L2413` 的"裸渲染"只是在 `vis.showScore` 条件的**内部**。
+
+**根因**：把**两天前的文档**当今天的现状。计划文档的"待修 / 未做"清单与代码之间
+存在时差，越老的文档时差越大（该文档自己也标注了同类问题：§1.1 专门更正了
+另一份文档"上一/下一文件已实现却标未做"的过期条目）。
+
+**新增纪律 10**：文档写下的缺陷/未做项，动手前**先验证现象当前仍存在**。
+文档的未决清单是**待核假设**，不是事实。
+
+> 3.8 / 3.9 / 3.10 与 §3.1-3.5 同族（**用局部证据下全局结论**），
+> 但触发面不同：那几条是"证据不足就推广"，这三条是
+> **证据本身指向了错误的层面**（数据层 / 符号层 / 文档层），
+> 而正确的层面要靠**读代码调用点**才能拿到。
+
 ---
 
 ## 4. 本轮服务与数据状态（实测）
 
 ```
-main                0eaadb1（含 #159 error-book 修复、#160/#161 本文件、#162 L3 分页契约、
-                    #163 L3 链路实测、#164 agent 判卷通道、#165 复习视图 key 死锁）
+main                0a2317f（含 #159 error-book、#160/#161 本文件、#162 L3 分页契约、
+                    #163 L3 链路实测、#164 agent 判卷通道、#165 复习视图 key 死锁、
+                    #167 词卡 exam 扩展、#168 例句三件套、#169 阶梯/打字流可达性、
+                    #170 例句层测试补齐）
 compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 容器                web / review-outbox-worker / llm-reservation-reaper /
                     backup-scheduler / postgres —— 全 healthy
 镜像                vocab-observatory-v2:local  v22.22.2
 迁移 journal        49（0046/0047/0048 已应用）
-数据                words 6767 / with_examples 6531 / with_exam 6171 / empty 236
-                    对账：6767 = 6531 + 236  ✓
-使用痕迹            review_logs=2  user_word_progress=3  ladder_rung 已写入
+数据                words 6767 / with_examples 6767 / with_exam 6767   ← 已 100%
+                    （本文件初稿写的是 6531 / 6171 / empty 236，那是 15:12 前的
+                      快照；H1 产线随后补完 eu-10~eu-21，台账 `running: None`、
+                      `done: 6767`，6767 条全部带 `exam`）
+使用痕迹            user_word_progress=501（其中 497 立即到期）ladder_rung 已写入
+                    ↑ 2026-09-29 下午 500 词试点入队所致；入队前仅 4 条。
+                      试点动因：到期卡查询硬绑 `user_word_progress`，
+                      所以在此之前 **6767 份 exam 只有 4 份能被复习卡消费（0.06%）**
+                    review_logs=2
                     L3：sources=1 contexts=1 occurrences=1 papers=1 questions=1
                         submissions=1(sealed) question_attempts=1
                         **grading=1（wrong / grader-local）**  ← L3 七环打通
+                        另有 examModeVisibility.ts（219 行）三模式可见性引擎已落地
 agent 接入           AGENT_API_TOKENS 已配（agentId=grader-local，值只在 .env，gitignore 排除）
 备份                backups/ 共 56 文件；本轮新增两份经恢复验证的 dump
                     emergency-vocab-20260928-202923.dump   8,414,510
