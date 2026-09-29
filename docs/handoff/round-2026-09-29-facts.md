@@ -63,18 +63,23 @@
 
 ## 3. ⚠️ 我判断错误并已撤回的结论
 
-> **本轮共撤回 5 条。它们的共同根因值得单独记：**
-> **用局部证据下全局结论** —— 分别是「用体积推断丢数据」「用 grep 范围推断未接线」
-> 「用未完成的操作序列推断功能有 bug」「用『页面上看不到』推断『功能不存在』」
-> 「拿两个不同时刻的观测做比对」。
-> 最后一条尤其隐蔽，见 §3.5。
+> **本轮共撤回 7 条。共同根因与两类纪律：**
+> - **用局部证据下全局结论** —— 「用体积推断丢数据」「用 grep 范围推断未接线」
+>   「用未完成的操作序列推断功能有 bug」「用『页面上看不到』推断『功能不存在』」
+>   「拿两个不同时刻的观测做比对」（§3.5）
+> - **没先确认测量环境与目标环境一致** —— §3.6 与 §3.7：把容器 `NODE_ENV` 差异
+>   当成代码缺陷；把自动化脚本不认识某个组件的 DOM 标记当成产品死锁。
 >
 > **给后续工作的纪律**：
 > 1. 断言「功能不存在」前，先**触发**它一次，不只看代码或页面；
 > 2. 断言「某层没接线」前，grep **全调用链**（路由→service→repository），不是只 grep 路由层；
 > 3. 断言「数据丢了」前，先查**时间线**（数据何时写入 vs 备份何时生成）；
 > 4. 报告缺陷时附**基线对照**（本 PR 未改动的 `origin/main` 上是否同样复现）；
-> 5. 比对两个观测前，先确认**它们描述同一个状态**（见 §3.5 的教训）。
+> 5. 比对两个观测前，先确认**它们描述同一个状态**（见 §3.5 的教训）；
+> 6. **报缺陷前先对齐运行环境**（Node/NODE_ENV/依赖版本/镜像 tag），别拿本机观测
+>    直接代表 CI 或生产（见 §3.6）；
+> 7. **自动化脚本探针只覆盖它认得的 DOM 标记** —— 「脚本没动」不等于「页面卡死」，
+>    须先确认脚本能看见那个组件（见 §3.7）。
 
 
 ### 3.1 「自动备份丢失全部例句数据」——**误判，撤回**
@@ -153,13 +158,59 @@ T2  浏览器观测 → verdict=correct / owner        → error-book items=0   
 **更根本的纪律**：任何"验证/探针"脚本若会写数据，必须与只读检查分开，
 否则它既是测量工具也是污染源。
 
+### 3.6 「全仓 32 个测试文件的 `act` 导入是坏的」——**环境差异当成了代码缺陷**
+
+为给 P0 补回归测试，我在容器里跑 vitest，全仓报 `TypeError: act is not a function`，
+`grep 'import { act } from "react"'` 命中 **32 个文件**。我据此判定这是 React 19 移除
+`act` 导出的家族缺陷，准备**批量修 32 个文件**。
+
+**错。** 逐层排查后：
+
+```
+容器 NODE_ENV=production  → require("react").act === undefined   ← 我测的是这个
+NODE_ENV=development（CI） → require("react").act === function   ← 正常
+```
+
+React 的 `act` 只存在于 **development** 构建；migration 镜像的环境变量是 `production`。
+**那 32 个测试文件一直是好的，CI 也一直是绿的。**
+
+**根因**：我把自己的**执行环境**当成了**目标环境**，且未核对 CI 到底用什么环境跑。
+更值得注意的是：我一度用**干净 `origin/main` 拉 worktree 做基线对照**，对照结果同样是
+4/4 失败 —— **基线对照本身也用了同一个错误环境**，所以对照"通过"了，错误被确认了两遍。
+**基线对照只有在同一环境、同一命令下做才有意义。**
+
+**新增纪律 6**：报缺陷前先对齐运行环境（Node / NODE_ENV / 依赖版本 / 镜像 tag），
+且基线对照必须与被测用**完全相同**的运行环境。
+
+> **本机跑 vitest 的正确姿势**（宿主无 `node_modules`）：
+> 挂源码进 `vocab-observatory-v2-migration:local`，`--user root` 写入后
+> `su node` 执行，并**显式 `NODE_ENV=development`**。该镜像默认 `production`，
+> 会让所有 `act is not a function` 类假故障出现。
+> 另：`docker cp src <c>:/app/` 若 `/app/src` 已存在会形成 `/app/src/src` 嵌套，
+> 污染 tsc —— 用 `docker cp src/frontend <c>:/app/src/` 或先 `rm -rf`。
+
+### 3.7 「切档后连点 8 次不推进 = 第二个死锁」——**探针看不见那个组件**
+
+修完 P0 后我继续压测，点「照着打 · 上限重来」8 次会话位置不动，
+据此说"还有第二个死锁"。**错**：那个界面是 `TypingDictationView`（产出轮），
+它的输入框 `aria-label` 是「默写输入」、跟写区是「默写键入区」；
+而我的脚本只认 `FollowCopyView` 的「跟写输入」/「逐字跟写区」。
+**脚本从来没看见那个组件**，"没推进"是探针失灵，不是产品卡死。
+改用正确标记后，会话正常 7/9 → 8/9 走通。
+
+**根因**：把**探针的盲区**读成**产品的故障**。
+与 §3.4「页面上看不到就说不存在」同源 —— 只不过这次是"脚本看不到"。
+
+**新增纪律 7**：自动化探针报"无反应"时，先确认探针能看见目标组件
+（用 evaluate 直接查 DOM，而不是只匹配自己熟悉的 aria-label）。
+
 ---
 
 ## 4. 本轮服务与数据状态（实测）
 
 ```
-main                09c099c（含 #159 error-book 修复、#160/#161 本文件、#162 L3 分页契约、
-                    #163 L3 链路实测、#164 agent 判卷通道）
+main                0eaadb1（含 #159 error-book 修复、#160/#161 本文件、#162 L3 分页契约、
+                    #163 L3 链路实测、#164 agent 判卷通道、#165 复习视图 key 死锁）
 compose 项目         vocab-observatory   工作目录 F:\dev\vocab-ob\wt-main
 容器                web / review-outbox-worker / llm-reservation-reaper /
                     backup-scheduler / postgres —— 全 healthy
@@ -233,13 +284,14 @@ agent 接入           AGENT_API_TOKENS 已配（agentId=grader-local，值只�
 `src/domain/l3-list-limits.ts` 作契约单一真源（前后端共用），并用测试 G-1 扫源码
 **禁止硬编码 `limit=\d`**。**同类漂移已全仓排查，仅此一处。**
 
-### 7.1 五个 PR 均已合并，CI 全绿
+### 7.1 六个 PR 均已合并，CI 全绿
 - **PR #159** `fix(l3): 错题库统一投影参数编号` → `main@e089154`
 - **PR #160** `docs(handoff): 固化本轮实况` → `main@f7e2d1c`
 - **PR #161** 同步 main 值 → `main@ccda0ac`
 - **PR #162** `fix(l3): 素材列表分页契约漂移` → `main@8c15b15`
 - **PR #163** 登记 L3 全链路实测 → `main@09c099c`
 - **PR #164** `feat(compose): 透传 AGENT_API_TOKENS`（本节 §7.6）→ 唯一代码改动
+- **PR #165** `fix(review): 复习视图缺 key 致跨卡状态残留`（本节 §7.10）→ P0 死锁 + FSRS 污染
 
 全部三项必需检查（Engineering Gate + Migration Rehearsal / Browser E2E / Writing E2E）全 success。#159 的门禁数字：`Baseline ratchet gate PASS`、`Diff coverage 91.67% PASS`。
 
@@ -334,6 +386,54 @@ MCP server 包装层**，agent = HTTP Bearer 客户端」。实测 `scripts/run-
 
 ### 7.9 FR-12 接线1（L1 复习卡消费 L3 语境）
 实测 `review.service.ts` 对 L3 零引用。**注意**：§3.2 已说明 `feature-map.md` 原表述需收紧。
+
+### 7.10 【P0 已修】复习视图缺 key → 巩固轮死锁 + 评分上限污染（PR #165）
+
+**由用户实测截图发现**：「阶梯会话 · 巩固轮 6/9」的 `Mediterranean`
+显示「跟写完成 · 错键 3」，输入框消失、**无任何按钮可点**，会话卡死。
+
+**DOM 实测证据**（修复前）：
+
+```
+跟写区 13 格 = ['M','e','d','i','t','e','r','·','·','·','·','·','·']
+             └────── 前 7 格高亮 = 上一张卡残留的 typedLength ──────┘
+错键 3（残留）· 跟写完成态（残留）· 输入框消失（残留）
+```
+
+**根因**：`LadderReviewSession` 与 `ReviewPage` 渲染四个带本地 `useState` 的
+复习视图时**都没给 `key`**，React 按位置复用组件实例，上一张卡的本地状态
+被带进下一张。这是**家族缺陷**，四个组件全中：
+
+| 视图 | 残留状态 | 后果 |
+|---|---|---|
+| `FollowCopyView` | `finished` + `useTypingFlow` 的 `typedLength`/`doneRef` | **死锁** |
+| `TypingDictationView` | `finished`/`hintChars` + `useTypingFlow` | 同类死锁 |
+| `ReviewCardView` | `hintLevel`/`viaH4`/`revealed`/`shown` | **评分上限错 → 污染 FSRS**；剧透 |
+| `EncodeCardView` | `revealed` | 剧透 |
+
+**死锁链路**：上一卡已跟写完成（`doneRef=true`、`finished=true`）→ 换卡后组件被复用
+→ 新词比旧词短时 `done` 立即为真 → 输入框消失、`onDone` 因 `doneRef` 已置位永不触发。
+
+**`hintLevel` 泄漏比死锁更隐蔽也更糟**：每用一级提示评分上限降一档，残留会让用户
+**还没用任何提示就被压低评分**，FSRS 系统性低估记忆强度。这是**静默的数据污染**。
+
+**修复**（`main@0eaadb1`）：
+1. `cardKey = progressId + stage`。**stage 也要进 key** —— 最后一个 else 分支被
+   多个 stage 共用（`card` / `card-no-hints` …），换 stage 时同为 `ReviewCardView`、
+   位置不变，仅靠 `progressId` 不足以触发重挂载。
+   `ReviewPage` 用 `key={currentCard?.progressId ?? "review-no-card"}`。
+2. `useTypingFlow` 纵深防御：目标词变化即清零。**不替代 key** —— 它管不到 `finished`。
+
+**验证**：新增 hook 测试 4 例 + 源码护栏 4 例（五个视图**每一处**渲染都带 key）。
+变异测试：抽掉 `FollowCopyView` 的 key → 护栏转红；移除换词重置 → 3 例转红而
+「同词不重置」保持绿（对照组有效）。12/12 PASS；既有 6 个受影响文件 16/16 PASS；
+frontend tsc 零错误。
+**浏览器端到端**：同一张 `Mediterranean` 跟写区修复后为 `['M','·',...×12]`（进度归零）
+且**有输入框**；会话 6/9 → 7/9 → 8/9 → 9/9 走通至「阶梯会话结算 3 词已调度」。
+
+**教训**：React 列表/条件渲染里，**任何带本地状态的组件都必须有 key**。
+本项目四个复习视图全部漏了，而单测因 `act` 假故障（§3.6）从未真正执行过组件层断言 ——
+**测试没跑过 = 缺陷可以长期潜伏**。
 
 ---
 
