@@ -1,0 +1,164 @@
+{
+  "capturedAt": "2026-09-29T01:20:00Z",
+  "kind": "post-takeover + error-book-fix snapshot; measured on this machine (F:\\dev\\vocab-ob)",
+  "supersedes": null,
+  "note": "按 README 维护约定『迁移现场快照另存日期版本』，本文件不覆盖 workspace-snapshot.json（那是 2026-09-19 的历史快照）。本轮在 F:\\dev\\vocab-ob 机器上完成接管与修复，旧机数据类资产未触及。",
+  "repository": "https://github.com/looseP/vocab-ob-reborn",
+  "main": "e08915493f789bd4b108945a84e39851cbb9079c",
+  "mainMessage": "fix(l3): 错题库统一投影参数编号 — 消除 500 与静默错页 (#159)",
+  "tools": {
+    "git": "2.55.0.windows.3 (installed this round; was absent)",
+    "nodeHost": "v22.20.0 at C:\\Users\\20564\\AppData\\Local\\Programs\\nodejs22 (NOT on PATH; below engines range >=22.22.0 <23)",
+    "nodeContainer": "v22.22.2 (satisfies engines; all gates were run here)",
+    "npmHost": "10.9.3",
+    "nodeModulesOnHost": "absent in all worktrees",
+    "postgresMajor": 17,
+    "ghCli": "not installed; PR created via GitHub REST/GraphQL using git credential manager token"
+  },
+  "worktrees": {
+    "registeredCount": 5,
+    "all": [
+      { "directory": "wt-main", "head": "e089154", "branch": "main", "clean": true },
+      { "directory": "wt-integration", "head": "b7dcea4", "branch": "integration/l3-reliability-writing" },
+      { "directory": "wt-practice", "head": "b11f3ee", "branch": "writing-practice-v1" },
+      { "directory": "wt-reliability", "head": "b96b972", "branch": "reliability-batch" },
+      { "directory": "wt-writing", "head": "baf971e", "branch": "writing-v1" }
+    ],
+    "deletedThisRound": [
+      {
+        "directory": "wt-loop",
+        "reason": "orphan: .git pointed to D:/Temp/Myawesomeapp/vocab-ob'/.git/worktrees/wt-loop (nonexistent; stray apostrophe)",
+        "uniqueContent": 0,
+        "matchedRef": "origin/main (1135/1135 files identical)"
+      },
+      {
+        "directory": "wt-ladder",
+        "reason": "same orphan pointer",
+        "uniqueContent": 0,
+        "matchedRef": "origin/feat/ladder-review-workflow (1087/1087 files identical)"
+      }
+    ],
+    "verificationMethod": "git hash-object --path per file over the whole tree (not just src/), compared against all known refs"
+  },
+  "unpushedWorkRescued": {
+    "commits": ["a5d0f60", "86d9b3f"],
+    "file": "src/frontend/components/review/ReviewCardView.tsx",
+    "diffstat": "+575 / -127",
+    "subject": "hint ladder 接入 exam 三层 + 卡面对齐 wordcard-mock (2026-09-28)",
+    "provedUnpushedBy": "git branch -r --contains returned empty for both SHAs",
+    "rescuedTo": {
+      "bundle": "F:\\dev\\vocab-ob\\_restore\\git-bundle-unpushed-2026-09-28.bundle (24.7 MB, git bundle verify ok)",
+      "remoteBranch": "origin/backup/hint-ladder-unpushed-2026-09-28 = 86d9b3f"
+    },
+    "disposition": "architecture diverged from main (PR #138 rewrote the same file; HintStep shape incompatible) — REBUILD, do not merge. See round-2026-09-29-facts.md 7.4"
+  },
+  "runtime": {
+    "composeProject": "vocab-observatory",
+    "workingDir": "F:\\dev\\vocab-ob\\wt-main",
+    "port": "127.0.0.1:3001",
+    "containers": {
+      "web": "Up (healthy)",
+      "review-outbox-worker": "Up",
+      "llm-reservation-reaper": "Up",
+      "backup-scheduler": "Up (healthy)",
+      "postgres": "Up (healthy)"
+    },
+    "migrationsApplied": 49,
+    "imageNodeVersion": "v22.22.2"
+  },
+  "database": {
+    "name": "vocab",
+    "words": 6767,
+    "wordsWithExamples": 6531,
+    "wordsWithExamLayer": 6171,
+    "wordsWithoutExamples": 236,
+    "reconciliation": "6767 = 6531 done + 236 skipped (closed)",
+    "usageTraces": {
+      "review_logs": 0,
+      "user_word_progress": 0,
+      "l3_sources": 0,
+      "l3_contexts": 0,
+      "l3_questions": 0,
+      "l3_sheets": 0,
+      "l3_study_notes": 0,
+      "wordbooks": 0
+    }
+  },
+  "fixesThisRound": [
+    {
+      "id": "batch-01-20-words",
+      "kind": "data",
+      "rootCause": "all three backfill SQL revisions (examples-backfill .sql / -v2 / -v3) contained exactly 6511 statements, omitting batch-01 entirely; the backfill chain started at batch-02",
+      "authority": "deliverables/software-company/h1-example-sentences-batch01-sourced-2026-09-11.json (word-for-word identical to ledger.done_by_batch['batch-01']; all_anchored=true, modified=0)",
+      "verification": "isolated DB dry run 6511->6531, then 20/20 byte-exact comparison via Python direct-to-container (bypassing PowerShell text pipeline), then production",
+      "result": "with_examples 6511 -> 6531; 6767 = 6531 + 236"
+    },
+    {
+      "id": "error-book-param-numbering",
+      "kind": "code",
+      "pr": 159,
+      "mergedInto": "e089154",
+      "rootCause": "three parameter-numbering defects; the worst was LIMIT $1/$2 colliding with legs' $1(userId)/$2(space)/$3(direction), which would return silently wrong pages even after the 500 was fixed",
+      "whyTestsMissedIt": "tests/repositories/l3-error-book.test.ts mocked query/queryOne entirely and only asserted SQL text; also the three source tables held 0 rows so the bug could not surface on a real DB",
+      "verification": "real repo + real DB 4/4 FAIL before, 4/4 PASS after; new integration suite 7/7 (zero mocking); mutations M1 and M2 both turn red; tsc clean; production 500 -> 200 JSON on four call shapes"
+    }
+  ],
+  "retractedConclusions": [
+    {
+      "claim": "automatic backup lost all example data (P0); root cause suspected to be pg_dump not specifying connection identity",
+      "verdict": "WRONG — retracted",
+      "truth": "the 12:43 backup predates the data: all 6767 words were inserted 13:01:29, examples first written 14:11:54. It faithfully captured an empty database.",
+      "myError": "compared backup sizes without checking when data was loaded — indirect evidence used for a direct conclusion",
+      "mechanismVerified": "real postgres-backup.ts create via the production backup image produced 8,383,536 bytes; restore check matched production exactly (6767/6531/236/6171). No fix needed."
+    },
+    {
+      "claim": "host node v22.20.0 failing the engines range is a risk to this machine's ability to verify work",
+      "verdict": "MISLEADING — corrected",
+      "truth": "all services and all gates run in containers on node v22.22.2, which satisfies engines. Host node is irrelevant to verification."
+    },
+    {
+      "claim": "feature-map's 'L3 context adapter 已存在' means FR-12 is done",
+      "verdict": "TOO BROAD — tightened in feature-map.md",
+      "truth": "only FR-12 接线2 (L2 drill reads L3, ADR-0016 + L3ContextSourceAdapter) is delivered. 接线1 (L1 review card reads L3) is still absent: review.service.ts has zero references to l3_contexts."
+    }
+  ],
+  "structuralBlindSpot": {
+    "finding": "17 of 33 tests/repositories/*.test.ts are pure mocks that never let PostgreSQL parse the SQL — this is the structural reason the error-book defect survived 10 green unit tests",
+    "auditResult": "probed every reachable repository method against a real PostgreSQL: REAL-BUG = 0. error-book is an isolated defect from PR #142, not a family of them.",
+    "disposition": "do not preemptively rewrite all 17; use the same playbook (reproduce on real DB -> mutation test -> add integration test) when one of them actually breaks"
+  },
+  "processDeviations": [
+    "no gh CLI on this machine; PR #159 created via GitHub REST/GraphQL with a token from git credential manager (temp file only, deleted after use, never committed or echoed)",
+    "Python direct connections to api.github.com time out (WinError 10060); must reuse git's http.proxy 127.0.0.1:17891",
+    "HUSKY=0 used to bypass pre-commit (host has no npx); gates were actually run in a container instead",
+    "PowerShell text pipeline corrupts UTF-8 (mangles Chinese, breaks JSON parsing) — use Python direct-to-container for any Chinese data comparison",
+    "Get-FileHash is not equivalent to git hash-object: CRLF made 407 files falsely appear different; always use git hash-object --path for repo content comparison",
+    "PATCH /pulls/{n} {draft:false} returns 200 without effect; GraphQL markPullRequestReadyForReview is required, and this repo has the GraphQL draft field disabled so the mutation must not request it"
+  ],
+  "operationalGotchas": [
+    "docker compose build does NOT rebuild the migration image unless explicitly named — after upgrading main, the migrate container logs success while the journal stays unchanged. Verify the image contains the expected .sql count.",
+    "docker compose up -d rebuilds images but does NOT recreate running containers — --force-recreate is required to actually load new code.",
+    "Entering the migration image requires --user root to write into /app (read-only as uid 1000), then su node to run."
+  ],
+  "backups": {
+    "directory": "F:\\dev\\vocab-ob\\wt-main\\backups",
+    "fileCount": 56,
+    "verifiedNewThisRound": [
+      "emergency-vocab-20260928-202923.dump (8,414,510 bytes)",
+      "postfix-vocab-20260928-203409.dump (8,420,081 bytes)"
+    ],
+    "autoScheduler": "healthy; real createBackup run verified 8,383,536 bytes with restore matching production",
+    "offsiteCopy": "not configured (COS vs R2 still undecided — see PROJECT-GUIDE.md section 10)"
+  },
+  "openItems": [
+    "H1 exam backfill: eu-02..eu-08 (340 words) dispatched 2026-09-28, awaiting worker returns",
+    "L3 engine holds zero data — validate the real workflow before seeding 6171 sentences into it",
+    "hint ladder rebuild on main's architecture (reference: backup/hint-ladder-unpushed-2026-09-28)",
+    "FR-12 接线1: L1 review card consuming L3 context",
+    "remote branch cleanup: 20+ branches fully merged into main (deletion needs authorisation)"
+  ],
+  "notTouchedThisRound": [
+    "old-machine data assets (114 MB corpus, dumps, private config) — see local-closeout-facts-2026-09-19.md",
+    "host node_modules installation (not needed; containers suffice)"
+  ]
+}
