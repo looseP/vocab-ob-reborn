@@ -237,6 +237,79 @@ describe("WordRepository", () => {
     expect(mock.lastQuery!.text).toContain("is_deleted = false");
   });
 
+  // ── allowAlias 兜底（2026-09-30）────────────────────────────────────────
+  //
+  // 背景：读侧拿到的是语料原样形态（`hospitals` / `today's`），slug 只登记基词
+  // （`hospital` / `today`）。兜底前这 8656 个已登记变体形态全部 404。
+  //
+  // 默认必须仍是精确匹配 —— `deleteStubWord` 依赖精确性，否则
+  // `DELETE /words/abandoned` 会解析到 `abandon` 并可能删掉无关词条。
+  it("findBySlug 默认精确匹配，不带 aliases 兜底", async () => {
+    const word: Partial<WordRow> = { id: "1", slug: "hospital", lemma: "hospital" };
+    mock.setRows([word]);
+    const repos = createRepositories();
+    await repos.words.findBySlug("hospitals");
+
+    expect(mock.lastQuery!.text).toContain("WHERE slug = $1");
+    expect(mock.lastQuery!.text).not.toContain("aliases");
+  });
+
+  it("findBySlug 显式 allowAlias=false 同样保持精确", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+    await repos.words.findBySlug("hospitals", { allowAlias: false });
+
+    expect(mock.lastQuery!.text).toContain("WHERE slug = $1");
+    expect(mock.lastQuery!.text).not.toContain("aliases");
+  });
+
+  it("findBySlug allowAlias=true 走 aliases 兜底", async () => {
+    const word: Partial<WordRow> = { id: "1", slug: "hospital", lemma: "hospital" };
+    mock.setRows([word]);
+    const repos = createRepositories();
+    const result = await repos.words.findBySlug("hospitals", { allowAlias: true });
+
+    expect(result?.slug).toBe("hospital");
+    const sql = mock.lastQuery!.text;
+    expect(sql).toContain("unnest(aliases)");
+    // 形态比对必须不区分大小写：aliases 大小写混存（Marxists / Realtor / Junes）
+    expect(sql).toContain("lower(a) = lower($1)");
+    // slug 大小写变体也要能命中
+    expect(sql).toContain("lower(slug) = lower($1)");
+  });
+
+  // 1012 个 alias 与真实 slug 同名（`imagine` 既是 `imagination` 的 alias，
+  // 又是独立词条）。没有排序就会被 alias 抢走真实词条。
+  it("findBySlug 兜底时精确 slug 优先于 alias", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+    await repos.words.findBySlug("imagine", { allowAlias: true });
+
+    const sql = mock.lastQuery!.text;
+    expect(sql).toContain("ORDER BY");
+    expect(sql).toContain("(slug = $1) DESC");
+    expect(sql).toContain("(lower(slug) = lower($1)) DESC");
+    expect(sql).toContain("LIMIT 1");
+  });
+
+  // 345 个形态被多个 lemma 认领。排序键必须完全确定，否则同一请求可能
+  // 时而返回 A 时而返回 B（依赖 DB 返回顺序）。
+  it("findBySlug 兜底对多认领形态有确定性 tie-break", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+    await repos.words.findBySlug("over", { allowAlias: true });
+
+    const sql = mock.lastQuery!.text;
+    // alias 在自己数组里越靠前越优先（登记顺序即人工优先级）。
+    // 注意 WITH ORDINALITY 必须紧跟 unnest(...)：写成
+    // `FROM unnest(aliases) a WITH ORDINALITY` 是语法错误，且只在真库上暴露。
+    expect(sql).toContain("unnest(aliases) WITH ORDINALITY");
+    expect(sql).toContain("min(t.o)");
+    expect(sql).toContain("NULLS LAST");
+    // 末位兜底：完全确定
+    expect(sql).toContain("lemma ASC");
+  });
+
   it("findPublic paginates and applies filters", async () => {
     // First query = count, second = data
     mock.setRowMap({

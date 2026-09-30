@@ -1,0 +1,44 @@
+{
+  "$comment": "词条 aliases 补登清单。每条 = 一个在真实语料里出现、但当前点不开的屈折/所有格形式，以及它应归属的基词 lemma。",
+  "meta": {
+    "version": 1,
+    "measuredAt": "2026-09-30",
+    "corpus": "2025 考研英语（二）· 6 篇文章正文 + 48 道题（l3_papers.title like '2025%'）",
+    "method": "对语料切词后逐个查 words 的 lemma / slug / title / aliases 四路；凡「粗词干回退能命中基词、但该形式本身四路全不命中」的，判定为 aliases 登记缺口而非词表容量缺口。",
+    "coverageBefore": "词次覆盖 79.4%（1835/2312），词形覆盖 815/1131",
+    "coverageAfter": "词次覆盖 81.5%（1884/2312），补登 26 个形式即 +2.1 个百分点",
+    "notDone": "本清单只修这一份语料实测出的 26 个形式。库里另有 1491 个长度≥5 的词条 aliases 完全为空（1712 个词条 aliases 为空数组），属同类缺口但未纳入 —— 批量生成屈折形式需要形态学正确性保证，不在本次范围。",
+    "caveat": "aliases 不参与 content_hash 计算（见 src/db/content-hash.ts：L1=释义/词根/锚点/语义链，L2=搭配/语料/同义/反义），所以补登不会造成哈希漂移、不触发 L1 复习卡失效。"
+  },
+  "entries": [
+    { "form": "gaps", "lemma": "gap", "kind": "plural" },
+    { "form": "hospitals", "lemma": "hospital", "kind": "plural" },
+    { "form": "humans", "lemma": "human", "kind": "plural" },
+    { "form": "systems", "lemma": "system", "kind": "plural" },
+    { "form": "points", "lemma": "point", "kind": "plural" },
+    { "form": "trails", "lemma": "trail", "kind": "plural" },
+    { "form": "experiences", "lemma": "experience", "kind": "plural" },
+    { "form": "guides", "lemma": "guide", "kind": "plural" },
+    { "form": "projects", "lemma": "project", "kind": "plural" },
+
+    { "form": "suggested", "lemma": "suggest", "kind": "past" },
+    { "form": "requested", "lemma": "request", "kind": "past" },
+    { "form": "analysed", "lemma": "analyse", "kind": "past" },
+    { "form": "compared", "lemma": "compare", "kind": "past" },
+    { "form": "introduced", "lemma": "introduce", "kind": "past" },
+    { "form": "supported", "lemma": "support", "kind": "past" },
+    { "form": "viewed", "lemma": "view", "kind": "past" },
+
+    { "form": "growing", "lemma": "grow", "kind": "gerund" },
+    { "form": "reducing", "lemma": "reduce", "kind": "gerund" },
+    { "form": "rewarding", "lemma": "reward", "kind": "gerund" },
+    { "form": "encouraging", "lemma": "encourage", "kind": "gerund" },
+    { "form": "gaining", "lemma": "gain", "kind": "gerund" },
+    { "form": "introducing", "lemma": "introduce", "kind": "gerund" },
+    { "form": "offering", "lemma": "offer", "kind": "gerund" },
+    { "form": "triggering", "lemma": "trigger", "kind": "gerund" },
+
+    { "form": "reflects", "lemma": "reflect", "kind": "third-person" },
+    { "form": "today's", "lemma": "today", "kind": "possessive" }
+  ]
+}

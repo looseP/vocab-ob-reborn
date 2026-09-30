@@ -52,7 +52,10 @@ export class WordService {
   }
 
   async getWordBySlug(slug: string, userId?: string): Promise<{ word: Word; l2Promoted: boolean }> {
-    const row = await this.words.findBySlug(slug);
+    // allowAlias：读侧拿到的常是语料原样形态（L3 划词传 `hospitals` / `today's`），
+    // 而 slug 只登记基词。不开兜底这些形态一律 404 —— 实测库里 8656 个已登记
+    // 变体形态都走不到（`abandon → abandoned`、`Bible → biblical` 均如此）。
+    const row = await this.words.findBySlug(slug, { allowAlias: true });
     if (!row) {
       // M1 fix: use NotFoundError (AppError subclass) → errorToResponse maps to 404
       throw new NotFoundError("Word", slug);

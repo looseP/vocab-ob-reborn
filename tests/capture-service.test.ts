@@ -149,6 +149,40 @@ describe("CaptureService.capture — new word stub", () => {
   });
 });
 
+describe("CaptureService.capture — alias 兜底（2026-09-30）", () => {
+  beforeEach(() => {
+    withTransactionMock.mockClear();
+  });
+
+  // 圈到语料原样形态时不该新建 stub —— 那正是 L3「不在库则自动创建」的污染来源。
+  it("首次查找开 allowAlias：圈到 hospitals 应绑到已有的 hospital", async () => {
+    const mocks = makeRepos(makeWordRow({ slug: "hospital", lemma: "hospital" }));
+
+    const result = await makeService(mocks.words).capture({
+      ...BASE_INPUT,
+      headword: "hospitals",
+    });
+
+    expect(mocks.words.findBySlug.mock.calls[0]).toEqual(["hospitals", { allowAlias: true }]);
+    expect(result.existed).toBe(true);
+    expect(result.word.slug).toBe("hospital");
+    expect(mocks.words.insertMany).not.toHaveBeenCalled();
+  });
+
+  // 回读必须精确：刚插入的就是这个 slug，开兜底可能取回别人的词条。
+  it("插入后的回读不开 allowAlias", async () => {
+    let call = 0;
+    const rows = [null, makeWordRow()];
+    const mocks = makeRepos(null);
+    mocks.words.findBySlug.mockImplementation(async () => rows[Math.min(call++, 1)]!);
+
+    await makeService(mocks.words).capture(BASE_INPUT);
+
+    expect(mocks.words.findBySlug.mock.calls[0]).toEqual(["ephemeral", { allowAlias: true }]);
+    expect(mocks.words.findBySlug.mock.calls[1]).toEqual(["ephemeral"]);
+  });
+});
+
 describe("CaptureService.capture — existing word", () => {
   beforeEach(() => {
     withTransactionMock.mockClear();
