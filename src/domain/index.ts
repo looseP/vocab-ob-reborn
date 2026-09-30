@@ -487,6 +487,10 @@ export interface L3ContextRow {
   normalized_text: string | null;
   language: string | null;
   position: Json;
+  /** Cached sentence translation (null = never translated). See migration 0049. */
+  translation: string | null;
+  /** Provider id behind `translation` ('google-web' | 'mymemory' | 'manual'). */
+  translation_src: string | null;
   metadata: Json;
   created_at: string;
   updated_at: string;

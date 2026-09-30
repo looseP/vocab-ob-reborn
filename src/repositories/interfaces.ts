@@ -1092,6 +1092,13 @@ export interface IL3ContextRepository {
   deleteContextLink(userId: string, contextLinkId: string): Promise<L3ContextLinkRow | null>;
   lockSourceByIdForUser(userId: string, sourceId: string): Promise<L3SourceRow | null>;
   lockContextByIdForUser(userId: string, contextId: string): Promise<L3ContextRow | null>;
+  /** Cache/clear a translation on a context row (migration 0049). Owner-scoped. */
+  setContextTranslation(
+    userId: string,
+    contextId: string,
+    translation: string | null,
+    source: string | null,
+  ): Promise<L3ContextRow | null>;
   lockActiveL3TargetReference(userId: string, targetType: "source" | "context" | "word", targetId: string): Promise<void>;
   getSourceDeleteBlockers(userId: string, sourceId: string): Promise<L3SourceDeleteBlockers>;
   getContextDeleteBlockers(userId: string, contextId: string): Promise<L3ContextDeleteBlockers>;
