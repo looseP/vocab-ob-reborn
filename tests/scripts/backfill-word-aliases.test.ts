@@ -5,7 +5,7 @@
  * 之所以值得锁 —— 这个脚本要往 6767 词的生产词库里写数据，而它最容易出错的
  * 地方全是「以为不会发生但真会发生」的那几类：
  *   1. 同一个 lemma 有多个待补形式时，后一条把前一条挤掉（丢数据）
- *   2. aliases 为空数组（1712 个词条是这个状态）时拼出 `[undefined]`
+ *   2. aliases 为空数组（补登前 1712 个词条是这个状态）时拼出 `[undefined]`
  *   3. 大小写混存导致重复登记（库里本来就有 `Marxists` / `Realtor` 这类）
  *   4. 基词在库中不存在时写出一批孤儿 aliases
  *   5. 所有格形式（today's）被当成复数归一，撇号被吃掉
@@ -64,6 +64,16 @@ describe("随仓库发布的清单 data/word-aliases/2025-en2-inflections.json",
     expect(meta.coverageAfter).toContain("81.5%");
     // 「没做什么」必须留在文件里，否则下一个人会以为洞已经补完了。
     expect(meta.notDone).toContain("1491");
+  });
+
+  // 回归锁：1712 是**补登前**的口径，补登后是 1698（26 个形式落在 15 个
+  // 原为空的词条上）。曾把 1712 写成当前状态而被误读 —— 两个时点都必须写明。
+  it("meta 的空 aliases 数字同时标明补登前/后两个时点", () => {
+    const meta = manifest.meta as Record<string, string>;
+    expect(meta.notDone).toContain("1712");
+    expect(meta.notDone).toContain("1698");
+    expect(meta.notDone).toContain("补登前");
+    expect(meta.notDone).toContain("补登后");
   });
 });
 

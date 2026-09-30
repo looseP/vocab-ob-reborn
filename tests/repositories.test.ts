@@ -240,7 +240,8 @@ describe("WordRepository", () => {
   // ── allowAlias 兜底（2026-09-30）────────────────────────────────────────
   //
   // 背景：读侧拿到的是语料原样形态（`hospitals` / `today's`），slug 只登记基词
-  // （`hospital` / `today`）。兜底前这 8656 个已登记变体形态全部 404。
+  // （`hospital` / `today`）。兜底前约 8682 个已登记变体形态全部 404
+  // （aliases 去重形态 9694 − 与真实 slug 同名的 1012；口径见 findBySlug 注释）。
   //
   // 默认必须仍是精确匹配 —— `deleteStubWord` 依赖精确性，否则
   // `DELETE /words/abandoned` 会解析到 `abandon` 并可能删掉无关词条。
