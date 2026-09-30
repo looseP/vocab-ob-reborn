@@ -28,6 +28,9 @@ const CONTEXT_ROW: L3ContextRow = {
   text: "A vivid context.",
   normalized_text: null,
   language: "en",
+  // 翻译缓存（migration 0049）
+  translation: null,
+  translation_src: null,
   position: {},
   metadata: {},
   created_at: "2026-07-08T00:00:00Z",
@@ -100,6 +103,9 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
       text: input.text,
       normalized_text: input.normalized_text ?? null,
       language: input.language ?? null,
+      // 翻译缓存（migration 0049）
+      translation: null,
+      translation_src: null,
       position: input.position ?? {},
       metadata: input.metadata ?? {},
       created_at: "2026-07-08T00:00:00Z",
@@ -169,6 +175,13 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
       ...CONTEXT_ROW,
       id: contextId,
       user_id: userId,
+    })),
+    setContextTranslation: vi.fn(async (userId, contextId, translation, source) => ({
+      ...CONTEXT_ROW,
+      id: contextId,
+      user_id: userId,
+      translation,
+      translation_src: source,
     })),
     getSourceDeleteBlockers: vi.fn(async () => ({
       contextCount: 0,
@@ -825,6 +838,7 @@ describe("L3ContextService", () => {
     repo = makeRepo({
       lockSourceByIdForUser: vi.fn(async () => null),
       lockContextByIdForUser: vi.fn(async () => null),
+      setContextTranslation: vi.fn(async () => null),
     });
     service = makeService(repo);
 

@@ -47,6 +47,9 @@ function occurrenceItem(overrides: {
       text: overrides.text ?? "The vivid sunset faded.",
       normalized_text: null,
       language: "en",
+      // 翻译缓存（migration 0049）
+      translation: null,
+      translation_src: null,
       position: {},
       metadata: {},
       created_at: "2026-09-12T00:00:00.000Z",

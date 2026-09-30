@@ -12,11 +12,13 @@ import { proposalsRoutes } from "./proposals";
 import { readsRoutes } from "./reads";
 import { recommendationsRoutes } from "./recommendations";
 import { sourcesRoutes } from "./sources";
+import { translateRoutes } from "./translate";
 
 export function l3Routes(services: Services) {
   const app = new Hono<AppEnv>();
   app.route("/", sourcesRoutes(services));
   app.route("/", contextsRoutes(services));
+  app.route("/", translateRoutes(services));
   app.route("/", readsRoutes(services));
   app.route("/", importsRoutes(services));
   app.route("/", proposalsRoutes(services));

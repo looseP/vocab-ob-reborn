@@ -22,6 +22,8 @@ import {
   l3RecommendationItemResponseSchema,
   l3RecommendationListResponseSchema,
   l3SelectionCaptureResponseSchema,
+  l3ContextTranslateResponseSchema,
+  l3TextTranslateResponseSchema,
   l3SourceCreateResponseSchema,
   l3SourceListResponseSchema,
   l3SourceSpaceResponseSchema,
@@ -238,6 +240,7 @@ import {
   l3WordContextListQuerySchema,
   l3WordSpaceQuerySchema,
   quickL3ContextSchema,
+  l3TextTranslateSchema,
   reviewAnswerSchema,
   reviewSkipSchema,
   reviewSuspendSchema,
@@ -640,6 +643,12 @@ export const apiOperations = [
   operation("get", "/api/l3/practice-files", "listL3PracticeFiles", "owner", "agent", "none", { query: l3PracticeFileListQuerySchema }, 200, l3PracticeFileListResponseSchema),
   operation("get", "/api/l3/practice-files/detail", "getL3PracticeFile", "owner", "agent", "none", { query: l3PracticeFileDetailQuerySchema }, 200, l3PracticeFileDetailResponseSchema),
   operation("post", "/api/l3/contexts", "createL3Context", "owner", "owner", "sessionMutation", { body: l3ContextCreateSchema }, 201, l3ContextCreateResponseSchema),
+  // 整句翻译（2026-09-29）：owner-only + sessionMutation（写缓存行）。失败仍返 200，
+  // 译文缺失以 warning 表达 —— 语境可读，译文是增强。
+  operation("post", "/api/l3/contexts/:id/translate", "translateL3Context", "owner", "owner", "sessionMutation", undefined, 200, l3ContextTranslateResponseSchema),
+  // 划词即译（2026-09-29）：**无状态** —— 不要求语境存在、不落库。
+  // CSRF 记 none（同 POST 只读档）：本端点零写入，不接受 sessionMutation。
+  operation("post", "/api/l3/translate-text", "translateL3Text", "owner", "owner", "none", { body: l3TextTranslateSchema }, 200, l3TextTranslateResponseSchema),
   operation("post", "/api/l3/quick-context", "createL3QuickContext", "owner", "owner", "sessionMutation", { body: quickL3ContextSchema }, 201, l3QuickContextResponseSchema),
   operation("post", "/api/l3/occurrences", "createL3Occurrence", "owner", "owner", "sessionMutation", { body: l3OccurrenceCreateSchema }, 201, l3OccurrenceCreateResponseSchema),
   operation("post", "/api/l3/context-links", "createL3ContextLink", "owner", "owner", "sessionMutation", { body: l3ContextLinkCreateSchema }, 201, l3ContextLinkCreateResponseSchema),
