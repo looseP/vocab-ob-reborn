@@ -81,26 +81,32 @@ const app = createApp({
   l3Context: stubs.l3Context,
 } as unknown as Services);
 
+// Hono 的 app.request 返回 `Response | Promise<Response>`，故用 Awaited 归一，
+// 不能直接标注 Promise<Response>（TS2322）。
 function postText(body: unknown, token = OWNER_TOKEN): Promise<Response> {
-  return app.request("/api/l3/translate-text", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: typeof body === "string" ? body : JSON.stringify(body),
-  });
+  return Promise.resolve(
+    app.request("/api/l3/translate-text", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    }),
+  );
 }
 
 function postContext(id: string, body: unknown = {}, token = OWNER_TOKEN): Promise<Response> {
-  return app.request(`/api/l3/contexts/${id}/translate`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  return Promise.resolve(
+    app.request(`/api/l3/contexts/${id}/translate`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 beforeAll(() => {
