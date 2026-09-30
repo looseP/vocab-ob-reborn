@@ -137,6 +137,69 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
+/**
+ * 条目卡密度（2026-09-30）的回归锁。
+ *
+ * ## 为什么只能锁类名，锁不住布局
+ *
+ * 这个缺陷**只有真实布局引擎才能测出来**：jsdom 不做排版，`getBoundingClientRect`
+ * 恒返回 0，所以「笔记被压成窄条」在单测里根本不会发生。发现它的是用户截图，
+ * 复现它靠的是「真实组件 DOM + 真实构建 CSS + 与真机一致的容器宽度（487px）」。
+ *
+ * 那条复现路径不能进 CI（需要构建产物 + 定宽容器），所以这里退一步锁**成因**：
+ * 笔记元素不得带 `flex-1` / `basis-0`。`flex-1` 等价 `flex: 1 1 0%`，
+ * `basis: 0` 会让父容器的换行算法算出「笔记基础宽度≈0，永不触发换行」，
+ * `flex-grow` 再只把**剩余**空间分给它 —— 定位钮（宽度随摘录浮动）一宽，
+ * 笔记就被挤成逐字换行。
+ *
+ * 锁法说明：这是实现级断言，不是行为断言。它挡不住所有压缩成因（比如换成
+ * `w-1/6` 照样会挤），但能挡住**这一次的回归** —— 而这一次的代价是用户先看到
+ * 坏图才有人发现。
+ */
+describe("L3QuestionAnalysis 条目卡密度（不引入 flex 压缩）", () => {
+  /** 取某个条目卡里的笔记 <p>（排除只含选项键的段落容器）。 */
+  function noteOf(index: number): HTMLElement {
+    const cards = Array.from(document.querySelectorAll("li"));
+    const p = Array.from(cards[index]!.querySelectorAll("p"))
+      .find((el) => !/^[A-D]\s*$/.test((el.textContent ?? "").trim()));
+    if (!p) throw new Error(`第 ${index} 张卡里找不到笔记段落`);
+    return p as HTMLElement;
+  }
+
+  it("笔记不带 flex-1 / basis-0（否则定位钮会把笔记挤成窄条）", async () => {
+    await renderAnalysis();
+    await expandSection();
+    for (const i of [0, 1]) {
+      const cls = noteOf(i).className;
+      expect(cls, `第 ${i} 张卡的笔记类名`).not.toMatch(/\bflex-1\b/);
+      expect(cls, `第 ${i} 张卡的笔记类名`).not.toMatch(/\bbasis-0\b/);
+    }
+  });
+
+  it("笔记保留 min-w-0（允许在 flex 行内收缩而不撑破容器）", async () => {
+    await renderAnalysis();
+    await expandSection();
+    expect(noteOf(0).className).toMatch(/\bmin-w-0\b/);
+  });
+
+  it("笔记保留 whitespace-pre-wrap（长笔记按源文换行，不吞换行）", async () => {
+    await renderAnalysis();
+    await expandSection();
+    expect(noteOf(0).className).toMatch(/whitespace-pre-wrap/);
+  });
+
+  it("条目卡外层是横向 flex（密度改动本身不能被回退成块级）", async () => {
+    await renderAnalysis();
+    await expandSection();
+    const card = document.querySelectorAll("li")[0]!;
+    expect(card.className).toMatch(/\bflex\b/);
+    expect(card.className).toMatch(/items-baseline/);
+    // 密度改动：内边距从 p-2.5 收到 px-2 py-1
+    expect(card.className).toMatch(/px-2/);
+    expect(card.className).not.toMatch(/\bp-2\.5\b/);
+  });
+});
+
 describe("L3QuestionAnalysis 折叠子区", () => {
   it("默认折叠，标题显示计数徽标且不渲染条目内容", async () => {
     await renderAnalysis();
