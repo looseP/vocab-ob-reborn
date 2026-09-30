@@ -119,20 +119,5 @@ export function contextsRoutes(services: Services) {
     return c.json(result);
   });
 
-  // 整句翻译（2026-09-29）：按需生成 + 落库缓存。**手动触发**，不做自动翻译。
-  // 译文写进 l3_contexts.translation，即便免费 provider 日后失效，已读文章仍可读。
-  app.post("/contexts/:id/translate", async (c) => {
-    const contextId = parseRouteUuid(c.req.param("id"));
-    if (!contextId) return invalidIdResponse(c);
-    const body = await c.req.json().catch(() => ({}));
-    const result = await services.l3Context.translateContext({
-      userId: c.get("userId"),
-      contextId,
-      targetLang: typeof body.targetLang === "string" ? body.targetLang : undefined,
-      refresh: body.refresh === true,
-    });
-    return c.json(result);
-  });
-
   return app;
 }

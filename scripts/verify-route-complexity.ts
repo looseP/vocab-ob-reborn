@@ -43,6 +43,11 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // sheets-archive.ts 均已冻结在基线，故新面另立；bootstrap 限额按实测留一档余量
   // —— 实测 ~26 行 / 1 路由）。
   { file: "src/http/routes/l3/grading-inbox.ts", maxLines: 40, maxRoutes: 1 },
+  // 2026-09-30 翻译两条路径（带语境落库 + 无状态划词即译）独立薄路由。
+  // l3/index.ts 与 l3/contexts.ts 均已冻结在基线，故新端点另立并由 server.ts 直挂
+  // （同 spaces/lists/sheets-export 先例）；bootstrap 限额按实测留一档余量
+  // —— 实测 ~60 行 / 2 路由。
+  { file: "src/http/routes/l3/translate.ts", maxLines: 90, maxRoutes: 2 },
   // 2026-09-18 F-1 回看闭环：题纸档案列表独立薄路由（同棘轮约束，沿前例拆分；
   // bootstrap 限额按实测留一档余量）。
   { file: "src/http/routes/l3/sheets-archive.ts", maxLines: 30, maxRoutes: 1 },
