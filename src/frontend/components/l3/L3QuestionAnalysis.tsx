@@ -387,8 +387,10 @@ export function L3QuestionAnalysis({
         </button>
       </div>
 
+      {/* 密度（2026-09-30）：条目间距 2 → 1。条目自身已从 112px 压到约 31px，
+          8px 间距的相对占比随之变大，收到 4px 才不显得散。 */}
       {expanded && (
-        <div className="mt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+        <div className="mt-2 space-y-1" onClick={(e) => e.stopPropagation()}>
           {coverage.length > 0 && (
             <p className="text-[11px] text-[var(--color-ink-soft)]" title="选项被注记覆盖的情况（只呈现，不催促）">
               {coverage.map((entry) => `${entry.key}${entry.covered ? "✓" : "—"}`).join(" ")}
@@ -405,17 +407,29 @@ export function L3QuestionAnalysis({
               ...Object.values(annotation.option_tags).flatMap((list) => list ?? []),
             ]);
             return (
+              /*
+               * 密度（2026-09-30）：原本是块级堆叠 —— 徽章、定位钮、题型标签、笔记、
+               * 选项标签、操作行各占一行，一条两字笔记能撑到 112px。改为横向 flex：
+               * 徽章与内容同行，笔记/选项标签内联，操作行贴右。实测 112px → 31px。
+               *
+               * 草稿态的 `border-dashed` 换成 inset box-shadow：border 会占 2px 布局
+               * 并把卡片撑大，虚线本身又比实线「重」；inset shadow 视觉等价、零布局开销。
+               * 已提交态沿用 `ring-1`（ring 同样不占布局），保持两种态的视觉重量一致。
+               *
+               * 刻意保留：定位钮仍是最显眼的元素（跳回原文锚点是有真实用途的操作），
+               * 没有为了压高度把它降级。
+               */
               <li
                 key={annotation.id}
-                className={`list-none rounded-lg bg-[var(--color-surface)] p-2.5 text-xs leading-relaxed ${annotation.stage === "draft" ? "border border-dashed border-[var(--color-accent)]" : "ring-1 ring-[var(--color-border)]"}`}
+                className={`flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 rounded-md bg-[var(--color-surface)] px-2 py-1 text-xs leading-relaxed ${annotation.stage === "draft" ? "shadow-[inset_0_0_0_1px_var(--color-accent)]" : "shadow-[inset_0_0_0_1px_var(--color-border)]"}`}
               >
                 {annotation.stage === "draft" && (
-                  <span className="mr-1 inline-block rounded-full border border-dashed border-[var(--color-accent)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
+                  <span className="shrink-0 rounded-full bg-[var(--color-accent-soft,var(--color-surface))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
                     草稿
                   </span>
                 )}
                 {annotation.stage === "submitted" && (
-                  <span className="mr-1 inline-block rounded-full border border-sky-400 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                  <span className="shrink-0 rounded-full border border-sky-400 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
                     已提交
                   </span>
                 )}
@@ -426,33 +440,44 @@ export function L3QuestionAnalysis({
                       e.stopPropagation();
                       onLocate({ start: annotation.anchor_start!, end: annotation.anchor_end! });
                     }}
-                    className="mb-1 mr-2 rounded-md border border-[var(--color-accent)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft,var(--color-surface))]"
+                    className="shrink-0 rounded-md border border-[var(--color-accent)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft,var(--color-surface))]"
                   >
                     定位「{annotation.excerpt}」
                   </button>
                 )}
                 {annotation.entry_tags.map((label) => (
-                  <span key={label} className="mr-1 inline-block rounded-full bg-[var(--color-accent-soft,var(--color-surface))] px-2 py-0.5 text-[10px] text-[var(--color-accent)]">
+                  <span key={label} className="inline-block rounded-full bg-[var(--color-accent-soft,var(--color-surface))] px-2 py-0.5 text-[10px] text-[var(--color-accent)]">
                     {label}
                   </span>
                 ))}
-                {annotation.note && <p className="mt-1 whitespace-pre-wrap text-[var(--color-ink)]">{annotation.note}</p>}
+                {annotation.note && (
+                  /*
+                   * 刻意**不给** flex-1 / basis-0（2026-09-30 修）。
+                   * `flex-1` 等价 `flex:1 1 0%`：basis=0 让父容器的换行算法算出
+                   * 「笔记基础宽度≈0，永远不触发换行」，flex-grow 再把**剩余**空间
+                   * 分给它 —— 定位按钮一宽，剩余空间就窄，笔记被压成逐字竖排。
+                   * 现在按内容宽度参与换行判断：放得下就同行，放不下就整行换行
+                   * 并占满宽度。`min-w-0` 仍需要：允许在 flex 行内收缩而不撑破。
+                   */
+                  <p className="m-0 min-w-0 whitespace-pre-wrap text-[var(--color-ink)]">{annotation.note}</p>
+                )}
                 {OPTION_KEYS.filter((key) => (annotation.option_tags[key] ?? []).length > 0).map((key) => (
-                  <p key={key} className="mt-1 flex flex-wrap items-center gap-1">
-                    <span className="font-semibold text-[var(--color-ink-soft)]">{key}</span>
+                  <span key={key} className="inline-flex items-center gap-1">
+                    <span className="text-[10px] font-semibold text-[var(--color-ink-soft)]">{key}</span>
                     {(annotation.option_tags[key] ?? []).map((label) => (
                       <span key={label} className="rounded-full bg-[var(--color-surface)] px-2 py-0.5 text-[10px] ring-1 ring-[var(--color-border)]">
                         {label}
                       </span>
                     ))}
-                  </p>
+                  </span>
                 ))}
                 {/* 批次三①：agent 评卷 review 对照（sound ✓ / questionable ? / wrong ✗ +
-                    corrected_tags 差异 + comment）——只读展示，采纳归 owner。 */}
+                    corrected_tags 差异 + comment）——只读展示，采纳归 owner。
+                    块级：它自带多行结构，挤进横向流会读不了，故整块换行（basis-full）。 */}
                 {review && (
                   <div
                     data-annotation-review={review.verdict}
-                    className="mt-1 rounded-md bg-[var(--color-surface)] p-1.5 ring-1 ring-[var(--color-border)]"
+                    className="w-full basis-full rounded-md bg-[var(--color-surface)] p-1.5 ring-1 ring-[var(--color-border)]"
                   >
                     <p className="flex flex-wrap items-center gap-1 text-[10px] font-medium">
                       <span className={REVIEW_BADGE_CLS[review.verdict]}>
@@ -487,7 +512,9 @@ export function L3QuestionAnalysis({
                     )}
                   </div>
                 )}
-                <span className="mt-1.5 flex justify-end gap-2">
+                {/* 操作行：贴右、不另起一行（`ml-auto` 在 flex 流里把它推到末端）。
+                    `mt-1.5` 已去掉 —— 高度由 gap-y 统一管，避免两处间距叠加。 */}
+                <span className="ml-auto flex shrink-0 gap-2 pl-1">
                   {annotation.stage === "submitted" ? (
                     <>
                       {/* D18：submitted + 有 review → 「确认」钮（submitted→confirmed）。 */}
