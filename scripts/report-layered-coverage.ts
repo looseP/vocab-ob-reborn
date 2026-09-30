@@ -142,6 +142,11 @@ const BOOTSTRAP_BASELINE: CoverageThresholds = {
 const KNOWN_SOURCE_DIRECTORIES = new Set([
   "config", "db", "dictionary", "domain", "errors", "frontend", "fsrs", "http",
   "l3", "llm", "observability", "outbox", "repositories", "schemas", "services",
+  // 划词即译的 provider 层（2026-09-30）。与 `llm` 同构：index.ts + provider.ts +
+  // providers/*，是外部服务的适配层而非核心业务层，故不受核心层 diff-coverage
+  // 义务约束（见 isGovernedSourceFile：只有 domain/errors/services/repositories/
+  // http 承担义务）。业务编排仍在 src/services/translation.service.ts。
+  "translation",
 ]);
 const EMPTY_COUNTERS = (): Record<MetricName, { covered: number; total: number }> => ({
   lines: { covered: 0, total: 0 },
