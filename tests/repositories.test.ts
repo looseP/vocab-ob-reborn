@@ -292,8 +292,9 @@ describe("WordRepository", () => {
     expect(sql).toContain("LIMIT 1");
   });
 
-  // 345 个形态被多个 lemma 认领。排序键必须完全确定，否则同一请求可能
-  // 时而返回 A 时而返回 B（依赖 DB 返回顺序）。
+  // 298 个去重形态被多个 lemma 认领（按 lemma 去重统计；不去重会算成 345，
+  // 差值来自同一 lemma 在 aliases 里重复登记同一形态）。排序键必须完全确定，
+  // 否则同一请求可能时而返回 A 时而返回 B（依赖 DB 返回顺序）。
   it("findBySlug 兜底对多认领形态有确定性 tie-break", async () => {
     mock.setRows([]);
     const repos = createRepositories();

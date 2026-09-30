@@ -54,6 +54,9 @@ export class WordRepository extends BaseRepository implements IWordRepository {
    * 之所以必须「精确 slug 优先」：实测 1012 个 alias 与某个真实 slug 同名
    * （`imagine` 既是 `imagination` 的 alias，又是独立词条）。若不排序，
    * `GET /words/imagine` 会随扫描顺序返回 `imagination`。
+   *
+   * 规模（2026-09-30 实测）：已登记但 slug 查不到的 alias 共 8656 个去重形态；
+   * 其中 298 个被多个 lemma 认领，1012 个与真实 slug 同名。
    */
   async findBySlug(slug: string, options?: FindBySlugOptions): Promise<WordRow | null> {
     if (!options?.allowAlias) {
