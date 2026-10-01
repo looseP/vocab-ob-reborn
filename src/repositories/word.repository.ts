@@ -20,7 +20,12 @@ import type {
   WordRow,
   WordSummary,
 } from "../domain";
-import type { IWordRepository, UpsertFullWordInput, WordDeleteBlockers } from "./interfaces";
+import type {
+  FindBySlugOptions,
+  IWordRepository,
+  UpsertFullWordInput,
+  WordDeleteBlockers,
+} from "./interfaces";
 import { BaseRepository } from "./base";
 
 const SUMMARY_COLUMNS = `w.id, w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, w.short_definition, w.metadata`;
@@ -33,9 +38,49 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     );
   }
 
-  async findBySlug(slug: string): Promise<WordRow | null> {
+  /**
+   * 按 slug 取词条。`options.allowAlias` 打开时追加 aliases 兜底（见
+   * `FindBySlugOptions`）。**默认精确匹配** —— 删除等破坏性路径依赖这一点。
+   *
+   * 兜底的三层判定顺序（后者只在前者无果时生效）：
+   *   1. `slug = $1`            精确，行为与旧实现完全一致
+   *   2. `lower(slug) = lower($1)` 大小写变体（slug 均由小写化生成，实测无大小写冲突组）
+   *   3. `lower(alias) = lower($1)` 人工登记的变体/屈折形式
+   *
+   * 第 3 层内部再排序：alias 在**自己数组里越靠前越优先**（登记顺序即人工
+   * 标注的优先级，如 `analyze → analyse`），末尾以 `lemma ASC` 兜底确保结果
+   * 完全确定 —— 否则同一优先级下会依赖 DB 返回顺序，同一请求可能时命中时不命中。
+   *
+   * 之所以必须「精确 slug 优先」：实测 1012 个 alias 与某个真实 slug 同名
+   * （`imagine` 既是 `imagination` 的 alias，又是独立词条）。若不排序，
+   * `GET /words/imagine` 会随扫描顺序返回 `imagination`。
+   *
+   * 规模（2026-09-30 实测，两个口径要分清）：
+   *   aliases 去重形态总数   补登前 8656 → 补登后 9694
+   *   其中与真实 slug 同名   1012（这些靠「精确 slug 优先」化解，不算缺口）
+   *   被多个 lemma 认领      298（靠登记序号 + lemma ASC 化解）
+   *   故补登后仍无 slug 可达的形态约 9694 - 1012 = 8682 个，
+   *   兜底上线后这批才真正可达。
+   */
+  async findBySlug(slug: string, options?: FindBySlugOptions): Promise<WordRow | null> {
+    if (!options?.allowAlias) {
+      return this.queryOne<WordRow>(
+        `SELECT * FROM words WHERE slug = $1 AND is_deleted = false`,
+        [slug],
+      );
+    }
     return this.queryOne<WordRow>(
-      `SELECT * FROM words WHERE slug = $1 AND is_deleted = false`,
+      `SELECT * FROM words
+       WHERE is_deleted = false
+         AND (slug = $1
+              OR lower(slug) = lower($1)
+              OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(a) = lower($1)))
+       ORDER BY (slug = $1) DESC,
+                (lower(slug) = lower($1)) DESC,
+                (SELECT min(t.o) FROM unnest(aliases) WITH ORDINALITY AS t(a, o)
+                  WHERE lower(t.a) = lower($1)) ASC NULLS LAST,
+                lemma ASC
+       LIMIT 1`,
       [slug],
     );
   }

@@ -80,13 +80,17 @@ export class CaptureService {
       throw new ValidationError("headword must contain latin word characters", "headword");
     }
 
-    let row = await this.words.findBySlug(slug);
+    // 首次查找开 allowAlias：圈到 `hospitals` 时应绑到已有的 `hospital`，
+    // 而不是新建一个 stub 词条 —— 后者正是 L3「不在库则自动创建」污染的来源。
+    let row = await this.words.findBySlug(slug, { allowAlias: true });
     let existed = row != null;
     if (!row) {
       if (!this.words.insertMany) throw new Error("insertMany not configured");
       await this.words.insertMany([
         { slug, title, lemma: title, pos: null, cefr: null, ipa: null, short_definition: null },
       ]);
+      // 回读必须精确匹配：刚插入的就是这个 slug，若开兜底且它恰好是别人的
+      // alias，取回的可能是另一个词条，existed 判断就错了。
       row = await this.words.findBySlug(slug);
       if (!row) throw new Error(`capture word upsert failed for slug "${slug}"`);
       existed = false;
