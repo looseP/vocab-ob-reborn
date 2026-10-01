@@ -17,6 +17,7 @@ import {
   Plus,
   StickyNote,
   TrendingUp,
+  Volume2,
   Zap,
 } from "lucide-react";
 import type { Rating, ReviewCard, ReviewNoteEntry } from "@/frontend/hooks/useReview";
@@ -27,6 +28,7 @@ import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { L3ContextsFold } from "@/frontend/components/review/L3ContextsFold";
 import { buildHintSteps, extractMnemonicCore, HINT_STEP_LABEL as STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
 import { ClueZone, TrainingFold, ExampleLayerBlock, parseWordExam, parseVerifiedCount } from "@/frontend/components/review/WordCardExamLayers";
+import { isSpeechSynthesisAvailable, speak } from "@/frontend/reviewFlow/speech";
 
 const ratings = [
   { value: "again", label: "重来", variant: "danger" as const, key: "1" },
@@ -453,6 +455,7 @@ export function ReviewCardView({
   // T3 Hint 阶梯：已消费提示级数 + 提示穷尽后经 H4/直翻的翻卡标记
   const [hintLevel, setHintLevel] = useState(0);
   const [viaH4, setViaH4] = useState(false);
+  const speechAvailable = typeof window !== "undefined" && isSpeechSynthesisAvailable();
   const { addToast } = useToast();
 
   // 操作区容器：评分/跳过/挂起/撤销/翻页后把焦点移回这里，
@@ -644,6 +647,11 @@ export function ReviewCardView({
         if (hintSteps.length === 0 || hintLevel >= hintSteps.length) return;
         event.preventDefault();
         setHintLevel((v) => Math.min(v + 1, hintSteps.length));
+      } else if (key === "r") {
+        // 快捷键 R：朗读当前单词发音
+        if (!card) return;
+        event.preventDefault();
+        speak(card.word.lemma);
       } else if (key === "s") {
         event.preventDefault();
         void handleSkip();
@@ -771,6 +779,21 @@ export function ReviewCardView({
                 {card.word.ipa && (
                   <span className="font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
                 )}
+                {speechAvailable && (
+                  <button
+                    type="button"
+                    data-no-flip
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      speak(card.word.lemma);
+                    }}
+                    title="朗读发音（快捷键 R）"
+                    aria-label="朗读发音 (R)"
+                    className="rounded-full p-1 text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-accent)] focus:outline-none"
+                  >
+                    <Volume2 className="h-4 w-4" />
+                  </button>
+                )}
               </div>
               {card.word.short_definition ? (
                 <p className="mt-3 text-lg font-medium text-[var(--color-ink)]">{card.word.short_definition}</p>
@@ -847,9 +870,26 @@ export function ReviewCardView({
             <h2 className="section-title text-4xl font-bold text-[var(--color-ink)]">
               {card.word.lemma}
             </h2>
-            {card.word.ipa && (
-              <span className="mt-2 font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
-            )}
+            <div className="mt-2 flex items-center justify-center gap-2">
+              {card.word.ipa && (
+                <span className="font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
+              )}
+              {speechAvailable && (
+                <button
+                  type="button"
+                  data-no-flip
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    speak(card.word.lemma);
+                  }}
+                  title="朗读发音（快捷键 R）"
+                  aria-label="朗读发音 (R)"
+                  className="rounded-full p-1 text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-accent)] focus:outline-none"
+                >
+                  <Volume2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
 
             {/* ── 例句线索区（mock .clue-zone 口径）──────────────────────────
                 例句**先出现**但目标词被遮盖：记忆任务从"看整句回想"变成
@@ -1088,7 +1128,7 @@ export function ReviewCardView({
 
           <p className="text-center text-xs text-[var(--color-ink-soft)] opacity-70">
             评分上限「{HINT_CAP_LABEL[cap]}」
-            {hintLevel > 0 ? ` · 已用 ${hintLevel} 级提示` : ""} · 空格 翻转 · N 提示 · 1-4 评分 · S 跳过 · P 挂起 · H 历史{canUndo ? " · U / Ctrl+Z 撤销上一张" : ""}
+            {hintLevel > 0 ? ` · 已用 ${hintLevel} 级提示` : ""} · 空格 翻转 · N 提示 · R 朗读 · 1-4 评分 · S 跳过 · P 挂起 · H 历史{canUndo ? " · U / Ctrl+Z 撤销上一张" : ""}
           </p>
         </>
       )}
