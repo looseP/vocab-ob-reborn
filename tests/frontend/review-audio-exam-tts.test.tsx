@@ -150,6 +150,7 @@ afterEach(() => {
     for (const m of mounted.splice(0)) m.root.unmount();
   });
   document.body.innerHTML = "";
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.clearAllMocks();
   Reflect.deleteProperty(window, "speechSynthesis");
@@ -448,14 +449,96 @@ describe("ReviewCardView：声学胶囊与快捷键", () => {
     expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("播放中");
   });
 
-  it("E 键播放中再次按下：打断复位，不叠第二条语音", () => {
+  it("E 键播放中再次按下：打断复位，且**真正调用** speechSynthesis.cancel（物理停声）", () => {
     const container = renderCard();
     pressKey("e");
     expect(utterances()).toHaveLength(1);
+    const cancelsBefore = synth.cancel.mock.calls.length;
 
     pressKey("e");
+
+    // 断言点必须落在底层：只验 UI 复位会漏掉"界面复位了、耳机还在念"的幽灵音轨
+    expect(synth.cancel.mock.calls.length).toBeGreaterThan(cancelsBefore);
     expect(utterances()).toHaveLength(1);
     expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("听真题例句");
+  });
+
+  it("例句播放中按 R：先物理打断例句，再念单词，两轨不撞车", () => {
+    const container = renderCard();
+    pressKey("e");
+    expect(utterances()).toHaveLength(1);
+    expect(utterances()[0].text).toBe(EXAMPLE_TEXT);
+    const cancelsBefore = synth.cancel.mock.calls.length;
+
+    pressKey("r");
+
+    // 例句 TTS 被显式 cancel，否则会与单词真人语音双轨混音
+    expect(synth.cancel.mock.calls.length).toBeGreaterThan(cancelsBefore);
+    expect(utterances()).toHaveLength(2);
+    expect(utterances()[1].text).toBe("above");
+    // 声源已切到单词 → 例句按钮复位
+    expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("听真题例句");
+  });
+
+  it("正面「听真题例句」按钮在播放中点击 = 打断复位（与 E 键行为一致）", () => {
+    const container = renderCard();
+    pressKey("e");
+    expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("播放中");
+    const cancelsBefore = synth.cancel.mock.calls.length;
+
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="clue-play-example"]')?.click());
+
+    expect(synth.cancel.mock.calls.length).toBeGreaterThan(cancelsBefore);
+    expect(utterances()).toHaveLength(1);
+    expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("听真题例句");
+  });
+
+  it("背面「朗读例句」按钮在播放中点击 = 打断复位（正反面同一入口）", () => {
+    // preview 直接渲染卡背（不经翻转动画），可在 jsdom 里稳定触达 ex-layer-play
+    const container = render(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(ReviewCardView, { card: makeCard(), preview: true, onAnswer: vi.fn() }),
+      ),
+    );
+    const play = () => container.querySelector<HTMLButtonElement>('[data-testid="ex-layer-play"]');
+    expect(play()).not.toBeNull();
+
+    act(() => play()?.click());
+    expect(utterances()).toHaveLength(1);
+    expect(play()?.textContent).toContain("播放中");
+    const cancelsBefore = synth.cancel.mock.calls.length;
+
+    act(() => play()?.click());
+
+    expect(synth.cancel.mock.calls.length).toBeGreaterThan(cancelsBefore);
+    expect(utterances()).toHaveLength(1);
+    expect(play()?.textContent).toContain("朗读例句");
+  });
+
+  it("真人轨在途不被 estimateSpeechMs 腰斩：600ms 处仍在播放态", () => {
+    vi.useFakeTimers();
+    // jsdom 默认 canPlayType("audio/mpeg") === ""（判定为无解码能力）。这里模拟
+    // 具备解码能力的浏览器，逼 playWord 走**真人音频主轨**分支。
+    vi.spyOn(window.HTMLMediaElement.prototype, "canPlayType").mockReturnValue("maybe");
+    expect(canPlayRealAudio()).toBe(true);
+
+    const container = renderCard();
+    pressKey("r");
+    expect(utterances()).toHaveLength(0);
+
+    // 缺陷回归点：真人 mp3 需网络拉取，短词 600ms 估算到点即腰斩声波并丢失打断能力
+    act(() => void vi.advanceTimersByTime(estimateSpeechMs("above")));
+    expect(container.querySelector('[data-testid="audio-waveform"]')).not.toBeNull();
+
+    // 首帧 1.5s 超时后才降级 TTS，此时才切回按字符数估算的复位定时器
+    act(() => void vi.advanceTimersByTime(WORD_AUDIO_TIMEOUT_MS - estimateSpeechMs("above")));
+    expect(utterances()).toHaveLength(1);
+    expect(utterances()[0].text).toBe("above");
+
+    act(() => void vi.advanceTimersByTime(estimateSpeechMs("above")));
+    expect(container.querySelector('[data-testid="audio-waveform"]')).toBeNull();
   });
 
   it("正面「听真题例句」按钮可用（不消耗 H1 提示）", () => {

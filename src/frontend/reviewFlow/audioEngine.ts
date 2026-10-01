@@ -10,15 +10,18 @@
  * 三处工程约束（都是踩过的坑，不是风格偏好）：
  * 1. **能力探测前置**：离线或环境无 mp3 解码能力（含 jsdom）时**直接**走 TTS，
  *    不浪费一次注定失败的跨域请求 —— 也让单测无需网络即可覆盖降级分支。
- * 2. **播放互斥**：新音频一律先中断上一次（真人轨 `cancel()` + TTS 内部 `cancel()`），
- *    否则 R / E 交替按键会出现两条语音叠着念。
- * 3. **状态复位兜底**：Web Speech 的 `onend` 在部分浏览器长句场景不可靠，统一用
- *    `estimateSpeechMs()` 估算复位，宁可早复位也不让 UI 卡在"播放中"。
+ * 2. **播放互斥（物理级）**：新音频一律先中断上一次 —— 真人轨 `cancel()` +
+ *    `speechSynthesis.cancel()`（见 `interruptCurrent`）。只复位 UI 不 cancel，
+ *    会出现"界面已复位、耳机还在念"的幽灵音轨，R / E 交替时双轨混音。
+ * 3. **复位分流**：真人轨以 `Audio.onended` 为准（`WORD_REAL_AUDIO_SAFETY_MS`
+ *    只是防线，不得用短文本估算腰斩 mp3）；TTS 没有可靠 `onend`，
+ *    才退回 `estimateSpeechMs()` 估算复位，宁可早复位也不让 UI 卡在"播放中"。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SENTENCE_RATE,
+  cancelSpeech,
   isSpeechSynthesisAvailable,
   speak,
   speakSentence,
@@ -35,6 +38,16 @@ export const DEFAULT_ACCENT: Accent = "us";
 
 /** 真人音频首帧超时：超过它即降级本地 TTS（用户不该为一次加载干等）。 */
 export const WORD_AUDIO_TIMEOUT_MS = 1500;
+
+/**
+ * 真人音频轨的**安全上限**（毫秒）：不是"播放时长估算"，而是"防线"。
+ *
+ * 真人 mp3 需要网络拉取，短词（如 `access`）用 `estimateSpeechMs` 的 600ms 下限
+ * 会让定时器**腰斩**正在播放的音频 —— 声波动画提前熄灭，且 `handleRef` 被清空后
+ * 连打断能力一起丢失。真人轨正常收尾一律由 `Audio.onended` 负责；
+ * 这个定时器只在"既没 ended 也没 error 也没首帧超时"的极端漏网场景兜底。
+ */
+export const WORD_REAL_AUDIO_SAFETY_MS = 4000;
 
 /**
  * 词典真人发音 CDN：type=1 英音 / type=2 美音。
@@ -263,13 +276,23 @@ export function useAudioController(): AudioController {
       clearTimer();
       handleRef.current?.cancel();
       handleRef.current = null;
+      // 卸载兜底：句柄只覆盖"已知在途对象"，TTS 在极端时序下可能已脱离句柄，
+      // 直接对 speechSynthesis 发一次物理 cancel，避免离开页面后耳机还在念。
+      cancelSpeech();
     };
   }, [clearTimer]);
 
-  /** 中断在途音频并清定时器，但**不改**播放态（由随后的 begin 接管）。 */
+  /**
+   * 中断在途音频并清定时器，但**不改**播放态（由随后的 begin 接管）。
+   *
+   * `cancelSpeech()` 不可省略：`handleRef.current?.cancel()` 只停我们自己创建的对象，
+   * Web Speech 已排队的整句必须靠 `speechSynthesis.cancel()` 才能真停 ——
+   * 否则 UI 复位了、耳机里仍在念，随后按 R 会与单词发音双轨混音。
+   */
   const interruptCurrent = useCallback(() => {
     handleRef.current?.cancel();
     handleRef.current = null;
+    cancelSpeech();
     clearTimer();
   }, [clearTimer]);
 
@@ -291,10 +314,24 @@ export function useAudioController(): AudioController {
       const text = lemma.trim();
       if (text.length === 0) return;
       interruptCurrent();
-      begin("word", estimateSpeechMs(text));
-      handleRef.current = playWordAudio(text, accentRef.current, { onEnd: finishPlayback });
+      // 真人轨：用 4s 安全上限兜底（正常收尾走 Audio.onended），**绝不用 600ms 腰斩**；
+      // 纯 TTS 路径（离线 / 无 mp3 解码能力）没有 onended，仍按文本长度估算复位。
+      const realTrack = canPlayRealAudio();
+      begin(
+        "word",
+        realTrack ? Math.max(WORD_REAL_AUDIO_SAFETY_MS, estimateSpeechMs(text)) : estimateSpeechMs(text),
+      );
+      handleRef.current = playWordAudio(text, accentRef.current, {
+        onEnd: finishPlayback,
+        onFallback: () => {
+          // 主轨已失败（error / 超时 / play reject）而声音真的切换到了 TTS：
+          // 此时才启用按字符数估算的短定时器，接管 TTS 的状态复位。
+          clearTimer();
+          timerRef.current = setTimeout(finishPlayback, estimateSpeechMs(text));
+        },
+      });
     },
-    [begin, finishPlayback, interruptCurrent],
+    [begin, clearTimer, finishPlayback, interruptCurrent],
   );
 
   const playSentence = useCallback(
@@ -304,8 +341,14 @@ export function useAudioController(): AudioController {
       interruptCurrent();
       begin("sentence", estimateSpeechMs(content));
       const started = speakSentence(content, { accent: accentRef.current, rate: SENTENCE_RATE });
-      // 无 TTS 能力时不留在"播放中"假状态
-      if (!started) finishPlayback();
+      if (started) {
+        // **必须挂上物理打断句柄**：TTS 没有可用的 ended 回传，句柄是上游
+        // （E 再按一次 / 按 R / 组件卸载）唯一能真正掐断这条长句的入口。
+        handleRef.current = { cancel: cancelSpeech };
+      } else {
+        // 无 TTS 能力时不留在"播放中"假状态
+        finishPlayback();
+      }
     },
     [begin, finishPlayback, interruptCurrent],
   );

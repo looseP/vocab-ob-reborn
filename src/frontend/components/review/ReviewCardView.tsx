@@ -557,6 +557,14 @@ export function ReviewCardView({
   // 声学底座：双轨发音（真人词典音频 → 本地 TTS）+ 口音 + 播放态（Phase 1）
   const audio = useAudioController();
   const { addToast } = useToast();
+  // 播放控制拆成局部常量：`audio` 每次渲染都是新对象身份，直接进 useCallback 依赖
+  // 会让回调（进而让键盘 effect）每帧重建；拆开后依赖全是稳定引用。
+  const {
+    playSentence: playSentenceAudio,
+    stop: stopAudio,
+    isPlaying: audioPlaying,
+    currentSource: audioSource,
+  } = audio;
 
   // 操作区容器：评分/跳过/挂起/撤销/翻页后把焦点移回这里，
   // 避免按钮卸载后焦点掉回 body（键盘/读屏用户的焦点链断裂）。
@@ -715,6 +723,20 @@ export function ReviewCardView({
     return first ? parseWordExam(first.exam) : null;
   }, [detailWord?.examples]);
 
+  /**
+   * 例句朗读的**唯一入口**：快捷键 E 与正/背面按钮共用同一条路径。
+   *
+   * 正在播例句时再次触发 = 打断复位，而不是叠第二条语音。此前按钮回调直接写死
+   * `playSentence`，导致同一个动作在键盘上能打断、在按钮上却只会重播 ——
+   * 两条路径行为分叉，用户按"播放中…"的按钮反而听不到预期效果。
+   */
+  const toggleOrPlaySentence = useCallback(() => {
+    const sentence = exampleItem?.text ?? null;
+    if (!sentence) return;
+    if (audioPlaying && audioSource === "sentence") stopAudio();
+    else playSentenceAudio(sentence);
+  }, [exampleItem, audioPlaying, audioSource, playSentenceAudio, stopAudio]);
+
   // 键盘快捷键（P0，对齐 v1）：
   //   评分模式：空格/Enter 翻转、1-4 评分、S 跳过、P 挂起、U 或 Ctrl/Cmd+Z 撤销；
   //   preview 模式：←/→ 翻页。
@@ -788,12 +810,12 @@ export function ReviewCardView({
         event.preventDefault();
         audio.playWord(card.word.lemma);
       } else if (key === "e") {
-        // 快捷键 E：朗读当前真题例句（听觉线索）；正在播同一句则打断复位
+        // 快捷键 E：朗读当前真题例句（听觉线索）；正在播同一句则打断复位。
+        // 与按钮共用 toggleOrPlaySentence，保证两条入口行为一致。
         const sentence = exampleItem?.text ?? null;
         if (!sentence) return;
         event.preventDefault();
-        if (audio.isPlaying && audio.currentSource === "sentence") audio.stop();
-        else audio.playSentence(sentence);
+        toggleOrPlaySentence();
       } else if (key === "s") {
         event.preventDefault();
         void handleSkip();
@@ -809,7 +831,7 @@ export function ReviewCardView({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, loading, preview, onAnswer, onSkip, onSuspend, onUndo, canUndo, onPrev, onNext, commitQuickNote, flipCard, handleAnswer, hintSteps, hintLevel, revealed, exampleItem, audio.playWord, audio.playSentence, audio.toggleAccent, audio.stop, audio.isPlaying, audio.currentSource]);
+  }, [card, loading, preview, onAnswer, onSkip, onSuspend, onUndo, canUndo, onPrev, onNext, commitQuickNote, flipCard, handleAnswer, hintSteps, hintLevel, revealed, exampleItem, toggleOrPlaySentence, audio.playWord, audio.toggleAccent]);
 
   if (loading && !card) {
     return (
@@ -934,7 +956,7 @@ export function ReviewCardView({
                 url={exampleItem.url}
                 modified={exampleItem.modified}
                 verifiedCount={exampleItem.verifiedCount}
-                onPlaySentence={() => audio.playSentence(exampleItem.text)}
+                onPlaySentence={toggleOrPlaySentence}
                 sentencePlaying={sentencePlaying}
               />
             )}
@@ -997,7 +1019,7 @@ export function ReviewCardView({
                   maskTerm={exampleItem.anchor}
                   maskRevealed={maskRevealed}
                   onUnmask={unmaskClue}
-                  onPlaySentence={() => audio.playSentence(exampleItem.text)}
+                  onPlaySentence={toggleOrPlaySentence}
                   sentencePlaying={sentencePlaying}
                 />
                 <TrainingFold exam={exampleExam} verifiedCount={exampleItem.verifiedCount} />

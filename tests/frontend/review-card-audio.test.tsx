@@ -10,9 +10,15 @@ import type { ReviewCard } from "@/frontend/hooks/useReview";
 
 const { speakMock } = vi.hoisted(() => ({ speakMock: vi.fn() }));
 
+// 部分模块 mock：audioEngine 现在还会 import `cancelSpeech`（打断句柄）与
+// `SENTENCE_RATE` / `speakSentence`。漏配会让 `cancelSpeech` 变成 undefined，
+// 于是「按 R 触发中断」直接抛 TypeError —— 这里把 speech 模块的对外面补齐。
 vi.mock("@/frontend/reviewFlow/speech", () => ({
   isSpeechSynthesisAvailable: () => true,
   speak: speakMock,
+  speakSentence: vi.fn(() => true),
+  cancelSpeech: vi.fn(),
+  SENTENCE_RATE: 0.9,
 }));
 
 vi.mock("@/frontend/api/client", () => ({
