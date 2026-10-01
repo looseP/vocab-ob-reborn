@@ -645,3 +645,185 @@ frontend tsc 零错误。
 - 旧机数据类资产（语料 114 MB、dump、私密配置）的迁移状态——见 `local-closeout-facts-2026-09-19.md`，**本轮未触及**。
 - 宿主 `node_modules` 的安装（未做；也不建议做，容器已足够）。
 - 备份异地副本目标（COS vs R2）——`PROJECT-GUIDE.md` §10 的待裁决项，仍未决。
+
+---
+
+## 9. 2026-09-30 ~ 10-01 追加：四个 PR 与一组元失误
+
+本节是主文档的续篇，只记**本段**新增的事实与教训。前 8 节仍然有效，但
+其中「PR 全部已合并」的表述已过时（见 §9.1）。
+
+### 9.1 PR 清单与合并顺序
+
+| PR | 内容 | 面 | 合并态 |
+|---|---|---|---|
+| #176 | 2025 试卷入库 | — | 已合并 `e236dfb` |
+| #177 | 条目卡压平 | — | 已合并 `3430a48` |
+| #179 | 标注 2025 答案为构造产物 | docs | 已合并 `bada8a3` |
+| #180 | 纳管 6767 词条语料 `data/corpus/` | 266 文件 / 8.9 MB | 见 §9.6 |
+| #181 | `backfill-content-hash` RLS 静默 0 行 | 2 文件 | 见 §9.6 |
+| #175 | 划词即译（HTTP 层） | 49 文件 | 待合并 |
+| #178 | `findBySlug` aliases 兜底 | 11 文件 | 待合并 |
+
+合并顺序按**技术风险从低到高**排（#181 → #180 → #178 → #175），不是按编号。
+理由：坏了能最早隔离。#181 纯离线脚本不进运行时；#180 全是 md；#178 改核心
+查找路径 `word.repository.findBySlug`；#175 面最大。
+
+**每个 PR 都合完等 main CI 全绿再动下一个** —— 不是形式。#179 合入后 #180 立刻
+变 `behind=1`，如果连着合会得到一个「required checks 未满足」的 405，而错误信息
+（`3 of 3 required status checks are expected`）完全不指向「你落后了」这个真因。
+
+### 9.2 GitHub 侧的三个硬约束（踩过才知道）
+
+| 约束 | 表现 |
+|---|---|
+| required checks 是 `strict=True` | 分支 behind main 时合并返 **405**，而非冲突错误 |
+| CI 只在 `pull_request` 事件触发 | 往分支 push **不跑** CI，必须开/更新 PR |
+| `mergeable_state` 异步计算 | 新 push 后长时间 `unknown`，此时合并必被拒，要轮询等它变可判 |
+
+`mergeable_state` 的取值含义（实测）：
+
+- `unknown` —— GitHub 还在算，此时**必须重试**，不代表有问题
+- `behind` —— 分支落后 main，合不了（见上）
+- `dirty` —— 真冲突
+- `blocked` —— required checks 未满足
+- `clean` / `has_hooks` / `unstable` —— 可合（`unstable` 表示有非 required 的失败）
+
+我第一次合 #180 时因为 `unknown` 就拒了它，那是**脚本过于保守**，不是 PR 的问题。
+
+### 9.3 ⚠️ 元失误：11 次「先假设后验证」
+
+本段最该记的不是修了什么，是**我判断错了 11 次，且模式完全一致**：
+**看到一个异常就急着定性，跳过「查引用 / 查用途 / 查前提」那一步。**
+
+本段新增的 2 次（前段 9 次见 §3）：
+
+| 我的说法 | 实际 |
+|---|---|
+| 「0 字来源是早期遗留测试数据，删掉」 | 挂着 1 条完整语境（含正确译文 + `abandon` 词条绑定），**删不得**；FK 会失败或级联删掉有价值的数据 |
+| 「`content_text` 空 = 数据丢失」 | 语境原句完整存在 `l3_contexts.text` 里，**信息没丢**，缺的只是落库 |
+
+后者还导致一个附带发现：`l3_contexts` 全表只有 2 条，而**其中 1 条挂在这个 0 字来源上**
+—— 也就是说 L3 的「划词 → 语境 → occurrence → 词条」链路，样本量只有 1~2 条。
+任何关于 L3 数据完整性的结论，样本都不足。
+
+已修（数据修正，直接改库、不在 git 里）：
+
+```
+title       ?????  →  救援主题句（手动划词）
+content_len     0  →  130
+offset 落在正文内 = true      ← occurrence 的 start/end 语义未破坏
+contexts 引用 / source_spaces 引用 = 1 / 1（均未变）
+```
+
+⚠️ **这条修正换环境或重建 DB 会丢。** 目前只有这一次，先不建机制，但值得记着。
+
+### 9.4 ⚠️ 两次 P0 判断被数据推翻（都是「升级太早」）
+
+| 我最初判的 P0 | 实测 |
+|---|---|
+| 「stub 行累积污染词库」 | 库里 stub 数 = **0** |
+| 「`l1_content_hash` 失效导致漂移检测错误」 | 6 行已作答的漂移检测**正常工作**；全表 NULL 只导致 `deriveContentStaleness` 走「全量对」降级路径，而这**符合 ADR-0021 §Consequences (a) 的设计**（接受 L2 变更也触发 L1 卡重核，代码注释就写着「补 L1 hash 产出链后同一行代码自动升级」） |
+
+结论：补 hash 是 **P2 优化**，不是 P0。降级路径本身不是缺陷。
+
+这两次的共同教训：**「看起来是 bug」和「是 bug」之间隔着一个 SQL count。**
+
+### 9.5 🔴 `backfill-content-hash` 从未成功运行过（PR #181）
+
+这是本段最有价值的发现，且**危险之处在于它的输出看起来是成功的**。
+
+迁移 `0025_word_stub_rowlock_policy.sql` 给 `vocab_app` 建的 UPDATE policy 是：
+
+```sql
+USING (definition_md = '' AND is_published AND NOT is_deleted)   -- 只放行 stub 行
+```
+
+而 `scripts/backfill-content-hash.ts` 用 `getPool()`（正是 `vocab_app`），
+要改的却是词库**内容**行（全有真实释义）。于是**每条 UPDATE 命中 0 行且不抛异常** ——
+Postgres 把它当「行对当前角色不可见」。脚本一路打印：
+
+```
+Done. Total: 6767 words backfilled.
+```
+
+而库里 `l1_content_hash` **6767 条全是 NULL**。
+
+**为什么没人发现**：`tests/db/content-hash.test.ts` 只测 `computeL1Hash` 等**纯函数**，
+根本不碰连接；角色用错它测不出来。而「UPDATE 影响 0 行」不抛异常，**不查 `rowCount` 就看不出**。
+
+修法：`getBatchImportPool()`（`vocab_batch_import` 角色，UPDATE policy 是 `USING true`）
++ 每条校验 `rowCount === 1` + 写后重查库自检。真库跑通：`Verified: 0/6767 words still have NULL`。
+
+**同一坑在 `scripts/backfill-word-aliases.ts` 上已踩过一次（那里已修）** ——
+两处同款约定见 `scripts/import-vocab-notes.ts`。
+
+### 9.6 两个数据库角色，别搞混
+
+| 变量 | 角色 | 能改词库内容行？ |
+|---|---|---|
+| `DATABASE_URL` | `vocab_app` | **否**（RLS 挡，静默 0 行） |
+| `BATCH_IMPORT_DATABASE_URL` | `vocab_batch_import` | 是 |
+
+⚠️ 我验证 §9.5 的修复时，**把 `BATCH_IMPORT_DATABASE_URL` 设成了 `DATABASE_URL`**，
+于是两个池连成同一个 `vocab_app` 身份，差点判定「修复无效」。真实凭据必须从
+`compose.yaml` 或 web 容器 `printenv` 取 —— 两者是**不同角色**。
+
+对照实验（`select current_user` + 单条 UPDATE）：
+
+```
+凭据搞错时： getPool(app) user=vocab_app           rowCount=0  读回=NULL
+凭据正确时： getPool(app) user=vocab_batch_import  rowCount=1  读回=591c56a4ec
+```
+
+**正面经验**：回归锁里那条纯文本断言（「必须用 `getBatchImportPool`、不得出现
+`const pool = getPool()`」）是这次唯一没被表象迷惑的地方 —— 它只看代码，
+不受运行时凭据影响。
+
+### 9.7 另一个静默失败的形态：无限循环
+
+§9.5 修好后跑回填，打印到 `Backfilled 20000 words...` —— 而库里只有 6767 词、
+`BATCH_SIZE=1000`。原因：`WHERE l1_content_hash IS NULL` 的行**没被真正更新**
+（`rowCount=0`），所以每批都重新查出同样 1000 条。
+
+两个可复用的判据：
+
+- **计数越界**：`total` 大于表实际行数 = 有更新没生效
+- **不要只信「跑完了」**：脚本必须重查库确认状态，而不是靠循环自然退出
+
+### 9.8 环境坑（跨轮次可复用）
+
+| 坑 | 后果 | 绕法 |
+|---|---|---|
+| PowerShell 按 GBK 解 UTF-8 | 输出乱码，甚至把中文判成语法错误 | 涉及中文一律走 Python 直读/直写文件 |
+| PowerShell 吃 `$(...)` | `docker exec ... sh -c "export X=$(...)"` 被本地解析 | 写成 `.sh` 文件再 `docker cp` 进去执行 |
+| psql 管道吞 `‖` 分隔符 | 字段错位、读数错乱 | 用 `json_build_object(...)::text` 单列返回，或单列查询 |
+| `git show` 输出 | 中文乱码 | 显式 `decode("utf-8")` |
+| 容器与宿主共享工作区（bind mount `/src`） | 容器内 git 操作会改宿主仓库 | 意识到这一点再动手 |
+| Python 重定向到文件时块缓冲 | 轮询日志看起来「没输出」 | `reconfigure(line_buffering=True)` |
+
+**一条操作纪律（本段代价最大的一条）**：
+
+- 在 **bind mount 上 `rm -rf`** 删掉过自己的工作目录（已从 origin 重新 clone 恢复，三个已推 PR 均未丢）
+- 门禁脚本**复用了陈旧覆盖率**，据此得出「补测试没用」的错误结论
+- 用序列化器重写 JSON（`json.dumps(indent=2)`）造成 **1348 行噪声 diff**
+
+共同点：**破坏性/验证性操作前不确认前提，看到输出就下结论。** 直接代价是绕了
+40 分钟、差点把正确的修复当成错的。
+
+### 9.9 推代码前固定跑三样
+
+这三样曾让我漏检（只跑 vitest 就把红的 TS2322 推上了分支）：
+
+1. `tsc --noEmit` —— 全量类型
+2. 受影响的测试 —— 定向，不是全量
+3. **门禁本身** —— 因为门禁有自己的配置与阈值，跑 vitest 不等于过门禁
+
+本地没有 node/npx，husky 的 pre-commit 跑不了，一直用 `--no-verify` ——
+所以上面第 1、3 步必须在容器里手动补上。
+
+### 9.10 已知环境性失败（非缺陷）
+
+4 个测试恒失败：容器里**缺 git 二进制**（`not a git repository` /
+`spawnSync git ENOENT`）。CI 镜像有 git，所以 CI 绿。本地看到这 4 个红可以忽略，
+但**不要因此推断「测试没用」**。
