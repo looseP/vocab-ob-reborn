@@ -370,3 +370,83 @@ describe("L3PaperRepository.countQuestionGradings（ADR-0038）", () => {
     expect(await repo.countQuestionGradings(USER, "q-1")).toBe(0);
   });
 });
+
+
+/**
+ * findAnswerTrustBySourceIds —— 判卷答案可信度守卫的数据源（PR #184）。
+ *
+ * 为什么它必须有测试：service 层用例把 repository mock 掉了，所以本方法的真实
+ * 实现（SQL 拼接 + Map 构造）在别处不会执行。分层覆盖率门禁要求「diff 触及的
+ * 可执行行」覆盖 ≥85%，缺了这里就是 72.53%。
+ */
+describe("L3PaperRepository.findAnswerTrustBySourceIds", () => {
+  const SRC = "00000000-0000-4000-8000-000000000301";
+  const SRC_B = "00000000-0000-4000-8000-000000000302";
+
+  function spy(repo: L3PaperRepository, rows: unknown[]) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return vi.spyOn(repo as any, "query").mockResolvedValue(rows);
+  }
+
+  it("只查带 answerTrust 的卷，且排除 draft", async () => {
+    const repo = new L3PaperRepository();
+    const q = spy(repo, []);
+    await repo.findAnswerTrustBySourceIds(USER, [SRC]);
+    const sql = String(q.mock.calls[0]![0]);
+    // 缺键必须等于「无标注」，所以过滤要在 SQL 侧做 ——
+    // 把没标注的卷也拉回来会让调用方无法区分「无标注」与「标注了但 status 为空」。
+    expect(sql).toContain("p.metadata ? 'answerTrust'");
+    expect(sql).toContain("p.status <> 'draft'");
+    expect(sql).toContain("p.metadata->'answerTrust'->>'status'");
+  });
+
+  it("source_ids 去重后传入（不产生重复参数）", async () => {
+    const repo = new L3PaperRepository();
+    const q = spy(repo, []);
+    await repo.findAnswerTrustBySourceIds(USER, [SRC, SRC, SRC_B, SRC]);
+    expect(q.mock.calls[0]![1]).toEqual([USER, [SRC, SRC_B]]);
+  });
+
+  it("空输入直接返回空 Map 且不发查询", async () => {
+    const repo = new L3PaperRepository();
+    const q = spy(repo, []);
+    expect(await repo.findAnswerTrustBySourceIds(USER, [])).toEqual(new Map());
+    expect(await repo.findAnswerTrustBySourceIds(USER, ["", null as never])).toEqual(new Map());
+    expect(q).not.toHaveBeenCalled();
+  });
+
+  it("status 为 null 的行映射成 undefined 的键 —— 与「缺键」可区分", async () => {
+    const repo = new L3PaperRepository();
+    // SQL 侧 ->>'status' 在 status 缺失时返回 null；调用方必须能区分
+    // 「这个 source 被标注过但没写 status」（不可信）与「压根没标注」（可信）。
+    spy(repo, [
+      { source_id: SRC, trust_status: "unverified-constructed" },
+      { source_id: SRC_B, trust_status: null },
+    ]);
+    const map = await repo.findAnswerTrustBySourceIds(USER, [SRC, SRC_B]);
+    expect(map.get(SRC)).toBe("unverified-constructed");
+    expect(map.has(SRC_B)).toBe(true);
+    expect(map.get(SRC_B)).toBeUndefined();
+  });
+
+  it("verified 原样透传", async () => {
+    const repo = new L3PaperRepository();
+    spy(repo, [{ source_id: SRC, trust_status: "verified" }]);
+    const map = await repo.findAnswerTrustBySourceIds(USER, [SRC]);
+    expect(map.get(SRC)).toBe("verified");
+  });
+
+  it("source_id 为 null 的行被跳过（不写入 Map）", async () => {
+    const repo = new L3PaperRepository();
+    spy(repo, [{ source_id: null, trust_status: "unverified-constructed" }]);
+    const map = await repo.findAnswerTrustBySourceIds(USER, [SRC]);
+    expect(map.size).toBe(0);
+  });
+
+  it("无标注卷不在结果里（缺键即可信）", async () => {
+    const repo = new L3PaperRepository();
+    spy(repo, []); // 无 answerTrust 的卷被 SQL 过滤掉了
+    const map = await repo.findAnswerTrustBySourceIds(USER, [SRC]);
+    expect(map.has(SRC)).toBe(false);
+  });
+});
