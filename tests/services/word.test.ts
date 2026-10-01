@@ -54,6 +54,28 @@ beforeEach(() => {
   service = makeService(repo);
 });
 
+describe("WordService.getWordBySlug — alias 兜底", () => {
+  it("读侧开 allowAlias：语料原样形态应解析到基词", async () => {
+    repo = makeWordRepo({ findBySlug: vi.fn(async () => STUB_ROW) });
+    service = makeService(repo);
+
+    const result = await service.getWordBySlug("hospitals");
+
+    // 不传 userId 时不进事务分支，只断言查询参数
+    expect(repo.findBySlug).toHaveBeenCalledWith("hospitals", { allowAlias: true });
+    expect(result.word.id).toBe("w-1");
+  });
+
+  it("查不到时抛 NotFoundError", async () => {
+    repo = makeWordRepo({ findBySlug: vi.fn(async () => null) });
+    service = makeService(repo);
+
+    await expect(service.getWordBySlug("nonexistent")).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+  });
+});
+
 describe("WordService.deleteStubWord", () => {
   it("deletes a stub with no blockers and returns the shared delete result shape", async () => {
     await expect(service.deleteStubWord({ slug: "wibble", userId: "u1" })).resolves.toEqual({
@@ -61,7 +83,10 @@ describe("WordService.deleteStubWord", () => {
       activeReadInvalidation: true,
     });
 
+    // 删除路径必须保持精确匹配：若开 allowAlias，`DELETE /words/abandoned`
+    // 会解析到 `abandon`，从而可能删掉一个与该 URL 无关的词条。
     expect(repo.findBySlug).toHaveBeenCalledWith("wibble");
+    expect(repo.findBySlug).not.toHaveBeenCalledWith("wibble", expect.anything());
     expect(repo.lockStubWordById).toHaveBeenCalledWith("w-1");
     expect(repo.getWordDeleteBlockers).toHaveBeenCalledWith("u1", "w-1");
     expect(repo.deleteWordById).toHaveBeenCalledWith("u1", "w-1");

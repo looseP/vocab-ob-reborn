@@ -89,6 +89,7 @@
     "llm-reservation:reap": "tsx scripts/llm-reservation-admin.ts run-once",
     "db:script:backfill-hashes": "tsx scripts/backfill-content-hash.ts",
     "db:script:backfill-pinyin": "tsx scripts/backfill-word-pinyin.ts",
+    "db:script:backfill-aliases": "tsx scripts/backfill-word-aliases.ts",
     "dev": "tsx watch src/server.ts",
     "mcp:server": "node scripts/run-mcp-server.mjs",
     "frontend:dev": "vite --host 127.0.0.1",

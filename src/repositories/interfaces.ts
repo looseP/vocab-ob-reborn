@@ -87,9 +87,25 @@ import type { IL3StudyTopicRepository } from "./l3-study-topics.repository";
 import type { IL3StudyReferenceRepository } from "./l3-study-references.repository";
 
 // ── Word ────────────────────────────────────────────────────────────────
+export interface FindBySlugOptions {
+  /**
+   * 允许用 `words.aliases` 兜底解析。
+   *
+   * 背景：读侧（详情页 / L3 划词查词）拿到的是**语料里的原样形态**
+   * （`hospitals` / `today's` / `abandoned`），而 slug 只登记基词
+   * （`hospital` / `today` / `abandon`）。不开这个开关时这些形态一律 404，
+   * L3 还会因此判定「不在库」并新建 stub 词条。
+   *
+   * **默认关闭**，因为并非所有调用方都想要模糊解析：
+   * `deleteStubWord` 必须精确匹配 —— 否则 `DELETE /words/abandoned` 会解析到
+   * `abandon` 并可能删掉一个与该 URL 无关的词条。
+   */
+  allowAlias?: boolean;
+}
+
 export interface IWordRepository {
   findById(id: string): Promise<WordRow | null>;
-  findBySlug(slug: string): Promise<WordRow | null>;
+  findBySlug(slug: string, options?: FindBySlugOptions): Promise<WordRow | null>;
   findPublic(options: GetPublicWordsOptions): Promise<PaginatedResult<WordSummary>>;
   /** 输入联想：按 lemma / 拼音前缀返回 top-N 建议（L1-2）。 */
   suggest(q: string, limit?: number): Promise<WordSummary[]>;
