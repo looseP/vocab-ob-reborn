@@ -34,6 +34,10 @@ function questionRow(overrides: Partial<L3QuestionRow> = {}): L3QuestionRow {
 
 function makePaperRepo(overrides: Partial<IL3PaperRepository> = {}): IL3PaperRepository {
   return {
+    // 答案可信度守卫（PR #184）：默认「无标注」= 全部可信。
+    // 空 Map 是正确的默认 —— 可信度是 fail-closed 的**新增**闸门，
+    // 既有题目的题纸不带 answerTrust，不能因此让它们全部变成不可评。
+    findAnswerTrustBySourceIds: vi.fn(async () => new Map<string, unknown>()),
     // 批量作答计数（2026-09-27）：默认「无作答」—— 可改。缺键即 0 是契约。
     countAttemptsForQuestions: vi.fn(async () => new Map<string, number>()),
     insertQuestion: vi.fn(async (input) => questionRow({

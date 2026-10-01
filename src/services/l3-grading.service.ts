@@ -39,10 +39,13 @@ import type {
 } from "../domain";
 import {
   findOutOfScopeIds,
+  gradeability,
   gradableQuestionIds,
   nextAnnotationStage,
   toStoredAnnotationReview,
+  ungradableCode,
 } from "../domain/l3-grading";
+import type { GradableReason } from "../domain/l3-grading";
 import { resolveSheetScopedQuestions } from "./l3-sheet-scope";
 import type { PendingGradingItem, SubmitL3GradingInput } from "../schemas/service";
 
@@ -73,6 +76,15 @@ export interface GradingContextQuestion {
    * 提交 verdict 会被 422 拒。显式给出是让 agent **不必试错**。
    */
   gradable: boolean;
+  /**
+   * 不可评原因；`gradable=true` 时为 null。
+   *
+   * 两种不可评要区分：`no-attempt`（没有 active attempt，ADR-0038 决策 4）与
+   * `answer-unverified`（该题所属试卷的标准答案是人工构造的，判分会给出错误分数）。
+   * 两者都用 `gradable=false` 表达，但前者让agent 停止尝试，后者要求它
+   * **换一份可信答案**而不是重试 —— 混为一谈会导致 agent 无限重试。
+   */
+  gradableReason: GradableReason | null;
   /** 该题纸内最新一条 active attempt 的作答事实与主观快照；无则 null。 */
   attempt: { answer: Json; self_assessment: Json | null; created_at: string } | null;
   /** 该题纸 stage='submitted' 注记（提交即授权收口；历史正式注记群不开放）。 */
@@ -136,6 +148,16 @@ export class L3GradingService {
       const attempts = await repos.l3Sheets.listBySheet(userId, sheetId);
       const annotations = await repos.l3Annotations.listAnnotationsBySheet(userId, sheetId);
 
+      // 🔴 标准答案可信度：一次查询覆盖本张题纸涉及的全部 source。
+      // `file` 作用域的题纸拿不到 paper_id，所以只能按题目反查所属试卷的
+      // metadata.answerTrust（见 IL3PaperRepository.findAnswerTrustBySourceIds）。
+      const answerTrustBySource = await repos.l3Paper.findAnswerTrustBySourceIds(
+        userId,
+        scoped
+          .map((question) => question.source_id)
+          .filter((id): id is string => Boolean(id)),
+      );
+
       // 每题最新一条 active attempt（listBySheet 已按 created_at,id 定序，后写覆盖）。
       const latestAttempt = new Map<string, L3QuestionAttemptRow>();
       for (const row of attempts) {
@@ -180,12 +202,14 @@ export class L3GradingService {
             answerIndex: question.answer,
             explanation: question.explanation,
             source_id: question.source_id,
-            /**
-             * 可评标记（ADR-0038 决策 4）：`false` = 该题在这张题纸上没有 active
-             * attempt，提交 verdict 会被 422 拒。显式给出是让 agent **不必试错** ——
-             * 否则它只能靠一次被拒的提交才发现「未作答不评」。
-             */
-            gradable: attempt !== null,
+            ...(() => {
+              const g = gradeability({
+                answerTrustBySource,
+                sourceId: question.source_id,
+                hasAttempt: attempt !== null,
+              });
+              return { gradable: g.gradable, gradableReason: g.reason };
+            })(),
             attempt: attempt
               ? { answer: attempt.answer, self_assessment: attempt.self_assessment, created_at: attempt.created_at }
               : null,
@@ -282,18 +306,58 @@ export class L3GradingService {
       // ①-b 可评性校验（ADR-0038 决策 4）：作用域内**未作答**的题不接受 verdict。
       // verdict 判的是用户作答；没有作答就没有可判的对象，让 agent 提交等于让它编。
       // 收窄的连带好处：「已评 ⇒ 有 attempt ⇒ 题面已被 409 冻结」自动成立。
+      //
+      // 🔴 另外：**标准答案未经核验**的题同样拒 —— 那是配置问题，与「未作答」不同。
       const attempts = await repos.l3Sheets.listBySheet(input.userId, input.sheetId);
-      const gradable = new Set(
-        gradableQuestionIds(scoped.map((question) => question.id), attempts),
+
+      // 与读面 getGradingContext 用**同一个纯函数**，避免两侧判定漂移。
+      const answerTrustBySource = await repos.l3Paper.findAnswerTrustBySourceIds(
+        input.userId,
+        scoped
+          .map((question) => question.source_id)
+          .filter((id): id is string => Boolean(id)),
       );
-      const ungradable = input.results
-        .map((result) => result.questionId)
-        .filter((questionId) => !gradable.has(questionId));
-      if (ungradable.length > 0) {
+      const withAttempt = new Set(
+        gradableQuestionIds(
+          scoped.map((question) => question.id),
+          attempts,
+        ),
+      );
+      const verdictById = new Map<string, { gradable: boolean; reason: GradableReason | null }>();
+      for (const question of scoped) {
+        verdictById.set(
+          question.id,
+          gradeability({
+            answerTrustBySource,
+            sourceId: question.source_id,
+            hasAttempt: withAttempt.has(question.id),
+          }),
+        );
+      }
+
+      const untrusted: string[] = [];
+      const noAttempt: string[] = [];
+      for (const result of input.results) {
+        const g = verdictById.get(result.questionId);
+        if (!g || g.gradable) continue;
+        if (g.reason === "answer-unverified") untrusted.push(result.questionId);
+        else noAttempt.push(result.questionId);
+      }
+
+      // 答案不可信是**配置问题**，未作答是**使用问题** —— 消息与 code 都分开，
+      // 否则 agent 无法判断该重试还是该向人要可信答案。
+      if (untrusted.length > 0) {
+        throw new BusinessRuleError(
+          "标准答案未经核验，不参与评卷（该卷 answer 标注为人工构造，判分会给出错误分数）",
+          undefined,
+          { code: ungradableCode("answer-unverified"), ungradableQuestionIds: untrusted },
+        );
+      }
+      if (noAttempt.length > 0) {
         throw new BusinessRuleError(
           "未作答的题不参与评卷（verdict 判的是作答；请只提交该题纸已作答的题）",
           undefined,
-          { ungradableQuestionIds: ungradable },
+          { code: ungradableCode("no-attempt"), ungradableQuestionIds: noAttempt },
         );
       }
 

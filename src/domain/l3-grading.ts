@@ -176,3 +176,85 @@ export function toStoredAnnotationReview(input: GradingAnnotationReviewInput): S
     ...(input.comment ? { comment: input.comment } : {}),
   };
 }
+
+
+/**
+ * 🔴 标准答案可信度（answerTrust）—— 不可信的答案不得用于判卷。
+ *
+ * ## 为什么需要
+ *
+ * 试卷的 `l3_papers.metadata.answerTrust.status` 标注该卷 `answer` 字段的可信度。
+ * 2025 考研英语二那份标的是 `unverified-constructed`：45 道客观题的答案是**人工
+ * 构造**的（分布检验见该卷 README「答案是构造的」一节 —— 完形 20 题恰好
+ * A5/B5/C5/D5，整体 A11/B11/C11/D10/F1/G1，ordinal 0-5 呈循环）。
+ *
+ * 拿它当标准答案判分，会得出**与真实水平无关甚至相反**的分数：真实答案 B 的题
+ * 标着 C，做对的被判错、做错的被判对。所以 `unverified` 必须 fail-closed。
+ *
+ * ## 为什么放在 domain 纯函数层
+ *
+ * 「这道题能不能评」是业务规则，不是 IO。放这里可直接单测，且service 与
+ * repository 两侧复用同一判定，避免两处实现漂移。
+ */
+
+/** 可信度取值。与 l3_papers.metadata.answerTrust.status 对齐。 */
+export const ANSWER_TRUST_STATUSES = [
+  /** 已按官方答案钥匙核验，可用于判卷。 */
+  "verified",
+  /** 人工构造，**不得**用于判卷。 */
+  "unverified-constructed",
+] as const;
+
+export type AnswerTrustStatus = (typeof ANSWER_TRUST_STATUSES)[number];
+
+/** 只有 `verified` 才可用于判卷；其余（含未知值、缺失）一律 fail-closed。 */
+export function isAnswerTrusted(status: unknown): boolean {
+  return status === "verified";
+}
+
+/** 不可评的原因。`no-attempt` 是 ADR-0038 决策 4 已有的那个；新增的是可信度。 */
+export type GradableReason = "no-attempt" | "answer-unverified";
+
+/** 纯 JSON 读出 metadata（repository 已反序列化，但这里要容忍未知形状）。 */
+function readTrustStatus(metadata: unknown): unknown {
+  if (typeof metadata !== "object" || metadata === null) return undefined;
+  const trust = (metadata as { answerTrust?: unknown }).answerTrust;
+  if (typeof trust !== "object" || trust === null) return undefined;
+  return (trust as { status?: unknown }).status;
+}
+
+/**
+ * 某道题是否可评，以及不可评的原因。
+ *
+ * @param answerTrustBySource 该题所属 source_id → 可信度 status。
+ *        **缺键** = 无标注 = 视为可信（绝大多数正常题目的情形，不能因缺元数据就拒评）；
+ *        **有键但值为 undefined** = 标注了 answerTrust 却没写 status = 不可信。
+ * @param sourceId 该题的 source_id（null = 无来源题目，按可信处理）
+ * @param hasAttempt 该题在当前题纸上是否有 active attempt
+ */
+export function gradeability(input: {
+  answerTrustBySource: ReadonlyMap<string, unknown>;
+  sourceId: string | null;
+  hasAttempt: boolean;
+}): { gradable: boolean; reason: GradableReason | null } {
+  if (input.sourceId) {
+    // 用 has() 而不是 `status !== undefined` —— 后者把「键存在但值为 undefined」
+    // 与「键不存在」混同，于是「标注了却没写 status」这种最该被拦的形状会被放行。
+    // SQL 侧 `metadata->'answerTrust'->>'status'` 在 status 缺失时正好返回 null，
+    // 映射成 undefined 的键，所以这个形状在真实数据里会出现。
+    if (input.answerTrustBySource.has(input.sourceId)) {
+      const status = input.answerTrustBySource.get(input.sourceId);
+      if (!isAnswerTrusted(status)) {
+        // 可信度优先于有无作答：答案本身不可信时，评了也是错的。
+        return { gradable: false, reason: "answer-unverified" };
+      }
+    }
+  }
+  if (!input.hasAttempt) return { gradable: false, reason: "no-attempt" };
+  return { gradable: true, reason: null };
+}
+
+/** 不可评原因 → 422 的 code，便于客户端区分「没作答」与「答案不可信」。 */
+export function ungradableCode(reason: GradableReason | null): string {
+  return reason === "answer-unverified" ? "ANSWER_UNVERIFIED" : "NO_ACTIVE_ATTEMPT";
+}

@@ -174,6 +174,10 @@ function makeService(deps: ServiceDeps = {}): L3GradingService {
     listActiveQuestionsForFile: vi.fn(async () => [questionRow(Q1), questionRow(Q2, { ordinal: 1 })]),
     findPaperById: vi.fn(async () => null),
     findActiveQuestionsByIds: vi.fn(async () => []),
+    // 答案可信度（PR #184）：默认「无标注」= 全部可信，既有用例行为不变。
+    // 注意这个 mock 是 `as unknown as IL3PaperRepository`，tsc 不会因为缺方法报错，
+    // 但运行时会真的调用 —— 漏补会让全部既有用例以 undefined is not a function 挂掉。
+    findAnswerTrustBySourceIds: vi.fn(async () => new Map<string, unknown>()),
     ...deps.paper,
   } as unknown as IL3PaperRepository;
   const annotationRepo = {
@@ -537,5 +541,97 @@ describe("L3GradingService.listPendingGrading（待评卷清单）", () => {
   it("空 userId → fail-closed（不把全库清单端点变成枚举器）", async () => {
     const service = makeService();
     await expect(service.listPendingGrading("  ", 50)).rejects.toBeInstanceOf(BusinessRuleError);
+  });
+});
+
+
+/**
+ * 答案可信度守卫（PR #184）—— 服务级验证。
+ *
+ * 纯函数测试在 `tests/domain/l3-grading-answer-trust.test.ts`。这里验的是
+ * **守卫真的挂在链路上**，而不是纯函数本身正确：读面 gradable=false +
+ * gradableReason，写面 422 且 code 与「未作答」可区分。
+ *
+ * 背景：2025 那份卷的 answer 是人工构造的（完形 20 题恰好 A5/B5/C5/D5）。
+ * 判卷链当前碰不到它（实测：46 道 choice 型客观题里45 道来自 2025，但
+ * l3_practice_attempts 0 条、唯一题纸指向 USA TODAY）—— 所以这是预防性守卫。
+ */
+describe("答案可信度守卫（PR #184）", () => {
+  const UNVERIFIED = "unverified-constructed";
+
+  it("读面：答案不可信的题 gradable=false 且带 answer-unverified", async () => {
+    const service = makeService({
+      paper: {
+        findAnswerTrustBySourceIds: vi.fn(async () => new Map([[SOURCE, UNVERIFIED]])),
+      },
+    });
+    const ctx = await service.getGradingContext(USER, SHEET);
+    const q1 = ctx.questions.find((q) => q.id === Q1);
+    expect(q1?.gradable).toBe(false);
+    expect(q1?.gradableReason).toBe("answer-unverified");
+  });
+
+  it("读面：无标注的题保持原有行为（gradable=true, reason=null）", async () => {
+    const service = makeService(); // 默认空Map = 无标注
+    const ctx = await service.getGradingContext(USER, SHEET);
+    const q1 = ctx.questions.find((q) => q.id === Q1);
+    expect(q1?.gradable).toBe(true);
+    expect(q1?.gradableReason).toBeNull();
+  });
+
+  it("读面：答案不可信优先于「未作答」—— 否则 agent 会等作答后仍评错", async () => {
+    const service = makeService({
+      paper: {
+        findAnswerTrustBySourceIds: vi.fn(async () => new Map([[SOURCE, UNVERIFIED]])),
+      },
+      sheets: { listBySheet: vi.fn(async () => []) }, // 一个 attempt 都没有
+    });
+    const ctx = await service.getGradingContext(USER, SHEET);
+    expect(ctx.questions.every((q) => q.gradableReason === "answer-unverified")).toBe(true);
+  });
+
+  it("写面：对答案不可信的题提交 verdict → 422 且 code=ANSWER_UNVERIFIED", async () => {
+    const service = makeService({
+      paper: {
+        findAnswerTrustBySourceIds: vi.fn(async () => new Map([[SOURCE, UNVERIFIED]])),
+      },
+    });
+    await expect(
+      service.submitGrading({
+        userId: USER,
+        sheetId: SHEET,
+        gradedBy: "agent-a",
+        results: [{ questionId: Q1, verdict: "correct" }],
+      }),
+    ).rejects.toMatchObject({
+      meta: expect.objectContaining({ code: "ANSWER_UNVERIFIED" }),
+    });
+  });
+
+  // 关键回归：原本「未作答」也要拒，但不能被可信度守卫顶掉 —— 两个是不同的失败。
+  it("写面：未作答仍报 NO_ACTIVE_ATTEMPT（不被可信度守卫顶替）", async () => {
+    const service = makeService({ sheets: { listBySheet: vi.fn(async () => []) } });
+    await expect(
+      service.submitGrading({
+        userId: USER,
+        sheetId: SHEET,
+        gradedBy: "agent-a",
+        results: [{ questionId: Q1, verdict: "correct" }],
+      }),
+    ).rejects.toMatchObject({
+      meta: expect.objectContaining({ code: "NO_ACTIVE_ATTEMPT" }),
+    });
+  });
+
+  it("写面：可信且已作答的题正常通过（守卫不误伤）", async () => {
+    const service = makeService();
+    await expect(
+      service.submitGrading({
+        userId: USER,
+        sheetId: SHEET,
+        gradedBy: "agent-a",
+        results: [{ questionId: Q1, verdict: "correct" }],
+      }),
+    ).resolves.toBeDefined();
   });
 });

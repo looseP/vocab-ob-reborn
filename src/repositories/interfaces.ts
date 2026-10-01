@@ -1611,6 +1611,23 @@ export interface IL3PaperRepository {
   listActivePaperRefsWithPayload(userId: string): Promise<Array<L3PaperRef & { payload: unknown }>>;
   insertPaper(input: NewL3Paper): Promise<L3PaperRow>;
   findPaperById(userId: string, paperId: string): Promise<L3PaperRow | null>;
+
+  /**
+   * 按 source_ids 反查这些题目所属试卷的 `metadata.answerTrust.status`。
+   *
+   * 为什么需要：`file` 作用域的题纸只有 source_id，拿不到 paper_id（见
+   * `resolveSheetScopedQuestions`），而 2025 那份恰好只标在 paper 的 metadata 上。
+   * 没有这个方法，判卷守卫就只对 `paper` 作用域的题纸生效 —— 而 2025 若做成题纸，
+   * 最可能走的是 6 篇文章各自成 file。
+   *
+   * 一次查询，不产生 N+1。返回 Map<source_id, status>：
+   *   - 缺键 = 该 source 没有任何带 answerTrust 的试卷 = 视为可信（正常题目）
+   *   - 值为 undefined = 标注了 answerTrust 但没写 status = 判卷侧 fail-closed
+   */
+  findAnswerTrustBySourceIds(
+    userId: string,
+    sourceIds: readonly string[],
+  ): Promise<Map<string, unknown>>;
   /** 改卷（2026-09-26）：标题/方向/元信息/payload；条件 UPDATE 带 `status='active'`。 */
   updatePaper(input: UpdateL3Paper): Promise<L3PaperRow | null>;
   listPapers(input: L3PaperLookup): Promise<L3PaperListPage>;

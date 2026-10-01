@@ -447,6 +447,45 @@ export class L3PaperRepository extends BaseRepository implements IL3PaperReposit
     return row ? mapPaperRow(row) : null;
   }
 
+  /**
+   * 按 source 反查 answerTrust。
+   *
+   * 只走「题目 → 其所属试卷」这条已存在的关联（题目与试卷同属一个 user，
+   * 试卷 metadata 里带 answerTrust 就算标注过），不解析 payload：
+   * 判卷守卫不该因为 payload 形状变化而漏判可信度。
+   *
+   * SQL 里滤掉没有 answerTrust 的卷，于是返回 Map 的缺键即「无标注」——
+   * 调用方按缺键=可信处理，而标注了却没写 status 的会得到 undefined 值，
+   * 判卷侧 fail-closed。这两个情况必须可区分，所以不把二者合并成同一个键。
+   */
+  async findAnswerTrustBySourceIds(
+    userId: string,
+    sourceIds: readonly string[],
+  ): Promise<Map<string, unknown>> {
+    const unique = [...new Set(sourceIds)].filter(Boolean);
+    const out = new Map<string, unknown>();
+    if (unique.length === 0) return out;
+
+    const rows = await this.query<{ source_id: string | null; trust_status: unknown }>(
+      `SELECT q.source_id::text AS source_id,
+              p.metadata->'answerTrust'->>'status' AS trust_status
+         FROM l3_papers p
+         JOIN l3_questions q
+           ON q.user_id = p.user_id
+          AND q.source_id = ANY($2::uuid[])
+        WHERE p.user_id = $1::uuid
+          AND p.metadata ? 'answerTrust'
+          AND p.status <> 'draft'
+        GROUP BY q.source_id, p.metadata->'answerTrust'->>'status'`,
+      [userId, unique],
+    );
+
+    for (const row of rows) {
+      if (row.source_id) out.set(row.source_id, row.trust_status ?? undefined);
+    }
+    return out;
+  }
+
   async listPapers(input: L3PaperLookup): Promise<L3PaperListPage> {
     const params: unknown[] = [input.userId];
     let where = " WHERE p.user_id = $1::uuid";
