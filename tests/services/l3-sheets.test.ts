@@ -108,6 +108,10 @@ function makeSheetRepo(overrides: Partial<IL3SheetRepository> = {}): IL3SheetRep
 
 function makePaperRepo(overrides: Partial<IL3PaperRepository> = {}): IL3PaperRepository {
   return {
+    // 答案可信度守卫（PR #184）：默认「无标注」= 全部可信。
+    // 空 Map 是正确的默认 —— 可信度是 fail-closed 的**新增**闸门，
+    // 既有题目的题纸不带 answerTrust，不能因此让它们全部变成不可评。
+    findAnswerTrustBySourceIds: vi.fn(async () => new Map<string, unknown>()),
     insertQuestion: vi.fn(),
     findQuestionById: vi.fn(),
     findActiveQuestionsByIds: vi.fn(async () => []),
