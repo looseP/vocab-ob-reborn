@@ -25,6 +25,10 @@ COPY --from=build --chown=node:node /app/scripts/run-llm-reservation-reaper.ts .
 COPY --from=build --chown=node:node /app/scripts/run-backup-scheduler.ts ./scripts/run-backup-scheduler.ts
 COPY --from=build --chown=node:node /app/scripts/run-data-lifecycle.ts ./scripts/run-data-lifecycle.ts
 COPY --from=build --chown=node:node /app/scripts/postgres-backup.ts ./scripts/postgres-backup.ts
+# 一次性试卷 seed（2025 考研英语二）。脚本进镜像、data/ 走挂载 —— 与
+# import-vocab-notes.ts 处理语料目录的同一档：运行镜像不塞数据文件。
+# 用法见 data/l3-papers/2025-kaoyan-en2/README.md。
+COPY --from=build --chown=node:node /app/scripts/seed-l3-paper-2025-en2.ts ./scripts/seed-l3-paper-2025-en2.ts
 COPY --from=build --chown=node:node /app/scripts/verify-release-database.ts ./scripts/verify-release-database.ts
 COPY --from=build --chown=node:node /app/dist ./dist
 USER node

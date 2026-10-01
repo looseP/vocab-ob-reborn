@@ -76,6 +76,7 @@
     "runtime:down": "docker compose down",
     "db:push": "drizzle-kit push --config drizzle.config.ts",
     "db:studio": "drizzle-kit studio --config drizzle.config.ts",
+    "db:seed:l3-paper-2025-en2": "tsx scripts/seed-l3-paper-2025-en2.ts",
     "worker:review-outbox": "tsx scripts/run-review-outbox-worker.ts",
     "outbox:metrics": "tsx scripts/review-outbox-admin.ts metrics",
     "outbox:replay": "tsx scripts/review-outbox-admin.ts replay",

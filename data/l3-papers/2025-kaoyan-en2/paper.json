@@ -1,0 +1,1382 @@
+{
+ "paper": {
+  "title": "2025 年全国硕士研究生招生考试 · 英语（二）试题",
+  "direction": "考研",
+  "metadata": {
+   "year": 2025,
+   "subject": "英语二",
+   "source": "考研英语二2025年真题及答案解析（整卷）.pdf",
+   "points": 100,
+    "answerTrust": {
+      "status": "unverified-constructed",
+      "scope": "45 道客观题（第 1-40、41-45 题）的 answer 字段",
+      "finding": "答案分布检查显示为人工构造，非官方钥匙转录：Section I 完形 20 题恰好 A5/B5/C5/D5；整体 45 题 A11/B11/C11/D10/F1/G1；ordinal 0-5 呈 A B B C D F / A B C C C D 循环；ordinal 1-4 各有 3-4 题连同一选项。",
+      "checkedAt": "2026-09-30",
+      "usableFor": "题面 / 选项 / 解析（48/48）",
+      "notUsableFor": "自我评分 / 答案核对",
+      "remedy": "拿到官方答案钥匙后整体重做 45 题 answer；注意 seed 按标题判重、已存在则整份跳过，重做需先清卷或用 UPDATE 原地更新。",
+      "detail": "data/l3-papers/2025-kaoyan-en2/README.md 的「答案是构造的」一节"
+    }
+  }
+ },
+ "sources": [
+  {
+   "key": "cloze",
+   "title": "2025 英语二 · Section I Use of English（求助）",
+   "text": "There are many understandable reasons why you might find it difficult to ask for help when you need it. Psychologists have been interested in this 〖1〗 for decades, not least because people's widespread 〖2〗 to ask for help has led to some high-profile failures.\nAsking for help takes 〖3〗. It involves communicating a need on your part—there's something you can't do. 〖4〗 you're broadcasting your own weaknesses, which can be 〖5〗. You might worry about coming across as incompetent. You might have 〖6〗 about losing control of whatever it is you're asking for help with. 〖7〗 someone starts to help, perhaps they'll take over, or get credit for your earlier efforts. Yet another 〖8〗 that you might be worried about is being a nuisance or 〖9〗 the person you go to for help.\nIf you struggle with low self-esteem, you might find it especially difficult to 〖10〗 for help because you have the added worry of the other person 〖11〗 your request. You might see such refusals as implying something 〖12〗 about the status of your relationship with them. To 〖13〗 these difficulties, try to remind yourself that everyone needs help sometimes. Nobody knows everything and can do everything all by themselves. And while you might 〖14〗 coming across as incompetent, there's actually research that shows that advice-seekers are 〖15〗 as more competent, not less.\nPerhaps most encouraging of all is a paper from 2022 by researchers at Stanford University that involved a mix of contrived help-seeking interactions and asking people to 〖16〗 times they'd sought help in the past. The findings showed that help-seekers generally underestimate how 〖17〗 other people will be to help and how good it'll make the help-giver feel (for most people, having the chance to help someone is highly 〖18〗).\nSo, bear all this in mind the next time you need to ask for help. 〖19〗 take care over who you ask and when you ask them. And if someone can't help right now, avoid taking it personally. They might just be too 〖20〗, or they might not feel confident about their ability to help.",
+   "type": "cloze"
+  },
+  {
+   "key": "text1",
+   "title": "2025 英语二 · Text 1 小费文化（tipflation）",
+   "text": "U.S. customers historically tipped people they assumed were earning most of their income via tips, such as restaurant servers earning less than the minimum wage. In the early 2010s, a wide range of businesses started processing purchases with iPads and other digital payment systems. These systems often prompted customers to tip for services that were not previously tipped.\nToday's tip requests are often not connected to the salary and service norms that used to determine when and how people tip. Customers in the past nearly always paid tips after receiving a service, such as at the conclusion of a restaurant meal, after getting a haircut or once a pizza was delivered. That timing could reward high-quality service and give workers an incentive to provide it. It's becoming more common for tips to be requested beforehand. And new tipping technology may even automatically add tips.\nThe prevalence of digital payment devices has made it easier to ask customers for a tip. That helps explain why tip requests are creeping into new kinds of services. Customers now routinely see menus of suggested default options—often well above 20% of what they owe. The amounts have risen from 10% or less in the 1950s to 15% around the year 2000 to 20% or higher today. This increase is sometimes called tipflation—the expectation of ever-higher tip amounts.\nTipping has always been a vital source of income for workers in historically tipped services, like restaurants, where the tipped minimum wage can be as low as US$2.13 an hour. Tip creep and tipflation are now further supplementing the income of many low-wage service workers.\nNotably, tipping primarily benefits some of these workers, such as waiters, but not others, such as cooks and dishwashers. To ensure that all employees were paid fair wages, some restaurants banned tipping and increased prices, but this movement toward no-tipping services has largely fizzled out.\nSo, to increase employee wages without raising prices, more employers are succumbing to the temptations of tip creep and tipflation. However, many customers are frustrated because they feel they are being asked for too high of a tip, too often. And, as our research emphasizes, tipping now seems to be more coercive, less generous and often completely dissociated from service quality.",
+   "type": "reading_choice"
+  },
+  {
+   "key": "text2",
+   "title": "2025 英语二 · Text 2 NHS 医疗改革",
+   "text": "When it was established, the National Health Service (NHS) was visionary: offering high-quality, timely care to meet the dominant needs of the population it served. Nearly 75 years on, with the UK facing very different health challenges, it is clear that model is out of date.\nFrom life expectancy to cancer and infant mortality rates, we are lagging behind many of our peers. With more than 6.8 million on waitlists, healthcare is becoming increasingly inaccessible for those who cannot opt to pay for private treatment; and the cost of providing healthcare is increasingly squeezing out investment in other public services. As demand for healthcare continues to grow, pressures on the workforce—which is already near breaking point—will only become more acute.\nMany of the answers to the crisis in health and care are well rehearsed. We need to be much better at reducing and diverting demand on health services, rather than simply managing it. Much more needs to be invested in communities and primary care to reduce our reliance on hospitals. And capacity in social care needs to be greater, to support the growing number of people living with long-term conditions.\nYet despite two decades of strategies and a number of major health reforms, we have failed to make meaningful progress on any of these aims. That is why the Reform think tank is launching a new programme of work entitled \"Reimagining health\", supported by ten former health ministers. Together, we are calling for a much more open and honest conversation about the future of health in the UK, and an \"urgent rethink\" of the hospital-centric model we retain.\nThis must begin with the question of how we maximise the health of the nation, rather than \"fix\" the NHS. It is estimated, for example, that healthcare accounts for only about 20% of health outcomes. Much more important are the places we live, work and socialise—yet there is no clear cross-government strategy for improving these social determinants of health. Worse, when policies like the national obesity strategy are scrapped, taxpayers are left with the heavy price tag of treating the illnesses, like diabetes, that result.\nReform wants to ask how power and resources should be distributed in our health system. What health functions should remain at the centre, and what should be given to local leaders, often responsible for services that create health, and with a much better understanding of the needs of their populations?",
+   "type": "reading_choice"
+  },
+  {
+   "key": "text3",
+   "title": "2025 英语二 · Text 3 印度高温行动计划",
+   "text": "Heat action plans, or HAPs, have been proliferating in India in the past few years. In general, an HAP spells out when and how officials should issue heat warnings and alert hospitals and other institutions. Nagpur's plan, for instance, calls for hospitals to set aside \"cold wards\" in the summer for treating heatstroke patients, and advises builders to give construction laborers a break from work on very hot days.\nBut implementation of existing HAPs has been uneven, according to a report from the Centre for Policy Research. Many lack adequate funding, it found. And their triggering thresholds often are not customized to the local climate. In some areas, high daytime temperatures alone might serve as an adequate trigger for alerts. But in other places, nighttime temperatures or humidity might be as important a gauge of risk as daytime highs.\nMumbai's April heatstroke deaths highlighted the need for more nuanced and localized warnings, researchers say. That day's high temperature of roughly 36°C was 1°C shy of the heat wave alert threshold for coastal cities set by national meteorological authorities. But the effects of the heat were amplified by humidity—an often neglected factor in heat alert systems—and the lack of shade at the late-morning outdoor ceremony.\nTo help improve HAPs, urban planner Rajashree Kotharkar's team is working on a model plan that outlines best practices and could be adapted to local conditions. Among other things, she says, all cities should create a vulnerability map to help focus responses on the populations most at risk.\nSuch mapping doesn't need to be complex, Kotharkar says. \"A useful map can be created by looking at even a few key parameters.\" For example, neighborhoods with a large elderly population or informal dwellings that cope poorly with heat could get special warnings or be bolstered with cooling centers. The Nagpur project has already created a risk and vulnerability map, which enabled Kotharkar to tell officials which neighborhoods to focus on in the event of a heat wave this summer.\nHAPs shouldn't just include short-term emergency responses, researchers say, but also recommend medium- to long-term measures that could make communities cooler. In Nagpur, for example, Kotharkar's team has been able to advise city officials about where to plant trees to provide shade. HAPs could also guide efforts to retrofit homes or modify building regulations. \"Reducing deaths in an emergency is a good target to have, but it is the lowest target,\" says climate researcher Chandni Singh.",
+   "type": "reading_choice"
+  },
+  {
+   "key": "text4",
+   "title": "2025 英语二 · Text 4 欲望小径 desire paths",
+   "text": "Navigating beyond the organised pavements and parks of our urban spaces, desire paths are the unofficial footprints of a community, revealing the unspoken preferences, shared shortcuts and collective choices of humans. Often appearing as trodden dirt tracks through otherwise neat green spaces, these routes of collective disobedience cut corners, bisect lawns and cross hills, representing the natural capability of people (and animals) to go from point A to point B most effectively.\nUrban planners interpret desire paths as more than just convenient shortcuts; they offer valuable insights into the dynamics between planning and behaviour. Ohio State University allowed its students to navigate the Oval, a lawn in the centre of campus, freely, then proceeded to pave the desire paths, creating a web of effective routes students had established.\nYet, reluctance persists among other planners to integrate desire paths into formal plans, citing concerns about safety, environmental impact, or primarily, aesthetics. A Reddit webpage devoted to the phenomenon, boasting nearly 50,000 members, showcases images of local desire paths adorned with signs instructing pedestrians to adhere to designated walkways, underscoring the rebellious nature inherent in these human-made tracks. This clash highlights an ongoing struggle between the organic, user-driven evolution of public spaces and the desire for a visually curated and controlled urban environment.\nThe Wickquasgeck Trail is an example of a historical desire path, created by Native Americans to cross the forests of Manhattan and move between settlements quickly. This trail, when Dutch colonists arrived, was widened and made into one of the main trade roads across the island, known at the time as de Heere Straat, or Gentlemen's Street. Following the British assumption of control in New York, the street was renamed Broadway. Notably, Broadway stands out as one of the few areas in NYC that defies the grid-based system applied to the rest of the city, cutting a diagonal across parts of the city.\nIn online spaces, desire paths have sparked a fascination that can approach obsession, with the Reddit page serving as a hub. Contributors offer a wide array of stories, from little-known new shortcuts to long-established alternate routes.\nAnimal desire paths, such as ducks forging trails through frozen ponds or dogs carving direct routes in gardens, highlight the adaptability of these trails in both human and animal experiences. As desire paths crisscross through both physical and virtual landscapes, they stand as a proof of the collective insistence on forging unconventional routes and embracing the spirit of communal choice.",
+   "type": "reading_choice"
+  },
+  {
+   "key": "partb",
+   "title": "2025 英语二 · Part B 职场提建议五步法（小标题匹配）",
+   "text": "Everyone wants to be that person—the one who looks at the same information as everyone else, but who sees a fresh, innovative solution. However, it takes more than simply having a good idea. How you share it is as important as the suggestion itself. Why? Because writing a new script—literally or figuratively—means that other team members will have to adapt to something new. Not to mention, if the process you're scrapping is one someone else suggested, there's the possibility of hurt feelings. To gain buy-in on an innovative, new idea, follow these steps:\n\n〖41〗 Great ideas don't stand alone. In other words, you can't mention your suggestion once and expect it to be adopted. To see a change, you'll need to champion your plan and sell its merits. In addition, you need to be willing to stand up to scrutiny and criticism and be prepared to explain your innovation in different ways for various audiences.\n\n〖42〗 Sometimes it makes sense to go to your boss first. But other times, it's useful to build a coalition among your co-workers or other stakeholders. When it works, it works great—because you're ready for your stubborn supervisor's pushback with answers like, \"Actually, I connected with a few people in our tech department to discuss how much time these kinds of website updates would take, and they suggested they have the bandwidth.\"\n\n〖43〗 One of the biggest barriers to gaining buy-in occurs when the owner of an idea is viewed as argumentative, defensive, or close-minded. Because, let's be honest: No one likes a know-it-all. So, if people disagree with you, don't be indignant. Instead, listen to their concerns fully, try to understand their perspective, and include their concerns (and possible remedies) in future discussions. So, instead of saying, \"Martha, our current slogan is confusing and should be updated,\" you could try, \"Martha raises a great point that our current slogan has a long history for our stakeholders, but I wonder if we might be able to brainstorm a tagline that could build on that—and be clearer for new customers.\"\n\n〖44〗 New ideas are the grandchildren of old ones. In other words, don't throw old solutions under the bus to make your improvement stand out. Remember that in light of whatever the problem the old system solved—or, maybe, has failed to solve in recent memory—it was a great idea at the time. Appreciating the older contributions as you suggest future innovations helps bolster the credibility of your idea.\n\n〖45〗 When pitching a new idea, it's important to use the language of abundance instead of the language of deficit. Instead of saying what is wrong, broken, or suboptimal, talk about what is right, fixable, or ideal. For example, try, \"I can see lots of applications for this new approach\" rather than, \"This innovation is the only way.\" Be optimistic but realistic, and you will stand out.",
+   "type": "new_question"
+  }
+ ],
+ "sections": [
+  {
+   "title": "Section I · Use of English 完型填空（10 分）",
+   "questionType": "cloze",
+   "sourceKey": "cloze",
+   "questions": [
+    {
+     "ordinal": 0,
+     "stem": "第 1 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "illusion"
+      },
+      {
+       "key": "B",
+       "text": "discussion"
+      },
+      {
+       "key": "C",
+       "text": "tradition"
+      },
+      {
+       "key": "D",
+       "text": "question"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【词义辨析】this 回指 \"求助难\" 这个值得研究的议题"
+    },
+    {
+     "ordinal": 1,
+     "stem": "第 2 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "reluctance"
+      },
+      {
+       "key": "B",
+       "text": "ambition"
+      },
+      {
+       "key": "C",
+       "text": "tendency"
+      },
+      {
+       "key": "D",
+       "text": "enthusiasm"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【词义辨析】求助难、且导致 high-profile failures，方向负面"
+    },
+    {
+     "ordinal": 2,
+     "stem": "第 3 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "attention"
+      },
+      {
+       "key": "B",
+       "text": "talent"
+      },
+      {
+       "key": "C",
+       "text": "courage"
+      },
+      {
+       "key": "D",
+       "text": "patience"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【词义辨析】下文讲暴露弱点、怕显得无能"
+    },
+    {
+     "ordinal": 3,
+     "stem": "第 4 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "At any time"
+      },
+      {
+       "key": "B",
+       "text": "In other words"
+      },
+      {
+       "key": "C",
+       "text": "By all means"
+      },
+      {
+       "key": "D",
+       "text": "On the contrary"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【逻辑关系】前后两句是同义改写关系"
+    },
+    {
+     "ordinal": 4,
+     "stem": "第 5 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "unrealistic"
+      },
+      {
+       "key": "B",
+       "text": "deceptive"
+      },
+      {
+       "key": "C",
+       "text": "tiresome"
+      },
+      {
+       "key": "D",
+       "text": "uncomfortable"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【词义辨析】暴露弱点带来心理不适"
+    },
+    {
+     "ordinal": 5,
+     "stem": "第 6 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "doubts"
+      },
+      {
+       "key": "B",
+       "text": "concerns"
+      },
+      {
+       "key": "C",
+       "text": "suggestions"
+      },
+      {
+       "key": "D",
+       "text": "secrets"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【词义辨析】about 后接 \"失去控制\" 是负面顾虑"
+    },
+    {
+     "ordinal": 6,
+     "stem": "第 7 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "Once"
+      },
+      {
+       "key": "B",
+       "text": "Unless"
+      },
+      {
+       "key": "C",
+       "text": "Although"
+      },
+      {
+       "key": "D",
+       "text": "Before"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【逻辑关系】他人开始帮忙是 \"被接管/抢功\" 的前提"
+    },
+    {
+     "ordinal": 7,
+     "stem": "第 8 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "theory"
+      },
+      {
+       "key": "B",
+       "text": "choice"
+      },
+      {
+       "key": "C",
+       "text": "factor"
+      },
+      {
+       "key": "D",
+       "text": "context"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【词义辨析】前文列举的都是 \"让你担心的顾虑因素\""
+    },
+    {
+     "ordinal": 8,
+     "stem": "第 9 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "overpraising"
+      },
+      {
+       "key": "B",
+       "text": "outperforming"
+      },
+      {
+       "key": "C",
+       "text": "reassessing"
+      },
+      {
+       "key": "D",
+       "text": "inconveniencing"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【词义辨析】前并列项是 \"being a nuisance\""
+    },
+    {
+     "ordinal": 9,
+     "stem": "第 10 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "reach out"
+      },
+      {
+       "key": "B",
+       "text": "settle down"
+      },
+      {
+       "key": "C",
+       "text": "turn over"
+      },
+      {
+       "key": "D",
+       "text": "look back"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【固定搭配】段落主题 \"求助难\"、空后 for help"
+    },
+    {
+     "ordinal": 10,
+     "stem": "第 11 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "declining"
+      },
+      {
+       "key": "B",
+       "text": "considering"
+      },
+      {
+       "key": "C",
+       "text": "criticising"
+      },
+      {
+       "key": "D",
+       "text": "evaluating"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【词义辨析】下文 such refusals 直接定性"
+    },
+    {
+     "ordinal": 11,
+     "stem": "第 12 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "unnecessary"
+      },
+      {
+       "key": "B",
+       "text": "negative"
+      },
+      {
+       "key": "C",
+       "text": "strange"
+      },
+      {
+       "key": "D",
+       "text": "impractical"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【词义辨析】整段在讲低自尊的负面解读"
+    },
+    {
+     "ordinal": 12,
+     "stem": "第 13 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "explain"
+      },
+      {
+       "key": "B",
+       "text": "identify"
+      },
+      {
+       "key": "C",
+       "text": "predict"
+      },
+      {
+       "key": "D",
+       "text": "overcome"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【固定搭配】后接的是消除负面想法的具体建议"
+    },
+    {
+     "ordinal": 13,
+     "stem": "第 14 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "deny"
+      },
+      {
+       "key": "B",
+       "text": "forget"
+      },
+      {
+       "key": "C",
+       "text": "miss"
+      },
+      {
+       "key": "D",
+       "text": "fear"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【词义辨析】while…there's actually research 的让步反转"
+    },
+    {
+     "ordinal": 14,
+     "stem": "第 15 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "disguised"
+      },
+      {
+       "key": "B",
+       "text": "perceived"
+      },
+      {
+       "key": "C",
+       "text": "followed"
+      },
+      {
+       "key": "D",
+       "text": "introduced"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【词义辨析】研究结果是 \"别人怎么看求助者\""
+    },
+    {
+     "ordinal": 15,
+     "stem": "第 16 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "recall"
+      },
+      {
+       "key": "B",
+       "text": "classify"
+      },
+      {
+       "key": "C",
+       "text": "analyse"
+      },
+      {
+       "key": "D",
+       "text": "compare"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【词义辨析】the past + 让被试做的事"
+    },
+    {
+     "ordinal": 16,
+     "stem": "第 17 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "brave"
+      },
+      {
+       "key": "B",
+       "text": "disappointed"
+      },
+      {
+       "key": "C",
+       "text": "willing"
+      },
+      {
+       "key": "D",
+       "text": "hesitant"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【词义辨析】研究反转主旨：他人比想象中乐意帮忙"
+    },
+    {
+     "ordinal": 17,
+     "stem": "第 18 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "relaxing"
+      },
+      {
+       "key": "B",
+       "text": "surprising"
+      },
+      {
+       "key": "C",
+       "text": "rewarding"
+      },
+      {
+       "key": "D",
+       "text": "demanding"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【词义辨析】括号外 how good 决定方向"
+    },
+    {
+     "ordinal": 18,
+     "stem": "第 19 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "Thus"
+      },
+      {
+       "key": "B",
+       "text": "Also"
+      },
+      {
+       "key": "C",
+       "text": "Finally"
+      },
+      {
+       "key": "D",
+       "text": "Instead"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【逻辑关系】前句给总建议、本句给附加细则"
+    },
+    {
+     "ordinal": 19,
+     "stem": "第 20 空",
+     "options": [
+      {
+       "key": "A",
+       "text": "polite"
+      },
+      {
+       "key": "B",
+       "text": "proud"
+      },
+      {
+       "key": "C",
+       "text": "busy"
+      },
+      {
+       "key": "D",
+       "text": "lazy"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【词义辨析】right now + or 平行项的善意基调"
+    }
+   ]
+  },
+  {
+   "title": "Part A · Text 1（Text 1 小费文化（tipflation））",
+   "questionType": "reading_choice",
+   "sourceKey": "text1",
+   "questions": [
+    {
+     "ordinal": 0,
+     "stem": "According to Paragraph 1, the practice of tipping in the U.S. ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "was regarded as a sign of generosity"
+      },
+      {
+       "key": "B",
+       "text": "was considered essential for waiters"
+      },
+      {
+       "key": "C",
+       "text": "was a way of rewarding diligence"
+      },
+      {
+       "key": "D",
+       "text": "was optional in most businesses"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【细节题】 定位：U.S. customers historically tipped people they assumed were earning most of their income via tips, such as restaurant servers earning less than the minimum wage. 美国顾客历来只给那些他们认为大部分收入来源于小费的人付小费，比如时薪低于最低工资 的餐厅服务员。 依据：earning most of their income via tips ↔was considered essential for waiters U.S. customers historically tipped ↔was considered 预判“小费对低薪服务员是必需收入”，四个选项中只有was considered essential for waiters准确对应“essential（必需）+ waiters（服务员）"
+    },
+    {
+     "ordinal": 1,
+     "stem": "Compared with tips in the past, today's tips ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "are paid much less frequently"
+      },
+      {
+       "key": "B",
+       "text": "are less often requested in advance"
+      },
+      {
+       "key": "C",
+       "text": "have less to do with service quality"
+      },
+      {
+       "key": "D",
+       "text": "contribute less to workers' income"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【细节题】 定位：Today's tip requests are often not connected to the salary and service norms that used to determine when and how people tip. Customers in the past nearly always paid tips after receiving a service, such as at the conclusion of a restaurant meal, after getting  依据：Today's tip requests are often not connected to the salary and service norms ↔ have less to do with service quality That timing could reward high-quality service ↔service quality 预判差异维度是“与服务质量挂钩程度下降”，四个选项中只有have less to"
+    },
+    {
+     "ordinal": 2,
+     "stem": "Tip requests are creeping into new kinds of services as a result of ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "the advancement of technology"
+      },
+      {
+       "key": "B",
+       "text": "the desire for income increase"
+      },
+      {
+       "key": "C",
+       "text": "the diversification of business"
+      },
+      {
+       "key": "D",
+       "text": "the emergence of tipflation"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【细节题】 定位：The prevalence of digital payment devices has made it easier to ask customers for a tip. That helps explain why tip requests are creeping into new kinds of services. 数字支付设备的普及让向顾客索取小费变得更容易了。这有助于解释为什么小费请求正在蔓 延到新型服务里。 依据：The prevalence of digital payment devices ↔the advancement of technology has made it easier to ask customers for a tip ↔the advancement of technology 预判原因为“数字支付普及”，A 选项以“technology 进步”作为更宽泛但精准包含原因的 上位概念，与原文因果完全吻合，故锁 A。"
+    },
+    {
+     "ordinal": 3,
+     "stem": "The movement toward no-tipping services was intended to ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "promote consumption"
+      },
+      {
+       "key": "B",
+       "text": "enrich income sources"
+      },
+      {
+       "key": "C",
+       "text": "maintain reasonable prices"
+      },
+      {
+       "key": "D",
+       "text": "guarantee income fairness"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【细节题】 定位：To ensure that all employees were paid fair wages, some restaurants banned tipping and increased prices, but this movement toward no-tipping services has largely fizzled out. 为了确保所有员工都拿到公平的工资，一些餐厅禁止小费并提高了菜价，但这场无小费服务 运动已大体熄火。 依据：To ensure that all employees were paid fair wages ↔guarantee income fairness all employees ↔income fairness 预判目的是“工资公平”，四选项中 D 直接用“guarantee income fairness”复刻原文 ensure...fair wages，是最直接的同义替换，故锁 D。 从最后一段可以了解到，小费________。"
+    },
+    {
+     "ordinal": 4,
+     "stem": "It can be learned from the last paragraph that tipping ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "is becoming a burden for customers"
+      },
+      {
+       "key": "B",
+       "text": "helps encourage quality service"
+      },
+      {
+       "key": "C",
+       "text": "is vital to business development"
+      },
+      {
+       "key": "D",
+       "text": "reflects the need to reduce prices"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【推断题】 依据：many customers are frustrated because they feel they are being asked for too high of a tip, too often ↔is becoming a burden for customers tipping now seems to be more coercive, less generous ↔is becoming a burden for cus"
+    }
+   ]
+  },
+  {
+   "title": "Part A · Text 2（Text 2 NHS 医疗改革）",
+   "questionType": "reading_choice",
+   "sourceKey": "text2",
+   "questions": [
+    {
+     "ordinal": 0,
+     "stem": "According to the first two paragraphs, the NHS ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "is troubled by funding deficiencies"
+      },
+      {
+       "key": "B",
+       "text": "can hardly satisfy people's needs"
+      },
+      {
+       "key": "C",
+       "text": "can barely retain its current employees"
+      },
+      {
+       "key": "D",
+       "text": "is rivalled by private medical services"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【细节题】 定位：With more than 6.8 million on waitlists, healthcare is becoming increasingly inaccessible for those who cannot opt to pay for private treatment; and the cost of providing healthcare is increasingly squeezing out investment in other public services. 在 680 多万人排队 依据：healthcare is becoming increasingly inaccessible ↔can hardly satisfy people's needs model is out of date ↔can hardly satisfy people's needs 预判\"需求难被满足\"与 can hardly satisfy people's needs 完全同义，直接锁 B。"
+    },
+    {
+     "ordinal": 1,
+     "stem": "One answer to the crisis in health and care is to ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "boost the efficiency of hospitals"
+      },
+      {
+       "key": "B",
+       "text": "lighten the burden on social care"
+      },
+      {
+       "key": "C",
+       "text": "increase resources for primary care"
+      },
+      {
+       "key": "D",
+       "text": "reduce the pressure on communities"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【细节题】 定位：Much more needs to be invested in communities and primary care to reduce our reliance on hospitals. 我们必须在社区和初级医疗上加大投入，以减少对医院的依赖。 依据：Much more needs to be invested in communities and primary care ↔ increase resources for primary care 预判\"加大初级医疗投入\"与 increase resources for primary care 同向同对象，且 \"resources\" 是 \"investment\" 的上位概括，直接锁 C。"
+    },
+    {
+     "ordinal": 2,
+     "stem": "\"Reimagining health\" is aimed to ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "reinforce hospital management"
+      },
+      {
+       "key": "B",
+       "text": "readjust healthcare regulations"
+      },
+      {
+       "key": "C",
+       "text": "restructure the health system"
+      },
+      {
+       "key": "D",
+       "text": "resume suspended health reforms"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【细节题】 定位：That is why the Reform think tank is launching a new programme of work entitled \"Reimagining health\", supported by ten former health ministers. Together, we are calling for a much more open and honest conversation about the future of health in the UK, and an \" 依据：an \"urgent rethink\" of the hospital-centric model we retain ↔restructure the health system 预判\"重构以医院为中心的体系\"与 restructure the health system 完全同义，锁 C。"
+    },
+    {
+     "ordinal": 3,
+     "stem": "To maximise the nation's health, the author suggests ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "introducing relevant taxation policies"
+      },
+      {
+       "key": "B",
+       "text": "paying due attention to social factors"
+      },
+      {
+       "key": "C",
+       "text": "reevaluating major health outcomes"
+      },
+      {
+       "key": "D",
+       "text": "enhancing the quality of healthcare"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【细节题】 定位：What health functions should remain at the centre, and what should be given to local leaders, often responsible for services that create health, and with a much better understanding of the needs of their populations? 哪些卫生职能应当保留在中央，而哪些应当交给地方负责人——他们往往负责创造健康的相 关服 依据：Much more important are the places we live, work and socialise ↔ paying due attention to social factors these social determinants of health ↔paying due attention to social factors 预判\"重视社会决定因素\"与 paying due attention to so"
+    },
+    {
+     "ordinal": 4,
+     "stem": "It can be inferred that local leaders should ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "exercise their power more reasonably"
+      },
+      {
+       "key": "B",
+       "text": "develop a stronger sense of responsibility"
+      },
+      {
+       "key": "C",
+       "text": "play a bigger role in the health system"
+      },
+      {
+       "key": "D",
+       "text": "understand people's health needs better"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【推断题】 依据：what should be given to local leaders ↔play a bigger role in the health system often responsible for services that create health, and with a much better understanding of the needs of their populations ↔play a bigger role"
+    }
+   ]
+  },
+  {
+   "title": "Part A · Text 3（Text 3 印度高温行动计划）",
+   "questionType": "reading_choice",
+   "sourceKey": "text3",
+   "questions": [
+    {
+     "ordinal": 0,
+     "stem": "According to Paragraph 1, Nagpur's plan proposes measures to ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "tackle extreme weather"
+      },
+      {
+       "key": "B",
+       "text": "ensure construction quality"
+      },
+      {
+       "key": "C",
+       "text": "monitor emergency warnings"
+      },
+      {
+       "key": "D",
+       "text": "address excessive workloads"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【细节题】 定位：Nagpur's plan, for instance, calls for hospitals to set aside \"cold wards\" in the summer for treating heatstroke patients, and advises builders to give construction laborers a break from work on very hot days. 比如 Nagpur 的方案要求医院在夏天专门预留「冷病房」以救治中暑患者，并建议建筑商在 极热天让建 依据：on very hot days ↔extreme weather treating heatstroke patients ↔tackle 预判要的就是「应对高温」，tackle extreme weather 与两条措施全部对应，且选项里 只有 A 命中「热」这一核心，可直接锁定。"
+    },
+    {
+     "ordinal": 1,
+     "stem": "One problem with existing HAPs is that they ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "prove too costly to be implemented"
+      },
+      {
+       "key": "B",
+       "text": "lack localized alert-issuing criteria"
+      },
+      {
+       "key": "C",
+       "text": "give delayed responses to heat waves"
+      },
+      {
+       "key": "D",
+       "text": "keep hospitals under great pressure"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【细节题】 定位：And their triggering thresholds often are not customized to the local climate. 并且，它们的触发阈值常常没有根据当地气候进行定制。 依据：triggering thresholds ↔alert-issuing criteria are not customized to the local climate ↔lack localized 预判要的「预警门槛没本地化」与 lack localized alert-issuing criteria 字面对位， 可锁。"
+    },
+    {
+     "ordinal": 2,
+     "stem": "Mumbai's case shows that India's heat alert systems need to ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "include other factors besides temperature"
+      },
+      {
+       "key": "B",
+       "text": "take subtle weather changes into account"
+      },
+      {
+       "key": "C",
+       "text": "prioritize potentially disastrous heat waves"
+      },
+      {
+       "key": "D",
+       "text": "draw further support from local authorities"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【细节题】 定位：But the effects of the heat were amplified by humidity—an often neglected factor in heat alert systems—and the lack of shade at the late-morning outdoor ceremony. 但高温的影响被湿度（这是高温预警系统中常被忽视的一个因素）和上午晚些时候户外仪式 上缺乏遮蔽放大了。 依据：humidity—an often neglected factor in heat alert systems ↔ other factors besides temperature often neglected factor ↔include 预判「应当纳入温度以外的因素」与 include other factors besides temperature 字面 对位，可锁定。"
+    },
+    {
+     "ordinal": 3,
+     "stem": "Kotharkar holds that a vulnerability map can help ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "prevent the harm of high humidity"
+      },
+      {
+       "key": "B",
+       "text": "target areas needing special attention"
+      },
+      {
+       "key": "C",
+       "text": "expand the Nagpur project's coverage"
+      },
+      {
+       "key": "D",
+       "text": "make relief plans for heat-stricken people"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "【细节题】 定位：For example, neighborhoods with a large elderly population or informal dwellings that cope poorly with heat could get special warnings or be bolstered with cooling centers. The Nagpur project has already created a risk and vulnerability map, which enabled Koth 依据：which neighborhoods to focus on in the event of a heat wave ↔ target areas needing special attention focus responses on the populations most at risk ↔areas needing special attention 预判「锁定该重点关注的社区」与 target areas needing s"
+    },
+    {
+     "ordinal": 4,
+     "stem": "According to the last paragraph, researchers believe that HAPs should ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "focus more on heatstroke treatment"
+      },
+      {
+       "key": "B",
+       "text": "apply for more government grants"
+      },
+      {
+       "key": "C",
+       "text": "invite wider public participation"
+      },
+      {
+       "key": "D",
+       "text": "serve a broader range of purposes"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【细节题】 定位：HAPs shouldn't just include short-term emergency responses, researchers say, but also recommend medium- to long-term measures that could make communities cooler. 研究人员表示，HAPs 不应只包含短期应急响应，还应推荐能让社区更凉爽的中长期措施。 依据：shouldn't just include short-term emergency responses, researchers say, but also recommend medium- to long-term measures ↔serve a broader range of purposes Reducing deaths in an emergency is a good target to have, but it"
+    }
+   ]
+  },
+  {
+   "title": "Part A · Text 4（Text 4 欲望小径 desire paths）",
+   "questionType": "reading_choice",
+   "sourceKey": "text4",
+   "questions": [
+    {
+     "ordinal": 0,
+     "stem": "According to Paragraph 1, desire paths are a result of ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "the curiosity to explore surrounding hills"
+      },
+      {
+       "key": "B",
+       "text": "the necessity to preserve green spaces"
+      },
+      {
+       "key": "C",
+       "text": "the tendency to pursue convenience"
+      },
+      {
+       "key": "D",
+       "text": "the wish to find comfort in solitude"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "【细节题】 定位：these routes of collective disobedience cut corners, bisect lawns and cross hills, representing the natural capability of people (and animals) to go from point A to point B most effectively. 这些集体\"违规\"踩出的路径抄近路、横切草坪、翻越小山，体现了人（以及动物）从 A 点到 B 点尽可能高效行走的天性。 依据：to go from point A to point B most effectively ↔the tendency to pursue convenience the natural capability of people (and animals) ↔the tendency to the tendency to pursue convenience精确对应原文\"以最高效方式从 A 到 B 的天 性\"，与预判完全一致。"
+    },
+    {
+     "ordinal": 1,
+     "stem": "It can be inferred that Ohio State University ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "intends to improve its desire paths"
+      },
+      {
+       "key": "B",
+       "text": "leads in the research on desire paths"
+      },
+      {
+       "key": "C",
+       "text": "guides the creation of its desire paths"
+      },
+      {
+       "key": "D",
+       "text": "takes a positive view of desire paths"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【推断题】 定位：Ohio State University allowed its students to navigate the Oval, a lawn in the centre of campus, freely, then proceeded to pave the desire paths, creating a web of effective routes students had established. 俄亥俄州立大学先允许学生在校园中央草坪 Oval 上自由行走，然后把学生踩出的小径铺设 固化，形成一张由学 依据：proceeded to pave the desire paths, creating a web of effective routes students had established ↔takes a positive view of desire paths allowed its students to navigate the Oval...freely ↔positive view takes a positive vi"
+    },
+    {
+     "ordinal": 2,
+     "stem": "The images on the Reddit webpage reflect ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "conflicting opinions on the use of desire paths"
+      },
+      {
+       "key": "B",
+       "text": "the call to upgrade the designing of public spaces"
+      },
+      {
+       "key": "C",
+       "text": "the demand for proper planning of desire paths"
+      },
+      {
+       "key": "D",
+       "text": "growing concerns over the loss of public spaces"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "【细节题】 定位：A Reddit webpage devoted to the phenomenon, boasting nearly 50,000 members, showcases images of local desire paths adorned with signs instructing pedestrians to adhere to designated walkways, underscoring the rebellious nature inherent in these human-made trac 依据：This clash highlights an ongoing struggle ↔conflicting opinions on the use of desire paths between the organic, user-driven evolution of public spaces and the desire for a visually curated and controlled urban environmen"
+    },
+    {
+     "ordinal": 3,
+     "stem": "The example of the Wickquasgeck Trail illustrates ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "the growth of New York City"
+      },
+      {
+       "key": "B",
+       "text": "the Dutch origin of desire paths"
+      },
+      {
+       "key": "C",
+       "text": "the importance of urban planning"
+      },
+      {
+       "key": "D",
+       "text": "the recognition of desire paths"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【例证目的题】 定位：The Wickquasgeck Trail is an example of a historical desire path, created by Native Americans to cross the forests of Manhattan and move between settlements quickly. Wickquasgeck Trail 是一条历史上的 desire path，由美洲原住民开辟，用以穿越曼哈顿森 林、在聚居点之间快速往返。 依据：The Wickquasgeck Trail is an example of a historical desire path ↔ the recognition of desire paths Broadway stands out as one of the few areas in NYC that defies the grid-based system ↔ recognition the recognition of des"
+    },
+    {
+     "ordinal": 4,
+     "stem": "It can be learned from the last paragraph that desire paths ________.",
+     "options": [
+      {
+       "key": "A",
+       "text": "reveal humans' deep respect for nature"
+      },
+      {
+       "key": "B",
+       "text": "are crucial to humans' mental wellbeing"
+      },
+      {
+       "key": "C",
+       "text": "are a human imitation of animal behaviour"
+      },
+      {
+       "key": "D",
+       "text": "show a shared trait in humans and animals"
+      }
+     ],
+     "answer": {
+      "choice": "D"
+     },
+     "explanation": "【推断题】 定位：Animal desire paths, such as ducks forging trails through frozen ponds or dogs carving direct routes in gardens, highlight the adaptability of these trails in both human and animal experiences. As desire paths criss-cross through both physical and virtual land 依据：the adaptability of these trails in both human and animal experiences ↔ show a shared trait in humans and animals the collective insistence on forging unconventional routes and embracing the spirit of communal choice ↔sh"
+    }
+   ]
+  },
+  {
+   "title": "Part B · 小标题匹配（10 分）",
+   "questionType": "new_question",
+   "sourceKey": "partb",
+   "questions": [
+    {
+     "ordinal": 0,
+     "stem": "（41）为下列第 1 段选择最合适的小标题",
+     "options": [
+      {
+       "key": "A",
+       "text": "Stay positive. 保持积极"
+      },
+      {
+       "key": "B",
+       "text": "Respect the past. 尊重过去"
+      },
+      {
+       "key": "C",
+       "text": "Use channels. 善用渠道"
+      },
+      {
+       "key": "D",
+       "text": "Give it time. 给足时间"
+      },
+      {
+       "key": "E",
+       "text": "Invite resistance. 欢迎质疑"
+      },
+      {
+       "key": "F",
+       "text": "Be a salesman. 做个推销员"
+      },
+      {
+       "key": "G",
+       "text": "Be humble. 保持谦逊"
+      }
+     ],
+     "answer": {
+      "choice": "F"
+     },
+     "explanation": "本段主旨对应 F 项小标题。"
+    },
+    {
+     "ordinal": 1,
+     "stem": "（42）为下列第 2 段选择最合适的小标题",
+     "options": [
+      {
+       "key": "A",
+       "text": "Stay positive. 保持积极"
+      },
+      {
+       "key": "B",
+       "text": "Respect the past. 尊重过去"
+      },
+      {
+       "key": "C",
+       "text": "Use channels. 善用渠道"
+      },
+      {
+       "key": "D",
+       "text": "Give it time. 给足时间"
+      },
+      {
+       "key": "E",
+       "text": "Invite resistance. 欢迎质疑"
+      },
+      {
+       "key": "F",
+       "text": "Be a salesman. 做个推销员"
+      },
+      {
+       "key": "G",
+       "text": "Be humble. 保持谦逊"
+      }
+     ],
+     "answer": {
+      "choice": "C"
+     },
+     "explanation": "本段主旨对应 C 项小标题。"
+    },
+    {
+     "ordinal": 2,
+     "stem": "（43）为下列第 3 段选择最合适的小标题",
+     "options": [
+      {
+       "key": "A",
+       "text": "Stay positive. 保持积极"
+      },
+      {
+       "key": "B",
+       "text": "Respect the past. 尊重过去"
+      },
+      {
+       "key": "C",
+       "text": "Use channels. 善用渠道"
+      },
+      {
+       "key": "D",
+       "text": "Give it time. 给足时间"
+      },
+      {
+       "key": "E",
+       "text": "Invite resistance. 欢迎质疑"
+      },
+      {
+       "key": "F",
+       "text": "Be a salesman. 做个推销员"
+      },
+      {
+       "key": "G",
+       "text": "Be humble. 保持谦逊"
+      }
+     ],
+     "answer": {
+      "choice": "G"
+     },
+     "explanation": "本段主旨对应 G 项小标题。"
+    },
+    {
+     "ordinal": 3,
+     "stem": "（44）为下列第 4 段选择最合适的小标题",
+     "options": [
+      {
+       "key": "A",
+       "text": "Stay positive. 保持积极"
+      },
+      {
+       "key": "B",
+       "text": "Respect the past. 尊重过去"
+      },
+      {
+       "key": "C",
+       "text": "Use channels. 善用渠道"
+      },
+      {
+       "key": "D",
+       "text": "Give it time. 给足时间"
+      },
+      {
+       "key": "E",
+       "text": "Invite resistance. 欢迎质疑"
+      },
+      {
+       "key": "F",
+       "text": "Be a salesman. 做个推销员"
+      },
+      {
+       "key": "G",
+       "text": "Be humble. 保持谦逊"
+      }
+     ],
+     "answer": {
+      "choice": "B"
+     },
+     "explanation": "本段主旨对应 B 项小标题。"
+    },
+    {
+     "ordinal": 4,
+     "stem": "（45）为下列第 5 段选择最合适的小标题",
+     "options": [
+      {
+       "key": "A",
+       "text": "Stay positive. 保持积极"
+      },
+      {
+       "key": "B",
+       "text": "Respect the past. 尊重过去"
+      },
+      {
+       "key": "C",
+       "text": "Use channels. 善用渠道"
+      },
+      {
+       "key": "D",
+       "text": "Give it time. 给足时间"
+      },
+      {
+       "key": "E",
+       "text": "Invite resistance. 欢迎质疑"
+      },
+      {
+       "key": "F",
+       "text": "Be a salesman. 做个推销员"
+      },
+      {
+       "key": "G",
+       "text": "Be humble. 保持谦逊"
+      }
+     ],
+     "answer": {
+      "choice": "A"
+     },
+     "explanation": "本段主旨对应 A 项小标题。"
+    }
+   ]
+  },
+  {
+   "title": "Section III · Translation 英译汉（15 分）",
+   "questionType": "sentence_translation",
+   "fileKey": "2025 英语二 · 英译汉（对话中的尴尬停顿）",
+   "questions": [
+    {
+     "ordinal": 0,
+     "stem": "You know the moment—the conversation slows, then there's a pause. It's awkward, and so awkward that some people will panic and say anything. Do we all find such silences so stressful?\nResearchers analysed the frequency and impact of gaps greater than 2 seconds during conversations, including an overview of previous studies which indicate that the fear of awkward silences can be so extreme that people avoid talking to strangers, even though doing so is likely to be an enjoyable experience.\nDuring conversations with short gaps, people feel more connected to their conversation partners. But such feelings of connection markedly dip when entering a long gap. Long gaps between strangers are likely to be followed by a change in topic.\nBut the opposite seems to be true for conversations between friends. Long gaps there saw increased connection. Between friends, longer gaps seem to provide natural moments for reflection and expression.",
+     "options": [],
+     "answer": {
+      "text": "你一定遇到过这种情况——对话渐渐冷场，接着出现一阵停顿。这种停顿让人很尴尬，尴尬得有人会一下慌了神，随口乱说点什么。可是，我们真的都觉得这种沉默那么让人难受吗？\n围绕这个问题，研究者分析了对话中超过 2 秒的停顿出现的频率和造成的影响，其中还包括对此前研究的综述：这些研究表明，人们对尴尬沉默的害怕可能极端到让他们干脆回避和陌生人交谈，尽管和陌生人聊聊往往会是一段愉快的体验。\n研究发现，在停顿较短的对话中，人们会觉得自己与对话对方更亲近。但是，一旦对话进入较长的停顿，这种亲近感就会明显减弱。陌生人之间一旦出现较长的停顿，接下来往往就会换个话题。\n但在朋友之间的对话里，情况似乎正好相反——长停顿反而带来了更强的亲近感。在朋友之间，较长的停顿反而成了一种自然的契机，让彼此沉下来思考，也把想说的话表达出来。"
+     },
+     "explanation": "参考译文按段定稿；评分按理解准确、表达通顺连贯、无错译漏译四档。"
+    }
+   ]
+  },
+  {
+   "title": "Section IV Part A · 小作文 邮件（10 分）",
+   "questionType": "short_essay",
+   "fileKey": "2025 英语二 · 小作文（邀请 John 参演改编短剧邮件）",
+   "questions": [
+    {
+     "ordinal": 0,
+     "stem": "Suppose you are planning a short play based on a classic Chinese novel. Write your friend John an email to\n1) introduce the play, and\n2) invite him to take part in it.\nWrite your answer in about 100 words on the ANSWER SHEET.\nDo not use your own name in your email; Use “Li Ming” instead. (10 points)",
+     "options": [],
+     "answer": {
+      "sample": "Dear John,\nI hope this email finds you well. I am now planning a short play based on the classic Chinese novel Journey to the West, and I want to tell you about it. The play retells how the Monkey King protects his master on the journey west, showing courage and loyalty.\nI am writing to invite you to take part in it. With your rich stage experience, you would be perfect for the role of the Monkey King. We will start rehearsing next week. Could you please reply and let me know whether you can join us?\nLooking forward to your reply.\nYours,\nLi Ming"
+     },
+     "explanation": "半正式邮件：先介绍改编短剧（《西游记》），再邀请参演并给角色与排练安排，落款 Li Ming。"
+    }
+   ]
+  },
+  {
+   "title": "Section IV Part B · 大作文 图表作文（15 分）",
+   "questionType": "long_essay",
+   "fileKey": "2025 英语二 · 大作文（社区老年人休闲活动柱状图）",
+   "questions": [
+    {
+     "ordinal": 0,
+     "stem": "Write an essay based on the chart below. In your essay, you should\n1) describe and interpret the chart, and\n2) give your comments.\nWrite your answer in about 150 words on the ANSWER SHEET. (15 points)\n\n（图表：某社区老年人主要休闲活动占比——看电视 90.8%、散步 68.3%、养花 34.7%、阅读 31.8%、下棋 18.4%）",
+     "options": [],
+     "answer": {
+      "sample": "The bar chart clearly illustrates the main leisure activities of the elderly in a certain community. As is shown, watching TV ranks far ahead of the rest, chosen by 90.8% of the respondents, followed by taking a walk at 68.3%. By contrast, growing flowers and reading account for only 34.7% and 31.8% respectively, while playing chess sits at the bottom, favored by merely 18.4%.\nThese figures reveal that passive and effortless pastimes clearly dominate the daily lives of senior citizens. Watching TV and walking cost little and demand neither special skills nor companions, so they naturally appeal to the majority. In contrast, hobbies such as chess or gardening require more energy, patience or partners, which explains their limited popularity.\nIn my view, this pattern deserves our attention. Physical and social activities benefit the health of the elderly far more than sitting before a screen. Therefore, communities should organize richer events to encourage older people to step outside and enjoy a more colorful later life."
+     },
+     "explanation": "三段式：先描述图表五项数据并解读趋势，再分析省力消遣主导的成因，最后表态并给社区建议。"
+    }
+   ]
+  }
+ ]
+}
