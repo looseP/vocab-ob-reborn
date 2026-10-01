@@ -812,24 +812,24 @@ export function ImportPage() {
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder='[{"lemma": "abandon", "pos": "verb", "cefr": "B1", "short_definition": "To leave completely"}]'
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--color-ink-soft)]">
-                <span>写入模式：</span>
-                <select
-                  value={jsonMode}
-                  onChange={(e) => setJsonMode(e.target.value as BatchImportMode)}
-                  className="rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-1 text-xs"
-                >
-                  <option value="fill-only">仅补空（默认，安全）</option>
-                  <option value="overwrite">覆盖（会用导入值替换已有内容）</option>
-                </select>
-                <span className="basis-full">
-                  {jsonMode === "fill-only"
-                    ? "已存在的非空字段不会被改动；释义正文（definition_md）永远不由本路径写入。"
-                    : "注意：definition_md 由 short_definition 派生，覆盖模式会把已有释义结构冲成一句话。"}
-                </span>
-              </div>
               className="h-48 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-input)] p-4 font-mono text-sm text-[var(--color-ink)] focus:border-[var(--color-accent)] focus:outline-none"
             />
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--color-ink-soft)]">
+              <span>写入模式：</span>
+              <select
+                value={jsonMode}
+                onChange={(e) => setJsonMode(e.target.value as BatchImportMode)}
+                className="rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-1 text-xs"
+              >
+              <option value="fill-only">仅补空（默认，安全）</option>
+              <option value="overwrite">覆盖（会用导入值替换已有内容）</option>
+                </select>
+                <span className="basis-full">
+                {jsonMode === "fill-only"
+                  ? "已存在的非空字段不会被改动；释义正文（definition_md）永远不由本路径写入。"
+                  : "注意：definition_md 由 short_definition 派生，覆盖模式会把已有释义结构冲成一句话。"}
+                </span>
+            </div>
             <div className="mt-3 flex items-center gap-3">
               <Button onClick={parseJson} disabled={!text.trim()}>
                 <FileJson className="h-4 w-4" /> 解析预览
@@ -852,7 +852,7 @@ export function ImportPage() {
                   新增 {result.inserted} · 补全 {result.updated}
                   {result.unchanged > 0 ? ` · 未变 ${result.unchanged}` : ""}
                 </span>
-                <Badge tone={result.mode === "overwrite" ? "warn" : "neutral"}>
+                <Badge tone={result.mode === "overwrite" ? "warm" : "default"}>
                   {result.mode === "overwrite" ? "覆盖模式" : "仅补空"}
                 </Badge>
               </div>
