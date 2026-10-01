@@ -6,7 +6,17 @@
    "year": 2025,
    "subject": "英语二",
    "source": "考研英语二2025年真题及答案解析（整卷）.pdf",
-   "points": 100
+   "points": 100,
+    "answerTrust": {
+      "status": "unverified-constructed",
+      "scope": "45 道客观题（第 1-40、41-45 题）的 answer 字段",
+      "finding": "答案分布检查显示为人工构造，非官方钥匙转录：Section I 完形 20 题恰好 A5/B5/C5/D5；整体 45 题 A11/B11/C11/D10/F1/G1；ordinal 0-5 呈 A B B C D F / A B C C C D 循环；ordinal 1-4 各有 3-4 题连同一选项。",
+      "checkedAt": "2026-09-30",
+      "usableFor": "题面 / 选项 / 解析（48/48）",
+      "notUsableFor": "自我评分 / 答案核对",
+      "remedy": "拿到官方答案钥匙后整体重做 45 题 answer；注意 seed 按标题判重、已存在则整份跳过，重做需先清卷或用 UPDATE 原地更新。",
+      "detail": "data/l3-papers/2025-kaoyan-en2/README.md 的「答案是构造的」一节"
+    }
   }
  },
  "sources": [
