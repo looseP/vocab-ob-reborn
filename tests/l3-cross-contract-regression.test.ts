@@ -274,6 +274,9 @@ class L3CrossContractHarness {
       text: "The vivid and lucid explanation stayed memorable.",
       normalized_text: null,
       language: "en",
+      // 翻译缓存（migration 0049）
+      translation: null,
+      translation_src: null,
       position: {},
       metadata: {},
       created_at: "2026-07-08T00:00:00Z",
@@ -367,6 +370,9 @@ class L3CrossContractHarness {
           text: input.text,
           normalized_text: input.normalized_text ?? null,
           language: input.language ?? null,
+          // 翻译缓存（migration 0049）
+          translation: null,
+          translation_src: null,
           position: input.position ?? {},
           metadata: input.metadata ?? {},
           created_at: "2026-07-08T00:00:00Z",
@@ -433,6 +439,18 @@ class L3CrossContractHarness {
       lockContextByIdForUser: vi.fn(async (userId: string, contextId: string) => {
         const context = this.contexts.get(contextId);
         return context?.user_id === userId ? context : null;
+      }),
+      setContextTranslation: vi.fn(async (
+        userId: string,
+        contextId: string,
+        translation: string | null,
+        source: string | null,
+      ) => {
+        const context = this.contexts.get(contextId);
+        if (!context || context.user_id !== userId) return null;
+        context.translation = translation;
+        context.translation_src = source;
+        return context;
       }),
       lockActiveL3TargetReference: vi.fn(async () => undefined),
       getSourceDeleteBlockers: vi.fn(async (userId: string, sourceId: string) => ({

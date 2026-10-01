@@ -62,6 +62,9 @@ const CONTEXT_ROW: L3ContextRow = {
   user_id: "u1",
   context_type: "sentence",
   text: "She gave a vivid account.",
+  // 翻译缓存（migration 0049）
+  translation: null,
+  translation_src: null,
   normalized_text: null,
   language: "en",
   position: {},

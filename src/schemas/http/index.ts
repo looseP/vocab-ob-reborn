@@ -535,6 +535,23 @@ export const quickL3ContextSchema = z.object({
   boundSense: z.string().trim().max(2_000).nullish(),
 });
 
+/**
+ * 无状态整句翻译（2026-09-29）——**划词即译，不要求先圈记**。
+ *
+ * 为什么不复用 `POST /contexts/:id/translate`：那个端点以 context 为主体
+ * （要 id、要 RLS 身份、要落库），而「扫一眼译文」的用法根本不需要语境存在
+ * （2026-09-29 用户反馈：绑在圈记上等于把入口藏进了一条几乎不走的链路）。
+ *
+ * 长度上限 2000：Google 网页端点在 ~5000 字符附近开始截断，MyMemory 匿名额度
+ * 是 5000 字符/天。长文本在入口就拒掉，好过让 provider 静默截断出半句译文。
+ */
+export const l3TextTranslateSchema = z.object({
+  text: z.string().trim().min(1).max(2_000),
+  targetLang: z.string().trim().min(2).max(16).optional(),
+  /** 已知源语言时透传，省掉 provider 的语种猜测（短句尤其容易猜错）。 */
+  sourceLang: z.string().trim().min(2).max(16).optional(),
+});
+
 export const l3LimitCursorQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().min(1).optional(),

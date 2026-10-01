@@ -1778,6 +1778,9 @@ function contextRow(overrides: Partial<L3ContextRow> = {}): L3ContextRow {
     text: "A vivid context sentence.",
     normalized_text: "a vivid context sentence.",
     language: "en",
+    // 翻译缓存（migration 0049）：默认未翻译
+    translation: null,
+    translation_src: null,
     position: {},
     metadata: {},
     created_at: "now",

@@ -965,6 +965,11 @@ export const l3Contexts = pgTable("l3_contexts", {
 	normalizedText: text("normalized_text"),
 	language: text("language"),
 	position: jsonb("position").default({}).notNull(),
+	// Translation cache (2026-09-29): written on demand by the translate action,
+	// persisted so a translation survives its provider disappearing. The pair
+	// is all-or-nothing via `l3_contexts_translation_check`.
+	translation: text("translation"),
+	translationSrc: text("translation_src"),
 	metadata: jsonb("metadata").default({}).notNull(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
@@ -978,6 +983,7 @@ export const l3Contexts = pgTable("l3_contexts", {
 		}).onDelete("cascade"),
 	pgPolicy("l3_contexts_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 	check("l3_contexts_context_type_check", sql`context_type = ANY (ARRAY['sentence'::text, 'paragraph'::text, 'excerpt'::text, 'dialogue'::text, 'note'::text])`),
+	check("l3_contexts_translation_check", sql`(translation IS NULL AND translation_src IS NULL) OR (translation IS NOT NULL AND translation_src IS NOT NULL)`),
 ]);
 
 export const l3Occurrences = pgTable("l3_occurrences", {

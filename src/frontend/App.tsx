@@ -6,6 +6,7 @@ import { ToastProvider } from "./components/ui/Toast";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { Spinner } from "./components/ui/Spinner";
 import { OmniPalette } from "./components/search/OmniPalette";
+import { SelectionTranslateLayer } from "./components/translate/SelectionTranslateLayer";
 
 // 路由级代码分割：每个页面独立 chunk，首屏只加载当前路由所需代码。
 // 注意：命名导出需映射为 default 供 React.lazy 使用。
@@ -74,6 +75,9 @@ export function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             <OmniPalette />
+            {/* 划词即译（2026-09-29）：挂在 BrowserSessionGate 之内 —— 未登录时
+                整棵树不渲染，也就没有可划的正文。放在 Routes 之外以覆盖全部页面。 */}
+            <SelectionTranslateLayer />
           </BrowserRouter>
         </BrowserSessionGate>
       </ToastProvider>

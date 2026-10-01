@@ -21,6 +21,7 @@ import { StatsService } from "./stats.service";
 import { L2TransitionService } from "./l2-transition.service";
 import { L2ContentService } from "./l2-content.service";
 import { L3ContextService } from "./l3-context.service";
+import { TranslationService } from "./translation.service";
 import { L3ProposalService } from "./l3-proposal.service";
 import { L3ImportService } from "./l3-import.service";
 import { L3ReadService } from "./l3-read.service";
@@ -238,6 +239,8 @@ export function createServices(deps: ServiceDeps) {
     }),
     l2content,
     l3Context,
+    // 划词即译（2026-09-29）：无状态路径，不碰数据库，故无需 repos / RLS。
+    translation: new TranslationService(),
     l3Proposal,
     l3Read,
     l3Recommendation,
