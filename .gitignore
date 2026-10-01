@@ -19,6 +19,10 @@ vite.review.config.ts
 
 # Test output
 coverage/
+# coverage 报告的手工备份（2026-09-30 清理过一个 21MB 的）。
+# coverage/ 已被上面的规则忽略，但 `coverage_bak*` 这类带后缀的备份不匹配，
+# 曾以未跟踪文件的身份长期躺在仓库里，有被误提交的风险。
+coverage_bak*/
 playwright-report/
 test-results/
 test-results-*/
@@ -53,6 +57,14 @@ npm-debug.log*
 tmp/
 temp/
 backups/
+
+# 一次性本地脚本与中间产物（2026-09-30 清理时补规则）。
+# `scripts/tmp-*` 此前不在忽略范围内：2025 考研的一次性导入管线
+# （PDF 抽取 → 解析 → seed json → 入库脚本）留下的 6 个文件全部以未跟踪
+# 身份躺在仓库里，其中 `tmp-local-db-setup.ps1` 还含 7 个明文数据库密码 ——
+# 一次 `git add .` 就会泄露。凡是 `tmp-` 前缀的本地脚本一律不进版本库。
+scripts/tmp-*
+scripts/*.tmp.*
 
 # Large binary artifacts (should not be tracked in git)
 *.zip

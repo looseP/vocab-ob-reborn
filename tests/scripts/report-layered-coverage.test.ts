@@ -63,6 +63,19 @@ describe("source architecture contract", () => {
   it("fails closed for an unclassified top-level source directory", () => {
     expect(findUnknownSourceDirectories(["domain", "services", "use-cases"])).toEqual(["use-cases"]);
   });
+
+  // 回归锁：#175 新建 src/translation/ 时门禁 fail-closed 拦下
+  // 「Unknown src architecture directories: translation」。
+  it("accepts the translation provider layer as a known non-core directory", () => {
+    expect(findUnknownSourceDirectories(["domain", "services", "translation"])).toEqual([]);
+  });
+
+  // 同构先例：llm 与 translation 都是 provider 层，都不受核心层覆盖义务约束。
+  it("keeps translation out of the governed core layers, like llm", () => {
+    expect(() => classifySourceFile("src/translation/providers/google-web.ts")).toThrow(
+      /unclassified/i,
+    );
+  });
 });
 
 describe("buildLayeredSummary", () => {

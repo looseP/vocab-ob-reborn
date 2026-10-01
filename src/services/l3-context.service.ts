@@ -43,6 +43,11 @@ import type {
 } from "../repositories/interfaces";
 import { L3_SUB_SPACES } from "./l3-practice.service";
 import { slugifyHeadword } from "./capture.service";
+import {
+  createDefaultTranslationProviders,
+  translateWithFallback,
+  type TranslationProvider,
+} from "../translation";
 import { buildL3TrioInputs } from "./l3-trio";
 import {
   L3_CONTEXT_LINK_TARGET_TYPES,
@@ -97,6 +102,19 @@ function requireNonEmpty(value: string, field: string): void {
   if (value.trim().length === 0) {
     throw new ValidationError(`${field} cannot be empty`, field);
   }
+}
+
+/** Translation result returned to the HTTP layer. */
+export interface L3ContextTranslationResult {
+  contextId: string;
+  text: string;
+  translation: string;
+  /** 'google-web' | 'mymemory' | 'manual' — persisted as `translation_src`. */
+  provider: string;
+  /** True when this call served an already-cached translation (no network hit). */
+  cached: boolean;
+  /** Non-sensitive reason when translation could not be produced. */
+  warning?: string;
 }
 
 function validateConfidence(confidence: number | null | undefined, field = "confidence"): void {
@@ -228,7 +246,92 @@ export class L3ContextService {
     private readonly words?: IWordRepository,
     private readonly txRunner: TxRunner = withTransaction,
     private readonly repositoryFactory: RepositoryFactory = createRepositories,
+    /**
+     * Translation providers, tried in order (2026-09-29). Injected rather than
+     * constructed inline so tests can supply fakes and so switching to a keyed
+     * provider later is a one-line change at the composition root.
+     */
+    private readonly translationProviders: TranslationProvider[] = createDefaultTranslationProviders(),
   ) {}
+
+  /**
+   * Translate a context's sentence, caching the result on the row (migration 0049).
+   *
+   * Why the cache is the whole point: the providers are free but **unofficial**
+   * (Google's web-translate endpoint) or quota-limited (MyMemory). Persisting
+   * the translation means a user who has read an article keeps reading it even
+   * if every provider later disappears. This is what makes depending on a free,
+   * no-SLA endpoint acceptable.
+   *
+   * Manual trigger only — never automatic. Auto-translating on every selection
+   * would burn quota on sentences the user does not care about.
+   */
+  async translateContext(input: {
+    userId: string;
+    contextId: string;
+    targetLang?: string;
+    /** Re-translate even when cached. */
+    refresh?: boolean;
+  }): Promise<L3ContextTranslationResult> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.contextId, "contextId");
+    const targetLang = input.targetLang?.trim() || "zh-CN";
+
+    // 必须走 withActorRepository：它把 { actorId } 传给事务，RLS 依此设置
+    // auth.uid()。直接用 txRunner 会让 owner-RLS 把自己的行也过滤掉 ⇒
+    // 明明刚创建的 context 却报 NotFound（2026-09-29 实测踩到）。
+    return this.withActorRepository(input.userId, async (repository) => {
+      const context = await repository.lockContextByIdForUser(input.userId, input.contextId);
+      if (!context) throw new NotFoundError("L3Context", input.contextId);
+
+      if (!input.refresh && context.translation) {
+        return {
+          contextId: context.id,
+          text: context.text,
+          translation: context.translation,
+          provider: context.translation_src ?? "cache",
+          cached: true,
+        };
+      }
+
+      const result = await translateWithFallback(this.translationProviders, {
+        text: context.text,
+        targetLang,
+        // Source is auto-detected by the providers; passing context.language when
+        // known avoids a mis-detection on short sentences.
+        sourceLang: context.language ?? undefined,
+      });
+
+      if (!result.text) {
+        // Providers are down. Return the failure without touching the row so a
+        // previously cached translation (if any) is preserved.
+        return {
+          contextId: context.id,
+          text: context.text,
+          translation: context.translation ?? "",
+          provider: context.translation_src ?? "none",
+          cached: Boolean(context.translation),
+          warning: result.warning ?? "translation unavailable",
+        };
+      }
+
+      const updated = await repository.setContextTranslation(
+        input.userId,
+        context.id,
+        result.text,
+        result.provider,
+      );
+      if (!updated) throw new NotFoundError("L3Context", input.contextId);
+
+      return {
+        contextId: updated.id,
+        text: updated.text,
+        translation: updated.translation ?? result.text,
+        provider: updated.translation_src ?? result.provider,
+        cached: false,
+      };
+    });
+  }
 
   async createSource(input: CreateL3SourceInput): Promise<{ source: L3SourceRow }> {
     requireNonEmpty(input.userId, "userId");

@@ -34,6 +34,9 @@ function makeContextRow(id: string, text: string): L3ContextRow {
     text,
     normalized_text: null,
     language: "en",
+    // 翻译缓存（migration 0049）
+    translation: null,
+    translation_src: null,
     position: {},
     metadata: {},
     created_at: "2026-08-25T00:00:00Z",

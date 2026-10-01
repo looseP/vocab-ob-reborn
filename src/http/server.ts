@@ -33,6 +33,7 @@ import { l3ListsRoutes } from "./routes/l3/lists";
 import { l3CapabilitiesRoutes } from "./routes/l3/capabilities";
 import { l3SummaryRoutes } from "./routes/l3/summary";
 import { l3SourceSpacesRoutes } from "./routes/l3/spaces";
+import { translateRoutes } from "./routes/l3/translate";
 import { papersRoutes } from "./routes/l3/papers";
 import { papersUpdateRoutes } from "./routes/l3/papers-update";
 import { papersAuthoringRoutes } from "./routes/l3/papers-authoring";
@@ -152,6 +153,9 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l2", l2CandidateRoutes(services));
   app.route("/api/l2-drill", l2DrillRoutes(services));
   app.route("/api/l3", l3Routes(services));
+  // 翻译两条路径（2026-09-29）：带语境落库 + 无状态划词即译（独立薄路由 ——
+  // l3/index.ts 与 l3/contexts.ts 均受复杂度棘轮冻结，同 spaces/lists 先例）。
+  app.route("/api/l3", translateRoutes(services));
   // ADR-0029 §6 读面补缺：带 space/direction 两轴过滤的列表读 + occurrences /
   // context-links list（独立薄路由——sources.ts / reads.ts 受复杂度棘轮约束）。
   app.route("/api/l3", l3ListsRoutes(services));
