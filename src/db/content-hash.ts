@@ -7,15 +7,23 @@
  */
 import { createHash } from "node:crypto";
 
-interface WordForHashing {
-  definition_md?: string;
+/**
+ * 字段类型带 `| null` 而不是仅 `undefined`：words 表里这些列都可空，
+ * 而 SQL 取出来的行就是可空列 —— 之前这里不写 null，调用方只能 `as never`
+ * 绕过，于是「类型与真实数据不符」这件事被掩盖了很久（PR #182 补测试时暴露）。
+ *
+ * 三个 compute 函数内部统一用 `?? ""` / `?? []` / `?? null` 归一化，
+ * 所以接受 null 不改变任何 hash 输出；确定性由 tests/db/content-hash.test.ts 守着。
+ */
+export interface WordForHashing {
+  definition_md?: string | null;
   core_definitions?: unknown;
   prototype_text?: string | null;
   metadata?: {
     morphology?: unknown;
     mnemonic?: unknown;
     semantic_chain?: unknown;
-  };
+  } | null;
   collocations?: unknown;
   corpus_items?: unknown;
   synonym_items?: unknown;
