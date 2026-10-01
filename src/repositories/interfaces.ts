@@ -6,6 +6,11 @@
  */
 
 import type {
+  BatchImportMode,
+  BatchImportOutcome,
+} from "../domain/ingest/batch-import-mode";
+
+import type {
   Direction,
   WordRow,
   WordSummary,
@@ -130,10 +135,22 @@ export interface IWordRepository {
   countReviewStatsByWordIds(userId: string, wordIds: string[]): Promise<{ tracked: number; due: number }>;
   count(): Promise<number>;
   findSlugs(limit?: number): Promise<string[]>;
+  /**
+   * 批量导入词条（导入页的「JSON 粘贴」路径 = `POST /words/batch`）。
+   *
+   * ⚠️ 这条路径的 `definition_md` / `body_md` 是从 `short_definition` **派生**的，
+   * 所以「无条件覆盖」会把库里已有的富内容冲成一句话（实测 abandon 的
+   * definition_md 从 240 字符塌缩到 19 字符；short 缺省时更会变成空串，
+   * 把词条打成 stub）。因此默认 `fill-only`：已有非空字段不被覆盖，
+   * 且**根本不写** definition_md / body_md。
+   *
+   * `mode: "overwrite"` 才恢复旧行为（调用方要显式声明「就是要改写」）。
+   * 返回值区分新增 / 更新 / 未变，便于告诉使用者这批到底改了什么。
+   */
   insertMany?(words: Array<{
     slug: string; title: string; lemma: string; pos: string | null;
     cefr: string | null; ipa: string | null; short_definition: string | null;
-  }>): Promise<number>;
+  }>, mode?: BatchImportMode): Promise<BatchImportOutcome>;
   /**
    * Full-note upsert through the dedicated batch-import role. Hash-guarded:
    * when the stored content_hash already equals the incoming one the update

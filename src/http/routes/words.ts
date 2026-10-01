@@ -15,6 +15,10 @@ import type { Services } from "@/services";
 import type { AuthRole, Principal } from "@/http/middleware/auth";
 import { noteEntryUpsertRequestSchema, wordsQuerySchema, wordSuggestQuerySchema } from "@/schemas/http";
 import { validationError } from "../error-response";
+import {
+  resolveBatchImportMode,
+  sanitizeBatchImportWords,
+} from "../../domain/ingest/batch-import-mode";
 
 export type AppEnv = {
   Variables: {
@@ -38,17 +42,10 @@ export function wordRoutes(services: Services) {
     if (words.length > 500) {
       return c.json({ error: "max 500 words per batch" }, 400);
     }
-    const sanitized = words.slice(0, 500).map((w: Record<string, unknown>) => ({
-      slug: String(w.slug ?? w.lemma ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-"),
-      title: String(w.title ?? w.lemma ?? ""),
-      lemma: String(w.lemma ?? w.title ?? ""),
-      pos: w.pos ? String(w.pos) : null,
-      cefr: w.cefr ? String(w.cefr) : null,
-      ipa: w.ipa ? String(w.ipa) : null,
-      short_definition: w.short_definition ? String(w.short_definition) : null,
-    })).filter((w: { slug: string }) => w.slug.length > 0);
-    const result = await services.words.batchCreate(sanitized);
-    return c.json(result);
+    // 默认 fill-only：overwrite 必须显式声明（旧行为无条件覆盖，会静默毁掉已有释义）
+    const mode = resolveBatchImportMode(body?.mode);
+    const sanitized = sanitizeBatchImportWords(words.slice(0, 500));
+    return c.json({ ...(await services.words.batchCreate(sanitized, mode)), mode });
   });
 
   // GET / — paginated/filtered word list

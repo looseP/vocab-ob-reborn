@@ -74,8 +74,20 @@ export const wordSuggestResponseSchema = z.object({
   items: z.array(wordSummaryResponseSchema),
 }).strict();
 
+/**
+ * POST /words/batch 的响应。
+ *
+ * 三态而不是只有 `inserted`：fill-only（默认）下大量条目会是「未变」，
+ * 而旧形状把它们全算进 inserted —— 使用者看到「成功导入 N 个单词」，
+ * 实际可能一个字段都没改。这是「批量导入会静默覆盖/什么都不做」难被发现的原因之一。
+ *
+ * `mode` 回显实际生效的写入模式，便于客户端确认「只补空」确实生效了。
+ */
 export const wordBatchCreateResponseSchema = z.object({
   inserted: z.number().int().nonnegative(),
+  updated: z.number().int().nonnegative(),
+  unchanged: z.number().int().nonnegative(),
+  mode: z.enum(["fill-only", "overwrite"]),
 }).strict();
 
 // 详情页硬删 stub 词条（0023）：删除结果形状与 L3 删除一致，域内命名复用。

@@ -53,7 +53,7 @@ function makeMockServices(): Services {
       getWordBySlug: vi.fn(),
       getWordCount: vi.fn().mockResolvedValue(1),
       getAllSlugs: vi.fn().mockResolvedValue(["abound"]),
-      batchCreate: vi.fn().mockResolvedValue({ inserted: 0 }),
+      batchCreate: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, unchanged: 0 }),
       deleteStubWord: vi.fn().mockResolvedValue({
         deleted: { entityType: "word", id: "word-1" },
         activeReadInvalidation: true,
@@ -283,7 +283,7 @@ describe("GET /api/words/:slug", () => {
 describe("POST /api/words/batch", () => {
   it("sanitizes rows, delegates to batchCreate, and matches the response contract", async () => {
     const services = makeMockServices();
-    services.words.batchCreate = vi.fn().mockResolvedValue({ inserted: 2 });
+    services.words.batchCreate = vi.fn().mockResolvedValue({ inserted: 2, updated: 0, unchanged: 0 });
     const app = createApp(services);
 
     const res = await app.request("/api/words/batch", {
@@ -299,14 +299,18 @@ describe("POST /api/words/batch", () => {
 
     expect(res.status).toBe(200);
     const body = wordBatchCreateResponseSchema.parse(await res.json());
-    expect(body).toEqual({ inserted: 2 });
+    expect(body).toEqual({ inserted: 2, updated: 0, unchanged: 0, mode: "fill-only" });
 
     // slug derives from lemma, lowercased with non [a-z0-9-] collapsed to "-";
     // title/lemma fall back to each other; missing optionals become null
     expect(services.words.batchCreate).toHaveBeenCalledWith([
       { slug: "blue-sky-", title: "Blue Sky!", lemma: "Blue Sky!", pos: null, cefr: null, ipa: null, short_definition: "a wide sky" },
       { slug: "existing", title: "Existing", lemma: "existing", pos: "noun", cefr: null, ipa: null, short_definition: null },
-    ]);
+    ],
+    // 默认必须是 fill-only：历史上这条路由无条件覆盖，
+    // 会把已有 definition_md 冲成 short_definition 那一句话。
+    "fill-only",
+  );
   });
 
   it("rejects a missing or empty words array with 400", async () => {
@@ -346,7 +350,7 @@ describe("POST /api/words/batch", () => {
 
   it("drops rows whose sanitized slug is empty", async () => {
     const services = makeMockServices();
-    services.words.batchCreate = vi.fn().mockResolvedValue({ inserted: 2 });
+    services.words.batchCreate = vi.fn().mockResolvedValue({ inserted: 2, updated: 0, unchanged: 0 });
     const app = createApp(services);
 
     const res = await app.request("/api/words/batch", {
@@ -362,13 +366,17 @@ describe("POST /api/words/batch", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ inserted: 2 });
+    expect(await res.json()).toEqual({ inserted: 2, updated: 0, unchanged: 0, mode: "fill-only" });
     // empty lemma sanitizes to "" and is dropped; "!!!" sanitizes to "---"
     // (non-empty, kept as-is); only the empty row is filtered out
     expect(services.words.batchCreate).toHaveBeenCalledWith([
       { slug: "---", title: "!!!", lemma: "!!!", pos: null, cefr: null, ipa: null, short_definition: null },
       { slug: "valid", title: "valid", lemma: "valid", pos: null, cefr: null, ipa: null, short_definition: null },
-    ]);
+    ],
+    // 默认必须是 fill-only：历史上这条路由无条件覆盖，
+    // 会把已有 definition_md 冲成 short_definition 那一句话。
+    "fill-only",
+  );
   });
 
   it("rejects missing credentials with 401", async () => {

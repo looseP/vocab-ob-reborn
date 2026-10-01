@@ -98,10 +98,10 @@ async function main(): Promise<void> {
   // 5) Exercise the REAL application repository code path used by POST /api/words/batch.
   //    If this throws, the write path is broken at the data layer (NOT NULL columns).
   const repo = new WordRepository();
-  let repositoryInserted = -1;
+  let repositoryOutcome: { inserted: number; updated: number; unchanged: number } | null = null;
   let repositoryError: string | null = null;
   try {
-    repositoryInserted = await repo.insertMany([
+    repositoryOutcome = await repo.insertMany([
       {
         slug: `repo-batch-${randomToken(6)}`,
         title: "Repository Batch Word",
@@ -137,7 +137,10 @@ async function main(): Promise<void> {
     deniedCrossTableRead: true,
     repositoryInsertMany: repositoryError
       ? { error: repositoryError }
-      : { inserted: repositoryInserted },
+      // fill-only 是新默认：首次插入仍应 inserted=1。若为 0，说明写路径坏了。
+      : { inserted: repositoryOutcome?.inserted ?? -1,
+          updated: repositoryOutcome?.updated ?? -1,
+          unchanged: repositoryOutcome?.unchanged ?? -1 },
   }, null, 2));
 }
 
