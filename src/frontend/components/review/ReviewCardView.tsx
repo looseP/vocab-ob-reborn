@@ -28,7 +28,7 @@ import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { L3ContextsFold } from "@/frontend/components/review/L3ContextsFold";
 import { buildHintSteps, extractMnemonicCore, HINT_STEP_LABEL as STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
 import { ClueZone, TrainingFold, ExampleLayerBlock, parseWordExam, parseVerifiedCount } from "@/frontend/components/review/WordCardExamLayers";
-import { isSpeechSynthesisAvailable, speak } from "@/frontend/reviewFlow/speech";
+import { useAudioController, type Accent, type AudioSource } from "@/frontend/reviewFlow/audioEngine";
 
 const ratings = [
   { value: "again", label: "重来", variant: "danger" as const, key: "1" },
@@ -418,6 +418,105 @@ const UPGRADE_SUGGESTION_LABELS: Record<string, string> = {
   needs_settling: "需要沉淀",
 };
 
+/** 播放中的声波指示：纯 CSS（animate-pulse + 相位错开），不引入 JS 定时器。 */
+function SoundWave() {
+  return (
+    <span className="flex h-4 items-end gap-[2px]" data-testid="audio-waveform" aria-hidden>
+      {[40, 90, 60].map((height, i) => (
+        <span
+          key={i}
+          className="w-[2px] animate-pulse rounded-full bg-[var(--color-accent)]"
+          style={{ height: `${height}%`, animationDelay: `${i * 120}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * 拼读声学胶囊（Phase 1）：**正反面通用容器顶部吸顶常驻** —— 无论翻到哪一面、
+ * 无论卡背长内容滚到哪里，词形 / 音标 / 口音 / 发音入口始终在视线内。
+ *
+ * 吸顶偏移取顶栏高度（SiteHeader 的 `--header-height: 5rem` = `top-20`），
+ * z-index 低于顶栏的 z-40，避免盖住导航。
+ *
+ * 放在翻面容器**外层**（兄弟节点）而非内部：翻面容器整体是 role=button，
+ * 把按钮塞进去要额外处理事件冒泡与嵌套语义；做成兄弟节点后点击天然不触发翻转。
+ */
+function AcousticStickyAnchor({
+  lemma,
+  ipa,
+  accent,
+  available,
+  isPlaying,
+  source,
+  onPlayWord,
+  onToggleAccent,
+}: {
+  lemma: string;
+  ipa: string | null;
+  accent: Accent;
+  available: boolean;
+  isPlaying: boolean;
+  source: AudioSource | null;
+  onPlayWord: () => void;
+  onToggleAccent: () => void;
+}) {
+  if (!lemma) return null;
+  const wordPlaying = isPlaying && source === "word";
+  return (
+    <div
+      className="sticky top-20 z-30 mb-3 flex w-full items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]/95 px-3 py-1.5 text-left shadow-[var(--shadow-panel)] backdrop-blur-xl"
+      data-testid="acoustic-sticky-anchor"
+      data-no-flip
+      onClick={(e) => e.stopPropagation()}
+    >
+      <span className="truncate text-sm font-semibold text-[var(--color-ink)]">{lemma}</span>
+      {ipa && <span className="flex-none font-mono text-xs text-[var(--color-ink-soft)]">{ipa}</span>}
+      {available && (
+        <button
+          type="button"
+          data-no-flip
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlayWord();
+          }}
+          title="朗读发音（R）· 切换英音/美音（Shift+R）"
+          aria-label="朗读发音 (R)"
+          className="flex-none rounded-full p-1 text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        >
+          {wordPlaying ? <SoundWave /> : <Volume2 className="h-4 w-4" />}
+        </button>
+      )}
+      {available && (
+        <button
+          type="button"
+          data-no-flip
+          data-testid="accent-toggle"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleAccent();
+          }}
+          title="切换口音（Shift+R）"
+          aria-label={accent === "uk" ? "当前英音，切换到美音" : "当前美音，切换到英音"}
+          className="flex-none rounded-full border border-[var(--color-border)] px-1.5 py-0.5 font-mono text-[10px] tracking-wider transition-colors hover:border-[var(--color-accent)]"
+        >
+          <span className={accent === "uk" ? "font-bold text-[var(--color-accent)]" : "text-[var(--color-ink-soft)]"}>
+            UK
+          </span>
+          <span className="px-0.5 text-[var(--color-ink-soft)]">/</span>
+          <span className={accent === "us" ? "font-bold text-[var(--color-accent)]" : "text-[var(--color-ink-soft)]"}>
+            US
+          </span>
+        </button>
+      )}
+      <span className="ml-auto hidden flex-none text-[10px] text-[var(--color-ink-soft)] sm:block">
+        R 拼读 · Shift+R 口音 · E 例句
+      </span>
+    </div>
+  );
+}
+
 /**
  * 翻卡交互(P2)+ 三层信息披露(2026-09-06):
  *   Tier 0 答案 = 短释主行(居中)+ 义项行(definition_md,小字);
@@ -455,7 +554,8 @@ export function ReviewCardView({
   // T3 Hint 阶梯：已消费提示级数 + 提示穷尽后经 H4/直翻的翻卡标记
   const [hintLevel, setHintLevel] = useState(0);
   const [viaH4, setViaH4] = useState(false);
-  const speechAvailable = typeof window !== "undefined" && isSpeechSynthesisAvailable();
+  // 声学底座：双轨发音（真人词典音频 → 本地 TTS）+ 口音 + 播放态（Phase 1）
+  const audio = useAudioController();
   const { addToast } = useToast();
 
   // 操作区容器：评分/跳过/挂起/撤销/翻页后把焦点移回这里，
@@ -587,9 +687,38 @@ export function ReviewCardView({
     }
   };
 
+  // ── 例句三件套数据（wordcard-mock 口径，移植 86d9b3f）────────────────────
+  // 提在键盘 useEffect **之前**：E 快捷键要读 exampleItem.text，而依赖数组在
+  // `useEffect(...)` 调用时就求值 —— 放在后面会踩 TDZ（const 尚未初始化）。
+  //
+  // 例句取词条详情的第一条（详情 API 已带 exam/anchor/verified），未到达时安静缺席。
+  // jsonb 字段一律走 `asString` 式窄化，不做裸类型断言（tsc 会拒绝"两类型无重叠"的强转）。
+  const detailWord: WordDetail | null = detail.word;
+  const exampleItem = useMemo(() => {
+    const first = detailWord?.examples?.[0] as Record<string, unknown> | undefined;
+    if (!first || typeof first.text !== "string" || first.text.trim() === "") return null;
+    const s = (v: unknown): string | null =>
+      typeof v === "string" && v.trim().length > 0 ? v : null;
+    return {
+      text: first.text,
+      translation: s(first.translation),
+      source: s(first.source),
+      sourceType: s(first.source_type),
+      url: s(first.url),
+      modified: first.modified === true,
+      anchor: s(first.anchor),
+      verifiedCount: parseVerifiedCount(first.verified),
+    };
+  }, [detailWord?.examples]);
+  const exampleExam = useMemo(() => {
+    const first = detailWord?.examples?.[0] as Record<string, unknown> | undefined;
+    return first ? parseWordExam(first.exam) : null;
+  }, [detailWord?.examples]);
+
   // 键盘快捷键（P0，对齐 v1）：
   //   评分模式：空格/Enter 翻转、1-4 评分、S 跳过、P 挂起、U 或 Ctrl/Cmd+Z 撤销；
   //   preview 模式：←/→ 翻页。
+  // 声学（Phase 1）：R 拼读单词、Shift+R 切英音/美音、E 听真题例句。
   // 输入控件聚焦时豁免（快记 textarea 内不打断输入）。
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -637,6 +766,13 @@ export function ReviewCardView({
         flipCard();
         return;
       }
+      // Shift+R = 切换英音/美音。放在 `!card` 守卫之前：口音是**会话级偏好**，
+      // 与当前卡无关，加载态下也应可切。
+      if (key === "r" && event.shiftKey) {
+        event.preventDefault();
+        audio.toggleAccent();
+        return;
+      }
       if (!card || loading) return;
       if (key === "1" || key === "2" || key === "3" || key === "4") {
         event.preventDefault();
@@ -648,10 +784,16 @@ export function ReviewCardView({
         event.preventDefault();
         setHintLevel((v) => Math.min(v + 1, hintSteps.length));
       } else if (key === "r") {
-        // 快捷键 R：朗读当前单词发音
-        if (!card) return;
+        // 快捷键 R：朗读当前单词发音（真人音频优先，失败降级本地 TTS）
         event.preventDefault();
-        speak(card.word.lemma);
+        audio.playWord(card.word.lemma);
+      } else if (key === "e") {
+        // 快捷键 E：朗读当前真题例句（听觉线索）；正在播同一句则打断复位
+        const sentence = exampleItem?.text ?? null;
+        if (!sentence) return;
+        event.preventDefault();
+        if (audio.isPlaying && audio.currentSource === "sentence") audio.stop();
+        else audio.playSentence(sentence);
       } else if (key === "s") {
         event.preventDefault();
         void handleSkip();
@@ -667,7 +809,7 @@ export function ReviewCardView({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card, loading, preview, onAnswer, onSkip, onSuspend, onUndo, canUndo, onPrev, onNext, commitQuickNote, flipCard, handleAnswer, hintSteps, hintLevel, revealed]);
+  }, [card, loading, preview, onAnswer, onSkip, onSuspend, onUndo, canUndo, onPrev, onNext, commitQuickNote, flipCard, handleAnswer, hintSteps, hintLevel, revealed, exampleItem, audio.playWord, audio.playSentence, audio.toggleAccent, audio.stop, audio.isPlaying, audio.currentSource]);
 
   if (loading && !card) {
     return (
@@ -711,7 +853,7 @@ export function ReviewCardView({
     (card.state === "new" || card.reviewCount <= 1);
 
   // 三层数据(来自挂载预取的词条详情;未到达时安静降级只显 Tier 0)
-  const detailWord: WordDetail | null = detail.word;
+  // `detailWord` 与例句 memos 已上移到键盘 useEffect 之前（E 快捷键需要它们）。
   const meta = detailWord?.metadata ?? null;
   const definitionMd = detailWord?.definition_md ?? "";
   // 结构化义项优先，`definition_md` 仅作降级（core_definitions 覆盖 6767/6767，
@@ -720,29 +862,6 @@ export function ReviewCardView({
   const hasSenses = Array.isArray(senses) && senses.length > 0;
   const hasDefinitionMd = !hasSenses && definitionMd.trim().length > 0;
 
-  // ── 例句三件套数据（wordcard-mock 口径，移植 86d9b3f）────────────────────
-  // 例句取词条详情的第一条（详情 API 已带 exam/anchor/verified），未到达时安静缺席。
-  // jsonb 字段一律走 `asString` 式窄化，不做裸类型断言（tsc 会拒绝"两类型无重叠"的强转）。
-  const exampleItem = useMemo(() => {
-    const first = detailWord?.examples?.[0] as Record<string, unknown> | undefined;
-    if (!first || typeof first.text !== "string" || first.text.trim() === "") return null;
-    const s = (v: unknown): string | null =>
-      typeof v === "string" && v.trim().length > 0 ? v : null;
-    return {
-      text: first.text,
-      translation: s(first.translation),
-      source: s(first.source),
-      sourceType: s(first.source_type),
-      url: s(first.url),
-      modified: first.modified === true,
-      anchor: s(first.anchor),
-      verifiedCount: parseVerifiedCount(first.verified),
-    };
-  }, [detailWord?.examples]);
-  const exampleExam = useMemo(() => {
-    const first = detailWord?.examples?.[0] as Record<string, unknown> | undefined;
-    return first ? parseWordExam(first.exam) : null;
-  }, [detailWord?.examples]);
   // 遮盖揭示与提示阶梯**共用一个状态**：点遮盖块与消费 H1 都是"解锁词形"，
   // 因此 maskRevealed 直接由 hintLevel>0 推导 —— 不会出现"没消费提示却已揭示"
   // 或"提示已消费但仍遮着"两种自相矛盾的状态。
@@ -751,6 +870,9 @@ export function ReviewCardView({
     if (maskRevealed) return;
     setHintLevel((v) => (v >= 1 ? v : 1));
   }, [maskRevealed]);
+
+  // 例句朗读进行中（驱动 ClueZone / ExampleLayerBlock 的按钮态）
+  const sentencePlaying = audio.isPlaying && audio.currentSource === "sentence";
 
   // 卡片主体内容：aria-live 区域在翻转时向读屏播报词形↔释义切换。
   const flipBody = (
@@ -778,21 +900,6 @@ export function ReviewCardView({
                 {card.word.cefr && <Badge tone="warm">CEFR {card.word.cefr}</Badge>}
                 {card.word.ipa && (
                   <span className="font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
-                )}
-                {speechAvailable && (
-                  <button
-                    type="button"
-                    data-no-flip
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      speak(card.word.lemma);
-                    }}
-                    title="朗读发音（快捷键 R）"
-                    aria-label="朗读发音 (R)"
-                    className="rounded-full p-1 text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-accent)] focus:outline-none"
-                  >
-                    <Volume2 className="h-4 w-4" />
-                  </button>
                 )}
               </div>
               {card.word.short_definition ? (
@@ -827,6 +934,8 @@ export function ReviewCardView({
                 url={exampleItem.url}
                 modified={exampleItem.modified}
                 verifiedCount={exampleItem.verifiedCount}
+                onPlaySentence={() => audio.playSentence(exampleItem.text)}
+                sentencePlaying={sentencePlaying}
               />
             )}
 
@@ -874,21 +983,6 @@ export function ReviewCardView({
               {card.word.ipa && (
                 <span className="font-mono text-sm text-[var(--color-ink-soft)]">{card.word.ipa}</span>
               )}
-              {speechAvailable && (
-                <button
-                  type="button"
-                  data-no-flip
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    speak(card.word.lemma);
-                  }}
-                  title="朗读发音（快捷键 R）"
-                  aria-label="朗读发音 (R)"
-                  className="rounded-full p-1 text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-accent)] focus:outline-none"
-                >
-                  <Volume2 className="h-4 w-4" />
-                </button>
-              )}
             </div>
 
             {/* ── 例句线索区（mock .clue-zone 口径）──────────────────────────
@@ -903,6 +997,8 @@ export function ReviewCardView({
                   maskTerm={exampleItem.anchor}
                   maskRevealed={maskRevealed}
                   onUnmask={unmaskClue}
+                  onPlaySentence={() => audio.playSentence(exampleItem.text)}
+                  sentencePlaying={sentencePlaying}
                 />
                 <TrainingFold exam={exampleExam} verifiedCount={exampleItem.verifiedCount} />
               </div>
@@ -1067,10 +1163,36 @@ export function ReviewCardView({
 
       {/* 卡片主体:preview 直接展示;评分模式先词形后释义(三层披露) */}
       {!preview ? (
-        <div {...flipContainerProps}>{flipBody}</div>
+        <div className="relative">
+          {/* 声学常驻锚点：翻面容器**外层**兄弟节点 —— 正反面共用同一枚胶囊，
+              不随翻面重挂载（否则动画期间会闪烁），也不随卡背长内容滚走。 */}
+          <AcousticStickyAnchor
+            lemma={card.word.lemma}
+            ipa={card.word.ipa}
+            accent={audio.accent}
+            available={audio.available}
+            isPlaying={audio.isPlaying}
+            source={audio.currentSource}
+            onPlayWord={() => audio.playWord(card.word.lemma)}
+            onToggleAccent={audio.toggleAccent}
+          />
+          <div {...flipContainerProps}>{flipBody}</div>
+        </div>
       ) : (
-        <div className="relative flex min-h-[14rem] w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-6 py-6 text-left">
-          {flipBody}
+        <div className="relative">
+          <AcousticStickyAnchor
+            lemma={card.word.lemma}
+            ipa={card.word.ipa}
+            accent={audio.accent}
+            available={audio.available}
+            isPlaying={audio.isPlaying}
+            source={audio.currentSource}
+            onPlayWord={() => audio.playWord(card.word.lemma)}
+            onToggleAccent={audio.toggleAccent}
+          />
+          <div className="relative flex min-h-[14rem] w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 px-6 py-6 text-left">
+            {flipBody}
+          </div>
         </div>
       )}
 
