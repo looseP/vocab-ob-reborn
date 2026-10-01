@@ -131,6 +131,8 @@ describe("L3 response contracts", () => {
       context: {
         id: "ctx-1", source_id: "src-1", user_id: "user-1", context_type: "sentence",
         text: "The moon orbits the earth.", normalized_text: null, language: "en",
+        // 翻译缓存（migration 0049）
+        translation: null, translation_src: null,
         position: {}, metadata: {},
         created_at: "2026-07-13T00:00:00.000Z", updated_at: "2026-07-13T00:00:00.000Z",
       },

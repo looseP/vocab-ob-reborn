@@ -17,37 +17,45 @@
  * `deriveContentStaleness`（`src/domain/content-staleness.ts`）因此永远走
  * 「全量对」降级路径，L1 专属比对从未启用。
  *
- * 同一坑在 `scripts/backfill-word-aliases.ts` 上也踩过一次（那里已修）。
- * 正确连接身份见 `scripts/import-vocab-notes.ts` 的同款约定：走
- * `getBatchImportPool()`（`vocab_batch_import` 角色，其 UPDATE policy 是 `USING true`）。
+ * 0025 自己的注释已经写明约定：
+ *   > there is no app-code path that UPDATEs words (writes go through the
+ *   > dedicated batch-import role)
+ * 脚本违反的正是这条 —— 而没有任何机制会阻止它再违反一次，所以下面两道防线
+ * 与 `tests/scripts/backfill-content-hash.test.ts` 的回归锁是必需的，不是保险。
+ *
+ * 同型脚本 `scripts/backfill-word-pinyin.ts` 曾是同样的形状（同样用 getPool、
+ * 同样无校验），已一并修正。
  */
 import { getBatchImportPool } from "../src/db/connection";
-import { computeL1Hash, computeL2Hash, computeFullHash } from "../src/db/content-hash";
+import {
+  computeL1Hash,
+  computeL2Hash,
+  computeFullHash,
+  type WordForHashing,
+} from "../src/db/content-hash";
 
 const BATCH_SIZE = 1000;
 
-export interface HashableWord {
+export interface HashableWord extends WordForHashing {
   id: string;
-  definition_md?: string | null;
-  core_definitions?: unknown;
-  prototype_text?: string | null;
-  metadata?: Record<string, unknown> | null;
-  collocations?: unknown;
-  corpus_items?: unknown;
-  synonym_items?: unknown;
-  antonym_items?: unknown;
 }
 
-/** 纯计算，不碰库 —— 单测直接覆盖这一段。 */
+/**
+ * 纯计算，不碰库 —— 单测直接覆盖这一段。
+ *
+ * 注意这里**没有** `as never`：`WordForHashing` 已从 `src/db/content-hash.ts`
+ * 导出，所以本文件用的字段集与 computeL1Hash 期望的入参由编译器保证一致。
+ * 之前用 `as never` 是为了绕过「类型不导出」，代价是字段名写错也不会报错。
+ */
 export function computeHashes(word: HashableWord): {
   l1: string;
   l2: string;
   full: string;
 } {
   return {
-    l1: computeL1Hash(word as never),
-    l2: computeL2Hash(word as never),
-    full: computeFullHash(word as never),
+    l1: computeL1Hash(word),
+    l2: computeL2Hash(word),
+    full: computeFullHash(word),
   };
 }
 
@@ -97,21 +105,26 @@ async function backfill(): Promise<void> {
   }
 
   // 写后自检：不能只信「跑完了」，要确认库里真的有值。
+  // 三列都要查 —— 只查 l1 的话，l2/full 写失败而 l1 成功会被漏报。
   const { rows: check } = await pool.query(
     `SELECT count(*)::int AS total,
-            count(*) FILTER (WHERE l1_content_hash IS NULL)::int AS still_null
+            count(*) FILTER (WHERE l1_content_hash IS NULL)::int AS l1_null,
+            count(*) FILTER (WHERE l2_content_hash IS NULL)::int AS l2_null,
+            count(*) FILTER (WHERE content_hash IS NULL)::int AS full_null
        FROM words WHERE is_deleted = false`,
   );
   const total0 = check[0]?.total ?? 0;
-  const stillNull = check[0]?.still_null ?? 0;
-  if (stillNull > 0) {
+  const l1Null = check[0]?.l1_null ?? 0;
+  const l2Null = check[0]?.l2_null ?? 0;
+  const fullNull = check[0]?.full_null ?? 0;
+  if (l1Null > 0 || l2Null > 0 || fullNull > 0) {
     throw new Error(
-      `写后自检失败：仍有 ${stillNull}/${total0} 条 l1_content_hash 为 NULL。`,
+      `写后自检失败：仍有 l1=${l1Null} l2=${l2Null} full=${fullNull}（共 ${total0} 条）为 NULL。`,
     );
   }
 
   console.log(`Done. Total: ${total} words backfilled.`);
-  console.log(`Verified: 0/${total0} words still have NULL l1_content_hash.`);
+  console.log(`Verified: 0/${total0} words still have NULL in any of the 3 hash columns.`);
 }
 
 const invokedDirectly =

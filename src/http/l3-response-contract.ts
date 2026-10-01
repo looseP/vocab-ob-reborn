@@ -134,6 +134,9 @@ export const l3ContextRowResponseSchema: z.ZodType<L3ContextRow> = z.object({
   text: z.string(),
   normalized_text: z.string().nullable(),
   language: z.string().nullable(),
+  // 翻译缓存（migration 0049）
+  translation: z.string().nullable(),
+  translation_src: z.string().nullable(),
   position: jsonValueSchema,
   metadata: jsonValueSchema,
   created_at: z.string(),
@@ -237,6 +240,37 @@ export const l3SelectionCaptureResponseSchema = z.object({
     title: z.string(),
   }).strict(),
   created: z.boolean(),
+}).strict();
+
+/**
+ * 整句翻译响应（2026-09-29）。
+ *
+ * `cached` 让前端区分「这次真翻了」与「直接读库」；`warning` 存在即表示
+ * provider 全挂且此前也没有缓存 —— **翻译失败不是 HTTP 错误**（仍返回 200），
+ * 因为语境本身可读，只是没有译文，界面据此显示「暂不可用」而不是报错页。
+ */
+export const l3ContextTranslateResponseSchema = z.object({
+  contextId: z.string(),
+  text: z.string(),
+  translation: z.string(),
+  provider: z.string(),
+  cached: z.boolean(),
+  warning: z.string().optional(),
+}).strict();
+
+/**
+ * 无状态划词翻译响应（2026-09-29）。
+ *
+ * 与 {@link l3ContextTranslateResponseSchema} 同形（前端可复用解析逻辑），
+ * 差别是没有 `contextId` —— 这条路径不要求语境存在。
+ * 失败仍 200 + `warning` + 空译文：划词是增强，失败不该变成错误页。
+ */
+export const l3TextTranslateResponseSchema = z.object({
+  text: z.string(),
+  translation: z.string(),
+  provider: z.string(),
+  cached: z.literal(false),
+  warning: z.string().optional(),
 }).strict();
 
 export const l3QuickContextResponseSchema = z.object({

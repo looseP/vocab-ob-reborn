@@ -58,6 +58,8 @@ interface JoinedContextRow {
   text: string;
   normalized_text: string | null;
   context_language: string | null;
+  context_translation?: string | null;
+  context_translation_src?: string | null;
   position: unknown;
   context_metadata: unknown;
   context_created_at: string;
@@ -95,6 +97,8 @@ interface JoinedContextWithSourceRow {
   text: string;
   normalized_text: string | null;
   context_language: string | null;
+  context_translation?: string | null;
+  context_translation_src?: string | null;
   position: unknown;
   context_metadata: unknown;
   context_created_at: string;
@@ -117,6 +121,7 @@ interface JoinedContextWithSourceRow {
 /** context+source 联查列清单（无尾逗号；调用方按需补逗号）。 */
 const CONTEXT_SOURCE_COLUMNS = `         c.id AS context_id, c.source_id, c.user_id, c.context_type, c.text,
          c.normalized_text, c.language AS context_language, c.position,
+         c.translation AS context_translation, c.translation_src AS context_translation_src,
          c.metadata AS context_metadata, c.created_at AS context_created_at,
          c.updated_at AS context_updated_at,
          s.user_id AS source_user_id, s.wordbook_id, s.source_type, s.title,
@@ -164,6 +169,10 @@ function mapContext(row: JoinedContextWithSourceRow | JoinedContextRow): L3Conte
       text: row.text,
       normalized_text: row.normalized_text,
       language: row.context_language,
+      // 翻译缓存（migration 0049）：部分 join 查询不选这两列，缺省为 null
+      // （= 未翻译），读取方据此决定是否需要按需生成。
+      translation: row.context_translation ?? null,
+      translation_src: row.context_translation_src ?? null,
       position: row.position as never,
       metadata: row.context_metadata as never,
       created_at: row.context_created_at,
@@ -699,6 +708,31 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
        WHERE id = $1::uuid AND user_id = $2::uuid
        FOR UPDATE`,
       [contextId, userId],
+    );
+  }
+
+  /**
+   * Cache a translation onto a context row (migration 0049).
+   *
+   * Owner-scoped like every other write here. Writes both columns together
+   * because `l3_contexts_translation_check` forbids a half-populated pair —
+   * passing `translation = null` clears the cache (re-translate later).
+   */
+  async setContextTranslation(
+    userId: string,
+    contextId: string,
+    translation: string | null,
+    source: string | null,
+  ): Promise<L3ContextRow | null> {
+    this.requireTx();
+    return this.queryOne<L3ContextRow>(
+      `UPDATE l3_contexts
+          SET translation = $3::text,
+              translation_src = $4::text,
+              updated_at = now()
+        WHERE id = $1::uuid AND user_id = $2::uuid
+        RETURNING *`,
+      [contextId, userId, translation, source],
     );
   }
 

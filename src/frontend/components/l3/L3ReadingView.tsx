@@ -123,6 +123,10 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
   const lookupSeq = useRef(0);
   // 交互隔离（2026-09-08 用户反馈）：跳转入品收敛到句尾小标号——右侧相关词汇面板
   const [wordPanel, setWordPanel] = useState<{ contextId: string; slugs: string[]; text: string; entries: L3PanelWordEntry[] } | null>(null);
+  // 整句翻译（2026-09-29）：按需生成、落库缓存。手动触发，不做自动翻译。
+  // `cached` 让已缓存的译文直接展开而不再请求。
+  const [translation, setTranslation] = useState<{ contextId: string; text: string; cached: boolean } | null>(null);
+  const [translating, setTranslating] = useState(false);
   const { addToast } = useToast();
 
   const reload = useCallback(async () => {
@@ -135,6 +139,29 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
       setSpace(null);
     }
   }, [sourceId]);
+
+  const translatePanel = useCallback(async (contextId: string, refresh = false) => {
+    setTranslating(true);
+    try {
+      const res = await apiFetch<{ contextId: string; text: string; translation: string; provider: string; cached: boolean; warning?: string }>(
+        `/l3/contexts/${encodeURIComponent(contextId)}/translate`,
+        { method: "POST", body: JSON.stringify({ refresh }), timeoutMs: 20_000 },
+      );
+      if (res.translation) {
+        setTranslation({ contextId: res.contextId, text: res.translation, cached: res.cached });
+        // 新生成的译文已落库；刷新空间数据以便后续渲染读到缓存。
+        if (!res.cached) await reload();
+      } else {
+        setTranslation(null);
+        addToast("warning", res.warning ?? "翻译暂不可用");
+      }
+    } catch (err) {
+      setTranslation(null);
+      addToast("error", err instanceof BrowserApiError ? err.message : "翻译失败");
+    } finally {
+      setTranslating(false);
+    }
+  }, [addToast, reload]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -320,6 +347,36 @@ export function L3ReadingView({ sourceId, onBack, focusContextId }: { sourceId: 
             <p className="border-l-2 border-[var(--color-accent)] pl-2.5 text-[12px] leading-relaxed text-[var(--color-ink-soft)]">
               {wordPanel.text.slice(0, 140)}{wordPanel.text.length > 140 ? "…" : ""}
             </p>
+            {/* 整句翻译（2026-09-29）：按需生成 + 落库缓存。译文独立成行，
+                与原文用左边框区分；已缓存时直接展开不重复请求。 */}
+            {translation?.contextId === wordPanel.contextId ? (
+              <div className="mt-2 border-l-2 border-[var(--color-accent-2,var(--color-accent))] pl-2.5">
+                <p className="text-[12px] leading-relaxed text-[var(--color-ink)]">{translation.text}</p>
+                <div className="mt-1 flex items-center gap-2">
+                  {translation.cached && (
+                    <span className="text-[10px] text-[var(--color-ink-soft)]">已缓存</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => translatePanel(wordPanel.contextId, true)}
+                    disabled={translating}
+                    className="text-[10px] text-[var(--color-ink-soft)] underline-offset-2 transition-colors hover:text-[var(--color-accent)] hover:underline disabled:opacity-50"
+                  >
+                    重新翻译
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => translatePanel(wordPanel.contextId)}
+                disabled={translating}
+                data-testid="l3-translate-button"
+                className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-[11px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              >
+                {translating ? "翻译中…" : "翻译整句"}
+              </button>
+            )}
             <p className="mt-3 mb-1.5 text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-soft)]">跳转到词条</p>
             <ul className="space-y-2">
               {wordPanel.entries.map((entry) => {

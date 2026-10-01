@@ -195,6 +195,12 @@ const OTHER_OWNER_WRITES = [
   "saveL3WritingDraft",
   "submitL3WritingSheet",
   "discardL3WritingSheet",
+  // 整句翻译（2026-09-29）：owner-only 写面 —— 它把译文落进 l3_contexts 缓存列，
+  // 是写操作（sessionMutation），agent 一律 403。
+  "translateL3Context",
+  // 划词即译（2026-09-29）：**零写入**（CSRF=none，无状态翻译），但因非 GET
+  // 仍归写面分类，与 previewL3ReferenceTarget 同一档：agent 一律 403。
+  "translateL3Text",
   // 作文子空间 v1（W9）：正文清理（soft-delete attempt + 同事务删反馈；sealed 限定）。
   "clearL3WritingSheetContent",
   // 学习笔记（N1，ADR《study-notes-workspace》/ 设计 §7）：私人笔记工作台 owner 写面
