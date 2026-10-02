@@ -67,6 +67,33 @@ export function buildSheetScopeKey(
 }
 
 /**
+ * 已定格题纸快照是否需要「就地校正题序」（2026-10-02，P0 保序修复的存量自愈判据）。
+ *
+ * 背景：`openSheet` 的 paper 分支曾把 `WHERE id = ANY(...)` 的**物理返回序**冻结进
+ * `question_ids`，于是完型空号乱序（第 2 题显示第 17 空）。代码修好之后，**先前已开的
+ * draft 题纸不会自愈** —— 开纸幂等复用既有行，题单「以首次开纸为准」。
+ *
+ * 判据刻意收得很窄，三条同时成立才返回 true：
+ *   1. 两者元素**集合完全相同**（少题/多题一律不动 —— ADR 的「题单只缩不换」是红线）；
+ *   2. 顺序**确实不同**（相同则不需要写库，避免每次开纸都打一次无谓 UPDATE）；
+ *   3. 两者都非空。
+ *
+ * 也就是说：本函数只允许「同一批题换个顺序」，不允许换题、加题、减题。
+ */
+export function needsQuestionOrderRealign(
+  frozenQuestionIds: readonly string[] | null | undefined,
+  orderedQuestionIds: readonly string[],
+): boolean {
+  if (!frozenQuestionIds || frozenQuestionIds.length === 0) return false;
+  if (orderedQuestionIds.length === 0) return false;
+  if (frozenQuestionIds.length !== orderedQuestionIds.length) return false;
+  const frozen = new Set(frozenQuestionIds);
+  if (frozen.size !== orderedQuestionIds.length) return false;
+  if (orderedQuestionIds.some((id) => !frozen.has(id))) return false;
+  return frozenQuestionIds.some((id, index) => id !== orderedQuestionIds[index]);
+}
+
+/**
  * 作答内容判据（口径统一修正 2026-09-17，单一真源）：choice / choices / text 任一非空
  * = 已作答；仅主观痕迹（marks/flags/optionFlags）、空对象、未知形状 = 未作答。
  * 定格软确认与导出/历史摘要共用本判据；物化不受影响（痕迹不丢）。
