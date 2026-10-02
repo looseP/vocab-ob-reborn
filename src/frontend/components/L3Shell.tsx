@@ -34,25 +34,25 @@ function writeCollapsed(value: boolean): void {
 /**
  * L3 外壳（侧栏 + 主区）。
  *
- * ## 为什么要能收折（2026-10-02）
+ * ## 为什么要上下折叠（2026-10-02）
  *
- * 侧栏在桌面端固定占 200px。做题是 15~60 分钟的**连续**会话，期间「空间首页 /
- * 来源书架 / 作文」这些低频入口一直占着宽度 —— 卷面是左文右题双栏，200px 直接
- * 从两栏里各抠掉一部分。收起后只剩 48px 图标条，正文与题卡同时变宽。
+ * 侧栏在桌面端固定占 200px。做题是 15~60 分钟的连续会话，期间「空间首页 / 来源书架 / 作文」
+ * 等低频入口一直占据着纵向空间。用户需要的是**上下折叠**（垂直手风琴收拢），而不是左右挤压成细条：
+ * 侧栏宽度保持 200px 稳定卡片，低频导航项垂直收起，仅保留当前活动项（如「试卷台」），
+ * 并留出下方固定交互区域（选区上下文停靠区）。
  *
- * ## 收起 ≠ 丢掉导航
- *
- * 收起态不是把导航藏起来，而是换成 **mini rail**：每个核心面一个首字方块，
- * 带 `title` / `aria-label`，点了照样切面。如果收起后导航不可达，用户就得先
- * 展开再收起，等于白做。
- *
- * 快捷键 Ctrl/⌘+B（与「收起目录」按钮同一动作）。输入控件内不抢键——
- * 浏览器在 `input` / `contenteditable` 里对 Ctrl+B 有自己的语义（加粗）。
+ * 快捷键 Ctrl/⌘+B（与折叠/展开按钮同一动作）。输入控件内不抢键——
+ * 浏览器在 input / contenteditable 里对 Ctrl+B 有自己的语义（加粗）。
  */
 export function L3Shell({ activeSection, onNavigate, children }: L3ShellProps) {
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsed);
   const core = L3_SHELL_SECTIONS.filter((s) => (L3_SHELL_CORE_SECTIONS as readonly L3ShellSection[]).includes(s.id));
   const tools = L3_SHELL_SECTIONS.filter((s) => !(L3_SHELL_CORE_SECTIONS as readonly L3ShellSection[]).includes(s.id));
+
+  const activeMeta = L3_SHELL_SECTIONS.find((s) => s.id === activeSection) ?? {
+    id: activeSection,
+    label: "当前入口",
+  };
 
   const toggle = useCallback(() => {
     setCollapsed((prev) => {
@@ -88,30 +88,41 @@ export function L3Shell({ activeSection, onNavigate, children }: L3ShellProps) {
             type="button"
             data-testid="l3-sidebar-toggle"
             aria-expanded={!collapsed}
-            aria-label={collapsed ? "展开目录" : "收起目录"}
-            title={`${collapsed ? "展开目录" : "收起目录"}（Ctrl+B）`}
+            aria-label={collapsed ? "展开导航" : "折叠导航"}
+            title={`${collapsed ? "展开导航" : "折叠导航"}（Ctrl+B）`}
             onClick={toggle}
             className="l3-sidebar-toggle"
           >
-            {collapsed ? "»" : "«"}
+            {collapsed ? "▾" : "▴"}
           </button>
         </div>
 
         {collapsed ? (
-          <nav className="l3-nav l3-sidebar-rail" aria-label="核心入口（图标）">
-            {core.map((section) => (
+          <>
+            <nav className="l3-nav l3-nav-collapsed" aria-label="当前入口（已折叠其他项）">
               <button
-                key={section.id}
+                className="active"
+                key={activeMeta.id}
+                onClick={() => onNavigate(activeMeta.id)}
                 type="button"
-                className={`l3-rail-btn${section.id === activeSection ? " active" : ""}`}
-                aria-label={section.label}
-                title={section.label}
-                onClick={() => onNavigate(section.id)}
+                title={activeMeta.label}
               >
-                {section.label.slice(0, 1)}
+                {activeMeta.label}
               </button>
-            ))}
-          </nav>
+            </nav>
+            <div className="l3-nav-collapsed-hint">
+              <button
+                type="button"
+                onClick={toggle}
+                className="l3-nav-unfold-trigger"
+                aria-label="展开全部目录"
+                title="展开全部目录（Ctrl+B）"
+              >
+                <span>展开全部目录</span>
+                <span aria-hidden>▾</span>
+              </button>
+            </div>
+          </>
         ) : (
           <>
             <nav className="l3-nav" aria-label="核心入口">
