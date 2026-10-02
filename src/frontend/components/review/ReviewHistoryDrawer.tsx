@@ -31,7 +31,14 @@ interface ReviewHistoryDrawerProps {
    * entry 是被撤销的那一条。
    */
   onUndoSuccess?: (entry: ReviewHistoryEntry) => void | Promise<void>;
-  /** 是否允许对历史条目执行撤销：默认仅最新一条可撤销（后端限制）。 */
+  /**
+   * 是否允许对历史条目执行撤销：默认放开（任意未撤销条目皆可）。
+   *
+   * 后端 `undo_review_log` 的"仅最新一条"约束是**按 progress_id 分组**判定的——
+   * 对同一张卡，只有它最新那条未撤销的评分能撤回。因此放开侧栏不会产生非法请求：
+   * 某词更早的评分本就不可撤销（服务端会拒绝），前端逐条尝试即可。
+   * 保留此属性供调用方按需收紧（例如只想暴露"撤销上一张"的旧语义）。
+   */
   allowUndoLatestOnly?: boolean;
 }
 
@@ -62,7 +69,7 @@ export function ReviewHistoryDrawer({
   sessionScopeId,
   limit = 30,
   onUndoSuccess,
-  allowUndoLatestOnly = true,
+  allowUndoLatestOnly = false,
 }: ReviewHistoryDrawerProps) {
   const [entries, setEntries] = useState<ReviewHistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -140,7 +147,7 @@ export function ReviewHistoryDrawer({
           复习历史记录
         </span>
       }
-      subtitle={total > 0 ? `共 ${total} 条，本次会话内可撤销最近 1 条评分` : "快捷键 H 开关此面板；Ctrl/Cmd+Z 直接撤销最新一条"}
+      subtitle={total > 0 ? `共 ${total} 条，点击条目右侧撤销可回退该次评分` : "快捷键 H 开关此面板；Ctrl/Cmd+Z 直接撤销最新一条"}
       headerRight={
         <Button variant="ghost" size="sm" onClick={() => void load()} disabled={loading} title="刷新">
           <RefreshCw className={clsx("h-4 w-4", loading && "animate-spin")} />
@@ -220,8 +227,7 @@ export function ReviewHistoryDrawer({
                         ? "仅允许撤销最新一条评分"
                         : "会话未就绪"
                   }
-                >
-                  {undoingId === entry.id ? (
+                >                  {undoingId === entry.id ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <Undo2 className="h-4 w-4" />
