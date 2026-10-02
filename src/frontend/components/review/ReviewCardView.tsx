@@ -17,7 +17,6 @@ import {
   Plus,
   StickyNote,
   TrendingUp,
-  Volume2,
   Zap,
 } from "lucide-react";
 import type { Rating, ReviewCard, ReviewNoteEntry } from "@/frontend/hooks/useReview";
@@ -26,9 +25,10 @@ import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { L3ContextsFold } from "@/frontend/components/review/L3ContextsFold";
+import { AcousticStickyAnchor } from "@/frontend/components/review/AcousticAnchor";
 import { buildHintSteps, extractMnemonicCore, HINT_STEP_LABEL as STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
 import { ClueZone, TrainingFold, ExampleLayerBlock, parseWordExam, parseVerifiedCount } from "@/frontend/components/review/WordCardExamLayers";
-import { useAudioController, type Accent, type AudioSource } from "@/frontend/reviewFlow/audioEngine";
+import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
 
 const ratings = [
   { value: "again", label: "重来", variant: "danger" as const, key: "1" },
@@ -417,105 +417,6 @@ const UPGRADE_SUGGESTION_LABELS: Record<string, string> = {
   normal: "推荐升级",
   needs_settling: "需要沉淀",
 };
-
-/** 播放中的声波指示：纯 CSS（animate-pulse + 相位错开），不引入 JS 定时器。 */
-function SoundWave() {
-  return (
-    <span className="flex h-4 items-end gap-[2px]" data-testid="audio-waveform" aria-hidden>
-      {[40, 90, 60].map((height, i) => (
-        <span
-          key={i}
-          className="w-[2px] animate-pulse rounded-full bg-[var(--color-accent)]"
-          style={{ height: `${height}%`, animationDelay: `${i * 120}ms` }}
-        />
-      ))}
-    </span>
-  );
-}
-
-/**
- * 拼读声学胶囊（Phase 1）：**正反面通用容器顶部吸顶常驻** —— 无论翻到哪一面、
- * 无论卡背长内容滚到哪里，词形 / 音标 / 口音 / 发音入口始终在视线内。
- *
- * 吸顶偏移取顶栏高度（SiteHeader 的 `--header-height: 5rem` = `top-20`），
- * z-index 低于顶栏的 z-40，避免盖住导航。
- *
- * 放在翻面容器**外层**（兄弟节点）而非内部：翻面容器整体是 role=button，
- * 把按钮塞进去要额外处理事件冒泡与嵌套语义；做成兄弟节点后点击天然不触发翻转。
- */
-function AcousticStickyAnchor({
-  lemma,
-  ipa,
-  accent,
-  available,
-  isPlaying,
-  source,
-  onPlayWord,
-  onToggleAccent,
-}: {
-  lemma: string;
-  ipa: string | null;
-  accent: Accent;
-  available: boolean;
-  isPlaying: boolean;
-  source: AudioSource | null;
-  onPlayWord: () => void;
-  onToggleAccent: () => void;
-}) {
-  if (!lemma) return null;
-  const wordPlaying = isPlaying && source === "word";
-  return (
-    <div
-      className="sticky top-20 z-30 mb-3 flex w-full items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel)]/95 px-3 py-1.5 text-left shadow-[var(--shadow-panel)] backdrop-blur-xl"
-      data-testid="acoustic-sticky-anchor"
-      data-no-flip
-      onClick={(e) => e.stopPropagation()}
-    >
-      <span className="truncate text-sm font-semibold text-[var(--color-ink)]">{lemma}</span>
-      {ipa && <span className="flex-none font-mono text-xs text-[var(--color-ink-soft)]">{ipa}</span>}
-      {available && (
-        <button
-          type="button"
-          data-no-flip
-          onClick={(e) => {
-            e.stopPropagation();
-            onPlayWord();
-          }}
-          title="朗读发音（R）· 切换英音/美音（Shift+R）"
-          aria-label="朗读发音 (R)"
-          className="flex-none rounded-full p-1 text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
-        >
-          {wordPlaying ? <SoundWave /> : <Volume2 className="h-4 w-4" />}
-        </button>
-      )}
-      {available && (
-        <button
-          type="button"
-          data-no-flip
-          data-testid="accent-toggle"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleAccent();
-          }}
-          title="切换口音（Shift+R）"
-          aria-label={accent === "uk" ? "当前英音，切换到美音" : "当前美音，切换到英音"}
-          className="flex-none rounded-full border border-[var(--color-border)] px-1.5 py-0.5 font-mono text-[10px] tracking-wider transition-colors hover:border-[var(--color-accent)]"
-        >
-          <span className={accent === "uk" ? "font-bold text-[var(--color-accent)]" : "text-[var(--color-ink-soft)]"}>
-            UK
-          </span>
-          <span className="px-0.5 text-[var(--color-ink-soft)]">/</span>
-          <span className={accent === "us" ? "font-bold text-[var(--color-accent)]" : "text-[var(--color-ink-soft)]"}>
-            US
-          </span>
-        </button>
-      )}
-      <span className="ml-auto hidden flex-none text-[10px] text-[var(--color-ink-soft)] sm:block">
-        R 拼读 · Shift+R 口音 · E 例句
-      </span>
-    </div>
-  );
-}
 
 /**
  * 翻卡交互(P2)+ 三层信息披露(2026-09-06):
