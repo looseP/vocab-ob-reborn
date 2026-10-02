@@ -791,61 +791,38 @@ body.zen-mode main {
   border-color: var(--color-accent);
 }
 
-/* mini rail：收起态的核心面入口（收起不等于导航不可达）。 */
-.l3-sidebar-rail {
+/* 上下折叠态：导航垂直收折，仅保留当前活动项 + 展开提示条（宽度稳定保持 200px）。 */
+.l3-nav-collapsed {
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.2rem;
+  flex-direction: column;
+  gap: 0.3rem;
 }
 
-.l3-rail-btn {
-  width: 1.8rem;
-  height: 1.8rem;
-  display: inline-flex;
+.l3-nav-collapsed-hint {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--color-border);
+}
+
+.l3-nav-unfold-trigger {
+  width: 100%;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  border: 1px solid transparent;
+  justify-content: space-between;
+  padding: 0.35rem 0.5rem;
+  border: 1px dashed var(--color-border);
   border-radius: 0.5rem;
   background: transparent;
   color: var(--color-ink-soft);
   font-size: 0.72rem;
-  font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
 
-.l3-rail-btn:hover {
-  background: var(--color-surface-muted);
+.l3-nav-unfold-trigger:hover {
   color: var(--color-ink);
-}
-
-.l3-rail-btn.active {
-  background: var(--color-accent);
   border-color: var(--color-accent);
-  color: var(--color-accent-contrast, #ffffff);
-}
-
-/* 收起态：宽屏压成 48px 图标条（释放约 150px 给卷面双栏）。 */
-@media (min-width: 768px) {
-  .l3-shell.sidebar-collapsed .l3-sidebar {
-    width: 48px;
-    padding: 0.5rem 0.3rem;
-  }
-
-  .l3-shell.sidebar-collapsed .l3-sidebar-head {
-    justify-content: center;
-  }
-
-  .l3-shell.sidebar-collapsed .l3-sidebar-rail {
-    flex-direction: column;
-    flex-wrap: nowrap;
-  }
-}
-
-.l3-shell.sidebar-collapsed .l3-sidebar-wide {
-  display: none;
+  background: var(--color-surface-muted);
 }
 
 @media (min-width: 768px) {
@@ -917,22 +894,34 @@ body.zen-mode main {
 }
 
 /* ── 卷面选区上下文停靠区（Context Inspector，2026-10-02）─────────────────
-   位置与 L3 侧栏同列（左侧 200px 宽 + 1rem 内边距 ⇒ 16px 起），即设计稿红框位。
-   用 fixed 而不是放进侧栏 DOM：侧栏是可收折的（收起后只剩 48px 图标条），
-   挂进侧栏会让停靠区随之一并消失 —— 而「选中的那段文本要挂到哪道题」在做题
-   过程中必须一直在。侧栏收起时整体左移到图标条右侧，不与图标抢位置。 */
+   位置与 L3 侧栏同列（桌面端固定在侧栏垂直投影区域内，即设计稿红框位）。
+   对齐桌面端 max-w-7xl 容器的左内边距，无论窗口多宽都与侧栏保持同一垂线。
+   上下折叠后，侧栏宽度保持 200px 不变，停靠区在同列底部常驻显示。 */
 .exam-context-dock {
   left: 1rem;
 }
 
-.l3-shell.sidebar-collapsed .exam-context-dock {
-  left: calc(3rem + 1rem);
+@media (min-width: 640px) {
+  .exam-context-dock {
+    left: 1.5rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .exam-context-dock {
+    width: 200px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .exam-context-dock {
+    left: max(2rem, calc((100vw - 80rem) / 2 + 2rem));
+  }
 }
 
 /* 窄屏（<768px）侧栏是通栏、不占左右边距，停靠区改为横向铺满底部。 */
 @media (max-width: 767px) {
-  .exam-context-dock,
-  .l3-shell.sidebar-collapsed .exam-context-dock {
+  .exam-context-dock {
     left: 1rem;
     right: 1rem;
     width: auto;
