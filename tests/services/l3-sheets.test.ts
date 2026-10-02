@@ -101,6 +101,8 @@ function makeSheetRepo(overrides: Partial<IL3SheetRepository> = {}): IL3SheetRep
     listArchive: vi.fn(async () => []),
     // ADR-0038 决策 7：定格补冻结（legacy question_ids IS NULL 时写回作用域题集）
     freezeQuestionIds: vi.fn(async () => true),
+    // 2026-10-02 P0 保序自愈：默认「不需要校正」（返回 null，不写库）。
+    realignQuestionIdsOrder: vi.fn(async () => null),
     ...overrides,
   } as IL3SheetRepository;
   return repo;
@@ -294,6 +296,149 @@ describe("L3SheetService.openSheet", () => {
     expect(sheetRepo.openSheet).toHaveBeenCalledWith(expect.objectContaining({
       question_ids: [activeQuestion.id],
     }));
+  });
+
+  /**
+   * 【P0 保序】题单快照必须是原卷 `sections.questionIds` 的**精确保序投影**。
+   *
+   * 现象：完型 20 空在题卡与下拉里呈 `1, 17, 16, 20...` 乱序（「第 2 题显示第 17 空」）。
+   * 机理：`findActiveQuestionsByIds` 的 SQL 是 `WHERE id = ANY($2)`，**不带 ORDER BY**
+   * ——PostgreSQL 按磁盘物理顺序返回。冻结时直接 `active.map(q => q.id)` 就把物理序
+   * 写进了快照；前端 `scopePaperToFrozenList` 又拿这份快照当 rank 重排卷面，于是乱序
+   * 一路传到题号。所以断言的**不是**「active 都在」，而是「顺序与卷面逐位相同」。
+   */
+  it("冻结的题单严格保序：底层乱序返回也不改变原卷题序（完型空号乱序 P0）", async () => {
+    const ids = [
+      "00000000-0000-4000-8000-000000000101",
+      "00000000-0000-4000-8000-000000000102",
+      "00000000-0000-4000-8000-000000000103",
+      "00000000-0000-4000-8000-000000000104",
+    ];
+    const sheetRepo = makeSheetRepo({
+      openSheet: vi.fn(async () => ({ row: submissionRow(), created: true })),
+    });
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => ({
+        id: PAPER,
+        payload: { version: 1, sections: [{ key: "cloze-1", questionIds: ids }] },
+      } as never)),
+      // 模拟 PostgreSQL 的物理序返回：1、4、3、2
+      findActiveQuestionsByIds: vi.fn(async () => [ids[0], ids[3], ids[2], ids[1]].map((id) => ({ id }) as never)),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo(), makeContextRepo(null));
+    await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER });
+    expect(sheetRepo.openSheet).toHaveBeenCalledWith(expect.objectContaining({ question_ids: ids }));
+  });
+
+  it("多 section 卷跨节保序，且重复 id 只保留首次出现（题单不重复计数）", async () => {
+    const a = "00000000-0000-4000-8000-000000000201";
+    const b = "00000000-0000-4000-8000-000000000202";
+    const c = "00000000-0000-4000-8000-000000000203";
+    const sheetRepo = makeSheetRepo({
+      openSheet: vi.fn(async () => ({ row: submissionRow(), created: true })),
+    });
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => ({
+        id: PAPER,
+        payload: {
+          version: 1,
+          sections: [
+            { key: "s1", questionIds: [a, b] },
+            { key: "s2", questionIds: [b, c] },
+          ],
+        },
+      } as never)),
+      findActiveQuestionsByIds: vi.fn(async () => [c, b, a].map((id) => ({ id }) as never)),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo(), makeContextRepo(null));
+    await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER });
+    expect(sheetRepo.openSheet).toHaveBeenCalledWith(expect.objectContaining({ question_ids: [a, b, c] }));
+  });
+
+  /**
+   * 【P0 存量自愈】代码修好之后，**修前已开的 draft 题纸**仍然乱序 —— 因为开纸是幂等的，
+   * 复用既有行且不覆盖快照（「题单以首次开纸为准」）。若不补这一步，用户手里那张
+   * 2025 英语（二）卷（实测：48 题里只有第 1 位恰好对）永远看不到修复效果。
+   *
+   * 校正窗口必须窄：只有「同一批题换个顺序」才允许写库。
+   */
+  it("幂等复用既有 draft 时：集合相同但顺序不同 → 就地校正题序并返回校正后的行", async () => {
+    const a = "00000000-0000-4000-8000-000000000501";
+    const b = "00000000-0000-4000-8000-000000000502";
+    const c = "00000000-0000-4000-8000-000000000503";
+    const realignedRow = submissionRow({ question_ids: [a, b, c] });
+    const sheetRepo = makeSheetRepo({
+      // 幂等命中：既有 draft 行的快照是乱序的（a, c, b）
+      openSheet: vi.fn(async () => ({ row: submissionRow({ question_ids: [a, c, b] }), created: false })),
+      realignQuestionIdsOrder: vi.fn(async () => realignedRow),
+    });
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => ({
+        id: PAPER, payload: { version: 1, sections: [{ key: "s1", questionIds: [a, b, c] }] },
+      } as never)),
+      findActiveQuestionsByIds: vi.fn(async () => [c, b, a].map((id) => ({ id }) as never)),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo(), makeContextRepo(null));
+    const result = await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER });
+
+    expect(sheetRepo.realignQuestionIdsOrder).toHaveBeenCalledWith(USER, SHEET, [a, b, c]);
+    expect(result.sheet.question_ids).toEqual([a, b, c]);
+    expect(result.created).toBe(false);
+  });
+
+  it("幂等复用但顺序已一致 → 不打无谓 UPDATE（幂等，避免每次开纸都写库）", async () => {
+    const a = "00000000-0000-4000-8000-000000000501";
+    const b = "00000000-0000-4000-8000-000000000502";
+    const sheetRepo = makeSheetRepo({
+      openSheet: vi.fn(async () => ({ row: submissionRow({ question_ids: [a, b] }), created: false })),
+    });
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => ({
+        id: PAPER, payload: { version: 1, sections: [{ key: "s1", questionIds: [a, b] }] },
+      } as never)),
+      findActiveQuestionsByIds: vi.fn(async () => [{ id: a }, { id: b }] as never),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo(), makeContextRepo(null));
+    await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER });
+    expect(sheetRepo.realignQuestionIdsOrder).not.toHaveBeenCalled();
+  });
+
+  it("快照题集与卷面不同（少题/多题）→ 不校正：题单只缩不换，不得借机换题", async () => {
+    const a = "00000000-0000-4000-8000-000000000501";
+    const b = "00000000-0000-4000-8000-000000000502";
+    const c = "00000000-0000-4000-8000-000000000503";
+    const sheetRepo = makeSheetRepo({
+      // 快照只有 a、b（卷面题组后来加过题，但快照是「首次开纸」的题集）
+      openSheet: vi.fn(async () => ({ row: submissionRow({ question_ids: [b, a] }), created: false })),
+    });
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => ({
+        id: PAPER, payload: { version: 1, sections: [{ key: "s1", questionIds: [a, b, c] }] },
+      } as never)),
+      findActiveQuestionsByIds: vi.fn(async () => [{ id: a }, { id: b }, { id: c }] as never),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo(), makeContextRepo(null));
+    const result = await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER });
+    expect(sheetRepo.realignQuestionIdsOrder).not.toHaveBeenCalled();
+    expect(result.sheet.question_ids).toEqual([b, a]);
+  });
+
+  it("新建题纸（created=true）不触发校正：新快照本身已是保序投影", async () => {
+    const a = "00000000-0000-4000-8000-000000000501";
+    const b = "00000000-0000-4000-8000-000000000502";
+    const sheetRepo = makeSheetRepo({
+      openSheet: vi.fn(async () => ({ row: submissionRow({ question_ids: [a, b] }), created: true })),
+    });
+    const paperRepo = makePaperRepo({
+      findPaperById: vi.fn(async () => ({
+        id: PAPER, payload: { version: 1, sections: [{ key: "s1", questionIds: [a, b] }] },
+      } as never)),
+      findActiveQuestionsByIds: vi.fn(async () => [{ id: b }, { id: a }] as never),
+    });
+    const service = makeService(sheetRepo, paperRepo, makeAnnotationRepo(), makeContextRepo(null));
+    await service.openSheet({ userId: USER, scope: "paper", paperId: PAPER });
+    expect(sheetRepo.realignQuestionIdsOrder).not.toHaveBeenCalled();
+    expect(sheetRepo.openSheet).toHaveBeenCalledWith(expect.objectContaining({ question_ids: [a, b] }));
   });
 
   it("validates the scope shape before touching repositories", async () => {

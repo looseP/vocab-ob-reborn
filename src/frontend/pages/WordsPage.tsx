@@ -1,12 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Search, Filter, Upload, BookOpen, History, Users, X } from "lucide-react";
+import { Search, Filter, Upload, BookOpen, History, Users, X, Plus, CheckSquare, Square } from "lucide-react";
 import { Input } from "@/frontend/components/ui/Input";
 import { Button } from "@/frontend/components/ui/Button";
 import { WordList } from "@/frontend/components/words/WordList";
 import { useWords } from "@/frontend/hooks/useWords";
 import { useRecentSearches } from "@/frontend/hooks/useRecentSearches";
 import { useWordSuggest } from "@/frontend/hooks/useWordSuggest";
+import { useToast } from "@/frontend/components/ui/Toast";
+import { apiFetch } from "@/frontend/api/client";
 
 const CEFR_LEVELS = ["", "A1", "A2", "B1", "B2", "C1", "C2"] as const;
 
@@ -17,6 +19,8 @@ export function WordsPage() {
   const [review, setReview] = useState("all");
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [enqueuing, setEnqueuing] = useState(false);
+  const { addToast } = useToast();
   const navigate = useNavigate();
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { recent, add, remove, clear } = useRecentSearches();
@@ -72,6 +76,38 @@ export function WordsPage() {
     if (ids.length === 0) return;
     navigate(`/review?wordIds=${ids.join(",")}`);
   }, [selectedIds, navigate]);
+
+  const selectAllPage = useCallback(() => {
+    setSelectedIds(new Set(words.map((w) => w.id)));
+  }, [words]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const batchAddToReview = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setEnqueuing(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; added: number; skipped: number; progressIds: string[] }>(
+        "/api/review/cards/batch",
+        {
+          method: "POST",
+          body: JSON.stringify({ wordIds: ids }),
+        },
+      );
+      if (res.ok) {
+        addToast("success", `成功加入 ${res.added} 词到复习队列${res.skipped > 0 ? `（跳过已存在 ${res.skipped} 词）` : ""}`);
+        setSelectedIds(new Set());
+        setSelecting(false);
+      }
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "批量加入复习失败");
+    } finally {
+      setEnqueuing(false);
+    }
+  }, [selectedIds, addToast]);
 
   return (
     <div className="space-y-6">
@@ -144,12 +180,29 @@ export function WordsPage() {
             <option value="untracked">未追踪</option>
           </select>
           <Button size="sm" variant={selecting ? "primary" : "secondary"} onClick={enterSelecting}>
-            <BookOpen className="h-4 w-4" /> 自由复习
+            <BookOpen className="h-4 w-4" /> {selecting ? "退出多选" : "多选模式"}
           </Button>
           {selecting && (
-            <Button size="sm" variant="primary" disabled={selectedIds.size === 0} onClick={startFreeReview}>
-              复习已选 ({selectedIds.size})
-            </Button>
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={selectedIds.size === words.length && words.length > 0 ? clearSelection : selectAllPage}
+                title={selectedIds.size === words.length && words.length > 0 ? "取消本页全选" : "全选当前已加载词条"}
+              >
+                {selectedIds.size === words.length && words.length > 0 ? (
+                  <><Square className="h-4 w-4" /> 取消全选</>
+                ) : (
+                  <><CheckSquare className="h-4 w-4" /> 全选本页</>
+                )}
+              </Button>
+              <Button size="sm" variant="secondary" disabled={selectedIds.size === 0} onClick={startFreeReview}>
+                自由复习 ({selectedIds.size})
+              </Button>
+              <Button size="sm" variant="primary" disabled={selectedIds.size === 0 || enqueuing} onClick={batchAddToReview}>
+                <Plus className="h-4 w-4" /> {enqueuing ? "加入中..." : `加入复习计划 (${selectedIds.size})`}
+              </Button>
+            </>
           )}
           <Link to="/import">
             <Button size="sm" variant="secondary">
@@ -161,7 +214,7 @@ export function WordsPage() {
 
       {selecting && (
         <p className="text-sm text-[var(--color-ink-soft)]">
-          勾选要复习的单词，然后点击「复习已选」进入自由复习（不评分、不写入复习数据）。
+          已勾选 {selectedIds.size} 词。点击「加入复习计划」纳入 FSRS 记忆调度；或点击「自由复习」进行零压力速览。
         </p>
       )}
 

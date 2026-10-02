@@ -20,7 +20,7 @@
  * 形状不受类型系统保护（实测 `reading.structure` 缺 95/6731）。
  */
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Volume2 } from "lucide-react";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { parseWordExam, type WordExam } from "@/domain/word-exam";
 
@@ -205,6 +205,9 @@ function SplitLines({
 /**
  * 正面「例句线索区」（mock `.clue-zone` 口径）：目标词遮盖 + 轨色切分，
  * 先在语境里回想。**无切分数据的 v1 批次退化为整句遮盖**。
+ *
+ * 「听真题例句」定位为**听觉线索**（Phase 1）：与"揭示词形（H1）"正交 ——
+ * 听整句不泄露词形，故不消耗 H1 提示上限；对听觉型学习者是独立的提取线索。
  */
 export function ClueZone({
   exam,
@@ -212,12 +215,16 @@ export function ClueZone({
   maskTerm,
   maskRevealed,
   onUnmask,
+  onPlaySentence,
+  sentencePlaying,
 }: {
   exam: WordExam | null;
   text: string | null;
   maskTerm: string | null;
   maskRevealed: boolean;
   onUnmask: () => void;
+  onPlaySentence?: () => void;
+  sentencePlaying?: boolean;
 }) {
   const hasSplit = (exam?.reading?.blocks.length ?? 0) > 0;
   if (!text) return null;
@@ -228,12 +235,28 @@ export function ClueZone({
       data-no-flip
       onClick={(e) => e.stopPropagation()}
     >
-      <p className="mb-1.5 flex items-center gap-1.5 text-[11px] text-[var(--color-ink-soft)]">
+      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-[var(--color-ink-soft)]">
         <span className="rounded bg-[var(--color-accent-2)] px-1 py-px text-[10px] font-bold tracking-wider text-white">
           例句线索
         </span>
         <span>（H1）· 目标词已遮盖 · 先在语境里回想</span>
-      </p>
+        {onPlaySentence && (
+          <button
+            type="button"
+            data-no-flip
+            data-testid="clue-play-example"
+            aria-label="朗读真题例句 (E)"
+            title="朗读真题例句（快捷键 E）· 听觉线索，不消耗 H1 提示"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPlaySentence();
+            }}
+            className="ml-auto inline-flex flex-none items-center gap-1 rounded-full border border-dashed border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          >
+            <Volume2 className="h-3 w-3" /> {sentencePlaying ? "播放中…" : "听真题例句"}
+          </button>
+        )}
+      </div>
       {hasSplit && exam ? (
         <SplitLines
           exam={exam}
@@ -359,7 +382,7 @@ export function TrainingFold({ exam, verifiedCount }: { exam: WordExam | null; v
 
 /**
  * 卡背「例句层」（mock `.ex-layer` 口径）：完整例句（目标词 `mark` 高亮）+ 译文
- * + 来源/核验徽章。
+ * + 来源/核验徽章 + **原声朗读**（听写复核 / 原句跟读）。
  */
 export function ExampleLayerBlock({
   text,
@@ -370,6 +393,8 @@ export function ExampleLayerBlock({
   url,
   modified,
   verifiedCount,
+  onPlaySentence,
+  sentencePlaying,
 }: {
   text: string | null;
   translation: string | null;
@@ -379,6 +404,8 @@ export function ExampleLayerBlock({
   url: string | null;
   modified: boolean;
   verifiedCount: number;
+  onPlaySentence?: () => void;
+  sentencePlaying?: boolean;
 }) {
   if (!text) return null;
   return (
@@ -393,9 +420,27 @@ export function ExampleLayerBlock({
             例句 · H1
           </span>
         </span>
-        <span className="text-right text-[11px] text-[var(--color-ink-soft)]">
-          {[sourceType, source].filter(Boolean).join(" · ")}
-        </span>
+        <div className="flex flex-none items-center gap-2">
+          {onPlaySentence && (
+            <button
+              type="button"
+              data-no-flip
+              data-testid="ex-layer-play"
+              aria-label="朗读例句 (E)"
+              title="朗读例句（快捷键 E）· 听写复核与原句跟读"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPlaySentence();
+              }}
+              className="inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            >
+              <Volume2 className="h-3 w-3" /> {sentencePlaying ? "播放中…" : "朗读例句"}
+            </button>
+          )}
+          <span className="text-right text-[11px] text-[var(--color-ink-soft)]">
+            {[sourceType, source].filter(Boolean).join(" · ")}
+          </span>
+        </div>
       </div>
       <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--color-ink)]">
         <MarkedSentence text={text} term={term} />

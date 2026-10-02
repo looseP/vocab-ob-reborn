@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect, useCallback, type ReactNode } from "react";
+import { useMemo, useRef, useState, useEffect, useLayoutEffect, useCallback, type ReactNode } from "react";
 import { buildPassageSpans, enclosingSentence, groupSpansIntoParagraphs, type PassageRun } from "./examPassageSpans";
 import { scopePaperToFrozenList, countQuestionsOutsideFrozenList } from "./examTypes";
 import type { ExamPaper as ExamPaperType, ExamQuestion, ExamSection } from "./examTypes";
@@ -13,6 +13,12 @@ import {
 import type { ReferenceTarget } from "@/domain/l3-study-notes";
 import { GRADING_VERDICT_LABELS } from "@/domain/l3-grading";
 import { EXAM_MODES, type ExamMode } from "@/frontend/viewModels/examModeNavigation";
+import {
+  PROXIMITY_REASON_LABELS,
+  resolveProximityQuestion,
+  type ProximityMatch,
+} from "@/frontend/viewModels/examProximityBinding";
+import { resolveSelectionPanelPosition } from "@/frontend/viewModels/selectionPanelPosition";
 import {
   hiddenTraceNotice,
   visibilityFor,
@@ -162,13 +168,111 @@ function selectionToContentOffsets(container: HTMLElement): { start: number; end
   return end > start ? { start, end } : null;
 }
 
+/**
+ * 吸顶安全区高度（SiteHeader 是 `--header-height: 5rem` = 80px，卷面章节导航
+ * `sticky top-0` 与之叠放）。选区浮条不得进入这条线以内，否则会盖住章节 Tab ——
+ * 这正是「浮条倒挂」截图里的现象。
+ */
+const SELECTION_PANEL_TOP_INSET = 72;
+
+/** 选区视口矩形。 */
+export interface SelectionAnchor {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/**
+ * 选区矩形 → 浮条锚点。
+ *
+ * `getBoundingClientRect` 在 jsdom 等无布局环境返回全零矩形（真实浏览器恒有真值），
+ * 所以这里给零宽/零高矩形补一个最小高度：否则 `bottom === top`，浮条会与选区重叠。
+ */
+function selectionAnchorFromRect(rect: DOMRect | undefined): SelectionAnchor {
+  if (!rect) return { top: 160, bottom: 184, left: 80, right: 160 };
+  return {
+    top: rect.top,
+    bottom: rect.bottom > rect.top ? rect.bottom : rect.top + 20,
+    left: rect.left,
+    right: rect.right > rect.left ? rect.right : rect.left,
+  };
+}
+
+/**
+ * 选区操作浮条（正文外三处：题干 / 选项）。
+ *
+ * 定位走 `resolveSelectionPanelPosition` 纯函数（上方优先、放不下即翻面、
+ * 最后无条件夹进视口 + 吸顶安全区）。**不要把 old 实现的 `translateY(-100%)`
+ * 加回来**：位移发生在夹取之后，等于夹取没做 —— 顶部选区会把浮条推出视口。
+ *
+ * 高度在挂载后实测再校正一次：首帧只能按估算值定位，否则长列表（题号选择器）
+ * 会按短菜单的高度摆放，展开后越出视口底。
+ */
+function SelectionActionPopover({
+  anchor,
+  width,
+  revision,
+  className,
+  children,
+}: {
+  anchor: SelectionAnchor;
+  width: number;
+  /** 内容变化的标识（如 mode）：变化时重测高度。不传则只按 anchor 变化重定位。 */
+  revision?: unknown;
+  className?: string;
+  children: ReactNode;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const place = useCallback(
+    () => resolveSelectionPanelPosition({
+      anchor,
+      panelWidth: width,
+      // 首帧只能按估算高度摆（真实高度要等渲染完）；挂载后 useLayoutEffect 校正。
+      panelHeight: panelRef.current?.getBoundingClientRect().height ?? 200,
+      viewportWidth: viewportWidth(),
+      viewportHeight: viewportHeight(),
+      topSafeInset: SELECTION_PANEL_TOP_INSET,
+    }),
+    [anchor, width],
+  );
+  const [placement, setPlacement] = useState(place);
+
+  useLayoutEffect(() => {
+    setPlacement(place());
+    // anchor 每次划词都是新对象，按字段依赖才能避免每次渲染都重算。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchor.top, anchor.bottom, anchor.left, anchor.right, width, revision]);
+
+  return (
+    <div
+      ref={panelRef}
+      data-exam-capture-bar
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      style={{ position: "fixed", top: placement.top, left: placement.left, width, maxHeight: placement.maxHeight }}
+      className={`z-50 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-xl ${className ?? ""}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** 视口尺寸读取（抽出来是为了浮条外只有一处读 window，便于日后替换成容器尺寸）。 */
+function viewportWidth(): number {
+  return typeof window === "undefined" ? 1024 : window.innerWidth;
+}
+function viewportHeight(): number {
+  return typeof window === "undefined" ? 768 : window.innerHeight;
+}
+
 interface CaptureState {
-  x: number;
-  y: number;
   start: number;
   end: number;
   excerpt: string;
   mode: "menu" | "annotate" | "mark" | "capture";
+  /** 就近绑定结果（`null` = 无可用依据，回退成题序候选列表）。 */
+  match: ProximityMatch | null;
 }
 
 function PassageBody({
@@ -243,6 +347,53 @@ function PassageBody({
   // 按原文换行分段：每段独立 <p> 带段距，空行占位；run 携带全局偏移，拆段不影响选区坐标。
   const paragraphs = useMemo(() => groupSpansIntoParagraphs(spans, content), [spans, content]);
 
+  /**
+   * 空号 → 题 id。**这里原先是内联在空位角标 onClick 里的三元表达式**，就近绑定
+   * 需要同一份映射 —— 两处各写一遍必然漂移（角标点到的题与就近绑定推荐到的题会
+   * 不一致，而两者在界面上是同一个「第 N 空」）。抽成一份，两处共用。
+   */
+  const questionIdByBlankNo = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const question of section.questions) {
+      const blankNo = section.questionType === "new_question"
+        ? question.ordinal + 41
+        : questionDisplayNo.get(question.id);
+      if (typeof blankNo === "number") map.set(blankNo, question.id);
+    }
+    return map;
+  }, [section.questions, section.questionType, questionDisplayNo]);
+
+  /** 就近判定的输入：空位锚点直接由 spans 取（与渲染同一坐标系，不重新解析正文）。 */
+  const blankAnchors = useMemo(() => {
+    const anchors: Array<{ blankNo: number; start: number; end: number; questionId: string }> = [];
+    for (const span of spans) {
+      if (span.kind !== "blank" || span.blankNo == null) continue;
+      const questionId = questionIdByBlankNo.get(span.blankNo);
+      if (!questionId) continue;
+      anchors.push({ blankNo: span.blankNo, start: span.start, end: span.end, questionId });
+    }
+    return anchors;
+  }, [spans, questionIdByBlankNo]);
+
+  const questionRefs = useMemo(
+    () => section.questions.map((question) => ({
+      id: question.id,
+      ordinal: question.ordinal,
+      stem: question.stem,
+    })),
+    [section.questions],
+  );
+
+  /** 候选序：就近命中排第一，其余按距离升序；无判定依据时退回卷内题序。 */
+  const orderedQuestions = useMemo(() => {
+    const match = capture?.match;
+    if (!match) return section.questions;
+    const byId = new Map(section.questions.map((question) => [question.id, question]));
+    return match.sortedCandidates
+      .map((candidate) => byId.get(candidate.questionId))
+      .filter((question): question is (typeof section.questions)[number] => Boolean(question));
+  }, [capture?.match, section.questions]);
+
   // 题卡定位钮 → 滚动到锚点并脉冲（nonce 保证重复点击同一锚点也重播动画）。
   // 跨段标注会拆成多个 mark 片段，按 data-ann-start（锚点全局起点）取第一个片段即可。
   useEffect(() => {
@@ -257,7 +408,7 @@ function PassageBody({
     return () => clearTimeout(timer);
   }, [locate, section.key]);
 
-  // 浮条外点关闭 / Esc 关闭。
+  // 停靠区外点关闭 / Esc 关闭。
   useEffect(() => {
     if (!capture) return;
     const onMouseDown = (event: MouseEvent) => {
@@ -284,17 +435,21 @@ function PassageBody({
       setCapture(null);
       return;
     }
-    // getBoundingClientRect 可选调用：jsdom 等受限环境无此方法（真实浏览器恒在）。
-    const rect = window.getSelection()?.getRangeAt(0).getBoundingClientRect?.();
     setCapture({
-      x: rect ? rect.left + rect.width / 2 : 120,
-      y: rect ? rect.top : 120,
       start: offsets.start,
       end: offsets.end,
       excerpt: content.slice(offsets.start, offsets.end),
       mode: "menu",
+      // 就近绑定：选区落在哪个空、离哪个空最近 —— 纯函数判定，不依赖 DOM 度量。
+      match: resolveProximityQuestion({
+        selectionStart: offsets.start,
+        selectionEnd: offsets.end,
+        blanks: blankAnchors,
+        questions: questionRefs,
+        questionDisplayNo,
+      }),
     });
-  }, [content]);
+  }, [content, blankAnchors, questionRefs, questionDisplayNo]);
 
   const clearSelection = () => {
     window.getSelection()?.removeAllRanges();
@@ -372,9 +527,7 @@ function PassageBody({
                       key={`${run.start}-${run.end}`}
                       type="button"
                       data-blank-no={run.blankNo}
-                      onClick={() => onJumpQuestion(section.questions.find((q) =>
-                        section.questionType === "new_question" ? q.ordinal + 41 === run.blankNo : questionDisplayNo.get(q.id) === run.blankNo,
-                      )?.id ?? "")}
+                      onClick={() => onJumpQuestion(questionIdByBlankNo.get(run.blankNo!) ?? "")}
                       className={`mx-0.5 inline-flex h-5 min-w-5 select-none items-center justify-center rounded px-1 text-[11px] font-semibold align-middle transition-all ${
                         isActiveBlank
                           ? "scale-110 bg-[var(--color-accent)] text-[var(--color-accent-contrast,var(--color-surface))]"
@@ -462,29 +615,71 @@ function PassageBody({
         })}
       </div>
 
+      {/*
+        ★ Context Inspector 常驻停靠区（图二红框位）。
+        原先这里是贴选区的浮层（w-72 + translateY(-100%)）—— 正文第一段划词时飞出
+        视口顶部、并盖住吸顶章节导航。改成固定停靠在侧栏同列左下方：
+        正文**彻底不被自己的操作菜单遮挡**，且鼠标挪开时操作上下文不丢（浮层靠
+        「外点即关」，一旦去点选项就把上下文清了）。
+      */}
       {capture && (
-        <div
+        <aside
           data-exam-capture-bar
+          data-exam-context-dock
+          aria-label="选区上下文"
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
-          style={{
-            position: "fixed",
-            left: Math.min(Math.max(capture.x, 140), window.innerWidth - 140),
-            top: Math.max(capture.y - 8, 72),
-            transform: "translateX(-50%) translateY(-100%)",
-          }}
-          className="z-50 w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-xl"
+          className="exam-context-dock fixed bottom-4 z-40 flex max-h-[min(70vh,34rem)] w-60 flex-col gap-2 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-xl"
         >
-          <p className="mb-2 line-clamp-2 rounded-md bg-[var(--color-accent-soft,var(--color-surface))] p-1.5 text-[11px] italic text-[var(--color-ink-soft)]">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-ink-soft)]">
+              选区上下文
+            </p>
+            <button
+              type="button"
+              onClick={() => setCapture(null)}
+              aria-label="收起选区上下文"
+              className="text-[11px] text-[var(--color-ink-soft)] transition-colors hover:text-[var(--color-ink)]"
+            >
+              收起
+            </button>
+          </div>
+          <p className="line-clamp-3 rounded-md bg-[var(--color-accent-soft,var(--color-surface))] p-1.5 text-[11px] italic text-[var(--color-ink-soft)]">
             「{capture.excerpt}」
           </p>
+          {capture.match && (
+            <div
+              data-exam-proximity
+              data-proximity-reason={capture.match.reason}
+              className="rounded-md border border-[var(--color-border)] p-2"
+            >
+              <p className="flex items-baseline gap-1 text-[11px] text-[var(--color-ink)]">
+                <span aria-hidden>🎯</span>
+                <strong className="font-semibold">第 {capture.match.displayNo} 空</strong>
+                <span className="text-[10px] text-[var(--color-ink-soft)]">
+                  {PROXIMITY_REASON_LABELS[capture.match.reason]}
+                </span>
+              </p>
+              {capture.match.stem && (
+                <p className="mt-0.5 line-clamp-2 text-[10px] text-[var(--color-ink-soft)]">{capture.match.stem}</p>
+              )}
+              <button
+                type="button"
+                disabled={!onCreateAnnotation || busy}
+                onClick={() => void createAnnotatedEntry(capture.match!.targetQuestionId)}
+                className="mt-1.5 w-full rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-[11px] font-semibold text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50"
+              >
+                {capture.match.confidence === "high" ? "一键建原文分析" : "按此空建原文分析"}
+              </button>
+            </div>
+          )}
           {capture.mode === "menu" && (
             <div className="flex flex-col gap-1.5">
               <button
                 type="button"
                 disabled={!onCreateAnnotation || busy}
                 onClick={() => setCapture((c) => (c ? { ...c, mode: "annotate" } : c))}
-                className="rounded-md bg-[var(--color-accent)] px-2 py-1.5 text-xs font-semibold text-[var(--color-accent-contrast,var(--color-surface))] disabled:opacity-50"
+                className="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs text-[var(--color-ink)] hover:border-[var(--color-accent)] disabled:opacity-50"
               >
                 建原文分析条目
               </button>
@@ -526,8 +721,10 @@ function PassageBody({
           )}
           {capture.mode === "annotate" && (
             <div className="max-h-48 space-y-1 overflow-y-auto">
-              <p className="text-[10px] text-[var(--color-ink-soft)]">挂到哪道题？（锚点已自动带入）</p>
-              {section.questions.map((q) => (
+              <p className="text-[10px] text-[var(--color-ink-soft)]">
+                挂到哪道题？（锚点已自动带入{capture.match ? "，就近命中排第一" : ""}）
+              </p>
+              {orderedQuestions.map((q) => (
                 <button
                   key={q.id}
                   type="button"
@@ -535,7 +732,7 @@ function PassageBody({
                   onClick={() => void createAnnotatedEntry(q.id)}
                   className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] hover:bg-[var(--color-accent-soft,var(--color-surface))] disabled:opacity-50"
                 >
-                  第 {questionDisplayNo.get(q.id)} 题 · {q.stem}
+                  {q.id === capture.match?.targetQuestionId ? "🎯 " : ""}第 {questionDisplayNo.get(q.id)} 题 · {q.stem}
                 </button>
               ))}
               <button type="button" onClick={() => setCapture(null)} className="text-[10px] text-[var(--color-ink-soft)]">取消</button>
@@ -544,7 +741,7 @@ function PassageBody({
           {capture.mode === "mark" && (
             <div className="max-h-48 space-y-1 overflow-y-auto">
               <p className="text-[10px] text-[var(--color-ink-soft)]">标记关联哪道题？（随该题保存，导出可见）</p>
-              {section.questions.map((q) => (
+              {orderedQuestions.map((q) => (
                 <button
                   key={q.id}
                   type="button"
@@ -556,7 +753,7 @@ function PassageBody({
                   }}
                   className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] hover:bg-sky-50 disabled:opacity-50 dark:hover:bg-sky-950/40"
                 >
-                  第 {questionDisplayNo.get(q.id)} 题 · {q.stem}
+                  {q.id === capture.match?.targetQuestionId ? "🎯 " : ""}第 {questionDisplayNo.get(q.id)} 题 · {q.stem}
                 </button>
               ))}
               <button type="button" onClick={() => setCapture(null)} className="text-[10px] text-[var(--color-ink-soft)]">取消</button>
@@ -589,7 +786,7 @@ function PassageBody({
               </span>
             </div>
           )}
-        </div>
+        </aside>
       )}
     </div>
   );
@@ -614,7 +811,7 @@ function OptionRow({
   onToggleMark?: (anchor: { start: number; end: number }) => void;
 }) {
   const rowRef = useRef<HTMLButtonElement>(null);
-  const [markCapture, setMarkCapture] = useState<{ x: number; y: number; start: number; end: number; excerpt: string } | null>(null);
+  const [markCapture, setMarkCapture] = useState<{ anchor: SelectionAnchor; start: number; end: number; excerpt: string } | null>(null);
   useEffect(() => {
     if (!markCapture) return;
     const onMouseDown = (event: MouseEvent) => {
@@ -644,8 +841,7 @@ function OptionRow({
     }
     const rect = window.getSelection()?.getRangeAt(0).getBoundingClientRect?.();
     setMarkCapture({
-      x: rect ? rect.left + rect.width / 2 : 120,
-      y: rect ? rect.top : 120,
+      anchor: selectionAnchorFromRect(rect),
       start: offsets.start,
       end: offsets.end,
       excerpt: text.slice(offsets.start, offsets.end),
@@ -719,18 +915,7 @@ function OptionRow({
         </span>
       )}
       {markCapture && onToggleMark && !readOnly && (
-        <div
-          data-exam-capture-bar
-          onClick={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          style={{
-            position: "fixed",
-            left: Math.min(Math.max(markCapture.x, 140), window.innerWidth - 140),
-            top: Math.max(markCapture.y - 8, 72),
-            transform: "translateX(-50%) translateY(-100%)",
-          }}
-          className="z-50 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-xl"
-        >
+        <SelectionActionPopover anchor={markCapture.anchor} width={256}>
           <p className="mb-2 line-clamp-2 rounded-md bg-[var(--color-accent-soft,var(--color-surface))] p-1.5 text-[11px] italic text-[var(--color-ink-soft)]">
             「{markCapture.excerpt}」
           </p>
@@ -747,7 +932,7 @@ function OptionRow({
           >
             {marked ? "取消标记" : "标记重点"}
           </button>
-        </div>
+        </SelectionActionPopover>
       )}
     </div>
   );
@@ -800,7 +985,7 @@ function ChoiceQuestion({
 
   // v2 §4.6：题干划词（scope='stem'）——浮动条直接标记/取消，不走题号选择器。
   const stemRef = useRef<HTMLParagraphElement>(null);
-  const [stemCapture, setStemCapture] = useState<{ x: number; y: number; start: number; end: number; excerpt: string } | null>(null);
+  const [stemCapture, setStemCapture] = useState<{ anchor: SelectionAnchor; start: number; end: number; excerpt: string } | null>(null);
   useEffect(() => {
     if (!stemCapture) return;
     const onMouseDown = (event: MouseEvent) => {
@@ -830,8 +1015,7 @@ function ChoiceQuestion({
     }
     const rect = window.getSelection()?.getRangeAt(0).getBoundingClientRect?.();
     setStemCapture({
-      x: rect ? rect.left + rect.width / 2 : 120,
-      y: rect ? rect.top : 120,
+      anchor: selectionAnchorFromRect(rect),
       start: offsets.start,
       end: offsets.end,
       excerpt: question.stem.slice(offsets.start, offsets.end),
@@ -884,18 +1068,7 @@ function ChoiceQuestion({
         )}
       </div>
       {stemCapture && onToggleStemMark && !readOnly && (
-        <div
-          data-exam-capture-bar
-          onClick={(event) => event.stopPropagation()}
-          onPointerDown={(event) => event.stopPropagation()}
-          style={{
-            position: "fixed",
-            left: Math.min(Math.max(stemCapture.x, 140), window.innerWidth - 140),
-            top: Math.max(stemCapture.y - 8, 72),
-            transform: "translateX(-50%) translateY(-100%)",
-          }}
-          className="z-50 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-xl"
-        >
+        <SelectionActionPopover anchor={stemCapture.anchor} width={256}>
           <p className="mb-2 line-clamp-2 rounded-md bg-[var(--color-accent-soft,var(--color-surface))] p-1.5 text-[11px] italic text-[var(--color-ink-soft)]">
             「{stemCapture.excerpt}」
           </p>
@@ -912,7 +1085,7 @@ function ChoiceQuestion({
           >
             {stemMarked ? "取消标记" : "标记重点"}
           </button>
-        </div>
+        </SelectionActionPopover>
       )}
       {cleared && (
         <p className="mb-2 inline-block rounded-md bg-[var(--color-surface)] px-2 py-1 text-[11px] text-[var(--color-ink-soft)] ring-1 ring-[var(--color-border)]">

@@ -82,6 +82,8 @@ type MockOptions = {
   patchVersionStep?: boolean;
   /** V 测试：GET /l3/sheets/:id 的详情行覆盖（冲突恢复动作读服务器版本用）。 */
   detailSheet?: Record<string, unknown>;
+  /** 建原文分析条目的响应体（`{ item }` 形状）；不传则沿用只读列表桩。 */
+  annotationItem?: Record<string, unknown>;
 };
 
 function setupMock(options: MockOptions = {}) {
@@ -132,7 +134,9 @@ function setupMock(options: MockOptions = {}) {
         }),
       };
     }
-    if (path.startsWith("/l3/question-annotations")) return { items: [] };
+    if (path.startsWith("/l3/question-annotations")) {
+      return options.annotationItem ? { item: options.annotationItem } : { items: [] };
+    }
     if (path === "/l3/annotation-tags") return { entry: [], option: [] };
     return {};
   });
@@ -842,6 +846,159 @@ describe("批次二增补：内容标记 marks（v2 §4.6）", () => {
       await Promise.resolve();
     });
     expect(document.querySelector("[data-exam-capture-bar]")).toBeNull();
+  });
+});
+
+/**
+ * 卷面选区停靠区（Context Inspector）+ 就近绑定。
+ *
+ * 钉三件事，每一件都对应一个真实缺陷：
+ * 1. 划选包住空位时，停靠区直接给出「第 N 空」——用户不必在 20 项下拉里人肉找题；
+ * 2. 停靠区是**固定停靠**，不是贴选区的浮层 —— 旧实现用内联
+ *    `translateY(-100%)`，顶部选区会把操作菜单推出视口并盖住吸顶章节导航；
+ * 3. 一键建原文分析必须建到**就近命中的那一道题**上（绑错题的代价是注记挂错题，
+ *    比不绑定更坏）。
+ */
+describe("卷面选区停靠区 · 就近绑定（2026-10-02）", () => {
+  // 「Alpha 〖1〗 beta gamma 〖2〗 delta.」空1=[6,9)、空2=[21,24)（UTF-16 偏移）
+  const CLOZE_TEXT = "Alpha 〖1〗 beta gamma 〖2〗 delta.";
+  const clozePaper: ExamPaper = {
+    id: PAPER_ID,
+    title: "2025 英语二 · 完型",
+    direction: "考研",
+    metadata: {},
+    sections: [{
+      key: "s-cloze",
+      title: "Section I Use of English",
+      questionType: "cloze",
+      sourceId: null,
+      fileKey: "rlf-cloze",
+      questionIds: [Q1, Q2],
+      missing: false,
+      source_title: null,
+      source_content: CLOZE_TEXT,
+      questions: [
+        {
+          id: Q1, ordinal: 0, stem: "1. 第 1 空",
+          options: [{ key: "A", text: "甲" }, { key: "B", text: "乙" }],
+          answer: { choice: "A" }, explanation: null, evidence: [],
+        },
+        {
+          id: Q2, ordinal: 1, stem: "2. 第 2 空",
+          options: [{ key: "A", text: "丙" }, { key: "B", text: "丁" }],
+          answer: { choice: "B" }, explanation: null, evidence: [],
+        },
+      ],
+    }],
+  };
+
+  /** 按 content 全局偏移划选**跨空位**的区间（`[data-content-off]` 片段不含空位角标）。 */
+  function selectContentRange(container: Element, start: number, end: number): void {
+    const spans = [...container.querySelectorAll<HTMLElement>("[data-content-off]")];
+    const locate = (offset: number) => {
+      const el = spans.find((candidate) => {
+        const base = Number(candidate.dataset.contentOff);
+        const len = candidate.textContent?.length ?? 0;
+        return base <= offset && offset <= base + len;
+      });
+      if (!el) throw new Error(`选区偏移 ${offset} 不落在任何文本片段上`);
+      return { node: el.firstChild as Text, offset: offset - Number(el.dataset.contentOff) };
+    };
+    const from = locate(start);
+    const to = locate(end);
+    const range = document.createRange();
+    range.setStart(from.node, from.offset);
+    range.setEnd(to.node, to.offset);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  async function openDock(start: number, end: number): Promise<HTMLElement> {
+    await renderPaper(clozePaper);
+    await waitFor(() => expect(document.querySelector("[data-ann-passage]")).toBeTruthy());
+    const passage = document.querySelector("[data-ann-passage]")!;
+    await act(async () => {
+      selectContentRange(passage, start, end);
+      fireEvent.mouseUp(passage);
+      await Promise.resolve();
+    });
+    const dock = document.querySelector<HTMLElement>("[data-exam-context-dock]");
+    expect(dock).toBeTruthy();
+    return dock!;
+  }
+
+  it("选区包住空位 → 停靠区直接给出「第 1 空」（证据级 high）", async () => {
+    const dock = await openDock(0, 9);
+    const proximity = dock.querySelector("[data-exam-proximity]")!;
+    expect(proximity.getAttribute("data-proximity-reason")).toBe("enclosed_blank");
+    expect(proximity.textContent).toContain("第 1 空");
+    expect(proximity.textContent).toContain("选区包含该空");
+    expect(screen.getByRole("button", { name: "一键建原文分析" })).toBeTruthy();
+  });
+
+  it("选区内无空位 → 按字符中点就近推荐（第 2 空 / nearest_blank）", async () => {
+    // [16,20) 中点 18：空1 中点 7.5（距 10.5）、空2 中点 22.5（距 4.5）→ 空2
+    const dock = await openDock(16, 20);
+    const proximity = dock.querySelector("[data-exam-proximity]")!;
+    expect(proximity.getAttribute("data-proximity-reason")).toBe("nearest_blank");
+    expect(proximity.textContent).toContain("第 2 空");
+    // 推断级判定不得伪装成证据级：文案与主按钮都要如实降档
+    expect(proximity.textContent).toContain("距该空最近");
+    expect(screen.getByRole("button", { name: "按此空建原文分析" })).toBeTruthy();
+  });
+
+  it("停靠区是固定停靠：不得再用内联 transform 位移（倒挂飞出视口的根因）", async () => {
+    const dock = await openDock(0, 9);
+    // 回归钉：旧实现 `top: max(y-8,72)` + `translateY(-100%)` —— 夹取先于位移 ⇒ 夹取失效。
+    expect(dock.style.transform).toBe("");
+    expect(dock.style.position).toBe("");
+    expect(dock.className).toContain("exam-context-dock");
+    // 与既有浮条契约共存：外点关闭依赖这个属性
+    expect(dock.hasAttribute("data-exam-capture-bar")).toBe(true);
+  });
+
+  it("一键建原文分析建到就近命中的题上（请求体带 questionId 与锚点）", async () => {
+    const apiFetchMock = setupMock({
+      annotationItem: {
+        id: "00000000-0000-4000-8000-000000000777",
+        user_id: "00000000-0000-4000-8000-000000000001",
+        question_id: Q1, ordinal: 0, anchor_start: 0, anchor_end: 9,
+        excerpt: "Alpha 〖1〗", note: "", entry_tags: [], option_tags: {},
+        stage: "draft", sheet_id: SHEET_ID, review: null, status: "active",
+        created_at: "2026-10-02T00:00:00Z", updated_at: "2026-10-02T00:00:00Z",
+      },
+    });
+    await openDock(0, 9);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "一键建原文分析" }));
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    });
+
+    const createCall = apiFetchMock.mock.calls.find(
+      ([path, init]) => path === "/l3/question-annotations" && (init as { method?: string } | undefined)?.method === "POST",
+    );
+    expect(createCall).toBeTruthy();
+    expect(JSON.parse((createCall![1] as { body: string }).body)).toMatchObject({
+      questionId: Q1,
+      anchorStart: 0,
+      anchorEnd: 9,
+      sheetId: SHEET_ID,
+    });
+  });
+
+  it("就近命中排候选第 1 位：标记重点的选择器里它带 🎯 且在最前", async () => {
+    const dock = await openDock(16, 20);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "标记重点" }));
+      await Promise.resolve();
+    });
+    const candidates = [...dock.querySelectorAll("button")]
+      .filter((button) => button.textContent?.includes("题 ·"));
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]!.textContent).toContain("🎯");
+    expect(candidates[0]!.textContent).toContain("第 2 题");
+    expect(candidates[1]!.textContent).not.toContain("🎯");
   });
 });
 

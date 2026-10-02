@@ -33,23 +33,44 @@ function ReviewModeSelector({
 }) {
   return (
     <div className="space-y-6">
-      <Card
-        className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]"
-        onClick={() => onStart("review")}
-      >
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
-            <Sparkles className="h-7 w-7 text-[var(--color-accent)]" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Card
+          className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]"
+          onClick={() => onStart("review")}
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
+              <Sparkles className="h-7 w-7 text-[var(--color-accent)]" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-[var(--color-ink)]">快速开始</h3>
+              <p className="text-sm text-[var(--color-ink-soft)]">按 FSRS 进度快速过完到期卡片</p>
+            </div>
+            <Button size="sm">开始</Button>
           </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-[var(--color-ink)]">快速开始</h3>
-            <p className="text-sm text-[var(--color-ink-soft)]">直接进入标准复习</p>
-          </div>
-          <Button size="sm">开始</Button>
-        </div>
-      </Card>
+        </Card>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Card
+          className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]"
+          onClick={() => onStart("zen")}
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
+              <InfinityIcon className="h-7 w-7 text-[var(--color-accent)]" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-semibold text-[var(--color-ink)]">Zen 禅模式</h3>
+                <Badge tone="accent">沉浸心流</Badge>
+              </div>
+              <p className="text-sm text-[var(--color-ink-soft)]">无限循环自动续载，无倒计时焦虑</p>
+            </div>
+            <Button size="sm" variant="secondary">进入</Button>
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {reviewModes.map((m) => {
           const Icon = m.icon;
           // 阶梯会话（实验）默认关闭，且开关只在设置页 —— 用户从复习页完全看不出
@@ -135,7 +156,7 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
     queue,
     hasMore,
     loadingMore,
-    lastAnswer,
+    canUndo,
     startReview,
     answer,
     skip,
@@ -185,7 +206,7 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
   // Zen mode: auto-restart when completed AND no more pages remain.
   // 队列分页（P2）：completed 但仍有更多卡片时由 useReview 自动续载下一页；
   // 只有无更多卡片时禅模式才重新拉取队列，避免无限循环中断。
-  // force=true：绕过 sessionStorage 缓存（缓存的已完成会话会让 startReview
+  // force=true：绕过会话缓存（缓存的已完成会话会让 startReview
   // 反复恢复同一 completed 状态，导致无限"重新加载队列中..."），真实重拉队列。
   useEffect(() => {
     if (completed && isZen && !hasMore) {
@@ -219,7 +240,7 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
             历史
             <kbd className="ml-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-soft)]">H</kbd>
           </Button>
-          {lastAnswer && !isPreview && (
+          {canUndo && !isPreview && (
             <Button variant="ghost" size="sm" disabled={loading} onClick={() => void undoLast()}>
               <Undo2 className="h-4 w-4" />撤销
             </Button>
@@ -280,7 +301,7 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
             onSkip={skip}
             onSuspend={isPreview ? undefined : suspendCurrent}
             onUndo={isPreview ? undefined : undoLast}
-            canUndo={!isPreview && !!lastAnswer}
+            canUndo={!isPreview && canUndo}
             onPrev={browsePrev}
             onNext={browseNext}
             onClearWeakSignal={clearWeakSignal}
@@ -334,7 +355,7 @@ export function ReviewPage() {
   // 检测到未完成的复习会话时，不静默进入；先展示"继续上次 / 重新开始"确认条。
   const [pendingRestore, setPendingRestore] = useState<{ mode: string; reviewed: number; total: number } | null>(null);
 
-  // 首次挂载时检查 sessionStorage 是否有可恢复的复习会话。
+  // 首次挂载时检查 localStorage 是否有可恢复的复习会话（TTL 24h，与 useReview 同口径）。
   // 命中后先提示用户选择"继续上次"或"重新开始"（不静默自动进入）；
   // 未命中则保持 select 模式让用户手动选模式。
   useEffect(() => {
@@ -342,17 +363,17 @@ export function ReviewPage() {
       if (typeof window === "undefined") return;
       const prefix = "vocab:review:session:";
       const now = Date.now();
-      const TTL = 30 * 60 * 1000;
+      const TTL = 24 * 60 * 60 * 1000;
       let best: { mode: string; reviewed: number; total: number; savedAt: number } | null = null;
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const key = window.sessionStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
         if (!key || !key.startsWith(prefix)) continue;
-        const raw = window.sessionStorage.getItem(key);
+        const raw = window.localStorage.getItem(key);
         if (!raw) continue;
         try {
           const parsed = JSON.parse(raw) as { mode: string; savedAt: number; stats: { reviewed: number }; completed: boolean; queue: unknown[] };
           if (now - parsed.savedAt > TTL) {
-            window.sessionStorage.removeItem(key);
+            window.localStorage.removeItem(key);
             continue;
           }
           if (parsed.completed || !parsed.queue || parsed.queue.length === 0) continue;
@@ -379,16 +400,16 @@ export function ReviewPage() {
     try {
       if (typeof window === "undefined") return;
       const prefix = "vocab:review:session:";
-      for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
-        const key = window.sessionStorage.key(i);
+      for (let i = window.localStorage.length - 1; i >= 0; i--) {
+        const key = window.localStorage.key(i);
         if (!key || !key.startsWith(prefix)) continue;
-        const raw = window.sessionStorage.getItem(key);
+        const raw = window.localStorage.getItem(key);
         if (!raw) continue;
         try {
           const parsed = JSON.parse(raw) as { mode: string };
-          if (parsed.mode === m) window.sessionStorage.removeItem(key);
+          if (parsed.mode === m) window.localStorage.removeItem(key);
         } catch {
-          window.sessionStorage.removeItem(key);
+          window.localStorage.removeItem(key);
         }
       }
     } catch {
@@ -481,23 +502,23 @@ export function ReviewPage() {
  * - 从详情页返回 / 浏览器恢复（force=false）：若存在未完成的缓存会话则命中；否则新拉队列。
  */
 function BootstrapReviewSession({ reviewMode, onBack, force }: { reviewMode: string; onBack: () => void; force?: boolean }) {
-  // 显式点击"开始"：首次挂载（force=true 的那次）清掉对应 mode 的 sessionStorage 缓存。
+  // 显式点击"开始"：首次挂载（force=true 的那次）清掉对应 mode 的 localStorage 缓存。
   // 注意：必须用 useEffect，useMemo 不保证副作用必然执行。
   useEffect(() => {
     if (!force) return;
     try {
       if (typeof window === "undefined") return;
       const prefix = "vocab:review:session:";
-      for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
-        const key = window.sessionStorage.key(i);
+      for (let i = window.localStorage.length - 1; i >= 0; i--) {
+        const key = window.localStorage.key(i);
         if (!key || !key.startsWith(prefix)) continue;
-        const raw = window.sessionStorage.getItem(key);
+        const raw = window.localStorage.getItem(key);
         if (!raw) continue;
         try {
           const parsed = JSON.parse(raw) as { mode: string };
-          if (parsed.mode === reviewMode) window.sessionStorage.removeItem(key);
+          if (parsed.mode === reviewMode) window.localStorage.removeItem(key);
         } catch {
-          window.sessionStorage.removeItem(key);
+          window.localStorage.removeItem(key);
         }
       }
     } catch {

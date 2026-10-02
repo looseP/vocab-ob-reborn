@@ -21,7 +21,7 @@ export interface ReviewCard {
     pos: string | null;
     cefr: string | null;
     // ── T3 Hint 阶梯（2026-09-25）：queue 方案 A 直载。可选 = 兼容旧
-    // sessionStorage 缓存（TTL 30min 内的会话恢复不含新字段）──
+    // 会话缓存（TTL 内的会话恢复可能不含新字段）──
     /** H1 例句（未回灌批次为空数组）。exam 扩展见 @/domain/word-exam。 */
     examples?: unknown[];
     /** H2 原型意象原文（前端遮罩 + isSpoiler）。 */
@@ -85,8 +85,8 @@ function newIdempotencyKey(): string {
   return `rev-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** 最近一次已提交评分（撤销目标）。undo RPC 仅支持带 previous_snapshot 的 answer 日志。 */
-interface LastAnswer {
+/** 已提交评分（撤销目标）。undo RPC 仅支持带 previous_snapshot 的 answer 日志。 */
+export interface LastAnswer {
   card: ReviewCard;
   rating: Rating;
   reviewLogId: string;
@@ -95,12 +95,22 @@ interface LastAnswer {
 }
 
 /**
+ * 撤销栈深度上限。
+ *
+ * 栈里每项都握着一张完整 `ReviewCard`（含 examples / note_entries），而整个栈会被
+ * 序列化进 localStorage。上限既防内存与配额无界增长，也把"连续撤销"限制在一个
+ * 人类可理解的范围内（撤回十几步之前的评分通常意味着该重开会话，而不是继续点撤销）。
+ */
+export const MAX_UNDO_DEPTH = 10;
+
+/**
  * 会话级缓存 key：避免"查看详情 → 返回"后复习队列被重置。
  * 按 (mode, wordIds) 分桶，不同模式/勾选集合的会话互不污染。
- * TTL = 30min，浏览器关闭或标签页关闭自动清理（sessionStorage 语义）。
+ * TTL = 24h：localStorage 不随标签页关闭清空，误关浏览器/崩溃后可恢复进度；
+ * 过期靠 sweepExpiredCache + 读写时校验清理，避免长期堆积。
  */
 const STORAGE_PREFIX = "vocab:review:session:";
-const STORAGE_TTL_MS = 30 * 60 * 1000;
+const STORAGE_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface PersistedSession {
   mode: string;
@@ -116,6 +126,11 @@ interface PersistedSession {
   suspended?: number;
   /** 队列是否还有更多卡片可继续分页加载。旧缓存无此字段时按 false 处理（到末尾再探测）。 */
   hasMore?: boolean;
+  /**
+   * 撤销栈（栈顶在前）。刷新/误关浏览器后仍能连续撤销。
+   * 旧缓存无此字段时按空栈处理——旧格式里的 `lastAnswer` 已随本次升级废弃。
+   */
+  undoStack?: LastAnswer[];
   savedAt: number;
 }
 
@@ -127,11 +142,11 @@ function cacheKey(mode: string, wordIds?: string[]): string {
 function readCache(mode: string, wordIds?: string[]): PersistedSession | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(cacheKey(mode, wordIds));
+    const raw = localStorage.getItem(cacheKey(mode, wordIds));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PersistedSession;
     if (Date.now() - (parsed.savedAt ?? 0) > STORAGE_TTL_MS) {
-      sessionStorage.removeItem(cacheKey(mode, wordIds));
+      localStorage.removeItem(cacheKey(mode, wordIds));
       return null;
     }
     return parsed;
@@ -146,7 +161,7 @@ function writeCache(session: Omit<PersistedSession, "savedAt"> & { wordIds?: str
     const key = cacheKey(session.mode, session.wordIds);
     const payload: PersistedSession = { ...session, savedAt: Date.now() };
     delete (payload as { wordIds?: string[] }).wordIds;
-    sessionStorage.setItem(key, JSON.stringify(payload));
+    localStorage.setItem(key, JSON.stringify(payload));
   } catch {
     /* quota / private mode: 静默失败，行为退化为无缓存 */
   }
@@ -155,25 +170,25 @@ function writeCache(session: Omit<PersistedSession, "savedAt"> & { wordIds?: str
 function clearCache(mode: string, wordIds?: string[]): void {
   if (typeof window === "undefined") return;
   try {
-    sessionStorage.removeItem(cacheKey(mode, wordIds));
+    localStorage.removeItem(cacheKey(mode, wordIds));
   } catch {
     /* ignore */
   }
 }
 
-/** 清除所有过期的复习会话缓存，避免 sessionStorage 长期堆积碎片。 */
+/** 清除所有过期的复习会话缓存，避免 localStorage 长期堆积碎片。 */
 function sweepExpiredCache(): void {
   if (typeof window === "undefined") return;
   try {
     const now = Date.now();
-    for (let i = sessionStorage.length - 1; i >= 0; i--) {
-      const key = sessionStorage.key(i);
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
       if (!key || !key.startsWith(STORAGE_PREFIX)) continue;
-      const raw = sessionStorage.getItem(key);
+      const raw = localStorage.getItem(key);
       if (!raw) continue;
       const parsed = JSON.parse(raw) as PersistedSession;
       if (now - (parsed.savedAt ?? 0) > STORAGE_TTL_MS) {
-        sessionStorage.removeItem(key);
+        localStorage.removeItem(key);
       }
     }
   } catch {
@@ -193,7 +208,17 @@ export function useReview() {
   const [skipped, setSkipped] = useState(0);
   const [suspended, setSuspended] = useState(0);
   const [completed, setCompleted] = useState(false);
-  const [lastAnswer, setLastAnswer] = useState<LastAnswer | null>(null);
+  /**
+   * 撤销栈（栈顶在前，上限 MAX_UNDO_DEPTH）。
+   *
+   * 为什么是栈而不是单个 `lastAnswer`：撤销本身也写 review_logs（一条 rating=NULL 的
+   * 审计行），它**不**带 previous_snapshot，因此不可再撤销；而栈里每个元素对应一条
+   * 真实评分日志。连续撤销 = 依次弹出栈顶，各自独立可撤，互不干扰。
+   *
+   * 后端 `undo_review_log` 的"仅最新一条可撤"约束是**按 progress_id 分组**判定的，
+   * 与栈的严格 LIFO 顺序天然一致：栈顶元素必是该词最新未撤销的评分。
+   */
+  const [undoStack, setUndoStack] = useState<LastAnswer[]>([]);
   /** 队列是否还有更多卡片可继续分页加载（P2）。 */
   const [hasMore, setHasMore] = useState(false);
   /** 正在加载下一页。 */
@@ -225,7 +250,7 @@ export function useReview() {
         setHasMore(cached.hasMore ?? false);
         setLoadingMore(false);
         setError(null);
-        setLastAnswer(null);
+        setUndoStack(cached.undoStack ?? []);
         addToast("info", `已恢复复习会话（进度 ${cached.stats.reviewed}/${cached.queue.length}）`);
         return;
       }
@@ -240,7 +265,7 @@ export function useReview() {
     setSuspended(0);
     setHasMore(false);
     setLoadingMore(false);
-    setLastAnswer(null);
+    setUndoStack([]);
     setStats({ reviewed: 0, again: 0, hard: 0, good: 0, easy: 0 });
     clearCache(mode, wordIds);
     try {
@@ -304,7 +329,8 @@ export function useReview() {
       });
       // cram 返回合成 reviewLogId，服务端无日志可撤销；仅真实评分记录撤销目标
       if (typeof result.reviewLogId === "string" && !result.reviewLogId.startsWith("cram-")) {
-        setLastAnswer({ card: currentCard, rating, reviewLogId: result.reviewLogId, indexBefore: currentIndex });
+        const entry: LastAnswer = { card: currentCard, rating, reviewLogId: result.reviewLogId, indexBefore: currentIndex };
+        setUndoStack((prev) => [entry, ...prev].slice(0, MAX_UNDO_DEPTH));
       }
       setStats((prev) => ({
         reviewed: prev.reviewed + 1,
@@ -335,9 +361,13 @@ export function useReview() {
     }
   }, [currentCard, sessionId, currentIndex, queue.length, addToast, mode]);
 
-  /** 撤销最近一次评分：服务端恢复 FSRS 快照，前端把卡片退回队首并回滚统计。 */
+  /**
+   * 撤销栈顶评分：服务端恢复 FSRS 快照，前端把卡片退回提交前的位置并回滚统计。
+   * 可连续调用——每次弹出栈顶一条，逐级回退。
+   */
   const undoLast = useCallback(async () => {
-    if (!lastAnswer || !sessionId) return;
+    const target = undoStack[0];
+    if (!target || !sessionId) return;
     if (busyRef.current) return;
     busyRef.current = true;
     setLoading(true);
@@ -345,58 +375,66 @@ export function useReview() {
       await apiFetch("/review/undo", {
         method: "POST",
         body: JSON.stringify({
-          reviewLogId: lastAnswer.reviewLogId,
+          reviewLogId: target.reviewLogId,
           sessionId,
           idempotencyKey: newIdempotencyKey(),
         }),
       });
-      setLastAnswer(null);
+      // 只有服务端确认撤销成功才弹栈，避免把不可撤销的目标从栈里抹掉
+      setUndoStack((prev) => prev.slice(1));
       setCompleted(false);
-      setCurrentIndex(lastAnswer.indexBefore);
+      setCurrentIndex(target.indexBefore);
+      // 卡片通常仍在队列里（评分只推进游标、不移除元素）；分页续载等路径下若已不在，
+      // 按提交前的位置插回，保证撤销后一定能重新看到这张卡。
+      setQueue((prev) => {
+        if (prev.some((c) => c.progressId === target.card.progressId)) return prev;
+        const next = [...prev];
+        next.splice(Math.min(target.indexBefore, next.length), 0, target.card);
+        return next;
+      });
       setStats((prev) => ({
         reviewed: Math.max(0, prev.reviewed - 1),
-        again: Math.max(0, prev.again - (lastAnswer.rating === "again" ? 1 : 0)),
-        hard: Math.max(0, prev.hard - (lastAnswer.rating === "hard" ? 1 : 0)),
-        good: Math.max(0, prev.good - (lastAnswer.rating === "good" ? 1 : 0)),
-        easy: Math.max(0, prev.easy - (lastAnswer.rating === "easy" ? 1 : 0)),
+        again: Math.max(0, prev.again - (target.rating === "again" ? 1 : 0)),
+        hard: Math.max(0, prev.hard - (target.rating === "hard" ? 1 : 0)),
+        good: Math.max(0, prev.good - (target.rating === "good" ? 1 : 0)),
+        easy: Math.max(0, prev.easy - (target.rating === "easy" ? 1 : 0)),
       }));
-      addToast("success", `已撤销「${lastAnswer.card.word.lemma}」，卡片回到队首`);
+      addToast("success", `已撤销「${target.card.word.lemma}」的评分，可重新作答`);
     } catch (err) {
-      // 已被撤销过/非最新日志等情况：目标不再有效，清掉避免死循环重试
-      setLastAnswer(null);
+      // 已被撤销过/非最新日志等情况：目标不再有效，弹出避免死循环重试
+      setUndoStack((prev) => prev.slice(1));
       addToast("error", err instanceof Error ? err.message : "撤销失败");
     } finally {
       busyRef.current = false;
       setLoading(false);
     }
-  }, [lastAnswer, sessionId, addToast]);
+  }, [undoStack, sessionId, addToast]);
 
   // 每次渲染刷新 ref，使 toast action 永远调到最新闭包
   undoRef.current = () => void undoLast();
 
   /**
    * 消费侧栏"历史记录"中某条撤销请求（已在 ReviewHistoryDrawer 中发过 /review/undo），
-   * 前端做本地状态回滚：卡片进度、统计、lastAnswer。
-   * 约定：允许在无 lastAnswer 时调用（例如从详情返回 lastAnswer 被清，但服务端仍可撤回最新日志）。
+   * 前端做本地状态回滚：卡片进度、统计、撤销栈。
+   * 约定：允许在栈为空时调用（例如从详情返回撤销栈被清，但服务端仍可撤回该日志）。
+   *
+   * 侧栏可撤销任意条目（不再限最新一条），因此这里**不能**假设被撤的就是栈顶：
+   * 命中栈内任意一条都按它的 indexBefore 精确回退，并把该条从栈中摘除——
+   * 否则后续 undoLast 会拿一个已撤销的 reviewLogId 去请求，必然失败。
    */
   const applyHistoryUndo = useCallback(async (entry: { rating: string; reviewLogId: string; word_slug: string; word_lemma: string }) => {
     // 重要：ReviewHistoryDrawer 自己先 POST 了 /review/undo，然后才调用这个回调。
     // 因此这里绝对不能再次调用 undoLast()（会重复撤销，后端报错，stats 回滚也会 skip）。
-    // 只需做本地状态回滚：递减 reviewed 与对应 rating；若命中 lastAnswer 则使用其 indexBefore 精确回退。
+    // 只需做本地状态回滚：递减 reviewed 与对应 rating；若命中栈内条目则使用其 indexBefore 精确回退。
     if (busyRef.current) return;
     busyRef.current = true;
     try {
       const rating = entry.rating as typeof entry.rating & ("again" | "hard" | "good" | "easy");
-      const matchedLast = lastAnswer && lastAnswer.reviewLogId === entry.reviewLogId;
-      const prevCard = matchedLast ? lastAnswer.card.word.lemma : entry.word_lemma;
-      setLastAnswer(null);
+      const matched = undoStack.find((a) => a.reviewLogId === entry.reviewLogId);
+      const prevCard = matched ? matched.card.word.lemma : entry.word_lemma;
+      setUndoStack((prev) => prev.filter((a) => a.reviewLogId !== entry.reviewLogId));
       setCompleted(false);
-      setCurrentIndex((prev) => {
-        if (matchedLast) {
-          return (lastAnswer as NonNullable<typeof lastAnswer>).indexBefore;
-        }
-        return Math.max(0, prev - 1);
-      });
+      setCurrentIndex((prev) => (matched ? matched.indexBefore : Math.max(0, prev - 1)));
       setStats((prev) => ({
         reviewed: Math.max(0, prev.reviewed - 1),
         again: Math.max(0, prev.again - (rating === "again" ? 1 : 0)),
@@ -404,13 +442,13 @@ export function useReview() {
         good: Math.max(0, prev.good - (rating === "good" ? 1 : 0)),
         easy: Math.max(0, prev.easy - (rating === "easy" ? 1 : 0)),
       }));
-      addToast("success", matchedLast
-        ? `已撤销「${prevCard}」，卡片回到队首`
+      addToast("success", matched
+        ? `已撤销「${prevCard}」的评分，可重新作答`
         : `已撤销「${entry.word_lemma}」的评分，可重新评分`);
     } finally {
       busyRef.current = false;
     }
-  }, [lastAnswer, addToast]);
+  }, [undoStack, addToast]);
 
   /** 跳过当前卡：持久化 skip 日志（幂等），再本地推进。 */
   const skip = useCallback(() => {
@@ -428,7 +466,7 @@ export function useReview() {
           }),
         }).catch(() => addToast("warning", "跳过未能同步到服务器"));
       }
-      setLastAnswer(null);
+      setUndoStack([]);
       setSkipped((prev) => prev + 1);
       const next = currentIndex + 1;
       if (next >= queue.length) {
@@ -456,7 +494,7 @@ export function useReview() {
           idempotencyKey: newIdempotencyKey(),
         }),
       });
-      setLastAnswer(null);
+      setUndoStack([]);
       setSuspended((prev) => prev + 1);
       addToast("success", `已挂起「${currentCard.word.lemma}」，不再进入复习队列`);
       const next = currentIndex + 1;
@@ -560,8 +598,9 @@ export function useReview() {
   }, [completed, hasMore, loadingMore, loadMore]);
 
   /**
-   * 每当会话的核心进度变化，同步写入 sessionStorage。
+   * 每当会话的核心进度变化，同步写入 localStorage。
    * 缓存只在真实加载过队列后才写；未开始会话（queue 空）不写。
+   * undoStack 一并落盘：刷新/误关浏览器后撤销历史不丢（栈本身有 10 深度上限）。
    */
   useEffect(() => {
     if (!queue.length && !sessionId) return;
@@ -578,8 +617,9 @@ export function useReview() {
       suspended,
       completed,
       hasMore,
+      undoStack,
     });
-  }, [mode, sessionId, queue, currentIndex, stats, deferredNewCards, skipped, suspended, completed, hasMore]);
+  }, [mode, sessionId, queue, currentIndex, stats, deferredNewCards, skipped, suspended, completed, hasMore, undoStack]);
 
   return {
     currentCard,
@@ -599,8 +639,12 @@ export function useReview() {
     hasMore,
     /** 正在加载下一页。 */
     loadingMore,
-    /** 最近一次可撤销的评分（null = 无可撤销项）。 */
-    lastAnswer,
+    /** 最近一次可撤销的评分（null = 无可撤销项）。等价于 undoStack 栈顶。 */
+    lastAnswer: undoStack[0] ?? null,
+    /** 撤销栈（栈顶在前）；`canUndo` 即 length > 0。 */
+    undoStack,
+    /** 是否还有可撤销的评分（撤销栈非空）。 */
+    canUndo: undoStack.length > 0,
     startReview,
     answer,
     skip,
