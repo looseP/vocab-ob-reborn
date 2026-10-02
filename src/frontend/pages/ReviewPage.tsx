@@ -33,23 +33,44 @@ function ReviewModeSelector({
 }) {
   return (
     <div className="space-y-6">
-      <Card
-        className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]"
-        onClick={() => onStart("review")}
-      >
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
-            <Sparkles className="h-7 w-7 text-[var(--color-accent)]" />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Card
+          className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]"
+          onClick={() => onStart("review")}
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
+              <Sparkles className="h-7 w-7 text-[var(--color-accent)]" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-[var(--color-ink)]">快速开始</h3>
+              <p className="text-sm text-[var(--color-ink-soft)]">按 FSRS 进度快速过完到期卡片</p>
+            </div>
+            <Button size="sm">开始</Button>
           </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-[var(--color-ink)]">快速开始</h3>
-            <p className="text-sm text-[var(--color-ink-soft)]">直接进入标准复习</p>
-          </div>
-          <Button size="sm">开始</Button>
-        </div>
-      </Card>
+        </Card>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Card
+          className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]"
+          onClick={() => onStart("zen")}
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
+              <InfinityIcon className="h-7 w-7 text-[var(--color-accent)]" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-semibold text-[var(--color-ink)]">Zen 禅模式</h3>
+                <Badge tone="accent">沉浸心流</Badge>
+              </div>
+              <p className="text-sm text-[var(--color-ink-soft)]">无限循环自动续载，无倒计时焦虑</p>
+            </div>
+            <Button size="sm" variant="secondary">进入</Button>
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {reviewModes.map((m) => {
           const Icon = m.icon;
           // 阶梯会话（实验）默认关闭，且开关只在设置页 —— 用户从复习页完全看不出
