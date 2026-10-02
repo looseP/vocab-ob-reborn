@@ -173,8 +173,9 @@ expect(sheetRepo.openSheet).toHaveBeenCalledWith(
 | 依赖巡检 | `depcruise src --config .dependency-cruiser.cjs` | ✅ 480 模块 / 2086 依赖 / 0 违规 |
 | 覆盖率（全局阈值） | `vitest run --coverage`（排除 3 个 git 依赖测试文件后全绿） | ✅ **语句 92.89% / 分支 85.17% / 函数 92.82% / 行 94.76%**，远高于阈值 75/65/70/75 |
 | 测试收集门禁 | `tsx scripts/verify-test-collection.ts` | ✅ 317 文件收集 / 317 在盘 / 0 缺失 |
-| 路由棘轮 | `verify-route-complexity.ts` | ⚠️ 容器无 git 跑不了；替代取证：未触 `src/http/routes/`（`git diff --name-only origin/main -- src/http/routes \| wc -l` = 0） |
-| 分层覆盖率门禁 | `COVERAGE_BASE_REF=origin/main tsx scripts/report-layered-coverage.ts` | ⚠️ **容器内不可跑**：脚本要 `git rev-parse HEAD` 与 `git show <ref>:<file>`，容器无 git 二进制 → `git rev-parse HEAD failed`。CI-only |
+| 路由棘轮 | `npm run complexity:routes` | ✅ 容器内 `apt-get install -y git` 后可跑（见 §6.1.3） |
+| 分层覆盖率门禁 | `npm run coverage:layered`（`COVERAGE_BASE_REF=<PR base sha>`） | ✅ 同上；`Diff coverage 88.57% (PASS)`、Baseline ratchet PASS、四层全 PASS |
+| 完整工程门禁 | `npm run verify:engineering`（PR base sha 注入三个 `*_BASE_REF`） | ✅ **EXIT=0**（CI 上同名 job 曾 failure，原因见 §6.1.4） |
 
 #### 6.1.2 数字口径（避免后人被"文件数对不上"误导）
 
@@ -186,7 +187,25 @@ expect(sheetRepo.openSheet).toHaveBeenCalledWith(
 当成这条分支的数字 —— 那 2 个文件（`ladder-session-stepback.test.tsx`、`use-review-undo-stack.test.tsx`）
 属于**未推送的栈式分支**，不在「以 `origin/main` 为基线」的本分支里。
 
-#### 6.1.3 两条环境结论（新踩到，别重复探索）
+#### 6.1.3 三条环境结论（新踩到，别重复探索）
+
+0. **门禁不必留给 CI —— 容器内 `apt-get install git` 就能全量本地复现**（本次实测）。
+   `vocab-observatory-v2-migration:local` 是 Debian bookworm，apt 可用、网络可达；
+   装完 git 后 `npm run verify:engineering` **EXIT=0**。命令模板（注意：`--rm` 容器是临时的，
+   装 git 与跑门禁必须在**同一次** `docker run` 里；并且要 `git config --global --add safe.directory /src`
+   否则 root 读 uid 20564 的仓库会报 dubious ownership）：
+
+   ```bash
+   MSYS_NO_PATHCONV=1 docker run --rm --user root -e NODE_ENV=test \
+     -e COVERAGE_BASE_REF=<PR base sha> -e API_CONTRACT_BASE_REF=<PR base sha> \
+     -e ROUTE_COMPLEXITY_BASE_REF=<PR base sha> \
+     -v F:/dev/vocab-ob/wt-main:/src -v vocab-ob-gate-nm:/src/node_modules -w /src \
+     --entrypoint sh vocab-observatory-v2-migration:local -c \
+     "apt-get update -qq >/dev/null && apt-get install -y -qq git >/dev/null && \
+      git config --global --add safe.directory /src && cd /src && npm run verify:engineering"
+   ```
+
+   顺带作废 facts §9.10 的「4 个测试恒失败」在**装 git 之后不再出现**（316 passed / 1 skipped）。
 
 1. **只要有任意一个测试失败，vitest v8 覆盖率既不打印表也不落盘。**
    实测：含 4 例 git 依赖失败的全量跑，日志里只有 `Coverage enabled with v8`，
@@ -203,6 +222,37 @@ expect(sheetRepo.openSheet).toHaveBeenCalledWith(
    带偏（facts §9.8 已记录过一次）。正确做法是**不删**：一次全绿的全量
    `vitest run --coverage` 会直接覆盖 `coverage-final.json`。
 
+#### 6.1.4 CI 的 `Engineering Gate` 曾失败：变更行覆盖率（已修）
+
+**现象**：PR 起 CI 后，`Engineering Gate + Migration Rehearsal` **failure**，另两项 E2E 通过；
+而 `main@fcdb508` 同名 job 为 success ⇒ 失败由本分支引入。GitHub 的注解只有
+`Process completed with exit code 1.`，没有定位信息（日志接口需鉴权，本机凭据助手当时挂住）。
+
+**根因**（本地复现后精确到行）：
+
+```
+Diff coverage (>=85%): **51.43% (FAIL)**
+changed src files 9 (governed 4 / ungoverned 5); changed executable lines 35 (covered 18)
+[layered-coverage] FAILED: diff: 18/35 changed executable lines covered
+```
+
+四层聚合覆盖率全 PASS（domain 97.89 / service 95.44 / repository 93.78 / http 91.73）、
+基线棘轮也 PASS —— 唯独**变更行**这一道卡住。用 `coverage-final.json` + `git diff` 逐行对齐后定位：
+`src/repositories/l3-sheets.repository.ts` 的 **379/380/390 行 0 覆盖**，即新增的
+`realignQuestionIdsOrder` 方法体（其余 governed 文件 21/21 全覆盖）。
+
+**为什么 service 层的 4 个测试救不了它**：那些测试用的是 **fake 仓储**（`makeSheetRepo`），
+真方法一行都没执行。门禁的判定是「变更行落在 statement/branch/**function** 区间内即算可执行」
+（`scripts/report-layered-coverage.ts` → `calculateDiffCoverage`），方法的 **function 区间覆盖整个函数体**
+⇒ `fn` hit=0 时，函数体里每一行（含多行 SQL 模板）全部计为未覆盖，并把比率压到 51%。
+
+**修法**：在 `tests/repositories/l3-sheets.test.ts` 落三例真方法测试（谓词断言 + 落空 null +
+空数组短路）。复跑得 `Diff coverage 88.57% (PASS)`、`verify:engineering` **EXIT=0**。
+
+**可复用判据（重要）**：**受管层（`src/repositories|services|domain|errors|http`）新增/修改的方法，
+必须有「真仓储 / 真函数级」的单测执行到它**，service 层的 fake 仓储不算 —— 否则 diff 覆盖率必然被拖穿。
+这条比「补了测试」更值钱：它决定了测试该写在**哪一层**。
+
 ### 6.2 新增回归测试钉住了什么
 
 | 测试文件 | 钉住的契约 |
@@ -212,6 +262,7 @@ expect(sheetRepo.openSheet).toHaveBeenCalledWith(
 | `tests/frontend/selection-panel-position.test.ts`（7） | 顶部选区翻到下方且 `top >= topSafeInset`；浮层高于视口时夹到安全区顶且 `top >= 0`；左右边缘夹取 |
 | `tests/frontend/exam-sheet-integration.test.tsx`（+5） | 停靠区给出「第 1 空」（`enclosed_blank`）/「第 2 空」（`nearest_blank`）；**停靠区不得再有内联 `transform`**（倒挂根因的回归钉）；一键建分析建到就近命中的题上；候选第 1 位带 🎯 |
 | `tests/frontend/l3-shell.test.tsx`（4） | 收起后 mini rail 仍可切面；`Ctrl/⌘+B` 与按钮同一动作且输入框内不抢键；偏好持久化 |
+| `tests/repositories/l3-sheets.test.ts`（+3） | `realignQuestionIdsOrder` 的**真方法**行为：谓词含 `@>`/`<@` 集合相等判据 + `status='draft'` + `user_id`、参数为 (sheet,user,ids)；落空返回 null；空数组短路不发查询。**这一例同时是 diff 覆盖率门禁的解锁钥匙**（见 §6.1.4） |
 
 ### 6.3 真机验收（**未做**，必须补）
 

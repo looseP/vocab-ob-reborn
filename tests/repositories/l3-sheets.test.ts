@@ -443,3 +443,50 @@ describe("L3SheetRepository 待评卷清单 / 补冻结（ADR-0038）", () => {
     expect(noQuery).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 就地校正题序（2026-10-02，P0 保序存量自愈的写面）。
+ *
+ * 这三例同时解决两件事：
+ * ① 行为契约（集合相等才校正 / 落空返回 null / 空数组短路）；
+ * ② **变更行覆盖率** —— 修前该方法只被 service 层的 fake 仓储"调用"，
+ *    `src/repositories/**` 是受管层（分层覆盖率 diff 门禁 >=85%），
+ *    真方法体一行都没执行过，CI 上直接以 `Diff coverage 51.43% (FAIL)` 拦住。
+ *    service 层测试验不到仓储的真 SQL，必须在这里落一例。
+ */
+describe("L3SheetRepository.realignQuestionIdsOrder", () => {
+  it("谓词含集合相等判据 + status='draft'，参数为 (sheet, user, ids)", async () => {
+    const repo = new L3SheetRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const queryOneSpy = vi.spyOn(repo as any, "queryOne")
+      .mockResolvedValue(submission({ question_ids: [QUESTION, QUESTION_B] }));
+    const result = await repo.realignQuestionIdsOrder(USER, SHEET, [QUESTION, QUESTION_B]);
+    expect(result?.question_ids).toEqual([QUESTION, QUESTION_B]);
+
+    const [sql, params] = queryOneSpy.mock.calls[0]!;
+    expect(sql).toContain("SET question_ids = $3::uuid[]");
+    // 集合相等（双向包含）⇒ 读-写之间的并发加题/减题命中 0 行：本方法**只能换序不能换题**
+    expect(sql).toContain("question_ids @> $3::uuid[]");
+    expect(sql).toContain("question_ids <@ $3::uuid[]");
+    // 已定格快照不可改（红线）
+    expect(sql).toContain("status = 'draft'");
+    // 不越权改别人的题纸
+    expect(sql).toContain("user_id = $2::uuid");
+    expect(params).toEqual([SHEET, USER, [QUESTION, QUESTION_B]]);
+  });
+
+  it("并发已定格 / 集合已变 → 0 行 ⇒ null，调用方保留原行", async () => {
+    const repo = new L3SheetRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(repo as any, "queryOne").mockResolvedValue(null);
+    expect(await repo.realignQuestionIdsOrder(USER, SHEET, [QUESTION, QUESTION_B])).toBeNull();
+  });
+
+  it("空数组不发查询：不把快照写成空数组（撞 DB 的 length > 0 CHECK）", async () => {
+    const repo = new L3SheetRepository();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const noQuery = vi.spyOn(repo as any, "queryOne");
+    expect(await repo.realignQuestionIdsOrder(USER, SHEET, [])).toBeNull();
+    expect(noQuery).not.toHaveBeenCalled();
+  });
+});
