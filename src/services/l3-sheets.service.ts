@@ -98,17 +98,30 @@ export class L3SheetService {
         // active 题。原先直接取 payload 的 questionIds 不筛状态，于是 agent 建的
         // 待录卷（卷行 active、卷内题全 pending）会开出一张"题单快照里有 id、渲染
         // 却是空的"的题纸，用户看不到任何解释。空集在此 fail-closed 并说明原因。
-        const active = await repos.l3Paper.findActiveQuestionsByIds(
-          input.userId,
-          paper.payload.sections.flatMap((section) => [...section.questionIds]),
-        );
+        const rawQuestionIds = paper.payload.sections.flatMap((section) => [...section.questionIds]);
+        const active = await repos.l3Paper.findActiveQuestionsByIds(input.userId, rawQuestionIds);
         if (active.length === 0) {
           throw new ValidationError(
             "该试卷内没有可做的题（若为 agent 待录产物，请先在「待录」中采纳）",
             "paperId",
           );
         }
-        questionIds = active.map((question) => question.id);
+        // ⚠️ 2026-10-02【P0 保序】快照必须是原卷 `sections.questionIds` 的**精确保序投影**。
+        // `findActiveQuestionsByIds` 的 SQL 是 `WHERE id = ANY($2::uuid[])`，**不带 ORDER BY**
+        // ——PostgreSQL 按磁盘物理顺序返回，顺序不可预测。若在此直接 `active.map(q => q.id)`，
+        // 物理序就被冻结进快照；前端 `scopePaperToFrozenList` 又拿这份快照当 `rank` 重排卷面，
+        // 于是完型空号乱序（现象：第 2 题显示第 17 空）。此处按原卷题序走一遍过滤即得保序投影；
+        // 同一 id 在卷内重复出现时只保留首次（题单不重复计数，与读侧 orderByFrozenIds 的
+        // Set 去重同口径）。
+        const activeIds = new Set(active.map((question) => question.id));
+        const orderedQuestionIds: string[] = [];
+        const seenIds = new Set<string>();
+        for (const id of rawQuestionIds) {
+          if (!activeIds.has(id) || seenIds.has(id)) continue;
+          seenIds.add(id);
+          orderedQuestionIds.push(id);
+        }
+        questionIds = orderedQuestionIds;
       }
       // 空题集不写快照（DB CHECK 拒绝空数组；且"空"与"未定格"在读侧同义——都现拉）。
       const frozenQuestionIds = questionIds.length > 0 ? questionIds : null;

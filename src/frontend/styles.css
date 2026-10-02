@@ -759,6 +759,93 @@ body.zen-mode main {
   border: 1px solid var(--color-border);
   border-radius: 0.9rem;
   background: var(--color-panel);
+  transition: width 0.18s ease, padding 0.18s ease;
+}
+
+.l3-sidebar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.l3-sidebar-toggle {
+  flex-shrink: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--color-ink-soft);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.l3-sidebar-toggle:hover {
+  color: var(--color-ink);
+  border-color: var(--color-accent);
+}
+
+/* mini rail：收起态的核心面入口（收起不等于导航不可达）。 */
+.l3-sidebar-rail {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.2rem;
+}
+
+.l3-rail-btn {
+  width: 1.8rem;
+  height: 1.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--color-ink-soft);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.l3-rail-btn:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-ink);
+}
+
+.l3-rail-btn.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-contrast, #ffffff);
+}
+
+/* 收起态：宽屏压成 48px 图标条（释放约 150px 给卷面双栏）。 */
+@media (min-width: 768px) {
+  .l3-shell.sidebar-collapsed .l3-sidebar {
+    width: 48px;
+    padding: 0.5rem 0.3rem;
+  }
+
+  .l3-shell.sidebar-collapsed .l3-sidebar-head {
+    justify-content: center;
+  }
+
+  .l3-shell.sidebar-collapsed .l3-sidebar-rail {
+    flex-direction: column;
+    flex-wrap: nowrap;
+  }
+}
+
+.l3-shell.sidebar-collapsed .l3-sidebar-wide {
+  display: none;
 }
 
 @media (min-width: 768px) {
@@ -827,6 +914,29 @@ body.zen-mode main {
 .l3-main {
   flex: 1;
   min-width: 0;
+}
+
+/* ── 卷面选区上下文停靠区（Context Inspector，2026-10-02）─────────────────
+   位置与 L3 侧栏同列（左侧 200px 宽 + 1rem 内边距 ⇒ 16px 起），即设计稿红框位。
+   用 fixed 而不是放进侧栏 DOM：侧栏是可收折的（收起后只剩 48px 图标条），
+   挂进侧栏会让停靠区随之一并消失 —— 而「选中的那段文本要挂到哪道题」在做题
+   过程中必须一直在。侧栏收起时整体左移到图标条右侧，不与图标抢位置。 */
+.exam-context-dock {
+  left: 1rem;
+}
+
+.l3-shell.sidebar-collapsed .exam-context-dock {
+  left: calc(3rem + 1rem);
+}
+
+/* 窄屏（<768px）侧栏是通栏、不占左右边距，停靠区改为横向铺满底部。 */
+@media (max-width: 767px) {
+  .exam-context-dock,
+  .l3-shell.sidebar-collapsed .exam-context-dock {
+    left: 1rem;
+    right: 1rem;
+    width: auto;
+  }
 }
 
 .l3-page {
