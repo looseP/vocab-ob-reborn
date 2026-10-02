@@ -35,6 +35,7 @@ import {
   buildSheetScopeKey,
   countRecheckQuestions,
   countUnansweredQuestions,
+  needsQuestionOrderRealign,
   sheetStatusAfterSeal,
   stripAnswerSubjectiveFields,
 } from "../domain/l3-sheets";
@@ -137,6 +138,18 @@ export class L3SheetService {
         paper_id: input.scope === "paper" ? (input.paperId as string) : null,
         question_ids: frozenQuestionIds,
       });
+      // 存量自愈（2026-10-02，P0 保序）：修前冻结的是 SQL 物理序，而开纸幂等**不覆盖**
+      // 既有 draft 快照（「题单以首次开纸为准」）⇒ 不补这一步的话，用户手里那张已开过的
+      // 2025 卷会永远乱序，代码修了也看不见效果。
+      // 校正窗口收得很窄：仅 paper 域、仅幂等复用（created=false）、仅「集合相同但顺序
+      // 不同」——任何加题/减题/定格都不动（ADR「题单只缩不换」是红线）。集合判据在
+      // SQL 谓词里再判一次，读-写之间有并发变更时 UPDATE 命中 0 行、保留原行。
+      if (!created && input.scope === "paper" && questionIds) {
+        if (needsQuestionOrderRealign(row.question_ids, questionIds)) {
+          const realigned = await repos.l3Sheets.realignQuestionIdsOrder(input.userId, row.id, questionIds);
+          if (realigned) return { sheet: realigned, created };
+        }
+      }
       return { sheet: row, created };
     });
   }

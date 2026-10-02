@@ -365,6 +365,32 @@ export class L3SheetRepository extends BaseRepository implements IL3SheetReposit
   }
 
   /**
+   * 就地校正 draft 题纸题序（2026-10-02）：只换顺序、不换题集。
+   *
+   * 谓词里的 `question_ids @> $3 AND question_ids <@ $3` 是**集合相等**的 SQL 侧执行点：
+   * 读-写之间若有并发变更（题组加题、定格），集合不再相等 ⇒ 0 行 ⇒ 返回 null，
+   * 调用方保留原行。`status='draft'` 则钉死「已定格快照不可改」的红线。
+   */
+  async realignQuestionIdsOrder(
+    userId: string,
+    sheetId: string,
+    questionIds: readonly string[],
+  ): Promise<L3SubmissionRow | null> {
+    if (questionIds.length === 0) return null;
+    const row = await this.queryOne<SubmissionDbRow>(
+      `UPDATE l3_submissions
+          SET question_ids = $3::uuid[], updated_at = now()
+        WHERE id = $1::uuid AND user_id = $2::uuid
+          AND status = 'draft'
+          AND question_ids IS NOT NULL
+          AND question_ids @> $3::uuid[] AND question_ids <@ $3::uuid[]
+        RETURNING *`,
+      [sheetId, userId, [...questionIds]],
+    );
+    return row ? mapSubmissionRow(row) : null;
+  }
+
+  /**
    * W3：写作任务 → question_id 只读查询（仅供作用域解析器 writing 分支；
    * 不触发任何创建；W6 注册 l3Writing 后可迁至写作 repo）。
    */

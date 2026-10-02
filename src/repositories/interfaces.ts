@@ -1857,6 +1857,19 @@ export interface IL3SheetRepository {
    */
   freezeQuestionIds(userId: string, sheetId: string, questionIds: readonly string[]): Promise<boolean>;
   /**
+   * 就地校正 draft 题纸的**题序**（2026-10-02，P0 保序存量自愈）：
+   * 修前冻结进快照的是 SQL 的物理返回序，已开的 draft 纸不会自愈（开纸幂等不覆盖快照）。
+   *
+   * 谓词是**集合相等**（`@>` 且 `<@`）+ `status='draft'`：任何加题/减题/定格/
+   * 并发变更都让 UPDATE 命中 0 行 ⇒ 幂等且 fail-closed —— 本方法只能换顺序，
+   * 不能换题集。返回 null 表示无需/不允许校正。
+   */
+  realignQuestionIdsOrder(
+    userId: string,
+    sheetId: string,
+    questionIds: readonly string[],
+  ): Promise<L3SubmissionRow | null>;
+  /**
    * 待评卷清单（ADR-0038 决策 2）：agent 可读发现面，**只给计数与身份，不给题面**。
    * `gradable_count` = 已物化 active attempt 的题数（可评数，决策 4/8）；未作答的题
    * 不参与评卷，故不计入分母。
