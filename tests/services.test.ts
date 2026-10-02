@@ -181,20 +181,28 @@ describe("WordService", () => {
 
   it("batchCreate delegates to insertMany and returns the inserted count", async () => {
     const repo = makeMockWordRepo({
-      insertMany: vi.fn(async () => 3),
+      insertMany: vi.fn(async () => ({ inserted: 3, updated: 1, unchanged: 0 })),
     });
     const service = new WordService(repo);
     const batch = [
       { slug: "abound", title: "Abound", lemma: "abound", pos: "verb", cefr: "C1", ipa: null, short_definition: "def" },
     ];
 
-    await expect(service.batchCreate(batch)).resolves.toEqual({ inserted: 3 });
-    expect(repo.insertMany).toHaveBeenCalledWith(batch);
+    // 三态都要透出 —— 使用者需要知道这批到底改了什么。
+    // 以前只返回 { inserted }，「什么都没变」与「真的改了」无法区分。
+    await expect(service.batchCreate(batch)).resolves.toEqual({
+      inserted: 3,
+      updated: 1,
+      unchanged: 0,
+    });
+    // 默认 fill-only 必须显式传给 repository，不能靠 repository 端默认值 ——
+    // 否则「默认是什么」会在两处各写一遍而漂移。
+    expect(repo.insertMany).toHaveBeenCalledWith(batch, "fill-only");
   });
 
   it("batchCreate invalidates the plaza aggregate cache after writing", async () => {
     const repo = makeMockWordRepo({
-      insertMany: vi.fn(async () => 1),
+      insertMany: vi.fn(async () => ({ inserted: 1, updated: 0, unchanged: 0 })),
     });
     const service = new WordService(repo);
     const invalidate = vi.spyOn(plazaCache, "invalidateAll");
@@ -206,6 +214,35 @@ describe("WordService", () => {
     expect(repo.insertMany).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledTimes(1);
     invalidate.mockRestore();
+  });
+
+  it("batchCreate passes overwrite through only when asked", async () => {
+    const repo = makeMockWordRepo({
+      insertMany: vi.fn(async () => ({ inserted: 0, updated: 1, unchanged: 0 })),
+    });
+    const service = new WordService(repo);
+
+    await service.batchCreate(
+      [{ slug: "abound", title: "A", lemma: "abound", pos: null, cefr: null, ipa: null, short_definition: "x" }],
+      "overwrite",
+    );
+    expect(repo.insertMany).toHaveBeenCalledWith(expect.anything(), "overwrite");
+  });
+
+  it("batchCreate does NOT invalidate the cache when nothing changed", async () => {
+    // fill-only 的常见结果就是「什么都没变」。这时清广场聚合缓存纯属浪费，
+    // 还会让缓存命中率掉一截 —— 没有数据变化就没有失效的理由。
+    const repo = makeMockWordRepo({
+      insertMany: vi.fn(async () => ({ inserted: 0, updated: 0, unchanged: 12 })),
+    });
+    const service = new WordService(repo);
+    const invalidate = vi.spyOn(plazaCache, "invalidateAll").mockImplementation(() => undefined);
+
+    await service.batchCreate([
+      { slug: "abound", title: "Abound", lemma: "abound", pos: null, cefr: null, ipa: null, short_definition: "x" },
+    ]);
+
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
   it("batchCreate fails closed when the repository has no insertMany", async () => {

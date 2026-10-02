@@ -12,6 +12,17 @@ import { apiFetch } from "@/frontend/api/client";
 
 type Strictness = "lenient" | "standard" | "strict";
 
+type BatchImportMode = "fill-only" | "overwrite";
+
+/** 与 POST /words/batch 的返回一致；以前只有 inserted，于是「一个都没变」也
+ *  显示成「成功导入 N 个单词」，使用者无从判断这批到底改了什么。 */
+interface BatchImportResult {
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  mode: BatchImportMode;
+}
+
 interface ImportWord {
   lemma: string;
   pos?: string;
@@ -259,7 +270,9 @@ export function ImportPage() {
   const [parsed, setParsed] = useState<ImportWord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{ inserted: number } | null>(null);
+  const [result, setResult] = useState<BatchImportResult | null>(null);
+  // 默认 fill-only：不覆盖已有非空字段。要改写必须显式选 overwrite。
+  const [jsonMode, setJsonMode] = useState<BatchImportMode>("fill-only");
 
   const { addToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -427,13 +440,16 @@ export function ImportPage() {
     setImporting(true);
     setError(null);
     try {
-      const res = await apiFetch<{ inserted: number }>("/words/batch", {
+      const res = await apiFetch<BatchImportResult>("/words/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ words: parsed }),
+        body: JSON.stringify({ words: parsed, mode: jsonMode }),
       });
       setResult(res);
-      addToast("success", `成功导入 ${res.inserted} 个单词`);
+      // 如实报三态。以前只显示 inserted，「什么都没变」也显示成「成功导入 N 个」。
+      const parts = [`新增 ${res.inserted}`, `补全 ${res.updated}`];
+      if (res.unchanged > 0) parts.push(`未变 ${res.unchanged}`);
+      addToast(res.inserted + res.updated > 0 ? "success" : "info", parts.join(" · "));
       setParsed(null);
       setText("");
     } catch (e) {
@@ -798,6 +814,22 @@ export function ImportPage() {
               placeholder='[{"lemma": "abandon", "pos": "verb", "cefr": "B1", "short_definition": "To leave completely"}]'
               className="h-48 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-input)] p-4 font-mono text-sm text-[var(--color-ink)] focus:border-[var(--color-accent)] focus:outline-none"
             />
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[var(--color-ink-soft)]">
+              <span>写入模式：</span>
+              <select
+                value={jsonMode}
+                onChange={(e) => setJsonMode(e.target.value as BatchImportMode)}
+                className="rounded border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-1 text-xs"
+              >
+              <option value="fill-only">仅补空（默认，安全）</option>
+              <option value="overwrite">覆盖（会用导入值替换已有内容）</option>
+                </select>
+                <span className="basis-full">
+                {jsonMode === "fill-only"
+                  ? "已存在的非空字段不会被改动；释义正文（definition_md）永远不由本路径写入。"
+                  : "注意：definition_md 由 short_definition 派生，覆盖模式会把已有释义结构冲成一句话。"}
+                </span>
+            </div>
             <div className="mt-3 flex items-center gap-3">
               <Button onClick={parseJson} disabled={!text.trim()}>
                 <FileJson className="h-4 w-4" /> 解析预览
@@ -816,8 +848,25 @@ export function ImportPage() {
             <Card className="border-[var(--color-accent)]">
               <div className="flex items-center gap-2 text-[var(--color-accent)]">
                 <CheckCircle2 className="h-6 w-6" />
-                <span className="text-lg font-semibold">成功导入 {result.inserted} 个单词</span>
+                <span className="text-lg font-semibold">
+                  新增 {result.inserted} · 补全 {result.updated}
+                  {result.unchanged > 0 ? ` · 未变 ${result.unchanged}` : ""}
+                </span>
+                <Badge tone={result.mode === "overwrite" ? "warm" : "default"}>
+                  {result.mode === "overwrite" ? "覆盖模式" : "仅补空"}
+                </Badge>
               </div>
+              {result.mode === "overwrite" && (
+                <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
+                  覆盖模式会用导入值替换已有字段（含由 short_definition 派生的
+                  definition_md）。若只是想补上缺失字段，请改用「仅补空」。
+                </p>
+              )}
+              {result.inserted + result.updated === 0 && (
+                <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
+                  本批没有任何字段被改动 —— 已存在的词条都填满了。
+                </p>
+              )}
             </Card>
           )}
 

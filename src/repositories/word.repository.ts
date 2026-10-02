@@ -11,6 +11,12 @@
 
 import { createHash } from "node:crypto";
 import { computePinyinFromCjk } from "../domain/ingest/pinyin";
+import {
+  conflictGuardClause,
+  conflictUpdateClause,
+  type BatchImportMode,
+  type BatchImportOutcome,
+} from "../domain/ingest/batch-import-mode";
 import type {
   GetPublicWordsOptions,
   PaginatedResult,
@@ -466,14 +472,20 @@ export class WordRepository extends BaseRepository implements IWordRepository {
   async insertMany(words: Array<{
     slug: string; title: string; lemma: string; pos: string | null;
     cefr: string | null; ipa: string | null; short_definition: string | null;
-  }>): Promise<number> {
-    if (words.length === 0) return 0;
+  }>, mode: BatchImportMode = "fill-only"): Promise<BatchImportOutcome> {
+    if (words.length === 0) return { inserted: 0, updated: 0, unchanged: 0 };
+
     // `words` requires `content_hash` (64-hex, unique), `source_path`,
     // `definition_md`, and `body_md` as NOT NULL with no defaults. The batch
     // import payload only carries a minimal field set, so we derive stable
     // values here: a content hash from the provided fields (satisfies the
     // `^[0-9a-f]{64}$` CHECK and the unique constraint), a deterministic
     // source path, and markdown bodies from the short definition.
+    //
+    // ⚠️ 正因为 definition_md / body_md 在这条路径上是**从 short_definition 派生**的，
+    // 写入它们就会把已有的富内容冲成一句话（实测 abandon 的 definition_md
+    // 240 -> 19 字符）。所以 fill-only 的冲突分支根本不碰这两列 ——
+    // 见 conflictUpdateClause。
     const perRow = 13;
     const values: string[] = [];
     const params: unknown[] = [];
@@ -494,21 +506,30 @@ export class WordRepository extends BaseRepository implements IWordRepository {
         pinyin, pinyinInitial,
       );
     });
-    const result = await this.queryViaBatchPool<{ id: string }>(
+
+    const guard = conflictGuardClause(mode);
+    const result = await this.queryViaBatchPool<{ id: string; inserted_flag: boolean }>(
       `INSERT INTO words
          (slug, title, lemma, pos, cefr, ipa, short_definition, content_hash, source_path, definition_md, body_md, pinyin, pinyin_initial)
        VALUES ${values.join(", ")}
        ON CONFLICT (slug) DO UPDATE SET
-         title = EXCLUDED.title, lemma = EXCLUDED.lemma, pos = EXCLUDED.pos,
-         cefr = EXCLUDED.cefr, ipa = EXCLUDED.ipa, short_definition = EXCLUDED.short_definition,
-         content_hash = EXCLUDED.content_hash, source_path = EXCLUDED.source_path,
-         definition_md = EXCLUDED.definition_md, body_md = EXCLUDED.body_md,
-         pinyin = EXCLUDED.pinyin, pinyin_initial = EXCLUDED.pinyin_initial,
-         updated_at = now()
-       RETURNING id`,
+         ${conflictUpdateClause(mode)}
+       ${guard}
+       RETURNING id, (xmax = 0) AS inserted_flag`,
       params,
     );
-    return result.length;
+
+    // inserted_flag 由数据库算（xmax = 0 → 这次是插入；xmax > 0 → 走了 DO UPDATE）。
+    //
+    // ⚠️ 不要在 JS 里判断 xmax：xid 是 64 位类型，pg 驱动可能以文本返回 '0'，
+    // 而 Boolean('0') === true —— 那样「新增」和「更新」会被彻底混淆。
+    // 这里直接用驱动解析好的 boolean。
+    //
+    // fill-only 下「什么都没补上」的行走 WHERE no-op，不出现在 result 里，
+    // 所以 unchanged = 提交条数 - 命中条数。
+    const inserted = result.filter((r) => r.inserted_flag === true).length;
+    const updated = result.length - inserted;
+    return { inserted, updated, unchanged: words.length - result.length };
   }
 
   /**

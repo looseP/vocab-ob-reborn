@@ -21,16 +21,22 @@ beforeEach(() => {
 });
 
 describe("WordRepository.insertMany", () => {
-  it("returns 0 without querying for an empty batch", async () => {
+  it("returns an all-zero outcome without querying for an empty batch", async () => {
     const repository = new WordRepository();
 
-    await expect(repository.insertMany([])).resolves.toBe(0);
+    await expect(repository.insertMany([])).resolves.toEqual({
+      inserted: 0,
+      updated: 0,
+      unchanged: 0,
+    });
     expect(batchMock.calls).toHaveLength(0);
     expect(mock.calls).toHaveLength(0);
   });
 
-  it("writes one 13-column row per word via the batch pool and returns the row count", async () => {
-    batchMock.setRows([{ id: "w-1" }, { id: "w-2" }]);
+  it("writes one 13-column row per word via the batch pool and returns the outcome", async () => {
+    // inserted_flag 由 SQL 的 (xmax = 0) 算出：true=本次插入，false=走了 DO UPDATE。
+    // mock 必须带这个字段 —— 缺字段会让「新增」被误判成「更新」。
+    batchMock.setRows([{ id: "w-1", inserted_flag: true }, { id: "w-2", inserted_flag: true }]);
     const repository = new WordRepository();
 
     const inserted = await repository.insertMany([
@@ -38,7 +44,7 @@ describe("WordRepository.insertMany", () => {
       { slug: "breach", title: "Breach", lemma: "breach", pos: null, cefr: null, ipa: null, short_definition: null },
     ]);
 
-    expect(inserted).toBe(2);
+    expect(inserted).toEqual({ inserted: 2, updated: 0, unchanged: 0 });
     const query = batchMock.lastQuery!;
     expect(query.text).toContain("INSERT INTO words");
     expect(query.text).toContain("ON CONFLICT (slug) DO UPDATE");
@@ -69,8 +75,43 @@ describe("WordRepository.insertMany", () => {
     expect(mock.calls).toHaveLength(0);
   });
 
+  it("conflict branch does NOT overwrite definition_md under the default fill-only mode", async () => {
+    // 这是本 PR 的核心不变量：批量导入历史上会把 definition_md（从
+    // short_definition 派生）覆盖成一句话，静默毁掉已有的富内容。
+    // 实测 abandon 的 definition_md 从 240 字符塌缩到 19 字符。
+    batchMock.setRows([{ id: "w-1", inserted_flag: false }]);
+    const repository = new WordRepository();
+
+    await repository.insertMany([
+      { slug: "abandon", title: "Abandon", lemma: "abandon", pos: "v", cefr: "B1", ipa: null, short_definition: "To leave completely" },
+    ]);
+
+    const text = batchMock.lastQuery!.text;
+    const conflict = text.slice(text.indexOf("ON CONFLICT"));
+    expect(conflict).not.toMatch(/definition_md\s*=\s*EXCLUDED/);
+    expect(conflict).not.toMatch(/body_md\s*=\s*EXCLUDED/);
+    expect(conflict).toMatch(/COALESCE\(NULLIF\(words\.short_definition/);
+    expect(conflict).toMatch(/IS DISTINCT FROM/);
+  });
+
+  it("conflict branch restores the unconditional overwrite under explicit overwrite mode", async () => {
+    batchMock.setRows([{ id: "w-1", inserted_flag: false }]);
+    const repository = new WordRepository();
+
+    await repository.insertMany(
+      [{ slug: "abandon", title: "Abandon", lemma: "abandon", pos: "v", cefr: "B1", ipa: null, short_definition: "x" }],
+      "overwrite",
+    );
+
+    const text = batchMock.lastQuery!.text;
+    const conflict = text.slice(text.indexOf("ON CONFLICT"));
+    expect(conflict).toMatch(/definition_md\s*=\s*EXCLUDED\.definition_md/);
+    // overwrite 是无条件覆盖，不带守卫
+    expect(conflict).not.toMatch(/IS DISTINCT FROM/);
+  });
+
   it("computes pinyin columns from Chinese short definitions on insert", async () => {
-    batchMock.setRows([{ id: "w-1" }]);
+    batchMock.setRows([{ id: "w-1", inserted_flag: true }]);
     const repository = new WordRepository();
 
     await repository.insertMany([
@@ -83,7 +124,7 @@ describe("WordRepository.insertMany", () => {
   });
 
   it("derives a deterministic sha256 content hash from all batch fields", async () => {
-    batchMock.setRows([{ id: "w-1" }]);
+    batchMock.setRows([{ id: "w-1", inserted_flag: true }]);
     const repository = new WordRepository();
 
     await repository.insertMany([

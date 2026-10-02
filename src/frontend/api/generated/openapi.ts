@@ -4027,6 +4027,10 @@ export interface operations {
                 content: {
                     "application/json": {
                         inserted: number;
+                        updated: number;
+                        unchanged: number;
+                        /** @enum {string} */
+                        mode: "fill-only" | "overwrite";
                     };
                 };
             };

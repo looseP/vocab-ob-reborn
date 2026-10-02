@@ -12,6 +12,11 @@ import { Word } from "../domain/word.entity";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import { ConflictError, NotFoundError, ValidationError } from "../errors";
+import {
+  DEFAULT_BATCH_IMPORT_MODE,
+  type BatchImportMode,
+  type BatchImportOutcome,
+} from "../domain/ingest/batch-import-mode";
 import { plazaCache } from "./plaza-cache";
 import type { L3DeleteResult } from "../schemas/service";
 
@@ -86,15 +91,28 @@ export class WordService {
     return this.words.findSlugs(limit);
   }
 
+  /**
+   * 批量导入词条（`POST /words/batch`）。
+   *
+   * 默认 `fill-only`：**不覆盖**已有的非空字段，也不写 `definition_md` /
+   * `body_md`（它们在 repository 里是从 short_definition 派生的，写了就会把
+   * 富内容冲掉）。`mode: "overwrite"` 才恢复旧的全覆盖行为。
+   *
+   * 返回值区分 inserted / updated / unchanged —— 使用者需要知道这批到底
+   * 改了什么，尤其 fill-only 下大量条目会是 unchanged。
+   */
   async batchCreate(words: Array<{
     slug: string; title: string; lemma: string; pos: string | null;
     cefr: string | null; ipa: string | null; short_definition: string | null;
-  }>): Promise<{ inserted: number }> {
+  }>, mode: BatchImportMode = DEFAULT_BATCH_IMPORT_MODE): Promise<BatchImportOutcome> {
     if (!this.words.insertMany) throw new Error("insertMany not configured");
-    const count = await this.words.insertMany(words);
+    const outcome = await this.words.insertMany(words, mode);
     // P4 性能：批量写词后清空广场聚合缓存。
-    plazaCache.invalidateAll();
-    return { inserted: count };
+    // 只在真的动过数据时清 —— 否则「什么都没变的导入」也会让缓存失效。
+    if (outcome.inserted > 0 || outcome.updated > 0) {
+      plazaCache.invalidateAll();
+    }
+    return outcome;
   }
 
   /**
