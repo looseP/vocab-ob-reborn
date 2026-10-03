@@ -30,7 +30,7 @@ import {
 
 export type { Accent };
 
-/** 音频来源：单词拼读 / 真题例句朗读。 */
+/** 音频来源：单词拼读 / 例句朗读。 */
 export type AudioSource = "word" | "sentence";
 
 /** 默认口音：美音 —— 与既有 `speak()` 的 en-US 默认保持一致。 */

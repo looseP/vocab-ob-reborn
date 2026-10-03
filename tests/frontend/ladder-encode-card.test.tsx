@@ -207,7 +207,7 @@ describe("EncodeCardView 声学层（新词初见：自动发音 / 胶囊 / 例�
     const container = mountedContainer({ examples: [{ text: EXAMPLE_TEXT, translation: EXAMPLE_TRANSLATION }] });
     const button = container.querySelector<HTMLButtonElement>('[data-testid="encode-play-example"]');
     expect(button).not.toBeNull();
-    expect(button?.getAttribute("aria-label")).toBe("朗读真题例句 (E)");
+    expect(button?.getAttribute("aria-label")).toBe("朗读例句 (E)");
 
     act(() => button?.click());
 
@@ -244,7 +244,7 @@ describe("EncodeCardView 声学层（新词初见：自动发音 / 胶囊 / 例�
     expect(utterances().at(-1)?.lang).toBe("en-GB");
   });
 
-  it("快捷键 E 朗读 H1 真题例句；播放中再按 E = 打断（物理 cancel），不叠第二条", () => {
+  it("快捷键 E 朗读 H1 例句；播放中再按 E = 打断（物理 cancel），不叠第二条", () => {
     const container = mountedContainer({ examples: [{ text: EXAMPLE_TEXT }] });
 
     pressKey("e");

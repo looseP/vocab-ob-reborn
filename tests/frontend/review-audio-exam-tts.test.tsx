@@ -287,7 +287,7 @@ describe("estimateSpeechMs：TTS 时长估算", () => {
 
 // ────────────────────────────────────────────────────────────────────────────
 describe("Exam 例句朗读按钮", () => {
-  it("ClueZone 渲染「听真题例句」并在点击时回调", () => {
+  it("ClueZone 渲染「听例句」并在点击时回调", () => {
     const onPlaySentence = vi.fn();
     const container = render(
       createElement(ClueZone, {
@@ -303,13 +303,36 @@ describe("Exam 例句朗读按钮", () => {
 
     const button = container.querySelector<HTMLButtonElement>('[data-testid="clue-play-example"]');
     expect(button).not.toBeNull();
-    expect(button?.getAttribute("aria-label")).toBe("朗读真题例句 (E)");
+    expect(button?.getAttribute("aria-label")).toBe("朗读例句 (E)");
 
     act(() => button?.click());
     expect(onPlaySentence).toHaveBeenCalledTimes(1);
 
     // 按钮在正面线索区里，必须不触发翻面
     expect(button?.hasAttribute("data-no-flip")).toBe(true);
+  });
+
+  // 防回归：真库 words.examples[0].source_type 实测为
+  // press 6407 / reference 302 / institution 38 / academic 16 / quote 3 / media 1，
+  // 且 `source ~ '考研|真题'` 命中 0 条 —— 例句来自报刊与词典，不是历年真题原文。
+  // 文案一旦写回「真题」，就是对内容来源的失实陈述（100% 用户可见）。
+  it("例句按钮文案不得出现「真题」字样（正反面两侧同口径）", () => {
+    const container = render(
+      createElement(ClueZone, {
+        exam: null,
+        text: EXAMPLE_TEXT,
+        maskTerm: "above",
+        maskRevealed: false,
+        onUnmask: vi.fn(),
+        onPlaySentence: vi.fn(),
+        sentencePlaying: false,
+      }),
+    );
+    const button = container.querySelector<HTMLButtonElement>('[data-testid="clue-play-example"]');
+    expect(button).not.toBeNull();
+    expect(button?.textContent ?? "").not.toContain("真题");
+    expect(button?.getAttribute("aria-label") ?? "").not.toContain("真题");
+    expect(button?.getAttribute("title") ?? "").not.toContain("真题");
   });
 
   it("ClueZone 未接入朗读时不渲染按钮（未接线不出现死按钮）", () => {
@@ -437,7 +460,7 @@ describe("ReviewCardView：声学胶囊与快捷键", () => {
     expect(utterances()[0].lang).toBe("en-GB");
   });
 
-  it("E 键朗读真题例句（正面 ClueZone）", () => {
+  it("E 键朗读例句（正面 ClueZone）", () => {
     const container = renderCard();
     expect(container.querySelector('[data-testid="clue-play-example"]')).not.toBeNull();
 
@@ -460,7 +483,7 @@ describe("ReviewCardView：声学胶囊与快捷键", () => {
     // 断言点必须落在底层：只验 UI 复位会漏掉"界面复位了、耳机还在念"的幽灵音轨
     expect(synth.cancel.mock.calls.length).toBeGreaterThan(cancelsBefore);
     expect(utterances()).toHaveLength(1);
-    expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("听真题例句");
+    expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("听例句");
   });
 
   it("例句播放中按 R：先物理打断例句，再念单词，两轨不撞车", () => {
@@ -477,10 +500,10 @@ describe("ReviewCardView：声学胶囊与快捷键", () => {
     expect(utterances()).toHaveLength(2);
     expect(utterances()[1].text).toBe("above");
     // 声源已切到单词 → 例句按钮复位
-    expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("听真题例句");
+    expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("听例句");
   });
 
-  it("正面「听真题例句」按钮在播放中点击 = 打断复位（与 E 键行为一致）", () => {
+  it("正面「听例句」按钮在播放中点击 = 打断复位（与 E 键行为一致）", () => {
     const container = renderCard();
     pressKey("e");
     expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("播放中");
@@ -490,7 +513,7 @@ describe("ReviewCardView：声学胶囊与快捷键", () => {
 
     expect(synth.cancel.mock.calls.length).toBeGreaterThan(cancelsBefore);
     expect(utterances()).toHaveLength(1);
-    expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("听真题例句");
+    expect(container.querySelector('[data-testid="clue-play-example"]')?.textContent).toContain("听例句");
   });
 
   it("背面「朗读例句」按钮在播放中点击 = 打断复位（正反面同一入口）", () => {
@@ -541,7 +564,7 @@ describe("ReviewCardView：声学胶囊与快捷键", () => {
     expect(container.querySelector('[data-testid="audio-waveform"]')).toBeNull();
   });
 
-  it("正面「听真题例句」按钮可用（不消耗 H1 提示）", () => {
+  it("正面「听例句」按钮可用（不消耗 H1 提示）", () => {
     const container = renderCard();
     const button = container.querySelector<HTMLButtonElement>('[data-testid="clue-play-example"]');
     act(() => button?.click());

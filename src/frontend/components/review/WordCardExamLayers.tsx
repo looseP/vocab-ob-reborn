@@ -191,7 +191,11 @@ function SplitLines({
               />
             </span>
             {label && (
-              <span className="max-w-[11em] flex-none text-right text-[10px] leading-snug text-[var(--color-ink-soft)]">
+              // 窄屏隐藏（对齐 mock `wordcard-mock-2026-09-11.html:206` 的
+              // `@media (max-width: 520px) { .split-line .sl-role { display: none } }`）。
+              // 390px 下这个 58px 的标签要吃掉卡片内容宽（258px）的 22%，
+              // 正文被压成每 2-3 词换行；轨色本身仍在，主干/修饰的区分不丢失。
+              <span className="max-w-[11em] flex-none text-right text-[10px] leading-snug text-[var(--color-ink-soft)] max-[520px]:hidden">
                 {label}
               </span>
             )}
@@ -206,8 +210,15 @@ function SplitLines({
  * 正面「例句线索区」（mock `.clue-zone` 口径）：目标词遮盖 + 轨色切分，
  * 先在语境里回想。**无切分数据的 v1 批次退化为整句遮盖**。
  *
- * 「听真题例句」定位为**听觉线索**（Phase 1）：与"揭示词形（H1）"正交 ——
+ * 「听例句」定位为**听觉线索**（Phase 1）：与"揭示词形（H1）"正交 ——
  * 听整句不泄露词形，故不消耗 H1 提示上限；对听觉型学习者是独立的提取线索。
+ *
+ * ⚠️ 按钮文案**不得写「真题例句」**。实测真库 `words.examples[0].source_type`
+ * 全量分布为 press 6407 / reference 302 / institution 38 / academic 16 / quote 3 / media 1，
+ * 且 `source ~ '考研|真题'` 命中 **0 条** —— 例句来自报刊与词典，不是历年真题原文。
+ * 「真题例句」一词源自 `docs/superpowers/specs/2026-07-06-*.md` 里 `corpus_items`（语料例句）
+ * 的旧括注，被从 L3 语境（L3 用「真题」正确）误带进 L1。卡背同一句标的是「朗读例句」
+ * 并如实显示来源，两侧必须一致。**改回「真题」前请先跑 `docs/plan/` 里的来源核查。**
  */
 export function ClueZone({
   exam,
@@ -245,15 +256,15 @@ export function ClueZone({
             type="button"
             data-no-flip
             data-testid="clue-play-example"
-            aria-label="朗读真题例句 (E)"
-            title="朗读真题例句（快捷键 E）· 听觉线索，不消耗 H1 提示"
+            aria-label="朗读例句 (E)"
+            title="朗读例句（快捷键 E）· 听觉线索，不消耗 H1 提示"
             onClick={(e) => {
               e.stopPropagation();
               onPlaySentence();
             }}
             className="ml-auto inline-flex flex-none items-center gap-1 rounded-full border border-dashed border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           >
-            <Volume2 className="h-3 w-3" /> {sentencePlaying ? "播放中…" : "听真题例句"}
+            <Volume2 className="h-3 w-3" /> {sentencePlaying ? "播放中…" : "听例句"}
           </button>
         )}
       </div>
