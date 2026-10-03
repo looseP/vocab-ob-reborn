@@ -24,18 +24,54 @@ import { AcousticStickyAnchor } from "@/frontend/components/review/AcousticAncho
 import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
 import type { Rating, ReviewCard } from "@/frontend/hooks/useReview";
 import { buildHintSteps, HINT_STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
+import { useWordDetail } from "@/frontend/hooks/useWordDetail";
+import {
+  ClueZone,
+  TrainingFold,
+  parseWordExam,
+  parseVerifiedCount,
+} from "@/frontend/components/review/WordCardExamLayers";
+import type { WordExam } from "@/domain/word-exam";
 
 function EncodeHintStep({
   step,
   onPlaySentence,
   sentencePlaying,
+  exam,
 }: {
   step: HintStep;
   /** 未接线（环境无声学能力）时传 undefined —— 不渲染死按钮。 */
   onPlaySentence?: () => void;
   sentencePlaying?: boolean;
+  /**
+   * 词条详情里的 exam 三层。**有切分数据时**，例句步改由 `ClueZone`（analysis 口径）
+   * 渲染 —— 编码卡本就全展开，不遮盖，把轨色切分与语法角色直接摊在例句旁。
+   * 无切分（v1 批次）时回落到原来的朴素例句块，行为零变化。
+   */
+  exam?: WordExam | null;
 }) {
   if (step.kind === "example") {
+    const hasSplit = (exam?.reading?.blocks.length ?? 0) > 0;
+    if (hasSplit) {
+      return (
+        <div className="text-left">
+          <ClueZone
+            exam={exam ?? null}
+            text={step.text}
+            maskTerm={null}
+            maskRevealed
+            onUnmask={() => {}}
+            onPlaySentence={onPlaySentence}
+            sentencePlaying={sentencePlaying}
+            variant="analysis"
+            className="mt-0 border-none bg-transparent px-0 py-0"
+          />
+          {step.translation && (
+            <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--color-ink-soft)]">{step.translation}</p>
+          )}
+        </div>
+      );
+    }
     return (
       <div className="rounded-lg bg-[var(--color-surface-muted)] px-3 py-2 text-left">
         <div className="flex items-start gap-2">
@@ -130,6 +166,21 @@ export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) 
   }, [steps]);
 
   const lemma = card.word.lemma;
+
+  // ── exam 三层（例句分析 + 训练扩展）────────────────────────────────
+  // 与复习卡同一份契约层解析（`parseWordExam`），不重复实现。
+  // 依赖详情 API：未到达 / 无 exam 时安静缺席 —— 阶梯卡退回「只有裸例句」的旧观感。
+  const detail = useWordDetail(lemma);
+  const exampleExam = useMemo(() => {
+    const first = detail.word?.examples?.[0] as Record<string, unknown> | undefined;
+    return first ? parseWordExam(first.exam) : null;
+  }, [detail.word?.examples]);
+  const verifiedCount = useMemo(() => {
+    const first = detail.word?.examples?.[0] as Record<string, unknown> | undefined;
+    return first ? parseVerifiedCount(first.verified) : 0;
+  }, [detail.word?.examples]);
+  // 训练扩展的「译点 / 骨架」任一存在才值得渲染折叠（两者皆空时是空壳）。
+  const hasTraining = (exampleExam?.translation?.keyPoints.length ?? 0) > 0 || Boolean(exampleExam?.writing?.pattern);
 
   /** 例句朗读唯一入口：快捷键 E 与按钮共用；播放中再次触发 = 打断复位。 */
   const toggleOrPlaySentence = useCallback(() => {
@@ -239,12 +290,19 @@ export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) 
                 step={step}
                 onPlaySentence={step.kind === "example" && available ? toggleOrPlaySentence : undefined}
                 sentencePlaying={isPlaying && currentSource === "sentence"}
+                exam={step.kind === "example" ? exampleExam : null}
               />
             </div>
           ))}
         </div>
       ) : (
         <p className="text-center text-xs text-[var(--color-ink-soft)] opacity-70">暂无提示素材，直接看释义学习</p>
+      )}
+
+      {/* 译点与骨架：与复习卡共用 TrainingFold（含点金块「先猜后看」自检）。
+          挂在阶梯之外而非某一阶之内 —— 它是对整条例句的解析补充，不是提示的一级。 */}
+      {hasTraining && (
+        <TrainingFold exam={exampleExam} verifiedCount={verifiedCount} />
       )}
 
       {!revealed ? (

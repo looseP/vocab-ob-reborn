@@ -151,6 +151,8 @@ export function ClueZone({
   onUnmask,
   onPlaySentence,
   sentencePlaying,
+  variant = "mask",
+  className = "",
 }: {
   exam: WordExam | null;
   text: string | null;
@@ -159,6 +161,15 @@ export function ClueZone({
   onUnmask: () => void;
   onPlaySentence?: () => void;
   sentencePlaying?: boolean;
+  /**
+   * 两种口径，**头部措辞与遮盖语义完全不同**，不能混用：
+   * - `mask`（默认，复习卡）：目标词遮盖、先在语境里回想 —— 提取线索。
+   * - `analysis`（新词编码卡）：**不遮盖**，逐块语法分析 —— 编码期本就全展开，
+   *   写「目标词已遮盖」是假的；且例句已由该卡 H1 步承担，不再重复遮盖语义。
+   */
+  variant?: "mask" | "analysis";
+  /** 外边距等布局微调入口（阶梯内嵌时要贴边，故内置 `mt-4` 需可覆盖）。 */
+  className?: string;
 }) {
   const [trunkMode, setTrunkMode] = useState(false);
   const blocks = exam?.reading?.blocks ?? [];
@@ -169,16 +180,20 @@ export function ClueZone({
   if (!text) return null;
   return (
     <div
-      className="mt-4 w-full rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[rgba(255,253,248,0.6)] px-3.5 py-3 text-left"
+      className={`mt-4 w-full rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[rgba(255,253,248,0.6)] px-3.5 py-3 text-left ${className}`}
       data-testid="clue-zone"
       data-no-flip
       onClick={(e) => e.stopPropagation()}
     >
       <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-[var(--color-ink-soft)]">
         <span className="rounded bg-[var(--color-accent-2)] px-1 py-px text-[10px] font-bold tracking-wider text-white">
-          例句线索
+          {variant === "analysis" ? "例句分析" : "例句线索"}
         </span>
-        <span>（H1）· 目标词已遮盖 · 先在语境里回想</span>
+        <span>
+          {variant === "analysis"
+            ? "逐块语法角色 · 读主干可收起修饰行"
+            : "（H1）· 目标词已遮盖 · 先在语境里回想"}
+        </span>
         {onPlaySentence && (
           <button
             type="button"
@@ -200,8 +215,10 @@ export function ClueZone({
         <>
           <SplitLines
             exam={exam}
-            maskTerm={maskTerm}
-            maskRevealed={maskRevealed}
+            // analysis 口径强制不遮盖：不依赖调用方传对 maskTerm，
+            // 免得「编码卡上写着已遮盖、其实没遮」这种自相矛盾的状态出现。
+            maskTerm={variant === "analysis" ? null : maskTerm}
+            maskRevealed={variant === "analysis" ? true : maskRevealed}
             onUnmask={onUnmask}
             trunkMode={trunkMode}
           />
