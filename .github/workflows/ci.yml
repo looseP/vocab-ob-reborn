@@ -12,7 +12,7 @@ permissions:
 jobs:
   verify:
     name: Engineering Gate + Migration Rehearsal
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     env:
       DATABASE_ADMIN_URL: postgresql://vocab_ci_admin:P1a2CiVerifyAdmin_8wQ4tK@localhost:5432/vocab
@@ -284,7 +284,7 @@ jobs:
 
   e2e:
     name: Browser E2E (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     env:
       DATABASE_ADMIN_URL: postgresql://vocab_e2e_admin:P1a2CiE2eAdmin_8wQ4tK@localhost:5432/vocab
