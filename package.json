@@ -90,6 +90,7 @@
     "db:script:backfill-hashes": "tsx scripts/backfill-content-hash.ts",
     "db:script:backfill-pinyin": "tsx scripts/backfill-word-pinyin.ts",
     "db:script:backfill-aliases": "tsx scripts/backfill-word-aliases.ts",
+    "db:script:mine-l3-2025": "tsx scripts/mine-l3-contexts-2025.ts",
     "dev": "tsx watch src/server.ts",
     "mcp:server": "node scripts/run-mcp-server.mjs",
     "frontend:dev": "vite --host 127.0.0.1",
