@@ -6,7 +6,7 @@
  * 实测 `reading.structure` 就缺 95/6731。未来 L1 产线回填还会继续写这个字段。
  */
 import { describe, expect, it } from "vitest";
-import { parseWordExam, pickPrimaryExam, type WordExam } from "@/domain/word-exam";
+import { parseSplitSegments, parseWordExam, pickPrimaryExam, type WordExam } from "@/domain/word-exam";
 
 /** 真实形状样本（取自库里 facilitate 一条，字段名与嵌套均未改动）。 */
 const REAL = {
@@ -47,7 +47,12 @@ describe("parseWordExam", () => {
     const exam = parseWordExam(REAL) as WordExam;
     expect(exam).not.toBeNull();
     expect(exam.reading?.blocks).toHaveLength(5);
-    expect(exam.reading?.blocks[0]).toEqual({ text: "Facilitating learning", role: "主语（动名词）", roleKind: "main" });
+    expect(exam.reading?.blocks[0]).toEqual({
+      text: "Facilitating learning",
+      role: "主语（动名词）",
+      roleKind: "main",
+      segments: [{ text: "Facilitating learning", depth: 0, nestType: null }],
+    });
     expect(exam.reading?.blocks[2]?.roleKind).toBe("mod");
     expect(exam.reading?.structure).toBeTruthy();
     expect(exam.translation?.keyPoints).toHaveLength(2);
@@ -126,6 +131,125 @@ describe("parseWordExam", () => {
   it("非字符串 split 元素被过滤，不渲染空白块", () => {
     const exam = parseWordExam({ reading: { split: ["A", null, 123, "", "  ", "B"] } }) as WordExam;
     expect(exam.reading?.blocks.map((b) => b.text)).toEqual(["A", "B"]);
+  });
+});
+
+/**
+ * `reading.split` 里的 `[]` 与 `｜标记` 是**编码**，不是正文。
+ *
+ * 不剥离的后果是真实可见的：真库实测 **126 词** 的例句正文里混进了 `｜定` / `｜状`。
+ * 设计稿（`wordcard-mock-2026-09-11.html`）把嵌套片段做成 `.nest`、分类做成
+ * **独立的 `.nest-type` 角标**，且设计稿全部迭代备份中 `｜` 出现次数为 0。
+ *
+ * 三种编码形态在真库中并存（全量统计 2026-10-03）：
+ *   ① `[片段｜定]` 124 词   ② `[片段]` 1 词   ③ `[片段]｜状,` 2 词（bow / boss）
+ */
+describe("parseSplitSegments（`[]` / `｜` 编码剥离）", () => {
+  const joined = (raw: string) => parseSplitSegments(raw).map((s) => s.text).join("");
+
+  it("无标记的纯文本 → 单个 depth 0 片段", () => {
+    expect(parseSplitSegments("Facilitating learning")).toEqual([
+      { text: "Facilitating learning", depth: 0, nestType: null },
+    ]);
+  });
+
+  it("形态① `[片段｜定]`：标记归 nestType，正文里不得残留 `｜`", () => {
+    const segs = parseSplitSegments("Levitt wore a [brown suède｜定] coat and gloves;");
+    expect(segs).toEqual([
+      { text: "Levitt wore a ", depth: 0, nestType: null },
+      { text: "brown suède", depth: 1, nestType: "定" },
+      { text: " coat and gloves;", depth: 0, nestType: null },
+    ]);
+    expect(joined("Levitt wore a [brown suède｜定] coat and gloves;")).not.toContain("｜");
+  });
+
+  it("形态② `[片段]`（无标记）→ 仍是嵌套片段，nestType 为 null", () => {
+    expect(parseSplitSegments("Given [China's shrinking labor force] and more,")).toEqual([
+      { text: "Given ", depth: 0, nestType: null },
+      { text: "China's shrinking labor force", depth: 1, nestType: null },
+      { text: " and more,", depth: 0, nestType: null },
+    ]);
+  });
+
+  it("形态③ `[片段]｜状,`：标记在括号外，且**尾随逗号必须交回正文**（不能吞掉）", () => {
+    // 真实脏数据：bow = "seated [in the second row directly behind his daughter]｜状,"
+    const raw = "seated [in the second row directly behind his daughter]｜状,";
+    const segs = parseSplitSegments(raw);
+    expect(segs).toEqual([
+      { text: "seated ", depth: 0, nestType: null },
+      { text: "in the second row directly behind his daughter", depth: 1, nestType: "状" },
+      { text: ",", depth: 0, nestType: null },
+    ]);
+    // 关键：正文拼回来必须与去掉编码后的原句逐字相同 —— 既不残留 `｜`/`[]`，也不丢标点
+    expect(joined(raw)).toBe("seated in the second row directly behind his daughter,");
+  });
+
+  it("形态③ 变体 `[片段]｜定.`：句点同样交回正文", () => {
+    // 真实脏数据：boss = "and the dangerous orbit of [their crime boss mother]｜定."
+    const segs = parseSplitSegments("and the dangerous orbit of [their crime boss mother]｜定.");
+    expect(segs[segs.length - 1]).toEqual({ text: ".", depth: 0, nestType: null });
+    expect(segs.find((s) => s.nestType !== null)?.nestType).toBe("定");
+  });
+
+  it("同一块内多处标记各自解析", () => {
+    const segs = parseSplitSegments("[26｜同] people were [12 people ill｜宾] in total");
+    expect(segs.filter((s) => s.depth === 1).map((s) => s.nestType)).toEqual(["同", "宾"]);
+    expect(segs.map((s) => s.text).join("")).not.toContain("｜");
+  });
+
+  it("真实样本（analogy 的 split[0]）：`｜状` 不再落进正文", () => {
+    const raw = "Asante draws a manufacturing analogy[—with some exaggeration—｜状]";
+    const segs = parseSplitSegments(raw);
+    expect(segs).toEqual([
+      { text: "Asante draws a manufacturing analogy", depth: 0, nestType: null },
+      { text: "—with some exaggeration—", depth: 1, nestType: "状" },
+    ]);
+    expect(segs.map((s) => s.text).join("")).not.toContain("｜");
+  });
+
+  it("嵌套深度 >1 时按层计数（实测仅 1 词，但契约要如实标注）", () => {
+    const segs = parseSplitSegments("a [b [c] d] e");
+    expect(segs).toEqual([
+      { text: "a ", depth: 0, nestType: null },
+      { text: "b ", depth: 1, nestType: null },
+      { text: "c", depth: 2, nestType: null },
+      { text: " d", depth: 1, nestType: null },
+      { text: " e", depth: 0, nestType: null },
+    ]);
+  });
+
+  // ── 脏数据容错：不崩、不白屏，也不静默吞字 ──
+  it("空标记 `[x｜]`：剥括号但不出角标", () => {
+    expect(parseSplitSegments("[x｜] tail")).toEqual([
+      { text: "x", depth: 1, nestType: null },
+      { text: " tail", depth: 0, nestType: null },
+    ]);
+  });
+
+  it("括号不配对 → 整串当正文原样返回，不剥不猜（实测真库 154 个含 `[` 片段全部配对）", () => {
+    const unclosed = "a [b c";
+    expect(parseSplitSegments(unclosed)).toEqual([{ text: unclosed, depth: 0, nestType: null }]);
+    const strayClose = "a ] b";
+    expect(parseSplitSegments(strayClose)).toEqual([{ text: strayClose, depth: 0, nestType: null }]);
+  });
+
+  it("空串 → 空数组（不产出空片段）", () => {
+    expect(parseSplitSegments("")).toEqual([]);
+  });
+
+  it("解析结果被挂到 block.segments 上，且 block.text 保留原文以便追溯", () => {
+    const exam = parseWordExam({
+      reading: {
+        split: ["x [y｜定] z"],
+        split_roles: [["主语", "main"]],
+      },
+    }) as WordExam;
+    expect(exam.reading?.blocks[0]?.text).toBe("x [y｜定] z");
+    expect(exam.reading?.blocks[0]?.segments).toEqual([
+      { text: "x ", depth: 0, nestType: null },
+      { text: "y", depth: 1, nestType: "定" },
+      { text: " z", depth: 0, nestType: null },
+    ]);
   });
 });
 

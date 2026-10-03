@@ -13,6 +13,7 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import type { WordExam } from "@/domain/word-exam";
+import { ExamSplitText } from "@/frontend/components/words/ExamSplitText";
 
 function LayerShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -87,12 +88,14 @@ export function WordExamPanel({
         <div className="mt-2 space-y-2.5" data-testid="word-exam-body">
           {reading && (
             <LayerShell title="精读 · 逐块与语法角色">
-              <ol className="space-y-1.5">
+              <ol className="space-y-1.5" data-testid="word-exam-reading">
                 {reading.blocks.map((b, i) => (
                   <li key={`${b.text.slice(0, 20)}-${i}`} className="flex items-start gap-2">
                     <RoleBadge role={b.role} roleKind={b.roleKind} />
                     <span className="text-[13px] leading-relaxed text-[var(--color-ink)]">
-                      {b.text}
+                      {/* 渲染 segments 而非 b.text：`[]` 与 `｜定` 是数据编码，
+                          直接渲染原文会把它们漏给读者（与复习卡同源的问题）。 */}
+                      <ExamSplitText segments={b.segments} />
                     </span>
                   </li>
                 ))}

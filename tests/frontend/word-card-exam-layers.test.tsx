@@ -276,3 +276,87 @@ describe("ExampleLayerBlock（例句层 · mock .ex-layer）", () => {
     expect(mount(createElement(ExampleLayerBlock, { ...base, text: "" })).innerHTML).toBe("");
   });
 });
+
+/**
+ * `[]` / `｜` 是**编码**，不是句子内容。
+ *
+ * 修复前：`SplitSegment` 只 `slice(1,-1)` 剥方括号，括号内的 `｜定` 直接落进正文
+ * —— 真库实测 126 词的例句里出现 `｜定` / `｜状`，读起来像句子的一部分。
+ * 设计稿（`wordcard-mock-2026-09-11.html:287`）的原意是：嵌套片段走 `.nest`，
+ * 分类走**独立的 `.nest-type` 角标**。
+ */
+describe("ClueZone 嵌套编码（`.nest` + `.nest-type` 角标）", () => {
+  const NEST_EXAM = {
+    reading: {
+      split: [
+        "Asante draws a manufacturing analogy[—with some exaggeration—｜状]",
+        "arguing that previous plants were built bespoke.",
+      ],
+      structure: "插入语 + 分词状语",
+      split_roles: [
+        ["主句 · 主谓宾", "main"],
+        ["状语", "mod"],
+      ],
+    },
+  };
+
+  const renderClue = (maskRevealed: boolean) =>
+    mount(
+      createElement(ClueZone, {
+        exam: parseWordExam(NEST_EXAM),
+        text: "Asante draws a manufacturing analogy—with some exaggeration—arguing that.",
+        maskTerm: "analogy",
+        maskRevealed,
+        onUnmask: () => {},
+        onPlaySentence: () => {},
+        sentencePlaying: false,
+      }),
+    );
+
+  it("`｜状` 不落进正文 —— 整块正文里不得出现全角竖线", () => {
+    const c = renderClue(true);
+    const block = c.querySelector('[data-testid="clue-split"]')!;
+    expect(block.textContent).not.toContain("｜");
+  });
+
+  it("分类渲染成独立角标 `.nest-type`（与嵌套片段分开）", () => {
+    const c = renderClue(true);
+    const badges = Array.from(c.querySelectorAll('[data-testid="nest-type"]'));
+    expect(badges.map((b) => b.textContent)).toEqual(["状"]);
+  });
+
+  it("方括号被剥离，嵌套片段只留纯文本", () => {
+    const c = renderClue(true);
+    const text = c.querySelector('[data-testid="clue-split"]')!.textContent ?? "";
+    expect(text).not.toContain("[");
+    expect(text).not.toContain("]");
+    expect(text).toContain("—with some exaggeration—");
+  });
+
+  it("遮盖未揭示时同样不留编码标记（遮盖与嵌套两条逻辑不打架）", () => {
+    const c = renderClue(false);
+    const block = c.querySelector('[data-testid="clue-split"]')!;
+    expect(block.textContent).not.toContain("｜");
+    // 遮盖块仍在（未揭示），说明剥离编码没有影响遮挡
+    expect(c.querySelector('[data-testid="clue-mask"]')).not.toBeNull();
+  });
+
+  it("无标记的纯嵌套 → 有 `.nest` 但没有角标", () => {
+    const c = mount(
+      createElement(ClueZone, {
+        exam: parseWordExam({
+          reading: { split: ["Given [China's shrinking labor force] and more,"], split_roles: [["状语", "mod"]] },
+        }),
+        text: "Given China's shrinking labor force and more,",
+        maskTerm: null,
+        maskRevealed: true,
+        onUnmask: () => {},
+        onPlaySentence: () => {},
+        sentencePlaying: false,
+      }),
+    );
+    const block = c.querySelector('[data-testid="clue-split"]')!;
+    expect(block.textContent).toContain("China's shrinking labor force");
+    expect(block.querySelectorAll('[data-testid="nest-type"]')).toHaveLength(0);
+  });
+});
