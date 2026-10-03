@@ -31,7 +31,7 @@ env:
 jobs:
   writing-e2e:
     name: Writing E2E（真环境闭环 + 故障矩阵）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     services:
