@@ -28,6 +28,7 @@ import { L3ContextsFold } from "@/frontend/components/review/L3ContextsFold";
 import { AcousticStickyAnchor } from "@/frontend/components/review/AcousticAnchor";
 import { buildHintSteps, extractMnemonicCore, HINT_STEP_LABEL as STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
 import { ClueZone, TrainingFold, ExampleLayerBlock, parseWordExam, parseVerifiedCount } from "@/frontend/components/review/WordCardExamLayers";
+import { parseRealUsageFromExample } from "@/domain/word-exam";
 import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
 
 const ratings = [
@@ -617,6 +618,9 @@ export function ReviewCardView({
       modified: first.modified === true,
       anchor: s(first.anchor),
       verifiedCount: parseVerifiedCount(first.verified),
+      // 真实语料佐证（CC BY 2.0 FR 的署名义务履行点）：解析在契约层，
+      // 缺字段逐项降级、形状不符返回空数组（组件据此整块不渲染）。
+      realUsage: parseRealUsageFromExample(first),
     };
   }, [detailWord?.examples]);
   const exampleExam = useMemo(() => {
@@ -846,7 +850,8 @@ export function ReviewCardView({
               </div>
             )}
 
-            {/* ── 例句层（mock .ex-layer 口径）：完整例句 + 译文 + 来源/核验 ── */}
+            {/* ── 例句层（mock .ex-layer 口径）：完整例句 + 译文 + 来源/核验
+                 + 真实语料佐证署名（CC BY 2.0 FR 义务履行点）── */}
             {exampleItem && (
               <ExampleLayerBlock
                 text={exampleItem.text}
@@ -857,6 +862,7 @@ export function ReviewCardView({
                 url={exampleItem.url}
                 modified={exampleItem.modified}
                 verifiedCount={exampleItem.verifiedCount}
+                realUsage={exampleItem.realUsage}
                 onPlaySentence={toggleOrPlaySentence}
                 sentencePlaying={sentencePlaying}
               />

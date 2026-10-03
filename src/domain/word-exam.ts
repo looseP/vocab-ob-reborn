@@ -297,3 +297,113 @@ export function pickPrimaryExam(examples: unknown): WordExam | null {
   }
   return null;
 }
+
+/**
+ * 真实语料佐证条目（`examples[i].verified.real_usage[j]`）。
+ *
+ * ## 为什么要在契约层解析它（而不是组件里裸读）
+ *
+ * 这些句子**不是自撰的**：每条都来自 Tatoeba 的真实语料，带许可与出处。
+ * 其中标 CC BY 2.0 FR 的那些，许可证 §4.2 要求再分发时给出原作者姓名、
+ * 作品标题（若有）、许可 URI。所以这不只是"多显示一行"——**渲染它就是在履行
+ * 署名义务，漏渲染就是不合规**，而"渲染了但作者名没出来"同样不合规。
+ *
+ * 实测形状（**2026-10-03**，全库 81 条 real_usage，分布于 81 个词）：
+ * - 键：`has_official_zh` / `license` / `note` / `source` / `source_type` / `text` / `url`
+ * - 许可分布：CC BY 2.0 FR = 79 条，CC0 1.0 = 2 条
+ * - `author` 键在 2026-10-03 之前**一条都没有**，由
+ *   `scripts/backfill-real-usage-author.ts` 回补（同日 81/81 补齐）
+ *
+ * 因为 `author` 是**新补的字段**，而 `examples` 是 jsonb（形状不受类型系统保护），
+ * 所以这里对 `author` 缺失做**逐项降级**：缺作者不丢整条佐证 —— 句子与出处仍然
+ * 该显示，只是署名部分缺席（此时前端会显式提示"作者待补"，而不是假装已署名）。
+ */
+export interface WordExamRealUsage {
+  /** 佐证句原文。缺失/非字符串/空串 → 该条不解析（没有句子的佐证无意义）。 */
+  readonly text: string;
+  /** 原作者（Tatoeba 用户名）。缺失 → null（前端显式标"作者待补"）。 */
+  readonly author: string | null;
+  /** 许可名（如 `CC BY 2.0 FR`）。缺失 → null。 */
+  readonly license: string | null;
+  /** 句子永久链接（Tatoeba 句子页）。缺失 → null（则不给链接）。 */
+  readonly url: string | null;
+  /** 来源类型（实测 `tatoeba`）。缺失 → null。 */
+  readonly sourceType: string | null;
+  /** 出处说明（如 `Tatoeba 真实语料（CC BY 2.0 FR）`）。缺失 → null。 */
+  readonly source: string | null;
+  /** 是否中文官方译（`has_official_zh`）。非布尔一律 false。 */
+  readonly hasOfficialZh: boolean;
+}
+
+/**
+ * 从 `examples[i].verified.real_usage` 解析真实语料佐证列表。
+ *
+ * 返回空数组 = 该例句没有佐证（调用方据此**整块不渲染**，不留空壳）。
+ * 形状完全不符（verified 非对象 / real_usage 非数组）同样返回空数组 —— 与
+ * `parseWordExam` 同一条纪律：jsonb 脏数据不抛错、不白屏，降级成"没有"。
+ *
+ * 逐条降级：单条里缺 text 就丢该条（没有句子的佐证无意义），但缺 author /
+ * license / url 只丢对应字段 —— 尤其是 **author 缺失不能连句子一起丢**，
+ * 否则会从"署名不全"退化成"完全不署名"。
+ */
+export function parseRealUsage(raw: unknown): WordExamRealUsage[] {
+  if (!Array.isArray(raw)) return [];
+  const out: WordExamRealUsage[] = [];
+  for (const item of raw) {
+    if (!isRecord(item)) continue;
+    const text = str(item.text);
+    if (text === null) continue;
+    out.push({
+      text,
+      author: str(item.author),
+      license: str(item.license),
+      url: str(item.url),
+      sourceType: str(item.source_type),
+      source: str(item.source),
+      hasOfficialZh: item.has_official_zh === true,
+    });
+  }
+  return out;
+}
+
+/** 从单个 `examples[i]` 取 `verified.real_usage`（缺 verified 时返回空数组）。 */
+export function parseRealUsageFromExample(example: unknown): WordExamRealUsage[] {
+  if (!isRecord(example)) return [];
+  const verified = example.verified;
+  if (!isRecord(verified)) return [];
+  return parseRealUsage(verified.real_usage);
+}
+
+/**
+ * 许可名 → 官方 legalcode 页。
+ *
+ * CC BY 2.0 FR §4.1 要求「每次分发都附上本许可的副本或 URI」，所以渲染佐证时
+ * 必须能给出这个 URI —— 只写许可名（"CC BY 2.0 FR"）不构成附 URI。
+ *
+ * 只映射**实测出现过**的两类，其余一律返回 null（不猜）：库里 81 条 real_usage
+ * 的许可分布就是 CC BY 2.0 FR（79）+ CC0 1.0（2）。未来出现新许可时，
+ * 前端会退化成「只显示许可名、不给链接」，而不是链到一个猜的地址。
+ */
+export function realUsageLicenseUrl(license: string | null): string | null {
+  if (license === null) return null;
+  const norm = license.trim().toLowerCase();
+  if (norm === "cc by 2.0 fr") return "https://creativecommons.org/licenses/by/2.0/fr/";
+  if (norm === "cc0 1.0") return "https://creativecommons.org/publicdomain/zero/1.0/";
+  return null;
+}
+
+/**
+ * 该许可是否要求署名（决定 UI 是「作者：X」还是「出处：X」，以及作者缺失时
+ * 是否要显式标「待补」）。
+ *
+ * - `CC BY *` → true（署名是许可条件）
+ * - `CC0 *` / 公有领域 → false（奉献者已放弃署名权，但仍建议标出处）
+ * - 未知 / 缺失 → **true**（保守方向：宁可多标一次署名，不可少标。
+ *   少标 = 不合规，多标只是多一行字）
+ */
+export function realUsageRequiresAttribution(license: string | null): boolean {
+  if (license === null) return true;
+  const norm = license.trim().toLowerCase();
+  if (norm.startsWith("cc0") || norm.includes("public domain")) return false;
+  return true;
+}

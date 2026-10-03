@@ -192,7 +192,10 @@ describe("TrainingFold（训练扩展 · mock fold）", () => {
     expect(c.innerHTML).toContain("说明文");
     expect(c.innerHTML).toContain("转折论证");
     expect(c.innerHTML).toContain("A is fine, but B is not.");
-    expect(c.innerHTML).toContain("已核");
+    // 文案口径（2026-10-03）：`verifiedCount` 数的是产线**自检记录**条数
+    // （`verified.checked[]`），与"许可义务已履行"是两回事，旧文案「✓已核」
+    // 会被读成"来源已核验"。改后断言新文案。
+    expect(c.innerHTML).toContain("产线自检 3 项");
   });
 
   it("无 exam / 无译点且无骨架 → 整体缺席", () => {
@@ -237,8 +240,8 @@ describe("ExampleLayerBlock（例句层 · mock .ex-layer）", () => {
     // 来源类型 + 来源名都出现
     expect(layer!.textContent).toContain("corpus");
     expect(layer!.textContent).toContain("COCA");
-    // verifiedCount > 0 才出「已核」
-    expect(layer!.textContent).toContain("已核");
+    // verifiedCount > 0 才出产线自检徽章（文案口径见 2026-10-03 说明）
+    expect(layer!.textContent).toContain("产线自检 2 项");
   });
 
   it("无译文 / 未核验 / 未改写 / 无原文链接 → 对应徽章与链接都不出现", () => {
@@ -253,7 +256,7 @@ describe("ExampleLayerBlock（例句层 · mock .ex-layer）", () => {
     );
     const layer = c.querySelector('[data-testid="ex-layer"]')!;
     expect(layer.textContent).toContain(TEXT);
-    expect(layer.textContent).not.toContain("已核");
+    expect(layer.textContent).not.toContain("产线自检");
     expect(layer.textContent).not.toContain("来源·改");
     expect(layer.querySelector("a")).toBeNull();
   });
