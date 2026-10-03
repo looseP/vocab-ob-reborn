@@ -1,0 +1,661 @@
+{
+  "$comment": "words.examples[0].verified.real_usage[*].author 回填清单。author 取自 Tatoeba 官方 API 的 data.owner；status != ok 的条目一律 author=null（不猜），由 backfill-real-usage-author.ts 跳过并在报告里列出。",
+  "meta": {
+    "version": 1,
+    "measuredAt": "2026-10-03",
+    "source": "https://api.tatoeba.org/unstable/sentences/<id>",
+    "method": "逐条 GET（串行，条间固定间隔），核对返回文本与库内文本一致后取 data.owner；不一致标 text-mismatch 不取作者。",
+    "fetched": 81,
+    "missing": 0
+  },
+  "entries": [
+    {
+      "slug": "buddhist",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11354735",
+      "author": "magnificentgoddess",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:23.124Z",
+      "status": "ok"
+    },
+    {
+      "slug": "centimetre",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11970218",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:25.125Z",
+      "status": "ok"
+    },
+    {
+      "slug": "cheque",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11913346",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:27.106Z",
+      "status": "ok"
+    },
+    {
+      "slug": "congressional",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11004580",
+      "author": "CM",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:29.112Z",
+      "status": "ok"
+    },
+    {
+      "slug": "cosy",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12130152",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:31.123Z",
+      "status": "ok"
+    },
+    {
+      "slug": "depredation",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11464446",
+      "author": "carlosalberto",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:33.325Z",
+      "status": "ok"
+    },
+    {
+      "slug": "dimensional",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/5996689",
+      "author": "Hybrid",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:35.128Z",
+      "status": "ok"
+    },
+    {
+      "slug": "dishonour",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12819079",
+      "author": "Ergulis",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:37.118Z",
+      "status": "ok"
+    },
+    {
+      "slug": "dramatically",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/8610677",
+      "author": "Amastan",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:39.125Z",
+      "status": "ok"
+    },
+    {
+      "slug": "eighteen",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11176034",
+      "author": "CK",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:41.117Z",
+      "status": "ok"
+    },
+    {
+      "slug": "enquire",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11847381",
+      "author": "Amastan",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:43.137Z",
+      "status": "ok"
+    },
+    {
+      "slug": "exclusionary",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11450740",
+      "author": "pip",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:45.126Z",
+      "status": "ok"
+    },
+    {
+      "slug": "favour",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12299660",
+      "author": "Aghanim",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:47.118Z",
+      "status": "ok"
+    },
+    {
+      "slug": "favourable",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/1047698",
+      "author": "Parmeet",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:49.122Z",
+      "status": "ok"
+    },
+    {
+      "slug": "fibre",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10017808",
+      "author": "Johannes_S",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:51.130Z",
+      "status": "ok"
+    },
+    {
+      "slug": "flavour",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13056871",
+      "author": "menaud",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:53.115Z",
+      "status": "ok"
+    },
+    {
+      "slug": "gaol",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10852687",
+      "author": "andibing",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:55.122Z",
+      "status": "ok"
+    },
+    {
+      "slug": "genetically",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13040131",
+      "author": "Adelpa",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:57.130Z",
+      "status": "ok"
+    },
+    {
+      "slug": "habitually",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/2249256",
+      "author": "CC",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:02:59.120Z",
+      "status": "ok"
+    },
+    {
+      "slug": "hooray",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11031084",
+      "author": "maaster",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:01.125Z",
+      "status": "ok"
+    },
+    {
+      "slug": "horticultural",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12314612",
+      "author": "carlosalberto",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:03.126Z",
+      "status": "ok"
+    },
+    {
+      "slug": "humour",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11515568",
+      "author": "Nuel",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:05.126Z",
+      "status": "ok"
+    },
+    {
+      "slug": "intensely",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12216181",
+      "author": "Miktsoanit",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:07.130Z",
+      "status": "ok"
+    },
+    {
+      "slug": "irrespective",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/241432",
+      "author": "Lumi_alt",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:09.129Z",
+      "status": "ok"
+    },
+    {
+      "slug": "kilogramme",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/6199568",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:11.795Z",
+      "status": "ok"
+    },
+    {
+      "slug": "lender",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/2983286",
+      "author": "carlosalberto",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:13.396Z",
+      "status": "ok"
+    },
+    {
+      "slug": "low-cost",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10096797",
+      "author": "Amastan",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:15.398Z",
+      "status": "ok"
+    },
+    {
+      "slug": "male-dominated",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/1096366",
+      "author": "CK",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:17.406Z",
+      "status": "ok"
+    },
+    {
+      "slug": "marxism",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10581073",
+      "author": "AlanF_US",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:19.415Z",
+      "status": "ok"
+    },
+    {
+      "slug": "massacre",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10158167",
+      "author": "Amastan",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:21.406Z",
+      "status": "ok"
+    },
+    {
+      "slug": "mesmerise",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/8681090",
+      "author": "sabretou",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:23.411Z",
+      "status": "ok"
+    },
+    {
+      "slug": "meteorological",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12673299",
+      "author": "anzart",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:25.420Z",
+      "status": "ok"
+    },
+    {
+      "slug": "meteorologist",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/6697496",
+      "author": "Hybrid",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:27.404Z",
+      "status": "ok"
+    },
+    {
+      "slug": "metre",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10948209",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:29.409Z",
+      "status": "ok"
+    },
+    {
+      "slug": "microbiologist",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/3223246",
+      "author": "Hybrid",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:31.416Z",
+      "status": "ok"
+    },
+    {
+      "slug": "mindlessly",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/5261606",
+      "author": "Ppjet6",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:33.416Z",
+      "status": "ok"
+    },
+    {
+      "slug": "mould",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11828483",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:35.406Z",
+      "status": "ok"
+    },
+    {
+      "slug": "needlessly",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11461309",
+      "author": "camouat",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:37.417Z",
+      "status": "ok"
+    },
+    {
+      "slug": "netball",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12229102",
+      "author": "becky82",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:39.405Z",
+      "status": "ok"
+    },
+    {
+      "slug": "neuroscientist",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/8670542",
+      "author": "Mediabat",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:41.411Z",
+      "status": "ok"
+    },
+    {
+      "slug": "ninety",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/8029337",
+      "author": "theachaean",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:43.406Z",
+      "status": "ok"
+    },
+    {
+      "slug": "oceanographer",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13919271",
+      "author": "frpzzd",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:45.407Z",
+      "status": "ok"
+    },
+    {
+      "slug": "odour",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12438896",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:47.435Z",
+      "status": "ok"
+    },
+    {
+      "slug": "oneself",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/270100",
+      "author": "sacredceltic",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:49.401Z",
+      "status": "ok"
+    },
+    {
+      "slug": "open-access",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13964347",
+      "author": "Naityahia",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:51.409Z",
+      "status": "ok"
+    },
+    {
+      "slug": "outdate",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12302247",
+      "author": "CK",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:53.417Z",
+      "status": "ok"
+    },
+    {
+      "slug": "paralyse",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13843529",
+      "author": "Tom9358",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:55.419Z",
+      "status": "ok"
+    },
+    {
+      "slug": "partly",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13245308",
+      "author": "Lumi",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:57.416Z",
+      "status": "ok"
+    },
+    {
+      "slug": "peer-reviewed",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/1795485",
+      "author": "Spamster",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:03:59.420Z",
+      "status": "ok"
+    },
+    {
+      "slug": "phonetics",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12802548",
+      "author": "Igider",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:01.419Z",
+      "status": "ok"
+    },
+    {
+      "slug": "phoney",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/7164956",
+      "author": "OsoHombre",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:03.426Z",
+      "status": "ok"
+    },
+    {
+      "slug": "re-evaluate",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/5989401",
+      "author": "OsoHombre",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:05.405Z",
+      "status": "ok"
+    },
+    {
+      "slug": "realtor",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10210102",
+      "author": "Amastan",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:07.427Z",
+      "status": "ok"
+    },
+    {
+      "slug": "reception",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11259561",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:09.625Z",
+      "status": "ok"
+    },
+    {
+      "slug": "recognise",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12169249",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:11.418Z",
+      "status": "ok"
+    },
+    {
+      "slug": "recruiter",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13879664",
+      "author": "rul",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:13.407Z",
+      "status": "ok"
+    },
+    {
+      "slug": "render",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11803467",
+      "author": "ddnktr",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:15.419Z",
+      "status": "ok"
+    },
+    {
+      "slug": "rid",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10143796",
+      "author": "ddnktr",
+      "license": "CC0 1.0",
+      "fetched_at": "2026-10-03T11:04:17.411Z",
+      "status": "ok"
+    },
+    {
+      "slug": "rifle",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12456899",
+      "author": "CK",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:19.417Z",
+      "status": "ok"
+    },
+    {
+      "slug": "rumour",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12511288",
+      "author": "megamanenm",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:21.420Z",
+      "status": "ok"
+    },
+    {
+      "slug": "scrutinise",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11744934",
+      "author": "Nuel",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:23.415Z",
+      "status": "ok"
+    },
+    {
+      "slug": "shade-tolerant",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/8903138",
+      "author": "cazort",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:25.414Z",
+      "status": "ok"
+    },
+    {
+      "slug": "skilful",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11930980",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:27.412Z",
+      "status": "ok"
+    },
+    {
+      "slug": "state-of-the-art",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12201511",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:29.417Z",
+      "status": "ok"
+    },
+    {
+      "slug": "statesman",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/45952",
+      "author": "MrShoval",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:31.419Z",
+      "status": "ok"
+    },
+    {
+      "slug": "statistics",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13868988",
+      "author": "rul",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:33.434Z",
+      "status": "ok"
+    },
+    {
+      "slug": "studiously",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10153553",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:35.424Z",
+      "status": "ok"
+    },
+    {
+      "slug": "suburban",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12908751",
+      "author": "Conjuice",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:37.426Z",
+      "status": "ok"
+    },
+    {
+      "slug": "suppose",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13862335",
+      "author": "menaud",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:39.426Z",
+      "status": "ok"
+    },
+    {
+      "slug": "swollen",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13087043",
+      "author": "anzart",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:41.431Z",
+      "status": "ok"
+    },
+    {
+      "slug": "tissue",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12787126",
+      "author": "CK",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:43.425Z",
+      "status": "ok"
+    },
+    {
+      "slug": "undoubtedly",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11196246",
+      "author": "Amastan",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:45.438Z",
+      "status": "ok"
+    },
+    {
+      "slug": "upfront",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/3581351",
+      "author": "bluwy",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:47.441Z",
+      "status": "ok"
+    },
+    {
+      "slug": "utilise",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/7004652",
+      "author": "timoteojohano",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:49.426Z",
+      "status": "ok"
+    },
+    {
+      "slug": "vapour",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/11085821",
+      "author": "sundown",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:51.429Z",
+      "status": "ok"
+    },
+    {
+      "slug": "vice",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/7733809",
+      "author": "CK",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:53.638Z",
+      "status": "ok"
+    },
+    {
+      "slug": "watershed",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10455253",
+      "author": "shekitten",
+      "license": "CC0 1.0",
+      "fetched_at": "2026-10-03T11:04:55.423Z",
+      "status": "ok"
+    },
+    {
+      "slug": "whatsoever",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/13831404",
+      "author": "menaud",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:57.429Z",
+      "status": "ok"
+    },
+    {
+      "slug": "whoever",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/12620656",
+      "author": "ddnktr",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:04:59.432Z",
+      "status": "ok"
+    },
+    {
+      "slug": "x-rated",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/49531",
+      "author": "CM",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:05:01.427Z",
+      "status": "ok"
+    },
+    {
+      "slug": "zoologist",
+      "sentence_url": "https://tatoeba.org/en/sentences/show/10210254",
+      "author": "Amastan",
+      "license": "CC BY 2.0 FR",
+      "fetched_at": "2026-10-03T11:05:03.423Z",
+      "status": "ok"
+    }
+  ]
+}
