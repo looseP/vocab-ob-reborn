@@ -360,3 +360,138 @@ describe("ClueZone 嵌套编码（`.nest` + `.nest-type` 角标）", () => {
     expect(block.querySelectorAll('[data-testid="nest-type"]')).toHaveLength(0);
   });
 });
+
+/**
+ * 「读主干」模式（mock `.clue-split.trunk-mode`，设计稿 v0.5 展示升级）。
+ *
+ * 诉求：长句先只看**句子骨架**（主干），修饰/补充行一键收起 —— 先读懂主干再看细节。
+ * 实测真库分布：5589 词含 mod/supp（有意义的），1178 词全是主干（切换无变化）。
+ */
+describe("ClueZone「读主干」模式", () => {
+  // 三块：主干 + 修饰 + 补充（补充用未知类别，走渲染口径归 supp）
+  const TRUNK_EXAM = {
+    reading: {
+      split: [
+        "Asante draws a manufacturing analogy",
+        "—with some exaggeration—",
+        "akin to building a factory for one car.",
+      ],
+      split_roles: [
+        ["主句 · 主谓宾", "main"],
+        ["插入语（引出所引观点）", "mod"],
+        ["补充 · 比较（与前项并置）", "supp"],
+      ],
+    },
+  };
+
+  const ALL_MAIN_EXAM = {
+    reading: {
+      split: ["Some fat is normal in the liver", "abnormal levels are a concern."],
+      split_roles: [
+        ["主句（主谓）", "main"],
+        ["系表 · 表语", "main"],
+      ],
+    },
+  };
+
+  const mountClue = (exam: unknown) =>
+    mount(
+      createElement(ClueZone, {
+        exam: parseWordExam(exam),
+        text: "Asante draws a manufacturing analogy.",
+        maskTerm: null,
+        maskRevealed: true,
+        onUnmask: () => {},
+      }),
+    );
+
+  const rows = (c: HTMLElement) => c.querySelectorAll('[data-testid="clue-split"] li');
+  const toggle = (c: HTMLElement) =>
+    c.querySelector<HTMLButtonElement>('[data-testid="clue-trunk-toggle"]');
+
+  it("默认展开全句：三条轨都在", () => {
+    const c = mountClue(TRUNK_EXAM);
+    expect(rows(c)).toHaveLength(3);
+    expect(toggle(c)?.textContent).toBe("读主干");
+  });
+
+  it("点「读主干」→ 只留主干行，mod/supp 从 DOM 消失", () => {
+    const c = mountClue(TRUNK_EXAM);
+    act(() => toggle(c)!.click());
+
+    expect(rows(c)).toHaveLength(1);
+    expect(rows(c)[0].textContent).toContain("Asante draws a manufacturing analogy");
+    expect(c.querySelector('[data-testid="clue-split"]')?.getAttribute("data-trunk")).toBe("on");
+  });
+
+  it("按钮标签与 aria-pressed 同步（读主干 ⇄ 显示全句）", () => {
+    const c = mountClue(TRUNK_EXAM);
+    const btn = toggle(c)!;
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+
+    act(() => toggle(c)!.click());
+    expect(toggle(c)!.textContent).toBe("显示全句");
+    expect(toggle(c)!.getAttribute("aria-pressed")).toBe("true");
+
+    act(() => toggle(c)!.click());
+    expect(toggle(c)!.textContent).toBe("读主干");
+    expect(toggle(c)!.getAttribute("aria-pressed")).toBe("false");
+    expect(rows(c)).toHaveLength(3);
+  });
+
+  it("tooltip 告知会隐藏几行（不让用户以为界面坏了）", () => {
+    const c = mountClue(TRUNK_EXAM);
+    expect(toggle(c)!.getAttribute("title")).toContain("2");
+    act(() => toggle(c)!.click());
+    expect(toggle(c)!.getAttribute("title")).toContain("2");
+  });
+
+  it("按钮带 data-no-flip —— 点它不会把卡片翻面（那会误消费一次评分）", () => {
+    const c = mountClue(TRUNK_EXAM);
+    expect(toggle(c)!.hasAttribute("data-no-flip")).toBe(true);
+  });
+
+  it("全部是主干行时**不渲染按钮**（不给无操作的控件）", () => {
+    // 实测真库 1178/6767 属此类
+    const c = mountClue(ALL_MAIN_EXAM);
+    expect(rows(c)).toHaveLength(2);
+    expect(toggle(c)).toBeNull();
+  });
+
+  it("无切分数据（v1 批次）→ 无按钮，退化为整句渲染", () => {
+    const c = mount(
+      createElement(ClueZone, {
+        exam: null,
+        text: "A plain sentence without split data.",
+        maskTerm: null,
+        maskRevealed: true,
+        onUnmask: () => {},
+      }),
+    );
+    expect(toggle(c)).toBeNull();
+    expect(c.textContent).toContain("A plain sentence without split data.");
+  });
+
+  it("未知类别（roleKind 非 main/mod）按 supp 口径收起", () => {
+    const c = mount(
+      createElement(ClueZone, {
+        exam: parseWordExam({
+          reading: {
+            split: ["A main clause", "an appended clause"],
+            split_roles: [
+              ["主句", "main"],
+              ["补充 · 比较", "some_unknown_kind"],
+            ],
+          },
+        }),
+        text: "A main clause",
+        maskTerm: null,
+        maskRevealed: true,
+        onUnmask: () => {},
+      }),
+    );
+    expect(rows(c)).toHaveLength(2);
+    act(() => toggle(c)!.click());
+    expect(rows(c)).toHaveLength(1);
+  });
+});

@@ -68,25 +68,36 @@ function MarkedSentence({ text, term }: { text: string; term: string | null }) {
 /**
  * 轨色切分行（mock `.clue-split` 口径）：main/mod/supp 三轨 + 角色标签 + `[]` 嵌套着色
  * + 目标词遮挡。
+ *
+ * `trunkMode` = 「读主干」（mock `.clue-split.trunk-mode`）：**只留主干**，
+ * 隐藏 mod / supp 行 —— 先读句子骨架再看修饰，是设计稿 v0.5 的展示升级。
+ * 未知类别（`roleKind` 为 null）按渲染口径归 `supp`，故同样被隐藏。
  */
 function SplitLines({
   exam,
   maskTerm,
   maskRevealed,
   onUnmask,
+  trunkMode = false,
 }: {
   exam: WordExam;
   maskTerm?: string | null;
   maskRevealed?: boolean;
   onUnmask?: () => void;
+  trunkMode?: boolean;
 }) {
   const blocks = exam.reading?.blocks ?? [];
   if (blocks.length === 0) return null;
   return (
-    <ol className="space-y-1" data-testid="clue-split">
+    <ol
+      className="space-y-1"
+      data-testid="clue-split"
+      data-trunk={trunkMode ? "on" : undefined}
+    >
       {blocks.map((block, i) => {
         const role = block.roleKind ?? "supp";
         const label = block.role ?? "";
+        if (trunkMode && role !== "main") return null;
         return (
           <li key={`${block.text.slice(0, 20)}-${i}`} className="flex items-start gap-2">
             <span
@@ -149,7 +160,12 @@ export function ClueZone({
   onPlaySentence?: () => void;
   sentencePlaying?: boolean;
 }) {
-  const hasSplit = (exam?.reading?.blocks.length ?? 0) > 0;
+  const [trunkMode, setTrunkMode] = useState(false);
+  const blocks = exam?.reading?.blocks ?? [];
+  // 「读主干」只在**真有可隐藏的行**时才有意义：实测真库 1178 词全是主干行
+  // （切换后内容不变 = 给用户一个无操作的控件），另 5589 词含 mod/supp。
+  const hiddenCount = blocks.filter((b) => (b.roleKind ?? "supp") !== "main").length;
+  const hasSplit = blocks.length > 0;
   if (!text) return null;
   return (
     <div
@@ -181,12 +197,41 @@ export function ClueZone({
         )}
       </div>
       {hasSplit && exam ? (
-        <SplitLines
-          exam={exam}
-          maskTerm={maskTerm}
-          maskRevealed={maskRevealed}
-          onUnmask={onUnmask}
-        />
+        <>
+          <SplitLines
+            exam={exam}
+            maskTerm={maskTerm}
+            maskRevealed={maskRevealed}
+            onUnmask={onUnmask}
+            trunkMode={trunkMode}
+          />
+          {hiddenCount > 0 && (
+            <div className="mt-1.5 flex justify-end" data-no-flip>
+              <button
+                type="button"
+                data-no-flip
+                data-testid="clue-trunk-toggle"
+                aria-pressed={trunkMode}
+                title={
+                  trunkMode
+                    ? `已隐藏 ${hiddenCount} 条修饰/补充行，点此恢复全句`
+                    : `先只看句子主干（隐藏 ${hiddenCount} 条修饰/补充行）`
+                }
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTrunkMode((v) => !v);
+                }}
+                className={
+                  trunkMode
+                    ? "cursor-pointer rounded-full border border-solid border-[var(--color-accent)] bg-transparent px-2.5 py-[3px] text-[11.5px] text-[var(--color-accent)] transition-colors"
+                    : "cursor-pointer rounded-full border border-dashed border-[var(--color-border-strong)] bg-transparent px-2.5 py-[3px] text-[11.5px] text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                }
+              >
+                {trunkMode ? "显示全句" : "读主干"}
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <p className="text-[13.5px] leading-relaxed text-[var(--color-ink)]">
           <MaskedPiece text={text} term={maskTerm} revealed={maskRevealed} onUnmask={onUnmask} />
