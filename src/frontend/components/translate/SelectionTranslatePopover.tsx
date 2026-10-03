@@ -83,6 +83,21 @@ export function SelectionTranslatePopover({
    */
   const seq = useRef(0);
 
+  /**
+   * 翻译范围口径（2026-10-04 用户反馈修正）：**引什么翻什么**。
+   *
+   * 此前翻的是 `state.text`（`extractProseSelection` 兜底扩成的整句），
+   * 而引用区显示的却是 `state.selectedText` —— 用户选一个词组、拿到一整句译文，
+   * 「我选的是这个、你翻的是那个」正是这种不一致的体感。
+   * 现在默认翻**选区原文**；扩句能力保留，降级为页脚的显式入口「翻整句」。
+   */
+  const [scope, setScope] = useState<"selection" | "sentence">(() =>
+    state.selectedText.trim() ? "selection" : "sentence",
+  );
+  // 送去翻译的文本：选区口径用 selectedText（空白选区不可用，退回扩句文本兜底）
+  const scopeText =
+    scope === "selection" && state.selectedText.trim() ? state.selectedText : state.text;
+
   const run = useCallback(
     async (text: string, bypassCache: boolean) => {
       seq.current += 1;
@@ -102,8 +117,8 @@ export function SelectionTranslatePopover({
   );
 
   useEffect(() => {
-    void run(state.text, false);
-  }, [run, state.text]);
+    void run(scopeText, false);
+  }, [run, scopeText]);
 
   // 量出实际高度后再校正位置（首帧只能按估算值，否则长译文会被视口截断）
   useLayoutEffect(() => {
@@ -142,7 +157,7 @@ export function SelectionTranslatePopover({
     >
       <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface,var(--color-bg))] px-3 py-1.5">
         <span className="text-[11px] font-medium text-[var(--color-ink-soft)]">
-          {state.expanded ? "整句译文" : "选区译文"}
+          {scope === "sentence" ? "整句译文" : "选区译文"}
         </span>
         <div className="flex items-center gap-1.5">
           {outcome?.fromCache && <span className="text-[10px] text-[var(--color-ink-soft)]">缓存</span>}
@@ -176,21 +191,35 @@ export function SelectionTranslatePopover({
       </div>
 
       {!loading && (
-        <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface,var(--color-bg))] px-3 py-1.5">
-          {/*
-            这里**刻意不显示 provider id**（2026-09-29 修正）。
-            早期版本在页脚露出裸的 `mymemory` / `google-web`，结果被用户当成
-            「请求发到别处去了」—— provider 是**上游翻译源**，跟请求打到哪个
-            端点无关，裸 id 长得就像个地址，纯误导。诊断信息归日志，不归界面。
-          */}
-          <button
-            type="button"
-            onClick={() => void run(state.text, true)}
-            className="text-[10px] text-[var(--color-ink-soft)] underline-offset-2 transition-colors hover:text-[var(--color-accent)] hover:underline"
-          >
-            重新翻译
-          </button>
-        </div>
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface,var(--color-bg))] px-3 py-1.5">
+              {/*
+                这里**刻意不显示 provider id**（2026-09-29 修正）。
+                早期版本在页脚露出裸的 `mymemory` / `google-web`，结果被用户当成
+                「请求发到别处去了」—— provider 是**上游翻译源**，跟请求打到哪个
+                端点无关，裸 id 长得就像个地址，纯误导。诊断信息归日志，不归界面。
+              */}
+              {/*
+                扩句入口（2026-10-04）：只有**真的发生过扩句**才出现 —— 选区本来
+                就是完整句时给这个按钮毫无意义。默认只译选区，需要更大语境时再点。
+              */}
+              {state.expanded && state.selectedText.trim() && (
+                <button
+                  type="button"
+                  data-testid="selection-scope-toggle"
+                  onClick={() => setScope((s) => (s === "selection" ? "sentence" : "selection"))}
+                  className="text-[10px] text-[var(--color-ink-soft)] underline-offset-2 transition-colors hover:text-[var(--color-accent)] hover:underline"
+                >
+                  {scope === "selection" ? "翻整句" : "只译选区"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void run(scopeText, true)}
+                className="text-[10px] text-[var(--color-ink-soft)] underline-offset-2 transition-colors hover:text-[var(--color-accent)] hover:underline"
+              >
+                重新翻译
+              </button>
+            </div>
       )}
     </div>
   );

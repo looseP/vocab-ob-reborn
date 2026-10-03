@@ -93,5 +93,15 @@ export function useSelectionTranslate() {
   }, [close]);
 
   if (!state) return null;
-  return <SelectionTranslatePopover state={state} targetLang={TARGET_LANG} onClose={close} />;
+  // key 让**每次新选区都重挂浮层**：否则「翻整句」选过的 scope 会残留到下一次
+  // 划词上，用户没主动切却拿到了整句译文。与 ReviewCardView 用 key 隔离跨卡
+  // 本地状态同一手法。
+  return (
+    <SelectionTranslatePopover
+      key={`${state.selectedText}@${state.rect.top}`}
+      state={state}
+      targetLang={TARGET_LANG}
+      onClose={close}
+    />
+  );
 }

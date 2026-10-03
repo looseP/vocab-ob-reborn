@@ -45,6 +45,24 @@ function stateAt(top: number, left = 260): SelectionTranslateState {
   };
 }
 
+/**
+ * 最后一次请求**真正送去翻译的文本**。
+ *
+ * `mocked` 是 `apiFetch`（不是 `translateText`），所以断言要落到请求体的
+ * `text` 字段上 —— 直接断言 `(text, lang)` 会拿到 `("/l3/translate-text", init)`。
+ */
+function requestedText(): string {
+  const calls = mocked.mock.calls;
+  const init = calls.at(-1)?.[1] as { body?: string } | undefined;
+  if (!init?.body) return "";
+  try {
+    const parsed = JSON.parse(init.body) as { text?: unknown };
+    return typeof parsed.text === "string" ? parsed.text : "";
+  } catch {
+    return "";
+  }
+}
+
 let container: HTMLDivElement;
 let root: Root;
 /** 模拟真实浏览器给出的浮层高度（jsdom 的 getBoundingClientRect 恒返回 0）。 */
@@ -157,13 +175,52 @@ describe("自身可滚", () => {
 });
 
 describe("内容与失败态", () => {
-  it("扩展过的选区标题写「整句译文」，未扩展写「选区译文」", () => {
+  it("默认只译选区 —— 即便选区被扩过句，标题也是「选区译文」", () => {
+    // 2026-10-04 修正：此前翻的是扩句后的整句，而引用区显示选区原文，
+    // 「我选这个词组、给我整句译文」的不一致体感由此而来。现在默认引什么翻什么。
     mount(createElement(SelectionTranslatePopover, { state: stateAt(200), targetLang: "zh-CN", onClose: () => {} }));
-    expect(screen.getByTestId("selection-translate-popover").textContent).toContain("整句译文");
-
-    const plain = { ...stateAt(200), expanded: false };
-    act(() => root.render(createElement(SelectionTranslatePopover, { state: plain, targetLang: "zh-CN", onClose: () => {} })));
     expect(screen.getByTestId("selection-translate-popover").textContent).toContain("选区译文");
+  });
+
+  it("**送去翻译的文本就是选区原文**（不是扩出来的整句）", async () => {
+    await act(async () => {
+      root.render(createElement(SelectionTranslatePopover, { state: stateAt(200), targetLang: "zh-CN", onClose: () => {} }));
+    });
+    expect(requestedText()).toBe("abandon");
+    expect(requestedText()).not.toBe(stateAt(200).text);
+  });
+
+  it("点「翻整句」才切到整句口径，标题同步为「整句译文」", async () => {
+    await act(async () => {
+      root.render(createElement(SelectionTranslatePopover, { state: stateAt(200), targetLang: "zh-CN", onClose: () => {} }));
+    });
+    const toggle = screen.getByTestId("selection-scope-toggle");
+    expect(toggle.textContent).toBe("翻整句");
+
+    await act(async () => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const el = screen.getByTestId("selection-translate-popover");
+    expect(el.textContent).toContain("整句译文");
+    expect(requestedText()).toBe(stateAt(200).text);
+    // 切回去
+    expect(screen.getByTestId("selection-scope-toggle").textContent).toBe("只译选区");
+  });
+
+  it("选区本来就是完整句（未扩句）→ 不给「翻整句」按钮（无意义的控件）", async () => {
+    const plain = { ...stateAt(200), expanded: false };
+    await act(async () => {
+      root.render(createElement(SelectionTranslatePopover, { state: plain, targetLang: "zh-CN", onClose: () => {} }));
+    });
+    expect(screen.queryByTestId("selection-scope-toggle")).toBeNull();
+    expect(screen.getByTestId("selection-translate-popover").textContent).toContain("选区译文");
+  });
+
+  it("空白选区（selectedText 只有空格）→ 退回整句口径，不翻空白", async () => {
+    const blank: SelectionTranslateState = { ...stateAt(200), selectedText: "   " };
+    await act(async () => {
+      root.render(createElement(SelectionTranslatePopover, { state: blank, targetLang: "zh-CN", onClose: () => {} }));
+    });
+    expect(requestedText()).toBe(stateAt(200).text);
   });
 
   it("provider 全挂 → 显示「暂不可用」而不是空白或报错", async () => {
