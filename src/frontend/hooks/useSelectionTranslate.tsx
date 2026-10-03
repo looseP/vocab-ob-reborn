@@ -55,6 +55,11 @@ export function useSelectionTranslate() {
   useEffect(() => {
     const onMouseUp = (event: MouseEvent) => {
       const target = event.target;
+      // 浮层**自身内部**的交互（关闭 / 重新翻译 / 翻整句）不是「在别处点了」，
+      // 必须原样放行。判据要放在 NO_TRANSLATE 之前：`closest()` 返回**最近**的
+      // 匹配祖先，而浮层内的 footer 按钮自己就命中 `button` —— 先查通用排除项
+      // 会把「点重新翻译」误判成外部点击而收起浮层（2026-10-04 真机实测抓到）。
+      if (target instanceof Element && target.closest("[data-selection-translate]")) return;
       if (target instanceof Element && target.closest(NO_TRANSLATE)) {
         close();
         return;

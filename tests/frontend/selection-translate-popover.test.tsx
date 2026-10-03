@@ -19,6 +19,7 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { screen } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useSelectionTranslate } from "@/frontend/hooks/useSelectionTranslate";
 import { SelectionTranslatePopover, type SelectionTranslateState } from "@/frontend/components/translate/SelectionTranslatePopover";
 import { apiFetch } from "@/frontend/api/client";
 
@@ -27,6 +28,10 @@ vi.mock("@/frontend/api/client", () => ({ apiFetch: vi.fn() }));
 const mocked = vi.mocked(apiFetch);
 
 const VIEWPORT_W = 800;
+// React 19 的 act 需要显式声明测试环境（同仓库其余 jsdom 测试约定），
+// 否则本文件里经 hook 挂载的浮层每个用例都会打 act(...) 噪音。
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 const VIEWPORT_H = 651;
 const PANEL_WIDTH = 340;
 const MARGIN = 12;
@@ -237,5 +242,73 @@ describe("内容与失败态", () => {
   it("始终显示用户实际选中的片段（不是扩出来的整句）", () => {
     mount(createElement(SelectionTranslatePopover, { state: stateAt(200), targetLang: "zh-CN", onClose: () => {} }));
     expect(screen.getByTestId("selection-translate-popover").textContent).toContain("abandon");
+  });
+});
+
+/**
+ * 浮层内部按钮不得收起浮层（2026-10-04 真机实测抓到）。
+ *
+ * `useSelectionTranslate` 的 mouseup 守卫用 `closest(NO_TRANSLATE)` 排除干扰，
+ * 而 `NO_TRANSLATE` 含 `button` —— `closest()` 返回**最近**的匹配祖先，
+ * 浮层页脚的「重新翻译 / 翻整句」按钮**自己**就命中 `button`，
+ * 于是「点重新翻译」被误判成外部点击 → 浮层当场收起，按钮形同虚设。
+ *
+ * 单测此前没抓到，是因为它们直接调 onClick、不派发真实的 document mouseup。
+ * 这里补上真实事件路径。
+ */
+describe("浮层内部交互不得收起浮层", () => {
+  function mountHook() {
+    const Probe = () => {
+      const layer = useSelectionTranslate();
+      return createElement("div", null, layer);
+    };
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    const r = createRoot(c);
+    act(() => { r.render(createElement(Probe)); });
+    return { container: c, root: r };
+  }
+
+  /** 在正文里划一段，触发浮层。 */
+  function selectProse(host: HTMLElement, phrase: string): void {
+    const node = document.createTextNode(phrase);
+    host.appendChild(node);
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, phrase.length);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    act(() => {
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+  }
+
+  it("点「重新翻译」后浮层仍在（且重新请求了一次）", async () => {
+    const host = document.createElement("p");
+    document.body.appendChild(host);
+    const probe = mountHook();
+    // 假定时器：划词后有 350ms 去抖
+    vi.useFakeTimers();
+    selectProse(host, "abandon the plan");
+    await act(async () => { vi.advanceTimersByTime(400); });
+    vi.useRealTimers();
+    await act(async () => {});
+
+    const panel = () => screen.queryByTestId("selection-translate-popover");
+    expect(panel(), "浮层应已出现").not.toBeNull();
+    const before = mocked.mock.calls.length;
+
+    await act(async () => {
+      screen.getByText("重新翻译").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+
+    expect(panel(), "点重新翻译后浮层被收起了").not.toBeNull();
+    expect(mocked.mock.calls.length, "应重新发起了一次翻译请求").toBeGreaterThan(before);
+
+    act(() => probe.root.unmount());
+    probe.container.remove();
+    host.remove();
   });
 });
