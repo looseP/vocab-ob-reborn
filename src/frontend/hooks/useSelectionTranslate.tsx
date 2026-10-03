@@ -55,6 +55,11 @@ export function useSelectionTranslate() {
   useEffect(() => {
     const onMouseUp = (event: MouseEvent) => {
       const target = event.target;
+      // 浮层**自身内部**的交互（关闭 / 重新翻译 / 翻整句）不是「在别处点了」，
+      // 必须原样放行。判据要放在 NO_TRANSLATE 之前：`closest()` 返回**最近**的
+      // 匹配祖先，而浮层内的 footer 按钮自己就命中 `button` —— 先查通用排除项
+      // 会把「点重新翻译」误判成外部点击而收起浮层（2026-10-04 真机实测抓到）。
+      if (target instanceof Element && target.closest("[data-selection-translate]")) return;
       if (target instanceof Element && target.closest(NO_TRANSLATE)) {
         close();
         return;
@@ -93,5 +98,15 @@ export function useSelectionTranslate() {
   }, [close]);
 
   if (!state) return null;
-  return <SelectionTranslatePopover state={state} targetLang={TARGET_LANG} onClose={close} />;
+  // key 让**每次新选区都重挂浮层**：否则「翻整句」选过的 scope 会残留到下一次
+  // 划词上，用户没主动切却拿到了整句译文。与 ReviewCardView 用 key 隔离跨卡
+  // 本地状态同一手法。
+  return (
+    <SelectionTranslatePopover
+      key={`${state.selectedText}@${state.rect.top}`}
+      state={state}
+      targetLang={TARGET_LANG}
+      onClose={close}
+    />
+  );
 }

@@ -19,6 +19,7 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { screen } from "@testing-library/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useSelectionTranslate } from "@/frontend/hooks/useSelectionTranslate";
 import { SelectionTranslatePopover, type SelectionTranslateState } from "@/frontend/components/translate/SelectionTranslatePopover";
 import { apiFetch } from "@/frontend/api/client";
 
@@ -27,6 +28,10 @@ vi.mock("@/frontend/api/client", () => ({ apiFetch: vi.fn() }));
 const mocked = vi.mocked(apiFetch);
 
 const VIEWPORT_W = 800;
+// React 19 的 act 需要显式声明测试环境（同仓库其余 jsdom 测试约定），
+// 否则本文件里经 hook 挂载的浮层每个用例都会打 act(...) 噪音。
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 const VIEWPORT_H = 651;
 const PANEL_WIDTH = 340;
 const MARGIN = 12;
@@ -43,6 +48,24 @@ function stateAt(top: number, left = 260): SelectionTranslateState {
     expanded: true,
     rect: { top, bottom: top + 16, left, right: left + 40 },
   };
+}
+
+/**
+ * 最后一次请求**真正送去翻译的文本**。
+ *
+ * `mocked` 是 `apiFetch`（不是 `translateText`），所以断言要落到请求体的
+ * `text` 字段上 —— 直接断言 `(text, lang)` 会拿到 `("/l3/translate-text", init)`。
+ */
+function requestedText(): string {
+  const calls = mocked.mock.calls;
+  const init = calls.at(-1)?.[1] as { body?: string } | undefined;
+  if (!init?.body) return "";
+  try {
+    const parsed = JSON.parse(init.body) as { text?: unknown };
+    return typeof parsed.text === "string" ? parsed.text : "";
+  } catch {
+    return "";
+  }
 }
 
 let container: HTMLDivElement;
@@ -157,13 +180,52 @@ describe("自身可滚", () => {
 });
 
 describe("内容与失败态", () => {
-  it("扩展过的选区标题写「整句译文」，未扩展写「选区译文」", () => {
+  it("默认只译选区 —— 即便选区被扩过句，标题也是「选区译文」", () => {
+    // 2026-10-04 修正：此前翻的是扩句后的整句，而引用区显示选区原文，
+    // 「我选这个词组、给我整句译文」的不一致体感由此而来。现在默认引什么翻什么。
     mount(createElement(SelectionTranslatePopover, { state: stateAt(200), targetLang: "zh-CN", onClose: () => {} }));
-    expect(screen.getByTestId("selection-translate-popover").textContent).toContain("整句译文");
-
-    const plain = { ...stateAt(200), expanded: false };
-    act(() => root.render(createElement(SelectionTranslatePopover, { state: plain, targetLang: "zh-CN", onClose: () => {} })));
     expect(screen.getByTestId("selection-translate-popover").textContent).toContain("选区译文");
+  });
+
+  it("**送去翻译的文本就是选区原文**（不是扩出来的整句）", async () => {
+    await act(async () => {
+      root.render(createElement(SelectionTranslatePopover, { state: stateAt(200), targetLang: "zh-CN", onClose: () => {} }));
+    });
+    expect(requestedText()).toBe("abandon");
+    expect(requestedText()).not.toBe(stateAt(200).text);
+  });
+
+  it("点「翻整句」才切到整句口径，标题同步为「整句译文」", async () => {
+    await act(async () => {
+      root.render(createElement(SelectionTranslatePopover, { state: stateAt(200), targetLang: "zh-CN", onClose: () => {} }));
+    });
+    const toggle = screen.getByTestId("selection-scope-toggle");
+    expect(toggle.textContent).toBe("翻整句");
+
+    await act(async () => { toggle.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+
+    const el = screen.getByTestId("selection-translate-popover");
+    expect(el.textContent).toContain("整句译文");
+    expect(requestedText()).toBe(stateAt(200).text);
+    // 切回去
+    expect(screen.getByTestId("selection-scope-toggle").textContent).toBe("只译选区");
+  });
+
+  it("选区本来就是完整句（未扩句）→ 不给「翻整句」按钮（无意义的控件）", async () => {
+    const plain = { ...stateAt(200), expanded: false };
+    await act(async () => {
+      root.render(createElement(SelectionTranslatePopover, { state: plain, targetLang: "zh-CN", onClose: () => {} }));
+    });
+    expect(screen.queryByTestId("selection-scope-toggle")).toBeNull();
+    expect(screen.getByTestId("selection-translate-popover").textContent).toContain("选区译文");
+  });
+
+  it("空白选区（selectedText 只有空格）→ 退回整句口径，不翻空白", async () => {
+    const blank: SelectionTranslateState = { ...stateAt(200), selectedText: "   " };
+    await act(async () => {
+      root.render(createElement(SelectionTranslatePopover, { state: blank, targetLang: "zh-CN", onClose: () => {} }));
+    });
+    expect(requestedText()).toBe(stateAt(200).text);
   });
 
   it("provider 全挂 → 显示「暂不可用」而不是空白或报错", async () => {
@@ -180,5 +242,73 @@ describe("内容与失败态", () => {
   it("始终显示用户实际选中的片段（不是扩出来的整句）", () => {
     mount(createElement(SelectionTranslatePopover, { state: stateAt(200), targetLang: "zh-CN", onClose: () => {} }));
     expect(screen.getByTestId("selection-translate-popover").textContent).toContain("abandon");
+  });
+});
+
+/**
+ * 浮层内部按钮不得收起浮层（2026-10-04 真机实测抓到）。
+ *
+ * `useSelectionTranslate` 的 mouseup 守卫用 `closest(NO_TRANSLATE)` 排除干扰，
+ * 而 `NO_TRANSLATE` 含 `button` —— `closest()` 返回**最近**的匹配祖先，
+ * 浮层页脚的「重新翻译 / 翻整句」按钮**自己**就命中 `button`，
+ * 于是「点重新翻译」被误判成外部点击 → 浮层当场收起，按钮形同虚设。
+ *
+ * 单测此前没抓到，是因为它们直接调 onClick、不派发真实的 document mouseup。
+ * 这里补上真实事件路径。
+ */
+describe("浮层内部交互不得收起浮层", () => {
+  function mountHook() {
+    const Probe = () => {
+      const layer = useSelectionTranslate();
+      return createElement("div", null, layer);
+    };
+    const c = document.createElement("div");
+    document.body.appendChild(c);
+    const r = createRoot(c);
+    act(() => { r.render(createElement(Probe)); });
+    return { container: c, root: r };
+  }
+
+  /** 在正文里划一段，触发浮层。 */
+  function selectProse(host: HTMLElement, phrase: string): void {
+    const node = document.createTextNode(phrase);
+    host.appendChild(node);
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, phrase.length);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    act(() => {
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+  }
+
+  it("点「重新翻译」后浮层仍在（且重新请求了一次）", async () => {
+    const host = document.createElement("p");
+    document.body.appendChild(host);
+    const probe = mountHook();
+    // 假定时器：划词后有 350ms 去抖
+    vi.useFakeTimers();
+    selectProse(host, "abandon the plan");
+    await act(async () => { vi.advanceTimersByTime(400); });
+    vi.useRealTimers();
+    await act(async () => {});
+
+    const panel = () => screen.queryByTestId("selection-translate-popover");
+    expect(panel(), "浮层应已出现").not.toBeNull();
+    const before = mocked.mock.calls.length;
+
+    await act(async () => {
+      screen.getByText("重新翻译").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+
+    expect(panel(), "点重新翻译后浮层被收起了").not.toBeNull();
+    expect(mocked.mock.calls.length, "应重新发起了一次翻译请求").toBeGreaterThan(before);
+
+    act(() => probe.root.unmount());
+    probe.container.remove();
+    host.remove();
   });
 });
