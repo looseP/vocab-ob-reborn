@@ -48,6 +48,31 @@
 - 设置页新增「阶梯会话（实验）」布尔项，前端 localStorage 持久化（v1 不做服务端偏好）。
 - **关闭 = 与 main 逐字段一致的回归证明**：全部新前端代码路径（scheduler 编排/打字流/档位菜单/结算页）不可达；服务端新增字段全部 optional，关闭时请求体不含新字段。
 
+> **2026-10-03 修订（本条被取代，保留原文供追溯）**
+>
+> 上述「设置页布尔开关」实现在落地后产生了一个原始决策未预见的问题：
+> **一个全局布尔开关会悄悄接管两个入口**。`ReviewPage` 的判定是
+> `ladderActive = reviewMode === "review" && !wordIds?.length && isLadderModeEnabled()`，
+> 而「快速开始」按钮也是 `onStart("review")` ⇒ **开关一开，标准复习与快速开始同时被换成
+> 阶梯新词卡**；开关还就地放在「标准复习」卡片内，用户无从预期自己被换了卡片。
+> 实测（2026-10-03）：阶梯开启时「标准复习」「快速开始」落 `EncodeCardView`，
+> 而 zen / 自由复习 / 练习模式不受影响 —— 这种**不对称**最容易被读成「卡面时有时无」。
+>
+> **改为**：阶梯是 `reviewModes` 里的**显式第 5 个模式**「阶梯复习（实验）」，
+> 与 zen / 练习 / 自由复习并列。设置页布尔项与 `reviewFlow/ladderSettings.ts` **一并删除**
+> （留两个开关比留一个更糟，且会重新引入两个真源）。
+>
+> **不变量因此被加强，而非放宽**：
+> - 旧：*关闭时分支不可达* —— 由布尔值保证，可被旁路（另一处 `setLadderModeEnabled(true)`）
+> - 新：*不选该模式 ⇒ 分支不可达* —— 由 `reviewMode === "ladder"` 的渲染分支结构保证，
+>   不存在可被误开的全局状态
+>
+> 两条回归防线已进测试：`ladder-typing-reachability.test.tsx` 断言
+> ① 模式清单恰为 `["review","cram","preview","zen","ladder"]`；
+> ② `ReviewPage.tsx` 的**代码**（剥注释后）不再含 `ladderActive` / `isLadderModeEnabled`。
+> 另：`ReviewPage` 全程未读 `vocab-ladder-mode`，**存量用户的选择不会影响行为**，
+> 无需迁移 —— 旧键残留在 localStorage 中但已无读者。
+
 ### 5. 依赖克制（ADR-0004）
 
 不引入任何新 npm 依赖。TTS 用浏览器原生 Web Speech API（能力检测，失败降跟写）。打字流无 setTimeout（阻塞式逐字状态机：字母全归答案、错字阻塞标红、wrongTimes 只增不减）。

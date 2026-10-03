@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Undo2, History } from "lucide-react";
+import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Layers, Undo2, History } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -13,24 +13,25 @@ import { CompletionCelebration } from "@/frontend/components/review/CompletionCe
 import { ReviewHistoryDrawer, type ReviewHistoryEntry } from "@/frontend/components/review/ReviewHistoryDrawer";
 import { useReview } from "@/frontend/hooks/useReview";
 import { useUpgradeHints } from "@/frontend/hooks/useUpgradeHints";
-import { isLadderModeEnabled, setLadderModeEnabled } from "@/frontend/reviewFlow/ladderSettings";
 
 const reviewModes = [
   { key: "review", icon: Repeat, title: "标准复习", desc: "按 FSRS 间隔重复算法安排的到期卡片", variant: "primary" as const },
   { key: "cram", icon: Zap, title: "练习模式", desc: "完形填空 / 词汇填空自测，错题回尾，不写入复习数据", variant: "secondary" as const },
   { key: "preview", icon: BookOpen, title: "自由复习", desc: "自由浏览词汇，不评分、不写入数据", variant: "secondary" as const },
   { key: "zen", icon: InfinityIcon, title: "禅模式", desc: "无限循环复习，巩固记忆", variant: "secondary" as const },
+  // 阶梯会话此前是一个**全局布尔开关**（设置页 / 标准复习卡内），开启后会接管
+  // 「标准复习」**和**「快速开始」两条路 —— 用户无法预期自己被换了卡片。
+  // 2026-10-03 起改为**显式第 5 个模式**（ADR-0036 §4 修订）：
+  // 要用就明确选它，不选则阶梯代码路径**分支不可达**。
+  { key: "ladder", icon: Layers, title: "阶梯复习（实验）", desc: "三轮制会话：再认 → 巩固 → 产出，含跟写与默写", variant: "secondary" as const },
 ] as const;
 
-function ReviewModeSelector({
-  onStart,
-  ladderMode,
-  setLadderMode,
-}: {
-  onStart: (mode: string) => void;
-  ladderMode: boolean;
-  setLadderMode: (next: boolean) => void;
-}) {
+/** 测试钩子：暴露模式清单，供测试锁住「阶梯是显式第 5 个模式」这条不变量。 */
+export function reviewModesForTest() {
+  return reviewModes.map((m) => ({ key: m.key, title: m.title }));
+}
+
+function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -70,60 +71,14 @@ function ReviewModeSelector({
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {reviewModes.map((m) => {
           const Icon = m.icon;
-          // 阶梯会话（实验）默认关闭，且开关只在设置页 —— 用户从复习页完全看不出
-          // 「为什么没有打字流」。标准复习是它唯一接管的模式（ADR-0036 决策 4），
-          // 所以状态徽标 + 就地开关放在这张卡上，而不是让人去设置页找。
-          const ladderRelevant = m.key === "review";
-          const ladderOn = ladderRelevant && ladderMode;
           return (
             <Card key={m.key} className="h-full">
               <Icon className="mb-3 h-6 w-6 text-[var(--color-accent)]" />
               <h3 className="mb-1 text-lg font-semibold text-[var(--color-ink)]">{m.title}</h3>
               <p className="mb-4 text-sm text-[var(--color-ink-soft)]">{m.desc}</p>
-              {ladderRelevant && (
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={ladderOn}
-                  data-testid="ladder-mode-toggle-inline"
-                  title="阶梯会话（实验）：再认 → 巩固 → 产出三轮，含跟写与默写"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setLadderModeEnabled(!ladderOn);
-                    setLadderMode(!ladderOn);
-                  }}
-                  className={`mb-3 flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
-                    ladderOn
-                      ? "border-[var(--color-accent)]/50 bg-[var(--color-accent-soft)]"
-                      : "border-dashed border-[var(--color-border)]"
-                  }`}
-                >
-                  <span className="min-w-0">
-                    <span className="block text-[12px] font-medium text-[var(--color-ink)]">
-                      阶梯会话（实验）
-                    </span>
-                    <span className="block text-[10.5px] leading-snug text-[var(--color-ink-soft)]">
-                      {ladderOn ? "已开启 · 含跟写与默写" : "关闭 · 无跟写/默写"}
-                    </span>
-                  </span>
-                  <span
-                    className={`inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
-                      ladderOn
-                        ? "border-[var(--color-accent)] bg-[var(--color-accent)]"
-                        : "border-[var(--color-border-strong)] bg-[var(--color-surface-muted)]"
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-                        ladderOn ? "translate-x-5" : "translate-x-0.5"
-                      }`}
-                    />
-                  </span>
-                </button>
-              )}
               <Button size="sm" variant={m.variant} onClick={() => onStart(m.key)}>开始</Button>
             </Card>
           );
@@ -134,12 +89,11 @@ function ReviewModeSelector({
 }
 
 function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: string; wordIds?: string[]; onBack: () => void; force?: boolean }) {
-  // 阶梯会话开关（ADR-0036 决策 4）：仅接管「标准复习」模式；preview 不进阶梯
-  // （浏览语义）、cram/zen 走现行组件。关闭时本分支不可达 = 与 main 零差异。
-  const [ladderActive] = useState(() => reviewMode === "review" && !wordIds?.length && isLadderModeEnabled());
-  if (ladderActive) {
-    return <LadderReviewSession onBack={onBack} />;
-  }
+  // 阶梯会话**不再劫持任何模式**（ADR-0036 §4 于 2026-10-03 修订）：
+  // 此前这里是 `reviewMode === "review" && !wordIds?.length && isLadderModeEnabled()`，
+  // 一个全局布尔开关会悄悄把「标准复习」和「快速开始」换成另一张卡，用户无从预期。
+  // 现在阶梯是 `reviewModes` 里的显式第 5 个模式，由上层 `reviewMode === "ladder"` 分支直达，
+  // 本函数**只服务现行复习流** ⇒ 不变量从「靠布尔值保证」升级为「分支不可达，构造上保证」。
   const {
     currentCard,
     mode,
@@ -342,16 +296,6 @@ export function ReviewPage() {
   const freeWordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
   const [mode, setMode] = useState<"select" | "session">("select");
   const [reviewMode, setReviewMode] = useState("review");
-  /**
-   * 阶梯会话开关的本地镜像。
-   *
-   * 真源是 `localStorage`（`setLadderModeEnabled`），而 `ReviewSession` 用
-   * `useState(() => isLadderModeEnabled())` 在**挂载时**取一次 —— 若模式选择页没有
-   * 本地状态，用户在这里拨开关后 `ladderActive` 不会重算，得退回选择页再进才生效，
-   * 表现为"开关拨了但没反应"。本地状态解决这个即时反馈问题，
-   * 持久化仍由 localStorage 承担（跨会话一致）。
-   */
-  const [ladderMode, setLadderMode] = useState(() => isLadderModeEnabled());
   // 检测到未完成的复习会话时，不静默进入；先展示"继续上次 / 重新开始"确认条。
   const [pendingRestore, setPendingRestore] = useState<{ mode: string; reviewed: number; total: number } | null>(null);
 
@@ -477,10 +421,13 @@ export function ReviewPage() {
               </div>
             </Card>
           )}
-          <ReviewModeSelector onStart={handleStart} ladderMode={ladderMode} setLadderMode={setLadderMode} />
+          <ReviewModeSelector onStart={handleStart} />
         </>
       ) : isFreeSelection ? (
         <ReviewSession reviewMode="preview" wordIds={freeWordIds} onBack={() => setMode("select")} />
+      ) : reviewMode === "ladder" ? (
+        // 阶梯会话：显式模式直达（ADR-0036 §4 修订）。不选它 ⇒ 本分支不可达。
+        <LadderReviewSession key={forceBootstrap ? "ladder-fresh" : "ladder-restore"} onBack={() => { setForceBootstrap(false); setMode("select"); }} />
       ) : reviewMode === "cram" ? (
         <DrillSession onBack={() => setMode("select")} />
       ) : (
