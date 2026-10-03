@@ -641,7 +641,7 @@ export function ReviewCardView({
   // 键盘快捷键（P0，对齐 v1）：
   //   评分模式：空格/Enter 翻转、1-4 评分、S 跳过、P 挂起、U 或 Ctrl/Cmd+Z 撤销；
   //   preview 模式：←/→ 翻页。
-  // 声学（Phase 1）：R 拼读单词、Shift+R 切英音/美音、E 听真题例句。
+  // 声学（Phase 1）：R 拼读单词、Shift+R 切英音/美音、E 听例句。
   // 输入控件聚焦时豁免（快记 textarea 内不打断输入）。
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -711,7 +711,7 @@ export function ReviewCardView({
         event.preventDefault();
         audio.playWord(card.word.lemma);
       } else if (key === "e") {
-        // 快捷键 E：朗读当前真题例句（听觉线索）；正在播同一句则打断复位。
+        // 快捷键 E：朗读当前例句（听觉线索）；正在播同一句则打断复位。
         // 与按钮共用 toggleOrPlaySentence，保证两条入口行为一致。
         const sentence = exampleItem?.text ?? null;
         if (!sentence) return;
@@ -1139,7 +1139,9 @@ export function ReviewCardView({
             ref={actionRef}
             tabIndex={-1}
             aria-label="评分操作区"
-            className="flex justify-center gap-2 pt-4 focus:outline-none"
+            // flex-wrap 不可省：390px 视口下四个 size="lg" 按钮 + gap-2 放不下，
+            // 不加会把「轻松」推出视口（实测 right=404 > 390）并让整页出现横向滚动。
+            className="flex flex-wrap justify-center gap-2 pt-4 focus:outline-none"
           >
             {ratings.map((r) => (
               <Button

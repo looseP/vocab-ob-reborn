@@ -11,7 +11,8 @@
  * 上一轮只在标准复习卡落了声学底座，初见卡是哑的。现在补齐三层：
  * 1. 挂载即自动发音一次（首发音印象），卸载/换卡时掐断；
  * 2. 顶部声学胶囊：发音按钮 + UK/US 口音开关（与 ReviewCardView 共用同一组件）；
- * 3. H1 真题例句可朗读 + 全局快捷键 R / Shift+R / E（与按钮同一入口，播放中可打断）。
+ * 3. H1 例句可朗读 + 全局快捷键 R / Shift+R / E（与按钮同一入口，播放中可打断）。
+ *    （文案是「听例句」不是「真题例句」—— 例句来自报刊/词典，非历年真题，见 ClueZone 注释。）
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -44,8 +45,8 @@ function EncodeHintStep({
               type="button"
               data-no-flip
               data-testid="encode-play-example"
-              aria-label="朗读真题例句 (E)"
-              title="朗读真题例句（快捷键 E）· 听觉线索，不消耗提示级"
+              aria-label="朗读例句 (E)"
+              title="朗读例句（快捷键 E）· 听觉线索，不消耗提示级"
               onClick={(e) => {
                 e.stopPropagation();
                 onPlaySentence();
