@@ -25,13 +25,37 @@
  * - `writing.pattern`: string；`writing.imitating_example`: string（仿写例句）
  */
 
+/**
+ * 切分块内的一个片段（`reading.split[i]` 内部的嵌套结构）。
+ *
+ * 数据里嵌套片段有三种编码形态（真库全量统计 2026-10-03，`reading.split`）：
+ * - `[片段｜定]` —— 标记在括号内，**124 词**
+ * - `[片段]` —— 纯嵌套无标记，**1 词**
+ * - `[片段]｜状,` —— 标记在括号外、且带尾随句读，**2 词**（`bow` / `boss`）
+ *
+ * 三种都必须能解析：`｜` 是**数据分隔符不是正文**，泄漏出去会在句子里显示
+ * `｜定`（实测 126 词受害）。设计稿口径见 `wordcard-mock-2026-09-11.html`：
+ * 嵌套片段走 `.nest`，分类走**独立的 `.nest-type` 角标**，且设计稿全部迭代备份中
+ * `｜` 出现次数为 0 —— 佐证它只是编码。
+ */
+export interface WordExamSplitSegment {
+  /** 片段原文（已剥离 `[]` 与 `｜标记`）。 */
+  readonly text: string;
+  /** 嵌套层数：0 = 非嵌套正文；1+ = 位于该层 `[]` 内。 */
+  readonly depth: number;
+  /** 嵌套片段的分类角标（如「定」「状」「同」）。无标记或非嵌套时为 null。 */
+  readonly nestType: string | null;
+}
+
 export interface WordExamSplitBlock {
-  /** 例句切分出的第 i 块原文。 */
+  /** 例句切分出的第 i 块**原文**（含 `[]` / `｜` 编码标记）。渲染请用 `segments`。 */
   readonly text: string;
   /** 该块语法角色名（如「系表 · 表语」）。`split_roles` 缺失或长度不符时为 null。 */
   readonly role: string | null;
   /** 该块角色类别：`main` 主干 / `mod` 修饰。未知类别归 `null`，不猜。 */
   readonly roleKind: "main" | "mod" | null;
+  /** 已解析的片段序列（`text` 的结构化结果，供渲染直接消费）。 */
+  readonly segments: readonly WordExamSplitSegment[];
 }
 
 export interface WordExamKeyPoint {
@@ -81,6 +105,108 @@ const str = (v: unknown): string | null => {
 const strArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.map(str).filter((s): s is string => s !== null) : [];
 
+const NEST_SEP = "｜";
+
+/**
+ * 拆开「标记 + 尾随句读」。`｜状,` 的标记是「状」，`,` 是**句子标点**要交回正文 ——
+ * 吞掉它会把原句的逗号弄丢（实测 `bow` 的 `｜状,` 就是这样）。
+ * 标记本身只吃非句读字符；空标记归空串（调用方据此不渲染角标）。
+ */
+function splitMarkerTail(marker: string): { marker: string; tail: string } {
+  const m = /^([^.,;:!?，。；：！？、]+)([\s\S]*)$/.exec(marker);
+  if (!m) return { marker: "", tail: marker };
+  return { marker: m[1], tail: m[2] };
+}
+
+/**
+ * 把 `reading.split[i]` 的原文解析为片段序列，剥离 `[]` 与 `｜标记` 两种**编码**。
+ *
+ * 不解析的后果是真实的：`｜定` 会被当正文渲染进例句（真库实测 126 词）。
+ * 三种编码形态都要吃（见 `WordExamSplitSegment` 注释）。
+ *
+ * 宽容策略（脏数据不白屏、也不静默吞字）：
+ * - **括号不配对**（`[` 未闭合）⇒ **整串当正文原样返回**，不做任何剥离 ——
+ *   残缺编码无法判断边界，猜不如不猜（实测真库 154 个含 `[` 的片段全部配对，
+ *   这条是为未来回填写的兜底）；
+ * - 多余的 `]`（depth 为 0）当普通字符；
+ * - 标记为空（如 `[x｜]`）时不渲染角标，但括号照常剥离；
+ * - 单块内多处标记各自解析，互不影响。
+ */
+export function parseSplitSegments(raw: string): WordExamSplitSegment[] {
+  const whole = (): WordExamSplitSegment[] => [{ text: raw, depth: 0, nestType: null }];
+  if (raw.length === 0) return [];
+  // 先验配对：不配对就整体退化为正文，避免把残缺编码的边界猜错。
+  let balance = 0;
+  for (const ch of raw) {
+    if (ch === "[") balance += 1;
+    else if (ch === "]") balance -= 1;
+    if (balance < 0) return whole();
+  }
+  if (balance !== 0) return whole();
+
+  const segments: WordExamSplitSegment[] = [];
+  let buffer = "";
+  let depth = 0;
+  let i = 0;
+
+  const flush = (nestType: string | null): void => {
+    if (buffer.length === 0) return;
+    segments.push({ text: buffer, depth, nestType });
+    buffer = "";
+  };
+
+  while (i < raw.length) {
+    const ch = raw[i];
+
+    if (ch === "[") {
+      flush(null);
+      depth += 1;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "]" && depth > 0) {
+      // 形态①：标记在括号内 `[片段｜定]`
+      let nestType: string | null = null;
+      const sep = buffer.lastIndexOf(NEST_SEP);
+      if (sep >= 0) {
+        const parsed = splitMarkerTail(buffer.slice(sep + 1));
+        nestType = parsed.marker.length > 0 ? parsed.marker : null;
+        buffer = buffer.slice(0, sep) + parsed.tail; // 尾随句读回到该片段内
+      }
+      flush(nestType);
+      depth -= 1;
+
+      // 形态③：标记在括号外 `[片段]｜状,`
+      if (raw[i + 1] === NEST_SEP) {
+        let j = i + 2;
+        let rawMarker = "";
+        while (j < raw.length && raw[j] !== "[" && raw[j] !== "]") {
+          rawMarker += raw[j];
+          j += 1;
+        }
+        const parsed = splitMarkerTail(rawMarker);
+        const last = segments[segments.length - 1];
+        if (parsed.marker.length > 0 && last !== undefined) {
+          segments[segments.length - 1] = { ...last, nestType: parsed.marker };
+          buffer = parsed.tail; // 残余句读回正文，下一轮正常累积
+          i = j;
+          continue;
+        }
+      }
+
+      i += 1;
+      continue;
+    }
+
+    buffer += ch;
+    i += 1;
+  }
+
+  flush(null);
+  return segments;
+}
+
 /**
  * 解析 `reading.split` + `reading.split_roles` 为逐块结构。
  *
@@ -93,13 +219,14 @@ function parseBlocks(examReading: Record<string, unknown>): WordExam["reading"] 
   if (texts.length === 0) return null;
   const rawRoles = Array.isArray(examReading.split_roles) ? examReading.split_roles : [];
   const blocks: WordExamSplitBlock[] = texts.map((text, i) => {
+    const segments = parseSplitSegments(text);
     const pair = rawRoles[i];
-    if (!Array.isArray(pair)) return { text, role: null, roleKind: null };
+    if (!Array.isArray(pair)) return { text, role: null, roleKind: null, segments };
     const role = str(pair[0]);
     const kindRaw = str(pair[1]);
     // 只承认实测出现的两类，其余归 null——不按字符串猜语义。
     const roleKind = kindRaw === "main" || kindRaw === "mod" ? kindRaw : null;
-    return { text, role, roleKind };
+    return { text, role, roleKind, segments };
   });
   return { blocks, structure: str(examReading.structure) };
 }

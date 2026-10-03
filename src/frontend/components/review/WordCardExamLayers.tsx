@@ -23,6 +23,9 @@ import { useState } from "react";
 import { ChevronDown, Volume2 } from "lucide-react";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { parseWordExam, type WordExam } from "@/domain/word-exam";
+// 切分块的编码解析在契约层（`parseSplitSegments`），渲染在共享件 —— 词条详情页
+// （`words/WordExamPanel.tsx`）复用同一个组件，避免两处各解析一遍各漏一处。
+import { escapeRegExp, ExamSplitText, MaskedPiece } from "@/frontend/components/words/ExamSplitText";
 
 /** 轨色（切分设计说明书）：main 主干轨 / mod 修饰轨 / supp 补充轨。 */
 const RAIL_COLOR: Record<"main" | "mod" | "supp", string> = {
@@ -31,103 +34,12 @@ const RAIL_COLOR: Record<"main" | "mod" | "supp", string> = {
   supp: "rgba(103, 77, 44, 0.32)",
 };
 
-/** 轨色正则元字符转义（目标词可能含 . 或 -）。 */
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /** `verified.checked` 条目数（产线核验遗留；非数组/缺失 → 0）。 */
 function parseVerifiedCount(raw: unknown): number {
   if (typeof raw !== "object" || raw === null) return 0;
   const checked = (raw as { checked?: unknown }).checked;
   return Array.isArray(checked) ? checked.length : 0;
-}
-
-/** 切分片段渲染：`[]` 标记拆成尖括号强调（mock .nest 口径）。 */
-function SplitSegment({ text, highlight }: { text: string; highlight?: string | null }) {
-  const parts = text.split(/(\[[^\]]*\])/g);
-  const hl = highlight && highlight.trim().length > 0 ? highlight : null;
-  const hlRe = hl ? new RegExp(`(${escapeRegExp(hl)})`, "gi") : null;
-  return (
-    <>
-      {parts.map((part, i) => {
-        if (part.startsWith("[") && part.endsWith("]")) {
-          return (
-            <span key={i} className="font-medium text-[var(--color-accent)]">
-              {part.slice(1, -1)}
-            </span>
-          );
-        }
-        if (!hlRe || !hl) return <span key={i}>{part}</span>;
-        return (
-          <span key={i}>
-            {part.split(hlRe).map((piece, j) =>
-              piece.toLowerCase() === hl.toLowerCase() ? (
-                <span key={j} className="font-semibold text-[var(--color-accent)]">
-                  {piece}
-                </span>
-              ) : (
-                <span key={j}>{piece}</span>
-              ),
-            )}
-          </span>
-        );
-      })}
-    </>
-  );
-}
-
-/**
- * 目标词遮挡文本（mock `.mask` 口径）：未揭示时以**高亮底色隐形**呈现（点击揭示），
- * 揭示后按强调色显示。`term` 为空退化为普通渲染。
- */
-function MaskedText({
-  text,
-  term,
-  revealed,
-  onUnmask,
-}: {
-  text: string;
-  term: string | null;
-  revealed: boolean;
-  onUnmask?: () => void;
-}) {
-  if (!term || term.trim().length === 0) return <SplitSegment text={text} />;
-  if (revealed) return <SplitSegment text={text} highlight={term} />;
-  const parts = text.split(new RegExp(`(${escapeRegExp(term)})`, "gi"));
-  return (
-    <>
-      {parts.map((part, i) =>
-        part.toLowerCase() === term.toLowerCase() ? (
-          <span
-            key={i}
-            role="button"
-            tabIndex={0}
-            title="点击揭示词形（消耗 H1 提示）"
-            data-testid="clue-mask"
-            className="inline-block min-w-[4.2em] cursor-pointer rounded-md px-1 text-center align-baseline transition-colors"
-            // 同色底 + 同色字 = 隐形但占位：保留句法结构，不泄露词形长度以外的信息
-            style={{ background: "var(--color-highlight)", color: "var(--color-highlight)" }}
-            onClick={(e) => {
-              e.stopPropagation();
-              onUnmask?.();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                e.stopPropagation();
-                onUnmask?.();
-              }
-            }}
-          >
-            {part}
-          </span>
-        ) : (
-          <SplitSegment key={i} text={part} />
-        ),
-      )}
-    </>
-  );
 }
 
 /** 卡背完整例句：目标词 `<mark>` 高亮（mock `.ex-sentence mark` 口径）。 */
@@ -183,10 +95,10 @@ function SplitLines({
               style={{ background: RAIL_COLOR[role] }}
             />
             <span className="min-w-0 flex-1 text-[13px] leading-relaxed text-[var(--color-ink)]">
-              <MaskedText
-                text={block.text}
-                term={maskTerm ?? null}
-                revealed={maskRevealed ?? true}
+              <ExamSplitText
+                segments={block.segments}
+                maskTerm={maskTerm ?? null}
+                maskRevealed={maskRevealed ?? true}
                 onUnmask={onUnmask}
               />
             </span>
@@ -277,7 +189,7 @@ export function ClueZone({
         />
       ) : (
         <p className="text-[13.5px] leading-relaxed text-[var(--color-ink)]">
-          <MaskedText text={text} term={maskTerm} revealed={maskRevealed} onUnmask={onUnmask} />
+          <MaskedPiece text={text} term={maskTerm} revealed={maskRevealed} onUnmask={onUnmask} />
         </p>
       )}
     </div>
