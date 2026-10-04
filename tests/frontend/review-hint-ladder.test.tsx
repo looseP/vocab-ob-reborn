@@ -210,6 +210,65 @@ describe("ReviewCardView Hint Ladder", () => {
     expect(screen.getByRole("button", { name: /提示 2 · H3 助记锚/ })).toBeTruthy();
   });
 
+  // ── H1′ 真题语境（FR-12 接线1，2026-10-04）──────────────────────────────
+  it("把 L3 语境接成 H1′ 一级：遮盖目标词、不给中文释义、空号不泄漏", async () => {
+    const card = makeCard({
+      l3_contexts: [{
+        context_id: "c1",
+        source_id: "s1",
+        text: "〖45〗 When pitching a new idea, use the language of abundance instead of deficit.",
+        source_title: "2025 英语二 · Part B 职场提建议五步法",
+        bound_sense: "丰富的；充裕的；大量的",
+        surface: "abundance",
+      }],
+    });
+    const container = await renderCard({ card });
+
+    await consumeHint(); // H1 揭示词形
+    // 顺序：H1 之后是 H1′（真题语境），不是 H2 原型
+    const next = screen.getByRole("button", { name: /提示 2 · H1.+真题语境/ });
+    await act(async () => {
+      fireEvent.click(next);
+    });
+
+    const block = screen.getByTestId("l3-hint-context");
+    expect(block.textContent).toContain("When pitching a new idea");
+    expect(block.textContent).toContain("2025 英语二 · Part B 职场提建议五步法");
+    // 空号不泄漏（共享解析把 `〖45〗` 变成角标）
+    expect(block.textContent).not.toContain("〖");
+    expect(screen.getByTestId("passage-blank-badge").textContent).toBe("45");
+    // 中文释义不进提示：这是"换个语境再认一次"，不是给答案（卡背折叠才有）
+    expect(block.textContent).not.toContain("丰富的");
+    // 目标词被遮盖（可点揭示）
+    expect(block.querySelectorAll('[data-testid="clue-mask"]')).toHaveLength(1);
+    // 阶梯长度 4（example → H1′ → H2 → H3）：新增一级不改 H4 之后的既有口径
+    expect(bodyText(container)).toContain("2/4 级");
+    // 消费到第 2 级 ⇒ 上限降到 hard，与既有经济学（0→easy / 1→good / ≥2→hard）一致
+    expect(bodyText(container)).toContain("评分上限「困难」");
+    expect(ratingButton("困难").disabled).toBe(false);
+    expect(ratingButton("良好").disabled).toBe(true);
+    expect(ratingButton("轻松").disabled).toBe(true);
+  });
+
+  it("语境定位不到遮盖锚 → 不生成该级（下一级仍是 H2 原型）", async () => {
+    const card = makeCard({
+      l3_contexts: [{
+        context_id: "c2",
+        source_id: "s2",
+        // 句子与目标词无关，且 surface 缺失 ⇒ 无法遮盖 ⇒ 整级不生成
+        text: "〖45〗 Nothing about that word here.",
+        source_title: "2025 英语二 · Text 1",
+        bound_sense: null,
+        surface: null,
+      }],
+    });
+    await renderCard({ card });
+
+    await consumeHint(); // H1 揭示词形
+    expect(screen.getByRole("button", { name: /提示 2 · H2 原型/ })).toBeTruthy();
+    expect(screen.queryByTestId("l3-hint-context")).toBeNull();
+  });
+
   it("falls back to the semantic chain when no example is available", async () => {
     const card = makeCard({
       word: {

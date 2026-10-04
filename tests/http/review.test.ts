@@ -224,6 +224,8 @@ describe("GET /api/review/queue l3 injection", () => {
         items: input.slug === "ephemeral" ? [{
           context: { id: "ctx-1", text: "The ephemeral beauty of cherry blossoms.", position: {} },
           source: { id: "src-1", title: "阅读 Text B" },
+          // occurrence 提供 bound_sense（语境义快照）与 surface（H1′ 提示级遮盖锚）
+          occurrence: { bound_sense: "转瞬即逝的", surface: "ephemeral" },
         }] : [],
         limit: 2, cursor: null, nextCursor: null,
       })),
@@ -242,7 +244,14 @@ describe("GET /api/review/queue l3 injection", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.items[0].l3_contexts).toEqual([
-      { context_id: "ctx-1", source_id: "src-1", text: "The ephemeral beauty of cherry blossoms.", source_title: "阅读 Text B", bound_sense: null },
+      {
+        context_id: "ctx-1",
+        source_id: "src-1",
+        text: "The ephemeral beauty of cherry blossoms.",
+        source_title: "阅读 Text B",
+        bound_sense: "转瞬即逝的",
+        surface: "ephemeral",
+      },
     ]);
     expect(body.items[1].l3_contexts).toEqual([]);
   });

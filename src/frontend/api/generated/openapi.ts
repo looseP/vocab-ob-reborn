@@ -6628,6 +6628,7 @@ export interface operations {
                                 text: string;
                                 source_title: string;
                                 bound_sense: string | null;
+                                surface: string | null;
                             }[];
                         }[];
                         session: {

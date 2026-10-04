@@ -63,6 +63,7 @@ export function reviewRoutes(services: Services) {
         text: string;
         source_title: string;
         bound_sense: string | null;
+        surface: string | null;
       }[]]> => {
         const item = queue.items.find((q) => q.word.id === wordId);
         if (!item?.word.slug) return [wordId, []] as const;
@@ -77,6 +78,9 @@ export function reviewRoutes(services: Services) {
               source_title: entry.source.title,
               // 语境义快照：Tier 2 优先展示绑定释义，fallback 短释义（前端处理）
               bound_sense: entry.occurrence?.bound_sense ?? null,
+              // 目标词在该语境里的词面（FR-12 接线1 升级）：提示阶梯 H1′ 级用它遮盖
+              // 目标词；缺失时前端回退 lemma，再定位不到就不生成该级。
+              surface: entry.occurrence?.surface ?? null,
             })),
           ] as const;
         } catch {

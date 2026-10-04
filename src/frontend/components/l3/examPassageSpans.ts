@@ -13,7 +13,11 @@
  *   题卡角标与原文分析列表兜底。evidence 高于 mark：解析模式官方定位优先。）
  */
 
-export const PASSAGE_BLANK_RE = /〖(\d+)〗/g;
+// 空号正则的**单一定义源**已上移到 `@/domain/l3-passage-text`（2026-10-04）：
+// L1 复习卡也要按同一口径解析语境正文里的 `〖n〗`，两处各写一份必然漂移。
+// 此处 re-export 保持既有导入路径可用。
+import { PASSAGE_BLANK_RE } from "@/domain/l3-passage-text";
+export { PASSAGE_BLANK_RE };
 
 export type PassageSpanKind = "text" | "blank" | "evidence" | "mark" | "annotation";
 

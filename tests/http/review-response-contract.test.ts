@@ -90,7 +90,15 @@ describe("Review response contracts", () => {
         reviewCount: 3,
         stability: null,
         note_entries: [],
-        l3_contexts: [],
+        // H1′ 提示级靠 surface 遮盖目标词（FR-12 接线1，2026-10-04）
+        l3_contexts: [{
+          context_id: "ctx-1",
+          source_id: "src-1",
+          text: "〖45〗 When pitching a new idea, use the language of abundance.",
+          source_title: "2025 英语二 · Part B",
+          bound_sense: "丰富的；充裕的；大量的",
+          surface: "abundance",
+        }],
       }],
       session: { id: "s1", mode: "review", cardsSeen: 0 },
       stats: { total: 1, remaining: 1 },
@@ -110,6 +118,14 @@ describe("Review response contracts", () => {
     expect(() => reviewQueueResponseSchema.parse({
       ...response,
       items: [{ ...response.items[0], word: { ...response.items[0].word, examples: "not-array" } }],
+    })).toThrow();
+
+    // l3_contexts 条目缺 surface（旧响应形态）→ 拒绝：该字段是 H1′ 提示级的遮盖锚，
+    // 少了它前端只能整级不生成，属"静默降级"而非"兼容旧客户端"。
+    const { surface: _surface, ...legacyContext } = response.items[0].l3_contexts[0];
+    expect(() => reviewQueueResponseSchema.parse({
+      ...response,
+      items: [{ ...response.items[0], l3_contexts: [legacyContext] }],
     })).toThrow();
   });
 });
