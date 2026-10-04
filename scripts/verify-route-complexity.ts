@@ -102,6 +102,12 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // （split(/\r?\n/) 去尾换行）→ 29。校验方式：ROUTE_COMPLEXITY_BASE_REF=<本
   // 文件新增前的 ref> 时走 bootstrap 分支，才能真正验到这个上限。
   { file: "src/http/routes/l3/summary.ts", maxLines: 29, maxRoutes: 1 },
+  // 2026-10-04 FR-12 接线1：L3 语境注入自受棘轮冻结的 review.ts 外迁（给注入项加
+  // surface 需要新增行，而 review.ts 已被基线冻结）——同 l2-shared.ts / sheets-export.ts
+  // 先例。纯助手、零路由注册。上限 = 冻结时的**实际总行数**，取数口径必须与
+  // measureRouteComplexity 相同：含空行（split(/\r?\n/) 去尾换行）→ 93。
+  // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
+  { file: "src/http/routes/review-l3-contexts.ts", maxLines: 93, maxRoutes: 0 },
 ];
 
 export function measureRouteComplexity(source: string) {
