@@ -45,11 +45,14 @@ export function MaskedPiece({
   term,
   revealed,
   onUnmask,
+  maskTitle = "点击揭示词形（消耗 H1 提示）",
 }: {
   text: string;
   term: string | null;
   revealed: boolean;
   onUnmask?: () => void;
+  /** 悬停提示：不同调用点的"揭示代价"不同（H1 级 vs 已消费的 H1′ 级）。 */
+  maskTitle?: string;
 }) {
   const t = term !== null && term.trim().length > 0 ? term : null;
   if (t === null) return <>{text}</>;
@@ -70,7 +73,7 @@ export function MaskedPiece({
             key={i}
             role="button"
             tabIndex={0}
-            title="点击揭示词形（消耗 H1 提示）"
+            title={maskTitle}
             data-testid="clue-mask"
             className="inline-block min-w-[4.2em] cursor-pointer rounded-md px-1 text-center align-baseline transition-colors"
             // 同色底 + 同色字 = 隐形但占位：保留句法结构，不泄露词形长度以外的信息

@@ -68,8 +68,9 @@ export const reviewQueueResponseSchema = z.object({
       created_at: z.string(),
     }).strict()),
     /**
-     * Task 13（2026-09-07）：每卡注入的 L3 语境（Tier 2 折叠条目，best-effort，
-     * 每卡 limit 2）。source_id 供前端深链 ?sourceId= 直达阅读视图。
+     * Task 13（2026-09-07）：每卡注入的 L3 语境（best-effort，每卡 limit 2）。
+     * 两个消费点：卡背 Tier 2 折叠（`L3ContextsFold`）与提示阶梯 H1′ 级
+     * （FR-12 接线1 升级，2026-10-04）。source_id 供前端深链 ?sourceId= 直达阅读视图。
      */
     l3_contexts: z.array(z.object({
       context_id: z.string(),
@@ -78,6 +79,8 @@ export const reviewQueueResponseSchema = z.object({
       source_title: z.string(),
       /** 语境义快照（Bound sense）：绑定释义/搭配文本，未绑定为 null。 */
       bound_sense: z.string().nullable(),
+      /** 目标词在该语境里的词面（occurrence.surface）；H1′ 级遮盖用它，缺失为 null。 */
+      surface: z.string().nullable(),
     }).strict()),
   }).strict()),
   session: z.object({

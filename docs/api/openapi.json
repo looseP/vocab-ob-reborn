@@ -9405,6 +9405,16 @@
                                       "type": "null"
                                     }
                                   ]
+                                },
+                                "surface": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
                                 }
                               },
                               "required": [
@@ -9412,7 +9422,8 @@
                                 "source_id",
                                 "text",
                                 "source_title",
-                                "bound_sense"
+                                "bound_sense",
+                                "surface"
                               ],
                               "additionalProperties": false
                             }

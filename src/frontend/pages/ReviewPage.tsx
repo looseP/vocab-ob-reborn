@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Layers, Undo2, History } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
@@ -13,6 +13,7 @@ import { CompletionCelebration } from "@/frontend/components/review/CompletionCe
 import { ReviewHistoryDrawer, type ReviewHistoryEntry } from "@/frontend/components/review/ReviewHistoryDrawer";
 import { useReview } from "@/frontend/hooks/useReview";
 import { useUpgradeHints } from "@/frontend/hooks/useUpgradeHints";
+import { isReviewReturnNavigation, shouldAutoRestoreSession } from "@/frontend/viewModels/reviewReturnNavigation";
 
 const reviewModes = [
   { key: "review", icon: Repeat, title: "标准复习", desc: "按 FSRS 间隔重复算法安排的到期卡片", variant: "primary" as const },
@@ -292,6 +293,7 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
 
 export function ReviewPage() {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const wordIdsParam = searchParams.get("wordIds");
   const freeWordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
   const [mode, setMode] = useState<"select" | "session">("select");
@@ -371,13 +373,32 @@ export function ReviewPage() {
   };
 
   // 确认条：继续上次进度（force=false，交给 useReview 从缓存恢复）。
-  const handleContinueRestore = () => {
+  const handleContinueRestore = useCallback(() => {
     if (!pendingRestore) return;
     setReviewMode(pendingRestore.mode);
     setForceBootstrap(false);
     setPendingRestore(null);
     setMode("session");
-  };
+  }, [pendingRestore]);
+
+  /**
+   * 从 L3 语境看回来的自动续接（FR-12 接线1 回程，2026-10-04）。
+   *
+   * 为什么需要：`/review` 与 `/l3` 是同级路由，跳过去时 ReviewPage 会卸载、`mode`
+   * 局部状态丢失，回来只能靠 localStorage 会话缓存复原（含 `currentIndex`）。
+   * 缓存复原本来要用户再点一次「继续上次」—— 而这次跳转是**用户主动往返**、
+   * 不是"上次没关掉的会话"，多一次确认点击就成了链路断点。故带 `state.fromReview`
+   * 回来时直接续上；用户从别处进 `/review` 的行为**完全不变**（仍走确认条）。
+   */
+  const returningFromL3 = isReviewReturnNavigation(location.state);
+  useEffect(() => {
+    const auto = shouldAutoRestoreSession({
+      fromReview: returningFromL3,
+      mode,
+      hasPendingRestore: pendingRestore !== null,
+    });
+    if (auto) handleContinueRestore();
+  }, [returningFromL3, mode, pendingRestore, handleContinueRestore]);
 
   // 确认条：重新开始（清旧缓存 + force=true 新启一个会话）。
   const handleStartFresh = () => {

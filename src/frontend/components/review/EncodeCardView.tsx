@@ -21,6 +21,7 @@ import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Card } from "@/frontend/components/ui/Card";
 import { AcousticStickyAnchor } from "@/frontend/components/review/AcousticAnchor";
+import { L3ContextText } from "@/frontend/components/review/L3ContextText";
 import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
 import type { Rating, ReviewCard } from "@/frontend/hooks/useReview";
 import { buildHintSteps, HINT_STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
@@ -111,6 +112,23 @@ function EncodeHintStep({
             </span>
           ))}
         </p>
+      </div>
+    );
+  }
+  if (step.kind === "l3_context") {
+    // 编码卡是"首学全展开、不遮盖"形态。本卡当前不注入 L3 语境（它已由 #198 的
+    // exam 三层承担"真题语境"，重复渲染无收益，见 buildHintSteps 文档）；此分支
+    // 只为类型完备与将来复用时的口径正确 —— 不遮盖、不显示中文释义。
+    return (
+      <div className="space-y-1.5 rounded-lg bg-[var(--color-surface-muted)] px-3 py-2 text-left">
+        {step.items.map((item) => (
+          <div key={item.contextId}>
+            <p className="text-[12.5px] leading-relaxed text-[var(--color-ink)]">
+              <L3ContextText text={item.text} />
+            </p>
+            <p className="mt-0.5 text-[10px] text-[var(--color-ink-soft)]">—— {item.sourceTitle}</p>
+          </div>
+        ))}
       </div>
     );
   }

@@ -26,7 +26,8 @@ import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
 import { L3ContextsFold } from "@/frontend/components/review/L3ContextsFold";
 import { AcousticStickyAnchor } from "@/frontend/components/review/AcousticAnchor";
-import { buildHintSteps, extractMnemonicCore, HINT_STEP_LABEL as STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
+import { buildHintSteps, extractMnemonicCore, HINT_STEP_LABEL as STEP_LABEL, type HintStep, type L3ContextHintItem } from "@/frontend/reviewFlow/hintSteps";
+import { L3ContextText } from "@/frontend/components/review/L3ContextText";
 import { ClueZone, TrainingFold, ExampleLayerBlock, parseWordExam, parseVerifiedCount } from "@/frontend/components/review/WordCardExamLayers";
 import { parseRealUsageFromExample } from "@/domain/word-exam";
 import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
@@ -88,6 +89,30 @@ function PrototypeMask({ text }: { text: string }) {
   );
 }
 
+/**
+ * H1′ 真题语境（FR-12 接线1，2026-10-04）。
+ *
+ * 与卡背 Tier 2 折叠的三点差异（别把两处改成一样）：
+ * - **遮盖目标词**：这一级是"换个真实语境再自认一次"，不是给答案；
+ * - **不显示 bound_sense**：语境义是中文释义，放进提示等于直接剧透；
+ * - **空号 `〖n〗` 走共享解析**：不再把卷面占位符原样丢给用户。
+ */
+function L3ContextHintContent({ items }: { items: L3ContextHintItem[] }) {
+  return (
+    <div className="space-y-2 rounded-lg bg-[var(--color-surface-muted)] px-3 py-2" data-testid="l3-hint-context">
+      {items.map((item) => (
+        <div key={item.contextId}>
+          <p className="text-[12.5px] leading-relaxed text-[var(--color-ink)]">
+            <span aria-hidden className="mr-1">📄</span>
+            <L3ContextText text={item.text} maskTerm={item.maskTerm} masked />
+          </p>
+          <p className="mt-0.5 text-[10px] text-[var(--color-ink-soft)]">—— {item.sourceTitle}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function HintStepContent({ step }: { step: HintStep }) {
   if (step.kind === "example") {
     // H1 = 揭示词形：例句已在正面「例句线索区」呈现（目标词遮盖），
@@ -118,6 +143,9 @@ function HintStepContent({ step }: { step: HintStep }) {
         </p>
       </div>
     );
+  }
+  if (step.kind === "l3_context") {
+    return <L3ContextHintContent items={step.items} />;
   }
   if (step.kind === "prototype") {
     return (
@@ -492,8 +520,10 @@ export function ReviewCardView({
 
   // T3 Hint 阶梯：提示步（缺失级自动降级跳过）与评分上限。
   // 阶梯 R2 档（拍板③）撤提示面板：hintLadderHidden=true 时视同无提示步。
+  // L3 语境（FR-12 接线1）随队列载荷直载，作为 H1′ 级进阶梯；无语境/定位不到词面
+  // 的卡不会多出这一级（阶梯长度因卡而异由 buildHintSteps 保证）。
   const hintSteps = useMemo(
-    () => (preview || hintLadderHidden ? [] : buildHintSteps(card?.word)),
+    () => (preview || hintLadderHidden ? [] : buildHintSteps(card?.word, card?.l3_contexts)),
     [card, preview, hintLadderHidden],
   );
   const cap = hintCapNow(hintLevel, viaH4);

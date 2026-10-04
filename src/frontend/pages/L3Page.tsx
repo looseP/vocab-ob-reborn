@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { buildExamModeUrl, resolveExamMode, type ExamMode } from "@/frontend/viewModels/examModeNavigation";
 import { apiFetch } from "@/frontend/api/client";
 import type { L3FrontendClient } from "@/l3/frontend/contract";
 import { L3Bookshelf } from "@/frontend/components/l3/L3Bookshelf";
 import { L3ReadingView } from "@/frontend/components/l3/L3ReadingView";
 import { L3Shell, type L3ShellSection } from "@/frontend/components/L3Shell";
+import { L3ReviewReturnBar } from "@/frontend/components/l3/L3ReviewReturnBar";
+import {
+  REVIEW_PATH,
+  isReviewReturnNavigation,
+  reviewReturnState,
+} from "@/frontend/viewModels/reviewReturnNavigation";
 import { L3ContextPage } from "@/frontend/pages/L3ContextPage";
 import { L3ErrorBookPage } from "@/frontend/pages/L3ErrorBookPage";
 import { L3GraphPage } from "@/frontend/pages/L3GraphPage";
@@ -47,7 +53,23 @@ import type {
 export function L3Page() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const deepLinkContextId = searchParams.get("contextId");
+  /**
+   * 是否由 L1 复习卡的语境深链进入（`L3ContextsFold` 的 Link 带 `state.fromReview`）。
+   * 用途：给出一条**回程**出口 —— 此前 `/review` → `/l3` 是单向的，用户跳过来看语境
+   * 就只能手动退回复习页，且原卡要再点一次「继续上次」才回得来（2026-10-04 补）。
+   */
+  const fromReview = isReviewReturnNavigation(location.state);
+  /**
+   * 回程：回 `/review` 并带同一标记 —— ReviewPage 据此**直接续上**缓存里的原会话
+   * （不再让用户多点一次「继续上次」，那是这条链路的最后一跳）。
+   * 不用 `navigate(-1)`：L3 内部存在 push 型导航（切模式/进出学习笔记），
+   * 历史栈不保证上一项就是复习页。
+   */
+  const navigateReviewBack = useCallback(() => {
+    navigate(REVIEW_PATH, { state: reviewReturnState() });
+  }, [navigate]);
   // B1（体验层）：默认落地 = 素材宇宙（设计基线 §2 IA-1）；深链（?sourceId=/
   // ?wordSlug=/?contextId=）仍会在挂载后把视图切到对应 section。
   const [section, setSection] = useState<L3ShellSection>("home");
@@ -340,8 +362,11 @@ export function L3Page() {
   }[section];
 
   return (
-    <L3Shell activeSection={section} onNavigate={handleShellNavigate}>
-      {page}
-    </L3Shell>
+    <>
+      {fromReview && <L3ReviewReturnBar onBack={navigateReviewBack} />}
+      <L3Shell activeSection={section} onNavigate={handleShellNavigate}>
+        {page}
+      </L3Shell>
+    </>
   );
 }
