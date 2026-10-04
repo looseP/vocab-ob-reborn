@@ -3,7 +3,7 @@
 基准：本地主线 `ccc6fb4`，分支增量明确标出。核验方法为路由/组件/service/脚本与既有验收记录比对；本轮没有重新逐页浏览器验收。下列路径均相对于仓库根目录。
 
 > **⚠️ 基准已过期（2026-09-28/29 修正）**：本表的"主线已有"判定基于 09-19 的 `ccc6fb4`。此后 main 已前进到 `e089154`（含 PR #142~#159：错题库统一投影、三模式引擎、题目录入改题、判卷信箱 ADR-0038、N2 学习笔记、阶梯 LW-0→2）。本轮另有两处**实测更正**：
-> - **FR-12 的实际状态**（原表"L3 context adapter 已存在"表述过宽，已在对应行收紧）
+> - **FR-12 的实际状态**（原表"L3 context adapter 已存在"表述过宽，已在对应行收紧）。⚠️ **该行于 2026-10-04 再次更正**：它写的"L1 复习卡仍未消费 L3 / 接线1 未做"是**错的** —— 判定只查了 `review.service.ts`，漏了**路由层**的注入（见下方 L2 行与 §7.9 的修订块）
 > - **运行实例曾长期落后 main 60 个提交**，09-28 才升级；L3 引擎至今零数据
 >
 > 完整实况与遗留见 **[round-2026-09-29-facts.md](round-2026-09-29-facts.md)**。本表其余行未逐条重验，**不可直接用于派工**。
@@ -18,7 +18,7 @@
 | 词汇与词书 | `/words`、`/words/:slug`、`/plaza`：词详情、词书/集合与内容查看 | `WordsPage.tsx`、`WordDetailPage.tsx`、`PlazaPage.tsx`；`word.service.ts`、`wordbook.service.ts`、`plaza.service.ts` | 主线已有；不能用空库页面评价历史词库是否丢失 |
 | 生词捕获与导入 | `/capture`、`/import`：捕获和导入现有词汇材料 | `CapturePage.tsx`、`ImportPage.tsx`；`capture.service.ts`、`vocab-import.service.ts` | 主线已有；原始 MD/语料是独立迁移资产 |
 | L1 复习 | `/review`：队列、答题、撤销/暂停等复习流程 | `ReviewPage.tsx`、`components/review/`；`review.service.ts`、`src/fsrs/` | 主线已有；L1/L2 调度隔离，不应在恢复时重置进度 |
-| L2 辨析与内容扩展 | `/l2-drill`、词详情扩展、`/upgrade`：辨析训练与升级工单 | `L2DrillPage.tsx`、`UpgradePage.tsx`；`l2-drill.service.ts`、`l2-content.service.ts`、`upgrade-work-order.service.ts` | 主线已有；LLM 可选，未配置时生成接口显式不可用；**L2 辨析侧已接 L3 语境**（ADR-0016 + `L3ContextSourceAdapter`，注入 `l2Drill`，见 `services/index.ts`）。⚠️ **L1 复习卡仍未消费 L3**（`review.service.ts` 对 `l3_contexts` 零引用）——即 FR-12 只完成"接线2"，"接线1"未做。详见 [round-2026-09-29-facts.md](round-2026-09-29-facts.md) §3.2 |
+| L2 辨析与内容扩展 | `/l2-drill`、词详情扩展、`/upgrade`：辨析训练与升级工单 | `L2DrillPage.tsx`、`UpgradePage.tsx`；`l2-drill.service.ts`、`l2-content.service.ts`、`upgrade-work-order.service.ts` | 主线已有；LLM 可选，未配置时生成接口显式不可用；**L2 辨析侧已接 L3 语境**（ADR-0016 + `L3ContextSourceAdapter`，注入 `l2Drill`，见 `services/index.ts`）。**L1 侧 FR-12「接线1」已交付**（2026-10-04 更正）：队列**逐卡**注入 `l3_contexts`（`src/http/routes/review.ts` → `review-l3-contexts.ts`，每卡 limit 2、best-effort、只读），两个消费点 —— 卡背 Tier 2 折叠（`L3ContextsFold`）+ **提示阶梯 H1′ 真题语境一级**（PR #201，口径见 ADR-0036 §7；目标词遮盖、不给中文释义、定位不到遮盖锚则整级不生成）。⚠️ 判断"是否接线"时**不要只 grep `review.service.ts`**：注入在路由层，service 层确实零引用 —— 这正是本行一度被误判为"未做"的原因。详见 [round-2026-09-29-facts.md](round-2026-09-29-facts.md) §7.9 |
 | L3 素材阅读 | `/l3` 素材宇宙、书架、来源阅读与深链定位 | `L3Page.tsx`、`components/l3/L3Bookshelf.tsx`、`L3ReadingView.tsx`；`l3-read.service.ts` | 主线已有；`sourceId/contextId/wordSlug` 深链已经接线 |
 | L3 语境共建 | 手动创建、导入提案、确认/拒绝、推荐、图谱 | `L3ManualEditorPage.tsx`、`L3ImportPage.tsx`、`L3ProposalPage.tsx`、`L3RecommendationPage.tsx`、`L3GraphPage.tsx` | 主线已有；自动生成内容遵循各域审核合同，不能扩权直写 |
 | 题型与试卷台 | `/l3` 内试卷台、七题型空间、按文件/整卷打开 | `components/l3/L3PapersPage.tsx`、`L3ExamPaper.tsx`；`l3-paper.service.ts`、`l3-practice.service.ts` | 主线已有；内部 section 不全是独立 URL route，入口以 `L3Page` 的参数解析为准 |

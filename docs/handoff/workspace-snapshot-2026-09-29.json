@@ -124,6 +124,17 @@
       "claim": "feature-map's 'L3 context adapter 已存在' means FR-12 is done",
       "verdict": "TOO BROAD — tightened in feature-map.md",
       "truth": "only FR-12 接线2 (L2 drill reads L3, ADR-0016 + L3ContextSourceAdapter) is delivered. 接线1 (L1 review card reads L3) is still absent: review.service.ts has zero references to l3_contexts."
+    },
+    {
+      "claim": "接线1 (L1 review card reads L3) is still absent — review.service.ts has zero references to l3_contexts",
+      "verdict": "WRONG — retracted (2026-10-04)",
+      "truth": "the injection happens in the ROUTE layer, not the service: src/http/routes/review.ts (extracted to review-l3-contexts.ts by PR #201) calls listContextsForWord per card (limit 2, best-effort) and injects l3_contexts[] into GET /api/review/queue. The L1 consumer L3ContextsFold has been on main since 9110dc7 (2026-09-08) — i.e. BEFORE this snapshot. PR #201 additionally promoted the context onto the front hint ladder as the H1′ 真题语境 level (ADR-0036 §7).",
+      "myError": "grepped only the service layer instead of walking the request path (route -> service -> repository); a literally-true observation (zero refs in review.service.ts) was used to support a false conclusion"
+    },
+    {
+      "claim": "接线1 is a single well-defined thing",
+      "verdict": "MISLEADING — term collision recorded (2026-10-04)",
+      "truth": "the label 接线1 is used for two different wirings: ADR-0015 (2026-08-25) calls the L2 outbox track='l2' event routing 'FR-12 接线1', while feature-map.md / round-facts §3.2 use it for 'L1 review card reads L3 context'. Both are delivered. Always name the wiring by its endpoints, not by 接线1/接线2."
     }
   ],
   "structuralBlindSpot": {

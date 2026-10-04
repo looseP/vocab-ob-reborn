@@ -114,6 +114,22 @@
 
 **准确表述**：FR-12 **接线2（L2 辨析读 L3 语境）已交付**；**接线1（L1 复习卡读 L3 语境）仍未接线**。
 
+> **2026-10-04 修订（本节结论错误，保留原文供追溯）**
+>
+> 「接线1 仍未接线」是**错的**。判据取自「`review.service.ts` 对 `l3_contexts` 零引用」——
+> 这是**字面为真、结论为假**的典型：注入发生在**路由层**
+> `src/http/routes/review.ts`（`GET /queue` 内逐卡调 `listContextsForWord`，limit 2、
+> best-effort），根本不经过 service 层。卡背消费点 `L3ContextsFold` 自 `9110dc7`
+> （2026-09-08）就在 main 上 —— **早于本节 09-29 的记录**。
+>
+> **教训**：判定"某能力是否已接线"必须按**请求链路**（route → service → repository）
+> 全段检索，不能只 grep service 层。本次误判的直接后果：2026-10-03 的《后续开发指导》
+> 把"FR-12 接线1"列为**第一优先待办**，一项已经存在的功能被当成缺口。
+>
+> **现状（2026-10-04，PR #201 / main `336d318`）**：除卡背折叠外，语境又升到正面
+> **提示阶梯 H1′ 真题语境**一级 —— 目标词遮盖、不给中文释义、定位不到遮盖锚则整级不生成
+> （口径见 ADR-0036 §7）。
+
 ### 3.3 「阶梯结算表恒为空」与「服务端不感知 ladder」——两次误判
 
 实测阶梯会话（`vocab-ladder-mode=on`）走完一轮后，我断言：① 结算表「0 词已调度」是缺陷；
@@ -535,6 +551,24 @@ MCP server 包装层**，agent = HTTP Bearer 客户端」。实测 `scripts/run-
 
 ### 7.9 FR-12 接线1（L1 复习卡消费 L3 语境）
 实测 `review.service.ts` 对 L3 零引用。**注意**：§3.2 已说明 `feature-map.md` 原表述需收紧。
+
+> **2026-10-04 修订（本节结论错误，保留原文供追溯）**
+>
+> 「`review.service.ts` 零引用」是事实，但由此推出的「L1 未消费 L3」是**错误推论**：
+> 注入在**路由层**，不经过 service。详见 §3.2 的修订块。
+>
+> **当前实现（PR #201，main `336d318`）**：
+> - **注入**：`GET /api/review/queue` 逐卡注入 `l3_contexts[]`
+>   （`context_id / source_id / text / source_title / bound_sense / surface`）；
+>   每卡 limit 2、best-effort（L3 故障不阻塞队列）；实现在
+>   `src/http/routes/review-l3-contexts.ts`（自受棘轮冻结的 `review.ts` 外迁）。
+> - **消费点一**：卡背 Tier 2 折叠 `L3ContextsFold`（含绑定释义，不遮盖）。
+> - **消费点二（本次新增）**：正面提示阶梯 **H1′ 真题语境**一级 —— 遮盖目标词、不给
+>   中文释义、定位不到遮盖锚则整级不生成；用则评分上限降一档（经济学不变）。
+> - **回程**：深链带 `state.fromReview` → L3 渲染「← 返回复习」→ `/review` 自动续接
+>   缓存会话回到原卡。
+> - **副产品**：`〖n〗` 卷面空号不再原样泄漏（解析上移 `src/domain/l3-passage-text.ts`，
+>   L1 与 L3 共用一份）。
 
 ### 7.10 【P0 已修】复习视图缺 key → 巩固轮死锁 + 评分上限污染（PR #165）
 
