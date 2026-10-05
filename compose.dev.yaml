@@ -1,0 +1,66 @@
+# 开发栈 overlay（自用周基础设施，2026-10-05）。
+#
+# 目的：让「每天在用的实例」与「正在开发的实例」**物理隔离** —— 端口、数据卷、
+# 镜像 tag 三者都不共享，于是开发时可以随便 build / recreate / 写脏数据，
+# 正在用来复习的那个实例纹丝不动。
+#
+# 用法（**必须带 `-p vocab-dev`**）：
+#   docker compose -p vocab-dev -f compose.yaml -f compose.dev.yaml up -d
+# 推荐直接用封装脚本（它把 `-p`、镜像 tag、构建顺序都封住了）：
+#   npx tsx scripts/dev-stack.ts up
+#
+# 隔离靠三件事：
+#   1. `-p vocab-dev` ⇒ 容器名 `vocab-dev-*`、数据卷 `vocab-dev_postgres-data`
+#      （Compose 用项目名做前缀，天然隔离，不需要手写卷名）；
+#   2. web 端口 **3101**（自用栈占 3001）；
+#   3. 镜像 tag 换成 **:dev** ⇒ 开发构建**不再覆盖**自用栈正在运行的 :local。
+#
+# ⚠️ 第 3 条为什么必须写在文件里、而不是靠命令行 env：若靠 `APP_IMAGE=…:dev` 环境变量，
+# 那么任何人手动跑一次不带该变量的 `docker compose build`，就会把自用栈正在用的
+# :local 镜像重新打上 —— 隔离当场失效，而且没有任何提示。
+#
+# 本文件是 **partial override**：logging（ADR-0026）、安全基线（read_only /
+# cap_drop / no-new-privileges / tmpfs）全部由 compose.yaml 提供，此处不重复声明
+# —— 同 compose.cloudflare-tunnel.yaml 的约定。
+
+services:
+  database-role-bootstrap:
+    image: vocab-observatory-v2-migration:dev
+
+  migrate:
+    image: vocab-observatory-v2-migration:dev
+
+  database-role-converge:
+    image: vocab-observatory-v2-migration:dev
+
+  web:
+    image: vocab-observatory-v2:dev
+    # 基础文件写的是 `"127.0.0.1:${APP_PORT:-3001}:3001"`。这里用 `!override` **整表替换**：
+    # 只写 `ports:` 的话 Compose 会把列表**合并**（3001 + 3101 同时映射），
+    # 而 3001 已被自用栈占用 ⇒ 开发栈直接起不来。
+    ports: !override
+      - "127.0.0.1:${DEV_APP_PORT:-3101}:3001"
+    environment:
+      # 基础文件的 APP_ORIGIN 默认值由 APP_PORT 推导；本层已换端口，这里必须跟着换，
+      # 否则会写出 http://127.0.0.1:3001 的跨栈 origin。
+      APP_ORIGIN: ${DEV_APP_ORIGIN:-http://127.0.0.1:3101}
+
+  review-outbox-worker:
+    image: vocab-observatory-v2:dev
+
+  llm-reservation-reaper:
+    image: vocab-observatory-v2:dev
+
+  backup-scheduler:
+    image: vocab-observatory-v2-backup:dev
+    # 开发栈默认**不跑**定时备份：它的数据是自用库的快照副本，随时可重建。
+    # 需要时用 `--profile dev-backups` 显式开启。
+    profiles: ["dev-backups"]
+    # 基础文件是 `${BACKUP_HOST_DIR:-./backups}` 的**宿主相对路径** —— 项目名隔离不了它，
+    # 不换就会和自用栈往同一个目录写备份。`!override` 整表替换。
+    volumes: !override
+      - ${DEV_BACKUP_HOST_DIR:-./.dev/backups}:/backups
+
+  data-lifecycle:
+    # 该服务在基础文件里已挂在 profile 下（默认不跑），这里只改镜像 tag 保持一致。
+    image: vocab-observatory-v2:dev
