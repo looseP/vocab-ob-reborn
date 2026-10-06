@@ -114,6 +114,27 @@ export class HuluRepository extends BaseRepository implements IHuluRepository {
     );
   }
 
+  /**
+   * 写回挂起快照（创建事务的第二步：插计划行 → 挂起 → 快照落库）。
+   *
+   * 快照内容来自 `ReviewRepository.bulkSuspendByWordIds` 的回返（逐行「挂起前
+   * state」），本层只负责把它落到计划行，不解释语义。MUST be in a transaction。
+   */
+  async saveSuspendSnapshot(
+    userId: string,
+    planId: string,
+    snapshot: Record<string, string>,
+  ): Promise<HuluPlanRow | null> {
+    this.requireTx();
+    return this.queryOne<HuluPlanRow>(
+      `UPDATE hulu_plans
+          SET suspend_snapshot = $3::jsonb
+        WHERE id = $1::uuid AND user_id = $2::uuid
+        RETURNING *`,
+      [planId, userId, JSON.stringify(snapshot)],
+    );
+  }
+
   async findRoundsByPlan(userId: string, planId: string): Promise<HuluRoundRow[]> {
     return this.query<HuluRoundRow>(
       `SELECT * FROM hulu_rounds

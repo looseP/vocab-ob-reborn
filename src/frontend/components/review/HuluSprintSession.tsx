@@ -1,5 +1,5 @@
 /**
- * HuluSprintSession —— 葫芦冲刺会话（ADR-0041，P1）。
+ * HuluSprintSession —— 葫芦冲刺会话（ADR-0041，P1 起；P2 补多轮流转）。
  *
  * 葫芦 = 挂在 L1 词书上的阶段性多轮冲刺计划：整批词按页推进、页级检索闸门、
  * 多轮滚动、只记轮次耗时。本组件是**第 6 个显式复习模式**的会话体（不选该模式
@@ -11,13 +11,19 @@
  *     轮次开始（每轮 1 次）、轮次收尾（每轮 1 次）。
  *  2. **不嵌 `ReviewCardView`**：那是服务于评分流的组件（会写 FSRS）。这里**新写
  *     只读卡面**（词头 / 音标 / 词性 / 释义 / 助记），答案层默认折叠。
- *  3. **闸门读计划行的 `gate_ratio` 列值**，不写死 0.8；判定用前后端共用的纯函数
+ *  3. **闸门读计划行的 `gate_ratio` 列值**，不写死；判定用前后端共用的纯函数
  *     `huluGateDecision`（单一真口径）。不达闸 → 整页自认清零、退回学习态、
  *     **不发请求**。
  *
  * 会话恢复（R3）：`localStorage["vocab:hulu:sprint:<planId>"]` + 24h TTL，
  * 恢复时校验 planId / roundNo 与服务端一致，不一致即丢弃、从 `pages_passed` 页重来。
  * 未结算页本来就没入库，超时丢失的代价只是重走当前页。
+ *
+ * 「本轮页已全部结算但轮未收尾」的恢复（P2 必修）：末页整页删空后刷新、或末页
+ * 结算与 finish 之间中断，重进时页游标会落在页数上。这不是错误状态 ——
+ * `loadPage` 与 `enterPlan` 都把它当作「本轮已可收尾」直接 `finishRound`（幂等），
+ * 不报错、不清缓存回 setup。`loadPage` 的自动结算结果写回 `round` state，
+ * 否则游标滞后会把这条路径变成当场卡死。
  *
  * 注意 `Card` / `Badge` 不透传额外 props，故所有 `data-testid` 都挂在原生元素上。
  */
@@ -28,10 +34,12 @@ import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
+import { HuluSpeedCurve } from "@/frontend/components/review/HuluSpeedCurve";
 import { apiFetch } from "@/frontend/api/client";
 import { getDefaultWordbook } from "@/frontend/api/wordbooks";
 import {
   huluGateDecision,
+  huluPageCount,
   type HuluPagePayload,
   type HuluPlanSummary,
   type HuluPlanWithRounds,
@@ -54,6 +62,13 @@ interface PersistedHuluSession {
   /** 已自认的结论（页内下标 → pass/miss）。 */
   verdict: Record<string, Verdict>;
   savedAt: number;
+}
+
+/** 词书选项（创建表单的选择器；默认词书优先）。 */
+interface WordbookOption {
+  id: string;
+  name: string;
+  isDefault?: boolean;
 }
 
 function cacheKey(planId: string): string {
@@ -113,6 +128,15 @@ function clearCache(planId: string): void {
   }
 }
 
+/** 404 判据（越界页 = 本轮页已全部结算，不是错误）。 */
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object"
+    && error !== null
+    && (error as { status?: unknown }).status === 404
+  );
+}
+
 /** 秒 → 「n 分 ss 秒」（轮次耗时展示）。 */
 function formatSeconds(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));
@@ -126,12 +150,18 @@ function todayKey(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-type Phase = "setup" | "loading" | "sprint" | "finished" | "error";
+/** 考试日是否已过（YYYY-MM-DD 字典序即日期序）。 */
+function examDatePassed(examDate: string): boolean {
+  return examDate < todayKey();
+}
+
+type Phase = "setup" | "loading" | "sprint" | "finished" | "plan" | "error";
 
 export function HuluSprintSession({ onBack }: { onBack: () => void }) {
   const [phase, setPhase] = useState<Phase>("setup");
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<HuluPlanSummary | null>(null);
+  const [rounds, setRounds] = useState<HuluRoundRow[]>([]);
   const [round, setRound] = useState<HuluRoundRow | null>(null);
   const [page, setPage] = useState<HuluPagePayload | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
@@ -145,14 +175,21 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false);
 
   // 创建表单
+  const [wordbooks, setWordbooks] = useState<WordbookOption[]>([]);
+  const [wordbookId, setWordbookId] = useState("");
   const [examDate, setExamDate] = useState(todayKey);
   const [targetRounds, setTargetRounds] = useState(4);
   const [pageSize, setPageSize] = useState(20);
+  /** 可选挂起开关（默认关；只能创建时设定）。 */
+  const [suspendReview, setSuspendReview] = useState(false);
 
   /** 当前页是否已结算（游标之内）→ 只读回看，不可改。 */
   const settled = round !== null && pageIndex < round.pages_passed;
   const pages = page?.pages ?? 0;
   const isLastPage = pages > 0 && pageIndex >= pages - 1;
+  /** 计划是否已走到目标轮数（末轮收尾后服务端把 status 置 completed）。 */
+  const isPlanComplete = plan !== null
+    && (plan.status === "completed" || (round?.round_no ?? 0) >= plan.target_rounds);
 
   /** 落盘（每次自认 / 翻页后调用；纯本地，零请求）。 */
   const persist = useCallback((next: {
@@ -170,55 +207,105 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
     });
   }, []);
 
+  /** 计划 + 轮次刷新（缩时曲线的唯一数据源：GET /hulu/plans/:id）。 */
+  const refreshPlan = useCallback(async (planId: string): Promise<HuluPlanWithRounds> => {
+    const detail = await apiFetch<HuluPlanWithRounds>(`/hulu/plans/${planId}`);
+    setPlan(detail.plan);
+    setRounds(detail.rounds);
+    return detail;
+  }, []);
+
+  /**
+   * 轮次收尾：POST finish → 展示本轮耗时 + 曲线（含刚收尾的这一轮）。
+   * 幂等：服务端对已收尾轮返回现状，重复调用不会重写耗时。
+   */
+  const finishRound = useCallback(async (planId: string, roundNo: number): Promise<void> => {
+    const finished = await apiFetch<HuluRoundRow>(`/hulu/plans/${planId}/rounds/${roundNo}/finish`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    clearCache(planId);
+    setRound(finished);
+    setElapsedSeconds(finished.elapsed_seconds ?? 0);
+    try {
+      await refreshPlan(planId);
+    } catch {
+      /* 曲线刷新失败不影响「本轮已收尾」的展示 */
+    }
+    setPhase("finished");
+  }, [refreshPlan]);
+
   /**
    * 取一页载荷并**跳过 alive = 0 的页**（整页定格词已删 → 服务端自动通过）。
    *
    * `alive = 0` 的页不发渲染、直接结算 `{ pageIndex, passed: 0, total: 0 }`，
    * 然后继续往后走 —— 直到遇到有存活词的页，或走到末页。
+   *
+   * 越界页（404）= 本轮页已**全部结算**（末页结算与收尾之间中断、或末页整页删空
+   * 后的续上）：直接 `finishRound`（幂等）并返回 true，**不报错、不清缓存**。
+   *
+   * 返回 true 表示「本轮已收尾」（调用方不要再覆盖 phase）。
    */
-  const loadPage = useCallback(async (planId: string, roundNo: number, index: number): Promise<void> => {
+  const loadPage = useCallback(async (
+    planId: string,
+    roundNo: number,
+    index: number,
+  ): Promise<boolean> => {
     let cursor = Math.max(0, index);
     for (;;) {
-      const payload = await apiFetch<HuluPagePayload>(`/hulu/plans/${planId}/pages/${cursor}`);
+      let payload: HuluPagePayload;
+      try {
+        payload = await apiFetch<HuluPagePayload>(`/hulu/plans/${planId}/pages/${cursor}`);
+      } catch (err) {
+        if (isNotFound(err)) {
+          await finishRound(planId, roundNo);
+          return true;
+        }
+        throw err;
+      }
       if (payload.alive > 0) {
         setPage(payload);
         setPageIndex(cursor);
         setFlipped({});
         setVerdict({});
         setStudy(false);
-        return;
+        return false;
       }
       // 整页删空：直接结算（huluGateDecision(0, 0, gate) = pass，服务端同口径）
-      await apiFetch(`/hulu/plans/${planId}/rounds/${roundNo}/pages`, {
-        method: "POST",
-        body: JSON.stringify({ pageIndex: cursor, passed: 0, total: 0 }),
-      });
+      const settledRound = await apiFetch<HuluRoundRow>(
+        `/hulu/plans/${planId}/rounds/${roundNo}/pages`,
+        { method: "POST", body: JSON.stringify({ pageIndex: cursor, passed: 0, total: 0 }) },
+      );
+      // 写回游标（不写回 → settled 判据滞后，末页「完成本轮」按钮会点不动）
+      setRound(settledRound);
       if (cursor >= payload.pages - 1) {
+        // 末页整页删空：本页已自动结算，交「完成本轮」按钮收尾（不静默收尾）。
         setPage(payload);
         setPageIndex(cursor);
         setFlipped({});
         setVerdict({});
         setStudy(false);
-        return;
+        return false;
       }
       cursor += 1;
     }
-  }, []);
+  }, [finishRound]);
 
   /**
    * 进入一个计划的冲刺：轮次（幂等）+ 会话恢复（R3）+ 取当前页。
    *
    * `cache` 只在从缓存续上时传；planId / roundNo 与服务端不一致即丢弃缓存。
+   * 恢复时若页游标已落在页数上（本轮页全部结算但轮未收尾）→ 直接收尾（幂等）。
    */
   const enterPlan = useCallback(async (planId: string, cache: PersistedHuluSession | null) => {
     const detail = await apiFetch<HuluPlanWithRounds>(`/hulu/plans/${planId}`);
     setPlan(detail.plan);
+    setRounds(detail.rounds);
 
     if (detail.plan.status !== "active") {
-      // 计划已结束：清缓存，展示状态（不静默重建）。
+      // 计划已结束：清缓存，展示计划页（曲线 / 挂起状态），不静默重建。
       clearCache(planId);
-      setError(detail.plan.status === "completed" ? "该冲刺计划已完成" : "该冲刺计划已放弃");
-      setPhase("error");
+      setPhase("plan");
       return;
     }
 
@@ -235,7 +322,15 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
       ? Math.max(resume.pageIndex, started.pages_passed)
       : started.pages_passed;
 
-    await loadPage(planId, started.round_no, startIndex);
+    // 本轮页已全部结算（结算后中断 / 末页整页删空）：直接收尾，不是错误状态。
+    const totalPages = huluPageCount(detail.plan.word_count, detail.plan.page_size);
+    if (totalPages > 0 && startIndex >= totalPages) {
+      await finishRound(planId, started.round_no);
+      return;
+    }
+
+    const completed = await loadPage(planId, started.round_no, startIndex);
+    if (completed) return;
     if (resume && startIndex === resume.pageIndex) {
       setFlipped(Object.fromEntries(resume.flipped.map((key) => [key, true])));
       setVerdict(Object.fromEntries(
@@ -243,21 +338,25 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
       ));
     }
     setPhase("sprint");
-  }, [loadPage]);
+  }, [loadPage, finishRound]);
 
   /** 创建（或取回既有）计划 → 进入冲刺。 */
-  const bootstrap = useCallback(async (options: { examDate: string; targetRounds: number; pageSize: number }) => {
+  const bootstrap = useCallback(async (options: {
+    examDate: string; targetRounds: number; pageSize: number;
+    wordbookId: string; suspendReview: boolean;
+  }) => {
     setPhase("loading");
     setError(null);
     try {
-      const wordbook = await getDefaultWordbook();
+      const wbId = options.wordbookId || (await getDefaultWordbook()).id;
       const created = await apiFetch<HuluPlanSummary>("/hulu/plans", {
         method: "POST",
         body: JSON.stringify({
-          wordbookId: wordbook.id,
+          wordbookId: wbId,
           examDate: options.examDate,
           targetRounds: options.targetRounds,
           pageSize: options.pageSize,
+          suspendReview: options.suspendReview,
         }),
       });
       await enterPlan(created.id, readCache(created.id));
@@ -266,6 +365,33 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
       setPhase("error");
     }
   }, [enterPlan]);
+
+  /** 词书选择器的选项：GET /wordbooks；不可用时回落默认词书。 */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await apiFetch<{ items: WordbookOption[] }>("/wordbooks");
+        if (cancelled) return;
+        const items = list.items ?? [];
+        setWordbooks(items);
+        setWordbookId((current) => current
+          || items.find((wb) => wb.isDefault)?.id
+          || items[0]?.id
+          || "");
+      } catch {
+        try {
+          const fallback = await getDefaultWordbook();
+          if (cancelled) return;
+          setWordbooks([{ id: fallback.id, name: fallback.name, isDefault: true }]);
+          setWordbookId((current) => current || fallback.id);
+        } catch {
+          /* 两者都失败：bootstrap 时会给出可读错误 */
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   /**
    * 挂载即尝试续上未完成的冲刺（刷新/重进后续上，R3）：
@@ -318,17 +444,43 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
   /** 本页通过率按**存活词**算（与页结算的 total 同口径）。 */
   const gatePasses = plan !== null && huluGateDecision(passedCount, alive, plan.gate_ratio) === "pass";
 
-  /** 轮次收尾：POST finish → 展示本轮耗时。 */
-  const finishRound = useCallback(async (planId: string, roundNo: number) => {
-    const finished = await apiFetch<HuluRoundRow>(`/hulu/plans/${planId}/rounds/${roundNo}/finish`, {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-    clearCache(planId);
-    setRound(finished);
-    setElapsedSeconds(finished.elapsed_seconds ?? 0);
-    setPhase("finished");
-  }, []);
+  /** 进入第 n+1 轮：POST /rounds（幂等）→ 从新轮的 pages_passed 页开始。 */
+  const startNextRound = useCallback(async () => {
+    if (!plan) return;
+    setPhase("loading");
+    setError(null);
+    try {
+      const started = await apiFetch<HuluRoundRow>(`/hulu/plans/${plan.id}/rounds`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      setRound(started);
+      setElapsedSeconds(null);
+      setBlocked(0);
+      const completed = await loadPage(plan.id, started.round_no, started.pages_passed);
+      if (!completed) setPhase("sprint");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法开始下一轮");
+      setPhase("error");
+    }
+  }, [plan, loadPage]);
+
+  /** 放弃计划（active → abandoned）：同事务恢复挂起快照，之后刷新计划页。 */
+  const abandonPlan = useCallback(async () => {
+    if (!plan) return;
+    setBusy(true);
+    try {
+      await apiFetch(`/hulu/plans/${plan.id}/abandon`, { method: "POST", body: JSON.stringify({}) });
+      clearCache(plan.id);
+      await refreshPlan(plan.id);
+      setPhase("plan");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "放弃计划失败");
+      setPhase("error");
+    } finally {
+      setBusy(false);
+    }
+  }, [plan, refreshPlan]);
 
   /** 页尾推进：过闸 → 结算 → 下一页；不过闸 → 整页清零、退学习态、**不发请求**。 */
   const goNext = useCallback(async () => {
@@ -341,8 +493,20 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
       return;
     }
     if (settled) {
-      // 回看已结算页：只读，不可改；只能往后翻。
-      if (pageIndex < pages - 1) await loadPage(plan.id, round.round_no, pageIndex + 1);
+      // 回看已结算页：只读，不可改；末页则本轮已无页可走 → 收尾（幂等）。
+      if (isLastPage) {
+        setBusy(true);
+        try {
+          await finishRound(plan.id, round.round_no);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "轮次收尾失败");
+          setPhase("error");
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+      await loadPage(plan.id, round.round_no, pageIndex + 1);
       return;
     }
 
@@ -396,7 +560,23 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="space-y-1 text-sm">
+              <span className="text-[var(--color-ink-soft)]">词书</span>
+              <select
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-glass)] px-3 py-2 text-[var(--color-ink)]"
+                value={wordbookId}
+                onChange={(event) => setWordbookId(event.target.value)}
+                data-testid="hulu-wordbook"
+              >
+                {wordbooks.length === 0 && <option value={wordbookId}>默认词书</option>}
+                {wordbooks.map((wb) => (
+                  <option key={wb.id} value={wb.id}>
+                    {wb.name}{wb.isDefault ? "（默认）" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="space-y-1 text-sm">
               <span className="text-[var(--color-ink-soft)]">考试日期</span>
               <input
@@ -434,10 +614,27 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
             </label>
           </div>
 
+          <label className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-glass)] p-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4"
+              checked={suspendReview}
+              onChange={(event) => setSuspendReview(event.target.checked)}
+              data-testid="hulu-suspend-toggle"
+            />
+            <span className="space-y-1">
+              <span className="block text-[var(--color-ink)]">冲刺期间把这批词移出到期队列</span>
+              <span className="block text-xs text-[var(--color-ink-soft)]" data-testid="hulu-suspend-hint">
+                这批词会暂时退出到期队列，计划结束或放弃时自动回来。
+                开关只能在创建时设定，中途不能切换（要换就放弃重建）。
+              </span>
+            </span>
+          </label>
+
           <div className="flex items-center gap-2">
             <Button
-              disabled={!examDate}
-              onClick={() => void bootstrap({ examDate, targetRounds, pageSize })}
+              disabled={!examDate || !wordbookId}
+              onClick={() => void bootstrap({ examDate, targetRounds, pageSize, wordbookId, suspendReview })}
               data-testid="hulu-start"
             >
               开始冲刺
@@ -473,6 +670,58 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
     );
   }
 
+  /** 计划概况卡（收尾页与计划页共用）：状态 / 挂起 / 考试日提示 / 曲线 / 放弃。 */
+  const planOverview = plan && (
+    <>
+      {plan.status === "active" && examDatePassed(plan.exam_date) && (
+        <div data-testid="hulu-exam-passed">
+          <Card className="border-[var(--color-pill-warm-border)]">
+            <p className="text-sm text-[var(--color-ink)]">
+              <strong>考试日已过</strong>（{plan.exam_date}），建议放弃以恢复到期队列。
+            </p>
+          </Card>
+        </div>
+      )}
+      <div data-testid="hulu-plan-status">
+        <Card className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={plan.status === "active" ? "accent" : "warm"}>
+              {plan.status === "active" ? "进行中" : plan.status === "completed" ? "已完成" : "已放弃"}
+            </Badge>
+            <Badge>{plan.word_count} 词 · 每页 {plan.page_size} · 共 {plan.target_rounds} 轮</Badge>
+            <span data-testid="hulu-suspend-state">
+              <Badge tone={plan.suspend_review ? "warm" : "accent"}>
+                {plan.suspend_review
+                  ? `挂起中：${plan.suspended_count} 词暂不在到期队列`
+                  : "未启用挂起"}
+              </Badge>
+            </span>
+          </div>
+          <p className="text-xs text-[var(--color-ink-soft)]">
+            考试日 {plan.exam_date}
+            {plan.suspend_review && "。这批词会在计划结束或放弃时自动回到到期队列。"}
+          </p>
+        </Card>
+      </div>
+      <HuluSpeedCurve
+        rounds={rounds}
+        targetRounds={plan.target_rounds}
+        examDate={plan.exam_date}
+      />
+    </>
+  );
+
+  const abandonButton = plan?.status === "active" && (
+    <Button
+      variant="secondary"
+      disabled={busy}
+      onClick={() => void abandonPlan()}
+      data-testid="hulu-abandon"
+    >
+      放弃计划
+    </Button>
+  );
+
   if (phase === "finished") {
     return (
       <div className="space-y-4" data-testid="hulu-finished">
@@ -491,8 +740,40 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
           <p className="text-xs text-[var(--color-ink-soft)]">
             耗时是墙钟时间（中断不切开），是熟练度的代理指标、不是掌握证明。
           </p>
-          <Button variant="secondary" onClick={onBack}>返回</Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {!isPlanComplete && (
+              <Button onClick={() => void startNextRound()} data-testid="hulu-next-round">
+                进入第 {(round?.round_no ?? 0) + 1} 轮
+              </Button>
+            )}
+            {isPlanComplete && (
+              <span data-testid="hulu-plan-complete">
+                <Badge tone="accent">计划已完成，这批词已回到正常复习</Badge>
+              </span>
+            )}
+            {abandonButton}
+            <Button variant="ghost" onClick={onBack}>返回</Button>
+          </div>
         </Card>
+        {planOverview}
+      </div>
+    );
+  }
+
+  if (phase === "plan") {
+    return (
+      <div className="space-y-4" data-testid="hulu-plan">
+        <Card className="space-y-3">
+          <h2 className="text-lg font-semibold text-[var(--color-ink)]">冲刺计划</h2>
+          <p className="text-sm text-[var(--color-ink-soft)]" data-testid="hulu-plan-message">
+            {plan?.status === "completed" ? "该冲刺计划已完成。" : "该冲刺计划已放弃。"}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            {abandonButton}
+            <Button variant="ghost" onClick={onBack}>返回</Button>
+          </div>
+        </Card>
+        {planOverview}
       </div>
     );
   }
@@ -510,6 +791,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
             </Badge>
           </span>
           <Badge>闸门 {Math.round((plan?.gate_ratio ?? 0) * 100)}%</Badge>
+          {plan?.suspend_review && <Badge tone="warm">挂起中</Badge>}
           {settled && <span data-testid="hulu-settled"><Badge tone="warm">此页已结算（只读）</Badge></span>}
           {blocked > 0 && !settled && <Badge tone="warm">本页已被拦 {blocked} 次</Badge>}
         </div>
@@ -604,7 +886,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
           已自认 {judgedCount}/{alive}（未自认的按没通过计）
         </p>
         <Button
-          disabled={busy || settled}
+          disabled={busy}
           onClick={() => void goNext()}
           data-testid="hulu-next"
         >

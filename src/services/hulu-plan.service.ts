@@ -5,11 +5,12 @@
  * 只记轮次耗时。本期（P0）只做**计划容器**：创建 / 读取 / 放弃 + 风险校验 + 幂等创建。
  *
  * 红线（ADR-0041 / 执行计划 P0 验收）：
- *   - **零 FSRS 写入**：本服务不触碰复习写入面（事件日志、进度表、复习服务、
- *     评分提交）—— 服务层只调 hulu 仓库与纯函数；挂起能力经 ReviewRepository 的
- *     方法调用，且本期**不接线**（suspendReview=true 直接拒绝）。为把这条纪律做成
- *     可机检的，本文件刻意**不出现**那几张表/服务的名字（完备设计 测试 10 的 grep）。
- *   - **不改已有表**：只写 hulu_plans / hulu_rounds。
+ *   - **零 FSRS 写入（默认）**：本服务不触碰复习写入面（事件日志、进度表、复习服务、
+ *     评分提交）—— 服务层只调 hulu 仓库与纯函数；唯一的例外是**可选挂起开关**
+ *     （默认关，P2 接线）：挂起/恢复经 ReviewRepository 的两个方法调用，
+ *     本服务**不裸写 SQL**。为把这条纪律做成可机检的，本文件刻意**不出现**
+ *     那几张表/服务的名字（完备设计 测试 10 的 grep）。
+ *   - **不改已有表**：只写 hulu_plans / hulu_rounds（挂起开关经 ReviewRepository）。
  *   - 词集**创建时定格**（整本词书；direction 仅标签不过滤 —— R6）。
  *
  * 事务：所有方法（含只读）都经 withTransaction + actorId —— hulu_plans /
@@ -80,7 +81,12 @@ export interface CreateHuluPlanInput {
   targetRounds?: number;
   pageSize?: number;
   gateRatio?: number;
-  /** P0 期恒 false：true 直接抛 ValidationError("HULU_SUSPEND_NOT_YET")（P2 开放）。 */
+  /**
+   * 可选挂起开关（默认关，P2 起生效）：true 时**同一事务**内把这批词置为
+   * `suspended`（退出到期队列）并把「挂起前 state」逐行写进计划行的
+   * `suspend_snapshot`；计划转 completed / abandoned 时同事务恢复。
+   * 只能创建时设定，不支持中途切换（要换就放弃重建）。
+   */
   suspendReview?: boolean;
 }
 
@@ -212,9 +218,13 @@ export class HuluPlanService {
   /**
    * 创建计划（单事务）：① 校验词书归属 → ② 已有 active 计划则**直接返回**（幂等）
    * → ③ 定格取词 → ④ 风险校验（block 抛 422，携带 { need, left, perRound }）
-   * → ⑤ 插行。并发撞 idx_hulu_plans_one_active 时重查并返回既有计划。
+   * → ⑤ 插行 → ⑥ 开关开则同事务挂起 + 快照落库。
+   * 并发撞 idx_hulu_plans_one_active 时重查并返回既有计划。
    *
-   * `suspendReview = true` 本期**拒绝**（P2 才开放）。
+   * `suspendReview = true`（P2 接线）：挂起经 `ReviewRepository.bulkSuspendByWordIds`
+   * （第 9 个 state 写点），回返的逐行「挂起前 state」写进计划行 —— **不写事件日志**。
+   * 挂起范围 = `word_ids` 中 `state <> 'suspended'` 的行（含 `new`，有快照即安全）。
+   * 幂等分支（已有 active 计划）**不重复挂起**：既有计划自带它的快照。
    *
    * 出参是**摘要**（`toHuluPlanSummary`）：全量 `word_ids` / `suspend_snapshot` 不出参
    * （P1 起前端不需要；页载荷走 pages 端点、曲线走 rounds）。
@@ -236,10 +246,7 @@ export class HuluPlanService {
     if (direction !== null && !(DIRECTIONS as readonly string[]).includes(direction)) {
       throw new ValidationError(`Invalid direction: ${direction}`, "direction");
     }
-    // P0 拒绝挂起（执行计划 P0-5）：P2 才接线 apply/restore。
-    if (input.suspendReview === true) {
-      throw new ValidationError("HULU_SUSPEND_NOT_YET", "suspendReview");
-    }
+    const suspendReview = input.suspendReview === true;
 
     return this.txRunner(async (tx) => {
       const repos = this.repositoryFactory(tx);
@@ -285,8 +292,9 @@ export class HuluPlanService {
       }
 
       // ⑤ 插行。并发双创建由 idx_hulu_plans_one_active 兜底：撞索引 → 重查返回既有计划。
+      let plan;
       try {
-        return toHuluPlanSummary(await repos.hulu.insertPlan({
+        plan = await repos.hulu.insertPlan({
           user_id: input.userId,
           wordbook_id: input.wordbookId,
           direction,
@@ -295,15 +303,32 @@ export class HuluPlanService {
           page_size: pageSize,
           gate_ratio: gateRatio,
           word_ids: wordIds,
-          suspend_review: false,
+          suspend_review: suspendReview,
           suspend_snapshot: null,
-        }));
+        });
       } catch (error) {
         if (!isUniqueViolation(error)) throw error;
         const raced = await repos.hulu.findActivePlanByWordbook(input.userId, input.wordbookId);
         if (!raced) throw error;
+        // 并发对手可能正在同一时刻挂起 —— 返回它的快照口径，不重复挂起。
         return toHuluPlanSummary(raced);
       }
+
+      // ⑥ 挂起开关（同一事务）：写计划行 → 挂起 → 快照落库。任一步失败整体回滚，
+      //    不会留下「已挂起但无快照」的不可恢复状态。
+      if (suspendReview) {
+        const suspended = await repos.reviews.bulkSuspendByWordIds({
+          userId: input.userId,
+          wordbookId: input.wordbookId,
+          wordIds,
+        });
+        const snapshot: Record<string, string> = {};
+        for (const row of suspended) snapshot[row.wordId] = row.oldState;
+        const saved = await repos.hulu.saveSuspendSnapshot(input.userId, plan.id, snapshot);
+        if (saved) plan = saved;
+      }
+
+      return toHuluPlanSummary(plan);
     }, { actorId: input.userId });
   }
 
@@ -486,7 +511,8 @@ export class HuluPlanService {
    * 轮次收尾：`elapsed_seconds = clampElapsedSeconds(ended - started)`（墙钟，R5）。
    *
    * 已收尾 → **幂等返回现状**（不重写耗时）；末轮（`round_no == target_rounds`）
-   * 同事务把计划置 `completed` 并写 `ended_at`。
+   * 同事务把计划置 `completed` 并写 `ended_at`，且**同事务恢复挂起快照**
+   * （开关开过才有快照；快照回写后清 `suspend_snapshot`）。
    */
   async finishRound(input: FinishHuluRoundInput): Promise<HuluRoundRow> {
     requireNonEmpty(input.userId, "userId");
@@ -522,16 +548,20 @@ export class HuluPlanService {
         return current;
       }
 
-      // 末轮 → 同事务完成计划（P2 在此同事务恢复挂起快照）。
+      // 末轮 → 同事务完成计划 + 恢复挂起快照（P2）。
       if (finished.round_no >= plan.target_rounds && plan.status === "active") {
-        await repos.hulu.setPlanStatus(input.userId, input.planId, "completed", { ended: true });
+        await repos.hulu.setPlanStatus(input.userId, input.planId, "completed", {
+          ended: true,
+          ...this.snapshotClearOption(plan),
+        });
+        await this.restorePlanSuspension(repos, plan);
       }
       return finished;
     }, { actorId: input.userId });
   }
 
   /**
-   * 放弃计划：active → abandoned（写 ended_at）。
+   * 放弃计划：active → abandoned（写 ended_at），**同事务恢复挂起快照**（P2）。
    * 已 abandoned → **幂等返回现状**；已 completed → 抛业务错（409 语义）。
    */
   async abandonPlan(input: AbandonHuluPlanInput): Promise<HuluPlanSummary> {
@@ -547,9 +577,47 @@ export class HuluPlanService {
       if (plan.status === "completed") {
         throw new BusinessRuleError("计划已完成，无法放弃");
       }
-      const updated = await repos.hulu.setPlanStatus(input.userId, input.planId, "abandoned", { ended: true });
+      // 先恢复再改状态：恢复用挂起时记下的 wordbook 归属与快照；清快照与状态同事务。
+      const updated = await repos.hulu.setPlanStatus(input.userId, input.planId, "abandoned", {
+        ended: true,
+        ...this.snapshotClearOption(plan),
+      });
+      await this.restorePlanSuspension(repos, plan);
       if (!updated) throw new NotFoundError("HuluPlan", input.planId);
       return toHuluPlanSummary(updated);
     }, { actorId: input.userId });
+  }
+
+  /**
+   * 快照非空时才带 `suspendSnapshot: null`（清列）—— 未开开关时不动该列，
+   * 免得把「本来就没挂起」的计划也写一次 NULL。
+   */
+  private snapshotClearOption(
+    plan: { suspend_snapshot: Record<string, string> | null },
+  ): { suspendSnapshot: null } | Record<string, never> {
+    const snapshot = plan.suspend_snapshot;
+    if (!snapshot || Object.keys(snapshot).length === 0) return {};
+    return { suspendSnapshot: null };
+  }
+
+  /**
+   * 计划收束时的挂起恢复（末轮 completed / 放弃 abandoned 共用）：
+   * 有快照才恢复 —— 未开开关（快照 NULL）与快照为空对象都是零行变化。
+   *
+   * 恢复 = **快照回写**（R1）：逐行回到挂起前的 state，且**只回写仍处 suspended
+   * 的行**（计划期间被用户手动恢复过的词不动）。调用方负责在**同一事务**内清
+   * `suspend_snapshot`（见 `snapshotClearOption`）。
+   */
+  private async restorePlanSuspension(
+    repos: IRepositories,
+    plan: { user_id: string; wordbook_id: string; suspend_snapshot: Record<string, string> | null },
+  ): Promise<void> {
+    const snapshot = plan.suspend_snapshot;
+    if (!snapshot || Object.keys(snapshot).length === 0) return;
+    await repos.reviews.restoreSuspendSnapshot({
+      userId: plan.user_id,
+      wordbookId: plan.wordbook_id,
+      snapshot,
+    });
   }
 }

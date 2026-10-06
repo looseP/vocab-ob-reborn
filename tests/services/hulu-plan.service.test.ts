@@ -98,6 +98,12 @@ function setup(options: {
   settledRow?: HuluRoundRow | null;
   finishedRow?: HuluRoundRow | null;
   words?: Array<{ id: string; slug: string; title: string; lemma: string; ipa: string | null; pos: string | null; short_definition: string | null; mnemonic_text: string | null }>;
+  /** 挂起开关的桩：bulkSuspendByWordIds 回返的逐行快照。 */
+  suspended?: Array<{ wordId: string; oldState: string }>;
+  /** 恢复桩的回写行数。 */
+  restoredCount?: number;
+  /** saveSuspendSnapshot 的桩（缺省回返带快照的计划行）。 */
+  savedSnapshot?: HuluPlanRow | null;
 } = {}) {
   const hulu = {
     insertPlan: vi.fn(options.insertPlan ?? (async () => planRow())),
@@ -105,6 +111,9 @@ function setup(options: {
     lockPlanForUpdate: vi.fn(async () => options.lockedPlan === undefined ? planRow() : options.lockedPlan),
     findActivePlanByWordbook: vi.fn(async () => options.activePlan ?? null),
     setPlanStatus: vi.fn(async () => options.statusUpdated === undefined ? planRow({ status: "abandoned" }) : options.statusUpdated),
+    saveSuspendSnapshot: vi.fn(async () => options.savedSnapshot === undefined
+      ? planRow({ suspend_review: true, suspend_snapshot: { "w-1": "review" } })
+      : options.savedSnapshot),
     findRoundsByPlan: vi.fn(async () => options.rounds ?? []),
     insertRound: vi.fn(async () => options.insertedRound ?? roundRow()),
     findOpenRound: vi.fn(async () => options.openRound ?? null),
@@ -119,16 +128,19 @@ function setup(options: {
     listWordIdsByWordbook: vi.fn(async () => options.ids ?? wordIds(400)),
     findTodayKeyInDisplayTz: vi.fn(() => options.today ?? TODAY),
   };
-  mockRepos.hulu = hulu as never;
-  mockRepos.reviews = {
+  const reviews = {
     findWordsByIds: vi.fn(async () => options.words ?? []),
-  } as never;
+    bulkSuspendByWordIds: vi.fn(async () => options.suspended ?? []),
+    restoreSuspendSnapshot: vi.fn(async () => options.restoredCount ?? 0),
+  };
+  mockRepos.hulu = hulu as never;
+  mockRepos.reviews = reviews as never;
 
   const service = new HuluPlanService({
     todayKey: (repos) => repos.hulu.findTodayKeyInDisplayTz(),
     now: () => NOW,
   });
-  return { service, hulu };
+  return { service, hulu, reviews };
 }
 
 beforeEach(() => {
@@ -232,15 +244,59 @@ describe("HuluPlanService.createPlan", () => {
       .rejects.toThrow(BusinessRuleError);
   });
 
-  it("suspendReview=true 本期拒绝（HULU_SUSPEND_NOT_YET，P2 才开放）", async () => {
-    const { service, hulu } = setup();
+  it("suspendReview=true：同一事务挂起 + 快照落库（P2 接线，不再拒绝）", async () => {
+    const suspended = [
+      { wordId: "w-1", oldState: "review" },
+      { wordId: "w-2", oldState: "new" },
+    ];
+    const { service, hulu, reviews } = setup({ ids: ["w-1", "w-2"], suspended });
 
-    await expect(
-      service.createPlan({ userId: USER, wordbookId: WB, examDate: "2026-12-20", suspendReview: true }),
-    ).rejects.toThrow(ValidationError);
-    // 拒绝发生在事务外：不读词书、不插行
-    expect(hulu.assertWordbookOwned).not.toHaveBeenCalled();
-    expect(hulu.insertPlan).not.toHaveBeenCalled();
+    const row = await service.createPlan({
+      userId: USER, wordbookId: WB, examDate: "2026-12-20", suspendReview: true,
+    });
+
+    // ① 计划行按开关写 suspend_review=true（快照列先留空，随后同事务落库）
+    expect(hulu.insertPlan).toHaveBeenCalledWith(expect.objectContaining({
+      suspend_review: true,
+      suspend_snapshot: null,
+    }));
+    // ② 挂起走 ReviewRepository（第 9 个 state 写点），范围 = 定格 word_ids
+    expect(reviews.bulkSuspendByWordIds).toHaveBeenCalledWith({
+      userId: USER,
+      wordbookId: WB,
+      wordIds: ["w-1", "w-2"],
+    });
+    // ③ 逐行「挂起前 state」写进计划行的 suspend_snapshot
+    expect(hulu.saveSuspendSnapshot).toHaveBeenCalledWith(USER, PLAN, {
+      "w-1": "review",
+      "w-2": "new",
+    });
+    // ④ 出参摘要带 suspended_count
+    expect(row.suspend_review).toBe(true);
+    expect(row.suspended_count).toBe(1);
+  });
+
+  it("suspendReview 缺省（关）：不挂起、不写快照（默认关是有意的）", async () => {
+    const { service, hulu, reviews } = setup();
+
+    await service.createPlan({ userId: USER, wordbookId: WB, examDate: "2026-12-20" });
+
+    expect(hulu.insertPlan).toHaveBeenCalledWith(expect.objectContaining({ suspend_review: false }));
+    expect(reviews.bulkSuspendByWordIds).not.toHaveBeenCalled();
+    expect(hulu.saveSuspendSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("suspendReview=true 但幂等命中既有计划：不重复挂起（既有计划自带快照）", async () => {
+    const existing = planRow({ suspend_review: true, suspend_snapshot: { "w-1": "review" } });
+    const { service, hulu, reviews } = setup({ activePlan: existing });
+
+    const row = await service.createPlan({
+      userId: USER, wordbookId: WB, examDate: "2026-12-20", suspendReview: true,
+    });
+
+    expect(row.id).toBe(existing.id);
+    expect(reviews.bulkSuspendByWordIds).not.toHaveBeenCalled();
+    expect(hulu.saveSuspendSnapshot).not.toHaveBeenCalled();
   });
 
   it("入参越界一律 ValidationError（轮数/页数/闸门/日期形状）", async () => {
@@ -809,6 +865,106 @@ describe("HuluPlanService.finishRound（轮收尾）", () => {
     expect(hulu.finishRound).toHaveBeenCalledWith(
       expect.objectContaining({ endedAt: NOW.toISOString(), elapsedSeconds: 3600 }),
     );
+  });
+});
+
+describe("HuluPlanService 挂起恢复（P2：末轮 completed / 放弃 abandoned 同事务回写）", () => {
+  const SNAPSHOT = { "w-1": "review", "w-2": "new", "w-3": "learning" };
+
+  it("末轮收尾：同事务恢复快照 + 清 suspend_snapshot", async () => {
+    const { service, hulu, reviews } = setup({
+      lockedPlan: planRow({ target_rounds: 4, status: "active", suspend_review: true, suspend_snapshot: SNAPSHOT }),
+      roundByNo: roundRow({ round_no: 4 }),
+      finishedRow: roundRow({ round_no: 4, ended_at: NOW.toISOString(), elapsed_seconds: 3600 }),
+    });
+
+    await service.finishRound({ userId: USER, planId: PLAN, roundNo: 4 });
+
+    // 快照**逐行**回写（不是统一恢复成 review）
+    expect(reviews.restoreSuspendSnapshot).toHaveBeenCalledWith({
+      userId: USER,
+      wordbookId: WB,
+      snapshot: SNAPSHOT,
+    });
+    // 清快照与置状态同一次调用（同一事务）
+    expect(hulu.setPlanStatus).toHaveBeenCalledWith(USER, PLAN, "completed", {
+      ended: true,
+      suspendSnapshot: null,
+    });
+  });
+
+  it("非末轮收尾：不恢复、不动计划（挂起要留到计划结束）", async () => {
+    const { service, hulu, reviews } = setup({
+      lockedPlan: planRow({ target_rounds: 4, status: "active", suspend_review: true, suspend_snapshot: SNAPSHOT }),
+      roundByNo: roundRow({ round_no: 2 }),
+    });
+
+    await service.finishRound({ userId: USER, planId: PLAN, roundNo: 2 });
+
+    expect(reviews.restoreSuspendSnapshot).not.toHaveBeenCalled();
+    expect(hulu.setPlanStatus).not.toHaveBeenCalled();
+  });
+
+  it("未开开关（快照 NULL）：末轮也不调恢复，且不动快照列", async () => {
+    const { service, hulu, reviews } = setup({
+      lockedPlan: planRow({ target_rounds: 4, status: "active" }),
+      roundByNo: roundRow({ round_no: 4 }),
+      finishedRow: roundRow({ round_no: 4, ended_at: NOW.toISOString(), elapsed_seconds: 3600 }),
+    });
+
+    await service.finishRound({ userId: USER, planId: PLAN, roundNo: 4 });
+
+    expect(reviews.restoreSuspendSnapshot).not.toHaveBeenCalled();
+    // 快照本来就是 NULL → 不带 suspendSnapshot（免得白写一次）
+    expect(hulu.setPlanStatus).toHaveBeenCalledWith(USER, PLAN, "completed", { ended: true });
+  });
+
+  it("放弃计划：同事务恢复快照 + 清 suspend_snapshot", async () => {
+    const { service, hulu, reviews } = setup({
+      lockedPlan: planRow({ status: "active", suspend_review: true, suspend_snapshot: SNAPSHOT }),
+      statusUpdated: planRow({ status: "abandoned" }),
+    });
+
+    const row = await service.abandonPlan({ userId: USER, planId: PLAN });
+
+    expect(reviews.restoreSuspendSnapshot).toHaveBeenCalledWith({
+      userId: USER,
+      wordbookId: WB,
+      snapshot: SNAPSHOT,
+    });
+    expect(hulu.setPlanStatus).toHaveBeenCalledWith(USER, PLAN, "abandoned", {
+      ended: true,
+      suspendSnapshot: null,
+    });
+    expect(row.status).toBe("abandoned");
+  });
+
+  it("放弃未开开关的计划：不调恢复", async () => {
+    const { service, reviews } = setup({ lockedPlan: planRow({ status: "active" }) });
+
+    await service.abandonPlan({ userId: USER, planId: PLAN });
+
+    expect(reviews.restoreSuspendSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("已 abandoned 幂等返回：不重复恢复（快照此时已清空）", async () => {
+    const { service, reviews } = setup({
+      lockedPlan: planRow({ status: "abandoned", suspend_snapshot: null }),
+    });
+
+    await service.abandonPlan({ userId: USER, planId: PLAN });
+
+    expect(reviews.restoreSuspendSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("挂起与恢复都不写事件日志：服务层只经 ReviewRepository 的两个方法", () => {
+    // 完备设计 测试 10 的结构面：服务源码不出现那两张表/服务的名字。
+    const source = readFileSync(
+      new URL("../../src/services/hulu-plan.service.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).not.toContain("review_logs");
+    expect(source).not.toContain("user_word_progress");
   });
 });
 

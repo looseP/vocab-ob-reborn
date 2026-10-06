@@ -305,18 +305,32 @@ describe("POST /api/hulu/plans", () => {
     expect(body.details).toEqual({ need: 40, left: 5, perRound: 10 });
   });
 
-  it("service 抛 ValidationError（HULU_SUSPEND_NOT_YET）→ 422", async () => {
+  it("service 抛 ValidationError（入参越界）→ 422", async () => {
+    // P2 起 suspendReview 已接线，不再是拒绝路径；此处用仍会抛 ValidationError 的
+    // 入参越界（service 侧的区间复验）验证同一条错误映射。
     const { services, hulu } = makeMockServices();
-    hulu.createPlan.mockRejectedValue(new ValidationError("HULU_SUSPEND_NOT_YET", "suspendReview"));
+    hulu.createPlan.mockRejectedValue(new ValidationError("targetRounds must be an integer between 2 and 8", "targetRounds"));
     const app = createApp(services);
 
     const res = await app.request("/api/hulu/plans", {
       method: "POST", headers: AUTH_HEADERS,
-      body: JSON.stringify({ wordbookId: WB, examDate: "2026-12-20", suspendReview: true }),
+      body: JSON.stringify({ wordbookId: WB, examDate: "2026-12-20" }),
     });
 
     expect(res.status).toBe(422);
     expect((await res.json() as { code: string }).code).toBe("VALIDATION_ERROR");
+  });
+
+  it("suspendReview 原样透传给 service（P2 接线：开关只能创建时设定）", async () => {
+    const { services, hulu } = makeMockServices();
+    const app = createApp(services);
+
+    await app.request("/api/hulu/plans", {
+      method: "POST", headers: AUTH_HEADERS,
+      body: JSON.stringify({ wordbookId: WB, examDate: "2026-12-20", suspendReview: true }),
+    });
+
+    expect(hulu.createPlan).toHaveBeenCalledWith(expect.objectContaining({ suspendReview: true }));
   });
 
   it("未认证 → 401（owner 写面）", async () => {

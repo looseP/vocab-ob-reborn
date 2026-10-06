@@ -914,7 +914,7 @@ export const huluPlanCreateSchema = z.object({
   targetRounds: z.number().int().min(HULU_MIN_ROUNDS).max(HULU_MAX_ROUNDS).optional().default(HULU_DEFAULT_ROUNDS),
   pageSize: z.number().int().min(HULU_MIN_PAGE).max(HULU_MAX_PAGE).optional().default(HULU_DEFAULT_PAGE_SIZE),
   gateRatio: z.number().min(HULU_MIN_GATE).max(HULU_MAX_GATE).optional().default(HULU_DEFAULT_GATE_RATIO),
-  /** P0 期恒 false：true 由 service 抛 422（HULU_SUSPEND_NOT_YET），P2 开放。 */
+  /** 可选挂起开关（默认关，P2 起生效）：只能创建时设定，不支持中途切换。 */
   suspendReview: z.boolean().optional().default(false),
 });
 

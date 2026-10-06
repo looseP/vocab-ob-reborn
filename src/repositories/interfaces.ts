@@ -1550,6 +1550,16 @@ export interface IHuluRepository {
     status: HuluPlanStatus,
     options: { ended: boolean; suspendSnapshot?: Record<string, string> | null },
   ): Promise<HuluPlanRow | null>;
+  /**
+   * 写回挂起快照（创建事务的第二步）。快照来自
+   * `ReviewRepository.bulkSuspendByWordIds` 的回返，本层只落库、不解释语义。
+   * MUST be in a transaction。
+   */
+  saveSuspendSnapshot(
+    userId: string,
+    planId: string,
+    snapshot: Record<string, string>,
+  ): Promise<HuluPlanRow | null>;
   findRoundsByPlan(userId: string, planId: string): Promise<HuluRoundRow[]>;
   insertRound(input: NewHuluRound): Promise<HuluRoundRow>;
   /** 当前未收尾轮（ended_at IS NULL）；至多一行由服务层保证。 */
