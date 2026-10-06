@@ -8,7 +8,6 @@
  *                              active 计划时也走 201 返回既有计划（幂等由 service 保证）
  *   GET  /plans/:id          — 计划 + 轮次列表（缩时曲线数据源）
  *   POST /plans/:id/abandon  — 放弃（已 abandoned 幂等；已 completed → 422）
- *
  * 路由不做业务判断：404/409/422 全部由 service 抛错、errorToResponse 统一映射。
  */
 import { Hono } from "hono";
@@ -36,6 +35,7 @@ export function huluRoutes(services: Services) {
       targetRounds: parsed.data.targetRounds,
       pageSize: parsed.data.pageSize,
       gateRatio: parsed.data.gateRatio,
+      includeNewWords: parsed.data.includeNewWords,
       suspendReview: parsed.data.suspendReview,
     });
     return c.json(result, 201);

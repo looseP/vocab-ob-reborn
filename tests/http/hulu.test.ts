@@ -235,6 +235,25 @@ describe("hulu HTTP routes — 注册表同步", () => {
     expect(huluPlanRowResponseSchema.safeParse(row).success).toBe(true);
     expect(huluPlanRowResponseSchema.safeParse({ ...row, word_count: "2" }).success).toBe(false);
   });
+
+  it("迁移 0051 四列在契约里（plan: protocol_version / include_new_words；round: kind / word_set_fingerprint）", () => {
+    const plan = planSummary();
+    expect(plan.protocol_version).toBe("v2");
+    expect(huluPlanRowResponseSchema.safeParse(plan).success).toBe(true);
+    // 枚举外取值被拒
+    expect(huluPlanRowResponseSchema.safeParse({ ...plan, protocol_version: "v3" }).success).toBe(false);
+    expect(huluPlanRowResponseSchema.safeParse({ ...plan, include_new_words: "false" }).success).toBe(false);
+
+    const round = roundRow();
+    expect(round.kind).toBe("recall");
+    expect(huluRoundRowResponseSchema.safeParse(round).success).toBe(true);
+    expect(huluRoundRowResponseSchema.safeParse({ ...round, kind: "cram" }).success).toBe(false);
+    // 指纹可空（未收尾 / 存量行）
+    expect(huluRoundRowResponseSchema.safeParse({ ...round, word_set_fingerprint: null }).success).toBe(true);
+    expect(huluRoundRowResponseSchema.safeParse({ ...round, word_set_fingerprint: 42 }).success).toBe(false);
+    // 曝光轮是合法取值（round_no = 0）
+    expect(huluRoundRowResponseSchema.safeParse({ ...round, round_no: 0, kind: "exposure" }).success).toBe(true);
+  });
 });
 
 describe("POST /api/hulu/plans", () => {
@@ -260,6 +279,7 @@ describe("POST /api/hulu/plans", () => {
       targetRounds: 4,
       pageSize: 20,
       gateRatio: 0.8,
+      includeNewWords: false,
       suspendReview: false,
     });
   });
@@ -273,13 +293,14 @@ describe("POST /api/hulu/plans", () => {
       headers: AUTH_HEADERS,
       body: JSON.stringify({
         wordbookId: WB, examDate: "2026-12-20", direction: "考研",
-        targetRounds: 6, pageSize: 30, gateRatio: 0.9,
+        targetRounds: 6, pageSize: 30, gateRatio: 0.9, includeNewWords: true,
       }),
     });
 
     expect(res.status).toBe(201);
     expect(hulu.createPlan).toHaveBeenCalledWith(expect.objectContaining({
       direction: "考研", targetRounds: 6, pageSize: 30, gateRatio: 0.9,
+      includeNewWords: true,
     }));
   });
 

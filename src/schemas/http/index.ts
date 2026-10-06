@@ -914,6 +914,12 @@ export const huluPlanCreateSchema = z.object({
   targetRounds: z.number().int().min(HULU_MIN_ROUNDS).max(HULU_MAX_ROUNDS).optional().default(HULU_DEFAULT_ROUNDS),
   pageSize: z.number().int().min(HULU_MIN_PAGE).max(HULU_MAX_PAGE).optional().default(HULU_DEFAULT_PAGE_SIZE),
   gateRatio: z.number().min(HULU_MIN_GATE).max(HULU_MAX_GATE).optional().default(HULU_DEFAULT_GATE_RATIO),
+  /**
+   * 「包含还没复习过的词」（R12，默认关）：true → 池含 `new`，该计划先过一遍
+   * 曝光轮（第 0 轮）再进复习轮；false → 现行先学后刷口径。
+   * 可选新增 = 非 breaking（ADR-0036 §3 先例）。
+   */
+  includeNewWords: z.boolean().optional().default(false),
   /** 可选挂起开关（默认关，P2 起生效）：只能创建时设定，不支持中途切换。 */
   suspendReview: z.boolean().optional().default(false),
 });

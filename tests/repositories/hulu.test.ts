@@ -69,17 +69,18 @@ describe("HuluRepository.insertPlan", () => {
     const row = await repo.insertPlan({
       user_id: USER, wordbook_id: WB, direction: null, exam_date: "2026-12-20",
       target_rounds: 4, page_size: 20, gate_ratio: 0.8, word_ids: [W1, W2],
+      protocol_version: "v2", include_new_words: false,
       suspend_review: false, suspend_snapshot: null,
     });
 
     const [text, params] = querySpy.mock.calls[0]!;
     expect(text).toContain("INSERT INTO hulu_plans");
     expect(text).toContain("(user_id, wordbook_id, direction, exam_date, target_rounds, page_size,");
-    expect(text).toContain("gate_ratio, word_ids, suspend_review, suspend_snapshot)");
+    expect(text).toContain("gate_ratio, word_ids, protocol_version, include_new_words, suspend_review, suspend_snapshot)");
     expect(text).toContain("$8::uuid[]");
-    expect(text).toContain("$10::jsonb");
+    expect(text).toContain("$12::jsonb");
     expect(text).toContain("RETURNING *");
-    expect(params).toEqual([USER, WB, null, "2026-12-20", 4, 20, 0.8, [W1, W2], false, null]);
+    expect(params).toEqual([USER, WB, null, "2026-12-20", 4, 20, 0.8, [W1, W2], "v2", false, false, null]);
     expect(row.id).toBe(PLAN);
   });
 
@@ -89,10 +90,11 @@ describe("HuluRepository.insertPlan", () => {
     await repo.insertPlan({
       user_id: USER, wordbook_id: WB, direction: "考研", exam_date: "2026-12-20",
       target_rounds: 4, page_size: 20, gate_ratio: 0.8, word_ids: [W1, W2],
+      protocol_version: "v2", include_new_words: true,
       suspend_review: true, suspend_snapshot: { [W1]: "new", [W2]: "review" },
     });
 
-    expect(querySpy.mock.calls[0]![1][9]).toBe(JSON.stringify({ [W1]: "new", [W2]: "review" }));
+    expect(querySpy.mock.calls[0]![1][11]).toBe(JSON.stringify({ [W1]: "new", [W2]: "review" }));
   });
 
   it("插入无返回行时显式报错（不静默返回 undefined）", async () => {
@@ -101,6 +103,7 @@ describe("HuluRepository.insertPlan", () => {
       repo.insertPlan({
         user_id: USER, wordbook_id: WB, direction: null, exam_date: "2026-12-20",
         target_rounds: 4, page_size: 20, gate_ratio: 0.8, word_ids: [W1],
+        protocol_version: "v2", include_new_words: false,
         suspend_review: false, suspend_snapshot: null,
       }),
     ).rejects.toThrow("hulu plan insert returned no row");
@@ -114,6 +117,7 @@ describe("HuluRepository.insertPlan", () => {
       repo.insertPlan({
         user_id: USER, wordbook_id: WB, direction: null, exam_date: "2026-12-20",
         target_rounds: 4, page_size: 20, gate_ratio: 0.8, word_ids: [W1],
+        protocol_version: "v2", include_new_words: false,
         suspend_review: false, suspend_snapshot: null,
       }),
     ).rejects.toThrow(/duplicate key/);
@@ -176,12 +180,12 @@ describe("HuluRepository 轮次", () => {
   it("insertRound：started_at 为 null 时由 DB now() 兜底", async () => {
     querySpy.mockImplementation(async () => ({ rows: [roundRow()] }));
 
-    await repo.insertRound({ plan_id: PLAN, user_id: USER, round_no: 1, started_at: null, words_total: 2 });
+    await repo.insertRound({ plan_id: PLAN, user_id: USER, round_no: 1, started_at: null, words_total: 2, kind: "recall" });
 
     const [text, params] = querySpy.mock.calls[0]!;
-    expect(text).toContain("INSERT INTO hulu_rounds (plan_id, user_id, round_no, started_at, words_total)");
+    expect(text).toContain("INSERT INTO hulu_rounds (plan_id, user_id, round_no, started_at, words_total, kind)");
     expect(text).toContain("COALESCE($4::timestamptz, now())");
-    expect(params).toEqual([PLAN, USER, 1, null, 2]);
+    expect(params).toEqual([PLAN, USER, 1, null, 2, "recall"]);
   });
 
   it("insertRound：显式 started_at 原样传入", async () => {
@@ -189,16 +193,28 @@ describe("HuluRepository 轮次", () => {
 
     await repo.insertRound({
       plan_id: PLAN, user_id: USER, round_no: 1,
-      started_at: "2026-10-06T08:00:00Z", words_total: 2,
+      started_at: "2026-10-06T08:00:00Z", words_total: 2, kind: "recall",
     });
 
     expect(querySpy.mock.calls[0]![1][3]).toBe("2026-10-06T08:00:00Z");
   });
 
+  it("insertRound：kind 显式落库（'exposure' 曝光轮 / 'recall' 复习轮，不吃默认值）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [roundRow()] }));
+
+    await repo.insertRound({
+      plan_id: PLAN, user_id: USER, round_no: 0, started_at: null, words_total: 2, kind: "exposure",
+    });
+
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("words_total, kind)");
+    expect(params).toEqual([PLAN, USER, 0, null, 2, "exposure"]);
+  });
+
   it("insertRound 无返回行时显式报错", async () => {
     querySpy.mockImplementation(async () => ({ rows: [] }));
     await expect(
-      repo.insertRound({ plan_id: PLAN, user_id: USER, round_no: 1, started_at: null, words_total: 2 }),
+      repo.insertRound({ plan_id: PLAN, user_id: USER, round_no: 1, started_at: null, words_total: 2, kind: "recall" }),
     ).rejects.toThrow("hulu round insert returned no row");
   });
 
@@ -263,8 +279,8 @@ describe("HuluRepository.setPlanStatus / lockPlanForUpdate", () => {
   });
 });
 
-describe("HuluRepository.listReviewDeckWordIds（定格取词：先学后刷，R9）", () => {
-  it("池源是复习牌堆：SQL 只认 learning/review/relearning，按 (created_at ASC, word_id ASC) 稳定序", async () => {
+describe("HuluRepository.listReviewDeckWordIds（定格取词：先学后刷 R9 / 含未学词 R12）", () => {
+  it("默认档池源是复习牌堆：三态白名单，按 (created_at ASC, word_id ASC) 稳定序", async () => {
     querySpy.mockImplementation(async () => ({ rows: [{ word_id: W1 }, { word_id: W2 }] }));
 
     const ids = await repo.listReviewDeckWordIds(USER, WB);
@@ -272,11 +288,38 @@ describe("HuluRepository.listReviewDeckWordIds（定格取词：先学后刷，R
     const [text, params] = querySpy.mock.calls[0]!;
     expect(text).toContain("SELECT word_id FROM user_word_progress");
     expect(text).toContain("WHERE user_id = $1::uuid AND wordbook_id = $2::uuid");
-    // 入池条件：三态白名单（排除 new 与 suspended 是靠白名单本身，不是黑名单）
-    expect(text).toContain("state = ANY(ARRAY['learning','review','relearning'])");
+    expect(text).toContain("state = ANY($3::text[])");
     expect(text).toContain("ORDER BY created_at ASC, word_id ASC");
-    expect(params).toEqual([USER, WB]);
+    // 默认档：三态（排除 new —— 没见过的词不逼回忆）
+    expect(params).toEqual([USER, WB, ["learning", "review", "relearning"]]);
     expect(ids).toEqual([W1, W2]);
+  });
+
+  it("includeNew=true（R12）：四态白名单含 'new'，稳定序与默认档同一 SQL", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [{ word_id: W1 }] }));
+
+    await repo.listReviewDeckWordIds(USER, WB, { includeNew: true });
+
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(params[2]).toEqual(["new", "learning", "review", "relearning"]);
+    // 两档共用同一 SQL 文本：只有 state 数组变，序与谓词都不变
+    expect(text).toContain("state = ANY($3::text[])");
+    expect(text).toContain("ORDER BY created_at ASC, word_id ASC");
+  });
+
+  it("两档都排除 suspended（靠白名单本身，不是黑名单）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+
+    await repo.listReviewDeckWordIds(USER, WB);
+    await repo.listReviewDeckWordIds(USER, WB, { includeNew: true });
+
+    for (const call of querySpy.mock.calls) {
+      const [text, params] = call;
+      expect(text).not.toContain("'suspended'");
+      expect(params[2]).not.toContain("suspended");
+      // 白名单是唯一判据：改写成黑名单（state <> 'new'）会立刻红
+      expect(text).not.toMatch(/state\s*(<>|!=)\s*'new'/);
+    }
   });
 
   it("池源不再是 wordbook_items（错位修复的结构面：真实库里它几乎为空）", async () => {
@@ -288,22 +331,10 @@ describe("HuluRepository.listReviewDeckWordIds（定格取词：先学后刷，R
     expect(text).not.toContain("wordbook_items");
   });
 
-  it("`new` 不入池：白名单不含 'new'，也不含 'suspended'（先学后刷 + 不捡回放下的）", async () => {
-    querySpy.mockImplementation(async () => ({ rows: [] }));
-
-    await repo.listReviewDeckWordIds(USER, WB);
-
-    const [text] = querySpy.mock.calls[0]!;
-    // 白名单是唯一判据：改写成黑名单（state <> 'new'）会立刻红
-    expect(text).toContain("state = ANY(ARRAY['learning','review','relearning'])");
-    expect(text).not.toMatch(/state\s*(<>|!=)\s*'new'/);
-    expect(text).not.toContain("'new'");
-    expect(text).not.toContain("'suspended'");
-  });
-
   it("空牌堆返回空数组（不报错；服务层据此抛业务错）", async () => {
     querySpy.mockImplementation(async () => ({ rows: [] }));
     expect(await repo.listReviewDeckWordIds(USER, WB)).toEqual([]);
+    expect(await repo.listReviewDeckWordIds(USER, WB, { includeNew: true })).toEqual([]);
   });
 
   it("requireTx：未绑定事务时拒绝（owner-RLS 表无 actor claim 会静默返回空集）", async () => {
@@ -366,6 +397,7 @@ describe("HuluRepository 结构性红线", () => {
     await repo.insertPlan({
       user_id: USER, wordbook_id: WB, direction: null, exam_date: "2026-12-20",
       target_rounds: 4, page_size: 20, gate_ratio: 0.8, word_ids: [W1],
+      protocol_version: "v2", include_new_words: false,
       suspend_review: false, suspend_snapshot: null,
     });
     await repo.findPlanById(USER, PLAN);
@@ -510,14 +542,15 @@ describe("HuluRepository.finishRound（轮收尾条件 UPDATE）", () => {
 
     const row = await repo.finishRound({
       userId: USER, roundId: "round-1", endedAt: "2026-10-06T01:00:00Z", elapsedSeconds: 3600,
+      wordSetFingerprint: "a1b2c3d4e5f60718",
     });
 
     const [text, params] = querySpy.mock.calls[0]!;
     expect(text).toContain("UPDATE hulu_rounds");
-    expect(text).toContain("SET ended_at = $3::timestamptz, elapsed_seconds = $4");
+    expect(text).toContain("SET ended_at = $3::timestamptz, elapsed_seconds = $4, word_set_fingerprint = $5");
     expect(text).toContain("AND ended_at IS NULL");
     expect(text).toContain("RETURNING *");
-    expect(params).toEqual(["round-1", USER, "2026-10-06T01:00:00Z", 3600]);
+    expect(params).toEqual(["round-1", USER, "2026-10-06T01:00:00Z", 3600, "a1b2c3d4e5f60718"]);
     expect(row?.elapsed_seconds).toBe(3600);
   });
 
@@ -526,13 +559,26 @@ describe("HuluRepository.finishRound（轮收尾条件 UPDATE）", () => {
 
     expect(await repo.finishRound({
       userId: USER, roundId: "round-1", endedAt: "2026-10-06T01:00:00Z", elapsedSeconds: 1,
+      wordSetFingerprint: null,
     })).toBeNull();
+  });
+
+  it("word_set_fingerprint 随收尾写入（null 也显式传参，不清空既有值的语义靠条件 UPDATE）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [roundRow()] }));
+
+    await repo.finishRound({
+      userId: USER, roundId: "round-1", endedAt: "2026-10-06T01:00:00Z", elapsedSeconds: 1,
+      wordSetFingerprint: null,
+    });
+
+    expect(querySpy.mock.calls[0]![1][4]).toBeNull();
   });
 
   it("requireTx：未绑定事务时拒绝", async () => {
     const noTx = new HuluRepository();
     await expect(noTx.finishRound({
       userId: USER, roundId: "round-1", endedAt: "2026-10-06T01:00:00Z", elapsedSeconds: 1,
+      wordSetFingerprint: null,
     })).rejects.toThrow(/requires an active transaction/);
   });
 });
@@ -543,6 +589,7 @@ describe("HuluRepository P1 零 FSRS（结构性）", () => {
     await repo.settlePage({ userId: USER, roundId: "round-1", pageIndex: 0, passed: 1 });
     await repo.finishRound({
       userId: USER, roundId: "round-1", endedAt: "2026-10-06T01:00:00Z", elapsedSeconds: 1,
+      wordSetFingerprint: null,
     });
 
     const sql = querySpy.mock.calls.map((call) => call[0] as string).join("\n");

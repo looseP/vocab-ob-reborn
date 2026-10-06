@@ -36726,6 +36726,8 @@ export interface operations {
                     /** @default 0.8 */
                     gateRatio?: number;
                     /** @default false */
+                    includeNewWords?: boolean;
+                    /** @default false */
                     suspendReview?: boolean;
                 };
             };
@@ -36749,6 +36751,9 @@ export interface operations {
                         word_count: number;
                         /** @enum {string} */
                         status: "active" | "completed" | "abandoned";
+                        /** @enum {string} */
+                        protocol_version: "v2" | "legacy";
+                        include_new_words: boolean;
                         suspend_review: boolean;
                         suspended_count: number;
                         started_at: string;
@@ -36927,6 +36932,9 @@ export interface operations {
                             word_count: number;
                             /** @enum {string} */
                             status: "active" | "completed" | "abandoned";
+                            /** @enum {string} */
+                            protocol_version: "v2" | "legacy";
+                            include_new_words: boolean;
                             suspend_review: boolean;
                             suspended_count: number;
                             started_at: string;
@@ -36941,6 +36949,9 @@ export interface operations {
                             started_at: string;
                             ended_at: string | null;
                             elapsed_seconds: number | null;
+                            /** @enum {string} */
+                            kind: "exposure" | "recall" | "legacy";
+                            word_set_fingerprint: string | null;
                             pages_passed: number;
                             words_passed: number;
                             words_total: number;
@@ -37308,6 +37319,9 @@ export interface operations {
                         started_at: string;
                         ended_at: string | null;
                         elapsed_seconds: number | null;
+                        /** @enum {string} */
+                        kind: "exposure" | "recall" | "legacy";
+                        word_set_fingerprint: string | null;
                         pages_passed: number;
                         words_passed: number;
                         words_total: number;
@@ -37488,6 +37502,9 @@ export interface operations {
                         started_at: string;
                         ended_at: string | null;
                         elapsed_seconds: number | null;
+                        /** @enum {string} */
+                        kind: "exposure" | "recall" | "legacy";
+                        word_set_fingerprint: string | null;
                         pages_passed: number;
                         words_passed: number;
                         words_total: number;
@@ -37667,6 +37684,9 @@ export interface operations {
                         started_at: string;
                         ended_at: string | null;
                         elapsed_seconds: number | null;
+                        /** @enum {string} */
+                        kind: "exposure" | "recall" | "legacy";
+                        word_set_fingerprint: string | null;
                         pages_passed: number;
                         words_passed: number;
                         words_total: number;
@@ -37842,6 +37862,9 @@ export interface operations {
                         word_count: number;
                         /** @enum {string} */
                         status: "active" | "completed" | "abandoned";
+                        /** @enum {string} */
+                        protocol_version: "v2" | "legacy";
+                        include_new_words: boolean;
                         suspend_review: boolean;
                         suspended_count: number;
                         started_at: string;

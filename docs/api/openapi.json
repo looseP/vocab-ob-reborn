@@ -85898,6 +85898,10 @@
                     "minimum": 0.5,
                     "maximum": 1
                   },
+                  "includeNewWords": {
+                    "default": false,
+                    "type": "boolean"
+                  },
                   "suspendReview": {
                     "default": false,
                     "type": "boolean"
@@ -85968,6 +85972,16 @@
                         "abandoned"
                       ]
                     },
+                    "protocol_version": {
+                      "type": "string",
+                      "enum": [
+                        "v2",
+                        "legacy"
+                      ]
+                    },
+                    "include_new_words": {
+                      "type": "boolean"
+                    },
                     "suspend_review": {
                       "type": "boolean"
                     },
@@ -86004,6 +86018,8 @@
                     "gate_ratio",
                     "word_count",
                     "status",
+                    "protocol_version",
+                    "include_new_words",
                     "suspend_review",
                     "suspended_count",
                     "started_at",
@@ -86374,6 +86390,16 @@
                             "abandoned"
                           ]
                         },
+                        "protocol_version": {
+                          "type": "string",
+                          "enum": [
+                            "v2",
+                            "legacy"
+                          ]
+                        },
+                        "include_new_words": {
+                          "type": "boolean"
+                        },
                         "suspend_review": {
                           "type": "boolean"
                         },
@@ -86410,6 +86436,8 @@
                         "gate_ratio",
                         "word_count",
                         "status",
+                        "protocol_version",
+                        "include_new_words",
                         "suspend_review",
                         "suspended_count",
                         "started_at",
@@ -86462,6 +86490,24 @@
                               }
                             ]
                           },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "exposure",
+                              "recall",
+                              "legacy"
+                            ]
+                          },
+                          "word_set_fingerprint": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "pages_passed": {
                             "type": "integer",
                             "minimum": -9007199254740991,
@@ -86486,6 +86532,8 @@
                           "started_at",
                           "ended_at",
                           "elapsed_seconds",
+                          "kind",
+                          "word_set_fingerprint",
                           "pages_passed",
                           "words_passed",
                           "words_total"
@@ -87387,6 +87435,24 @@
                         }
                       ]
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "exposure",
+                        "recall",
+                        "legacy"
+                      ]
+                    },
+                    "word_set_fingerprint": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "pages_passed": {
                       "type": "integer",
                       "minimum": -9007199254740991,
@@ -87411,6 +87477,8 @@
                     "started_at",
                     "ended_at",
                     "elapsed_seconds",
+                    "kind",
+                    "word_set_fingerprint",
                     "pages_passed",
                     "words_passed",
                     "words_total"
@@ -87809,6 +87877,24 @@
                         }
                       ]
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "exposure",
+                        "recall",
+                        "legacy"
+                      ]
+                    },
+                    "word_set_fingerprint": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "pages_passed": {
                       "type": "integer",
                       "minimum": -9007199254740991,
@@ -87833,6 +87919,8 @@
                     "started_at",
                     "ended_at",
                     "elapsed_seconds",
+                    "kind",
+                    "word_set_fingerprint",
                     "pages_passed",
                     "words_passed",
                     "words_total"
@@ -88216,6 +88304,24 @@
                         }
                       ]
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "exposure",
+                        "recall",
+                        "legacy"
+                      ]
+                    },
+                    "word_set_fingerprint": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "pages_passed": {
                       "type": "integer",
                       "minimum": -9007199254740991,
@@ -88240,6 +88346,8 @@
                     "started_at",
                     "ended_at",
                     "elapsed_seconds",
+                    "kind",
+                    "word_set_fingerprint",
                     "pages_passed",
                     "words_passed",
                     "words_total"
@@ -88606,6 +88714,16 @@
                         "abandoned"
                       ]
                     },
+                    "protocol_version": {
+                      "type": "string",
+                      "enum": [
+                        "v2",
+                        "legacy"
+                      ]
+                    },
+                    "include_new_words": {
+                      "type": "boolean"
+                    },
                     "suspend_review": {
                       "type": "boolean"
                     },
@@ -88642,6 +88760,8 @@
                     "gate_ratio",
                     "word_count",
                     "status",
+                    "protocol_version",
+                    "include_new_words",
                     "suspend_review",
                     "suspended_count",
                     "started_at",

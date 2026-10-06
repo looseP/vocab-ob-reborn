@@ -88,6 +88,8 @@ import type {
   HuluPageWordRow,
   HuluPlanRow,
   HuluPlanStatus,
+  HuluProtocolVersion,
+  HuluRoundKind,
   HuluRoundRow,
 } from "../domain/hulu-sprint";
 import type { OtherBookL2Signal } from "../domain/upgrade-suggestion";
@@ -1509,6 +1511,8 @@ export interface IL3SessionRepository {
 /**
  * 建计划入参。`suspend_snapshot` 仅在创建时挂起成功后非空（P2 才接线；
  * P0 期服务层拒绝 suspendReview=true，故恒为 null）。
+ * `protocol_version` / `include_new_words` 由服务层显式给 'v2' / 用户选择
+ * （迁移 0051；不吃 DB 默认值 —— 默认值 'legacy'/false 是给旧写入路径的兜底）。
  */
 export interface NewHuluPlan {
   user_id: string;
@@ -1519,17 +1523,23 @@ export interface NewHuluPlan {
   page_size: number;
   gate_ratio: number;
   word_ids: string[];
+  protocol_version: HuluProtocolVersion;
+  include_new_words: boolean;
   suspend_review: boolean;
   suspend_snapshot: Record<string, string> | null;
 }
 
-/** 开轮入参；`started_at` 为 null 时由 DB now() 兜底。 */
+/**
+ * 开轮入参；`started_at` 为 null 时由 DB now() 兜底。
+ * `kind` 由服务层显式给（'exposure' 曝光轮 / 'recall' 复习轮），不吃默认值。
+ */
 export interface NewHuluRound {
   plan_id: string;
   user_id: string;
   round_no: number;
   started_at: string | null;
   words_total: number;
+  kind: HuluRoundKind;
 }
 
 /**
@@ -1583,6 +1593,8 @@ export interface IHuluRepository {
     roundId: string;
     endedAt: string;
     elapsedSeconds: number;
+    /** 结算词集指纹（R13）：服务层推导后写入；null = 不写（曝光轮以外恒有值）。 */
+    wordSetFingerprint: string | null;
   }): Promise<HuluRoundRow | null>;
   /** 词书归属显式检查（照 insertNewCard 先例）：越权 → false。 */
   assertWordbookOwned(userId: string, wordbookId: string): Promise<boolean>;
@@ -1592,15 +1604,22 @@ export interface IHuluRepository {
    */
   findTodayKeyInDisplayTz(): string;
   /**
-   * 定格取词（R9 / 修订轮 D-A「先学后刷」）：该词书**复习牌堆**中至少评分过一次
-   * 的词（`user_word_progress` 的 learning / review / relearning），稳定序
-   * `created_at ASC, word_id ASC`。排除 `new`（没见过的词不逼回忆）与
-   * `suspended`（用户主动放下的不捡回来）。
+   * 定格取词（R9 / 修订轮 D-A「先学后刷」；R12 加可选「含未学词」）：
+   * 该词书**复习牌堆**的词（`user_word_progress`），稳定序
+   * `created_at ASC, word_id ASC`。两档都排除 `suspended`（用户主动放下的不捡回来）：
+   *
+   *   - `opts.includeNew` 缺省/false → `state ∈ ('learning','review','relearning')`
+   *     （排除 `new`：没见过的词不逼回忆）；
+   *   - `opts.includeNew` true → 四态含 `new`（先过曝光轮再冲刺）。
    *
    * 只读、零写入（唯一的 FSRS 可见面接触）；MUST be in a transaction
    * （owner-RLS 表须带 actor claim，否则静默返回空集）。
    */
-  listReviewDeckWordIds(userId: string, wordbookId: string): Promise<string[]>;
+  listReviewDeckWordIds(
+    userId: string,
+    wordbookId: string,
+    opts?: { includeNew?: boolean },
+  ): Promise<string[]>;
   /**
    * 页载荷取词（R10 / 修订轮 D-B）：按 id 批量取**卡面全字段**（Tier0 短释、
    * 义项、助记锚、例句、Tier2 语义链），一次带下 ⇒ 单卡路径零请求。

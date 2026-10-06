@@ -20,6 +20,7 @@
  */
 
 import type { PoolClient } from "pg";
+import { createHash } from "node:crypto";
 import { BusinessRuleError, ConflictError, HuluPageAliveMismatchError, NotFoundError, ValidationError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
@@ -83,6 +84,12 @@ export interface CreateHuluPlanInput {
   targetRounds?: number;
   pageSize?: number;
   gateRatio?: number;
+  /**
+   * 「包含还没复习过的词」（R12，默认关 = R9 先学后刷）：true 时池 = 四态
+   * （含 `new`），轮次序列 = 曝光轮 ×1 + 复习轮 × `target_rounds`；false 时池 =
+   * 三态（现行口径），轮次序列 = 复习轮 × `target_rounds`。
+   */
+  includeNewWords?: boolean;
   /**
    * 可选挂起开关（默认关，P2 起生效）：true 时**同一事务**内把这批词置为
    * `suspended`（退出到期队列）并把「挂起前 state」逐行写进计划行的
@@ -202,6 +209,20 @@ function requireNonNegativeInt(value: number, field: string): number {
   return value;
 }
 
+/**
+ * 结算词集指纹（R13）：词 id **排序后**拼接、SHA-256 取 hex 前 16 位。
+ *
+ * 排序是必须的 —— 集合等价与顺序无关，而「页级近似」推导出的顺序在不同轮次
+ * 可能不同（删词会让某些页少词）。16 位 hex（64 bit）的碰撞域对「同一用户同一
+ * 计划的几轮词集」绰绰有余。
+ *
+ * 放在 service 层而非 domain：`node:crypto` 是出向依赖（domain 零出向红线）。
+ */
+function hashWordSet(wordIds: readonly string[]): string {
+  const sorted = [...wordIds].sort();
+  return createHash("sha256").update(sorted.join(",")).digest("hex").slice(0, 16);
+}
+
 export class HuluPlanService {
   private readonly txRunner: TxRunner;
   private readonly repositoryFactory: RepositoryFactory;
@@ -219,9 +240,13 @@ export class HuluPlanService {
 
   /**
    * 创建计划（单事务）：① 校验词书归属 → ② 已有 active 计划则**直接返回**（幂等）
-   * → ③ 定格取词 → ④ 风险校验（block 抛 422，携带 { need, left, perRound }）
-   * → ⑤ 插行 → ⑥ 开关开则同事务挂起 + 快照落库。
+   * → ③ 定格取词（`includeNewWords` 决定池含不含 `new`）→ ④ 风险校验（block 抛
+   * 422，携带 { need, left, perRound }）→ ⑤ 插行（显式 `protocol_version='v2'`）
+   * → ⑥ 开关开则同事务挂起 + 快照落库。
    * 并发撞 idx_hulu_plans_one_active 时重查并返回既有计划。
+   *
+   * `includeNewWords`（R12，默认关）：true 时池 = 四态（含 `new`），该 v2 计划
+   * 之后可开曝光轮（第 0 轮）；false 时池 = 三态，行为与 R9 先学后刷一致。
    *
    * `suspendReview = true`（P2 接线）：挂起经 `ReviewRepository.bulkSuspendByWordIds`
    * （第 9 个 state 写点），回返的逐行「挂起前 state」写进计划行 —— **不写事件日志**。
@@ -249,6 +274,7 @@ export class HuluPlanService {
       throw new ValidationError(`Invalid direction: ${direction}`, "direction");
     }
     const suspendReview = input.suspendReview === true;
+    const includeNewWords = input.includeNewWords === true;
 
     return this.txRunner(async (tx) => {
       const repos = this.repositoryFactory(tx);
@@ -270,12 +296,16 @@ export class HuluPlanService {
       const existing = await repos.hulu.findActivePlanByWordbook(input.userId, input.wordbookId);
       if (existing) return toHuluPlanSummary(existing);
 
-      // ③ 定格取词（该词书的复习牌堆，稳定序；R9「先学后刷」）。
-      const wordIds = await repos.hulu.listReviewDeckWordIds(input.userId, input.wordbookId);
+      // ③ 定格取词（该词书的复习牌堆，稳定序；R9「先学后刷」；R12 可选含未学词）。
+      const wordIds = await repos.hulu.listReviewDeckWordIds(input.userId, input.wordbookId, {
+        includeNew: includeNewWords,
+      });
       if (wordIds.length === 0) {
-        throw new BusinessRuleError(
-          "该词书还没有可冲刺的词——先去标准复习，至少复习过一次再回来。",
-        );
+        // 空池双档文案（R12）：默认档沿用 R9 文案；开了「含未学词」仍为空，
+        // 说明该词书四态都没有行 —— 是「词书里根本没词」，不是「还没复习过」。
+        throw new BusinessRuleError(includeNewWords
+          ? "该词书还没有词——先把词加进词书再冲刺。"
+          : "该词书还没有可冲刺的词——先去标准复习，至少复习过一次再回来。");
       }
       if (wordIds.length > HULU_MAX_WORDS) {
         throw new BusinessRuleError(`词数超出上限 ${HULU_MAX_WORDS}`, undefined, { wordCount: wordIds.length });
@@ -307,6 +337,10 @@ export class HuluPlanService {
           page_size: pageSize,
           gate_ratio: gateRatio,
           word_ids: wordIds,
+          // 新代码写新行时**显式**给 'v2'，不吃 DB 默认值 'legacy'（迁移 0051：
+          // 默认值指向旧语义是给未感知新列的旧写入路径的兜底）。
+          protocol_version: "v2",
+          include_new_words: includeNewWords,
           suspend_review: suspendReview,
           suspend_snapshot: null,
         });
@@ -413,8 +447,15 @@ export class HuluPlanService {
    * 开始下一轮：计划行 `FOR UPDATE` 串行化（「全计划至多一个未收尾轮」的保证）。
    *
    * ① 已有未收尾轮 → **返回它**（幂等；网络重试不会开出第二个轮）；
-   * ② `round_no = 已有轮数 + 1`，超过 `target_rounds` → 409；
-   * ③ `started_at` 由请求体给（夹取），缺省 now()。
+   * ② v2 + `include_new_words` 且尚无曝光轮 → 开 `round_no = 0, kind = 'exposure'`
+   *    （R12：曝光轮不计入目标轮数，是开第 1 个复习轮的前置）；
+   * ③ 否则复习轮：`round_no = 已有 kind='recall' 轮数 + 1`（曝光轮不占号 ——
+   *    legacy 轮同理不参与计数），超过 `target_rounds` → 409；
+   * ④ `started_at` 由请求体给（夹取），缺省 now()。
+   *
+   * 轮号为什么数 `kind='recall'` 而不是「已有轮数」：曝光轮占用 `round_no = 0`，
+   * 把它算进去会让第一条复习轮变成 2 —— 而 `target_rounds` 的口径是复习轮数。
+   * legacy 计划的新轮标 `recall`（语义就是复习轮），已存在的旧轮保持 legacy。
    *
    * 计划已 completed / abandoned → 409（不能再开轮）。
    */
@@ -434,17 +475,31 @@ export class HuluPlanService {
       const open = await repos.hulu.findOpenRound(input.userId, input.planId);
       if (open) return open;
 
-      // ② 轮号 = 已有轮数 + 1；超过目标轮数 → 409。
       const rounds = await repos.hulu.findRoundsByPlan(input.userId, input.planId);
-      const nextNo = rounds.length + 1;
-      if (nextNo > plan.target_rounds) {
-        throw new ConflictError("已达目标轮数，无法开始新一轮", undefined, {
-          targetRounds: plan.target_rounds,
-          rounds: rounds.length,
+
+      // ② 曝光轮前置（R12）：仅 v2 + include_new_words 的计划、且尚无第 0 轮。
+      if (this.needsExposureRound(plan, rounds)) {
+        return repos.hulu.insertRound({
+          plan_id: plan.id,
+          user_id: input.userId,
+          round_no: 0,
+          started_at: clampMoment(input.startedAt, this.now(), "startedAt"),
+          words_total: plan.word_ids.length,
+          kind: "exposure",
         });
       }
 
-      // ③ started_at 夹取（缺省 now()）。
+      // ③ 复习轮号 = 已有 kind='recall' 轮数 + 1；超过目标轮数 → 409。
+      const recallRounds = rounds.filter((round) => round.kind === "recall").length;
+      const nextNo = recallRounds + 1;
+      if (nextNo > plan.target_rounds) {
+        throw new ConflictError("已达目标轮数，无法开始新一轮", undefined, {
+          targetRounds: plan.target_rounds,
+          rounds: recallRounds,
+        });
+      }
+
+      // ④ started_at 夹取（缺省 now()）。
       const startedAt = clampMoment(input.startedAt, this.now(), "startedAt");
       return repos.hulu.insertRound({
         plan_id: plan.id,
@@ -452,8 +507,21 @@ export class HuluPlanService {
         round_no: nextNo,
         started_at: startedAt,
         words_total: plan.word_ids.length,
+        kind: "recall",
       });
     }, { actorId: input.userId });
+  }
+
+  /**
+   * 是否需要开曝光轮（R12）：v2 协议 + 用户开了「含未学词」+ 尚无 `round_no = 0`
+   * 的轮。legacy 计划永远走复习轮序列（老计划口径不回改）。
+   */
+  private needsExposureRound(
+    plan: { protocol_version: string; include_new_words: boolean },
+    rounds: readonly { round_no: number }[],
+  ): boolean {
+    if (plan.protocol_version !== "v2" || !plan.include_new_words) return false;
+    return !rounds.some((round) => round.round_no === 0);
   }
 
   /**
@@ -497,7 +565,15 @@ export class HuluPlanService {
         });
       }
 
+      // ①' R15-1 防线：`passed ≤ total`（在 alive 复算之后、闸门之前 —— 先确认
+      //     total 可信，再谈 passed 的合法性）。请求 schema 只验非负整数，
+      //     `words_passed` 不得因异常提交虚增。
+      if (passed > total) {
+        throw new ValidationError("passed 不能大于 total", "passed");
+      }
+
       // ② 闸门复验（读计划行列值，不写死 0.8）。total = 0（整页删空）→ pass。
+      //    曝光轮恒过闸是调用方口径的自然结果：passed = total = 存活词数（R12）。
       if (huluGateDecision(passed, total, plan.gate_ratio) === "block") {
         throw new ValidationError("本页未达闸门，不能结算", "passed");
       }
@@ -530,9 +606,15 @@ export class HuluPlanService {
   /**
    * 轮次收尾：`elapsed_seconds = clampElapsedSeconds(ended - started)`（墙钟，R5）。
    *
-   * 已收尾 → **幂等返回现状**（不重写耗时）；末轮（`round_no == target_rounds`）
-   * 同事务把计划置 `completed` 并写 `ended_at`，且**同事务恢复挂起快照**
-   * （开关开过才有快照；快照回写后清 `suspend_snapshot`）。
+   * 顺序即防线：
+   *  ① 已收尾 → **幂等返回现状**（不重写耗时）；
+   *  ② R15-2：`kind ∈ ('recall','legacy')` 的轮要求 `pages_passed` 等于页数
+   *     （还有未结算页 → 422 携带 `{ pagesPassed, pages }`）—— 否则「轮走完」
+   *     不可信、R13 的结算词集推导也不成立。**曝光轮豁免**：部分收尾即
+   *     「显式跳过」（R12），覆盖率缺口由计划页展示；
+   *  ③ 推导**结算词集指纹**（R13）写入 `word_set_fingerprint`；
+   *  ④ 仅 `kind='recall'` 且 `round_no >= target_rounds` 才完成计划
+   *     （曝光轮不推进计划完成，R12）；同事务恢复挂起快照。
    */
   async finishRound(input: FinishHuluRoundInput): Promise<HuluRoundRow> {
     requireNonEmpty(input.userId, "userId");
@@ -546,8 +628,24 @@ export class HuluPlanService {
 
       const round = await repos.hulu.findRoundByNo(input.userId, input.planId, input.roundNo);
       if (!round) throw new NotFoundError("HuluRound", `${input.planId}:${input.roundNo}`);
-      // 已收尾 → 幂等返回现状。
+      // ① 已收尾 → 幂等返回现状。
       if (round.ended_at !== null) return round;
+
+      // ② R15-2：复习轮/legacy 轮须全部页已结算；曝光轮豁免（部分收尾 = 显式跳过）。
+      //    BusinessRuleError（同为 422）而非 ValidationError：这不是「提交值非法」，
+      //    而是「轮还没走完」，且 details 要携带缺口 { pagesPassed, pages } 供前端归因。
+      const pages = huluPageCount(plan.word_ids.length, plan.page_size);
+      if (round.kind !== "exposure" && round.pages_passed < pages) {
+        throw new BusinessRuleError("本轮还有未结算的页，不能收尾", undefined, {
+          pagesPassed: round.pages_passed,
+          pages,
+        });
+      }
+
+      // ③ 结算词集指纹（R13）：按 `pages_passed` 游标取已结算页的定格切片，
+      //    过滤当前已删词，排序后哈希。页级近似 —— 页内被删词在结算时点是否存活
+      //    不可考（页级无明细），误差由曲线免责声明兜底。
+      const fingerprint = await this.deriveWordSetFingerprint(repos, plan, round.pages_passed);
 
       const now = this.now();
       const endedAt = clampMoment(input.endedAt, now, "endedAt");
@@ -560,6 +658,7 @@ export class HuluPlanService {
         roundId: round.id,
         endedAt,
         elapsedSeconds,
+        wordSetFingerprint: fingerprint,
       });
       if (!finished) {
         // 并发双收尾：另一个请求先写成功 → 幂等返回现状。
@@ -568,8 +667,13 @@ export class HuluPlanService {
         return current;
       }
 
-      // 末轮 → 同事务完成计划 + 恢复挂起快照（P2）。
-      if (finished.round_no >= plan.target_rounds && plan.status === "active") {
+      // ④ 末轮复习轮 → 同事务完成计划 + 恢复挂起快照（P2）。曝光轮不推进计划
+      //    完成（R12：曝光轮不计入 target_rounds，只是开复习轮 1 的前置）。
+      if (
+        finished.kind === "recall"
+        && finished.round_no >= plan.target_rounds
+        && plan.status === "active"
+      ) {
         await repos.hulu.setPlanStatus(input.userId, input.planId, "completed", {
           ended: true,
           ...this.snapshotClearOption(plan),
@@ -578,6 +682,29 @@ export class HuluPlanService {
       }
       return finished;
     }, { actorId: input.userId });
+  }
+
+  /**
+   * 结算词集指纹（R13，页级近似）：按 `pagesPassed` 游标取前 N 页的**定格切片**
+   * （拼接成已结算词集）→ 过滤当前已删词（`findHuluPageWords` 只回存活词）→
+   * 排序 → SHA-256 取 hex 前 16 位。
+   *
+   * 为什么是页级近似（修订补充 §3.2-3a，主控拍板）：现行表结构**刻意不建**词级
+   * 结算明细（完备设计 §4.3），页内被删词在结算时点是否存活不可考；但删词后该页
+   * `total` 漂移已被 D1 机制拦住重取，故误差可接受，且口径声明写入曲线免责声明。
+   *
+   * 指纹计算放 service 层而非 domain：`node:crypto` 是出向依赖，domain 零出向
+   * 红线不容 import（ADR-0041 Amendment 2 第 2 条）。
+   */
+  private async deriveWordSetFingerprint(
+    repos: IRepositories,
+    plan: { word_ids: string[]; page_size: number },
+    pagesPassed: number,
+  ): Promise<string> {
+    const settled = plan.word_ids.slice(0, Math.max(0, pagesPassed) * plan.page_size);
+    if (settled.length === 0) return hashWordSet([]);
+    const alive = await repos.hulu.findHuluPageWords(settled);
+    return hashWordSet(alive.map((word) => word.id));
   }
 
   /**

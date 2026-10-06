@@ -42,8 +42,8 @@ export class HuluRepository extends BaseRepository implements IHuluRepository {
     const row = await this.queryOne<HuluPlanRow>(
       `INSERT INTO hulu_plans
          (user_id, wordbook_id, direction, exam_date, target_rounds, page_size,
-          gate_ratio, word_ids, suspend_review, suspend_snapshot)
-       VALUES ($1::uuid, $2::uuid, $3, $4::date, $5, $6, $7, $8::uuid[], $9, $10::jsonb)
+          gate_ratio, word_ids, protocol_version, include_new_words, suspend_review, suspend_snapshot)
+       VALUES ($1::uuid, $2::uuid, $3, $4::date, $5, $6, $7, $8::uuid[], $9, $10, $11, $12::jsonb)
        RETURNING *`,
       [
         input.user_id,
@@ -54,6 +54,8 @@ export class HuluRepository extends BaseRepository implements IHuluRepository {
         input.page_size,
         input.gate_ratio,
         input.word_ids,
+        input.protocol_version,
+        input.include_new_words,
         input.suspend_review,
         input.suspend_snapshot === null ? null : JSON.stringify(input.suspend_snapshot),
       ],
@@ -147,10 +149,10 @@ export class HuluRepository extends BaseRepository implements IHuluRepository {
 
   async insertRound(input: NewHuluRound): Promise<HuluRoundRow> {
     const row = await this.queryOne<HuluRoundRow>(
-      `INSERT INTO hulu_rounds (plan_id, user_id, round_no, started_at, words_total)
-       VALUES ($1::uuid, $2::uuid, $3, COALESCE($4::timestamptz, now()), $5)
+      `INSERT INTO hulu_rounds (plan_id, user_id, round_no, started_at, words_total, kind)
+       VALUES ($1::uuid, $2::uuid, $3, COALESCE($4::timestamptz, now()), $5, $6)
        RETURNING *`,
-      [input.plan_id, input.user_id, input.round_no, input.started_at, input.words_total],
+      [input.plan_id, input.user_id, input.round_no, input.started_at, input.words_total, input.kind],
     );
     if (!row) throw new Error("hulu round insert returned no row");
     return row;
@@ -211,14 +213,15 @@ export class HuluRepository extends BaseRepository implements IHuluRepository {
     roundId: string;
     endedAt: string;
     elapsedSeconds: number;
+    wordSetFingerprint: string | null;
   }): Promise<HuluRoundRow | null> {
     this.requireTx();
     return this.queryOne<HuluRoundRow>(
       `UPDATE hulu_rounds
-          SET ended_at = $3::timestamptz, elapsed_seconds = $4
+          SET ended_at = $3::timestamptz, elapsed_seconds = $4, word_set_fingerprint = $5
         WHERE id = $1::uuid AND user_id = $2::uuid AND ended_at IS NULL
         RETURNING *`,
-      [input.roundId, input.userId, input.endedAt, input.elapsedSeconds],
+      [input.roundId, input.userId, input.endedAt, input.elapsedSeconds, input.wordSetFingerprint],
     );
   }
 
@@ -246,16 +249,23 @@ export class HuluRepository extends BaseRepository implements IHuluRepository {
   }
 
   /**
-   * 定格取词（R9 / 修订轮 D-A「先学后刷」）：该词书**复习牌堆**里已评分过的词，
-   * 稳定序 `created_at ASC, word_id ASC`（加入复习的顺序，贴近"从头到尾过一遍"）。
+   * 定格取词（R9 / 修订轮 D-A「先学后刷」；R12 加可选「含未学词」）：
+   * 该词书**复习牌堆**里已评分过的词，稳定序 `created_at ASC, word_id ASC`
+   * （加入复习的顺序，贴近"从头到尾过一遍"）。
    *
    * 池源为什么不是 `wordbook_items`：真实库里它几乎为空、且 app 没有写入口
    * （真机验收坐实「复习牌堆 492 到期卡 vs 定格 1 词」的错位）。改为读
    * `user_word_progress` 后，定格词集 = 用户实际在学的词。
    *
-   * 入池条件（排除两态，各有动机）：
-   *   - 排除 `new`：没见过的词不逼"回忆"（先学后刷）；
-   *   - 排除 `suspended`：用户主动放下的，冲刺不替他捡回来。
+   * 入池条件（两档，`opts.includeNew` 决定是否放行 `new`）：
+   *   - `includeNew` 缺省/false（R9 先学后刷，默认档）：排除 `new` —— 没见过的词
+   *     不逼"回忆"；
+   *   - `includeNew` true（R12 曝光轮档）：四态全收 —— 没学过的词先过一遍曝光
+   *     再进复习轮；
+   *   - 两档都排除 `suspended`：用户主动放下的，冲刺不替他捡回来。
+   *
+   * 稳定序**两档一致**（同一 SQL 只换 state 白名单）：同词书同刻恒同序，计划的
+   * `word_ids` 因此可复现。
    *
    * **只读**：这是本层唯一的 FSRS 可见面接触，仅 SELECT、零写入。RLS policy
    * （progress_own_all）按 auth.uid() 限定到 actor 自己的行，SQL 另显式带
@@ -265,14 +275,21 @@ export class HuluRepository extends BaseRepository implements IHuluRepository {
    * 空集（把「有词可冲刺」误判成「没有词」），requireTx 让误用当场炸而不是
    * 变成一个难查的空池。
    */
-  async listReviewDeckWordIds(userId: string, wordbookId: string): Promise<string[]> {
+  async listReviewDeckWordIds(
+    userId: string,
+    wordbookId: string,
+    opts: { includeNew?: boolean } = {},
+  ): Promise<string[]> {
     this.requireTx();
+    const states = opts.includeNew
+      ? ["new", "learning", "review", "relearning"]
+      : ["learning", "review", "relearning"];
     const rows = await this.query<{ word_id: string }>(
       `SELECT word_id FROM user_word_progress
         WHERE user_id = $1::uuid AND wordbook_id = $2::uuid
-          AND state = ANY(ARRAY['learning','review','relearning'])
+          AND state = ANY($3::text[])
         ORDER BY created_at ASC, word_id ASC`,
-      [userId, wordbookId],
+      [userId, wordbookId, states],
     );
     return rows.map((row) => row.word_id);
   }

@@ -64,8 +64,11 @@ describe("existing local volume role upgrade", () => {
     //       CHECK 两列全有或全无）。**注意 0047/0048 之后已到 49，本迁移使其为 50。**
     // 0050: hulu_plans/hulu_rounds 两张新表（ADR-0041 葫芦冲刺计划容器：
     //       定格 word_ids + 页游标 + 可选挂起快照；复合 owner FK + 部分唯一
-    //       one-active 索引 + RLS + 四权 GRANT）。本迁移使其为 51。
-    expect(authoritativeMigrationCount()).toBe(51);
+    //       one-active 索引 + RLS + 四权 GRANT）。
+    // 0051: hulu_plans.protocol_version/include_new_words + hulu_rounds.kind/
+    //       word_set_fingerprint + round_no CHECK 下界 1→0（ADR-0041 Amendment 2：
+    //       曝光轮 R12 + 可比较轮 R13）。本迁移使其为 52。
+    expect(authoritativeMigrationCount()).toBe(52);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
