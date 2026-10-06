@@ -338,9 +338,31 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
   const [pageSize, setPageSize] = useState(20);
   /** 可选挂起开关（默认关；只能创建时设定）。 */
   const [suspendReview, setSuspendReview] = useState(false);
+  /** 「包含还没复习过的词」（R12，默认关 = 先学后刷）；开了才有曝光轮。 */
+  const [includeNewWords, setIncludeNewWords] = useState(false);
 
   /** 当前页是否已结算（游标之内）→ 只读回看，不可改。 */
   const settled = round !== null && pageIndex < round.pages_passed;
+  /**
+   * 本轮是不是曝光轮（R12，第 0 轮）：卡面直展、无自认、页结算恒过闸
+   * （`passed = total = 本页存活词数`，语义 = 已曝光）。
+   */
+  const isExposure = round?.kind === "exposure";
+  /**
+   * 曝光覆盖率缺口（R12）：曝光轮 `words_passed`（语义 = 已曝光词数）与定格词数
+   * 之差。没有曝光轮（未开「含未学词」/ legacy 计划）时为 0，提示不显示。
+   */
+  const exposureRound = rounds.find((row) => row.kind === "exposure");
+  const unexposedCount = exposureRound && plan
+    ? Math.max(0, plan.word_count - exposureRound.words_passed)
+    : 0;
+  /**
+   * 计划页「每轮通过率」的数据源（R14）：已收尾的**复习轮**（`kind ∈ ('recall',
+   * 'legacy')`），按轮号升序。曝光轮不进这一栏（它的语义是覆盖率，另有徽章）。
+   */
+  const finishedRoundsForDisplay = rounds
+    .filter((row) => row.ended_at !== null && row.kind !== "exposure")
+    .sort((a, b) => a.round_no - b.round_no);
   const pages = page?.pages ?? 0;
   const isLastPage = pages > 0 && pageIndex >= pages - 1;
   /** 计划是否已走到目标轮数（末轮收尾后服务端把 status 置 completed）。 */
@@ -499,7 +521,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
   /** 创建（或取回既有）计划 → 进入冲刺。 */
   const bootstrap = useCallback(async (options: {
     examDate: string; targetRounds: number; pageSize: number;
-    wordbookId: string; suspendReview: boolean;
+    wordbookId: string; suspendReview: boolean; includeNewWords: boolean;
   }) => {
     setPhase("loading");
     setError(null);
@@ -512,6 +534,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
           examDate: options.examDate,
           targetRounds: options.targetRounds,
           pageSize: options.pageSize,
+          includeNewWords: options.includeNewWords,
           suspendReview: options.suspendReview,
         }),
       });
@@ -667,7 +690,8 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
     }
 
     // 闸门：读计划行的 gate_ratio 列值（不写死）；alive = 0 由 loadPage 直接结算。
-    if (huluGateDecision(passedCount, alive, plan.gate_ratio) === "block") {
+    // 曝光轮恒过闸（R12）：passed = total = 存活词数（曝光无自认），不进 block 分支。
+    if (!isExposure && huluGateDecision(passedCount, alive, plan.gate_ratio) === "block") {
       setVerdict({});
       setFlipped({});
       setStudy(true);
@@ -679,7 +703,8 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
     try {
       const settledRound = await apiFetch<HuluRoundRow>(
         `/hulu/plans/${plan.id}/rounds/${round.round_no}/pages`,
-        { method: "POST", body: JSON.stringify({ pageIndex, passed: passedCount, total: alive }) },
+        // 曝光轮提交 { pageIndex, passed: alive, total: alive }（= 本页已曝光词数）
+        { method: "POST", body: JSON.stringify({ pageIndex, passed: alive, total: alive }) },
       );
       setRound(settledRound);
       if (isLastPage) {
@@ -705,7 +730,47 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [plan, round, page, study, settled, pageIndex, pages, passedCount, alive, isLastPage, loadPage, finishRound, toast]);
+  }, [plan, round, page, study, settled, pageIndex, pages, passedCount, alive, isExposure, isLastPage, loadPage, finishRound, toast]);
+
+  /**
+   * 显式跳过曝光轮（R12，一次确认）：完成度 <100% 时对第 0 轮调 `finishRound`
+   * 收尾（**不新增端点**），随后开第 1 轮复习。
+   *
+   * 曝光轮部分收尾是合法状态（服务端豁免 R15-2 的「页已齐」要求），覆盖率缺口
+   * 由计划页的徽章持续显示 —— **不允许**悄悄跳过，必须用户点这个按钮。
+   */
+  const skipExposure = useCallback(async () => {
+    if (!plan || !round || round.kind !== "exposure") return;
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        "还有词没看过。跳过曝光直接进入第 1 轮复习？未看过的词仍会出现在复习轮里。",
+      );
+      if (!confirmed) return;
+    }
+    setBusy(true);
+    try {
+      await apiFetch<HuluRoundRow>(`/hulu/plans/${plan.id}/rounds/${round.round_no}/finish`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      clearCache(plan.id);
+      // 曝光轮收尾不推进计划状态（R12），直接开第 1 轮复习。
+      const started = await apiFetch<HuluRoundRow>(`/hulu/plans/${plan.id}/rounds`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      setRound(started);
+      setElapsedSeconds(null);
+      setBlocked(0);
+      const completed = await loadPage(plan.id, started.round_no, started.pages_passed);
+      if (!completed) setPhase("sprint");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "跳过曝光轮失败");
+      setPhase("error");
+    } finally {
+      setBusy(false);
+    }
+  }, [plan, round, loadPage]);
 
   /** 上一页（只读回看；未结算页不允许倒回，避免状态错乱）。 */
   const goPrev = () => {
@@ -786,6 +851,23 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
             <input
               type="checkbox"
               className="mt-0.5 h-4 w-4"
+              checked={includeNewWords}
+              onChange={(event) => setIncludeNewWords(event.target.checked)}
+              data-testid="hulu-include-new-toggle"
+            />
+            <span className="space-y-1">
+              <span className="block text-[var(--color-ink)]">包含还没复习过的词</span>
+              <span className="block text-xs text-[var(--color-ink-soft)]" data-testid="hulu-include-new-hint">
+                先把没学过的词过一遍曝光（第 0 轮，只展示不考），再进入目标复习轮。
+                默认关：只冲刺已经复习过的词。曝光轮不计入目标轮数。
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-glass)] p-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4"
               checked={suspendReview}
               onChange={(event) => setSuspendReview(event.target.checked)}
               data-testid="hulu-suspend-toggle"
@@ -802,7 +884,9 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
           <div className="flex items-center gap-2">
             <Button
               disabled={!examDate || !wordbookId}
-              onClick={() => void bootstrap({ examDate, targetRounds, pageSize, wordbookId, suspendReview })}
+              onClick={() => void bootstrap({
+                examDate, targetRounds, pageSize, wordbookId, suspendReview, includeNewWords,
+              })}
               data-testid="hulu-start"
             >
               开始冲刺
@@ -857,6 +941,14 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
               {plan.status === "active" ? "进行中" : plan.status === "completed" ? "已完成" : "已放弃"}
             </Badge>
             <Badge>{plan.word_count} 词 · 每页 {plan.page_size} · 共 {plan.target_rounds} 轮</Badge>
+            {/* 曝光覆盖率徽章（R14）：仅含曝光轮的计划显示；缺口持续可见。 */}
+            {exposureRound && (
+              <span data-testid="hulu-exposure-coverage">
+                <Badge tone={unexposedCount > 0 ? "warm" : "accent"}>
+                  曝光 {exposureRound.words_passed}/{plan.word_count}
+                </Badge>
+              </span>
+            )}
             <span data-testid="hulu-suspend-state">
               <Badge tone={plan.suspend_review ? "warm" : "accent"}>
                 {plan.suspend_review
@@ -869,13 +961,46 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
             考试日 {plan.exam_date}
             {plan.suspend_review && "。这批词会在计划结束或放弃时自动回到到期队列。"}
           </p>
+          {/* 首次曝光耗时（R14）：单行展示，明确**不计入**缩时对比。 */}
+          {exposureRound && exposureRound.ended_at !== null && (
+            <p className="text-xs text-[var(--color-ink-soft)]" data-testid="hulu-exposure-elapsed">
+              首次曝光耗时 {formatSeconds(exposureRound.elapsed_seconds ?? 0)}
+              <span className="ml-1">（曝光不计入缩时对比）</span>
+            </p>
+          )}
         </Card>
       </div>
+      {/* 每轮通过率（R14 口径修正）：过闸页自认通过数 ÷ 定格词数 —— 不是逐词掌握结果。 */}
+      {finishedRoundsForDisplay.length > 0 && (
+        <div data-testid="hulu-round-pass-rates">
+          <Card className="space-y-1.5">
+            <h3 className="text-sm font-semibold text-[var(--color-ink)]">每轮通过率</h3>
+            {finishedRoundsForDisplay.map((row) => (
+              <p key={row.id} className="text-xs text-[var(--color-ink-soft)]" data-testid={`hulu-round-rate-${row.round_no}`}>
+                第 {row.round_no} 轮：过闸页自认通过 {row.words_passed} / 定格 {row.words_total}
+                （{row.words_total > 0 ? Math.round((row.words_passed / row.words_total) * 100) : 0}%）
+              </p>
+            ))}
+            <p className="text-[11.5px] text-[var(--color-ink-soft)]">
+              这是「过闸页的自认通过数 ÷ 定格词数」——失败页重自认不入库，它不是逐词掌握结果。
+            </p>
+          </Card>
+        </div>
+      )}
       <HuluSpeedCurve
         rounds={rounds}
         targetRounds={plan.target_rounds}
         examDate={plan.exam_date}
       />
+      {/* FAQ（R14）：首次回忆成功率为何不展示。 */}
+      <div data-testid="hulu-metrics-faq">
+        <Card>
+          <p className="text-xs text-[var(--color-ink-soft)]">
+            <strong>为什么看不到「首次回忆成功率」？</strong>
+            它需要逐词记录每次自认，与葫芦「只记页级汇总」的轻量设计冲突，本期不做。
+          </p>
+        </Card>
+      </div>
     </>
   );
 
@@ -946,19 +1071,31 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
     );
   }
 
-  const progressText = `第 ${pageIndex + 1} / ${pages} 页 · 第 ${round?.round_no ?? 1} / ${plan?.target_rounds ?? 1} 轮`;
+  // 顶栏轮次标签：曝光轮与复习轮分开（R12：「第 0 轮 · 首次曝光」vs「第 n 轮 · 复习」）。
+  const progressText = isExposure
+    ? `第 ${pageIndex + 1} / ${pages} 页 · 第 0 轮 · 首次曝光`
+    : `第 ${pageIndex + 1} / ${pages} 页 · 第 ${round?.round_no ?? 1} / ${plan?.target_rounds ?? 1} 轮 · 复习`;
 
   return (
     <div className="space-y-4" data-testid="hulu-sprint">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span data-testid="hulu-progress"><Badge tone="accent">{progressText}</Badge></span>
-          <span data-testid="hulu-rate">
-            <Badge tone={gatePasses ? "accent" : "warm"}>
-              本页通过 {passedCount}/{alive} · {alive > 0 ? Math.round((passedCount / alive) * 100) : 0}%
-            </Badge>
-          </span>
-          <Badge>闸门 {Math.round((plan?.gate_ratio ?? 0) * 100)}%</Badge>
+          {/* 曝光轮无「通过率」徽标（R12）：显示「已曝光 n/n」，不显示闸门。 */}
+          {isExposure ? (
+            <span data-testid="hulu-exposure-rate">
+              <Badge tone="accent">已曝光 {alive}/{alive}</Badge>
+            </span>
+          ) : (
+            <>
+              <span data-testid="hulu-rate">
+                <Badge tone={gatePasses ? "accent" : "warm"}>
+                  本页通过 {passedCount}/{alive} · {alive > 0 ? Math.round((passedCount / alive) * 100) : 0}%
+                </Badge>
+              </span>
+              <Badge>闸门 {Math.round((plan?.gate_ratio ?? 0) * 100)}%</Badge>
+            </>
+          )}
           {plan?.suspend_review && <Badge tone="warm">挂起中</Badge>}
           {settled && <span data-testid="hulu-settled"><Badge tone="warm">此页已结算（只读）</Badge></span>}
           {blocked > 0 && !settled && <Badge tone="warm">本页已被拦 {blocked} 次</Badge>}
@@ -970,6 +1107,19 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
           <Button variant="ghost" size="sm" onClick={onBack}>退出</Button>
         </div>
       </div>
+
+      {/* 复习轮页首提示（R12）：本批有 N 词在曝光轮未看过（复习轮词集恒等于定格
+          词集，不因曝光完成度缩减）。 */}
+      {!isExposure && unexposedCount > 0 && (
+        <div data-testid="hulu-unexposed-hint">
+          <Card className="border-[var(--color-pill-warm-border)]">
+            <p className="text-sm text-[var(--color-ink)]">
+              本批有 <strong>{unexposedCount}</strong> 词在曝光轮未看过。
+              复习轮词集不因曝光完成度缩减 —— 它们照常出现在这里。
+            </p>
+          </Card>
+        </div>
+      )}
 
       {study && (
         <div data-testid="hulu-study-banner">
@@ -989,7 +1139,8 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
 
       <div className="space-y-3">
         {(page?.items ?? []).map((word, index) => {
-          const revealed = study || settled || Boolean(flipped[index]);
+          // 曝光轮（R12）：卡面**直展** —— 无遮答、无自认、无闸门。
+          const revealed = isExposure || study || settled || Boolean(flipped[index]);
           const current = settled ? undefined : verdict[index];
           return (
             <div key={word.id} data-testid={`hulu-card-${index}`}>
@@ -1009,13 +1160,15 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
                   </p>
                 )}
 
+                {/* 曝光轮无「翻开核对」按钮：卡面已经直展（没有要回忆的东西）。 */}
                 <div className="flex items-center gap-2">
-                  {!revealed && !settled && (
+                  {!isExposure && !revealed && !settled && (
                     <Button size="sm" variant="secondary" onClick={() => flip(index)} data-testid={`hulu-flip-${index}`}>
                       <BookOpen className="h-4 w-4" />翻开核对
                     </Button>
                   )}
-                  {revealed && !study && !settled && (
+                  {/* 曝光轮无自认按钮（R12）：只展示，不考。 */}
+                  {!isExposure && revealed && !study && !settled && (
                     <>
                       <Button
                         size="sm"
@@ -1047,15 +1200,29 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
 
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-[var(--color-ink-soft)]">
-          已自认 {judgedCount}/{alive}（未自认的按没通过计）
+          {isExposure
+            ? `已曝光 ${alive}/${alive}`
+            : `已自认 ${judgedCount}/${alive}（未自认的按没通过计）`}
         </p>
-        <Button
-          disabled={busy}
-          onClick={() => void goNext()}
-          data-testid="hulu-next"
-        >
-          {study ? "重新自认" : isLastPage ? "完成本轮" : "下一页"}
-        </Button>
+        <div className="flex items-center gap-2">
+          {isExposure && (
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => void skipExposure()}
+              data-testid="hulu-skip-exposure"
+            >
+              直接开始第 1 轮复习
+            </Button>
+          )}
+          <Button
+            disabled={busy}
+            onClick={() => void goNext()}
+            data-testid="hulu-next"
+          >
+            {isExposure ? (isLastPage ? "完成曝光" : "下一页") : study ? "重新自认" : isLastPage ? "完成本轮" : "下一页"}
+          </Button>
+        </div>
       </div>
     </div>
   );

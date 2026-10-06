@@ -44,6 +44,8 @@ function round(overrides: Partial<HuluRoundRow> & { round_no: number }): HuluRou
     pages_passed: 5,
     words_passed: 100,
     words_total: 100,
+    kind: "recall",
+    word_set_fingerprint: "aaaaaaaabbbbbbbb",
     ...overrides,
   };
 }
@@ -124,9 +126,9 @@ describe("缩时曲线：两点递减（相对第一轮的降幅）", () => {
     const container = render({ rounds, targetRounds: 4, examDate: "2026-12-20", today: "2026-10-06" });
 
     // (7200 - 5400) / 7200 = 25%
-    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent).toContain("比首轮快 25%");
+    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent).toContain("比基准轮快 25%");
     // 第一轮是基准
-    expect(container.querySelector('[data-testid="hulu-curve-drop-1"]')?.textContent).toContain("首轮基准");
+    expect(container.querySelector('[data-testid="hulu-curve-drop-1"]')?.textContent).toContain("基准轮");
   });
 
   it("变慢的轮次标「比首轮慢」，不伪装成提速", () => {
@@ -136,7 +138,7 @@ describe("缩时曲线：两点递减（相对第一轮的降幅）", () => {
     ];
     const container = render({ rounds, targetRounds: 4, examDate: "2026-12-20", today: "2026-10-06" });
 
-    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent).toContain("比首轮慢 100%");
+    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent).toContain("比基准轮慢 100%");
   });
 });
 
@@ -197,5 +199,119 @@ describe("缩时曲线：不引入第二数据源", () => {
     // 不发请求（数据由父组件从 GET /plans/:id 传入）
     expect(source).not.toContain("apiFetch");
     expect(source).not.toContain("fetch(");
+  });
+
+  it("R13：可比性判据走 huluSameWordSet（domain 纯函数），不自己实现指纹比较", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("src/frontend/components/review/HuluSpeedCurve.tsx", "utf8");
+    expect(source).toContain("huluSameWordSet");
+    // 不引 node:crypto（指纹计算在 service 层，前端只比较）
+    expect(source).not.toContain("node:crypto");
+  });
+});
+
+describe("缩时曲线：R13 三态（纯已学 / 含曝光 / 词集漂移不可比）", () => {
+  it("纯已学序列（全 recall 同指纹）：基准 = 第 1 轮，其余算降幅", () => {
+    const rounds = [
+      round({ round_no: 1, id: "r-1", elapsed_seconds: 7200, word_set_fingerprint: "fp-same" }),
+      round({ round_no: 2, id: "r-2", elapsed_seconds: 5400, word_set_fingerprint: "fp-same" }),
+    ];
+    const container = render({ rounds, targetRounds: 4, examDate: "2026-12-20", today: "2026-10-06" });
+
+    expect(container.querySelector('[data-testid="hulu-curve-drop-1"]')?.textContent).toContain("基准轮");
+    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent).toContain("比基准轮快 25%");
+    // 两轮都可比
+    expect(container.querySelector('[data-testid="hulu-curve-bar-1"]')?.getAttribute("data-comparable")).toBe("true");
+    expect(container.querySelector('[data-testid="hulu-curve-bar-2"]')?.getAttribute("data-comparable")).toBe("true");
+  });
+
+  it("含曝光：曝光轮不进图；基准 = 第一条 recall（不是第 0 轮）", () => {
+    const rounds = [
+      round({ round_no: 0, kind: "exposure", id: "r-0", elapsed_seconds: 120, word_set_fingerprint: null }),
+      round({ round_no: 1, id: "r-1", elapsed_seconds: 7200, word_set_fingerprint: "fp-same" }),
+      round({ round_no: 2, id: "r-2", elapsed_seconds: 3600, word_set_fingerprint: "fp-same" }),
+    ];
+    const container = render({ rounds, targetRounds: 4, examDate: "2026-12-20", today: "2026-10-06" });
+
+    const ids = Array.from(container.querySelectorAll("[data-round-id]")).map((bar) => bar.getAttribute("data-round-id"));
+    expect(ids).toEqual(["r-1", "r-2"]);
+    expect(ids).not.toContain("r-0");
+    // 基准是第 1 轮（recall），不是曝光轮
+    expect(container.querySelector('[data-testid="hulu-curve-drop-1"]')?.textContent).toContain("基准轮");
+    // 剩余轮数只按复习轮算（2 条已收尾复习轮 → 剩 2）
+    expect(container.querySelector('[data-testid="hulu-curve-remaining"]')?.textContent).toContain("剩余 2 轮");
+  });
+
+  it("全 legacy 序列：维持旧画法（首个已收尾轮为基准，legacy 不当基准但仍是基准位）", () => {
+    const rounds = [
+      round({ round_no: 1, kind: "legacy", id: "r-1", elapsed_seconds: 7200, word_set_fingerprint: null }),
+      round({ round_no: 2, kind: "legacy", id: "r-2", elapsed_seconds: 5400, word_set_fingerprint: null }),
+    ];
+    const container = render({ rounds, targetRounds: 4, examDate: "2026-12-20", today: "2026-10-06" });
+
+    // 老计划口径不回改：首个已收尾轮标基准
+    expect(container.querySelector('[data-testid="hulu-curve-drop-1"]')?.textContent).toContain("基准轮");
+    // 两轮都没有指纹 → 不可比（但第 2 轮照画柱）
+    expect(container.querySelector('[data-testid="hulu-curve-bar-2"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent)
+      .toContain("词集已变化，不与基准比较");
+  });
+
+  it("legacy 不当基准：含 legacy 的序列里基准 = 第一条 recall", () => {
+    const rounds = [
+      round({ round_no: 1, kind: "legacy", id: "r-1", elapsed_seconds: 9000, word_set_fingerprint: "fp-old" }),
+      round({ round_no: 2, kind: "recall", id: "r-2", elapsed_seconds: 6000, word_set_fingerprint: "fp-new" }),
+      round({ round_no: 3, kind: "recall", id: "r-3", elapsed_seconds: 3000, word_set_fingerprint: "fp-new" }),
+    ];
+    const container = render({ rounds, targetRounds: 4, examDate: "2026-12-20", today: "2026-10-06" });
+
+    // 第 1 轮是 legacy → 不是基准（基准是第 2 轮）
+    expect(container.querySelector('[data-testid="hulu-curve-drop-1"]')?.textContent)
+      .toContain("词集已变化，不与基准比较");
+    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent).toContain("基准轮");
+    // 第 3 轮与第 2 轮同指纹 → 可比：比基准快 50%
+    expect(container.querySelector('[data-testid="hulu-curve-drop-3"]')?.textContent).toContain("比基准轮快 50%");
+  });
+
+  it("词集漂移：指纹不同 → 照画柱但降幅位标「词集已变化，不与基准比较」", () => {
+    const rounds = [
+      round({ round_no: 1, id: "r-1", elapsed_seconds: 7200, word_set_fingerprint: "fp-before" }),
+      round({ round_no: 2, id: "r-2", elapsed_seconds: 3600, word_set_fingerprint: "fp-after" }),
+    ];
+    const container = render({ rounds, targetRounds: 4, examDate: "2026-12-20", today: "2026-10-06" });
+
+    const bar2 = container.querySelector('[data-testid="hulu-curve-bar-2"]');
+    expect(bar2).toBeTruthy();
+    // 柱子照画（耗时仍可回溯），但不可比
+    expect(bar2?.getAttribute("data-elapsed-seconds")).toBe("3600");
+    expect(bar2?.getAttribute("data-comparable")).toBe("false");
+    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent)
+      .toContain("词集已变化，不与基准比较");
+  });
+
+  it("词数相同不构成可比：words_total 相等但指纹不同 → 不可比", () => {
+    const rounds = [
+      round({ round_no: 1, id: "r-1", elapsed_seconds: 7200, words_total: 24, word_set_fingerprint: "fp-a" }),
+      round({ round_no: 2, id: "r-2", elapsed_seconds: 3600, words_total: 24, word_set_fingerprint: "fp-b" }),
+    ];
+    const container = render({ rounds, targetRounds: 4, examDate: "2026-12-20", today: "2026-10-06" });
+
+    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent)
+      .toContain("词集已变化，不与基准比较");
+  });
+});
+
+describe("缩时曲线：免责声明第三条（R13 词集漂移）", () => {
+  it("三条都在：代理指标 / 墙钟虚高 / 只有已结算词集一致的轮才比较耗时", () => {
+    const container = render({
+      rounds: [round({ round_no: 1 })], targetRounds: 4, examDate: "2026-12-20", today: "2026-10-06",
+    });
+
+    const text = bodyText(container.querySelector('[data-testid="hulu-curve-disclaimer"]') as HTMLElement);
+    expect(text).toContain("代理指标");
+    expect(text).toContain("墙钟");
+    // 第三条（R13 追加）
+    expect(text).toContain("已结算词集一致");
+    expect(text).toContain("词集漂移");
   });
 });

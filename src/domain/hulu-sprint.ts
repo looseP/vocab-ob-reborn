@@ -278,7 +278,9 @@ export function huluGateDecision(passed: number, total: number, gateRatio: numbe
  * 零出向红线不容 import —— 见 ADR-0041 Amendment 2 第 2 条）。
  */
 export function huluSameWordSet(fpA: string | null, fpB: string | null): boolean {
-  if (fpA === null || fpB === null) return false;
+  // 防御性：契约保证 string|null，但旧缓存 / 局部 mock 可能整列缺席（undefined）。
+  // 缺席与 null 同义（没有指纹 = 不可比较），不让它把渲染整个炸掉。
+  if (typeof fpA !== "string" || typeof fpB !== "string") return false;
   if (fpA.length === 0 || fpB.length === 0) return false;
   return fpA === fpB;
 }

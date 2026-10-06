@@ -140,6 +140,13 @@ describe("huluSameWordSet（R13 可比较轮判据）", () => {
   it("词数相同不构成可比较（判据是指纹不是长度）：同长度不同值 → false", () => {
     expect(huluSameWordSet("0000000000000000", "0000000000000001")).toBe(false);
   });
+
+  it("防御性：整列缺席（undefined，旧缓存/局部 mock）不炸，按不可比较处理", () => {
+    const missing = undefined as unknown as string | null;
+    expect(huluSameWordSet(missing, "a1b2c3d4e5f60718")).toBe(false);
+    expect(huluSameWordSet("a1b2c3d4e5f60718", missing)).toBe(false);
+    expect(huluSameWordSet(missing, missing)).toBe(false);
+  });
 });
 
 describe("协议类型（迁移 0051 的取值面）", () => {
