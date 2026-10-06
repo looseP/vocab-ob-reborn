@@ -1856,6 +1856,13 @@ export const huluPlans = pgTable("hulu_plans", {
 	// 创建时定格（R6）：整本词书的 word_id 数组，稳定序（created_at ASC, word_id ASC）。
 	wordIds: uuid("word_ids").array().notNull(),
 	status: text("status").default('active').notNull(),
+	// 协议版本（R12，迁移 0051）：'v2' 新计划 / 'legacy' 存量回填。DEFAULT 指向**旧**
+	// 语义是有意的 fail-safe —— 滚动升级/回滚窗口内，未感知新列的旧写入路径产出的行
+	// 仍被正确解释；新代码写新行时显式给 'v2'，不吃默认值。
+	protocolVersion: text("protocol_version").default('legacy').notNull(),
+	// 「包含还没复习过的词」（R12，默认关 = R9 先学后刷）：池是否含 state='new'。
+	// v2 计划是否需要曝光轮由它决定 —— 池创建时已定格，事后无法从词集反推。
+	includeNewWords: boolean("include_new_words").default(false).notNull(),
 	// 默认关是有意的（ADR-0041 决策 5）：只有用户显式开启才动 user_word_progress。
 	suspendReview: boolean("suspend_review").default(false).notNull(),
 	// {wordId: 挂起前 state}；仅开关开且已 apply 时非空（R1）。恢复 = 逐行回写本快照。
@@ -1877,6 +1884,7 @@ export const huluPlans = pgTable("hulu_plans", {
 	unique("hulu_plans_id_user_unique").on(table.id, table.userId),
 	pgPolicy("hulu_plans_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
 	check("hulu_plans_direction_check", sql`direction IS NULL OR direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
+	check("hulu_plans_protocol_check", sql`protocol_version = ANY (ARRAY['v2'::text, 'legacy'::text])`),
 	check("hulu_plans_target_rounds_check", sql`target_rounds >= 2 AND target_rounds <= 8`),
 	check("hulu_plans_page_size_check", sql`page_size >= 5 AND page_size <= 50`),
 	check("hulu_plans_gate_ratio_check", sql`gate_ratio >= 0.50 AND gate_ratio <= 1.00`),
@@ -1895,6 +1903,14 @@ export const huluRounds = pgTable("hulu_rounds", {
 	endedAt: timestamp("ended_at", { withTimezone: true, mode: "string" }),
 	// 墙钟 elapsed（R5），收尾写入后不改；服务端夹取到 [0, 86400×7]。
 	elapsedSeconds: integer("elapsed_seconds"),
+	// 轮次语义标签（R12/R13，迁移 0051）：'exposure' 曝光轮 / 'recall' 复习轮 /
+	// 'legacy' 存量回填。legacy 轮参与曲线但**永不作为基准轮**；曝光轮不进缩时曲线。
+	kind: text("kind").default('legacy').notNull(),
+	// 本轮**实际结算词集**的指纹（R13）：收尾时按已结算页切片推导（页级近似）、
+	// 排序后 SHA-256 取 hex 前 16 位。可比较轮的判据 —— `words_total` 相等**不是**
+	// 词集等价判据（它恒等于定格词数，不随删词变化）。存量行不回填（重建不出可信
+	// 的历史结算词集），老曲线维持现行画法。
+	wordSetFingerprint: text("word_set_fingerprint"),
 	// 页游标（R7）：页结算 = 单条条件 UPDATE ... WHERE pages_passed = $pageIndex，
 	// 原子且并发安全，不需要页级明细表。
 	pagesPassed: smallint("pages_passed").default(0).notNull(),
@@ -1910,7 +1926,9 @@ export const huluRounds = pgTable("hulu_rounds", {
 		}).onDelete("cascade"),
 	unique("hulu_rounds_plan_round_unique").on(table.planId, table.roundNo),
 	pgPolicy("hulu_rounds_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
-	check("hulu_rounds_round_no_check", sql`round_no >= 1 AND round_no <= 8`),
+	// 曝光轮需要 round_no = 0（R12）；上界 8 不动 —— 复习轮恒为 1..target_rounds。
+	check("hulu_rounds_round_no_check", sql`round_no >= 0 AND round_no <= 8`),
+	check("hulu_rounds_kind_check", sql`kind = ANY (ARRAY['exposure'::text, 'recall'::text, 'legacy'::text])`),
 	check("hulu_rounds_elapsed_seconds_check", sql`elapsed_seconds IS NULL OR (elapsed_seconds >= 0 AND elapsed_seconds <= 604800)`),
 	check("hulu_rounds_pages_passed_check", sql`pages_passed >= 0`),
 	check("hulu_rounds_words_passed_check", sql`words_passed >= 0`),

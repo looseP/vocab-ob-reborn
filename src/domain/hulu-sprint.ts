@@ -35,6 +35,23 @@ export const HULU_DEFAULT_GATE_RATIO = 0.8;
 /** 计划状态（hulu_plans.status CHECK 同值）。 */
 export type HuluPlanStatus = "active" | "completed" | "abandoned";
 
+/**
+ * 协议版本（hulu_plans.protocol_version CHECK 同值，迁移 0051）。
+ * `'v2'` 新计划 / `'legacy'` 存量回填。决定入池范围解释、轮次序列形状、曲线基准口径。
+ */
+export type HuluProtocolVersion = "v2" | "legacy";
+
+/**
+ * 轮次语义标签（hulu_rounds.kind CHECK 同值，迁移 0051）。
+ *
+ *   - `'exposure'` 曝光轮（第 0 轮）：使命是**让每个词至少被看见一次**，不是逼回忆。
+ *     交互 = 逐卡直接展示卡面（无遮答、无自认、无闸门）；页结算语义 = 本页已曝光
+ *     计数（`passed = total = 本页存活词数`，恒过闸）。**不计入** `target_rounds`。
+ *   - `'recall'` 复习轮：现行的遮答→回忆→翻开→自认→页闸门流程。
+ *   - `'legacy'` 存量回填：R9–R11 时期写下的轮，参与曲线但**永不作为基准轮**。
+ */
+export type HuluRoundKind = "exposure" | "recall" | "legacy";
+
 /** 风险三级：ok 放行 / warn 放行但持续显示缺口 / block 拒绝。 */
 export type HuluRiskLevel = "ok" | "warn" | "block";
 
@@ -55,6 +72,10 @@ export interface HuluPlanRow {
   gate_ratio: number;
   word_ids: string[];
   status: HuluPlanStatus;
+  /** 协议版本（迁移 0051）：'v2' 新计划 / 'legacy' 存量。 */
+  protocol_version: HuluProtocolVersion;
+  /** 「包含还没复习过的词」（默认 false = 先学后刷）；v2 计划是否需要曝光轮由它决定。 */
+  include_new_words: boolean;
   suspend_review: boolean;
   /** `{wordId: 挂起前 state}`；仅开关开且已 apply 时非空。 */
   suspend_snapshot: Record<string, string> | null;
@@ -63,7 +84,7 @@ export interface HuluPlanRow {
   created_at: string;
 }
 
-/** 轮次行（hulu_rounds，迁移 0050）。`ended_at IS NULL` = 进行中（至多一个）。 */
+/** 轮次行（hulu_rounds，迁移 0050/0051）。`ended_at IS NULL` = 进行中（至多一个）。 */
 export interface HuluRoundRow {
   id: string;
   plan_id: string;
@@ -72,6 +93,13 @@ export interface HuluRoundRow {
   started_at: string;
   ended_at: string | null;
   elapsed_seconds: number | null;
+  /** 轮次语义标签（迁移 0051）：曝光轮 / 复习轮 / 存量回填。 */
+  kind: HuluRoundKind;
+  /**
+   * 本轮**实际结算词集**的指纹（R13）：收尾时按已结算页切片推导（页级近似）、
+   * 排序后 SHA-256 取 hex 前 16 位。`null` = 未收尾或存量行（不回填）。
+   */
+  word_set_fingerprint: string | null;
   /** 页游标（R7）：页结算的条件 UPDATE 判据。 */
   pages_passed: number;
   words_passed: number;
@@ -97,6 +125,10 @@ export interface HuluPlanSummary {
   /** 定格词数 = cardinality(word_ids)；页数由 huluPageCount 推出。 */
   word_count: number;
   status: HuluPlanStatus;
+  /** 协议版本（迁移 0051）：'v2' 新计划 / 'legacy' 存量。 */
+  protocol_version: HuluProtocolVersion;
+  /** 「包含还没复习过的词」；v2 计划是否需要曝光轮由它决定。 */
+  include_new_words: boolean;
   suspend_review: boolean;
   /** 快照条目数（未 apply 或已恢复时为 0）。 */
   suspended_count: number;
@@ -224,10 +256,31 @@ export function assessHuluRisk(input: HuluRiskInput): HuluRiskResult {
  *
  * 比例取**计划行的列值**（不写死 0.8）；`total ≤ 0`（整页定格词已删）→ "pass"
  * —— 删空的页服务端自动通过，前端跳过。
+ *
+ * **曝光轮恒过闸**（R12）：曝光轮的页结算复用同一管道，但 `passed` 的语义是
+ * 「本页已曝光词数」= 本页存活词数（曝光无自认），于是 `passed / total === 1`
+ * 恒 ≥ 任何合法 gateRatio —— 闸门函数本身**不改**，恒过是调用方口径的自然结果。
+ * 前端在曝光轮不发与闸门相关的 UI（无「通过率」徽标，显示「已曝光 n/n」）。
  */
 export function huluGateDecision(passed: number, total: number, gateRatio: number): HuluGateDecision {
   if (total <= 0) return "pass";
   return passed / total >= gateRatio ? "pass" : "block";
+}
+
+/**
+ * 两条轮次是否为**可比较轮**（R13）：结算词集指纹一致。
+ *
+ * 判据是**指纹相等**，不是词数相等 —— `words_total` 恒等于定格词数、不随删词变化，
+ * 「两轮 24 词」完全可能是 24 个不同的词。指纹为 `null`（未收尾 / 存量行）或空串
+ * （脏数据，不是合法指纹）时不比较：两边都得是**非空**指纹且相同才算可比较。
+ *
+ * 本函数是纯比较：指纹**计算**在 service 层（`node:crypto` 是出向依赖，domain
+ * 零出向红线不容 import —— 见 ADR-0041 Amendment 2 第 2 条）。
+ */
+export function huluSameWordSet(fpA: string | null, fpB: string | null): boolean {
+  if (fpA === null || fpB === null) return false;
+  if (fpA.length === 0 || fpB.length === 0) return false;
+  return fpA === fpB;
 }
 
 /**
@@ -283,6 +336,8 @@ export function toHuluPlanSummary(plan: HuluPlanRow): HuluPlanSummary {
     gate_ratio: plan.gate_ratio,
     word_count: plan.word_ids.length,
     status: plan.status,
+    protocol_version: plan.protocol_version,
+    include_new_words: plan.include_new_words,
     suspend_review: plan.suspend_review,
     suspended_count: plan.suspend_snapshot ? Object.keys(plan.suspend_snapshot).length : 0,
     started_at: plan.started_at,

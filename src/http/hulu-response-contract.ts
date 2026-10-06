@@ -30,6 +30,10 @@ export const huluPlanRowResponseSchema: z.ZodType<HuluPlanSummary> = z.object({
   /** 定格词数（= cardinality(word_ids)）；页数由 word_count + page_size 推出。 */
   word_count: z.number().int(),
   status: z.enum(["active", "completed", "abandoned"]),
+  /** 协议版本（迁移 0051）：'v2' 新计划 / 'legacy' 存量。 */
+  protocol_version: z.enum(["v2", "legacy"]),
+  /** 「包含还没复习过的词」；v2 计划是否需要曝光轮由它决定。 */
+  include_new_words: z.boolean(),
   suspend_review: z.boolean(),
   /** 挂起快照条目数（未 apply 或已恢复时为 0）。 */
   suspended_count: z.number().int(),
@@ -46,6 +50,10 @@ export const huluRoundRowResponseSchema: z.ZodType<HuluRoundRow> = z.object({
   started_at: z.string(),
   ended_at: z.string().nullable(),
   elapsed_seconds: z.number().int().nullable(),
+  /** 轮次语义标签（迁移 0051）：曝光轮 / 复习轮 / 存量回填。 */
+  kind: z.enum(["exposure", "recall", "legacy"]),
+  /** 本轮已结算词集指纹（SHA-256 hex 前 16 位）；未收尾或存量行 → null。 */
+  word_set_fingerprint: z.string().nullable(),
   pages_passed: z.number().int(),
   words_passed: z.number().int(),
   words_total: z.number().int(),

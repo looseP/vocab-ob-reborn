@@ -56,7 +56,8 @@ function planRow(overrides: Partial<HuluPlanRow> = {}): HuluPlanRow {
   return {
     id: PLAN, user_id: USER, wordbook_id: WB, direction: null, exam_date: "2026-12-20",
     target_rounds: 4, page_size: 20, gate_ratio: 0.8, word_ids: ["w-1", "w-2"],
-    status: "active", suspend_review: false, suspend_snapshot: null,
+    status: "active", protocol_version: "v2", include_new_words: false,
+    suspend_review: false, suspend_snapshot: null,
     started_at: "2026-10-06T00:00:00Z", ended_at: null, created_at: "2026-10-06T00:00:00Z",
     ...overrides,
   };
@@ -67,7 +68,8 @@ function planSummary(overrides: Partial<HuluPlanSummary> = {}): HuluPlanSummary 
   return {
     id: PLAN, user_id: USER, wordbook_id: WB, direction: null, exam_date: "2026-12-20",
     target_rounds: 4, page_size: 20, gate_ratio: 0.8, word_count: 2,
-    status: "active", suspend_review: false, suspended_count: 0,
+    status: "active", protocol_version: "v2", include_new_words: false,
+    suspend_review: false, suspended_count: 0,
     started_at: "2026-10-06T00:00:00Z", ended_at: null, created_at: "2026-10-06T00:00:00Z",
     ...overrides,
   };
@@ -77,6 +79,7 @@ function roundRow(overrides: Partial<HuluRoundRow> = {}): HuluRoundRow {
   return {
     id: "round-1", plan_id: PLAN, user_id: USER, round_no: 1,
     started_at: "2026-10-06T00:00:00Z", ended_at: null, elapsed_seconds: null,
+    kind: "recall", word_set_fingerprint: null,
     pages_passed: 0, words_passed: 0, words_total: 2,
     ...overrides,
   };

@@ -6,6 +6,7 @@
  *   恰好值），perRound = ceil(n/400)，need = rounds × perRound
  * - huluGateDecision：闸门边界用**传入的 ratio 参数**（不写死 0.8），total ≤ 0 自动通过
  * - clampElapsedSeconds：负数归 0、超上限夹取、非有限值归 0
+ * - huluSameWordSet（R13）：指纹一致才算可比较轮，null 两边任一即不可比
  */
 
 import { describe, it, expect } from "vitest";
@@ -14,7 +15,10 @@ import {
   HULU_MAX_SINGLE_ROUND_SECONDS,
   assessHuluRisk,
   huluGateDecision,
+  huluSameWordSet,
   clampElapsedSeconds,
+  type HuluProtocolVersion,
+  type HuluRoundKind,
 } from "@/domain/hulu-sprint";
 
 describe("assessHuluRisk（风险三档）", () => {
@@ -111,8 +115,46 @@ describe("huluGateDecision（页级闸门）", () => {
   });
 });
 
-describe("clampElapsedSeconds（墙钟夹取）", () => {
-  it("正常值原样通过（向下取整）", () => {
+describe("huluSameWordSet（R13 可比较轮判据）", () => {
+  it("两边指纹非空且相等 → true（结算词集一致，降幅可比）", () => {
+    expect(huluSameWordSet("a1b2c3d4e5f60718", "a1b2c3d4e5f60718")).toBe(true);
+  });
+
+  it("指纹不同 → false（词集漂移，降幅不可比）", () => {
+    expect(huluSameWordSet("a1b2c3d4e5f60718", "0f1e2d3c4b5a6978")).toBe(false);
+  });
+
+  it("任一边为 null（未收尾 / 存量行不回填）→ false（不比较）", () => {
+    expect(huluSameWordSet(null, "a1b2c3d4e5f60718")).toBe(false);
+    expect(huluSameWordSet("a1b2c3d4e5f60718", null)).toBe(false);
+    expect(huluSameWordSet(null, null)).toBe(false);
+  });
+
+  it("空串不被当作有效指纹（空串 ≠ 空串）", () => {
+    // 空串是「有值」但无意义：契约上指纹要么是 16 位 hex、要么 null；
+    // 这里锁住「空串不构成可比较」，免得把脏数据当成同一词集。
+    expect(huluSameWordSet("", "")).toBe(false);
+    expect(huluSameWordSet("", "a1b2c3d4e5f60718")).toBe(false);
+  });
+
+  it("词数相同不构成可比较（判据是指纹不是长度）：同长度不同值 → false", () => {
+    expect(huluSameWordSet("0000000000000000", "0000000000000001")).toBe(false);
+  });
+});
+
+describe("协议类型（迁移 0051 的取值面）", () => {
+  it("HuluRoundKind 三值齐备（曝光 / 复习 / 存量）", () => {
+    const kinds: HuluRoundKind[] = ["exposure", "recall", "legacy"];
+    expect(kinds).toHaveLength(3);
+  });
+
+  it("HuluProtocolVersion 两值齐备（新 / 存量）", () => {
+    const versions: HuluProtocolVersion[] = ["v2", "legacy"];
+    expect(versions).toHaveLength(2);
+  });
+});
+
+describe("clampElapsedSeconds（墙钟夹取）", () => {  it("正常值原样通过（向下取整）", () => {
     expect(clampElapsedSeconds(0)).toBe(0);
     expect(clampElapsedSeconds(90)).toBe(90);
     expect(clampElapsedSeconds(90.9)).toBe(90);
