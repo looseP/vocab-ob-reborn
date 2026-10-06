@@ -5,6 +5,7 @@ import {
   dayKeyInDisplayTz,
   startOfTodayIsoInDisplayTz,
 } from "@/db/timezone";
+import { HuluRepository } from "@/repositories/hulu.repository";
 
 describe("DISPLAY_TIMEZONE", () => {
   it("is Asia/Shanghai", () => {
@@ -101,5 +102,43 @@ describe("startOfTodayIsoInDisplayTz", () => {
     const minute = parts.find(p => p.type === "minute")?.value;
     expect(hour).toBe("00");
     expect(minute).toBe("00");
+  });
+});
+
+/**
+ * 口径一致性（主控补充指令 §4）：`HuluRepository.findTodayKeyInDisplayTz`
+ * 与 `SessionRepository` 用的 `startOfTodayIsoInDisplayTz` 必须是**同一个
+ * 日历日口径** —— 都是 Asia/Shanghai，而不是 UTC 日界。
+ *
+ * 为什么值得钉死：葫芦的风险校验 `left = exam_date - today` 用前者，
+ * 复习会话的"今日坐次"用后者。若两者日界不同（一个上海、一个 UTC），
+ * 在 UTC 16:00–24:00 这段（上海已跨日）会出现「复习算新的一天、冲刺还算昨天」
+ * 的分裂，用户的"距考试还有几天"会莫名其妙差一天。
+ */
+describe("findTodayKeyInDisplayTz 与 startOfTodayIsoInDisplayTz 同日历日口径", () => {
+  it("仓库返回的今天键 = startOfTodayIso 的上海日期 = todayKeyInDisplayTz()", () => {
+    const repo = new HuluRepository();
+    const repoKey = repo.findTodayKeyInDisplayTz();
+
+    expect(repoKey).toBe(todayKeyInDisplayTz());
+    // startOfTodayIso 是上海零点，它的上海日期就是"今天"
+    expect(dayKeyInDisplayTz(new Date(startOfTodayIsoInDisplayTz()))).toBe(repoKey);
+  });
+
+  it("是 Asia/Shanghai 日界，不是 UTC 日界（UTC 16:00 之后已跨日）", () => {
+    // UTC 2026-07-07T16:00:00Z = 上海 2026-07-08T00:00:00 → 上海口径算 07-08
+    const shanghaiKey = dayKeyInDisplayTz("2026-07-07T16:00:00.000Z");
+    expect(shanghaiKey).toBe("2026-07-08");
+    // 同一时刻若按 UTC 日界会算成 07-07 —— 两者必须不同（证明不是 UTC 口径）
+    expect(shanghaiKey).not.toBe("2026-07-07");
+
+    // 该时刻的"上海零点"必须落在 07-08 这一天，与上面同日
+    expect(dayKeyInDisplayTz(new Date("2026-07-07T16:00:00.000Z"))).toBe(shanghaiKey);
+  });
+
+  it("跨 UTC 日界时两者仍一致（UTC 15:59 vs 16:00 两侧）", () => {
+    // 15:59 → 上海同日 07-07；16:00 → 上海次日 07-08。两侧都按上海算。
+    expect(dayKeyInDisplayTz("2026-07-07T15:59:59.000Z")).toBe("2026-07-07");
+    expect(dayKeyInDisplayTz("2026-07-07T16:00:00.000Z")).toBe("2026-07-08");
   });
 });

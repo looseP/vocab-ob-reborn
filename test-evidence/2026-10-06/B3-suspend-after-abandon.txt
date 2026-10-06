@@ -1,0 +1,22 @@
+ suspended_after_abandon 
+-------------------------
+                       0
+(1 row)
+
+ snap_null |  status   
+-----------+-----------
+ t         | abandoned
+(1 row)
+
+  state   | count 
+----------+-------
+ new      |   478
+ review   |    14
+ learning |    10
+(3 rows)
+
+ due_after_abandon 
+-------------------
+               492
+(1 row)
+

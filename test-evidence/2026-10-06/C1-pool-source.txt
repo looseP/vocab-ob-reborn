@@ -1,0 +1,42 @@
+=== 修订轮 Part A：定格池源取证 ===
+日期: 2026-10-06 18:14:44
+
+--- 1. 池分布（wordbook be51b132-7c3f-49ba-9f9d-81d7d90200b6）---
+  state   | count 
+----------+-------
+ learning |    10
+ review   |    14
+(2 rows)
+
+--- 2. 计划定格（cardinality + 页数）---
+ n_words | page_size | pages | status | suspend_review |          created_at           
+---------+-----------+-------+--------+----------------+-------------------------------
+      24 |        20 |     2 | active | f              | 2026-10-06 10:08:39.382783+00
+(1 row)
+
+--- 3. 定格序 == created_at ASC, word_id ASC（真库复算）---
+ORDER_MATCH
+--- 4. new/suspended 不入池（结构面：两者都不在 word_ids 里）---
+ERROR:  operator does not exist: uuid = uuid[]
+LINE 6:    and word_id = ANY((select word_ids from hulu_plans where ...
+                       ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
+
+--- 4. new/suspended 不入池（复核：入池词里不应有任何 new/suspended 行）---
+pool_rows_with_new_or_suspended=0
+--- 5. 全部池外态计数（new 478 / suspended 0）---
+  state   | count 
+----------+-------
+ learning |    10
+ new      |   478
+ review   |    14
+(3 rows)
+
+--- 6. 页载荷字段清单（R10：15 列，真库实测）---
+pageIndex=0 pages=2 total=24 alive=20
+fields(15): cefr, core_definitions, definition_md, examples, id, ipa, lemma, mnemonic_text, mnemonic_type, pos, prototype_text, semantic_chain, short_definition, slug, title
+core_definitions: 1 条 | 首条 priority = 1
+mnemonic_text: ab-（偏离）+ norm（norma 标准）+ -al：偏离标准的，就是 abnormal。
+mnemonic_type: root
+examples: 1
+semantic_chain: 不齐 -> 失其常度 -> 偏离常情 -> 反常

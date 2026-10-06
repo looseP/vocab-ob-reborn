@@ -1,0 +1,16 @@
+ total_word_ids | distinct_word_ids 
+----------------+-------------------
+             41 |                41
+(1 row)
+
+ state | count 
+-------+-------
+ new   |    40
+       |     1
+(2 rows)
+
+               word_id                |  lemma   | state | wordbook_id 
+--------------------------------------+----------+-------+-------------
+ 1c914e58-d08d-4f23-a138-a5f325528bc7 | traction |       | 
+(1 row)
+

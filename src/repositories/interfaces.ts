@@ -84,6 +84,14 @@ import type {
   RootFamilyGroupRow,
   Json,
 } from "../domain";
+import type {
+  HuluPageWordRow,
+  HuluPlanRow,
+  HuluPlanStatus,
+  HuluProtocolVersion,
+  HuluRoundKind,
+  HuluRoundRow,
+} from "../domain/hulu-sprint";
 import type { OtherBookL2Signal } from "../domain/upgrade-suggestion";
 import type { IL3WritingRepository } from "./l3-writing.repository";
 import type { IL3WritingFeedbackRepository } from "./l3-writing-feedback.repository";
@@ -275,6 +283,32 @@ export interface BulkForgetBatchInput {
   batchId: string;
 }
 
+/**
+ * 葫芦冲刺挂起入参（ADR-0041 决策 5 / 完备设计 R1）。
+ *
+ * 与一键遗忘的区别：**范围含 `new`**（有快照即安全，且目标是整批退出到期队列；
+ * 一键遗忘排除 `new` 的动机不同）；**不写 review_logs** —— 快照直接落在计划行
+ * 的 `suspend_snapshot`，故没有 batchId。
+ */
+export interface BulkSuspendByWordIdsInput {
+  userId: string;
+  wordbookId: string;
+  wordIds: string[];
+}
+
+/** 挂起恢复入参：快照 `{wordId: 挂起前 state}`（只回写仍处挂起的行）。 */
+export interface RestoreSuspendSnapshotInput {
+  userId: string;
+  wordbookId: string;
+  snapshot: Record<string, string>;
+}
+
+/** 挂起回返的逐行快照（wordId → 挂起前 state）。 */
+export interface SuspendedWordSnapshot {
+  wordId: string;
+  oldState: string;
+}
+
 export interface SaveAnswerInput {
   progressId: string;
   userId: string;
@@ -432,6 +466,28 @@ export interface IReviewRepository {
    * 不触碰 stability/due_at。返回受影响行数。MUST be in a transaction。
    */
   restoreBulkForget(input: BulkForgetBatchInput): Promise<number>;
+
+  /**
+   * 葫芦冲刺批量挂起（ADR-0041 决策 5，经批准的第 9 个 state 写点）。
+   *
+   * 单条语句完成「快照 + 挂起」并回返快照：把 wordIds 中 `state <> 'suspended'`
+   * 的行置为 suspended，`RETURNING` 出每行的**挂起前** state 供计划行落快照。
+   * **不写 review_logs**（与 bulkSuspendByWordbook 的关键区别：葫芦的快照在计划
+   * 行上，不需要批次日志；这也是「零 FSRS 写入」的落点）。
+   * MUST be in a transaction。
+   *
+   * P0 期只加方法、不接线（服务层在 P0 拒绝 suspendReview=true）。
+   */
+  bulkSuspendByWordIds(input: BulkSuspendByWordIdsInput): Promise<SuspendedWordSnapshot[]>;
+
+  /**
+   * 葫芦冲刺挂起恢复（ADR-0041 决策 5，第 10 个 state 写点）：
+   * 用 `jsonb_to_recordset` 展开快照，**只回写仍处 suspended 的行**（用户手动
+   * 恢复过的词不动）。返回回写行数。**不写 review_logs**。MUST be in a transaction。
+   *
+   * P0 期只加方法、不接线。
+   */
+  restoreSuspendSnapshot(input: RestoreSuspendSnapshotInput): Promise<number>;
 
   /** Resolve the owner-scoped wordbook for an undoable review log. MUST be in a transaction. */
   findReviewLogWordbookForUndo(reviewLogId: string, userId: string): Promise<string | null>;
@@ -1451,6 +1507,129 @@ export interface IL3SessionRepository {
   findContextsByIds(userId: string, contextIds: string[]): Promise<L3SessionContextSummary[]>;
 }
 
+// ── 葫芦冲刺（ADR-0041，2026-10-06）────────────────────────────────────────
+/**
+ * 建计划入参。`suspend_snapshot` 仅在创建时挂起成功后非空（P2 才接线；
+ * P0 期服务层拒绝 suspendReview=true，故恒为 null）。
+ * `protocol_version` / `include_new_words` 由服务层显式给 'v2' / 用户选择
+ * （迁移 0051；不吃 DB 默认值 —— 默认值 'legacy'/false 是给旧写入路径的兜底）。
+ */
+export interface NewHuluPlan {
+  user_id: string;
+  wordbook_id: string;
+  direction: string | null;
+  exam_date: string;
+  target_rounds: number;
+  page_size: number;
+  gate_ratio: number;
+  word_ids: string[];
+  protocol_version: HuluProtocolVersion;
+  include_new_words: boolean;
+  suspend_review: boolean;
+  suspend_snapshot: Record<string, string> | null;
+}
+
+/**
+ * 开轮入参；`started_at` 为 null 时由 DB now() 兜底。
+ * `kind` 由服务层显式给（'exposure' 曝光轮 / 'recall' 复习轮），不吃默认值。
+ */
+export interface NewHuluRound {
+  plan_id: string;
+  user_id: string;
+  round_no: number;
+  started_at: string | null;
+  words_total: number;
+  kind: HuluRoundKind;
+}
+
+/**
+ * 葫芦冲刺持久化（只写 hulu_plans / hulu_rounds，零 FSRS）。
+ * 多语句方法（insertPlan 的唯一索引兜底、setPlanStatus 的读改写、
+ * lockPlanForUpdate）MUST be in a transaction。
+ */
+export interface IHuluRepository {
+  /** 插入计划行；并发撞 idx_hulu_plans_one_active 抛 unique_violation（23505）。 */
+  insertPlan(input: NewHuluPlan): Promise<HuluPlanRow>;
+  findPlanById(userId: string, planId: string): Promise<HuluPlanRow | null>;
+  /** 计划行加锁（FOR UPDATE）：串行化「至多一个未收尾轮」的判断。MUST be in a transaction。 */
+  lockPlanForUpdate(userId: string, planId: string): Promise<HuluPlanRow | null>;
+  findActivePlanByWordbook(userId: string, wordbookId: string): Promise<HuluPlanRow | null>;
+  /** 置状态；ended=true 写 ended_at=now()；suspendSnapshot=null 清快照。MUST be in a transaction。 */
+  setPlanStatus(
+    userId: string,
+    planId: string,
+    status: HuluPlanStatus,
+    options: { ended: boolean; suspendSnapshot?: Record<string, string> | null },
+  ): Promise<HuluPlanRow | null>;
+  /**
+   * 写回挂起快照（创建事务的第二步）。快照来自
+   * `ReviewRepository.bulkSuspendByWordIds` 的回返，本层只落库、不解释语义。
+   * MUST be in a transaction。
+   */
+  saveSuspendSnapshot(
+    userId: string,
+    planId: string,
+    snapshot: Record<string, string>,
+  ): Promise<HuluPlanRow | null>;
+  findRoundsByPlan(userId: string, planId: string): Promise<HuluRoundRow[]>;
+  insertRound(input: NewHuluRound): Promise<HuluRoundRow>;
+  /** 当前未收尾轮（ended_at IS NULL）；至多一行由服务层保证。 */
+  findOpenRound(userId: string, planId: string): Promise<HuluRoundRow | null>;
+  findRoundByNo(userId: string, planId: string, roundNo: number): Promise<HuluRoundRow | null>;
+  /**
+   * 页结算（R7）：单条条件 UPDATE，`pages_passed` 即页游标。
+   * 命中（返回行）表示结算成功；null 表示游标不匹配（由服务层分流幂等/跳页）。
+   * MUST be in a transaction。
+   */
+  settlePage(input: {
+    userId: string;
+    roundId: string;
+    pageIndex: number;
+    passed: number;
+  }): Promise<HuluRoundRow | null>;
+  /** 轮次收尾：条件 UPDATE（ended_at IS NULL）。null = 已收尾或不存在。MUST be in a transaction。 */
+  finishRound(input: {
+    userId: string;
+    roundId: string;
+    endedAt: string;
+    elapsedSeconds: number;
+    /** 结算词集指纹（R13）：服务层推导后写入；null = 不写（曝光轮以外恒有值）。 */
+    wordSetFingerprint: string | null;
+  }): Promise<HuluRoundRow | null>;
+  /** 词书归属显式检查（照 insertNewCard 先例）：越权 → false。 */
+  assertWordbookOwned(userId: string, wordbookId: string): Promise<boolean>;
+  /**
+   * 显示时区（Asia/Shanghai）的今天键 YYYY-MM-DD —— 风险校验 `left` 的基准。
+   * 同步纯函数（零 IO）；置于仓库层是分层纪律（服务层不得依赖 db/timezone）。
+   */
+  findTodayKeyInDisplayTz(): string;
+  /**
+   * 定格取词（R9 / 修订轮 D-A「先学后刷」；R12 加可选「含未学词」）：
+   * 该词书**复习牌堆**的词（`user_word_progress`），稳定序
+   * `created_at ASC, word_id ASC`。两档都排除 `suspended`（用户主动放下的不捡回来）：
+   *
+   *   - `opts.includeNew` 缺省/false → `state ∈ ('learning','review','relearning')`
+   *     （排除 `new`：没见过的词不逼回忆）；
+   *   - `opts.includeNew` true → 四态含 `new`（先过曝光轮再冲刺）。
+   *
+   * 只读、零写入（唯一的 FSRS 可见面接触）；MUST be in a transaction
+   * （owner-RLS 表须带 actor claim，否则静默返回空集）。
+   */
+  listReviewDeckWordIds(
+    userId: string,
+    wordbookId: string,
+    opts?: { includeNew?: boolean },
+  ): Promise<string[]>;
+  /**
+   * 页载荷取词（R10 / 修订轮 D-B）：按 id 批量取**卡面全字段**（Tier0 短释、
+   * 义项、助记锚、例句、Tier2 语义链），一次带下 ⇒ 单卡路径零请求。
+   *
+   * 与 `reviews.findWordsByIds`（preview 队列在用，不动）分工：那个是队列最小集。
+   * 只读 `words`（公开读策略），零副作用；返回序由 DB 决定，服务层按切片序重排。
+   */
+  findHuluPageWords(wordIds: string[]): Promise<HuluPageWordRow[]>;
+}
+
 // ── LLM Usage ──────────────────────────────────────────────────────────
 /**
  * LLM token usage persistence — backs the UsageTracker budget enforcement.
@@ -1945,6 +2124,8 @@ export interface IRepositories {
   /** 错题库统一投影（只读；合并句级 + 题级两腿，见仓储文件头纪律）。 */
   l3ErrorBook: IL3ErrorBookRepository;
   l3Sessions: IL3SessionRepository;
+  // 葫芦冲刺（ADR-0041 注册）：计划容器（hulu_plans / hulu_rounds），零 FSRS。
+  hulu: IHuluRepository;
   l3Paper: IL3PaperRepository;
   l3Annotations: IL3AnnotationRepository;
   l3Sheets: IL3SheetRepository;

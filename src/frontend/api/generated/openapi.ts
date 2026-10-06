@@ -2399,6 +2399,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/hulu/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createHuluPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hulu/plans/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHuluPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hulu/plans/{id}/pages/{no}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHuluPlanPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hulu/plans/{id}/rounds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startHuluRound"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hulu/plans/{id}/rounds/{no}/pages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["settleHuluPage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hulu/plans/{id}/rounds/{no}/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["finishHuluRound"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hulu/plans/{id}/abandon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["abandonHuluPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -30825,7 +30937,7 @@ export interface operations {
                             proposalPayloadMaxBytes: number;
                             proposalTotalPayloadMaxBytes: number;
                         };
-                        errorCodes: ("NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "UNAUTHORIZED" | "FORBIDDEN" | "BUSINESS_RULE" | "DB_UNAVAILABLE" | "INTERNAL" | "FOREIGN_KEY_VIOLATION" | "NOT_NULL_VIOLATION" | "CHECK_VIOLATION" | "INVALID_INPUT")[];
+                        errorCodes: ("NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "UNAUTHORIZED" | "FORBIDDEN" | "BUSINESS_RULE" | "DB_UNAVAILABLE" | "INTERNAL" | "FOREIGN_KEY_VIOLATION" | "NOT_NULL_VIOLATION" | "CHECK_VIOLATION" | "INVALID_INPUT" | "HULU_PAGE_ALIVE_MISMATCH")[];
                     };
                 };
             };
@@ -36450,6 +36562,1314 @@ export interface operations {
                     "application/json": {
                         restoredCount: number;
                         unpausedCount: number;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    createHuluPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    wordbookId: string;
+                    direction?: ("通用" | "考研" | "雅思") | null;
+                    examDate: string;
+                    /** @default 4 */
+                    targetRounds?: number;
+                    /** @default 20 */
+                    pageSize?: number;
+                    /** @default 0.8 */
+                    gateRatio?: number;
+                    /** @default false */
+                    includeNewWords?: boolean;
+                    /** @default false */
+                    suspendReview?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        user_id: string;
+                        wordbook_id: string;
+                        direction: string | null;
+                        exam_date: string;
+                        target_rounds: number;
+                        page_size: number;
+                        gate_ratio: number;
+                        word_count: number;
+                        /** @enum {string} */
+                        status: "active" | "completed" | "abandoned";
+                        /** @enum {string} */
+                        protocol_version: "v2" | "legacy";
+                        include_new_words: boolean;
+                        suspend_review: boolean;
+                        suspended_count: number;
+                        started_at: string;
+                        ended_at: string | null;
+                        created_at: string;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHuluPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        plan: {
+                            id: string;
+                            user_id: string;
+                            wordbook_id: string;
+                            direction: string | null;
+                            exam_date: string;
+                            target_rounds: number;
+                            page_size: number;
+                            gate_ratio: number;
+                            word_count: number;
+                            /** @enum {string} */
+                            status: "active" | "completed" | "abandoned";
+                            /** @enum {string} */
+                            protocol_version: "v2" | "legacy";
+                            include_new_words: boolean;
+                            suspend_review: boolean;
+                            suspended_count: number;
+                            started_at: string;
+                            ended_at: string | null;
+                            created_at: string;
+                        };
+                        rounds: {
+                            id: string;
+                            plan_id: string;
+                            user_id: string;
+                            round_no: number;
+                            started_at: string;
+                            ended_at: string | null;
+                            elapsed_seconds: number | null;
+                            /** @enum {string} */
+                            kind: "exposure" | "recall" | "legacy";
+                            word_set_fingerprint: string | null;
+                            pages_passed: number;
+                            words_passed: number;
+                            words_total: number;
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHuluPlanPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        pageIndex: number;
+                        pages: number;
+                        total: number;
+                        alive: number;
+                        items: {
+                            id: string;
+                            slug: string;
+                            title: string;
+                            lemma: string;
+                            ipa: string | null;
+                            pos: string | null;
+                            cefr: string | null;
+                            short_definition: string | null;
+                            core_definitions: {
+                                sense: string;
+                                en: string | null;
+                                priority: number | null;
+                                tags: string[];
+                            }[];
+                            definition_md: string;
+                            examples: unknown[];
+                            prototype_text: string | null;
+                            mnemonic_text: string | null;
+                            mnemonic_type: string | null;
+                            semantic_chain: string | null;
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    startHuluRound: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: date-time */
+                    startedAt?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        plan_id: string;
+                        user_id: string;
+                        round_no: number;
+                        started_at: string;
+                        ended_at: string | null;
+                        elapsed_seconds: number | null;
+                        /** @enum {string} */
+                        kind: "exposure" | "recall" | "legacy";
+                        word_set_fingerprint: string | null;
+                        pages_passed: number;
+                        words_passed: number;
+                        words_total: number;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    settleHuluPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    pageIndex: number;
+                    passed: number;
+                    total: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        plan_id: string;
+                        user_id: string;
+                        round_no: number;
+                        started_at: string;
+                        ended_at: string | null;
+                        elapsed_seconds: number | null;
+                        /** @enum {string} */
+                        kind: "exposure" | "recall" | "legacy";
+                        word_set_fingerprint: string | null;
+                        pages_passed: number;
+                        words_passed: number;
+                        words_total: number;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    finishHuluRound: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: date-time */
+                    endedAt?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        plan_id: string;
+                        user_id: string;
+                        round_no: number;
+                        started_at: string;
+                        ended_at: string | null;
+                        elapsed_seconds: number | null;
+                        /** @enum {string} */
+                        kind: "exposure" | "recall" | "legacy";
+                        word_set_fingerprint: string | null;
+                        pages_passed: number;
+                        words_passed: number;
+                        words_total: number;
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    abandonHuluPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        id: string;
+                        user_id: string;
+                        wordbook_id: string;
+                        direction: string | null;
+                        exam_date: string;
+                        target_rounds: number;
+                        page_size: number;
+                        gate_ratio: number;
+                        word_count: number;
+                        /** @enum {string} */
+                        status: "active" | "completed" | "abandoned";
+                        /** @enum {string} */
+                        protocol_version: "v2" | "legacy";
+                        include_new_words: boolean;
+                        suspend_review: boolean;
+                        suspended_count: number;
+                        started_at: string;
+                        ended_at: string | null;
+                        created_at: string;
                     };
                 };
             };

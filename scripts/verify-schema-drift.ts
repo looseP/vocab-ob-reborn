@@ -8,11 +8,26 @@
  * regenerates the schema into a throwaway directory, extracts those two
  * definitions, and fails closed if they drift from the authoritative contract.
  *
+ * It also carries the release migration-chain guards (0047–0050 incident):
+ * `_journal.json` inspection (strictly increasing `when`, complete entries,
+ * no orphan tag/file in either direction) plus a generate no-op proof
+ * against a throwaway copy of drizzle-release. Rationale: the drizzle migrator
+ * reads `lastDbMigration` once (highest created_at) and filters with a strict
+ * `<` (node_modules/drizzle-orm/pg-core/dialect.js:56-71), so tied `when`
+ * values silently skip every tied migration on incremental databases; and a
+ * missing terminal snapshot makes `db:generate` replay applied migrations as a
+ * brand-new pseudo migration.
+ *
+ * It additionally lints re-run safety for migrations at or after the cutover
+ * (`MIGRATION_IDEMPOTENCY_CUTOVER_IDX`, ADR-0042 decision 4): the repair path
+ * for a ledger that lost rows is reconciliation, not replay, so new migrations
+ * must still be safe to re-run. Historical migrations stay exempt.
+ *
  * Run: npm run db:schema:drift   (requires DATABASE_URL to be set; the value is
  * only read by drizzle-kit config loading — `generate` does not connect to a DB)
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -221,6 +236,470 @@ export function compareSecurityDefinerDirectionContract(migrationSql: string): b
   return intact && !normalized.includes(normalizeSql(STRICT_REFRESH_GUARD_MARKER));
 }
 
+/** Minimal shape of one `_journal.json` entry, kept loose for hostile input. */
+export interface MigrationJournalEntry {
+  idx?: unknown;
+  version?: unknown;
+  when?: unknown;
+  tag?: unknown;
+  breakpoints?: unknown;
+}
+
+/**
+ * Journal invariants that `db:migrate` silently depends on:
+ *
+ *   ① `when` is strictly increasing (ties are skipped by the migrator's
+ *      one-shot `lastDbMigration` + strict `<` comparison),
+ *   ② every entry carries `version` and `breakpoints` (drizzle-kit's own
+ *      `writeResult` emits both; hand-edited tails must match).
+ *
+ * Returns one human-readable problem per violation; empty means healthy.
+ */
+export function analyzeMigrationJournal(journal: unknown): string[] {
+  const problems: string[] = [];
+  const entries = (journal as { entries?: unknown } | null | undefined)?.entries;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return ["_journal.json has no entries array"];
+  }
+
+  entries.forEach((raw, index) => {
+    const entry = (raw ?? {}) as MigrationJournalEntry;
+    const label = typeof entry.tag === "string" && entry.tag.length > 0 ? entry.tag : `entries[${index}]`;
+    if (typeof entry.tag !== "string" || entry.tag.length === 0) {
+      problems.push(`${label}: tag must be a non-empty string`);
+    }
+    if (typeof entry.when !== "number" || !Number.isFinite(entry.when)) {
+      problems.push(`${label}: when must be a finite number`);
+    }
+    if (typeof entry.version !== "string" || entry.version.length === 0) {
+      problems.push(`${label}: missing version`);
+    }
+    if (typeof entry.breakpoints !== "boolean") {
+      problems.push(`${label}: missing breakpoints`);
+    }
+
+    const previous = (entries[index - 1] ?? {}) as MigrationJournalEntry;
+    if (
+      index > 0
+      && typeof entry.when === "number"
+      && typeof previous.when === "number"
+      && entry.when <= previous.when
+    ) {
+      problems.push(
+        `${label}: when ${entry.when} is not strictly greater than previous entry ` +
+          `(when ${previous.when}) — the migrator skips tied when values on incremental databases`,
+      );
+    }
+  });
+
+  return problems;
+}
+
+/**
+ * Folder-level journal/`.sql` coverage:
+ *
+ *   ③ every journal tag resolves to `<tag>.sql`,
+ *   ④ every `NNNN_*.sql` is registered in the journal (no orphans either way).
+ *
+ * Combined with {@link analyzeMigrationJournal} this is the full ①②③④ guard.
+ */
+export function verifyReleaseMigrationFolder(releaseDir: string): string[] {
+  const journalPath = path.join(releaseDir, "meta", "_journal.json");
+  if (!existsSync(journalPath)) {
+    return [`missing migration journal: ${journalPath}`];
+  }
+
+  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as { entries?: Array<{ tag?: unknown }> };
+  const problems = analyzeMigrationJournal(journal);
+
+  const tags = new Set(
+    (Array.isArray(journal.entries) ? journal.entries : [])
+      .map((entry) => entry?.tag)
+      .filter((tag): tag is string => typeof tag === "string" && tag.length > 0),
+  );
+  const sqlFiles = readdirSync(releaseDir).filter((file) => /^\d{4}_.+\.sql$/.test(file));
+
+  for (const tag of tags) {
+    if (!existsSync(path.join(releaseDir, `${tag}.sql`))) {
+      problems.push(`journal tag ${tag} has no matching ${tag}.sql`);
+    }
+  }
+  for (const file of sqlFiles) {
+    if (!tags.has(file.replace(/\.sql$/, ""))) {
+      problems.push(`${file} has no journal entry`);
+    }
+  }
+
+  return problems;
+}
+
+/**
+ * Idempotency lint for hand-authored migrations.
+ *
+ * The release chain is applied linearly and never rolled back automatically
+ * (ADR-0042), but a database whose schema was advanced outside the migrator
+ * (db:push, manual DDL) can still see a migration replayed on top of its own
+ * effects. Historical generated migrations are non-idempotent by design and
+ * stay that way (D1: the repair path is ledger reconciliation, not SQL edits),
+ * so this lint governs only migrations from the cutover onward.
+ *
+ * Cutover = idx 51 (`0051_*`): 0050 was the last migration written under the
+ * old convention. Statements at or after the cutover must be safe to re-run.
+ */
+export const MIGRATION_IDEMPOTENCY_CUTOVER_IDX = 51;
+
+/** Waive marker: a comment line immediately preceding a statement. */
+const IDEMPOTENCY_WAIVE_PATTERN = /^\s*--\s*@idempotency-waive:\s*\S/;
+
+export interface IdempotencyProblem {
+  /** `NNNN_tag.sql` file name. */
+  file: string;
+  /** 1-based line number of the offending statement. */
+  line: number;
+  statement: string;
+  message: string;
+}
+
+/** Statement split on drizzle's breakpoint marker, keeping line offsets. */
+interface SqlStatement {
+  text: string;
+  line: number;
+}
+
+function splitStatements(sql: string): SqlStatement[] {
+  const statements: SqlStatement[] = [];
+  let line = 1;
+  let startLine = 1;
+  let buffer = "";
+  const flush = (): void => {
+    if (buffer.trim().length > 0) statements.push({ text: buffer.trim(), line: startLine });
+    buffer = "";
+    startLine = line;
+  };
+  for (const rawLine of sql.split(/\r?\n/)) {
+    if (rawLine.includes("--> statement-breakpoint")) {
+      const head = rawLine.slice(0, rawLine.indexOf("--> statement-breakpoint"));
+      buffer += (buffer ? "\n" : "") + head;
+      flush();
+    } else {
+      if (buffer.length === 0) startLine = line;
+      buffer += (buffer ? "\n" : "") + rawLine;
+    }
+    line += 1;
+  }
+  flush();
+  return statements;
+}
+
+/**
+ * Split a statement's lines into its leading comment lines and its code lines,
+ * with the 1-based line number of the first code line. Comments are not
+ * breakpoints, so a statement's rationale comment block is part of its chunk.
+ */
+function splitLeadingComments(
+  statement: SqlStatement,
+): { comments: string[]; codeLines: string[]; codeLine: number } {
+  const lines = statement.text.split(/\r?\n/);
+  let first = 0;
+  while (first < lines.length && /^\s*--/.test(lines[first])) first += 1;
+  return {
+    comments: lines.slice(0, first),
+    codeLines: lines.slice(first),
+    codeLine: statement.line + first,
+  };
+}
+
+/**
+ * A statement is waived when one of its own leading comment lines carries
+ * `-- @idempotency-waive: <reason>` (the line directly above the SQL).
+ */
+function hasWaiver(comments: readonly string[]): boolean {
+  return comments.some((line) => IDEMPOTENCY_WAIVE_PATTERN.test(line));
+}
+
+/** First word-ish token of a statement, used to name the rule in messages. */
+function statementKind(statement: string): string {
+  const match = statement.match(/^\s*([A-Z]+(?:\s+[A-Z]+)?)/i);
+  return match ? match[1].toUpperCase() : "STATEMENT";
+}
+
+/**
+ * Check one migration file's SQL for re-run safety. Returns one problem per
+ * offending statement; an empty array means the file is idempotent.
+ *
+ * Rules (each names its own fix so the failure is actionable):
+ *   ① ADD COLUMN without IF NOT EXISTS
+ *   ② CREATE [UNIQUE] INDEX without IF NOT EXISTS
+ *   ③ CREATE TABLE without IF NOT EXISTS
+ *   ④ ADD CONSTRAINT without a matching DROP CONSTRAINT IF EXISTS in-file
+ *   ⑤ CREATE POLICY without a matching DROP POLICY IF EXISTS in-file
+ *   ⑥ CREATE TRIGGER without a DROP TRIGGER IF EXISTS in-file
+ */
+export function analyzeMigrationIdempotency(
+  sql: string,
+  options: { file: string },
+): IdempotencyProblem[] {
+  const problems: IdempotencyProblem[] = [];
+  const statements = splitStatements(sql);
+  const normalized = normalizeSql(sql);
+
+  for (const statement of statements) {
+    const { comments, codeLines, codeLine } = splitLeadingComments(statement);
+    const code = codeLines.join(" ").trim();
+    if (code.length === 0) continue;
+    if (hasWaiver(comments)) continue;
+
+    const addColumn = /\bADD\s+COLUMN\b/i.test(code);
+    if (addColumn && !/\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/i.test(code)) {
+      problems.push({
+        file: options.file,
+        line: codeLine,
+        statement: statementKind(code),
+        message:
+          "ADD COLUMN without IF NOT EXISTS — re-running this migration would fail with " +
+          "\"column already exists\". Write `ALTER TABLE \"t\" ADD COLUMN IF NOT EXISTS \"c\" <type>;`",
+      });
+    }
+
+    const createIndex = /\bCREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(code);
+    if (createIndex && !/\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\b/i.test(code)) {
+      problems.push({
+        file: options.file,
+        line: codeLine,
+        statement: statementKind(code),
+        message:
+          "CREATE INDEX without IF NOT EXISTS — re-running this migration would fail with " +
+          "\"relation already exists\". Write `CREATE INDEX IF NOT EXISTS \"idx_name\" ON ...;`",
+      });
+    }
+
+    const createTable = /\bCREATE\s+TABLE\b/i.test(code);
+    if (createTable && !/\bCREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b/i.test(code)) {
+      problems.push({
+        file: options.file,
+        line: codeLine,
+        statement: statementKind(code),
+        message:
+          "CREATE TABLE without IF NOT EXISTS — re-running this migration would fail with " +
+          "\"relation already exists\". Write `CREATE TABLE IF NOT EXISTS \"name\" (...);`",
+      });
+    }
+
+    const addConstraint = code.match(/\bADD\s+CONSTRAINT\s+"?([A-Za-z0-9_]+)"?/i);
+    if (addConstraint) {
+      const name = addConstraint[1];
+      const dropFirst = new RegExp(
+        `DROP\\s+CONSTRAINT\\s+IF\\s+EXISTS\\s+"?${name}"?`,
+        "i",
+      );
+      if (!dropFirst.test(normalized)) {
+        problems.push({
+          file: options.file,
+          line: codeLine,
+          statement: statementKind(code),
+          message:
+            `ADD CONSTRAINT "${name}" has no matching DROP CONSTRAINT IF EXISTS in this file — ` +
+            "re-running this migration would fail with \"constraint already exists\". " +
+            `Write \`ALTER TABLE "t" DROP CONSTRAINT IF EXISTS "${name}";\` before the ADD.`,
+        });
+      }
+    }
+
+    const createPolicy = code.match(/\bCREATE\s+POLICY\s+"?([A-Za-z0-9_]+)"?\s+ON\s+"?([A-Za-z0-9_]+)"?/i);
+    if (createPolicy) {
+      const [, name, table] = createPolicy;
+      const dropFirst = new RegExp(
+        `DROP\\s+POLICY\\s+IF\\s+EXISTS\\s+"?${name}"?\\s+ON\\s+"?${table}"?`,
+        "i",
+      );
+      if (!dropFirst.test(normalized)) {
+        problems.push({
+          file: options.file,
+          line: codeLine,
+          statement: statementKind(code),
+          message:
+            `CREATE POLICY "${name}" has no matching DROP POLICY IF EXISTS in this file — ` +
+            "re-running this migration would fail with \"policy already exists\". " +
+            `Write \`DROP POLICY IF EXISTS "${name}" ON "${table}";\` before the CREATE.`,
+        });
+      }
+    }
+
+    const createTrigger = code.match(/\bCREATE\s+TRIGGER\s+"?([A-Za-z0-9_]+)"?/i);
+    if (createTrigger) {
+      const name = createTrigger[1];
+      const dropFirst = new RegExp(
+        `DROP\\s+TRIGGER\\s+IF\\s+EXISTS\\s+"?${name}"?`,
+        "i",
+      );
+      if (!dropFirst.test(normalized)) {
+        problems.push({
+          file: options.file,
+          line: codeLine,
+          statement: statementKind(code),
+          message:
+            `CREATE TRIGGER "${name}" has no matching DROP TRIGGER IF EXISTS in this file — ` +
+            "re-running this migration would fail with \"trigger already exists\". " +
+            `Write \`DROP TRIGGER IF EXISTS "${name}" ON "t";\` before the CREATE.`,
+        });
+      }
+    }
+  }
+
+  return problems;
+}
+
+/** Numeric prefix of a `NNNN_tag.sql` file name, or null when it has none. */
+export function migrationFileIndex(fileName: string): number | null {
+  const match = fileName.match(/^(\d{4})_.+\.sql$/);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Lint every migration at or after the cutover inside a release folder.
+ * Files below the cutover are historical and exempt (D1).
+ */
+export function verifyMigrationIdempotency(
+  releaseDir: string,
+  cutoverIdx = MIGRATION_IDEMPOTENCY_CUTOVER_IDX,
+): IdempotencyProblem[] {
+  const problems: IdempotencyProblem[] = [];
+  for (const file of readdirSync(releaseDir).sort()) {
+    const index = migrationFileIndex(file);
+    if (index == null || index < cutoverIdx) continue;
+    const sql = readFileSync(path.join(releaseDir, file), "utf8");
+    problems.push(...analyzeMigrationIdempotency(sql, { file }));
+  }
+  return problems;
+}
+
+/** New artifact paths present in `after` but not in `before`. */
+export function diffReleaseArtifacts(before: readonly string[], after: readonly string[]): string[] {
+  const known = new Set(before);
+  return after.filter((file) => !known.has(file)).sort();
+}
+
+/** Relative posix-style paths of every file under `dir` (recursive). */
+function listArtifacts(dir: string, base = dir): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...listArtifacts(full, base));
+    else out.push(path.relative(base, full).split(path.sep).join("/"));
+  }
+  return out.sort();
+}
+
+export interface GenerateNoOpResult {
+  ok: boolean;
+  /** Migration artifacts generate would have written — empty on a clean chain. */
+  added: string[];
+  detail: string;
+}
+
+/**
+ * Prove `drizzle-kit generate` is a no-op against the committed migration chain:
+ * run it inside a throwaway sandbox (src + drizzle-release + linked
+ * node_modules, `out` relative) and fail if any new `.sql`/snapshot appears.
+ * A missing terminal snapshot is exactly the 0047–0050 defect — the next
+ * `db:generate` then replays applied migrations as a brand-new pseudo migration.
+ *
+ * `generate` does not connect to a database, so this stays CI-safe without
+ * Postgres; `strict` is off and stdin is ignored so a drifted chain reports
+ * instead of hanging on an interactive rename/delete prompt. The sandbox (and
+ * a relative `out`) is mandatory, not cosmetic: drizzle-kit joins `out` with
+ * the working directory, so an absolute out path from a foreign drive resolves
+ * to `<cwd>\C:\...` and aborts — printing the error yet still exiting 0. That
+ * is why success additionally requires the "No schema changes" evidence on
+ * stdout instead of trusting the exit code alone.
+ */
+export function verifyGenerateIsNoOp(
+  projectRoot: string,
+  databaseUrl = process.env.DATABASE_URL ?? "postgresql://localhost:5432/placeholder",
+): GenerateNoOpResult {
+  const tmp = mkdtempSync(path.join(tmpdir(), "release-generate-noop-"));
+  const sandbox = path.join(tmp, "project");
+  const outDir = path.join(sandbox, "drizzle-release");
+  const configPath = path.join(sandbox, ".migration-noop.config.ts");
+
+  try {
+    mkdirSync(sandbox, { recursive: true });
+    cpSync(path.join(projectRoot, "src"), path.join(sandbox, "src"), { recursive: true });
+    cpSync(path.join(projectRoot, "drizzle-release"), outDir, { recursive: true });
+    cpSync(path.join(projectRoot, "package.json"), path.join(sandbox, "package.json"));
+    // drizzle-kit bundles the config and schema with esbuild from the sandbox;
+    // a directory link keeps node_modules resolution without copying an install.
+    symlinkSync(
+      path.join(projectRoot, "node_modules"),
+      path.join(sandbox, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const before = listArtifacts(outDir);
+    writeFileSync(
+      configPath,
+      `import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "postgresql",
+  schema: "./src/db/schema.ts",
+  out: "./drizzle-release",
+  migrations: { schema: "vocab_migrations", table: "__v2_release_migrations" },
+  dbCredentials: { url: ${JSON.stringify(databaseUrl)} },
+  schemaFilter: ["public"],
+  tablesFilter: ["*"],
+  verbose: false,
+  strict: false,
+});
+`,
+      "utf8",
+    );
+
+    const binPath = path.join(projectRoot, "node_modules", "drizzle-kit", "bin.cjs");
+    const res = spawnSync(process.execPath, [binPath, "generate", "--config", configPath], {
+      cwd: sandbox,
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const stdout = res.stdout ?? "";
+    if (res.status !== 0) {
+      const errOut = (res.stderr || stdout || "").trim();
+      return {
+        ok: false,
+        added: [],
+        detail: `drizzle-kit generate failed (exit ${res.status}): ${errOut}`,
+      };
+    }
+
+    const added = diffReleaseArtifacts(before, listArtifacts(outDir));
+    if (added.length > 0) {
+      return {
+        ok: false,
+        added,
+        detail:
+          "drizzle-kit generate would write new migration artifacts " +
+          `(${added.join(", ")}) — the meta snapshots drifted from src/db/schema.ts`,
+      };
+    }
+
+    if (!/no schema changes/i.test(stdout)) {
+      return {
+        ok: false,
+        added,
+        detail:
+          "drizzle-kit generate exited 0 without reporting \"No schema changes\" — " +
+          `treating it as a failure (stderr: ${(res.stderr || "").trim() || "(empty)"})`,
+      };
+    }
+
+    return { ok: true, added, detail: "drizzle-kit generate is a no-op against the committed chain" };
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 export interface DriftResult {
   ok: boolean;
   columnMatch: boolean;
@@ -331,7 +810,33 @@ export default defineConfig({
       throw new Error("Schema drift detected: 0027 direction-preserving refresh_l2_cache contract changed");
     }
 
-    console.log(`[schema-drift] OK — ${result.detail}; SECURITY DEFINER functions match authoritative contracts`);
+    const releaseDir = path.join(projectRoot, "drizzle-release");
+    const chainProblems = verifyReleaseMigrationFolder(releaseDir);
+    if (chainProblems.length > 0) {
+      throw new Error(`Migration chain invalid: ${chainProblems.join("; ")}`);
+    }
+
+    const idempotencyProblems = verifyMigrationIdempotency(releaseDir);
+    if (idempotencyProblems.length > 0) {
+      throw new Error(
+        `Migration chain invalid: ${idempotencyProblems.length} non-idempotent statement(s) at or ` +
+          `after idx ${MIGRATION_IDEMPOTENCY_CUTOVER_IDX} (ADR-0042): ` +
+          idempotencyProblems
+            .map((problem) => `${problem.file}:${problem.line} — ${problem.message}`)
+            .join("; "),
+      );
+    }
+
+    const noOp = verifyGenerateIsNoOp(projectRoot, databaseUrl);
+    if (!noOp.ok) {
+      throw new Error(`Migration chain invalid: ${noOp.detail}`);
+    }
+
+    console.log(
+      `[schema-drift] OK — ${result.detail}; SECURITY DEFINER functions match authoritative contracts; ` +
+        `migration journal is strictly increasing with no orphan tag/file and ${noOp.detail}; ` +
+        `migrations from idx ${MIGRATION_IDEMPOTENCY_CUTOVER_IDX} are re-run safe`,
+    );
   } finally {
     rmSync(tmp, { recursive: true, force: true });
     if (existsSync(configPath)) unlinkSync(configPath);

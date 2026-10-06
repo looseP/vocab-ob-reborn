@@ -1825,3 +1825,112 @@ export const l3StudyNoteReferences = pgTable("l3_study_note_references", {
 	check("l3_study_note_references_field_hash_check", sql`char_length(field_hash) = 64`),
 ]);
 
+
+// ── 葫芦冲刺（ADR-0041，2026-10-06）──────────────────────────────────────────
+// L1 词书上的阶段性多轮冲刺计划。**两张新表、不改任何已有表**；不进 sessions
+// （枚举 + 坐次语义两条理由）、不进 l3_sessions（它的世界是语境不是词）。
+//
+// 零 FSRS 写入是**结构性**的：两表无 stability / difficulty / retrievability /
+// due 列，服务层不引用 review.service、不写 review_logs / user_word_progress。
+// 唯一碰到既有数据的地方是可选、默认关闭的挂起开关（suspend_review +
+// suspend_snapshot），它在构造上隔离（快照回写，恢复只按快照逐行还原）。
+//
+// 刻意没有的列/表（完备设计 §4.3）：页级明细表、词级通过记录、plan jsonb、
+// version 列。失败页不留记录；「没通过」是页级比例事件，不接错题库。
+
+export const huluPlans = pgTable("hulu_plans", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	// 复合 FK (wordbook_id, user_id) → wordbooks(id, user_id) cascade：
+	// 照 sessions_wordbook_owner_fkey 先例，防越权挂书（schema.ts:337）。
+	wordbookId: uuid("wordbook_id").notNull(),
+	// **仅标签**（R6）：words / wordbooks 都没有 direction 列，方向不过滤词集；
+	// 创建 UI 不得提供「按 direction 选词」。三值枚举同 ADR-0017。
+	direction: text("direction"),
+	// 无截止日不建计划：exam_date 是必填，风险校验的 left 由它推出。
+	examDate: date("exam_date").notNull(),
+	targetRounds: smallint("target_rounds").default(4).notNull(),
+	pageSize: smallint("page_size").default(20).notNull(),
+	// 闸门比例存**列值**（完备设计 §三）：判定读本列，不写死 0.8。
+	gateRatio: numeric("gate_ratio", { precision: 3, scale: 2 }).default('0.80').notNull(),
+	// 创建时定格（R6）：整本词书的 word_id 数组，稳定序（created_at ASC, word_id ASC）。
+	wordIds: uuid("word_ids").array().notNull(),
+	status: text("status").default('active').notNull(),
+	// 协议版本（R12，迁移 0051）：'v2' 新计划 / 'legacy' 存量回填。DEFAULT 指向**旧**
+	// 语义是有意的 fail-safe —— 滚动升级/回滚窗口内，未感知新列的旧写入路径产出的行
+	// 仍被正确解释；新代码写新行时显式给 'v2'，不吃默认值。
+	protocolVersion: text("protocol_version").default('legacy').notNull(),
+	// 「包含还没复习过的词」（R12，默认关 = R9 先学后刷）：池是否含 state='new'。
+	// v2 计划是否需要曝光轮由它决定 —— 池创建时已定格，事后无法从词集反推。
+	includeNewWords: boolean("include_new_words").default(false).notNull(),
+	// 默认关是有意的（ADR-0041 决策 5）：只有用户显式开启才动 user_word_progress。
+	suspendReview: boolean("suspend_review").default(false).notNull(),
+	// {wordId: 挂起前 state}；仅开关开且已 apply 时非空（R1）。恢复 = 逐行回写本快照。
+	suspendSnapshot: jsonb("suspend_snapshot"),
+	startedAt: timestamp("started_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+	endedAt: timestamp("ended_at", { withTimezone: true, mode: "string" }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: "string" }).defaultNow().notNull(),
+}, (table) => [
+	index("idx_hulu_plans_user").using("btree", table.userId.asc().nullsLast()),
+	// 同词书至多一个 active 计划（完备设计 §4.1）：并发双创建由本索引兜底，
+	// 服务层撞索引后重查并返回既有计划（幂等语义）。
+	uniqueIndex("idx_hulu_plans_one_active").using("btree", table.userId.asc().nullsLast(), table.wordbookId.asc().nullsLast()).where(sql`status = 'active'`),
+	foreignKey({
+			columns: [table.wordbookId, table.userId],
+			foreignColumns: [wordbooks.id, wordbooks.userId],
+			name: "hulu_plans_wordbook_owner_fkey"
+		}).onDelete("cascade"),
+	// 供 hulu_rounds 的复合 FK 用（照 sessions_id_user_wordbook_unique，schema.ts:342）。
+	unique("hulu_plans_id_user_unique").on(table.id, table.userId),
+	pgPolicy("hulu_plans_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("hulu_plans_direction_check", sql`direction IS NULL OR direction = ANY (ARRAY['通用'::text, '考研'::text, '雅思'::text])`),
+	check("hulu_plans_protocol_check", sql`protocol_version = ANY (ARRAY['v2'::text, 'legacy'::text])`),
+	check("hulu_plans_target_rounds_check", sql`target_rounds >= 2 AND target_rounds <= 8`),
+	check("hulu_plans_page_size_check", sql`page_size >= 5 AND page_size <= 50`),
+	check("hulu_plans_gate_ratio_check", sql`gate_ratio >= 0.50 AND gate_ratio <= 1.00`),
+	check("hulu_plans_word_ids_check", sql`cardinality(word_ids) >= 1 AND cardinality(word_ids) <= 20000`),
+	check("hulu_plans_status_check", sql`status = ANY (ARRAY['active'::text, 'completed'::text, 'abandoned'::text])`),
+]);
+
+export const huluRounds = pgTable("hulu_rounds", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	planId: uuid("plan_id").notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	roundNo: smallint("round_no").notNull(),
+	startedAt: timestamp("started_at", { withTimezone: true, mode: "string" }).notNull(),
+	// ended_at IS NULL = 进行中。「全计划至多一个未收尾轮」由服务层在事务内保证
+	// （SELECT ... FOR UPDATE 计划行后判断），**不另建部分唯一索引**（完备设计 §4.2）。
+	endedAt: timestamp("ended_at", { withTimezone: true, mode: "string" }),
+	// 墙钟 elapsed（R5），收尾写入后不改；服务端夹取到 [0, 86400×7]。
+	elapsedSeconds: integer("elapsed_seconds"),
+	// 轮次语义标签（R12/R13，迁移 0051）：'exposure' 曝光轮 / 'recall' 复习轮 /
+	// 'legacy' 存量回填。legacy 轮参与曲线但**永不作为基准轮**；曝光轮不进缩时曲线。
+	kind: text("kind").default('legacy').notNull(),
+	// 本轮**实际结算词集**的指纹（R13）：收尾时按已结算页切片推导（页级近似）、
+	// 排序后 SHA-256 取 hex 前 16 位。可比较轮的判据 —— `words_total` 相等**不是**
+	// 词集等价判据（它恒等于定格词数，不随删词变化）。存量行不回填（重建不出可信
+	// 的历史结算词集），老曲线维持现行画法。
+	wordSetFingerprint: text("word_set_fingerprint"),
+	// 页游标（R7）：页结算 = 单条条件 UPDATE ... WHERE pages_passed = $pageIndex，
+	// 原子且并发安全，不需要页级明细表。
+	pagesPassed: smallint("pages_passed").default(0).notNull(),
+	wordsPassed: integer("words_passed").default(0).notNull(),
+	// 冗余 cardinality(word_ids)：避免缩时曲线为拿总数回表读计划。
+	wordsTotal: integer("words_total").notNull(),
+}, (table) => [
+	index("idx_hulu_rounds_plan").using("btree", table.planId.asc().nullsLast()),
+	foreignKey({
+			columns: [table.planId, table.userId],
+			foreignColumns: [huluPlans.id, huluPlans.userId],
+			name: "hulu_rounds_plan_owner_fkey"
+		}).onDelete("cascade"),
+	unique("hulu_rounds_plan_round_unique").on(table.planId, table.roundNo),
+	pgPolicy("hulu_rounds_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	// 曝光轮需要 round_no = 0（R12）；上界 8 不动 —— 复习轮恒为 1..target_rounds。
+	check("hulu_rounds_round_no_check", sql`round_no >= 0 AND round_no <= 8`),
+	check("hulu_rounds_kind_check", sql`kind = ANY (ARRAY['exposure'::text, 'recall'::text, 'legacy'::text])`),
+	check("hulu_rounds_elapsed_seconds_check", sql`elapsed_seconds IS NULL OR (elapsed_seconds >= 0 AND elapsed_seconds <= 604800)`),
+	check("hulu_rounds_pages_passed_check", sql`pages_passed >= 0`),
+	check("hulu_rounds_words_passed_check", sql`words_passed >= 0`),
+	check("hulu_rounds_words_total_check", sql`words_total >= 0`),
+]);

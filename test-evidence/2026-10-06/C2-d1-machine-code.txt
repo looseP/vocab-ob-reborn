@@ -1,0 +1,23 @@
+=== 修订轮 Part B⑫：D1 两方向取证（第 2 轮，干净游标 pages_passed=0）===
+日期: 2026-10-06 18:15:39
+第 2 轮 round_no=2，pageSize=20 → 第 0 页 20 词、第 1 页 4 词
+
+--- 方向 A：页内词【下架】→ alive 20→19 → 客户端持 total=20 结算 ---
+已下架 35e1c427；重取页载荷确认 alive：
+  total=24 alive=19
+用陈旧 total=20 结算 →
+{"error":"total 与本页存活词数不符","code":"HULU_PAGE_ALIVE_MISMATCH","message":"total 与本页存活词数不符","details":{"total":20,"alive":19,"pageIndex":0},"requestId":"b3f94cb3-a972-4a1a-b06d-4514a602225e"}
+  HTTP=422
+
+--- 方向 B：复原该词【上架】→ alive 19→20 → 客户端持 total=19 结算 ---
+已复原；服务端 alive 回到 20，客户端仍持 19 →
+{"error":"total 与本页存活词数不符","code":"HULU_PAGE_ALIVE_MISMATCH","message":"total 与本页存活词数不符","details":{"total":19,"alive":20,"pageIndex":0},"requestId":"261cd108-5b47-4b0f-8955-ddf03fbf9548"}
+  HTTP=422
+
+--- 对照：码不泛化 —— 按正确 alive=20 结算应 200 成功 ---
+{"id":"27d100e6-667a-43b2-83ac-11214f36529f","plan_id":"a0d4b8e6-478c-4cf5-90e2-aa270a39448d","user_id":"00000000-0000-4000-8000-000000000001","round_no":2,"started_at":"2026-10-06 10:15:21.567+00","ended_at":null,"elapsed_seconds":null,"pages_passed":1,"words_passed":20,"words_total":24}
+  HTTP=200
+
+--- 对照：不过闸仍是 VALIDATION_ERROR（不是新码）---
+{"error":"本页未达闸门，不能结算","code":"VALIDATION_ERROR","message":"本页未达闸门，不能结算","details":{"field":"passed"},"requestId":"bf0dbf4d-4b78-4865-aac9-064d801efbcd"}
+  HTTP=422

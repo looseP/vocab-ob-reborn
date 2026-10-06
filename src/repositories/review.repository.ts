@@ -16,6 +16,7 @@ import type {
 } from "../domain";
 import type {
   BulkForgetBatchInput,
+  BulkSuspendByWordIdsInput,
   BulkSuspendByWordbookInput,
   ForgettingPreviewRow,
   IReviewRepository,
@@ -23,7 +24,9 @@ import type {
   InsertNewCardStatus,
   ProgressForAction,
   ProgressWithContentHash,
+  RestoreSuspendSnapshotInput,
   SaveAnswerInput,
+  SuspendedWordSnapshot,
   UndoRpcResult,
 } from "./interfaces";
 import { BaseRepository } from "./base";
@@ -765,6 +768,67 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       [reviewLogId, userId],
     );
     return row?.wordbook_id ?? null;
+  }
+
+  /**
+   * 葫芦冲刺批量挂起（ADR-0041 决策 5 / 完备设计 §六，第 9 个 state 写点）。
+   *
+   * 单条 set-based 语句：从候选子查询读**挂起前** state，主 UPDATE 挂起，经
+   * `RETURNING s.word_id, s.old_state` 回返快照 —— 结果直接写入计划行的
+   * `suspend_snapshot`，因此**不需要 review_logs**（这正是「葫芦的快照在计划行、
+   * 一键遗忘的快照在日志」的分野）。
+   *
+   * 范围含 `new`（与 bulkSuspendByWordbook 排除 new 的语义**不同**：有快照即安全，
+   * 且目标是整批退出到期队列）；`state <> 'suspended'` 使重复挂起零行变化。
+   * scope 钉死 (user, wordbook) 防跨书误写。MUST be in a transaction。
+   */
+  async bulkSuspendByWordIds(input: BulkSuspendByWordIdsInput): Promise<SuspendedWordSnapshot[]> {
+    this.requireTx();
+    if (input.wordIds.length === 0) return [];
+    const rows = await this.query<{ word_id: string; old_state: string }>(
+      `UPDATE user_word_progress u
+       SET state = 'suspended', updated_at = now()
+       FROM (
+         SELECT id, word_id, state AS old_state
+         FROM user_word_progress
+         WHERE user_id = $1 AND wordbook_id = $2::uuid
+           AND word_id = ANY($3::uuid[])
+           AND state <> 'suspended'
+       ) s
+       WHERE u.id = s.id
+       RETURNING s.word_id, s.old_state`,
+      [input.userId, input.wordbookId, input.wordIds],
+    );
+    return rows.map((row) => ({ wordId: row.word_id, oldState: row.old_state }));
+  }
+
+  /**
+   * 葫芦冲刺挂起恢复（ADR-0041 决策 5，第 10 个 state 写点）：快照回写。
+   *
+   * `jsonb_to_recordset` 展开 `{wordId: 挂起前 state}`，逐行回写**快照内的
+   * state**，且仅当该行当前仍为 `suspended`（用户手动恢复过的词不动）。
+   * **禁止**统一恢复成 `'review'` —— 那会让 new/learning/relearning 的行伪装成
+   * review 态，改变 review 队列行为（完备设计 R1 的最重修正）。
+   * **不写 review_logs**。scope 钉死 (user, wordbook)。MUST be in a transaction。
+   */
+  async restoreSuspendSnapshot(input: RestoreSuspendSnapshotInput): Promise<number> {
+    this.requireTx();
+    const entries = Object.entries(input.snapshot);
+    if (entries.length === 0) return 0;
+    const snapshotJson = JSON.stringify(
+      entries.map(([wordId, state]) => ({ word_id: wordId, old_state: state })),
+    );
+    const rows = await this.query<{ id: string }>(
+      `UPDATE user_word_progress u
+       SET state = s.old_state, updated_at = now()
+       FROM jsonb_to_recordset($3::jsonb) AS s(word_id uuid, old_state text)
+       WHERE u.user_id = $1 AND u.wordbook_id = $2::uuid
+         AND u.word_id = s.word_id
+         AND u.state = 'suspended'
+       RETURNING u.id`,
+      [input.userId, input.wordbookId, snapshotJson],
+    );
+    return rows.length;
   }
 
   /**

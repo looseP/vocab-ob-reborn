@@ -1,0 +1,11 @@
+ suspended_after_create 
+------------------------
+                     40
+(1 row)
+
+ due_after_create 
+------------------
+              452
+(1 row)
+
+ERROR:  cannot get array length of a non-array

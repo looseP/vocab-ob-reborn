@@ -75,6 +75,9 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     bulkSuspendByWordbook: vi.fn(async () => 0),
     findBulkForgetBatch: vi.fn(async () => false),
     restoreBulkForget: vi.fn(async () => 0),
+    // ADR-0041 葫芦冲刺：本套件不触达（挂起/恢复属 P2 接线），stub 归零。
+    bulkSuspendByWordIds: vi.fn(async () => []),
+    restoreSuspendSnapshot: vi.fn(async () => 0),
     ...overrides,
   };
 }

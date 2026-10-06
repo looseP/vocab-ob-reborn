@@ -34,6 +34,17 @@ import {
   L3_SESSION_MAX_DAYS,
   L3_SESSION_TYPES,
 } from "../../services/l3-session.service";
+import {
+  HULU_DEFAULT_GATE_RATIO,
+  HULU_DEFAULT_PAGE_SIZE,
+  HULU_DEFAULT_ROUNDS,
+  HULU_MAX_GATE,
+  HULU_MAX_PAGE,
+  HULU_MAX_ROUNDS,
+  HULU_MIN_GATE,
+  HULU_MIN_PAGE,
+  HULU_MIN_ROUNDS,
+} from "../../domain/hulu-sprint";
 
 // ── Primitives ──────────────────────────────────────────────────────────
 export const reviewRatingSchema = z.enum(["again", "hard", "good", "easy"]);
@@ -889,6 +900,51 @@ export const forgettingApplySchema = z.object({
 export const forgettingRestoreSchema = z.object({
   bookId: uuidSchema,
   batchId: z.string().trim().min(1).max(200),
+});
+
+// ── 葫芦冲刺（ADR-0041，2026-10-06）────────────────────────────────────────
+// 边界与 hulu_plans 的 CHECK 同值（单一真源在 src/domain/hulu-sprint.ts 的常量）：
+// 轮数 2..8、页 5..50、闸门 0.50..1.00。direction 仅标签、不过滤词集（R6）。
+export const huluPlanCreateSchema = z.object({
+  wordbookId: uuidSchema,
+  /** 仅标签（三值枚举同 ADR-0017）；不提供「按 direction 选词」。 */
+  direction: directionSchema.nullable().optional(),
+  /** 考试日期（YYYY-MM-DD）；缺省或已过由 service 抛 422。 */
+  examDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "examDate must be YYYY-MM-DD"),
+  targetRounds: z.number().int().min(HULU_MIN_ROUNDS).max(HULU_MAX_ROUNDS).optional().default(HULU_DEFAULT_ROUNDS),
+  pageSize: z.number().int().min(HULU_MIN_PAGE).max(HULU_MAX_PAGE).optional().default(HULU_DEFAULT_PAGE_SIZE),
+  gateRatio: z.number().min(HULU_MIN_GATE).max(HULU_MAX_GATE).optional().default(HULU_DEFAULT_GATE_RATIO),
+  /**
+   * 「包含还没复习过的词」（R12，默认关）：true → 池含 `new`，该计划先过一遍
+   * 曝光轮（第 0 轮）再进复习轮；false → 现行先学后刷口径。
+   * 可选新增 = 非 breaking（ADR-0036 §3 先例）。
+   */
+  includeNewWords: z.boolean().optional().default(false),
+  /** 可选挂起开关（默认关，P2 起生效）：只能创建时设定，不支持中途切换。 */
+  suspendReview: z.boolean().optional().default(false),
+});
+
+/**
+ * 页结算（R7）：`total` = 本页**存活**词数（服务端复算，不符 → 422）；
+ * `passed` 不过闸 → 422。三个计数都是 ≥ 0 的整数。
+ */
+export const huluPageSettleSchema = z.object({
+  pageIndex: z.number().int().min(0),
+  passed: z.number().int().min(0),
+  total: z.number().int().min(0),
+});
+
+/**
+ * 轮次开始 / 收尾的可选时刻（缺省服务端 now()；越界由 service 夹取到
+ * `[now - 7 天, now]`，不报错 —— 与 clampElapsedSeconds 同界）。
+ * 只收 UTC/带 Z 的 ISO 形状（zod datetime 不收裸偏移，与既有端点同口径）。
+ */
+export const huluRoundStartSchema = z.object({
+  startedAt: z.string().datetime().optional(),
+});
+
+export const huluRoundFinishSchema = z.object({
+  endedAt: z.string().datetime().optional(),
 });
 
 // ── 批次一：做题注记（原文分析条目）与规律标签字典（2026-09-16）─────────────

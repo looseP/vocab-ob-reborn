@@ -1,0 +1,22 @@
+                  id                  |  status   | n  |          created_at           
+--------------------------------------+-----------+----+-------------------------------
+ 26055a59-0b12-4a81-8fae-01141e4fb89c | abandoned |  1 | 2026-10-06 08:31:41.459336+00
+ ecc3cccf-2cea-4ea3-bdb1-5453244138eb | abandoned | 41 | 2026-10-06 08:35:26.665296+00
+ d7e4b331-6cc5-4a2c-ab43-970743d1345c | abandoned | 41 | 2026-10-06 08:40:56.70738+00
+ f162084e-dbd9-4c61-8499-4753494d64f0 | abandoned | 41 | 2026-10-06 08:46:20.032422+00
+(4 rows)
+
+ERROR:  column "created_at" does not exist
+LINE 1: select id, plan_id, round_no, created_at from hulu_rounds or...
+                                      ^
+    column_name    
+-------------------
+ source_updated_at
+ updated_at
+(2 rows)
+
+                  id                  |    lemma    | is_published |          updated_at           
+--------------------------------------+-------------+--------------+-------------------------------
+ 011791ed-0adf-41bf-9893-b20438c57ec3 | adversarial | t            | 2026-09-28 06:11:54.671145+00
+(1 row)
+

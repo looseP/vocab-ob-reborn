@@ -1,0 +1,27 @@
+ review_logs_final 
+-------------------
+               111
+(1 row)
+
+      max_progress_final       
+-------------------------------
+ 2026-10-06 08:45:37.145096+00
+(1 row)
+
+ wordbook_items_final 
+----------------------
+                   41
+(1 row)
+
+  state   | count 
+----------+-------
+ new      |   478
+ review   |    14
+ learning |    10
+(3 rows)
+
+ due_final 
+-----------
+       492
+(1 row)
+

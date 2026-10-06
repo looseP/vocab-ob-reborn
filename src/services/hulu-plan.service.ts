@@ -1,0 +1,770 @@
+/**
+ * HuluPlanService — 葫芦冲刺计划容器（ADR-0041，完备设计 §三/§五）。
+ *
+ * 葫芦 = 挂在 L1 词书上的阶段性冲刺计划：整批词按页推进、页级检索闸门、多轮滚动、
+ * 只记轮次耗时。本期（P0）只做**计划容器**：创建 / 读取 / 放弃 + 风险校验 + 幂等创建。
+ *
+ * 红线（ADR-0041 / 执行计划 P0 验收）：
+ *   - **零 FSRS 写入（默认）**：本服务不触碰复习写入面（事件日志、进度表、复习服务、
+ *     评分提交）—— 服务层只调 hulu 仓库与纯函数；唯一的例外是**可选挂起开关**
+ *     （默认关，P2 接线）：挂起/恢复经 ReviewRepository 的两个方法调用，
+ *     本服务**不裸写 SQL**。为把这条纪律做成可机检的，本文件刻意**不出现**
+ *     那几张表/服务的名字（完备设计 测试 10 的 grep）。
+ *   - **不改已有表**：只写 hulu_plans / hulu_rounds（挂起开关经 ReviewRepository）。
+ *   - 词集**创建时定格**（direction 仅标签不过滤 —— R6）；定格源 = 该词书的
+ *     **复习牌堆**（R9「先学后刷」：learning/review/relearning，排除 new 与
+ *     suspended；序 created_at ASC, word_id ASC）。
+ *
+ * 事务：所有方法（含只读）都经 withTransaction + actorId —— hulu_plans /
+ * hulu_rounds 是 owner-RLS 表，读也要带 actor。
+ */
+
+import type { PoolClient } from "pg";
+import { createHash } from "node:crypto";
+import { BusinessRuleError, ConflictError, HuluPageAliveMismatchError, NotFoundError, ValidationError } from "../errors";
+import { withTransaction } from "../db/transaction";
+import { createRepositories } from "../repositories/factory";
+import { isUniqueViolation } from "../repositories/hulu.repository";
+import {
+  assessHuluRisk,
+  clampElapsedSeconds,
+  HULU_DEFAULT_GATE_RATIO,
+  HULU_DEFAULT_PAGE_SIZE,
+  HULU_DEFAULT_ROUNDS,
+  HULU_MAX_GATE,
+  HULU_MAX_PAGE,
+  HULU_MAX_ROUNDS,
+  HULU_MAX_SINGLE_ROUND_SECONDS,
+  HULU_MAX_WORDS,
+  HULU_MIN_GATE,
+  HULU_MIN_PAGE,
+  HULU_MIN_ROUNDS,
+  huluGateDecision,
+  huluPageCount,
+  huluPageSlice,
+  toHuluPlanSummary,
+  type HuluPagePayload,
+  type HuluPageWordItem,
+  type HuluPlanSummary,
+  type HuluPlanWithRounds,
+  type HuluRiskResult,
+  type HuluRoundRow,
+} from "../domain/hulu-sprint";
+import type { IRepositories } from "../repositories/interfaces";
+
+type TxRunner = typeof withTransaction;
+type RepositoryFactory = (tx?: PoolClient) => IRepositories;
+
+/** 方向三值（ADR-0017，hulu_plans.direction CHECK 同值）。 */
+const DIRECTIONS = ["通用", "考研", "雅思"] as const;
+
+/** 距考试日的剩余天数（不足一天算 0；已过 → 负数，由调用方拒绝）。 */
+const MS_PER_DAY = 86400000;
+
+const MS_PER_SECOND = 1000;
+
+export interface HuluPlanServiceDeps {
+  /** 事务执行器（默认 withTransaction；测试可注入）。 */
+  txRunner?: TxRunner;
+  /** 仓库工厂（默认 createRepositories；测试可注入）。 */
+  repositoryFactory?: RepositoryFactory;
+  /** 「今天」的日期键（YYYY-MM-DD，显示时区）；默认取系统显示时区，测试可注入。 */
+  todayKey?: (repos: IRepositories) => string;
+  /** 墙钟（默认系统时钟；测试可注入固定值）。轮次起止时刻的唯一来源。 */
+  now?: () => Date;
+}
+
+export interface CreateHuluPlanInput {
+  userId: string;
+  wordbookId: string;
+  /** 仅标签，不过滤词集（R6）。 */
+  direction?: string | null;
+  /** 考试日期（YYYY-MM-DD）。 */
+  examDate: string;
+  targetRounds?: number;
+  pageSize?: number;
+  gateRatio?: number;
+  /**
+   * 「包含还没复习过的词」（R12，默认关 = R9 先学后刷）：true 时池 = 四态
+   * （含 `new`），轮次序列 = 曝光轮 ×1 + 复习轮 × `target_rounds`；false 时池 =
+   * 三态（现行口径），轮次序列 = 复习轮 × `target_rounds`。
+   */
+  includeNewWords?: boolean;
+  /**
+   * 可选挂起开关（默认关，P2 起生效）：true 时**同一事务**内把这批词置为
+   * `suspended`（退出到期队列）并把「挂起前 state」逐行写进计划行的
+   * `suspend_snapshot`；计划转 completed / abandoned 时同事务恢复。
+   * 只能创建时设定，不支持中途切换（要换就放弃重建）。
+   */
+  suspendReview?: boolean;
+}
+
+export interface GetHuluPlanInput {
+  userId: string;
+  planId: string;
+}
+
+export interface AbandonHuluPlanInput {
+  userId: string;
+  planId: string;
+}
+
+/** 开始下一轮的入参；`startedAt` 缺省取服务端 now()，越界夹取到当前时刻。 */
+export interface StartHuluRoundInput {
+  userId: string;
+  planId: string;
+  startedAt?: string;
+}
+
+/** 页结算入参（R7）。`passed`/`total` 都是**本页存活词**的口径。 */
+export interface SettleHuluPageInput {
+  userId: string;
+  planId: string;
+  roundNo: number;
+  pageIndex: number;
+  passed: number;
+  total: number;
+}
+
+/** 轮次收尾入参；`endedAt` 缺省取服务端 now()。 */
+export interface FinishHuluRoundInput {
+  userId: string;
+  planId: string;
+  roundNo: number;
+  endedAt?: string;
+}
+
+/** 页载荷入参（R4）。 */
+export interface GetHuluPlanPageInput {
+  userId: string;
+  planId: string;
+  pageIndex: number;
+}
+
+function requireNonEmpty(value: string, field: string): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ValidationError(`${field} cannot be empty`, field);
+  }
+}
+
+/** 整数区间校验（越界 → ValidationError，与 DB CHECK 同边界）。 */
+function requireIntInRange(value: number, min: number, max: number, field: string): number {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new ValidationError(`${field} must be an integer between ${min} and ${max}`, field);
+  }
+  return value;
+}
+
+function requireNumberInRange(value: number, min: number, max: number, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
+    throw new ValidationError(`${field} must be a number between ${min} and ${max}`, field);
+  }
+  return value;
+}
+
+/** YYYY-MM-DD 形状校验（不解析时区：exam_date 是日历日，不是时刻）。 */
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function requireDateKey(value: string, field: string): string {
+  if (typeof value !== "string" || !DATE_KEY_RE.test(value)) {
+    throw new ValidationError(`${field} must be a YYYY-MM-DD date`, field);
+  }
+  return value;
+}
+
+/**
+ * 剩余天数（考试日 - 今天，日历日粒度）：
+ * 用两个日期键各自的 UTC 零点求差，避开夏令时/时区偏移对天数的影响。
+ */
+function daysBetween(fromKey: string, toKey: string): number {
+  const from = Date.parse(`${fromKey}T00:00:00Z`);
+  const to = Date.parse(`${toKey}T00:00:00Z`);
+  return Math.round((to - from) / MS_PER_DAY);
+}
+
+/**
+ * 客户端可选时刻的夹取（`startedAt` / `endedAt` 共用）：不早于 `now - 7 天`、
+ * 不晚于 `now`。上界防「未来起跑」（会让 elapsed 为负），下界与
+ * `clampElapsedSeconds` 的单轮上限同界（早于 7 天前起跑等价于超上限）。
+ *
+ * 缺省 → now()。形状非法 → ValidationError（路由 schema 已挡一层，此处是
+ * 服务层的防御性复验，照 createPlan 的 requireDateKey 先例）。
+ */
+function clampMoment(value: string | undefined, now: Date, field: string): string {
+  if (value === undefined) return now.toISOString();
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new ValidationError(`${field} must be an ISO datetime`, field);
+  }
+  const maxMs = now.getTime();
+  const minMs = maxMs - HULU_MAX_SINGLE_ROUND_SECONDS * MS_PER_SECOND;
+  return new Date(Math.min(Math.max(parsed, minMs), maxMs)).toISOString();
+}
+
+/** 非负整数校验（页结算的计数口径：pageIndex / passed / total 都是 ≥ 0 的整数）。 */
+function requireNonNegativeInt(value: number, field: string): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new ValidationError(`${field} must be a non-negative integer`, field);
+  }
+  return value;
+}
+
+/**
+ * 结算词集指纹（R13）：词 id **排序后**拼接、SHA-256 取 hex 前 16 位。
+ *
+ * 排序是必须的 —— 集合等价与顺序无关，而「页级近似」推导出的顺序在不同轮次
+ * 可能不同（删词会让某些页少词）。16 位 hex（64 bit）的碰撞域对「同一用户同一
+ * 计划的几轮词集」绰绰有余。
+ *
+ * 放在 service 层而非 domain：`node:crypto` 是出向依赖（domain 零出向红线）。
+ */
+function hashWordSet(wordIds: readonly string[]): string {
+  const sorted = [...wordIds].sort();
+  return createHash("sha256").update(sorted.join(",")).digest("hex").slice(0, 16);
+}
+
+export class HuluPlanService {
+  private readonly txRunner: TxRunner;
+  private readonly repositoryFactory: RepositoryFactory;
+  /** 「今天」的日期键提供者；缺省用仓库层的显示时区实现（测试可注入固定值）。 */
+  private readonly todayKey: (repos: IRepositories) => string;
+  /** 墙钟；轮次起止时刻的唯一来源（测试可注入固定值）。 */
+  private readonly now: () => Date;
+
+  constructor(private readonly deps: HuluPlanServiceDeps = {}) {
+    this.txRunner = deps.txRunner ?? withTransaction;
+    this.repositoryFactory = deps.repositoryFactory ?? createRepositories;
+    this.todayKey = deps.todayKey ?? ((repos) => repos.hulu.findTodayKeyInDisplayTz());
+    this.now = deps.now ?? (() => new Date());
+  }
+
+  /**
+   * 创建计划（单事务）：① 校验词书归属 → ② 已有 active 计划则**直接返回**（幂等）
+   * → ③ 定格取词（`includeNewWords` 决定池含不含 `new`）→ ④ 风险校验（block 抛
+   * 422，携带 { need, left, perRound }）→ ⑤ 插行（显式 `protocol_version='v2'`）
+   * → ⑥ 开关开则同事务挂起 + 快照落库。
+   * 并发撞 idx_hulu_plans_one_active 时重查并返回既有计划。
+   *
+   * `includeNewWords`（R12，默认关）：true 时池 = 四态（含 `new`），该 v2 计划
+   * 之后可开曝光轮（第 0 轮）；false 时池 = 三态，行为与 R9 先学后刷一致。
+   *
+   * `suspendReview = true`（P2 接线）：挂起经 `ReviewRepository.bulkSuspendByWordIds`
+   * （第 9 个 state 写点），回返的逐行「挂起前 state」写进计划行 —— **不写事件日志**。
+   * 挂起范围 = `word_ids` 中 `state <> 'suspended'` 的行（含 `new`，有快照即安全）。
+   * 幂等分支（已有 active 计划）**不重复挂起**：既有计划自带它的快照。
+   *
+   * 出参是**摘要**（`toHuluPlanSummary`）：全量 `word_ids` / `suspend_snapshot` 不出参
+   * （P1 起前端不需要；页载荷走 pages 端点、曲线走 rounds）。
+   */
+  async createPlan(input: CreateHuluPlanInput): Promise<HuluPlanSummary> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.wordbookId, "wordbookId");
+    const examDate = requireDateKey(input.examDate, "examDate");
+    const targetRounds = requireIntInRange(
+      input.targetRounds ?? HULU_DEFAULT_ROUNDS, HULU_MIN_ROUNDS, HULU_MAX_ROUNDS, "targetRounds",
+    );
+    const pageSize = requireIntInRange(
+      input.pageSize ?? HULU_DEFAULT_PAGE_SIZE, HULU_MIN_PAGE, HULU_MAX_PAGE, "pageSize",
+    );
+    const gateRatio = requireNumberInRange(
+      input.gateRatio ?? HULU_DEFAULT_GATE_RATIO, HULU_MIN_GATE, HULU_MAX_GATE, "gateRatio",
+    );
+    const direction = input.direction ?? null;
+    if (direction !== null && !(DIRECTIONS as readonly string[]).includes(direction)) {
+      throw new ValidationError(`Invalid direction: ${direction}`, "direction");
+    }
+    const suspendReview = input.suspendReview === true;
+    const includeNewWords = input.includeNewWords === true;
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+
+      const leftDays = daysBetween(this.todayKey(repos), examDate);
+      if (leftDays <= 0) {
+        // 未填考试日期或日期已过 → 422（完备设计 §三 风险三级第一行）。
+        throw new BusinessRuleError("考试日期已过或就是今天，无法建立冲刺计划", undefined, {
+          examDate,
+          left: leftDays,
+        });
+      }
+
+      // ① 词书归属（照 insertNewCard 的显式检查先例；越权表现为 404）。
+      const owned = await repos.hulu.assertWordbookOwned(input.userId, input.wordbookId);
+      if (!owned) throw new NotFoundError("Wordbook", input.wordbookId);
+
+      // ② 幂等：同词书已有 active 计划 → 直接返回它，不报冲突。
+      const existing = await repos.hulu.findActivePlanByWordbook(input.userId, input.wordbookId);
+      if (existing) return toHuluPlanSummary(existing);
+
+      // ③ 定格取词（该词书的复习牌堆，稳定序；R9「先学后刷」；R12 可选含未学词）。
+      const wordIds = await repos.hulu.listReviewDeckWordIds(input.userId, input.wordbookId, {
+        includeNew: includeNewWords,
+      });
+      if (wordIds.length === 0) {
+        // 空池双档文案（R12）：默认档沿用 R9 文案；开了「含未学词」仍为空，
+        // 说明该词书四态都没有行 —— 是「词书里根本没词」，不是「还没复习过」。
+        throw new BusinessRuleError(includeNewWords
+          ? "该词书还没有词——先把词加进词书再冲刺。"
+          : "该词书还没有可冲刺的词——先去标准复习，至少复习过一次再回来。");
+      }
+      if (wordIds.length > HULU_MAX_WORDS) {
+        throw new BusinessRuleError(`词数超出上限 ${HULU_MAX_WORDS}`, undefined, { wordCount: wordIds.length });
+      }
+
+      // ④ 风险校验（服务端重算，不信任前端）。
+      const risk: HuluRiskResult = assessHuluRisk({
+        wordCount: wordIds.length,
+        targetRounds,
+        leftDays,
+      });
+      if (risk.level === "block") {
+        throw new BusinessRuleError("冲刺计划所需天数超出剩余天数太多", undefined, {
+          need: risk.need,
+          left: risk.left,
+          perRound: risk.perRound,
+        });
+      }
+
+      // ⑤ 插行。并发双创建由 idx_hulu_plans_one_active 兜底：撞索引 → 重查返回既有计划。
+      let plan;
+      try {
+        plan = await repos.hulu.insertPlan({
+          user_id: input.userId,
+          wordbook_id: input.wordbookId,
+          direction,
+          exam_date: examDate,
+          target_rounds: targetRounds,
+          page_size: pageSize,
+          gate_ratio: gateRatio,
+          word_ids: wordIds,
+          // 新代码写新行时**显式**给 'v2'，不吃 DB 默认值 'legacy'（迁移 0051：
+          // 默认值指向旧语义是给未感知新列的旧写入路径的兜底）。
+          protocol_version: "v2",
+          include_new_words: includeNewWords,
+          suspend_review: suspendReview,
+          suspend_snapshot: null,
+        });
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+        const raced = await repos.hulu.findActivePlanByWordbook(input.userId, input.wordbookId);
+        if (!raced) throw error;
+        // 并发对手可能正在同一时刻挂起 —— 返回它的快照口径，不重复挂起。
+        return toHuluPlanSummary(raced);
+      }
+
+      // ⑥ 挂起开关（同一事务）：写计划行 → 挂起 → 快照落库。任一步失败整体回滚，
+      //    不会留下「已挂起但无快照」的不可恢复状态。
+      if (suspendReview) {
+        const suspended = await repos.reviews.bulkSuspendByWordIds({
+          userId: input.userId,
+          wordbookId: input.wordbookId,
+          wordIds,
+        });
+        const snapshot: Record<string, string> = {};
+        for (const row of suspended) snapshot[row.wordId] = row.oldState;
+        const saved = await repos.hulu.saveSuspendSnapshot(input.userId, plan.id, snapshot);
+        if (saved) plan = saved;
+      }
+
+      return toHuluPlanSummary(plan);
+    }, { actorId: input.userId });
+  }
+
+  /** 计划 + 轮次列表（缩时曲线的唯一数据源）。计划出参为摘要（P1 裁剪）。 */
+  async getPlan(input: GetHuluPlanInput): Promise<HuluPlanWithRounds> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.planId, "planId");
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const plan = await repos.hulu.findPlanById(input.userId, input.planId);
+      if (!plan) throw new NotFoundError("HuluPlan", input.planId);
+      const rounds = await repos.hulu.findRoundsByPlan(input.userId, input.planId);
+      return { plan: toHuluPlanSummary(plan), rounds };
+    }, { actorId: input.userId });
+  }
+
+  /**
+   * 页载荷（R4，只读）：按**定格** `word_ids` 切片 → 批量取存活词 → 按切片序重排。
+   *
+   * 只读、零副作用 —— 这正是它存在的原因：`/review/queue?mode=preview&wordIds=`
+   * 会 `getOrCreateTodaySession` 写一行 sessions 且锚定默认词书（完备设计 R4）。
+   *
+   * 取词走 `hulu.findHuluPageWords`（R10：卡面全字段一次带下 ⇒ 单卡路径零请求），
+   * 不用 `reviews.findWordsByIds`（那个是 preview 队列的最小集，且**不动**它）。
+   *
+   * 越界页 → 404（越界不是「空页」，是「不存在的页」）；`alive = 0` 是合法页
+   * （整页定格词已删），前端跳过、服务端结算自动通过。
+   */
+  async getPlanPage(input: GetHuluPlanPageInput): Promise<HuluPagePayload> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.planId, "planId");
+    requireNonNegativeInt(input.pageIndex, "pageIndex");
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const plan = await repos.hulu.findPlanById(input.userId, input.planId);
+      if (!plan) throw new NotFoundError("HuluPlan", input.planId);
+
+      const total = plan.word_ids.length;
+      const pages = huluPageCount(total, plan.page_size);
+      const slice = huluPageSlice(plan.word_ids, plan.page_size, input.pageIndex);
+      if (slice.length === 0) {
+        // pageIndex ≥ pages（或定格为空，创建时已拒绝，防御性）→ 不存在的页。
+        throw new NotFoundError("HuluPlanPage", `${input.planId}:${input.pageIndex}`);
+      }
+
+      const found = await repos.hulu.findHuluPageWords(slice);
+      // 按切片顺序重排（照 getQueue 的 orderMap 做法）：仓库的返回序由 DB 决定，
+      // 而定格序才是「只缩不换」的语义所在。
+      const orderMap = new Map(slice.map((id, index) => [id, index]));
+      const items: HuluPageWordItem[] = found
+        .filter((word) => orderMap.has(word.id))
+        .sort((a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0))
+        .map((word) => ({
+          id: word.id,
+          slug: word.slug,
+          title: word.title,
+          lemma: word.lemma,
+          ipa: word.ipa,
+          pos: word.pos,
+          cefr: word.cefr,
+          short_definition: word.short_definition,
+          core_definitions: word.core_definitions,
+          definition_md: word.definition_md,
+          examples: word.examples,
+          prototype_text: word.prototype_text,
+          mnemonic_text: word.mnemonic_text,
+          mnemonic_type: word.mnemonic_type,
+          semantic_chain: word.semantic_chain,
+        }));
+
+      return { pageIndex: input.pageIndex, pages, total, alive: items.length, items };
+    }, { actorId: input.userId });
+  }
+
+  /**
+   * 开始下一轮：计划行 `FOR UPDATE` 串行化（「全计划至多一个未收尾轮」的保证）。
+   *
+   * ① 已有未收尾轮 → **返回它**（幂等；网络重试不会开出第二个轮）；
+   * ② v2 + `include_new_words` 且尚无曝光轮 → 开 `round_no = 0, kind = 'exposure'`
+   *    （R12：曝光轮不计入目标轮数，是开第 1 个复习轮的前置）；
+   * ③ 否则复习轮：`round_no = 已有 kind='recall' 轮数 + 1`（曝光轮不占号 ——
+   *    legacy 轮同理不参与计数），超过 `target_rounds` → 409；
+   * ④ `started_at` 由请求体给（夹取），缺省 now()。
+   *
+   * 轮号为什么数 `kind='recall'` 而不是「已有轮数」：曝光轮占用 `round_no = 0`，
+   * 把它算进去会让第一条复习轮变成 2 —— 而 `target_rounds` 的口径是复习轮数。
+   * legacy 计划的新轮标 `recall`（语义就是复习轮），已存在的旧轮保持 legacy。
+   *
+   * 计划已 completed / abandoned → 409（不能再开轮）。
+   */
+  async startRound(input: StartHuluRoundInput): Promise<HuluRoundRow> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.planId, "planId");
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const plan = await repos.hulu.lockPlanForUpdate(input.userId, input.planId);
+      if (!plan) throw new NotFoundError("HuluPlan", input.planId);
+      if (plan.status !== "active") {
+        throw new ConflictError("计划已结束，无法开始新一轮");
+      }
+
+      // ① 幂等：已有未收尾轮 → 返回它（不新建）。
+      const open = await repos.hulu.findOpenRound(input.userId, input.planId);
+      if (open) return open;
+
+      const rounds = await repos.hulu.findRoundsByPlan(input.userId, input.planId);
+
+      // ② 曝光轮前置（R12）：仅 v2 + include_new_words 的计划、且尚无第 0 轮。
+      if (this.needsExposureRound(plan, rounds)) {
+        return repos.hulu.insertRound({
+          plan_id: plan.id,
+          user_id: input.userId,
+          round_no: 0,
+          started_at: clampMoment(input.startedAt, this.now(), "startedAt"),
+          words_total: plan.word_ids.length,
+          kind: "exposure",
+        });
+      }
+
+      // ③ 复习轮号 = 已有 kind='recall' 轮数 + 1；超过目标轮数 → 409。
+      const recallRounds = rounds.filter((round) => round.kind === "recall").length;
+      const nextNo = recallRounds + 1;
+      if (nextNo > plan.target_rounds) {
+        throw new ConflictError("已达目标轮数，无法开始新一轮", undefined, {
+          targetRounds: plan.target_rounds,
+          rounds: recallRounds,
+        });
+      }
+
+      // ④ started_at 夹取（缺省 now()）。
+      const startedAt = clampMoment(input.startedAt, this.now(), "startedAt");
+      return repos.hulu.insertRound({
+        plan_id: plan.id,
+        user_id: input.userId,
+        round_no: nextNo,
+        started_at: startedAt,
+        words_total: plan.word_ids.length,
+        kind: "recall",
+      });
+    }, { actorId: input.userId });
+  }
+
+  /**
+   * 是否需要开曝光轮（R12）：v2 协议 + 用户开了「含未学词」+ 尚无 `round_no = 0`
+   * 的轮。legacy 计划永远走复习轮序列（老计划口径不回改）。
+   */
+  private needsExposureRound(
+    plan: { protocol_version: string; include_new_words: boolean },
+    rounds: readonly { round_no: number }[],
+  ): boolean {
+    if (plan.protocol_version !== "v2" || !plan.include_new_words) return false;
+    return !rounds.some((round) => round.round_no === 0);
+  }
+
+  /**
+   * 页结算（R7）：服务端先**复算**本页存活词数并**复验**闸门，再走单条条件 UPDATE。
+   *
+   * 顺序即防线：
+   *  ① `total` 必须等于本页存活词数（`alive = 0` 时 `total = 0` 合法）→ 不符 422；
+   *  ② `huluGateDecision(passed, total, plan.gate_ratio)` 为 block → 422（读列值，不写死）；
+   *  ③ 条件 UPDATE：命中 → 200；未命中且 `pages_passed > pageIndex` → 幂等返回现状；
+   *     未命中且 `<` → 跳页 409。
+   *
+   * 前端「不过闸整页清零、不发请求」是 UX 路径；这里的 422 是**服务端防线** ——
+   * 不信任前端（完备设计 §三）。
+   */
+  async settlePage(input: SettleHuluPageInput): Promise<HuluRoundRow> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.planId, "planId");
+    requireNonNegativeInt(input.roundNo, "roundNo");
+    const pageIndex = requireNonNegativeInt(input.pageIndex, "pageIndex");
+    const passed = requireNonNegativeInt(input.passed, "passed");
+    const total = requireNonNegativeInt(input.total, "total");
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const plan = await repos.hulu.findPlanById(input.userId, input.planId);
+      if (!plan) throw new NotFoundError("HuluPlan", input.planId);
+
+      const round = await repos.hulu.findRoundByNo(input.userId, input.planId, input.roundNo);
+      if (!round) throw new NotFoundError("HuluRound", `${input.planId}:${input.roundNo}`);
+
+      // ① total 必须等于本页**存活**词数（服务端复算，不信任前端）。
+      const slice = huluPageSlice(plan.word_ids, plan.page_size, pageIndex);
+      const alive = (await repos.hulu.findHuluPageWords(slice)).length;
+      if (total !== alive) {
+        // D1（R11）：带**稳定机器码**，前端据此自动重取本页 —— 页内词被上架/下架
+        // 会让前端手里的 total 过期，这不是"提交错了"，而是"词集变了"。
+        throw new HuluPageAliveMismatchError("total 与本页存活词数不符", {
+          total,
+          alive,
+          pageIndex,
+        });
+      }
+
+      // ①' R15-1 防线：`passed ≤ total`（在 alive 复算之后、闸门之前 —— 先确认
+      //     total 可信，再谈 passed 的合法性）。请求 schema 只验非负整数，
+      //     `words_passed` 不得因异常提交虚增。
+      if (passed > total) {
+        throw new ValidationError("passed 不能大于 total", "passed");
+      }
+
+      // ② 闸门复验（读计划行列值，不写死 0.8）。total = 0（整页删空）→ pass。
+      //    曝光轮恒过闸是调用方口径的自然结果：passed = total = 存活词数（R12）。
+      if (huluGateDecision(passed, total, plan.gate_ratio) === "block") {
+        throw new ValidationError("本页未达闸门，不能结算", "passed");
+      }
+
+      // ③ 单条条件 UPDATE（R7 原文）。
+      const settled = await repos.hulu.settlePage({
+        userId: input.userId,
+        roundId: round.id,
+        pageIndex,
+        passed,
+      });
+      if (settled) return settled;
+
+      // 未命中：重读游标分流（并发/重试下的幂等语义）。
+      const current = await repos.hulu.findRoundByNo(input.userId, input.planId, input.roundNo);
+      if (!current) throw new NotFoundError("HuluRound", `${input.planId}:${input.roundNo}`);
+      if (current.pages_passed > pageIndex) {
+        // 重复提交：本页已结算过，返回现状（不重复计数）。
+        return current;
+      }
+      // pages_passed < pageIndex → 跳页；pages_passed === pageIndex 而 0 行
+      // 只能是本轮已收尾（ended_at 非空）。
+      throw new ConflictError("页结算被拒绝：轮次已收尾或提交了未来的页", undefined, {
+        pageIndex,
+        pagesPassed: current.pages_passed,
+      });
+    }, { actorId: input.userId });
+  }
+
+  /**
+   * 轮次收尾：`elapsed_seconds = clampElapsedSeconds(ended - started)`（墙钟，R5）。
+   *
+   * 顺序即防线：
+   *  ① 已收尾 → **幂等返回现状**（不重写耗时）；
+   *  ② R15-2：`kind ∈ ('recall','legacy')` 的轮要求 `pages_passed` 等于页数
+   *     （还有未结算页 → 422 携带 `{ pagesPassed, pages }`）—— 否则「轮走完」
+   *     不可信、R13 的结算词集推导也不成立。**曝光轮豁免**：部分收尾即
+   *     「显式跳过」（R12），覆盖率缺口由计划页展示；
+   *  ③ 推导**结算词集指纹**（R13）写入 `word_set_fingerprint`；
+   *  ④ 仅 `kind='recall'` 且 `round_no >= target_rounds` 才完成计划
+   *     （曝光轮不推进计划完成，R12）；同事务恢复挂起快照。
+   */
+  async finishRound(input: FinishHuluRoundInput): Promise<HuluRoundRow> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.planId, "planId");
+    requireNonNegativeInt(input.roundNo, "roundNo");
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      const plan = await repos.hulu.lockPlanForUpdate(input.userId, input.planId);
+      if (!plan) throw new NotFoundError("HuluPlan", input.planId);
+
+      const round = await repos.hulu.findRoundByNo(input.userId, input.planId, input.roundNo);
+      if (!round) throw new NotFoundError("HuluRound", `${input.planId}:${input.roundNo}`);
+      // ① 已收尾 → 幂等返回现状。
+      if (round.ended_at !== null) return round;
+
+      // ② R15-2：复习轮/legacy 轮须全部页已结算；曝光轮豁免（部分收尾 = 显式跳过）。
+      //    BusinessRuleError（同为 422）而非 ValidationError：这不是「提交值非法」，
+      //    而是「轮还没走完」，且 details 要携带缺口 { pagesPassed, pages } 供前端归因。
+      const pages = huluPageCount(plan.word_ids.length, plan.page_size);
+      if (round.kind !== "exposure" && round.pages_passed < pages) {
+        throw new BusinessRuleError("本轮还有未结算的页，不能收尾", undefined, {
+          pagesPassed: round.pages_passed,
+          pages,
+        });
+      }
+
+      // ③ 结算词集指纹（R13）：按 `pages_passed` 游标取已结算页的定格切片，
+      //    过滤当前已删词，排序后哈希。页级近似 —— 页内被删词在结算时点是否存活
+      //    不可考（页级无明细），误差由曲线免责声明兜底。
+      const fingerprint = await this.deriveWordSetFingerprint(repos, plan, round.pages_passed);
+
+      const now = this.now();
+      const endedAt = clampMoment(input.endedAt, now, "endedAt");
+      const elapsedSeconds = clampElapsedSeconds(
+        (Date.parse(endedAt) - Date.parse(round.started_at)) / MS_PER_SECOND,
+      );
+
+      const finished = await repos.hulu.finishRound({
+        userId: input.userId,
+        roundId: round.id,
+        endedAt,
+        elapsedSeconds,
+        wordSetFingerprint: fingerprint,
+      });
+      if (!finished) {
+        // 并发双收尾：另一个请求先写成功 → 幂等返回现状。
+        const current = await repos.hulu.findRoundByNo(input.userId, input.planId, input.roundNo);
+        if (!current) throw new NotFoundError("HuluRound", `${input.planId}:${input.roundNo}`);
+        return current;
+      }
+
+      // ④ 末轮复习轮 → 同事务完成计划 + 恢复挂起快照（P2）。曝光轮不推进计划
+      //    完成（R12：曝光轮不计入 target_rounds，只是开复习轮 1 的前置）。
+      if (
+        finished.kind === "recall"
+        && finished.round_no >= plan.target_rounds
+        && plan.status === "active"
+      ) {
+        await repos.hulu.setPlanStatus(input.userId, input.planId, "completed", {
+          ended: true,
+          ...this.snapshotClearOption(plan),
+        });
+        await this.restorePlanSuspension(repos, plan);
+      }
+      return finished;
+    }, { actorId: input.userId });
+  }
+
+  /**
+   * 结算词集指纹（R13，页级近似）：按 `pagesPassed` 游标取前 N 页的**定格切片**
+   * （拼接成已结算词集）→ 过滤当前已删词（`findHuluPageWords` 只回存活词）→
+   * 排序 → SHA-256 取 hex 前 16 位。
+   *
+   * 为什么是页级近似（修订补充 §3.2-3a，主控拍板）：现行表结构**刻意不建**词级
+   * 结算明细（完备设计 §4.3），页内被删词在结算时点是否存活不可考；但删词后该页
+   * `total` 漂移已被 D1 机制拦住重取，故误差可接受，且口径声明写入曲线免责声明。
+   *
+   * 指纹计算放 service 层而非 domain：`node:crypto` 是出向依赖，domain 零出向
+   * 红线不容 import（ADR-0041 Amendment 2 第 2 条）。
+   */
+  private async deriveWordSetFingerprint(
+    repos: IRepositories,
+    plan: { word_ids: string[]; page_size: number },
+    pagesPassed: number,
+  ): Promise<string> {
+    const settled = plan.word_ids.slice(0, Math.max(0, pagesPassed) * plan.page_size);
+    if (settled.length === 0) return hashWordSet([]);
+    const alive = await repos.hulu.findHuluPageWords(settled);
+    return hashWordSet(alive.map((word) => word.id));
+  }
+
+  /**
+   * 放弃计划：active → abandoned（写 ended_at），**同事务恢复挂起快照**（P2）。
+   * 已 abandoned → **幂等返回现状**；已 completed → 抛业务错（409 语义）。
+   */
+  async abandonPlan(input: AbandonHuluPlanInput): Promise<HuluPlanSummary> {
+    requireNonEmpty(input.userId, "userId");
+    requireNonEmpty(input.planId, "planId");
+
+    return this.txRunner(async (tx) => {
+      const repos = this.repositoryFactory(tx);
+      // 加锁读改写：并发放弃只有一个写生效，另一个读到已 abandoned 走幂等分支。
+      const plan = await repos.hulu.lockPlanForUpdate(input.userId, input.planId);
+      if (!plan) throw new NotFoundError("HuluPlan", input.planId);
+      if (plan.status === "abandoned") return toHuluPlanSummary(plan);
+      if (plan.status === "completed") {
+        throw new BusinessRuleError("计划已完成，无法放弃");
+      }
+      // 先恢复再改状态：恢复用挂起时记下的 wordbook 归属与快照；清快照与状态同事务。
+      const updated = await repos.hulu.setPlanStatus(input.userId, input.planId, "abandoned", {
+        ended: true,
+        ...this.snapshotClearOption(plan),
+      });
+      await this.restorePlanSuspension(repos, plan);
+      if (!updated) throw new NotFoundError("HuluPlan", input.planId);
+      return toHuluPlanSummary(updated);
+    }, { actorId: input.userId });
+  }
+
+  /**
+   * 快照非空时才带 `suspendSnapshot: null`（清列）—— 未开开关时不动该列，
+   * 免得把「本来就没挂起」的计划也写一次 NULL。
+   */
+  private snapshotClearOption(
+    plan: { suspend_snapshot: Record<string, string> | null },
+  ): { suspendSnapshot: null } | Record<string, never> {
+    const snapshot = plan.suspend_snapshot;
+    if (!snapshot || Object.keys(snapshot).length === 0) return {};
+    return { suspendSnapshot: null };
+  }
+
+  /**
+   * 计划收束时的挂起恢复（末轮 completed / 放弃 abandoned 共用）：
+   * 有快照才恢复 —— 未开开关（快照 NULL）与快照为空对象都是零行变化。
+   *
+   * 恢复 = **快照回写**（R1）：逐行回到挂起前的 state，且**只回写仍处 suspended
+   * 的行**（计划期间被用户手动恢复过的词不动）。调用方负责在**同一事务**内清
+   * `suspend_snapshot`（见 `snapshotClearOption`）。
+   */
+  private async restorePlanSuspension(
+    repos: IRepositories,
+    plan: { user_id: string; wordbook_id: string; suspend_snapshot: Record<string, string> | null },
+  ): Promise<void> {
+    const snapshot = plan.suspend_snapshot;
+    if (!snapshot || Object.keys(snapshot).length === 0) return;
+    await repos.reviews.restoreSuspendSnapshot({
+      userId: plan.user_id,
+      wordbookId: plan.wordbook_id,
+      snapshot,
+    });
+  }
+}
