@@ -14,7 +14,7 @@
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "@/http/server";
-import { BusinessRuleError, ConflictError, NotFoundError, ValidationError } from "@/errors";
+import { BusinessRuleError, ConflictError, HuluPageAliveMismatchError, NotFoundError, ValidationError } from "@/errors";
 import type { Services } from "@/services";
 import {
   huluPageResponseSchema,
@@ -24,6 +24,7 @@ import {
 } from "@/http/hulu-response-contract";
 import type {
   HuluPagePayload,
+  HuluPageWordItem,
   HuluPlanRow,
   HuluPlanSummary,
   HuluPlanWithRounds,
@@ -81,6 +82,27 @@ function roundRow(overrides: Partial<HuluRoundRow> = {}): HuluRoundRow {
   };
 }
 
+/** 页载荷词卡桩（R10 扩字段后须给全 16 列；形状照 findHuluPageWords 的返回）。 */
+function pageWordItem(overrides: Partial<HuluPageWordItem> & { id: string }): HuluPageWordItem {
+  return {
+    slug: overrides.id,
+    title: overrides.id,
+    lemma: overrides.id,
+    ipa: null,
+    pos: null,
+    cefr: null,
+    short_definition: null,
+    core_definitions: [],
+    definition_md: "",
+    examples: [],
+    prototype_text: null,
+    mnemonic_text: null,
+    mnemonic_type: null,
+    semantic_chain: null,
+    ...overrides,
+  };
+}
+
 function makeMockServices() {
   const hulu = {
     createPlan: vi.fn(async (): Promise<HuluPlanSummary> => planSummary()),
@@ -88,8 +110,15 @@ function makeMockServices() {
     getPlanPage: vi.fn(async (): Promise<HuluPagePayload> => ({
       pageIndex: 0, pages: 1, total: 2, alive: 2,
       items: [
-        { id: "w-1", slug: "alleviate", title: "alleviate", lemma: "alleviate", ipa: "/əˈliːvieɪt/", pos: "v.", short_definition: "减轻", mnemonic_text: "a+lev+iate" },
-        { id: "w-2", slug: "bravo", title: "bravo", lemma: "bravo", ipa: null, pos: null, short_definition: "好", mnemonic_text: null },
+        pageWordItem({
+          id: "w-1", slug: "alleviate", title: "alleviate", lemma: "alleviate",
+          ipa: "/əˈliːvieɪt/", pos: "v.", cefr: "B2", short_definition: "减轻",
+          mnemonic_text: "a+lev+iate", mnemonic_type: "词根",
+          core_definitions: [{ sense: "减轻", en: "alleviate", priority: 1, tags: ["core"] }],
+          definition_md: "1. 减轻", examples: [{ text: "It alleviates pain." }],
+          prototype_text: "make lighter", semantic_chain: "lev（轻）→ alleviate",
+        }),
+        pageWordItem({ id: "w-2", slug: "bravo", title: "bravo", lemma: "bravo", short_definition: "好" }),
       ],
     })),
     startRound: vi.fn(async (): Promise<HuluRoundRow> => roundRow()),
@@ -465,6 +494,34 @@ describe("GET /api/hulu/plans/:id/pages/:no — 页载荷（R4，只读）", () 
     expect(hulu.getPlanPage).toHaveBeenCalledWith({ userId: USER, planId: PLAN, pageIndex: 0 });
   });
 
+  it("R10：卡面全字段随页载荷带下（五层数据一次到位，单卡路径因此零请求）", async () => {
+    const { services } = makeMockServices();
+    const app = createApp(services);
+
+    const res = await app.request(`/api/hulu/plans/${PLAN}/pages/0`, { headers: AUTH_HEADERS });
+    const parsed = huluPageResponseSchema.parse(await res.json());
+    const first = parsed.items[0]!;
+
+    // Tier0 / 义项 / 助记锚 / 例句 / Tier2 —— 五层各自的字段都在
+    expect(first.short_definition).toBe("减轻");
+    expect(first.core_definitions).toEqual([
+      { sense: "减轻", en: "alleviate", priority: 1, tags: ["core"] },
+    ]);
+    expect(first.definition_md).toBe("1. 减轻");
+    expect(first.mnemonic_text).toBe("a+lev+iate");
+    expect(first.mnemonic_type).toBe("词根");
+    expect(first.examples).toEqual([{ text: "It alleviates pain." }]);
+    expect(first.semantic_chain).toBe("lev（轻）→ alleviate");
+    expect(first.prototype_text).toBe("make lighter");
+    expect(first.cefr).toBe("B2");
+    // 字段清单是 15 列（R10）——多一列少一列都在这里被钉住
+    expect(Object.keys(first).sort()).toEqual([
+      "cefr", "core_definitions", "definition_md", "examples", "id", "ipa",
+      "lemma", "mnemonic_text", "mnemonic_type", "pos", "prototype_text",
+      "semantic_chain", "short_definition", "slug", "title",
+    ]);
+  });
+
   it("越界页由 service 抛 NotFoundError → 404", async () => {
     const { services, hulu } = makeMockServices();
     hulu.getPlanPage.mockRejectedValue(new NotFoundError("HuluPlanPage", `${PLAN}:99`));
@@ -589,9 +646,29 @@ describe("POST /api/hulu/plans/:id/rounds/:no/pages — 页结算（R7）", () =
       method: "POST", headers: AUTH_HEADERS,
       body: JSON.stringify({ pageIndex: 0, passed: 12, total: 20 }),
     });
-
     expect(res.status).toBe(422);
     expect((await res.json() as { code: string }).code).toBe("VALIDATION_ERROR");
+  });
+
+  it("D1：total/alive 不符 → 422 且 code 是 HULU_PAGE_ALIVE_MISMATCH（前端据此自动重取）", async () => {
+    const { services, hulu } = makeMockServices();
+    hulu.settlePage.mockRejectedValue(new HuluPageAliveMismatchError("total 与本页存活词数不符", {
+      total: 20, alive: 18, pageIndex: 0,
+    }));
+    const app = createApp(services);
+
+    const res = await app.request(`/api/hulu/plans/${PLAN}/rounds/1/pages`, {
+      method: "POST", headers: AUTH_HEADERS,
+      body: JSON.stringify({ pageIndex: 0, passed: 18, total: 20 }),
+    });
+
+    // HTTP 语义不变（仍 422），只有机器码变了
+    expect(res.status).toBe(422);
+    const body = await res.json() as { code: string; error: string; details?: unknown };
+    expect(body.code).toBe("HULU_PAGE_ALIVE_MISMATCH");
+    expect(body.error).toBe("total 与本页存活词数不符");
+    // details 带出 { total, alive, pageIndex }，便于前端/日志归因
+    expect(body.details).toMatchObject({ total: 20, alive: 18, pageIndex: 0 });
   });
 
   it("跳页 → 409 CONFLICT", async () => {

@@ -70510,7 +70510,8 @@
                           "FOREIGN_KEY_VIOLATION",
                           "NOT_NULL_VIOLATION",
                           "CHECK_VIOLATION",
-                          "INVALID_INPUT"
+                          "INVALID_INPUT",
+                          "HULU_PAGE_ALIVE_MISMATCH"
                         ]
                       }
                     }
@@ -86875,7 +86876,78 @@
                               }
                             ]
                           },
+                          "cefr": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "short_definition": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "core_definitions": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "sense": {
+                                  "type": "string"
+                                },
+                                "en": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "priority": {
+                                  "anyOf": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "tags": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "sense",
+                                "en",
+                                "priority",
+                                "tags"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "definition_md": {
+                            "type": "string"
+                          },
+                          "examples": {
+                            "type": "array",
+                            "items": {}
+                          },
+                          "prototype_text": {
                             "anyOf": [
                               {
                                 "type": "string"
@@ -86894,6 +86966,26 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "mnemonic_type": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "semantic_chain": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -86903,8 +86995,15 @@
                           "lemma",
                           "ipa",
                           "pos",
+                          "cefr",
                           "short_definition",
-                          "mnemonic_text"
+                          "core_definitions",
+                          "definition_md",
+                          "examples",
+                          "prototype_text",
+                          "mnemonic_text",
+                          "mnemonic_type",
+                          "semantic_chain"
                         ],
                         "additionalProperties": false
                       }

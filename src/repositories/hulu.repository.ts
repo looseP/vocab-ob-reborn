@@ -1,13 +1,14 @@
 /**
  * HuluRepository — 葫芦冲刺计划容器持久化（ADR-0041）。
  *
- * 边界（ADR-0041 / 完备设计 §四）：
+ * 边界（ADR-0041 / 完备设计 §四 / 修订轮 R9）：
  *   - 只写 `hulu_plans` / `hulu_rounds` 两张新表（owner RLS own_all），
- *     **不改任何已有表**；零 FSRS：不碰 user_word_progress / review_logs /
- *     sessions / l3_sessions。
- *   - 定格取词（`listWordIdsByWordbook`）**只读** `wordbook_items` + `words`，
- *     稳定序（created_at ASC, word_id ASC）——同词书同刻恒同序，计划的
- *     word_ids 因此可复现。
+ *     **不改任何已有表**；零 FSRS **写入**：不写 user_word_progress /
+ *     review_logs / sessions / l3_sessions。
+ *   - 定格取词（`listReviewDeckWordIds`）**只读** `user_word_progress` —— 这是
+ *     本层唯一的 FSRS 可见面接触，且只读（修订轮 D-A「先学后刷」：池源从几乎
+ *     为空的 `wordbook_items` 改为复习牌堆）。稳定序（created_at ASC,
+ *     word_id ASC）——同词书同刻恒同序，计划的 word_ids 因此可复现。
  *   - 「全计划至多一个未收尾轮」由**服务层**在事务内保证（`lockPlanForUpdate`
  *     先锁计划行再判断），本层不建部分唯一索引（完备设计 §4.2）。
  *
@@ -15,7 +16,7 @@
  * 走 requireTx —— 服务层统一经 withTransaction(..., { actorId }) 调用。
  */
 
-import type { HuluPlanRow, HuluPlanStatus, HuluRoundRow } from "../domain/hulu-sprint";
+import type { HuluPageWordRow, HuluPlanRow, HuluPlanStatus, HuluRoundRow } from "../domain/hulu-sprint";
 import type { IHuluRepository, NewHuluPlan, NewHuluRound } from "./interfaces";
 import { BaseRepository } from "./base";
 import { todayKeyInDisplayTz } from "../db/timezone";
@@ -245,27 +246,63 @@ export class HuluRepository extends BaseRepository implements IHuluRepository {
   }
 
   /**
-   * 定格取词（R6 / 完备设计 §七）：整本词书的已发布未删词，稳定序。
+   * 定格取词（R9 / 修订轮 D-A「先学后刷」）：该词书**复习牌堆**里已评分过的词，
+   * 稳定序 `created_at ASC, word_id ASC`（加入复习的顺序，贴近"从头到尾过一遍"）。
    *
-   * `ORDER BY wi.created_at ASC, wi.word_id ASC` —— 同词书同刻恒同序；词的
-   * 增删只影响后续读取，已定格计划不受影响（只缩不换）。
+   * 池源为什么不是 `wordbook_items`：真实库里它几乎为空、且 app 没有写入口
+   * （真机验收坐实「复习牌堆 492 到期卡 vs 定格 1 词」的错位）。改为读
+   * `user_word_progress` 后，定格词集 = 用户实际在学的词。
    *
-   * `userId` 不参与 SQL：`wordbook_items` 的 RLS policy（via_wordbook）已按
-   * auth.uid() 限定到 actor 自己的词书，服务层另以 assertWordbookOwned 显式
-   * 预检归属（越权访问表现为 404 而非空集）。保留入参以对齐服务层的调用形状。
+   * 入池条件（排除两态，各有动机）：
+   *   - 排除 `new`：没见过的词不逼"回忆"（先学后刷）；
+   *   - 排除 `suspended`：用户主动放下的，冲刺不替他捡回来。
+   *
+   * **只读**：这是本层唯一的 FSRS 可见面接触，仅 SELECT、零写入。RLS policy
+   * （progress_own_all）按 auth.uid() 限定到 actor 自己的行，SQL 另显式带
+   * user_id 谓词；服务层已以 assertWordbookOwned 预检归属。
+   *
+   * MUST be in a transaction：owner-RLS 表在无 actor claim 的连接上会静默返回
+   * 空集（把「有词可冲刺」误判成「没有词」），requireTx 让误用当场炸而不是
+   * 变成一个难查的空池。
    */
-  async listWordIdsByWordbook(userId: string, wordbookId: string): Promise<string[]> {
-    void userId;
+  async listReviewDeckWordIds(userId: string, wordbookId: string): Promise<string[]> {
+    this.requireTx();
     const rows = await this.query<{ word_id: string }>(
-      `SELECT wi.word_id
-         FROM wordbook_items wi
-         JOIN words w ON w.id = wi.word_id
-        WHERE wi.wordbook_id = $1::uuid
-          AND w.is_published = true
-          AND w.is_deleted = false
-        ORDER BY wi.created_at ASC, wi.word_id ASC`,
-      [wordbookId],
+      `SELECT word_id FROM user_word_progress
+        WHERE user_id = $1::uuid AND wordbook_id = $2::uuid
+          AND state = ANY(ARRAY['learning','review','relearning'])
+        ORDER BY created_at ASC, word_id ASC`,
+      [userId, wordbookId],
     );
     return rows.map((row) => row.word_id);
+  }
+
+  /**
+   * 页载荷取词（R10 / 修订轮 D-B 卡面精致化）：按 id 批量取**卡面全字段**。
+   *
+   * 与 `ReviewRepository.findWordsByIds`（preview 队列在用，**不动**）的分工：
+   * 那个是队列取词的最小集，这个是**页载荷唯一取数方式**——卡面五层（Tier0 短释 /
+   * 义项 / 助记锚 / 例句 / Tier2 语义链）要的全部字段一次带下，单卡路径因此零请求。
+   *
+   * 返回序由 DB 决定：服务层按**切片序**重排（定格序才是「只缩不换」的语义所在）。
+   * 只读 `words` 一张表（公开读策略 words_public_read），零副作用。
+   */
+  async findHuluPageWords(wordIds: string[]): Promise<HuluPageWordRow[]> {
+    if (wordIds.length === 0) return [];
+    const rows = await this.query<HuluPageWordRow>(
+      `SELECT id, slug, title, lemma, ipa, pos, cefr, short_definition,
+              core_definitions, definition_md, examples, prototype_text,
+              COALESCE(metadata->>'mnemonic_text', metadata->>'mnemonic') AS mnemonic_text,
+              metadata->>'mnemonic_type' AS mnemonic_type,
+              metadata->>'semantic_chain' AS semantic_chain
+         FROM words
+        WHERE id = ANY($1::uuid[]) AND is_published = true AND is_deleted = false`,
+      [wordIds],
+    );
+    return rows.map((row) => ({
+      ...row,
+      core_definitions: Array.isArray(row.core_definitions) ? row.core_definitions : [],
+      examples: Array.isArray(row.examples) ? row.examples : [],
+    }));
   }
 }

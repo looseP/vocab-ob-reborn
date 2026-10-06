@@ -1,0 +1,33 @@
+=== 修订轮 Part B⑪：卡面精致度取证（真机浏览器，dev 栈）===
+日期: 2026-10-06 18:13
+环境: ZCode IAB → http://127.0.0.1:3101/review，计划 a0d4b8e6（池 24 词）
+
+翻开 amplify（第 2 页第 1 张）后的 DOM 实测（逐层）：
+
+① Tier0 短释主行（大字）
+   "放大；扩大；增强"
+
+② 义项层（SenseList，priority 序）
+   list:
+     - "放大、扩大、增强"            ← 义项 1（priority=1，加粗）
+     - "enlarge, expand, increase"   ← 其英文
+
+③ 助记锚（显著 + 类型徽标）
+   "助记" + "amplus (大) + -fy (使) → 把声音撑开，撑到原先几倍"
+   徽标: "root"（mnemonic_type）
+
+④ 例句（前 1–2 条，含译文与来源署名）
+   - "But El Niño amplifies the flames by prolonging dry conditions, …"
+   - "但厄尔尼诺现象会延长干旱、降低泥炭地水位并将植物变成引火物，从而放大火势。"
+   - "— MW Recent Examples · CNN, Laura Paddison, 9 Sep. 2026"
+
+⑤ Tier2 语义链（默认折叠 → 点击展开）
+   折叠态: 只有按钮「语义链 / 词源」
+   展开后: "原型 · amplify = 对着山谷喊半句，整面崖壁替你吼完"
+           "大 -> 撑开变大 -> 声音跟着变响 -> 放大、增强"
+
+--- 单卡零请求（Network 断言）---
+翻开 + 展开语义链前后，浏览器 /api/ 资源条目数：7 → 7（不增长）
+⇒ 卡面数据全部随页载荷带下，单卡路径零请求（无 useWordDetail、无 ReviewCardView）。
+
+截图: C4-card-face-five-layers.png

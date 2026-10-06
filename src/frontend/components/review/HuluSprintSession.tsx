@@ -29,11 +29,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, BookOpen, Check, RotateCcw, Sprout, X } from "lucide-react";
+import { ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, RotateCcw, Sprout, X } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
+import { Markdown } from "@/frontend/components/ui/Markdown";
+import { SenseList } from "@/frontend/components/words/SenseList";
+import { useOptionalToast } from "@/frontend/components/ui/Toast";
 import { HuluSpeedCurve } from "@/frontend/components/review/HuluSpeedCurve";
 import { apiFetch } from "@/frontend/api/client";
 import { getDefaultWordbook } from "@/frontend/api/wordbooks";
@@ -41,6 +44,7 @@ import {
   huluGateDecision,
   huluPageCount,
   type HuluPagePayload,
+  type HuluPageWordItem,
   type HuluPlanSummary,
   type HuluPlanWithRounds,
   type HuluRoundRow,
@@ -137,6 +141,41 @@ function isNotFound(error: unknown): boolean {
   );
 }
 
+/** 错误码判据（D1：页内词集漂移 → 自动重取本页，不落错误页）。 */
+function hasErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object"
+    && error !== null
+    && (error as { code?: unknown }).code === code
+  );
+}
+
+/** D1 的稳定机器码（服务端 `src/errors/codes.ts` 单一真源的同值字面量）。 */
+const HULU_PAGE_ALIVE_MISMATCH = "HULU_PAGE_ALIVE_MISMATCH";
+
+/** jsonb 元素的字符串窄化（缺字段 / 空串一律 null，防御性渲染）。 */
+function asText(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+/** 例句的前 N 条（形状由导入器决定，逐项窄化；无 text 的条目直接丢弃）。 */
+function pickExamples(examples: unknown[], limit = 2): Array<{ text: string; translation: string | null; source: string | null }> {
+  const picked: Array<{ text: string; translation: string | null; source: string | null }> = [];
+  for (const entry of examples) {
+    if (picked.length >= limit) break;
+    if (typeof entry !== "object" || entry === null) continue;
+    const record = entry as Record<string, unknown>;
+    const text = asText(record.text);
+    if (!text) continue;
+    picked.push({
+      text,
+      translation: asText(record.translation),
+      source: asText(record.source),
+    });
+  }
+  return picked;
+}
+
 /** 秒 → 「n 分 ss 秒」（轮次耗时展示）。 */
 function formatSeconds(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));
@@ -157,10 +196,127 @@ function examDatePassed(examDate: string): boolean {
 
 type Phase = "setup" | "loading" | "sprint" | "finished" | "plan" | "error";
 
+/**
+ * 卡背五层披露（R10 / D-B）——**纯展示**，一切数据来自页载荷（单卡路径零请求）。
+ *
+ *   Tier0  短释主行（大字）
+ *   义项层 core_definitions → `SenseList`（priority 序即重要程度）；空则降级
+ *          `definition_md`（与 L1 卡背同一判据）
+ *   助记锚 mnemonic_text + mnemonic_type 徽标（显著，非低调常驻）
+ *   例句   examples 前 1–2 条（text + 可选来源/译文，防御性渲染）
+ *   Tier2  semantic_chain（默认折叠、可点展开）+ prototype_text
+ *
+ * 不嵌 `ReviewCardView`（那是评分流组件、会写 FSRS），不调 `useWordDetail`
+ * （每卡一请求会破零请求约束）—— 只复用 `SenseList` 这类纯展示子组件。
+ */
+function HuluCardFace({ word, index }: { word: HuluPageWordItem; index: number }) {
+  const [chainOpen, setChainOpen] = useState(false);
+  const senses = word.core_definitions ?? [];
+  const hasSenses = senses.length > 0;
+  // 防御性：契约保证 definition_md 是字符串，但旧缓存/局部 mock 可能缺席 ——
+  // 这里退化为「无降级内容」而不是整卡崩掉。
+  const hasDefinitionMd = !hasSenses && (word.definition_md ?? "").trim().length > 0;
+  const examples = pickExamples(word.examples ?? []);
+  const hasChain = (word.semantic_chain ?? "").trim().length > 0;
+
+  return (
+    <div className="space-y-3" data-testid={`hulu-answer-${index}`}>
+      {/* ── Tier0：短释主行（大字） ── */}
+      {word.short_definition ? (
+        <p className="text-lg font-medium text-[var(--color-ink)]" data-testid={`hulu-tier0-${index}`}>
+          {word.short_definition}
+        </p>
+      ) : (
+        <p className="text-sm text-[var(--color-ink-soft)]">暂无释义</p>
+      )}
+
+      {/* ── 义项层：结构化义项（按 priority 序）→ 无则降级 definition_md ── */}
+      {hasSenses && (
+        <div className="rounded-xl bg-[var(--color-surface-muted)] px-3 py-2.5" data-testid={`hulu-senses-${index}`}>
+          <SenseList senses={senses} />
+        </div>
+      )}
+      {hasDefinitionMd && (
+        <div
+          className="rounded-xl bg-[var(--color-surface-muted)] px-3 py-2 text-[12.5px] leading-relaxed text-[var(--color-ink)]"
+          data-testid={`hulu-definition-${index}`}
+        >
+          <Markdown content={word.definition_md} />
+        </div>
+      )}
+
+      {/* ── 助记锚（显著；数据缺席时整块不渲染） ── */}
+      {word.mnemonic_text && (
+        <div
+          className="flex items-start gap-2 rounded-xl border border-[var(--color-pill-warm-border)] bg-[var(--color-surface-glass)] px-3 py-2"
+          data-testid={`hulu-mnemonic-${index}`}
+        >
+          <span className="shrink-0 text-xs font-semibold text-[var(--color-highlight)]">助记</span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] leading-snug text-[var(--color-ink)]">{word.mnemonic_text}</p>
+          </div>
+          {word.mnemonic_type && (
+            <span data-testid={`hulu-mnemonic-type-${index}`}>
+              <Badge tone="warm">{word.mnemonic_type}</Badge>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── 例句（前 1–2 条；无例句安静缺席） ── */}
+      {examples.length > 0 && (
+        <ul className="space-y-1.5" data-testid={`hulu-examples-${index}`}>
+          {examples.map((example, i) => (
+            <li key={i} className="rounded-lg bg-[var(--color-surface-muted)] px-3 py-2">
+              <p className="text-[12.5px] leading-snug text-[var(--color-ink)]">{example.text}</p>
+              {example.translation && (
+                <p className="mt-0.5 text-[11.5px] text-[var(--color-ink-soft)]">{example.translation}</p>
+              )}
+              {example.source && (
+                <p className="mt-0.5 text-[11px] text-[var(--color-ink-soft)]">— {example.source}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* ── Tier2：语义链（默认折叠）+ 原型 ── */}
+      {(hasChain || word.prototype_text) && (
+        <div data-testid={`hulu-tier2-${index}`}>
+          <button
+            type="button"
+            onClick={() => setChainOpen((open) => !open)}
+            className="flex items-center gap-1 text-xs text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]"
+            data-testid={`hulu-tier2-toggle-${index}`}
+          >
+            {chainOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            语义链 / 词源
+          </button>
+          {chainOpen && (
+            <div
+              className="mt-1.5 space-y-1 rounded-xl bg-[var(--color-surface-muted)] px-3 py-2"
+              data-testid={`hulu-tier2-body-${index}`}
+            >
+              {word.prototype_text && (
+                <p className="text-[12.5px] leading-snug text-[var(--color-ink)]">原型 · {word.prototype_text}</p>
+              )}
+              {hasChain && (
+                <p className="text-[12.5px] leading-snug text-[var(--color-ink)]">{word.semantic_chain}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function HuluSprintSession({ onBack }: { onBack: () => void }) {
   const [phase, setPhase] = useState<Phase>("setup");
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<HuluPlanSummary | null>(null);
+  /** 轻提示（可选：无 Provider 时安静缺席，见 useOptionalToast 的注释）。 */
+  const toast = useOptionalToast();
   const [rounds, setRounds] = useState<HuluRoundRow[]>([]);
   const [round, setRound] = useState<HuluRoundRow | null>(null);
   const [page, setPage] = useState<HuluPagePayload | null>(null);
@@ -532,12 +688,24 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
       }
       await loadPage(plan.id, round.round_no, pageIndex + 1);
     } catch (err) {
+      // D1（R11）：页内词集已变化（定格词被上架/下架）→ 手里的 total 过期了。
+      // 自动重取本页 + 轻提示；**不落错误页**、不重复结算（重取后回到未自认态）。
+      if (hasErrorCode(err, HULU_PAGE_ALIVE_MISMATCH)) {
+        toast?.addToast("info", "本页词集已变化，已重新加载");
+        try {
+          await loadPage(plan.id, round.round_no, pageIndex);
+        } catch (reloadErr) {
+          setError(reloadErr instanceof Error ? reloadErr.message : "重新加载本页失败");
+          setPhase("error");
+        }
+        return;
+      }
       setError(err instanceof Error ? err.message : "页结算失败");
       setPhase("error");
     } finally {
       setBusy(false);
     }
-  }, [plan, round, page, study, settled, pageIndex, pages, passedCount, alive, isLastPage, loadPage, finishRound]);
+  }, [plan, round, page, study, settled, pageIndex, pages, passedCount, alive, isLastPage, loadPage, finishRound, toast]);
 
   /** 上一页（只读回看；未结算页不允许倒回，避免状态错乱）。 */
   const goPrev = () => {
@@ -830,15 +998,11 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
                   <span className="text-base font-semibold text-[var(--color-ink)]">{word.lemma || word.title}</span>
                   {word.ipa && <span className="text-xs text-[var(--color-ink-soft)]">{word.ipa}</span>}
                   {word.pos && <span className="text-xs text-[var(--color-ink-soft)]">{word.pos}</span>}
+                  {word.cefr && <Badge tone="warm">CEFR {word.cefr}</Badge>}
                 </div>
 
                 {revealed ? (
-                  <div className="space-y-1" data-testid={`hulu-answer-${index}`}>
-                    <p className="text-sm text-[var(--color-ink)]">{word.short_definition ?? "（无释义）"}</p>
-                    {word.mnemonic_text && (
-                      <p className="text-xs text-[var(--color-ink-soft)]">助记 · {word.mnemonic_text}</p>
-                    )}
-                  </div>
+                  <HuluCardFace word={word} index={index} />
                 ) : (
                   <p className="text-xs text-[var(--color-ink-soft)]">
                     先回忆这个词。想完再翻开，翻开之前不算通过。

@@ -1,0 +1,10 @@
+ round_no | pages_passed | words_passed | elapsed_seconds | closed 
+----------+--------------+--------------+-----------------+--------
+        1 |            3 |           33 |             257 | t
+(1 row)
+
+                  id                  | n  | page_size | target_rounds | suspend_review | status | snap_null 
+--------------------------------------+----+-----------+---------------+----------------+--------+-----------
+ ecc3cccf-2cea-4ea3-bdb1-5453244138eb | 41 |        20 |             4 | f              | active | t
+(1 row)
+

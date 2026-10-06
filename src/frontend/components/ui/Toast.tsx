@@ -27,6 +27,8 @@ interface ToastContextValue {
   addToast: (type: ToastType, message: string, options?: ToastOptions) => void;
 }
 
+export type { ToastContextValue, ToastType };
+
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 const icons = {
@@ -101,4 +103,15 @@ export function useToast() {
   const ctx = useContext(ToastContext);
   if (!ctx) throw new Error("useToast must be used within ToastProvider");
   return ctx;
+}
+
+/**
+ * 无 Provider 时返回 null 的变体（照 `useToast` 的同名语义，但不抛）。
+ *
+ * 用于**可独立挂载**的会话组件（如 `HuluSprintSession`）：应用根部有
+ * `ToastProvider`，但组件级测试与嵌入式用法未必包着它 —— 那种情况下提示应安静
+ * 缺席，而不是把整个会话炸掉。调用方负责判空。
+ */
+export function useOptionalToast(): ToastContextValue | null {
+  return useContext(ToastContext);
 }

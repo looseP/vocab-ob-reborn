@@ -1,0 +1,21 @@
+ review_logs_after_round 
+-------------------------
+                     111
+(1 row)
+
+  max_progress_after_round  
+----------------------------
+ 2026-10-04 11:28:56.986+00
+(1 row)
+
+ n  | page_size | target_rounds | suspend_review | status 
+----+-----------+---------------+----------------+--------
+ 41 |        20 |             4 | f              | active
+(1 row)
+
+ round_no | pages_passed | words_passed | elapsed_seconds | closed 
+----------+--------------+--------------+-----------------+--------
+        1 |            1 |            1 |             128 | t
+        1 |            3 |           33 |             257 | t
+(2 rows)
+

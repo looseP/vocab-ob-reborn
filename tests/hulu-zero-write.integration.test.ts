@@ -48,7 +48,8 @@ describe("Hulu sprint zero-write (integration)", () => {
       [WORDBOOK_ID, USER_ID, `hulu zero-write ${WORDBOOK_ID.slice(0, 8)}`],
     );
 
-    // 三个 published + 未删词，并挂进词书（定格取词的来源）。
+    // 三个 published + 未删词，并以 **learning 态进度行**入池（R9：定格源 =
+    // 复习牌堆，wordbook_items 不再参与定格）。
     for (const [index, wordId] of WORD_IDS.entries()) {
       const slug = `hulu-zw-${index}-${wordId.slice(0, 8)}`;
       await adminPool.query(
@@ -58,8 +59,9 @@ describe("Hulu sprint zero-write (integration)", () => {
         [wordId, slug, createHash("sha256").update(wordId).digest("hex"), `huluword${index}`, `释义 ${index}`],
       );
       await adminPool.query(
-        `INSERT INTO wordbook_items (wordbook_id, word_id) VALUES ($1, $2)`,
-        [WORDBOOK_ID, wordId],
+        `INSERT INTO user_word_progress (user_id, word_id, wordbook_id, state, due_at)
+         VALUES ($1, $2, $3, 'learning', now())`,
+        [USER_ID, wordId, WORDBOOK_ID],
       );
     }
 
@@ -72,7 +74,7 @@ describe("Hulu sprint zero-write (integration)", () => {
     // 逆 FK 顺序清理；hulu 两表随 wordbook 级联消失，仍显式删以防万一。
     await adminPool.query(`DELETE FROM hulu_rounds WHERE user_id = $1`, [USER_ID]);
     await adminPool.query(`DELETE FROM hulu_plans WHERE user_id = $1`, [USER_ID]);
-    await adminPool.query(`DELETE FROM wordbook_items WHERE wordbook_id = $1`, [WORDBOOK_ID]);
+    await adminPool.query(`DELETE FROM user_word_progress WHERE user_id = $1`, [USER_ID]);
     await adminPool.query(`DELETE FROM words WHERE id = ANY($1::uuid[])`, [WORD_IDS]);
     await adminPool.query(`DELETE FROM wordbooks WHERE id = $1`, [WORDBOOK_ID]);
     await adminPool.query(`DELETE FROM profiles WHERE id = $1`, [USER_ID]);
@@ -171,11 +173,19 @@ describe("Hulu sprint zero-write (integration)", () => {
     expect(rounds[0]!.ended_at).not.toBeNull();
   });
 
-  it("收尾后计划与轮次只写 hulu_* 两表（结构性零 FSRS 的第二道证据）", async () => {
+  it("收尾后计划与轮次只写 hulu_* 两表；进度行只被读、不被改（R9 的第二道证据）", async () => {
     const { createRepositories } = await import("@/repositories/factory");
     const { withTransaction } = await import("@/db/transaction");
     const { HuluPlanService } = await import("@/services/hulu-plan.service");
     const service = new HuluPlanService();
+
+    // 定格源是进度行（R9）→ 先拍下它们的指纹：行数 + 最近更新时间。
+    const progressBefore = await adminPool.query(
+      `SELECT count(*)::int AS total, max(updated_at)::text AS latest
+         FROM user_word_progress WHERE user_id = $1`,
+      [USER_ID],
+    );
+    expect(progressBefore.rows[0].total).toBe(WORD_IDS.length);
 
     const plan = await service.createPlan({
       userId: USER_ID,
@@ -185,12 +195,22 @@ describe("Hulu sprint zero-write (integration)", () => {
     });
     const round = await service.startRound({ userId: USER_ID, planId: plan.id });
 
-    // 该用户在任何 FSRS 表里都不应有行（这个词书从未进过复习流）
-    const progress = await adminPool.query(
-      `SELECT count(*)::int AS total FROM user_word_progress WHERE user_id = $1`,
+    // 进度行数量不变、updated_at 最大值不变 —— 定格取词只 SELECT，不写回。
+    const progressAfter = await adminPool.query(
+      `SELECT count(*)::int AS total, max(updated_at)::text AS latest
+         FROM user_word_progress WHERE user_id = $1`,
       [USER_ID],
     );
-    expect(progress.rows[0].total).toBe(0);
+    expect(progressAfter.rows[0].total, "进度行数不得变化").toBe(progressBefore.rows[0].total);
+    expect(progressAfter.rows[0].latest, "进度行 updated_at 不得变化")
+      .toBe(progressBefore.rows[0].latest);
+
+    // 状态仍是入池前的 learning（没有被读路径顺手改成别的）
+    const states = await adminPool.query<{ state: string }>(
+      `SELECT state FROM user_word_progress WHERE user_id = $1`,
+      [USER_ID],
+    );
+    expect(states.rows.map((row) => row.state)).toEqual(WORD_IDS.map(() => "learning"));
 
     const logs = await adminPool.query(
       `SELECT count(*)::int AS total FROM review_logs WHERE user_id = $1`,

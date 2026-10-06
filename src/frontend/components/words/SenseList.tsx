@@ -46,13 +46,18 @@ import { Badge } from "@/frontend/components/ui/Badge";
  * 将来导入器若恢复语义标签，这里可以再放出真正的分类徽章。
  */
 
-export interface CoreSense {
-  sense: string;
-  en: string | null;
-  priority: number | null;
-  /** 当前**不渲染**（冗余于 priority，见文件头）。保留在类型里以便将来恢复语义标签。 */
-  tags: string[];
-}
+import type { CoreSense } from "@/domain/hulu-sprint";
+
+/**
+ * 义项类型以 **domain 为单一真源**（`src/domain/hulu-sprint.ts` 的 `CoreSense`）：
+ * 页载荷契约（`huluPageWordItemResponseSchema`）与前端组件必须描述同一个 jsonb
+ * 形状，各写一遍就会漂移。方向恒为 frontend → domain —— domain 层零出向依赖
+ * （`.dependency-cruiser.cjs` 的 `domain-no-outbound`），反向 import 会被门禁拦下。
+ *
+ * 这里 re-export 保持既有调用点（`import { SenseList, type CoreSense } from
+ * "@/frontend/components/words/SenseList"`）不变。
+ */
+export type { CoreSense };
 
 interface SenseListProps {
   senses: CoreSense[] | null | undefined;

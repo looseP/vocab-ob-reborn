@@ -1,0 +1,40 @@
+=== 葫芦修订轮 · 真机复测汇总（dev 栈，修订代码重建后）===
+日期: 2026-10-06
+分支: feat/hulu-amend-pool-card（自 3f03d55 拉出）
+环境: docker compose -p vocab-dev（web 重建于 18:06，/health 200 @ :3101）
+计划: a0d4b8e6-478c-4cf5-90e2-aa270a39448d（词书 be51b132，池 24 词）
+
+--- T0 前置清理（开工前）---
+hulu_rounds 删 5 / hulu_plans 删 5 / wordbook_items 删 40（08:34 那批测试行）
+复核: plans=0 / rounds=0 / wordbook_items=1（10-03 的原始行，未动）
+
+--- Part A：新取证（池源修订）---
+池 = learning(10) + review(14) = **24**（真库 SQL 实测，与预期一致）
+创建 → word_count=24 / cardinality=24 / page_size=20 / **pages=2**
+定格序 == `created_at ASC, word_id ASC` → ORDER_MATCH（真库复算）
+new(478) / suspended(0) 均不入池 → 入池行里 new/suspended 计数 = 0
+页载荷 15 字段齐全（R10），义项 priority 序、助记、例句、语义链均实测有值
+
+--- Part B：12 项 ---
+①第 6 张卡「葫芦冲刺」         ✅ 复习页模式网格末位（DOM 实测）
+②创建计划（挂起关）→ 第 1 轮    ✅ 201 + round_no=1
+③单卡路径无网络请求            ✅ 翻开+展开语义链：/api/ 条目 7 → 7
+④60% 被拦（整页清零/学习态）    ✅ 浏览器实测「本页没到闸门…本页已被拦 1 次」
+⑤重新自认 ≥80% → 结算 → 下一页  ✅ 4/4 通过后结算 200
+⑥回看已结算页只读              ✅ jsdom 用例（hulu-session.test.tsx）
+⑦刷新自动续上（24h）           ✅ jsdom 用例（缓存命中/过期/轮次不符三例）
+⑧末页收尾 → 耗时 → 曲线        ✅ round 1 finish 200，elapsed_seconds=359
+⑨挂起开关（开）→ 队列消失 → 放弃恢复 ✅ 集成测试（hulu-suspension，真库）
+⑩删词只缩不换                  ✅ 下架页内词：alive 4→3，total=24/页数=2 不变
+⑪**卡面精致度（新增）**         ✅ 五层全实测 + 单卡零请求（见 C7）
+⑫**D1 两方向（新增）**          ✅ 见 C2（API 层两方向 + 两个对照）、C6（前端自动重取）
+
+--- 零写入对账 ---
+review_logs 行数: 111 → 111（未变）
+user_word_progress.max(updated_at): 2026-10-06 08:45:37.145096+00 → 未变
+判定: ZERO_WRITE_OK
+葫芦两表确有写入（plans=1 / rounds=2 / finished=1）⇒ 链路真跑过，非假绿
+
+--- 测试数据处置 ---
+临时下架的 3 个词均已复原（is_published 全库复核：unpublished=0）
+计划 a0d4b8e6 保留（active，供后续人工回看；如需清理由 T0 同款 SQL 处理）

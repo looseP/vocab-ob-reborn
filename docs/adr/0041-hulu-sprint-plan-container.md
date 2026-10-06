@@ -36,3 +36,26 @@
 - ⚠️ 轮次耗时 = 墙钟 `ended_at - started_at`（R5），**中断不切开**；跨夜/跨天的长中断会虚高。这是已知且接受的口径代价，由缩时曲线的免责声明覆盖，不为它建段表。服务端把 `elapsed_seconds` 夹取到 `[0, 86400×7]`。
 - ⚠️ 页级明细、词级通过历史、错题导出均**刻意不建**（完备设计 §4.3）：失败页不留记录，「没通过」是页级比例事件，不接错题库（错题库 = `attempts(outcome='wrong')` 派生视图，ADR-0019 §1）。
 - ⚠️ 挂起范围含 `new`（与一键遗忘排除 `new` 的语义不同：有快照即安全，且目标是整批退出到期队列）。交错安全（与一键遗忘、手动挂起互不伤）的逐条论证见完备设计 §六。
+
+---
+
+## Amendment（2026-10-06 · 修订轮）
+
+真机验收（dev 栈）坐实两处待修订项与一个缺陷，主控拍板后落本段。**Decision 4/5/6 的框架不变**，以下三条是修订（详见完备设计 R9–R11 与修订轮执行计划）：
+
+1. **定格池源改为「先学后刷」（R9，修订 Decision 4 的取词口径）**。
+   旧口径「整本词书的 `wordbook_items`」与真实用法错位：真机实测该表**只有 1 行**、且 app 没有写入口（复习牌堆有 492 张到期卡，定格却只拿到 1 词）。新口径 = 该词书**复习牌堆**中 `state ∈ ('learning','review','relearning')` 的词，序 `created_at ASC, word_id ASC`（加入复习的顺序，贴近"从头到尾过一遍"）。
+   - 排除 `new`：没见过的词不逼"回忆"（先学后刷）；排除 `suspended`：用户主动放下的，冲刺不替他捡回来。
+   - **连带自洽**：`new` 不入池 ⇒ 挂起开关只作用于入池词（新词照常到期）；Decision 5 的挂起快照/恢复机制**不变**（冻结集本身就是进度行）。
+   - 池空 → `BusinessRuleError`（422），文案「该词书还没有可冲刺的词——先去标准复习，至少复习过一次再回来。」
+   - 仓库方法：`listReviewDeckWordIds` 取代 `listWordIdsByWordbook`（后者已删）。这是本层**唯一的 FSRS 可见面接触，且只读**——Decision 2「零 FSRS **写入**」的措辞据此收紧（原写"不写 `user_word_progress`"，现为"不写，但定格取词读它"）。
+
+2. **卡面精致化（R10，扩展 Decision 3 的卡面与 Decision 4 的页载荷）**。
+   翻开后按 L1 卡背同构的**五层**披露：Tier0 短释主行 → `core_definitions` 义项（priority 序即重要程度，喂现成 `SenseList`；空则降级 `definition_md`）→ 助记锚（`mnemonic_text` + `mnemonic_type` 徽标，显著）→ 例句前 1–2 条 → Tier2 `semantic_chain` 折叠。
+   - **硬约束不变**：单卡路径零请求 ⇒ 上述字段必须随**页载荷**批量带下；**禁** `useWordDetail`（每卡一请求）、**禁**嵌 `ReviewCardView`（评分流组件）；**允许**复用 `SenseList` 这类纯展示子组件。
+   - 取数改为 `hulu.findHuluPageWords`（页载荷的唯一取数方式）；`reviews.findWordsByIds` **不动**（preview 队列在用）。
+
+3. **D1 机器码（R11，修正 Decision 4 的页结算错误面）**。
+   页内词被上架/下架后，前端手里的 `total` 会过期 → 结算 422。旧行为把用户丢到错误页（卡死）。新增稳定码 `HULU_PAGE_ALIVE_MISMATCH`（HTTP 仍 422，code 透出响应体）；前端捕获该码 → **自动重取本页 + 轻提示**，不落错误页、不重复结算。
+   - 该码进入 `ERROR_CODES` 单一导出 ⇒ `/api/l3/capabilities` 的 `errorCodes` 响应枚举随之扩展，触发 OpenAPI breaking 门禁一条（`response enum 新增未声明值`）。按 ADR-0035 §勘误 / ADR-0037 先例**整体重锚** `docs/api/openapi-breaking-approval.json` 三元组（历史 study-notes 条目已不在实测集合内，按机制一并舍去；`message` 字段参与字节级比对，故决策理由记在此处）。
+

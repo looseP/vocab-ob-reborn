@@ -1,18 +1,20 @@
 /**
- * 葫芦冲刺挂起开关集成测试（完备设计 测试 7 / 执行计划 P2-3）。
+ * 葫芦冲刺挂起开关集成测试（完备设计 测试 7 / 执行计划 P2-3；修订轮 R9 更新）。
  *
  * **Run with:** `npm run test:integration`（需真实 PostgreSQL）
  *
  * 断言（开关开时）：
- *  1. 创建计划后，`word_ids` 中的词全部 `suspended`，且 `suspend_snapshot` 记下了
- *     **挂起前 state**（`new` / `learning` / `relearning` / `review` 各一例）；
- *  2. 计划期间**用户手动挂起**的词（不在快照内）在恢复后仍是 `suspended`；
- *  3. 计划转 completed / abandoned 后：快照内行回到**挂起前 state**（不是统一
+ *  1. 创建计划后，**入池词**（learning / relearning / review）全部 `suspended`，
+ *     且 `suspend_snapshot` 记下了**挂起前 state**（三态各一例）；
+ *  2. **`new` 不入池**（R9「先学后刷」）：state='new' 的词不进 word_ids、
+ *     不被挂起、不出现在快照里 —— 它照常留在到期队列；
+ *  3. 计划期间**用户手动挂起**的词（不在快照内）在恢复后仍是 `suspended`；
+ *  4. 计划转 completed / abandoned 后：快照内行回到**挂起前 state**（不是统一
  *     `review`）、`suspend_snapshot` 清空；
- *  4. 挂起与恢复**都不写 review_logs**（行数不变）。
+ *  5. 挂起与恢复**都不写 review_logs**（行数不变）。
  *
  * 这是 R1「恢复 = 快照回写」的运行时证据：结构面（源码 grep）之外，真库跑一遍
- * 看那四行 state 有没有各自回到原处。
+ * 看那几行 state 有没有各自回到原处。
  *
  * 前置（与 tests/hulu-zero-write.integration.test.ts 同一套基建）：
  * - TEST_DATABASE_URL  管理连接（seed / cleanup / 读 state）
@@ -35,14 +37,17 @@ if (!appDatabaseUrl) {
   throw new Error("TEST_APP_DATABASE_URL is required for the restricted hulu session");
 }
 
-/** 快照要覆盖的四种挂起前 state（完备设计 测试 7 原文）。 */
-const SNAPSHOT_STATES = ["new", "learning", "relearning", "review"] as const;
+/** 入池的三种挂起前 state（R9 白名单；`new` 被显式排除，单独断言「不入池」）。 */
+const POOL_STATES = ["learning", "relearning", "review"] as const;
 
 describe("Hulu sprint suspension (integration)", () => {
   const USER_ID = randomUUID();
   const WORDBOOK_ID = randomUUID();
-  /** 四种 state 各一词 + 一个「用户手动挂起」的词（不在 word_ids 内）。 */
-  const WORD_IDS = SNAPSHOT_STATES.map(() => randomUUID());
+  /** 三种入池 state 各一词。 */
+  const POOL_WORD_IDS = POOL_STATES.map(() => randomUUID());
+  /** `new` 态词：在词书内、有进度行，但**不入池**（R9）。 */
+  const NEW_WORD_ID = randomUUID();
+  /** 「用户手动挂起」的词：同样不入池（suspended 被排除），也不在快照内。 */
   const MANUAL_WORD_ID = randomUUID();
   const ORIGINAL_DATABASE_URL = process.env.DATABASE_URL;
   const ORIGINAL_POOL_MAX = process.env.DB_POOL_MAX;
@@ -85,8 +90,8 @@ describe("Hulu sprint suspension (integration)", () => {
       [WORDBOOK_ID, USER_ID, `hulu suspend ${WORDBOOK_ID.slice(0, 8)}`],
     );
 
-    // 五种词：四种快照 state 各一 + 一个只给用户手动挂起的词（不进计划 word_ids）。
-    const allWords = [...WORD_IDS, MANUAL_WORD_ID];
+    // 词条：三种入池态各一 + `new`（不入池）+ 手动挂起（不入池）。
+    const allWords = [...POOL_WORD_IDS, NEW_WORD_ID, MANUAL_WORD_ID];
     for (const [index, wordId] of allWords.entries()) {
       const slug = `hulu-suspend-${index}-${wordId.slice(0, 8)}`;
       await adminPool.query(
@@ -95,24 +100,21 @@ describe("Hulu sprint suspension (integration)", () => {
          VALUES ($1, $2, $3, 'test', $4, $4, 'def', 'body', $5, true, false)`,
         [wordId, slug, createHash("sha256").update(wordId).digest("hex"), `huluword${index}`, `释义 ${index}`],
       );
-      // 手动挂起的那个词**不进词书**：它只用来验证「快照之外的词不动」。
-      if (wordId !== MANUAL_WORD_ID) {
-        await adminPool.query(
-          `INSERT INTO wordbook_items (wordbook_id, word_id) VALUES ($1, $2)`,
-          [WORDBOOK_ID, wordId],
-        );
-      }
     }
 
-    // 四种 state 各一（含 due_at，让它们看起来像真的到期队列成员）。
-    for (const [index, wordId] of WORD_IDS.entries()) {
-      const state = SNAPSHOT_STATES[index]!;
+    // 进度行就是池源（R9）：三态入池，`new` 与 `suspended` 不入池。
+    for (const [index, wordId] of POOL_WORD_IDS.entries()) {
       await adminPool.query(
         `INSERT INTO user_word_progress (user_id, word_id, wordbook_id, state, due_at)
          VALUES ($1, $2, $3, $4, now())`,
-        [USER_ID, wordId, WORDBOOK_ID, state],
+        [USER_ID, wordId, WORDBOOK_ID, POOL_STATES[index]],
       );
     }
+    await adminPool.query(
+      `INSERT INTO user_word_progress (user_id, word_id, wordbook_id, state, due_at)
+       VALUES ($1, $2, $3, 'new', now())`,
+      [USER_ID, NEW_WORD_ID, WORDBOOK_ID],
+    );
     // 用户手动挂起的词（快照之外；挂起期间用户自己挂的）。
     await adminPool.query(
       `INSERT INTO user_word_progress (user_id, word_id, wordbook_id, state, due_at)
@@ -129,8 +131,7 @@ describe("Hulu sprint suspension (integration)", () => {
     await adminPool.query(`DELETE FROM hulu_rounds WHERE user_id = $1`, [USER_ID]);
     await adminPool.query(`DELETE FROM hulu_plans WHERE user_id = $1`, [USER_ID]);
     await adminPool.query(`DELETE FROM user_word_progress WHERE user_id = $1`, [USER_ID]);
-    await adminPool.query(`DELETE FROM wordbook_items WHERE wordbook_id = $1`, [WORDBOOK_ID]);
-    await adminPool.query(`DELETE FROM words WHERE id = ANY($1::uuid[])`, [[...WORD_IDS, MANUAL_WORD_ID]]);
+    await adminPool.query(`DELETE FROM words WHERE id = ANY($1::uuid[])`, [[...POOL_WORD_IDS, NEW_WORD_ID, MANUAL_WORD_ID]]);
     await adminPool.query(`DELETE FROM wordbooks WHERE id = $1`, [WORDBOOK_ID]);
     await adminPool.query(`DELETE FROM profiles WHERE id = $1`, [USER_ID]);
     await adminPool.query(`DELETE FROM users WHERE id = $1`, [USER_ID]);
@@ -142,12 +143,12 @@ describe("Hulu sprint suspension (integration)", () => {
     await resetPool();
   });
 
-  it("创建时挂起 + 快照记录挂起前 state；放弃后逐行回写（new/learning/relearning/review）", async () => {
+  it("创建时挂起入池词 + 快照记录挂起前 state；new 不入池；放弃后逐行回写", async () => {
     const { HuluPlanService } = await import("@/services/hulu-plan.service");
     const service = new HuluPlanService();
     const logsBefore = await reviewLogCount();
 
-    // ① 创建（开关开）：四种 state 全部被挂起
+    // ① 创建（开关开）：三种入池 state 全部被挂起；`new` / `suspended` 不在池内
     const plan = await service.createPlan({
       userId: USER_ID,
       wordbookId: WORDBOOK_ID,
@@ -156,33 +157,39 @@ describe("Hulu sprint suspension (integration)", () => {
       suspendReview: true,
     });
     expect(plan.suspend_review).toBe(true);
-    expect(plan.suspended_count).toBe(WORD_IDS.length);
+    // 池 = 三态各一（`new` 与 `suspended` 被排除）
+    expect(plan.word_count).toBe(POOL_WORD_IDS.length);
+    expect(plan.suspended_count).toBe(POOL_WORD_IDS.length);
 
-    const afterApply = await readStates([...WORD_IDS, MANUAL_WORD_ID]);
-    for (const wordId of WORD_IDS) {
-      expect(afterApply[wordId], "计划内的词应被挂起").toBe("suspended");
+    const afterApply = await readStates([...POOL_WORD_IDS, NEW_WORD_ID, MANUAL_WORD_ID]);
+    for (const wordId of POOL_WORD_IDS) {
+      expect(afterApply[wordId], "入池词应被挂起").toBe("suspended");
     }
+    // R9：`new` 不入池 ⇒ 不被挂起，照常留在到期队列
+    expect(afterApply[NEW_WORD_ID], "new 不入池，不应被挂起").toBe("new");
     expect(afterApply[MANUAL_WORD_ID], "快照外的词不受影响").toBe("suspended");
 
-    // 快照逐行记下挂起前 state（不是统一 review）
+    // 快照逐行记下挂起前 state（不是统一 review；且不含 new）
     const snapshot = await readSnapshot(plan.id);
     expect(snapshot).not.toBeNull();
-    expect(Object.keys(snapshot!).sort()).toEqual([...WORD_IDS].sort());
-    for (const [index, wordId] of WORD_IDS.entries()) {
-      expect(snapshot![wordId]).toBe(SNAPSHOT_STATES[index]);
+    expect(Object.keys(snapshot!).sort()).toEqual([...POOL_WORD_IDS].sort());
+    for (const [index, wordId] of POOL_WORD_IDS.entries()) {
+      expect(snapshot![wordId]).toBe(POOL_STATES[index]);
     }
+    expect(snapshot![NEW_WORD_ID], "new 不入池 ⇒ 不进快照").toBeUndefined();
 
     // ② 放弃计划（同事务恢复）：逐行回到挂起前 state
     const abandoned = await service.abandonPlan({ userId: USER_ID, planId: plan.id });
     expect(abandoned.status).toBe("abandoned");
 
-    const afterRestore = await readStates([...WORD_IDS, MANUAL_WORD_ID]);
-    for (const [index, wordId] of WORD_IDS.entries()) {
-      expect(afterRestore[wordId], `词 ${wordId} 应回到 ${SNAPSHOT_STATES[index]}`)
-        .toBe(SNAPSHOT_STATES[index]);
+    const afterRestore = await readStates([...POOL_WORD_IDS, NEW_WORD_ID, MANUAL_WORD_ID]);
+    for (const [index, wordId] of POOL_WORD_IDS.entries()) {
+      expect(afterRestore[wordId], `词 ${wordId} 应回到 ${POOL_STATES[index]}`)
+        .toBe(POOL_STATES[index]);
     }
     // 快照外的词（用户手动挂起）不被葫芦恢复动到
     expect(afterRestore[MANUAL_WORD_ID], "快照外的挂起词应保持 suspended").toBe("suspended");
+    expect(afterRestore[NEW_WORD_ID], "new 全程未被动过").toBe("new");
 
     // ③ 快照已清空
     expect(await readSnapshot(plan.id), "恢复后 suspend_snapshot 应清空").toBeNull();
@@ -196,11 +203,11 @@ describe("Hulu sprint suspension (integration)", () => {
     const service = new HuluPlanService();
     const logsBefore = await reviewLogCount();
 
-    // 先复位四种 state（上一用例已恢复，但这里再显式钉一次）
-    for (const [index, wordId] of WORD_IDS.entries()) {
+    // 先复位三种入池 state（上一用例已恢复，但这里再显式钉一次）
+    for (const [index, wordId] of POOL_WORD_IDS.entries()) {
       await adminPool.query(
         `UPDATE user_word_progress SET state = $3 WHERE user_id = $1 AND word_id = $2`,
-        [USER_ID, wordId, SNAPSHOT_STATES[index]],
+        [USER_ID, wordId, POOL_STATES[index]],
       );
     }
 
@@ -214,18 +221,19 @@ describe("Hulu sprint suspension (integration)", () => {
     });
 
     // 计划期间：用户手动把其中一个词恢复到 review（它因此离开挂起态）
-    const manualRecovered = WORD_IDS[3]!;
+    const manualRecovered = POOL_WORD_IDS[2]!;
     await adminPool.query(
       `UPDATE user_word_progress SET state = 'review' WHERE user_id = $1 AND word_id = $2`,
       [USER_ID, manualRecovered],
     );
 
     // 跑满两轮 → 末轮收尾时计划转 completed 并恢复快照
+    const poolSize = POOL_WORD_IDS.length;
     for (let roundNo = 1; roundNo <= 2; roundNo += 1) {
       await service.startRound({ userId: USER_ID, planId: plan.id });
       await service.settlePage({
         userId: USER_ID, planId: plan.id, roundNo, pageIndex: 0,
-        passed: WORD_IDS.length, total: WORD_IDS.length,
+        passed: poolSize, total: poolSize,
       });
       await service.finishRound({ userId: USER_ID, planId: plan.id, roundNo });
     }
@@ -238,15 +246,16 @@ describe("Hulu sprint suspension (integration)", () => {
     );
     expect(stored?.status, "末轮收尾应把计划置 completed").toBe("completed");
 
-    const afterFinish = await readStates([...WORD_IDS, MANUAL_WORD_ID]);
-    for (const [index, wordId] of WORD_IDS.entries()) {
+    const afterFinish = await readStates([...POOL_WORD_IDS, NEW_WORD_ID, MANUAL_WORD_ID]);
+    for (const [index, wordId] of POOL_WORD_IDS.entries()) {
       if (wordId === manualRecovered) continue;
-      expect(afterFinish[wordId], `词 ${wordId} 应回到 ${SNAPSHOT_STATES[index]}`)
-        .toBe(SNAPSHOT_STATES[index]);
+      expect(afterFinish[wordId], `词 ${wordId} 应回到 ${POOL_STATES[index]}`)
+        .toBe(POOL_STATES[index]);
     }
     // 计划期间用户手动恢复过的词：葫芦恢复不动它（它已不是 suspended）
     expect(afterFinish[manualRecovered], "用户手动恢复过的词应保持用户的选择").toBe("review");
     expect(afterFinish[MANUAL_WORD_ID], "快照外的挂起词仍 suspended").toBe("suspended");
+    expect(afterFinish[NEW_WORD_ID], "new 全程未被动过").toBe("new");
 
     expect(await readSnapshot(plan.id), "完成后快照应清空").toBeNull();
     expect(await reviewLogCount(), "整条链路不得写 review_logs").toBe(logsBefore);

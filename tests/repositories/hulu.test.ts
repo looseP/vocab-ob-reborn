@@ -10,9 +10,10 @@
  * - 唯一索引冲突：23505 判据（服务层据此重查返回既有计划 = 幂等创建）
  * - 读取：findPlanById / findActivePlanByWordbook 的 owner scope 与 status 过滤
  * - 轮次：insertRound 的 now() 兜底 / findOpenRound 的 ended_at IS NULL / findRoundByNo
- * - 定格取词：listWordIdsByWordbook 的稳定序与 published+未删过滤
+ * - 定格取词：listReviewDeckWordIds 的入池条件（learning/review/relearning）与稳定序
  * - 级联删除：迁移 SQL 的两条复合 FK 均为 cascade（结构断言）
- * - 零 FSRS：全部 SQL 不出现 user_word_progress / review_logs / sessions / l3_sessions
+ * - 零 FSRS **写入**：全部 SQL 不出现 review_logs / sessions / l3_sessions，
+ *   也不出现对 user_word_progress 的写（定格取词只读该表，见 R9）
  */
 
 import { readFileSync } from "node:fs";
@@ -262,26 +263,100 @@ describe("HuluRepository.setPlanStatus / lockPlanForUpdate", () => {
   });
 });
 
-describe("HuluRepository.listWordIdsByWordbook（定格取词）", () => {
-  it("只取已发布未删词，按 (created_at ASC, word_id ASC) 稳定序", async () => {
+describe("HuluRepository.listReviewDeckWordIds（定格取词：先学后刷，R9）", () => {
+  it("池源是复习牌堆：SQL 只认 learning/review/relearning，按 (created_at ASC, word_id ASC) 稳定序", async () => {
     querySpy.mockImplementation(async () => ({ rows: [{ word_id: W1 }, { word_id: W2 }] }));
 
-    const ids = await repo.listWordIdsByWordbook(USER, WB);
+    const ids = await repo.listReviewDeckWordIds(USER, WB);
 
     const [text, params] = querySpy.mock.calls[0]!;
-    expect(text).toContain("FROM wordbook_items wi");
-    expect(text).toContain("JOIN words w ON w.id = wi.word_id");
-    expect(text).toContain("WHERE wi.wordbook_id = $1::uuid");
-    expect(text).toContain("w.is_published = true");
-    expect(text).toContain("w.is_deleted = false");
-    expect(text).toContain("ORDER BY wi.created_at ASC, wi.word_id ASC");
-    expect(params).toEqual([WB]);
+    expect(text).toContain("SELECT word_id FROM user_word_progress");
+    expect(text).toContain("WHERE user_id = $1::uuid AND wordbook_id = $2::uuid");
+    // 入池条件：三态白名单（排除 new 与 suspended 是靠白名单本身，不是黑名单）
+    expect(text).toContain("state = ANY(ARRAY['learning','review','relearning'])");
+    expect(text).toContain("ORDER BY created_at ASC, word_id ASC");
+    expect(params).toEqual([USER, WB]);
     expect(ids).toEqual([W1, W2]);
   });
 
-  it("空词书返回空数组（不报错；服务层据此抛业务错）", async () => {
+  it("池源不再是 wordbook_items（错位修复的结构面：真实库里它几乎为空）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [{ word_id: W1 }] }));
+
+    await repo.listReviewDeckWordIds(USER, WB);
+
+    const [text] = querySpy.mock.calls[0]!;
+    expect(text).not.toContain("wordbook_items");
+  });
+
+  it("`new` 不入池：白名单不含 'new'，也不含 'suspended'（先学后刷 + 不捡回放下的）", async () => {
     querySpy.mockImplementation(async () => ({ rows: [] }));
-    expect(await repo.listWordIdsByWordbook(USER, WB)).toEqual([]);
+
+    await repo.listReviewDeckWordIds(USER, WB);
+
+    const [text] = querySpy.mock.calls[0]!;
+    // 白名单是唯一判据：改写成黑名单（state <> 'new'）会立刻红
+    expect(text).toContain("state = ANY(ARRAY['learning','review','relearning'])");
+    expect(text).not.toMatch(/state\s*(<>|!=)\s*'new'/);
+    expect(text).not.toContain("'new'");
+    expect(text).not.toContain("'suspended'");
+  });
+
+  it("空牌堆返回空数组（不报错；服务层据此抛业务错）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+    expect(await repo.listReviewDeckWordIds(USER, WB)).toEqual([]);
+  });
+
+  it("requireTx：未绑定事务时拒绝（owner-RLS 表无 actor claim 会静默返回空集）", async () => {
+    const noTx = new HuluRepository();
+    await expect(noTx.listReviewDeckWordIds(USER, WB))
+      .rejects.toThrow(/requires an active transaction/);
+  });
+});
+
+describe("HuluRepository.findHuluPageWords（页载荷取词：卡面全字段，R10）", () => {
+  it("SELECT 卡面 15 列（含 core_definitions / definition_md / 助记 / 语义链），只取已发布未删", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+
+    await repo.findHuluPageWords([W1, W2]);
+
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("FROM words");
+    expect(text).toContain("core_definitions");
+    expect(text).toContain("definition_md");
+    expect(text).toContain("COALESCE(metadata->>'mnemonic_text', metadata->>'mnemonic') AS mnemonic_text");
+    expect(text).toContain("metadata->>'mnemonic_type' AS mnemonic_type");
+    expect(text).toContain("metadata->>'semantic_chain' AS semantic_chain");
+    expect(text).toContain("WHERE id = ANY($1::uuid[]) AND is_published = true AND is_deleted = false");
+    expect(params).toEqual([[W1, W2]]);
+  });
+
+  it("空数组短路（不发 SQL）", async () => {
+    expect(await repo.findHuluPageWords([])).toEqual([]);
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+
+  it("jsonb 列非数组时归一为空数组（前端据此走 definition_md 降级）", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [{ id: W1, slug: "a", title: "a", lemma: "a", ipa: null, pos: null, cefr: null,
+        short_definition: null, core_definitions: null, definition_md: "d", examples: null,
+        prototype_text: null, mnemonic_text: null, mnemonic_type: null, semantic_chain: null }],
+    }));
+
+    const rows = await repo.findHuluPageWords([W1]);
+
+    expect(rows[0]!.core_definitions).toEqual([]);
+    expect(rows[0]!.examples).toEqual([]);
+  });
+
+  it("只读 words 一张表：不触碰 user_word_progress / review_logs", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+
+    await repo.findHuluPageWords([W1]);
+
+    const [text] = querySpy.mock.calls[0]!;
+    expect(text).not.toContain("user_word_progress");
+    expect(text).not.toContain("review_logs");
+    expect(text).not.toContain("wordbook_items");
   });
 });
 
@@ -297,10 +372,14 @@ describe("HuluRepository 结构性红线", () => {
     await repo.findActivePlanByWordbook(USER, WB);
     await repo.findRoundsByPlan(USER, PLAN);
     await repo.assertWordbookOwned(USER, WB);
-    await repo.listWordIdsByWordbook(USER, WB);
+    await repo.listReviewDeckWordIds(USER, WB);
 
     const sql = querySpy.mock.calls.map((call) => call[0]).join("\n");
-    expect(sql).not.toContain("user_word_progress");
+    // 定格取词是**只读** user_word_progress（R9）：出现 SELECT 不算违规，
+    // 但任何写形态（UPDATE / INSERT / DELETE / SET）都必须缺席。
+    expect(sql).not.toContain("UPDATE user_word_progress");
+    expect(sql).not.toContain("INSERT INTO user_word_progress");
+    expect(sql).not.toContain("DELETE FROM user_word_progress");
     expect(sql).not.toContain("user_word_l2_progress");
     expect(sql).not.toContain("review_logs");
     expect(sql).not.toContain("INSERT INTO sessions");

@@ -85,6 +85,7 @@ import type {
   Json,
 } from "../domain";
 import type {
+  HuluPageWordRow,
   HuluPlanRow,
   HuluPlanStatus,
   HuluRoundRow,
@@ -1591,10 +1592,23 @@ export interface IHuluRepository {
    */
   findTodayKeyInDisplayTz(): string;
   /**
-   * 定格取词：整本词书的已发布未删词，稳定序
-   * （wordbook_items.created_at ASC, word_id ASC）。只读，零副作用。
+   * 定格取词（R9 / 修订轮 D-A「先学后刷」）：该词书**复习牌堆**中至少评分过一次
+   * 的词（`user_word_progress` 的 learning / review / relearning），稳定序
+   * `created_at ASC, word_id ASC`。排除 `new`（没见过的词不逼回忆）与
+   * `suspended`（用户主动放下的不捡回来）。
+   *
+   * 只读、零写入（唯一的 FSRS 可见面接触）；MUST be in a transaction
+   * （owner-RLS 表须带 actor claim，否则静默返回空集）。
    */
-  listWordIdsByWordbook(userId: string, wordbookId: string): Promise<string[]>;
+  listReviewDeckWordIds(userId: string, wordbookId: string): Promise<string[]>;
+  /**
+   * 页载荷取词（R10 / 修订轮 D-B）：按 id 批量取**卡面全字段**（Tier0 短释、
+   * 义项、助记锚、例句、Tier2 语义链），一次带下 ⇒ 单卡路径零请求。
+   *
+   * 与 `reviews.findWordsByIds`（preview 队列在用，不动）分工：那个是队列最小集。
+   * 只读 `words`（公开读策略），零副作用；返回序由 DB 决定，服务层按切片序重排。
+   */
+  findHuluPageWords(wordIds: string[]): Promise<HuluPageWordRow[]>;
 }
 
 // ── LLM Usage ──────────────────────────────────────────────────────────

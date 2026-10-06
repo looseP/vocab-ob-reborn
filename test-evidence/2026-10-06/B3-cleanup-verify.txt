@@ -1,0 +1,25 @@
+ plans_active 
+--------------
+            0
+(1 row)
+
+ review_logs_final 
+-------------------
+               111
+(1 row)
+
+ suspended_final 
+-----------------
+               0
+(1 row)
+
+ wordbook_items_final 
+----------------------
+                   41
+(1 row)
+
+ words_unpublished 
+-------------------
+                 0
+(1 row)
+

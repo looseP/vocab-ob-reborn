@@ -11,14 +11,16 @@
  *     本服务**不裸写 SQL**。为把这条纪律做成可机检的，本文件刻意**不出现**
  *     那几张表/服务的名字（完备设计 测试 10 的 grep）。
  *   - **不改已有表**：只写 hulu_plans / hulu_rounds（挂起开关经 ReviewRepository）。
- *   - 词集**创建时定格**（整本词书；direction 仅标签不过滤 —— R6）。
+ *   - 词集**创建时定格**（direction 仅标签不过滤 —— R6）；定格源 = 该词书的
+ *     **复习牌堆**（R9「先学后刷」：learning/review/relearning，排除 new 与
+ *     suspended；序 created_at ASC, word_id ASC）。
  *
  * 事务：所有方法（含只读）都经 withTransaction + actorId —— hulu_plans /
  * hulu_rounds 是 owner-RLS 表，读也要带 actor。
  */
 
 import type { PoolClient } from "pg";
-import { BusinessRuleError, ConflictError, NotFoundError, ValidationError } from "../errors";
+import { BusinessRuleError, ConflictError, HuluPageAliveMismatchError, NotFoundError, ValidationError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 import { isUniqueViolation } from "../repositories/hulu.repository";
@@ -268,10 +270,12 @@ export class HuluPlanService {
       const existing = await repos.hulu.findActivePlanByWordbook(input.userId, input.wordbookId);
       if (existing) return toHuluPlanSummary(existing);
 
-      // ③ 定格取词（整本词书，稳定序）。
-      const wordIds = await repos.hulu.listWordIdsByWordbook(input.userId, input.wordbookId);
+      // ③ 定格取词（该词书的复习牌堆，稳定序；R9「先学后刷」）。
+      const wordIds = await repos.hulu.listReviewDeckWordIds(input.userId, input.wordbookId);
       if (wordIds.length === 0) {
-        throw new BusinessRuleError("词书内没有可取词的条目，无法建立冲刺计划");
+        throw new BusinessRuleError(
+          "该词书还没有可冲刺的词——先去标准复习，至少复习过一次再回来。",
+        );
       }
       if (wordIds.length > HULU_MAX_WORDS) {
         throw new BusinessRuleError(`词数超出上限 ${HULU_MAX_WORDS}`, undefined, { wordCount: wordIds.length });
@@ -352,6 +356,9 @@ export class HuluPlanService {
    * 只读、零副作用 —— 这正是它存在的原因：`/review/queue?mode=preview&wordIds=`
    * 会 `getOrCreateTodaySession` 写一行 sessions 且锚定默认词书（完备设计 R4）。
    *
+   * 取词走 `hulu.findHuluPageWords`（R10：卡面全字段一次带下 ⇒ 单卡路径零请求），
+   * 不用 `reviews.findWordsByIds`（那个是 preview 队列的最小集，且**不动**它）。
+   *
    * 越界页 → 404（越界不是「空页」，是「不存在的页」）；`alive = 0` 是合法页
    * （整页定格词已删），前端跳过、服务端结算自动通过。
    */
@@ -373,9 +380,9 @@ export class HuluPlanService {
         throw new NotFoundError("HuluPlanPage", `${input.planId}:${input.pageIndex}`);
       }
 
-      const found = await repos.reviews.findWordsByIds(slice);
-      // 按切片顺序重排（照 getQueue 的 orderMap 做法）：findWordsByIds 的返回序
-      // 由 DB 决定，而定格序才是「只缩不换」的语义所在。
+      const found = await repos.hulu.findHuluPageWords(slice);
+      // 按切片顺序重排（照 getQueue 的 orderMap 做法）：仓库的返回序由 DB 决定，
+      // 而定格序才是「只缩不换」的语义所在。
       const orderMap = new Map(slice.map((id, index) => [id, index]));
       const items: HuluPageWordItem[] = found
         .filter((word) => orderMap.has(word.id))
@@ -387,8 +394,15 @@ export class HuluPlanService {
           lemma: word.lemma,
           ipa: word.ipa,
           pos: word.pos,
+          cefr: word.cefr,
           short_definition: word.short_definition,
+          core_definitions: word.core_definitions,
+          definition_md: word.definition_md,
+          examples: word.examples,
+          prototype_text: word.prototype_text,
           mnemonic_text: word.mnemonic_text,
+          mnemonic_type: word.mnemonic_type,
+          semantic_chain: word.semantic_chain,
         }));
 
       return { pageIndex: input.pageIndex, pages, total, alive: items.length, items };
@@ -472,9 +486,15 @@ export class HuluPlanService {
 
       // ① total 必须等于本页**存活**词数（服务端复算，不信任前端）。
       const slice = huluPageSlice(plan.word_ids, plan.page_size, pageIndex);
-      const alive = (await repos.reviews.findWordsByIds(slice)).filter((word) => slice.includes(word.id)).length;
+      const alive = (await repos.hulu.findHuluPageWords(slice)).length;
       if (total !== alive) {
-        throw new ValidationError("total 与本页存活词数不符", "total");
+        // D1（R11）：带**稳定机器码**，前端据此自动重取本页 —— 页内词被上架/下架
+        // 会让前端手里的 total 过期，这不是"提交错了"，而是"词集变了"。
+        throw new HuluPageAliveMismatchError("total 与本页存活词数不符", {
+          total,
+          alive,
+          pageIndex,
+        });
       }
 
       // ② 闸门复验（读计划行列值，不写死 0.8）。total = 0（整页删空）→ pass。

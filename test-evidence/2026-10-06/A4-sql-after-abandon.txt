@@ -1,0 +1,20 @@
+                  id                  | n | page_size | target_rounds |  status   | suspend_review | snap_null 
+--------------------------------------+---+-----------+---------------+-----------+----------------+-----------
+ 26055a59-0b12-4a81-8fae-01141e4fb89c | 1 |        20 |             4 | abandoned | f              | t
+(1 row)
+
+ round_no | pages_passed | words_passed | elapsed_seconds | closed 
+----------+--------------+--------------+-----------------+--------
+        1 |            1 |            1 |             128 | t
+(1 row)
+
+ review_logs 
+-------------
+         111
+(1 row)
+
+        max_progress        
+----------------------------
+ 2026-10-04 11:28:56.986+00
+(1 row)
+

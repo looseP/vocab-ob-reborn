@@ -30937,7 +30937,7 @@ export interface operations {
                             proposalPayloadMaxBytes: number;
                             proposalTotalPayloadMaxBytes: number;
                         };
-                        errorCodes: ("NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "UNAUTHORIZED" | "FORBIDDEN" | "BUSINESS_RULE" | "DB_UNAVAILABLE" | "INTERNAL" | "FOREIGN_KEY_VIOLATION" | "NOT_NULL_VIOLATION" | "CHECK_VIOLATION" | "INVALID_INPUT")[];
+                        errorCodes: ("NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "UNAUTHORIZED" | "FORBIDDEN" | "BUSINESS_RULE" | "DB_UNAVAILABLE" | "INTERNAL" | "FOREIGN_KEY_VIOLATION" | "NOT_NULL_VIOLATION" | "CHECK_VIOLATION" | "INVALID_INPUT" | "HULU_PAGE_ALIVE_MISMATCH")[];
                     };
                 };
             };
@@ -37118,8 +37118,20 @@ export interface operations {
                             lemma: string;
                             ipa: string | null;
                             pos: string | null;
+                            cefr: string | null;
                             short_definition: string | null;
+                            core_definitions: {
+                                sense: string;
+                                en: string | null;
+                                priority: number | null;
+                                tags: string[];
+                            }[];
+                            definition_md: string;
+                            examples: unknown[];
+                            prototype_text: string | null;
                             mnemonic_text: string | null;
+                            mnemonic_type: string | null;
+                            semantic_chain: string | null;
                         }[];
                     };
                 };

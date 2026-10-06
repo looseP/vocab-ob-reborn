@@ -111,7 +111,18 @@ export interface HuluPlanWithRounds {
   rounds: HuluRoundRow[];
 }
 
-/** 页载荷的一件词卡（只读；R4 专用端点，不复用 preview queue）。 */
+/**
+ * 页载荷的一件词卡（只读；R4 专用端点，不复用 preview queue）。
+ *
+ * 字段清单（R10 / 修订轮 D-B「卡面精致化」）：五层披露所需的一切都在这里，
+ * 随**页载荷**批量带下 —— 单卡路径因此零请求（禁 `useWordDetail`）。
+ *   - Tier0 主行：`short_definition`
+ *   - 义项层：`core_definitions`（入库时已按 priority 排序，序即重要程度）
+ *   - 助记锚：`mnemonic_text` + `mnemonic_type`
+ *   - 例句：`examples`（前 1–2 条，防御性渲染）
+ *   - Tier2：`semantic_chain`（默认折叠）+ `prototype_text`
+ * `definition_md` 是 `core_definitions` 为空时的降级路径（与 L1 卡背同一判据）。
+ */
 export interface HuluPageWordItem {
   id: string;
   slug: string;
@@ -119,8 +130,36 @@ export interface HuluPageWordItem {
   lemma: string;
   ipa: string | null;
   pos: string | null;
+  cefr: string | null;
   short_definition: string | null;
+  /** 结构化义项（`words.core_definitions`；空数组 = 走 definition_md 降级）。 */
+  core_definitions: CoreSense[];
+  definition_md: string;
+  /** 例句 JSONB（形状由导入器决定，前端逐项窄化、缺字段安静降级）。 */
+  examples: unknown[];
+  prototype_text: string | null;
   mnemonic_text: string | null;
+  mnemonic_type: string | null;
+  semantic_chain: string | null;
+}
+
+/**
+ * 页载荷取词的行类型（`HuluRepository.findHuluPageWords` 的返回；
+ * 与 `HuluPageWordItem` 同形，但 jsonb 列在仓库层尚未窄化）。
+ */
+export type HuluPageWordRow = HuluPageWordItem;
+
+/**
+ * 结构化义项。与 `SenseList` 的 `CoreSense` **同形**——两边都描述
+ * `words.core_definitions` 的一个元素；此处复制字段定义而非 import 前端组件，
+ * 是为了守住 domain 的零出向依赖（domain 不 import frontend）。
+ * 契约测试锁两者同形（tests/domain/hulu-sprint.test.ts）。
+ */
+export interface CoreSense {
+  sense: string;
+  en: string | null;
+  priority: number | null;
+  tags: string[];
 }
 
 /**

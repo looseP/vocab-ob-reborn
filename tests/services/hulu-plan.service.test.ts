@@ -17,8 +17,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { IRepositories } from "@/repositories/interfaces";
-import { BusinessRuleError, NotFoundError, ValidationError } from "@/errors";
-import type { HuluPlanRow, HuluRoundRow } from "@/domain/hulu-sprint";
+import { BusinessRuleError, HuluPageAliveMismatchError, NotFoundError, ValidationError } from "@/errors";
+import type { HuluPageWordItem, HuluPlanRow, HuluRoundRow } from "@/domain/hulu-sprint";
 
 const mockRepos: Partial<IRepositories> = {};
 vi.mock("@/db/transaction", () => ({
@@ -79,6 +79,43 @@ function wordIds(n: number): string[] {
   return Array.from({ length: n }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
 }
 
+/**
+ * 页载荷词卡的桩（R10 扩字段后：卡面五层要的列都在）。
+ * 只需给关心的字段，其余按空值补齐 —— 用例读起来才不被 15 列淹掉。
+ */
+type PageWordStub = { id: string } & Partial<Omit<HuluPageWordItem, "id">>;
+
+function pageWordStub(stub: PageWordStub): HuluPageWordItem {
+  return {
+    slug: stub.id,
+    title: stub.id,
+    lemma: stub.id,
+    ipa: null,
+    pos: null,
+    cefr: null,
+    short_definition: null,
+    core_definitions: [],
+    definition_md: "",
+    examples: [],
+    prototype_text: null,
+    mnemonic_text: null,
+    mnemonic_type: null,
+    semantic_chain: null,
+    ...stub,
+  };
+}
+
+/**
+ * `findHuluPageWords` 的桩语义：**只回返在册的 id**（模拟 DB 的存活过滤），
+ * 其余 id 视为已删 —— 服务层的 alive 复算与「只缩不换」都依赖这个语义。
+ */
+function pageWords(ids: string[], words: PageWordStub[]): HuluPageWordItem[] {
+  const byId = new Map(words.map((word) => [word.id, word]));
+  return ids
+    .filter((id) => byId.has(id))
+    .map((id) => pageWordStub(byId.get(id)!));
+}
+
 /** 固定墙钟（服务层 now 注入；轮次起止时刻的唯一来源）。 */
 const NOW = new Date("2026-10-06T10:00:00.000Z");
 
@@ -97,7 +134,7 @@ function setup(options: {
   insertedRound?: HuluRoundRow;
   settledRow?: HuluRoundRow | null;
   finishedRow?: HuluRoundRow | null;
-  words?: Array<{ id: string; slug: string; title: string; lemma: string; ipa: string | null; pos: string | null; short_definition: string | null; mnemonic_text: string | null }>;
+  words?: PageWordStub[];
   /** 挂起开关的桩：bulkSuspendByWordIds 回返的逐行快照。 */
   suspended?: Array<{ wordId: string; oldState: string }>;
   /** 恢复桩的回写行数。 */
@@ -125,7 +162,9 @@ function setup(options: {
       ? roundRow({ ended_at: "2026-10-06T10:00:00Z", elapsed_seconds: 3600 })
       : options.finishedRow),
     assertWordbookOwned: vi.fn(async () => options.owned ?? true),
-    listWordIdsByWordbook: vi.fn(async () => options.ids ?? wordIds(400)),
+    listReviewDeckWordIds: vi.fn(async () => options.ids ?? wordIds(400)),
+    findHuluPageWords: vi.fn(async (ids: string[]) =>
+      pageWords(ids, options.words ?? [])),
     findTodayKeyInDisplayTz: vi.fn(() => options.today ?? TODAY),
   };
   const reviews = {
@@ -155,7 +194,7 @@ describe("HuluPlanService.createPlan", () => {
 
     expect(row.id).toBe(PLAN);
     expect(hulu.assertWordbookOwned).toHaveBeenCalledWith(USER, WB);
-    expect(hulu.listWordIdsByWordbook).toHaveBeenCalledWith(USER, WB);
+    expect(hulu.listReviewDeckWordIds).toHaveBeenCalledWith(USER, WB);
     expect(hulu.insertPlan).toHaveBeenCalledWith({
       user_id: USER,
       wordbook_id: WB,
@@ -179,7 +218,7 @@ describe("HuluPlanService.createPlan", () => {
     expect(row.id).toBe("plan-existing");
     expect(hulu.insertPlan).not.toHaveBeenCalled();
     // 幂等分支在定格取词之前返回（省一次读）
-    expect(hulu.listWordIdsByWordbook).not.toHaveBeenCalled();
+    expect(hulu.listReviewDeckWordIds).not.toHaveBeenCalled();
   });
 
   it("并发撞唯一索引：insertPlan 抛 23505 → 重查并返回既有计划", async () => {
@@ -226,11 +265,36 @@ describe("HuluPlanService.createPlan", () => {
     expect(hulu.insertPlan).not.toHaveBeenCalled();
   });
 
-  it("空词书 → BusinessRuleError（空计划没有意义）", async () => {
-    const { service } = setup({ ids: [] });
+  it("空牌堆（该词书没有已评分过的词）→ BusinessRuleError 带先学后刷文案（R9）", async () => {
+    const { service, hulu } = setup({ ids: [] });
 
     await expect(service.createPlan({ userId: USER, wordbookId: WB, examDate: "2026-12-20" }))
-      .rejects.toThrow(BusinessRuleError);
+      .rejects.toThrow("该词书还没有可冲刺的词——先去标准复习，至少复习过一次再回来。");
+    // 422 语义（BusinessRuleError）且不插行
+    await expect(service.createPlan({ userId: USER, wordbookId: WB, examDate: "2026-12-20" }))
+      .rejects.toMatchObject({ httpStatus: 422 });
+    expect(hulu.insertPlan).not.toHaveBeenCalled();
+  });
+
+  it("定格源是复习牌堆（listReviewDeckWordIds），不再是 wordbook_items 的旧读法", async () => {
+    const { service, hulu } = setup({ ids: wordIds(10) });
+
+    await service.createPlan({ userId: USER, wordbookId: WB, examDate: "2026-12-20" });
+
+    expect(hulu.listReviewDeckWordIds).toHaveBeenCalledWith(USER, WB);
+    expect(hulu).not.toHaveProperty("listWordIdsByWordbook");
+  });
+
+  it("new 不入池：定格词集只含仓库回返的复习牌堆（服务层不自行补词、不放大）", async () => {
+    // 桩回返的就是「复习牌堆」——池的构成由仓库的 state 白名单决定（见仓库测试），
+    // 服务层只按原样定格：多一个词、少一个词都会在这里露馅。
+    const deck = wordIds(3);
+    const { service, hulu } = setup({ ids: deck });
+
+    await service.createPlan({ userId: USER, wordbookId: WB, examDate: "2026-12-20" });
+
+    expect(hulu.insertPlan).toHaveBeenCalledWith(expect.objectContaining({ word_ids: deck }));
+    expect(deck).toHaveLength(3);
   });
 
   it("考试日期已过或就是今天 → 422（BusinessRuleError）", async () => {
@@ -362,7 +426,7 @@ describe("HuluPlanService.createPlan", () => {
 
     expect(hulu.insertPlan).toHaveBeenCalledWith(expect.objectContaining({ direction: "考研" }));
     // 词集不因 direction 变化（R6：整本词书）
-    expect(hulu.listWordIdsByWordbook).toHaveBeenCalledWith(USER, WB);
+    expect(hulu.listReviewDeckWordIds).toHaveBeenCalledWith(USER, WB);
   });
 });
 
@@ -464,13 +528,13 @@ describe("HuluPlanService 事务与红线", () => {
   });
 });
 
-describe("HuluPlanService.getPlanPage（R4 页载荷）", () => {
-  const PAGE_WORDS = [
+describe("HuluPlanService.getPlanPage（R4 页载荷 / R10 卡面全字段）", () => {
+  const PAGE_WORDS: PageWordStub[] = [
     { id: "w-a", slug: "alpha", title: "alpha", lemma: "alpha", ipa: "/a/", pos: "n.", short_definition: "甲", mnemonic_text: "m-a" },
     { id: "w-b", slug: "bravo", title: "bravo", lemma: "bravo", ipa: null, pos: null, short_definition: "乙", mnemonic_text: null },
   ];
 
-  it("按定格切片取词并按切片序重排，字段裁剪到 8 列", async () => {
+  it("按定格切片取词并按切片序重排；字段是 R10 的卡面全清单", async () => {
     // 定格 3 词 / page_size 2 → 第 0 页 = [w-a, w-b]，第 1 页 = [w-c]
     const ids = ["w-a", "w-b", "w-c"];
     const { service } = setup({
@@ -489,10 +553,57 @@ describe("HuluPlanService.getPlanPage（R4 页载荷）", () => {
     expect(page.total).toBe(3);
     expect(page.alive).toBe(2);
     expect(page.items.map((item) => item.id)).toEqual(["w-a", "w-b"]);
-    // 字段裁剪：只出 8 列（不夹带 cefr / examples / prototype_text 等）
-    expect(Object.keys(page.items[0]!).sort()).toEqual(
-      ["id", "ipa", "lemma", "mnemonic_text", "pos", "short_definition", "slug", "title"],
-    );
+    // R10：卡面五层要的 15 列都在（不再是 8 列裁剪 —— 单卡零请求靠它们）
+    expect(Object.keys(page.items[0]!).sort()).toEqual([
+      "cefr", "core_definitions", "definition_md", "examples", "id", "ipa",
+      "lemma", "mnemonic_text", "mnemonic_type", "pos", "prototype_text",
+      "semantic_chain", "short_definition", "slug", "title",
+    ]);
+  });
+
+  it("R10：义项 / 例句 / 语义链等卡面字段原样透传（按切片序重排后仍对齐）", async () => {
+    const { service } = setup({
+      planById: planRow({ word_ids: ["w-a", "w-b"], page_size: 2 }),
+      words: [
+        {
+          id: "w-a", short_definition: "甲", definition_md: "1. 甲",
+          core_definitions: [
+            { sense: "甲", en: "alpha", priority: 1, tags: ["core"] },
+            { sense: "首要的", en: null, priority: 2, tags: [] },
+          ],
+          examples: [{ text: "Alpha is first.", translation: "甲是第一个" }],
+          prototype_text: "第一个", mnemonic_text: "a 开头", mnemonic_type: "联想",
+          semantic_chain: "aleph → alpha", cefr: "A1",
+        },
+        { id: "w-b", short_definition: "乙", definition_md: "1. 乙" },
+      ],
+    });
+
+    const page = await service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 0 });
+    const [first, second] = page.items;
+
+    expect(first!.core_definitions.map((sense) => sense.sense)).toEqual(["甲", "首要的"]);
+    expect(first!.examples).toEqual([{ text: "Alpha is first.", translation: "甲是第一个" }]);
+    expect(first!.semantic_chain).toBe("aleph → alpha");
+    expect(first!.mnemonic_type).toBe("联想");
+    expect(first!.prototype_text).toBe("第一个");
+    expect(first!.cefr).toBe("A1");
+    // 无 core_definitions 的词给空数组（前端据此走 definition_md 降级）
+    expect(second!.core_definitions).toEqual([]);
+    expect(second!.definition_md).toBe("1. 乙");
+  });
+
+  it("取词走 hulu.findHuluPageWords（页载荷的唯一取数方式），不再用 reviews.findWordsByIds", async () => {
+    const { service, hulu, reviews } = setup({
+      planById: planRow({ word_ids: ["w-a"], page_size: 2 }),
+      words: PAGE_WORDS,
+    });
+
+    await service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 0 });
+
+    expect(hulu.findHuluPageWords).toHaveBeenCalledWith(["w-a"]);
+    // findWordsByIds 是 preview 队列的取数口，葫芦页载荷不再碰它（也不动它的实现）
+    expect(reviews.findWordsByIds).not.toHaveBeenCalled();
   });
 
   it("删词只缩不换：切片位置不变，已删词从 items 消失（alive < total）", async () => {
@@ -617,9 +728,9 @@ describe("HuluPlanService.startRound（轮次开始）", () => {
 });
 
 describe("HuluPlanService.settlePage（R7 页结算）", () => {
-  const ALIVE_WORDS = [
-    { id: "w-a", slug: "a", title: "a", lemma: "a", ipa: null, pos: null, short_definition: null, mnemonic_text: null },
-    { id: "w-b", slug: "b", title: "b", lemma: "b", ipa: null, pos: null, short_definition: null, mnemonic_text: null },
+  const ALIVE_WORDS: PageWordStub[] = [
+    { id: "w-a", slug: "a", title: "a", lemma: "a" },
+    { id: "w-b", slug: "b", title: "b", lemma: "b" },
   ];
 
   function settleSetup(overrides: {
@@ -674,9 +785,8 @@ describe("HuluPlanService.settlePage（R7 页结算）", () => {
   it("闸门边界：恰等于 gate_ratio 放行，差 0.01 拒绝", async () => {
     // 20 词 / 0.8 → 16 通过恰好放行；15 通过（0.75）拒绝
     const ids = wordIds(20);
-    const twenty = Array.from({ length: 20 }, (_, i) => ({
-      id: ids[i]!, slug: `w${i}`, title: `w${i}`, lemma: `w${i}`,
-      ipa: null, pos: null, short_definition: null, mnemonic_text: null,
+    const twenty: PageWordStub[] = ids.map((id, i) => ({
+      id, slug: `w${i}`, title: `w${i}`, lemma: `w${i}`,
     }));
 
     const pass = settleSetup({ gateRatio: 0.8, wordIds: ids, words: twenty });
@@ -690,13 +800,39 @@ describe("HuluPlanService.settlePage（R7 页结算）", () => {
     })).rejects.toMatchObject({ httpStatus: 422 });
   });
 
-  it("total 必须等于本页存活词数（不符 → 422）", async () => {
+  it("total 必须等于本页存活词数（不符 → 422 + HULU_PAGE_ALIVE_MISMATCH 机器码）", async () => {
+    const { service, hulu } = settleSetup();
+
+    // D1（R11）：HTTP 语义仍是 422，但机器码是稳定码（前端据此自动重取本页）
+    await expect(service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 2, total: 3,
+    })).rejects.toMatchObject({
+      httpStatus: 422,
+      code: "HULU_PAGE_ALIVE_MISMATCH",
+      message: expect.stringMatching(/存活词数/),
+    });
+    // 该路径**不落库**：条件 UPDATE 一次都没发
+    expect(hulu.settlePage).not.toHaveBeenCalled();
+  });
+
+  it("D1 反向：total 等于存活数时照常结算（机器码只挂在漂移路径上）", async () => {
     const { service, hulu } = settleSetup();
 
     await expect(service.settlePage({
-      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 2, total: 3,
-    })).rejects.toThrow(/存活词数/);
-    expect(hulu.settlePage).not.toHaveBeenCalled();
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 2, total: 2,
+    })).resolves.toBeTruthy();
+    expect(hulu.settlePage).toHaveBeenCalledTimes(1);
+  });
+
+  it("D1 归因信息：details 带出 { total, alive, pageIndex }", async () => {
+    const { service } = settleSetup();
+
+    const error = await service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 1, total: 3,
+    }).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(HuluPageAliveMismatchError);
+    expect((error as HuluPageAliveMismatchError).meta).toEqual({ total: 3, alive: 2, pageIndex: 0 });
   });
 
   it("alive = 0（整页删空）→ total = 0 合法且自动通过", async () => {
@@ -713,9 +849,8 @@ describe("HuluPlanService.settlePage（R7 页结算）", () => {
   it("重复提交（条件 UPDATE 未命中且游标已推进）→ 幂等返回现状，不重复计数", async () => {
     // 定格 40 词 / 每页 20 → 2 页；提交第 1 页（第 2 页）时游标已在 2 → 幂等
     const ids = wordIds(40);
-    const page1 = ids.slice(20, 40).map((id, i) => ({
+    const page1: PageWordStub[] = ids.slice(20, 40).map((id, i) => ({
       id, slug: `w${20 + i}`, title: `w${20 + i}`, lemma: `w${20 + i}`,
-      ipa: null, pos: null, short_definition: null, mnemonic_text: null,
     }));
     const current = roundRow({ pages_passed: 2, words_passed: 36 });
     const { service, hulu } = settleSetup({
@@ -736,9 +871,8 @@ describe("HuluPlanService.settlePage（R7 页结算）", () => {
   it("跳页（游标落后于提交页）→ ConflictError（409）", async () => {
     // 同上：第 1 页合法（alive = 20），但游标停在 0 → 跳页
     const ids = wordIds(40);
-    const page1 = ids.slice(20, 40).map((id, i) => ({
+    const page1: PageWordStub[] = ids.slice(20, 40).map((id, i) => ({
       id, slug: `w${20 + i}`, title: `w${20 + i}`, lemma: `w${20 + i}`,
-      ipa: null, pos: null, short_definition: null, mnemonic_text: null,
     }));
     const current = roundRow({ pages_passed: 0 });
     const { service, hulu } = settleSetup({
@@ -989,13 +1123,13 @@ describe("HuluPlanService P1 红线", () => {
     }
   });
 
-  it("页载荷取词走只读的 findWordsByIds（不写 sessions、不锚定默认词书）", async () => {
+  it("页载荷取词走只读的 hulu.findHuluPageWords（不写 sessions、不锚定默认词书）", async () => {
     const { service } = setup({ planById: planRow({ word_ids: ["w-a"] }), words: [] });
-    const repos = mockRepos as { reviews?: { findWordsByIds?: ReturnType<typeof vi.fn> } };
+    const repos = mockRepos as { hulu?: { findHuluPageWords?: ReturnType<typeof vi.fn> } };
 
     await service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 0 });
 
-    expect(repos.reviews?.findWordsByIds).toHaveBeenCalledWith(["w-a"]);
+    expect(repos.hulu?.findHuluPageWords).toHaveBeenCalledWith(["w-a"]);
     // 绝不触达会写 sessions 的队列构建（wordbooks 服务未被注入/调用）
     expect(mockRepos.wordbooks).toBeUndefined();
   });

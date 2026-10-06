@@ -85,6 +85,25 @@ export class BusinessRuleError extends AppError {
   readonly code = ERROR_CODES.BUSINESS_RULE;
 }
 
+/**
+ * 葫芦页结算的页内词集漂移（422）—— D1 / 修订轮 R11。
+ *
+ * 与 `ValidationError` 同为 422，但携带**稳定机器码**
+ * `HULU_PAGE_ALIVE_MISMATCH`：这不是「提交非法」，而是客户端取页之后定格词被
+ * 上架/下架，手里的 `total` 过期了。前端据码自动重取本页（不落错误页）。
+ */
+export class HuluPageAliveMismatchError extends AppError {
+  readonly httpStatus = 422;
+  readonly code = ERROR_CODES.HULU_PAGE_ALIVE_MISMATCH;
+
+  constructor(
+    message: string,
+    meta?: Record<string, unknown>,
+  ) {
+    super(message, undefined, meta);
+  }
+}
+
 /** Database connection unavailable (503). */
 export class DbConnectionError extends AppError {
   readonly httpStatus = 503;

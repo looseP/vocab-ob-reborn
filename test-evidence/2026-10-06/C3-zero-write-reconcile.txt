@@ -1,0 +1,20 @@
+=== 修订轮零写入对账（整轮前后）===
+日期: 2026-10-06 18:15:46
+
+--- 本轮开始时的指纹（T4 开工前拍照）---
+review_logs_total=111
+progress_max_updated=2026-10-06 08:45:37.145096+00
+
+--- 现在（跑完 Part A + Part B 后）---
+review_logs_total=111
+progress_max_updated=2026-10-06 08:45:37.145096+00
+
+--- 判定 ---
+ZERO_WRITE_OK — review_logs 行数与 user_word_progress.max(updated_at) 均未变
+
+--- 葫芦两表确有写入（证明链路真的跑过，不是假绿）---
+ plans | rounds | finished_rounds 
+-------+--------+-----------------
+     1 |      2 |               1
+(1 row)
+
