@@ -106,7 +106,8 @@ function installApi(options: {
   const calls: string[] = [];
   const wordCount = options.pages * options.pageSize;
   const wordsPassed = options.wordsPassed ?? wordCount;
-  const hasExposure = options.hasExposure ?? true;
+  // 可变：曝光轮「存在」是 startRound 的产物 —— 与真机一致（新建计划里没有轮）。
+  let hasExposure = options.hasExposure ?? true;
   // 可变：finish(0) 之后曝光轮即收尾 —— 下一次 startRound 才会回复习轮
   // （服务端语义的桩：曝光轮是开复习轮 1 的前置）。
   let exposureFinished = options.exposureFinished ?? false;
@@ -158,6 +159,11 @@ function installApi(options: {
       if (hasExposure && !exposureFinished) {
         current = exposureRound;
         pagesPassed = 0;
+      } else if (!hasExposure && !exposureFinished) {
+        // 尚无曝光轮 → 先开第 0 轮（真机：v2 + includeNewWords 的前置）
+        hasExposure = true;
+        current = exposureRound;
+        pagesPassed = 0;
       } else {
         current = { ...recallRound, pages_passed: pagesPassed };
       }
@@ -177,13 +183,19 @@ function installApi(options: {
     const settleMatch = path.match(/^\/hulu\/plans\/[^/]+\/rounds\/\d+\/pages$/);
     if (settleMatch && init?.method === "POST") {
       pagesPassed += 1;
-      return { ...(current ?? recallRound), pages_passed: pagesPassed } as never;
+      // 曝光轮的 words_passed 由 wordsPassed 桩固定（缺口场景要它保持 0）；
+      // 复习轮按页推进累加（每页全通过）。
+      if (current && current.kind === "exposure") {
+        return { ...current, pages_passed: pagesPassed } as never;
+      }
+      return { ...(current ?? recallRound), pages_passed: pagesPassed, words_passed: pagesPassed * options.pageSize } as never;
     }
 
     const finishMatch = path.match(/^\/hulu\/plans\/[^/]+\/rounds\/(\d+)\/finish$/);
     if (finishMatch && init?.method === "POST") {
       const roundNo = Number(finishMatch[1]);
       if (roundNo === 0) {
+        hasExposure = true;
         exposureFinished = true;
         return { ...exposureRound, ended_at: "2026-10-06T00:30:00Z", elapsed_seconds: 1800 } as never;
       }
@@ -406,6 +418,30 @@ describe("复习轮页首提示：N 词在曝光轮未看过（R12）", () => {
     await startSprint(container);
 
     expect(container.querySelector('[data-testid="hulu-unexposed-hint"]')).toBeNull();
+  });
+
+  it("真机回归：曝光轮**本轮才开出来**（进入前 rounds 为空）时，提示仍要出现", async () => {
+    // 真机复测抓到的缺陷：enterPlan 拿到的 rounds 是「开轮之前」的快照 ——
+    // 新建计划里根本没有曝光轮，不把刚开出的轮并进 state，缺口就恒为 0，
+    // 提示永远不显示。这里让 GET /plans/:id 在开轮前回空 rounds。
+    installApi({ pages: 2, pageSize: 5, hasExposure: false, wordsPassed: 0 });
+    const container = mount();
+    await flush();
+    await startSprint(container);
+
+    // 曝光轮当场开出（第 0 轮直展）——先跳过它
+    expect(container.querySelector('[data-testid="hulu-exposure-rate"]'), "应先进曝光轮").toBeTruthy();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    await act(async () => {
+      (container.querySelector('[data-testid="hulu-skip-exposure"]') as HTMLButtonElement).click();
+    });
+    await flush();
+    expect(confirmSpy).toHaveBeenCalled();
+
+    // 进入复习轮：曝光轮 words_passed=0 → 缺口 = 全部 10 词
+    const hint = container.querySelector('[data-testid="hulu-unexposed-hint"]');
+    expect(hint, "本轮才开出的曝光轮也必须计入缺口").toBeTruthy();
+    expect(hint?.textContent).toContain("10");
   });
 });
 

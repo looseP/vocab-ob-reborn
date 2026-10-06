@@ -203,4 +203,95 @@ describe("Hulu pool source (integration) — 先学后刷", () => {
     );
     expect(plansAfter.rows[0]!.total).toBe(plansBefore.rows[0]!.total);
   });
+
+  it("includeNewWords=true（R12）：`new` 词入池（四态），suspended 仍不入池", async () => {
+    const { createRepositories } = await import("@/repositories/factory");
+    const { withTransaction } = await import("@/db/transaction");
+
+    const ids = await withTransaction(
+      async (tx) => createRepositories(tx).hulu.listReviewDeckWordIds(USER_ID, WORDBOOK_ID, { includeNew: true }),
+      { actorId: USER_ID },
+    );
+
+    // 四态：三态 + new（5 词里只筛掉 suspended）
+    expect(ids).toHaveLength(POOL_SPEC.length + 1);
+    expect(new Set(ids)).toEqual(new Set([...POOL_WORD_IDS, NEW_WORD_ID]));
+    expect(ids).toContain(NEW_WORD_ID);
+    // suspended 两档都不入池（用户主动放下的不捡回来）
+    expect(ids).not.toContain(SUSPENDED_WORD_ID);
+    // 稳定序不变：created_at ASC（new 行是种子插入序里最早的批次，
+    // 与三态同批插入 → 同刻，用 word_id 兜底，故只锁「序与默认档同源」）
+    expect(ids.slice(0, POOL_SPEC.length)).toEqual(POOL_WORD_IDS);
+  });
+
+  it("includeNewWords=true 但词书四态全空 → 换「词书里没词」文案（R12 双档文案）", async () => {
+    const { HuluPlanService } = await import("@/services/hulu-plan.service");
+    const service = new HuluPlanService();
+
+    const error = await service.createPlan({
+      userId: USER_ID,
+      wordbookId: EMPTY_WORDBOOK_ID,
+      examDate: "2030-12-20",
+      pageSize: 5,
+      includeNewWords: true,
+    }).catch((err: unknown) => err);
+
+    expect(error).toMatchObject({
+      httpStatus: 422,
+      message: "该词书还没有词——先把词加进词书再冲刺。",
+    });
+  });
+
+  it("includeNewWords=true 的计划显式落库 protocol_version='v2' 与 include_new_words", async () => {
+    const { HuluPlanService } = await import("@/services/hulu-plan.service");
+    const { createRepositories } = await import("@/repositories/factory");
+    const { withTransaction } = await import("@/db/transaction");
+    const service = new HuluPlanService();
+
+    const plan = await service.createPlan({
+      userId: USER_ID,
+      wordbookId: WORDBOOK_ID,
+      examDate: "2030-12-20",
+      pageSize: 5,
+      includeNewWords: true,
+    });
+
+    expect(plan.protocol_version).toBe("v2");
+    expect(plan.include_new_words).toBe(true);
+    // 池含 new → 定格词数 = 三态 + new
+    expect(plan.word_count).toBe(POOL_SPEC.length + 1);
+
+    const stored = await withTransaction(
+      async (tx) => createRepositories(tx).hulu.findPlanById(USER_ID, plan.id),
+      { actorId: USER_ID },
+    );
+    expect(stored!.protocol_version).toBe("v2");
+    expect(stored!.include_new_words).toBe(true);
+
+    await service.abandonPlan({ userId: USER_ID, planId: plan.id });
+  });
+
+  it("默认档计划落 protocol_version='v2' / include_new_words=false（不吃 DB 的 legacy 默认值）", async () => {
+    const { HuluPlanService } = await import("@/services/hulu-plan.service");
+    const { createRepositories } = await import("@/repositories/factory");
+    const { withTransaction } = await import("@/db/transaction");
+    const service = new HuluPlanService();
+
+    const plan = await service.createPlan({
+      userId: USER_ID,
+      wordbookId: WORDBOOK_ID,
+      examDate: "2030-12-20",
+      pageSize: 5,
+    });
+
+    const stored = await withTransaction(
+      async (tx) => createRepositories(tx).hulu.findPlanById(USER_ID, plan.id),
+      { actorId: USER_ID },
+    );
+    // 新代码写新行恒 'v2'（'legacy' 只该出现在迁移前的存量行）
+    expect(stored!.protocol_version).toBe("v2");
+    expect(stored!.include_new_words).toBe(false);
+
+    await service.abandonPlan({ userId: USER_ID, planId: plan.id });
+  });
 });

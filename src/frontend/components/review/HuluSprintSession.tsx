@@ -394,6 +394,21 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
   }, []);
 
   /**
+   * 把刚开/刚更新的轮次并进 `rounds` state（按轮号去重、升序）。
+   *
+   * 为什么需要：`enterPlan` 拿到的 rounds 是**开轮之前**的快照（刚建的计划里
+   * 根本没有轮），而复习轮页首的「N 词未曝光」提示与计划页的曝光覆盖率徽章
+   * 都要读曝光轮那一行 —— 不并进来，曝光轮就永远「不存在」，缺口恒为 0。
+   * 轮次开始本来就是允许发请求的时点（每轮 1 次），不破单卡零请求约束。
+   */
+  const mergeRound = useCallback((started: HuluRoundRow) => {
+    setRounds((current) => {
+      const others = current.filter((row) => row.round_no !== started.round_no);
+      return [...others, started].sort((a, b) => a.round_no - b.round_no);
+    });
+  }, []);
+
+  /**
    * 轮次收尾：POST finish → 展示本轮耗时 + 曲线（含刚收尾的这一轮）。
    * 幂等：服务端对已收尾轮返回现状，重复调用不会重写耗时。
    */
@@ -493,6 +508,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
       body: JSON.stringify({}),
     });
     setRound(started);
+    mergeRound(started);
 
     // 恢复校验：roundNo 一致才续用页内进度；否则丢弃、从 pages_passed 页重来。
     const resume = cache && cache.roundNo === started.round_no ? cache : null;
@@ -516,7 +532,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
       ));
     }
     setPhase("sprint");
-  }, [loadPage, finishRound]);
+  }, [loadPage, finishRound, mergeRound]);
 
   /** 创建（或取回既有）计划 → 进入冲刺。 */
   const bootstrap = useCallback(async (options: {
@@ -634,6 +650,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
         body: JSON.stringify({}),
       });
       setRound(started);
+      mergeRound(started);
       setElapsedSeconds(null);
       setBlocked(0);
       const completed = await loadPage(plan.id, started.round_no, started.pages_passed);
@@ -642,7 +659,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
       setError(err instanceof Error ? err.message : "无法开始下一轮");
       setPhase("error");
     }
-  }, [plan, loadPage]);
+  }, [plan, loadPage, mergeRound]);
 
   /** 放弃计划（active → abandoned）：同事务恢复挂起快照，之后刷新计划页。 */
   const abandonPlan = useCallback(async () => {
@@ -749,10 +766,11 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
     }
     setBusy(true);
     try {
-      await apiFetch<HuluRoundRow>(`/hulu/plans/${plan.id}/rounds/${round.round_no}/finish`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
+      const finishedExposure = await apiFetch<HuluRoundRow>(
+        `/hulu/plans/${plan.id}/rounds/${round.round_no}/finish`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      mergeRound(finishedExposure);
       clearCache(plan.id);
       // 曝光轮收尾不推进计划状态（R12），直接开第 1 轮复习。
       const started = await apiFetch<HuluRoundRow>(`/hulu/plans/${plan.id}/rounds`, {
@@ -760,6 +778,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
         body: JSON.stringify({}),
       });
       setRound(started);
+      mergeRound(started);
       setElapsedSeconds(null);
       setBlocked(0);
       const completed = await loadPage(plan.id, started.round_no, started.pages_passed);
@@ -770,7 +789,7 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [plan, round, loadPage]);
+  }, [plan, round, loadPage, mergeRound]);
 
   /** 上一页（只读回看；未结算页不允许倒回，避免状态错乱）。 */
   const goPrev = () => {

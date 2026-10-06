@@ -275,9 +275,19 @@ describe("Hulu sprint suspension (integration)", () => {
       suspendReview: false,
     });
 
+    // R15-2 生效后：复习轮收尾要求页已全部结算 —— 每轮先结算本页再过闸收尾。
+    const settleAll = async (roundNo: number) => {
+      const page = await service.getPlanPage({ userId: USER_ID, planId: plan.id, pageIndex: 0 });
+      await service.settlePage({
+        userId: USER_ID, planId: plan.id, roundNo,
+        pageIndex: 0, passed: page.alive, total: page.alive,
+      });
+    };
+
     // ① 未来起跑 → elapsed 会是负数 → 夹到 0（不报错、轮次不丢）
     const future = new Date(Date.now() + 3600_000).toISOString();
     const round1 = await service.startRound({ userId: USER_ID, planId: plan.id, startedAt: future });
+    await settleAll(round1.round_no);
     const finished1 = await service.finishRound({ userId: USER_ID, planId: plan.id, roundNo: round1.round_no });
     expect(finished1.elapsed_seconds, "负耗时夹到 0").toBe(0);
     expect(finished1.ended_at).not.toBeNull();
@@ -285,6 +295,7 @@ describe("Hulu sprint suspension (integration)", () => {
     // ② 超上限起跑（夹取到 now - 7 天）→ elapsed 恰好是上限
     const ancient = new Date(Date.now() - 400 * 86400_000).toISOString();
     const round2 = await service.startRound({ userId: USER_ID, planId: plan.id, startedAt: ancient });
+    await settleAll(round2.round_no);
     const finished2 = await service.finishRound({ userId: USER_ID, planId: plan.id, roundNo: round2.round_no });
     expect(finished2.elapsed_seconds).toBe(HULU_MAX_SINGLE_ROUND_SECONDS);
 

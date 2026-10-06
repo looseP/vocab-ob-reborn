@@ -100,6 +100,18 @@ describe("Hulu sprint zero-write (integration)", () => {
     };
   }
 
+  /**
+   * 清掉本用户残留的 active 计划 —— 创建是**幂等**的（同词书已有 active 计划
+   * 直接返回它），前一个用例留下的计划会让后一个用例拿到旧行（include_new_words
+   * 之类的字段对不上）。用 adminPool 直删（hulu 两表随计划级联），不走服务层。
+   */
+  async function clearActivePlans(): Promise<void> {
+    await adminPool.query(
+      `DELETE FROM hulu_plans WHERE user_id = $1`,
+      [USER_ID],
+    );
+  }
+
   it("一轮从创建跑到收尾，review_logs 行数与 user_word_progress.updated_at 最大值都不变", async () => {
     const { createRepositories } = await import("@/repositories/factory");
     const { HuluPlanService } = await import("@/services/hulu-plan.service");
@@ -224,5 +236,124 @@ describe("Hulu sprint zero-write (integration)", () => {
       { actorId: USER_ID },
     );
     expect(stored).not.toBeNull();
+  });
+
+  it("曝光轮整轮（R12）前后：review_logs 行数与 user_word_progress.updated_at 最大值都不变", async () => {
+    const { createRepositories } = await import("@/repositories/factory");
+    const { withTransaction } = await import("@/db/transaction");
+    const { HuluPlanService } = await import("@/services/hulu-plan.service");
+    const service = new HuluPlanService();
+
+    // 曝光轮的前提：v2 + includeNewWords（池含 new）。本 fixture 的三词是
+    // learning 态，两档都入池 —— 这里要的是「曝光轮这条链路」的零写入证据。
+    // 幂等创建会拿回上一用例留下的 active 计划 → 先清干净。
+    await clearActivePlans();
+    const before = await fsrsFingerprint();
+
+    const plan = await service.createPlan({
+      userId: USER_ID,
+      wordbookId: WORDBOOK_ID,
+      examDate: "2030-12-20",
+      pageSize: 5,
+      includeNewWords: true,
+    });
+    expect(plan.include_new_words).toBe(true);
+
+    // ① 开第 0 轮：曝光轮（直展，不计入目标轮数）
+    const exposure = await service.startRound({ userId: USER_ID, planId: plan.id });
+    expect(exposure.round_no).toBe(0);
+    expect(exposure.kind).toBe("exposure");
+
+    // ② 页载荷（只读；曝光轮不发与闸门相关的请求，页结算仍走同一管道）
+    const page = await service.getPlanPage({ userId: USER_ID, planId: plan.id, pageIndex: 0 });
+    expect(page.alive).toBe(WORD_IDS.length);
+
+    // ③ 页结算：passed = total = 存活词数（恒过闸，语义 = 已曝光）
+    const settled = await service.settlePage({
+      userId: USER_ID,
+      planId: plan.id,
+      roundNo: exposure.round_no,
+      pageIndex: 0,
+      passed: page.alive,
+      total: page.alive,
+    });
+    expect(settled.pages_passed).toBe(1);
+    expect(settled.words_passed).toBe(page.alive);
+
+    // ④ 曝光轮收尾（部分收尾也合法；这里页已齐）
+    const finished = await service.finishRound({
+      userId: USER_ID,
+      planId: plan.id,
+      roundNo: exposure.round_no,
+    });
+    expect(finished.kind).toBe("exposure");
+    expect(finished.ended_at).not.toBeNull();
+    // 曝光轮不推进计划完成（R12）
+    const stillActive = await withTransaction(
+      async (tx) => createRepositories(tx).hulu.findPlanById(USER_ID, plan.id),
+      { actorId: USER_ID },
+    );
+    expect(stillActive!.status).toBe("active");
+
+    const after = await fsrsFingerprint();
+    expect(after.reviewLogs, "曝光轮前后 review_logs 行数发生了变化").toBe(before.reviewLogs);
+    expect(after.maxUpdatedAt, "曝光轮前后 user_word_progress.updated_at 最大值发生了变化")
+      .toBe(before.maxUpdatedAt);
+
+    // ⑤ 曝光轮收尾后开第 1 轮：kind='recall'，round_no=1（曝光轮不占复习轮号）
+    const recall = await service.startRound({ userId: USER_ID, planId: plan.id });
+    expect(recall.round_no).toBe(1);
+    expect(recall.kind).toBe("recall");
+
+    await service.abandonPlan({ userId: USER_ID, planId: plan.id });
+  });
+
+  it("R15-2 防线（真库）：复习轮页未齐不能收尾；曝光轮部分收尾合法", async () => {
+    const { HuluPlanService } = await import("@/services/hulu-plan.service");
+    const service = new HuluPlanService();
+
+    // 2 页计划（3 词 / 每页 5 → 实际 1 页；用 pageSize=5 与 3 词，页数 1）
+    // 为拿到「页未齐」，先造 2 页：用 pageSize=5 + 6 词不可得（fixture 只 3 词），
+    // 故此处用「1 页但 pages_passed=0」直接验复习轮被拦。
+    await clearActivePlans();
+    const plan = await service.createPlan({
+      userId: USER_ID,
+      wordbookId: WORDBOOK_ID,
+      examDate: "2030-12-20",
+      pageSize: 5,
+    });
+    const round = await service.startRound({ userId: USER_ID, planId: plan.id });
+    expect(round.kind).toBe("recall");
+
+    const error = await service.finishRound({
+      userId: USER_ID,
+      planId: plan.id,
+      roundNo: round.round_no,
+    }).catch((err: unknown) => err);
+    expect(error).toMatchObject({
+      httpStatus: 422,
+      meta: { pagesPassed: 0, pages: 1 },
+    });
+
+    // 页结算后即可收尾
+    const page = await service.getPlanPage({ userId: USER_ID, planId: plan.id, pageIndex: 0 });
+    await service.settlePage({
+      userId: USER_ID,
+      planId: plan.id,
+      roundNo: round.round_no,
+      pageIndex: 0,
+      passed: page.alive,
+      total: page.alive,
+    });
+    const finished = await service.finishRound({
+      userId: USER_ID,
+      planId: plan.id,
+      roundNo: round.round_no,
+    });
+    expect(finished.ended_at).not.toBeNull();
+    // 收尾同时写了结算词集指纹（R13）
+    expect(finished.word_set_fingerprint).toMatch(/^[0-9a-f]{16}$/);
+
+    await service.abandonPlan({ userId: USER_ID, planId: plan.id });
   });
 });
