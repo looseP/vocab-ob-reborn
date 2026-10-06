@@ -2,14 +2,14 @@
  * Hulu sprint HTTP routes (ADR-0041).
  *
  * 独立前缀 /api/hulu。HTTP 薄层：解析 body、附加 auth userId、只调 service。
- * 本期（P0）三条端点先行（计划容器）：
+ * 计划容器三条（P0；P1 的轮次推进四条见 ./hulu-rounds.ts，同挂本前缀）：
  *
- *   POST /plans              — 创建（含定格+风险校验；同词书已有 active → 200 返回它）
+ *   POST /plans              — 创建（含定格+风险校验）；**恒 201**，同词书已有
+ *                              active 计划时也走 201 返回既有计划（幂等由 service 保证）
  *   GET  /plans/:id          — 计划 + 轮次列表（缩时曲线数据源）
  *   POST /plans/:id/abandon  — 放弃（已 abandoned 幂等；已 completed → 422）
  *
- * 其余四条（rounds 开始 / 页结算 / 轮收尾 / 页载荷）在 P1 补齐。
- * 路由不做业务判断：422/404/409 全部由 service 抛错、errorToResponse 统一映射。
+ * 路由不做业务判断：404/409/422 全部由 service 抛错、errorToResponse 统一映射。
  */
 import { Hono } from "hono";
 import type { Services } from "@/services";
