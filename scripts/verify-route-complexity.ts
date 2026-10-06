@@ -109,12 +109,19 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
   { file: "src/http/routes/review-l3-contexts.ts", maxLines: 93, maxRoutes: 0 },
   // 2026-10-06 ADR-0041 葫芦冲刺：计划容器独立薄路由（新前缀 /api/hulu，server.ts
-  // 直挂，同 forgetting/l3-sessions 先例）。P0 只挂 3 条（plans 建/读/放弃），
-  // P1 补 rounds 开始 / 页结算 / 轮收尾 / 页载荷 4 条 → 设计预留 7。
-  // 上限口径与 measureRouteComplexity 相同（含空行，去尾换行）：
-  //   P0 实测 67 行 / 3 路由 → 留一档余量给 P1 的 4 条端点（每条 ~12 行）→ 130。
+  // 直挂，同 forgetting/l3-sessions 先例）。P0 挂 3 条（plans 建/读/放弃）。
+  // 上限口径与 measureRouteComplexity 相同（含空行，去尾换行）：P0 实测 67 行 / 3 路由。
   // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
-  { file: "src/http/routes/hulu.ts", maxLines: 130, maxRoutes: 7 },
+  { file: "src/http/routes/hulu.ts", maxLines: 67, maxRoutes: 3 },
+  // 2026-10-06 P1：轮次推进四条（页载荷 / 开始轮 / 页结算 / 轮收尾）另立本文件，
+  // 与 hulu.ts 同挂 /api/hulu 前缀（同 l3 族多文件共享 /api/l3 的先例）。
+  // 为什么另立而不是抬 hulu.ts 的上限：该文件在 P0 提交后已被棘轮**按基线冻结**
+  // （base ref 的树里已存在该路径 ⇒ bootstrap 限额不再生效，只与基线比大小），
+  // P1 的四条端点会把 67 行撑到 123 行而被拦下；沿 capabilities / sheets-export /
+  // papers-authoring 的拆分先例另立文件是仓库既定解法。
+  // 上限 = 落地时实测规模留一档余量（实测 90 行 / 4 路由）。
+  // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
+  { file: "src/http/routes/hulu-rounds.ts", maxLines: 115, maxRoutes: 4 },
 ];
 
 export function measureRouteComplexity(source: string) {

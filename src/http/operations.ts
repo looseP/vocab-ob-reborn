@@ -112,8 +112,10 @@ import {
   forgettingRestoreResponseSchema,
 } from "./forgetting-response-contract";
 import {
+  huluPageResponseSchema,
   huluPlanRowResponseSchema,
   huluPlanWithRoundsResponseSchema,
+  huluRoundRowResponseSchema,
 } from "./hulu-response-contract";
 import {
   reviewAnswerResponseSchema,
@@ -275,7 +277,10 @@ import {
   forgettingPreviewQuerySchema,
   forgettingApplySchema,
   forgettingRestoreSchema,
+  huluPageSettleSchema,
   huluPlanCreateSchema,
+  huluRoundFinishSchema,
+  huluRoundStartSchema,
 } from "../schemas/http";
 
 export type HttpMethod = "delete" | "get" | "patch" | "post" | "put";
@@ -717,10 +722,14 @@ export const apiOperations = [
   operation("post", "/api/forgetting/apply", "applyForgetting", "owner", "owner", "sessionMutation", { body: forgettingApplySchema }, 200, forgettingApplyResponseSchema),
   operation("post", "/api/forgetting/restore", "restoreForgetting", "owner", "owner", "sessionMutation", { body: forgettingRestoreSchema }, 200, forgettingRestoreResponseSchema),
   // ── Hulu sprint plan container (ADR-0041) ───────────────────────────────
-  // P0 三条先行（计划容器）；P1 补 rounds 开始 / 页结算 / 轮收尾 / 页载荷四条。
   // 读 = owner/agent/none（计划是私人学习台面，但读面与 l3-sessions 同档开放给
   // agent）；写 = owner/owner/sessionMutation（建与放弃都是 owner 的权威动作）。
+  // P1 补 rounds 开始 / 页结算 / 轮收尾 / 页载荷四条（页载荷是读面，同 getHuluPlan）。
   operation("post", "/api/hulu/plans", "createHuluPlan", "owner", "owner", "sessionMutation", { body: huluPlanCreateSchema }, 201, huluPlanRowResponseSchema),
   operation("get", "/api/hulu/plans/:id", "getHuluPlan", "owner", "agent", "none", undefined, 200, huluPlanWithRoundsResponseSchema),
+  operation("get", "/api/hulu/plans/:id/pages/:no", "getHuluPlanPage", "owner", "agent", "none", undefined, 200, huluPageResponseSchema),
+  operation("post", "/api/hulu/plans/:id/rounds", "startHuluRound", "owner", "owner", "sessionMutation", { body: huluRoundStartSchema }, 201, huluRoundRowResponseSchema),
+  operation("post", "/api/hulu/plans/:id/rounds/:no/pages", "settleHuluPage", "owner", "owner", "sessionMutation", { body: huluPageSettleSchema }, 200, huluRoundRowResponseSchema),
+  operation("post", "/api/hulu/plans/:id/rounds/:no/finish", "finishHuluRound", "owner", "owner", "sessionMutation", { body: huluRoundFinishSchema }, 200, huluRoundRowResponseSchema),
   operation("post", "/api/hulu/plans/:id/abandon", "abandonHuluPlan", "owner", "owner", "sessionMutation", undefined, 200, huluPlanRowResponseSchema),
 ] as const satisfies readonly ApiOperation[];

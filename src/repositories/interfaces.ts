@@ -1555,6 +1555,24 @@ export interface IHuluRepository {
   /** 当前未收尾轮（ended_at IS NULL）；至多一行由服务层保证。 */
   findOpenRound(userId: string, planId: string): Promise<HuluRoundRow | null>;
   findRoundByNo(userId: string, planId: string, roundNo: number): Promise<HuluRoundRow | null>;
+  /**
+   * 页结算（R7）：单条条件 UPDATE，`pages_passed` 即页游标。
+   * 命中（返回行）表示结算成功；null 表示游标不匹配（由服务层分流幂等/跳页）。
+   * MUST be in a transaction。
+   */
+  settlePage(input: {
+    userId: string;
+    roundId: string;
+    pageIndex: number;
+    passed: number;
+  }): Promise<HuluRoundRow | null>;
+  /** 轮次收尾：条件 UPDATE（ended_at IS NULL）。null = 已收尾或不存在。MUST be in a transaction。 */
+  finishRound(input: {
+    userId: string;
+    roundId: string;
+    endedAt: string;
+    elapsedSeconds: number;
+  }): Promise<HuluRoundRow | null>;
   /** 词书归属显式检查（照 insertNewCard 先例）：越权 → false。 */
   assertWordbookOwned(userId: string, wordbookId: string): Promise<boolean>;
   /**

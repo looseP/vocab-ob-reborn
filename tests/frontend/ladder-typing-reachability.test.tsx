@@ -110,8 +110,17 @@ describe("阶梯改为显式模式后的可达性（打字流）", () => {
   it("模式清单里存在显式的第 5 个模式「阶梯复习（实验）」", async () => {
     const { reviewModesForTest } = await import("@/frontend/pages/ReviewPage");
     const modes = reviewModesForTest();
-    expect(modes.map((m) => m.key)).toEqual(["review", "cram", "preview", "zen", "ladder"]);
+    expect(modes.map((m) => m.key)).toEqual(["review", "cram", "preview", "zen", "ladder", "hulu"]);
     expect(modes.find((m) => m.key === "ladder")?.title).toContain("阶梯");
+  });
+
+  it("葫芦冲刺是显式第 6 个模式，固定在末位（ADR-0041）", async () => {
+    // 与阶梯同理：显式模式 ⇒ 不选则分支不可达，构造上保证不劫持别的模式。
+    const { reviewModesForTest } = await import("@/frontend/pages/ReviewPage");
+    const modes = reviewModesForTest();
+    expect(modes).toHaveLength(6);
+    expect(modes[modes.length - 1]?.key).toBe("hulu");
+    expect(modes.find((m) => m.key === "hulu")?.title).toBe("葫芦冲刺");
   });
 
   it("现行复习流（review）不再有任何阶梯劫持分支（源码断言）", async () => {

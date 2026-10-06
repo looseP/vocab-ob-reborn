@@ -155,6 +155,52 @@ export class HuluRepository extends BaseRepository implements IHuluRepository {
   }
 
   /**
+   * 页结算（R7 原文）：**单条条件 UPDATE**，`pages_passed` 即页游标。
+   *
+   *   rowcount = 1 → 结算成功（返回更新后的行）；
+   *   rowcount = 0 → 调用方按游标判据分流（`> pageIndex` 幂等返回现状、`<` 跳页 409、
+   *   `=` 而 0 行只能是本轮已收尾）—— 本层不做业务判断。
+   *
+   * 原子且并发安全，不需要页级明细表：两个并发请求里只有一个能命中
+   * `pages_passed = $pageIndex`，另一个的 rowcount 为 0。MUST be in a transaction。
+   */
+  async settlePage(input: {
+    userId: string;
+    roundId: string;
+    pageIndex: number;
+    passed: number;
+  }): Promise<HuluRoundRow | null> {
+    this.requireTx();
+    return this.queryOne<HuluRoundRow>(
+      `UPDATE hulu_rounds
+          SET pages_passed = pages_passed + 1, words_passed = words_passed + $4
+        WHERE id = $1::uuid AND user_id = $2::uuid AND ended_at IS NULL AND pages_passed = $3
+        RETURNING *`,
+      [input.roundId, input.userId, input.pageIndex, input.passed],
+    );
+  }
+
+  /**
+   * 轮次收尾：条件 UPDATE（`ended_at IS NULL`）—— 并发双收尾只有一个写生效，
+   * 另一个 rowcount 为 0，服务层据此幂等返回现状。MUST be in a transaction。
+   */
+  async finishRound(input: {
+    userId: string;
+    roundId: string;
+    endedAt: string;
+    elapsedSeconds: number;
+  }): Promise<HuluRoundRow | null> {
+    this.requireTx();
+    return this.queryOne<HuluRoundRow>(
+      `UPDATE hulu_rounds
+          SET ended_at = $3::timestamptz, elapsed_seconds = $4
+        WHERE id = $1::uuid AND user_id = $2::uuid AND ended_at IS NULL
+        RETURNING *`,
+      [input.roundId, input.userId, input.endedAt, input.elapsedSeconds],
+    );
+  }
+
+  /**
    * 词书归属显式检查（照 insertNewCard 的先例，review.repository.ts:298-311）：
    * 返回该词书 id 当且仅当属于该 user；否则 null（服务层抛 NotFound）。
    */

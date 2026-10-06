@@ -213,10 +213,13 @@ const OTHER_OWNER_WRITES = [
   "saveL3StudyTopic",
   "moveL3StudyTopicMember",
   "removeL3StudyTopicMember",
-  // 葫芦冲刺（ADR-0041，2026-10-06）：计划容器 owner 写面 —— 建计划（定格整本词书
-  // + 服务端风险校验）与放弃计划都是 owner 的权威动作，agent 一律 403。
-  // P1 的 rounds 四条（开始轮/页结算/轮收尾/页载荷）落地时须一并登记于此。
+  // 葫芦冲刺（ADR-0041，2026-10-06）：计划容器 + 轮次推进的 owner 写面 —— 建计划
+  // （定格整本词书 + 服务端风险校验）、开始轮、页结算、轮收尾、放弃计划都是 owner
+  // 的权威动作，agent 一律 403。P1 的四条里页载荷是**读面**（见 AGENT_READS）。
   "createHuluPlan",
+  "startHuluRound",
+  "settleHuluPage",
+  "finishHuluRound",
   "abandonHuluPlan",
 ] as const;
 
@@ -331,9 +334,11 @@ const AGENT_READS = [
   // 作文子空间 v1（W6）：agent 读面第 3 开口——只读指定 sealed 稿的评阅上下文
   // （feedback-context；draft 409、正文已清理 409、零写入）。
   "getL3WritingFeedbackContext",
-  // 葫芦冲刺（ADR-0041，2026-10-06）：计划读面（计划 + 轮次列表）。与 l3-sessions /
-  // forgetting-preview 同档开放给 agent；写入仍 owner-only（见 OWNER 写清单）。
+  // 葫芦冲刺（ADR-0041，2026-10-06）：计划读面（计划 + 轮次列表）与页载荷
+  // （R4：本页词卡渲染字段，只读零副作用）。与 l3-sessions / forgetting-preview
+  // 同档开放给 agent；写入仍 owner-only（见 OWNER 写清单）。
   "getHuluPlan",
+  "getHuluPlanPage",
 ] as const;
 
 const OWNER_READS = [

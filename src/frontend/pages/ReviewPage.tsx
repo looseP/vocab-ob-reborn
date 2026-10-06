@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
-import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Layers, Undo2, History } from "lucide-react";
+import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Layers, Undo2, History, Sprout } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -8,6 +8,7 @@ import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { ReviewCardView } from "@/frontend/components/review/ReviewCardView";
 import { DrillSession } from "@/frontend/components/review/DrillSession";
 import { LadderReviewSession } from "@/frontend/components/review/LadderReviewSession";
+import { HuluSprintSession } from "@/frontend/components/review/HuluSprintSession";
 import { ReviewProgressBar } from "@/frontend/components/review/ReviewProgressBar";
 import { CompletionCelebration } from "@/frontend/components/review/CompletionCelebration";
 import { ReviewHistoryDrawer, type ReviewHistoryEntry } from "@/frontend/components/review/ReviewHistoryDrawer";
@@ -25,9 +26,13 @@ const reviewModes = [
   // 2026-10-03 起改为**显式第 5 个模式**（ADR-0036 §4 修订）：
   // 要用就明确选它，不选则阶梯代码路径**分支不可达**。
   { key: "ladder", icon: Layers, title: "阶梯复习（实验）", desc: "三轮制会话：再认 → 巩固 → 产出，含跟写与默写", variant: "secondary" as const },
+  // 葫芦冲刺（ADR-0041）：整批词按页推进的**阶段性**多轮冲刺，页级检索闸门、
+  // 只记轮次耗时、零 FSRS 写入。与 ladder 同理做成**显式第 6 个模式**——
+  // 不选它则葫芦的代码路径分支不可达（构造上保证，不靠约定）。
+  { key: "hulu", icon: Sprout, title: "葫芦冲刺", desc: "整批词考前多轮冲刺，只记轮次耗时，不写入复习数据", variant: "secondary" as const },
 ] as const;
 
-/** 测试钩子：暴露模式清单，供测试锁住「阶梯是显式第 5 个模式」这条不变量。 */
+/** 测试钩子：暴露模式清单，供测试锁住「阶梯/葫芦是显式模式」这两条不变量。 */
 export function reviewModesForTest() {
   return reviewModes.map((m) => ({ key: m.key, title: m.title }));
 }
@@ -72,7 +77,8 @@ function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      {/* 6 项模式卡：lg 起两行三张（去掉 xl:grid-cols-5 —— 6 项在 5 列下会留孤行） */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {reviewModes.map((m) => {
           const Icon = m.icon;
           return (
@@ -451,6 +457,10 @@ export function ReviewPage() {
         <LadderReviewSession key={forceBootstrap ? "ladder-fresh" : "ladder-restore"} onBack={() => { setForceBootstrap(false); setMode("select"); }} />
       ) : reviewMode === "cram" ? (
         <DrillSession onBack={() => setMode("select")} />
+      ) : reviewMode === "hulu" ? (
+        // 葫芦冲刺：显式模式直达（ADR-0041）。不选它 ⇒ 本分支不可达；
+        // 与 ladder/cram 并列，不进 ReviewSession（零 FSRS 是结构性保证）。
+        <HuluSprintSession onBack={() => { setForceBootstrap(false); setMode("select"); }} />
       ) : (
         // 自动恢复的会话用 force=false（缓存命中共用）；
         // 用户显式点"开始"的 handleStart 设置了 forceBootstrap=true → 清旧缓存，新启一个会话

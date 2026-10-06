@@ -391,3 +391,87 @@ describe("ReviewRepository 葫芦挂起两方法（ADR-0041 决策 5，第 9/10 
       .rejects.toThrow(/requires an active transaction/);
   });
 });
+
+describe("HuluRepository.settlePage（R7 页结算条件 UPDATE）", () => {
+  it("单条条件 UPDATE：游标相等 + 未收尾才命中，pages_passed 加一", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [roundRow({ pages_passed: 1 })] }));
+
+    const row = await repo.settlePage({ userId: USER, roundId: "round-1", pageIndex: 0, passed: 18 });
+
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("UPDATE hulu_rounds");
+    expect(text).toContain("SET pages_passed = pages_passed + 1, words_passed = words_passed + $4");
+    // R7 的三个判据：owner + 未收尾 + 游标相等
+    expect(text).toContain("AND user_id = $2::uuid");
+    expect(text).toContain("AND ended_at IS NULL");
+    expect(text).toContain("AND pages_passed = $3");
+    expect(text).toContain("RETURNING *");
+    expect(params).toEqual(["round-1", USER, 0, 18]);
+    expect(row?.pages_passed).toBe(1);
+  });
+
+  it("未命中（游标不匹配 / 已收尾）→ null（服务层据此分流幂等或 409）", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+
+    expect(await repo.settlePage({ userId: USER, roundId: "round-1", pageIndex: 5, passed: 0 })).toBeNull();
+  });
+
+  it("requireTx：未绑定事务时拒绝", async () => {
+    const noTx = new HuluRepository();
+    await expect(noTx.settlePage({ userId: USER, roundId: "round-1", pageIndex: 0, passed: 0 }))
+      .rejects.toThrow(/requires an active transaction/);
+  });
+});
+
+describe("HuluRepository.finishRound（轮收尾条件 UPDATE）", () => {
+  it("条件 UPDATE：ended_at IS NULL 才写，写 ended_at + elapsed_seconds", async () => {
+    querySpy.mockImplementation(async () => ({
+      rows: [roundRow({ ended_at: "2026-10-06T01:00:00Z", elapsed_seconds: 3600 })],
+    }));
+
+    const row = await repo.finishRound({
+      userId: USER, roundId: "round-1", endedAt: "2026-10-06T01:00:00Z", elapsedSeconds: 3600,
+    });
+
+    const [text, params] = querySpy.mock.calls[0]!;
+    expect(text).toContain("UPDATE hulu_rounds");
+    expect(text).toContain("SET ended_at = $3::timestamptz, elapsed_seconds = $4");
+    expect(text).toContain("AND ended_at IS NULL");
+    expect(text).toContain("RETURNING *");
+    expect(params).toEqual(["round-1", USER, "2026-10-06T01:00:00Z", 3600]);
+    expect(row?.elapsed_seconds).toBe(3600);
+  });
+
+  it("已收尾（并发双收尾的另一方）→ null，服务层幂等返回现状", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [] }));
+
+    expect(await repo.finishRound({
+      userId: USER, roundId: "round-1", endedAt: "2026-10-06T01:00:00Z", elapsedSeconds: 1,
+    })).toBeNull();
+  });
+
+  it("requireTx：未绑定事务时拒绝", async () => {
+    const noTx = new HuluRepository();
+    await expect(noTx.finishRound({
+      userId: USER, roundId: "round-1", endedAt: "2026-10-06T01:00:00Z", elapsedSeconds: 1,
+    })).rejects.toThrow(/requires an active transaction/);
+  });
+});
+
+describe("HuluRepository P1 零 FSRS（结构性）", () => {
+  it("settlePage / finishRound 的 SQL 不触碰任何 FSRS 面", async () => {
+    querySpy.mockImplementation(async () => ({ rows: [roundRow()] }));
+    await repo.settlePage({ userId: USER, roundId: "round-1", pageIndex: 0, passed: 1 });
+    await repo.finishRound({
+      userId: USER, roundId: "round-1", endedAt: "2026-10-06T01:00:00Z", elapsedSeconds: 1,
+    });
+
+    const sql = querySpy.mock.calls.map((call) => call[0] as string).join("\n");
+    expect(sql).not.toContain("user_word_progress");
+    expect(sql).not.toContain("review_logs");
+    expect(sql).not.toContain("INSERT INTO sessions");
+    expect(sql).not.toContain("l3_sessions");
+    // 只写 hulu_rounds 一张表
+    expect(sql.match(/UPDATE (\w+)/g)).toEqual(["UPDATE hulu_rounds", "UPDATE hulu_rounds"]);
+  });
+});

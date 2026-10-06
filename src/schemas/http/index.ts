@@ -918,6 +918,29 @@ export const huluPlanCreateSchema = z.object({
   suspendReview: z.boolean().optional().default(false),
 });
 
+/**
+ * 页结算（R7）：`total` = 本页**存活**词数（服务端复算，不符 → 422）；
+ * `passed` 不过闸 → 422。三个计数都是 ≥ 0 的整数。
+ */
+export const huluPageSettleSchema = z.object({
+  pageIndex: z.number().int().min(0),
+  passed: z.number().int().min(0),
+  total: z.number().int().min(0),
+});
+
+/**
+ * 轮次开始 / 收尾的可选时刻（缺省服务端 now()；越界由 service 夹取到
+ * `[now - 7 天, now]`，不报错 —— 与 clampElapsedSeconds 同界）。
+ * 只收 UTC/带 Z 的 ISO 形状（zod datetime 不收裸偏移，与既有端点同口径）。
+ */
+export const huluRoundStartSchema = z.object({
+  startedAt: z.string().datetime().optional(),
+});
+
+export const huluRoundFinishSchema = z.object({
+  endedAt: z.string().datetime().optional(),
+});
+
 // ── 批次一：做题注记（原文分析条目）与规律标签字典（2026-09-16）─────────────
 // body 契约直接复用 domain zod（单一真源：锚点三元组/标签上限/A–D 白名单）。
 export {

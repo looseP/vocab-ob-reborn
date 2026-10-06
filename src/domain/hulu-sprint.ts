@@ -78,9 +78,36 @@ export interface HuluRoundRow {
   words_total: number;
 }
 
+/**
+ * 计划**出参**载荷（P1 裁剪）：不再出参全量 `word_ids` / `suspend_snapshot`，
+ * 只给计数。理由：P1 起前端不需要全量 id —— 页载荷走 `.../pages/:no`、
+ * 曲线走 rounds；把 20000 个 uuid 塞进每次计划读的响应里是纯负担。
+ * 出参类型与行类型分离后，`word_ids` 仍可自由增删（定格语义不变）。
+ */
+export interface HuluPlanSummary {
+  id: string;
+  user_id: string;
+  wordbook_id: string;
+  /** 仅标签，不过滤词集（R6）。 */
+  direction: string | null;
+  exam_date: string;
+  target_rounds: number;
+  page_size: number;
+  gate_ratio: number;
+  /** 定格词数 = cardinality(word_ids)；页数由 huluPageCount 推出。 */
+  word_count: number;
+  status: HuluPlanStatus;
+  suspend_review: boolean;
+  /** 快照条目数（未 apply 或已恢复时为 0）。 */
+  suspended_count: number;
+  started_at: string;
+  ended_at: string | null;
+  created_at: string;
+}
+
 /** 计划 + 轮次（GET /api/hulu/plans/:id 的载荷；缩时曲线的唯一数据源）。 */
 export interface HuluPlanWithRounds {
-  plan: HuluPlanRow;
+  plan: HuluPlanSummary;
   rounds: HuluRoundRow[];
 }
 
@@ -98,6 +125,7 @@ export interface HuluPageWordItem {
 
 /**
  * 页载荷：`items` 只含**存活**词（已删词被过滤，定格位置只缩不换）；
+ * `total` = 本页定格词数（切片长度），`alive` = 存活词数（= items.length）；
  * `alive = 0` 表示整页定格词已删 —— 前端跳过、服务端结算自动通过。
  */
 export interface HuluPagePayload {
@@ -170,4 +198,56 @@ export function huluGateDecision(passed: number, total: number, gateRatio: numbe
 export function clampElapsedSeconds(seconds: number, max: number = HULU_MAX_SINGLE_ROUND_SECONDS): number {
   if (!Number.isFinite(seconds)) return 0;
   return Math.min(Math.max(Math.floor(seconds), 0), max);
+}
+
+/**
+ * 页数 = `ceil(定格词数 / page_size)`（R4/§七）。
+ *
+ * 只依**定格**词数，与词书当前的增删无关（词被删只让页内的存活词变少，
+ * 不让页数变少 —— 否则「只缩不换」的定格语义会被页边界漂移破坏）。
+ * 定格词数为 0 时返回 0（创建时已拒绝空词书，此处是防御性口径）。
+ */
+export function huluPageCount(wordCount: number, pageSize: number): number {
+  if (!Number.isFinite(wordCount) || wordCount <= 0) return 0;
+  if (!Number.isFinite(pageSize) || pageSize <= 0) return 0;
+  return Math.ceil(wordCount / pageSize);
+}
+
+/**
+ * 本页的定格切片（左闭右开）：`slice(no * pageSize, (no + 1) * pageSize)`。
+ *
+ * 越界（no < 0 或 no ≥ 页数）返回空数组 —— 服务层据此抛 404（越界页不是
+ * 「空页」，是「不存在的页」）。切片只依定格数组，与词是否被删无关。
+ */
+export function huluPageSlice(wordIds: readonly string[], pageSize: number, pageIndex: number): string[] {
+  if (!Number.isInteger(pageIndex) || pageIndex < 0) return [];
+  if (!Number.isFinite(pageSize) || pageSize <= 0) return [];
+  if (pageIndex >= huluPageCount(wordIds.length, pageSize)) return [];
+  return wordIds.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+}
+
+/**
+ * 计划行 → 出参摘要（P1 裁剪）：全量 `word_ids` / `suspend_snapshot` 折叠成计数。
+ *
+ * 与页载荷的 `total` 同源（都用定格 `word_ids`）—— 前端用 `word_count` + `page_size`
+ * 算进度指示，不需要全量 id。
+ */
+export function toHuluPlanSummary(plan: HuluPlanRow): HuluPlanSummary {
+  return {
+    id: plan.id,
+    user_id: plan.user_id,
+    wordbook_id: plan.wordbook_id,
+    direction: plan.direction,
+    exam_date: plan.exam_date,
+    target_rounds: plan.target_rounds,
+    page_size: plan.page_size,
+    gate_ratio: plan.gate_ratio,
+    word_count: plan.word_ids.length,
+    status: plan.status,
+    suspend_review: plan.suspend_review,
+    suspended_count: plan.suspend_snapshot ? Object.keys(plan.suspend_snapshot).length : 0,
+    started_at: plan.started_at,
+    ended_at: plan.ended_at,
+    created_at: plan.created_at,
+  };
 }

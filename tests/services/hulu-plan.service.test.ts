@@ -79,6 +79,9 @@ function wordIds(n: number): string[] {
   return Array.from({ length: n }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
 }
 
+/** 固定墙钟（服务层 now 注入；轮次起止时刻的唯一来源）。 */
+const NOW = new Date("2026-10-06T10:00:00.000Z");
+
 function setup(options: {
   owned?: boolean;
   activePlan?: HuluPlanRow | null;
@@ -89,6 +92,12 @@ function setup(options: {
   lockedPlan?: HuluPlanRow | null;
   statusUpdated?: HuluPlanRow | null;
   today?: string;
+  openRound?: HuluRoundRow | null;
+  roundByNo?: HuluRoundRow | null;
+  insertedRound?: HuluRoundRow;
+  settledRow?: HuluRoundRow | null;
+  finishedRow?: HuluRoundRow | null;
+  words?: Array<{ id: string; slug: string; title: string; lemma: string; ipa: string | null; pos: string | null; short_definition: string | null; mnemonic_text: string | null }>;
 } = {}) {
   const hulu = {
     insertPlan: vi.fn(options.insertPlan ?? (async () => planRow())),
@@ -97,17 +106,27 @@ function setup(options: {
     findActivePlanByWordbook: vi.fn(async () => options.activePlan ?? null),
     setPlanStatus: vi.fn(async () => options.statusUpdated === undefined ? planRow({ status: "abandoned" }) : options.statusUpdated),
     findRoundsByPlan: vi.fn(async () => options.rounds ?? []),
-    insertRound: vi.fn(async () => roundRow()),
-    findOpenRound: vi.fn(async () => null),
-    findRoundByNo: vi.fn(async () => null),
+    insertRound: vi.fn(async () => options.insertedRound ?? roundRow()),
+    findOpenRound: vi.fn(async () => options.openRound ?? null),
+    findRoundByNo: vi.fn(async () => options.roundByNo ?? null),
+    settlePage: vi.fn(async () => options.settledRow === undefined
+      ? roundRow({ pages_passed: 1, words_passed: 18 })
+      : options.settledRow),
+    finishRound: vi.fn(async () => options.finishedRow === undefined
+      ? roundRow({ ended_at: "2026-10-06T10:00:00Z", elapsed_seconds: 3600 })
+      : options.finishedRow),
     assertWordbookOwned: vi.fn(async () => options.owned ?? true),
     listWordIdsByWordbook: vi.fn(async () => options.ids ?? wordIds(400)),
     findTodayKeyInDisplayTz: vi.fn(() => options.today ?? TODAY),
   };
   mockRepos.hulu = hulu as never;
+  mockRepos.reviews = {
+    findWordsByIds: vi.fn(async () => options.words ?? []),
+  } as never;
 
   const service = new HuluPlanService({
     todayKey: (repos) => repos.hulu.findTodayKeyInDisplayTz(),
+    now: () => NOW,
   });
   return { service, hulu };
 }
@@ -331,7 +350,9 @@ describe("HuluPlanService.abandonPlan", () => {
 
     const row = await service.abandonPlan({ userId: USER, planId: PLAN });
 
-    expect(row).toBe(already);
+    // P1 起出参是**摘要**（全量 word_ids / suspend_snapshot 折叠成计数），
+    // 故不再按对象身份断言，改按投影后的值与 status 断言。
+    expect(row).toMatchObject({ id: already.id, status: "abandoned", word_count: 2, suspended_count: 0 });
     expect(hulu.setPlanStatus).not.toHaveBeenCalled();
   });
 
@@ -373,6 +394,454 @@ describe("HuluPlanService 事务与红线", () => {
     for (const call of spy.mock.calls) {
       expect(call[1]).toEqual({ actorId: USER });
     }
+  });
+
+  it("零 FSRS：服务源码不出现 review_logs / user_word_progress / review.service", () => {
+    const source = readFileSync(
+      new URL("../../src/services/hulu-plan.service.ts", import.meta.url),
+      "utf8",
+    );
+    expect(source).not.toContain("review_logs");
+    expect(source).not.toContain("user_word_progress");
+    expect(source).not.toContain("review.service");
+    expect(source).not.toContain("submitAnswer");
+  });
+});
+
+describe("HuluPlanService.getPlanPage（R4 页载荷）", () => {
+  const PAGE_WORDS = [
+    { id: "w-a", slug: "alpha", title: "alpha", lemma: "alpha", ipa: "/a/", pos: "n.", short_definition: "甲", mnemonic_text: "m-a" },
+    { id: "w-b", slug: "bravo", title: "bravo", lemma: "bravo", ipa: null, pos: null, short_definition: "乙", mnemonic_text: null },
+  ];
+
+  it("按定格切片取词并按切片序重排，字段裁剪到 8 列", async () => {
+    // 定格 3 词 / page_size 2 → 第 0 页 = [w-a, w-b]，第 1 页 = [w-c]
+    const ids = ["w-a", "w-b", "w-c"];
+    const { service } = setup({
+      planById: planRow({ word_ids: ids, page_size: 2 }),
+      // 仓库返回**乱序**（DB 不保证序）：服务层须按切片序重排
+      words: [
+        { id: "w-b", slug: "bravo", title: "bravo", lemma: "bravo", ipa: null, pos: null, short_definition: "乙", mnemonic_text: null },
+        { id: "w-a", slug: "alpha", title: "alpha", lemma: "alpha", ipa: "/a/", pos: "n.", short_definition: "甲", mnemonic_text: "m-a" },
+      ],
+    });
+
+    const page = await service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 0 });
+
+    expect(page.pageIndex).toBe(0);
+    expect(page.pages).toBe(2);
+    expect(page.total).toBe(3);
+    expect(page.alive).toBe(2);
+    expect(page.items.map((item) => item.id)).toEqual(["w-a", "w-b"]);
+    // 字段裁剪：只出 8 列（不夹带 cefr / examples / prototype_text 等）
+    expect(Object.keys(page.items[0]!).sort()).toEqual(
+      ["id", "ipa", "lemma", "mnemonic_text", "pos", "short_definition", "slug", "title"],
+    );
+  });
+
+  it("删词只缩不换：切片位置不变，已删词从 items 消失（alive < total）", async () => {
+    const ids = ["w-a", "w-b", "w-c"];
+    const { service } = setup({
+      planById: planRow({ word_ids: ids, page_size: 2 }),
+      // w-a 已删（仓库不返回）→ items 只有 w-b
+      words: [
+        { id: "w-b", slug: "bravo", title: "bravo", lemma: "bravo", ipa: null, pos: null, short_definition: "乙", mnemonic_text: null },
+      ],
+    });
+
+    const page = await service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 0 });
+
+    expect(page.total).toBe(3); // 定格词数不变
+    expect(page.alive).toBe(1);
+    expect(page.items.map((item) => item.id)).toEqual(["w-b"]);
+    expect(page.pages).toBe(2); // 页数只依定格，与删除无关
+  });
+
+  it("整页删空 → alive = 0 且 items 为空（合法页，非 404）", async () => {
+    const { service } = setup({
+      planById: planRow({ word_ids: ["w-a", "w-b"], page_size: 2 }),
+      words: [],
+    });
+
+    const page = await service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 0 });
+
+    expect(page.alive).toBe(0);
+    expect(page.items).toEqual([]);
+    expect(page.total).toBe(2);
+  });
+
+  it("越界页 → NotFoundError（不存在的页，不是空页）", async () => {
+    const { service } = setup({ planById: planRow({ word_ids: ["w-a", "w-b"], page_size: 2 }) });
+
+    await expect(service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 1 })).rejects.toThrow(NotFoundError);
+    await expect(service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 99 })).rejects.toThrow(NotFoundError);
+  });
+
+  it("计划不存在 → NotFoundError；负页号 → ValidationError", async () => {
+    const missing = setup({ planById: null });
+    await expect(missing.service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 0 }))
+      .rejects.toThrow(NotFoundError);
+
+    const { service } = setup();
+    await expect(service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: -1 }))
+      .rejects.toThrow(ValidationError);
+  });
+});
+
+describe("HuluPlanService.startRound（轮次开始）", () => {
+  it("首轮：round_no = 已有轮数 + 1，words_total = 定格词数，started_at 缺省 now()", async () => {
+    const { service, hulu } = setup({ planById: planRow({ word_ids: ["w-a", "w-b"] }), rounds: [] });
+
+    const round = await service.startRound({ userId: USER, planId: PLAN });
+
+    expect(round.round_no).toBe(1);
+    expect(hulu.insertRound).toHaveBeenCalledWith({
+      plan_id: PLAN,
+      user_id: USER,
+      round_no: 1,
+      started_at: NOW.toISOString(),
+      words_total: 2,
+    });
+  });
+
+  it("幂等：已有未收尾轮 → 返回它，不新建", async () => {
+    const open = roundRow({ round_no: 2, id: "round-2" });
+    const { service, hulu } = setup({ openRound: open });
+
+    const round = await service.startRound({ userId: USER, planId: PLAN });
+
+    expect(round).toBe(open);
+    expect(hulu.insertRound).not.toHaveBeenCalled();
+  });
+
+  it("超过目标轮数 → ConflictError（409）", async () => {
+    const { service, hulu } = setup({
+      planById: planRow({ target_rounds: 4 }),
+      rounds: [roundRow({ round_no: 1 }), roundRow({ round_no: 2, id: "r2" }), roundRow({ round_no: 3, id: "r3" }), roundRow({ round_no: 4, id: "r4" })],
+    });
+
+    await expect(service.startRound({ userId: USER, planId: PLAN }))
+      .rejects.toMatchObject({ httpStatus: 409 });
+    expect(hulu.insertRound).not.toHaveBeenCalled();
+  });
+
+  it("计划非 active（completed/abandoned）→ ConflictError（409）", async () => {
+    const completed = setup({ lockedPlan: planRow({ status: "completed" }) });
+    await expect(completed.service.startRound({ userId: USER, planId: PLAN }))
+      .rejects.toMatchObject({ httpStatus: 409 });
+
+    const abandoned = setup({ lockedPlan: planRow({ status: "abandoned" }) });
+    await expect(abandoned.service.startRound({ userId: USER, planId: PLAN }))
+      .rejects.toMatchObject({ httpStatus: 409 });
+  });
+
+  it("startedAt 越界夹取到 [now - 7 天, now]（未来 → now，过旧 → 下界）", async () => {
+    const future = setup({ rounds: [] });
+    await future.service.startRound({ userId: USER, planId: PLAN, startedAt: "2030-01-01T00:00:00.000Z" });
+    expect(future.hulu.insertRound).toHaveBeenCalledWith(
+      expect.objectContaining({ started_at: NOW.toISOString() }),
+    );
+
+    const ancient = setup({ rounds: [] });
+    await ancient.service.startRound({ userId: USER, planId: PLAN, startedAt: "2000-01-01T00:00:00.000Z" });
+    const expectedFloor = new Date(NOW.getTime() - 7 * 86400 * 1000).toISOString();
+    expect(ancient.hulu.insertRound).toHaveBeenCalledWith(
+      expect.objectContaining({ started_at: expectedFloor }),
+    );
+  });
+
+  it("startedAt 形状非法 → ValidationError；计划不存在 → NotFoundError", async () => {
+    const { service } = setup({ rounds: [] });
+    await expect(service.startRound({ userId: USER, planId: PLAN, startedAt: "yesterday" }))
+      .rejects.toThrow(ValidationError);
+
+    const missing = setup({ lockedPlan: null });
+    await expect(missing.service.startRound({ userId: USER, planId: PLAN })).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe("HuluPlanService.settlePage（R7 页结算）", () => {
+  const ALIVE_WORDS = [
+    { id: "w-a", slug: "a", title: "a", lemma: "a", ipa: null, pos: null, short_definition: null, mnemonic_text: null },
+    { id: "w-b", slug: "b", title: "b", lemma: "b", ipa: null, pos: null, short_definition: null, mnemonic_text: null },
+  ];
+
+  function settleSetup(overrides: {
+    gateRatio?: number;
+    wordIds?: string[];
+    pageSize?: number;
+    words?: typeof ALIVE_WORDS;
+    settledRow?: HuluRoundRow | null;
+    roundByNo?: HuluRoundRow | null;
+  } = {}) {
+    const ids = overrides.wordIds ?? ["w-a", "w-b"];
+    return setup({
+      planById: planRow({ word_ids: ids, page_size: overrides.pageSize ?? 20, gate_ratio: overrides.gateRatio ?? 0.8 }),
+      roundByNo: overrides.roundByNo === undefined ? roundRow() : overrides.roundByNo,
+      settledRow: overrides.settledRow,
+      words: overrides.words ?? ALIVE_WORDS,
+    });
+  }
+
+  it("过闸（读列值）→ 条件 UPDATE 命中，返回更新后的轮次行", async () => {
+    const { service, hulu } = settleSetup({ gateRatio: 0.8 });
+
+    const row = await service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 2, total: 2,
+    });
+
+    expect(row.pages_passed).toBe(1);
+    expect(hulu.settlePage).toHaveBeenCalledWith({
+      userId: USER, roundId: "round-1", pageIndex: 0, passed: 2,
+    });
+  });
+
+  it("闸门读的是**计划行列值**，不是写死的 0.8：0.5 的计划下 1/2 放行", async () => {
+    // 同样 50% 通过率：0.8 闸门下被拒（下一用例），0.5 闸门下放行 —— 证明读列值
+    const { service, hulu } = settleSetup({ gateRatio: 0.5 });
+
+    await expect(service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 1, total: 2,
+    })).resolves.toBeTruthy();
+    expect(hulu.settlePage).toHaveBeenCalledTimes(1);
+  });
+
+  it("不过闸 → ValidationError（422），不发条件 UPDATE", async () => {
+    const { service, hulu } = settleSetup({ gateRatio: 0.8 });
+
+    await expect(service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 1, total: 2,
+    })).rejects.toMatchObject({ httpStatus: 422 });
+    expect(hulu.settlePage).not.toHaveBeenCalled();
+  });
+
+  it("闸门边界：恰等于 gate_ratio 放行，差 0.01 拒绝", async () => {
+    // 20 词 / 0.8 → 16 通过恰好放行；15 通过（0.75）拒绝
+    const ids = wordIds(20);
+    const twenty = Array.from({ length: 20 }, (_, i) => ({
+      id: ids[i]!, slug: `w${i}`, title: `w${i}`, lemma: `w${i}`,
+      ipa: null, pos: null, short_definition: null, mnemonic_text: null,
+    }));
+
+    const pass = settleSetup({ gateRatio: 0.8, wordIds: ids, words: twenty });
+    await expect(pass.service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 16, total: 20,
+    })).resolves.toBeTruthy();
+
+    const block = settleSetup({ gateRatio: 0.8, wordIds: ids, words: twenty });
+    await expect(block.service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 15, total: 20,
+    })).rejects.toMatchObject({ httpStatus: 422 });
+  });
+
+  it("total 必须等于本页存活词数（不符 → 422）", async () => {
+    const { service, hulu } = settleSetup();
+
+    await expect(service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 2, total: 3,
+    })).rejects.toThrow(/存活词数/);
+    expect(hulu.settlePage).not.toHaveBeenCalled();
+  });
+
+  it("alive = 0（整页删空）→ total = 0 合法且自动通过", async () => {
+    const { service, hulu } = settleSetup({ words: [] });
+
+    await expect(service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 0, total: 0,
+    })).resolves.toBeTruthy();
+    expect(hulu.settlePage).toHaveBeenCalledWith({
+      userId: USER, roundId: "round-1", pageIndex: 0, passed: 0,
+    });
+  });
+
+  it("重复提交（条件 UPDATE 未命中且游标已推进）→ 幂等返回现状，不重复计数", async () => {
+    // 定格 40 词 / 每页 20 → 2 页；提交第 1 页（第 2 页）时游标已在 2 → 幂等
+    const ids = wordIds(40);
+    const page1 = ids.slice(20, 40).map((id, i) => ({
+      id, slug: `w${20 + i}`, title: `w${20 + i}`, lemma: `w${20 + i}`,
+      ipa: null, pos: null, short_definition: null, mnemonic_text: null,
+    }));
+    const current = roundRow({ pages_passed: 2, words_passed: 36 });
+    const { service, hulu } = settleSetup({
+      wordIds: ids, words: page1, settledRow: null, roundByNo: current,
+    });
+
+    const row = await service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 1, passed: 20, total: 20,
+    });
+
+    expect(row).toBe(current);
+    expect(row.pages_passed).toBe(2);
+    // R7 的幂等来自 WHERE 谓词不匹配（游标已推进），而非「跳过 UPDATE」：
+    // 条件 UPDATE 照发一次，rowcount = 0 → 读游标分流为幂等。
+    expect(hulu.settlePage).toHaveBeenCalledTimes(1);
+  });
+
+  it("跳页（游标落后于提交页）→ ConflictError（409）", async () => {
+    // 同上：第 1 页合法（alive = 20），但游标停在 0 → 跳页
+    const ids = wordIds(40);
+    const page1 = ids.slice(20, 40).map((id, i) => ({
+      id, slug: `w${20 + i}`, title: `w${20 + i}`, lemma: `w${20 + i}`,
+      ipa: null, pos: null, short_definition: null, mnemonic_text: null,
+    }));
+    const current = roundRow({ pages_passed: 0 });
+    const { service, hulu } = settleSetup({
+      wordIds: ids, words: page1, settledRow: null, roundByNo: current,
+    });
+
+    await expect(service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 1, passed: 20, total: 20,
+    })).rejects.toMatchObject({ httpStatus: 409 });
+    expect(hulu.settlePage).toHaveBeenCalledTimes(1); // 条件 UPDATE 发过但未命中
+  });
+
+  it("轮次不存在 → NotFoundError；负 pageIndex / passed / total → ValidationError", async () => {
+    const noRound = settleSetup({ roundByNo: null });
+    await expect(noRound.service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 9, pageIndex: 0, passed: 0, total: 0,
+    })).rejects.toThrow(NotFoundError);
+
+    const { service, hulu } = settleSetup();
+    await expect(service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: -1, passed: 0, total: 0,
+    })).rejects.toThrow(ValidationError);
+    await expect(service.settlePage({
+      userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: -1, total: 0,
+    })).rejects.toThrow(ValidationError);
+    expect(hulu.settlePage).not.toHaveBeenCalled();
+  });
+});
+
+describe("HuluPlanService.finishRound（轮收尾）", () => {
+  it("墙钟耗时夹取后写入（ended - started）", async () => {
+    // started 2026-10-06T09:00:00Z，now 10:00:00Z → 3600 秒
+    const started = roundRow({ started_at: "2026-10-06T09:00:00Z" });
+    const { service, hulu } = setup({ roundByNo: started });
+
+    const row = await service.finishRound({ userId: USER, planId: PLAN, roundNo: 1 });
+
+    expect(row.elapsed_seconds).toBe(3600);
+    expect(hulu.finishRound).toHaveBeenCalledWith({
+      userId: USER,
+      roundId: "round-1",
+      endedAt: NOW.toISOString(),
+      elapsedSeconds: 3600,
+    });
+  });
+
+  it("耗时超上限（7 天）夹取，不报错、不丢轮", async () => {
+    const started = roundRow({ started_at: "2020-01-01T00:00:00Z" });
+    const { service, hulu } = setup({ roundByNo: started });
+
+    await service.finishRound({ userId: USER, planId: PLAN, roundNo: 1 });
+
+    expect(hulu.finishRound).toHaveBeenCalledWith(
+      expect.objectContaining({ elapsedSeconds: 7 * 86400 }),
+    );
+  });
+
+  it("已收尾 → 幂等返回现状（不重写耗时）", async () => {
+    const done = roundRow({ ended_at: "2026-10-06T09:30:00Z", elapsed_seconds: 1800 });
+    const { service, hulu } = setup({ roundByNo: done });
+
+    const row = await service.finishRound({ userId: USER, planId: PLAN, roundNo: 1 });
+
+    expect(row).toBe(done);
+    expect(hulu.finishRound).not.toHaveBeenCalled();
+  });
+
+  it("末轮 → 同事务把计划置 completed", async () => {
+    const last = roundRow({ round_no: 4 });
+    const { service, hulu } = setup({
+      lockedPlan: planRow({ target_rounds: 4, status: "active" }),
+      roundByNo: last,
+      // 条件 UPDATE 的返回行必须是**第 4 轮**（判据取 finished.round_no）
+      finishedRow: roundRow({ round_no: 4, ended_at: NOW.toISOString(), elapsed_seconds: 3600 }),
+    });
+
+    await service.finishRound({ userId: USER, planId: PLAN, roundNo: 4 });
+
+    expect(hulu.setPlanStatus).toHaveBeenCalledWith(USER, PLAN, "completed", { ended: true });
+  });
+
+  it("非末轮 → 不动计划状态", async () => {
+    const { service, hulu } = setup({
+      lockedPlan: planRow({ target_rounds: 4, status: "active" }),
+      roundByNo: roundRow({ round_no: 2 }),
+    });
+
+    await service.finishRound({ userId: USER, planId: PLAN, roundNo: 2 });
+
+    expect(hulu.setPlanStatus).not.toHaveBeenCalled();
+  });
+
+  it("并发双收尾（条件 UPDATE 未命中）→ 幂等返回现状", async () => {
+    const fresh = roundRow();
+    const raced = roundRow({ ended_at: "2026-10-06T09:59:00Z", elapsed_seconds: 3540 });
+    const { service, hulu } = setup({ finishedRow: null });
+    let call = 0;
+    hulu.findRoundByNo.mockImplementation(async () => {
+      call += 1;
+      return call === 1 ? fresh : raced;
+    });
+
+    const row = await service.finishRound({ userId: USER, planId: PLAN, roundNo: 1 });
+
+    expect(row).toBe(raced);
+    expect(hulu.setPlanStatus).not.toHaveBeenCalled();
+  });
+
+  it("轮次不存在 → NotFoundError；计划不存在 → NotFoundError", async () => {
+    const noRound = setup({ roundByNo: null });
+    await expect(noRound.service.finishRound({ userId: USER, planId: PLAN, roundNo: 9 }))
+      .rejects.toThrow(NotFoundError);
+
+    const noPlan = setup({ lockedPlan: null });
+    await expect(noPlan.service.finishRound({ userId: USER, planId: PLAN, roundNo: 1 }))
+      .rejects.toThrow(NotFoundError);
+  });
+
+  it("endedAt 越界夹取（未来 → now）", async () => {
+    const { service, hulu } = setup({ roundByNo: roundRow({ started_at: "2026-10-06T09:00:00Z" }) });
+
+    await service.finishRound({ userId: USER, planId: PLAN, roundNo: 1, endedAt: "2030-01-01T00:00:00.000Z" });
+
+    expect(hulu.finishRound).toHaveBeenCalledWith(
+      expect.objectContaining({ endedAt: NOW.toISOString(), elapsedSeconds: 3600 }),
+    );
+  });
+});
+
+describe("HuluPlanService P1 红线", () => {
+  it("P1 四个新方法也走 withTransaction + actorId", async () => {
+    const { withTransaction } = await import("@/db/transaction");
+    const spy = withTransaction as unknown as ReturnType<typeof vi.fn>;
+    spy.mockClear();
+    const { service } = setup({
+      planById: planRow({ word_ids: ["w-a"] }),
+      roundByNo: roundRow(),
+      words: [],
+    });
+
+    await service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 0 });
+    await service.startRound({ userId: USER, planId: PLAN });
+    await service.settlePage({ userId: USER, planId: PLAN, roundNo: 1, pageIndex: 0, passed: 0, total: 0 });
+    await service.finishRound({ userId: USER, planId: PLAN, roundNo: 1 });
+
+    for (const call of spy.mock.calls) {
+      expect(call[1]).toEqual({ actorId: USER });
+    }
+  });
+
+  it("页载荷取词走只读的 findWordsByIds（不写 sessions、不锚定默认词书）", async () => {
+    const { service } = setup({ planById: planRow({ word_ids: ["w-a"] }), words: [] });
+    const repos = mockRepos as { reviews?: { findWordsByIds?: ReturnType<typeof vi.fn> } };
+
+    await service.getPlanPage({ userId: USER, planId: PLAN, pageIndex: 0 });
+
+    expect(repos.reviews?.findWordsByIds).toHaveBeenCalledWith(["w-a"]);
+    // 绝不触达会写 sessions 的队列构建（wordbooks 服务未被注入/调用）
+    expect(mockRepos.wordbooks).toBeUndefined();
   });
 
   it("零 FSRS：服务源码不出现 review_logs / user_word_progress / review.service", () => {

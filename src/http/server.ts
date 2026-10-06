@@ -61,6 +61,7 @@ import { l3PracticeRoutes } from "./routes/l3-practice";
 import { l3SessionsRoutes } from "./routes/l3-sessions";
 import { forgettingRoutes } from "./routes/forgetting";
 import { huluRoutes } from "./routes/hulu";
+import { huluRoundsRoutes } from "./routes/hulu-rounds";
 import { authRoutes } from "./routes/auth";
 import { requestTelemetry, isMetricsAuthorized } from "./middleware/telemetry";
 import { jsonError } from "./error-response";
@@ -219,8 +220,11 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3-practice", l3PracticeRoutes(services));
   app.route("/api/l3-sessions", l3SessionsRoutes(services));
   app.route("/api/forgetting", forgettingRoutes(services));
-  // 葫芦冲刺（ADR-0041）：独立前缀 /api/hulu（计划容器，P0 三条端点）。
+  // 葫芦冲刺（ADR-0041）：独立前缀 /api/hulu。计划容器（P0 三条）与轮次推进
+  // （P1 四条）分两个文件挂同一前缀 —— hulu.ts 在 P0 即被路由复杂度棘轮冻结，
+  // P1 的四条端点另立 hulu-rounds.ts（同 l3 族多文件共享 /api/l3 的先例）。
   app.route("/api/hulu", huluRoutes(services));
+  app.route("/api/hulu", huluRoundsRoutes(services));
 
   return app;
 }
