@@ -18,6 +18,11 @@
  * missing terminal snapshot makes `db:generate` replay applied migrations as a
  * brand-new pseudo migration.
  *
+ * It additionally lints re-run safety for migrations at or after the cutover
+ * (`MIGRATION_IDEMPOTENCY_CUTOVER_IDX`, ADR-0042 decision 4): the repair path
+ * for a ledger that lost rows is reconciliation, not replay, so new migrations
+ * must still be safe to re-run. Historical migrations stay exempt.
+ *
  * Run: npm run db:schema:drift   (requires DATABASE_URL to be set; the value is
  * only read by drizzle-kit config loading — `generate` does not connect to a DB)
  */
@@ -328,6 +333,246 @@ export function verifyReleaseMigrationFolder(releaseDir: string): string[] {
   return problems;
 }
 
+/**
+ * Idempotency lint for hand-authored migrations.
+ *
+ * The release chain is applied linearly and never rolled back automatically
+ * (ADR-0042), but a database whose schema was advanced outside the migrator
+ * (db:push, manual DDL) can still see a migration replayed on top of its own
+ * effects. Historical generated migrations are non-idempotent by design and
+ * stay that way (D1: the repair path is ledger reconciliation, not SQL edits),
+ * so this lint governs only migrations from the cutover onward.
+ *
+ * Cutover = idx 51 (`0051_*`): 0050 was the last migration written under the
+ * old convention. Statements at or after the cutover must be safe to re-run.
+ */
+export const MIGRATION_IDEMPOTENCY_CUTOVER_IDX = 51;
+
+/** Waive marker: a comment line immediately preceding a statement. */
+const IDEMPOTENCY_WAIVE_PATTERN = /^\s*--\s*@idempotency-waive:\s*\S/;
+
+export interface IdempotencyProblem {
+  /** `NNNN_tag.sql` file name. */
+  file: string;
+  /** 1-based line number of the offending statement. */
+  line: number;
+  statement: string;
+  message: string;
+}
+
+/** Statement split on drizzle's breakpoint marker, keeping line offsets. */
+interface SqlStatement {
+  text: string;
+  line: number;
+}
+
+function splitStatements(sql: string): SqlStatement[] {
+  const statements: SqlStatement[] = [];
+  let line = 1;
+  let startLine = 1;
+  let buffer = "";
+  const flush = (): void => {
+    if (buffer.trim().length > 0) statements.push({ text: buffer.trim(), line: startLine });
+    buffer = "";
+    startLine = line;
+  };
+  for (const rawLine of sql.split(/\r?\n/)) {
+    if (rawLine.includes("--> statement-breakpoint")) {
+      const head = rawLine.slice(0, rawLine.indexOf("--> statement-breakpoint"));
+      buffer += (buffer ? "\n" : "") + head;
+      flush();
+    } else {
+      if (buffer.length === 0) startLine = line;
+      buffer += (buffer ? "\n" : "") + rawLine;
+    }
+    line += 1;
+  }
+  flush();
+  return statements;
+}
+
+/**
+ * Split a statement's lines into its leading comment lines and its code lines,
+ * with the 1-based line number of the first code line. Comments are not
+ * breakpoints, so a statement's rationale comment block is part of its chunk.
+ */
+function splitLeadingComments(
+  statement: SqlStatement,
+): { comments: string[]; codeLines: string[]; codeLine: number } {
+  const lines = statement.text.split(/\r?\n/);
+  let first = 0;
+  while (first < lines.length && /^\s*--/.test(lines[first])) first += 1;
+  return {
+    comments: lines.slice(0, first),
+    codeLines: lines.slice(first),
+    codeLine: statement.line + first,
+  };
+}
+
+/**
+ * A statement is waived when one of its own leading comment lines carries
+ * `-- @idempotency-waive: <reason>` (the line directly above the SQL).
+ */
+function hasWaiver(comments: readonly string[]): boolean {
+  return comments.some((line) => IDEMPOTENCY_WAIVE_PATTERN.test(line));
+}
+
+/** First word-ish token of a statement, used to name the rule in messages. */
+function statementKind(statement: string): string {
+  const match = statement.match(/^\s*([A-Z]+(?:\s+[A-Z]+)?)/i);
+  return match ? match[1].toUpperCase() : "STATEMENT";
+}
+
+/**
+ * Check one migration file's SQL for re-run safety. Returns one problem per
+ * offending statement; an empty array means the file is idempotent.
+ *
+ * Rules (each names its own fix so the failure is actionable):
+ *   ① ADD COLUMN without IF NOT EXISTS
+ *   ② CREATE [UNIQUE] INDEX without IF NOT EXISTS
+ *   ③ CREATE TABLE without IF NOT EXISTS
+ *   ④ ADD CONSTRAINT without a matching DROP CONSTRAINT IF EXISTS in-file
+ *   ⑤ CREATE POLICY without a matching DROP POLICY IF EXISTS in-file
+ *   ⑥ CREATE TRIGGER without a DROP TRIGGER IF EXISTS in-file
+ */
+export function analyzeMigrationIdempotency(
+  sql: string,
+  options: { file: string },
+): IdempotencyProblem[] {
+  const problems: IdempotencyProblem[] = [];
+  const statements = splitStatements(sql);
+  const normalized = normalizeSql(sql);
+
+  for (const statement of statements) {
+    const { comments, codeLines, codeLine } = splitLeadingComments(statement);
+    const code = codeLines.join(" ").trim();
+    if (code.length === 0) continue;
+    if (hasWaiver(comments)) continue;
+
+    const addColumn = /\bADD\s+COLUMN\b/i.test(code);
+    if (addColumn && !/\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/i.test(code)) {
+      problems.push({
+        file: options.file,
+        line: codeLine,
+        statement: statementKind(code),
+        message:
+          "ADD COLUMN without IF NOT EXISTS — re-running this migration would fail with " +
+          "\"column already exists\". Write `ALTER TABLE \"t\" ADD COLUMN IF NOT EXISTS \"c\" <type>;`",
+      });
+    }
+
+    const createIndex = /\bCREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(code);
+    if (createIndex && !/\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\b/i.test(code)) {
+      problems.push({
+        file: options.file,
+        line: codeLine,
+        statement: statementKind(code),
+        message:
+          "CREATE INDEX without IF NOT EXISTS — re-running this migration would fail with " +
+          "\"relation already exists\". Write `CREATE INDEX IF NOT EXISTS \"idx_name\" ON ...;`",
+      });
+    }
+
+    const createTable = /\bCREATE\s+TABLE\b/i.test(code);
+    if (createTable && !/\bCREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b/i.test(code)) {
+      problems.push({
+        file: options.file,
+        line: codeLine,
+        statement: statementKind(code),
+        message:
+          "CREATE TABLE without IF NOT EXISTS — re-running this migration would fail with " +
+          "\"relation already exists\". Write `CREATE TABLE IF NOT EXISTS \"name\" (...);`",
+      });
+    }
+
+    const addConstraint = code.match(/\bADD\s+CONSTRAINT\s+"?([A-Za-z0-9_]+)"?/i);
+    if (addConstraint) {
+      const name = addConstraint[1];
+      const dropFirst = new RegExp(
+        `DROP\\s+CONSTRAINT\\s+IF\\s+EXISTS\\s+"?${name}"?`,
+        "i",
+      );
+      if (!dropFirst.test(normalized)) {
+        problems.push({
+          file: options.file,
+          line: codeLine,
+          statement: statementKind(code),
+          message:
+            `ADD CONSTRAINT "${name}" has no matching DROP CONSTRAINT IF EXISTS in this file — ` +
+            "re-running this migration would fail with \"constraint already exists\". " +
+            `Write \`ALTER TABLE "t" DROP CONSTRAINT IF EXISTS "${name}";\` before the ADD.`,
+        });
+      }
+    }
+
+    const createPolicy = code.match(/\bCREATE\s+POLICY\s+"?([A-Za-z0-9_]+)"?\s+ON\s+"?([A-Za-z0-9_]+)"?/i);
+    if (createPolicy) {
+      const [, name, table] = createPolicy;
+      const dropFirst = new RegExp(
+        `DROP\\s+POLICY\\s+IF\\s+EXISTS\\s+"?${name}"?\\s+ON\\s+"?${table}"?`,
+        "i",
+      );
+      if (!dropFirst.test(normalized)) {
+        problems.push({
+          file: options.file,
+          line: codeLine,
+          statement: statementKind(code),
+          message:
+            `CREATE POLICY "${name}" has no matching DROP POLICY IF EXISTS in this file — ` +
+            "re-running this migration would fail with \"policy already exists\". " +
+            `Write \`DROP POLICY IF EXISTS "${name}" ON "${table}";\` before the CREATE.`,
+        });
+      }
+    }
+
+    const createTrigger = code.match(/\bCREATE\s+TRIGGER\s+"?([A-Za-z0-9_]+)"?/i);
+    if (createTrigger) {
+      const name = createTrigger[1];
+      const dropFirst = new RegExp(
+        `DROP\\s+TRIGGER\\s+IF\\s+EXISTS\\s+"?${name}"?`,
+        "i",
+      );
+      if (!dropFirst.test(normalized)) {
+        problems.push({
+          file: options.file,
+          line: codeLine,
+          statement: statementKind(code),
+          message:
+            `CREATE TRIGGER "${name}" has no matching DROP TRIGGER IF EXISTS in this file — ` +
+            "re-running this migration would fail with \"trigger already exists\". " +
+            `Write \`DROP TRIGGER IF EXISTS "${name}" ON "t";\` before the CREATE.`,
+        });
+      }
+    }
+  }
+
+  return problems;
+}
+
+/** Numeric prefix of a `NNNN_tag.sql` file name, or null when it has none. */
+export function migrationFileIndex(fileName: string): number | null {
+  const match = fileName.match(/^(\d{4})_.+\.sql$/);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Lint every migration at or after the cutover inside a release folder.
+ * Files below the cutover are historical and exempt (D1).
+ */
+export function verifyMigrationIdempotency(
+  releaseDir: string,
+  cutoverIdx = MIGRATION_IDEMPOTENCY_CUTOVER_IDX,
+): IdempotencyProblem[] {
+  const problems: IdempotencyProblem[] = [];
+  for (const file of readdirSync(releaseDir).sort()) {
+    const index = migrationFileIndex(file);
+    if (index == null || index < cutoverIdx) continue;
+    const sql = readFileSync(path.join(releaseDir, file), "utf8");
+    problems.push(...analyzeMigrationIdempotency(sql, { file }));
+  }
+  return problems;
+}
+
 /** New artifact paths present in `after` but not in `before`. */
 export function diffReleaseArtifacts(before: readonly string[], after: readonly string[]): string[] {
   const known = new Set(before);
@@ -571,6 +816,17 @@ export default defineConfig({
       throw new Error(`Migration chain invalid: ${chainProblems.join("; ")}`);
     }
 
+    const idempotencyProblems = verifyMigrationIdempotency(releaseDir);
+    if (idempotencyProblems.length > 0) {
+      throw new Error(
+        `Migration chain invalid: ${idempotencyProblems.length} non-idempotent statement(s) at or ` +
+          `after idx ${MIGRATION_IDEMPOTENCY_CUTOVER_IDX} (ADR-0042): ` +
+          idempotencyProblems
+            .map((problem) => `${problem.file}:${problem.line} — ${problem.message}`)
+            .join("; "),
+      );
+    }
+
     const noOp = verifyGenerateIsNoOp(projectRoot, databaseUrl);
     if (!noOp.ok) {
       throw new Error(`Migration chain invalid: ${noOp.detail}`);
@@ -578,7 +834,8 @@ export default defineConfig({
 
     console.log(
       `[schema-drift] OK — ${result.detail}; SECURITY DEFINER functions match authoritative contracts; ` +
-        `migration journal is strictly increasing with no orphan tag/file and ${noOp.detail}`,
+        `migration journal is strictly increasing with no orphan tag/file and ${noOp.detail}; ` +
+        `migrations from idx ${MIGRATION_IDEMPOTENCY_CUTOVER_IDX} are re-run safe`,
     );
   } finally {
     rmSync(tmp, { recursive: true, force: true });

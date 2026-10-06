@@ -24,6 +24,10 @@ import {
   analyzeMigrationJournal,
   verifyReleaseMigrationFolder,
   diffReleaseArtifacts,
+  MIGRATION_IDEMPOTENCY_CUTOVER_IDX,
+  analyzeMigrationIdempotency,
+  migrationFileIndex,
+  verifyMigrationIdempotency,
 } from "../../scripts/verify-schema-drift";
 
 const SAMPLE_SQL = `
@@ -466,5 +470,206 @@ describe("authoritative contract constants", () => {
     expect(AUTHORITATIVE_PROFILES_SELECT_POLICY).toContain("auth.uid() = id");
     expect(AUTHORITATIVE_HIGHLIGHTS_POLICY).toContain("auth.uid() = user_id");
     expect(AUTHORITATIVE_ANNOTATIONS_POLICY).toContain("auth.uid() = user_id");
+  });
+});
+
+describe("migration idempotency lint（ADR-0042 决策 4）", () => {
+  const file = "0051_sample.sql";
+  const lint = (sql: string) => analyzeMigrationIdempotency(sql, { file });
+
+  describe("cutover", () => {
+    it("pins the cutover to 0051", () => {
+      expect(MIGRATION_IDEMPOTENCY_CUTOVER_IDX).toBe(51);
+    });
+
+    it("derives the numeric prefix from NNNN_tag.sql names only", () => {
+      expect(migrationFileIndex("0051_sample.sql")).toBe(51);
+      expect(migrationFileIndex("0000_baseline.sql")).toBe(0);
+      expect(migrationFileIndex("0051_sample.SQL")).toBeNull();
+      expect(migrationFileIndex("meta/_journal.json")).toBeNull();
+      expect(migrationFileIndex("_journal.json")).toBeNull();
+    });
+
+    it("lints files at or after the cutover and skips historical ones", () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "idempotency-lint-"));
+      try {
+        // 0049-shape (non-idempotent) must be exempt below the cutover.
+        writeFileSync(
+          path.join(dir, "0049_old.sql"),
+          'ALTER TABLE "l3_contexts" ADD COLUMN "translation" text;',
+          "utf8",
+        );
+        writeFileSync(
+          path.join(dir, "0050_last_old_convention.sql"),
+          'ALTER TABLE "hulu_plans" ADD COLUMN "legacy" text;',
+          "utf8",
+        );
+        writeFileSync(
+          path.join(dir, "0051_new.sql"),
+          'ALTER TABLE "t" ADD COLUMN "c" text;',
+          "utf8",
+        );
+        expect(verifyMigrationIdempotency(dir).map((problem) => problem.file)).toEqual(["0051_new.sql"]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe("positive: 0050 is re-run safe", () => {
+    const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+    const sql = readFileSync(
+      path.join(repoRoot, "drizzle-release", "0050_hulu_sprint.sql"),
+      "utf8",
+    );
+
+    it("reports no problems for the committed 0050", () => {
+      expect(analyzeMigrationIdempotency(sql, { file: "0050_hulu_sprint.sql" })).toEqual([]);
+    });
+
+    it("keeps the whole committed chain from the cutover clean", () => {
+      expect(verifyMigrationIdempotency(path.join(repoRoot, "drizzle-release"))).toEqual([]);
+    });
+  });
+
+  describe("negative: 0049-shape statements are caught", () => {
+    it("flags ADD COLUMN without IF NOT EXISTS", () => {
+      const problems = lint(
+        'ALTER TABLE "l3_contexts" ADD COLUMN "translation" text;--> statement-breakpoint\n' +
+          'ALTER TABLE "l3_contexts" ADD COLUMN "translation_src" text;',
+      );
+      expect(problems).toHaveLength(2);
+      expect(problems[0].statement).toBe("ALTER TABLE");
+      expect(problems[0].message).toContain("ADD COLUMN IF NOT EXISTS");
+      expect(problems[1].line).toBe(2);
+    });
+
+    it("accepts ADD COLUMN IF NOT EXISTS", () => {
+      expect(lint('ALTER TABLE "t" ADD COLUMN IF NOT EXISTS "c" text;')).toEqual([]);
+    });
+
+    it("flags CREATE INDEX and CREATE UNIQUE INDEX without IF NOT EXISTS", () => {
+      const problems = lint(
+        'CREATE INDEX "idx_a" ON "t" ("c");--> statement-breakpoint\n' +
+          'CREATE UNIQUE INDEX "idx_b" ON "t" ("c");',
+      );
+      expect(problems).toHaveLength(2);
+      expect(problems.every((problem) => problem.message.includes("IF NOT EXISTS"))).toBe(true);
+    });
+
+    it("accepts CREATE [UNIQUE] INDEX IF NOT EXISTS", () => {
+      expect(lint(
+        'CREATE INDEX IF NOT EXISTS "idx_a" ON "t" ("c");--> statement-breakpoint\n' +
+          'CREATE UNIQUE INDEX IF NOT EXISTS "idx_b" ON "t" ("c");',
+      )).toEqual([]);
+    });
+
+    it("flags CREATE TABLE without IF NOT EXISTS", () => {
+      const problems = lint('CREATE TABLE "t" ("id" uuid PRIMARY KEY);');
+      expect(problems).toHaveLength(1);
+      expect(problems[0].message).toContain("CREATE TABLE IF NOT EXISTS");
+    });
+
+    it("flags ADD CONSTRAINT without a same-file DROP CONSTRAINT IF EXISTS", () => {
+      const problems = lint(
+        'ALTER TABLE "t" ADD CONSTRAINT "t_kind_check" CHECK (kind = ANY (ARRAY[\'a\'::text]));',
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0].message).toContain('DROP CONSTRAINT IF EXISTS "t_kind_check"');
+    });
+
+    it("accepts ADD CONSTRAINT preceded by its guarded DROP in the same file", () => {
+      expect(lint(
+        'ALTER TABLE "t" DROP CONSTRAINT IF EXISTS "t_kind_check";--> statement-breakpoint\n' +
+          'ALTER TABLE "t" ADD CONSTRAINT "t_kind_check" CHECK (kind = ANY (ARRAY[\'a\'::text]));',
+      )).toEqual([]);
+    });
+
+    it("requires the DROP to name the same constraint", () => {
+      const problems = lint(
+        'ALTER TABLE "t" DROP CONSTRAINT IF EXISTS "other_name";--> statement-breakpoint\n' +
+          'ALTER TABLE "t" ADD CONSTRAINT "t_kind_check" CHECK (true);',
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0].message).toContain('"t_kind_check"');
+    });
+
+    it("flags CREATE POLICY without a same-file DROP POLICY IF EXISTS", () => {
+      const problems = lint(
+        'CREATE POLICY "t_own_all" ON "t" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id));',
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0].message).toContain('DROP POLICY IF EXISTS "t_own_all" ON "t"');
+    });
+
+    it("accepts CREATE POLICY preceded by its guarded DROP", () => {
+      expect(lint(
+        'DROP POLICY IF EXISTS "t_own_all" ON "t";--> statement-breakpoint\n' +
+          'CREATE POLICY "t_own_all" ON "t" AS PERMISSIVE FOR ALL TO public USING ((auth.uid() = user_id));',
+      )).toEqual([]);
+    });
+
+    it("flags CREATE TRIGGER without a same-file DROP TRIGGER IF EXISTS", () => {
+      const problems = lint(
+        'CREATE TRIGGER "t_touch" BEFORE UPDATE ON "t" FOR EACH ROW EXECUTE FUNCTION touch();',
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0].message).toContain('DROP TRIGGER IF EXISTS "t_touch"');
+    });
+
+    it("accepts CREATE TRIGGER preceded by its guarded DROP", () => {
+      expect(lint(
+        'DROP TRIGGER IF EXISTS "t_touch" ON "t";--> statement-breakpoint\n' +
+          'CREATE TRIGGER "t_touch" BEFORE UPDATE ON "t" FOR EACH ROW EXECUTE FUNCTION touch();',
+      )).toEqual([]);
+    });
+
+    it("ignores rule keywords mentioned inside comments", () => {
+      expect(lint(
+        "-- 本迁移不用 ADD COLUMN，因为列已存在；CREATE INDEX 也由 0000 建过。\n" +
+          'ALTER TABLE "t" ADD COLUMN IF NOT EXISTS "c" text;',
+      )).toEqual([]);
+    });
+
+    it("reports the first code line, not the comment block", () => {
+      const problems = lint(
+        "-- 理由两行\n-- 第二行\nALTER TABLE \"t\" ADD COLUMN \"c\" text;",
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0].line).toBe(3);
+    });
+  });
+
+  describe("waiver", () => {
+    it("honors -- @idempotency-waive: on the line above the statement", () => {
+      expect(lint(
+        "-- @idempotency-waive: 数据回填，重复执行由 WHERE 子句保证幂等\n" +
+          'UPDATE "t" SET "c" = 1 WHERE "c" IS NULL;',
+      )).toEqual([]);
+    });
+
+    it("waives a non-idempotent statement that would otherwise fail", () => {
+      expect(lint(
+        "-- @idempotency-waive: 回填列值，见上方论证\n" +
+          'ALTER TABLE "t" ADD COLUMN "c" text;',
+      )).toEqual([]);
+    });
+
+    it("requires a reason after the marker", () => {
+      const problems = lint(
+        "-- @idempotency-waive:\n" + 'ALTER TABLE "t" ADD COLUMN "c" text;',
+      );
+      expect(problems).toHaveLength(1);
+    });
+
+    it("does not waive the statement after the next one", () => {
+      const problems = lint(
+        "-- @idempotency-waive: 只豁免紧随其后的那条\n" +
+          'ALTER TABLE "t" ADD COLUMN "c" text;--> statement-breakpoint\n' +
+          'ALTER TABLE "t" ADD COLUMN "d" text;',
+      );
+      expect(problems).toHaveLength(1);
+      expect(problems[0].line).toBe(3);
+    });
   });
 });

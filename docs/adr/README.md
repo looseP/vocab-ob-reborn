@@ -184,6 +184,8 @@ are superseded by the Node 24 workflow fix in `main@9f9702c`.
 | [0038](./0038-grading-inbox-and-verdict-guards.md) | 判卷待评面与判定护栏（待评卷清单 + 评卷作用域收窄 + 删题/定格三护栏） | 2026-09-26 |
 | [0039](./0039-study-note-grading-reference-identity.md) | 评卷引用的身份边界（**签字 D3-a**：只引用当前评卷、不加版本列；补 field_hash 输入） | 2026-09-26 |
 | [0040](./0040-writing-reference-sealed-only.md) | 写作引用的草稿边界（**签字 D1-a**：只允许 sealed；第 5 条链只新增 `writing_task` / `writing_feedback` 两个 kind） | 2026-09-26 |
+| [0041](./0041-hulu-sprint-plan-container.md) | 葫芦冲刺——L1 词书上的阶段性冲刺计划容器（独立两表 + 零 FSRS 写入结构性保证） | 2026-10-06 |
+| [0042](./0042-migration-chain-governance.md) | 迁移链治理（journal 严格递增 / 快照链 / 账本真源 / 新迁移幂等；**0051 起**手写 + DDL 幂等 lint） | 2026-10-06 |
 
 ## 并行 agent 必读
 
