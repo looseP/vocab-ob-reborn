@@ -59,3 +59,23 @@
    页内词被上架/下架后，前端手里的 `total` 会过期 → 结算 422。旧行为把用户丢到错误页（卡死）。新增稳定码 `HULU_PAGE_ALIVE_MISMATCH`（HTTP 仍 422，code 透出响应体）；前端捕获该码 → **自动重取本页 + 轻提示**，不落错误页、不重复结算。
    - 该码进入 `ERROR_CODES` 单一导出 ⇒ `/api/l3/capabilities` 的 `errorCodes` 响应枚举随之扩展，触发 OpenAPI breaking 门禁一条（`response enum 新增未声明值`）。按 ADR-0035 §勘误 / ADR-0037 先例**整体重锚** `docs/api/openapi-breaking-approval.json` 三元组（历史 study-notes 条目已不在实测集合内，按机制一并舍去；`message` 字段参与字节级比对，故决策理由记在此处）。
 
+---
+
+## Amendment 2（2026-10-06 · 指标与轮次修订，主控拍板三项）
+
+上游：`docs/design/葫芦背书法-指标与轮次修订补充-2026-10-06.md`（拍板记录见其 §八）；完备设计 R12–R15 为口径落点。Decision 1–6 的框架不变，以下三条是修订：
+
+1. **入池可选「含未学词」+ 曝光轮（R12，修订 Decision 4 的取词口径与轮次序列）**。
+   创建时可选「包含还没复习过的词」（**默认关**，默认 = Amendment 1 的先学后刷）。开启后池 = `state ∈ ('new','learning','review','relearning')`（稳定序不变），轮次序列 = **曝光轮 ×1（`round_no = 0`，直展卡面、无自认无闸门，页结算语义 = 已曝光，`passed = total`）+ 复习轮 × `target_rounds`**；曝光轮不计入目标轮数，完成度 <100% 允许显式跳过（对第 0 轮调 `finishRound`，**不新增端点**；覆盖率缺口持续显示）。复习轮词集恒等于定格词集，不因曝光完成度缩减。挂起开关随入池词集走（含 `new` 时 `new` 亦在挂起范围，快照回写机制不变）。
+   - 迁移 0051（手写 + DDL 幂等，ADR-0042 D4）：`hulu_plans` 加 `protocol_version`（'v2'/'legacy'，DEFAULT 'legacy'）与 `include_new_words`（boolean，DEFAULT false）；`hulu_rounds` 加 `kind`（'exposure'/'recall'/'legacy'，DEFAULT 'legacy'）与 `word_set_fingerprint`（text NULL）；`round_no` CHECK 下界 1→0（曝光轮需要 0，上界 8 不动）。存量行吃默认值 = 老计划老轮次语义不回改；默认值指向旧语义是滚动升级/回滚窗口的 fail-safe。
+2. **缩时只比可比较轮（R13，修订曲线口径）**。
+   基准轮 = 第一条 `kind = 'recall'` 的已收尾轮（legacy 轮永不当基准；全 legacy 序列维持旧画法）；曝光轮不进图（其耗时单列展示）。`word_set_fingerprint` = 轮收尾时服务端按已结算页切片推导结算词集、排序取 SHA-256 前 16 位 hex——仅指纹一致的复习轮之间计算降幅。`words_total` 相等**不是**词集等价判据（它恒等于定格词数，不随删词变化）。免责声明追加第三条（词集漂移不参与降幅）。指纹计算放 service 层（domain 零出向，不引 node:crypto）。
+3. **指标分档与「首次回忆成功率」不采（R14）+ 结算防线补齐（R15）**。
+   曝光覆盖率 / 首次曝光耗时 / 首个复习轮耗时直接可读；每轮通过率口径修正为「过闸页自认通过数 ÷ 定格词数」（`words_passed` 不是逐词掌握结果）。**首次回忆成功率本期明确不采**——它是词级首判事件，与完备设计 §4.3「刻意不建词级明细」的既定裁决冲突；将来采集（结算请求带可选 `firstVerdicts`）须另行立项并重开 §4.3。R15 补两条服务端防线：`settlePage` 拒 `passed > total`；`finishRound` 要求复习轮/legacy 轮全部页已结算（曝光轮豁免，部分收尾 = 显式跳过）。
+
+Consequences 增补：
+
+- ⚠️ 结算词集是**页级近似**（页内删词时点不可考），指纹因此是近似判据——已拍板接受，免责声明兜底。
+- ⚠️ 曝光轮复用页结算管道恒过闸（`passed = total = 本页存活词数`），前端不显示通过率徽标（显示「已曝光 n/n」）。
+- ✅ 端点数不变（仍 7 条）；请求/响应契约均为可选/新增字段，按 ADR-0036 §3 先例非 breaking。
+
