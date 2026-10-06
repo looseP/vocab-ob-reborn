@@ -112,6 +112,10 @@ import {
   forgettingRestoreResponseSchema,
 } from "./forgetting-response-contract";
 import {
+  huluPlanRowResponseSchema,
+  huluPlanWithRoundsResponseSchema,
+} from "./hulu-response-contract";
+import {
   reviewAnswerResponseSchema,
   reviewDashboardStatsResponseSchema,
   reviewDrillQueueResponseSchema,
@@ -271,6 +275,7 @@ import {
   forgettingPreviewQuerySchema,
   forgettingApplySchema,
   forgettingRestoreSchema,
+  huluPlanCreateSchema,
 } from "../schemas/http";
 
 export type HttpMethod = "delete" | "get" | "patch" | "post" | "put";
@@ -711,4 +716,11 @@ export const apiOperations = [
   operation("get", "/api/forgetting/preview", "previewForgetting", "owner", "agent", "none", { query: forgettingPreviewQuerySchema }, 200, forgettingPreviewResponseSchema),
   operation("post", "/api/forgetting/apply", "applyForgetting", "owner", "owner", "sessionMutation", { body: forgettingApplySchema }, 200, forgettingApplyResponseSchema),
   operation("post", "/api/forgetting/restore", "restoreForgetting", "owner", "owner", "sessionMutation", { body: forgettingRestoreSchema }, 200, forgettingRestoreResponseSchema),
+  // ── Hulu sprint plan container (ADR-0041) ───────────────────────────────
+  // P0 三条先行（计划容器）；P1 补 rounds 开始 / 页结算 / 轮收尾 / 页载荷四条。
+  // 读 = owner/agent/none（计划是私人学习台面，但读面与 l3-sessions 同档开放给
+  // agent）；写 = owner/owner/sessionMutation（建与放弃都是 owner 的权威动作）。
+  operation("post", "/api/hulu/plans", "createHuluPlan", "owner", "owner", "sessionMutation", { body: huluPlanCreateSchema }, 201, huluPlanRowResponseSchema),
+  operation("get", "/api/hulu/plans/:id", "getHuluPlan", "owner", "agent", "none", undefined, 200, huluPlanWithRoundsResponseSchema),
+  operation("post", "/api/hulu/plans/:id/abandon", "abandonHuluPlan", "owner", "owner", "sessionMutation", undefined, 200, huluPlanRowResponseSchema),
 ] as const satisfies readonly ApiOperation[];

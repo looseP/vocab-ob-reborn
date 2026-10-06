@@ -108,6 +108,13 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // measureRouteComplexity 相同：含空行（split(/\r?\n/) 去尾换行）→ 93。
   // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
   { file: "src/http/routes/review-l3-contexts.ts", maxLines: 93, maxRoutes: 0 },
+  // 2026-10-06 ADR-0041 葫芦冲刺：计划容器独立薄路由（新前缀 /api/hulu，server.ts
+  // 直挂，同 forgetting/l3-sessions 先例）。P0 只挂 3 条（plans 建/读/放弃），
+  // P1 补 rounds 开始 / 页结算 / 轮收尾 / 页载荷 4 条 → 设计预留 7。
+  // 上限口径与 measureRouteComplexity 相同（含空行，去尾换行）：
+  //   P0 实测 67 行 / 3 路由 → 留一档余量给 P1 的 4 条端点（每条 ~12 行）→ 130。
+  // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
+  { file: "src/http/routes/hulu.ts", maxLines: 130, maxRoutes: 7 },
 ];
 
 export function measureRouteComplexity(source: string) {

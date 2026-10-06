@@ -60,6 +60,7 @@ import { upgradeWorkOrdersRoutes } from "./routes/upgrade-work-orders";
 import { l3PracticeRoutes } from "./routes/l3-practice";
 import { l3SessionsRoutes } from "./routes/l3-sessions";
 import { forgettingRoutes } from "./routes/forgetting";
+import { huluRoutes } from "./routes/hulu";
 import { authRoutes } from "./routes/auth";
 import { requestTelemetry, isMetricsAuthorized } from "./middleware/telemetry";
 import { jsonError } from "./error-response";
@@ -218,6 +219,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/l3-practice", l3PracticeRoutes(services));
   app.route("/api/l3-sessions", l3SessionsRoutes(services));
   app.route("/api/forgetting", forgettingRoutes(services));
+  // 葫芦冲刺（ADR-0041）：独立前缀 /api/hulu（计划容器，P0 三条端点）。
+  app.route("/api/hulu", huluRoutes(services));
 
   return app;
 }

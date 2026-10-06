@@ -460,6 +460,12 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       // 0039：专题成员（加入/移出/重排）与引用行（替换 + capture-更新）四权。
       "public.l3_study_topic_notes": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.l3_study_note_references": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      // 0050（ADR-0041 葫芦冲刺）：计划与轮次。计划建/读/放弃（UPDATE status）；
+      // 轮次开轮 INSERT、页结算与收尾 UPDATE（条件 UPDATE 游标幂等）；SELECT ...
+      // FOR UPDATE 计划行要求 UPDATE 权限（0021 同款行锁陷阱）。DELETE 随删词书
+      // 级联与计划行删除路径授予。零 FSRS：两表无 FSRS 列。
+      "public.hulu_plans": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      "public.hulu_rounds": ["SELECT", "INSERT", "UPDATE", "DELETE"],
     }).map(([relation, privileges]) => [relation, new Set(privileges)]))],
     ["vocab_worker", new Map(Object.entries({
       "public.outbox_events": ["SELECT", "UPDATE"],

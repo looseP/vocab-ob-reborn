@@ -62,7 +62,10 @@ describe("existing local volume role upgrade", () => {
     //       WHERE 只认 IS NULL，二次执行零行变化）。
     // 0049: l3_contexts.translation / translation_src（语境整句翻译缓存，
     //       CHECK 两列全有或全无）。**注意 0047/0048 之后已到 49，本迁移使其为 50。**
-    expect(authoritativeMigrationCount()).toBe(50);
+    // 0050: hulu_plans/hulu_rounds 两张新表（ADR-0041 葫芦冲刺计划容器：
+    //       定格 word_ids + 页游标 + 可选挂起快照；复合 owner FK + 部分唯一
+    //       one-active 索引 + RLS + 四权 GRANT）。本迁移使其为 51。
+    expect(authoritativeMigrationCount()).toBe(51);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

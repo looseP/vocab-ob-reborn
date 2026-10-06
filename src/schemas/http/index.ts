@@ -34,6 +34,17 @@ import {
   L3_SESSION_MAX_DAYS,
   L3_SESSION_TYPES,
 } from "../../services/l3-session.service";
+import {
+  HULU_DEFAULT_GATE_RATIO,
+  HULU_DEFAULT_PAGE_SIZE,
+  HULU_DEFAULT_ROUNDS,
+  HULU_MAX_GATE,
+  HULU_MAX_PAGE,
+  HULU_MAX_ROUNDS,
+  HULU_MIN_GATE,
+  HULU_MIN_PAGE,
+  HULU_MIN_ROUNDS,
+} from "../../domain/hulu-sprint";
 
 // ── Primitives ──────────────────────────────────────────────────────────
 export const reviewRatingSchema = z.enum(["again", "hard", "good", "easy"]);
@@ -889,6 +900,22 @@ export const forgettingApplySchema = z.object({
 export const forgettingRestoreSchema = z.object({
   bookId: uuidSchema,
   batchId: z.string().trim().min(1).max(200),
+});
+
+// ── 葫芦冲刺（ADR-0041，2026-10-06）────────────────────────────────────────
+// 边界与 hulu_plans 的 CHECK 同值（单一真源在 src/domain/hulu-sprint.ts 的常量）：
+// 轮数 2..8、页 5..50、闸门 0.50..1.00。direction 仅标签、不过滤词集（R6）。
+export const huluPlanCreateSchema = z.object({
+  wordbookId: uuidSchema,
+  /** 仅标签（三值枚举同 ADR-0017）；不提供「按 direction 选词」。 */
+  direction: directionSchema.nullable().optional(),
+  /** 考试日期（YYYY-MM-DD）；缺省或已过由 service 抛 422。 */
+  examDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "examDate must be YYYY-MM-DD"),
+  targetRounds: z.number().int().min(HULU_MIN_ROUNDS).max(HULU_MAX_ROUNDS).optional().default(HULU_DEFAULT_ROUNDS),
+  pageSize: z.number().int().min(HULU_MIN_PAGE).max(HULU_MAX_PAGE).optional().default(HULU_DEFAULT_PAGE_SIZE),
+  gateRatio: z.number().min(HULU_MIN_GATE).max(HULU_MAX_GATE).optional().default(HULU_DEFAULT_GATE_RATIO),
+  /** P0 期恒 false：true 由 service 抛 422（HULU_SUSPEND_NOT_YET），P2 开放。 */
+  suspendReview: z.boolean().optional().default(false),
 });
 
 // ── 批次一：做题注记（原文分析条目）与规律标签字典（2026-09-16）─────────────

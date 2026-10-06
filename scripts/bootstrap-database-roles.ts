@@ -374,6 +374,13 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     -- 0039：引用行（replaceForNote = DELETE + INSERT；capture-更新已有引用走
     -- UPDATE/upsert；keep 保留原摘录；行锁读走 SELECT）。
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l3_study_note_references TO vocab_app;
+    -- 0050（ADR-0041）：葫芦冲刺计划容器。计划：建（含定格 word_ids）/读/放弃
+    -- （UPDATE status）/删词书级联；轮次：开轮 INSERT、页结算与收尾 UPDATE、读。
+    -- 四权齐备 —— 两条写路径都走条件 UPDATE，且 SELECT ... FOR UPDATE 计划行
+    -- （「至多一个未收尾轮」的服务层保证）要求 UPDATE 权限（0021/0024 同款行锁陷阱）。
+    -- 零 FSRS：这两张表无 FSRS 列，授权不触及 user_word_progress / review_logs。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hulu_plans TO vocab_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hulu_rounds TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;
