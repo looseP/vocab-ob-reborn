@@ -8,11 +8,21 @@
  * regenerates the schema into a throwaway directory, extracts those two
  * definitions, and fails closed if they drift from the authoritative contract.
  *
+ * It also carries the release migration-chain guards (0047–0050 incident):
+ * `_journal.json` inspection (strictly increasing `when`, complete entries,
+ * no orphan tag/file in either direction) plus a generate no-op proof
+ * against a throwaway copy of drizzle-release. Rationale: the drizzle migrator
+ * reads `lastDbMigration` once (highest created_at) and filters with a strict
+ * `<` (node_modules/drizzle-orm/pg-core/dialect.js:56-71), so tied `when`
+ * values silently skip every tied migration on incremental databases; and a
+ * missing terminal snapshot makes `db:generate` replay applied migrations as a
+ * brand-new pseudo migration.
+ *
  * Run: npm run db:schema:drift   (requires DATABASE_URL to be set; the value is
  * only read by drizzle-kit config loading — `generate` does not connect to a DB)
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -221,6 +231,230 @@ export function compareSecurityDefinerDirectionContract(migrationSql: string): b
   return intact && !normalized.includes(normalizeSql(STRICT_REFRESH_GUARD_MARKER));
 }
 
+/** Minimal shape of one `_journal.json` entry, kept loose for hostile input. */
+export interface MigrationJournalEntry {
+  idx?: unknown;
+  version?: unknown;
+  when?: unknown;
+  tag?: unknown;
+  breakpoints?: unknown;
+}
+
+/**
+ * Journal invariants that `db:migrate` silently depends on:
+ *
+ *   ① `when` is strictly increasing (ties are skipped by the migrator's
+ *      one-shot `lastDbMigration` + strict `<` comparison),
+ *   ② every entry carries `version` and `breakpoints` (drizzle-kit's own
+ *      `writeResult` emits both; hand-edited tails must match).
+ *
+ * Returns one human-readable problem per violation; empty means healthy.
+ */
+export function analyzeMigrationJournal(journal: unknown): string[] {
+  const problems: string[] = [];
+  const entries = (journal as { entries?: unknown } | null | undefined)?.entries;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return ["_journal.json has no entries array"];
+  }
+
+  entries.forEach((raw, index) => {
+    const entry = (raw ?? {}) as MigrationJournalEntry;
+    const label = typeof entry.tag === "string" && entry.tag.length > 0 ? entry.tag : `entries[${index}]`;
+    if (typeof entry.tag !== "string" || entry.tag.length === 0) {
+      problems.push(`${label}: tag must be a non-empty string`);
+    }
+    if (typeof entry.when !== "number" || !Number.isFinite(entry.when)) {
+      problems.push(`${label}: when must be a finite number`);
+    }
+    if (typeof entry.version !== "string" || entry.version.length === 0) {
+      problems.push(`${label}: missing version`);
+    }
+    if (typeof entry.breakpoints !== "boolean") {
+      problems.push(`${label}: missing breakpoints`);
+    }
+
+    const previous = (entries[index - 1] ?? {}) as MigrationJournalEntry;
+    if (
+      index > 0
+      && typeof entry.when === "number"
+      && typeof previous.when === "number"
+      && entry.when <= previous.when
+    ) {
+      problems.push(
+        `${label}: when ${entry.when} is not strictly greater than previous entry ` +
+          `(when ${previous.when}) — the migrator skips tied when values on incremental databases`,
+      );
+    }
+  });
+
+  return problems;
+}
+
+/**
+ * Folder-level journal/`.sql` coverage:
+ *
+ *   ③ every journal tag resolves to `<tag>.sql`,
+ *   ④ every `NNNN_*.sql` is registered in the journal (no orphans either way).
+ *
+ * Combined with {@link analyzeMigrationJournal} this is the full ①②③④ guard.
+ */
+export function verifyReleaseMigrationFolder(releaseDir: string): string[] {
+  const journalPath = path.join(releaseDir, "meta", "_journal.json");
+  if (!existsSync(journalPath)) {
+    return [`missing migration journal: ${journalPath}`];
+  }
+
+  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as { entries?: Array<{ tag?: unknown }> };
+  const problems = analyzeMigrationJournal(journal);
+
+  const tags = new Set(
+    (Array.isArray(journal.entries) ? journal.entries : [])
+      .map((entry) => entry?.tag)
+      .filter((tag): tag is string => typeof tag === "string" && tag.length > 0),
+  );
+  const sqlFiles = readdirSync(releaseDir).filter((file) => /^\d{4}_.+\.sql$/.test(file));
+
+  for (const tag of tags) {
+    if (!existsSync(path.join(releaseDir, `${tag}.sql`))) {
+      problems.push(`journal tag ${tag} has no matching ${tag}.sql`);
+    }
+  }
+  for (const file of sqlFiles) {
+    if (!tags.has(file.replace(/\.sql$/, ""))) {
+      problems.push(`${file} has no journal entry`);
+    }
+  }
+
+  return problems;
+}
+
+/** New artifact paths present in `after` but not in `before`. */
+export function diffReleaseArtifacts(before: readonly string[], after: readonly string[]): string[] {
+  const known = new Set(before);
+  return after.filter((file) => !known.has(file)).sort();
+}
+
+/** Relative posix-style paths of every file under `dir` (recursive). */
+function listArtifacts(dir: string, base = dir): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...listArtifacts(full, base));
+    else out.push(path.relative(base, full).split(path.sep).join("/"));
+  }
+  return out.sort();
+}
+
+export interface GenerateNoOpResult {
+  ok: boolean;
+  /** Migration artifacts generate would have written — empty on a clean chain. */
+  added: string[];
+  detail: string;
+}
+
+/**
+ * Prove `drizzle-kit generate` is a no-op against the committed migration chain:
+ * run it inside a throwaway sandbox (src + drizzle-release + linked
+ * node_modules, `out` relative) and fail if any new `.sql`/snapshot appears.
+ * A missing terminal snapshot is exactly the 0047–0050 defect — the next
+ * `db:generate` then replays applied migrations as a brand-new pseudo migration.
+ *
+ * `generate` does not connect to a database, so this stays CI-safe without
+ * Postgres; `strict` is off and stdin is ignored so a drifted chain reports
+ * instead of hanging on an interactive rename/delete prompt. The sandbox (and
+ * a relative `out`) is mandatory, not cosmetic: drizzle-kit joins `out` with
+ * the working directory, so an absolute out path from a foreign drive resolves
+ * to `<cwd>\C:\...` and aborts — printing the error yet still exiting 0. That
+ * is why success additionally requires the "No schema changes" evidence on
+ * stdout instead of trusting the exit code alone.
+ */
+export function verifyGenerateIsNoOp(
+  projectRoot: string,
+  databaseUrl = process.env.DATABASE_URL ?? "postgresql://localhost:5432/placeholder",
+): GenerateNoOpResult {
+  const tmp = mkdtempSync(path.join(tmpdir(), "release-generate-noop-"));
+  const sandbox = path.join(tmp, "project");
+  const outDir = path.join(sandbox, "drizzle-release");
+  const configPath = path.join(sandbox, ".migration-noop.config.ts");
+
+  try {
+    mkdirSync(sandbox, { recursive: true });
+    cpSync(path.join(projectRoot, "src"), path.join(sandbox, "src"), { recursive: true });
+    cpSync(path.join(projectRoot, "drizzle-release"), outDir, { recursive: true });
+    cpSync(path.join(projectRoot, "package.json"), path.join(sandbox, "package.json"));
+    // drizzle-kit bundles the config and schema with esbuild from the sandbox;
+    // a directory link keeps node_modules resolution without copying an install.
+    symlinkSync(
+      path.join(projectRoot, "node_modules"),
+      path.join(sandbox, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const before = listArtifacts(outDir);
+    writeFileSync(
+      configPath,
+      `import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  dialect: "postgresql",
+  schema: "./src/db/schema.ts",
+  out: "./drizzle-release",
+  migrations: { schema: "vocab_migrations", table: "__v2_release_migrations" },
+  dbCredentials: { url: ${JSON.stringify(databaseUrl)} },
+  schemaFilter: ["public"],
+  tablesFilter: ["*"],
+  verbose: false,
+  strict: false,
+});
+`,
+      "utf8",
+    );
+
+    const binPath = path.join(projectRoot, "node_modules", "drizzle-kit", "bin.cjs");
+    const res = spawnSync(process.execPath, [binPath, "generate", "--config", configPath], {
+      cwd: sandbox,
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const stdout = res.stdout ?? "";
+    if (res.status !== 0) {
+      const errOut = (res.stderr || stdout || "").trim();
+      return {
+        ok: false,
+        added: [],
+        detail: `drizzle-kit generate failed (exit ${res.status}): ${errOut}`,
+      };
+    }
+
+    const added = diffReleaseArtifacts(before, listArtifacts(outDir));
+    if (added.length > 0) {
+      return {
+        ok: false,
+        added,
+        detail:
+          "drizzle-kit generate would write new migration artifacts " +
+          `(${added.join(", ")}) — the meta snapshots drifted from src/db/schema.ts`,
+      };
+    }
+
+    if (!/no schema changes/i.test(stdout)) {
+      return {
+        ok: false,
+        added,
+        detail:
+          "drizzle-kit generate exited 0 without reporting \"No schema changes\" — " +
+          `treating it as a failure (stderr: ${(res.stderr || "").trim() || "(empty)"})`,
+      };
+    }
+
+    return { ok: true, added, detail: "drizzle-kit generate is a no-op against the committed chain" };
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 export interface DriftResult {
   ok: boolean;
   columnMatch: boolean;
@@ -331,7 +565,21 @@ export default defineConfig({
       throw new Error("Schema drift detected: 0027 direction-preserving refresh_l2_cache contract changed");
     }
 
-    console.log(`[schema-drift] OK — ${result.detail}; SECURITY DEFINER functions match authoritative contracts`);
+    const releaseDir = path.join(projectRoot, "drizzle-release");
+    const chainProblems = verifyReleaseMigrationFolder(releaseDir);
+    if (chainProblems.length > 0) {
+      throw new Error(`Migration chain invalid: ${chainProblems.join("; ")}`);
+    }
+
+    const noOp = verifyGenerateIsNoOp(projectRoot, databaseUrl);
+    if (!noOp.ok) {
+      throw new Error(`Migration chain invalid: ${noOp.detail}`);
+    }
+
+    console.log(
+      `[schema-drift] OK — ${result.detail}; SECURITY DEFINER functions match authoritative contracts; ` +
+        `migration journal is strictly increasing with no orphan tag/file and ${noOp.detail}`,
+    );
   } finally {
     rmSync(tmp, { recursive: true, force: true });
     if (existsSync(configPath)) unlinkSync(configPath);

@@ -332,24 +332,32 @@
       "breakpoints": true
     },
       {
-      	"idx": 47,
-      	"tag": "0047_study_note_references_grading_kind",
-      	"when": 1790405138087
+        "idx": 47,
+        "version": "7",
+        "when": 1790405138088,
+        "tag": "0047_study_note_references_grading_kind",
+        "breakpoints": true
       },
-      	{
-      		"idx": 48,
-      		"tag": "0048_study_note_references_writing_kinds",
-      		"when": 1790405138087
-      	},
-      	{
-      		"idx": 49,
-      		"tag": "0049_l3_contexts_translation",
-      		"when": 1790405138087
-      	},
-      	{
-      		"idx": 50,
-      		"tag": "0050_hulu_sprint",
-      		"when": 1791259673129
-      	}
+      {
+        "idx": 48,
+        "version": "7",
+        "when": 1790405138089,
+        "tag": "0048_study_note_references_writing_kinds",
+        "breakpoints": true
+      },
+      {
+        "idx": 49,
+        "version": "7",
+        "when": 1790405138090,
+        "tag": "0049_l3_contexts_translation",
+        "breakpoints": true
+      },
+      {
+        "idx": 50,
+        "version": "7",
+        "when": 1791259673129,
+        "tag": "0050_hulu_sprint",
+        "breakpoints": true
+      }
   ]
 }

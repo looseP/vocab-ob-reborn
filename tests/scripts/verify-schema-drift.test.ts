@@ -1,4 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   AUTHORITATIVE_SEARCH_VECTOR,
   AUTHORITATIVE_SEARCH_INDEX,
@@ -17,6 +21,9 @@ import {
   compareSecurityDefinerOverrideContract,
   compareSecurityDefinerDirectionContract,
   compareSearchVectorContract,
+  analyzeMigrationJournal,
+  verifyReleaseMigrationFolder,
+  diffReleaseArtifacts,
 } from "../../scripts/verify-schema-drift";
 
 const SAMPLE_SQL = `
@@ -302,6 +309,150 @@ describe("compareSearchVectorContract", () => {
 
   it("detects a missing column or index", () => {
     expect(compareSearchVectorContract("CREATE TABLE words (id uuid);").ok).toBe(false);
+  });
+});
+
+describe("analyzeMigrationJournal（① when 严格递增 / ② version+breakpoints）", () => {
+  const healthy = () => ({
+    version: "7",
+    dialect: "postgresql",
+    entries: [
+      { idx: 0, version: "7", when: 1000, tag: "0000_baseline", breakpoints: true },
+      { idx: 1, version: "7", when: 2000, tag: "0001_routines", breakpoints: true },
+    ],
+  });
+
+  it("accepts a strictly increasing journal with complete entries", () => {
+    expect(analyzeMigrationJournal(healthy())).toEqual([]);
+  });
+
+  it("rejects tied when values — the 0046/0047/0048/0049 incident", () => {
+    const journal = healthy();
+    journal.entries[1].when = journal.entries[0].when;
+    const problems = analyzeMigrationJournal(journal);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("0001_routines");
+    expect(problems[0]).toContain("not strictly greater");
+  });
+
+  it("rejects a decreasing when value", () => {
+    const journal = healthy();
+    journal.entries[1].when = 500;
+    expect(analyzeMigrationJournal(journal)).toHaveLength(1);
+  });
+
+  it("rejects entries missing version or breakpoints", () => {
+    const journal = healthy() as { entries: Array<Record<string, unknown>> };
+    delete journal.entries[0].version;
+    delete journal.entries[1].breakpoints;
+    const problems = analyzeMigrationJournal(journal);
+    expect(problems).toContain("0000_baseline: missing version");
+    expect(problems).toContain("0001_routines: missing breakpoints");
+  });
+
+  it("rejects a journal without entries and a non-numeric when", () => {
+    expect(analyzeMigrationJournal({ entries: [] })).toEqual(["_journal.json has no entries array"]);
+    expect(analyzeMigrationJournal(null)).toEqual(["_journal.json has no entries array"]);
+    const journal = healthy() as { entries: Array<Record<string, unknown>> };
+    journal.entries[1].when = "2000";
+    expect(analyzeMigrationJournal(journal).join(";")).toContain("when must be a finite number");
+  });
+});
+
+describe("verifyReleaseMigrationFolder（③④ tag/.sql 双向无孤儿）", () => {
+  function writeFixture(files: Record<string, string>): string {
+    const dir = mkdtempSync(path.join(tmpdir(), "migration-chain-"));
+    for (const [relative, contents] of Object.entries(files)) {
+      const full = path.join(dir, relative);
+      mkdirSync(path.dirname(full), { recursive: true });
+      writeFileSync(full, contents, "utf8");
+    }
+    return dir;
+  }
+
+  const journal = (entries: Array<Record<string, unknown>>) => `${JSON.stringify({ version: "7", dialect: "postgresql", entries }, null, 2)}\n`;
+
+  it("accepts a healthy folder", () => {
+    const dir = writeFixture({
+      "meta/_journal.json": journal([
+        { idx: 0, version: "7", when: 1000, tag: "0000_baseline", breakpoints: true },
+        { idx: 1, version: "7", when: 2000, tag: "0001_routines", breakpoints: true },
+      ]),
+      "0000_baseline.sql": "CREATE TABLE a (id int);",
+      "0001_routines.sql": "CREATE TABLE b (id int);",
+    });
+    try {
+      expect(verifyReleaseMigrationFolder(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a journal tag without a matching .sql", () => {
+    const dir = writeFixture({
+      "meta/_journal.json": journal([{ idx: 0, version: "7", when: 1000, tag: "0000_baseline", breakpoints: true }]),
+    });
+    try {
+      const problems = verifyReleaseMigrationFolder(dir);
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("0000_baseline has no matching 0000_baseline.sql");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an unregistered .sql (replayed pseudo migration orphan)", () => {
+    const dir = writeFixture({
+      "meta/_journal.json": journal([{ idx: 0, version: "7", when: 1000, tag: "0000_baseline", breakpoints: true }]),
+      "0000_baseline.sql": "CREATE TABLE a (id int);",
+      "0051_windy_lenny_balinger.sql": "CREATE TABLE pseudo (id int);",
+    });
+    try {
+      const problems = verifyReleaseMigrationFolder(dir);
+      expect(problems).toHaveLength(1);
+      expect(problems[0]).toContain("0051_windy_lenny_balinger.sql has no journal entry");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a missing journal", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "migration-chain-"));
+    try {
+      expect(verifyReleaseMigrationFolder(dir)).toEqual([
+        expect.stringContaining("missing migration journal"),
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("diffReleaseArtifacts", () => {
+  it("reports only newly written artifacts", () => {
+    expect(diffReleaseArtifacts([], [])).toEqual([]);
+    expect(diffReleaseArtifacts(["a.sql"], ["a.sql"])).toEqual([]);
+    expect(diffReleaseArtifacts(["meta/_journal.json"], ["meta/_journal.json", "0051_x.sql", "meta/0051_snapshot.json"]))
+      .toEqual(["0051_x.sql", "meta/0051_snapshot.json"]);
+  });
+});
+
+describe("release migration chain（仓库真实状态）", () => {
+  const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+  const releaseDir = path.join(repoRoot, "drizzle-release");
+
+  it("keeps every journal entry strictly increasing with version/breakpoints and no orphans", () => {
+    expect(verifyReleaseMigrationFolder(releaseDir)).toEqual([]);
+  });
+
+  it("carries the terminal snapshot of the last journal entry so db:generate stays a no-op", () => {
+    const parsed = JSON.parse(readFileSync(path.join(releaseDir, "meta", "_journal.json"), "utf8")) as {
+      entries: Array<{ tag: string }>;
+    };
+    const lastTag = parsed.entries.at(-1)?.tag ?? "";
+    expect(lastTag.length).toBeGreaterThan(0);
+    const prefix = lastTag.split("_")[0];
+    expect(existsSync(path.join(releaseDir, "meta", `${prefix}_snapshot.json`))).toBe(true);
   });
 });
 
