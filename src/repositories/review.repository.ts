@@ -347,7 +347,8 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     this.requireTx();
     return this.queryOne<ProgressWithContentHash>(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
-              w.content_hash, w.slug AS word_slug, w.title AS word_title, w.lemma AS word_lemma
+              w.content_hash, w.l1_content_hash,
+              w.slug AS word_slug, w.title AS word_title, w.lemma AS word_lemma
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.id = $1::uuid AND uwp.user_id = $2
@@ -435,7 +436,11 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
 
     // 1. UPDATE user_word_progress
     // M-NEW-4 fix: include content_hash_snapshot refresh (matches v1)
-    // Dual-track: also refresh l1_content_hash_snapshot (L1-specific hash)
+    // Dual-track: also refresh l1_content_hash_snapshot — 但必须填 **L1 hash**
+    // （$18），不能复用 $11 的全量 hash：`deriveContentStaleness` 拿
+    // words.l1_content_hash 与这一列配对（L1 专属对），装全量 hash 就是跨空间
+    // 比对、恒不相等 ⇒ 每张学过的词都被误报"重新核对"。
+    // 调用方（review.service）传 words.l1_content_hash，缺 L1 时回退全量。
     // and append the latest rating to recent_ratings (capped at 5).
     //
     // recent_ratings SQL breakdown:
@@ -444,6 +449,8 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     //   ORDER BY ord DESC LIMIT 5  — take 5 most recent
     //   jsonb_agg(elem ORDER BY ord ASC)  — re-aggregate in chronological order
     // Result: [oldest_kept, ..., newest] (max 5 elements)
+    //
+    // 参数化：$1..$17 的既有映射不动，L1 hash 追加为末位 $18。
     await this.query(
       `UPDATE user_word_progress
        SET difficulty = $1, due_at = $2, interval_days = $3,
@@ -453,7 +460,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
            scheduler_payload = $8, stability = $9, state = $10,
            ${counterField} = ${counterField} + 1,
            content_hash_snapshot = $11,
-           l1_content_hash_snapshot = $11,
+           l1_content_hash_snapshot = $18,
            recent_ratings = (
              SELECT jsonb_agg(elem ORDER BY ord)
              FROM (
@@ -486,6 +493,7 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
         input.wordbookId,
         String(input.rating), // $16: text for JSON append; $5 remains the enum value
         input.ladderRung ?? null, // $17: 阶梯起步档结算结果（COALESCE 保缺省原值）
+        input.l1ContentHash, // $18: L1 专属 hash → l1_content_hash_snapshot（调用方缺 L1 时回退全量）
       ],
     );
 

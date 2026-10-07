@@ -235,7 +235,7 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       const pool = (await import("@/db/connection")).getPool();
       const { rows: progress } = await pool.query(
         `SELECT state, review_count, good_count, last_rating, recent_ratings,
-                content_hash_snapshot
+                content_hash_snapshot, l1_content_hash_snapshot
          FROM user_word_progress
          WHERE id = $1`,
         [data.progressId],
@@ -247,6 +247,10 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       expect(progress[0].recent_ratings).toEqual(["good"]);
       // M-NEW-4: content_hash_snapshot should be refreshed
       expect(progress[0].content_hash_snapshot).toBe(data.contentHash);
+      // L1 快照随作答刷新。本 fixture 的词没有 l1_content_hash（INSERT 未写该列），
+      // 走回退分支：L1 快照 = 全量 hash —— L1 对因此不可比，
+      // deriveContentStaleness 降级比全量对，不会误报。
+      expect(progress[0].l1_content_hash_snapshot).toBe(data.contentHash);
 
       // Verify review_log was created
       const { rows: logs } = await pool.query(

@@ -559,6 +559,11 @@ export class ReviewService {
         sessionId: input.sessionId,
         rating: input.rating,
         contentHash: progress.content_hash,  // M-NEW-4: refresh snapshot
+        // L1 快照列必须装 L1 空间的 hash：deriveContentStaleness 用
+        // words.l1_content_hash ↔ l1_content_hash_snapshot 配对（ADR-0021 第 1 条）。
+        // 词条缺 L1 hash（历史 stub）时回退全量 —— 此时 L1 对仍不可比，派生
+        // 自动降级到全量对（content-staleness.ts 第 2 条）。
+        l1ContentHash: progress.l1_content_hash ?? progress.content_hash,
         scheduling,
         idempotencyKey: input.idempotencyKey ?? null,
         previousSnapshot,

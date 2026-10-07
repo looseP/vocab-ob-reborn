@@ -539,6 +539,9 @@ describe("ReviewRepository", () => {
     expect(mock.lastQuery!.text).toContain("word_slug");
     expect(mock.lastQuery!.text).toContain("word_title");
     expect(mock.lastQuery!.text).toContain("word_lemma");
+    // 作答要把 words.l1_content_hash 带出来填 L1 快照（ADR-0021 L1 专属对）；
+    // 漏选 ⇒ 服务层拿不到 L1 hash，只能回退全量 ⇒ L1 对跨空间比对、恒误报。
+    expect(mock.lastQuery!.text).toContain("w.l1_content_hash");
   });
 
   it("findProgressForUpdate throws when not in transaction (H4 fix)", async () => {
@@ -600,6 +603,7 @@ describe("ReviewRepository", () => {
       sessionId: "s1",
       rating: "good",
       contentHash: "hash123",
+      l1ContentHash: "l1hash123",
       scheduling: {
         difficulty: 0.3, dueAt: "2026-01-08", logDueAt: "2026-01-08",
         elapsedDays: 7, scheduledDays: 7, retrievability: 0.9,
@@ -976,6 +980,7 @@ describe("ReviewRepository — counterField whitelist (H2 fix)", () => {
       progressId: "p1", userId: "u1", wordId: "w1", wordbookId: "wb1",
       sessionId: "s1", rating: "again",
       contentHash: "hash123",
+      l1ContentHash: "l1hash123",
       scheduling: {
         difficulty: 0.5, dueAt: "2026-01-01", logDueAt: "2026-01-01",
         elapsedDays: 0, scheduledDays: 0, retrievability: 0.5,
@@ -993,6 +998,7 @@ describe("ReviewRepository — counterField whitelist (H2 fix)", () => {
       progressId: "p1", userId: "u1", wordId: "w1", wordbookId: "wb1",
       sessionId: "s1",
       contentHash: "hash123",
+      l1ContentHash: "l1hash123",
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       rating: "malicious; DROP TABLE" as any,
       scheduling: {
@@ -1083,6 +1089,7 @@ describe("saveAnswer dual-track changes", () => {
       sessionId: "s1",
       rating,
       contentHash: "hash123",
+      l1ContentHash: "l1hash123",
       scheduling: {
         difficulty: 0.3, dueAt: "2026-01-08", logDueAt: "2026-01-08",
         elapsedDays: 7, scheduledDays: 7, retrievability: 0.9,
@@ -1094,12 +1101,19 @@ describe("saveAnswer dual-track changes", () => {
     });
   }
 
-  it("writes l1_content_hash_snapshot alongside content_hash_snapshot", async () => {
+  it("writes the L1 hash to l1_content_hash_snapshot ($18), full hash to content_hash_snapshot ($11)", async () => {
     await runSaveAnswer();
     const updateSql = mock.calls[0].text;
 
+    // 两个快照列分属不同 hash 空间：全量 → $11，L1 → $18。
+    // 复用 $11（历史行为）会让 L1 快照装全量 hash ⇒ 跨空间比对恒不等 ⇒ 误报洪泛。
     expect(updateSql).toContain("content_hash_snapshot = $11");
-    expect(updateSql).toContain("l1_content_hash_snapshot = $11");
+    expect(updateSql).toContain("l1_content_hash_snapshot = $18");
+    expect(updateSql).not.toContain("l1_content_hash_snapshot = $11");
+    // $18 是参数数组末位，且 $1..$17 的既有映射未被重排。
+    expect(mock.calls[0].params).toHaveLength(18);
+    expect(mock.calls[0].params[10]).toBe("hash123"); // $11 = 全量 hash
+    expect(mock.calls[0].params[17]).toBe("l1hash123"); // $18 = L1 hash
   });
 
   it("updates recent_ratings (append + slice 5)", async () => {
@@ -1112,7 +1126,8 @@ describe("saveAnswer dual-track changes", () => {
     expect(updateSql).toContain("recent_ratings || to_jsonb($16::text)");
     // $17 = 阶梯起步档结算结果（ADR-0036）：COALESCE($17, ladder_rung)，缺省保持原值
     expect(updateSql).toContain("ladder_rung = COALESCE($17, ladder_rung)");
-    expect(mock.calls[0].params).toHaveLength(17);
+    // $18 = L1 专属 hash（追加在末位；$1..$17 的映射不变）
+    expect(mock.calls[0].params).toHaveLength(18);
     expect(mock.calls[0].params[4]).toBe("good");
     expect(mock.calls[0].params[15]).toBe("good");
     // cap at 5 most recent
