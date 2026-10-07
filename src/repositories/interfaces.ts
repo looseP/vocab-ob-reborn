@@ -1710,6 +1710,14 @@ export interface DashboardL2Stats {
 export interface DashboardSummary {
   totalWords: number;
   trackedWords: number;
+  /**
+   * 「已掌握」= `state = 'review'` 的词数（词书 scope）。
+   *
+   * 刻意**不**让前端用 `totalWords - dueToday` 推：那等于把「今天没到期」当成「已掌握」，
+   * 2026-10-07 实测前端显示 **6754**（6768 − 14）而真值是 **14**。学习态晋升到
+   * `review` 才算掌握；分母用 `trackedWords`（已开始的词）才是有意义的进度。
+   */
+  masteredWords: number;
   dueToday: number;
   reviewedToday: number;
   reviewed7d: number;

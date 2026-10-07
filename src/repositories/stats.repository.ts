@@ -23,7 +23,7 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     // M5 fix: use display timezone for "today" boundary
     const todayIso = startOfTodayIsoInDisplayTz();
 
-    const [totalRow, trackedRow, dueRow, todayRow, weekRow, monthRow, notesRow, l2Row] =
+    const [totalRow, trackedRow, progressRow, todayRow, weekRow, monthRow, notesRow, l2Row] =
       await Promise.all([
         this.queryOne<{ count: string }>(
           `SELECT count(*) FROM words WHERE is_deleted = false`,
@@ -33,10 +33,16 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
            WHERE user_id = $1 AND wordbook_id = $2::uuid`,
           [userId, wordbookId],
         ),
-        this.queryOne<{ count: string }>(
-          `SELECT count(*) FROM user_word_progress
-           WHERE user_id = $1 AND wordbook_id = $2::uuid
-             AND due_at IS NOT NULL AND due_at <= now()`,
+        // 一次往返出两个指标（保持「8 并行查询 + 1 streak」的调用数不变）：
+        //  - `due_count`「今天待复习」：到期且**未挂起**。挂起词不计待复习 —— 复习队列
+        //    本来就排除它们，此前仪表盘不排除 ⇒ 同一件事两个数（D4）。
+        //  - `mastered_count`「已掌握」：`state = 'review'` 的词数。**不是**
+        //    `totalWords - dueToday`（那会把「今天没到期」当「已掌握」，见接口注释）。
+        this.queryOne<{ due_count: string; mastered_count: string }>(
+          `SELECT count(*) FILTER (WHERE due_at IS NOT NULL AND due_at <= now() AND state <> 'suspended') AS due_count,
+                  count(*) FILTER (WHERE state = 'review') AS mastered_count
+             FROM user_word_progress
+            WHERE user_id = $1 AND wordbook_id = $2::uuid`,
           [userId, wordbookId],
         ),
         // 作答口径（CONTEXT.md「Event log semantics」）：reviewedToday/7d/30d 只计
@@ -93,7 +99,8 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     return {
       totalWords: totalRow ? parseInt(totalRow.count, 10) : 0,
       trackedWords: trackedRow ? parseInt(trackedRow.count, 10) : 0,
-      dueToday: dueRow ? parseInt(dueRow.count, 10) : 0,
+      dueToday: progressRow ? parseInt(progressRow.due_count, 10) : 0,
+      masteredWords: progressRow ? parseInt(progressRow.mastered_count, 10) : 0,
       reviewedToday: todayRow ? parseInt(todayRow.count, 10) : 0,
       reviewed7d: weekRow ? parseInt(weekRow.count, 10) : 0,
       reviewed30d: monthRow ? parseInt(monthRow.count, 10) : 0,

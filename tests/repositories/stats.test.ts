@@ -23,7 +23,7 @@ function mapStandardQueries(l2Row: unknown[] | null) {
   mock.setRowMap({
     ...(l2Row ? { "FROM user_word_l2_progress": l2Row } : {}),
     "l1_weak_signal": [{ count: "3" }],
-    "due_at IS NOT NULL AND due_at <= now()": [{ count: "2" }],
+    "due_at IS NOT NULL AND due_at <= now()": [{ due_count: "2", mastered_count: "5" }],
     "interval '7 days'": [{ count: "10" }],
     "interval '30 days'": [{ count: "40" }],
     "FROM user_word_progress": [{ count: "25" }],
@@ -85,6 +85,7 @@ describe("StatsRepository.getDashboardSummary", () => {
     expect(summary).toEqual({
       totalWords: 0,
       trackedWords: 0,
+      masteredWords: 0,
       dueToday: 0,
       reviewedToday: 0,
       reviewed7d: 0,
@@ -93,6 +94,27 @@ describe("StatsRepository.getDashboardSummary", () => {
       notesCount: 0,
       l2: { promoted: 0, dueNow: 0, weakSignal: 0, reviewedToday: 0 },
     });
+  });
+
+  it("进度查询同时出「今天待复习」与「已掌握」，且排除挂起词（D4 + 真口径）", async () => {
+    // 2026-10-07 仪表盘深度优化：此前 dueToday 不过滤 suspended（队列却排除 ⇒ 同一件事
+    // 两个数），而「已掌握」由前端用 totalWords - dueToday 硬算（实测 6754 vs 真值 14）。
+    mapStandardQueries([{ promoted: "12", due_now: "3", weak_signal: "4", l2_reviewed_today: "6" }]);
+    const repos = createRepositories();
+
+    const summary = await repos.stats.getDashboardSummary("u1", "wb1");
+
+    // 两个指标由**同一条**查询出（并行调用数不变：8 + streak）
+    const progressQueries = mock.calls.filter((c) => c.text.includes("user_word_progress") && c.text.includes("FILTER"));
+    expect(progressQueries).toHaveLength(1);
+    const sql = progressQueries[0].text;
+    expect(sql).toContain("state <> 'suspended'");
+    expect(sql).toContain("state = 'review'");
+
+    expect(summary.dueToday).toBe(2);
+    expect(summary.masteredWords).toBe(5);
+    // 「已掌握」绝不能等于「总数 − 今天到期」那种假口径
+    expect(summary.masteredWords).not.toBe(summary.totalWords - summary.dueToday);
   });
 
   it("locks the answer/activity split: window counters filter rating, streak does not", async () => {

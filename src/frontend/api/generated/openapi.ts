@@ -7091,6 +7091,7 @@ export interface operations {
                     "application/json": {
                         totalWords: number;
                         trackedWords: number;
+                        masteredWords: number;
                         dueToday: number;
                         reviewedToday: number;
                         reviewed7d: number;

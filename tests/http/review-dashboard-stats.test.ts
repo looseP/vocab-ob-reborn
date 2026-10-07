@@ -23,6 +23,7 @@ const WORDBOOK_ID = "33333333-3333-4333-8333-333333333333";
 const SUMMARY = {
   totalWords: 100,
   trackedWords: 40,
+  masteredWords: 8,
   dueToday: 12,
   reviewedToday: 5,
   reviewed7d: 30,
