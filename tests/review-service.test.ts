@@ -57,10 +57,12 @@ function makeMockProgress(overrides: Partial<ProgressWithContentHash> = {}): Pro
     interval_days: 7,
     scheduler_payload: {} as Json,
     content_hash_snapshot: "old-hash",
+    l1_content_hash_snapshot: "old-l1-hash",
     skip_count: 0,
     created_at: "2025-01-01T00:00:00Z",
     updated_at: "2025-12-31T00:00:00Z",
     content_hash: "current-hash",
+    l1_content_hash: "current-l1-hash",
     word_slug: "aboard",
     word_title: "aboard",
     word_lemma: "aboard",
@@ -248,6 +250,8 @@ describe("ReviewService.submitAnswer", () => {
     expect(reviewRepo.saveAnswer).toHaveBeenCalledTimes(1);
     const saveInput = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[0][0] as SaveAnswerInput;
     expect(saveInput.contentHash).toBe("current-hash");
+    // L1 快照列装 L1 空间的 hash（不是全量）：两个快照列分属不同 hash 空间
+    expect(saveInput.l1ContentHash).toBe("current-l1-hash");
     expect(saveInput.wordId).toBe("w1");
     expect(saveInput.wordbookId).toBe("wb1");
 
@@ -259,6 +263,34 @@ describe("ReviewService.submitAnswer", () => {
       eventType: "review.answer.recorded.v1",
       dedupeKey: "review.answer.recorded.v1:log-1",
     }));
+  });
+
+  it("passes the L1 hash (not the full hash) for the L1 snapshot, falling back to full when absent", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const reviewRepo = makeMockReviewRepo({
+      findProgressForUpdate: vi.fn(async () => makeMockProgress()),
+    });
+    mockRepos.reviews = reviewRepo;
+    mockRepos.sessions = makeMockSessionRepo();
+
+    const service = new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+
+    // 有 L1 hash：L1 快照拿到 L1 hash，全量快照仍是全量 hash
+    await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1");
+    const withL1 = (reviewRepo.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[0][0] as SaveAnswerInput;
+    expect(withL1.contentHash).toBe("current-hash");
+    expect(withL1.l1ContentHash).toBe("current-l1-hash");
+    expect(withL1.l1ContentHash).not.toBe(withL1.contentHash);
+
+    // 词条缺 L1 hash（历史 stub）→ 回退全量：L1 对随之不可比，
+    // deriveContentStaleness 自动降级到全量对（content-staleness.ts 第 2 条）。
+    const reviewRepoNoL1 = makeMockReviewRepo({
+      findProgressForUpdate: vi.fn(async () => makeMockProgress({ l1_content_hash: null })),
+    });
+    mockRepos.reviews = reviewRepoNoL1;
+    await service.submitAnswer({ progressId: "p1", rating: "good", sessionId: "s1" }, "u1");
+    const noL1 = (reviewRepoNoL1.saveAnswer as ReturnType<typeof vi.fn>).mock.calls[0][0] as SaveAnswerInput;
+    expect(noL1.l1ContentHash).toBe("current-hash");
   });
 
   it("records hint ladder telemetry in review log metadata (T3, 2026-09-25)", async () => {

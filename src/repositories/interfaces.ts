@@ -216,6 +216,12 @@ export interface UpsertFullWordInput {
 /** Progress row joined with words for FOR UPDATE locking. */
 export interface ProgressWithContentHash extends UserWordProgressRow {
   content_hash: string;
+  /**
+   * L1 专属 hash（`words.l1_content_hash`，ADR-0002 双轨隔离）。
+   * 作答时随 L1 快照一并落库；列可空（历史 stub / 未回填的词），
+   * 缺失时服务层回退用 `content_hash`（全量）填快照。
+   */
+  l1_content_hash: string | null;
   word_slug: string;
   word_title: string;
   word_lemma: string;
@@ -318,6 +324,16 @@ export interface SaveAnswerInput {
   rating: ReviewRating;
   /** M-NEW-4 fix: current word content_hash to refresh snapshot */
   contentHash: string;
+  /**
+   * L1 专属 hash（`words.l1_content_hash`）—— 写入 `l1_content_hash_snapshot`。
+   *
+   * 快照列必须装**同一 hash 空间**的值：`deriveContentStaleness` 拿
+   * `words.l1_content_hash` 与 `l1_content_hash_snapshot` 配对比较（L1 专属对），
+   * 装全量 hash 会跨空间比对、恒不相等 ⇒ 每张学过的词都被误报"重新核对"。
+   * 词条无 L1 hash 时由调用方回退传 `contentHash`（全量）——此时 L1 对仍不可比，
+   * 派生自动降级到全量对（见 src/domain/content-staleness.ts）。
+   */
+  l1ContentHash: string | null;
   scheduling: {
     difficulty: number | null;
     dueAt: string;
