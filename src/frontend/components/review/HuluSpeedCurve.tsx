@@ -10,8 +10,10 @@
  *  - **曝光轮不进图**（其耗时在计划页单列「首次曝光耗时」，注明不计入对比）；
  *  - **基准轮** = 第一条 `kind = 'recall'` 的已收尾轮（legacy 轮**永不**当基准）；
  *    全 legacy 序列维持旧画法（首个已收尾轮为基准，老计划口径不回改）；
- *  - **可比性** = `word_set_fingerprint` 一致（`huluSameWordSet` 纯函数）；不一致的轮
- *    照画柱、降幅位标「词集已变化，不与基准比较」。
+ *  - **可比性** = `word_set_fingerprint` 一致（`huluWordSetVerdict` 纯函数，**三态**）：
+ *    指纹不一致的轮 → 「词集已变化，不与基准比较」；指纹**缺失**的轮（存量 legacy 轮，
+ *    0051 明文不回填）→ 「该轮无词集指纹，不与基准比较」。两种"不可比"**必须分开措辞**
+ *    —— 对没记指纹的老计划说「词集已变化」是假话（独立审计 2026-10-07 发现）。
  *    **词数相等不是等价判据**（定格词数恒不变、不随删词浮动，两轮同数可能是两批
  *    不同的词）—— 唯一判据是指纹。本组件因此不读计划/轮次的词数列。
  *
@@ -27,7 +29,7 @@
 
 import { Card } from "@/frontend/components/ui/Card";
 import { Badge } from "@/frontend/components/ui/Badge";
-import { huluSameWordSet, type HuluRoundRow } from "@/domain/hulu-sprint";
+import { huluWordSetVerdict, type HuluRoundRow } from "@/domain/hulu-sprint";
 
 const MS_PER_DAY = 86400000;
 
@@ -117,9 +119,13 @@ export function HuluSpeedCurve({ rounds, targetRounds, examDate, today }: HuluSp
                 ? Math.max(6, Math.round((seconds / maxSeconds) * 100))
                 : 6;
               const isBaseline = baseline !== null && round.id === baseline.id;
-              // 可比性判据（R13）：指纹一致才比降幅。baseline 自己恒是基准。
-              const comparable = isBaseline
-                || (baseline !== null && huluSameWordSet(round.word_set_fingerprint, baseline.word_set_fingerprint));
+              // 可比性判据（R13）：指纹一致才比降幅；baseline 自己恒是基准。
+              // 三态而非布尔：`no-fingerprint`（这一轮没记词集）与 `different-word-set`
+              // （词集真的漂移了）文案不同，见文件头。
+              const verdict = isBaseline
+                ? "comparable"
+                : huluWordSetVerdict(round.word_set_fingerprint, baseline?.word_set_fingerprint ?? null);
+              const comparable = verdict === "comparable";
               const dropPct = baselineSeconds !== null && baselineSeconds > 0
                 ? Math.round(((baselineSeconds - seconds) / baselineSeconds) * 100)
                 : 0;
@@ -132,6 +138,7 @@ export function HuluSpeedCurve({ rounds, targetRounds, examDate, today }: HuluSp
                   data-round-no={round.round_no}
                   data-elapsed-seconds={seconds}
                   data-comparable={comparable ? "true" : "false"}
+                  data-compare-reason={verdict}
                 >
                   <div className="flex h-28 w-full items-end">
                     <div
@@ -148,13 +155,15 @@ export function HuluSpeedCurve({ rounds, targetRounds, examDate, today }: HuluSp
                   <span className="text-xs text-[var(--color-ink-soft)]" data-testid={`hulu-curve-drop-${round.round_no}`}>
                     {isBaseline
                       ? "基准轮"
-                      : !comparable
-                        ? "词集已变化，不与基准比较"
-                        : dropPct > 0
-                          ? `比基准轮快 ${dropPct}%`
-                          : dropPct === 0
-                            ? "与基准轮持平"
-                            : `比基准轮慢 ${-dropPct}%`}
+                      : verdict === "no-fingerprint"
+                        ? "该轮无词集指纹，不与基准比较"
+                        : verdict === "different-word-set"
+                          ? "词集已变化，不与基准比较"
+                          : dropPct > 0
+                            ? `比基准轮快 ${dropPct}%`
+                            : dropPct === 0
+                              ? "与基准轮持平"
+                              : `比基准轮慢 ${-dropPct}%`}
                   </span>
                 </div>
               );

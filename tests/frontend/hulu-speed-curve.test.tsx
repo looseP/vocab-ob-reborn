@@ -201,10 +201,10 @@ describe("缩时曲线：不引入第二数据源", () => {
     expect(source).not.toContain("fetch(");
   });
 
-  it("R13：可比性判据走 huluSameWordSet（domain 纯函数），不自己实现指纹比较", async () => {
+  it("R13：可比性判据走 huluWordSetVerdict（domain 纯函数**三态**），不自己实现指纹比较", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("src/frontend/components/review/HuluSpeedCurve.tsx", "utf8");
-    expect(source).toContain("huluSameWordSet");
+    expect(source).toContain("huluWordSetVerdict");
     // 不引 node:crypto（指纹计算在 service 层，前端只比较）
     expect(source).not.toContain("node:crypto");
   });
@@ -242,7 +242,7 @@ describe("缩时曲线：R13 三态（纯已学 / 含曝光 / 词集漂移不可
     expect(container.querySelector('[data-testid="hulu-curve-remaining"]')?.textContent).toContain("剩余 2 轮");
   });
 
-  it("全 legacy 序列：维持旧画法（首个已收尾轮为基准，legacy 不当基准但仍是基准位）", () => {
+  it("全 legacy 序列：首个已收尾轮为基准，后续轮标「无词集指纹」而非「词集已变化」", () => {
     const rounds = [
       round({ round_no: 1, kind: "legacy", id: "r-1", elapsed_seconds: 7200, word_set_fingerprint: null }),
       round({ round_no: 2, kind: "legacy", id: "r-2", elapsed_seconds: 5400, word_set_fingerprint: null }),
@@ -252,9 +252,15 @@ describe("缩时曲线：R13 三态（纯已学 / 含曝光 / 词集漂移不可
     // 老计划口径不回改：首个已收尾轮标基准
     expect(container.querySelector('[data-testid="hulu-curve-drop-1"]')?.textContent).toContain("基准轮");
     // 两轮都没有指纹 → 不可比（但第 2 轮照画柱）
-    expect(container.querySelector('[data-testid="hulu-curve-bar-2"]')).toBeTruthy();
-    expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent)
-      .toContain("词集已变化，不与基准比较");
+    const bar2 = container.querySelector('[data-testid="hulu-curve-bar-2"]');
+    expect(bar2).toBeTruthy();
+    expect(bar2?.getAttribute("data-comparable")).toBe("false");
+    expect(bar2?.getAttribute("data-compare-reason")).toBe("no-fingerprint");
+    // 关键：**不能**说「词集已变化」—— 存量轮只是没记词集（0051 明文不回填指纹），
+    // 说它变了是假话。两种"不可比"必须分开措辞。
+    const drop2 = container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent ?? "";
+    expect(drop2).toContain("该轮无词集指纹，不与基准比较");
+    expect(drop2).not.toContain("词集已变化");
   });
 
   it("legacy 不当基准：含 legacy 的序列里基准 = 第一条 recall", () => {
@@ -285,6 +291,8 @@ describe("缩时曲线：R13 三态（纯已学 / 含曝光 / 词集漂移不可
     // 柱子照画（耗时仍可回溯），但不可比
     expect(bar2?.getAttribute("data-elapsed-seconds")).toBe("3600");
     expect(bar2?.getAttribute("data-comparable")).toBe("false");
+    // 与「无指纹」区分：这里是词集**真的**漂移了（两轮都有指纹且不等）
+    expect(bar2?.getAttribute("data-compare-reason")).toBe("different-word-set");
     expect(container.querySelector('[data-testid="hulu-curve-drop-2"]')?.textContent)
       .toContain("词集已变化，不与基准比较");
   });
