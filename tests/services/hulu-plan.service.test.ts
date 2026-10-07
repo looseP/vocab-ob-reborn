@@ -775,6 +775,71 @@ describe("HuluPlanService.startRound（轮次开始）", () => {
     expect(hulu.insertRound).toHaveBeenCalledWith(expect.objectContaining({ round_no: 1, kind: "recall" }));
   });
 
+  // ── 审计 D1 回归：轮号是身份不是计数（kind='legacy' 的存量轮不能被漏算）──────
+  it("legacy 计划已有 kind='legacy' 轮 → 新轮号接最大已用号（此前恒为 1，撞唯一约束→409）", async () => {
+    // 0051 把存量轮回填为 'legacy'；旧实现按 `kind === 'recall'` 计数 ⇒ 计数恒 0
+    // ⇒ nextNo 恒 1 ⇒ 撞 UNIQUE(plan_id, round_no)，23505 冒泡成 409。
+    const { service, hulu } = setup({
+      lockedPlan: planRow({ protocol_version: "legacy", target_rounds: 4 }),
+      rounds: [
+        roundRow({ round_no: 1, kind: "legacy", id: "l1", ended_at: NOW.toISOString(), elapsed_seconds: 3600 }),
+        roundRow({ round_no: 2, kind: "legacy", id: "l2", ended_at: NOW.toISOString(), elapsed_seconds: 3000 }),
+      ],
+    });
+
+    await service.startRound({ userId: USER, planId: PLAN });
+
+    expect(hulu.insertRound).toHaveBeenCalledWith(
+      expect.objectContaining({ round_no: 3, kind: "recall" }),
+    );
+  });
+
+  it("legacy + recall 混合序列 → 轮号仍取最大已用号 + 1（不重号）", async () => {
+    const { service, hulu } = setup({
+      lockedPlan: planRow({ protocol_version: "legacy", target_rounds: 4 }),
+      rounds: [
+        roundRow({ round_no: 1, kind: "legacy", id: "l1", ended_at: NOW.toISOString() }),
+        roundRow({ round_no: 2, kind: "recall", id: "r2", ended_at: NOW.toISOString() }),
+      ],
+    });
+
+    await service.startRound({ userId: USER, planId: PLAN });
+
+    expect(hulu.insertRound).toHaveBeenCalledWith(
+      expect.objectContaining({ round_no: 3, kind: "recall" }),
+    );
+  });
+
+  it("轮号有跳号的历史数据：取最大已用号 + 1（按条数会给出已占用的号）", async () => {
+    const { service, hulu } = setup({
+      lockedPlan: planRow({ protocol_version: "legacy", target_rounds: 4 }),
+      rounds: [
+        roundRow({ round_no: 1, kind: "legacy", id: "l1", ended_at: NOW.toISOString() }),
+        roundRow({ round_no: 3, kind: "legacy", id: "l3", ended_at: NOW.toISOString() }),
+      ],
+    });
+
+    await service.startRound({ userId: USER, planId: PLAN });
+
+    expect(hulu.insertRound).toHaveBeenCalledWith(
+      expect.objectContaining({ round_no: 4, kind: "recall" }),
+    );
+  });
+
+  it("legacy 计划轮数已达目标 → 409（闸门按已开始的复习轮数，不按轮号）", async () => {
+    const { service, hulu } = setup({
+      lockedPlan: planRow({ protocol_version: "legacy", target_rounds: 2 }),
+      rounds: [
+        roundRow({ round_no: 1, kind: "legacy", id: "l1", ended_at: NOW.toISOString() }),
+        roundRow({ round_no: 2, kind: "legacy", id: "l2", ended_at: NOW.toISOString() }),
+      ],
+    });
+
+    await expect(service.startRound({ userId: USER, planId: PLAN }))
+      .rejects.toMatchObject({ httpStatus: 409, meta: { targetRounds: 2, rounds: 2 } });
+    expect(hulu.insertRound).not.toHaveBeenCalled();
+  });
+
   it("v2 但未开「含未学词」→ 不开曝光轮（池里本来就没有 new 词）", async () => {
     const { service, hulu } = setup({
       lockedPlan: planRow({ include_new_words: false }),
