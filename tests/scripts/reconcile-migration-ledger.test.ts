@@ -148,8 +148,32 @@ describe("buildAdoptStatements", () => {
 
     expect(statement.sql).toContain("WHERE NOT EXISTS (");
     expect(statement.sql).toContain("SELECT 1 FROM vocab_migrations.__v2_release_migrations");
-    expect(statement.sql).toContain(`created_at = ${statement.when}`);
     expect(statement.sql).toContain(`SELECT '${statement.hash}', ${statement.when}`);
+  });
+
+  it("守卫按 hash 判身份：tied-when 的缺失条目仍会被写入（不再被无关行的 when 吞掉）", () => {
+    // 复刻真实账本残留（0046/0047/0048 共享 created_at = 1790405138087）：
+    // 旧守卫 `WHERE created_at = 1000` 会命中 0046 那一行 ⇒ 0047 的 INSERT 写 0 行，
+    // 命令却报成功，账本继续缺行、迁移器继续跳过该条。
+    const tied: MigrationJournal = {
+      entries: [
+        { idx: 46, tag: "0046_tied", when: 1000 },
+        { idx: 47, tag: "0047_tied", when: 1000 },
+      ],
+    };
+    const hashes: Record<string, string> = { "0046_tied": HASH_A, "0047_tied": HASH_B };
+    const diff = computeLedgerDiff(
+      tied,
+      [{ hash: HASH_A, created_at: "1000" }], // 0046 已入账，且占用 when=1000
+      (tag) => hashes[tag],
+    );
+    expect(diff.missing.map((entry) => entry.tag)).toEqual(["0047_tied"]);
+
+    const [statement] = buildAdoptStatements(diff, "0047_tied");
+    expect(statement.hash).toBe(HASH_B);
+    expect(statement.when).toBe(1000);
+    expect(statement.sql).not.toMatch(/WHERE created_at =/);
+    expect(statement.sql).toContain(`WHERE hash = '${HASH_B}'`);
   });
 
   it("returns nothing when every target entry is already applied", () => {
@@ -212,6 +236,38 @@ describe("runAdopt", () => {
     expect(log).toHaveBeenCalledWith(
       "nothing to adopt: every entry at or before the target is already in the ledger",
     );
+  });
+
+  it("写入后复核：missing 未按语句数下降 → 抛错（不再静默成功）", async () => {
+    const execute = vi.fn<(sql: string) => Promise<void>>().mockResolvedValue(undefined);
+    const log = vi.fn<(line: string) => void>();
+    // 3 个 missing、目标内 2 条语句 → 期望剩 1；返回 2 说明有一条没真正写进去。
+    const recheckMissing = vi.fn(async () => 2);
+
+    await expect(
+      runAdopt(diff(), "0048_second", { write: true, execute, log, recheckMissing }),
+    ).rejects.toThrow(/a row was not written/);
+    expect(recheckMissing).toHaveBeenCalledTimes(1);
+  });
+
+  it("写入后复核通过：missing 恰按语句数下降", async () => {
+    const execute = vi.fn<(sql: string) => Promise<void>>().mockResolvedValue(undefined);
+    const log = vi.fn<(line: string) => void>();
+    const recheckMissing = vi.fn(async () => 1); // 3 − 2 条语句
+
+    await runAdopt(diff(), "0048_second", { write: true, execute, log, recheckMissing });
+
+    expect(recheckMissing).toHaveBeenCalledTimes(1);
+  });
+
+  it("dry-run 不复核（没写库就不该断言账本变了）", async () => {
+    const execute = vi.fn<(sql: string) => Promise<void>>().mockResolvedValue(undefined);
+    const log = vi.fn<(line: string) => void>();
+    const recheckMissing = vi.fn(async () => 3);
+
+    await runAdopt(diff(), "0048_second", { write: false, execute, log, recheckMissing });
+
+    expect(recheckMissing).not.toHaveBeenCalled();
   });
 });
 

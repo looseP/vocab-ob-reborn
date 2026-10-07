@@ -489,13 +489,21 @@ export class HuluPlanService {
         });
       }
 
-      // ③ 复习轮号 = 已有 kind='recall' 轮数 + 1；超过目标轮数 → 409。
-      const recallRounds = rounds.filter((round) => round.kind === "recall").length;
-      const nextNo = recallRounds + 1;
-      if (nextNo > plan.target_rounds) {
+      // ③ 复习轮号 = **已用最大轮号 + 1**；已开始的复习轮数达目标 → 409。
+      //
+      // 轮号是**身份**（`UNIQUE(plan_id, round_no)`），不是计数。此前按
+      // `kind === 'recall'` 计数，而迁移 0051 把存量轮回填为 `'legacy'`：一个 legacy
+      // 计划手上已有第 1..n 轮，计数却是 0 ⇒ nextNo 恒为 1 ⇒ 直接撞唯一约束，23505
+      // 冒泡成 409「Resource already exists.」，该计划再也开不了新一轮。取最大已用
+      // 轮号 + 1 对三种序列都成立：v2（曝光轮占 0）、legacy（1..n）、legacy+recall 混合。
+      // （独立审计 2026-10-07 发现；见 `docs/design/下一轮行动指导-2026-10-06.md` §9。）
+      const reviewRounds = rounds.filter((round) => round.kind !== "exposure");
+      const nextNo = reviewRounds.reduce((max, round) => Math.max(max, round.round_no), 0) + 1;
+      // 闸门按「已开始的复习轮数」而非轮号判 —— 跳号/缺口的历史数据下语义仍正确。
+      if (reviewRounds.length >= plan.target_rounds) {
         throw new ConflictError("已达目标轮数，无法开始新一轮", undefined, {
           targetRounds: plan.target_rounds,
-          rounds: recallRounds,
+          rounds: reviewRounds.length,
         });
       }
 

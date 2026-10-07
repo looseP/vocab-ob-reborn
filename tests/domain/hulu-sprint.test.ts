@@ -16,6 +16,7 @@ import {
   assessHuluRisk,
   huluGateDecision,
   huluSameWordSet,
+  huluWordSetVerdict,
   clampElapsedSeconds,
   type HuluProtocolVersion,
   type HuluRoundKind,
@@ -146,6 +147,45 @@ describe("huluSameWordSet（R13 可比较轮判据）", () => {
     expect(huluSameWordSet(missing, "a1b2c3d4e5f60718")).toBe(false);
     expect(huluSameWordSet("a1b2c3d4e5f60718", missing)).toBe(false);
     expect(huluSameWordSet(missing, missing)).toBe(false);
+  });
+});
+
+describe("huluWordSetVerdict（三态判据，界面文案据此区分两种「不可比」）", () => {
+  it("指纹非空且相等 → comparable（且与 huluSameWordSet 恒等）", () => {
+    expect(huluWordSetVerdict("a1b2c3d4e5f60718", "a1b2c3d4e5f60718")).toBe("comparable");
+    expect(huluSameWordSet("a1b2c3d4e5f60718", "a1b2c3d4e5f60718"))
+      .toBe(huluWordSetVerdict("a1b2c3d4e5f60718", "a1b2c3d4e5f60718") === "comparable");
+  });
+
+  it("指纹不同 → different-word-set（词集**真的**漂移了）", () => {
+    expect(huluWordSetVerdict("a1b2c3d4e5f60718", "0f1e2d3c4b5a6978")).toBe("different-word-set");
+  });
+
+  it("指纹缺失（null / 空串 / undefined）→ no-fingerprint，**不是** different-word-set", () => {
+    // 这是在修一个会撒谎的文案：存量 legacy 轮回填后指纹为 null（0051 明文不回填），
+    // 若把它归进「词集已变化」，老计划用户会看到「词集变了」而实际没变。
+    expect(huluWordSetVerdict(null, "a1b2c3d4e5f60718")).toBe("no-fingerprint");
+    expect(huluWordSetVerdict("a1b2c3d4e5f60718", null)).toBe("no-fingerprint");
+    expect(huluWordSetVerdict(null, null)).toBe("no-fingerprint");
+    expect(huluWordSetVerdict("", "")).toBe("no-fingerprint");
+    expect(huluWordSetVerdict("", "a1b2c3d4e5f60718")).toBe("no-fingerprint");
+    const missing = undefined as unknown as string | null;
+    expect(huluWordSetVerdict(missing, "a1b2c3d4e5f60718")).toBe("no-fingerprint");
+  });
+
+  it("三态互斥且完备：任取输入只落一态，且 comparable ⟺ huluSameWordSet 为真", () => {
+    const inputs: Array<[string | null, string | null]> = [
+      ["fp-a", "fp-a"],
+      ["fp-a", "fp-b"],
+      [null, "fp-a"],
+      ["fp-a", null],
+      [null, null],
+      ["", "fp-a"],
+    ];
+    for (const [a, b] of inputs) {
+      expect(["comparable", "no-fingerprint", "different-word-set"]).toContain(huluWordSetVerdict(a, b));
+      expect(huluSameWordSet(a, b)).toBe(huluWordSetVerdict(a, b) === "comparable");
+    }
   });
 });
 

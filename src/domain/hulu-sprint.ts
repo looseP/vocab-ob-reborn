@@ -278,11 +278,24 @@ export function huluGateDecision(passed: number, total: number, gateRatio: numbe
  * 零出向红线不容 import —— 见 ADR-0041 Amendment 2 第 2 条）。
  */
 export function huluSameWordSet(fpA: string | null, fpB: string | null): boolean {
+  return huluWordSetVerdict(fpA, fpB) === "comparable";
+}
+
+/**
+ * 可比性的**三态**判据（同上口径，但把两种"不可比"分开）。
+ *
+ * 为什么需要分开：界面文案必须是真话。`null` 指纹（存量轮 / 未收尾行）**不代表**
+ * 词集变了 —— 它代表"这一轮没有记录词集"。两者混用一句话会让老计划用户看到
+ * 「词集已变化」而实际词集没变（独立审计 2026-10-07 发现）。
+ */
+export type HuluWordSetVerdict = "comparable" | "no-fingerprint" | "different-word-set";
+
+export function huluWordSetVerdict(fpA: string | null, fpB: string | null): HuluWordSetVerdict {
   // 防御性：契约保证 string|null，但旧缓存 / 局部 mock 可能整列缺席（undefined）。
   // 缺席与 null 同义（没有指纹 = 不可比较），不让它把渲染整个炸掉。
-  if (typeof fpA !== "string" || typeof fpB !== "string") return false;
-  if (fpA.length === 0 || fpB.length === 0) return false;
-  return fpA === fpB;
+  if (typeof fpA !== "string" || typeof fpB !== "string") return "no-fingerprint";
+  if (fpA.length === 0 || fpB.length === 0) return "no-fingerprint";
+  return fpA === fpB ? "comparable" : "different-word-set";
 }
 
 /**
