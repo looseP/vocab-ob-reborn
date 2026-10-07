@@ -96,6 +96,9 @@ function makeMockStatsRepo(overrides: Partial<IStatsRepository> = {}): IStatsRep
       l2: { promoted: 8, dueNow: 2, weakSignal: 1, reviewedToday: 4 },
     })),
     getRatingDistribution: vi.fn(async () => ({ again: 1, hard: 2, good: 5, easy: 2 })),
+    // M1：到期预测桶（每个 horizon 一条直查的替身；count 取 3× 便于一眼看出取的是哪个桶）
+    getDueForecast: vi.fn(async (_userId: string, _wordbookId: string, horizons: readonly number[]) =>
+      horizons.map((horizonDays) => ({ horizonDays, count: horizonDays * 3 }))),
     ...overrides,
   };
 }
@@ -529,7 +532,7 @@ describe("StatsService", () => {
     expect(constructorRepo.getRatingDistribution).not.toHaveBeenCalled();
   });
 
-  it("computeForecast derives from summary without opening a transaction", () => {
+  it("computeForecast 由**真实到期桶**组装（不再是 dueToday×1.5 / ×2），且不打开事务", () => {
     const txRunner = vi.fn();
     const repositoryFactory = vi.fn();
     const service = new StatsService(
@@ -537,16 +540,58 @@ describe("StatsService", () => {
       txRunner as unknown as typeof import("@/db/transaction").withTransaction,
       repositoryFactory,
     );
-    const forecast = service.computeForecast({
-      totalWords: 100, trackedWords: 50, dueToday: 10,
+    const forecast = service.computeForecast(
+      {
+        totalWords: 100, trackedWords: 50, dueToday: 10,
+        reviewedToday: 5, reviewed7d: 35, reviewed30d: 150,
+        streakDays: 7, notesCount: 3,
+        l2: { promoted: 0, dueNow: 0, weakSignal: 0, reviewedToday: 0 },
+      },
+      [{ horizonDays: 7, count: 18 }, { horizonDays: 14, count: 24 }],
+    );
+    // dueNow 沿用 summary.dueToday（口径不变）；7d/14d 取桶计数本身
+    expect(forecast.dueNow).toBe(10);
+    expect(forecast.due7d).toBe(18);
+    expect(forecast.due14d).toBe(24);
+    // 纯函数：取数在 getForecast，组装不碰事务
+    expect(txRunner).not.toHaveBeenCalled();
+    expect(repositoryFactory).not.toHaveBeenCalled();
+  });
+
+  it("computeForecast 桶缺失按 0 计（该窗口确实没有到期词），不回落成推算值", () => {
+    const service = new StatsService(makeMockStatsRepo());
+    const summary = {
+      totalWords: 1, trackedWords: 1, dueToday: 7,
+      reviewedToday: 0, reviewed7d: 0, reviewed30d: 0,
+      streakDays: 0, notesCount: 0,
+      l2: { promoted: 0, dueNow: 0, weakSignal: 0, reviewedToday: 0 },
+    };
+
+    expect(service.computeForecast(summary, [])).toEqual({ dueNow: 7, due7d: 0, due14d: 0 });
+    // 只有 14 天的桶 → 7 天仍是 0（缺桶 = 0），不是拿 14 天的数去凑
+    expect(service.computeForecast(summary, [{ horizonDays: 14, count: 9 }]))
+      .toEqual({ dueNow: 7, due7d: 0, due14d: 9 });
+  });
+
+  it("getForecast 经 actor 事务仓储取桶（窗口恰为契约的 [7,14]），构造器仓储不被使用", async () => {
+    const constructorRepo = makeMockStatsRepo();
+    const txRepo = makeMockStatsRepo();
+    const fakeTx = {} as never;
+    const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback(fakeTx)) as unknown as typeof import("@/db/transaction").withTransaction;
+    const repositoryFactory = vi.fn(() => ({ stats: txRepo } as unknown as IRepositories));
+    const service = new StatsService(constructorRepo, txRunner, repositoryFactory);
+    const summary = {
+      totalWords: 100, trackedWords: 50, dueToday: 12,
       reviewedToday: 5, reviewed7d: 35, reviewed30d: 150,
       streakDays: 7, notesCount: 3,
       l2: { promoted: 0, dueNow: 0, weakSignal: 0, reviewedToday: 0 },
-    });
-    expect(forecast.dueNow).toBe(10);
-    expect(forecast.due7d).toBe(15);
-    expect(forecast.due14d).toBe(20);
-    expect(txRunner).not.toHaveBeenCalled();
-    expect(repositoryFactory).not.toHaveBeenCalled();
+    };
+
+    const forecast = await service.getForecast(summary, "u1", "wb1");
+
+    expect(txRepo.getDueForecast).toHaveBeenCalledWith("u1", "wb1", [7, 14]);
+    expect(forecast).toEqual({ dueNow: 12, due7d: 21, due14d: 42 });
+    expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
+    expect(constructorRepo.getDueForecast).not.toHaveBeenCalled();
   });
 });
