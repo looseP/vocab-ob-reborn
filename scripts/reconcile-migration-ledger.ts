@@ -191,6 +191,15 @@ export function resolveAdoptTarget(journal: MigrationJournal, target: string): n
  * The `WHERE NOT EXISTS` guard keeps the statement idempotent: re-running it,
  * or running it against a database whose ledger gained the row meanwhile, is a
  * no-op. The hash is the same sha256 drizzle would record (whole file bytes).
+ *
+ * **The guard keys on `hash`, not on `created_at`** (independent audit,
+ * 2026-10-07). Identity in the ledger is the **file hash** — that is why
+ * `computeLedgerDiff` matches on it (see its comment). Guarding on
+ * `created_at` was a silent failure: the tied-`when` incident left three rows
+ * (`0046` / `0047` / `0048`) sharing the timestamp `1790405138087`, so adopting
+ * `0047` or `0048` matched an unrelated row, wrote **zero** rows, and still
+ * reported success — the ledger silently stayed incomplete while the migrator
+ * kept skipping that migration.
  */
 export function buildAdoptStatements(diff: LedgerDiff, target: string): AdoptStatement[] {
   const position = resolveAdoptTarget({ entries: diff.entries }, target);
@@ -206,7 +215,7 @@ export function buildAdoptStatements(diff: LedgerDiff, target: string): AdoptSta
         "INSERT INTO vocab_migrations.__v2_release_migrations (hash, created_at)\n" +
         `SELECT '${entry.hash}', ${entry.when}\n` +
         "WHERE NOT EXISTS (\n" +
-        `  SELECT 1 FROM vocab_migrations.__v2_release_migrations WHERE created_at = ${entry.when}\n` +
+        `  SELECT 1 FROM vocab_migrations.__v2_release_migrations WHERE hash = '${entry.hash}'\n` +
         ");",
     }));
 }
@@ -263,6 +272,11 @@ export async function runAdopt(
     write: boolean;
     execute: (sql: string) => Promise<void>;
     log: (line: string) => void;
+    /**
+     * Re-read the ledger and report how many journal entries are still missing.
+     * `main` always supplies it; unit tests inject a fake or omit it.
+     */
+    recheckMissing?: () => Promise<number>;
   },
 ): Promise<AdoptStatement[]> {
   const statements = buildAdoptStatements(diff, target);
@@ -275,6 +289,22 @@ export async function runAdopt(
     options.log(statement.sql);
     if (options.write) {
       await options.execute(statement.sql);
+    }
+  }
+  // Post-write assertion (independent audit, 2026-10-07): every statement targets an
+  // entry the diff called `missing`, so the row count must fall by exactly
+  // `statements.length`. Anything else means a guarded INSERT was swallowed —
+  // previously that only produced a log line and exit code 0.
+  if (options.write && options.recheckMissing) {
+    const before = diff.missing.length;
+    const after = await options.recheckMissing();
+    const expected = before - statements.length;
+    if (after !== expected) {
+      throw new Error(
+        `adopt: executed ${statements.length} guarded INSERT(s) but the ledger went from ` +
+          `${before} to ${after} missing entries (expected ${expected}) — a row was not written. ` +
+          "Do not retry blindly; inspect the ledger rows for the target first.",
+      );
     }
   }
   return statements;
@@ -325,10 +355,12 @@ async function main(argv: readonly string[]): Promise<number> {
           await pool.query(sql);
         },
         log: (line) => console.log(line),
+        // 写完立刻复核 —— 守卫若吞掉某条 INSERT，这里把它变成非零退出，而不是一行日志。
+        recheckMissing: async () =>
+          computeLedgerDiff(journal, await readAppliedRows(pool), resolveHashForTag).missing.length,
       });
 
-      // Re-read so the log states whether the guarded INSERTs actually landed
-      // (a colliding created_at from an unrelated row would swallow one).
+      // Re-read so the log states whether the guarded INSERTs actually landed.
       const after = computeLedgerDiff(journal, await readAppliedRows(pool), resolveHashForTag);
       console.log(
         `after adopt: max(created_at) = ${after.maxLedgerCreatedAt ?? "(empty ledger)"}; ` +
