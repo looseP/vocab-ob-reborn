@@ -106,7 +106,7 @@ export function reviewRoutes(services: Services) {
     return c.json({
       ...summary,
       ratingDist,
-      forecast: services.stats.computeForecast(summary),
+      forecast: await services.stats.getForecast(summary, userId, wordbook.id),
     });
   });
 

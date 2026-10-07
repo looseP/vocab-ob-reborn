@@ -1711,9 +1711,27 @@ export interface RatingDistribution {
   easy: number;
 }
 
+/** 到期预测的一个时间桶（`getDueForecast` 的出参单元；M1，2026-10-07）。 */
+export interface DueForecastBucket {
+  /** 从「今天」（显示时区日历日）起算的天数。 */
+  horizonDays: number;
+  /** 截至「今天零点 + horizonDays」仍到期未复习的词数（口径见仓储实现注释）。 */
+  count: number;
+}
+
 export interface IStatsRepository {
   getDashboardSummary(userId: string, wordbookId: string): Promise<DashboardSummary>;
   getRatingDistribution(userId: string, wordbookId: string, days?: number): Promise<RatingDistribution>;
+  /**
+   * 真实到期预测（M1，2026-10-07）：按 `due_at` 的**日历日累计**桶计数，
+   * 取代仪表盘上此前的 `dueToday × 1.5 / × 2` 假推算（V10 类假指标）。
+   * 单条往返：一次 `unnest` 出全部 horizon。判据见 `StatsRepository` 的实现注释。
+   */
+  getDueForecast(
+    userId: string,
+    wordbookId: string,
+    horizons: readonly number[],
+  ): Promise<DueForecastBucket[]>;
 }
 
 // ── ADR-0030：L3 题目 / 试卷（题与 context 分离；卷面存 payload 引用）──────

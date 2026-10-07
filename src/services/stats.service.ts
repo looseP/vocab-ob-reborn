@@ -7,7 +7,11 @@
 
 import type { PoolClient } from "pg";
 import type { IRepositories, IStatsRepository } from "../repositories/interfaces";
-import type { DashboardSummary, RatingDistribution } from "../repositories/interfaces";
+import type {
+  DashboardSummary,
+  RatingDistribution,
+  DueForecastBucket,
+} from "../repositories/interfaces";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
 
@@ -56,15 +60,46 @@ export class StatsService {
   }
 
   /**
-   * Compute a simple forecast from the dashboard summary.
-   * In a full implementation this would query user_word_progress due_at
-   * directly, but for now we derive it from dueToday + trackedWords.
+   * 契约的两个预测窗口（`ReviewForecast` 只有这两个字段）。
    */
-  computeForecast(summary: DashboardSummary): ReviewForecast {
+  static readonly FORECAST_HORIZONS: readonly number[] = [7, 14];
+
+  /**
+   * M1（2026-10-07）：真实到期预测 —— 查 `due_at` 的日历日累计桶，再交纯函数组装。
+   *
+   * 为什么签名里带 `summary`：`dueNow` 沿用调用方已取的 `summary.dueToday`
+   * （口径与数值都不变），这样路由只需把同一份 summary 传进来，**不必改结构、也不必
+   * 多取一次 summary**（`src/http/routes/review.ts` 受路由棘轮按基线冻结，不能增行）。
+   */
+  async getForecast(
+    summary: DashboardSummary,
+    userId: string,
+    wordbookId: string,
+  ): Promise<ReviewForecast> {
+    const buckets = await this.withActorStats(
+      userId,
+      (stats) => stats.getDueForecast(userId, wordbookId, StatsService.FORECAST_HORIZONS),
+    );
+    return this.computeForecast(summary, buckets);
+  }
+
+  /**
+   * 由**真实**到期桶组装预测（纯函数，不打开事务 —— 取数在 `getForecast`）。
+   *
+   * `dueNow` = `summary.dueToday`；`due7d` / `due14d` = 对应 horizon 的桶计数。
+   * 桶缺失按 0 计（查不到行 = 该窗口确实没有到期词）。`buckets` **必填**：
+   * 让它有默认值会在调用方漏传时静默给出 0，那正是本轮要消灭的假数字。
+   */
+  computeForecast(
+    summary: DashboardSummary,
+    buckets: readonly DueForecastBucket[],
+  ): ReviewForecast {
+    const atHorizon = (days: number): number =>
+      buckets.find((bucket) => bucket.horizonDays === days)?.count ?? 0;
     return {
       dueNow: summary.dueToday,
-      due7d: Math.round(summary.dueToday * 1.5),
-      due14d: Math.round(summary.dueToday * 2),
+      due7d: atHorizon(7),
+      due14d: atHorizon(14),
     };
   }
 }

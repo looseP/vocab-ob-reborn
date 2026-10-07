@@ -6,7 +6,12 @@
  */
 
 import type { ReviewRating } from "../domain";
-import type { IStatsRepository, DashboardSummary, RatingDistribution } from "./interfaces";
+import type {
+  IStatsRepository,
+  DashboardSummary,
+  RatingDistribution,
+  DueForecastBucket,
+} from "./interfaces";
 import { BaseRepository } from "./base";
 import { startOfTodayIsoInDisplayTz, todayKeyInDisplayTz } from "../db/timezone";
 
@@ -103,6 +108,49 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
         reviewedToday: l2Row ? parseInt(l2Row.l2_reviewed_today, 10) : 0,
       },
     };
+  }
+
+  /**
+   * M1 · 真实到期预测（2026-10-07）—— 取代 `dueToday × 1.5 / × 2` 的假推算。
+   *
+   * 三条口径都必须照做，缺一条就会与别处对不上：
+   *
+   * ① **日历日**边界：窗口上沿 = 显示时区（Asia/Shanghai）今日零点 + horizon 天，
+   *    复用 `startOfTodayIsoInDisplayTz()` —— 与 dueToday / reviewedToday 同一个日界
+   *    （不是从 now() 起滚动的 N×24 小时）。
+   * ② **累计、不设下沿**：`due_at <= 今日零点 + horizon`。**实测结论**（2026-10-07 自用栈）：
+   *    14 个待复习词的 `due_at` 全部 ≤ 今日零点（积压），若照设计稿加
+   *    `due_at > 今日零点` 的下沿，due7d 会算成 **0** 而 dueNow 是 14 ——
+   *    「未来 7 天预计复习」比「今天待复习」还少。累计口径同时给出
+   *    dueNow ≤ due7d ≤ due14d 的单调性。
+   * ③ **排除 `suspended`**：挂起词不会被复习队列取出（`review.repository` 的队列 SQL
+   *    一律 `state != 'suspended'`），预测里算上它们是虚报。注意 `dueToday` 口径**没有**
+   *    这条过滤（既有差异，本方法不动它；自用栈当前 0 个挂起词，未显现）。
+   *
+   * 单条往返：一次 `unnest` 出所有 horizon，每个 horizon 一个标量子查询。
+   */
+  async getDueForecast(
+    userId: string,
+    wordbookId: string,
+    horizons: readonly number[],
+  ): Promise<DueForecastBucket[]> {
+    const todayIso = startOfTodayIsoInDisplayTz();
+    const rows = await this.query<{ horizon_days: number; count: string }>(
+      `SELECT h.horizon_days,
+              (SELECT count(*) FROM user_word_progress uwp
+                WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+                  AND uwp.state <> 'suspended'
+                  AND uwp.due_at IS NOT NULL
+                  AND uwp.due_at <= $3::timestamptz + make_interval(days => h.horizon_days))::text AS count
+       FROM unnest($4::int[]) AS h(horizon_days)
+       ORDER BY h.horizon_days`,
+      [userId, wordbookId, todayIso, [...horizons]],
+    );
+
+    return rows.map((row) => ({
+      horizonDays: Number(row.horizon_days),
+      count: parseInt(row.count, 10),
+    }));
   }
 
   async getRatingDistribution(

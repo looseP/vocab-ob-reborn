@@ -141,6 +141,56 @@ describe("StatsRepository.getDashboardSummary", () => {
   });
 });
 
+describe("StatsRepository.getDueForecast（M1 真实到期预测）", () => {
+  it("把 horizon 行映射为 {horizonDays,count}（count 走 parseInt）", async () => {
+    const repos = createRepositories();
+    mock.setRows([
+      { horizon_days: 7, count: "18" },
+      { horizon_days: 14, count: "24" },
+    ]);
+
+    await expect(repos.stats.getDueForecast("u1", "wb1", [7, 14])).resolves.toEqual([
+      { horizonDays: 7, count: 18 },
+      { horizonDays: 14, count: 24 },
+    ]);
+  });
+
+  it("单条往返，且三条口径都在 SQL 里：日历日上沿 / 累计无下沿 / 排除 suspended", async () => {
+    const repos = createRepositories();
+    mock.setRows([{ horizon_days: 7, count: "0" }]);
+
+    await repos.stats.getDueForecast("u1", "wb1", [7, 14]);
+
+    const q = mock.lastQuery!;
+    // 单条往返：一次 unnest 出全部 horizon（不是每个 horizon 一发）
+    expect(mock.calls).toHaveLength(1);
+    expect(q.text).toContain("FROM unnest($4::int[])");
+    expect(q.text).toContain("ORDER BY h.horizon_days");
+
+    // ① 上沿 = 今天零点 + horizon 天（日历日，非滚动 168 小时）
+    expect(q.text).toContain("make_interval(days => h.horizon_days)");
+    // ② **不设下沿**：加 `due_at > 今天零点` 会把积压排除 —— 实测自用栈会得出
+    //    due7d=0 而 dueNow=14（「未来 7 天」比「今天」还少）。这条断言锁住该决定。
+    expect(q.text).not.toMatch(/due_at\s*>/);
+    // ③ 排除挂起词（复习队列一律 state != 'suspended'，预测算上它们是虚报）
+    expect(q.text).toContain("state <> 'suspended'");
+    expect(q.text).toContain("due_at IS NOT NULL");
+
+    // 日界复用显示时区今日零点（与 dueToday / reviewedToday 同源）
+    expect(q.params[2]).toMatch(/^\d{4}-\d{2}-\d{2}T16:00:00\.000Z$/);
+    expect(q.params[0]).toBe("u1");
+    expect(q.params[1]).toBe("wb1");
+    expect(q.params[3]).toEqual([7, 14]);
+  });
+
+  it("无桶行 → 空数组（该窗口确实没有到期词，由 service 按 0 计而不是回落推算）", async () => {
+    const repos = createRepositories();
+    mock.setRows([]);
+
+    await expect(repos.stats.getDueForecast("u1", "wb1", [7])).resolves.toEqual([]);
+  });
+});
+
 describe("StatsRepository.getRatingDistribution", () => {
   it("maps the four known ratings and ignores unknown / NULL rating rows", async () => {
     const repos = createRepositories();

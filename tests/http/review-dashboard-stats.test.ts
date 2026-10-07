@@ -48,7 +48,8 @@ function makeMockServices(): Services {
     stats: {
       getDashboardSummary: vi.fn().mockResolvedValue(SUMMARY),
       getRatingDistribution: vi.fn().mockResolvedValue(RATING_DIST),
-      computeForecast: vi.fn(() => FORECAST),
+      // M1：预测改为异步取真实到期桶后组装（路由把同一份 summary 传进去）
+      getForecast: vi.fn().mockResolvedValue(FORECAST),
     },
   } as unknown as Services;
 }
@@ -69,7 +70,9 @@ describe("GET /api/review/stats/dashboard", () => {
     expect(services.wordbooks.getOrCreateDefault).toHaveBeenCalledWith("user-123");
     expect(services.stats.getDashboardSummary).toHaveBeenCalledWith("user-123", WORDBOOK_ID);
     expect(services.stats.getRatingDistribution).toHaveBeenCalledWith("user-123", WORDBOOK_ID);
-    expect(services.stats.computeForecast).toHaveBeenCalledWith(SUMMARY);
+    // M1：路由不再直接调纯函数，而是让 service 取真实到期桶（传同一份 summary，
+    // 避免多取一次 summary —— review.ts 受路由棘轮按基线冻结，不能增行）
+    expect(services.stats.getForecast).toHaveBeenCalledWith(SUMMARY, "user-123", WORDBOOK_ID);
   });
 
   it("rejects unauthenticated requests with 401", async () => {
