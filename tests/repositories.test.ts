@@ -449,13 +449,16 @@ describe("SessionRepository", () => {
 describe("StatsRepository", () => {
   it("getDashboardSummary aggregates 9 queries", async () => {
     // All count queries return 5; the L2 stats query reads its own columns.
-    mock.setRows([{ count: "5", promoted: "2", due_now: "1", weak_signal: "0", l2_reviewed_today: "3" }]);
+    // 进度查询一次出两个指标，故该行两个键都要给（缺了 mastered_count 会得到 NaN，
+    // 2026-10-07 真被 CI 抓到过一次）。mastered_count 故意给 7 ≠ 5：映射串了就会露。
+    mock.setRows([{ count: "5", due_count: "5", mastered_count: "7", promoted: "2", due_now: "1", weak_signal: "0", l2_reviewed_today: "3" }]);
     const repos = createRepositories();
     const result = await repos.stats.getDashboardSummary("u1", "wb1");
 
     expect(result.totalWords).toBe(5);
     expect(result.trackedWords).toBe(5);
     expect(result.dueToday).toBe(5);
+    expect(result.masteredWords).toBe(7);
     expect(result.reviewedToday).toBe(5);
     expect(result.l2).toEqual({ promoted: 2, dueNow: 1, weakSignal: 0, reviewedToday: 3 });
     // 8 parallel queries + 1 streak query

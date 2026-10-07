@@ -90,7 +90,7 @@ function makeNoteEntryService(
 function makeMockStatsRepo(overrides: Partial<IStatsRepository> = {}): IStatsRepository {
   return {
     getDashboardSummary: vi.fn(async () => ({
-      totalWords: 100, trackedWords: 50, dueToday: 5,
+      totalWords: 100, trackedWords: 50, masteredWords: 12, dueToday: 5,
       reviewedToday: 10, reviewed7d: 70, reviewed30d: 300,
       streakDays: 3, notesCount: 20,
       l2: { promoted: 8, dueNow: 2, weakSignal: 1, reviewedToday: 4 },
@@ -542,7 +542,7 @@ describe("StatsService", () => {
     );
     const forecast = service.computeForecast(
       {
-        totalWords: 100, trackedWords: 50, dueToday: 10,
+        totalWords: 100, trackedWords: 50, masteredWords: 20, dueToday: 10,
         reviewedToday: 5, reviewed7d: 35, reviewed30d: 150,
         streakDays: 7, notesCount: 3,
         l2: { promoted: 0, dueNow: 0, weakSignal: 0, reviewedToday: 0 },
@@ -561,7 +561,7 @@ describe("StatsService", () => {
   it("computeForecast 桶缺失按 0 计（该窗口确实没有到期词），不回落成推算值", () => {
     const service = new StatsService(makeMockStatsRepo());
     const summary = {
-      totalWords: 1, trackedWords: 1, dueToday: 7,
+      totalWords: 1, trackedWords: 1, masteredWords: 0, dueToday: 7,
       reviewedToday: 0, reviewed7d: 0, reviewed30d: 0,
       streakDays: 0, notesCount: 0,
       l2: { promoted: 0, dueNow: 0, weakSignal: 0, reviewedToday: 0 },
@@ -581,7 +581,7 @@ describe("StatsService", () => {
     const repositoryFactory = vi.fn(() => ({ stats: txRepo } as unknown as IRepositories));
     const service = new StatsService(constructorRepo, txRunner, repositoryFactory);
     const summary = {
-      totalWords: 100, trackedWords: 50, dueToday: 12,
+      totalWords: 100, trackedWords: 50, masteredWords: 30, dueToday: 12,
       reviewedToday: 5, reviewed7d: 35, reviewed30d: 150,
       streakDays: 7, notesCount: 3,
       l2: { promoted: 0, dueNow: 0, weakSignal: 0, reviewedToday: 0 },

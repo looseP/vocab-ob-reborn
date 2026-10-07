@@ -10225,6 +10225,11 @@
                       "minimum": 0,
                       "maximum": 9007199254740991
                     },
+                    "masteredWords": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
                     "dueToday": {
                       "type": "integer",
                       "minimum": 0,
@@ -10349,6 +10354,7 @@
                   "required": [
                     "totalWords",
                     "trackedWords",
+                    "masteredWords",
                     "dueToday",
                     "reviewedToday",
                     "reviewed7d",

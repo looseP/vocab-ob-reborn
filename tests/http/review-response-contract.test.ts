@@ -52,6 +52,7 @@ describe("Review response contracts", () => {
     const response = {
       totalWords: 100,
       trackedWords: 40,
+      masteredWords: 8,
       dueToday: 12,
       reviewedToday: 5,
       reviewed7d: 30,
@@ -66,6 +67,9 @@ describe("Review response contracts", () => {
     expect(reviewDashboardStatsResponseSchema.parse(response)).toEqual(response);
     const { streakDays: _streak, ...missingStreak } = response;
     expect(() => reviewDashboardStatsResponseSchema.parse(missingStreak)).toThrow();
+    // 「已掌握」是**必填**：缺了它前端又会回落到 `totalWords - dueToday` 的假口径。
+    const { masteredWords: _mastered, ...missingMastered } = response;
+    expect(() => reviewDashboardStatsResponseSchema.parse(missingMastered)).toThrow();
     expect(() => reviewDashboardStatsResponseSchema.parse({ ...response, extra: true })).toThrow();
     expect(() => reviewDashboardStatsResponseSchema.parse({ ...response, ratingDist: { ...response.ratingDist, medium: 1 } })).toThrow();
     expect(() => reviewDashboardStatsResponseSchema.parse({ ...response, forecast: { ...response.forecast, due3d: 30 } })).toThrow();

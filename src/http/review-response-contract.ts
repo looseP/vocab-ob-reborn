@@ -129,6 +129,8 @@ export const reviewStatsResponseSchema = z.object({
 export const reviewDashboardStatsResponseSchema = z.object({
   totalWords: z.number().int().nonnegative(),
   trackedWords: z.number().int().nonnegative(),
+  /** 「已掌握」= `state = 'review'` 的词数（不是 `totalWords - dueToday`）。 */
+  masteredWords: z.number().int().nonnegative(),
   dueToday: z.number().int().nonnegative(),
   reviewedToday: z.number().int().nonnegative(),
   reviewed7d: z.number().int().nonnegative(),
