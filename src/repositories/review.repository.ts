@@ -164,6 +164,14 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
    * returning the final batch. Carries needs_recheck (人工标记) plus the
    * words-side hashes so the service can derive "content changed" at read
    * time (ADR-0021: 读时派生，零写入).
+   *
+   * **排序必须是 `due_at ASC NULLS LAST`（2026-10-07 修）**：新卡的 `due_at` 是
+   * `NULL`，而本查询靠 `LIMIT` 截候选池 —— 若按 `NULLS FIRST` 排，几百张新卡会先把
+   * 池子占满，**到期卡一张都进不来**，于是 review/zen 队列只发新卡、到期复习永远
+   * 排不上（实测：某书 478 张新卡 + 14 张到期 ⇒ 池内 0 张到期，接口 `total=8` 全是
+   * 新卡、`deferredNewCards=192`）。配额机制（`review-queue.ts` 的
+   * `MAX_NEW_CARDS_PER_BATCH` / `MAX_NEW_CARD_SHARE`）本就是为「避免新卡挤占到期
+   * 复习」而设 —— 这一行的 `NULLS LAST` 是它生效的前提。
    */
   async findDueCandidates(
     userId: string,
@@ -184,7 +192,9 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
          AND uwp.state != 'suspended'
          AND (uwp.due_at IS NULL OR uwp.due_at <= now())
-       ORDER BY uwp.due_at ASC NULLS FIRST, uwp.last_reviewed_at ASC NULLS FIRST
+       -- 到期卡优先（NULLS LAST）：新卡 due_at 为 NULL，NULLS FIRST 会让它们占满
+       -- 200 个候选名额、到期卡一张进不来 ⇒ 队列只发新卡。见本方法 JSDoc。
+       ORDER BY uwp.due_at ASC NULLS LAST, uwp.last_reviewed_at ASC NULLS FIRST
        LIMIT $3`,
       [userId, wordbookId, limit],
     );

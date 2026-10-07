@@ -117,6 +117,29 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     expect(q.params).toEqual(["u1", "wb1", 200]);
   });
 
+  it("findDueCandidates 排序为**到期优先**（NULLS LAST）—— 否则新卡会占满候选池饿死到期卡", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    await repos.reviews.findDueCandidates!("u1", "wb1", 200);
+
+    const q = mock.lastQuery!;
+    // 主键必须 NULLS LAST：新卡 due_at 为 NULL，NULLS FIRST 会把 200 个候选名额
+    // 全给新卡，到期卡一张进不了池 ⇒ review/zen 队列只发新卡（实测 478 新卡 + 14 到期
+    // → 接口 total=8 全是新卡）。次键 last_reviewed_at 保持 NULLS FIRST（与到期序无关）。
+    expect(q.text).toContain(
+      "ORDER BY uwp.due_at ASC NULLS LAST, uwp.last_reviewed_at ASC NULLS FIRST",
+    );
+    // 与 findDueCards（cram/preview 回退与练习面）**故意不同**：那边维持 NULLS FIRST，
+    // 本 PR 不动它（方案 A）。
+    mock.reset();
+    mock.setRows([]);
+    await repos.reviews.findDueCards("u1", "wb1", 10);
+    expect(mock.lastQuery!.text).toContain(
+      "ORDER BY uwp.due_at ASC NULLS FIRST, uwp.last_reviewed_at ASC NULLS FIRST",
+    );
+  });
+
   it("findWordsByIds queries published words and returns empty for no ids", async () => {
     const repos = createRepositories();
 
