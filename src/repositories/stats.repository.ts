@@ -181,7 +181,8 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
   ): Promise<{ todayDate: string; buckets: DailyCount[] }> {
     const todayIso = startOfTodayIsoInDisplayTz();
     const rows = await this.query<{ date: string; count: string }>(
-      `SELECT greatest((uwp.due_at AT TIME ZONE 'Asia/Shanghai')::date, $3::date)::text AS date,
+      `SELECT greatest((uwp.due_at AT TIME ZONE 'Asia/Shanghai')::date,
+                       ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date)::text AS date,
               count(*)::text AS count
          FROM user_word_progress uwp
         WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
@@ -233,10 +234,11 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
               WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
                 AND uwp.state <> 'suspended'
                 AND uwp.due_at IS NOT NULL
-                AND (uwp.due_at AT TIME ZONE 'Asia/Shanghai')::date = $3::date
+                AND greatest((uwp.due_at AT TIME ZONE 'Asia/Shanghai')::date,
+                             ($5::timestamptz AT TIME ZONE 'Asia/Shanghai')::date) = $3::date
               ORDER BY w.lemma
               LIMIT $4`,
-            [userId, wordbookId, date, limit],
+            [userId, wordbookId, date, limit, startOfTodayIsoInDisplayTz()],
           )
         : await this.query<{
             id: string;
