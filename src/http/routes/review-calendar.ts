@@ -13,7 +13,6 @@ import { Hono } from "hono";
 import type { Services } from "../../services";
 import type { AppEnv } from "./words";
 import { jsonError } from "../error-response";
-import { todayKeyInDisplayTz } from "../../db/timezone";
 
 /** `days` 的允许区间（前端默认 30；上限防一次拉太宽）。 */
 export const CALENDAR_DAYS_MIN = 1;
@@ -49,15 +48,16 @@ export function reviewCalendarRoutes(services: Services) {
     const userId = c.get("userId");
     const days = clampInt(c.req.query("days"), 30, CALENDAR_DAYS_MIN, CALENDAR_DAYS_MAX);
     const wordbook = await services.wordbooks.getOrCreateDefault(userId);
-    const [pastRows, futureRows] = await Promise.all([
+    const [pastRows, dueCounts] = await Promise.all([
       services.reviews.getHeatmap(userId, wordbook.id, days),
       services.stats.getDailyDueCounts(userId, wordbook.id, days),
     ]);
     const past = pastRows.map((row) => ({ date: row.date, reviewed: Number(row.count) }));
-    const future = futureRows.map((row) => ({ date: row.date, due: row.count }));
+    const future = dueCounts.buckets.map((row) => ({ date: row.date, due: row.count }));
     // 「今天」两个值直接从两条序列里取 —— 不再多查一次汇总（少一次往返，
     // 也避免两处口径漂移：序列与卡片用的是同一个显示时区日历日）。
-    const todayKey = todayKeyInDisplayTz();
+    // 今天的日历日键由**仓储**给（HTTP 层被 arch 规则禁止直接 import db/*）。
+    const todayKey = dueCounts.todayDate;
     return c.json({
       past,
       today: {

@@ -178,7 +178,7 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     userId: string,
     wordbookId: string,
     days: number,
-  ): Promise<DailyCount[]> {
+  ): Promise<{ todayDate: string; buckets: DailyCount[] }> {
     const todayIso = startOfTodayIsoInDisplayTz();
     const rows = await this.query<{ date: string; count: string }>(
       `SELECT greatest((uwp.due_at AT TIME ZONE 'Asia/Shanghai')::date, $3::date)::text AS date,
@@ -192,7 +192,10 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
         ORDER BY 1`,
       [userId, wordbookId, todayIso, days],
     );
-    return rows.map((row) => ({ date: row.date, count: parseInt(row.count, 10) }));
+    return {
+      todayDate: todayKeyInDisplayTz(),
+      buckets: rows.map((row) => ({ date: row.date, count: parseInt(row.count, 10) })),
+    };
   }
 
   /**

@@ -100,7 +100,7 @@ function makeMockStatsRepo(overrides: Partial<IStatsRepository> = {}): IStatsRep
     getDueForecast: vi.fn(async (_userId: string, _wordbookId: string, horizons: readonly number[]) =>
       horizons.map((horizonDays) => ({ horizonDays, count: horizonDays * 3 }))),
     // M2：日历两个只读查询的替身（空集即可 —— 这些用例不消费它们的返回值）
-    getDailyDueCounts: vi.fn(async () => []),
+    getDailyDueCounts: vi.fn(async () => ({ todayDate: "2026-10-08", buckets: [] })),
     getDayWords: vi.fn(async () => ({ total: 0, items: [] })),
     ...overrides,
   };

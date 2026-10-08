@@ -65,12 +65,13 @@ export class StatsService {
   /**
    * M2（2026-10-08）：日历**未来侧** —— `due_at` 按显示时区日历日分桶。
    * 与 `dueToday` 同一个日历日口径；`state = 'suspended'` 不计（与队列一致）。
+   * 同时带回 `todayDate`（显示时区今天键），调用方不用自己算时区。
    */
   async getDailyDueCounts(
     userId: string,
     wordbookId: string,
     days: number,
-  ): Promise<DailyCount[]> {
+  ): Promise<{ todayDate: string; buckets: DailyCount[] }> {
     return this.withActorStats(
       userId,
       (stats) => stats.getDailyDueCounts(userId, wordbookId, days),

@@ -1778,8 +1778,14 @@ export interface IStatsRepository {
   /**
    * M2（2026-10-08）：日历**未来侧** —— `due_at` 按显示时区日历日分桶。
    * 积压（`due_at < 今天零点`）并入「今天」那一桶；排除 `state = 'suspended'`。
+   * 同时带回 `todayDate`（显示时区的今天键）：调用方拿它去序列里定位「今天」，
+   * **不必自己算时区**（HTTP 层被 arch 规则禁止直接 import `db/*`）。
    */
-  getDailyDueCounts(userId: string, wordbookId: string, days: number): Promise<DailyCount[]>;
+  getDailyDueCounts(
+    userId: string,
+    wordbookId: string,
+    days: number,
+  ): Promise<{ todayDate: string; buckets: DailyCount[] }>;
   /** M2：日历**单日列词**（只读）—— `scope = due` 该日到期 / `scope = reviewed` 该日复习过。 */
   getDayWords(
     userId: string,

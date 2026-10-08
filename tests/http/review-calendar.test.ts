@@ -42,6 +42,8 @@ const DUE_BUCKETS = [
   { date: TODAY, count: 14 }, // 含积压
   { date: TOMORROW, count: 3 },
 ];
+/** 仓储现在把「今天键」随分桶一起带回（HTTP 层被 arch 规则禁止自己算时区）。 */
+const DUE_COUNTS = { todayDate: TODAY, buckets: DUE_BUCKETS };
 
 function makeMockServices(overrides: Partial<Record<string, unknown>> = {}): Services {
   return {
@@ -50,7 +52,7 @@ function makeMockServices(overrides: Partial<Record<string, unknown>> = {}): Ser
     wordbooks: { getOrCreateDefault: vi.fn().mockResolvedValue({ id: WORDBOOK_ID }) },
     reviews: { getHeatmap: vi.fn().mockResolvedValue(HEATMAP) },
     stats: {
-      getDailyDueCounts: vi.fn().mockResolvedValue(DUE_BUCKETS),
+      getDailyDueCounts: vi.fn().mockResolvedValue(DUE_COUNTS),
       getDayWords: vi.fn().mockResolvedValue({
         total: 1,
         items: [{ id: "w1", slug: "abide", title: "abide", lemma: "abide", shortDefinition: "遵守" }],
@@ -86,7 +88,7 @@ describe("GET /api/review/stats/calendar", () => {
   it("今天不在任何序列里时两个值都按 0（不是 undefined/NaN）", async () => {
     const services = makeMockServices();
     (services.reviews.getHeatmap as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (services.stats.getDailyDueCounts as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (services.stats.getDailyDueCounts as ReturnType<typeof vi.fn>).mockResolvedValue({ todayDate: TODAY, buckets: [] });
     const res = await createApp(services).request("/api/review/stats/calendar", { headers: AUTH_HEADERS });
 
     const body = reviewCalendarResponseSchema.parse(await res.json());
