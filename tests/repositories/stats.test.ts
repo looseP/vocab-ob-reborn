@@ -139,6 +139,11 @@ describe("StatsRepository.getDashboardSummary", () => {
     expect(sql).toContain("state <> 'suspended'");       // 与队列同口径
     expect(sql).toContain("greatest(");                    // 积压并入「今天」
     expect(sql).toContain("make_interval");                // 日历日窗口（非滚动 N×24h）
+    // 桶锚点必须先把 $3（= 今天零点的 ISO 串，形如 2026-10-07T16:00:00.000Z）按**显示时区**
+    // 转成日期。直接写 `$3::date` 会按会话时区（容器里是 UTC）截成「昨天」——
+    // 2026-10-08 在自用栈实测到：积压的 14 张全被记进 2026-10-07 那一格，今天的桶是空的。
+    expect(sql).not.toContain("$3::date");
+    expect(sql).toContain("($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date");
   });
 
   it("getDayWords（due）：行映射 + total 取自窗口函数（与 LIMIT 无关）", async () => {
@@ -156,7 +161,12 @@ describe("StatsRepository.getDashboardSummary", () => {
     expect(result.items).toEqual([
       { id: "w1", slug: "abide", title: "abide", lemma: "abide", shortDefinition: "遵守" },
     ]);
-    expect(mock.lastQuery!.text).toContain("JOIN words w ON w.id = uwp.word_id");
+    const sql = mock.lastQuery!.text;
+    expect(sql).toContain("JOIN words w ON w.id = uwp.word_id");
+    // 单日列表必须与**分桶同口径**：积压（due_at 落在今天零点之前）也算「今天到期」，
+    // 否则日历那一格写着 14、点进去却是空的。
+    expect(sql).toContain("greatest(");
+    expect(sql).toContain("AT TIME ZONE 'Asia/Shanghai')::date) = $3::date");
   });
 
   it("getDayWords（reviewed）：按词去重的子查询分支", async () => {
