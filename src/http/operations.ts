@@ -176,6 +176,7 @@ import {
 import { captureResponseSchema } from "./capture-response-contract";
 import { vocabNotesImportResponseSchema } from "./import-response-contract";
 import { operationMetricsResponseSchema } from "./operation-metrics-response-contract";
+import { reviewCalendarResponseSchema, reviewDayResponseSchema } from "./review-calendar-response-contract";
 import {
   l3ContextCreateSchema,
   l3ContextLinkCreateSchema,
@@ -732,4 +733,8 @@ export const apiOperations = [
   operation("post", "/api/hulu/plans/:id/rounds/:no/pages", "settleHuluPage", "owner", "owner", "sessionMutation", { body: huluPageSettleSchema }, 200, huluRoundRowResponseSchema),
   operation("post", "/api/hulu/plans/:id/rounds/:no/finish", "finishHuluRound", "owner", "owner", "sessionMutation", { body: huluRoundFinishSchema }, 200, huluRoundRowResponseSchema),
   operation("post", "/api/hulu/plans/:id/abandon", "abandonHuluPlan", "owner", "owner", "sessionMutation", undefined, 200, huluPlanRowResponseSchema),
+  // M2 复习日历（2026-10-08）：两条**只读**端点（过去/今天/未来 + 单日列词），
+  // 读面与其它 review 读一致（owner/agent/none）；query 在路由内钳制，故无参数 schema。
+  operation("get", "/api/review/stats/calendar", "getReviewCalendar", "owner", "agent", "none", undefined, 200, reviewCalendarResponseSchema),
+  operation("get", "/api/review/day", "getReviewDay", "owner", "agent", "none", undefined, 200, reviewDayResponseSchema),
 ] as const satisfies readonly ApiOperation[];

@@ -99,6 +99,9 @@ function makeMockStatsRepo(overrides: Partial<IStatsRepository> = {}): IStatsRep
     // M1：到期预测桶（每个 horizon 一条直查的替身；count 取 3× 便于一眼看出取的是哪个桶）
     getDueForecast: vi.fn(async (_userId: string, _wordbookId: string, horizons: readonly number[]) =>
       horizons.map((horizonDays) => ({ horizonDays, count: horizonDays * 3 }))),
+    // M2：日历两个只读查询的替身（空集即可 —— 这些用例不消费它们的返回值）
+    getDailyDueCounts: vi.fn(async () => []),
+    getDayWords: vi.fn(async () => ({ total: 0, items: [] })),
     ...overrides,
   };
 }

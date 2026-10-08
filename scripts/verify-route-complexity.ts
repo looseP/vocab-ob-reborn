@@ -108,6 +108,13 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // measureRouteComplexity 相同：含空行（split(/\r?\n/) 去尾换行）→ 93。
   // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
   { file: "src/http/routes/review-l3-contexts.ts", maxLines: 93, maxRoutes: 0 },
+  // 2026-10-08 M2 复习日历：两条只读端点（过去/今天/未来 + 单日列词）另立本文件，与
+  // review.ts 同挂 /api/review 前缀（同 review-l3-contexts.ts 先例：review.ts 已按基线
+  // 冻结，不能净增行）。上限口径与 measureRouteComplexity 相同（含空行，去尾换行）：
+  // 实测 87 行 / 2 路由（含给 today 补 `date` 锚点、以及「真实日历日」校验 —— 形状正则
+  // 放得过 `2026-13-99`，直通 SQL 会 500，被端点测试抓到后补的）。
+  // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
+  { file: "src/http/routes/review-calendar.ts", maxLines: 87, maxRoutes: 2 },
   // 2026-10-06 ADR-0041 葫芦冲刺：计划容器独立薄路由（新前缀 /api/hulu，server.ts
   // 直挂，同 forgetting/l3-sessions 先例）。P0 挂 3 条（plans 建/读/放弃）。
   // 上限口径与 measureRouteComplexity 相同（含空行，去尾换行）：P0 实测 67 行 / 3 路由。

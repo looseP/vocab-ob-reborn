@@ -1743,6 +1743,25 @@ export interface DueForecastBucket {
   count: number;
 }
 
+/** 按显示时区日历日分桶的一天计数（M2 日历用）。 */
+export interface DailyCount {
+  /** `YYYY-MM-DD`（Asia/Shanghai 日历日）。 */
+  date: string;
+  count: number;
+}
+
+/** 日历单日列词用的词条摘要（只读展示，不进复习流）。 */
+export interface DayWordBrief {
+  id: string;
+  slug: string;
+  title: string;
+  lemma: string;
+  shortDefinition: string | null;
+}
+
+/** 单日列词的两个视角：`due` = 该日到期 / `reviewed` = 该日复习过。 */
+export type DayScope = "due" | "reviewed";
+
 export interface IStatsRepository {
   getDashboardSummary(userId: string, wordbookId: string): Promise<DashboardSummary>;
   getRatingDistribution(userId: string, wordbookId: string, days?: number): Promise<RatingDistribution>;
@@ -1756,6 +1775,19 @@ export interface IStatsRepository {
     wordbookId: string,
     horizons: readonly number[],
   ): Promise<DueForecastBucket[]>;
+  /**
+   * M2（2026-10-08）：日历**未来侧** —— `due_at` 按显示时区日历日分桶。
+   * 积压（`due_at < 今天零点`）并入「今天」那一桶；排除 `state = 'suspended'`。
+   */
+  getDailyDueCounts(userId: string, wordbookId: string, days: number): Promise<DailyCount[]>;
+  /** M2：日历**单日列词**（只读）—— `scope = due` 该日到期 / `scope = reviewed` 该日复习过。 */
+  getDayWords(
+    userId: string,
+    wordbookId: string,
+    date: string,
+    scope: DayScope,
+    limit: number,
+  ): Promise<{ total: number; items: DayWordBrief[] }>;
 }
 
 // ── ADR-0030：L3 题目 / 试卷（题与 context 分离；卷面存 payload 引用）──────

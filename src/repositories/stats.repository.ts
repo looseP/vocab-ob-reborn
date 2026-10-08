@@ -11,6 +11,9 @@ import type {
   DashboardSummary,
   RatingDistribution,
   DueForecastBucket,
+  DailyCount,
+  DayScope,
+  DayWordBrief,
 } from "./interfaces";
 import { BaseRepository } from "./base";
 import { startOfTodayIsoInDisplayTz, todayKeyInDisplayTz } from "../db/timezone";
@@ -158,6 +161,112 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
       horizonDays: Number(row.horizon_days),
       count: parseInt(row.count, 10),
     }));
+  }
+
+  /**
+   * M2（2026-10-08）· 日历**未来侧**：`due_at` 按显示时区日历日分桶。
+   *
+   * 两条口径与 `getDueForecast` / `dueToday` 保持一致，否则日历与卡片会对不上：
+   * ① 日历日边界 = Asia/Shanghai（`AT TIME ZONE` 切日，非 UTC）；
+   * ② `state <> 'suspended'` 不计（挂起词不会被队列取出）。
+   *
+   * **积压并入「今天」**：`due_at < 今天零点` 的到期词（2026-10-07 实测自用栈 14 张全属此类）
+   * 用 `greatest(日, 今天)` 归到今天那一桶 —— 它们今天就要做，日历上空着会让
+   * 「今天」徽标显示 14 而柱子是 0，自相矛盾。
+   */
+  async getDailyDueCounts(
+    userId: string,
+    wordbookId: string,
+    days: number,
+  ): Promise<DailyCount[]> {
+    const todayIso = startOfTodayIsoInDisplayTz();
+    const rows = await this.query<{ date: string; count: string }>(
+      `SELECT greatest((uwp.due_at AT TIME ZONE 'Asia/Shanghai')::date, $3::date)::text AS date,
+              count(*)::text AS count
+         FROM user_word_progress uwp
+        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+          AND uwp.state <> 'suspended'
+          AND uwp.due_at IS NOT NULL
+          AND uwp.due_at <= $3::timestamptz + make_interval(days => $4::int)
+        GROUP BY 1
+        ORDER BY 1`,
+      [userId, wordbookId, todayIso, days],
+    );
+    return rows.map((row) => ({ date: row.date, count: parseInt(row.count, 10) }));
+  }
+
+  /**
+   * M2 · 日历**单日列词**（只读展示，不进复习流）。
+   *
+   * - `scope = 'due'`：该日到期的词（挂起词排除，与队列一致）；
+   * - `scope = 'reviewed'`：该日**复习过**的词，**按词去重**（同日多次作答只算一张卡）。
+   *   过滤口径与既有热力图一致（`rating IS NOT NULL`，不过滤 `undone`）——
+   *   计划里的验收项就是「日历过去列与既有热力图对得上」。
+   *
+   * `total` 用窗口函数在 LIMIT 之前算全量，与返回的 `items` 截断无关。
+   */
+  async getDayWords(
+    userId: string,
+    wordbookId: string,
+    date: string,
+    scope: DayScope,
+    limit: number,
+  ): Promise<{ total: number; items: DayWordBrief[] }> {
+    const select =
+      `SELECT w.id, w.slug, w.title, w.lemma, w.short_definition, count(*) OVER ()::text AS total`;
+    const rows =
+      scope === "due"
+        ? await this.query<{
+            id: string;
+            slug: string;
+            title: string;
+            lemma: string;
+            short_definition: string | null;
+            total: string;
+          }>(
+            `${select}
+               FROM user_word_progress uwp
+               JOIN words w ON w.id = uwp.word_id
+              WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+                AND uwp.state <> 'suspended'
+                AND uwp.due_at IS NOT NULL
+                AND (uwp.due_at AT TIME ZONE 'Asia/Shanghai')::date = $3::date
+              ORDER BY w.lemma
+              LIMIT $4`,
+            [userId, wordbookId, date, limit],
+          )
+        : await this.query<{
+            id: string;
+            slug: string;
+            title: string;
+            lemma: string;
+            short_definition: string | null;
+            total: string;
+          }>(
+            `${select}
+               FROM (
+                 SELECT DISTINCT rl.word_id
+                   FROM review_logs rl
+                  WHERE rl.user_id = $1 AND rl.wordbook_id = $2
+                    AND rl.rating IS NOT NULL
+                    AND (rl.reviewed_at AT TIME ZONE 'Asia/Shanghai')::date = $3::date
+               ) day_words
+               JOIN words w ON w.id = day_words.word_id
+              ORDER BY w.lemma
+              LIMIT $4`,
+            [userId, wordbookId, date, limit],
+          );
+
+    return {
+      total: rows.length === 0 ? 0 : parseInt(rows[0].total, 10),
+      items: rows.map((row) => ({
+        id: row.id,
+        slug: row.slug,
+        title: row.title,
+        lemma: row.lemma,
+        shortDefinition: row.short_definition,
+      })),
+    };
   }
 
   async getRatingDistribution(
