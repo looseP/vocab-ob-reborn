@@ -11,6 +11,7 @@ import { ReviewStatsPanel } from "@/frontend/components/review/ReviewStatsPanel"
 import { LeechPanel } from "@/frontend/components/review/LeechPanel";
 import { WordReviewTimeline } from "@/frontend/components/review/WordReviewTimeline";
 import { MasteryHeatmap } from "@/frontend/components/review/MasteryHeatmap";
+import { ReviewCalendar } from "@/frontend/components/review/ReviewCalendar";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Skeleton } from "@/frontend/components/ui/Skeleton";
 import { apiFetch } from "@/frontend/api/client";
@@ -271,6 +272,9 @@ export function DashboardPage() {
           </>
         )}
       </Card>
+
+      {/* 2b · 复习日历（M2）：过去=复习了什么 / 今天=双值 / 未来=什么时候到期；点某天列词 */}
+      <ReviewCalendar />
 
       {/* 3 · 学习进度（分母用「在学词数」；此前是 总数−今天到期 的假进度） */}
       <Card>

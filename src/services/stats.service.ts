@@ -11,6 +11,9 @@ import type {
   DashboardSummary,
   RatingDistribution,
   DueForecastBucket,
+  DailyCount,
+  DayScope,
+  DayWordBrief,
 } from "../repositories/interfaces";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
@@ -56,6 +59,36 @@ export class StatsService {
     return this.withActorStats(
       userId,
       (stats) => stats.getRatingDistribution(userId, wordbookId, days),
+    );
+  }
+
+  /**
+   * M2（2026-10-08）：日历**未来侧** —— `due_at` 按显示时区日历日分桶。
+   * 与 `dueToday` 同一个日历日口径；`state = 'suspended'` 不计（与队列一致）。
+   * 同时带回 `todayDate`（显示时区今天键），调用方不用自己算时区。
+   */
+  async getDailyDueCounts(
+    userId: string,
+    wordbookId: string,
+    days: number,
+  ): Promise<{ todayDate: string; buckets: DailyCount[] }> {
+    return this.withActorStats(
+      userId,
+      (stats) => stats.getDailyDueCounts(userId, wordbookId, days),
+    );
+  }
+
+  /** M2：日历**单日列词**（只读）—— 该日到期 / 该日复习过。 */
+  async getDayWords(
+    userId: string,
+    wordbookId: string,
+    date: string,
+    scope: DayScope,
+    limit: number,
+  ): Promise<{ total: number; items: DayWordBrief[] }> {
+    return this.withActorStats(
+      userId,
+      (stats) => stats.getDayWords(userId, wordbookId, date, scope, limit),
     );
   }
 

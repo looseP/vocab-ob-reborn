@@ -313,6 +313,8 @@ const AGENT_READS = [
   "getPlazaOverview", "getPlazaCollection", "getPlazaRootsOverview", "getPlazaRootCollection", "getPlazaReviewStats",
   "listNotes", "listWordbooks", "getOrCreateDefaultWordbook",
   "getReviewQueue", "getReviewStats", "getReviewDashboardStats", "listReviewLeeches", "listReviewTimeline", "getReviewHeatmap", "getReviewDrillQueue",
+  // M2 复习日历：两条只读端点（过去/今天/未来 + 单日列词），与其它 review 读同档。
+  "getReviewCalendar", "getReviewDay",
   "getL2LlmStatus", "listL2Candidates", "listL2ContentRows", "getL2DrillQueue",
   "getL3Context", "getL3WordSpace", "listL3Sources", "getL3SourceSpace", "getL3Graph", "listL3WordContexts", "listL3SourceContexts",
   "listL3Occurrences", "listL3ContextLinks", "getL3Capabilities", "getL3SpaceSummary",

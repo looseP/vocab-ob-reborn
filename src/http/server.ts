@@ -19,6 +19,7 @@ import { resolveMinRole } from "./middleware/api-authorization";
 import { wordRoutes, type AppEnv } from "./routes/words";
 import { plazaRoutes } from "./routes/plaza";
 import { reviewRoutes } from "./routes/review";
+import { reviewCalendarRoutes } from "./routes/review-calendar";
 import { captureRoutes } from "./routes/capture";
 import { importRoutes } from "./routes/imports";
 import { wordbookRoutes } from "./routes/wordbooks";
@@ -142,6 +143,8 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   app.route("/api/words", wordRoutes(services));
   app.route("/api/plaza", plazaRoutes(services));
   app.route("/api/review", reviewRoutes(services));
+  // M2：复习日历薄路由（`review.ts` 受路由棘轮冻结，新端点另立文件 —— 既有惯例）
+  app.route("/api/review", reviewCalendarRoutes(services));
   app.route("/api/capture", captureRoutes(services));
   app.route("/api/imports", importRoutes(services));
   app.route("/api/wordbooks", wordbookRoutes(services));
