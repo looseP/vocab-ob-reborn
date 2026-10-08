@@ -117,6 +117,75 @@ describe("StatsRepository.getDashboardSummary", () => {
     expect(summary.masteredWords).not.toBe(summary.totalWords - summary.dueToday);
   });
 
+  describe("日历两查询（M2）", () => {
+  it("getDailyDueCounts：分桶映射 + 带回今天键；SQL 排除挂起、积压并入今天", async () => {
+    mock.setRowMap({
+      "FROM user_word_progress": [
+        { date: "2026-10-08", count: "14" },
+        { date: "2026-10-09", count: "3" },
+      ],
+    });
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    const result = await repos.stats.getDailyDueCounts("u1", "wb1", 30);
+
+    expect(result.todayDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(result.buckets).toEqual([
+      { date: "2026-10-08", count: 14 },
+      { date: "2026-10-09", count: 3 },
+    ]);
+    const sql = mock.lastQuery!.text;
+    expect(sql).toContain("state <> 'suspended'");       // 与队列同口径
+    expect(sql).toContain("greatest(");                    // 积压并入「今天」
+    expect(sql).toContain("make_interval");                // 日历日窗口（非滚动 N×24h）
+  });
+
+  it("getDayWords（due）：行映射 + total 取自窗口函数（与 LIMIT 无关）", async () => {
+    mock.setRowMap({
+      "uwp.due_at IS NOT NULL": [
+        { id: "w1", slug: "abide", title: "abide", lemma: "abide", short_definition: "遵守", total: "9" },
+      ],
+    });
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    const result = await repos.stats.getDayWords("u1", "wb1", "2026-10-08", "due", 50);
+
+    expect(result.total).toBe(9);
+    expect(result.items).toEqual([
+      { id: "w1", slug: "abide", title: "abide", lemma: "abide", shortDefinition: "遵守" },
+    ]);
+    expect(mock.lastQuery!.text).toContain("JOIN words w ON w.id = uwp.word_id");
+  });
+
+  it("getDayWords（reviewed）：按词去重的子查询分支", async () => {
+    mock.setRowMap({
+      "DISTINCT rl.word_id": [
+        { id: "w2", slug: "ample", title: "ample", lemma: "ample", short_definition: null, total: "1" },
+      ],
+    });
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    const result = await repos.stats.getDayWords("u1", "wb1", "2026-10-07", "reviewed", 50);
+
+    expect(result.total).toBe(1);
+    expect(result.items[0].shortDefinition).toBeNull();
+    expect(mock.lastQuery!.text).toContain("DISTINCT rl.word_id");
+  });
+
+  it("getDayWords：零行时 total=0（不 NaN）", async () => {
+    mock.setRowMap({});
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    const result = await repos.stats.getDayWords("u1", "wb1", "2026-10-08", "due", 50);
+
+    expect(result).toEqual({ total: 0, items: [] });
+  });
+  });
+
   it("locks the answer/activity split: window counters filter rating, streak does not", async () => {
     mapStandardQueries([{ promoted: "12", due_now: "3", weak_signal: "4", l2_reviewed_today: "6" }]);
     const repos = createRepositories();
