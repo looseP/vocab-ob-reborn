@@ -67,8 +67,11 @@ describe("existing local volume role upgrade", () => {
     //       one-active 索引 + RLS + 四权 GRANT）。
     // 0051: hulu_plans.protocol_version/include_new_words + hulu_rounds.kind/
     //       word_set_fingerprint + round_no CHECK 下界 1→0（ADR-0041 Amendment 2：
-    //       曝光轮 R12 + 可比较轮 R13）。本迁移使其为 52。
-    expect(authoritativeMigrationCount()).toBe(52);
+    //       曝光轮 R12 + 可比较轮 R13）。
+    // 0052: root_lexicon 词根词典表（P1-C 词根词缀深化：核心义 + 变体族；
+    //       全局共享只读模型同 tags——RLS public read + vocab_app 仅 SELECT，
+    //       写入走 seed 脚本的 migration 角色）。本迁移使其为 53。
+    expect(authoritativeMigrationCount()).toBe(53);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
