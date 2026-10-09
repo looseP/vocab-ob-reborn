@@ -22,6 +22,7 @@ import type {
   PaginatedResult,
   PlazaWordRow,
   RootFamilyGroupRow,
+  RootMasteryFamilyRow,
   SemanticFieldGroupRow,
   WordRow,
   WordSummary,
@@ -416,6 +417,68 @@ export class WordRepository extends BaseRepository implements IWordRepository {
   }
 
   /**
+   * 词汇广场（0052 / P1-C）：按 token 批量取词根词典（核心义 + 变体族）。
+   * 全局共享只读表（RLS public read）；未命中返回空 Map，调用方降级展示。
+   */
+  async findRootLexiconByTokens(
+    tokens: string[],
+  ): Promise<Map<string, { meaningZh: string; variants: string[] }>> {
+    if (tokens.length === 0) return new Map();
+    const rows = await this.query<{ token: string; meaning_zh: string; variants: string[] | null }>(
+      `SELECT token, meaning_zh, variants FROM root_lexicon WHERE token = ANY($1::text[])`,
+      [tokens],
+    );
+    return new Map(
+      rows.map((row) => [row.token, { meaningZh: row.meaning_zh, variants: row.variants ?? [] }]),
+    );
+  }
+
+  /**
+   * 词汇广场（P2-2）：词根家族掌握矩阵——一次查询全部（或指定）家族的
+   * mastered(review)/learning(learning+relearning) 分档。token 提取口径与
+   * findRootFamilyGroups 一致；未学前端按 total - mastered - learning 派生
+   * （suspended 并入未学，三段恒等于家族词数）。
+   * user_word_progress 是 owner-scoped RLS 表，须在携带 actorId=userId 的事务内执行。
+   */
+  async findRootMasteryMatrix(
+    userId: string,
+    opts: { minCount?: number; tokens?: string[] } = {},
+  ): Promise<RootMasteryFamilyRow[]> {
+    const params: unknown[] = [userId];
+    const tokenExpr = `btrim(lower(substring(btrim(part) FROM '^[^ (（+]+')))`;
+    const where = [
+      `w.is_published = true`,
+      `w.is_deleted = false`,
+      `w.definition_md <> ''`,
+      `w.metadata->>'morphology_root' IS NOT NULL`,
+      `w.metadata->>'morphology_root' NOT IN ('', 'EMPTY')`,
+      `${tokenExpr} ~ '^[a-z]{2,}$'`,
+    ];
+    if (opts.tokens && opts.tokens.length > 0) {
+      params.push(opts.tokens.map((token) => token.toLowerCase()));
+      where.push(`${tokenExpr} = ANY($${params.length}::text[])`);
+    }
+    params.push(Math.max(1, opts.minCount ?? 1));
+    return this.query<RootMasteryFamilyRow>(
+      `SELECT t.token,
+              count(*)::int AS total,
+              count(*) FILTER (WHERE p.state = 'review')::int AS mastered,
+              count(*) FILTER (WHERE p.state IN ('learning','relearning'))::int AS learning
+       FROM (
+         SELECT DISTINCT ${tokenExpr} AS token, w.id AS word_id
+         FROM words w
+         CROSS JOIN LATERAL unnest(string_to_array(w.metadata->>'morphology_root', '+')) AS part
+         WHERE ${where.join(" AND ")}
+       ) t
+       LEFT JOIN user_word_progress p ON p.word_id = t.word_id AND p.user_id = $1
+       GROUP BY t.token
+       HAVING count(*) >= $${params.length}
+       ORDER BY t.token`,
+      params,
+    );
+  }
+
+  /**
    * 词汇广场（P4）：取某语义场 source_path 前缀下的全部已发布词（含 updated_at）。
    */
   async findBySourcePathPrefix(prefix: string): Promise<PlazaWordRow[]> {
@@ -432,17 +495,23 @@ export class WordRepository extends BaseRepository implements IWordRepository {
 
   /**
    * 词汇广场（P4 E1）：按 wordIds 聚合集合内复习统计。
-   * tracked = 有 user_word_progress 行；due = 非 suspended 且 due_at <= now()。
+   * tracked = 有 user_word_progress 行；due = 非 suspended 且 due_at <= now()；
+   * mastered = FSRS review 态（已毕业）；learning = learning + relearning（学习中）。
    * user_word_progress 是 owner-scoped RLS 表，本方法必须在携带 actorId=userId
    * 的事务内执行（PlazaService 的 withActorWords 已保证）。
    */
-  async countReviewStatsByWordIds(userId: string, wordIds: string[]): Promise<{ tracked: number; due: number }> {
-    if (wordIds.length === 0) return { tracked: 0, due: 0 };
-    const row = await this.queryOne<{ tracked: string; due: string }>(
+  async countReviewStatsByWordIds(
+    userId: string,
+    wordIds: string[],
+  ): Promise<{ tracked: number; due: number; mastered: number; learning: number }> {
+    if (wordIds.length === 0) return { tracked: 0, due: 0, mastered: 0, learning: 0 };
+    const row = await this.queryOne<{ tracked: string; due: string; mastered: string; learning: string }>(
       `SELECT
          count(*) FILTER (WHERE p.id IS NOT NULL)::int AS tracked,
          count(*) FILTER (WHERE p.id IS NOT NULL AND p.state <> 'suspended'
-             AND p.due_at IS NOT NULL AND p.due_at <= now())::int AS due
+             AND p.due_at IS NOT NULL AND p.due_at <= now())::int AS due,
+         count(*) FILTER (WHERE p.state = 'review')::int AS mastered,
+         count(*) FILTER (WHERE p.state IN ('learning', 'relearning'))::int AS learning
        FROM unnest($1::uuid[]) AS wid(word_id)
        LEFT JOIN user_word_progress p
          ON p.word_id = wid.word_id AND p.user_id = $2`,
@@ -451,6 +520,8 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     return {
       tracked: row ? parseInt(row.tracked, 10) : 0,
       due: row ? parseInt(row.due, 10) : 0,
+      mastered: row ? parseInt(row.mastered, 10) : 0,
+      learning: row ? parseInt(row.learning, 10) : 0,
     };
   }
 

@@ -148,6 +148,7 @@ import {
   plazaCollectionResponseSchema,
   plazaOverviewResponseSchema,
   plazaRootsResponseSchema,
+  plazaRootsMasteryResponseSchema,
   plazaReviewStatsResponseSchema,
   rootCollectionDetailResponseSchema,
 } from "./plaza-response-contract";
@@ -261,6 +262,7 @@ import {
   wordsQuerySchema,
   wordSuggestQuerySchema,
   plazaQuerySchema,
+  plazaRootsMasteryQuerySchema,
   plazaRootsQuerySchema,
   l2TaskAnswerSchema,
   l2SelfAssessSchema,
@@ -491,6 +493,8 @@ export const apiOperations = [
   operation("get", "/api/plaza", "getPlazaOverview", "owner", "agent", "none", { query: plazaQuerySchema }, 200, plazaOverviewResponseSchema),
   operation("get", "/api/plaza/collections/:slug", "getPlazaCollection", "owner", "agent", "none", undefined, 200, plazaCollectionResponseSchema),
   operation("get", "/api/plaza/roots", "getPlazaRootsOverview", "owner", "agent", "none", { query: plazaRootsQuerySchema }, 200, plazaRootsResponseSchema),
+  // P2-2 掌握矩阵：静态路径，先于 /api/plaza/roots/:slug 匹配（Hono 注册顺序同理）。
+  operation("get", "/api/plaza/roots/mastery-matrix", "getPlazaRootsMasteryMatrix", "owner", "agent", "none", { query: plazaRootsMasteryQuerySchema }, 200, plazaRootsMasteryResponseSchema),
   operation("get", "/api/plaza/roots/:slug", "getPlazaRootCollection", "owner", "agent", "none", undefined, 200, rootCollectionDetailResponseSchema),
   operation("get", "/api/plaza/review-stats/:slug", "getPlazaReviewStats", "owner", "agent", "none", undefined, 200, plazaReviewStatsResponseSchema),
   operation("get", "/api/notes", "listNotes", "owner", "agent", "none", { query: noteListQuerySchema }, 200, noteListResponseSchema),

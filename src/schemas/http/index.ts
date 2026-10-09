@@ -85,6 +85,12 @@ export const plazaRootsQuerySchema = z.object({
   letter: z.string().regex(/^[a-zA-Z]$/).optional(),
 });
 
+/** P2-2 词根掌握矩阵查询参数：minCount 最小家族规模、tokens 逗号分隔的家族过滤。 */
+export const plazaRootsMasteryQuerySchema = z.object({
+  minCount: z.coerce.number().int().min(1).max(200).optional().default(1),
+  tokens: z.string().trim().max(500).optional(),
+});
+
 // Mirrors the manual sanitization in routes/words.ts POST /batch: every field
 // is optional (slug falls back to lemma, then title) and rows without a
 // non-empty sanitized slug are dropped server-side.

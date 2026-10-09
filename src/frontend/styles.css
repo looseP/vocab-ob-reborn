@@ -192,10 +192,16 @@ html {
 }
 
 body {
+  /* 背景层锚定视口（2026-10-09 修「同主题两页颜色深浅不一」）：
+     此前 attachment 默认 scroll，radial 的 transparent 32% 锚定 farthest-corner，
+     几何随文档高度拉伸——空态页（body≈1 屏）暖光只染左上角、词根长列表
+     （body 几十屏）首屏全落高浓度内圈，同一主题两页呈现明显色差。
+     fixed 后定位区域=视口，与文档高度/滚动位置无关，任意页面观感一致。 */
   background:
     var(--bg-body-radial-1),
     var(--bg-body-radial-2),
     var(--bg-body);
+  background-attachment: fixed;
   color: var(--color-ink);
   font-family: var(--font-body), sans-serif;
   transition: background 0.3s ease, color 0.2s ease;

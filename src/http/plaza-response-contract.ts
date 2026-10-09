@@ -61,6 +61,8 @@ export const rootFamilySummaryResponseSchema = z.object({
   kind: z.literal("root_affix"),
   count: z.number().int().nonnegative(),
   updatedAt: z.string(),
+  /** 核心义（0052 词典命中时；未命中 null，前端降级）。 */
+  meaning: z.string().nullable(),
 }).strict();
 
 export const plazaRootsResponseSchema = z.object({
@@ -80,11 +82,35 @@ export const rootCollectionDetailResponseSchema = z.object({
   count: z.number().int().nonnegative(),
   updatedAt: z.string(),
   type: z.enum(["simple", "compound", "mixed"]),
+  /** 核心义（0052 词典命中时；未命中 null，前端降级）。 */
+  meaning: z.string().nullable(),
+  /** 同族变体 token（0052 词典命中时；未命中空数组）。 */
+  variants: z.array(z.string()),
   words: z.array(rootWordCardResponseSchema),
 }).strict();
 
-/** 集合内复习统计（E1）：已追踪 / 待复习计数。 */
+/** 集合内复习统计（E1）：已追踪 / 待复习 / 掌握分档（P1-B 掌握环，additive）。 */
 export const plazaReviewStatsResponseSchema = z.object({
   tracked: z.number().int().nonnegative(),
   due: z.number().int().nonnegative(),
+  mastered: z.number().int().nonnegative(),
+  learning: z.number().int().nonnegative(),
+}).strict();
+
+/** P2-2 掌握矩阵家族行（未学 = total - mastered - learning，suspended 并入未学段）。 */
+export const rootMasteryFamilyResponseSchema = z.object({
+  token: z.string(),
+  slug: z.string(),
+  total: z.number().int().nonnegative(),
+  mastered: z.number().int().nonnegative(),
+  learning: z.number().int().nonnegative(),
+  /** 核心义（0052 词典命中时；未命中 null）。 */
+  meaning: z.string().nullable(),
+}).strict();
+
+/** P2-2 词根掌握矩阵响应（矩阵视图 + P2-3 图谱着色共用一份端点）。 */
+export const plazaRootsMasteryResponseSchema = z.object({
+  available: z.boolean(),
+  total: z.number().int().nonnegative(),
+  families: z.array(rootMasteryFamilyResponseSchema),
 }).strict();

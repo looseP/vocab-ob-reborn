@@ -1934,3 +1934,21 @@ export const huluRounds = pgTable("hulu_rounds", {
 	check("hulu_rounds_words_passed_check", sql`words_passed >= 0`),
 	check("hulu_rounds_words_total_check", sql`words_total >= 0`),
 ]);
+
+// 0052（P1-C 词根词缀深化）：词根词典——核心义 + 变体族。
+//
+// 全局共享只读数据（同 tags 的 public read 模型）：广场聚合仍从
+// words.metadata->>'morphology_root' 实时推导（自生长），本表只为**展示增强**
+// 补两类信息：① token 的核心义（家族页语义锚）；② 同族变体（port/porti、
+// spect/spic——词源音变合并，家族页可跨族跳转）。未命中时展示降级为现样。
+// 写入路径仅 seed 脚本（migration 角色）；vocab_app 只读（SELECT）。
+export const rootLexicon = pgTable("root_lexicon", {
+	token: text().primaryKey().notNull(),
+	meaningZh: text("meaning_zh").notNull(),
+	variants: text().array().default([]).notNull(),
+	notes: text(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, () => [
+	pgPolicy("root_lexicon_public_read", { as: "permissive", for: "select", to: ["public"], using: sql`true` }),
+]);

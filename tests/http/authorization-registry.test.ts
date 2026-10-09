@@ -310,7 +310,7 @@ describe("owner-only write inventory (D5 + D6 guard)", () => {
 const AGENT_READS = [
   // corpus / reference reads
   "listWords", "suggestWords", "getWord", "getWordNoteEntries",
-  "getPlazaOverview", "getPlazaCollection", "getPlazaRootsOverview", "getPlazaRootCollection", "getPlazaReviewStats",
+  "getPlazaOverview", "getPlazaCollection", "getPlazaRootsOverview", "getPlazaRootCollection", "getPlazaReviewStats", "getPlazaRootsMasteryMatrix",
   "listNotes", "listWordbooks", "getOrCreateDefaultWordbook",
   "getReviewQueue", "getReviewStats", "getReviewDashboardStats", "listReviewLeeches", "listReviewTimeline", "getReviewHeatmap", "getReviewDrillQueue",
   // M2 复习日历：两条只读端点（过去/今天/未来 + 单日列词），与其它 review 读同档。

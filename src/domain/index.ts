@@ -80,9 +80,18 @@ export interface PlazaCollectionDetail extends PlazaCollectionSummary {
   words: PlazaWordCard[];
 }
 
-/** 词根集合详情：摘要 + 词根结构词卡。 */
+/** 词根家族摘要（0052 词典增强：核心义命中时为字符串，未命中 null）。 */
+export interface RootFamilySummary extends PlazaCollectionSummary {
+  meaning: string | null;
+}
+
+/** 词根集合详情：摘要 + 词根结构词卡 + 词典增强（核心义 / 同族变体）。 */
 export interface RootCollectionDetail extends PlazaCollectionSummary {
   type: "simple" | "compound" | "mixed";
+  /** 核心义（0052 词典命中时；未命中为 null，前端降级不展示）。 */
+  meaning: string | null;
+  /** 同族变体 token（词典命中时；未命中为空数组）。 */
+  variants: string[];
   words: RootWordCard[];
 }
 
@@ -106,14 +115,40 @@ export interface PlazaOverview {
 export interface RootsOverview {
   available: boolean;
   counts: { showing: number; total: number };
-  collections: PlazaCollectionSummary[];
+  collections: RootFamilySummary[];
   total: number;
+}
+
+/** P2-2 词根掌握矩阵行（未学 = total - mastered - learning，前端派生；suspended 并入未学）。 */
+export interface RootMasteryFamilyRow {
+  token: string;
+  total: number;
+  mastered: number;
+  learning: number;
+}
+
+/** P2-2 词根掌握矩阵响应：全部（或指定）家族的掌握分档 + 词典核心义。 */
+export interface PlazaRootsMastery {
+  available: boolean;
+  total: number;
+  families: Array<{
+    token: string;
+    slug: string;
+    total: number;
+    mastered: number;
+    learning: number;
+    meaning: string | null;
+  }>;
 }
 
 /** 集合内复习统计（E1）：按 wordIds 聚合 user_word_progress。 */
 export interface PlazaReviewStats {
   tracked: number;
   due: number;
+  /** P1-B 族级掌握环：FSRS review 态（已毕业/已掌握）。 */
+  mastered: number;
+  /** P1-B 族级掌握环：learning + relearning（学习中）。 */
+  learning: number;
 }
 
 // ── Word ────────────────────────────────────────────────────────────────

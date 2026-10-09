@@ -23,7 +23,9 @@ function makeMockWordRepo(overrides: Partial<IWordRepository> = {}): IWordReposi
     findRootFamilyGroups: vi.fn(async () => []),
     findBySourcePathPrefix: vi.fn(async () => []),
     findByRootToken: vi.fn(async () => []),
-    countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 0, due: 0 })),
+    countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 0, due: 0, mastered: 0, learning: 0 })),
+    findRootLexiconByTokens: vi.fn(async () => new Map<string, { meaningZh: string; variants: string[] }>()),
+    findRootMasteryMatrix: vi.fn(async () => []),
     count: vi.fn(async () => 0),
     findSlugs: vi.fn(async () => []),
     lockStubWordById: vi.fn(async () => null),
@@ -289,6 +291,21 @@ describe("PlazaService.getRootsOverview", () => {
     // 三种不同 key → 各触发一次全量+过滤查库
     expect(repo.findRootFamilyGroups).toHaveBeenCalledTimes(6);
   });
+
+  it("attaches 0052 lexicon meaning when the family token is seeded（未命中为 null）", async () => {
+    const repo = makeMockWordRepo({
+      findRootFamilyGroups: vi.fn(async () => [{ root: "par", count: 6, updatedAt: "2026-08-28T00:00:00.000Z" }]),
+      findRootLexiconByTokens: vi.fn(
+        async () => new Map([["par", { meaningZh: "相等；使相等", variants: [] }]]),
+      ),
+    });
+    const { service } = makeService(repo);
+
+    const result = await service.getRootsOverview({ userId: "user-1", minCount: 3 });
+
+    expect(repo.findRootLexiconByTokens).toHaveBeenCalledWith(["par"]);
+    expect(result.collections[0]?.meaning).toBe("相等；使相等");
+  });
 });
 
 describe("PlazaService.getRootCollection", () => {
@@ -352,13 +369,73 @@ describe("PlazaService.getRootCollection", () => {
     expect(second).toEqual(first);
     expect(repo.findByRootToken).toHaveBeenCalledTimes(1);
   });
+
+  it("attaches 0052 lexicon meaning and variants for the family token", async () => {
+    const repo = makeMockWordRepo({
+      findByRootToken: vi.fn(async () => [WORD_ROW]),
+      findRootLexiconByTokens: vi.fn(
+        async () => new Map([["chart", { meaningZh: "纸；图表", variants: ["cart"] }]]),
+      ),
+    });
+    const { service } = makeService(repo);
+
+    const result = await service.getRootCollection({ userId: "user-1", slug: "root-chart" });
+
+    expect(repo.findRootLexiconByTokens).toHaveBeenCalledWith(["chart"]);
+    expect(result.meaning).toBe("纸；图表");
+    expect(result.variants).toEqual(["cart"]);
+  });
+});
+
+describe("PlazaService.getRootsMasteryMatrix", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns per-family mastered/learning buckets with lexicon meaning（未命中 null）", async () => {
+    const repo = makeMockWordRepo({
+      findRootMasteryMatrix: vi.fn(async () => [
+        { token: "port", total: 12, mastered: 2, learning: 1 },
+        { token: "spect", total: 9, mastered: 0, learning: 0 },
+      ]),
+      findRootLexiconByTokens: vi.fn(
+        async () => new Map([["port", { meaningZh: "携带；搬运", variants: ["porti"] }]]),
+      ),
+    });
+    const { service } = makeService(repo);
+
+    const result = await service.getRootsMasteryMatrix({ userId: "user-1", minCount: 3 });
+
+    expect(repo.findRootMasteryMatrix).toHaveBeenCalledWith("user-1", { minCount: 3, tokens: undefined });
+    expect(result.total).toBe(2);
+    expect(result.families[0]).toEqual({
+      token: "port",
+      slug: "root-port",
+      total: 12,
+      mastered: 2,
+      learning: 1,
+      meaning: "携带；搬运",
+    });
+    expect(result.families[1]?.meaning).toBeNull();
+  });
+
+  it("passes tokens through and caches by parameter key", async () => {
+    const repo = makeMockWordRepo({
+      findRootMasteryMatrix: vi.fn(async () => [{ token: "port", total: 12, mastered: 0, learning: 0 }]),
+    });
+    const { service } = makeService(repo);
+
+    await service.getRootsMasteryMatrix({ userId: "user-1", tokens: ["port"] });
+    await service.getRootsMasteryMatrix({ userId: "user-1", tokens: ["port"] });
+
+    expect(repo.findRootMasteryMatrix).toHaveBeenCalledTimes(1);
+    expect(repo.findRootMasteryMatrix).toHaveBeenCalledWith("user-1", { minCount: 1, tokens: ["port"] });
+  });
 });
 
 describe("PlazaService.getReviewStats", () => {
   it("aggregates review stats for a semantic-field slug", async () => {
     const repo = makeMockWordRepo({
       findBySourcePathPrefix: vi.fn(async () => [WORD_ROW]),
-      countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 3, due: 1 })),
+      countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 3, due: 1, mastered: 2, learning: 1 })),
     });
     const { service } = makeService(repo);
 
@@ -366,20 +443,20 @@ describe("PlazaService.getReviewStats", () => {
 
     expect(repo.findBySourcePathPrefix).toHaveBeenCalledWith("L1_雅思词汇/L1_雅思词汇_学校教育.md");
     expect(repo.countReviewStatsByWordIds).toHaveBeenCalledWith("user-1", ["w-1"]);
-    expect(stats).toEqual({ tracked: 3, due: 1 });
+    expect(stats).toEqual({ tracked: 3, due: 1, mastered: 2, learning: 1 });
   });
 
   it("aggregates review stats for a root-family slug", async () => {
     const repo = makeMockWordRepo({
       findByRootToken: vi.fn(async () => [WORD_ROW]),
-      countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 2, due: 0 })),
+      countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 2, due: 0, mastered: 1, learning: 0 })),
     });
     const { service } = makeService(repo);
 
     const stats = await service.getReviewStats({ userId: "user-1", slug: "root-chart" });
 
     expect(repo.findByRootToken).toHaveBeenCalledWith("chart");
-    expect(stats).toEqual({ tracked: 2, due: 0 });
+    expect(stats).toEqual({ tracked: 2, due: 0, mastered: 1, learning: 0 });
   });
 
   it("throws NotFound for an unknown collection", async () => {

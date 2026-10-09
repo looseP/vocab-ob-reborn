@@ -94,6 +94,7 @@
     "db:script:backfill-l1-snapshot": "tsx scripts/backfill-l1-content-hash-snapshot.ts",
     "db:script:fix-cambridge-mislabel": "tsx scripts/fix-cambridge-mislabel.ts",
     "db:script:clean-pending-web-verify": "tsx scripts/clean-source-pending-web-verify.ts",
+    "db:script:seed-root-lexicon": "tsx scripts/seed-root-lexicon.ts",
     "db:script:mine-l3-2025": "tsx scripts/mine-l3-contexts-2025.ts",
     "dev": "tsx watch src/server.ts",
     "mcp:server": "node scripts/run-mcp-server.mjs",

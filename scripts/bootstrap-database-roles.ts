@@ -381,6 +381,10 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     -- 零 FSRS：这两张表无 FSRS 列，授权不触及 user_word_progress / review_logs。
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hulu_plans TO vocab_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.hulu_rounds TO vocab_app;
+    -- 0052（P1-C）：词根词典（全局共享只读数据——核心义 + 变体族）。只有读路径
+    -- （广场家族页展示增强）；写入走 seed 脚本，以 owner（vocab_migration）执行，
+    -- owner 天然绕过 RLS，无需为写入角色另建 policy。
+    GRANT SELECT ON TABLE public.root_lexicon TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;
