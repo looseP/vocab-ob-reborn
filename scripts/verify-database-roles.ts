@@ -413,6 +413,8 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       "public.llm_usage": ["SELECT", "INSERT", "UPDATE"],
       "public.collection_notes": ["SELECT"],
       "public.tags": ["SELECT"],
+      // 0052：词根词典（全局共享只读；写入走 seed 脚本的 migration 角色）。
+      "public.root_lexicon": ["SELECT"],
       "public.word_filter_facets": ["SELECT"],
       "public.word_tags": ["SELECT"],
       // UPDATE 供 SELECT ... FOR UPDATE 行锁使用（圈记/上下文锁定路径）
