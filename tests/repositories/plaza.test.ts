@@ -158,3 +158,45 @@ describe("WordRepository.countReviewStatsByWordIds", () => {
     expect(stats).toEqual({ tracked: 5, due: 2, mastered: 3, learning: 1 });
   });
 });
+
+describe("WordRepository.findRootMasteryMatrix", () => {
+  it("buckets per-family mastered/learning with minCount in HAVING", async () => {
+    mock.setRows([{ token: "port", total: 12, mastered: 2, learning: 1 }]);
+    const repository = new WordRepository();
+
+    const rows = await repository.findRootMasteryMatrix("user-1", { minCount: 3 });
+
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("SELECT t.token");
+    expect(query.text).toContain("count(*)::int AS total");
+    expect(query.text).toContain("count(*) FILTER (WHERE p.state = 'review')::int AS mastered");
+    expect(query.text).toContain("count(*) FILTER (WHERE p.state IN ('learning','relearning'))::int AS learning");
+    expect(query.text).toContain("SELECT DISTINCT btrim(lower(substring(btrim(part) FROM '^[^ (（+]+'))) AS token, w.id AS word_id");
+    expect(query.text).toContain("LEFT JOIN user_word_progress p ON p.word_id = t.word_id AND p.user_id = $1");
+    expect(query.text).toContain("HAVING count(*) >= $2");
+    expect(query.text).toContain("ORDER BY t.token");
+    expect(query.params).toEqual(["user-1", 3]);
+    expect(rows).toEqual([{ token: "port", total: 12, mastered: 2, learning: 1 }]);
+  });
+
+  it("appends a tokens whitelist filter with lowercase normalization", async () => {
+    mock.setRows([]);
+    const repository = new WordRepository();
+
+    await repository.findRootMasteryMatrix("user-1", { minCount: 1, tokens: ["port", "spect"] });
+
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("= ANY($2::text[])");
+    expect(query.params).toEqual(["user-1", ["port", "spect"], 1]);
+  });
+
+  it("defaults minCount to 1 and keeps userId as the first param", async () => {
+    mock.setRows([]);
+    const repository = new WordRepository();
+
+    await repository.findRootMasteryMatrix("user-1");
+
+    const query = mock.lastQuery!;
+    expect(query.params).toEqual(["user-1", 1]);
+  });
+});
