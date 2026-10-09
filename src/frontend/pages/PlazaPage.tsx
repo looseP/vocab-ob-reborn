@@ -5,6 +5,7 @@ import { Input } from "@/frontend/components/ui/Input";
 import { Card } from "@/frontend/components/ui/Card";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Spinner } from "@/frontend/components/ui/Spinner";
+import { RootMasteryMatrix } from "@/frontend/components/plaza/RootMasteryMatrix";
 import { apiFetch } from "@/frontend/api/client";
 
 type PlazaKind = "semantic_field" | "root_affix";
@@ -15,6 +16,8 @@ interface PlazaCollectionSummary {
   kind: PlazaKind;
   count: number;
   updatedAt: string;
+  /** 核心义（词根家族词典命中时；语义场集合无此字段）。 */
+  meaning?: string | null;
 }
 interface PlazaGroup {
   kind: PlazaKind;
@@ -60,6 +63,8 @@ function formatDate(value: string): string {
 
 export function PlazaPage() {
   const [kind, setKind] = useState<PlazaKind>("semantic_field");
+  // P2-2：词根 tab 的列表/掌握矩阵视图切换（语义场 tab 恒为卡片）
+  const [rootView, setRootView] = useState<"cards" | "matrix">("cards");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [minCount, setMinCount] = useState<number>(3);
@@ -191,7 +196,10 @@ export function PlazaPage() {
               <button
                 key={opt.value}
                 type="button"
-                onClick={() => setKind(opt.value)}
+                onClick={() => {
+                  setKind(opt.value);
+                  setRootView("cards");
+                }}
                 className={`flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium transition-colors ${
                   kind === opt.value
                     ? "bg-[var(--color-surface-muted)] text-[var(--color-accent)]"
@@ -307,9 +315,40 @@ export function PlazaPage() {
                 {data.label}
               </h2>
             </div>
-            <p className="text-sm text-[var(--color-ink-soft)]">{data.count} 个{isRoot ? "家族" : "主题"}</p>
+            <div className="flex items-center gap-3">
+              {isRoot && (
+                <div className="inline-flex overflow-hidden rounded-xl border border-[var(--color-border)]">
+                  <button
+                    type="button"
+                    onClick={() => setRootView("cards")}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      rootView === "cards"
+                        ? "bg-[var(--color-surface-muted)] text-[var(--color-accent)]"
+                        : "text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-glass-hover)]"
+                    }`}
+                  >
+                    卡片
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRootView("matrix")}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      rootView === "matrix"
+                        ? "bg-[var(--color-surface-muted)] text-[var(--color-accent)]"
+                        : "text-[var(--color-ink-soft)] hover:bg-[var(--color-surface-glass-hover)]"
+                    }`}
+                  >
+                    掌握矩阵
+                  </button>
+                </div>
+              )}
+              <p className="text-sm text-[var(--color-ink-soft)]">{data.count} 个{isRoot ? "家族" : "主题"}</p>
+            </div>
           </div>
 
+          {isRoot && rootView === "matrix" ? (
+            <RootMasteryMatrix minCount={minCount} />
+          ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {data.collections.map((collection) => (
               <Link key={collection.slug} to={`/plaza/${encodeURIComponent(collection.slug)}`}>
@@ -323,6 +362,10 @@ export function PlazaPage() {
                   <h3 className="section-title mt-4 text-xl font-bold text-[var(--color-ink)]">
                     {isRoot ? `-${collection.title}-` : collection.title}
                   </h3>
+                  {/* 0052 词典增强：核心义（未命中不渲染） */}
+                  {isRoot && collection.meaning && (
+                    <p className="mt-1.5 text-xs text-[var(--color-ink-soft)]">核心义：{collection.meaning}</p>
+                  )}
                   <div className="mt-3 flex items-center gap-2">
                     <Badge>{isRoot ? `家族 ${collection.count} 词` : `关联词条 ${collection.count}`}</Badge>
                   </div>
@@ -333,6 +376,7 @@ export function PlazaPage() {
               </Link>
             ))}
           </div>
+          )}
         </section>
       ) : null}
     </div>

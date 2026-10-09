@@ -82,6 +82,7 @@ import type {
   SemanticFieldGroupRow,
   PlazaWordRow,
   RootFamilyGroupRow,
+  RootMasteryFamilyRow,
   Json,
 } from "../domain";
 import type {
@@ -137,10 +138,29 @@ export interface IWordRepository {
   /** 词汇广场（P4）：取词根 token 命中（作为 morphology_root 任一部分）的全部已发布词。 */
   findByRootToken(token: string): Promise<PlazaWordRow[]>;
   /**
-   * 词汇广场（P4 E1）：按 wordIds 聚合集合内的复习统计（已追踪 / 待复习）。
+   * 词汇广场（P4 E1）：按 wordIds 聚合集合内的复习统计（已追踪 / 待复习 /
+   * 掌握分档 P1-B：mastered=review 态，learning=learning+relearning）。
    * user_word_progress 走 owner RLS，必须在携带 actorId=userId 的事务内执行。
    */
-  countReviewStatsByWordIds(userId: string, wordIds: string[]): Promise<{ tracked: number; due: number }>;
+  countReviewStatsByWordIds(
+    userId: string,
+    wordIds: string[],
+  ): Promise<{ tracked: number; due: number; mastered: number; learning: number }>;
+  /**
+   * 词汇广场（0052 / P1-C）：按 token 批量取词根词典（核心义 + 变体族）。
+   * 全局共享只读表（RLS public read）；未命中返回空 Map。
+   */
+  findRootLexiconByTokens(
+    tokens: string[],
+  ): Promise<Map<string, { meaningZh: string; variants: string[] }>>;
+  /**
+   * 词汇广场（P2-2）：词根家族掌握矩阵（mastered/learning 分档）。
+   * 须在携带 actorId=userId 的事务内执行（owner-scoped RLS 表）。
+   */
+  findRootMasteryMatrix(
+    userId: string,
+    opts?: { minCount?: number; tokens?: string[] },
+  ): Promise<RootMasteryFamilyRow[]>;
   count(): Promise<number>;
   findSlugs(limit?: number): Promise<string[]>;
   /**

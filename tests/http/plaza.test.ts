@@ -6,6 +6,7 @@ import {
   plazaOverviewResponseSchema,
   plazaCollectionResponseSchema,
   plazaRootsResponseSchema,
+  plazaRootsMasteryResponseSchema,
   plazaReviewStatsResponseSchema,
   rootCollectionDetailResponseSchema,
 } from "@/http/plaza-response-contract";
@@ -67,6 +68,7 @@ function makeMockServices(): Services {
           kind: "root_affix",
           count: 6,
           updatedAt: "2026-08-28T00:00:00.000Z",
+          meaning: "纸；图表",
         }],
         total: 1,
       }),
@@ -77,6 +79,8 @@ function makeMockServices(): Services {
         count: 1,
         updatedAt: "2026-08-28T00:00:00.000Z",
         type: "simple",
+        meaning: "纸；图表",
+        variants: ["cart"],
         words: [{
           id: "w-1",
           slug: "abound",
@@ -89,7 +93,15 @@ function makeMockServices(): Services {
           suffix: null,
         }],
       }),
-      getReviewStats: vi.fn().mockResolvedValue({ tracked: 5, due: 2 }),
+      getRootsMasteryMatrix: vi.fn().mockResolvedValue({
+        available: true,
+        total: 2,
+        families: [
+          { token: "port", slug: "root-port", total: 12, mastered: 2, learning: 1, meaning: "携带；搬运" },
+          { token: "spect", slug: "root-spect", total: 9, mastered: 0, learning: 0, meaning: null },
+        ],
+      }),
+      getReviewStats: vi.fn().mockResolvedValue({ tracked: 5, due: 2, mastered: 3, learning: 1 }),
     },
   } as unknown as Services;
 }
@@ -132,6 +144,8 @@ describe("GET /api/plaza/roots", () => {
     expect(res.status).toBe(200);
     const body = plazaRootsResponseSchema.parse(await res.json());
     expect(body.collections[0].slug).toBe("root-chart");
+    // 0052 词典增强：家族摘要带核心义
+    expect(body.collections[0].meaning).toBe("纸；图表");
     expect(services.plaza.getRootsOverview).toHaveBeenCalledWith({
       userId: "user-123",
       minCount: 5,
@@ -150,6 +164,38 @@ describe("GET /api/plaza/roots", () => {
       minCount: 3,
       q: undefined,
       letter: undefined,
+    });
+  });
+});
+
+describe("GET /api/plaza/roots/mastery-matrix", () => {
+  it("returns the mastery matrix matching the response contract（路由先于 /roots/:slug，slug 路由不会吞掉该路径）", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/plaza/roots/mastery-matrix?minCount=3&tokens=port,spect", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const body = plazaRootsMasteryResponseSchema.parse(await res.json());
+    expect(body.total).toBe(2);
+    expect(body.families[0]?.meaning).toBe("携带；搬运");
+    expect(services.plaza.getRootsMasteryMatrix).toHaveBeenCalledWith({
+      userId: "user-123",
+      minCount: 3,
+      tokens: ["port", "spect"],
+    });
+  });
+
+  it("defaults minCount to 1 and normalizes/dedupes/validates tokens", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request(
+      "/api/plaza/roots/mastery-matrix?tokens=PORT, port ,x,port&minCount=2",
+      { headers: AUTH_HEADERS },
+    );
+    expect(res.status).toBe(200);
+    expect(services.plaza.getRootsMasteryMatrix).toHaveBeenCalledWith({
+      userId: "user-123",
+      minCount: 2,
+      tokens: ["port"],
     });
   });
 });
@@ -182,6 +228,9 @@ describe("GET /api/plaza/collections/:slug", () => {
     const body = rootCollectionDetailResponseSchema.parse(await res.json());
     expect(body.kind).toBe("root_affix");
     expect(body.type).toBe("simple");
+    // 0052 词典增强：详情带核心义与同族变体
+    expect(body.meaning).toBe("纸；图表");
+    expect(body.variants).toEqual(["cart"]);
     expect(body.words[0]).toMatchObject({ root: "chart (from Late Latin charta)", prefix: null, suffix: null });
     expect(services.plaza.getRootCollection).toHaveBeenCalledWith({ userId: "user-123", slug: "root-chart" });
   });
@@ -194,7 +243,7 @@ describe("GET /api/plaza/review-stats/:slug", () => {
     const res = await app.request("/api/plaza/review-stats/semantic-%E5%AD%A6%E6%A0%A1%E6%95%99%E8%82%B2", { headers: AUTH_HEADERS });
     expect(res.status).toBe(200);
     const body = plazaReviewStatsResponseSchema.parse(await res.json());
-    expect(body).toEqual({ tracked: 5, due: 2 });
+    expect(body).toEqual({ tracked: 5, due: 2, mastered: 3, learning: 1 });
     expect(services.plaza.getReviewStats).toHaveBeenCalledWith({ userId: "user-123", slug: "semantic-学校教育" });
   });
 

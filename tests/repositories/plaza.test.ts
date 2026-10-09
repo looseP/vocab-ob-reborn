@@ -136,12 +136,12 @@ describe("WordRepository.countReviewStatsByWordIds", () => {
 
     const stats = await repository.countReviewStatsByWordIds("user-1", []);
 
-    expect(stats).toEqual({ tracked: 0, due: 0 });
+    expect(stats).toEqual({ tracked: 0, due: 0, mastered: 0, learning: 0 });
     expect(mock.calls).toHaveLength(0);
   });
 
-  it("left-joins user_word_progress and counts tracked/due with FILTER", async () => {
-    mock.setRows([{ tracked: "5", due: "2" }]);
+  it("left-joins user_word_progress and counts tracked/due/mastered/learning with FILTER", async () => {
+    mock.setRows([{ tracked: "5", due: "2", mastered: "3", learning: "1" }]);
     const repository = new WordRepository();
 
     const stats = await repository.countReviewStatsByWordIds("user-1", ["w-1", "w-2"]);
@@ -152,7 +152,9 @@ describe("WordRepository.countReviewStatsByWordIds", () => {
     expect(query.text).toContain("p.word_id = wid.word_id AND p.user_id = $2");
     expect(query.text).toContain("p.state <> 'suspended'");
     expect(query.text).toContain("p.due_at <= now()");
+    expect(query.text).toContain("p.state = 'review'");
+    expect(query.text).toContain("p.state IN ('learning', 'relearning')");
     expect(query.params).toEqual([["w-1", "w-2"], "user-1"]);
-    expect(stats).toEqual({ tracked: 5, due: 2 });
+    expect(stats).toEqual({ tracked: 5, due: 2, mastered: 3, learning: 1 });
   });
 });

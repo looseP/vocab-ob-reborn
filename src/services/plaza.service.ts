@@ -19,10 +19,12 @@ import type {
   PlazaKind,
   PlazaOverview,
   PlazaReviewStats,
+  PlazaRootsMastery,
   PlazaWordCard,
   PlazaWordRow,
   RootCollectionDetail,
   RootFamilyGroupRow,
+  RootFamilySummary,
   RootsOverview,
   RootWordCard,
   SemanticFieldGroupRow,
@@ -114,13 +116,14 @@ function toCollectionSummary(row: SemanticFieldGroupRow): PlazaCollectionSummary
   };
 }
 
-function toRootCollectionSummary(row: RootFamilyGroupRow): PlazaCollectionSummary {
+function toRootCollectionSummary(row: RootFamilyGroupRow, meaning: string | null): RootFamilySummary {
   return {
     slug: toRootSlug(row.root),
     title: row.root,
     kind: "root_affix",
     count: row.count,
     updatedAt: row.updatedAt,
+    meaning,
   };
 }
 
@@ -212,7 +215,11 @@ export class PlazaService {
         words.findRootFamilyGroups({ minCount: min }),
         words.findRootFamilyGroups({ minCount: min, q, letter }),
       ]);
-      const collections = filteredGroups.map(toRootCollectionSummary);
+      // 0052 词典增强：批量取核心义（未命中的家族 meaning = null，前端降级为现样）。
+      const lexicon = await words.findRootLexiconByTokens(filteredGroups.map((row) => row.root));
+      const collections = filteredGroups.map((row) =>
+        toRootCollectionSummary(row, lexicon.get(row.root)?.meaningZh ?? null),
+      );
       return {
         available: true,
         counts: { showing: collections.length, total: allGroups.length },
@@ -222,6 +229,41 @@ export class PlazaService {
     });
     this.cache.set(cacheKey, overview);
     return overview;
+  }
+
+  /**
+   * 词根家族掌握矩阵（P2-2）：全部（或指定 tokens）家族的 mastered/learning 分档
+   * + 词典核心义。未学 = total - mastered - learning（suspended 并入未学段）。
+   * tokens 过滤供 P2-3 邻域图着色复用（只取相关家族，避免全量）。
+   */
+  async getRootsMasteryMatrix(params: {
+    userId: string;
+    minCount?: number;
+    tokens?: string[];
+  }): Promise<PlazaRootsMastery> {
+    const min = Math.max(1, params.minCount ?? 1);
+    const tokensKey = (params.tokens ?? []).join(",");
+    const cacheKey = `mastery:roots:${min}:${tokensKey}`;
+    const cached = this.cache.get<PlazaRootsMastery>(cacheKey);
+    if (cached) return cached;
+    const matrix = await this.withActorWords(params.userId, async (words) => {
+      const rows = await words.findRootMasteryMatrix(params.userId, { minCount: min, tokens: params.tokens });
+      const lexicon = await words.findRootLexiconByTokens(rows.map((row) => row.token));
+      return {
+        available: true,
+        total: rows.length,
+        families: rows.map((row) => ({
+          token: row.token,
+          slug: toRootSlug(row.token),
+          total: row.total,
+          mastered: row.mastered,
+          learning: row.learning,
+          meaning: lexicon.get(row.token)?.meaningZh ?? null,
+        })),
+      };
+    });
+    this.cache.set(cacheKey, matrix);
+    return matrix;
   }
 
   async getCollection(params: { userId: string; slug: string }): Promise<PlazaCollectionDetail> {
@@ -268,6 +310,9 @@ export class PlazaService {
         throw new NotFoundError("PlazaCollection", slug);
       }
       const firstUpdated = rows.reduce((acc, row) => (row.updated_at > acc ? row.updated_at : acc), rows[0].updated_at);
+      // 0052 词典增强：核心义 + 同族变体（未命中时 meaning = null / variants = []）。
+      const lexicon = await words.findRootLexiconByTokens([token]);
+      const entry = lexicon.get(token);
       return {
         slug,
         title: token,
@@ -275,6 +320,8 @@ export class PlazaService {
         count: rows.length,
         updatedAt: firstUpdated,
         type: classifyRootFamily(rows),
+        meaning: entry?.meaningZh ?? null,
+        variants: entry?.variants ?? [],
         words: rows.map(toRootWordCard),
       };
     });

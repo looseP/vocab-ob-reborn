@@ -12,7 +12,7 @@
 import { Hono } from "hono";
 import type { Services } from "@/services";
 import type { AuthRole, Principal } from "@/http/middleware/auth";
-import { plazaQuerySchema, plazaRootsQuerySchema } from "@/schemas/http";
+import { plazaQuerySchema, plazaRootsMasteryQuerySchema, plazaRootsQuerySchema } from "@/schemas/http";
 import { validationError } from "../error-response";
 
 export type PlazaAppEnv = {
@@ -51,6 +51,29 @@ export function plazaRoutes(services: Services) {
       minCount: parsed.data.minCount,
       q: parsed.data.q,
       letter: parsed.data.letter,
+    });
+    return c.json(result);
+  });
+
+  // GET /roots/mastery-matrix — 词根家族掌握矩阵（P2-2 矩阵视图 / P2-3 图谱着色）。
+  // ⚠️ 必须注册在 /roots/:slug 之前，否则 "mastery-matrix" 会被当 slug 吞掉。
+  app.get("/roots/mastery-matrix", async (c) => {
+    const parsed = plazaRootsMasteryQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) {
+      return validationError(c, parsed.error.flatten());
+    }
+    const tokens = parsed.data.tokens
+      ? [...new Set(
+          parsed.data.tokens
+            .split(",")
+            .map((token) => token.trim().toLowerCase())
+            .filter((token) => /^[a-z]{2,}$/.test(token)),
+        )]
+      : undefined;
+    const result = await services.plaza.getRootsMasteryMatrix({
+      userId: c.get("userId"),
+      minCount: parsed.data.minCount,
+      tokens,
     });
     return c.json(result);
   });
