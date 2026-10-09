@@ -208,7 +208,8 @@ describe("ReviewRepository 鈥?rebuild read methods", () => {
     expect(q.text).toContain("JOIN words w ON w.id = rl.word_id");
     // 统一口径：时间线时间字段为 reviewed_at（响应仍以 created_at 字段名暴露）
     expect(q.text).toContain("rl.reviewed_at AS created_at");
-    expect(q.text).toContain("ORDER BY rl.reviewed_at DESC");
+    // 批次 1：二级排序 rl.id —— 同刻多条（批量作答）顺序确定性；整句断言防回退
+    expect(q.text).toContain("ORDER BY rl.reviewed_at DESC, rl.id DESC");
     // 过滤非评分动作（skip/suspend/undo 的 rating=NULL），避免 "null" 徽标
     expect(q.text).toContain("rl.rating IS NOT NULL");
     expect(q.params).toEqual(["u1", "wb1", 50]);

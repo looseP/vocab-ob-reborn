@@ -37,16 +37,24 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
           [userId, wordbookId],
         ),
         // 一次往返出两个指标（保持「8 并行查询 + 1 streak」的调用数不变）：
-        //  - `due_count`「今天待复习」：到期且**未挂起**。挂起词不计待复习 —— 复习队列
-        //    本来就排除它们，此前仪表盘不排除 ⇒ 同一件事两个数（D4）。
+        //  - `due_count`「今天待复习」：**今天（显示时区日历日）内到期**且未挂起的卡片。
+        //    批次 3（2026-10-09）收口：此前是 `due_at <= now()`（时刻口径），而日历
+        //    「今天待做」/ forecast.dueNow 是日历日口径 —— 「今天晚些时候到期」的词
+        //    日历含、顶卡不含，同一件事两个数。现改为 `due_at < 今天零点 + 1 天`
+        //    （等价于 `due 日 <= 今天`），与日历今天桶**逐字等价**。
+        //    注意：复习**队列**仍是时刻口径（`due_at <= now()`，只能复习已到点的卡），
+        //    队列总数与口径差异由 `queueHeadline` 的文案负责讲清（"会被你看见的那个数"）。
+        //    挂起词不计待复习 —— 复习队列本来就排除它们（D4）。
         //  - `mastered_count`「已掌握」：`state = 'review'` 的词数。**不是**
         //    `totalWords - dueToday`（那会把「今天没到期」当「已掌握」，见接口注释）。
         this.queryOne<{ due_count: string; mastered_count: string }>(
-          `SELECT count(*) FILTER (WHERE due_at IS NOT NULL AND due_at <= now() AND state <> 'suspended') AS due_count,
+          `SELECT count(*) FILTER (WHERE due_at IS NOT NULL
+                                     AND due_at < $3::timestamptz + interval '1 day'
+                                     AND state <> 'suspended') AS due_count,
                   count(*) FILTER (WHERE state = 'review') AS mastered_count
              FROM user_word_progress
             WHERE user_id = $1 AND wordbook_id = $2::uuid`,
-          [userId, wordbookId],
+          [userId, wordbookId, todayIso],
         ),
         // 作答口径（CONTEXT.md「Event log semantics」）：reviewedToday/7d/30d 只计
         // 作答事件，rating IS NULL 的非作答事件（L2 seed 审计行）不计入。
@@ -134,8 +142,9 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
    *    「未来 7 天预计复习」比「今天待复习」还少。累计口径同时给出
    *    dueNow ≤ due7d ≤ due14d 的单调性。
    * ③ **排除 `suspended`**：挂起词不会被复习队列取出（`review.repository` 的队列 SQL
-   *    一律 `state != 'suspended'`），预测里算上它们是虚报。注意 `dueToday` 口径**没有**
-   *    这条过滤（既有差异，本方法不动它；自用栈当前 0 个挂起词，未显现）。
+   *    一律 `state != 'suspended'`），预测里算上它们是虚报。`dueToday` 自 D4 修复起
+   *    同样排除挂起，且自批次 3（2026-10-09）起与 `dueNow` 同为**日历日**口径
+   *    （`due_at < 今天零点 + 1 天`）——「今天待做」≤「7 天」≤「14 天」可直接读增量。
    *
    * 单条往返：一次 `unnest` 出所有 horizon，每个 horizon 一个标量子查询。
    */
@@ -169,6 +178,9 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
    * 两条口径与 `getDueForecast` / `dueToday` 保持一致，否则日历与卡片会对不上：
    * ① 日历日边界 = Asia/Shanghai（`AT TIME ZONE` 切日，非 UTC）；
    * ② `state <> 'suspended'` 不计（挂起词不会被队列取出）。
+   *
+   * 批次 3（2026-10-09）起「今天」桶与 `dueToday` **完全等价**（`due 日 <= 今天`
+   * ⟺ `due_at < 明天零点`）—— 顶卡「今日待复习」与「今天待做」徽标永远同数。
    *
    * **积压并入「今天」**：`due_at < 今天零点` 的到期词（2026-10-07 实测自用栈 14 张全属此类）
    * 用 `greatest(日, 今天)` 归到今天那一桶 —— 它们今天就要做，日历上空着会让

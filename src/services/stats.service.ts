@@ -100,9 +100,11 @@ export class StatsService {
   /**
    * M1（2026-10-07）：真实到期预测 —— 查 `due_at` 的日历日累计桶，再交纯函数组装。
    *
-   * 为什么签名里带 `summary`：`dueNow` 沿用调用方已取的 `summary.dueToday`
-   * （口径与数值都不变），这样路由只需把同一份 summary 传进来，**不必改结构、也不必
-   * 多取一次 summary**（`src/http/routes/review.ts` 受路由棘轮按基线冻结，不能增行）。
+   * 为什么签名里带 `summary`：`dueNow` 沿用调用方已取的 `summary.dueToday`，
+   * 这样路由只需把同一份 summary 传进来，**不必改结构、也不必多取一次 summary**
+   * （`src/http/routes/review.ts` 受路由棘轮按基线冻结，不能增行）。
+   * 批次 3（2026-10-09）起 `dueToday` 是日历日口径（`due_at < 明天零点`）——
+   * `dueNow` 与日历「今天待做」逐字一致，两者不再存在「今天晚些时候到期」的差数。
    */
   async getForecast(
     summary: DashboardSummary,
