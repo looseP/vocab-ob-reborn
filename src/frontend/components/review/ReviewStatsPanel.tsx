@@ -18,7 +18,18 @@ interface ReviewStats {
   };
 }
 
-export function ReviewStatsPanel() {
+export interface ReviewStatsPanelProps {
+  /**
+   * L2 轨统计（来自仪表盘汇总 `/review/stats/dashboard`，批次 2 起由父级传入）。
+   *
+   * 原「更多统计」整组 4 卡删除后，L2 的三个数字并入本卡尾部的一个条件块
+   * （与「阶梯会话」同款：无数据时整块不渲染）——L2 数字在页面上别处没有，
+   * 不能随复读卡一起删掉。
+   */
+  l2?: { promoted: number; dueNow: number; weakSignal: number; reviewedToday: number } | null;
+}
+
+export function ReviewStatsPanel({ l2 = null }: ReviewStatsPanelProps = {}) {
   const [stats, setStats] = useState<ReviewStats | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -48,7 +59,10 @@ export function ReviewStatsPanel() {
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4">
-        <div className="flex items-center gap-3">
+        <div
+          className="flex items-center gap-3"
+          title="仅 L1 轨（速刷 / 阶梯）的评分次数；含 L2 的全轨今日数见行动区「今日已复习」。"
+        >
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface-muted)]">
             <CheckCircle2 className="h-5 w-5 text-[var(--color-accent)]" />
           </div>
@@ -57,7 +71,7 @@ export function ReviewStatsPanel() {
             <p className="text-xl font-bold text-[var(--color-ink)]">{stats.todayCount}</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" title="仅 L1 轨的评分次数（建库以来累计）。">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--color-surface-muted)]">
             <Target className="h-5 w-5 text-[var(--color-accent-2)]" />
           </div>
@@ -115,6 +129,27 @@ export function ReviewStatsPanel() {
             <span>产出作答 <b className="text-[var(--color-ink)]">{stats.ladder.sessions}</b></span>
             <span>自选降档率 <b className="text-[var(--color-ink)]">{stats.ladder.downgradeRate != null ? `${Math.round(stats.ladder.downgradeRate * 100)}%` : "—"}</b></span>
             <span>平均错键 <b className="text-[var(--color-ink)]">{stats.ladder.avgWrongTimes != null ? stats.ladder.avgWrongTimes : "—"}</b></span>
+          </div>
+        </div>
+      )}
+
+      {/* L2 轨道（批次 2）：由父级传入的汇总统计；未启用（四项全 0）时整块不渲染 */}
+      {l2 && l2.promoted + l2.dueNow + l2.weakSignal + l2.reviewedToday > 0 && (
+        <div className="mt-6 border-t border-[var(--color-border)] pt-4" data-testid="l2-track-group">
+          <p className="mb-3 text-sm font-medium text-[var(--color-ink-soft)]">L2 轨道</p>
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="rounded-lg bg-[var(--color-surface-muted)] px-2 py-2">
+              <p className="text-[10px] text-[var(--color-ink-soft)]">已晋升</p>
+              <p className="text-lg font-bold text-[var(--color-ink)]">{l2.promoted}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--color-surface-muted)] px-2 py-2">
+              <p className="text-[10px] text-[var(--color-ink-soft)]">待辨析</p>
+              <p className="text-lg font-bold text-[var(--color-ink)]">{l2.dueNow}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--color-surface-muted)] px-2 py-2">
+              <p className="text-[10px] text-[var(--color-ink-soft)]">今日复习</p>
+              <p className="text-lg font-bold text-[var(--color-ink)]">{l2.reviewedToday}</p>
+            </div>
           </div>
         </div>
       )}

@@ -23,7 +23,8 @@ function mapStandardQueries(l2Row: unknown[] | null) {
   mock.setRowMap({
     ...(l2Row ? { "FROM user_word_l2_progress": l2Row } : {}),
     "l1_weak_signal": [{ count: "3" }],
-    "due_at IS NOT NULL AND due_at <= now()": [{ due_count: "2", mastered_count: "5" }],
+    // 批次 3：due 计数改为日历日口径（due_at < 今天零点 + 1 天 ⟺ due 日 <= 今天）
+    "due_at < $3::timestamptz + interval '1 day'": [{ due_count: "2", mastered_count: "5" }],
     "interval '7 days'": [{ count: "10" }],
     "interval '30 days'": [{ count: "40" }],
     "FROM user_word_progress": [{ count: "25" }],
@@ -50,8 +51,8 @@ describe("StatsRepository.getDashboardSummary", () => {
   });
 
   it("falls back to zeros when the l2 subquery returns no row", async () => {
-    // 注意：l2 SQL 含子串 "due_at IS NOT NULL AND due_at <= now()"，必须
-    // 显式映射 l2 键为空行（不能省略），否则会被 due 统计的行污染。
+    // l2 子查询必须显式映射为空行（不能省略）：它含 "FROM review_logs"，
+    // 不映射就会命中通用键拿到 {count:"5"}，四个标量字段 undefined → NaN。
     mapStandardQueries([]);
     const repos = createRepositories();
 
@@ -96,9 +97,12 @@ describe("StatsRepository.getDashboardSummary", () => {
     });
   });
 
-  it("进度查询同时出「今天待复习」与「已掌握」，且排除挂起词（D4 + 真口径）", async () => {
+  it("进度查询同时出「今天待复习」与「已掌握」，排除挂起且为日历日口径（D4 + 批次 3）", async () => {
     // 2026-10-07 仪表盘深度优化：此前 dueToday 不过滤 suspended（队列却排除 ⇒ 同一件事
     // 两个数），而「已掌握」由前端用 totalWords - dueToday 硬算（实测 6754 vs 真值 14）。
+    // 批次 3（2026-10-09）收口：dueToday 从 `due_at <= now()`（时刻）改为
+    // `due_at < 今天零点 + 1 天`（日历日）——与日历「今天待做」逐字等价，
+    // 「今天晚些时候到期」的词不再出现「日历含、顶卡不含」的差数。
     mapStandardQueries([{ promoted: "12", due_now: "3", weak_signal: "4", l2_reviewed_today: "6" }]);
     const repos = createRepositories();
 
@@ -110,6 +114,10 @@ describe("StatsRepository.getDashboardSummary", () => {
     const sql = progressQueries[0].text;
     expect(sql).toContain("state <> 'suspended'");
     expect(sql).toContain("state = 'review'");
+    // 日历日口径：上沿 = 今天零点 + 1 天（= 明天零点），且日界参数来自显示时区
+    expect(sql).toContain("due_at < $3::timestamptz + interval '1 day'");
+    expect(sql).not.toContain("due_at <= now()");
+    expect(progressQueries[0].params[2]).toMatch(/^\d{4}-\d{2}-\d{2}T16:00:00\.000Z$/);
 
     expect(summary.dueToday).toBe(2);
     expect(summary.masteredWords).toBe(5);

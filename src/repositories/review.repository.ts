@@ -1130,7 +1130,9 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
        JOIN words w ON w.id = rl.word_id
        WHERE rl.user_id = $1 AND rl.wordbook_id = $2 AND rl.track = 'l1'
          AND rl.rating IS NOT NULL
-       ORDER BY rl.reviewed_at DESC
+       -- 二级排序 rl.id（批次 1，2026-10-09）：同一时刻的多条（批量作答/导入）
+       -- 此前顺序由物理序决定，每次查询可能漂移；补确定性 tiebreaker。
+       ORDER BY rl.reviewed_at DESC, rl.id DESC
        LIMIT $3`,
       [userId, wordbookId, limit],
     );

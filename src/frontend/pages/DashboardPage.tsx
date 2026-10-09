@@ -1,16 +1,28 @@
+/**
+ * 仪表盘（批次 2，2026-10-09 四段式重排）。
+ *
+ * 结构规矩：**行动 → 洞察 → 进度 → 档案**，首屏只说「今天该做什么」。
+ *  - 行动区：今日待复习 / 今日已复习 两卡 + 开始复习（队列文案）+ 复习活动卡；
+ *  - 洞察区：L1 速刷统计（含 L2 条件块）+ 漏词管理；
+ *  - 进度区：掌握进度条 + 一行 badges（已掌握/在学/总数/近 7·30 天；连续打卡在头部）；
+ *  - 档案区：最近笔记 + 一键遗忘（低显著入口置底）。
+ *
+ * 与批次 2 同时删掉的重复陈列（每个数字此前出现 2–4 次）：
+ *  - 「连续打卡」「在学词数」顶卡 → 进度区 badge；
+ *  - 「近期到期」预测卡 → 复习活动卡未来侧（今天/7 天/30 天同源口径）；
+ *  - 「更多统计」4 卡（已掌握/总数/近 7·30 天）→ 进度区 badges；
+ *  - L2 三卡 → L1 速刷统计卡内的条件块（数字不重复，块不重复）。
+ */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Repeat, BookOpen, Notebook, TrendingUp, Flame, Target, CheckCircle2,
-  CalendarRange, GraduationCap, RotateCcw, Users, Layers, Zap,
+  Repeat, CheckCircle2, Notebook, TrendingUp, Flame, RotateCcw,
 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { ReviewStatsPanel } from "@/frontend/components/review/ReviewStatsPanel";
 import { LeechPanel } from "@/frontend/components/review/LeechPanel";
-import { WordReviewTimeline } from "@/frontend/components/review/WordReviewTimeline";
-import { MasteryHeatmap } from "@/frontend/components/review/MasteryHeatmap";
 import { ReviewCalendar } from "@/frontend/components/review/ReviewCalendar";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Skeleton } from "@/frontend/components/ui/Skeleton";
@@ -58,16 +70,18 @@ interface DashboardStats {
   l2?: { promoted: number; dueNow: number; weakSignal: number; reviewedToday: number };
 }
 
-function StatCard({ icon: Icon, label, value, color, loading, suffix }: {
+function StatCard({ icon: Icon, label, value, color, loading, suffix, hint }: {
   icon: typeof Repeat;
   label: string;
   value: number | string;
   color: string;
   loading?: boolean;
   suffix?: string;
+  /** 口径说明（悬停提示）—— 数字的口径差异靠它讲清，不占版面。 */
+  hint?: string;
 }) {
   return (
-    <Card className="flex items-center gap-4">
+    <Card className="flex items-center gap-4" title={hint}>
       <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--color-surface-muted)]">
         <Icon className="h-6 w-6" style={{ color }} />
       </div>
@@ -165,10 +179,7 @@ export function DashboardPage() {
   const mastered = dashboard?.masteredWords ?? 0;
   const dueToday = dashboard?.dueToday ?? 0;
   const reviewedToday = dashboard?.reviewedToday ?? 0;
-  const l2 = dashboard?.l2;
-  const l2Active = !!l2 && (l2.promoted + l2.dueNow + l2.weakSignal + l2.reviewedToday) > 0;
   const masteredPct = trackedWords > 0 ? Math.round((mastered / trackedWords) * 100) : 0;
-  const forecast = dashboard?.forecast;
 
   return (
     <div className="space-y-6">
@@ -192,93 +203,53 @@ export function DashboardPage() {
         </Card>
       )}
 
-      {/* 1 · 今天该做什么（首屏只留四个决定行动的数） */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={Repeat} label="今日待复习（到期）" value={dueToday} color="var(--color-accent)" loading={loading} />
-        <StatCard icon={CheckCircle2} label="今日已复习" value={reviewedToday} color="var(--color-accent)" loading={loading} />
-        <StatCard icon={Flame} label="连续打卡" value={dashboard?.streakDays ?? 0} color="var(--color-accent-2)" loading={loading} suffix="天" />
-        <StatCard icon={Target} label="在学词数" value={trackedWords} color="var(--color-accent-2)" loading={loading} />
-      </div>
-
-      {/* 快速入口 */}
+      {/* ① 行动区：今天该做什么（首屏只留两个决定行动的数 + 队列入口） */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Card className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]">
-          <Link to="/review" className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
-              <Repeat className="h-7 w-7 text-[var(--color-accent)]" />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-lg font-semibold text-[var(--color-ink)]">开始复习</h3>
-              <p className="text-sm text-[var(--color-ink-soft)]">
-                {queueHeadline(queue?.stats ?? null, queue?.items ?? null)}
-              </p>
-            </div>
-            <Button size="sm">前往</Button>
-          </Link>
-        </Card>
-
-        <Card className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]">
-          <Link to="/words" className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted-warm)]">
-              <BookOpen className="h-7 w-7 text-[var(--color-accent-2)]" />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-lg font-semibold text-[var(--color-ink)]">浏览词条</h3>
-              <p className="text-sm text-[var(--color-ink-soft)]">查看和管理词汇库</p>
-            </div>
-            <Button size="sm" variant="secondary">前往</Button>
-          </Link>
-        </Card>
-
-        <Card className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]">
-          <Link to="/plaza" className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
-              <Users className="h-7 w-7 text-[var(--color-accent)]" />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-lg font-semibold text-[var(--color-ink)]">浏览广场</h3>
-              <p className="text-sm text-[var(--color-ink-soft)]">按语义场主题浏览整组词汇</p>
-            </div>
-            <Button size="sm" variant="secondary">前往</Button>
-          </Link>
-        </Card>
+        <StatCard
+          icon={Repeat}
+          label="今日待复习（到期）"
+          value={dueToday}
+          color="var(--color-accent)"
+          loading={loading}
+          hint="今天（上海日历日）内到期且未挂起的卡片：含更早的积压与今天稍后到点的。与「复习活动」的「今天待做」同口径；「现在能复习的」以复习队列为准。"
+        />
+        <StatCard
+          icon={CheckCircle2}
+          label="今日已复习"
+          value={reviewedToday}
+          color="var(--color-accent)"
+          loading={loading}
+          hint="今天（上海日历日）的评分次数，L1+L2 全轨；skip/挂起等非评分动作不计。与「复习活动」的「今天已复习」同口径。"
+        />
       </div>
 
-      {/* 2 · 近期到期（三档真预测；M1 起不再是 dueToday × 1.5 / × 2 的推算） */}
-      <Card>
-        <h2 className="section-title mb-4 flex items-center gap-2 text-lg font-semibold text-[var(--color-ink)]">
-          <CalendarRange className="h-5 w-5 text-[var(--color-accent)]" />
-          近期到期
-        </h2>
-        {loading ? (
-          <Skeleton className="h-16 w-full" />
-        ) : (
-          <>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { label: "今天", value: forecast?.dueNow ?? 0 },
-                { label: "7 天内", value: forecast?.due7d ?? 0 },
-                { label: "14 天内", value: forecast?.due14d ?? 0 },
-              ].map((bucket) => (
-                <div key={bucket.label} className="rounded-xl bg-[var(--color-surface-muted)] px-3 py-3 text-center">
-                  <p className="text-xs text-[var(--color-ink-soft)]">{bucket.label}</p>
-                  <p className="text-2xl font-bold text-[var(--color-ink)]">{bucket.value}</p>
-                </div>
-              ))}
-            </div>
-            <p className="mt-3 text-xs text-[var(--color-ink-soft)]">
-              口径：按 `due_at` 的日历日累计（Asia/Shanghai），不含已挂起词；「今天」即到期总数。
+      <Card className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]">
+        <Link to="/review" className="flex items-center gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
+            <Repeat className="h-7 w-7 text-[var(--color-accent)]" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-[var(--color-ink)]">开始复习</h3>
+            <p className="text-sm text-[var(--color-ink-soft)]">
+              {queueHeadline(queue?.stats ?? null, queue?.items ?? null)}
             </p>
-          </>
-        )}
+          </div>
+          <Button size="sm">前往</Button>
+        </Link>
       </Card>
 
-      {/* 2b · 复习日历（M2）：过去=复习了什么 / 今天=双值 / 未来=什么时候到期；点某天列词 */}
+      {/* 复习活动：过去条带 / 12 周格网 / 未来条带 / 最近会话（批次 2 三合一） */}
       <ReviewCalendar />
 
-      {/* 3 · 学习进度（分母用「在学词数」；此前是 总数−今天到期 的假进度） */}
+      {/* ② 洞察区：节奏与分布（L2 数字由 ReviewStatsPanel 内部的条件块承载） */}
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
+        <ReviewStatsPanel l2={dashboard?.l2 ?? null} />
+        <LeechPanel />
+      </div>
+
+      {/* ③ 进度区：长期指标（原「更多统计」整组下沉为一行 badges，数字只出现一次） */}
       <Card>
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="section-title flex items-center gap-2 text-lg font-semibold text-[var(--color-ink)]">
             <TrendingUp className="h-5 w-5 text-[var(--color-accent)]" />
             学习进度
@@ -290,7 +261,7 @@ export function DashboardPage() {
           )}
         </div>
         {loading ? (
-          <Skeleton className="h-48 w-full" />
+          <Skeleton className="h-32 w-full" />
         ) : totalWords > 0 ? (
           <div className="space-y-4">
             <div>
@@ -312,47 +283,21 @@ export function DashboardPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge tone="accent">到期 {dueToday}</Badge>
-              <Badge tone="warm">今日已复习 {reviewedToday}</Badge>
+              <Badge tone="accent">已掌握 {mastered}</Badge>
               <Badge>在学 {trackedWords}</Badge>
-              <Badge>总计 {totalWords}</Badge>
+              <Badge>词条总数 {totalWords}</Badge>
+              <Badge tone="accent">近 7 天复习 {dashboard?.reviewed7d ?? 0}</Badge>
+              <Badge>近 30 天复习 {dashboard?.reviewed30d ?? 0}</Badge>
             </div>
           </div>
         ) : (
-          <div className="flex h-48 items-center justify-center text-[var(--color-ink-soft)]">
+          <div className="flex h-32 items-center justify-center text-[var(--color-ink-soft)]">
             <p className="text-sm">暂无数据</p>
           </div>
         )}
       </Card>
 
-      {/* 4 · 更多统计（低频指标下沉；L2 轨未启用时整组不渲染） */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard icon={GraduationCap} label="已掌握" value={mastered} color="var(--color-accent)" loading={loading} />
-        <StatCard icon={Layers} label="词条总数" value={totalWords} color="var(--color-accent-2)" loading={loading} />
-        <StatCard icon={CalendarRange} label="近 7 天复习" value={dashboard?.reviewed7d ?? 0} color="var(--color-accent)" loading={loading} />
-        <StatCard icon={TrendingUp} label="近 30 天复习" value={dashboard?.reviewed30d ?? 0} color="var(--color-accent)" loading={loading} />
-        {l2Active && (
-          <>
-            <StatCard icon={Layers} label="L2 已晋升" value={l2?.promoted ?? 0} color="var(--color-accent)" loading={loading} />
-            <StatCard icon={Zap} label="L2 待辨析" value={l2?.dueNow ?? 0} color="var(--color-accent-2)" loading={loading} />
-            <StatCard icon={Zap} label="今日 L2 复习" value={l2?.reviewedToday ?? 0} color="var(--color-accent-2)" loading={loading} />
-          </>
-        )}
-      </div>
-
-      {/* 复习统计 + 漏词管理 */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ReviewStatsPanel />
-        <LeechPanel />
-      </div>
-
-      {/* 热力图 + 时间线 */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <MasteryHeatmap />
-        <WordReviewTimeline />
-      </div>
-
-      {/* 最近笔记 —— 接真数据（此前是硬编码「暂无笔记」，即使库里已有笔记也不显示） */}
+      {/* ④ 档案区：最近笔记（接真数据；此前是硬编码「暂无笔记」） */}
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="section-title flex items-center gap-2 text-lg font-semibold text-[var(--color-ink)]">
