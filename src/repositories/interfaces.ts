@@ -11,6 +11,13 @@ import type {
 } from "../domain/ingest/batch-import-mode";
 
 import type {
+  DailyCaptureAbsorptionReceipt,
+  DailyCaptureDaySummary,
+  DailyCaptureEntryRow,
+  DailyCaptureTypeRow,
+} from "../domain/daily-capture";
+
+import type {
   Direction,
   WordRow,
   WordSummary,
@@ -1241,6 +1248,13 @@ export interface IL3ContextRepository {
   ensureSourceSpaces(userId: string, sourceId: string, spaces: readonly string[]): Promise<void>;
   createContext(input: NewL3Context): Promise<L3ContextRow>;
   createOccurrence(input: NewL3Occurrence): Promise<L3OccurrenceRow>;
+  /**
+   * 每日捕获吸收（M3 §12-⑥）的判重：同 user + 同词 + 同句文本的既有语境。
+   * 命中 → 吸收走幂等收尾（deduped 回执），不重复写三件套。
+   */
+  findWordContextIdByText(userId: string, wordId: string, text: string): Promise<{ id: string; source_id: string } | null>;
+  /** 词语境计数（证据包 existing_context_count：agent 判新颖度的依据）。 */
+  countWordOccurrences(userId: string, wordId: string): Promise<number>;
   createContextLink(input: NewL3ContextLink): Promise<L3ContextLinkRow>;
   deleteOccurrence(userId: string, occurrenceId: string): Promise<L3OccurrenceRow | null>;
   deleteContextLink(userId: string, contextLinkId: string): Promise<L3ContextLinkRow | null>;
@@ -2269,4 +2283,60 @@ export interface IRepositories {
   studyReferences: IL3StudyReferenceRepository;
   llmUsage: ILlmUsageRepository;
   outbox: IOutboxRepository;
+  // 每日捕获（2026-10-10 注册）：流水条目 + 类型注册表，零 FSRS。
+  dailyCapture: IDailyCaptureRepository;
+}
+
+export interface IDailyCaptureRepository {
+  /** 幂等 seed 默认类型（首条追加时调用）。MUST be in a transaction。 */
+  ensureDefaultTypes(userId: string): Promise<void>;
+  listTypes(userId: string): Promise<DailyCaptureTypeRow[]>;
+  /**
+   * 追加条目（seq 单语句原子分配）；并发撞 (user, date, seq) 唯一索引抛 23505。
+   */
+  insertEntry(input: {
+    user_id: string;
+    entry_date: string;
+    entry_type: string;
+    content: string;
+    meta: Record<string, unknown> | null;
+  }): Promise<DailyCaptureEntryRow>;
+  /** 当日条目（未隐藏、seq 升序）。 */
+  listDay(userId: string, entryDate: string): Promise<DailyCaptureEntryRow[]>;
+  /** 日期流聚合（未隐藏；近 N 天，按日倒序）。raw = 未回顾数。 */
+  listDaySummaries(userId: string, limit: number): Promise<DailyCaptureDaySummary[]>;
+  /** 单条（未隐藏）；不存在/已隐藏 = null。 */
+  findEntry(userId: string, id: string): Promise<DailyCaptureEntryRow | null>;
+  /**
+   * 吸收回执追加 + 置终态（M3）：absorption 追加一节，status 置 absorbed/archived。
+   * 谓词拦下 archived/absorbed（重复采纳返回 null，由服务层读回幂等）。
+   * MUST be in a transaction。
+   */
+  appendAbsorption(
+    userId: string,
+    id: string,
+    receipt: DailyCaptureAbsorptionReceipt,
+    nextStatus: DailyCaptureEntryRow["status"],
+  ): Promise<DailyCaptureEntryRow | null>;
+  /** 按需更新 status/meta（服务层先做流转校验）。MUST be in a transaction。 */
+  updateEntryFields(
+    userId: string,
+    id: string,
+    fields: { status?: DailyCaptureEntryRow["status"]; meta?: Record<string, unknown> | null },
+  ): Promise<DailyCaptureEntryRow | null>;
+  findTypeByKey(userId: string, typeKey: string): Promise<DailyCaptureTypeRow | null>;
+  /** 可见（非 hidden）类型总数——M2 上限 ≤10 的判据。 */
+  countVisibleTypes(userId: string): Promise<number>;
+  insertType(input: {
+    user_id: string;
+    type_key: string;
+    label: string;
+    absorption_hint: string | null;
+    sort: number;
+  }): Promise<DailyCaptureTypeRow>;
+  updateType(
+    userId: string,
+    typeKey: string,
+    fields: { label?: string; absorption_hint?: string | null; sort?: number; hidden?: boolean },
+  ): Promise<DailyCaptureTypeRow | null>;
 }

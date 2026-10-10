@@ -223,6 +223,75 @@ export const captureRequestSchema = z.object({
   wordbookId: uuidSchema.optional(),
 });
 
+// ── Daily capture（每日捕获，2026-10-10 M1）───────────────────────────────
+// entryType 对类型注册表是软引用：schema 只限形状（key ≤40），存在性由服务层
+// 校验（未知类型 422）——注册表可配置（用户自定义类型），不能写死枚举。
+// content 上限对齐 capture sentence 的 ≤4000。
+export const dailyCaptureEntryCreateSchema = z.object({
+  entryType: z.string().trim().min(1).max(40),
+  content: z.string().trim().min(1).max(4000),
+  meta: z
+    .object({
+      meaning: z.string().trim().min(1).max(500).optional(),
+      translation: z.string().trim().min(1).max(1000).optional(),
+      sourceUrl: z.string().url().max(2048).optional(),
+      obsidianRef: z.string().min(1).max(1024).optional(),
+      wordSlugs: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
+    })
+    .optional(),
+  /** 缺省 = 显示时区今天（YYYY-MM-DD）；真实日历日校验在路由层。 */
+  entryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "entryDate must be YYYY-MM-DD").optional(),
+});
+
+// M2 回顾面：状态前向流转 + 置要开关（流转合法性在服务层，同状态 = 幂等 no-op）。
+export const dailyCaptureEntryPatchSchema = z
+  .object({
+    status: z.enum(["raw", "reviewed", "absorbed", "archived"]).optional(),
+    important: z.boolean().optional(),
+  })
+  .refine((data) => data.status !== undefined || data.important !== undefined, {
+    message: "nothing to patch: provide status or important",
+  });
+
+// M2 类型管理：自定义扩展（§14「6 内置 + 用户自定义」）。
+// typeKey 稳定 key 用拉丁 slug（中文名进 label）；冲突 409、可见上限 422 在服务层。
+export const dailyCaptureTypeCreateSchema = z.object({
+  typeKey: z.string().trim().regex(/^[a-z][a-z0-9-]{0,39}$/, "typeKey must match ^[a-z][a-z0-9-]{0,39}$"),
+  label: z.string().trim().min(1).max(12),
+  absorptionHint: z.string().trim().min(1).max(200).optional(),
+  sort: z.number().int().min(0).max(99).optional(),
+});
+
+export const dailyCaptureTypePatchSchema = z
+  .object({
+    label: z.string().trim().min(1).max(12).optional(),
+    absorptionHint: z.string().trim().min(1).max(200).optional(),
+    sort: z.number().int().min(0).max(99).optional(),
+    hidden: z.boolean().optional(),
+  })
+  .refine(
+    (data) =>
+      data.label !== undefined || data.absorptionHint !== undefined || data.sort !== undefined || data.hidden !== undefined,
+    { message: "nothing to patch" },
+  );
+
+// M3 吸收：采纳一条 agent 提案（proposal-only 的「执行」半边）。
+// 动作要求（服务层校验）：bind_l3 需 wordSlug + payload.contextText；
+// add_word / enqueue_review 需 wordSlug（wordbookId 由路由缺省解析默认词书）。
+export const dailyCaptureAbsorbSchema = z.object({
+  action: z.enum(["bind_l3", "add_word", "enqueue_review", "file_method", "rewrite", "none"]),
+  wordSlug: z.string().trim().min(1).max(80).optional(),
+  payload: z
+    .object({
+      contextText: z.string().trim().min(1).max(4000).optional(),
+      translation: z.string().trim().min(1).max(1000).optional(),
+      sourceUrl: z.string().url().max(2048).optional(),
+    })
+    .optional(),
+  reason: z.string().trim().min(1).max(500).optional(),
+  wordbookId: uuidSchema.optional(),
+});
+
 // ── Note entries(条目制笔记,2026-09-06)────────────────────────────────
 // 追加式写入:1 请求 = 1 条;无乐观锁/无快照语义(文档模型的 expected_version/snapshot 已随版本链退场)。
 export const noteEntryUpsertRequestSchema = z.object({

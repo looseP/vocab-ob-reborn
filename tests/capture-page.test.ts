@@ -316,3 +316,108 @@ describe("CapturePage", () => {
     expect(boundToasts).toHaveLength(0);
   });
 });
+
+describe("CapturePage 条目模式（每日捕获 M1）", () => {
+  /** 条目模式 API：类型注册表 + 追加 + 当日文件。词语模式端点在条目模式不会被触达。 */
+  function routeDailyCaptureApi(): void {
+    apiFetchMock.mockImplementation(async (path: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && path === "/daily-capture/types") {
+        return { types: [{ type_key: "phrase", label: "词组", hidden: false }] };
+      }
+      if (method === "POST" && path === "/daily-capture/entries") {
+        const parsed = JSON.parse(init?.body ?? "{}") as { entryType: string; content: string };
+        return { id: "e-1", entry_date: "2026-10-10", seq: 3, entry_type: parsed.entryType, content: parsed.content };
+      }
+      if (method === "GET" && path.startsWith("/daily-capture/days/") && path.endsWith("/file")) {
+        return "# 每日捕获 · 2026-10-10\n";
+      }
+      throw new Error(`unexpected api call ${method} ${path}`);
+    });
+  }
+
+  function switchToEntryMode(container: HTMLElement): void {
+    const tab = findButtonByText(container, "条目")!;
+    act(() => {
+      fireEvent.click(tab);
+    });
+  }
+
+  it("默认词语模式：条目 UI 不出现，也不拉类型注册表", () => {
+    routeDailyCaptureApi();
+    const container = renderPage();
+    expect(container.textContent).toContain("从任意阅读处捕获");
+    expect(findButtonByText(container, "记一条")).toBeUndefined();
+    expect(apiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("追加一条：POST /daily-capture/entries + 清空草稿 + 显示今日序号", async () => {
+    routeDailyCaptureApi();
+    const container = renderPage();
+    switchToEntryMode(container);
+
+    const textarea = document.body.querySelector('textarea[aria-label="条目内容"]')! as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: "harness the power of habit" } });
+    });
+    const saveButton = findButtonByText(container, "记一条")!;
+    await act(async () => {
+      fireEvent.click(saveButton);
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("今日已记 3 条");
+    });
+    const entryCall = apiFetchMock.mock.calls.find(
+      ([path, init]) => path === "/daily-capture/entries" && (init as { method?: string }).method === "POST",
+    );
+    expect(entryCall).toBeDefined();
+    expect(JSON.parse((entryCall![1] as { body: string }).body)).toEqual({
+      entryType: "phrase",
+      content: "harness the power of habit",
+    });
+    expect(textarea.value).toBe("");
+    expect(addToast).toHaveBeenCalledWith("success", expect.stringContaining("第 3 条"));
+  });
+
+  it("Ctrl+Enter 提交；空内容只警告不请求", async () => {
+    routeDailyCaptureApi();
+    const container = renderPage();
+    switchToEntryMode(container);
+
+    const textarea = document.body.querySelector('textarea[aria-label="条目内容"]')! as HTMLTextAreaElement;
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+    });
+    expect(addToast).toHaveBeenCalledWith("warning", "先写点内容再记");
+    expect(apiFetchMock.mock.calls.filter(([, init]) => (init as { method?: string } | undefined)?.method === "POST")).toHaveLength(0);
+
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: "词根 -spect- 用看记" } });
+      fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
+    });
+    await waitFor(() => {
+      expect(container.textContent).toContain("今日已记 3 条");
+    });
+  });
+
+  it("复制今日文件：取 text/markdown 投影并写入剪贴板", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    routeDailyCaptureApi();
+    const container = renderPage();
+    switchToEntryMode(container);
+
+    const copyButton = findButtonByText(container, "复制今日文件")!;
+    await act(async () => {
+      fireEvent.click(copyButton);
+    });
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("# 每日捕获"));
+    });
+    const fileCall = apiFetchMock.mock.calls.find(([path]) => String(path).includes("/daily-capture/days/"));
+    expect(String(fileCall?.[0])).toMatch(/\/daily-capture\/days\/\d{4}-\d{2}-\d{2}\/file$/);
+    expect(addToast).toHaveBeenCalledWith("success", expect.stringContaining("已复制"));
+  });
+});

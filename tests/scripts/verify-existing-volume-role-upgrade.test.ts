@@ -73,8 +73,10 @@ describe("existing local volume role upgrade", () => {
     //       写入走 seed 脚本的 migration 角色）。
     // 0053: user_word_progress 的 DELETE 授权（P1 队列编辑：移出复习队列；
     //       行级由既有 progress_own_all 单条 policy 覆盖，无新 policy/无 schema 变化）。
-    //       本迁移使其为 54。
-    expect(authoritativeMigrationCount()).toBe(54);
+    // 0054: 每日捕获两张新表（daily_capture_entries/daily_capture_types，M1 捕获侧；
+    //       追加式流水 + 类型注册表，零 FSRS、不动已有表）。
+    //       本迁移使其为 55。
+    expect(authoritativeMigrationCount()).toBe(55);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

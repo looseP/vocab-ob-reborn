@@ -39,6 +39,7 @@ import { L3StudyNoteRepository } from "./l3-study-notes.repository";
 import { L3StudyTopicRepository } from "./l3-study-topics.repository";
 import { L3StudyReferenceRepository } from "./l3-study-references.repository";
 import { OutboxRepository } from "./outbox.repository";
+import { DailyCaptureRepository } from "./daily-capture.repository";
 
 export function createRepositories(tx?: PoolClient): IRepositories {
   return {
@@ -72,6 +73,7 @@ export function createRepositories(tx?: PoolClient): IRepositories {
     studyReferences: new L3StudyReferenceRepository(tx),
     llmUsage: new LlmUsageRepository(tx),
     outbox: new OutboxRepository(tx),
+    dailyCapture: new DailyCaptureRepository(tx),
   };
 }
 

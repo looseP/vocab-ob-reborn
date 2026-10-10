@@ -134,6 +134,13 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // 上限 = 落地时实测规模留一档余量（实测 90 行 / 4 路由）。
   // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
   { file: "src/http/routes/hulu-rounds.ts", maxLines: 115, maxRoutes: 4 },
+  // 2026-10-10 每日捕获 M1（设计定稿《每日捕获-设计分析》）：轻阻力流水独立
+  // 新前缀 /api/daily-capture，server.ts 直挂（同 forgetting/hulu 先例）。
+  // M2 同文件增补（§14）：回顾面 + 类型管理；M3 同文件增补（§9）：证据包导出
+  // （agent 唯一读面）+ 吸收执行——M1 未提交入库，bootstrap 限额随实测逐期上调
+  // （M3 实测 199 行 / 10 路由，行数留一档余量）。
+  // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
+  { file: "src/http/routes/daily-capture.ts", maxLines: 220, maxRoutes: 10 },
 ];
 
 export function measureRouteComplexity(source: string) {

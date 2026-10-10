@@ -224,6 +224,17 @@ const OTHER_OWNER_WRITES = [
   "settleHuluPage",
   "finishHuluRound",
   "abandonHuluPlan",
+  // 每日捕获（2026-10-10 M1）：追加流水条目（私人记录，学到用到先记录）。
+  // owner 写面 —— agent 写面不存在（吸收在 M3 走 proposal-only，采纳才执行）。
+  "createDailyCaptureEntry",
+  // 每日捕获 M2（§14 定稿）：回顾动作（状态前向流转 + 置要）与类型管理
+  // （自定义扩展/改名/隐藏）都是 owner 的权威变更，agent 一律 403。
+  "patchDailyCaptureEntry",
+  "createDailyCaptureType",
+  "patchDailyCaptureType",
+  // 每日捕获 M3（§9）：采纳提案并执行（bind_l3/add_word/enqueue_review/留档/归档）
+  // —— owner 永远过目的权威动作，agent 永不直写（agent 只产提案 + 读证据包）。
+  "absorbDailyCaptureEntry",
 ] as const;
 
 const OWNER_WRITE_OPERATION_IDS = sorted([
@@ -344,6 +355,9 @@ const AGENT_READS = [
   // 同档开放给 agent；写入仍 owner-only（见 OWNER 写清单）。
   "getHuluPlan",
   "getHuluPlanPage",
+  // 每日捕获 M3（§14 拍板③）：证据包导出 —— 日捕获对 agent 的**唯一**读面
+  // （数据本质是待分析文本）；markdown + 稳定 ID + absorption_hint 喂提案。
+  "getDailyCaptureEvidencePack",
 ] as const;
 
 const OWNER_READS = [
@@ -384,6 +398,12 @@ const OWNER_READS = [
   // N1/Task 10：笔记导出（owner-only；agent 无导出权限，与 exportL3Sheet /
   // exportL3WritingSheet 同口径——私人笔记档案不对 agent 开放）。
   "exportL3StudyNote",
+  // 每日捕获（2026-10-10 M1）：私人流水，读面全 owner——M3 起证据包导出
+  // 是唯一的 agent 读面（见 AGENT_READS 的 getDailyCaptureEvidencePack）。
+  "getDailyCaptureTypes",
+  "listDailyCaptureDays",
+  "getDailyCaptureDay",
+  "getDailyCaptureDayFile",
 ] as const;
 
 describe("GET endpoint classification (F1)", () => {

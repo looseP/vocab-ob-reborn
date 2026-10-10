@@ -48,6 +48,7 @@ import { L3SessionService } from "./l3-session.service";
 import { ForgettingService } from "./forgetting.service";
 import { ReviewCardsService } from "./review-cards.service";
 import { HuluPlanService } from "./hulu-plan.service";
+import { DailyCaptureService } from "./daily-capture.service";
 import { L3ContextSourceAdapter } from "./l3-context-source-adapter";
 import { AuthSessionService } from "./auth-session.service";
 import { LoginRateLimitService } from "./login-rate-limit.service";
@@ -286,6 +287,9 @@ export function createServices(deps: ServiceDeps) {
     hulu: new HuluPlanService(),
     // 队列编辑（P1 / 0053）：移出复习队列（删行+审计）/ 提前到期（优先学习）。
     reviewCards: new ReviewCardsService(),
+    // 每日捕获（2026-10-10 M1）：轻阻力流水（追加/类型注册表/日文件投影）。
+    // 零 FSRS、流水期不写 L3 —— 吸收（M3）才单向晋升。
+    dailyCapture: new DailyCaptureService(),
   };
 }
 

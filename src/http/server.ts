@@ -22,6 +22,7 @@ import { reviewRoutes } from "./routes/review";
 import { reviewCalendarRoutes } from "./routes/review-calendar";
 import { reviewCardsRoutes } from "./routes/review-cards";
 import { captureRoutes } from "./routes/capture";
+import { dailyCaptureRoutes } from "./routes/daily-capture";
 import { importRoutes } from "./routes/imports";
 import { wordbookRoutes } from "./routes/wordbooks";
 import { noteRoutes } from "./routes/notes";
@@ -149,6 +150,9 @@ export function createApp(services: Services, metrics: Telemetry = telemetry): H
   // P1 队列编辑：移出队列 / 提前到期（同棘轮约束，沿 review-calendar.ts 先例）
   app.route("/api/review", reviewCardsRoutes(services));
   app.route("/api/capture", captureRoutes(services));
+  // 每日捕获（2026-10-10 M1）：轻阻力流水，独立前缀 /api/daily-capture（同
+  // forgetting/hulu 先例）。全部 owner —— agent 读面只有 M3 的 export 证据包。
+  app.route("/api/daily-capture", dailyCaptureRoutes(services));
   app.route("/api/imports", importRoutes(services));
   app.route("/api/wordbooks", wordbookRoutes(services));
   app.route("/api/notes", noteRoutes(services));

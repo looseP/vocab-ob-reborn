@@ -175,6 +175,15 @@ import {
   l2UndoResponseSchema,
 } from "./l2-drill-response-contract";
 import { captureResponseSchema } from "./capture-response-contract";
+import {
+  dailyCaptureAbsorbResponseSchema,
+  dailyCaptureDayResponseSchema,
+  dailyCaptureDaysResponseSchema,
+  dailyCaptureEntryResponseSchema,
+  dailyCaptureEvidencePackResponseSchema,
+  dailyCaptureTypeResponseSchema,
+  dailyCaptureTypesResponseSchema,
+} from "./daily-capture-response-contract";
 import { vocabNotesImportResponseSchema } from "./import-response-contract";
 import { operationMetricsResponseSchema } from "./operation-metrics-response-contract";
 import { reviewCalendarResponseSchema, reviewDayResponseSchema } from "./review-calendar-response-contract";
@@ -258,6 +267,11 @@ import {
   addToReviewSchema,
   batchAddToReviewSchema,
   captureRequestSchema,
+  dailyCaptureAbsorbSchema,
+  dailyCaptureEntryCreateSchema,
+  dailyCaptureEntryPatchSchema,
+  dailyCaptureTypeCreateSchema,
+  dailyCaptureTypePatchSchema,
   vocabNotesImportRequestSchema,
   wordBatchCreateSchema,
   wordsQuerySchema,
@@ -521,6 +535,26 @@ export const apiOperations = [
   operation("post", "/api/review/cards/expire", "expireReviewCards", "owner", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewCardsMutationResponseSchema),
   operation("get", "/api/review/drill/queue", "getReviewDrillQueue", "owner", "agent", "none", { query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional().default(20) }) }, 200, reviewDrillQueueResponseSchema),
   operation("post", "/api/capture", "createCapture", "owner", "owner", "sessionMutation", { body: captureRequestSchema }, 201, captureResponseSchema),
+  // ── 每日捕获（2026-10-10 M1）────────────────────────────────────────────
+  // 私人流水（学到用到先记录）：**全部 owner**——设计拍板③ agent 读面只有
+  // M3 的 export 证据包（届时单独登记）；类型注册表可配置，entryType 的
+  // 存在性校验在服务层（422 UNKNOWN 类，schema 只限形状）。
+  operation("post", "/api/daily-capture/entries", "createDailyCaptureEntry", "owner", "owner", "sessionMutation", { body: dailyCaptureEntryCreateSchema }, 201, dailyCaptureEntryResponseSchema),
+  operation("get", "/api/daily-capture/types", "getDailyCaptureTypes", "owner", "owner", "none", undefined, 200, dailyCaptureTypesResponseSchema),
+  // limit 在路由内钳制（review-calendar 先例），无 query schema。
+  operation("get", "/api/daily-capture/days", "listDailyCaptureDays", "owner", "owner", "none", undefined, 200, dailyCaptureDaysResponseSchema),
+  operation("get", "/api/daily-capture/days/:date", "getDailyCaptureDay", "owner", "owner", "none", undefined, 200, dailyCaptureDayResponseSchema),
+  // 日文件投影：text/markdown，同题纸/作文/笔记导出口径（z.string() 契约）。
+  operation("get", "/api/daily-capture/days/:date/file", "getDailyCaptureDayFile", "owner", "owner", "none", undefined, 200, z.string(), "text/markdown"),
+  // M2 回顾面 + 类型管理（§14 定稿）：owner 写面 —— 回顾动作是用户的权威状态
+  // 变更；类型管理是私人注册表配置。agent 一律 403（吸收走 M3 proposal-only）。
+  operation("patch", "/api/daily-capture/entries/:id", "patchDailyCaptureEntry", "owner", "owner", "sessionMutation", { body: dailyCaptureEntryPatchSchema }, 200, dailyCaptureEntryResponseSchema),
+  operation("post", "/api/daily-capture/types", "createDailyCaptureType", "owner", "owner", "sessionMutation", { body: dailyCaptureTypeCreateSchema }, 201, dailyCaptureTypeResponseSchema),
+  operation("patch", "/api/daily-capture/types/:key", "patchDailyCaptureType", "owner", "owner", "sessionMutation", { body: dailyCaptureTypePatchSchema }, 200, dailyCaptureTypeResponseSchema),
+  // M3 吸收侧（§9）：证据包是 **agent 唯一读面**（§14 拍板③：日捕获本质是待
+  // 分析文本）；采纳执行是 owner 权威动作 —— agent 永不直写。
+  operation("get", "/api/daily-capture/days/:date/export", "getDailyCaptureEvidencePack", "owner", "agent", "none", undefined, 200, dailyCaptureEvidencePackResponseSchema),
+  operation("post", "/api/daily-capture/entries/:id/absorb", "absorbDailyCaptureEntry", "owner", "owner", "sessionMutation", { body: dailyCaptureAbsorbSchema }, 200, dailyCaptureAbsorbResponseSchema),
   operation("post", "/api/imports/vocab-notes", "importVocabNotes", "owner", "owner", "sessionMutation", { body: vocabNotesImportRequestSchema }, 200, vocabNotesImportResponseSchema),
   // llm-status 是预算水位（agent 需据此决定是否构建生成请求）——读面，非语料。
   operation("get", "/api/l2/llm-status", "getL2LlmStatus", "owner", "agent", "none", undefined, 200, l2LlmStatusResponseSchema),
