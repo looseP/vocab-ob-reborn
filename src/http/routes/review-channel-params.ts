@@ -36,3 +36,45 @@ export function parseNewCardsLimit(raw: string | undefined | null): number | und
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
   return Math.min(parsed, MAX_NEW_CARDS_LIMIT_CAP);
 }
+
+/**
+ * `/api/review/queue` 的全部 query 参数解析（mode / wordIds / channel / newCardsLimit）。
+ *
+ * **为什么全在这里**：`routes/review.ts` 受路由复杂度棘轮冻结（基线 236 行，不许增长），
+ * 而通道隔离必须给它多传两个参数。与其在路由里挤行，不如把纯解析全部外迁——
+ * 这些函数没有副作用、可单测，且路由里只剩一行调用。
+ */
+export interface ReviewQueueQuery {
+  limit: number;
+  offset: number;
+  mode: "review" | "cram" | "preview";
+  wordIds: string[] | undefined;
+  channel: ReviewQueueChannel | null;
+  maxNewCards: number | undefined;
+}
+
+export function parseReviewQueueQuery(query: (key: string) => string | undefined): ReviewQueueQuery {
+  const wordIdsParam = query("wordIds");
+  return {
+    limit: Math.min(parseInt(query("limit") ?? "20", 10) || 20, 100),
+    offset: Math.max(parseInt(query("offset") ?? "0", 10) || 0, 0),
+    mode: query("mode") === "cram" ? "cram" : query("mode") === "preview" ? "preview" : "review",
+    wordIds: wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined,
+    channel: parseReviewChannel(query("channel")),
+    maxNewCards: parseNewCardsLimit(query("newCardsLimit")),
+  };
+}
+
+/**
+ * 一次性解析两个通道参数 —— `review.ts` 受路由复杂度棘轮冻结（不许增长），
+ * 把两次调用并成一次可省下一行，也省掉路由里的注释。
+ */
+export function parseChannelParams(query: (key: string) => string | undefined): {
+  channel: ReviewQueueChannel | null;
+  maxNewCards: number | undefined;
+} {
+  return {
+    channel: parseReviewChannel(query("channel")),
+    maxNewCards: parseNewCardsLimit(query("newCardsLimit")),
+  };
+}
