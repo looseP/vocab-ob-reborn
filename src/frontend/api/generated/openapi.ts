@@ -4708,6 +4708,7 @@ export interface operations {
             content: {
                 "application/json": {
                     content_md: string;
+                    kind?: string;
                 };
             };
         };
@@ -4883,6 +4884,7 @@ export interface operations {
             content: {
                 "application/json": {
                     content_md: string;
+                    kind?: string;
                 };
             };
         };
@@ -7155,6 +7157,7 @@ export interface operations {
                             note_entries: {
                                 id: string;
                                 content_md: string;
+                                kind: string;
                                 created_at: string;
                             }[];
                             l3_contexts: {

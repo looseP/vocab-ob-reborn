@@ -19,7 +19,7 @@ export class NoteEntryRepository extends BaseRepository implements INoteEntryRep
     wordId: string,
   ): Promise<NoteEntryRow[]> {
     return this.query<NoteEntryRow>(
-      `SELECT id, user_id, word_id, wordbook_id, content_md, hidden_at, created_at, updated_at
+      `SELECT id, user_id, word_id, wordbook_id, content_md, kind, hidden_at, created_at, updated_at
        FROM note_entries
        WHERE user_id = $1 AND wordbook_id = $2 AND word_id = $3::uuid
        ORDER BY created_at ASC, id ASC`,
@@ -35,7 +35,7 @@ export class NoteEntryRepository extends BaseRepository implements INoteEntryRep
   ): Promise<NoteEntryRow[]> {
     if (wordIds.length === 0) return [];
     return this.query<NoteEntryRow>(
-      `SELECT id, user_id, word_id, wordbook_id, content_md, hidden_at, created_at, updated_at
+      `SELECT id, user_id, word_id, wordbook_id, content_md, kind, hidden_at, created_at, updated_at
        FROM note_entries
        WHERE user_id = $1 AND wordbook_id = $2 AND word_id = ANY($3::uuid[])
          AND hidden_at IS NULL
@@ -49,12 +49,13 @@ export class NoteEntryRepository extends BaseRepository implements INoteEntryRep
     wordbookId: string,
     wordId: string,
     contentMd: string,
+    kind: string,
   ): Promise<NoteEntryRow> {
     return this.queryOne<NoteEntryRow>(
-      `INSERT INTO note_entries (user_id, word_id, wordbook_id, content_md)
-       VALUES ($1, $2::uuid, $3::uuid, $4)
-       RETURNING id, user_id, word_id, wordbook_id, content_md, hidden_at, created_at, updated_at`,
-      [userId, wordId, wordbookId, contentMd],
+      `INSERT INTO note_entries (user_id, word_id, wordbook_id, content_md, kind)
+       VALUES ($1, $2::uuid, $3::uuid, $4, $5)
+       RETURNING id, user_id, word_id, wordbook_id, content_md, kind, hidden_at, created_at, updated_at`,
+      [userId, wordId, wordbookId, contentMd, kind],
     ) as Promise<NoteEntryRow>;
   }
 
@@ -62,14 +63,34 @@ export class NoteEntryRepository extends BaseRepository implements INoteEntryRep
     userId: string,
     entryId: string,
     contentMd: string,
+    kind?: string,
   ): Promise<NoteEntryRow | null> {
     return this.queryOne<NoteEntryRow>(
       `UPDATE note_entries
-       SET content_md = $3, updated_at = now()
+       SET content_md = $3, kind = COALESCE($4, kind), updated_at = now()
        WHERE id = $2::uuid AND user_id = $1
-       RETURNING id, user_id, word_id, wordbook_id, content_md, hidden_at, created_at, updated_at`,
-      [userId, entryId, contentMd],
+       RETURNING id, user_id, word_id, wordbook_id, content_md, kind, hidden_at, created_at, updated_at`,
+      [userId, entryId, contentMd, kind ?? null],
     );
+  }
+
+  /**
+   * 自定义 kind 用量与重名探测（单用户）：
+   * n = 内置之外的不同 kind 数（≤12 上限判据）；has = 目标值是否已在用。
+   */
+  async countCustomKinds(
+    userId: string,
+    builtinKinds: readonly string[],
+    candidate: string,
+  ): Promise<{ n: number; has: boolean }> {
+    const row = await this.queryOne<{ n: number; has: number }>(
+      `SELECT COUNT(DISTINCT kind)::int AS n,
+              COUNT(*) FILTER (WHERE kind = $3)::int AS has
+         FROM note_entries
+        WHERE user_id = $1 AND kind <> ALL($2::text[])`,
+      [userId, builtinKinds, candidate],
+    );
+    return { n: row?.n ?? 0, has: (row?.has ?? 0) > 0 };
   }
 
   async hide(userId: string, entryId: string): Promise<NoteEntryRow | null> {
@@ -77,7 +98,7 @@ export class NoteEntryRepository extends BaseRepository implements INoteEntryRep
       `UPDATE note_entries
        SET hidden_at = now(), updated_at = now()
        WHERE id = $2::uuid AND user_id = $1
-       RETURNING id, user_id, word_id, wordbook_id, content_md, hidden_at, created_at, updated_at`,
+       RETURNING id, user_id, word_id, wordbook_id, content_md, kind, hidden_at, created_at, updated_at`,
       [userId, entryId],
     );
   }
@@ -87,7 +108,7 @@ export class NoteEntryRepository extends BaseRepository implements INoteEntryRep
       `UPDATE note_entries
        SET hidden_at = NULL, updated_at = now()
        WHERE id = $2::uuid AND user_id = $1
-       RETURNING id, user_id, word_id, wordbook_id, content_md, hidden_at, created_at, updated_at`,
+       RETURNING id, user_id, word_id, wordbook_id, content_md, kind, hidden_at, created_at, updated_at`,
       [userId, entryId],
     );
   }
@@ -108,7 +129,7 @@ export class NoteEntryRepository extends BaseRepository implements INoteEntryRep
     offset: number,
   ): Promise<Array<NoteEntryRow & { word_slug: string; word_lemma: string; word_title: string }>> {
     return this.query<NoteEntryRow & { word_slug: string; word_lemma: string; word_title: string }>(
-      `SELECT n.id, n.user_id, n.word_id, n.wordbook_id, n.content_md, n.hidden_at, n.created_at, n.updated_at,
+      `SELECT n.id, n.user_id, n.word_id, n.wordbook_id, n.content_md, n.kind, n.hidden_at, n.created_at, n.updated_at,
               w.slug AS word_slug, w.lemma AS word_lemma, w.title AS word_title
        FROM note_entries n
        JOIN words w ON w.id = n.word_id

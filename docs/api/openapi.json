@@ -4311,6 +4311,11 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 20000
+                  },
+                  "kind": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16
                   }
                 },
                 "required": [
@@ -4693,6 +4698,11 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 20000
+                  },
+                  "kind": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 16
                   }
                 },
                 "required": [
@@ -9842,6 +9852,9 @@
                                 "content_md": {
                                   "type": "string"
                                 },
+                                "kind": {
+                                  "type": "string"
+                                },
                                 "created_at": {
                                   "type": "string"
                                 }
@@ -9849,6 +9862,7 @@
                               "required": [
                                 "id",
                                 "content_md",
+                                "kind",
                                 "created_at"
                               ],
                               "additionalProperties": false

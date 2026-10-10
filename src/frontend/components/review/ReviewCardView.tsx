@@ -11,14 +11,23 @@ import { Link } from "react-router-dom";
 import {
   ArrowLeft,
   ArrowRight,
+  Check,
   ChevronDown,
   Eye,
   EyeOff,
+  Pencil,
   Plus,
   StickyNote,
   TrendingUp,
+  X,
   Zap,
 } from "lucide-react";
+import {
+  NoteEntryContent,
+  NoteKindChips,
+  NOTE_ENTRY_TA_CLASS,
+  noteKindMeta,
+} from "@/frontend/components/notes/noteEntryUi";
 import type { Rating, ReviewCard, ReviewNoteEntry } from "@/frontend/hooks/useReview";
 import { labelReviewState } from "@/frontend/hooks/useReview";
 import { useWordDetail, type WordDetail } from "@/frontend/hooks/useWordDetail";
@@ -39,8 +48,7 @@ const ratings = [
   { value: "easy", label: "轻松", variant: "primary" as const, key: "4" },
 ] as const;
 
-const TA_CLASS =
-  "min-h-[56px] w-full resize-y rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-input)] p-2 text-xs text-[var(--color-ink)] placeholder:text-[var(--color-ink-soft)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]";
+// 输入区规格已统一到 noteEntryUi.NOTE_ENTRY_TA_CLASS（设计 §5：卡背/详情页同款）。
 
 function Kbd({ children }: { children: ReactNode }) {
   return (
@@ -311,8 +319,9 @@ function NetworkFold({ detail }: { detail: WordDetail | null }) {
 }
 
 /**
- * P3-①(条目制 2026-09-06):卡背笔记折叠 + 快记。
- * N 条条目逐条展开;快记 = POST 插入一条,追加式无覆盖冲突。
+ * 卡背笔记折叠（F1-F4，2026-10-10 设计《ux-notes-redesign》）：
+ *  F1 Markdown + 单换行渲染（NoteEntryContent）；F2 条目区块化 + 输入区默认收起 28px；
+ *  F3 kind 标签（chip 内联正文首行，general 不显示）；F4 悬停就地编辑/隐藏（非破坏）。
  * 所有交互 stopPropagation —— 卡片容器点击 = 翻回词形,不能被冒泡触发。
  */
 function NoteEntriesFold({
@@ -321,35 +330,86 @@ function NoteEntriesFold({
   draft,
   onDraftChange,
   onInsert,
+  onUpdate,
+  onHide,
 }: {
   slug: string;
   entries: ReviewNoteEntry[];
   draft: string;
   onDraftChange: (value: string) => void;
   onInsert: (entry: ReviewNoteEntry) => void;
+  onUpdate: (entry: ReviewNoteEntry) => void;
+  onHide: (entryId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [pickKind, setPickKind] = useState("general");
+  const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
   const { addToast } = useToast();
 
   const add = async () => {
     const content = draft.trim();
-    if (!content || adding) return;
-    setAdding(true);
+    if (!content || busy) return;
+    setBusy(true);
     try {
       const res = await apiFetch<{ entry: ReviewNoteEntry }>(
         `/words/${encodeURIComponent(slug)}/notes/entries`,
-        { method: "POST", body: JSON.stringify({ content_md: content }), timeoutMs: 20_000 },
+        {
+          method: "POST",
+          body: JSON.stringify({ content_md: content, kind: pickKind }),
+          timeoutMs: 20_000,
+        },
       );
       onInsert(res.entry);
       onDraftChange("");
+      setAddOpen(false);
       addToast("success", "已添加一条笔记");
     } catch (err) {
       addToast("error", err instanceof BrowserApiError ? err.message : "添加失败，请重试");
     } finally {
-      setAdding(false);
+      setBusy(false);
     }
   };
+
+  const saveEdit = async () => {
+    if (!editingId || editBusy) return;
+    const content = editDraft.trim();
+    if (!content) return;
+    setEditBusy(true);
+    try {
+      const res = await apiFetch<{ entry: ReviewNoteEntry }>(
+        `/words/${encodeURIComponent(slug)}/notes/entries/${encodeURIComponent(editingId)}`,
+        { method: "PUT", body: JSON.stringify({ content_md: content }), timeoutMs: 20_000 },
+      );
+      onUpdate(res.entry);
+      setEditingId(null);
+      setEditDraft("");
+      addToast("success", "已更新这条笔记");
+    } catch (err) {
+      addToast("error", err instanceof BrowserApiError ? err.message : "保存失败，请重试");
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  const hide = async (entry: ReviewNoteEntry) => {
+    try {
+      await apiFetch(
+        `/words/${encodeURIComponent(slug)}/notes/entries/${encodeURIComponent(entry.id)}/hide`,
+        { method: "POST", timeoutMs: 20_000 },
+      );
+      onHide(entry.id);
+      addToast("success", "已隐藏 —— 评分时不再出现，详情页可恢复");
+    } catch (err) {
+      addToast("error", err instanceof BrowserApiError ? err.message : "隐藏失败");
+    }
+  };
+
+  const iconBtn =
+    "flex h-[22px] w-[22px] items-center justify-center rounded-md text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-ink)]";
 
   return (
     <div className="mt-3 w-full text-left" onClick={(e) => e.stopPropagation()}>
@@ -369,35 +429,142 @@ function NoteEntriesFold({
       </button>
       {open && (
         <div className="mt-2 w-full rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] p-3">
-          {entries.length > 0 && (
-            <ul className="space-y-1.5">
-              {entries.map((entry, index) => (
-                <li key={entry.id} className="text-[12.5px] leading-relaxed text-[var(--color-ink)]">
-                  <span className="mr-1 font-bold text-[var(--color-accent)]">{index + 1}.</span>
-                  {entry.content_md}
-                </li>
-              ))}
-            </ul>
+          {entries.length === 0 && (
+            <p className="mb-1 text-[11.5px] text-[var(--color-ink-soft)]">
+              还没有笔记。点下面记一条，一条只记一个点。
+            </p>
           )}
-          <textarea
-            value={draft}
-            onChange={(e) => onDraftChange(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-                e.preventDefault();
-                void add();
-              }
-            }}
-            onClick={(e) => e.stopPropagation()}
-            placeholder={entries.length > 0 ? "再记一条..." : "一条笔记记一个点..."}
-            className={TA_CLASS}
-          />
-          <div className="mt-1.5 flex justify-end">
-            <Button size="sm" variant="secondary" onClick={() => void add()} disabled={adding || !draft.trim()}>
-              {adding ? <Spinner className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
-              添加条目
-            </Button>
+          <div className="flex flex-col gap-2">
+            {entries.map((entry) => {
+              const meta = noteKindMeta(entry.kind);
+              return (
+                <div
+                  key={entry.id}
+                  className="group relative rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] py-1.5 pl-2.5 pr-[30px] transition-colors hover:border-[var(--color-border-strong)]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {editingId === entry.id ? (
+                    <div>
+                      <textarea
+                        value={editDraft}
+                        onChange={(e) => setEditDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                            e.preventDefault();
+                            void saveEdit();
+                          }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className={NOTE_ENTRY_TA_CLASS}
+                        style={{ minHeight: 52 }}
+                      />
+                      <div className="mt-1.5 flex items-center gap-2">
+                        {meta && (
+                          <span className={`rounded px-1.5 py-px text-[10px] font-semibold ${meta.chipClass}`}>
+                            {meta.label}
+                          </span>
+                        )}
+                        <Button size="sm" onClick={() => void saveEdit()} disabled={editBusy || !editDraft.trim()}>
+                          {editBusy ? <Spinner className="h-3 w-3" /> : <Check className="h-3 w-3" />}
+                          保存
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setEditingId(null);
+                            setEditDraft("");
+                          }}
+                        >
+                          <X className="h-3 w-3" />
+                          取消
+                        </Button>
+                        <span className="ml-auto text-[11px] text-[var(--color-ink-soft)]">
+                          <Kbd>Ctrl</Kbd>+<Kbd>Enter</Kbd>
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="absolute right-1 top-1 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                        <button
+                          type="button"
+                          aria-label="编辑此条"
+                          title="编辑此条"
+                          className={iconBtn}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingId(entry.id);
+                            setEditDraft(entry.content_md);
+                          }}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="隐藏此条"
+                          title="隐藏（非破坏，详情页可恢复）"
+                          className={iconBtn}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void hide(entry);
+                          }}
+                        >
+                          <EyeOff className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                      <NoteEntryContent content={entry.content_md} kind={entry.kind} />
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
+          {!addOpen ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setAddOpen(true);
+              }}
+              className="mt-2 flex h-7 w-full items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 text-xs text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            >
+              <Plus className="h-3 w-3" />
+              {entries.length > 0 ? "再记一条…" : "记一条笔记…"}
+            </button>
+          ) : (
+            <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+              <textarea
+                autoFocus
+                value={draft}
+                onChange={(e) => onDraftChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                    e.preventDefault();
+                    void add();
+                  }
+                }}
+                onClick={(e) => e.stopPropagation()}
+                placeholder="一条笔记记一个点…"
+                className={NOTE_ENTRY_TA_CLASS}
+              />
+              <div className="mt-1.5">
+                <NoteKindChips value={pickKind} onChange={setPickKind} />
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <Button size="sm" onClick={() => void add()} disabled={busy || !draft.trim()}>
+                  {busy ? <Spinner className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                  添加条目
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setAddOpen(false)} disabled={busy}>
+                  取消
+                </Button>
+                <span className="ml-auto text-[11px] text-[var(--color-ink-soft)]">
+                  <Kbd>Ctrl</Kbd>+<Kbd>Enter</Kbd> 提交
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -911,13 +1078,17 @@ export function ReviewCardView({
             {/* ── Tier 2 语境:L3 素材空间圈记条目(默认收起,深链阅读视图)── */}
             <L3ContextsFold slug={card.word.slug} items={card?.l3_contexts ?? []} />
 
-            {/* ── 我的笔记(条目制):折叠 + 快记 ── */}
+            {/* ── 我的笔记(条目制):折叠 + 快记 + 就地编辑/隐藏(F4) ── */}
             <NoteEntriesFold
               slug={card.word.slug}
               entries={noteEntries}
               draft={quickDraft}
               onDraftChange={setQuickDraft}
               onInsert={(entry) => setNoteEntries((prev) => [...prev, entry])}
+              onUpdate={(entry) =>
+                setNoteEntries((prev) => prev.map((item) => (item.id === entry.id ? entry : item)))
+              }
+              onHide={(entryId) => setNoteEntries((prev) => prev.filter((item) => item.id !== entryId))}
             />
 
             {!preview && (

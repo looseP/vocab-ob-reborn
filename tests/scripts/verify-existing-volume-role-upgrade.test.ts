@@ -75,8 +75,10 @@ describe("existing local volume role upgrade", () => {
     //       行级由既有 progress_own_all 单条 policy 覆盖，无新 policy/无 schema 变化）。
     // 0054: 每日捕获两张新表（daily_capture_entries/daily_capture_types，M1 捕获侧；
     //       追加式流水 + 类型注册表，零 FSRS、不动已有表）。
-    //       本迁移使其为 55。
-    expect(authoritativeMigrationCount()).toBe(55);
+    // 0055: note_entries.kind（笔记系统 UX 修复：条目标签，内置 6 类 + 自定义；
+    //       无 CHECK 枚举，服务层做保留字/数量校验）。
+    //       本迁移使其为 56。
+    expect(authoritativeMigrationCount()).toBe(56);
   });
 
   it("guards the disposable Compose project and cleanup", () => {

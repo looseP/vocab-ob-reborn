@@ -731,9 +731,14 @@ export interface INoteEntryRepository {
     wordbookId: string,
     wordIds: string[],
   ): Promise<Array<NoteEntryRow>>;
-  insert(userId: string, wordbookId: string, wordId: string, contentMd: string): Promise<NoteEntryRow>;
-  /** 编辑单条内容;条目不存在或非本人 → null。 */
-  updateContent(userId: string, entryId: string, contentMd: string): Promise<NoteEntryRow | null>;
+  insert(userId: string, wordbookId: string, wordId: string, contentMd: string, kind: string): Promise<NoteEntryRow>;
+  /** 编辑单条内容(kind 可选:传 undefined 保持原值);条目不存在或非本人 → null。 */
+  updateContent(userId: string, entryId: string, contentMd: string, kind?: string): Promise<NoteEntryRow | null>;
+  /**
+   * 自定义 kind 用量与重名探测(0055):n = 内置之外的不同 kind 数;has = 目标值已在用。
+   * 服务层据此执行「自定义 ≤12」的上限校验。
+   */
+  countCustomKinds(userId: string, builtinKinds: readonly string[], candidate: string): Promise<{ n: number; has: boolean }>;
   /** 非破坏隐藏:置 hidden_at;幂等。 */
   hide(userId: string, entryId: string): Promise<NoteEntryRow | null>;
   /** 恢复:清 hidden_at;幂等。 */

@@ -26,6 +26,10 @@ import {
   L3_SUB_SPACES,
 } from "../../services/l3-practice.service";
 import { L3_QUESTION_TYPES, questionTypeAllowsSourceless } from "../../domain/l3-question-types";
+import {
+  NOTE_ENTRY_KIND_MAX_LENGTH,
+  NOTE_ENTRY_KIND_RESERVED_VALUES,
+} from "../../domain";
 import { WRITING_DIRECTIONS, WRITING_KINDS } from "../../domain/l3-writing";
 import {
   L3_SESSION_DEFAULT_CONTEXTS,
@@ -308,8 +312,21 @@ export const dailyCaptureAbsorbSchema = z.object({
 
 // ── Note entries(条目制笔记,2026-09-06)────────────────────────────────
 // 追加式写入:1 请求 = 1 条;无乐观锁/无快照语义(文档模型的 expected_version/snapshot 已随版本链退场)。
+// kind(0055, 2026-10-10 笔记 UX 修复):内置 6 类 id 或自定义 1..16 字;
+// 保留字=内置**标签**(必须改用对应英文 id,避免同一分类两种表示);非白名单,扩展不锁死。
+// 自定义 ≤12 的上限在服务层校验(需要按用户统计存量,非 schema 可判)。
+export const noteEntryKindSchema = z
+  .string()
+  .trim()
+  .min(1, "类型不能为空")
+  .max(NOTE_ENTRY_KIND_MAX_LENGTH, `类型最长 ${NOTE_ENTRY_KIND_MAX_LENGTH} 字`)
+  .refine((value) => !NOTE_ENTRY_KIND_RESERVED_VALUES.has(value), {
+    message: "内置类型请使用对应 id（general/story/synonym/mnemonic/usage/issue）",
+  });
+
 export const noteEntryUpsertRequestSchema = z.object({
   content_md: z.string().trim().min(1, "笔记内容不能为空").max(20_000),
+  kind: noteEntryKindSchema.optional(),
 });
 
 // ── Wordbooks ───────────────────────────────────────────────────────────

@@ -382,12 +382,15 @@ export const noteRevisions = pgTable("note_revisions", {
 
 // 笔记条目(2026-09-06 条目化):1 行/条,追加式写入;hidden_at 非空 = 已隐藏(非破坏)。
 // notes/note_revisions 为文档模型遗留,只读保留至 P4 清理,不再有代码写入路径。
+// kind（0055，2026-10-10 笔记 UX 修复）：条目分类；内置 6 类 + 用户自定义，
+// **不加 CHECK 枚举**（扩展不锁死，服务层做保留字/数量校验），存量行由 DEFAULT 回填。
 export const noteEntries = pgTable("note_entries", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	userId: uuid("user_id").notNull(),
 	wordId: uuid("word_id").notNull(),
 	wordbookId: uuid("wordbook_id").notNull(),
 	contentMd: text("content_md").notNull(),
+	kind: text().default('general').notNull(),
 	hiddenAt: timestamp("hidden_at", { withTimezone: true, mode: 'string' }),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),

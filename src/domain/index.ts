@@ -352,10 +352,40 @@ export interface NoteEntryRow {
   word_id: string;
   wordbook_id: string;
   content_md: string;
+  /** 条目分类（0055，2026-10-10 笔记 UX 修复）：内置 6 类 id 或用户自定义（1..16 字）。 */
+  kind: string;
   /** 非空 = 已隐藏(非破坏管理);恢复时置回 NULL。 */
   hidden_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ── Note entry kind（笔记 UX 修复，2026-10-10 设计《ux-notes-redesign》）─────
+// 单一真源：存储值是英文 id；标签是 UI 展示名（自定义类型用中性灰、label=原文）。
+/** 内置 kind id（有序，选择器展示序）。 */
+export const NOTE_ENTRY_BUILTIN_KINDS = ["general", "story", "synonym", "mnemonic", "usage", "issue"] as const;
+export type NoteEntryBuiltinKind = (typeof NOTE_ENTRY_BUILTIN_KINDS)[number];
+/** 内置 kind 展示名。`general` 为默认态（条目上不显示 chip，零噪音）。 */
+export const NOTE_ENTRY_KIND_LABELS: Record<NoteEntryBuiltinKind, string> = {
+  general: "普通",
+  story: "故事会",
+  synonym: "同义辨析",
+  mnemonic: "助记",
+  usage: "用法",
+  issue: "问题遗留",
+};
+/** kind 长度上限（自定义类型 1..16 字）。 */
+export const NOTE_ENTRY_KIND_MAX_LENGTH = 16;
+/** 单用户自定义类型数量上限（设计 §3）。 */
+export const NOTE_ENTRY_CUSTOM_KIND_LIMIT = 12;
+/**
+ * 保留字：内置标签作为**存储值**会被拒绝（必须用对应英文 id，避免同一分类两种表示）；
+ * 非白名单——其余任意 1..16 字均可作为自定义类型（扩展不锁死）。
+ */
+export const NOTE_ENTRY_KIND_RESERVED_VALUES: ReadonlySet<string> = new Set(Object.values(NOTE_ENTRY_KIND_LABELS));
+/** 该值是否内置 kind id。 */
+export function isBuiltinNoteEntryKind(value: string): value is NoteEntryBuiltinKind {
+  return (NOTE_ENTRY_BUILTIN_KINDS as readonly string[]).includes(value);
 }
 
 // ── Wordbook ────────────────────────────────────────────────────────────

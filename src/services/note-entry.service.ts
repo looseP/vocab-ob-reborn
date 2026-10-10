@@ -9,10 +9,15 @@
 
 import type { PoolClient } from "pg";
 import type { INoteEntryRepository, IRepositories, IWordbookRepository } from "../repositories/interfaces";
-import type { NoteEntryRow } from "../domain";
+import {
+  isBuiltinNoteEntryKind,
+  NOTE_ENTRY_BUILTIN_KINDS,
+  NOTE_ENTRY_CUSTOM_KIND_LIMIT,
+  type NoteEntryRow,
+} from "../domain";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
-import { NotFoundError } from "../errors";
+import { BusinessRuleError, NotFoundError } from "../errors";
 
 type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
@@ -51,22 +56,45 @@ export class NoteEntryService {
     wordId: string,
     contentMd: string,
     wordbookId?: string,
+    kind = "general",
   ): Promise<NoteEntryRow> {
     return this.txRunner(async (tx) => {
       const repos = this.repositoryFactory(tx);
+      await this.assertCustomKindAllowed(repos.noteEntries, userId, kind);
       // getOrCreateDefault 在事务内:新建词书与插入条目原子
       const resolvedWordbookId = wordbookId
         ?? (await repos.wordbooks.getOrCreateDefault(userId)).id;
-      return repos.noteEntries.insert(userId, resolvedWordbookId, wordId, contentMd);
+      return repos.noteEntries.insert(userId, resolvedWordbookId, wordId, contentMd, kind);
     }, { actorId: userId });
   }
 
-  async editEntry(userId: string, entryId: string, contentMd: string): Promise<NoteEntryRow> {
+  async editEntry(userId: string, entryId: string, contentMd: string, kind?: string): Promise<NoteEntryRow> {
     return this.withActorEntries(userId, async (entries) => {
-      const entry = await entries.updateContent(userId, entryId, contentMd);
+      if (kind !== undefined) {
+        await this.assertCustomKindAllowed(entries, userId, kind);
+      }
+      const entry = await entries.updateContent(userId, entryId, contentMd, kind);
       if (!entry) throw new NotFoundError("NoteEntry", entryId);
       return entry;
     });
+  }
+
+  /**
+   * 自定义 kind 上限（设计 §3）：内置 6 类不占额度；**新出现的**自定义类型
+   * （该用户从未用过）超过 ≤12 时 422；已在用的类型永远放行（幂等重试/编辑不受限）。
+   */
+  private async assertCustomKindAllowed(
+    entries: INoteEntryRepository,
+    userId: string,
+    kind: string,
+  ): Promise<void> {
+    if (isBuiltinNoteEntryKind(kind)) return;
+    const { n, has } = await entries.countCustomKinds(userId, NOTE_ENTRY_BUILTIN_KINDS, kind);
+    if (!has && n >= NOTE_ENTRY_CUSTOM_KIND_LIMIT) {
+      throw new BusinessRuleError(
+        `custom note kind limit reached (${NOTE_ENTRY_CUSTOM_KIND_LIMIT}) — reuse or merge existing kinds first`,
+      );
+    }
   }
 
   async hideEntry(userId: string, entryId: string): Promise<NoteEntryRow> {
@@ -126,6 +154,7 @@ export class NoteEntryService {
     wordLemma: string;
     wordTitle: string;
     contentMd: string;
+    kind: string;
     createdAt: string;
     updatedAt: string;
   }>> {
@@ -137,6 +166,7 @@ export class NoteEntryService {
         wordLemma: r.word_lemma,
         wordTitle: r.word_title,
         contentMd: r.content_md,
+        kind: r.kind,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
       }));

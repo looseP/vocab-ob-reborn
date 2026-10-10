@@ -20,6 +20,11 @@ import { Markdown } from "@/frontend/components/ui/Markdown";
 import { useToast } from "@/frontend/components/ui/Toast";
 import { apiFetch } from "@/frontend/api/client";
 import { BrowserApiError } from "@/frontend/api/browserRequest";
+import {
+  NoteEntryContent,
+  NoteKindChips,
+  NOTE_ENTRY_TA_CLASS as TA_CLASS,
+} from "@/frontend/components/notes/noteEntryUi";
 
 interface WordNotesProps {
   slug: string;
@@ -31,13 +36,14 @@ interface WordNotesProps {
 interface NoteEntry {
   id: string;
   content_md: string;
+  /** kind(0055):内置 6 类 id 或用户自定义；general = 默认不显示 chip。 */
+  kind: string;
   hidden_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
-const TA_CLASS =
-  "min-h-[72px] w-full resize-y rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-input)] p-3 text-sm text-[var(--color-ink)] placeholder:text-[var(--color-ink-soft)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]";
+// 输入区规格已统一到 noteEntryUi.NOTE_ENTRY_TA_CLASS（设计 §5：卡背/详情页同款）。
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -60,6 +66,7 @@ export function WordNotes({ slug, textbookMd }: WordNotesProps) {
   const [entries, setEntries] = useState<NoteEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [addDraft, setAddDraft] = useState("");
+  const [addKind, setAddKind] = useState("general");
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -82,6 +89,7 @@ export function WordNotes({ slug, textbookMd }: WordNotesProps) {
     setEntries(null);
     setEditingId(null);
     setAddDraft("");
+    setAddKind("general");
     void load();
   }, [load]);
 
@@ -97,7 +105,7 @@ export function WordNotes({ slug, textbookMd }: WordNotesProps) {
     try {
       const res = await apiFetch<{ entry: NoteEntry }>(`/words/${encodeURIComponent(slug)}/notes/entries`, {
         method: "POST",
-        body: JSON.stringify({ content_md: content }),
+        body: JSON.stringify({ content_md: content, kind: addKind }),
         timeoutMs: 20_000,
       });
       setEntries((prev) => [...(prev ?? []), res.entry]);
@@ -271,7 +279,7 @@ export function WordNotes({ slug, textbookMd }: WordNotesProps) {
         </div>
       );
     }
-    return <Markdown content={entry.content_md} />;
+    return <NoteEntryContent content={entry.content_md} kind={entry.kind} />;
   };
 
   return (
@@ -332,8 +340,11 @@ export function WordNotes({ slug, textbookMd }: WordNotesProps) {
               }}
               placeholder="记一条批注...（一条记一个点，Ctrl+Enter 快速添加）"
               className={TA_CLASS}
-            />
-            <div className="mt-2 flex justify-end">
+              />
+              <div className="mt-2">
+              <NoteKindChips value={addKind} onChange={setAddKind} />
+              </div>
+              <div className="mt-2 flex justify-end">
               <Button size="sm" onClick={() => void addEntry()} disabled={adding || !addDraft.trim()}>
                 {adding ? <Spinner className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
                 添加条目
