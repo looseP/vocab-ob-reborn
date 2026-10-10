@@ -178,6 +178,7 @@ import { captureResponseSchema } from "./capture-response-contract";
 import { vocabNotesImportResponseSchema } from "./import-response-contract";
 import { operationMetricsResponseSchema } from "./operation-metrics-response-contract";
 import { reviewCalendarResponseSchema, reviewDayResponseSchema } from "./review-calendar-response-contract";
+import { reviewCardsMutationResponseSchema } from "./review-cards-response-contract";
 import {
   l3ContextCreateSchema,
   l3ContextLinkCreateSchema,
@@ -514,6 +515,10 @@ export const apiOperations = [
   operation("post", "/api/review/weak-signal/clear", "clearL1WeakSignal", "owner", "owner", "sessionMutation", { body: clearL1WeakSignalSchema }, 200, reviewSimpleResponseSchema),
   operation("post", "/api/review/cards", "enqueueReviewCard", "owner", "owner", "sessionMutation", { body: addToReviewSchema }, 201, reviewEnqueueCardResponseSchema),
   operation("post", "/api/review/cards/batch", "enqueueReviewCardsBatch", "owner", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewEnqueueCardsBatchResponseSchema),
+  // P1 队列编辑（2026-10-10）：移出（物理删行+审计）/ 提前到期（优先学习）。
+  // 均为 owner-only 写面（同 enqueue 系列）；body 复用 batchAddToReviewSchema。
+  operation("post", "/api/review/cards/remove", "removeReviewCards", "owner", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewCardsMutationResponseSchema),
+  operation("post", "/api/review/cards/expire", "expireReviewCards", "owner", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewCardsMutationResponseSchema),
   operation("get", "/api/review/drill/queue", "getReviewDrillQueue", "owner", "agent", "none", { query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional().default(20) }) }, 200, reviewDrillQueueResponseSchema),
   operation("post", "/api/capture", "createCapture", "owner", "owner", "sessionMutation", { body: captureRequestSchema }, 201, captureResponseSchema),
   operation("post", "/api/imports/vocab-notes", "importVocabNotes", "owner", "owner", "sessionMutation", { body: vocabNotesImportRequestSchema }, 200, vocabNotesImportResponseSchema),

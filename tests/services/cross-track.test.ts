@@ -78,6 +78,9 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     // ADR-0041 葫芦冲刺：本套件不触达（挂起/恢复属 P2 接线），stub 归零。
     bulkSuspendByWordIds: vi.fn(async () => []),
     restoreSuspendSnapshot: vi.fn(async () => 0),
+    // P1 队列编辑：本套件不触达（移出/提前到期属 ReviewCardsService），stub 归零。
+    removeCardsByWordIds: vi.fn(async () => []),
+    expireCardsByWordIds: vi.fn(async () => []),
     ...overrides,
   };
 }

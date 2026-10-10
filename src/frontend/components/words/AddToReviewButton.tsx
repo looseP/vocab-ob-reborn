@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Check } from "lucide-react";
+import { Plus, Check, Trash2 } from "lucide-react";
 import { Button } from "@/frontend/components/ui/Button";
 import { useToast } from "@/frontend/components/ui/Toast";
 import { apiFetch } from "@/frontend/api/client";
@@ -13,6 +13,7 @@ interface AddToReviewButtonProps {
 export function AddToReviewButton({ wordId, slug }: AddToReviewButtonProps) {
   const [added, setAdded] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const { addToast } = useToast();
 
   const addToReview = async () => {
@@ -36,12 +37,42 @@ export function AddToReviewButton({ wordId, slug }: AddToReviewButtonProps) {
     }
   };
 
+  // P1 队列编辑：移出复习队列（删除进度行 + 审计；未命中幂等零行）
+  const removeFromReview = async () => {
+    setRemoving(true);
+    try {
+      await apiFetch<{ ok: boolean; count: number }>("/api/review/cards/remove", {
+        method: "POST",
+        body: JSON.stringify({ wordIds: [wordId] }),
+      });
+      setAdded(false);
+      addToast("success", `${slug} 已移出复习队列`);
+    } catch (error) {
+      addToast("error", "移出失败，请重试");
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   if (added) {
     return (
-      <Button variant="secondary" size="sm" disabled>
-        <Check className="h-4 w-4" />
-        已在复习队列
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button variant="secondary" size="sm" disabled>
+          <Check className="h-4 w-4" />
+          已在复习队列
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={removeFromReview}
+          disabled={removing}
+          className="text-[var(--color-accent-2)]"
+          title="移出 = 从复习队列删除（重新加入后从头学）；只是暂时不学请用复习卡上的「挂起」"
+        >
+          <Trash2 className="h-4 w-4" />
+          {removing ? "移出中..." : "移出队列"}
+        </Button>
+      </div>
     );
   }
 

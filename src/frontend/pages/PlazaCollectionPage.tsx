@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { BookOpen, Check, ChevronRight, Layers, Play, Plus, Sparkles, Users } from "lucide-react";
+import { BookOpen, ChevronRight, Flame, Layers, Loader2, Play, Plus, Sparkles, Trash2, Users } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Button } from "@/frontend/components/ui/Button";
@@ -64,6 +64,9 @@ export function PlazaCollectionPage() {
   // P0-B：整组加入复习计划（写队列，幂等；入队成功后统计即时刷新）
   const [enqueuing, setEnqueuing] = useState(false);
   const [enqueued, setEnqueued] = useState(false);
+  // P1 队列编辑：整组移出（删除进度行）/ 优先学这一组（入队 + 提前到期）
+  const [removing, setRemoving] = useState(false);
+  const [prioritizing, setPrioritizing] = useState(false);
   // P1-A：生词预审快闪（先筛后生）
   const [precheckOpen, setPrecheckOpen] = useState(false);
   const { addToast } = useToast();
@@ -124,6 +127,58 @@ export function PlazaCollectionPage() {
       addToast("error", err instanceof Error ? err.message : "批量加入复习失败");
     } finally {
       setEnqueuing(false);
+    }
+  };
+
+  // P1 队列编辑：整组移出复习队列（物理删除进度行 + 审计；未命中幂等零行）。
+  // 与「挂起」的差别：移出 = 离开队列（重新加入后 FSRS 从头）；挂起 = 留在书里但暂不复习。
+  const removeCollectionFromReview = async () => {
+    if (!data || data.words.length === 0) return;
+    setRemoving(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; count: number }>("/api/review/cards/remove", {
+        method: "POST",
+        body: JSON.stringify({ wordIds: data.words.map((w) => w.id) }),
+      });
+      if (res.ok) {
+        setEnqueued(false);
+        addToast("success", `已从复习队列移出 ${res.count} 词`);
+        refreshReviewStats();
+      }
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "移出复习队列失败");
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  // P1 优先学习：先整组入队（幂等，已在队列的记 skipped），再全部提前到期 ——
+  // 候选池排序（due_at ASC NULLS LAST）把这批词提到新卡之前，即「先学这一组」。
+  const prioritizeCollection = async () => {
+    if (!data || data.words.length === 0) return;
+    setPrioritizing(true);
+    try {
+      const wordIds = data.words.map((w) => w.id);
+      await apiFetch("/api/review/cards/batch", {
+        method: "POST",
+        body: JSON.stringify({ wordIds }),
+      });
+      const res = await apiFetch<{ ok: boolean; count: number }>("/api/review/cards/expire", {
+        method: "POST",
+        body: JSON.stringify({ wordIds }),
+      });
+      if (res.ok) {
+        setEnqueued(true);
+        addToast(
+          "success",
+          `已把 ${res.count} 词提到队列最前${res.count < wordIds.length ? "（其余本就在最前）" : ""}`,
+        );
+        refreshReviewStats();
+      }
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "提升优先级失败");
+    } finally {
+      setPrioritizing(false);
     }
   };
 
@@ -229,11 +284,37 @@ export function PlazaCollectionPage() {
               先筛后生（{data.words.length}）
             </Button>
           )}
-          {/* P0-B：整组加入复习计划（写队列；幂等，重复点只记 skipped） */}
+          {/* P0-B / P1：整组加入复习计划（写队列；幂等）—— 已入队态切换为「移出队列」 */}
+          {data.words.length > 0 &&
+            (enqueued ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={removeCollectionFromReview}
+                disabled={removing}
+                className="text-[var(--color-accent-2)]"
+                title="移出 = 从复习队列删除（重新加入后从头学）；只是暂时不学请用复习卡上的「挂起」"
+              >
+                <Trash2 className="h-4 w-4" />
+                {removing ? "移出中..." : `移出队列 (${data.words.length})`}
+              </Button>
+            ) : (
+              <Button size="sm" onClick={addCollectionToReview} disabled={enqueuing}>
+                {enqueuing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {enqueuing ? "加入中..." : `加入复习计划 (${data.words.length})`}
+              </Button>
+            ))}
+          {/* P1 优先学习：这一组的词提到候选池最前（先学这一组） */}
           {data.words.length > 0 && (
-            <Button size="sm" onClick={addCollectionToReview} disabled={enqueuing || enqueued}>
-              {enqueued ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-              {enqueuing ? "加入中..." : enqueued ? "已在复习队列" : `加入复习计划 (${data.words.length})`}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={prioritizeCollection}
+              disabled={prioritizing}
+              title="把这一组全部入队并提前到期 —— 下一轮复习优先学它们"
+            >
+              {prioritizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flame className="h-4 w-4" />}
+              {prioritizing ? "提升中..." : "优先学这一组"}
             </Button>
           )}
           {/* E3：集合一键自由复习（复用 /review?wordIds= 通道，不评分不写复习数据） */}

@@ -137,6 +137,9 @@ const OTHER_OWNER_WRITES = [
   "clearL1WeakSignal",
   "enqueueReviewCard",
   "enqueueReviewCardsBatch",
+  // P1 队列编辑（2026-10-10）：移出（物理删行）/ 提前到期 —— 都是 owner 的权威动作。
+  "removeReviewCards",
+  "expireReviewCards",
   // L2 组装 / 导入 / 练习
   "createL2Draft",
   "submitL2TaskAnswer",

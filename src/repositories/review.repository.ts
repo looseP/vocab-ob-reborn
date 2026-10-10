@@ -18,12 +18,14 @@ import type {
   BulkForgetBatchInput,
   BulkSuspendByWordIdsInput,
   BulkSuspendByWordbookInput,
+  ExpireCardsByWordIdsInput,
   ForgettingPreviewRow,
   IReviewRepository,
   InsertNewCardInput,
   InsertNewCardStatus,
   ProgressForAction,
   ProgressWithContentHash,
+  RemoveCardsByWordIdsInput,
   RestoreSuspendSnapshotInput,
   SaveAnswerInput,
   SuspendedWordSnapshot,
@@ -818,6 +820,73 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       [input.userId, input.wordbookId, input.wordIds],
     );
     return rows.map((row) => ({ wordId: row.word_id, oldState: row.old_state }));
+  }
+
+  /**
+   * 队列编辑（P1）：移出复习队列 —— 物理删除进度行 + 逐词写卡片移除审计。
+   *
+   * 两段式（同事务）：DELETE ... RETURNING 拿到被删行（id 与旧 state）→
+   * INSERT review_logs（rating=NULL、metadata.action='card_removed'）。
+   * review_logs.progress_id **无外键约束**（实测 6 个 FK 均不涉此列），审计可
+   * 安全引用已删行。不排除 suspended —— 挂起词同样可被用户主动移出。
+   * scope 钉死 (user, wordbook) 防跨书误删；未命中 id 幂等零行。MUST be in a transaction。
+   */
+  async removeCardsByWordIds(input: RemoveCardsByWordIdsInput): Promise<string[]> {
+    this.requireTx();
+    if (input.wordIds.length === 0) return [];
+    const removed = await this.query<{ id: string; word_id: string; previous_state: string }>(
+      `DELETE FROM user_word_progress
+       WHERE user_id = $1 AND wordbook_id = $2::uuid
+         AND word_id = ANY($3::uuid[])
+       RETURNING id, word_id, state AS previous_state`,
+      [input.userId, input.wordbookId, input.wordIds],
+    );
+    if (removed.length > 0) {
+      await this.query(
+        `INSERT INTO review_logs (
+           user_id, word_id, wordbook_id, progress_id, session_id,
+           rating, state, metadata, previous_progress_snapshot, reviewed_at, track
+         )
+         SELECT $1, r.word_id, $2::uuid, r.id, NULL,
+                NULL, r.previous_state,
+                jsonb_build_object('action', 'card_removed'),
+                jsonb_build_object('state', r.previous_state),
+                now(), 'l1'
+         FROM jsonb_to_recordset($3::jsonb) AS r(id uuid, word_id uuid, previous_state text)`,
+        [
+          input.userId,
+          input.wordbookId,
+          JSON.stringify(
+            removed.map((row) => ({ id: row.id, word_id: row.word_id, previous_state: row.previous_state })),
+          ),
+        ],
+      );
+    }
+    return removed.map((row) => row.word_id);
+  }
+
+  /**
+   * 队列编辑（P1）：提前到期 —— 把指定词的 due_at 提到现在（只提前、从不延后）。
+   *
+   * `LEAST(COALESCE(due_at, now()), now())`：未来到期与 NULL（新卡）→ now()；
+   * 已到期（含积压）的词由过滤条件排除、零写入（提前复习不应改动本来就在队列
+   * 里的卡）。挂起词不改。候选池（findDueCandidates）排序 due_at ASC NULLS LAST
+   * 使这批词先于其他新卡、并与到期卡同池。MUST be in a transaction。
+   */
+  async expireCardsByWordIds(input: ExpireCardsByWordIdsInput): Promise<string[]> {
+    this.requireTx();
+    if (input.wordIds.length === 0) return [];
+    const rows = await this.query<{ word_id: string }>(
+      `UPDATE user_word_progress
+       SET due_at = LEAST(COALESCE(due_at, now()), now()), updated_at = now()
+       WHERE user_id = $1 AND wordbook_id = $2::uuid
+         AND word_id = ANY($3::uuid[])
+         AND state <> 'suspended'
+         AND (due_at IS NULL OR due_at > now())
+       RETURNING word_id`,
+      [input.userId, input.wordbookId, input.wordIds],
+    );
+    return rows.map((row) => row.word_id);
   }
 
   /**
