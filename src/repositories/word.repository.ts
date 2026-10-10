@@ -22,6 +22,7 @@ import type {
   PaginatedResult,
   PlazaWordRow,
   RootFamilyGroupRow,
+  RootSense,
   RootMasteryFamilyRow,
   SemanticFieldGroupRow,
   WordRow,
@@ -417,19 +418,45 @@ export class WordRepository extends BaseRepository implements IWordRepository {
   }
 
   /**
-   * 词汇广场（0052 / P1-C）：按 token 批量取词根词典（核心义 + 变体族）。
+   * 词汇广场（0052 / P1-C）：按 token 批量取词根词典（核心义 + 变体族 + 释义分支）。
    * 全局共享只读表（RLS public read）；未命中返回空 Map，调用方降级展示。
+   * `notes` 列存释义分支 JSON（[{meaning, words[]}]，seed 写入）——解析失败
+   * 视作无分支（curated 数据唯一写入方是 seed 脚本，坏 JSON 不应发生，防御式兜底）。
    */
   async findRootLexiconByTokens(
     tokens: string[],
-  ): Promise<Map<string, { meaningZh: string; variants: string[] }>> {
+  ): Promise<Map<string, { meaningZh: string; variants: string[]; senses: RootSense[] }>> {
     if (tokens.length === 0) return new Map();
-    const rows = await this.query<{ token: string; meaning_zh: string; variants: string[] | null }>(
-      `SELECT token, meaning_zh, variants FROM root_lexicon WHERE token = ANY($1::text[])`,
+    const rows = await this.query<{
+      token: string;
+      meaning_zh: string;
+      variants: string[] | null;
+      notes: string | null;
+    }>(
+      `SELECT token, meaning_zh, variants, notes FROM root_lexicon WHERE token = ANY($1::text[])`,
       [tokens],
     );
     return new Map(
-      rows.map((row) => [row.token, { meaningZh: row.meaning_zh, variants: row.variants ?? [] }]),
+      rows.map((row) => {
+        let senses: RootSense[] = [];
+        if (row.notes) {
+          try {
+            const parsed = JSON.parse(row.notes) as RootSense[];
+            if (Array.isArray(parsed)) {
+              senses = parsed.filter(
+                (sense) =>
+                  typeof sense?.meaning === "string" &&
+                  sense.meaning.trim() !== "" &&
+                  Array.isArray(sense?.words) &&
+                  sense.words.length > 0,
+              );
+            }
+          } catch {
+            // 坏 JSON：按无分支降级
+          }
+        }
+        return [row.token, { meaningZh: row.meaning_zh, variants: row.variants ?? [], senses }];
+      }),
     );
   }
 
