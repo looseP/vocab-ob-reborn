@@ -39,6 +39,19 @@
 
 import { Pool } from "pg";
 
+/**
+ * 释义分支（2026-10-10）：一个词根常有多个词源支（par 等同 / parare 备好 /
+ * parere 显现），每支各自扩展出一批词。`words` 是该支的**代表词例**（lemma，
+ * 必须在词库真实存在——写入前用词库校验，宁少不错）；家族页按「分支 → 词例」
+ * 成对渲染。存储在 `root_lexicon.notes`（JSON 字符串，该列 seed 前闲置）。
+ */
+export interface RootLexiconSense {
+  /** 分支释义（含拉丁原形注记，如「备好（拉丁 parare）」）。 */
+  meaning: string;
+  /** 该支扩展出的代表词（lemma）。 */
+  words: string[];
+}
+
 export interface RootLexiconSeedEntry {
   /** 规范词根（canonical，小写拉丁，与词库 token 同形）。 */
   token: string;
@@ -46,6 +59,8 @@ export interface RootLexiconSeedEntry {
   meaningZh: string;
   /** 同族变体 token（可为空数组；不含自身）。 */
   variants: string[];
+  /** 释义分支 → 词例（可选；缺省时家族页走通用降级展示）。 */
+  senses?: RootLexiconSense[];
 }
 
 /**
@@ -115,6 +130,245 @@ export const ROOT_LEXICON_SEED: RootLexiconSeedEntry[] = [
   { token: "chron", meaningZh: "时间", variants: [] },
   { token: "tempor", meaningZh: "时间", variants: [] },
   { token: "path", meaningZh: "感觉；情感；疾病", variants: [] },
+
+  // ── 2026-10-10 增补批（29 条）：广场家族页按归一化口径实测「有家族、无词典」
+  // 的真词根（家族 ≥7；英文主题词 / 误标值如 day / work / latin / 拉丁语 一律不收）。
+  // variants 只收录已在词库真实命中的拼写；senses 词例全部经词库存在性校验。
+  {
+    token: "par",
+    meaningZh: "相等；备好；显现（par「等同」/ parare「备好」/ parere「显现、生育」三支同源）",
+    variants: ["parere"],
+    senses: [
+      { meaning: "等同（拉丁 par）", words: ["compare", "comparison", "pair", "peer", "parity"] },
+      { meaning: "备好（拉丁 parare）", words: ["repair", "prepare", "apparatus", "separate", "parade"] },
+      { meaning: "显现、生育（拉丁 parere）", words: ["appear", "apparent", "parent"] },
+    ],
+  },
+  {
+    token: "facere",
+    meaningZh: "做；制作（fac / fact / fic 同族）",
+    variants: ["fac", "fact", "fic"],
+    senses: [
+      { meaning: "做、造（fac / fact）", words: ["factory", "factor", "manufacture", "facility"] },
+      { meaning: "向…做（fect，factum）", words: ["affect", "effect", "perfect", "defect"] },
+    ],
+  },
+  {
+    token: "fact",
+    meaningZh: "做；已做成之事（facere 的分词 factum）",
+    variants: ["fac", "facere"],
+    senses: [
+      { meaning: "已做成之事（factum）", words: ["affect", "effect", "perfect", "defect"] },
+    ],
+  },
+  {
+    token: "fic",
+    meaningZh: "做；使成为（facere 的音变）",
+    variants: ["fac", "fact"],
+    senses: [
+      { meaning: "使成为…的（ficus）", words: ["sufficient", "efficient", "artificial", "fiction", "benefit"] },
+    ],
+  },
+  {
+    token: "dare",
+    meaningZh: "给；给予（data / date / donate 同族）",
+    variants: [],
+    senses: [
+      { meaning: "给予（dare）", words: ["data", "date", "donate", "tradition", "edit"] },
+    ],
+  },
+  {
+    token: "late",
+    meaningZh: "带来；宽广（latus，ferre「带来」的分词）",
+    variants: [],
+    senses: [
+      { meaning: "带回、传送（latus）", words: ["relate", "relation", "relative", "translate"] },
+    ],
+  },
+  {
+    token: "plic",
+    meaningZh: "折叠（plicare）",
+    variants: [],
+    senses: [
+      { meaning: "折向、叠合（plicare）", words: ["apply", "applicant", "application", "complicate", "replicate", "reply", "imply"] },
+    ],
+  },
+  {
+    token: "legere",
+    meaningZh: "读；收集；挑选（lect 同族）",
+    variants: ["lect"],
+    senses: [
+      { meaning: "收集、挑选、读（legere / lect）", words: ["lecture", "select", "collect", "elect", "election", "legend"] },
+    ],
+  },
+  {
+    token: "log",
+    meaningZh: "词；理性；学说（希腊 logos）",
+    variants: [],
+    senses: [
+      { meaning: "说话、道理（logos）", words: ["dialogue", "logic", "biology", "technology", "psychology", "apology"] },
+    ],
+  },
+  {
+    token: "tendere",
+    meaningZh: "伸展；趋向",
+    variants: [],
+    senses: [
+      { meaning: "伸向（tendere）", words: ["tend", "tendency", "attend", "attention", "extend", "pretend", "intense"] },
+    ],
+  },
+  {
+    token: "pos",
+    meaningZh: "放置；摆（ponere 分支）",
+    variants: [],
+    senses: [
+      { meaning: "摆放（ponere）", words: ["compose", "component", "position", "deposit", "purpose", "postpone", "oppose", "expose"] },
+    ],
+  },
+  {
+    token: "vis",
+    meaningZh: "看（videre 分支）",
+    variants: ["vid"],
+    senses: [
+      { meaning: "看（videre / vid）", words: ["visible", "vision", "video", "evident", "provide", "review", "revise", "survey"] },
+    ],
+  },
+  {
+    token: "ducere",
+    meaningZh: "引导；带领（duce / duct 同族）",
+    variants: ["duct"],
+    senses: [
+      { meaning: "引导（ducere / duct）", words: ["educate", "reduce", "produce", "product", "introduce", "conduct"] },
+    ],
+  },
+  {
+    token: "ced",
+    meaningZh: "走；让步（cedere）",
+    variants: ["cess"],
+    senses: [
+      { meaning: "走、退让（cedere / cess）", words: ["proceed", "succeed", "success", "concede", "exceed"] },
+    ],
+  },
+  {
+    token: "sist",
+    meaningZh: "站立；安置（sistere）",
+    variants: ["stat"],
+    senses: [
+      { meaning: "站在…（sistere）", words: ["assist", "persist", "resist", "insist", "consist"] },
+    ],
+  },
+  {
+    token: "stare",
+    meaningZh: "站立（sta / stat 系）",
+    variants: ["stat", "sist"],
+    senses: [
+      { meaning: "站立（stare / stat）", words: ["stable", "statue", "status", "state", "obstacle"] },
+    ],
+  },
+  {
+    token: "pet",
+    meaningZh: "追求；寻求（petere）",
+    variants: [],
+    senses: [
+      { meaning: "朝…冲、求取（petere）", words: ["compete", "competition", "petition", "appetite", "repeat"] },
+    ],
+  },
+  {
+    token: "part",
+    meaningZh: "部分（pars / parti-）",
+    variants: [],
+    senses: [
+      { meaning: "一部分（pars）", words: ["partial", "participate", "particular", "partner", "apartment"] },
+    ],
+  },
+  {
+    token: "ven",
+    meaningZh: "来（venire）",
+    variants: [],
+    senses: [
+      { meaning: "来到（venire）", words: ["prevent", "invent", "event", "convene", "revenue"] },
+    ],
+  },
+  {
+    token: "miss",
+    meaningZh: "送；放出（mittere 的分词 missum）",
+    variants: ["mit"],
+    senses: [
+      { meaning: "送出（mittere / missum）", words: ["mission", "dismiss", "admit", "permit", "submit"] },
+    ],
+  },
+  {
+    token: "pend",
+    meaningZh: "悬挂；称量；支付（pendere）",
+    variants: [],
+    senses: [
+      { meaning: "挂着、称量（pendere）", words: ["depend", "suspend", "spend", "expense", "pension"] },
+    ],
+  },
+  {
+    token: "cern",
+    meaningZh: "筛分；辨明（cernere）",
+    variants: [],
+    senses: [
+      { meaning: "筛分、看清（cernere）", words: ["discern", "concern", "certain", "secret"] },
+    ],
+  },
+  {
+    token: "capere",
+    meaningZh: "拿取（cap / capt / cept / cip 同族）",
+    variants: ["capt", "cept", "cip"],
+    senses: [
+      { meaning: "拿、取（capere 及其分词 capt/cept）", words: ["capture", "capable", "accept", "recipe", "occupy"] },
+    ],
+  },
+  {
+    token: "specere",
+    meaningZh: "看；观察（spect / spic 同族）",
+    variants: ["spect", "spic"],
+    senses: [
+      { meaning: "看、注视（specere / spect）", words: ["inspect", "respect", "suspect", "spectator", "prospect"] },
+    ],
+  },
+  {
+    token: "put",
+    meaningZh: "思考；计算（putare）",
+    variants: [],
+    senses: [
+      { meaning: "计算、认为（putare）", words: ["compute", "dispute", "reputation", "deputy"] },
+    ],
+  },
+  {
+    token: "mod",
+    meaningZh: "量度；方式（modus）",
+    variants: [],
+    senses: [
+      { meaning: "合乎尺度（modus）", words: ["model", "modify", "moderate", "accommodate"] },
+    ],
+  },
+  {
+    token: "lev",
+    meaningZh: "轻；举起（levis / levare）",
+    variants: [],
+    senses: [
+      { meaning: "变轻、举起（levare）", words: ["relieve", "elevate", "elevator", "leverage"] },
+    ],
+  },
+  {
+    token: "ag",
+    meaningZh: "做；驱动（agere）",
+    variants: ["act"],
+    senses: [
+      { meaning: "驱动、做（agere）", words: ["action", "agent", "agenda", "agile", "exact"] },
+    ],
+  },
+  {
+    token: "sign",
+    meaningZh: "标记（signum）",
+    variants: [],
+    senses: [
+      { meaning: "做标记（signare）", words: ["signal", "design", "signature", "assign", "significant"] },
+    ],
+  },
 ];
 
 const TOKEN_PATTERN = /^[a-z]{2,}$/;
@@ -150,16 +404,35 @@ export function validateRootLexiconSeed(entries: RootLexiconSeedEntry[]): string
       }
       variantSeen.add(variant);
     }
+    const senseSeen = new Set<string>();
+    for (const sense of entry.senses ?? []) {
+      if (!sense.meaning.trim()) {
+        problems.push(`分支释义为空：${entry.token}`);
+      }
+      if (sense.words.length === 0) {
+        problems.push(`分支词例为空：${entry.token} -> ${sense.meaning}`);
+      }
+      for (const word of sense.words) {
+        const normalized = word.trim().toLowerCase();
+        if (!normalized || senseSeen.has(normalized)) {
+          problems.push(`分支词例为空或重复：${entry.token} -> ${JSON.stringify(word)}`);
+        }
+        senseSeen.add(normalized);
+      }
+    }
   }
   return problems;
 }
 
+// notes 列存释义分支 JSON（senses；seed 前该列闲置）。无 senses 时写 NULL，
+// 幂等语义：重复执行收敛到同一终态（包括"清掉手写的坏 notes"）。
 const UPSERT_SQL = `
-  INSERT INTO root_lexicon (token, meaning_zh, variants, updated_at)
-  VALUES ($1, $2, $3::text[], now())
+  INSERT INTO root_lexicon (token, meaning_zh, variants, notes, updated_at)
+  VALUES ($1, $2, $3::text[], $4::text, now())
   ON CONFLICT (token) DO UPDATE SET
     meaning_zh = EXCLUDED.meaning_zh,
     variants = EXCLUDED.variants,
+    notes = EXCLUDED.notes,
     updated_at = now()
 `;
 
@@ -202,7 +475,12 @@ async function main(): Promise<void> {
 
     await pool.query("BEGIN");
     for (const entry of ROOT_LEXICON_SEED) {
-      await pool.query(UPSERT_SQL, [entry.token, entry.meaningZh, entry.variants]);
+      await pool.query(UPSERT_SQL, [
+        entry.token,
+        entry.meaningZh,
+        entry.variants,
+        entry.senses ? JSON.stringify(entry.senses) : null,
+      ]);
     }
     if (dryRun) {
       await pool.query("ROLLBACK");
