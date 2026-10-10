@@ -398,7 +398,8 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       // UPDATE policy，故内容行无匹配策略 → 实际更新被 RLS 静默过滤为 0 行（不报错）
       "public.words": ["SELECT", "DELETE", "UPDATE"],
       "public.word_l2_content": ["SELECT", "INSERT", "UPDATE", "DELETE"],
-      "public.user_word_progress": ["SELECT", "INSERT", "UPDATE"],
+      // 0053：DELETE 用于「移出复习队列」（队列编辑，非遗忘挂起）。
+      "public.user_word_progress": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.user_word_l2_progress": ["SELECT", "INSERT", "UPDATE"],
       "public.l2_drill_session_steps": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.notes": ["SELECT", "INSERT", "UPDATE"],
