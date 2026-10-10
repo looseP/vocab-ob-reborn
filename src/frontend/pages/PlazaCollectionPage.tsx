@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { BookOpen, ChevronRight, Flame, Layers, Loader2, Play, Plus, Sparkles, Trash2, Users } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
@@ -38,6 +38,8 @@ interface PlazaCollectionDetail {
   meaning?: string | null;
   /** 同族变体 token（0052 词典命中时；未命中空数组）。 */
   variants?: string[];
+  /** 释义分支 → 词例（2026-10-10；词典 senses 命中时非空，按分支成对渲染）。 */
+  senses?: Array<{ meaning: string; words: string[] }>;
   words: PlazaWordCard[] | RootWordCard[];
 }
 /** 集合内复习统计（E1 + P1-B 掌握分档）。 */
@@ -182,6 +184,37 @@ export function PlazaCollectionPage() {
     }
   };
 
+  /**
+   * 常见派生词精选（2026-10-10）：家族全量词已在下方列表，「常见派生词」chips
+   * 只挑**最常用**的几张做速览 —— 口径：CEFR 越靠前越常用，同级按字母序；
+   * 最多 6 个，避免与下方全列表重复刷屏。
+   * 必须放在早退 return 之前（Hooks 顺序 invariant），用 data 判空代替 isRoot 局部量。
+   */
+  const representativeWords = useMemo(() => {
+    if (!data || data.kind !== "root_affix") return [];
+    const rank = (cefr: string | null): number => {
+      const index = ["A1", "A2", "B1", "B2", "C1", "C2"].indexOf(cefr ?? "");
+      return index === -1 ? 6 : index;
+    };
+    return [...data.words]
+      .sort((a, b) => rank(a.cefr) - rank(b.cefr) || a.lemma.localeCompare(b.lemma))
+      .slice(0, 6);
+  }, [data]);
+
+  /**
+   * 分支词例 → 家族词卡（lemma 精确匹配，取 slug 做跳转）。senses 词例按约定
+   * 都来自本家族；若词条不在家族（morphology_root 写法差异），该 chip 不渲染
+   * —— 宁少不错，不给死链。
+   */
+  const wordByLemma = useMemo(() => {
+    const map = new Map<string, PlazaWordCard>();
+    if (!data) return map;
+    for (const word of data.words) {
+      map.set(word.lemma.toLowerCase(), word);
+    }
+    return map;
+  }, [data]);
+
   if (loading) {
     return (
       <Card className="flex items-center justify-center py-12">
@@ -220,7 +253,6 @@ export function PlazaCollectionPage() {
           <Badge tone="warm">{kindLabel}</Badge>
           <Badge>{isRoot ? `家族 ${data.count} 词` : `关联词条 ${data.count}`}</Badge>
           {isRoot && data.type && <Badge>{TYPE_LABEL[data.type]}</Badge>}
-          {isRoot && data.meaning && <Badge tone="warm">核心义：{data.meaning}</Badge>}
           {/* E1：集合内复习统计 */}
           {reviewStats && (
             <Badge>已追踪 {reviewStats.tracked}</Badge>
@@ -233,6 +265,67 @@ export function PlazaCollectionPage() {
           {isRoot ? <Layers className="h-7 w-7 text-[var(--color-accent)]" /> : <Users className="h-7 w-7 text-[var(--color-accent)]" />}
           {isRoot ? `-${data.title}-` : data.title}
         </h1>
+        {/* 0052 词典增强（2026-10-10 升级）：优先按「释义分支 → 该支扩展词」成对渲染
+            （多支词源一眼看清谁出自哪支）；词典无 senses 时回退「核心义 + CEFR 常用词」；
+            全部未命中不渲染（自生长家族不硬凑）。 */}
+        {isRoot && data.senses && data.senses.length > 0 && (
+          <div className="mt-3 space-y-1.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-soft)]">
+              词根释义 · 按词源分支
+            </p>
+            {data.senses.map((sense) => {
+              const chips = sense.words
+                .map((lemma) => wordByLemma.get(lemma.toLowerCase()))
+                .filter((word): word is PlazaWordCard => Boolean(word));
+              if (chips.length === 0) return null;
+              return (
+                <div key={sense.meaning} className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  <span className="min-w-0 text-sm font-medium text-[var(--color-ink)]">{sense.meaning}</span>
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    {chips.map((word) => (
+                      <Link
+                        key={word.id}
+                        to={`/words/${word.slug}`}
+                        title={word.short_definition ?? word.lemma}
+                        className="rounded-md border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-0.5 text-xs text-[var(--color-ink)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                      >
+                        {word.lemma}
+                        {word.cefr && <span className="ml-1 text-[var(--color-ink-soft)]">{word.cefr}</span>}
+                      </Link>
+                    ))}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {isRoot && !(data.senses && data.senses.length > 0) && (data.meaning || representativeWords.length > 0) && (
+          <div className="mt-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-3">
+            {data.meaning && (
+              <p className="text-sm leading-6 text-[var(--color-ink)]">
+                <span className="font-semibold text-[var(--color-ink)]">词根释义</span>
+                <span className="mx-2 text-[var(--color-border-strong)]">·</span>
+                {data.meaning}
+              </p>
+            )}
+            {representativeWords.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-[var(--color-ink-soft)]">常见派生词</span>
+                {representativeWords.map((word) => (
+                  <Link
+                    key={word.id}
+                    to={`/words/${word.slug}`}
+                    title={word.short_definition ?? word.lemma}
+                    className="rounded-md border border-[var(--color-border)] bg-[var(--color-panel)] px-2 py-0.5 text-xs text-[var(--color-ink)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+                  >
+                    {word.lemma}
+                    {word.cefr && <span className="ml-1 text-[var(--color-ink-soft)]">{word.cefr}</span>}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {/* 0052 词典增强：同族变体跳转（词源音变合并，未命中不渲染） */}
         {isRoot && data.variants && data.variants.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
