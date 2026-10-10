@@ -40,9 +40,11 @@ import {
 } from "../outbox/review-card-enqueued.event";
 import {
   REVIEW_QUEUE_CANDIDATE_LIMIT,
+  REVIEW_QUEUE_SNAPSHOT_MARGIN,
   buildReviewQueueBatch,
 } from "./review-queue";
 import type { ReviewQueueCandidate, ReviewQueuePriorityBucket } from "./review-queue";
+import type { ReviewQueueChannel } from "../domain";
 import { findClozeFromExamples } from "./drill-engine";
 import type { DrillCard } from "./drill-engine";
 
@@ -79,6 +81,13 @@ export type ReviewQueueWord = {
   mnemonic_text: string | null;
   mnemonic_type: string | null;
   semantic_chain: string | null;
+};
+
+/** 候选行（progress 侧窄列 + needs_recheck 派生所需的 words 侧 hash）。 */
+type QueueCandidateProgressRow = UserWordProgressRow & {
+  needs_recheck: boolean;
+  content_hash: string;
+  l1_content_hash: string | null;
 };
 
 /** 复习队列项 DTO —— review/zen 模式携带优先级元数据（P1）。 */
@@ -162,7 +171,17 @@ export interface ReviewServiceDeps {
    * final batch for review/zen modes. Carries needs_recheck (人工标记) plus
    * the words-side hashes needed for the read-time derivation (ADR-0021).
    */
-  findDueCandidates?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: ReviewQueueWord }>>;
+  findDueCandidates?: (userId: string, wordbookId: string, limit: number, channel?: ReviewQueueChannel | null) => Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: ReviewQueueWord }>>;
+  /**
+   * 两阶段取数 · 阶段一：轻量候选快照（窄列，池宽可扩到数千级）。
+   * 未注入时 getQueue 回退旧的 findDueCandidates 单阶段路径。
+   *
+   * @param channel 复习通道（2026-10-10 隔离）；下推到 SQL 的 state 谓词，
+   *   让候选池本身就只有该通道的卡。`null`/未传 = 旧行为（混流）。
+   */
+  findDueCandidateSnapshots?: (userId: string, wordbookId: string, limit: number, channel?: ReviewQueueChannel | null) => Promise<Array<UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }>>;
+  /** 两阶段取数 · 阶段二：只为当前批的 ≤20 张卡水合 word 详情。 */
+  loadReviewCardsByWordIds?: (userId: string, wordbookId: string, wordIds: string[]) => Promise<Array<{ progress: UserWordProgressRow; word: ReviewQueueWord }>>;
   /** Find all active cards regardless of due_at — used by cram/preview practice modes. */
   findPracticeCards?: (userId: string, wordbookId: string, limit: number) => Promise<Array<{ progress: UserWordProgressRow; word: ReviewQueueWord }>>;
   /** Free-review selection: fetch words by ids (published only), independent of review progress. */
@@ -200,7 +219,16 @@ export class ReviewService {
    *   overdue window and state tier, and a new-card quota is applied
    *   (deferredNewCards in stats).
    */
-  async getQueue(userId: string, wordbookId: string, limit = 20, mode = "review", wordIds?: string[], offset = 0): Promise<ReviewQueueDto> {
+  async getQueue(
+    userId: string,
+    wordbookId: string,
+    limit = 20,
+    mode = "review",
+    wordIds?: string[],
+    offset = 0,
+    channel: ReviewQueueChannel | null = null,
+    maxNewCards?: number,
+  ): Promise<ReviewQueueDto> {
     if (!this.deps.findDueCards || !this.deps.getOrCreateTodaySession) {
       throw new Error("Review queue dependencies not configured");
     }
@@ -259,8 +287,91 @@ export class ReviewService {
     }
 
     // review / zen：候选池 → 优先级分桶 + 新卡配额（P1）
+    //
+    // 两阶段取数（默认路径）：阶段一 findDueCandidateSnapshots 只取 progress 窄列
+    // （含 needs_recheck 派生所需的两个 content hash），排序/配额/切片后阶段二
+    // loadReviewCardsByWordIds 只水合当前这 ≤limit 张的 word 详情。
+    // 旧实现把「排序用池」和「word 详情」绑在一次查询里，池宽因此被 words 大字段
+    // （examples/metadata）的内存成本卡在 200 —— 表现是**单会话封顶 200 张**：
+    // 冲刺上千张时每清完一段就必须退出重进才能放出下一段。快照化后池宽 2000 且随
+    // offset 自动扩窗（无硬上限），单会话可连续翻完上千张。
+    if (this.deps.findDueCandidateSnapshots && this.deps.loadReviewCardsByWordIds) {
+      const snapshotLimit = Math.max(
+        REVIEW_QUEUE_CANDIDATE_LIMIT,
+        offset + REVIEW_QUEUE_SNAPSHOT_MARGIN,
+      );
+      const snapshots = await this.deps.findDueCandidateSnapshots(
+        userId,
+        wordbookId,
+        snapshotLimit,
+        channel,
+      );
+      if (snapshots.length > 0) {
+        let weights: number[] | null = null;
+        try {
+          weights = await this.deps.loadWeights(wordbookId);
+        } catch {
+          // 权重加载失败时回退默认权重
+        }
+
+        const batch = buildReviewQueueBatch(
+          snapshots.map((row) => this.toQueueSnapshotCandidate(row)),
+          new Date(),
+          limit,
+          weights,
+          offset,
+          channel,
+          maxNewCards,
+        );
+        const hydrated = await this.deps.loadReviewCardsByWordIds(
+          userId,
+          wordbookId,
+          batch.items.map(({ item }) => item.wordId),
+        );
+        const wordById = new Map(hydrated.map((card) => [card.word.id, card.word]));
+
+        const items: ReviewQueueItemDto[] = [];
+        for (const { item, priority } of batch.items) {
+          const word = wordById.get(item.wordId);
+          // 快照与水合之间词被删除/下架 → 跳过该卡，不让整批 502
+          if (!word) continue;
+          items.push({
+            progressId: item.progressId,
+            word,
+            state: item.state,
+            dueAt: item.due_at,
+            lastRating: item.lastRating,
+            reviewCount: item.review_count,
+            l1WeakSignal: item.l1WeakSignal,
+            stability: item.stability,
+            ladderRung: item.ladder_rung,
+            queueBucket: priority.bucket,
+            queueLabel: priority.label,
+            queueReason: priority.reason,
+            retrievability: priority.retrievability,
+          });
+        }
+
+        return {
+          items,
+          session: {
+            id: session.id,
+            mode: session.mode,
+            cardsSeen: session.cards_seen,
+          },
+          stats: {
+            total: batch.eligibleTotal,
+            remaining: Math.max(0, batch.eligibleTotal - offset),
+            deferredNewCards: batch.deferredNewCards,
+          },
+          hasMore: batch.hasMore,
+        };
+      }
+    }
+
+    // 旧单阶段路径（deps 未注入两阶段取数时保持兼容，例如精简测试夹具）
     const candidates = this.deps.findDueCandidates
-      ? await this.deps.findDueCandidates(userId, wordbookId, REVIEW_QUEUE_CANDIDATE_LIMIT)
+      ? await this.deps.findDueCandidates(userId, wordbookId, REVIEW_QUEUE_CANDIDATE_LIMIT, channel)
       : null;
     if (!candidates || candidates.length === 0) {
       // 依赖缺失或无到期候选时退回 findDueCards 直出，保持向后兼容
@@ -294,6 +405,8 @@ export class ReviewService {
       limit,
       weights,
       offset,
+      channel,
+      maxNewCards,
     );
 
     return {
@@ -351,27 +464,48 @@ export class ReviewService {
    * 与 docs/adr/0021-needs-recheck-derivation.md。
    */
   private toQueueCandidate(
-    card: { progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: ReviewQueueWord },
+    card: { progress: QueueCandidateProgressRow; word: ReviewQueueWord },
   ): ReviewQueueCandidate & { progressId: string; word: ReviewQueueWord; lastRating: ReviewRating | null; l1WeakSignal: boolean; stability: number | null; ladder_rung: number } {
+    return {
+      ...this.toQueueCandidateFields(card.progress),
+      word: card.word,
+    };
+  }
+
+  /**
+   * 阶段一用：只从 progress 窄列构造候选（word 详情留到阶段二水合）。
+   * wordId 供阶段二按批取详情；其余字段与 toQueueCandidate 完全一致 ⇒
+   * 排序与配额结果和旧实现逐张相同。
+   */
+  private toQueueSnapshotCandidate(
+    progress: QueueCandidateProgressRow,
+  ): ReviewQueueCandidate & { progressId: string; wordId: string; lastRating: ReviewRating | null; l1WeakSignal: boolean; stability: number | null; ladder_rung: number } {
+    return {
+      ...this.toQueueCandidateFields(progress),
+      wordId: progress.word_id,
+    };
+  }
+
+  /** 候选的公共字段构造（含 needs_recheck 读时派生，见上）。 */
+  private toQueueCandidateFields(progress: QueueCandidateProgressRow) {
     const derivedNeedsRecheck = deriveContentStaleness({
-      contentHash: card.progress.content_hash,
-      l1ContentHash: card.progress.l1_content_hash,
-      contentHashSnapshot: card.progress.content_hash_snapshot,
-      l1ContentHashSnapshot: card.progress.l1_content_hash_snapshot,
+      contentHash: progress.content_hash,
+      l1ContentHash: progress.l1_content_hash,
+      contentHashSnapshot: progress.content_hash_snapshot,
+      l1ContentHashSnapshot: progress.l1_content_hash_snapshot,
     });
     return {
-      progressId: card.progress.id,
-      state: card.progress.state,
-      due_at: card.progress.due_at,
-      review_count: card.progress.review_count,
-      desired_retention: card.progress.desired_retention,
-      scheduler_payload: card.progress.scheduler_payload,
-      needs_recheck: card.progress.needs_recheck || derivedNeedsRecheck,
-      word: card.word,
-      lastRating: card.progress.last_rating,
-      l1WeakSignal: card.progress.l1_weak_signal,
-      stability: card.progress.stability,
-      ladder_rung: card.progress.ladder_rung,
+      progressId: progress.id,
+      state: progress.state,
+      due_at: progress.due_at,
+      review_count: progress.review_count,
+      desired_retention: progress.desired_retention,
+      scheduler_payload: progress.scheduler_payload,
+      needs_recheck: progress.needs_recheck || derivedNeedsRecheck,
+      lastRating: progress.last_rating,
+      l1WeakSignal: progress.l1_weak_signal,
+      stability: progress.stability,
+      ladder_rung: progress.ladder_rung,
     };
   }
 
