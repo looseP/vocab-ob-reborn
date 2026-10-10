@@ -10,9 +10,16 @@ interface CompletionCelebrationProps {
   suspended?: number;
   onRestart: () => void;
   onBack: () => void;
+  /**
+   * 完成标题（2026-10-10 通道隔离）。
+   *
+   * 此前硬编码「今日复习已完成」，学新词通道走完也会显示这句话 —— 把「学」说成
+   * 「复习」，两个通道的成果就混在一起了。调用方按通道传入。
+   */
+  title?: string;
 }
 
-export function CompletionCelebration({ stats, skipped = 0, suspended = 0, onRestart, onBack }: CompletionCelebrationProps) {
+export function CompletionCelebration({ stats, skipped = 0, suspended = 0, onRestart, onBack, title = "今日复习已完成 🎉" }: CompletionCelebrationProps) {
   const unfinished = skipped + suspended;
   return (
     <motion.div
@@ -31,7 +38,7 @@ export function CompletionCelebration({ stats, skipped = 0, suspended = 0, onRes
       </motion.div>
 
       <h2 className="section-title text-3xl font-bold text-[var(--color-ink)]">
-        今日复习已完成 🎉
+        {title}
       </h2>
       <p className="mt-2 text-[var(--color-ink-soft)]">
         已评分 {stats.reviewed} 张卡片
