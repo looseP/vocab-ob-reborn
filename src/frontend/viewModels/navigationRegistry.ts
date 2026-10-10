@@ -146,6 +146,18 @@ export const NAVIGATION: readonly NavEntry[] = [
     surfaces: ["topnav", "mobile", "home", "palette"],
   },
   {
+    id: "review-queue",
+    label: "复习队列",
+    description: "浏览队列里的每个词，按状态分桶并可直接处置",
+    href: "/review-queue",
+    matchPrefix: "/review-queue",
+    icon: "layers",
+    family: "review",
+    // 不进顶栏、也不占首页卡片（首页卡片配额是硬的 ≤10，且它属于「复习」的深潜面）：
+    // 命令面板 0 击 + 复习页内的常驻链接 1 击，足够触达。
+    surfaces: ["palette"],
+  },
+  {
     id: "drill",
     label: "辨析",
     description: "L2 辨析训练：完形填空 / 词汇填空自测",
