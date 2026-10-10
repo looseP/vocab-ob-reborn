@@ -55,9 +55,14 @@ export interface ReviewQueueQuery {
 
 export function parseReviewQueueQuery(query: (key: string) => string | undefined): ReviewQueueQuery {
   const wordIdsParam = query("wordIds");
+  // limit/offset 必须**双端**clamp。原写法 `Math.min(parseInt(...) || 20, 100)` 只夹上界，
+  // 于是 `?limit=-5` 会原样透传 -5（-5 是 truthy，`|| 20` 兜不住）⇒ SQL `LIMIT -5` 直接报错。
+  // `Math.max(1, ...)` 保证下界 >= 1；非法值（NaN / 0 / 负数）统一回落 20。
+  const rawLimit = Number.parseInt(query("limit") ?? "20", 10);
+  const rawOffset = Number.parseInt(query("offset") ?? "0", 10);
   return {
-    limit: Math.min(parseInt(query("limit") ?? "20", 10) || 20, 100),
-    offset: Math.max(parseInt(query("offset") ?? "0", 10) || 0, 0),
+    limit: Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 20,
+    offset: Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0,
     mode: query("mode") === "cram" ? "cram" : query("mode") === "preview" ? "preview" : "review",
     wordIds: wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined,
     channel: parseReviewChannel(query("channel")),
