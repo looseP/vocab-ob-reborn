@@ -6963,8 +6963,10 @@ export interface operations {
     getReviewQueue: {
         parameters: {
             query?: {
+                channel?: "review" | "new";
                 limit?: number;
                 mode?: "review" | "cram" | "preview";
+                newCardsLimit?: number;
                 offset?: number;
             };
             header?: never;
