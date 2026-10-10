@@ -352,4 +352,74 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       await data.cleanup();
     }
   });
+
+  // P1 队列全景（2026-10-10）：分桶计数 + 清单分页。锁住「互斥且完备」——
+  // 同一张卡不得同时落进两个桶，否则队列页的 tab 徽标会互相打架。
+  it("countQueueBuckets / listQueueCards：分桶互斥、计数与清单一致", async () => {
+    const data = await createTestReviewData();
+    try {
+      const pool = (await import("@/db/connection")).getPool();
+      // 造一张「成熟且已到期」的卡：state=review + due_at 在过去
+      await pool.query(
+        `UPDATE user_word_progress
+         SET state = 'review', due_at = now() - interval '1 day', review_count = 3
+         WHERE id = $1`,
+        [data.progressId],
+      );
+
+      const repos = createRepositories();
+      const counts = await repos.reviews.countQueueBuckets(data.userId, data.wordbookId);
+      // 该书只有这一张卡：落 due 桶，其余桶为 0；非新卡且已到期 ⇒ dueNow 同计
+      expect(counts).toEqual({ due: 1, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 1, total: 1 });
+
+      const duePage = await repos.reviews.listQueueCards({
+        userId: data.userId,
+        wordbookId: data.wordbookId,
+        bucket: "due",
+        search: null,
+        limit: 50,
+        offset: 0,
+      });
+      expect(duePage.total).toBe(1);
+      expect(duePage.items[0]).toMatchObject({
+        wordId: data.wordId,
+        state: "review",
+        reviewCount: 3,
+      });
+      expect(typeof duePage.items[0].needsRecheck).toBe("boolean");
+
+      // 互斥：同一张卡不会同时出现在 new 桶（它已是 review 态）
+      const newPage = await repos.reviews.listQueueCards({
+        userId: data.userId,
+        wordbookId: data.wordbookId,
+        bucket: "new",
+        search: null,
+        limit: 50,
+        offset: 0,
+      });
+      expect(newPage.total).toBe(0);
+
+      // 搜索：命中 / 未命中（转义后的子串匹配，不匹配即空）
+      const hit = await repos.reviews.listQueueCards({
+        userId: data.userId,
+        wordbookId: data.wordbookId,
+        bucket: "all",
+        search: "testword",
+        limit: 50,
+        offset: 0,
+      });
+      expect(hit.total).toBe(1);
+      const miss = await repos.reviews.listQueueCards({
+        userId: data.userId,
+        wordbookId: data.wordbookId,
+        bucket: "all",
+        search: "zzz-definitely-absent",
+        limit: 50,
+        offset: 0,
+      });
+      expect(miss.total).toBe(0);
+    } finally {
+      await data.cleanup();
+    }
+  });
 });
