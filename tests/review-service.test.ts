@@ -96,6 +96,13 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
   return {
     findDueCards: vi.fn(async () => []),
     findDueCandidates: vi.fn(async () => []),
+    // 两阶段取数（默认路径）：返回空 ⇒ service 回退单阶段 findDueCandidates，
+    // 队列测试的既有行为不变；深翻行为由专用用例单独覆盖。
+    findDueCandidateSnapshots: vi.fn(async () => []),
+    loadReviewCardsByWordIds: vi.fn(async () => []),
+    // 队列全景页读路径（这些用例不触达，stub 空结果）
+    countQueueBuckets: vi.fn(async () => ({ due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, total: 0 })),
+    listQueueCards: vi.fn(async () => ({ items: [], total: 0 })),
     findPracticeCards: vi.fn(async () => []),
     findWordsByIds: vi.fn(async () => []),
     findDrillCandidates: vi.fn(async () => []),
@@ -1090,6 +1097,68 @@ describe("ReviewService — P1 queue-priority routing", () => {
     expect(page2.items.length).toBe(5);
     expect(page2.hasMore).toBe(false);
     expect(page2.stats.total).toBe(25);
+  });
+
+  // ── 深翻（冲刺场景）：单会话不再卡在 200 张候选池 ─────────────────────────
+  it("keeps serving cards deep into one session (past the old 200-card pool ceiling)", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    // 2200 张到期复习卡：旧实现的候选池硬上限是 200 张
+    const snapshots = Array.from({ length: 2200 }, (_, i) =>
+      makeProgressRow({ id: `p-${i}`, word_id: `w-${i}`, review_count: i }),
+    );
+    const findDueCandidateSnapshots = vi.fn(async (_userId: string, _wordbookId: string, limit: number) =>
+      snapshots.slice(0, limit),
+    );
+    const loadReviewCardsByWordIds = vi.fn(
+      async (_userId: string, _wordbookId: string, wordIds: string[]) =>
+        wordIds.map((id) => ({ progress: makeProgressRow({ word_id: id }), word: makeWord(id) })),
+    );
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findDueCandidateSnapshots,
+      loadReviewCardsByWordIds,
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    // offset=1000：旧实现候选池早已见底（空批 + hasMore=false ⇒ 必须退出重进）
+    const deep = await service.getQueue("u1", "wb1", 20, "review", undefined, 1000);
+    expect(deep.items.length).toBe(20);
+    expect(deep.hasMore).toBe(true);
+    // stats.total 是「本会话候选池内」的口径（既有语义），不是库里的到期总数
+    expect(deep.stats.total).toBe(2000);
+    expect(findDueCandidateSnapshots).toHaveBeenCalledWith("u1", "wb1", 2000);
+    // 只水合当前批的 20 张 word 详情（两阶段的核心收益）
+    expect(loadReviewCardsByWordIds).toHaveBeenCalledWith(
+      "u1",
+      "wb1",
+      deep.items.map((item) => item.word.id),
+    );
+
+    // 更深：offset=1900 → 快照窗口自动扩到 2100（2000 只是默认宽度，不是硬顶）
+    const deeper = await service.getQueue("u1", "wb1", 20, "review", undefined, 1900);
+    expect(deeper.items.length).toBe(20);
+    expect(findDueCandidateSnapshots).toHaveBeenLastCalledWith("u1", "wb1", 2100);
+  });
+
+  it("skips cards whose word vanished between snapshot and hydration", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const snapshots = [makeProgressRow({ id: "p-1", word_id: "w-1" }), makeProgressRow({ id: "p-2", word_id: "w-2" })];
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findDueCandidateSnapshots: vi.fn(async () => snapshots),
+      // w-2 在水合前被下架 → 只返回 w-1
+      loadReviewCardsByWordIds: vi.fn(async () => [
+        { progress: makeProgressRow({ word_id: "w-1" }), word: makeWord("w-1") },
+      ]),
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "review");
+    expect(queue.items.map((item) => item.word.id)).toEqual(["w-1"]);
   });
 
   // ── ADR-0021：needs_recheck 读时派生（零写入）────────────────────────────
