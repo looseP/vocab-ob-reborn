@@ -12,8 +12,9 @@
  * 覆盖范围（一个用户面一个规范 URL，声明一次）：
  *  - 本模块拥有：`home` `source` `papers` `practice` `errorBook` `session`
  *    `word` `graph` —— 它们没有别的 URL 契约。
- *  - 本模块**不**拥有：`writing` 与 `studyNotes`（各有专用契约，携带
- *    taskId/venue/noteId 等参数，契约更窄 —— 一个 URL 契约一个真源，ADR-0025）。
+ *  - 本模块**不**拥有：`writing`、`studyNotes` 与 `dailyCapture`（各有专用契约
+ *    ——writing/studyNotes 携带 taskId/venue/noteId 等参数、dailyCapture 为
+ *    dailyCaptureNavigation 的 section 常量；一个 URL 契约一个真源，ADR-0025）。
  *  - 故意不覆盖：`context`（语境条目 = 工程检查器，在侧栏「工程工具」折叠组内）、
  *    `import` / `manual` / `proposals` / `recommendations`（工程工具面）。
  *

@@ -12,6 +12,8 @@ export type L3ShellSection =
   | "writing"
   // 学习笔记子空间（Task 08）：/l3?section=study-notes（列表/专题/深链/离页屏障）。
   | "studyNotes"
+  // 每日捕获子空间（M2）：/l3?section=daily-capture（日期流/回顾/类型管理）。
+  | "dailyCapture"
   | "practice"
   | "errorBook"
   | "session";
@@ -24,6 +26,8 @@ export const L3_SHELL_SECTIONS: Array<{ id: L3ShellSection; label: string }> = [
   { id: "writing", label: "作文" },
   // 学习笔记子空间（Task 08）：一级入口「学习笔记」（/l3?section=study-notes）。
   { id: "studyNotes", label: "学习笔记" },
+  // 每日捕获子空间（M2）：一级入口「每日捕获」（/l3?section=daily-capture）。
+  { id: "dailyCapture", label: "每日捕获" },
   { id: "word", label: "词空间" },
   { id: "context", label: "语境条目" },
   { id: "graph", label: "关联图" },
@@ -42,4 +46,4 @@ export const L3_SHELL_SECTIONS: Array<{ id: L3ShellSection; label: string }> = [
  * B1（体验层）：「空间首页」= 素材宇宙，是 /l3 的默认落地与"开门第一眼"，
  * 因此从工具组提为一级并置于首位（设计基线 §2 IA-1 / IA-2）。
  */
-export const L3_SHELL_CORE_SECTIONS: L3ShellSection[] = ["home", "source", "papers", "writing", "studyNotes", "graph", "practice", "errorBook", "session"];
+export const L3_SHELL_CORE_SECTIONS: L3ShellSection[] = ["home", "source", "papers", "writing", "studyNotes", "dailyCapture", "graph", "practice", "errorBook", "session"];
