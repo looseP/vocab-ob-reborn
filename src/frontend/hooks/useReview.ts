@@ -156,7 +156,12 @@ interface PersistedSession {
  */
 export function channelForMode(mode: string): "review" | "new" | null {
   if (mode === "learn") return "new";
+  // `zen` 分支是**防御性的**：`ReviewPage` 已把 zen 归一成 "review" 再调startReview
+  // （apiMode 映射），所以正常路径收不到 "zen"。留着是为了「万一别处直接调
+  // startReview("zen")」时不会退化成混流 —— 静默退化成混流是最坏的结果。
   if (mode === "review" || mode === "zen") return "review";
+  // cram / preview / ladder / hulu 一律不隔离：要么是零 FSRS 的练习模式，
+  // 要么（ladder/hulu）本身就复用 review 通道的数据源，不该在这里另开一条。
   return null;
 }
 
