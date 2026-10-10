@@ -85,13 +85,21 @@ export interface RootFamilySummary extends PlazaCollectionSummary {
   meaning: string | null;
 }
 
-/** 词根集合详情：摘要 + 词根结构词卡 + 词典增强（核心义 / 同族变体）。 */
+/** 释义分支 → 词例（2026-10-10）：多支词源各自扩展出的代表词，词例为库内真实 lemma。 */
+export interface RootSense {
+  meaning: string;
+  words: string[];
+}
+
+/** 词根集合详情：摘要 + 词根结构词卡 + 词典增强（核心义 / 同族变体 / 释义分支）。 */
 export interface RootCollectionDetail extends PlazaCollectionSummary {
   type: "simple" | "compound" | "mixed";
   /** 核心义（0052 词典命中时；未命中为 null，前端降级不展示）。 */
   meaning: string | null;
   /** 同族变体 token（词典命中时；未命中为空数组）。 */
   variants: string[];
+  /** 释义分支 → 词例（词典 senses 命中时；未命中为空数组，前端走通用降级）。 */
+  senses: RootSense[];
   words: RootWordCard[];
 }
 
@@ -234,6 +242,36 @@ export interface GetPublicWordsOptions {
 
 // ── Review / Progress ───────────────────────────────────────────────────
 export type ReviewState = "new" | "learning" | "review" | "relearning" | "suspended";
+
+/**
+ * 复习通道（2026-10-10 新学/复习隔离）。
+ *
+ * **为什么隔离**：此前新卡与到期复习挤在同一条队列里，靠「每批新卡配额」防止新卡
+ * 挤占复习。真库实测该策略失效：507 行队列中 483 张新卡（95.3%）、到期复习 0 张；
+ * 20 张的批次里新卡封顶 8 张 ⇒ 483 张新卡要靠反复「退出重进」放出 60 批，而真正的
+ * 到期复习反而被稀释到每批最多剩 12 个位置。两者认知负荷也根本不同：新卡要「学」
+ * （首次曝光、需要示例引导、单张 30 秒合理），复习卡要「想」（快速提取、只做判断、
+ * 单张应 5-10 秒）。
+ *
+ * Anki / 多邻国 / 扇贝的一致做法是两条独立通道：UI 分开、统计分开、限额分开，唯一
+ * 共享的是同一个词库。本仓按同一原则切分，且是**构造性隔离**（候选池阶段就分开）——
+ * 配额只能限制数量，隔离必须限制集合。
+ *
+ * 定义在此处（domain）而非 services：仓储层要用它生成 SQL 谓词，而依赖方向是
+ * services → repositories，仓储不能反向 import 服务层。
+ */
+export type ReviewQueueChannel = "review" | "new";
+
+/** 该state 是否属于复习通道（已作答过：含短循环与到期成熟卡）。 */
+export function isReviewChannelState(state: ReviewState, needsRecheck = false): boolean {
+  if (needsRecheck) return true;
+  return state === "learning" || state === "relearning" || state === "review";
+}
+
+/** 该 state 是否属于新词通道（从未作答）。 */
+export function isNewChannelState(state: ReviewState, needsRecheck = false): boolean {
+  return state === "new" && !needsRecheck;
+}
 
 export interface UserWordProgressRow {
   id: string;

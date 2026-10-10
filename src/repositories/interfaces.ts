@@ -78,11 +78,13 @@ import type {
   AnnotationRow,
   SessionRow,
   ReviewState,
+  ReviewQueueChannel,
   ReviewRating,
   SemanticFieldGroupRow,
   PlazaWordRow,
   RootFamilyGroupRow,
   RootMasteryFamilyRow,
+  RootSense,
   Json,
 } from "../domain";
 import type {
@@ -147,12 +149,12 @@ export interface IWordRepository {
     wordIds: string[],
   ): Promise<{ tracked: number; due: number; mastered: number; learning: number }>;
   /**
-   * 词汇广场（0052 / P1-C）：按 token 批量取词根词典（核心义 + 变体族）。
+   * 词汇广场（0052 / P1-C）：按 token 批量取词根词典（核心义 + 变体族 + 释义分支）。
    * 全局共享只读表（RLS public read）；未命中返回空 Map。
    */
   findRootLexiconByTokens(
     tokens: string[],
-  ): Promise<Map<string, { meaningZh: string; variants: string[] }>>;
+  ): Promise<Map<string, { meaningZh: string; variants: string[]; senses: RootSense[] }>>;
   /**
    * 词汇广场（P2-2）：词根家族掌握矩阵（mastered/learning 分档）。
    * 须在携带 actorId=userId 的事务内执行（owner-scoped RLS 表）。
@@ -397,6 +399,33 @@ export interface UndoRpcResult {
   errorMessage: string | null;
 }
 
+/**
+ * 队列全景页的分桶（互斥且完备，覆盖 user_word_progress.state 的全部取值）：
+ *  suspended → new → learning → due → review。`all` = 不分桶（队列顺序：到期优先）。
+ */
+export type QueueListBucket = "all" | "due" | "learning" | "review" | "new" | "suspended";
+
+/** 队列清单行（仓储 → service → HTTP 响应共用形态）。 */
+export interface QueueListRow {
+  wordId: string;
+  slug: string;
+  title: string;
+  lemma: string;
+  shortDefinition: string | null;
+  pos: string | null;
+  cefr: string | null;
+  state: ReviewState;
+  dueAt: string | null;
+  reviewCount: number;
+  lapseCount: number;
+  stability: number | null;
+  intervalDays: number | null;
+  lastReviewedAt: string | null;
+  lastRating: ReviewRating | null;
+  /** ADR-0021 读时派生（零写入），与复习队列候选同源同算法。 */
+  needsRecheck: boolean;
+}
+
 export interface IReviewRepository {
   findDueCards(userId: string, wordbookId: string, limit: number): Promise<
     Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>
@@ -407,9 +436,47 @@ export interface IReviewRepository {
    * row-level needs_recheck mark plus the words-side hashes, so the service can
    * derive "content changed" at read time (ADR-0021).
    */
-  findDueCandidates(userId: string, wordbookId: string, limit: number): Promise<
+  findDueCandidates(userId: string, wordbookId: string, limit: number, channel?: ReviewQueueChannel | null): Promise<
     Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>
   >;
+
+  /**
+   * 阶段一（轻量候选快照）：与 findDueCandidates 同排序键，但不 join words
+   * 大字段 —— 池宽可扩到数千级而不爆内存（两阶段队列取数）。
+   *
+   * @param channel 复习通道（2026-10-10 新学/复习隔离）：`review` 只出已作答且到期
+   *   的卡，`new` 只出从未作答的新卡。谓词由仓储内**模块级常量白名单**提供，
+   *   绝不由调用方拼接。未传/`null` = 旧行为（混流池）。
+   */
+  findDueCandidateSnapshots(userId: string, wordbookId: string, limit: number, channel?: ReviewQueueChannel | null): Promise<
+    Array<UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }>
+  >;
+
+  /** 阶段二：按 word_id 批量水合 word 详情（只给当前批的 ≤20 张用）。 */
+  loadReviewCardsByWordIds(userId: string, wordbookId: string, wordIds: string[]): Promise<
+    Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>
+  >;
+
+  /** 队列总览：按互斥桶计数（due/learning/review/new/suspended + dueNow 合计）。 */
+  countQueueBuckets(userId: string, wordbookId: string): Promise<{
+    due: number;
+    learning: number;
+    review: number;
+    new: number;
+    suspended: number;
+    dueNow: number;
+    total: number;
+  }>;
+
+  /** 队列清单：按桶 + 搜索词分页（排序带 lemma tiebreak，翻页不重不漏）。 */
+  listQueueCards(input: {
+    userId: string;
+    wordbookId: string;
+    bucket: QueueListBucket;
+    search: string | null;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: QueueListRow[]; total: number }>;
 
   /** All active (non-suspended) cards regardless of due_at — used by cram/preview practice modes. */
   findPracticeCards(userId: string, wordbookId: string, limit: number): Promise<

@@ -623,6 +623,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/review/queue/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listReviewQueueCards"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/review/drill/queue": {
         parameters: {
             query?: never;
@@ -6120,6 +6136,10 @@ export interface operations {
                         type: "simple" | "compound" | "mixed";
                         meaning: string | null;
                         variants: string[];
+                        senses?: {
+                            meaning: string;
+                            words: string[];
+                        }[];
                         words: {
                             id: string;
                             slug: string;
@@ -6943,8 +6963,10 @@ export interface operations {
     getReviewQueue: {
         parameters: {
             query?: {
+                channel?: "review" | "new";
                 limit?: number;
                 mode?: "review" | "cram" | "preview";
+                newCardsLimit?: number;
                 offset?: number;
             };
             header?: never;
@@ -9453,6 +9475,203 @@ export interface operations {
                         ok: true;
                         count: number;
                         wordIds: string[];
+                    };
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    /** @description Bearer authentication challenge. */
+                    "WWW-Authenticate"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Payload too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Business rule rejected */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                        code: string;
+                        message: string;
+                        details?: unknown;
+                        requestId: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    listReviewQueueCards: {
+        parameters: {
+            query?: {
+                bucket?: "all" | "due" | "learning" | "review" | "new" | "suspended";
+                limit?: number;
+                offset?: number;
+                q?: string;
+                wordbookId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        counts: {
+                            due: number;
+                            learning: number;
+                            review: number;
+                            new: number;
+                            suspended: number;
+                            dueNow: number;
+                            total: number;
+                        };
+                        items: {
+                            wordId: string;
+                            slug: string;
+                            title: string;
+                            lemma: string;
+                            shortDefinition: string | null;
+                            pos: string | null;
+                            cefr: string | null;
+                            /** @enum {string} */
+                            state: "new" | "learning" | "review" | "relearning" | "suspended";
+                            dueAt: string | null;
+                            reviewCount: number;
+                            lapseCount: number;
+                            stability: number | null;
+                            intervalDays: number | null;
+                            lastReviewedAt: string | null;
+                            lastRating: ("again" | "hard" | "good" | "easy") | null;
+                            needsRecheck: boolean;
+                        }[];
+                        total: number;
+                        limit: number;
+                        offset: number;
+                        hasMore: boolean;
                     };
                 };
             };

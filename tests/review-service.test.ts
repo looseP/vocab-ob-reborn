@@ -3,7 +3,7 @@ import type { IOutboxRepository, IRepositories, IReviewRepository, ISessionRepos
 import type { ProgressWithContentHash, SaveAnswerInput, UndoRpcResult } from "@/repositories/interfaces";
 import { ReviewService, type FsrsAdapterFn } from "@/services/review.service";
 import { REVIEW_QUEUE_CANDIDATE_LIMIT } from "@/services/review-queue";
-import { NotFoundError, BusinessRuleError } from "@/errors";
+import { NotFoundError, ConflictError, BusinessRuleError } from "@/errors";
 import type { UserWordProgressRow, Json } from "@/domain";
 
 // ── Mock infrastructure ─────────────────────────────────────────────────
@@ -96,6 +96,13 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
   return {
     findDueCards: vi.fn(async () => []),
     findDueCandidates: vi.fn(async () => []),
+    // 两阶段取数（默认路径）：返回空 ⇒ service 回退单阶段 findDueCandidates，
+    // 队列测试的既有行为不变；深翻行为由专用用例单独覆盖。
+    findDueCandidateSnapshots: vi.fn(async () => []),
+    loadReviewCardsByWordIds: vi.fn(async () => []),
+    // 队列全景页读路径（这些用例不触达，stub 空结果）
+    countQueueBuckets: vi.fn(async () => ({ due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, total: 0 })),
+    listQueueCards: vi.fn(async () => ({ items: [], total: 0 })),
     findPracticeCards: vi.fn(async () => []),
     findWordsByIds: vi.fn(async () => []),
     findDrillCandidates: vi.fn(async () => []),
@@ -1019,7 +1026,9 @@ describe("ReviewService — P1 queue-priority routing", () => {
 
     const queue = await service.getQueue("u1", "wb1", 20, "review");
 
-    expect(findDueCandidates).toHaveBeenCalledWith("u1", "wb1", REVIEW_QUEUE_CANDIDATE_LIMIT);
+    // 第 4 参是通道（2026-10-10 隔离）：未指定时getQueue 传 null（混流，保持旧行为），
+    // 仓储据此决定是否下推 state 谓词。
+    expect(findDueCandidates).toHaveBeenCalledWith("u1", "wb1", REVIEW_QUEUE_CANDIDATE_LIMIT, null);
     expect(queue.stats).toEqual({ total: 2, remaining: 2, deferredNewCards: 0 });
     // review 卡带队列优先级元数据
     expect(queue.items[0].queueBucket).toBe("overdue");
@@ -1090,6 +1099,69 @@ describe("ReviewService — P1 queue-priority routing", () => {
     expect(page2.items.length).toBe(5);
     expect(page2.hasMore).toBe(false);
     expect(page2.stats.total).toBe(25);
+  });
+
+  // ── 深翻（冲刺场景）：单会话不再卡在 200 张候选池 ─────────────────────────
+  it("keeps serving cards deep into one session (past the old 200-card pool ceiling)", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    // 2200 张到期复习卡：旧实现的候选池硬上限是 200 张
+    const snapshots = Array.from({ length: 2200 }, (_, i) =>
+      makeProgressRow({ id: `p-${i}`, word_id: `w-${i}`, review_count: i }),
+    );
+    const findDueCandidateSnapshots = vi.fn(async (_userId: string, _wordbookId: string, limit: number) =>
+      snapshots.slice(0, limit),
+    );
+    const loadReviewCardsByWordIds = vi.fn(
+      async (_userId: string, _wordbookId: string, wordIds: string[]) =>
+        wordIds.map((id) => ({ progress: makeProgressRow({ word_id: id }), word: makeWord(id) })),
+    );
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findDueCandidateSnapshots,
+      loadReviewCardsByWordIds,
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    // offset=1000：旧实现候选池早已见底（空批 + hasMore=false ⇒ 必须退出重进）
+    const deep = await service.getQueue("u1", "wb1", 20, "review", undefined, 1000);
+    expect(deep.items.length).toBe(20);
+    expect(deep.hasMore).toBe(true);
+    // stats.total 是「本会话候选池内」的口径（既有语义），不是库里的到期总数
+    expect(deep.stats.total).toBe(2000);
+    expect(findDueCandidateSnapshots).toHaveBeenCalledWith("u1", "wb1", 2000, null);
+    // 只水合当前批的 20 张 word 详情（两阶段的核心收益）
+    expect(loadReviewCardsByWordIds).toHaveBeenCalledWith(
+      "u1",
+      "wb1",
+      deep.items.map((item) => item.word.id),
+    );
+
+    // 更深：offset=1900 → 快照窗口自动扩到 2100（2000 只是默认宽度，不是硬顶）
+    const deeper = await service.getQueue("u1", "wb1", 20, "review", undefined, 1900);
+    expect(deeper.items.length).toBe(20);
+    // 第 4 参null = 未指定通道（混流，保持旧行为）。
+    expect(findDueCandidateSnapshots).toHaveBeenLastCalledWith("u1", "wb1", 2100, null);
+  });
+
+  it("skips cards whose word vanished between snapshot and hydration", async () => {
+    const { adapter } = makeMockFsrsAdapter();
+    const snapshots = [makeProgressRow({ id: "p-1", word_id: "w-1" }), makeProgressRow({ id: "p-2", word_id: "w-2" })];
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards: vi.fn(async () => []),
+      findDueCandidateSnapshots: vi.fn(async () => snapshots),
+      // w-2 在水合前被下架 → 只返回 w-1
+      loadReviewCardsByWordIds: vi.fn(async () => [
+        { progress: makeProgressRow({ word_id: "w-1" }), word: makeWord("w-1") },
+      ]),
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "review");
+    expect(queue.items.map((item) => item.word.id)).toEqual(["w-1"]);
   });
 
   // ── ADR-0021：needs_recheck 读时派生（零写入）────────────────────────────
@@ -1292,5 +1364,146 @@ describe("ReviewService — drill candidates", () => {
     await expect(service.getDrillCandidates("u1", "wb1")).rejects.toThrow(
       /findDrillCandidates not configured/,
     );
+  });
+});
+
+/**
+ * 入队写路径（enqueueCard / enqueueCards）的service 层测试。
+ *
+ * 为什么要补这一块（2026-10-10 CI 审查）：
+ * 仓储层`insertNewCard` 的各种 status 早有测试，但**service 层把 status 映射成
+ * HTTP 语义的错误**这段约 100 行一直裸奔 —— 覆盖率门禁
+ * （`scripts/report-layered-coverage.ts` diff ≥85%）把它判为缺口。
+ *
+ * 这段逻辑的**业务价值**也不低：批量入队是 all-or-nothing（任一未知词/越权词书
+ * ⇒ 整批回滚，不留半批脏数据），且每次入队都要写 outbox 事件（供下游 L1 派生）。
+ */
+describe("ReviewService.enqueueCard / enqueueCards", () => {
+  /** outbox 的类型化引用（mockRepos.outbox 是可选字段，直接访问会 TS18048）。 */
+  let outbox: IOutboxRepository;
+
+  beforeEach(() => {
+    Object.keys(mockRepos).forEach(k => delete (mockRepos as Record<string, unknown>)[k]);
+    outbox = makeMockOutboxRepo();
+    mockRepos.outbox = outbox;
+    withTransactionMock.mockClear();
+  });
+
+  function serviceWith(insertNewCard: IReviewRepository["insertNewCard"]) {
+    const { adapter } = makeMockFsrsAdapter();
+    mockRepos.reviews = makeMockReviewRepo();
+    mockRepos.reviews.insertNewCard = vi.fn(insertNewCard) as IReviewRepository["insertNewCard"];
+    mockRepos.sessions = makeMockSessionRepo();
+    return new ReviewService({ fsrsAdapter: adapter, loadWeights: async () => null });
+  }
+
+  describe("enqueueCard — 仓储 status 到 HTTP 语义的映射", () => {
+    it("inserted ⇒ ok + progressId，并写 outbox 事件", async () => {
+      const service = serviceWith(async () => ({ status: "inserted", progressId: "p-new" }));
+
+      const result = await service.enqueueCard(
+        { wordId: "w1", wordbookId: "wb1" }, "u1",
+      );
+
+      expect(result).toEqual({ ok: true, progressId: "p-new" });
+      // 入队必须发事件：下游据此派生 L1 首学工单
+      expect(outbox.enqueue).toHaveBeenCalledTimes(1);
+    });
+
+    it("outbox 事件带 dedupeKey（重复投递时幂等去重）", async () => {
+      const service = serviceWith(async () => ({ status: "inserted", progressId: "p-new" }));
+
+      await service.enqueueCard({ wordId: "w1", wordbookId: "wb1" }, "u1");
+
+      const arg = vi.mocked(outbox.enqueue).mock.calls[0][0];
+      expect(arg.dedupeKey).toContain("p-new");
+    });
+
+    it("word_not_found ⇒ NotFoundError(Word)（404 而非 500）", async () => {
+      const service = serviceWith(async () => ({ status: "word_not_found", progressId: null }));
+
+      await expect(service.enqueueCard({ wordId: "missing", wordbookId: "wb1" }, "u1"))
+        .rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it("wordbook_invalid ⇒ NotFoundError(Wordbook)（越权词书也报 404 不泄露存在性）", async () => {
+      const service = serviceWith(async () => ({ status: "wordbook_invalid", progressId: null }));
+
+      await expect(service.enqueueCard({ wordId: "w1", wordbookId: "foreign" }, "u1"))
+        .rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it("duplicate ⇒ ConflictError（409，不是幂等成功）", async () => {
+      const service = serviceWith(async () => ({ status: "duplicate", progressId: null }));
+
+      await expect(service.enqueueCard({ wordId: "w1", wordbookId: "wb1" }, "u1"))
+        .rejects.toBeInstanceOf(ConflictError);
+    });
+
+    it("错误路径不写 outbox（没入队就不该发事件）", async () => {
+      const service = serviceWith(async () => ({ status: "duplicate", progressId: null }));
+
+      await expect(service.enqueueCard({ wordId: "w1", wordbookId: "wb1" }, "u1")).rejects.toThrow();
+
+      expect(outbox.enqueue).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("enqueueCards — 批量 all-or-nothing", () => {
+    it("空 wordIds ⇒ BusinessRuleError（不发事务、不打库）", async () => {
+      const service = serviceWith(async () => ({ status: "inserted", progressId: "p" }));
+
+      await expect(service.enqueueCards({ wordIds: [], wordbookId: "wb1" }, "u1"))
+        .rejects.toBeInstanceOf(BusinessRuleError);
+      expect(withTransactionMock).not.toHaveBeenCalled();
+    });
+
+    it("全部成功 ⇒ ok + added 计数 + progressIds 列表", async () => {
+      const ids = ["p1", "p2"];
+      let i = 0;
+      const service = serviceWith(async () => {
+        const progressId = ids[i++] ?? "p";
+        return { status: "inserted", progressId };
+      });
+
+      const result = await service.enqueueCards({ wordIds: ["w1", "w2"], wordbookId: "wb1" }, "u1");
+
+      expect(result).toEqual({ ok: true, added: 2, skipped: 0, progressIds: ["p1", "p2"] });
+    });
+
+    it("重复项计入 skipped 而非失败（批量入队的常见情形）", async () => {
+      const seq = [
+        { status: "inserted" as const, progressId: "p1" },
+        { status: "duplicate" as const, progressId: null },
+      ];
+      let i = 0;
+      const service = serviceWith(async () => seq[i++] ?? seq[1]);
+
+      const result = await service.enqueueCards({ wordIds: ["w1", "w2"], wordbookId: "wb1" }, "u1");
+
+      expect(result).toEqual({ ok: true, added: 1, skipped: 1, progressIds: ["p1"] });
+    });
+
+    it("任一未知词 ⇒ 整批 NotFoundError（all-or-nothing，不留半批脏数据）", async () => {
+      const seq = [
+        { status: "inserted" as const, progressId: "p1" },
+        { status: "word_not_found" as const, progressId: null },
+      ];
+      let i = 0;
+      const service = serviceWith(async () => seq[i++] ?? seq[1]);
+
+      // 第一条已「插入」但整批回滚 —— 用户重试时不会遇到半个重复状态
+      await expect(
+        service.enqueueCards({ wordIds: ["w1", "missing"], wordbookId: "wb1" }, "u1"),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it("越权词书 ⇒ 整批 NotFoundError", async () => {
+      const service = serviceWith(async () => ({ status: "wordbook_invalid", progressId: null }));
+
+      await expect(
+        service.enqueueCards({ wordIds: ["w1"], wordbookId: "foreign" }, "u1"),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
   });
 });

@@ -6,6 +6,7 @@ import type {
   IStatsRepository,
   IRepositories,
 } from "@/repositories/interfaces";
+import type { RootSense } from "@/domain";
 import { WordService } from "@/services/word.service";
 import { NoteEntryService } from "@/services/note-entry.service";
 import { WordbookService } from "@/services/wordbook.service";
@@ -37,7 +38,7 @@ function makeMockWordRepo(overrides: Partial<IWordRepository> = {}): IWordReposi
     findBySourcePathPrefix: vi.fn(async () => []),
     findByRootToken: vi.fn(async () => []),
     countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 0, due: 0, mastered: 0, learning: 0 })),
-    findRootLexiconByTokens: vi.fn(async () => new Map<string, { meaningZh: string; variants: string[] }>()),
+    findRootLexiconByTokens: vi.fn(async () => new Map<string, { meaningZh: string; variants: string[]; senses: RootSense[] }>()),
     findRootMasteryMatrix: vi.fn(async () => []),
     count: vi.fn(async () => 0),
     findSlugs: vi.fn(async () => []),

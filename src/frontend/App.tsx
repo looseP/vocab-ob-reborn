@@ -13,6 +13,8 @@ import { SelectionTranslateLayer } from "./components/translate/SelectionTransla
 const HomePage = lazy(() => import("./pages/HomePage").then((m) => ({ default: m.HomePage })));
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const ReviewPage = lazy(() => import("./pages/ReviewPage").then((m) => ({ default: m.ReviewPage })));
+// 队列全景（P1，2026-10-10）：分桶浏览 + 行内处置，独立 chunk（多数会话不点开）。
+const ReviewQueuePage = lazy(() => import("./pages/ReviewQueuePage").then((m) => ({ default: m.ReviewQueuePage })));
 const L2DrillPage = lazy(() => import("./pages/L2DrillPage").then((m) => ({ default: m.L2DrillPage })));
 const WordsPage = lazy(() => import("./pages/WordsPage").then((m) => ({ default: m.WordsPage })));
 const WordDetailPage = lazy(() => import("./pages/WordDetailPage").then((m) => ({ default: m.WordDetailPage })));
@@ -58,6 +60,7 @@ export function App() {
               <Route path="/dashboard" element={<SiteFrame><PageSuspense><DashboardPage /></PageSuspense></SiteFrame>} />
               <Route path="/review" element={<SiteFrame><PageSuspense><ReviewPage /></PageSuspense></SiteFrame>} />
               <Route path="/review/*" element={<SiteFrame><PageSuspense><ReviewPage /></PageSuspense></SiteFrame>} />
+              <Route path="/review-queue" element={<SiteFrame><PageSuspense><ReviewQueuePage /></PageSuspense></SiteFrame>} />
               <Route path="/l2-drill" element={<SiteFrame><PageSuspense><L2DrillPage /></PageSuspense></SiteFrame>} />
               <Route path="/words" element={<SiteFrame><PageSuspense><WordsPage /></PageSuspense></SiteFrame>} />
               <Route path="/words/:slug" element={<SiteFrame><PageSuspense><WordDetailPage /></PageSuspense></SiteFrame>} />

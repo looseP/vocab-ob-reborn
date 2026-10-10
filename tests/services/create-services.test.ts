@@ -27,6 +27,12 @@ function makeRepos() {
   const reviews = {
     findDueCards: vi.fn(async () => []),
     findDueCandidates: vi.fn(async () => []),
+    // P2 两阶段队列取数（2026-10-10）：读 lambda 走同一 actorId 事务接线
+    findDueCandidateSnapshots: vi.fn(async () => []),
+    loadReviewCardsByWordIds: vi.fn(async () => []),
+    // P1 队列全景读面（2026-10-10）
+    countQueueBuckets: vi.fn(async () => ({ due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, total: 0 })),
+    listQueueCards: vi.fn(async () => ({ items: [], total: 0 })),
     findPracticeCards: vi.fn(async () => []),
     findWordsByIds: vi.fn(async () => []),
     findDrillCandidates: vi.fn(async () => []),

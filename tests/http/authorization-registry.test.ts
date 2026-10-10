@@ -316,6 +316,8 @@ const AGENT_READS = [
   "getPlazaOverview", "getPlazaCollection", "getPlazaRootsOverview", "getPlazaRootCollection", "getPlazaReviewStats", "getPlazaRootsMasteryMatrix",
   "listNotes", "listWordbooks", "getOrCreateDefaultWordbook",
   "getReviewQueue", "getReviewStats", "getReviewDashboardStats", "listReviewLeeches", "listReviewTimeline", "getReviewHeatmap", "getReviewDrillQueue",
+  // P1 队列全景读面（2026-10-10）：与 getReviewQueue 同档（owner 可读、agent 可读）
+  "listReviewQueueCards",
   // M2 复习日历：两条只读端点（过去/今天/未来 + 单日列词），与其它 review 读同档。
   "getReviewCalendar", "getReviewDay",
   "getL2LlmStatus", "listL2Candidates", "listL2ContentRows", "getL2DrillQueue",

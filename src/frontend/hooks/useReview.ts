@@ -2,6 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/frontend/api/client";
 import { useToast } from "@/frontend/components/ui/Toast";
 import type { ReviewL3ContextItem } from "@/frontend/components/review/L3ContextsFold";
+import {
+  addDailyReviewedCount,
+  isDailyLimitReached,
+  readDailyNewWordLimit,
+  readDailyReviewLimit,
+  readDailyReviewedCount,
+} from "@/frontend/utils/dailyReviewLimit";
+import type { DailyCountBucket } from "@/frontend/utils/dailyReviewLimit";
 
 export interface ReviewNoteEntry {
   id: string;
@@ -134,6 +142,29 @@ interface PersistedSession {
   savedAt: number;
 }
 
+/**
+ * mode → 服务端通道（2026-10-10 新学/复习隔离）。
+ *
+ * **为什么用独立 mode 而不是给 startReview 加参数**：会话缓存按 `cacheKey(mode)`
+ * 分桶（见下），新通道若与`review` 共用 mode，两条通道的进度会互相覆盖 ——
+ * 复习到第 8 张时切去学新词，回来会读到新词通道的队列与 currentIndex。
+ * 走独立 mode 后缓存天然隔离，且 localStorage 里的旧 `review` 会话仍可正常恢复。
+ *
+ * - `learn` → `new` 通道（只出从未作答的新卡）
+ * - `review` / `zen` → `review` 通道（只出该复习的卡，**永不含新卡**）
+ * - `cram` / `preview` → 不隔离（练习模式按定义就是要混着来）
+ */
+export function channelForMode(mode: string): "review" | "new" | null {
+  if (mode === "learn") return "new";
+  // `zen` 分支是**防御性的**：`ReviewPage` 已把 zen 归一成 "review" 再调startReview
+  // （apiMode 映射），所以正常路径收不到 "zen"。留着是为了「万一别处直接调
+  // startReview("zen")」时不会退化成混流 —— 静默退化成混流是最坏的结果。
+  if (mode === "review" || mode === "zen") return "review";
+  // cram / preview / ladder / hulu 一律不隔离：要么是零 FSRS 的练习模式，
+  // 要么（ladder/hulu）本身就复用 review 通道的数据源，不该在这里另开一条。
+  return null;
+}
+
 function cacheKey(mode: string, wordIds?: string[]): string {
   const idsKey = (wordIds ?? []).join(",");
   return `${STORAGE_PREFIX}${mode}::${idsKey}`;
@@ -227,10 +258,54 @@ export function useReview() {
   const wordIdsRef = useRef<string[] | undefined>(undefined);
   const { addToast } = useToast();
 
+  /**
+   * 每日复习上限（2026-10-10 接线）—— 此前是纯摆设的设置，现在是**续载闸门**：
+   * 今日累计评分达到上限后停止**自动**续卡，复习页提示并给出冲刺入口。
+   * `0` = 不限。计数按本地日历日累计（边界说明见 utils/dailyReviewLimit.ts）。
+   * 已加载进队列的卡不受影响（软上限：绝不打断当前这张）。
+   */
+  const [dailyLimit, setDailyLimit] = useState(() => readDailyReviewLimit());
+  const [dailyReviewedToday, setDailyReviewedToday] = useState(() => readDailyReviewedCount());
+  /**
+   * 新词通道的今日已学张数（2026-10-10 隔离）。
+   *
+   * 与复习计数**分桶**：学新词不消耗复习额度，反之亦然。若共用一个计数器，
+   * 早上学一批新词就会把白天的复习额度耗尽 —— 那等于把隔离前的病根搬到限额上。
+   */
+  const [dailyNewLearnedToday, setDailyNewLearnedToday] = useState(() =>
+    readDailyReviewedCount(new Date(), "learn"),
+  );
+  /** 新词通道每日上限；0 = 不限。设置页与复习页共用（见 dailyReviewLimit.ts）。 */
+  const [dailyNewWordLimit, setDailyNewWordLimit] = useState(() => readDailyNewWordLimit());
+  /** 本次会话内用户显式点了「继续复习（冲刺）」⇒ 不再拦自动续卡（不改设置）。 */
+  const [dailyLimitOverride, setDailyLimitOverride] = useState(false);
+  /** 是否因达每日上限而停止了自动续卡（复习页据此渲染提示条）。 */
+  const [dailyLimitBlocked, setDailyLimitBlocked] = useState(false);
+  // 闸门读 ref：loadMore 被预加载 effect 高频调用，塞 state 进依赖会让它反复重建
+  const dailyLimitRef = useRef(dailyLimit);
+  dailyLimitRef.current = dailyLimit;
+  const dailyReviewedRef = useRef(dailyReviewedToday);
+  dailyReviewedRef.current = dailyReviewedToday;
+  const dailyOverrideRef = useRef(dailyLimitOverride);
+  dailyOverrideRef.current = dailyLimitOverride;
+  const dailyNewLimitRef = useRef(dailyNewWordLimit);
+  dailyNewLimitRef.current = dailyNewWordLimit;
+  const dailyNewLearnedRef = useRef(dailyNewLearnedToday);
+  dailyNewLearnedRef.current = dailyNewLearnedToday;
+
   const currentCard = !completed && currentIndex < queue.length ? queue[currentIndex] : null;
   const remaining = Math.max(0, queue.length - currentIndex);
 
   const startReview = useCallback(async (mode: string = "review", wordIds?: string[], options?: { force?: boolean }) => {
+    // 设置页可能刚改过上限 ⇒ 每次开新会话都重读；冲刺开关不跨会话（新会话 = 新闸门）
+    // 两个通道各自重读各自的额度（2026-10-10 隔离：额度与计数都分桶）。
+    const bucket: DailyCountBucket = mode === "learn" ? "learn" : "review";
+    setDailyLimit(bucket === "learn" ? readDailyNewWordLimit() : readDailyReviewLimit());
+    setDailyReviewedToday(readDailyReviewedCount(new Date(), bucket));
+    setDailyNewLearnedToday(readDailyReviewedCount(new Date(), "learn"));
+    setDailyNewWordLimit(readDailyNewWordLimit());
+    setDailyLimitOverride(false);
+    setDailyLimitBlocked(false);
     // 先尝试命中缓存：同 mode + 同 wordIds 分桶，且 TTL 内有效。
     // force=true 时绕过缓存（用户主动"开始/重启"）。
     wordIdsRef.current = wordIds;
@@ -273,6 +348,10 @@ export function useReview() {
       if (wordIds && wordIds.length > 0) {
         params.set("wordIds", wordIds.join(","));
       }
+      // 通道隔离（2026-10-10）：`learn` 走 new 通道、`review`/`zen` 走 review 通道，
+      // 练习模式（cram/preview）不下通道参数（保持混流）。
+      const channel = channelForMode(mode);
+      if (channel) params.set("channel", channel);
       const result = await apiFetch<QueueResponse>(`/review/queue?${params.toString()}`);
       if (!result.items || result.items.length === 0) {
         // 队列为空不是错误：不设 error，让完成/空态分支渲染"没有待复习的单词"，
@@ -339,6 +418,15 @@ export function useReview() {
         good: prev.good + (rating === "good" ? 1 : 0),
         easy: prev.easy + (rating === "easy" ? 1 : 0),
       }));
+      if (mode !== "cram") {
+        // 每日上限的计数入账（cram 是零 FSRS 的练习模式，不算复习）。
+        // 按通道分桶（2026-10-10 隔离）：learn 记「今日新学」，review/zen 记「今日复习」。
+        if (mode === "learn") {
+          setDailyNewLearnedToday(addDailyReviewedCount(1, new Date(), "learn"));
+        } else {
+          setDailyReviewedToday(addDailyReviewedCount(1, new Date(), "review"));
+        }
+      }
       const next = currentIndex + 1;
       if (next >= queue.length) {
         setCompleted(true);
@@ -399,6 +487,13 @@ export function useReview() {
         good: Math.max(0, prev.good - (target.rating === "good" ? 1 : 0)),
         easy: Math.max(0, prev.easy - (target.rating === "easy" ? 1 : 0)),
       }));
+      // 撤销 = 今日计数回退（否则撤销后仍被上限拦住，越撤越堵）
+      // 回退**当前会话所属通道**的桶：撤销学新词不能扣掉今日复习的计数。
+      if (mode === "learn") {
+        setDailyNewLearnedToday(addDailyReviewedCount(-1, new Date(), "learn"));
+      } else {
+        setDailyReviewedToday(addDailyReviewedCount(-1, new Date(), "review"));
+      }
       addToast("success", `已撤销「${target.card.word.lemma}」的评分，可重新作答`);
     } catch (err) {
       // 已被撤销过/非最新日志等情况：目标不再有效，弹出避免死循环重试
@@ -442,6 +537,12 @@ export function useReview() {
         good: Math.max(0, prev.good - (rating === "good" ? 1 : 0)),
         easy: Math.max(0, prev.easy - (rating === "easy" ? 1 : 0)),
       }));
+      // 与 undoLast 同口径：撤销后今日计数回退（同样按当前通道的桶）
+      if (mode === "learn") {
+        setDailyNewLearnedToday(addDailyReviewedCount(-1, new Date(), "learn"));
+      } else {
+        setDailyReviewedToday(addDailyReviewedCount(-1, new Date(), "review"));
+      }
       addToast("success", matched
         ? `已撤销「${prevCard}」的评分，可重新作答`
         : `已撤销「${entry.word_lemma}」的评分，可重新评分`);
@@ -549,6 +650,19 @@ export function useReview() {
   const loadMore = useCallback(async (): Promise<boolean> => {
     if (busyRef.current || loadingMore) return false;
     if (!sessionId) return false;
+    // 每日上限闸门（软上限，2026-10-10）：达限后不再「自动」续卡。
+    // 走 ref 读取，避免把上限/计数塞进本回调依赖（预加载 effect 会跟着抖动）。
+    // **按通道各判各的**（隔离后额度分桶）：learn 通道看新词额度，review/zen 看复习额度，
+    // 否则「早上学新词把复习额度花光」会在闸门处复现混流病。
+    const limitForMode = mode === "learn" ? dailyNewLimitRef.current : dailyLimitRef.current;
+    const countForMode = mode === "learn" ? dailyNewLearnedRef.current : dailyReviewedRef.current;
+    if (
+      !dailyOverrideRef.current &&
+      isDailyLimitReached(limitForMode, countForMode)
+    ) {
+      setDailyLimitBlocked(true);
+      return false;
+    }
     busyRef.current = true;
     setLoadingMore(true);
     try {
@@ -556,6 +670,9 @@ export function useReview() {
       if (wordIdsRef.current && wordIdsRef.current.length > 0) {
         params.set("wordIds", wordIdsRef.current.join(","));
       }
+      // 续卡必须带同一通道，否则第 2 页起会混流（首批隔离、后续不隔离 = 更难查的bug）。
+      const channel = channelForMode(mode);
+      if (channel) params.set("channel", channel);
       const result = await apiFetch<QueueResponse>(`/review/queue?${params.toString()}`);
       const newItems = result.items ?? [];
       setHasMore(Boolean(result.hasMore));
@@ -572,6 +689,19 @@ export function useReview() {
       setLoadingMore(false);
     }
   }, [mode, sessionId, queue.length, loadingMore, addToast]);
+
+  /**
+   * 冲刺：本次会话内越过每日上限并立即续卡。
+   *
+   * 为什么不是「改设置」：冲刺是临时行为（今天想多刷），不该让用户去设置页把上限
+   * 永久改高、之后忘了改回来。这里只解除本次会话的闸门，设置值原样不动。
+   */
+  const allowDailyLimitOverride = useCallback(async (): Promise<boolean> => {
+    dailyOverrideRef.current = true;
+    setDailyLimitOverride(true);
+    setDailyLimitBlocked(false);
+    return loadMore();
+  }, [loadMore]);
 
   /** 预加载阈值：剩余卡片 ≤ 该值时提前拉取下一页，避免到达末尾时的"完成"闪现。 */
   const LOAD_MORE_THRESHOLD = 5;
@@ -655,5 +785,17 @@ export function useReview() {
     browsePrev,
     clearWeakSignal,
     loadMore,
+    /** 今日已复习（本地日历日累计，含本会话增量；cram 练习不计）。 */
+    dailyReviewedToday,
+    /** 每日复习上限；0 = 不限。 */
+    dailyLimit,
+    /** 今日已学新词张数（与今日已复习分桶，见 dailyReviewLimit.ts）。 */
+    dailyNewLearnedToday,
+    /** 新词通道每日上限；0 = 不限。 */
+    dailyNewWordLimit,
+    /** 因达每日上限而停止自动续卡（复习页据此提示）。 */
+    dailyLimitBlocked,
+    /** 继续复习（冲刺）：本次会话内越过上限并立即续卡，不改设置。 */
+    allowDailyLimitOverride,
   };
 }

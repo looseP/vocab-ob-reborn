@@ -9,6 +9,7 @@ import { PlazaCache } from "@/services/plaza-cache";
 import { NotFoundError } from "@/errors";
 import type {
   PlazaWordRow,
+  RootSense,
   SemanticFieldGroupRow,
   WordSummary,
 } from "@/domain";
@@ -24,7 +25,7 @@ function makeMockWordRepo(overrides: Partial<IWordRepository> = {}): IWordReposi
     findBySourcePathPrefix: vi.fn(async () => []),
     findByRootToken: vi.fn(async () => []),
     countReviewStatsByWordIds: vi.fn(async () => ({ tracked: 0, due: 0, mastered: 0, learning: 0 })),
-    findRootLexiconByTokens: vi.fn(async () => new Map<string, { meaningZh: string; variants: string[] }>()),
+    findRootLexiconByTokens: vi.fn(async () => new Map<string, { meaningZh: string; variants: string[]; senses: RootSense[] }>()),
     findRootMasteryMatrix: vi.fn(async () => []),
     count: vi.fn(async () => 0),
     findSlugs: vi.fn(async () => []),
@@ -296,7 +297,7 @@ describe("PlazaService.getRootsOverview", () => {
     const repo = makeMockWordRepo({
       findRootFamilyGroups: vi.fn(async () => [{ root: "par", count: 6, updatedAt: "2026-08-28T00:00:00.000Z" }]),
       findRootLexiconByTokens: vi.fn(
-        async () => new Map([["par", { meaningZh: "相等；使相等", variants: [] }]]),
+        async () => new Map([["par", { meaningZh: "相等；使相等", variants: [], senses: [] }]]),
       ),
     });
     const { service } = makeService(repo);
@@ -374,7 +375,7 @@ describe("PlazaService.getRootCollection", () => {
     const repo = makeMockWordRepo({
       findByRootToken: vi.fn(async () => [WORD_ROW]),
       findRootLexiconByTokens: vi.fn(
-        async () => new Map([["chart", { meaningZh: "纸；图表", variants: ["cart"] }]]),
+        async () => new Map([["chart", { meaningZh: "纸；图表", variants: ["cart"], senses: [] }]]),
       ),
     });
     const { service } = makeService(repo);
@@ -397,7 +398,7 @@ describe("PlazaService.getRootsMasteryMatrix", () => {
         { token: "spect", total: 9, mastered: 0, learning: 0 },
       ]),
       findRootLexiconByTokens: vi.fn(
-        async () => new Map([["port", { meaningZh: "携带；搬运", variants: ["porti"] }]]),
+        async () => new Map([["port", { meaningZh: "携带；搬运", variants: ["porti"], senses: [] }]]),
       ),
     });
     const { service } = makeService(repo);

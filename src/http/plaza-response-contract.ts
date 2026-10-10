@@ -86,6 +86,17 @@ export const rootCollectionDetailResponseSchema = z.object({
   meaning: z.string().nullable(),
   /** 同族变体 token（0052 词典命中时；未命中空数组）。 */
   variants: z.array(z.string()),
+  /** 释义分支 → 词例（2026-10-10，词典 senses 命中时非空；additive 可选，未命中缺省）。 */
+  senses: z
+    .array(
+      z
+        .object({
+          meaning: z.string().min(1),
+          words: z.array(z.string().min(1)).min(1),
+        })
+        .strict(),
+    )
+    .optional(),
   words: z.array(rootWordCardResponseSchema),
 }).strict();
 

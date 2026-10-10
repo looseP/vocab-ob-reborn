@@ -1,0 +1,85 @@
+/**
+ * 复习通道的 query 参数解析（2026-10-10 新学/复习隔离）。
+ *
+ * **为什么单独成文件**：`routes/review.ts` 受路由复杂度棘轮冻结（见
+ * `scripts/verify-route-complexity.ts` 的 ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS），
+ * 不许增长。这里承载通道参数的全部解析与边界收敛，路由里只留一行调用。
+ *
+ * **解析纪律**：入参是不可信字符串，一律走**白名单枚举**解析，不透传进服务层。
+ * 未知值回落到 `null`（= 不做通道隔离，保持旧行为）而不是抛错 —— 这是读侧参数，
+ * 客户端版本落后时不该让整个复习页打不开。
+ */
+import type { ReviewQueueChannel } from "@/domain";
+
+/**
+ * `channel` → 通道。
+ *
+ * - `review` / `new`：显式两条通道（互斥且完备，见 domain 的 ReviewQueueChannel）。
+ * - 缺省、空串、`all`、未知值 → `null`（混流，旧行为）。
+ */
+export function parseReviewChannel(raw: string | undefined | null): ReviewQueueChannel | null {
+  if (raw === "review") return "review";
+  if (raw === "new") return "new";
+  return null;
+}
+
+/** 新卡配额上限上限值：与 MAX_NEW_CARDS_PER_BATCH 同量级，防止单次新学爆量。 */
+export const MAX_NEW_CARDS_LIMIT_CAP = 200;
+
+/**
+ * `newCardsLimit` → 单次新词会话的新卡配额；非法/缺省 → `undefined`
+ * （交给服务层用通道默认值 new 通道 20 / review 通道不受配额约束）。
+ */
+export function parseNewCardsLimit(raw: string | undefined | null): number | undefined {
+  if (raw == null || raw.trim() === "") return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.min(parsed, MAX_NEW_CARDS_LIMIT_CAP);
+}
+
+/**
+ * `/api/review/queue` 的全部 query 参数解析（mode / wordIds / channel / newCardsLimit）。
+ *
+ * **为什么全在这里**：`routes/review.ts` 受路由复杂度棘轮冻结（基线 236 行，不许增长），
+ * 而通道隔离必须给它多传两个参数。与其在路由里挤行，不如把纯解析全部外迁——
+ * 这些函数没有副作用、可单测，且路由里只剩一行调用。
+ */
+export interface ReviewQueueQuery {
+  limit: number;
+  offset: number;
+  mode: "review" | "cram" | "preview";
+  wordIds: string[] | undefined;
+  channel: ReviewQueueChannel | null;
+  maxNewCards: number | undefined;
+}
+
+export function parseReviewQueueQuery(query: (key: string) => string | undefined): ReviewQueueQuery {
+  const wordIdsParam = query("wordIds");
+  // limit/offset 必须**双端**clamp。原写法 `Math.min(parseInt(...) || 20, 100)` 只夹上界，
+  // 于是 `?limit=-5` 会原样透传 -5（-5 是 truthy，`|| 20` 兜不住）⇒ SQL `LIMIT -5` 直接报错。
+  // `Math.max(1, ...)` 保证下界 >= 1；非法值（NaN / 0 / 负数）统一回落 20。
+  const rawLimit = Number.parseInt(query("limit") ?? "20", 10);
+  const rawOffset = Number.parseInt(query("offset") ?? "0", 10);
+  return {
+    limit: Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 20,
+    offset: Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0,
+    mode: query("mode") === "cram" ? "cram" : query("mode") === "preview" ? "preview" : "review",
+    wordIds: wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined,
+    channel: parseReviewChannel(query("channel")),
+    maxNewCards: parseNewCardsLimit(query("newCardsLimit")),
+  };
+}
+
+/**
+ * 一次性解析两个通道参数 —— `review.ts` 受路由复杂度棘轮冻结（不许增长），
+ * 把两次调用并成一次可省下一行，也省掉路由里的注释。
+ */
+export function parseChannelParams(query: (key: string) => string | undefined): {
+  channel: ReviewQueueChannel | null;
+  maxNewCards: number | undefined;
+} {
+  return {
+    channel: parseReviewChannel(query("channel")),
+    maxNewCards: parseNewCardsLimit(query("newCardsLimit")),
+  };
+}

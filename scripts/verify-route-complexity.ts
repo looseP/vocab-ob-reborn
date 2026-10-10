@@ -115,11 +115,24 @@ export const ROUTE_COMPLEXITY_BOOTSTRAP_LIMITS: RouteComplexity[] = [
   // 放得过 `2026-13-99`，直通 SQL 会 500，被端点测试抓到后补的）。
   // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
   { file: "src/http/routes/review-calendar.ts", maxLines: 87, maxRoutes: 2 },
+  // 2026-10-10 新学/复习隔离：/api/review/queue 的**全部** query 参数解析
+  // （mode / wordIds / channel / newCardsLimit）外迁到本文件。
+  // `routes/review.ts` 受棘轮冻结（基线 236 行），而通道隔离必须给它多传两个参数 ——
+  // 实测把 mode/wordIds 的解析一并迁进来后，review.ts 净减到 **233 行**（不增反减）。
+  // **不是路由文件**（0 条 app.get/post），登记在此只为让棘轮同样覆盖它 ——
+  // 防止它日后悄悄长成第二个 review.ts。
+  // 上限口径同上（含空行，去尾换行）：实测 80 行 / 0 路由，留一档余量取 90。
+  { file: "src/http/routes/review-channel-params.ts", maxLines: 90, maxRoutes: 0 },
   // 2026-10-10 P1 队列编辑：移出队列 / 提前到期两条写端点另立本文件（review.ts 已按
   // 基线冻结，同 review-calendar.ts 先例同挂 /api/review）。上限口径与
   // measureRouteComplexity 相同（含空行，去尾换行）：实测 63 行 / 2 路由。
   // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
   { file: "src/http/routes/review-cards.ts", maxLines: 80, maxRoutes: 2 },
+  // 2026-10-10 P1 队列全景读面：GET /queue/list（桶计数 + 分页清单）另立本文件
+  // （review.ts 已冻结、review-cards.ts 是 owner-only 写面，读面另立更贴授权口径）。
+  // 上限口径同上（含空行，去尾换行）：实测 40 行 / 1 路由，留一档余量取 45。
+  // 校验方式：ROUTE_COMPLEXITY_BASE_REF=<本文件新增前的 ref> 时走 bootstrap 分支。
+  { file: "src/http/routes/review-queue-list.ts", maxLines: 45, maxRoutes: 1 },
   // 2026-10-06 ADR-0041 葫芦冲刺：计划容器独立薄路由（新前缀 /api/hulu，server.ts
   // 直挂，同 forgetting/l3-sessions 先例）。P0 挂 3 条（plans 建/读/放弃）。
   // 上限口径与 measureRouteComplexity 相同（含空行，去尾换行）：P0 实测 67 行 / 3 路由。

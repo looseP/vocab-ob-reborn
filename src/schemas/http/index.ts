@@ -184,6 +184,20 @@ export const batchAddToReviewSchema = z.object({
   wordbookId: uuidSchema.optional(),
 });
 
+// ── 队列全景（P1，2026-10-10）：分桶浏览队列清单 ───────────────────────────
+// bucket 与仓储的互斥桶一一对应；q 走 ILIKE 子串（lemma / title）。
+// offset 上限 10 万：队列上千张时翻页足够，又挡住 `?offset=1e9` 之类的扫描滥用。
+export const reviewQueueListQuerySchema = z.object({
+  wordbookId: uuidSchema.optional(),
+  bucket: z
+    .enum(["all", "due", "learning", "review", "new", "suspended"])
+    .optional()
+    .default("all"),
+  q: z.string().trim().min(1).max(80).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+  offset: z.coerce.number().int().min(0).max(100_000).optional().default(0),
+});
+
 // ── L2 drill mode (双轨 spec) ─────────────────────────────────────────────
 // 辨析步应答：choiceIndex 为选项下标（0-3）。幂等键全局共享（不限 track）。
 export const l2TaskAnswerSchema = z.object({

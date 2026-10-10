@@ -25,7 +25,7 @@ import { NAV_ICON, type NavIconName } from "@/frontend/components/layout/navIcon
 
 /** App.tsx 里真实存在的 top-level 路由（构建期不会自动核对，故在此钉住）。 */
 const APP_ROUTES = [
-  "/", "/dashboard", "/review", "/l2-drill", "/words", "/plaza", "/notes",
+  "/", "/dashboard", "/review", "/review-queue", "/l2-drill", "/words", "/plaza", "/notes",
   "/settings", "/import", "/l3", "/upgrade",
 ] as const;
 

@@ -16,17 +16,32 @@ interface LlmStatus {
   budget: { dailyLimitTokens: number; usedTodayTokens: number; resetsAt: string } | null;
 }
 
+import {
+  DEFAULT_DAILY_NEW_WORD_LIMIT,
+  DEFAULT_DAILY_REVIEW_LIMIT,
+  MAX_DAILY_NEW_WORD_LIMIT,
+  MAX_DAILY_REVIEW_LIMIT,
+  formatDailyLimitLabel,
+  readDailyNewWordLimit,
+  readDailyReviewLimit,
+  writeDailyNewWordLimit,
+  writeDailyReviewLimit,
+} from "@/frontend/utils/dailyReviewLimit";
+
 export function SettingsPage() {
   const [theme, setTheme] = useState<Theme>("system");
-  const [dailyLimit, setDailyLimit] = useState(50);
+  // 每日复习上限（2026-10-10 接线）：默认 200，0 = 不限。此前 50 是个从未被读取过的
+  // 孤儿默认值 —— 界面显示 50、实际没有任何行为随它变化。
+  const [dailyLimit, setDailyLimit] = useState(() => readDailyReviewLimit());
+  // 新词通道每日上限（2026-10-10 隔离）：与复习上限**独立设置、独立计数** ——
+  // 学新词不消耗复习额度，反之亦然。
+  const [dailyNewWordLimit, setDailyNewWordLimit] = useState(() => readDailyNewWordLimit());
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const { addToast } = useToast();
 
   useEffect(() => {
     const saved = localStorage.getItem("vocab-theme") as Theme;
     if (saved) setTheme(saved);
-    const limit = localStorage.getItem("vocab-daily-limit");
-    if (limit) setDailyLimit(parseInt(limit, 10));
   }, []);
 
   // Phase D：加载 LLM 接入状态（失败静默降级为"状态不可用"）。
@@ -56,7 +71,8 @@ export function SettingsPage() {
   };
 
   const saveSettings = () => {
-    localStorage.setItem("vocab-daily-limit", String(dailyLimit));
+    writeDailyReviewLimit(dailyLimit);
+    writeDailyNewWordLimit(dailyNewWordLimit);
     addToast("success", "设置已保存");
   };
 
@@ -113,22 +129,82 @@ export function SettingsPage() {
         <div className="space-y-4">
           <div>
             <label className="mb-2 block text-sm font-medium text-[var(--color-ink)]">
-              每日复习上限
-              <Badge tone="accent" className="ml-2">{dailyLimit} 张/天</Badge>
+              每日新词上限
+              <Badge tone="warm" className="ml-2">{formatDailyLimitLabel(dailyNewWordLimit)}</Badge>
             </label>
-            <input
-              type="range"
-              min={10}
-              max={200}
-              step={10}
-              value={dailyLimit}
-              onChange={(e) => setDailyLimit(parseInt(e.target.value, 10))}
-              className="w-full accent-[var(--color-accent)]"
-            />
+            {dailyNewWordLimit > 0 ? (
+              <input
+                type="range"
+                min={5}
+                max={MAX_DAILY_NEW_WORD_LIMIT}
+                step={5}
+                value={dailyNewWordLimit}
+                onChange={(e) => setDailyNewWordLimit(parseInt(e.target.value, 10))}
+                className="w-full accent-[var(--color-accent)]"
+              />
+            ) : (
+              <p className="text-sm text-[var(--color-ink-soft)]">
+                已设为不限：新词会话会一直续卡到没有新词为止。
+              </p>
+            )}
+            <div className="mt-1 flex justify-between text-xs text-[var(--color-ink-soft)]">
+              <span>5</span>
+              <span>{MAX_DAILY_NEW_WORD_LIMIT}</span>
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
+              <input
+                type="checkbox"
+                checked={dailyNewWordLimit === 0}
+                onChange={(e) =>
+                  setDailyNewWordLimit(e.target.checked ? 0 : DEFAULT_DAILY_NEW_WORD_LIMIT)
+                }
+                className="accent-[var(--color-accent)]"
+              />
+              不限（大量上词时）
+            </label>
+            <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
+              <strong>与每日复习上限互相独立</strong>：学新词不消耗复习额度，反之亦然
+              （2026-10-10 通道隔离）。一次学太多新词，第二天多半忘了大半 —— 20 是
+              认知负荷的经验上限。
+            </p>
+          </div>
+          <div>
+            <label className="mb-2 block text-sm font-medium text-[var(--color-ink)]">
+              每日复习上限
+              <Badge tone="accent" className="ml-2">{formatDailyLimitLabel(dailyLimit)}</Badge>
+            </label>
+            {dailyLimit > 0 ? (
+              <input
+                type="range"
+                min={10}
+                max={MAX_DAILY_REVIEW_LIMIT}
+                step={10}
+                value={dailyLimit}
+                onChange={(e) => setDailyLimit(parseInt(e.target.value, 10))}
+                className="w-full accent-[var(--color-accent)]"
+              />
+            ) : (
+              <p className="text-sm text-[var(--color-ink-soft)]">
+                已设为不限：复习队列会一直续卡到没有卡为止。
+              </p>
+            )}
             <div className="mt-1 flex justify-between text-xs text-[var(--color-ink-soft)]">
               <span>10</span>
-              <span>200</span>
+              <span>{MAX_DAILY_REVIEW_LIMIT}（上千张的冲刺档）</span>
             </div>
+            <label className="mt-3 flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
+              <input
+                type="checkbox"
+                checked={dailyLimit === 0}
+                onChange={(e) => setDailyLimit(e.target.checked ? 0 : DEFAULT_DAILY_REVIEW_LIMIT)}
+                className="accent-[var(--color-accent)]"
+              />
+              不限（冲刺期常驻）
+            </label>
+            <p className="mt-2 text-xs text-[var(--color-ink-soft)]">
+              达到上限后队列会停止「自动」续卡（当前这张不受影响），复习页给出提示与「继续复习（冲刺）」
+              入口 —— 上限是防过载的软护栏，不是硬墙。
+            </p>
           </div>
           <Button onClick={saveSettings}>
             <Save className="h-4 w-4" />

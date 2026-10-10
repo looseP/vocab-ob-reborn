@@ -170,9 +170,21 @@ export function createServices(deps: ServiceDeps) {
           (tx) => createRepositories(tx).reviews.findDueCards(userId, wordbookId, limit),
           { actorId: userId },
         ),
-      findDueCandidates: (userId, wordbookId, limit) =>
+      findDueCandidates: (userId, wordbookId, limit, channel) =>
         withTransaction(
-          (tx) => createRepositories(tx).reviews.findDueCandidates(userId, wordbookId, limit),
+          (tx) => createRepositories(tx).reviews.findDueCandidates(userId, wordbookId, limit, channel),
+          { actorId: userId },
+        ),
+      // 两阶段队列取数：窄列快照排序 → 只水合当前批（池宽不再受 200 张所限）
+      // channel 透传到仓储的 SQL 谓词（2026-10-10 新学/复习隔离）：候选池本身就只有该通道的卡
+      findDueCandidateSnapshots: (userId, wordbookId, limit, channel) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.findDueCandidateSnapshots(userId, wordbookId, limit, channel),
+          { actorId: userId },
+        ),
+      loadReviewCardsByWordIds: (userId, wordbookId, wordIds) =>
+        withTransaction(
+          (tx) => createRepositories(tx).reviews.loadReviewCardsByWordIds(userId, wordbookId, wordIds),
           { actorId: userId },
         ),
       findPracticeCards: (userId, wordbookId, limit) =>

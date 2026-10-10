@@ -10,6 +10,7 @@
 
 import type {
   Json,
+  ReviewQueueChannel,
   ReviewRating,
   ReviewState,
   UserWordProgressRow,
@@ -25,6 +26,8 @@ import type {
   InsertNewCardStatus,
   ProgressForAction,
   ProgressWithContentHash,
+  QueueListBucket,
+  QueueListRow,
   RemoveCardsByWordIdsInput,
   RestoreSuspendSnapshotInput,
   SaveAnswerInput,
@@ -34,6 +37,7 @@ import type {
 import { BaseRepository } from "./base";
 import { ValidationError } from "../errors";
 import { startOfTodayIsoInDisplayTz } from "../db/timezone";
+import { deriveContentStaleness } from "../domain/content-staleness";
 import { LEECH_LAPSE_THRESHOLD } from "../domain/review.entity";
 
 // ── H2 fix: whitelist for rating → counter column ───────────────────────
@@ -95,6 +99,60 @@ type ReviewCardQueryRow = UserWordProgressRow & {
   mnemonic_text?: string | null;
   mnemonic_type?: string | null;
   semantic_chain?: string | null;
+};
+
+/**
+ * 桶 → SQL 谓词的白名单。**用户输入永不进入 SQL**：分桶只决定挑哪个常量，
+ * 未知桶值在到达仓储前已被 zod 拒绝（schema 用 z.enum）。与 interfaces.ts 的
+ * QueueListBucket 一一对应。
+ */
+const QUEUE_BUCKET_PREDICATE: Record<Exclude<QueueListBucket, "all">, string> = {
+  suspended: `uwp.state = 'suspended'`,
+  new: `uwp.state = 'new'`,
+  learning: `uwp.state IN ('learning', 'relearning')`,
+  due: `uwp.state = 'review' AND (uwp.due_at IS NULL OR uwp.due_at <= now())`,
+  review: `uwp.state = 'review' AND uwp.due_at > now()`,
+};
+
+/** listQueueCards 的 SQL 行形态（snake_case + count 窗口列）。 */
+type QueueListQueryRow = {
+  w_id: string;
+  slug: string;
+  title: string;
+  lemma: string;
+  short_definition: string | null;
+  pos: string | null;
+  cefr: string | null;
+  state: ReviewState;
+  due_at: string | null;
+  review_count: number;
+  lapse_count: number;
+  stability: number | null;
+  interval_days: number | null;
+  last_reviewed_at: string | null;
+  last_rating: ReviewRating | null;
+  needs_recheck: boolean | null;
+  content_hash_snapshot: string | null;
+  l1_content_hash_snapshot: string | null;
+  content_hash: string;
+  l1_content_hash: string | null;
+};
+
+/**
+ * 通道 → SQL 谓词白名单（2026-10-10 新学/复习隔离）。
+ *
+ * 与 `QUEUE_BUCKET_PREDICATE` 同一纪律：**用户输入永不进入 SQL**，通道只决定挑哪个
+ * 常量，两侧枚举（services/review-queue.ts 的 ReviewQueueChannel 与此表）一一对应。
+ *
+ * `review` 通道刻意**不含** `due_at IS NULL`：state='review' 的卡 due_at 必非空
+ * （到期才转出 new），写成 `due_at <= now()` 与原查询同义。
+ * `new` 通道只认 `state='new'`（needs_recheck 的行不在此过滤——它们是「内容已变
+ * 需重看」的已作答卡，属于复习通道，由 review 通道的 needs_recheck 提权处理）。
+ */
+const CHANNEL_PREDICATE: Record<"review" | "new", string> = {
+  review: `uwp.state IN ('learning', 'relearning', 'review')
+           AND (uwp.state <> 'review' OR uwp.due_at IS NULL OR uwp.due_at <= now())`,
+  new: `uwp.state = 'new'`,
 };
 
 export class ReviewRepository extends BaseRepository implements IReviewRepository {
@@ -179,7 +237,9 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
     userId: string,
     wordbookId: string,
     limit: number,
+    channel: ReviewQueueChannel | null = null,
   ): Promise<Array<{ progress: UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>> {
+    const predicate = channel === null ? null : CHANNEL_PREDICATE[channel];
     const rows = await this.query<ReviewCardQueryRow>(
       `SELECT ${PROGRESS_COLUMNS_PREFIXED},
               w.id AS w_id, w.slug, w.title, w.lemma,
@@ -191,19 +251,86 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
               w.content_hash, w.l1_content_hash
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
-       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
-         AND uwp.state != 'suspended'
-         AND (uwp.due_at IS NULL OR uwp.due_at <= now())
-       -- 到期卡优先（NULLS LAST）：新卡 due_at 为 NULL，NULLS FIRST 会让它们占满
-       -- 200 个候选名额、到期卡一张进不来 ⇒ 队列只发新卡。见本方法 JSDoc。
-       ORDER BY uwp.due_at ASC NULLS LAST, uwp.last_reviewed_at ASC NULLS FIRST
-       LIMIT $3`,
+WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+        AND uwp.state != 'suspended'
+        ${predicate ? `AND (${predicate})` : ""}
+        ${predicate ? "" : "AND (uwp.due_at IS NULL OR uwp.due_at <= now())"}
+      -- 到期卡优先（NULLS LAST）：新卡 due_at 为 NULL，NULLS FIRST 会让它们占满
+      -- 200 个候选名额、到期卡一张进不来 ⇒ 队列只发新卡。见本方法 JSDoc。
+      -- 通道隔离后此排序仍保留：review 通道内按到期时间先后出卡，语义不变。
+      ORDER BY uwp.due_at ASC NULLS LAST, uwp.last_reviewed_at ASC NULLS FIRST
+      LIMIT $3`,
       [userId, wordbookId, limit],
     );
 
     return this.mapReviewCardRows<
       UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }
     >(rows);
+  }
+
+  /**
+   * 阶段一（轻量候选快照）—— 两阶段队列取数。
+   *
+   * 只取 user_word_progress 的窄列 + words 的两个 content hash（供 ADR-0021
+   * needs_recheck 读时派生），**不 join words 大字段**（examples / metadata /
+   * prototype_text …）。排序键与 findDueCandidates 完全一致（到期优先、
+   * NULLS LAST），所以两阶段得到的出卡顺序与旧实现逐张相同 —— 只是把
+   * "排序/配额"与"取 word 详情"拆开，池宽因而可以从 200 扩到数千而不爆内存。
+   *
+   * @param limit 快照行数上限；由 service 按会话 offset 计算（自动扩窗）。
+   * @param channel 复习通道（2026-10-10 隔离）；`null` = 不下推通道条件（保持旧行为，
+   *   即混流池 + 依赖 due_at IS NULL 分支放进新卡），供练习模式与旧调用方使用。
+   */
+  async findDueCandidateSnapshots(
+    userId: string,
+    wordbookId: string,
+    limit: number,
+    channel: "review" | "new" | null = null,
+  ): Promise<Array<UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }>> {
+    const predicate = channel === null ? null : CHANNEL_PREDICATE[channel];
+    return this.query<UserWordProgressRow & { needs_recheck: boolean; content_hash: string; l1_content_hash: string | null }>(
+      `SELECT ${PROGRESS_COLUMNS_PREFIXED},
+              w.content_hash, w.l1_content_hash
+       FROM user_word_progress uwp
+       JOIN words w ON w.id = uwp.word_id
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         AND uwp.state != 'suspended'
+         ${predicate ? `AND (${predicate})` : ""}
+         ${predicate ? "" : "AND (uwp.due_at IS NULL OR uwp.due_at <= now())"}
+       ORDER BY uwp.due_at ASC NULLS LAST, uwp.last_reviewed_at ASC NULLS FIRST
+       LIMIT $3`,
+      [userId, wordbookId, limit],
+    );
+  }
+
+  /**
+   * 阶段二（按 word_id 水合）—— 只为当前批的 ≤20 张卡补 word 详情。
+   *
+   * 用 ANY($3::uuid[]) 单次批量取回；调用方按 word.id 建 Map 回填。
+   * 顺序不保证（由调用方按批次顺序回填），故不重复排序。
+   */
+  async loadReviewCardsByWordIds(
+    userId: string,
+    wordbookId: string,
+    wordIds: string[],
+  ): Promise<Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>> {
+    if (wordIds.length === 0) return [];
+    const rows = await this.query<ReviewCardQueryRow>(
+      `SELECT ${PROGRESS_COLUMNS_PREFIXED},
+              w.id AS w_id, w.slug, w.title, w.lemma,
+              w.short_definition, w.ipa, w.pos, w.cefr,
+              w.examples, w.prototype_text,
+              COALESCE(w.metadata->>'mnemonic_text', w.metadata->>'mnemonic') AS mnemonic_text,
+              w.metadata->>'mnemonic_type' AS mnemonic_type,
+              w.metadata->>'semantic_chain' AS semantic_chain
+       FROM user_word_progress uwp
+       JOIN words w ON w.id = uwp.word_id
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         AND uwp.word_id = ANY($3::uuid[])
+       LIMIT $4`,
+      [userId, wordbookId, wordIds, wordIds.length],
+    );
+    return this.mapReviewCardRows(rows);
   }
 
   /**
@@ -697,6 +824,133 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
       [input.userId, input.wordbookId, input.keepWordIds],
     );
     return row ? parseInt(row.count, 10) : 0;
+  }
+
+  /**
+   * 队列总览计数（队列全景页，2026-10-10）：按**互斥**优先级分桶。
+   *
+   * 桶定义（互斥且完备，覆盖 user_word_progress.state 的全部取值）：
+   *  1. suspended —— state='suspended'（ADR-0020 遗忘挂起）
+   *  2. new       —— state='new'（从未作答）
+   *  3. learning  —— state IN ('learning','relearning')（短期卡，必然已到期）
+   *  4. due       —— state='review' 且 (due_at IS NULL OR due_at <= now())
+   *  5. review    —— state='review' 且 due_at > now()（成熟、未到期）
+   *
+   * `dueNow` 单列：非挂起、非新卡、已到期（= learning + due）—— 即「现在就该复习
+   * 的张数」。与仪表盘 due_count 的日历日口径不同，勿混用。
+   */
+  async countQueueBuckets(
+    userId: string,
+    wordbookId: string,
+  ): Promise<{
+    due: number;
+    learning: number;
+    review: number;
+    new: number;
+    suspended: number;
+    dueNow: number;
+    total: number;
+  }> {
+    const row = await this.queryOne<Record<string, string>>(
+      `SELECT
+         COUNT(*)::text AS total,
+         COUNT(*) FILTER (WHERE uwp.state = 'suspended')::text AS suspended,
+         COUNT(*) FILTER (WHERE uwp.state = 'new')::text AS new_count,
+         COUNT(*) FILTER (WHERE uwp.state IN ('learning', 'relearning'))::text AS learning,
+         COUNT(*) FILTER (WHERE uwp.state = 'review'
+                            AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due,
+         COUNT(*) FILTER (WHERE uwp.state = 'review' AND uwp.due_at > now())::text AS review,
+         COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
+                            AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due_now
+       FROM user_word_progress uwp
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid`,
+      [userId, wordbookId],
+    );
+    const count = (key: string): number => {
+      const raw = row?.[key];
+      const parsed = raw == null ? Number.NaN : Number.parseInt(raw, 10);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return {
+      due: count("due"),
+      learning: count("learning"),
+      review: count("review"),
+      new: count("new_count"),
+      suspended: count("suspended"),
+      dueNow: count("due_now"),
+      total: count("total"),
+    };
+  }
+
+  /**
+   * 队列清单（队列全景页）：按桶 / 搜索词分页列出卡。
+   *
+   * - 桶条件来自**模块级常量白名单**（QUEUE_BUCKET_PREDICATE），绝不拼接用户输入。
+   * - 排序末尾追加 `w.lemma ASC`：due_at / review_count 大量并列，缺稳定 tiebreak 时
+   *   翻页会重复或漏行（同一批卡在两页里各出现一次）。
+   * - `count(*) OVER()` 顺带取回过滤后总数，避免再跑一次 COUNT。
+   */
+  async listQueueCards(input: {
+    userId: string;
+    wordbookId: string;
+    bucket: QueueListBucket;
+    search: string | null;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: QueueListRow[]; total: number }> {
+    const predicate = input.bucket === "all" ? null : QUEUE_BUCKET_PREDICATE[input.bucket];
+    const rows = await this.query<(QueueListQueryRow & { total_count: string })>(
+      `SELECT uwp.state, uwp.due_at, uwp.review_count, uwp.lapse_count,
+              uwp.stability, uwp.interval_days, uwp.last_reviewed_at,
+              uwp.needs_recheck, uwp.last_rating,
+              uwp.content_hash_snapshot, uwp.l1_content_hash_snapshot,
+              w.id AS w_id, w.slug, w.title, w.lemma, w.short_definition,
+              w.pos, w.cefr, w.content_hash, w.l1_content_hash,
+              COUNT(*) OVER()::text AS total_count
+       FROM user_word_progress uwp
+       JOIN words w ON w.id = uwp.word_id
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         ${predicate ? `AND (${predicate})` : ""}
+         AND ($3::text IS NULL
+              OR w.lemma ILIKE '%' || $3 || '%' ESCAPE '\'
+              OR w.title ILIKE '%' || $3 || '%' ESCAPE '\')
+       ORDER BY
+         (CASE WHEN uwp.state = 'suspended' THEN 1 ELSE 0 END) ASC,
+         (CASE WHEN uwp.due_at IS NULL OR uwp.due_at <= now() THEN 0 ELSE 1 END) ASC,
+         uwp.due_at ASC NULLS LAST,
+         uwp.review_count ASC,
+         w.lemma ASC
+       LIMIT $4 OFFSET $5`,
+      [input.userId, input.wordbookId, input.search, input.limit, input.offset],
+    );
+    const total = rows.length > 0 ? Number.parseInt(rows[0].total_count, 10) : 0;
+    return {
+      items: rows.map((row) => ({
+        wordId: row.w_id,
+        slug: row.slug,
+        title: row.title,
+        lemma: row.lemma,
+        shortDefinition: row.short_definition,
+        pos: row.pos,
+        cefr: row.cefr,
+        state: row.state,
+        dueAt: row.due_at,
+        reviewCount: row.review_count,
+        lapseCount: row.lapse_count,
+        stability: toNullableNumber(row.stability),
+        intervalDays: toNullableNumber(row.interval_days),
+        lastReviewedAt: row.last_reviewed_at,
+        lastRating: row.last_rating,
+        // 与队列候选同一口径：行上人工标记 || 内容陈旧度派生（ADR-0021）
+        needsRecheck: Boolean(row.needs_recheck) || deriveContentStaleness({
+          contentHash: row.content_hash,
+          l1ContentHash: row.l1_content_hash,
+          contentHashSnapshot: row.content_hash_snapshot,
+          l1ContentHashSnapshot: row.l1_content_hash_snapshot,
+        }),
+      })),
+      total: Number.isFinite(total) ? total : 0,
+    };
   }
 
   /**

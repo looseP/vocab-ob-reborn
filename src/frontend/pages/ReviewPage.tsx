@@ -15,6 +15,7 @@ import { ReviewHistoryDrawer, type ReviewHistoryEntry } from "@/frontend/compone
 import { useReview } from "@/frontend/hooks/useReview";
 import { useUpgradeHints } from "@/frontend/hooks/useUpgradeHints";
 import { isReviewReturnNavigation, shouldAutoRestoreSession } from "@/frontend/viewModels/reviewReturnNavigation";
+import { fetchReviewQueue } from "@/frontend/api/reviewQueue";
 
 const reviewModes = [
   { key: "review", icon: Repeat, title: "标准复习", desc: "按 FSRS 间隔重复算法安排的到期卡片", variant: "primary" as const },
@@ -32,31 +33,121 @@ const reviewModes = [
   { key: "hulu", icon: Sprout, title: "葫芦冲刺", desc: "整批词考前多轮冲刺，只记轮次耗时，不写入复习数据", variant: "secondary" as const },
 ] as const;
 
+/**
+ * 今日两个通道的待办张数（2026-10-10 新学/复习隔离）。
+ *
+ * 复用队列全景已交付的 `/api/review/queue/list` 计数（`dueNow` = 非挂起非新卡且已到期，
+ * `new` = 从未作答），**不新增端点** —— 计数口径与服务端分桶同源，不会出现
+ * 「卡片写 14、进度条显示 12」这种自相矛盾。
+ *
+ * 取数失败静默降级为 `null`（卡片不显示数字、不禁用入口）—— 复习是第一优先路径，
+ * 计数挂了不该拦住用户开始复习。
+ */
+export interface ReviewChannelCounts {
+  dueNow: number;
+  newCards: number;
+}
+
+/**
+ * 次级模式卡（2026-10-10 通道隔离后从 reviewModes 中挑出）。
+ *
+ * `review` 与 `zen` 已各自升级为顶部大卡片（到期复习 / Zen 禅模式），
+ * 不在此重复渲染 —— 否则复习页会同时出现「到期复习」和「标准复习」两张语义重叠的卡。
+ * 剩余 4 项（cram / preview / ladder / hulu）走这张网格。
+ */
+const SECONDARY_MODE_KEYS = ["cram", "preview", "ladder", "hulu"] as const;
+const secondaryModes = reviewModes.filter((m) =>
+  (SECONDARY_MODE_KEYS as readonly string[]).includes(m.key),
+);
+
 /** 测试钩子：暴露模式清单，供测试锁住「阶梯/葫芦是显式模式」这两条不变量。 */
 export function reviewModesForTest() {
   return reviewModes.map((m) => ({ key: m.key, title: m.title }));
 }
 
-function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
+/** 测试钩子：次级网格里的模式 key（review/zen 已升级为大卡片，不在其中）。 */
+export function secondaryModeKeysForTest() {
+  return secondaryModes.map((m) => m.key);
+}
+
+/**
+ * 会话恢复条的标题（2026-10-10 通道隔离）。
+ *
+ * `learn` 是通道隔离新增的 mode，**不在 reviewModes 里**（它在顶部大卡片上，
+ * 语义是「学新词」而非一种「模式」），所以要单独映射，否则恢复条会退化成
+ * 「检测到未完成的复习会话」—— 把学新词的进度说成复习，语义就错了。
+ */
+const RESTORE_MODE_TITLES: Record<string, string> = {
+  learn: "学新词",
+  review: "标准复习",
+  zen: "Zen 禅模式",
+};
+
+function ReviewModeSelector({ onStart, counts }: { onStart: (mode: string) => void; counts: ReviewChannelCounts | null }) {
+  const dueCount = counts?.dueNow ?? 0;
+  const newCount = counts?.newCards ?? 0;
   return (
     <div className="space-y-6">
+      {/*
+        两个并列大卡片（2026-10-10 新学/复习隔离）。
+        此前只有「快速开始」一张卡通吃全部队列：真库实测 507 行里 483 张是新卡（95.3%），
+        于是「开始复习」实际上 95% 在学新词，真正的到期复习被稀释到看不见 ——
+        用户以为自己在复习，其实在被新词淹没（且新卡配额每批仅 8 张，483 张要进出 60 次）。
+        现在两条通道各占一张卡，各带自己的计数，一眼看出「今天该复习 1 张 / 该学新词 483 张」。
+      */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Card
-          className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]"
+          className={`h-full cursor-pointer transition-colors hover:border-[var(--color-border-strong)] ${dueCount === 0 && counts ? "opacity-70" : ""}`}
           onClick={() => onStart("review")}
         >
-          <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
-              <Sparkles className="h-7 w-7 text-[var(--color-accent)]" />
+          <div className="flex h-full flex-col justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
+                <Sparkles className="h-7 w-7 text-[var(--color-accent)]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-semibold text-[var(--color-ink)]">到期复习</h3>
+                  {counts && (
+                    <Badge tone={dueCount > 0 ? "accent" : undefined}>{dueCount} 张</Badge>
+                  )}
+                </div>
+                <p className="text-sm text-[var(--color-ink-soft)]">
+                  只过该复习的词，按 FSRS 间隔重复排序。记忆曲线卡在这里。
+                </p>
+              </div>
             </div>
-            <div className="flex-1">
-              <h3 className="text-lg font-semibold text-[var(--color-ink)]">快速开始</h3>
-              <p className="text-sm text-[var(--color-ink-soft)]">按 FSRS 进度快速过完到期卡片</p>
-            </div>
-            <Button size="sm">开始</Button>
+            <Button size="sm" className="self-start">开始复习</Button>
           </div>
         </Card>
 
+        <Card
+          className={`h-full cursor-pointer transition-colors hover:border-[var(--color-border-strong)] ${newCount === 0 && counts ? "opacity-70" : ""}`}
+          onClick={() => onStart("learn")}
+        >
+          <div className="flex h-full flex-col justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-surface-muted)]">
+                <Sprout className="h-7 w-7 text-[var(--color-accent)]" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-semibold text-[var(--color-ink)]">学新词</h3>
+                  {counts && (
+                    <Badge tone="warm">{newCount} 张</Badge>
+                  )}
+                </div>
+                <p className="text-sm text-[var(--color-ink-soft)]">
+                  录入队列后还没学过的词。与复习互不挤占，各自算各自的上限。
+                </p>
+              </div>
+            </div>
+            <Button size="sm" variant="secondary" className="self-start">开始学词</Button>
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Card
           className="cursor-pointer transition-colors hover:border-[var(--color-border-strong)]"
           onClick={() => onStart("zen")}
@@ -77,9 +168,9 @@ function ReviewModeSelector({ onStart }: { onStart: (mode: string) => void }) {
         </Card>
       </div>
 
-      {/* 6 项模式卡：lg 起两行三张（去掉 xl:grid-cols-5 —— 6 项在 5 列下会留孤行） */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {reviewModes.map((m) => {
+      {/* 4 项模式卡：sm 起两行两张 */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {secondaryModes.map((m) => {
           const Icon = m.icon;
           return (
             <Card key={m.key} className="h-full">
@@ -127,6 +218,14 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
     browseNext,
     browsePrev,
     clearWeakSignal,
+    // 每日复习上限（2026-10-10 接线）：此前设置页的滑块没有任何消费方
+    dailyReviewedToday,
+    dailyLimit,
+    // 新词通道的独立额度与计数（2026-10-10 隔离）：两通道各判各的
+    dailyNewLearnedToday,
+    dailyNewWordLimit,
+    dailyLimitBlocked,
+    allowDailyLimitOverride,
   } = useReview();
 
   // 从词条库勾选进入（P2）：强制自由复习浏览模式，不评分、不写入数据
@@ -134,6 +233,8 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
   const apiMode = isFreeSelection ? "preview" : reviewMode === "zen" ? "review" : reviewMode;
   const isZen = reviewMode === "zen";
   const isPreview = reviewMode === "preview" || isFreeSelection;
+  /** 学新词通道（2026-10-10 隔离）：空态与上限提示都要说「新词」而不是「复习」。 */
+  const isNewLearn = apiMode === "learn";
 
   // ADR-0018 首学徽标：会话初始化时【一次】批量取当前词书的进行中工单，
   // 建 wordId→档位映射；卡片只读映射（作答链路零新增网络请求）。
@@ -215,6 +316,7 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
           stats={stats}
           skipped={skipped}
           suspended={suspended}
+          title={isNewLearn ? "今日新词已学完 🎉" : "今日复习已完成 🎉"}
           onRestart={() => startReview(apiMode)}
           onBack={onBack}
         />
@@ -237,18 +339,61 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
       ) : showEmpty ? (
         <Card>
           <EmptyState
-            title="没有待复习的单词"
-            description="导入更多单词或稍后再来"
+            title={isNewLearn ? "队列里没有新词了" : "没有待复习的单词"}
+            description={
+              isNewLearn
+                ? "所有入队的词都学过一遍了。导入更多单词，或去复习通道巩固记忆。"
+                : "当前没有到期的复习卡。可以去学新词，或稍后再来。"
+            }
             action={
-              <Link to="/words">
-                <Button variant="secondary">浏览词条库</Button>
-              </Link>
+              isNewLearn ? (
+                <Link to="/words">
+                  <Button variant="secondary">浏览词条库</Button>
+                </Link>
+              ) : (
+                <Link to="/words">
+                  <Button variant="secondary">去学新词</Button>
+                </Link>
+              )
             }
           />
         </Card>
       ) : (
         <>
           <ReviewProgressBar completed={stats.reviewed} remaining={remaining} />
+          {/* 每日上限提示（2026-10-10）：只拦「自动续卡」，不打断当前这张。
+              冲刺是明示动作 —— 不动设置，本次会话越过即可。 */}
+          {dailyLimitBlocked && (
+            <Card className="border-[var(--color-accent)]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[var(--color-ink)]">
+                    {isNewLearn ? (
+                      <>
+                        今天已学 {dailyNewLearnedToday} 个新词，达到每日上限（{dailyNewWordLimit} 个/天）
+                      </>
+                    ) : (
+                      <>
+                        今天已复习 {dailyReviewedToday} 张，达到每日上限（{dailyLimit} 张/天）
+                      </>
+                    )}
+                  </p>
+                  <p className="text-xs text-[var(--color-ink-soft)]">
+                    队列已停止自动续卡，避免过载；当前这张不受影响。
+                    {isNewLearn ? "（今日复习额度未受影响，两条通道独立计数。）" : ""}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button size="sm" onClick={() => void allowDailyLimitOverride()}>
+                    {isNewLearn ? "继续学词（冲刺）" : "继续复习（冲刺）"}
+                  </Button>
+                  <Link to="/settings">
+                    <Button size="sm" variant="secondary">调整上限</Button>
+                  </Link>
+                </div>
+              </div>
+            </Card>
+          )}
           {/* key 必需：ReviewCardView 的 hintLevel/revealed/shown 等本地状态只对当前卡有效。
               缺 key 时 React 按位置复用实例，跨卡残留会导致「上一卡用了几级提示 → 下一卡
               未用提示就被压低评分上限」，污染 FSRS 调度；onUndo 回退到上一张卡时同样中招。 */}
@@ -347,6 +492,29 @@ export function ReviewPage() {
 
   const [forceBootstrap, setForceBootstrap] = useState(false);
 
+  /**
+   * 两条通道的待办计数（2026-10-10 隔离）。
+   *
+   * 复用队列全景的计数端点（`dueNow` / `new`），不新增接口 —— 与服务端分桶同源。
+   * 失败静默降级为 `null`：卡片照常可点，只是不显示数字。复习是第一优先路径，
+   * 计数接口挂了不该拦住用户开始。
+   */
+  const [channelCounts, setChannelCounts] = useState<ReviewChannelCounts | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchReviewQueue({ bucket: "all", limit: 1 })
+      .then((res) => {
+        if (cancelled) return;
+        setChannelCounts({ dueNow: res.counts.dueNow, newCards: res.counts.new });
+      })
+      .catch(() => {
+        if (!cancelled) setChannelCounts(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // 清空指定 mode 的复习会话缓存（"重新开始/显式开始"时调用）。
   const clearModeCache = (m: string) => {
     try {
@@ -416,7 +584,10 @@ export function ReviewPage() {
     setMode("session");
   };
 
-  const restoreModeTitle = reviewModes.find((m) => m.key === pendingRestore?.mode)?.title ?? "上次复习";
+  const restoreModeTitle =
+    RESTORE_MODE_TITLES[pendingRestore?.mode ?? ""] ??
+    reviewModes.find((m) => m.key === pendingRestore?.mode)?.title ??
+    "上次复习";
   const isFreeSelection = !!freeWordIds && freeWordIds.length > 0;
 
   return (
@@ -448,7 +619,18 @@ export function ReviewPage() {
               </div>
             </Card>
           )}
-          <ReviewModeSelector onStart={handleStart} />
+          <ReviewModeSelector onStart={handleStart} counts={channelCounts} />
+          {/* 队列全景（P1，2026-10-10）：此前没有任何入口能看到「队列里有哪些词」，
+              只有数字与日历。入口放这里 = 用户在想「我要复习点什么」时顺手可达。 */}
+          <div className="flex justify-end">
+            <Link
+              to="/review-queue"
+              className="inline-flex items-center gap-2 text-sm text-[var(--color-accent)] hover:underline"
+            >
+              <Layers className="h-4 w-4" />
+              查看队列里有哪些词
+            </Link>
+          </div>
         </>
       ) : isFreeSelection ? (
         <ReviewSession reviewMode="preview" wordIds={freeWordIds} onBack={() => setMode("select")} />
