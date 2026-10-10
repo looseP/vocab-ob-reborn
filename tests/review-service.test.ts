@@ -1141,7 +1141,8 @@ describe("ReviewService — P1 queue-priority routing", () => {
     // 更深：offset=1900 → 快照窗口自动扩到 2100（2000 只是默认宽度，不是硬顶）
     const deeper = await service.getQueue("u1", "wb1", 20, "review", undefined, 1900);
     expect(deeper.items.length).toBe(20);
-    expect(findDueCandidateSnapshots).toHaveBeenLastCalledWith("u1", "wb1", 2100);
+    // 第 4 参null = 未指定通道（混流，保持旧行为）。
+    expect(findDueCandidateSnapshots).toHaveBeenLastCalledWith("u1", "wb1", 2100, null);
   });
 
   it("skips cards whose word vanished between snapshot and hydration", async () => {
