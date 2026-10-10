@@ -322,6 +322,20 @@ export interface BulkSuspendByWordIdsInput {
   wordIds: string[];
 }
 
+/** 队列编辑（P1）：移出复习队列输入（物理删除进度行 + card_removed 审计）。 */
+export interface RemoveCardsByWordIdsInput {
+  userId: string;
+  wordbookId: string;
+  wordIds: string[];
+}
+
+/** 队列编辑（P1）：提前到期输入（due_at 提到现在，从不延后；挂起词除外）。 */
+export interface ExpireCardsByWordIdsInput {
+  userId: string;
+  wordbookId: string;
+  wordIds: string[];
+}
+
 /** 挂起恢复入参：快照 `{wordId: 挂起前 state}`（只回写仍处挂起的行）。 */
 export interface RestoreSuspendSnapshotInput {
   userId: string;
@@ -515,6 +529,21 @@ export interface IReviewRepository {
    * P0 期只加方法、不接线（服务层在 P0 拒绝 suspendReview=true）。
    */
   bulkSuspendByWordIds(input: BulkSuspendByWordIdsInput): Promise<SuspendedWordSnapshot[]>;
+
+  /**
+   * 队列编辑（P1）：移出复习队列 —— 按 wordIds 物理删除进度行，逐词写
+   * `card_removed` 审计日志（rating=NULL；review_logs.progress_id 无外键，
+   * 审计可安全引用已删行）。scope 钉死 (user, wordbook)；未命中幂等零行。
+   * MUST be in a transaction。
+   */
+  removeCardsByWordIds(input: RemoveCardsByWordIdsInput): Promise<string[]>;
+
+  /**
+   * 队列编辑（P1）：提前到期 —— `due_at = LEAST(COALESCE(due_at, now()), now())`
+   * （只提前、从不延后；挂起词除外）。候选池排序 due_at ASC NULLS LAST 会把它
+   * 提到新卡之前、到期桶内按到期先后排队。MUST be in a transaction。
+   */
+  expireCardsByWordIds(input: ExpireCardsByWordIdsInput): Promise<string[]>;
 
   /**
    * 葫芦冲刺挂起恢复（ADR-0041 决策 5，第 10 个 state 写点）：

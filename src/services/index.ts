@@ -46,6 +46,7 @@ import { L3StudyNoteExportService } from "./l3-study-note-export.service";
 import { L3StudyReferenceService } from "./l3-study-reference.service";
 import { L3SessionService } from "./l3-session.service";
 import { ForgettingService } from "./forgetting.service";
+import { ReviewCardsService } from "./review-cards.service";
 import { HuluPlanService } from "./hulu-plan.service";
 import { L3ContextSourceAdapter } from "./l3-context-source-adapter";
 import { AuthSessionService } from "./auth-session.service";
@@ -283,6 +284,8 @@ export function createServices(deps: ServiceDeps) {
     // 葫芦冲刺（ADR-0041）：计划容器（create/get/abandon）。零 FSRS 写入是结构性的
     // ——服务不引用 review.service，挂起能力经 ReviewRepository 方法（P0 不接线）。
     hulu: new HuluPlanService(),
+    // 队列编辑（P1 / 0053）：移出复习队列（删行+审计）/ 提前到期（优先学习）。
+    reviewCards: new ReviewCardsService(),
   };
 }
 

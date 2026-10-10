@@ -296,7 +296,9 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     -- Phase G：候选池采纳走 UPDATE（is_active=true）、拒绝走 DELETE——
     -- 两种写路径都必须对 vocab_app 可用，否则候选池 500。
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.word_l2_content TO vocab_app;
-    GRANT SELECT, INSERT, UPDATE ON TABLE public.user_word_progress TO vocab_app;
+    -- 0053（队列编辑）：DELETE 用于「移出复习队列」。行级由 progress_own_all
+    -- （FOR ALL，owner 条件）覆盖，无需新 policy。
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.user_word_progress TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.user_word_l2_progress TO vocab_app;
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.l2_drill_session_steps TO vocab_app;
     GRANT SELECT, INSERT, UPDATE ON TABLE public.notes TO vocab_app;

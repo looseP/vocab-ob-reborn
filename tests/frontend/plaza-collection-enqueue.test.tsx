@@ -98,11 +98,11 @@ describe("PlazaCollectionPage 整组加入复习计划", () => {
       expect.stringContaining("成功加入 2 词到复习队列"),
     );
 
-    const doneBtn = Array.from(container.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("已在复习队列"),
+    // P1 队列编辑起：已入队态从「已在复习队列（disabled）」升级为可点的「移出队列」
+    const removeBtn = Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("移出队列 (2)"),
     );
-    expect(doneBtn).toBeDefined();
-    expect(doneBtn?.disabled).toBe(true);
+    expect(removeBtn).toBeDefined();
 
     // P1-B：入队后掌握条随刷新统计即时更新（total 2：已掌握 1 · 学习中 1 · 未学 0）
     expect(container.textContent).toContain("已掌握 1 · 学习中 1 · 未学 0");

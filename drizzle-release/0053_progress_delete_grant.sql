@@ -1,0 +1,11 @@
+-- 0053：user_word_progress 的 DELETE 授权（移出复习队列 · P1 队列编辑）
+--
+-- 背景：队列编辑（把加错的词移出复习队列）需要物理删除 user_word_progress 行。
+-- 行级护栏已存在：`progress_own_all`（FOR ALL，USING/WITH CHECK = auth.uid() = user_id）
+-- 单条 policy 已覆盖 DELETE —— 本迁移只补表级授权，不新建 policy、不动 schema。
+--
+-- 与 ADR-0020 的分野：「遗忘 = 挂起（保留行与历史）」；本授权支撑的是用户**主动的
+-- 队列编辑**（移出 = 删除进度行，review_logs 审计保留，重新加入后 FSRS 从头）。
+-- 幂等：GRANT 可重复执行；无数据回填。
+--> statement-breakpoint
+GRANT DELETE ON TABLE public.user_word_progress TO vocab_app;
