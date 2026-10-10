@@ -72,10 +72,14 @@ describe("葫芦冲刺是显式模式（不选则分支不可达）", () => {
     expect(modes.map((mode) => mode.key)).toEqual(["review", "cram", "preview", "zen", "ladder", "hulu"]);
   });
 
-  it("模式网格不再有 xl:grid-cols-5（6 项在 lg:grid-cols-3 下两行三张，避免孤行）", () => {
+  it("模式网格不再有 xl:grid-cols-5，且次级网格留有余量不产生孤行", () => {
     const code = readCode(REVIEW_PAGE);
     expect(code).not.toContain("xl:grid-cols-5");
-    expect(code).toContain("lg:grid-cols-3");
+    // 2026-10-10 通道隔离后布局改了：review/zen 升级为顶部大卡片，剩下
+    // cram/preview/ladder/hulu 四项走 `lg:grid-cols-4` 网格 —— 四项在四列下
+    // **不产生孤行**（6 项在三列下才是 2+2+2，4 项在 4 列下是 1×4）。
+    // 原断言写死 `lg:grid-cols-3` 是针对「6 项模式网格」，该网格已不复存在。
+    expect(code).toContain("lg:grid-cols-4");
   });
 });
 
