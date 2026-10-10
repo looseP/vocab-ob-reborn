@@ -322,6 +322,7 @@ export class PlazaService {
         type: classifyRootFamily(rows),
         meaning: entry?.meaningZh ?? null,
         variants: entry?.variants ?? [],
+        senses: entry?.senses ?? [],
         words: rows.map(toRootWordCard),
       };
     });
