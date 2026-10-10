@@ -134,6 +134,17 @@ export const NAVIGATION: readonly NavEntry[] = [
     surfaces: ["palette", "l3home"],
     l3Section: "studyNotes",
   },
+  {
+    id: "practice-daily-capture",
+    label: "每日捕获",
+    description: "一天一页流水：先记录、再回顾、后吸收",
+    href: "/l3?section=daily-capture",
+    matchPrefix: "/l3",
+    icon: "sticky-note",
+    family: "practice",
+    surfaces: ["palette", "l3home"],
+    l3Section: "dailyCapture",
+  },
   // ── 复习族 ────────────────────────────────────────────────────────────
   {
     id: "review",

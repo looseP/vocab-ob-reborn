@@ -59,3 +59,24 @@ export function startOfTodayIsoInDisplayTz(): string {
   // We reconstruct with +08:00 offset to get the correct UTC instant.
   return new Date(`${key}T00:00:00+08:00`).toISOString();
 }
+
+/**
+ * Format a UTC timestamp as "HH:MM" wall clock in the display timezone.
+ * Used by the daily-capture day-file projection (pure; no DB access).
+ */
+export function formatClockInDisplayTz(iso: string | Date): string {
+  const date = typeof iso === "string" ? new Date(iso) : iso;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: DISPLAY_TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const hour = parts.find((p) => p.type === "hour")?.value;
+  const minute = parts.find((p) => p.type === "minute")?.value;
+  if (!hour || !minute) {
+    // Fallback: UTC clock if Intl fails
+    return date.toISOString().slice(11, 16);
+  }
+  return `${hour}:${minute}`;
+}
