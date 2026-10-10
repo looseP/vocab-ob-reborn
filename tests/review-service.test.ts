@@ -1026,7 +1026,9 @@ describe("ReviewService — P1 queue-priority routing", () => {
 
     const queue = await service.getQueue("u1", "wb1", 20, "review");
 
-    expect(findDueCandidates).toHaveBeenCalledWith("u1", "wb1", REVIEW_QUEUE_CANDIDATE_LIMIT);
+    // 第 4 参是通道（2026-10-10 隔离）：未指定时getQueue 传 null（混流，保持旧行为），
+    // 仓储据此决定是否下推 state 谓词。
+    expect(findDueCandidates).toHaveBeenCalledWith("u1", "wb1", REVIEW_QUEUE_CANDIDATE_LIMIT, null);
     expect(queue.stats).toEqual({ total: 2, remaining: 2, deferredNewCards: 0 });
     // review 卡带队列优先级元数据
     expect(queue.items[0].queueBucket).toBe("overdue");
@@ -1128,7 +1130,7 @@ describe("ReviewService — P1 queue-priority routing", () => {
     expect(deep.hasMore).toBe(true);
     // stats.total 是「本会话候选池内」的口径（既有语义），不是库里的到期总数
     expect(deep.stats.total).toBe(2000);
-    expect(findDueCandidateSnapshots).toHaveBeenCalledWith("u1", "wb1", 2000);
+    expect(findDueCandidateSnapshots).toHaveBeenCalledWith("u1", "wb1", 2000, null);
     // 只水合当前批的 20 张 word 详情（两阶段的核心收益）
     expect(loadReviewCardsByWordIds).toHaveBeenCalledWith(
       "u1",
