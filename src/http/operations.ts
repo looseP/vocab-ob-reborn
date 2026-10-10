@@ -179,6 +179,7 @@ import { vocabNotesImportResponseSchema } from "./import-response-contract";
 import { operationMetricsResponseSchema } from "./operation-metrics-response-contract";
 import { reviewCalendarResponseSchema, reviewDayResponseSchema } from "./review-calendar-response-contract";
 import { reviewCardsMutationResponseSchema } from "./review-cards-response-contract";
+import { reviewQueueListResponseSchema } from "./review-queue-list-response-contract";
 import {
   l3ContextCreateSchema,
   l3ContextLinkCreateSchema,
@@ -257,6 +258,7 @@ import {
   clearL1WeakSignalSchema,
   addToReviewSchema,
   batchAddToReviewSchema,
+  reviewQueueListQuerySchema,
   captureRequestSchema,
   vocabNotesImportRequestSchema,
   wordBatchCreateSchema,
@@ -409,6 +411,12 @@ const reviewQueueQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   mode: z.enum(["review", "cram", "preview"]).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+  // 复习通道（2026-10-10 新学/复习隔离）：review = 只出到期复习卡（永不含新卡），
+  // new = 只出从未作答的新卡。缺省 = 混流（保持旧行为，向后兼容）。
+  // 枚举与 domain 的 ReviewQueueChannel 一致；未知值在解析层回落为不隔离。
+  channel: z.enum(["review", "new"]).optional(),
+  // 单次新词会话的新卡配额上限（仅 channel=new 时有意义）；缺省由服务层按通道定。
+  newCardsLimit: z.coerce.number().int().min(1).max(200).optional(),
 });
 const reviewLeechesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -519,6 +527,9 @@ export const apiOperations = [
   // 均为 owner-only 写面（同 enqueue 系列）；body 复用 batchAddToReviewSchema。
   operation("post", "/api/review/cards/remove", "removeReviewCards", "owner", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewCardsMutationResponseSchema),
   operation("post", "/api/review/cards/expire", "expireReviewCards", "owner", "owner", "sessionMutation", { body: batchAddToReviewSchema }, 200, reviewCardsMutationResponseSchema),
+  // P1 队列全景读面（2026-10-10）：桶计数 + 分页清单。读面，agent 可读（同 getReviewQueue）。
+  // query schema 直接复用运行时那份，不内联复制 —— 契约漂移过一次就会变成两套分桶枚举。
+  operation("get", "/api/review/queue/list", "listReviewQueueCards", "owner", "agent", "none", { query: reviewQueueListQuerySchema }, 200, reviewQueueListResponseSchema),
   operation("get", "/api/review/drill/queue", "getReviewDrillQueue", "owner", "agent", "none", { query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional().default(20) }) }, 200, reviewDrillQueueResponseSchema),
   operation("post", "/api/capture", "createCapture", "owner", "owner", "sessionMutation", { body: captureRequestSchema }, 201, captureResponseSchema),
   operation("post", "/api/imports/vocab-notes", "importVocabNotes", "owner", "owner", "sessionMutation", { body: vocabNotesImportRequestSchema }, 200, vocabNotesImportResponseSchema),
