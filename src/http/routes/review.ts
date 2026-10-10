@@ -33,6 +33,7 @@ import {
 } from "@/schemas/http";
 import { validationError } from "../error-response";
 import { loadL3ContextsByWord } from "./review-l3-contexts";
+import { parseReviewChannel, parseNewCardsLimit } from "./review-channel-params";
 
 export function reviewRoutes(services: Services) {
   const app = new Hono<AppEnv>();
@@ -46,8 +47,13 @@ export function reviewRoutes(services: Services) {
     // 自由复习勾选入口（P2）：wordIds 逗号分隔，按用户选定顺序浏览
     const wordIdsParam = c.req.query("wordIds");
     const wordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
+    // 通道隔离（2026-10-10）：`channel=review` 只出到期复习卡，`channel=new` 只出新卡，
+    // 缺省 = null（混流，保持旧行为）。解析与边界收敛在 ./review-channel-params
+    // （本文件受路由复杂度棘轮冻结，不许增长）。
+    const channel = parseReviewChannel(c.req.query("channel"));
+    const newCardsLimit = parseNewCardsLimit(c.req.query("newCardsLimit"));
     const wordbook = await services.wordbooks.getOrCreateDefault(userId);
-    const queue = await services.reviews.getQueue(userId, wordbook.id, limit, mode, wordIds, offset);
+    const queue = await services.reviews.getQueue(userId, wordbook.id, limit, mode, wordIds, offset, channel, newCardsLimit);
     // 复习卡附带「我的笔记」(P3-①,条目制 2026-09-06):批量取可见笔记条目,
     // 有条目的卡在背面提供折叠入口(逐条展开 + 快记)
     const wordIdsInQueue = queue.items.map((item) => item.word.id).filter(Boolean);
