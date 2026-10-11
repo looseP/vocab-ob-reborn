@@ -58,10 +58,29 @@ export interface DailyCaptureEntry {
   hidden_at: string | null;
 }
 
+/** 词信号状态（读时投影）：`stub` 仅词形 / `ready` 已有正式释义 / `gone` 词库已无此 slug。 */
+export type DailyCaptureWordSignalState = "stub" | "ready" | "gone";
+
+/** 词信号（读时投影，不落库）：条目 `⤳ [[slug]]` 上那个词的当前状态。 */
+export interface DailyCaptureWordSignal {
+  slug: string;
+  state: DailyCaptureWordSignalState;
+  hasDefinition: boolean;
+  l2Promoted: boolean;
+  updatedAt: string | null;
+}
+
+/** 日视图条目 = 行 + 读时词信号（吸收/回顾响应只回行，故单列一层、合并时须保留）。 */
+export interface DailyCaptureDayEntry extends DailyCaptureEntry {
+  wordSignals: DailyCaptureWordSignal[];
+}
+
 export interface DailyCaptureDay {
   date: string;
+  /** 投影时刻（整个响应一个时钟；每次读取最新一版，非账本烙死值）。 */
+  observedAt: string;
   types: DailyCaptureType[];
-  entries: DailyCaptureEntry[];
+  entries: DailyCaptureDayEntry[];
 }
 
 export interface DailyCaptureDaySummary {
@@ -132,6 +151,8 @@ export interface DailyCaptureEvidenceWord {
   ipa: string | null;
   short_definition: string | null;
   existing_context_count: number;
+  /** 词信号投影（与日视图同一份；此处 slug 已精确命中，state 只会是 stub|ready）。 */
+  signal: DailyCaptureWordSignal;
 }
 
 export interface DailyCaptureEvidenceEntry {

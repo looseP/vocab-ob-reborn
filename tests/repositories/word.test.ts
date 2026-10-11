@@ -553,3 +553,24 @@ describe("WordRepository stub delete (0023)", () => {
     await expect(repository.deleteWordById(USER_ID, WORD_ID)).resolves.toBeNull();
   });
 });
+
+describe("WordRepository.findBySlugs（日视图词信号批量读线）", () => {
+  it("空数组直接返回空集且不查库（不做 ANY('{}') 空查）", async () => {
+    const repository = new WordRepository();
+
+    await expect(repository.findBySlugs([])).resolves.toEqual([]);
+    expect(mock.calls).toHaveLength(0);
+  });
+
+  it("按 slug 精确批量取词，并过滤软删除行（未命中的 slug 由调用方回落 gone）", async () => {
+    mock.setRows([{ id: "w-1", slug: "harness" }]);
+    const repository = new WordRepository();
+
+    const rows = await repository.findBySlugs(["harness", "vanish"]);
+
+    expect(rows).toEqual([{ id: "w-1", slug: "harness" }]);
+    expect(mock.lastQuery!.text).toContain("FROM words WHERE slug = ANY($1::text[])");
+    expect(mock.lastQuery!.text).toContain("is_deleted = false");
+    expect(mock.lastQuery!.params).toEqual([["harness", "vanish"]]);
+  });
+});

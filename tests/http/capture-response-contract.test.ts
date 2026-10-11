@@ -51,19 +51,23 @@ function makeServices(captureResult: unknown = validCaptureResult()): {
   services: Services;
   capture: { capture: ReturnType<typeof vi.fn> };
   wordbooks: { getOrCreateDefault: ReturnType<typeof vi.fn> };
+  dailyCapture: { appendEntry: ReturnType<typeof vi.fn> };
 } {
   const capture = { capture: vi.fn(async () => captureResult) };
   const wordbooks = { getOrCreateDefault: vi.fn(async () => ({ id: WORDBOOK_ID })) };
+  // 路由在捕获成功后 best-effort 记一条 word 流水（§5.1），并回传其 seq
+  const dailyCapture = { appendEntry: vi.fn(async () => ({ seq: 42 })) };
   return {
-    services: { capture, wordbooks } as unknown as Services,
+    services: { capture, wordbooks, dailyCapture } as unknown as Services,
     capture,
     wordbooks,
+    dailyCapture,
   };
 }
 
 describe("POST /api/capture response contract", () => {
   it("returns 201 and echoes the captured trio for a sentence capture", async () => {
-    const { services, capture } = makeServices();
+    const { services, capture, dailyCapture } = makeServices();
     const app = createApp(services);
 
     const res = await app.request("/api/capture", {
@@ -73,12 +77,20 @@ describe("POST /api/capture response contract", () => {
     });
 
     expect(res.status).toBe(201);
-    await expect(res.json()).resolves.toEqual(validCaptureResult());
+    // 契约面：入本回执 + best-effort 记流水回执（entrySeq 为新增可空字段）
+    await expect(res.json()).resolves.toEqual({ ...validCaptureResult(), entrySeq: 42 });
     expect(capture.capture).toHaveBeenCalledWith(expect.objectContaining({
       userId: "user-123",
       headword: "enduring",
       sentence: "An enduring lesson.",
     }));
+    // 有原句 → content 记原句；slug 进 meta.wordSlugs 供日视图挂词投影
+    expect(dailyCapture.appendEntry).toHaveBeenCalledWith({
+      userId: "user-123",
+      entryType: "word",
+      content: "An enduring lesson.",
+      meta: { wordSlugs: ["enduring"] },
+    });
   });
 
   it("accepts the deferred l3Status the runtime can still produce", async () => {

@@ -56,6 +56,8 @@ function makeMockServices(): Services {
     wordbooks: {
       getOrCreateDefault: vi.fn().mockResolvedValue({ id: DEFAULT_WORDBOOK_ID }),
     },
+    // 入本即记流水（§5.1）：路由在捕获成功后 best-effort 调它，并回传 entry.seq
+    dailyCapture: { appendEntry: vi.fn().mockResolvedValue({ seq: 7 }) },
   } as unknown as Services;
 }
 
@@ -236,5 +238,72 @@ describe("POST /api/capture", () => {
     const res = await app.request("/api/capture", postCapture({ headword: "abound" }, {}));
     expect(res.status).toBe(401);
     expect(services.capture.capture).not.toHaveBeenCalled();
+  });
+
+  // ── 入本即记流水（设计稿 2026-10-11 §5.1）─────────────────────────────────
+
+  it("入本即记流水：成功后 best-effort 追加 word 条目（原句优先）并回传 entrySeq", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request(
+      "/api/capture",
+      postCapture({ headword: "abound", sentence: "Rumours abound." }),
+    );
+    expect(res.status).toBe(201);
+    expect(services.dailyCapture.appendEntry).toHaveBeenCalledWith({
+      userId: "user-123",
+      entryType: "word",
+      content: "Rumours abound.",
+      meta: { wordSlugs: ["abound"] },
+    });
+    const body = captureResponseSchema.parse(await res.json());
+    expect(body.entrySeq).toBe(7);
+  });
+
+  it("入本即记流水：无原句记词形；来源软引用进 meta", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    await app.request(
+      "/api/capture",
+      postCapture({
+        headword: "abound",
+        sourceUrl: "https://example.com/post",
+        obsidianRef: "notes/abound.md",
+      }),
+    );
+    expect(services.dailyCapture.appendEntry).toHaveBeenCalledWith({
+      userId: "user-123",
+      entryType: "word",
+      content: "abound",
+      meta: {
+        wordSlugs: ["abound"],
+        sourceUrl: "https://example.com/post",
+        obsidianRef: "notes/abound.md",
+      },
+    });
+  });
+
+  it("入本即记流水 best-effort：appendEntry 抛错仍 201，entrySeq=null", async () => {
+    const services = makeMockServices();
+    (services.dailyCapture.appendEntry as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("daily_capture down"),
+    );
+    const app = createApp(services);
+    const res = await app.request("/api/capture", postCapture({ headword: "abound" }));
+    expect(res.status).toBe(201);
+    const body = captureResponseSchema.parse(await res.json());
+    expect(body.entrySeq).toBeNull();
+    expect(body.ok).toBe(true);
+  });
+
+  it("入本失败（422）时不写流水", async () => {
+    const services = makeMockServices();
+    (services.capture.capture as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new ValidationError("headword must contain latin word characters", "headword"),
+    );
+    const app = createApp(services);
+    const res = await app.request("/api/capture", postCapture({ headword: "的的" }));
+    expect(res.status).toBe(422);
+    expect(services.dailyCapture.appendEntry).not.toHaveBeenCalled();
   });
 });

@@ -103,13 +103,14 @@ interface DailyCaptureEntryResponse {
 
 const CAPTURE_MODE_KEY = "capture-mode-v1";
 
-/** 类型注册表为空（尚未追加过首条）时的内置兜底——与服务端 seed 六类同序同 key。 */
+/** 类型注册表为空（尚未追加过首条）时的内置兜底——与服务端 seed 七类同序同 key。 */
 const DAILY_CAPTURE_TYPES_FALLBACK: DailyCaptureTypeOption[] = [
   { type_key: "phrase", label: "词组" },
   { type_key: "sentence", label: "例句" },
   { type_key: "method", label: "学习方法" },
   { type_key: "question", label: "疑问" },
   { type_key: "idea", label: "想法" },
+  { type_key: "word", label: "生词" },
   { type_key: "note", label: "杂记" },
 ];
 

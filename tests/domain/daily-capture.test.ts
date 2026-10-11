@@ -143,15 +143,19 @@ describe("renderDailyCaptureFile（日文件投影）", () => {
     expect(noLabel).toContain("## custom (1)");
   });
 
-  it("seed 默认六类：sort 升序、note 兜底收尾", () => {
+  it("seed 默认七类：sort 严格升序、word 插在 idea 与 note 之间、note 兜底收尾", () => {
     expect(DEFAULT_DAILY_CAPTURE_TYPES.map((type) => type.typeKey)).toEqual([
       "phrase",
       "sentence",
       "method",
       "question",
       "idea",
+      "word",
       "note",
     ]);
+    // 日文件分节顺序 = 注册表 sort；word=5 紧贴 idea=4，note=6 收尾
+    expect(DEFAULT_DAILY_CAPTURE_TYPES.map((type) => type.sort)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(DEFAULT_DAILY_CAPTURE_TYPES.find((type) => type.typeKey === "word")?.label).toBe("生词");
   });
 });
 

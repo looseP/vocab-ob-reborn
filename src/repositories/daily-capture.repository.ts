@@ -38,10 +38,20 @@ export function formatEntryClock(iso: string): string {
 export class DailyCaptureRepository extends BaseRepository implements IDailyCaptureRepository {
   /**
    * 幂等 seed 默认类型（首条追加时调用；ON CONFLICT DO NOTHING —— 用户已
-   * 自定义的行不被覆盖）。单条语句，MUST be in a transaction（与后续
-   * insertEntry 同事务，避免「类型校验时 seed 未落」的窗口）。
+   * 自定义的行不被覆盖）。MUST be in a transaction（与后续 insertEntry 同事务，
+   * 避免「类型校验时 seed 未落」的窗口）。
+   *
+   * `note` sort 自愈：ON CONFLICT DO NOTHING 不会更新既有用户行，光靠 INSERT
+   * 无法把老用户的 `note` 从 seed 旧值 5 顺延到 6（新增内置 `word` 占 5 之后）。
+   * 故先补一条幂等 UPDATE —— 只命中内置 note 的 seed 值，用户改过 sort（≠5）
+   * 的不碰；new user 此时还没有行，UPDATE 空转，由 INSERT 一次落位。
    */
   async ensureDefaultTypes(userId: string): Promise<void> {
+    await this.query(
+      `UPDATE daily_capture_types SET sort = 6
+       WHERE user_id = $1::uuid AND type_key = 'note' AND sort = 5`,
+      [userId],
+    );
     // values 以 userId 起始：$1 恒为 user_id，各元组四列占位符由 push 返回的长度
     // 自 $2 递增派生（push 后 unshift 会让编号与值整体错位一位）。
     const values: unknown[] = [userId];

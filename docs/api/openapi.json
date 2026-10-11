@@ -16603,6 +16603,18 @@
                         "deferred"
                       ]
                     },
+                    "entrySeq": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "sourceId": {
                       "anyOf": [
                         {
@@ -18574,6 +18586,9 @@
                     "date": {
                       "type": "string"
                     },
+                    "observedAt": {
+                      "type": "string"
+                    },
                     "types": {
                       "type": "array",
                       "items": {
@@ -18772,6 +18787,49 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "wordSignals": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "slug": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string",
+                                  "enum": [
+                                    "stub",
+                                    "ready",
+                                    "gone"
+                                  ]
+                                },
+                                "hasDefinition": {
+                                  "type": "boolean"
+                                },
+                                "l2Promoted": {
+                                  "type": "boolean"
+                                },
+                                "updatedAt": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "slug",
+                                "state",
+                                "hasDefinition",
+                                "l2Promoted",
+                                "updatedAt"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -18785,7 +18843,8 @@
                           "status",
                           "absorption",
                           "created_at",
-                          "hidden_at"
+                          "hidden_at",
+                          "wordSignals"
                         ],
                         "additionalProperties": false
                       }
@@ -18793,6 +18852,7 @@
                   },
                   "required": [
                     "date",
+                    "observedAt",
                     "types",
                     "entries"
                   ],
@@ -20437,6 +20497,46 @@
                                   "type": "integer",
                                   "minimum": -9007199254740991,
                                   "maximum": 9007199254740991
+                                },
+                                "signal": {
+                                  "type": "object",
+                                  "properties": {
+                                    "slug": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string",
+                                      "enum": [
+                                        "stub",
+                                        "ready",
+                                        "gone"
+                                      ]
+                                    },
+                                    "hasDefinition": {
+                                      "type": "boolean"
+                                    },
+                                    "l2Promoted": {
+                                      "type": "boolean"
+                                    },
+                                    "updatedAt": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "slug",
+                                    "state",
+                                    "hasDefinition",
+                                    "l2Promoted",
+                                    "updatedAt"
+                                  ],
+                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -20445,7 +20545,8 @@
                                 "lemma",
                                 "ipa",
                                 "short_definition",
-                                "existing_context_count"
+                                "existing_context_count",
+                                "signal"
                               ],
                               "additionalProperties": false
                             }

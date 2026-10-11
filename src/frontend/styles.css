@@ -441,6 +441,31 @@ button {
   color: var(--color-pill-warm-text);
 }
 
+/* 词信号徽标（每日捕获日视图；案 A + 降级）：窄屏折成聚合胶囊（案 B），
+   逐词明细退到 hover/长按的 title。≥3 词的聚合由组件直接渲染（不带本类）。 */
+.word-signal-agg {
+  display: none;
+}
+
+/* 词信号：gone（词库已无此 slug）。中性灰，不用警示色 —— 删词是用户主动行为，
+   而流水文本不可变，投影只是如实反映。 */
+.sig-gone {
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-code-bg);
+  color: var(--color-ink-soft);
+}
+
+@media (max-width: 640px) {
+  .word-signal-detail {
+    display: none;
+  }
+
+  .word-signal-agg {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
 /* 词条库搜索结果关键词高亮（A2） */
 .search-highlight {
   background: var(--color-pill-bg);

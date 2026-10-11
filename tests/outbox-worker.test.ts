@@ -67,6 +67,8 @@ beforeEach(() => {
   mockRepos.l2Progress = {
     findByWordbookWordAndUser: vi.fn(async () => null),
     existsByUserAndWord: vi.fn(async () => false),
+    // 每日捕获词信号批量版（worker 不触达，接口对齐需补全 mock）
+    listPromotedWordIds: vi.fn(async () => []),
     // ADR-0018：提前升级 seed 读路径（worker 不触达，接口对齐需补全 mock）
     findBestByWordAndUser: vi.fn(async () => null),
     findOtherBookSignals: vi.fn(async () => []),

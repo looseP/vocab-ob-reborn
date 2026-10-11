@@ -63,16 +63,25 @@ const TYPES = [
 
 const ENTRIES = [
   { id: "e1", user_id: "u1", entry_date: TODAY, seq: 1, entry_type: "phrase", content: "harness the power of…",
-    meta: { meaning: "利用…的力量", wordSlugs: ["harness"] }, status: "raw", created_at: "2026-10-10T01:02:00Z", hidden_at: null },
+    meta: { meaning: "利用…的力量", wordSlugs: ["harness"] }, status: "raw", created_at: "2026-10-10T01:02:00Z", hidden_at: null,
+    // 读时词信号投影（日视图专属；写路径回执不带）
+    wordSignals: [
+      { slug: "harness", state: "stub" as const, hasDefinition: false, l2Promoted: false, updatedAt: "2026-10-10T01:00:00Z" },
+    ] },
   { id: "e2", user_id: "u1", entry_date: TODAY, seq: 2, entry_type: "sentence", content: "She harnessed her frustration.",
-    meta: { translation: "她把挫败感转化为产出。", important: true }, status: "reviewed", created_at: "2026-10-10T06:30:00Z", hidden_at: null },
+    meta: { translation: "她把挫败感转化为产出。", important: true }, status: "reviewed", created_at: "2026-10-10T06:30:00Z", hidden_at: null,
+    wordSignals: [] },
 ];
+
+const OBSERVED_AT = "2026-10-11T00:00:00.000Z";
 
 function baseMock(): void {
   listDays.mockResolvedValue([{ date: TODAY, total: 2, raw: 1, reviewed: 1, absorbed: 0 }]);
   listTypes.mockResolvedValue(TYPES);
   getDay.mockImplementation(async (date: string) =>
-    date === TODAY ? { date, types: TYPES, entries: ENTRIES } : { date, types: TYPES, entries: [] },
+    date === TODAY
+      ? { date, observedAt: OBSERVED_AT, types: TYPES, entries: ENTRIES }
+      : { date, observedAt: OBSERVED_AT, types: TYPES, entries: [] },
   );
   copyFileText.mockResolvedValue("# 每日捕获 · " + TODAY + "\n");
 }
@@ -313,5 +322,148 @@ describe("DailyCapturePage 吸收侧（M3）", () => {
       expect(container.textContent).toContain("已吸收");
     });
     expect(addToast).toHaveBeenCalledWith("success", expect.stringContaining("绑 L3"));
+  });
+});
+
+describe("DailyCapturePage 词信号投影（读时徽标）", () => {
+  /** 用给定条目覆盖当日数据 —— 信号是读时投影，换 mock 即可造三态/降级。 */
+  function mockDay(entries: unknown[]): void {
+    getDay.mockImplementation(async (date: string) => ({
+      date,
+      observedAt: OBSERVED_AT,
+      types: TYPES,
+      entries: date === TODAY ? entries : [],
+    }));
+  }
+
+  it("stub 词：紧跟 ⤳ [[slug]] 出「生词 · 待补释义」，hover 说明补释义去处", async () => {
+    const container = renderPage();
+    await waitFor(() => {
+      expect(container.textContent).toContain("harness the power of…");
+    });
+
+    expect(container.textContent).toContain("⤳ [[harness]]");
+    const badges = Array.from(container.querySelectorAll("span")).filter(
+      (el) => el.textContent === "生词 · 待补释义",
+    );
+    expect(badges.length).toBeGreaterThan(0);
+    expect(badges.some((el) => el.getAttribute("title")?.includes("仅词形"))).toBe(true);
+    // 未补释义 → 不出时间戳（时间戳只在 ready 时标「该词上次变动」）
+    expect(container.textContent).not.toContain("已补释义");
+  });
+
+  it("ready 词：出「已补释义」+「L2 已晋升」+ 时间戳（显示时区）；gone 词出「词已不在」", async () => {
+    mockDay([
+      {
+        ...ENTRIES[0],
+        meta: { wordSlugs: ["harness"] },
+        wordSignals: [
+          { slug: "harness", state: "ready", hasDefinition: true, l2Promoted: true, updatedAt: "2026-10-09T00:00:00Z" },
+        ],
+      },
+      {
+        ...ENTRIES[1],
+        meta: { wordSlugs: ["vanish"] },
+        wordSignals: [
+          { slug: "vanish", state: "gone", hasDefinition: false, l2Promoted: false, updatedAt: null },
+        ],
+      },
+    ]);
+    const container = renderPage();
+    await waitFor(() => {
+      expect(container.textContent).toContain("harness the power of…");
+    });
+
+    expect(container.textContent).toContain("已补释义");
+    expect(container.textContent).toContain("L2 已晋升");
+    // 时间戳 = DisplayTZ 墙钟（00:00Z → 08:00），hover 标注语义为「该词上次变动」
+    const stamp = Array.from(container.querySelectorAll("span")).find((el) =>
+      el.getAttribute("title")?.includes("该词上次变动"),
+    );
+    expect(stamp?.textContent).toMatch(/10-09,? 08:00/);
+
+    expect(container.textContent).toContain("词已不在");
+    expect(container.textContent).not.toContain("生词 · 待补释义");
+  });
+
+  it("≥3 挂词：折成聚合胶囊「词 3 · 待补 1 · 已补 1 · 已不在 1」，明细退到 hover", async () => {
+    mockDay([
+      {
+        ...ENTRIES[0],
+        meta: { wordSlugs: ["harness", "wistful", "vanish"] },
+        wordSignals: [
+          { slug: "harness", state: "ready", hasDefinition: true, l2Promoted: false, updatedAt: "2026-10-09T00:00:00Z" },
+          { slug: "wistful", state: "stub", hasDefinition: false, l2Promoted: false, updatedAt: "2026-10-08T00:00:00Z" },
+          { slug: "vanish", state: "gone", hasDefinition: false, l2Promoted: false, updatedAt: null },
+        ],
+      },
+    ]);
+    const container = renderPage();
+    await waitFor(() => {
+      expect(container.textContent).toContain("harness the power of…");
+    });
+
+    const summary = "词 3 · 待补 1 · 已补 1 · 已不在 1";
+    expect(container.textContent).toContain(summary);
+    // 降级下不再逐词渲染徽标文案（明细只在聚合胶囊的 hover 里）
+    expect(container.textContent).not.toContain("生词 · 待补释义");
+    const agg = Array.from(container.querySelectorAll("span")).find((el) => el.textContent === summary);
+    expect(agg?.getAttribute("title")).toContain("wistful：生词 · 待补释义");
+  });
+
+  it("回顾动作后徽标不丢：写路径回执只回行（无 wordSignals），合并时保留旧信号", async () => {
+    const rowOnly = { ...ENTRIES[0] } as Record<string, unknown>;
+    delete rowOnly.wordSignals;
+    patchEntry.mockResolvedValue({ ...rowOnly, status: "reviewed" });
+    const container = renderPage();
+    await waitFor(() => {
+      expect(container.textContent).toContain("harness the power of…");
+    });
+    expect(container.textContent).toContain("生词 · 待补释义");
+
+    await act(async () => {
+      fireEvent.click(findButtonByText(container, "回顾✓")!);
+    });
+    await waitFor(() => {
+      expect(patchEntry).toHaveBeenCalledWith("e1", { status: "reviewed" });
+    });
+
+    // 行状态已更，但读时信号仍挂在该行上（否则每次动作后徽标都会凭空消失）
+    expect(container.textContent).toContain("已回顾");
+    expect(container.textContent).toContain("生词 · 待补释义");
+  });
+
+  it("入本即记流水（§5.1）：word 条目按注册表分节「生词」，并挂词形标记与 stub 徽标", async () => {
+    listTypes.mockResolvedValue([
+      ...TYPES,
+      { user_id: "u1", type_key: "word", label: "生词", absorption_hint: null, sort: 5, hidden: false, created_at: "2026-10-11T00:00:00Z" },
+    ]);
+    mockDay([
+      {
+        id: "w1",
+        user_id: "u1",
+        entry_date: TODAY,
+        seq: 9,
+        entry_type: "word",
+        content: "Rumours abound.",
+        meta: { wordSlugs: ["abound"] },
+        status: "raw",
+        created_at: "2026-10-11T02:00:00Z",
+        hidden_at: null,
+        wordSignals: [
+          { slug: "abound", state: "stub", hasDefinition: false, l2Promoted: false, updatedAt: "2026-10-11T02:00:00Z" },
+        ],
+      },
+    ]);
+    const container = renderPage();
+    await waitFor(() => {
+      expect(container.textContent).toContain("Rumours abound.");
+    });
+
+    // 分组标题 = 注册表 label（分组是动态的：新内置类型无需改前端分组代码）
+    expect(container.textContent).toContain("生词");
+    // 挂词标记由 meta.wordSlugs 生成（不解析 content）+ 读时投影徽标（词刚落本 → stub）
+    expect(container.textContent).toContain("⤳ [[abound]]");
+    expect(container.textContent).toContain("生词 · 待补释义");
   });
 });

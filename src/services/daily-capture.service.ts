@@ -6,8 +6,8 @@
  *
  * - 条目是唯一真相；「一天一文件」由 domain 纯函数按 (entry_date, seq)
  *   确定性投影，getDayFile 随时可重生成。
- * - 类型注册表懒 seed：首条追加时幂等落 seed 六类（phrase/sentence/method/
- *   question/idea/note）；`GET /types` **零写**（回空即回空，前端有内置兜底）。
+ * - 类型注册表懒 seed：首条追加时幂等落 seed 七类（phrase/sentence/method/
+ *   question/idea/word/note）；`GET /types` **零写**（回空即回空，前端有内置兜底）。
  * - 时区口径：entry_date 缺省 = 显示时区（Asia/Shanghai）今天，与复习日历/
  *   连胜同源（src/db/timezone.ts，经仓储层 re-export——services 禁 import db/*）。
  *
@@ -38,11 +38,13 @@ import {
   renderDailyCaptureFile,
   type DailyCaptureAbsorbAction,
   type DailyCaptureAbsorptionReceipt,
+  type DailyCaptureDayEntry,
   type DailyCaptureDaySummary,
   type DailyCaptureEntryMeta,
   type DailyCaptureEntryRow,
   type DailyCaptureEvidencePack,
   type DailyCaptureTypeRow,
+  type DailyCaptureWordSignal,
 } from "../domain/daily-capture";
 
 type TxRunner = typeof withTransaction;
@@ -51,6 +53,11 @@ type RepositoryFactory = (tx?: PoolClient) => IRepositories;
 const ENTRY_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 /** seq 唯一索引并发兜底重试上限（单用户场景近乎不可达，防御性一次即可）。 */
 const SEQ_RETRY_LIMIT = 2;
+
+/** gone 信号（slug 已不在词库）：硬删除，或该原样形态从未入本。 */
+function goneSignal(slug: string): DailyCaptureWordSignal {
+  return { slug, state: "gone", hasDefinition: false, l2Promoted: false, updatedAt: null };
+}
 
 export interface DailyCaptureAppendInput {
   userId: string;
@@ -148,11 +155,22 @@ export class DailyCaptureService {
     );
   }
 
-  /** 当日条目 + 类型注册表（渲染/复盘面数据源）。 */
+  /**
+   * 当日条目 + 类型注册表（渲染/复盘面数据源）。
+   *
+   * `observedAt` 与每条 `wordSignals` 都是**读时投影**（不落库、不写回条目）：
+   * 信号按 `meta.wordSlugs` 批量取词派生，解析不到的 slug 产 `gone`。条目文本
+   * 永不改写 —— 变的只有每次读取现算的徽标。
+   */
   async getDay(
     userId: string,
     entryDate: string,
-  ): Promise<{ date: string; types: DailyCaptureTypeRow[]; entries: DailyCaptureEntryRow[] }> {
+  ): Promise<{
+    date: string;
+    observedAt: string;
+    types: DailyCaptureTypeRow[];
+    entries: DailyCaptureDayEntry[];
+  }> {
     if (!ENTRY_DATE_PATTERN.test(entryDate)) {
       throw new ValidationError("entryDate must be YYYY-MM-DD", "entryDate");
     }
@@ -163,16 +181,62 @@ export class DailyCaptureService {
           repos.dailyCapture.listTypes(userId),
           repos.dailyCapture.listDay(userId, entryDate),
         ]);
-        return { date: entryDate, types, entries };
+        const signals = await this.deriveWordSignals(repos, userId, entries);
+        return {
+          date: entryDate,
+          observedAt: new Date().toISOString(),
+          types,
+          entries: entries.map((entry) => ({
+            ...entry,
+            wordSignals: (entry.meta?.wordSlugs ?? []).map(
+              (slug) => signals.get(slug) ?? goneSignal(slug),
+            ),
+          })),
+        };
       },
       { actorId: userId },
     );
   }
 
-  /** 当日文件投影（确定性；同输入恒同输出）。 */
+  /** 当日文件投影（确定性；同输入恒同输出 —— 信号是动态投影，不烙进静态日文件）。 */
   async getDayFile(userId: string, entryDate: string): Promise<{ date: string; markdown: string }> {
     const { date, types, entries } = await this.getDay(userId, entryDate);
     return { date, markdown: renderDailyCaptureFile({ date, types, entries, formatClock: formatEntryClock }) };
+  }
+
+  /**
+   * 词信号派生（读时投影）：条目 `meta.wordSlugs` → 批量取词 + 批量取当前用户
+   * L2 晋升集合（后者的 EXISTS 语义与详情页 `l2_promoted` 同口径）。
+   *
+   * **精确 slug 匹配**（与证据包 `words` 数组同一口径，不做 alias 兜底）：
+   * 未命中的 slug 由调用方回落 `gone`。必须在携带 actorId 的事务内调用
+   * （`user_word_l2_progress` 是 owner-RLS 表）。
+   */
+  private async deriveWordSignals(
+    repos: IRepositories,
+    userId: string,
+    entries: DailyCaptureEntryRow[],
+  ): Promise<Map<string, DailyCaptureWordSignal>> {
+    const slugs = new Set<string>();
+    for (const entry of entries) {
+      for (const slug of entry.meta?.wordSlugs ?? []) slugs.add(slug);
+    }
+    if (slugs.size === 0) return new Map();
+    const rows = await repos.words.findBySlugs([...slugs]);
+    const promoted = new Set(
+      await repos.l2Progress.listPromotedWordIds(userId, rows.map((row) => row.id)),
+    );
+    const signals = new Map<string, DailyCaptureWordSignal>();
+    for (const row of rows) {
+      signals.set(row.slug, {
+        slug: row.slug,
+        state: row.definition_md === "" ? "stub" : "ready",
+        hasDefinition: row.definition_md !== "",
+        l2Promoted: promoted.has(row.id),
+        updatedAt: row.updated_at,
+      });
+    }
+    return signals;
   }
 
   // ── M2 回顾面：状态流转 + 置要（§14 拍板①：置要落 meta.important）────────
@@ -225,7 +289,7 @@ export class DailyCaptureService {
 
   /**
    * 证据包（agent 唯一读面）：markdown（人读）+ 结构化条目（机器读，含稳定 ID
-   * `[#seq]`、类型 absorption_hint、关联词释义快照与既有语境计数）。
+   * `[#seq]`、类型 absorption_hint、关联词释义快照、既有语境计数与词信号）。
    * 未入库词不进 words 数组（提案 add_word 会被 422 拦下——先入本再吸收）。
    */
   async getEvidencePack(userId: string, entryDate: string): Promise<DailyCaptureEvidencePack> {
@@ -239,20 +303,25 @@ export class DailyCaptureService {
     return this.txRunner(
       async (tx) => {
         const repos = this.repositoryFactory(tx);
+        // 信号与日视图同一份（getDay 已派生）——这里只做 slug → 信号的回查。
+        const signalBySlug = new Map<string, DailyCaptureWordSignal>();
+        for (const entry of entries) {
+          for (const signal of entry.wordSignals) signalBySlug.set(signal.slug, signal);
+        }
         const wordBySlug = new Map<string, {
           slug: string; title: string; lemma: string; ipa: string | null;
           short_definition: string | null; existing_context_count: number;
+          signal: DailyCaptureWordSignal;
         }>();
-        for (const slug of slugSet) {
-          const row = await repos.words.findBySlug(slug);
-          if (!row) continue;
-          wordBySlug.set(slug, {
-            slug,
+        for (const row of await repos.words.findBySlugs([...slugSet])) {
+          wordBySlug.set(row.slug, {
+            slug: row.slug,
             title: row.title,
             lemma: row.lemma,
             ipa: row.ipa,
             short_definition: row.short_definition,
             existing_context_count: await repos.l3Context.countWordOccurrences(userId, row.id),
+            signal: signalBySlug.get(row.slug) ?? goneSignal(row.slug),
           });
         }
         return {

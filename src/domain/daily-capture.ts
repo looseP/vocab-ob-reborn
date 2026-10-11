@@ -48,6 +48,35 @@ export interface DailyCaptureEntryRow {
   hidden_at: string | null;
 }
 
+/**
+ * 词信号状态（读时投影）：`stub` 仅词形（`definition_md` 空）/ `ready` 已有正式释义 /
+ * `gone` 词库中已无此 slug（硬删除，或该原样形态从未入本）。
+ */
+export type DailyCaptureWordSignalState = "stub" | "ready" | "gone";
+
+/**
+ * 词信号（读时投影，**不落库**）：条目 `⤳ [[slug]]` 上那个词的当前状态。
+ *
+ * 语义与证据包 `words` 数组一致：按 slug **精确匹配**（不做 alias 兜底）——
+ * 解析不到即 `gone`，不报错、不隐藏流水文本（账本不可变，投影如实反映）。
+ */
+export interface DailyCaptureWordSignal {
+  /** 条目 `meta.wordSlugs` 的原样 slug（信号按此键对齐）。 */
+  slug: string;
+  state: DailyCaptureWordSignalState;
+  /** `words.definition_md` 非空；与 `findPublic` 的 `scope=content/stub` 同一口径。 */
+  hasDefinition: boolean;
+  /** 当前用户是否已为该词晋升 L2 行（跨词书 EXISTS，与详情页 `l2_promoted` 同口径）。 */
+  l2Promoted: boolean;
+  /** `words.updated_at`（该词上次变动）；`gone` 为 null。 */
+  updatedAt: string | null;
+}
+
+/** 日视图条目 = 行 + 读时词信号投影（响应专属，不落库；吸收/回顾响应仍只回行）。 */
+export interface DailyCaptureDayEntry extends DailyCaptureEntryRow {
+  wordSignals: DailyCaptureWordSignal[];
+}
+
 /** 吸收动作全集（§9 提案模型）。 */
 export const DAILY_CAPTURE_ABSORB_ACTIONS = [
   "bind_l3",
@@ -82,6 +111,8 @@ export interface DailyCaptureEvidenceWord {
   ipa: string | null;
   short_definition: string | null;
   existing_context_count: number;
+  /** 词信号投影（与日视图同一份；此处 slug 已精确命中，state 只会是 stub|ready）。 */
+  signal: DailyCaptureWordSignal;
 }
 
 /** 证据包条目：稳定 ID + 类型提示 + 关联词上下文，喂给 agent 提案。 */
@@ -146,8 +177,8 @@ export function canTransitionEntryStatus(from: DailyCaptureEntryStatus, to: Dail
 /** 自定义类型的缺省吸收提示（M3 证据包照常携带）。 */
 export const CUSTOM_TYPE_DEFAULT_HINT = "自定义类型：吸收时由 agent 编排（rewrite/none）。";
 
-/** 可见（非 hidden）类型总数上限（M2 定稿 §14：6 内置 + 4 自定义席位）。 */
-export const DAILY_CAPTURE_VISIBLE_TYPE_CAP = 10;
+/** 可见（非 hidden）类型总数上限（M2 定稿 §14：7 内置 + 4 自定义席位）。 */
+export const DAILY_CAPTURE_VISIBLE_TYPE_CAP = 11;
 
 /**
  * seed 默认类型（单一真源；仓储 ensureDefaultTypes 据此幂等落库）。
@@ -190,10 +221,19 @@ export const DEFAULT_DAILY_CAPTURE_TYPES: ReadonlyArray<{
     sort: 4,
   },
   {
+    typeKey: "word",
+    label: "生词",
+    // 入本即记流水（设计稿 2026-10-11 §3.1）：捕获窗「加入生词本」触发的条目。
+    // L3 三件套在捕获时已写入，故吸收阶段不再提 add_word / bind_l3。
+    absorptionHint:
+      "出生即入本（捕获窗触发）；L3 三件套已在捕获时写入；吸收时不再提 add_word / bind_l3，可提 enqueue_review（补复习卡）或 file_method（留档）。",
+    sort: 5,
+  },
+  {
     typeKey: "note",
     label: "杂记",
     absorptionHint: "catch-all 兜底；吸收时由 agent 编排或归档。",
-    sort: 5,
+    sort: 6,
   },
 ];
 

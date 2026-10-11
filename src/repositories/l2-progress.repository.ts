@@ -55,6 +55,20 @@ export class L2ProgressRepository extends BaseRepository implements IL2ProgressR
     return row?.exists === true;
   }
 
+  /**
+   * 批量版 EXISTS：返回这批 word_id 里已晋升 L2 的子集（跨词书）。owner-RLS 表 ——
+   * 必须在携带 actorId 的事务里调用，裸池连接会被 RLS 过滤成空集。
+   */
+  async listPromotedWordIds(userId: string, wordIds: string[]): Promise<string[]> {
+    if (wordIds.length === 0) return [];
+    const rows = await this.query<{ word_id: string }>(
+      `SELECT DISTINCT word_id FROM user_word_l2_progress
+       WHERE user_id = $1 AND word_id = ANY($2::uuid[])`,
+      [userId, wordIds],
+    );
+    return rows.map((row) => row.word_id);
+  }
+
   async findByWordbookWordAndUser(
     userId: string,
     wordbookId: string,

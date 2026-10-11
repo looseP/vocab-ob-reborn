@@ -50,6 +50,8 @@ function makeService(
     countVisibleTypes?: RepoSpy;
     insertType?: RepoSpy;
     updateType?: RepoSpy;
+    findBySlugs?: RepoSpy;
+    listPromotedWordIds?: RepoSpy;
   } = {},
 ) {
   const raw = makeRow({ entry_date: "2026-10-10", entry_type: "phrase", content: "harness the power", meta: null });
@@ -74,12 +76,23 @@ function makeService(
       ),
     updateType: overrides.updateType ?? vi.fn(async () => makeType("slang")),
   };
-  const repoFactory = () => ({ dailyCapture }) as unknown as IRepositories;
+  // 词信号投影的两条读线（日视图专属；默认空集 → 条目无挂词时根本不触达）
+  const words = { findBySlugs: overrides.findBySlugs ?? vi.fn(async () => []) };
+  const l2Progress = {
+    listPromotedWordIds: overrides.listPromotedWordIds ?? vi.fn(async () => []),
+  };
+  const repoFactory = () => ({ dailyCapture, words, l2Progress }) as unknown as IRepositories;
   const txRunner = vi.fn(
     async (fn: (tx: unknown) => Promise<unknown>, _options?: unknown) => fn({}),
   ) as unknown as typeof import("@/db/transaction").withTransaction;
   const service = new DailyCaptureService(txRunner, repoFactory);
-  return { service, dailyCapture, txRunner: txRunner as unknown as ReturnType<typeof vi.fn> };
+  return {
+    service,
+    dailyCapture,
+    words,
+    l2Progress,
+    txRunner: txRunner as unknown as ReturnType<typeof vi.fn>,
+  };
 }
 
 describe("DailyCaptureService.appendEntry（轻阻力追加）", () => {
@@ -215,6 +228,91 @@ describe("DailyCaptureService 读面（listTypes / listDays / getDay）", () => 
   });
 });
 
+describe("DailyCaptureService.getDay（读时词信号投影）", () => {
+  /** 词行（信号只读 id/slug/definition_md/updated_at 四个字段）。 */
+  const wordRow = (id: string, slug: string, definition: string) => ({
+    id,
+    slug,
+    title: slug,
+    lemma: slug,
+    ipa: null,
+    short_definition: definition === "" ? null : definition,
+    definition_md: definition,
+    updated_at: "2026-10-09T00:00:00Z",
+  });
+  const entries = () => [
+    makeRow({
+      entry_date: "2026-10-10",
+      entry_type: "phrase",
+      content: "harness the power of…",
+      meta: { wordSlugs: ["harness", "wistful", "vanish", "harness"] },
+    }),
+    makeRow({ entry_date: "2026-10-10", entry_type: "sentence", content: "无挂词的句子", meta: null }),
+  ];
+
+  it("三态派生：ready（含 L2 晋升）/ stub（仅词形）/ gone（未命中回落）；重复 slug 去重", async () => {
+    const findBySlugs = vi.fn(async () => [
+      wordRow("w-1", "harness", "利用…的力量"),
+      wordRow("w-2", "wistful", ""),
+    ]);
+    const listPromotedWordIds = vi.fn(async () => ["w-1"]);
+    const { service, txRunner } = makeService({
+      listDay: vi.fn(async () => entries()),
+      findBySlugs,
+      listPromotedWordIds,
+    });
+
+    const day = await service.getDay(USER, "2026-10-10");
+
+    // 去重后一次批量取词；未命中的 vanish 由服务回落 gone（不报错）
+    expect(findBySlugs).toHaveBeenCalledTimes(1);
+    expect(findBySlugs).toHaveBeenCalledWith(["harness", "wistful", "vanish"]);
+    expect(listPromotedWordIds).toHaveBeenCalledWith(USER, ["w-1", "w-2"]);
+    // 1:1 反映 meta.wordSlugs 原样顺序（去重只发生在查库那一步；投影不重排、不删重）
+    expect(day.entries[0].wordSignals).toEqual([
+      { slug: "harness", state: "ready", hasDefinition: true, l2Promoted: true, updatedAt: "2026-10-09T00:00:00Z" },
+      { slug: "wistful", state: "stub", hasDefinition: false, l2Promoted: false, updatedAt: "2026-10-09T00:00:00Z" },
+      { slug: "vanish", state: "gone", hasDefinition: false, l2Promoted: false, updatedAt: null },
+      { slug: "harness", state: "ready", hasDefinition: true, l2Promoted: true, updatedAt: "2026-10-09T00:00:00Z" },
+    ]);
+    expect(day.entries[1].wordSignals).toEqual([]);
+    // 投影时刻：整响应一个时钟
+    expect(day.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    // user_word_l2_progress 是 owner-RLS 表 → 派生必须在携带 actorId 的事务内
+    expect(txRunner).toHaveBeenLastCalledWith(expect.any(Function), { actorId: USER });
+  });
+
+  it("无挂词条目：产空信号且不空查（两条读线均不触达）", async () => {
+    const findBySlugs = vi.fn(async () => []);
+    const listPromotedWordIds = vi.fn(async () => []);
+    const { service } = makeService({
+      listDay: vi.fn(async () => [
+        makeRow({ entry_date: "2026-10-10", entry_type: "phrase", content: "无挂词", meta: null }),
+      ]),
+      findBySlugs,
+      listPromotedWordIds,
+    });
+
+    const day = await service.getDay(USER, "2026-10-10");
+    expect(day.entries[0].wordSignals).toEqual([]);
+    expect(findBySlugs).not.toHaveBeenCalled();
+    expect(listPromotedWordIds).not.toHaveBeenCalled();
+  });
+
+  it("信号是动态投影：不烙进静态日文件（同输入恒同输出）", async () => {
+    const { service } = makeService({
+      listDay: vi.fn(async () => entries()),
+      findBySlugs: vi.fn(async () => [wordRow("w-1", "harness", "利用…的力量")]),
+      listPromotedWordIds: vi.fn(async () => ["w-1"]),
+    });
+
+    const { markdown } = await service.getDayFile(USER, "2026-10-10");
+    expect(markdown).toContain("harness the power of…");
+    expect(markdown).not.toContain("待补释义");
+    expect(markdown).not.toContain("已补释义");
+  });
+});
+
 describe("DailyCaptureService.patchEntry（回顾流转 + 置要）", () => {
   const raw = makeRow({ entry_date: "2026-10-10", entry_type: "phrase", content: "harness the power", meta: null });
 
@@ -305,7 +403,7 @@ describe("DailyCaptureService M2 类型管理（createType / patchType）", () =
     expect(txRunner).not.toHaveBeenCalled();
   });
 
-  it("createType：key 冲突 409（先 seed 再查重）；可见上限 10 触发 422", async () => {
+  it("createType：key 冲突 409（先 seed 再查重）；可见上限 11 触发 422", async () => {
     const conflict = makeService({ findTypeByKey: vi.fn(async () => makeType("slang")) });
     await expect(conflict.service.createType(USER, { typeKey: "slang", label: "俚语" })).rejects.toMatchObject({
       httpStatus: 409,
@@ -313,7 +411,8 @@ describe("DailyCaptureService M2 类型管理（createType / patchType）", () =
     expect(conflict.dailyCapture.ensureDefaultTypes).toHaveBeenCalledWith(USER);
     expect(conflict.dailyCapture.insertType).not.toHaveBeenCalled();
 
-    const capped = makeService({ countVisibleTypes: vi.fn(async () => 10) });
+    // 7 内置 + 4 自定义席位 = 11（word 入 seed 后口径修订）
+    const capped = makeService({ countVisibleTypes: vi.fn(async () => 11) });
     await expect(capped.service.createType(USER, { typeKey: "slang", label: "俚语" })).rejects.toMatchObject({
       code: "BUSINESS_RULE",
     });
@@ -361,16 +460,17 @@ describe("DailyCaptureService M2 类型管理（createType / patchType）", () =
 
   it("patchType：unhide 超可见上限 422；未到上限照常放行（hidden 类型才计数）", async () => {
     const hidden = makeType("idea", true);
+    // 上限 11 = 7 内置 + 4 自定义席位（word 入 seed 后口径修订）
     const capped = makeService({
       findTypeByKey: vi.fn(async () => hidden),
-      countVisibleTypes: vi.fn(async () => 10),
+      countVisibleTypes: vi.fn(async () => 11),
     });
     await expect(capped.service.patchType(USER, "idea", { hidden: false })).rejects.toMatchObject({
       code: "BUSINESS_RULE",
     });
     expect(capped.dailyCapture.updateType).not.toHaveBeenCalled();
 
-    const ok = makeService({ findTypeByKey: vi.fn(async () => hidden), countVisibleTypes: vi.fn(async () => 9) });
+    const ok = makeService({ findTypeByKey: vi.fn(async () => hidden), countVisibleTypes: vi.fn(async () => 10) });
     await ok.service.patchType(USER, "idea", { hidden: false });
     expect(ok.dailyCapture.updateType).toHaveBeenCalledWith(USER, "idea", { hidden: false });
   });
@@ -396,6 +496,8 @@ const WORD = {
   lemma: "harness",
   ipa: null,
   short_definition: "利用",
+  definition_md: "利用…的力量",
+  updated_at: "2026-10-09T00:00:00Z",
 };
 
 const RAW_ENTRY = makeRow({ entry_date: "2026-10-10", entry_type: "sentence", content: "She harnessed her frustration.", meta: null });
@@ -404,6 +506,8 @@ const RAW_ENTRY = makeRow({ entry_date: "2026-10-10", entry_type: "sentence", co
 function makeAbsorbService(overrides: {
   findEntry?: ReturnType<typeof vi.fn>;
   findBySlug?: ReturnType<typeof vi.fn>;
+  findBySlugs?: ReturnType<typeof vi.fn>;
+  listPromotedWordIds?: ReturnType<typeof vi.fn>;
   findWordContextIdByText?: ReturnType<typeof vi.fn>;
   insertNewCard?: ReturnType<typeof vi.fn>;
   appendAbsorption?: ReturnType<typeof vi.fn>;
@@ -427,7 +531,12 @@ function makeAbsorbService(overrides: {
   };
   const words = {
     findBySlug: overrides.findBySlug ?? vi.fn(async () => WORD),
+    // 证据包 / 日视图的词读线（精确 slug 批量）
+    findBySlugs: overrides.findBySlugs ?? vi.fn(async () => [WORD]),
     insertMany: vi.fn(async () => undefined),
+  };
+  const l2Progress = {
+    listPromotedWordIds: overrides.listPromotedWordIds ?? vi.fn(async () => []),
   };
   const l3Context = {
     findWordContextIdByText: overrides.findWordContextIdByText ?? vi.fn(async () => null),
@@ -441,7 +550,8 @@ function makeAbsorbService(overrides: {
     insertNewCard: overrides.insertNewCard ?? vi.fn(async () => ({ status: "inserted", progressId: "p-1" })),
   };
   const outbox = { enqueue: vi.fn(async () => ({ id: "ob-1", inserted: true })) };
-  const repoFactory = () => ({ dailyCapture, words, l3Context, wordbooks, reviews, outbox }) as unknown as IRepositories;
+  const repoFactory = () =>
+    ({ dailyCapture, words, l2Progress, l3Context, wordbooks, reviews, outbox }) as unknown as IRepositories;
   const txRunner = vi.fn(
     async (fn: (tx: unknown) => Promise<unknown>, _options?: unknown) => fn({}),
   ) as unknown as typeof import("@/db/transaction").withTransaction;
@@ -476,7 +586,8 @@ describe("DailyCaptureService.getEvidencePack（agent 唯一读面的数据源�
     ]);
     const { service, words, l3Context } = makeAbsorbService({
       listDay,
-      findBySlug: vi.fn(async (slug: string) => (slug === "harness" ? WORD : null)),
+      findBySlugs: vi.fn(async (slugs: string[]) => (slugs.includes("harness") ? [WORD] : [])),
+      listPromotedWordIds: vi.fn(async () => ["w-1"]),
     });
     (l3Context.countWordOccurrences as ReturnType<typeof vi.fn>).mockResolvedValue(2);
 
@@ -487,10 +598,19 @@ describe("DailyCaptureService.getEvidencePack（agent 唯一读面的数据源�
     expect(pack.entries[0].absorption_hint).toBeNull();
     expect(pack.entries[0].words).toHaveLength(1); // ghost 未入库 → 跳过
     expect(pack.entries[0].words[0].existing_context_count).toBe(2);
+    // 词信号随词条同出（与日视图同一份投影；此处 slug 已精确命中，state 只 stub|ready）
+    expect(pack.entries[0].words[0].signal).toEqual({
+      slug: "harness",
+      state: "ready",
+      hasDefinition: true,
+      l2Promoted: true,
+      updatedAt: "2026-10-09T00:00:00Z",
+    });
     expect(pack.entries[1].label).toBeNull(); // 类型未注册 → 回退 null（不是抛错）
     expect(pack.entries[1].absorption_hint).toBeNull();
     expect(pack.entries[1].words).toEqual([]);
-    expect(words.findBySlug).toHaveBeenCalledTimes(2); // 只按已登记的 slug 查库（harness/ghost）
+    // 只按已登记的 slug 精确批量查库（harness/ghost），不再逐词 findBySlug
+    expect(words.findBySlugs).toHaveBeenCalledWith(["harness", "ghost"]);
   });
 });
 

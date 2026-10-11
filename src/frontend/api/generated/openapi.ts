@@ -10180,6 +10180,7 @@ export interface operations {
                         noteContentMd: string | null;
                         /** @enum {string} */
                         l3Status: "captured" | "deferred";
+                        entrySeq?: number | null;
                         sourceId: string | null;
                         contextId: string | null;
                         occurrenceId: string | null;
@@ -11056,6 +11057,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         date: string;
+                        observedAt: string;
                         types: {
                             user_id: string;
                             type_key: string;
@@ -11093,6 +11095,14 @@ export interface operations {
                             }[] | null;
                             created_at: string;
                             hidden_at: string | null;
+                            wordSignals: {
+                                slug: string;
+                                /** @enum {string} */
+                                state: "stub" | "ready" | "gone";
+                                hasDefinition: boolean;
+                                l2Promoted: boolean;
+                                updatedAt: string | null;
+                            }[];
                         }[];
                     };
                 };
@@ -11817,6 +11827,14 @@ export interface operations {
                                 ipa: string | null;
                                 short_definition: string | null;
                                 existing_context_count: number;
+                                signal: {
+                                    slug: string;
+                                    /** @enum {string} */
+                                    state: "stub" | "ready" | "gone";
+                                    hasDefinition: boolean;
+                                    l2Promoted: boolean;
+                                    updatedAt: string | null;
+                                };
                             }[];
                         }[];
                     };
