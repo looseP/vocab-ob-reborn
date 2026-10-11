@@ -12,13 +12,15 @@
 
 | 语料库 | 文件 | 词条 | 库内分布 |
 |---|---:|---:|---|
-| `L0_单词集合/` | 91 | 867 | DB 866（差 1，见下） |
+| `L0_单词集合/` | 91 | 867 | 与 DB 完全一致 |
 | `L0_基础词/` | 85 | 1487 | 与 DB 完全一致 |
 | `L0_超纲词/` | 66 | 967 | 与 DB 完全一致 |
-| `L1_雅思词汇/` | 22 | 3447 | DB 3446（差 1，见下） |
+| `L1_雅思词汇/` | 22 | 3447 | 与 DB 完全一致 |
 | **合计** | **264** | **6768** | |
 
-语料侧合计 **6768**，无重复、无缺失（2026-10-11 新增 L1 `offense` 词卡：6767→6768、L1 3446→3447）。DB 侧实测（同日，按 `split_part(source_path,'/',1)` 归并）：`L0_单词集合` 866、`L0_基础词` 1487、`L0_超纲词` 967、`L1_雅思词汇` 3446，另有 4 条早期 `batch-import/*` 词条 —— 与语料侧差 2 条，原因待单独核对（本次未处理）。
+语料侧合计 **6768**，无重复、无缺失（2026-10-11 新增 L1 `offense` 词卡：6767→6768、L1 3446→3447）。DB 侧逐库相等（2026-10-11 核对：当日重导 `abandon` / `resilient` 语料卡，修复了 2 条 `source_path` 漂移 —— PR #185 之前 overwrite 批量导入的残留；重导走 hash 守卫更新路径，exam 层不受影响）。
+
+另有 2 条 `batch-import/*` 词条（`reluctance` / `traction`，捕获后待写卡的 stub）。已知瑕疵（未处理）：6633/6768 条 `source_path` 带历史容器路径前缀（形如 `L1_雅思词汇//work/corpus/L1_雅思词汇/…`）—— 按库前缀归并无碍，按精确值匹配会漏。
 
 ## 四份副本的关系
 
@@ -65,7 +67,7 @@ docker compose run --rm -v "<仓库路径>/data:/app/data:ro" \
 -- 语料侧（数 markdown 的 '## ' 二级标题）
 --   期望 6768，去重后 6768
 -- DB 侧
-select count(*) from words where is_deleted = false;              -- 6770（含 4 条 batch-import 历史词条）
+select count(*) from words where is_deleted = false;              -- 6770（含 2 条 batch-import 捕获 stub）
 select left(source_path, 6), count(*) from words group by 1;       -- 逐库比对
 ```
 
