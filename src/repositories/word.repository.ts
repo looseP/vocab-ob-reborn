@@ -690,7 +690,7 @@ export class WordRepository extends BaseRepository implements IWordRepository {
          short_definition = EXCLUDED.short_definition,
          definition_md = EXCLUDED.definition_md,
          body_md = EXCLUDED.body_md,
-         examples = EXCLUDED.examples,
+         examples = CASE WHEN EXCLUDED.examples = '[]'::jsonb THEN words.examples ELSE EXCLUDED.examples END,
          metadata = EXCLUDED.metadata,
          core_definitions = EXCLUDED.core_definitions,
          prototype_text = EXCLUDED.prototype_text,
