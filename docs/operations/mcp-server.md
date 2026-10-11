@@ -36,12 +36,13 @@
 
 也可用 `npm run mcp:server`（从仓库根目录继承环境变量）。
 
-## 工具一览（13 个）
+## 工具一览（14 个）
 
 | 工具 | 作用 | 对应 API |
 | --- | --- | --- |
 | `search_words` | 按词元/标题前缀搜索词条 | `GET /api/words/suggest` |
 | `get_word_detail` | 词条完整详情（含已生效 L2 内容） | `GET /api/words/:slug` |
+| `list_words` | **枚举词条**：`scope=stub` 即生词本（仅词形、待补释义）、`all` 两者同列；可按 q/cefr/review 过滤、按 `wordbookId` 只看某词书成员（2026-10-11 补） | `GET /api/words` |
 | `build_l2_prompt` | 组装规范化外部生成提示词（不耗 LLM 预算） | `POST /api/l2/:slug/external-prompt` |
 | `propose_l2_content` | **送候选**：写入候选池（`is_active=false`），不出题、不展示，等用户采纳 | `POST /api/l2/:slug/candidates` |
 | `list_l2_candidates` | 列出词条的全部待选候选 | `GET /api/l2/:slug/candidates` |
@@ -62,9 +63,29 @@
 `field` 取值：`collocation`（搭配）/ `example`（例句）/ `synonym`（同义辨析）/ `antonym`（反义）；
 `example` 在存储层映射为 `corpus`。
 
+### 生词本（stub）通道（2026-10-11 补）
+
+生词本 = `definition_md=''` 的**生词条目**（捕获页「生词入本」、阅读采集、批量导入产生）。
+此前它**没有任何读面**——捕获页能创建、详情页能删除，但攒了哪些看不见；`list_words` 是它的清点入口，
+参数与 `GET /api/words` **1:1 对齐**（不新增语义）：
+
+| 参数 | 取值 | 说明 |
+| --- | --- | --- |
+| `scope` | `content`（默认）/ `stub` / `all` | `content` 是**既有口径**（正式词条，不含生词）；省略即维持旧行为 |
+| `q` / `cefr` / `review` | 可选 | 搜索词（≤200 字符）/ CEFR / 复习状态（`all`·`tracked`·`due`·`untracked`） |
+| `wordbookId` | 可选 uuid | 只看某词书成员（**词书元数据本身仍不在 MCP 面**，见「现状限制」2） |
+| `limit` / `offset` | 1-100（默认 60）/ ≥0 | 返回 `items + total + limit + offset`，可翻页 |
+
+**设计取舍**：只加这一个枚举工具，不再为词书 / 复习队列各开工具——它们都只是 `GET /api/words` 的参数维度。
+读面依据 ADR-0029 决策 6（`GET → agent 可用`），桥不新增信任级、不写库（描述里带统一尾注）。
+生词补全闭环：`list_words(scope="stub")` 清点 → `get_word_detail` 看缺口 → `build_l2_prompt` →
+`propose_l2_content` 送候选 → 人在详情页采纳（补 L2 扩展内容）。注意：**stub 判定只看 `definition_md`**，
+要让生词转成正式词条，仍走批量导入（`POST /api/words/batch`，默认 fill-only）或人工补释义。
+
 ## 推荐对话流
 
-1. `search_words` 找词 → `get_word_detail` 看现有内容与缺口。
+1. 词面：`search_words` 找词 → `get_word_detail` 看现有内容与缺口；生词本清点用
+   `list_words`（`scope="stub"`；默认 `content` 行为不变）。
 2. `build_l2_prompt` 拿规范化提示词，交给对话中的 LLM 生成 JSON 条目。
 3. 走 `propose_l2_content` 送候选——用户在词条详情页「扩展内容」面板的
    **Agent 候选区**勾选条目后点「采纳」（可只采纳子集）或「忽略」。
@@ -88,6 +109,12 @@
    - agent token（`AGENT_API_TOKENS` 的 `agentId:token`，见 `docs/operations/secret-rotation.md`）可：读全量语料（GET；例外见下）；写 proposal（`POST /api/l3/proposals`、`POST /api/l2/:slug/candidates`）；构建提案载荷（`POST /api/l2/:slug/external-prompt`，即 `build_l2_prompt`，纯组装、不写库、不耗预算）；发起 L3 导入（`POST /api/l3/imports/raw-text|structured`，产出 proposal bundle，不写 active L3、不耗预算）。推荐流 `search_words → get_word_detail → build_l2_prompt → propose_l2_content` 在 agent token 下全程可用。
    - **升级动作对 agent 一律 403**：L2 confirm、L2 candidates accept/reject、L3 proposal validate/confirm/reject、L3 recommendation accept/reject、forgetting apply/restore、l3-sessions end、upgrade-work-orders 全部写、l2-rows deactivate/delete/hide/restore 等；owner token 仍全量放行。这些动作**也不在任何 MCP 工具里暴露**。
    - `GET /api/operations/metrics` 等少数读保持 owner-only；`/api/auth` 是唯一豁免组（会话兑换/登出）。
-2. **MCP 工具面已收敛（T13c / T13c-2）**：共 13 个工具——5 个 L2 + 7 个 L3（6 读 + 1 送提案）+ 1 个能力发现；`confirm_l2_content` 已下线；升级动作（confirm / accept / validate / apply / cancel）不暴露；每个工具 description 标注"产物进 proposal、需人工确认"；提案提交后可用 `list_l3_proposals` / `get_l3_proposal` 只读自查状态。行为由 `tests/scripts/run-mcp-server.test.ts` 冒烟钉住（真实子进程 + 真实 app）。
+2. **MCP 工具面（T13c 收敛 + 2026-10-11 生词本补口）**：共 14 个工具——6 个词条/L2 面
+   （`search_words`、`get_word_detail`、`list_words`、`build_l2_prompt`、`propose_l2_content`、`list_l2_candidates`）
+   + 7 个 L3（6 读 + 1 送提案）+ 1 个能力发现；`confirm_l2_content` 已下线；升级动作（confirm / accept / validate / apply / cancel）
+   不暴露；每个工具 description 标注"产物进 proposal、需人工确认"；提案提交后可用 `list_l3_proposals` / `get_l3_proposal` 只读自查状态。
+   收敛后**唯一新增的是 `list_words`**（只读枚举，依据决策 6「`GET` → agent 可用」，不新增信任级、不写库）；
+   **词书元数据（有哪些词书、各自成员数）仍不在 MCP 面**——需要时按同一范式补 `list_wordbooks`（`GET /api/wordbooks`）。
+   行为由 `tests/scripts/run-mcp-server.test.ts` 冒烟钉住（真实子进程 + 真实 app）。
 3. **agentId 已落库**：agent bearer 的 `proposal.provenance.agentId` 由服务端按 `AGENT_API_TOKENS` 映射认定、覆盖客户端自述（ADR-0029 §5）；提案幂等由 `inputHash` 查重 + 迁移 0031 的 partial unique index 保障。
 4. **能力发现**：`GET /api/l3/capabilities`（MCP `get_capabilities`）返回可读/可写面、预算上限与 error code 词表；数字引用 `src/schemas/resource-budget.ts`、词表引用 `src/errors/codes.ts` 单一真源。

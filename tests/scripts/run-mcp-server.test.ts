@@ -54,6 +54,15 @@ type ProposalInput = {
 };
 
 function makeServices() {
+  const words = {
+    getPublicWords: vi.fn(async (input: Record<string, unknown>) => ({
+      items: [{ slug: "reluctance", lemma: "reluctance", entryType: "stub" }],
+      total: 1,
+      limit: 60,
+      offset: 0,
+      echo: input,
+    })),
+  };
   const l3Proposal = {
     createProposal: vi.fn(async (_input: ProposalInput) => ({
       proposal: { id: "prop-smoke", status: "pending", source_type: "agent" },
@@ -89,7 +98,7 @@ function makeServices() {
     })),
     listContextLinks: vi.fn(async () => ({ items: [], limit: 50, cursor: null, nextCursor: null })),
   };
-  return { authSessions: undefined, l3Proposal, l3Context } as unknown as Services;
+  return { authSessions: undefined, words, l3Proposal, l3Context } as unknown as Services;
 }
 
 function firstCallArg<T>(method: unknown): T {
@@ -184,6 +193,7 @@ describe("MCP tools/list (T13c 工具面)", () => {
     expect(names).toEqual([
       "search_words",
       "get_word_detail",
+      "list_words",
       "build_l2_prompt",
       "propose_l2_content",
       "list_l2_candidates",
@@ -214,6 +224,35 @@ describe("MCP tools/list (T13c 工具面)", () => {
   it("surfaces unknown tools as JSON-RPC errors, not crashes", async () => {
     const message = await mcpRequest("tools/call", { name: "confirm_l2_content", arguments: {} });
     expect(message.error?.message).toContain("unknown tool");
+  });
+});
+
+// ── 生词本清点（list_words，2026-10-11 补）────────────────────────────────
+
+describe("MCP word enumeration (list_words)", () => {
+  it("forwards scope=stub and paging through list_words (生词本清点)", async () => {
+    const message = await mcpRequest("tools/call", {
+      name: "list_words",
+      arguments: { scope: "stub", limit: 20, offset: 0 },
+    });
+    expect(message.result).toBeDefined();
+    expect(toolResultText(message).echo).toMatchObject({
+      userId: "user-123",
+      scope: "stub",
+      limit: 20,
+      offset: 0,
+    });
+  });
+
+  it("keeps the default scope=content / review=all when omitted (生词不混进正式词条默认口径)", async () => {
+    const message = await mcpRequest("tools/call", { name: "list_words", arguments: {} });
+    expect(toolResultText(message).echo).toMatchObject({
+      userId: "user-123",
+      scope: "content",
+      review: "all",
+      limit: 60,
+      offset: 0,
+    });
   });
 });
 
