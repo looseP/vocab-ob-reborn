@@ -124,7 +124,10 @@ describe("createServices wiring", () => {
     expect(sessions.getOrCreateToday).toHaveBeenCalledWith("u1", "wb1", "cram");
 
     await services.reviews.getQueue("u1", "wb1", 5, "review");
-    expect(reviews.findDueCards).toHaveBeenCalledWith("u1", "wb1", 6);
+    // review 通道走两阶段候选取数（2026-10-11 审查 R1：候选池为空不再回落混流
+    // findDueCards —— 那条路径不带 channel 谓词，会把别的通道的卡发进来）
+    expect(reviews.findDueCandidateSnapshots).toHaveBeenCalled();
+    expect(reviews.findDueCards).not.toHaveBeenCalled();
     expect(reviews.findPracticeCards).toHaveBeenCalledTimes(1);
 
     await services.reviews.getStats("u1", "wb1");

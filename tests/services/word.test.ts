@@ -176,3 +176,17 @@ describe("WordService.deleteStubWord", () => {
       });
   });
 });
+
+describe("WordService.suggestWords — scope 透传（2026-10-11 生词本）", () => {
+  it("省略 scope 时按 content 下传（捕获页「词库里有没有这个词」的口径不变）", async () => {
+    await service.suggestWords("cour", 5);
+
+    expect(repo.suggest).toHaveBeenCalledWith("cour", 5, "content");
+  });
+
+  it("scope=all 原样透传，让用户自建 stub 也能进入联想候选", async () => {
+    await service.suggestWords("cour", 5, "all");
+
+    expect(repo.suggest).toHaveBeenCalledWith("cour", 5, "all");
+  });
+});

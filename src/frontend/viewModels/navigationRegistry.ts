@@ -200,6 +200,19 @@ export const NAVIGATION: readonly NavEntry[] = [
     surfaces: ["topnav", "mobile", "home", "palette"],
   },
   {
+    id: "word-notebook",
+    label: "生词本",
+    description: "捕获的生词条目：只有词形、等待补全释义",
+    href: "/words?scope=stub",
+    matchPrefix: "/words",
+    icon: "book-dashed",
+    family: "vocab",
+    // 与「词条库」共享 /words 前缀：若进顶栏/移动底栏，两者会在 /words 上同时
+    // 高亮（同 L3 家族"同前缀双入口"的教训），故只进命令面板（0 击）；
+    // 触屏用户的 1 击入口是词条库页内的维度切换（词条库 / 生词本 / 全部）。
+    surfaces: ["palette"],
+  },
+  {
     id: "plaza",
     label: "广场",
     description: "公开词书与他人精选",

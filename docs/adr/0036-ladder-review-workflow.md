@@ -73,6 +73,40 @@
 > 另：`ReviewPage` 全程未读 `vocab-ladder-mode`，**存量用户的选择不会影响行为**，
 > 无需迁移 —— 旧键残留在 localStorage 中但已无读者。
 
+> **2026-10-10 再次修订（取代 2026-10-03 的显式模式形态，回到开关形态）**
+>
+> 显式模式运行一周后，用户拍板回归开关形态：「阶梯复习要不整回原来的那种模式携带开关吧，
+> 复习和学新词都需要的啊，除了用户急的时候可以关闭速刷」（2026-10-10，附复习页双入口截图，
+> 红箭头从「到期复习」「学新词」指向阶梯卡）。显式模式解决了一个真问题（无预期接管），
+> 但带来新痛点：**阶梯被孤立成次要入口** —— 主入口（到期复习 / 学新词）反而享受不到
+> 三轮制，而「学新词的编码强化」（跟写 + 默写对新记忆的固化价值最大）恰恰是阶梯的核心
+> 设计初衷；急用时也没有「关掉速刷」的余地。
+>
+> **改为**：**双通道开关** —— 到期复习 / 学新词两个大卡片各带一个**独立** toggle
+> （`utils/ladderSettings.ts` 回归，`vocab-ladder-mode:review` / `vocab-ladder-mode:learn`
+> 各管各的入口，互不同步）；「阶梯复习（实验）」显式模式卡**删除**（`reviewModes` 回到 5 项，
+> 次级网格 cram/preview/hulu 三项三列）。开关开启时 `handleStart` 分流进
+> `LadderReviewSession`（新增 `channel: "review" | "learn"` prop：learn 走 new 通道、
+> answer `mode:"learn"` 计入「今日新学」额度、整场缓存 `vocab:review:ladder:<channel>`
+> 分桶、每日计数入对应桶 —— 后者是补账：阶梯的 answer 绕过 useReview.answer，
+> 此前从未入账， learn 接入后额度会被架空）。
+>
+> **2026-10-03 的教训这次被正面解决**（而非重蹈 v1）：
+> - 「无预期被换卡」→ 开关**就地渲染**在两个大卡片上（非设置页），开启时徽标与
+>   描述同步变化（「三轮制：再认 → 巩固 → 产出」vs 速刷文案），进会话前一眼可见；
+> - 「全局单开关不对称」→ **双通道独立**：复习想速刷、学新词想走三轮制（或反过来）
+>   各按各的开关；「急的时候关闭速刷」两个开关一按即可；
+> - 「替用户默认开启」→ 默认关（速刷），与 ADR-0036 原决策一致。
+>
+> 回归防线同步更新：`ladder-typing-reachability.test.tsx` 反转断言为
+> ① 开关真源分通道（`:review` / `:learn` 互不干扰）；② 模式清单恰 5 项**不含** ladder；
+> ③ 源码含分流结构（`isLadderEnabledFor` / `clearLadderSessionCache(channel)` /
+> `channel={ladderChannel}`）且经典 `ReviewSession` 函数体内无 `ladder`（劫持回潮防线）。
+> 新增 `ladder-settings.test.ts`（开关真源：默认关/双通道独立/坏值回落）与
+> `ladder-learn-channel.test.tsx`（learn 通道语义：队列 `channel=new`、answer `mode:"learn"`、
+> 每日计数入 learn 桶、缓存键分通道、徽标/空态文案口径）。
+> `hulu-reachability.test.tsx` 的清单断言同步 6 项 → 5 项。
+
 ### 5. 依赖克制（ADR-0004）
 
 不引入任何新 npm 依赖。TTS 用浏览器原生 Web Speech API（能力检测，失败降跟写）。打字流无 setTimeout（阻塞式逐字状态机：字母全归答案、错字阻塞标红、wrongTimes 只增不减）。

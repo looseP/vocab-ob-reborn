@@ -101,11 +101,22 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     const where: string[] = [
       "w.is_published = true",
       "w.is_deleted = false",
-      // L1-4：默认过滤 stub 词条（仅 lemma、无内容，批量导入/阅读采集产生）。
-      // 判定依据是核心内容列 definition_md 是否为空（NOT NULL，stub 写入空串）——
-      // 不能看 short_definition（真实词条可能无短释义但有完整释义）。
-      "(w.definition_md <> '')",
     ];
+    // 词条内容维度（2026-10-11 生词本）。
+    // 判定依据是核心内容列 definition_md 是否为空（NOT NULL，stub 写入空串）——
+    // 不能看 short_definition（真实词条可能无短释义但有完整释义）。
+    // `content`（默认）= L1-4 以来的既有行为（排除 stub），保持向后兼容。
+    switch (filters.scope) {
+      case "stub":
+        where.push("(w.definition_md = '')");
+        break;
+      case "all":
+        break;
+      case "content":
+      default:
+        where.push("(w.definition_md <> '')");
+        break;
+    }
     const params: unknown[] = [];
     let paramIdx = 1;
 
@@ -289,18 +300,22 @@ export class WordRepository extends BaseRepository implements IWordRepository {
 
   /**
    * 输入联想（L1-2）：按 lemma / 拼音前缀即时返回 top-N 建议。
-   * lemma 前缀命中优先于拼音命中，再按 lemma 字母序；同样过滤 stub 词条。
+   * lemma 前缀命中优先于拼音命中，再按 lemma 字母序。
+   *
+   * `scope`（2026-10-11 生词本）：`content`（默认）排除 stub —— 这是捕获页
+   * "词库里有没有这个词"的判定依据，语义不能被动摇；`all` 把用户自建的生词条目
+   * 一并纳入候选，供生词本页与 MCP agent 使用。
    */
-  async suggest(q: string, limit = 8): Promise<WordSummary[]> {
+  async suggest(q: string, limit = 8, scope: "content" | "all" = "content"): Promise<WordSummary[]> {
     const query = q.trim();
     if (!query) return [];
     const qNoSpace = query.replace(/\s+/g, "");
+    const stubPredicate = scope === "all" ? "" : "AND w.definition_md <> ''\n         ";
     return this.query<WordSummary>(
       `SELECT ${SUMMARY_COLUMNS}
        FROM words w
        WHERE w.is_published = true AND w.is_deleted = false
-         AND w.definition_md <> ''
-         AND (w.lemma ILIKE $1 OR w.pinyin ILIKE $2 OR w.pinyin_initial ILIKE $3)
+         ${stubPredicate}AND (w.lemma ILIKE $1 OR w.pinyin ILIKE $2 OR w.pinyin_initial ILIKE $3)
        ORDER BY CASE
          WHEN w.lemma ILIKE $4 THEN 0
          WHEN w.pinyin ILIKE $5 OR w.pinyin_initial ILIKE $6 THEN 1

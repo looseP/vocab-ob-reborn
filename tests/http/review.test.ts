@@ -81,6 +81,30 @@ describe("POST /api/review/answer", () => {
     }, "user-123");
   });
 
+  it("accepts mode=learn（学新词通道隔离 · 2026-10-10）", async () => {
+    // 回归防线：这个值曾缺席于 reviewAnswerSchema 的 mode 枚举，而前端
+    // useReview.startReview / LadderReviewSession 都按原值透传 "learn" ⇒
+    // 整条学新词评分链在 schema 层 400（阶梯 learn 通道表现为产出轮死锁）。
+    // 前端测试 mock 掉了 apiFetch，只能在这里做真正的契约防线。
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/review/answer", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({
+        progressId: PROGRESS_ID,
+        rating: "good",
+        sessionId: SESSION_ID,
+        mode: "learn",
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(services.reviews.submitAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "learn" }),
+      "user-123",
+    );
+  });
+
   it("rejects invalid body with 400", async () => {
     const services = makeMockServices();
     const app = createApp(services);

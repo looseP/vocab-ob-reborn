@@ -66,6 +66,11 @@ export const wordsQuerySchema = z.object({
   q: z.string().max(200).optional(),
   cefr: z.string().max(10).optional(),
   review: z.enum(["all", "tracked", "due", "untracked"]).optional().default("all"),
+  // 词条内容维度（2026-10-11 生词本）：`content` = 正式词条（**默认，行为不变**，
+  // L1-4 以来一直是"排除 stub"）；`stub` = 只看生词条目（仅 lemma、无释义内容，
+  // 由捕获/阅读采集/批量导入产生）；`all` = 两者都要。
+  // 此前 stub 无任何端点可列出 —— 捕获页能创建、详情页能删除，但攒了哪些看不见。
+  scope: z.enum(["content", "stub", "all"]).optional().default("content"),
   wordbookId: uuidSchema.optional(),
 });
 
@@ -73,6 +78,11 @@ export const wordsQuerySchema = z.object({
 export const wordSuggestQuerySchema = z.object({
   q: z.string().min(1).max(100),
   limit: z.coerce.number().int().min(1).max(20).optional().default(8),
+  // 联想是否含生词条目（2026-10-11，MCP / UI 共用）。默认 `content` 保持既有语义：
+  // "词库里有没有这个词"正是捕获页判定"要不要新建生词条目"的依据，不能被改变。
+  // `all` 让 agent / 生词本页能把用户自建的 stub 一起纳入候选。
+  // 用 enum 而非 z.coerce.boolean()：后者会把 query 里的字符串 "false" 算成 true。
+  scope: z.enum(["content", "all"]).optional().default("content"),
 });
 
 // ── Plaza（词汇广场 · P4）──────────────────────────────────────────────
@@ -119,7 +129,12 @@ export const reviewAnswerSchema = z.object({
   sessionId: uuidSchema,
   idempotencyKey: z.string().min(1).max(200).optional(),
   // Mode-aware side-effect boundary (P0): cram is a no-persistence self-test.
-  mode: z.enum(["review", "cram", "preview", "zen"]).optional(),
+  // `learn` = 学新词通道（2026-10-10 新学/复习隔离）：与 review 同样落库调度，
+  // 仅在统计侧按通道分桶（「今日新学」vs「今日复习」是前端 localStorage 口径）。
+  // ⚠️ 这个值曾经缺席于枚举，导致整条学新词评分链 400（前端 setMode 原值透传
+  // "learn"，见 useReview.startReview / LadderReviewSession 的 mode: channel）。
+  // 回归防线见 tests/http/review.test.ts 的 "accepts mode=learn" 用例。
+  mode: z.enum(["review", "cram", "preview", "zen", "learn"]).optional(),
   // T3 Hint 阶梯埋点（2026-09-25，request 纯新增 = 非 breaking）：
   // hintLevel = 作答时已消费的最高提示级（0=未用提示直翻，1=H1 例句/语义链，
   // 2=H2 原型，3=H3 助记锚）；viaH4 = 提示穷尽后经 H4 翻卡（区别于直翻验证）。

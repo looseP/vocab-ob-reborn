@@ -9,6 +9,7 @@
  */
 import {
   AlertTriangle,
+  BookDashed,
   BookOpen,
   Bookmark,
   BookMarked,
@@ -33,6 +34,7 @@ import {
 export const NAV_ICON = {
   alert: AlertTriangle,
   book: BookOpen,
+  "book-dashed": BookDashed,
   "book-marked": BookMarked,
   bookmark: Bookmark,
   clipboard: ClipboardList,

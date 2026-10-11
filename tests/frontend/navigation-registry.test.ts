@@ -163,4 +163,26 @@ describe("导航登记表 · 激活态", () => {
     const hits = topnav.filter((e) => isNavEntryActive(e, "/l3"));
     expect(hits.map((e) => e.id)).toEqual(["l3-home"]);
   });
+
+  it("生词本与词条库共享 /words 前缀，但激活面上只允许「词条库」命中", () => {
+    const activation = [...navEntriesFor("topnav"), ...navEntriesFor("mobile")];
+    const hits = new Set(
+      activation.filter((e) => isNavEntryActive(e, "/words")).map((e) => e.id),
+    );
+    expect([...hits]).toEqual(["words"]);
+  });
+});
+
+describe("导航登记表 · 生词本（2026-10-11）", () => {
+  it("视图维度写在 URL 上：深链 /words?scope=stub，并进命令面板（0 击）", () => {
+    const entry = NAVIGATION.find((e) => e.id === "word-notebook")!;
+    expect(entry.href).toBe("/words?scope=stub");
+    expect(routeOf(entry.href)).toBe("/words");
+    expect(navEntriesFor("palette").map((e) => e.id)).toContain("word-notebook");
+  });
+
+  it("不占用首页卡片份额（首页仍是门面，≤10 的不变量不被这次新增挤破）", () => {
+    expect(navEntriesFor("home").map((e) => e.id)).not.toContain("word-notebook");
+    expect(navEntriesFor("home").length).toBeLessThanOrEqual(10);
+  });
 });

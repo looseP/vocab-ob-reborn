@@ -1038,7 +1038,10 @@ describe("ReviewService — P1 queue-priority routing", () => {
     expect(queue.items[1].queueBucket).toBe("new");
   });
 
-  it("falls back to findDueCards when the candidate pool is empty", async () => {
+  it("通道候选池为空时返回空队列，不回落混流（2026-10-11 审查 R1）", async () => {
+    // 旧行为：候选池为空 → 调 findDueCards（**不带 channel 谓词**）→ 把 review 通道
+    // 应空的场景变成"拿别的通道的卡"。learn 通道下更糟：前端按 state==="new" 判
+    // 首学并计入"今日新学"，语义直接串台。
     const { adapter } = makeMockFsrsAdapter();
     const findDueCards = vi.fn(async () => [{
       progress: makeProgressRow(),
@@ -1049,6 +1052,27 @@ describe("ReviewService — P1 queue-priority routing", () => {
       loadWeights: async () => null,
       findDueCards,
       findDueCandidates: vi.fn(async () => []),
+      getOrCreateTodaySession: makeSession("review"),
+    });
+
+    const queue = await service.getQueue("u1", "wb1", 20, "review");
+    expect(findDueCards, "通道池为空时不得跨通道取卡").not.toHaveBeenCalled();
+    expect(queue.items).toEqual([]);
+    expect(queue.stats).toEqual({ total: 0, remaining: 0 });
+    expect(queue.hasMore).toBe(false);
+  });
+
+  it("依赖缺失（未注入 findDueCandidates）时才回落 findDueCards", async () => {
+    // 精简测试夹具形态：没有候选取数依赖 ⇒ 兼容直出，保持向后兼容。
+    const { adapter } = makeMockFsrsAdapter();
+    const findDueCards = vi.fn(async () => [{
+      progress: makeProgressRow(),
+      word: makeWord("w-1"),
+    }]);
+    const service = new ReviewService({
+      fsrsAdapter: adapter,
+      loadWeights: async () => null,
+      findDueCards,
       getOrCreateTodaySession: makeSession("review"),
     });
 

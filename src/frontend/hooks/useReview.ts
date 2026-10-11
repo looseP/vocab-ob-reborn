@@ -162,8 +162,9 @@ export function channelForMode(mode: string): "review" | "new" | null {
   // （apiMode 映射），所以正常路径收不到 "zen"。留着是为了「万一别处直接调
   // startReview("zen")」时不会退化成混流 —— 静默退化成混流是最坏的结果。
   if (mode === "review" || mode === "zen") return "review";
-  // cram / preview / ladder / hulu 一律不隔离：要么是零 FSRS 的练习模式，
-  // 要么（ladder/hulu）本身就复用 review 通道的数据源，不该在这里另开一条。
+  // cram / preview / hulu 一律不隔离：零 FSRS 的练习模式按定义就要混着来。
+  // 注意 ladder 自 2026-10-10 起**不再是 mode**：它由复习页开关分流、以其通道
+  // （"review"/"learn"）直接调 startReview，走与通道一致的下述分支。
   return null;
 }
 
@@ -229,7 +230,22 @@ function sweepExpiredCache(): void {
   }
 }
 
-export function useReview() {
+/**
+ * 标准复习会话 hook。
+ *
+ * @param options.persist 是否把经典会话进度写入 localStorage（默认 true）。
+ *   阶梯会话（`LadderReviewSession`）传 `false`：它只借用本 hook 拉一次队列，
+ *   自己的整场缓存走 `vocab:review:ladder:<channel>`。若沿用经典缓存，会造成两重
+ *   事故（2026-10-11 审查 B3/B4）：① 阶梯留下一条 `completed:false` 的残壳记录，
+ *   复习页恢复条恒假命中「检测到未完成的学新词会话（0/20）」，点「继续上次」会把用户
+ *   静默换回经典速刷 ⇒ 同批新词二次真实调度；② 经典流与阶梯共用同一缓存键，
+ *   「开始」会命中对方遗留的队列与 sessionId（跨天时 assertActiveOwned 直接 404）。
+ * @param options.autoLoadMore 是否启用分页预加载（默认 true）。阶梯一次性拉整批队列、
+ *   不走续载，故传 `false`：否则小队列（≤5）+hasMore 时会静默追加永不学习的卡。
+ */
+export function useReview(options?: { persist?: boolean; autoLoadMore?: boolean }) {
+  const persist = options?.persist !== false;
+  const autoLoadMore = options?.autoLoadMore !== false;
   const [queue, setQueue] = useState<ReviewCard[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [mode, setMode] = useState<string>("review");
@@ -708,13 +724,14 @@ export function useReview() {
   /** 预加载阈值：剩余卡片 ≤ 该值时提前拉取下一页，避免到达末尾时的"完成"闪现。 */
   const LOAD_MORE_THRESHOLD = 5;
 
-  // 预加载：剩余较少且有更多时提前拉取下一页（无缝续卡）。
+  // 预加载：剩余较少且有更多时提前拉取下一页（无缝续卡）。阶梯会话不续载。
   useEffect(() => {
+    if (!autoLoadMore) return;
     if (completed || !hasMore || loadingMore) return;
     if (remaining <= LOAD_MORE_THRESHOLD) {
       void loadMore();
     }
-  }, [completed, hasMore, loadingMore, remaining, loadMore]);
+  }, [autoLoadMore, completed, hasMore, loadingMore, remaining, loadMore]);
 
   // 续载兜底：已到达当前批末尾（completed）但仍有更多卡片时，拉取下一页并恢复进行。
   // 无更多且为禅模式时，交由 ReviewPage 的 zen-restart 逻辑重新拉取（无限循环）。
@@ -735,6 +752,7 @@ export function useReview() {
    * undoStack 一并落盘：刷新/误关浏览器后撤销历史不丢（栈本身有 10 深度上限）。
    */
   useEffect(() => {
+    if (!persist) return;
     if (!queue.length && !sessionId) return;
     writeCache({
       mode,

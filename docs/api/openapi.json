@@ -1770,6 +1770,20 @@
           },
           {
             "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "content",
+              "type": "string",
+              "enum": [
+                "content",
+                "stub",
+                "all"
+              ]
+            }
+          },
+          {
+            "in": "query",
             "name": "wordbookId",
             "required": false,
             "schema": {
@@ -2203,6 +2217,19 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "content",
+              "type": "string",
+              "enum": [
+                "content",
+                "all"
+              ]
             }
           }
         ],
@@ -9621,7 +9648,9 @@
               "enum": [
                 "review",
                 "cram",
-                "preview"
+                "preview",
+                "learn",
+                "zen"
               ]
             }
           },
@@ -12284,7 +12313,8 @@
                       "review",
                       "cram",
                       "preview",
-                      "zen"
+                      "zen",
+                      "learn"
                     ]
                   },
                   "hintLevel": {

@@ -2,20 +2,20 @@
 // @vitest-environment jsdom
 
 /**
- * 两处阶梯可达性修复（2026-09-29，用户报「原来那个打字流呢？为什么没了？」）。
+ * 阶梯可达性 + 形态不变量（ADR-0036 §4 的三次修订都锁在这里）。
  *
- * 根因不是打字流被删——`FollowCopyView` / `TypingDictationView` 一行未动，
- * 而是**没人能到达它**：
- * 1. 阶梯会话曾经是一个**全局布尔开关**（`vocab-ladder-mode`），藏在设置页 /
- *    标准复习卡内，开关一开会悄悄把「标准复习」和「快速复习」换成另一张卡
- *    → 用户既看不到打字流，也预判不到自己被换了卡。
- *    2026-10-03 起（ADR-0036 §4 修订）阶梯改为**显式第 5 个模式**，不变量
- *    从「靠布尔值保证」升级为「不选该模式 ⇒ 分支不可达」；本文件锁的就是这条；
- * 2. 阶梯会话 rung=2 的第一轮走 `card-no-hints`（按设计不给提示），此时
- *    `hintSteps.length === 0`，H4「翻卡」是唯一出口却只翻面不推进，
- *    表现为"点了没反应"，极易被读成死锁。
+ * 形态沿革：
+ *  1. v1 全局布尔开关（2026-09-26）：悄悄接管「标准复习」/「快速开始」，用户无预期；
+ *  2. 显式第 5 个模式（2026-10-03）：不选 ⇒ 分支不可达；但主入口享受不到三轮制；
+ *  3. 双通道开关（2026-10-10 拍板，用户：「整回原来的那种模式携带开关吧，复习和
+ *     学新词都需要的啊，除了用户急的时候可以关闭速刷」）：到期复习/学新词两个大
+ *     卡片各带一个独立 toggle（`vocab-ladder-mode:review` / `:learn`），状态就地
+ *     可见，解决 v1「无预期被换卡」的正面解法。
  *
- * 本文件锁住这两条路径。
+ * 本文件锁住：
+ *  - 双通道开关的真源（ladderSettings）与分流结构（ReviewPage 开关开启 ⇒ 阶梯分支）；
+ *  - 阶梯 rung=2 第一轮 `card-no-hints`（hintSteps 为空）时 H4「翻卡」是唯一出口
+ *    却只翻面不推进、表现为"点了没反应"的可达性修复。
  */
 import { act } from "react";
 import { createElement } from "react";
@@ -35,6 +35,19 @@ vi.mock("@/frontend/components/ui/Toast", () => ({ useToast: () => ({ addToast: 
 vi.mock("@/frontend/components/ui/Markdown", () => ({
   Markdown: (props: { content: string }) => createElement("div", null, props.content),
 }));
+// framer-motion 在 jsdom 下不推进 exit 过渡，AnimatePresence(mode="wait") 的
+// front→back 换 key 因此永远不落 DOM —— 表现为「点了看释义但卡背没出现」。
+// 退化为无动画版本，让翻卡语义可测（本文件只关心状态切换，不关心过渡）。
+vi.mock("framer-motion", async () => {
+  const { createElement: h } = await import("react");
+  const tag = (name: string) => (props: Record<string, unknown>) => h(name, null, props.children);
+  return {
+    motion: new Proxy({} as Record<string, unknown>, {
+      get: (_t, name: string) => tag(name),
+    }),
+    AnimatePresence: (props: { children: unknown }) => props.children,
+  };
+});
 
 const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
@@ -100,37 +113,41 @@ function mountCard(card: ReviewCard, handlers: { onAnswer?: ReturnType<typeof vi
 
 const bodyText = (c: HTMLElement) => c.innerText.replace(/\s+/g, " ");
 
-describe("阶梯改为显式模式后的可达性（打字流）", () => {
-  it("阶梯开关的 localStorage 真源已删除 —— 不再有「全局开关」可被误开", () => {
-    // 曾经的 `vocab-ladder-mode` 是全局的，能悄悄接管标准复习/快速开始。
-    // 改为显式模式后该键连同 ladderSettings 模块一起删除，物理上无法再被旁路打开。
+describe("阶梯双通道开关形态（2026-10-10，ADR-0036 §4 再次修订）", () => {
+  it("开关真源是**分通道**的：vocab-ladder-mode:review / :learn 各自独立", async () => {
+    // v1 的 `vocab-ladder-mode`（无后缀）是全局单开关 —— 一开全接管，这正是
+    // 「无预期被换卡」的结构根源。v3 必须分通道，两键互不干扰。
+    const { setLadderEnabledFor, isLadderEnabledFor } = await import("@/frontend/utils/ladderSettings");
+    expect(localStorage.getItem("vocab-ladder-mode:review")).toBeNull();
+    expect(localStorage.getItem("vocab-ladder-mode:learn")).toBeNull();
+    setLadderEnabledFor("review", true);
+    expect(isLadderEnabledFor("review")).toBe(true);
+    expect(isLadderEnabledFor("learn")).toBe(false);
     expect(localStorage.getItem("vocab-ladder-mode")).toBeNull();
   });
 
-  it("模式清单里存在显式的第 5 个模式「阶梯复习（实验）」", async () => {
+  it("模式清单恰 5 项且不含 ladder —— 阶梯不再是显式模式", async () => {
     const { reviewModesForTest } = await import("@/frontend/pages/ReviewPage");
     const modes = reviewModesForTest();
-    expect(modes.map((m) => m.key)).toEqual(["review", "cram", "preview", "zen", "ladder", "hulu"]);
-    expect(modes.find((m) => m.key === "ladder")?.title).toContain("阶梯");
+    expect(modes.map((m) => m.key)).toEqual(["review", "cram", "preview", "zen", "hulu"]);
+    expect(modes.find((m) => m.key === "ladder")).toBeUndefined();
   });
 
-  it("葫芦冲刺是显式第 6 个模式，固定在末位（ADR-0041）", async () => {
-    // 与阶梯同理：显式模式 ⇒ 不选则分支不可达，构造上保证不劫持别的模式。
+  it("葫芦冲刺是显式模式，固定在末位（ADR-0041）", async () => {
+    // 与阶梯不同，葫芦保持显式模式 ⇒ 不选则分支不可达，构造上保证不劫持别的模式。
     const { reviewModesForTest } = await import("@/frontend/pages/ReviewPage");
     const modes = reviewModesForTest();
-    expect(modes).toHaveLength(6);
+    expect(modes).toHaveLength(5);
     expect(modes[modes.length - 1]?.key).toBe("hulu");
     expect(modes.find((m) => m.key === "hulu")?.title).toBe("葫芦冲刺");
   });
 
-  it("现行复习流（review）不再有任何阶梯劫持分支（源码断言）", async () => {
-    // 关键回归防线：ReviewSession 里那句
-    // `ladderActive = reviewMode === "review" && !wordIds?.length && isLadderModeEnabled()`
-    // 已删除。这是**结构不变式**（分支不可达），不是运行时行为，故直接查源码。
+  it("阶梯只能由开关分流进入（源码结构断言）", async () => {
+    // 结构不变式：ReviewPage 里必须存在「开关开启 ⇒ ladderChannel 分支」的分流，
+    // 且经典 ReviewSession **内部**不得出现阶梯判断（不被劫持，由分流点构造保证）。
     const { readFileSync } = await import("node:fs");
     const src = readFileSync("src/frontend/pages/ReviewPage.tsx", "utf8");
-    // 只查**代码**：本文件的注释里会引述这段历史写法（"此前这里是 … isLadderModeEnabled()"），
-    // 直接查全文会被自己的注释误伤 —— 注释不是代码路径。
+    // 只查**代码**：注释里会引述历史写法，直接查全文会被自己的注释误伤。
     const code = src
       .split("\n")
       .filter((line) => {
@@ -138,36 +155,69 @@ describe("阶梯改为显式模式后的可达性（打字流）", () => {
         return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
       })
       .join("\n");
-    expect(code, "阶梯劫持逻辑被加回来了").not.toContain("ladderActive");
-    expect(code, "阶梯全局开关真源被加回来了").not.toContain("isLadderModeEnabled");
-    // 阶梯只能由显式模式分支进入
-    expect(code).toContain('reviewMode === "ladder"');
+    expect(code, "开关真源被删了（分流失去依据）").toContain("isLadderEnabledFor");
+    expect(code, "分流逻辑被删了（开关开了也进不了阶梯）").toContain("clearLadderSessionCache(channel)");
+    expect(code, "阶梯分支必须按 ladderChannel 直达").toContain("channel={ladderChannel}");
+    // v1 痛点的正面解法：开关就地渲染在两个大卡片上（非设置页），状态一眼可见
+    expect(code, "开关必须就地渲染（不可藏回设置页）").toContain("ladder-switch-");
+    expect(code, "review 开关开启的描述联动（三轮制文案）").toContain("三轮制：再认 → 巩固 → 产出");
+    expect(code, "learn 开关开启的描述联动（三轮制学新词文案）").toContain("三轮制学新词");
+    // ReviewSession 函数体内不得有阶梯分支（剥出函数体再查）
+    const fnStart = code.indexOf("function ReviewSession(");
+    const fnEnd = code.indexOf("export function ReviewPage(");
+    const body = code.slice(fnStart, fnEnd);
+    expect(body, "经典复习流内部不得出现阶梯判断（劫持回潮）").not.toContain("ladder");
   });
 });
 
 describe("card-no-hints 阶段（hintSteps 为空）的 H4 行为", () => {
-  it("无提示步时 H4 直接按上限结算并推进，不制造『只翻面』的中间态", () => {
+  it("无提示步时 H4 **真翻卡**（不静默结算）：用户必须先看到释义", async () => {
     // 无 examples → buildHintSteps 返回 []，等价于 card-no-hints 阶段
+    //
+    // 2026-10-11 审查（S4）：此分支此前直接 `onAnswer(easy)` 推进 —— 用户从头到尾
+    // 没看到释义就完成评分，等于向 FSRS 注入虚假的高强度记忆证据（下次间隔被显著拉长，
+    // 该词很可能在真正记住前就不再出现），而按钮上还写着「上限：重来」。
+    // 现语义：H4 = 纯翻卡（看到释义后自行评分），不因翻卡把上限压到「重来」。
     const onAnswer = vi.fn();
     const { container } = mountCard(makeCard({ examples: [] }), { onAnswer });
 
     const h4 = Array.from(container.querySelectorAll("button")).find((b) =>
-      /H4 · 翻卡/.test(b.textContent ?? ""),
+      /看释义（H4）/.test(b.textContent ?? ""),
     );
-    expect(h4, "无提示步时 H4 按钮应存在（唯一出口）").toBeTruthy();
+    expect(h4, "无提示步时应给出「看释义」出口").toBeTruthy();
 
-    act(() => {
-      h4!.click();
-    });
+    // 翻面走 framer-motion 的 AnimatePresence（key front→back），需冲刷微任务才落 DOM
+    await act(async () => { h4!.click(); });
 
-    // 关键断言：直接提交答案推进，而不是停在卡背
+    // 关键断言 1：不提交答案（不制造「没看释义就完成」的记忆证据）
+    expect(onAnswer).not.toHaveBeenCalled();
+    // 关键断言 2：卡背已翻开 —— 释义可见（makeCard 的 short_definition）
+    expect(container.textContent).toContain("减轻");
+    // 关键断言 3：评分区可达且四个评分按钮**全部可用**（无提示即无封顶）
+    const ratings = ["重来", "困难", "良好", "轻松"].map((label) =>
+      Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.trim().startsWith(label)),
+    );
+    for (const btn of ratings) expect(btn, "评分按钮缺失").toBeTruthy();
+    expect(ratings.every((b) => !b!.disabled), "无提示档不应封顶任何评分").toBe(true);
+  });
+
+  it("翻卡后由用户评分，提交时 hintLevel=0 / viaH4=false（不宣称 H4 消耗）", async () => {
+    const onAnswer = vi.fn();
+    const { container } = mountCard(makeCard({ examples: [] }), { onAnswer });
+
+    const h4 = Array.from(container.querySelectorAll("button")).find((b) =>
+      /看释义（H4）/.test(b.textContent ?? ""),
+    );
+    await act(async () => { h4!.click(); });
+
+    const good = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.trim().startsWith("良好"));
+    await act(async () => { good!.click(); });
+
     expect(onAnswer).toHaveBeenCalledTimes(1);
     const [rating, meta] = onAnswer.mock.calls[0] as [string, { hintLevel: number; viaH4: boolean }];
-    // 无提示可耗 → hintLevel 0；viaH4 的 again 封顶不适用
+    expect(rating).toBe("good");
     expect(meta.hintLevel).toBe(0);
     expect(meta.viaH4).toBe(false);
-    // cap(0, false) = easy：不该因「没提示可耗」被误判为 again
-    expect(rating).toBe("easy");
   });
 
   it("有提示步时 H4 保持原语义：不直接提交（仍由用户翻卡后评分）", () => {

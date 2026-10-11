@@ -130,8 +130,13 @@ export interface IWordRepository {
   findById(id: string): Promise<WordRow | null>;
   findBySlug(slug: string, options?: FindBySlugOptions): Promise<WordRow | null>;
   findPublic(options: GetPublicWordsOptions): Promise<PaginatedResult<WordSummary>>;
-  /** 输入联想：按 lemma / 拼音前缀返回 top-N 建议（L1-2）。 */
-  suggest(q: string, limit?: number): Promise<WordSummary[]>;
+  /**
+   * 输入联想：按 lemma / 拼音前缀返回 top-N 建议（L1-2）。
+   * `scope`（2026-10-11 生词本）：`content`（默认）排除 stub —— 捕获页
+   * 「词库里有没有这个词」的判定依据，不能被改写；`all` 把用户自建的生词条目
+   * （仅词形、无释义内容）一并纳入候选，供生词本页与 MCP agent 使用。
+   */
+  suggest(q: string, limit?: number, scope?: "content" | "all"): Promise<WordSummary[]>;
   /**
    * 词汇广场（P4）：按 L1 语义场 source_path 前缀实时聚合分组（自生长集合）。
    * q 非空时在 SQL 层按语义场名过滤。

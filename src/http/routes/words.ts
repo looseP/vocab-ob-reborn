@@ -69,7 +69,7 @@ export function wordRoutes(services: Services) {
     if (!parsed.success) {
       return validationError(c, parsed.error.flatten());
     }
-    const items = await services.words.suggestWords(parsed.data.q, parsed.data.limit);
+    const items = await services.words.suggestWords(parsed.data.q, parsed.data.limit, parsed.data.scope);
     return c.json({ items });
   });
 

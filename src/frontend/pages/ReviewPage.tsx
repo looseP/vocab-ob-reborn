@@ -7,13 +7,18 @@ import { Badge } from "@/frontend/components/ui/Badge";
 import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { ReviewCardView } from "@/frontend/components/review/ReviewCardView";
 import { DrillSession } from "@/frontend/components/review/DrillSession";
-import { LadderReviewSession } from "@/frontend/components/review/LadderReviewSession";
 import { HuluSprintSession } from "@/frontend/components/review/HuluSprintSession";
 import { ReviewProgressBar } from "@/frontend/components/review/ReviewProgressBar";
 import { CompletionCelebration } from "@/frontend/components/review/CompletionCelebration";
 import { ReviewHistoryDrawer, type ReviewHistoryEntry } from "@/frontend/components/review/ReviewHistoryDrawer";
+import { LadderReviewSession, clearLadderSessionCache, readLadderRestoreMeta, type LadderRestoreMeta } from "@/frontend/components/review/LadderReviewSession";
 import { useReview } from "@/frontend/hooks/useReview";
 import { useUpgradeHints } from "@/frontend/hooks/useUpgradeHints";
+import {
+  isLadderEnabledFor,
+  setLadderEnabledFor,
+  type LadderChannel,
+} from "@/frontend/utils/ladderSettings";
 import { isReviewReturnNavigation, shouldAutoRestoreSession } from "@/frontend/viewModels/reviewReturnNavigation";
 import { fetchReviewQueue } from "@/frontend/api/reviewQueue";
 
@@ -22,13 +27,13 @@ const reviewModes = [
   { key: "cram", icon: Zap, title: "练习模式", desc: "完形填空 / 词汇填空自测，错题回尾，不写入复习数据", variant: "secondary" as const },
   { key: "preview", icon: BookOpen, title: "自由复习", desc: "自由浏览词汇，不评分、不写入数据", variant: "secondary" as const },
   { key: "zen", icon: InfinityIcon, title: "禅模式", desc: "无限循环复习，巩固记忆", variant: "secondary" as const },
-  // 阶梯会话此前是一个**全局布尔开关**（设置页 / 标准复习卡内），开启后会接管
-  // 「标准复习」**和**「快速开始」两条路 —— 用户无法预期自己被换了卡片。
-  // 2026-10-03 起改为**显式第 5 个模式**（ADR-0036 §4 修订）：
-  // 要用就明确选它，不选则阶梯代码路径**分支不可达**。
-  { key: "ladder", icon: Layers, title: "阶梯复习（实验）", desc: "三轮制会话：再认 → 巩固 → 产出，含跟写与默写", variant: "secondary" as const },
+  // 阶梯会话的形态沿革（ADR-0036 §4）：全局布尔开关（用户无预期被换卡）→
+  // 显式模式（2026-10-03，预期问题解决了，但主入口享受不到三轮制，而「学新词的
+  // 编码强化」恰是阶梯的核心价值）→ **双通道开关**（2026-10-10 再次修订）：
+  // 到期复习/学新词两个大卡片各带一个独立 toggle，状态就地可见，
+  // 不再是"悄悄接管"。阶梯代码路径由 `ladderChannel` 分支直达，开关关闭则不可达。
   // 葫芦冲刺（ADR-0041）：整批词按页推进的**阶段性**多轮冲刺，页级检索闸门、
-  // 只记轮次耗时、零 FSRS 写入。与 ladder 同理做成**显式第 6 个模式**——
+  // 只记轮次耗时、零 FSRS 写入。与阶梯的开关形态不同，葫芦是**显式模式**——
   // 不选它则葫芦的代码路径分支不可达（构造上保证，不靠约定）。
   { key: "hulu", icon: Sprout, title: "葫芦冲刺", desc: "整批词考前多轮冲刺，只记轮次耗时，不写入复习数据", variant: "secondary" as const },
 ] as const;
@@ -53,14 +58,15 @@ export interface ReviewChannelCounts {
  *
  * `review` 与 `zen` 已各自升级为顶部大卡片（到期复习 / Zen 禅模式），
  * 不在此重复渲染 —— 否则复习页会同时出现「到期复习」和「标准复习」两张语义重叠的卡。
- * 剩余 4 项（cram / preview / ladder / hulu）走这张网格。
+ * 剩余 3 项（cram / preview / hulu）走这张网格（3 列 × 1 行，无孤行）。
+ * 阶梯不在其中：2026-10-10 起它是大卡片上的开关（见 ladderSettings），不是独立模式。
  */
-const SECONDARY_MODE_KEYS = ["cram", "preview", "ladder", "hulu"] as const;
+const SECONDARY_MODE_KEYS = ["cram", "preview", "hulu"] as const;
 const secondaryModes = reviewModes.filter((m) =>
   (SECONDARY_MODE_KEYS as readonly string[]).includes(m.key),
 );
 
-/** 测试钩子：暴露模式清单，供测试锁住「阶梯/葫芦是显式模式」这两条不变量。 */
+/** 测试钩子：暴露模式清单，供测试锁住「葫芦是显式模式」这条不变量（阶梯已于 2026-10-10 改为开关形态，不在清单内）。 */
 export function reviewModesForTest() {
   return reviewModes.map((m) => ({ key: m.key, title: m.title }));
 }
@@ -83,7 +89,51 @@ const RESTORE_MODE_TITLES: Record<string, string> = {
   zen: "Zen 禅模式",
 };
 
-function ReviewModeSelector({ onStart, counts }: { onStart: (mode: string) => void; counts: ReviewChannelCounts | null }) {
+/**
+ * 大卡片上的阶梯开关（2026-10-10 双通道开关形态，ADR-0036 §4 再次修订）。
+ *
+ * 这是「v1 全局开关被悄悄接管」痛点的正面解法：开关就长在入口卡片上，
+ * 状态（开=三轮制 / 关=速刷）随卡片描述联动显示 —— 用户进会话前一眼可见
+ * 自己会拿到什么卡面，不存在「无预期被换卡」。
+ *
+ * `stopPropagation`：toggle 是卡片内的独立控件，点击不应触发卡片整体的「开始」。
+ */
+function LadderSwitch({ channel, enabled, onToggle }: {
+  channel: LadderChannel;
+  enabled: boolean;
+  onToggle: (channel: LadderChannel) => void;
+}) {
+  const label = channel === "review" ? "到期复习" : "学新词";
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label={`${label}使用三轮制阶梯会话`}
+      data-testid={`ladder-switch-${channel}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle(channel);
+      }}
+      title={enabled ? "阶梯：开（三轮制）· 点击关闭走速刷" : "阶梯：关（速刷）· 点击开启三轮制"}
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+        enabled
+          ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-white"
+          : "border-[var(--color-border)] text-[var(--color-ink-soft)] hover:border-[var(--color-border-strong)]"
+      }`}
+    >
+      <Layers className="h-3.5 w-3.5" />
+      阶梯·{enabled ? "开" : "关"}
+    </button>
+  );
+}
+
+function ReviewModeSelector({ onStart, counts, ladderEnabled, onToggleLadder }: {
+  onStart: (mode: string) => void;
+  counts: ReviewChannelCounts | null;
+  ladderEnabled: Record<LadderChannel, boolean>;
+  onToggleLadder: (channel: LadderChannel) => void;
+}) {
   const dueCount = counts?.dueNow ?? 0;
   const newCount = counts?.newCards ?? 0;
   return (
@@ -111,9 +161,12 @@ function ReviewModeSelector({ onStart, counts }: { onStart: (mode: string) => vo
                   {counts && (
                     <Badge tone={dueCount > 0 ? "accent" : undefined}>{dueCount} 张</Badge>
                   )}
+                  <LadderSwitch channel="review" enabled={ladderEnabled.review} onToggle={onToggleLadder} />
                 </div>
                 <p className="text-sm text-[var(--color-ink-soft)]">
-                  只过该复习的词，按 FSRS 间隔重复排序。记忆曲线卡在这里。
+                  {ladderEnabled.review
+                    ? "三轮制：再认 → 巩固 → 产出（含跟写与默写）。急时可关开关走速刷。"
+                    : "只过该复习的词，按 FSRS 间隔重复排序。记忆曲线卡在这里。"}
                 </p>
               </div>
             </div>
@@ -136,9 +189,12 @@ function ReviewModeSelector({ onStart, counts }: { onStart: (mode: string) => vo
                   {counts && (
                     <Badge tone="warm">{newCount} 张</Badge>
                   )}
+                  <LadderSwitch channel="learn" enabled={ladderEnabled.learn} onToggle={onToggleLadder} />
                 </div>
                 <p className="text-sm text-[var(--color-ink-soft)]">
-                  录入队列后还没学过的词。与复习互不挤占，各自算各自的上限。
+                  {ladderEnabled.learn
+                    ? "三轮制学新词：再认 → 跟写 → 默写，强化编码记忆。急时可关开关走速刷。"
+                    : "录入队列后还没学过的词。与复习互不挤占，各自算各自的上限。"}
                 </p>
               </div>
             </div>
@@ -168,8 +224,8 @@ function ReviewModeSelector({ onStart, counts }: { onStart: (mode: string) => vo
         </Card>
       </div>
 
-      {/* 4 项模式卡：sm 起两行两张 */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* 3 项模式卡：sm 起一行三张，lg 三列不产生孤行 */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {secondaryModes.map((m) => {
           const Icon = m.icon;
           return (
@@ -187,11 +243,10 @@ function ReviewModeSelector({ onStart, counts }: { onStart: (mode: string) => vo
 }
 
 function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: string; wordIds?: string[]; onBack: () => void; force?: boolean }) {
-  // 阶梯会话**不再劫持任何模式**（ADR-0036 §4 于 2026-10-03 修订）：
-  // 此前这里是 `reviewMode === "review" && !wordIds?.length && isLadderModeEnabled()`，
-  // 一个全局布尔开关会悄悄把「标准复习」和「快速开始」换成另一张卡，用户无从预期。
-  // 现在阶梯是 `reviewModes` 里的显式第 5 个模式，由上层 `reviewMode === "ladder"` 分支直达，
-  // 本函数**只服务现行复习流** ⇒ 不变量从「靠布尔值保证」升级为「分支不可达，构造上保证」。
+  // 本函数**只服务经典速刷复习流**（ADR-0036 §4 的形态沿革：全局开关劫持 →
+  // 2026-10-03 显式模式 → 2026-10-10 双通道开关）。阶梯分流在上层 handleStart 完成：
+  // 开关开启时根本不进本函数，而是直达 LadderReviewSession；开关关闭则本函数的
+  // review/learn 就是纯速刷 —— 「不被阶梯污染」由分流点构造上保证，不靠运行时判断。
   const {
     currentCard,
     mode,
@@ -449,6 +504,32 @@ export function ReviewPage() {
   const freeWordIds = wordIdsParam ? wordIdsParam.split(",").filter(Boolean) : undefined;
   const [mode, setMode] = useState<"select" | "session">("select");
   const [reviewMode, setReviewMode] = useState("review");
+  /**
+   * 阶梯双通道开关状态（2026-10-10，ADR-0036 §4 再次修订）。
+   *
+   * 与 ladderSettings 的 localStorage 真源保持同步：初始读一次，toggle 时先写
+   * 存储再更新 state（存储是源，state 只是本组件的镜像）。双通道独立 ——
+   * 到期复习想速刷、学新词想走三轮制（或反过来）各按各的开关。
+   */
+  const [ladderEnabled, setLadderEnabled] = useState<Record<LadderChannel, boolean>>(() => ({
+    review: isLadderEnabledFor("review"),
+    learn: isLadderEnabledFor("learn"),
+  }));
+  const handleToggleLadder = useCallback((channel: LadderChannel) => {
+    setLadderEnabled((prev) => {
+      const next = !prev[channel];
+      setLadderEnabledFor(channel, next);
+      return { ...prev, [channel]: next };
+    });
+  }, []);
+  /**
+   * 阶梯会话的进入通道：`null` = 未进阶梯（经典会话或选择页）。
+   * 点大卡片"开始"时按对应通道的开关分流到这里，随 key 一起决定重挂载。
+   */
+  const [ladderChannel, setLadderChannel] = useState<LadderChannel | null>(null);
+  // 每次显式"开始"自增，作为 LadderReviewSession 的 key 一部分：点开始必须开
+  // 新会话（清缓存由 handleStart 负责），重挂载保证不命中旧组件实例。
+  const [ladderNonce, setLadderNonce] = useState(0);
   // 检测到未完成的复习会话时，不静默进入；先展示"继续上次 / 重新开始"确认条。
   const [pendingRestore, setPendingRestore] = useState<{ mode: string; reviewed: number; total: number } | null>(null);
 
@@ -537,9 +618,68 @@ export function ReviewPage() {
     }
   };
 
+  // 每次从阶梯会话返回选择页时重扫（缓存状态变了）
+  const [ladderRestore, setLadderRestore] = useState<LadderRestoreMeta | null>(null);
+  useEffect(() => {
+    const scan = () => {
+      // 两个通道都扫，取最近保存的那场（阶梯整场缓存 24h TTL）
+      const candidates = (["review", "learn"] as const)
+        .map((ch) => readLadderRestoreMeta(ch))
+        .filter((m): m is LadderRestoreMeta => m !== null)
+        .sort((a, b) => b.savedAt - a.savedAt);
+      setLadderRestore(candidates[0] ?? null);
+    };
+    scan();
+    window.addEventListener("storage", scan);
+    return () => window.removeEventListener("storage", scan);
+  }, [mode, ladderChannel]);
+
+  /**
+   * 继续上次阶梯会话（2026-10-11 审查 B1）：**不清缓存**，直接挂载让
+   * LadderReviewSession 的挂载 effect 读回整场状态（visits/游标/已提交幂等键）。
+   * 这是与 `handleStart`（点"开始" = 一定开新会话）刻意分开的第二个入口。
+   */
+  const handleContinueLadderRestore = () => {
+    if (!ladderRestore) return;
+    setLadderChannel(ladderRestore.channel);
+    setLadderNonce((n) => n + 1);
+    setMode("session");
+  };
+  /** 放弃上次进度：从头开始（清缓存后走常规"开始"路径）。 */
+  const handleRestartLadder = () => {
+    if (!ladderRestore) return;
+    const ch = ladderRestore.channel;
+    setLadderRestore(null);
+    clearLadderSessionCache(ch);
+    if (ladderEnabled[ch]) {
+      setLadderChannel(ch);
+      setLadderNonce((n) => n + 1);
+      setMode("session");
+      return;
+    }
+    clearModeCache(ch);
+    setReviewMode(ch);
+    setForceBootstrap(true);
+    setMode("session");
+  };
+
   // 显式点击"开始"按钮：同步清对应 mode 的缓存，再进入会话（force=true 让 useReview 发起新服务器请求）。
   // 这样用户点击"开始"一定是开一个全新的会话（不会命中旧缓存）。
+  //
+  // 阶梯分流（2026-10-10 双通道开关）：两大卡片（review/learn）的开关开启时，
+  // 进对应通道的阶梯会话而非经典速刷 —— 这是显式拍板的"模式携带开关"形态，
+  // 状态在卡片上一眼可见（开关 + 描述联动），不是 v1 那种无预期的悄悄接管。
   const handleStart = (m: string) => {
+    if (m === "review" || m === "learn") {
+      const channel = m as LadderChannel;
+      if (ladderEnabled[channel]) {
+        clearLadderSessionCache(channel);
+        setLadderChannel(channel);
+        setLadderNonce((n) => n + 1);
+        setMode("session");
+        return;
+      }
+    }
     clearModeCache(m);
     setReviewMode(m);
     setForceBootstrap(true);
@@ -619,7 +759,29 @@ export function ReviewPage() {
               </div>
             </Card>
           )}
-          <ReviewModeSelector onStart={handleStart} counts={channelCounts} />
+          {ladderRestore && (
+            <Card className="border-[var(--color-accent-border,var(--color-border-strong))]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <Layers className="h-5 w-5 text-[var(--color-accent)]" />
+                  <div>
+                    <p className="text-sm font-medium text-[var(--color-ink)]">
+                      检测到未完成的{ladderRestore.channel === "learn" ? "学新词" : "到期复习"}阶梯会话
+                      （第 {ladderRestore.pos + 1}/{ladderRestore.total} 站，三轮制）
+                    </p>
+                    <p className="text-xs text-[var(--color-ink-soft)]">
+                      继续会回到原轮次与原游标（含已提交词的幂等键，不会重复调度）
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={handleContinueLadderRestore}>继续上次</Button>
+                  <Button size="sm" variant="secondary" onClick={handleRestartLadder}>重新开始</Button>
+                </div>
+              </div>
+            </Card>
+          )}
+          <ReviewModeSelector onStart={handleStart} counts={channelCounts} ladderEnabled={ladderEnabled} onToggleLadder={handleToggleLadder} />
           {/* 队列全景（P1，2026-10-10）：此前没有任何入口能看到「队列里有哪些词」，
               只有数字与日历。入口放这里 = 用户在想「我要复习点什么」时顺手可达。 */}
           <div className="flex justify-end">
@@ -634,9 +796,15 @@ export function ReviewPage() {
         </>
       ) : isFreeSelection ? (
         <ReviewSession reviewMode="preview" wordIds={freeWordIds} onBack={() => setMode("select")} />
-      ) : reviewMode === "ladder" ? (
-        // 阶梯会话：显式模式直达（ADR-0036 §4 修订）。不选它 ⇒ 本分支不可达。
-        <LadderReviewSession key={forceBootstrap ? "ladder-fresh" : "ladder-restore"} onBack={() => { setForceBootstrap(false); setMode("select"); }} />
+      ) : ladderChannel ? (
+        // 阶梯会话：双通道开关分流直达（ADR-0036 §4 于 2026-10-10 再次修订）。
+        // 只有 handleStart 在开关开启时才会设置 ladderChannel；开关关闭 ⇒ 本分支不可达。
+        // key 含 channel+nonce：通道切换或重复"开始"都强制整体重挂载（清缓存已先行）。
+        <LadderReviewSession
+          key={`${ladderChannel}-${ladderNonce}`}
+          channel={ladderChannel}
+          onBack={() => { setLadderChannel(null); setMode("select"); }}
+        />
       ) : reviewMode === "cram" ? (
         <DrillSession onBack={() => setMode("select")} />
       ) : reviewMode === "hulu" ? (
