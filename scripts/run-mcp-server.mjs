@@ -7,9 +7,10 @@
  * HTTP API with Bearer auth. All business rules (RLS actor, content budgets,
  * candidate pool semantics) stay server-side; this process holds no DB access.
  *
- * Tools (T13c):
+ * Tools (T13c + 生词本枚举):
  *   search_words          find words by lemma/slug prefix (suggest endpoint)
  *   get_word_detail       full word detail incl. current L2 content
+ *   list_words            enumerate words by scope (stub = 生词本) / wordbook
  *   build_l2_prompt       assemble the canonical external-generation prompt
  *   propose_l2_content    write an is_active=false candidate → user reviews it
  *                         in the word detail composer panel (采纳/忽略)
@@ -213,6 +214,39 @@ const TOOLS = [
     },
     async run(args) {
       return apiCall("GET", `/api/words/${encodeURIComponent(String(args.slug))}`);
+    },
+  },
+  {
+    name: "list_words",
+    description:
+      "枚举词条列表（分页，返回 items + total + limit + offset）：scope=\"content\"（默认，正式词条）、" +
+      "\"stub\"（生词本：只有词形、等待补全释义的生词条目，由捕获/阅读采集/批量导入产生）、\"all\" 两者同列；" +
+      "可按 q / cefr / review 过滤，或给 wordbookId 只看某个词书成员。生词本此前无任何读面，" +
+      "本工具是它的清点入口（search_words 只按前缀搜、且默认不含生词条目）。" + READ_ONLY_NOTE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        scope: {
+          type: "string",
+          description: "词条范围：content=正式词条（默认，行为不变）/ stub=生词本 / all=两者同列。",
+          enum: ["content", "stub", "all"],
+          default: "content",
+        },
+        q: { type: "string", description: "搜索词（可选，≤200 字符）" },
+        cefr: { type: "string", description: "CEFR 等级过滤（可选，如 B1）" },
+        review: {
+          type: "string",
+          description: "复习状态过滤（可选）：all=全部（默认）/ tracked=已入队 / due=到期 / untracked=未入队。",
+          enum: ["all", "tracked", "due", "untracked"],
+        },
+        wordbookId: { type: "string", description: "词书 uuid（可选）：只看该词书成员" },
+        limit: { type: "number", description: "返回条数上限 1-100（服务端默认 60）", minimum: 1, maximum: 100 },
+        offset: { type: "number", description: "偏移分页（默认 0）", minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    async run(args) {
+      return apiCall("GET", `/api/words${toQuery(args)}`);
     },
   },
   {
