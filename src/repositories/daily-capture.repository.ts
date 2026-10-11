@@ -42,12 +42,13 @@ export class DailyCaptureRepository extends BaseRepository implements IDailyCapt
    * insertEntry 同事务，避免「类型校验时 seed 未落」的窗口）。
    */
   async ensureDefaultTypes(userId: string): Promise<void> {
-    const values: unknown[] = [];
+    // values 以 userId 起始：$1 恒为 user_id，各元组四列占位符由 push 返回的长度
+    // 自 $2 递增派生（push 后 unshift 会让编号与值整体错位一位）。
+    const values: unknown[] = [userId];
     const tuples = DEFAULT_DAILY_CAPTURE_TYPES.map(
       (type) =>
         `($1::uuid, $${values.push(type.typeKey)}, $${values.push(type.label)}, $${values.push(type.absorptionHint)}, $${values.push(type.sort)})`,
     );
-    values.unshift(userId);
     await this.query(
       `INSERT INTO daily_capture_types (user_id, type_key, label, absorption_hint, sort)
        VALUES ${tuples.join(", ")}

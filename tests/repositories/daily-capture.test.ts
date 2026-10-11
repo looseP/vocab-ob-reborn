@@ -18,7 +18,11 @@ vi.mock("@/db/connection", () => ({
   resetPool: vi.fn(),
 }));
 
+import { getTableColumns } from "drizzle-orm";
 import { createRepositories } from "@/index";
+import { DEFAULT_DAILY_CAPTURE_TYPES } from "@/domain/daily-capture";
+import { dailyCaptureEntryResponseSchema } from "@/http/daily-capture-response-contract";
+import { dailyCaptureEntries } from "@/db/schema";
 import { todayEntryDateKey, formatEntryClock } from "@/repositories/daily-capture.repository";
 
 const tx = { query: mock.pool.query } as never;
@@ -40,6 +44,29 @@ describe("DailyCaptureRepository.ensureDefaultTypes（幂等 seed）", () => {
     expect(seed.params[0]).toBe(USER);
     expect(seed.params.slice(1)).toContain("phrase");
     expect(seed.params.slice(1)).toContain("note");
+  });
+
+  it("占位符编号与参数一一对应（$1=user_id，元组四列自 $2 起）", async () => {
+    await repos.dailyCapture.ensureDefaultTypes(USER);
+    const seed = mock.lastQuery!;
+
+    // 全部 $n 恰好覆盖 1..params.length：无越界（bind 25 vs requires 24）、无缺参
+    const placeholders = [...seed.text.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]));
+    expect(Math.max(...placeholders)).toBe(seed.params.length);
+    expect([...new Set(placeholders)].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: seed.params.length }, (_, i) => i + 1),
+    );
+    // $n 绑定的值 = values 第 n-1 位（生成顺序：typeKey/label/absorptionHint/sort）
+    expect(seed.params).toEqual([
+      USER,
+      ...DEFAULT_DAILY_CAPTURE_TYPES.flatMap((t) => [t.typeKey, t.label, t.absorptionHint, t.sort]),
+    ]);
+    // 元组形状：第 i 行四列 = $4i+2 .. $4i+5（首列恒 $1::uuid）
+    expect(seed.text).toContain(
+      DEFAULT_DAILY_CAPTURE_TYPES.map(
+        (_, i) => `($1::uuid, $${4 * i + 2}, $${4 * i + 3}, $${4 * i + 4}, $${4 * i + 5})`,
+      ).join(", "),
+    );
   });
 });
 
@@ -289,5 +316,20 @@ describe("DailyCaptureRepository 类型注册表（M2 类型管理）", () => {
     const query = mock.lastQuery!;
     expect(query.text).toContain("SET absorption_hint = $1, sort = $2");
     expect(query.params).toEqual(["改由 agent 改写", 9, USER, "slang"]);
+  });
+});
+
+// 真环境复测抓到过一次：仓储写 absorption、契约要求 absorption，但 drizzle schema
+// 与迁移都没有这一列——mock 单测全绿、上线即 500。这里把「响应契约键 ↔ drizzle 列」
+// 钉死，任何一边单独加字段都会红。
+describe("每日捕获 DB 形状 ↔ 响应契约（防漏列）", () => {
+  it("dailyCaptureEntries 列与 dailyCaptureEntryResponseSchema 键一一对应（含 M3 absorption）", () => {
+    const columns = Object.values(getTableColumns(dailyCaptureEntries))
+      .map((column) => column.name)
+      .sort();
+    const contract = dailyCaptureEntryResponseSchema as unknown as { shape: Record<string, unknown> };
+
+    expect(columns).toContain("absorption");
+    expect(Object.keys(contract.shape).sort()).toEqual(columns);
   });
 });
