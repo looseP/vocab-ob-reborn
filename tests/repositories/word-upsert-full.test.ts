@@ -63,6 +63,19 @@ describe("WordRepository.upsertFullWord", () => {
     await expect(repo.upsertFullWord(baseInput)).resolves.toBe("unchanged");
   });
 
+  it("keeps stored examples when the import payload carries none", async () => {
+    mock.setRows([{ id: "w-3" }]);
+    await expect(repo.upsertFullWord(baseInput)).resolves.toBe("imported");
+
+    const sql = mock.lastQuery!.text;
+    // 导入通道恒送 examplesJson: []（L1 md 不含 Examples 段），而 exam 层由外部产线
+    // 单独写入 examples —— 无条件覆盖会让「重导词卡」清空 exam，故空数组时必须保留库内值。
+    expect(sql).toContain("CASE WHEN EXCLUDED.examples = '[]'::jsonb THEN words.examples");
+    expect(sql).toContain("ELSE EXCLUDED.examples END");
+    // 不得退回无条件覆盖写法
+    expect(sql).not.toMatch(/examples = EXCLUDED\.examples,/);
+  });
+
   it("maps needs_supplement to unpublished with issues payload", async () => {
     mock.setRows([{ id: "w-2" }]);
     await repo.upsertFullWord({

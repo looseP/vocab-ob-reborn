@@ -1,5 +1,5 @@
 /**
- * 6767 词条语料（`data/corpus/`）的完整性契约锁。
+ * 6768 词条语料（`data/corpus/`）的完整性契约锁。
  *
  * ## 为什么锁这个
  *
@@ -7,9 +7,10 @@
  * 是**让词库可复现** —— 如果语料被改坏（少文件、少词条、词条名对不上库），
  * 重建词库就会静默产出与现在不同的结果，而没有任何人会发现。
  *
- * 纳管时的实测基准（2026-09-30）：
- *   264 个 .md / 4 个语料库 / 6767 个词条 / 去重后仍 6767（无重复）
- *   与 DB 逐库相等：L0_单词集合 867、L0_基础词 1487、L0_超纲词 967、L1_雅思词汇 3446
+ * 当前锁定基准（2026-10-11 起）：
+ *   264 个 .md / 4 个语料库 / 6768 个词条 / 去重后仍 6768（无重复）
+ *   逐库：L0_单词集合 867、L0_基础词 1487、L0_超纲词 967、L1_雅思词汇 3447
+ *   （2026-10-11 新增 L1 offense 词卡：6767→6768、L1 3446→3447；纳管时基准 6767 / L1 3446）
  *
  * 本套件只做**离线**校验（读文件、数词条），不连库 —— DB 侧的一致性由
  * `data/corpus/README.md` 里的自查 SQL 覆盖。
@@ -29,10 +30,10 @@ const EXPECTED = {
   "L0_单词集合": { files: 91, words: 867 },
   "L0_基础词": { files: 85, words: 1487 },
   "L0_超纲词": { files: 66, words: 967 },
-  "L1_雅思词汇": { files: 22, words: 3446 },
+  "L1_雅思词汇": { files: 22, words: 3447 },
 } as const;
 const TOTAL_FILES = 264;
-const TOTAL_WORDS = 6767;
+const TOTAL_WORDS = 6768;
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -102,7 +103,7 @@ describe("data/corpus 语料完整性", () => {
     expect(total).toBe(TOTAL_WORDS);
   });
 
-  it("词条无重复（去重后仍 6767）", () => {
+  it("词条无重复（去重后仍 6768）", () => {
     const all = Object.keys(EXPECTED).flatMap(wordsInDir);
     const lower = all.map((w) => w.toLowerCase());
     const dups = lower.filter((w, i) => lower.indexOf(w) !== i);
