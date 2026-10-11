@@ -2002,6 +2002,9 @@ export const dailyCaptureEntries = pgTable("daily_capture_entries", {
 	// 流水期词可能尚不存在，吸收时才解析）。
 	meta: jsonb("meta"),
 	status: text("status").default('raw').notNull(),
+	// M3 吸收回执（§9 proposal-only）：采纳动作的留痕数组，未吸收为 NULL；
+	// 仓储层用 `COALESCE(absorption, '[]'::jsonb) || $n::jsonb` 追加，永不覆盖。
+	absorption: jsonb("absorption"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	hiddenAt: timestamp("hidden_at", { withTimezone: true, mode: 'string' }),
 }, (table) => [

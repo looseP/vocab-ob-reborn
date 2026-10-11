@@ -77,8 +77,10 @@ describe("existing local volume role upgrade", () => {
     //       追加式流水 + 类型注册表，零 FSRS、不动已有表）。
     // 0055: note_entries.kind（笔记系统 UX 修复：条目标签，内置 6 类 + 自定义；
     //       无 CHECK 枚举，服务层做保留字/数量校验）。
-    //       本迁移使其为 56。
-    expect(authoritativeMigrationCount()).toBe(56);
+    // 0056: daily_capture_entries.absorption（每日捕获 M3 吸收回执；0054 只建了
+    //       捕获面，补列必须新开一条——已应用的迁移不会被重放。幂等 ADD COLUMN）。
+    //       本迁移使其为 57。
+    expect(authoritativeMigrationCount()).toBe(57);
   });
 
   it("guards the disposable Compose project and cleanup", () => {
