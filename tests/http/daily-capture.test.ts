@@ -66,6 +66,22 @@ const ENTRY_ROW = {
 
 const DAY_SUMMARY = { date: TODAY, total: 3, raw: 2, reviewed: 1, absorbed: 0 };
 
+/** 读时词信号（与 dailyCaptureWordSignalResponseSchema 对齐）。 */
+const SIGNAL_STUB = {
+  slug: "harness",
+  state: "stub" as const,
+  hasDefinition: false,
+  l2Promoted: false,
+  updatedAt: "2026-10-10T01:00:00.000Z",
+};
+
+/** 日视图条目 = 行 + 词信号投影（写路径回执仍只回行，故与 ENTRY_ROW 分开）。 */
+const DAY_ENTRY = {
+  ...ENTRY_ROW,
+  meta: { wordSlugs: ["harness"] },
+  wordSignals: [SIGNAL_STUB],
+};
+
 const EVIDENCE_PACK = {
   version: 1 as const,
   date: TODAY,
@@ -82,7 +98,7 @@ const EVIDENCE_PACK = {
       meta: null,
       created_at: ENTRY_ROW.created_at,
       words: [
-        { slug: "harness", title: "harness", lemma: "harness", ipa: null, short_definition: "利用", existing_context_count: 0 },
+        { slug: "harness", title: "harness", lemma: "harness", ipa: null, short_definition: "利用", existing_context_count: 0, signal: SIGNAL_STUB },
       ],
     },
   ],
@@ -102,7 +118,12 @@ function makeMockServices(overrides: Record<string, unknown> = {}): Services {
       appendEntry: vi.fn(async () => ENTRY_ROW),
       listTypes: vi.fn(async () => [TYPE_ROW]),
       listDays: vi.fn(async () => [DAY_SUMMARY]),
-      getDay: vi.fn(async () => ({ date: TODAY, types: [TYPE_ROW], entries: [ENTRY_ROW] })),
+      getDay: vi.fn(async () => ({
+        date: TODAY,
+        observedAt: "2026-10-11T00:00:00.000Z",
+        types: [TYPE_ROW],
+        entries: [DAY_ENTRY],
+      })),
       getDayFile: vi.fn(async () => ({ date: TODAY, markdown: "# 每日捕获 · " + TODAY + "\n" })),
       getEvidencePack: vi.fn(async () => EVIDENCE_PACK),
       absorbEntry: vi.fn(async () => ABSORB_RESULT),
@@ -210,6 +231,38 @@ describe("GET /api/daily-capture/types|days|days/:date|days/:date/file", () => {
     expect(res.status).toBe(200);
     const body = dailyCaptureDayResponseSchema.parse(await res.json());
     expect(body.entries).toHaveLength(1);
+    // 读时投影两项：整响应一个投影时钟 + 逐词信号（路由不重算，原样透传）
+    expect(body.observedAt).toBe("2026-10-11T00:00:00.000Z");
+    expect(body.entries[0].wordSignals).toEqual([SIGNAL_STUB]);
+  });
+
+  it("days/:date 透传 gone 信号（updatedAt null）—— 词已不在是合法投影", async () => {
+    const services = makeMockServices({
+      getDay: vi.fn(async () => ({
+        date: TODAY,
+        observedAt: "2026-10-11T00:00:00.000Z",
+        types: [TYPE_ROW],
+        entries: [
+          {
+            ...DAY_ENTRY,
+            wordSignals: [
+              { slug: "harness", state: "gone", hasDefinition: false, l2Promoted: false, updatedAt: null },
+            ],
+          },
+        ],
+      })),
+    });
+    const res = await createApp(services).request(`/api/daily-capture/days/${TODAY}`, { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+
+    const body = dailyCaptureDayResponseSchema.parse(await res.json());
+    expect(body.entries[0].wordSignals[0]).toEqual({
+      slug: "harness",
+      state: "gone",
+      hasDefinition: false,
+      l2Promoted: false,
+      updatedAt: null,
+    });
   });
 
   it("days/:date/file 返回 text/markdown + no-store（捕获窗复制按钮数据源）；非法日期 400", async () => {
@@ -316,6 +369,8 @@ describe("M3 吸收侧：GET /days/:date/export（agent 唯一读面）+ POST /e
     expect(body.version).toBe(1);
     expect(body.markdown).toContain("# 每日捕获");
     expect(body.entries[0].words[0].existing_context_count).toBe(0);
+    // 词信号随关联词同出（agent 判「释义是否已补/是否已晋升 L2」的依据）
+    expect(body.entries[0].words[0].signal).toEqual(SIGNAL_STUB);
   });
 
   it("agent bearer 可读证据包（唯一读面）；未认证 401；坏日期 400", async () => {

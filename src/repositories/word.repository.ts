@@ -93,6 +93,18 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     );
   }
 
+  /**
+   * 批量按 slug 取词（**精确匹配**，不做 alias 兜底）——日视图词信号的读时投影用。
+   * 未命中的 slug 由调用方回落 `gone`（硬删除，或该原样形态从未入本），不报错。
+   */
+  async findBySlugs(slugs: string[]): Promise<WordRow[]> {
+    if (slugs.length === 0) return [];
+    return this.query<WordRow>(
+      `SELECT * FROM words WHERE slug = ANY($1::text[]) AND is_deleted = false`,
+      [slugs],
+    );
+  }
+
   async findPublic(
     options: GetPublicWordsOptions,
   ): Promise<PaginatedResult<WordSummary>> {

@@ -8,11 +8,13 @@
 import { z } from "zod";
 import type {
   DailyCaptureAbsorptionReceipt,
+  DailyCaptureDayEntry,
   DailyCaptureDaySummary,
   DailyCaptureEntryMeta,
   DailyCaptureEntryRow,
   DailyCaptureEvidencePack,
   DailyCaptureTypeRow,
+  DailyCaptureWordSignal,
 } from "../domain/daily-capture";
 
 export const dailyCaptureMetaResponseSchema: z.ZodType<DailyCaptureEntryMeta> = z
@@ -49,20 +51,23 @@ export const dailyCaptureTypeResponseSchema: z.ZodType<DailyCaptureTypeRow> = z
   })
   .strict();
 
+/** 行字段形状（单一真源）——行 schema 与日视图条目 schema 共用，避免两处列名漂移。 */
+const dailyCaptureEntryFields = {
+  id: z.string(),
+  user_id: z.string(),
+  entry_date: z.string(),
+  seq: z.number().int(),
+  entry_type: z.string(),
+  content: z.string(),
+  meta: dailyCaptureMetaResponseSchema.nullable(),
+  status: z.enum(["raw", "reviewed", "absorbed", "archived"]),
+  absorption: z.array(dailyCaptureAbsorptionReceiptSchema).nullable(),
+  created_at: z.string(),
+  hidden_at: z.string().nullable(),
+} as const;
+
 export const dailyCaptureEntryResponseSchema: z.ZodType<DailyCaptureEntryRow> = z
-  .object({
-    id: z.string(),
-    user_id: z.string(),
-    entry_date: z.string(),
-    seq: z.number().int(),
-    entry_type: z.string(),
-    content: z.string(),
-    meta: dailyCaptureMetaResponseSchema.nullable(),
-    status: z.enum(["raw", "reviewed", "absorbed", "archived"]),
-    absorption: z.array(dailyCaptureAbsorptionReceiptSchema).nullable(),
-    created_at: z.string(),
-    hidden_at: z.string().nullable(),
-  })
+  .object(dailyCaptureEntryFields)
   .strict();
 
 export const dailyCaptureTypesResponseSchema = z
@@ -71,11 +76,34 @@ export const dailyCaptureTypesResponseSchema = z
   })
   .strict();
 
+/** 词信号（读时投影）：日视图条目 ⤳ [[slug]] 上那个词的当前状态。 */
+export const dailyCaptureWordSignalResponseSchema: z.ZodType<DailyCaptureWordSignal> = z
+  .object({
+    slug: z.string(),
+    state: z.enum(["stub", "ready", "gone"]),
+    hasDefinition: z.boolean(),
+    l2Promoted: z.boolean(),
+    updatedAt: z.string().nullable(),
+  })
+  .strict();
+
+/**
+ * 日视图条目 = 行 + 读时词信号（`wordSignals` 必填，可为空数组）。
+ *
+ * 吸收/回顾响应仍用行 schema（`dailyCaptureEntryResponseSchema`）——那里是写路径
+ * 回执，不投影信号；前端合并时保留旧条目的 `wordSignals`（见 DailyCapturePage）。
+ */
+export const dailyCaptureDayEntryResponseSchema: z.ZodType<DailyCaptureDayEntry> = z
+  .object({ ...dailyCaptureEntryFields, wordSignals: z.array(dailyCaptureWordSignalResponseSchema) })
+  .strict();
+
 export const dailyCaptureDayResponseSchema = z
   .object({
     date: z.string(),
+    /** 投影时刻（整个响应一个时钟；语义是"每次读取最新一版"，非账本烙死值）。 */
+    observedAt: z.string(),
     types: z.array(dailyCaptureTypeResponseSchema),
-    entries: z.array(dailyCaptureEntryResponseSchema),
+    entries: z.array(dailyCaptureDayEntryResponseSchema),
   })
   .strict();
 
@@ -105,6 +133,7 @@ const dailyCaptureEvidenceWordSchema = z
     ipa: z.string().nullable(),
     short_definition: z.string().nullable(),
     existing_context_count: z.number().int(),
+    signal: dailyCaptureWordSignalResponseSchema,
   })
   .strict();
 

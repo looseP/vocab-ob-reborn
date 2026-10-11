@@ -863,3 +863,29 @@ describe("L2ProgressRepository", () => {
     });
   });
 });
+
+describe("L2ProgressRepository.listPromotedWordIds（日视图词信号批量 EXISTS）", () => {
+  it("空输入不查库（owner-RLS 事务里省一次往返）", async () => {
+    const repo = new L2ProgressRepository();
+    const querySpy = vi.spyOn(repo as any, "query").mockResolvedValue([]);
+
+    await expect(repo.listPromotedWordIds("user-1", [])).resolves.toEqual([]);
+    expect(querySpy).not.toHaveBeenCalled();
+  });
+
+  it("按 (user_id, word_id ANY) 取已晋升子集并摊平成 word_id 数组", async () => {
+    const repo = new L2ProgressRepository();
+    const querySpy = vi
+      .spyOn(repo as any, "query")
+      .mockResolvedValue([{ word_id: "w-1" }, { word_id: "w-3" }]);
+
+    const promoted = await repo.listPromotedWordIds("user-1", ["w-1", "w-2", "w-3"]);
+
+    expect(promoted).toEqual(["w-1", "w-3"]);
+    const [sql, params] = querySpy.mock.calls[0];
+    expect(sql).toContain("SELECT DISTINCT word_id FROM user_word_l2_progress");
+    expect(sql).toContain("user_id = $1");
+    expect(sql).toContain("word_id = ANY($2::uuid[])");
+    expect(params).toEqual(["user-1", ["w-1", "w-2", "w-3"]]);
+  });
+});

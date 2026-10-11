@@ -32,17 +32,25 @@ const USER = "11111111-1111-4111-8111-111111111111";
 describe("DailyCaptureRepository.ensureDefaultTypes（幂等 seed）", () => {
   beforeEach(() => mock.reset());
 
-  it("单条语句 seed 六类，冲突不覆盖（ON CONFLICT DO NOTHING）", async () => {
+  it("幂等顺延 note sort 后 seed 七类，冲突不覆盖（ON CONFLICT DO NOTHING）", async () => {
     await repos.dailyCapture.ensureDefaultTypes(USER);
 
-    expect(mock.calls.length).toBe(1);
+    expect(mock.calls.length).toBe(2);
+    // ① 老用户自愈：内置 note 从 seed 旧值 5 顺延到 6（word 占 5）。
+    //    条件同时钉住 sort=5 —— 用户改过 sort 的行不被碰。
+    const shift = mock.calls[0];
+    expect(shift.text).toContain("UPDATE daily_capture_types SET sort = 6");
+    expect(shift.text).toContain("type_key = 'note' AND sort = 5");
+    expect(shift.params).toEqual([USER]);
+    // ② seed 七类
     const seed = mock.lastQuery!;
     expect(seed.text).toContain("INSERT INTO daily_capture_types");
     expect(seed.text).toContain("ON CONFLICT (user_id, type_key) DO NOTHING");
-    // user_id + 6 行 × 4 值（type_key/label/absorption_hint/sort）= 25 个参数
-    expect(seed.params).toHaveLength(25);
+    // user_id + 7 行 × 4 值（type_key/label/absorption_hint/sort）= 29 个参数
+    expect(seed.params).toHaveLength(29);
     expect(seed.params[0]).toBe(USER);
     expect(seed.params.slice(1)).toContain("phrase");
+    expect(seed.params.slice(1)).toContain("word");
     expect(seed.params.slice(1)).toContain("note");
   });
 

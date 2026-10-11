@@ -129,6 +129,13 @@ export interface FindBySlugOptions {
 export interface IWordRepository {
   findById(id: string): Promise<WordRow | null>;
   findBySlug(slug: string, options?: FindBySlugOptions): Promise<WordRow | null>;
+  /**
+   * 批量按 slug 取词（**精确匹配**，不做 alias 兜底）——日视图词信号的读时投影用。
+   *
+   * 与证据包 `words` 数组同一口径：未命中的 slug 表示已不在词库（硬删除，或该
+   * 原样形态从未入本），由调用方回落 `gone`，不报错。
+   */
+  findBySlugs(slugs: string[]): Promise<WordRow[]>;
   findPublic(options: GetPublicWordsOptions): Promise<PaginatedResult<WordSummary>>;
   /**
    * 输入联想：按 lemma / 拼音前缀返回 top-N 建议（L1-2）。
@@ -897,6 +904,13 @@ export interface IL2ProgressRepository {
    * 是否已为该词晋升出 L2 行（跨词书 EXISTS）。供词条详情"待扩展"提示使用。
    */
   existsByUserAndWord(userId: string, wordId: string): Promise<boolean>;
+  /**
+   * 批量版 EXISTS：返回这批 word_id 里**已晋升 L2** 的子集（跨词书）。
+   *
+   * 日视图词信号投影用，避免逐词 EXISTS。owner-RLS 表 —— 必须在携带
+   * `request.jwt.claim.sub` 的事务里调用（裸池连接会被 RLS 过滤成空集）。
+   */
+  listPromotedWordIds(userId: string, wordIds: string[]): Promise<string[]>;
   /**
    * 他书该词的"最佳"L2 行（ADR-0018 §3 提前升级 seed 来源，只读）。
    *

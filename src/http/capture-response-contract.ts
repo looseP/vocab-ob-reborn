@@ -20,6 +20,12 @@ export const captureResponseSchema = z.object({
    * falls back. Hence a two-value enum rather than a frozen literal.
    */
   l3Status: z.enum(["captured", "deferred"]),
+  /**
+   * 入本即记流水（设计稿 2026-10-11 §4.1）：捕获成功后 best-effort 追加的当日
+   * 流水条目 seq；追加失败为 null —— 记流水不阻塞入本（与 L3 三件套同哲学）。
+   * optional + nullable 保持非 breaking（openapi 下为纯增 property）。
+   */
+  entrySeq: z.number().int().min(1).nullable().optional(),
   sourceId: z.string().uuid().nullable(),
   contextId: z.string().uuid().nullable(),
   occurrenceId: z.string().uuid().nullable(),

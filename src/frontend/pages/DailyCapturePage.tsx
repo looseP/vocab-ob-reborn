@@ -22,16 +22,18 @@ import * as client from "@/frontend/api/dailyCaptureClient";
 import type {
   DailyCaptureAbsorbAction,
   DailyCaptureDay,
+  DailyCaptureDayEntry,
   DailyCaptureDaySummary,
   DailyCaptureEntry,
   DailyCaptureType,
+  DailyCaptureWordSignal,
 } from "@/frontend/api/dailyCaptureClient";
 
 /** 与服务端显示时区同口径（src/db/timezone.ts = Asia/Shanghai）——日文件按它投影。 */
 const DISPLAY_TZ = "Asia/Shanghai";
 const DAY_WINDOW = 30;
-/** M1 seed 六类（内置标记用；自定义可改名/隐藏，内置不可删）。 */
-const SEED_TYPE_KEYS = new Set(["phrase", "sentence", "method", "question", "idea", "note"]);
+/** seed 七类（内置标记用；自定义可改名/隐藏，内置不可删）。word 由捕获窗自动记账。 */
+const SEED_TYPE_KEYS = new Set(["phrase", "sentence", "method", "question", "idea", "word", "note"]);
 
 function todayKey(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -61,6 +63,14 @@ function clockOf(iso: string): string {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: DISPLAY_TZ, hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(new Date(iso));
+}
+
+/** 词信号时间戳（MM-DD HH:mm，显示时区）——语义是"该词上次变动"，非信号写入时刻。 */
+function stampOf(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: DISPLAY_TZ, month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(iso)).replace(",", "");
 }
 
 function apiMessage(error: unknown, fallback: string): string {
@@ -186,10 +196,16 @@ export function DailyCapturePage() {
     });
   };
 
+  /**
+   * PATCH / 吸收响应只回行、**不带读时词信号**——合并时保留旧条目的 `wordSignals`，
+   * 否则标记回顾后徽标会凭空消失（信号由下次 getDay 刷新）。
+   */
   const replaceEntry = (updated: DailyCaptureEntry) => {
     setDay((prev) => {
       if (!prev || prev.date !== selectedDate) return prev;
-      const entries = prev.entries.map((e) => (e.id === updated.id ? updated : e));
+      const entries = prev.entries.map((e) =>
+        e.id === updated.id ? { ...updated, wordSignals: e.wordSignals } : e,
+      );
       recomputeSelectedSummary(entries);
       return { ...prev, entries };
     });
@@ -408,7 +424,8 @@ export function DailyCapturePage() {
     return e.status !== "archived";
   });
   const archivedEntries = filter === "all" ? entries.filter((e) => e.status === "archived") : [];
-  const groups: Array<{ label: string; items: DailyCaptureEntry[] }> = [];
+  // 分组项沿用日视图条目类型（携带读时词信号，EntryRow 依赖）
+  const groups: Array<{ label: string; items: DailyCaptureDayEntry[] }> = [];
   for (const type of types.filter((t) => !t.hidden)) {
     const items = visible.filter((e) => e.entry_type === type.type_key);
     if (items.length > 0) groups.push({ label: type.label, items });
@@ -785,9 +802,9 @@ export function DailyCapturePage() {
   );
 }
 
-/** 条目行（§6 投影格式 + 悬停动作；与 mockup 同构）。 */
+/** 条目行（§6 投影格式 + 悬停动作 + 读时词信号徽标）。 */
 function EntryRow(props: {
-  entry: DailyCaptureEntry;
+  entry: DailyCaptureDayEntry;
   busy: boolean;
   onReview: () => void;
   onStar: () => void;
@@ -796,9 +813,35 @@ function EntryRow(props: {
   const { entry, busy } = props;
   const meta = entry.meta ?? {};
   const important = meta.important === true;
-  const bits: string[] = [];
+  const wordSlugs = meta.wordSlugs ?? [];
+  const signalBySlug = new Map(entry.wordSignals.map((s) => [s.slug, s] as const));
+  /** 案 A + 降级：≥3 词折成聚合胶囊（窄屏降级由 styles.css 媒体查询负责）。 */
+  const degraded = wordSlugs.length >= 3;
+  const bits: React.ReactNode[] = [];
   if (meta.meaning) bits.push(`— ${meta.meaning}`);
-  for (const w of meta.wordSlugs ?? []) bits.push(`⤳ [[${w}]]`);
+  for (const w of wordSlugs) {
+    bits.push(
+      <span key={`word-${w}`} className="whitespace-nowrap">
+        {`⤳ [[${w}]]`}
+        {!degraded && (
+          <span className="word-signal-detail">
+            <WordSignalBadges signal={signalBySlug.get(w)} />
+          </span>
+        )}
+      </span>,
+    );
+  }
+  if (wordSlugs.length > 0) {
+    bits.push(
+      <WordSignalAggregate
+        key="word-signals"
+        signals={wordSlugs
+          .map((w) => signalBySlug.get(w))
+          .filter((s): s is DailyCaptureWordSignal => s !== undefined)}
+        always={degraded}
+      />,
+    );
+  }
   if (meta.sourceUrl) bits.push(`（来源: ${meta.sourceUrl}）`);
   return (
     <div
@@ -817,7 +860,13 @@ function EntryRow(props: {
         <span className="mr-1.5 text-xs tabular-nums text-[var(--color-ink-soft)]">{clockOf(entry.created_at)}</span>
         {important && <Star className="mb-0.5 inline h-3.5 w-3.5 fill-amber-500 text-amber-500" />}
         <span className="text-[var(--color-ink)]">{entry.content}</span>
-        {bits.length > 0 && <span> {bits.join(" ")}</span>}
+        {bits.length > 0 && (
+          <span>
+            {bits.map((bit, i) => (
+              <span key={i}>{" "}{bit}</span>
+            ))}
+          </span>
+        )}
         {entry.status === "reviewed" && (
           <span className="ml-2 rounded-full border border-[var(--color-pill-border)] bg-[var(--color-pill-bg)] px-1.5 align-[1px] text-[10px] font-bold text-[var(--color-pill-text)]">已回顾</span>
         )}
@@ -853,6 +902,93 @@ function EntryRow(props: {
         </ActButton>
       </div>
     </div>
+  );
+}
+
+/**
+ * 词信号徽标（案 A）：紧跟 `⤳ [[slug]]`；gone → 灰色「词已不在」
+ * （删词是用户主动行为，用中性色；流水文本不可变，投影如实反映）。
+ */
+function WordSignalBadges(props: { signal: DailyCaptureWordSignal | undefined }) {
+  const { signal } = props;
+  if (!signal) return null;
+  if (signal.state === "gone") {
+    return (
+      <span
+        className="sig-gone ml-1 rounded-full px-1.5 align-[1px] text-[10px] font-bold"
+        title={`${signal.slug} · 词库中已无此词（已删除，或未收录该原样形态）· 流水文本不可变，此为读时投影`}
+      >
+        词已不在
+      </span>
+    );
+  }
+  return (
+    <>
+      <span
+        className={`ml-1 rounded-full border px-1.5 align-[1px] text-[10px] font-bold ${
+          signal.hasDefinition ? "pill" : "pill-warm"
+        }`}
+        title={
+          signal.hasDefinition
+            ? `${signal.slug} · 已有正式释义`
+            : `${signal.slug} · 仅词形，待在词条详情页补释义`
+        }
+      >
+        {signal.hasDefinition ? "已补释义" : "生词 · 待补释义"}
+      </span>
+      {signal.l2Promoted && (
+        <span
+          className="ml-1 rounded-full bg-[var(--color-accent)] px-1.5 align-[1px] text-[10px] font-bold text-[var(--color-accent-contrast)]"
+          title={`${signal.slug} · 已晋升 L2 行`}
+        >
+          L2 已晋升
+        </span>
+      )}
+      {signal.hasDefinition && signal.updatedAt && (
+        <span
+          className="ml-1 text-[10px] tabular-nums text-[var(--color-ink-soft)]"
+          title={`该词上次变动：${stampOf(signal.updatedAt)}`}
+        >
+          {stampOf(signal.updatedAt)}
+        </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * 降级聚合胶囊（案 B）：≥3 词（`always`）或窄屏时取代逐词徽标 —— 窄屏收起由
+ * `styles.css` 的 `.word-signal-detail` / `.word-signal-agg` 媒体查询负责，hover 出
+ * 逐词明细。单词条目直接复用案 A 徽标，不出「词 1」这种噪音。
+ */
+function WordSignalAggregate(props: { signals: DailyCaptureWordSignal[]; always: boolean }) {
+  const { signals, always } = props;
+  if (signals.length === 0) return null;
+  if (signals.length === 1) {
+    return (
+      <span className={always ? "inline-flex" : "word-signal-agg"}>
+        <WordSignalBadges signal={signals[0]} />
+      </span>
+    );
+  }
+  const stateLabel = (s: DailyCaptureWordSignal) =>
+    s.state === "gone" ? "词已不在" : s.hasDefinition ? "已补释义" : "生词 · 待补释义";
+  const stub = signals.filter((s) => s.state === "stub").length;
+  const ready = signals.filter((s) => s.state === "ready").length;
+  const gone = signals.filter((s) => s.state === "gone").length;
+  const parts = [
+    `词 ${signals.length}`,
+    ...(stub > 0 ? [`待补 ${stub}`] : []),
+    ...(ready > 0 ? [`已补 ${ready}`] : []),
+    ...(gone > 0 ? [`已不在 ${gone}`] : []),
+  ];
+  return (
+    <span
+      className={`${always ? "inline-flex" : "word-signal-agg"} ml-1 items-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-muted)] px-1.5 align-[1px] text-[10px] font-semibold text-[var(--color-ink-soft)]`}
+      title={signals.map((s) => `${s.slug}：${stateLabel(s)}`).join("\n")}
+    >
+      {parts.join(" · ")}
+    </span>
   );
 }
 
