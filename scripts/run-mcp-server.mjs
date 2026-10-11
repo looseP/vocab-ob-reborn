@@ -172,12 +172,23 @@ function toQuery(params) {
 const TOOLS = [
   {
     name: "search_words",
-    description: "按词元（lemma）/标题前缀搜索词库中的词条，返回候选列表（slug、词元、词性、CEFR、短释义）。只读；本桥一切写入产物进 proposal、需人工确认，升级动作（confirm / accept / validate / apply / cancel）不暴露。",
+    description:
+      "按词元（lemma）/标题前缀搜索词库中的词条，返回候选列表（slug、词元、词性、CEFR、短释义）。" +
+      "include_stub=true 时把用户自建的生词条目（仅词形、无释义内容，由捕获/阅读采集产生）一并纳入 —— " +
+      "默认 false，与捕获页「词库里有没有这个词」的判定口径一致。只读；本桥一切写入产物进 proposal、" +
+      "需人工确认，升级动作（confirm / accept / validate / apply / cancel）不暴露。",
     inputSchema: {
       type: "object",
       properties: {
         q: stringProp("搜索前缀（1-100 字符）"),
         limit: { type: "number", description: "返回条数上限 1-20（默认 8）", minimum: 1, maximum: 20 },
+        include_stub: {
+          type: "boolean",
+          description:
+            "是否包含生词条目（stub）。默认 false：stub 不参与「这个词在不在词库里」的判定，" +
+            "设为 true 可检索用户自己捕获的生词。",
+          default: false,
+        },
       },
       required: ["q"],
       additionalProperties: false,
@@ -185,6 +196,8 @@ const TOOLS = [
     async run(args) {
       const params = new URLSearchParams({ q: String(args.q) });
       if (args.limit !== undefined) params.set("limit", String(args.limit));
+      // enum 而非 boolean 传参：服务端把字符串 "false" 也当真值，故用 scope=all 表达。
+      if (args.include_stub === true) params.set("scope", "all");
       const data = await apiCall("GET", `/api/words/suggest?${params}`);
       return data.items;
     },

@@ -1,16 +1,33 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Search, Filter, Upload, BookOpen, History, Users, X, Plus, CheckSquare, Square } from "lucide-react";
 import { Input } from "@/frontend/components/ui/Input";
 import { Button } from "@/frontend/components/ui/Button";
 import { WordList } from "@/frontend/components/words/WordList";
-import { useWords } from "@/frontend/hooks/useWords";
+import { useWords, type WordListScope } from "@/frontend/hooks/useWords";
 import { useRecentSearches } from "@/frontend/hooks/useRecentSearches";
 import { useWordSuggest } from "@/frontend/hooks/useWordSuggest";
 import { useToast } from "@/frontend/components/ui/Toast";
+import { useCaptureFloatingWindow } from "@/frontend/hooks/useCaptureFloatingWindow";
 import { apiFetch } from "@/frontend/api/client";
 
 const CEFR_LEVELS = ["", "A1", "A2", "B1", "B2", "C1", "C2"] as const;
+
+/**
+ * 词条内容维度切换（2026-10-11 生词本）。
+ * 「生词本」= 捕获/采集产生、只有词形还没补全释义的条目（scope=stub）；
+ * `content` 是有史以来的默认口径，`all` 两者同列。
+ */
+const SCOPE_TABS: ReadonlyArray<{ value: WordListScope; label: string; hint: string }> = [
+  { value: "content", label: "词条库", hint: "有释义内容的正式词条" },
+  { value: "stub", label: "生词本", hint: "捕获的生词条目，等待补全释义" },
+  { value: "all", label: "全部", hint: "正式词条与生词条目同列" },
+];
+
+function readScope(searchParams: URLSearchParams): WordListScope {
+  const raw = searchParams.get("scope");
+  return raw === "stub" || raw === "all" ? raw : "content";
+}
 
 export function WordsPage() {
   const [query, setQuery] = useState("");
@@ -24,8 +41,15 @@ export function WordsPage() {
   const navigate = useNavigate();
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { recent, add, remove, clear } = useRecentSearches();
-  // L1-2：输入联想——跟随实时输入（非防抖查询词），在输入框下方即时展示建议
-  const { suggestions } = useWordSuggest(query);
+  const launchCapture = useCaptureFloatingWindow();
+  // 视图维度落在 URL 上（`/words?scope=stub`）：命令面板的「生词本」入口、分享与
+  // 后退都能直接命中同一个视图，而不是另开一份页面状态。
+  const [searchParams, setSearchParams] = useSearchParams();
+  const scope = readScope(searchParams);
+  const isNotebook = scope === "stub";
+  // L1-2：输入联想——跟随实时输入（非防抖查询词），在输入框下方即时展示建议。
+  // 生词本视图传 all：用户自建的生词条目也要能被联想出来（suggest 只认 content/all）。
+  const { suggestions } = useWordSuggest(query, true, isNotebook ? "all" : "content");
 
   const debouncedSetQuery = useCallback((value: string) => {
     setQuery(value);
@@ -44,11 +68,24 @@ export function WordsPage() {
     setDebouncedQuery(value);
   }, []);
 
-  // P2-7/8：review 筛选 + 「加载更多」分页
+  /** 切维度：写回 URL（replace 以免把每次切换都塞进历史），并清掉旧列表的勾选。 */
+  const changeScope = useCallback(
+    (next: WordListScope) => {
+      const params = new URLSearchParams(searchParams);
+      if (next === "content") params.delete("scope");
+      else params.set("scope", next);
+      setSearchParams(params, { replace: true });
+      setSelectedIds(new Set());
+    },
+    [searchParams, setSearchParams],
+  );
+
+  // P2-7/8 + 生词本：review / scope 筛选 + 「加载更多」分页
   const { words, loading, loadingMore, error, total, hasMore, loadMore } = useWords({
     q: debouncedQuery || undefined,
     cefr: cefr || undefined,
     review: review || undefined,
+    scope,
     pageSize: 50,
   });
 
@@ -113,8 +150,12 @@ export function WordsPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="section-title text-2xl font-bold text-[var(--color-ink)]">词条库</h1>
-          <p className="text-sm text-[var(--color-ink-soft)]">浏览和管理词汇</p>
+          <h1 className="section-title text-2xl font-bold text-[var(--color-ink)]">
+            {isNotebook ? "生词本" : "词条库"}
+          </h1>
+          <p className="text-sm text-[var(--color-ink-soft)]">
+            {isNotebook ? "捕获的词条：先记下，再逐个补全" : "浏览和管理词汇"}
+          </p>
         </div>
         {/* 广场快捷入口：移动端底部 tab 无广场，这里为全端（尤其移动）提供入口 */}
         <Link to="/plaza">
@@ -157,6 +198,30 @@ export function WordsPage() {
 
         <div className="flex flex-wrap items-center gap-2">
           <Filter className="h-4 w-4 text-[var(--color-ink-soft)]" />
+          {/* 生词本入口（1 击）：视图维度写在 URL 上，命令面板的「生词本」指向同一处 */}
+          <div
+            className="flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-input)] p-1"
+            role="tablist"
+            aria-label="词条范围"
+          >
+            {SCOPE_TABS.map((tab) => (
+              <button
+                key={tab.value}
+                type="button"
+                role="tab"
+                aria-selected={scope === tab.value}
+                title={tab.hint}
+                onClick={() => changeScope(tab.value)}
+                className={`rounded-lg px-3 py-1 text-sm transition-colors ${
+                  scope === tab.value
+                    ? "bg-[var(--color-accent)] text-[var(--color-canvas)]"
+                    : "text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
           <select
             value={cefr}
             onChange={(e) => setCefr(e.target.value)}
@@ -257,13 +322,28 @@ export function WordsPage() {
         selectable={selecting}
         selectedIds={selectedIds}
         onToggleSelect={toggleSelect}
+        stubBadge={isNotebook}
+        emptyHint={
+          isNotebook ? (
+            <div className="space-y-3">
+              <p className="text-[var(--color-ink-soft)]">
+                生词本还空着 —— 查词时遇到的生词会先记在这里，之后逐步补全释义。
+              </p>
+              <Button size="sm" variant="secondary" onClick={() => void launchCapture()}>
+                <Plus className="h-4 w-4" /> 去捕获一个词
+              </Button>
+            </div>
+          ) : undefined
+        }
       />
 
       {/* P2-7：分页——「加载更多」追加下一页；总数与已加载数展示（空结果也显示 0/total） */}
       {!loading && !error && (
         <div className="flex flex-col items-center gap-2 pt-2">
           <p className="text-xs text-[var(--color-ink-soft)]">
-            已加载 {words.length} / {total} 词
+            {isNotebook
+              ? `已加载 ${words.length} / ${total} 个生词`
+              : `已加载 ${words.length} / ${total} 词`}
           </p>
           {hasMore && words.length > 0 && (
             <Button variant="secondary" onClick={loadMore} disabled={loadingMore}>

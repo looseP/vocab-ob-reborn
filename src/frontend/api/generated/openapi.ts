@@ -3611,6 +3611,7 @@ export interface operations {
                 offset?: number;
                 q?: string;
                 review?: "all" | "tracked" | "due" | "untracked";
+                scope?: "content" | "stub" | "all";
                 wordbookId?: string;
             };
             header?: never;
@@ -3789,6 +3790,7 @@ export interface operations {
             query: {
                 limit?: number;
                 q: string;
+                scope?: "content" | "all";
             };
             header?: never;
             path?: never;
@@ -7111,7 +7113,7 @@ export interface operations {
             query?: {
                 channel?: "review" | "new";
                 limit?: number;
-                mode?: "review" | "cram" | "preview";
+                mode?: "review" | "cram" | "preview" | "learn" | "zen";
                 newCardsLimit?: number;
                 offset?: number;
             };
@@ -8212,7 +8214,7 @@ export interface operations {
                     sessionId: string;
                     idempotencyKey?: string;
                     /** @enum {string} */
-                    mode?: "review" | "cram" | "preview" | "zen";
+                    mode?: "review" | "cram" | "preview" | "zen" | "learn";
                     hintLevel?: number;
                     viaH4?: boolean;
                     /** @enum {string} */

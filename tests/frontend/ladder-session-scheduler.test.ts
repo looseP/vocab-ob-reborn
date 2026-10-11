@@ -61,6 +61,58 @@ describe("enforceNoBackToBack（同词不背靠背）", () => {
     expect(enforceNoBackToBack([{ progressId: "a" }, { progressId: "a" }]).map((x) => x.progressId))
       .toEqual(["a", "a"]); // 单词会话退化场景：无其他词可穿插
   });
+
+  // 2026-10-11 审查（S3）：旧实现只检查交换位的**后侧**，漏检前侧，于是
+  // 「明明存在合法解」也被判成退化放过。下面这组输入旧实现会原样返回。
+  it("2 词队列的背靠背也要修：存在合法解时不得放过", () => {
+    const out = enforceNoBackToBack([
+      { progressId: "a" },
+      { progressId: "b" },
+      { progressId: "b" },
+      { progressId: "a" },
+    ]).map((x) => x.progressId);
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i], `位置 ${i} 与前一节点同词且存在合法解`).not.toBe(out[i - 1]);
+    }
+    // 元素集合不变（只换位置，不丢词）
+    expect([...out].sort()).toEqual(["a", "a", "b", "b"]);
+  });
+
+  it("修复后不引入新的背靠背（交换两侧都要检查）", () => {
+    const out = enforceNoBackToBack([
+      { progressId: "a" },
+      { progressId: "a" },
+      { progressId: "b" },
+      { progressId: "b" },
+      { progressId: "a" },
+    ]).map((x) => x.progressId);
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i]).not.toBe(out[i - 1]);
+    }
+  });
+
+  // 2026-10-11 审查（S3）连带约束：交换**不得跨轮**。
+  // 跨轮交换会把产出轮的词换到巩固轮之前 —— 词变成"先默写再跟写"，三轮语义递进被破坏
+  // （实测两词会话被换成 card,card,dictation,dictation,follow,follow）。
+  it("分组后交换严格限制在组内：跨轮背靠背保持原序而非乱换", () => {
+    const items = [
+      { progressId: "a", pass: 1 },
+      { progressId: "b", pass: 1 },
+      { progressId: "b", pass: 2 }, // 跨轮背靠背（pass1 尾 b 与 pass2 头 b）
+      { progressId: "a", pass: 2 },
+      { progressId: "a", pass: 3 },
+      { progressId: "b", pass: 3 },
+    ];
+    const out = enforceNoBackToBack(items, (v) => String(v.pass));
+    // 各轮的词集合必须原样保持（只允许组内换位）
+    for (const p of [1, 2, 3]) {
+      const before = items.filter((x) => x.pass === p).map((x) => x.progressId);
+      const after = out.filter((x) => x.pass === p).map((x) => x.progressId);
+      expect([...after].sort(), `pass${p} 的词集合被跨轮交换破坏`).toEqual([...before].sort());
+    }
+    // pass 的先后顺序不变（产出轮不能跑到巩固轮前面）
+    expect(out.map((x) => x.pass)).toEqual([1, 1, 2, 2, 3, 3]);
+  });
 });
 
 describe("buildLadderSession（三轮编排）", () => {

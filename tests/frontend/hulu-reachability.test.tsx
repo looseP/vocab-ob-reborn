@@ -5,8 +5,9 @@
  * 葫芦冲刺可达性与隔离（ADR-0041，P1）。
  *
  * 三条**结构不变式**（不是运行时行为，故直接查源码）：
- *  1. 葫芦是 `reviewModes` 里的**显式第 6 个模式**，由 `reviewMode === "hulu"`
- *     分支直达；不选它 ⇒ 分支不可达（同 ADR-0036 §4 修订对阶梯的处理）。
+ *  1. 葫芦是 `reviewModes` 里的**显式模式**（2026-10-10 阶梯开关化后清单共 5 项，
+ *     葫芦在末位），由 `reviewMode === "hulu"` 分支直达；不选它 ⇒ 分支不可达。
+ *     （阶梯自 2026-10-10 起改为双通道开关形态，不再是显式模式。）
  *  2. 三个既有会话体（`ReviewSession` / `DrillSession` / `LadderReviewSession`）
  *     的源码**不含 `hulu`** —— 葫芦不劫持、不寄生任何现行复习流。
  *     `ReviewSession` 不是独立文件，它是 `ReviewPage.tsx` 里的一个函数
@@ -55,31 +56,30 @@ function between(code: string, from: string, to: string): string {
 }
 
 describe("葫芦冲刺是显式模式（不选则分支不可达）", () => {
-  it('ReviewPage 有 reviewMode === "hulu" 的显式分支，与 ladder/cram 并列', () => {
+  it('ReviewPage 有 reviewMode === "hulu" 的显式分支，与 cram 并列', () => {
     const code = readCode(REVIEW_PAGE);
 
     expect(code).toContain('reviewMode === "hulu"');
-    // 三个显式模式分支并列（cram / ladder / hulu 各一条）
+    // 两个显式模式分支并列（cram / hulu 各一条）。阶梯自 2026-10-10 起改为
+    // 双通道开关（ladderChannel 分支），不再是 reviewMode 显式模式。
     expect(code).toContain('reviewMode === "cram"');
-    expect(code).toContain('reviewMode === "ladder"');
+    expect(code).not.toContain('reviewMode === "ladder"');
     // 葫芦走独立组件，不进 ReviewSession
     expect(code).toContain("HuluSprintSession");
   });
 
-  it("模式清单恰 6 项且 hulu 末位", async () => {
+  it("模式清单恰 5 项且 hulu 末位", async () => {
     const { reviewModesForTest } = await import("@/frontend/pages/ReviewPage");
     const modes = reviewModesForTest();
-    expect(modes.map((mode) => mode.key)).toEqual(["review", "cram", "preview", "zen", "ladder", "hulu"]);
+    expect(modes.map((mode) => mode.key)).toEqual(["review", "cram", "preview", "zen", "hulu"]);
   });
 
   it("模式网格不再有 xl:grid-cols-5，且次级网格留有余量不产生孤行", () => {
     const code = readCode(REVIEW_PAGE);
     expect(code).not.toContain("xl:grid-cols-5");
-    // 2026-10-10 通道隔离后布局改了：review/zen 升级为顶部大卡片，剩下
-    // cram/preview/ladder/hulu 四项走 `lg:grid-cols-4` 网格 —— 四项在四列下
-    // **不产生孤行**（6 项在三列下才是 2+2+2，4 项在 4 列下是 1×4）。
-    // 原断言写死 `lg:grid-cols-3` 是针对「6 项模式网格」，该网格已不复存在。
-    expect(code).toContain("lg:grid-cols-4");
+    // 次级网格项数随阶梯开关化再变：cram/preview/ladder/hulu 四项（4 列）→
+    // cram/preview/hulu 三项（2026-10-10 阶梯改开关后）—— 三项在三列下 1×3 无孤行。
+    expect(code).toContain("lg:grid-cols-3");
   });
 });
 

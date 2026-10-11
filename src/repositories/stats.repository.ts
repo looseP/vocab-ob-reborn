@@ -48,12 +48,16 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
         //  - `mastered_count`「已掌握」：`state = 'review'` 的词数。**不是**
         //    `totalWords - dueToday`（那会把「今天没到期」当「已掌握」，见接口注释）。
         this.queryOne<{ due_count: string; mastered_count: string }>(
-          `SELECT count(*) FILTER (WHERE due_at IS NOT NULL
-                                     AND due_at < $3::timestamptz + interval '1 day'
-                                     AND state <> 'suspended') AS due_count,
-                  count(*) FILTER (WHERE state = 'review') AS mastered_count
-             FROM user_word_progress
-            WHERE user_id = $1 AND wordbook_id = $2::uuid`,
+          `SELECT count(*) FILTER (WHERE uwp.due_at IS NOT NULL
+                                     AND uwp.due_at < $3::timestamptz + interval '1 day'
+                                     AND uwp.state <> 'suspended') AS due_count,
+                  count(*) FILTER (WHERE uwp.state = 'review') AS mastered_count
+             FROM user_word_progress uwp
+             JOIN words w ON w.id = uwp.word_id
+            -- 可见性口径与复习队列一致（收尾轮 R2 闭环）：仪表盘「今天待复习」
+            -- 必须与实际会发出的队列同口径，下架/软删除词不计入。
+            WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+              AND w.is_published = true AND w.is_deleted = false`,
           [userId, wordbookId, todayIso],
         ),
         // 作答口径（CONTEXT.md「Event log semantics」）：reviewedToday/7d/30d 只计
@@ -157,10 +161,14 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     const rows = await this.query<{ horizon_days: number; count: string }>(
       `SELECT h.horizon_days,
               (SELECT count(*) FROM user_word_progress uwp
+                 JOIN words w ON w.id = uwp.word_id
                 WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
                   AND uwp.state <> 'suspended'
                   AND uwp.due_at IS NOT NULL
-                  AND uwp.due_at <= $3::timestamptz + make_interval(days => h.horizon_days))::text AS count
+                  AND uwp.due_at <= $3::timestamptz + make_interval(days => h.horizon_days)
+                  -- 可见性口径与复习队列一致（收尾轮 R2 闭环）：日历预测的到期数
+                  -- 不得计入下架/软删除词，否则「未来 7 天 N 张」与实际队列对不上。
+                  AND w.is_published = true AND w.is_deleted = false)::text AS count
        FROM unnest($4::int[]) AS h(horizon_days)
        ORDER BY h.horizon_days`,
       [userId, wordbookId, todayIso, [...horizons]],
@@ -197,10 +205,13 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
                        ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date)::text AS date,
               count(*)::text AS count
          FROM user_word_progress uwp
+         JOIN words w ON w.id = uwp.word_id
         WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
           AND uwp.state <> 'suspended'
           AND uwp.due_at IS NOT NULL
           AND uwp.due_at <= $3::timestamptz + make_interval(days => $4::int)
+          -- 可见性口径与复习队列一致（收尾轮 R2 闭环）
+          AND w.is_published = true AND w.is_deleted = false
         GROUP BY 1
         ORDER BY 1`,
       [userId, wordbookId, todayIso, days],

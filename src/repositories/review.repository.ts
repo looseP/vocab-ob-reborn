@@ -178,6 +178,10 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
          AND uwp.state != 'suspended'
          AND (uwp.due_at IS NULL OR uwp.due_at <= now())
+         -- 可见性口径与其他队列取数一致（收尾轮 R2 闭环）：兼容直出路径同样
+         -- 排除下架/软删除词。该路径生产不可达（deps 全注入走两阶段），但夹具
+         -- 会走；保持一致避免「夹具发卡、生产不发」的口径分裂。
+         AND w.is_published = true AND w.is_deleted = false
        ORDER BY uwp.due_at ASC NULLS FIRST, uwp.last_reviewed_at ASC NULLS FIRST
        LIMIT $3`,
       [userId, wordbookId, limit],
@@ -252,10 +256,13 @@ export class ReviewRepository extends BaseRepository implements IReviewRepositor
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
 WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
-        AND uwp.state != 'suspended'
-        ${predicate ? `AND (${predicate})` : ""}
-        ${predicate ? "" : "AND (uwp.due_at IS NULL OR uwp.due_at <= now())"}
-      -- 到期卡优先（NULLS LAST）：新卡 due_at 为 NULL，NULLS FIRST 会让它们占满
+  AND uwp.state != 'suspended'
+  -- 可见性口径统一（2026-10-11 审查 R2）：下架/软删除的词不再进入复习队列。
+  -- 与 findWordsByIds 的过滤保持一致 —— 此前这里是同一批"可见词"的两套标准。
+  AND w.is_published = true AND w.is_deleted = false
+  ${predicate ? `AND (${predicate})` : ""}
+  ${predicate ? "" : "AND (uwp.due_at IS NULL OR uwp.due_at <= now())"}
+-- 到期卡优先（NULLS LAST）：新卡 due_at 为 NULL，NULLS FIRST 会让它们占满
       -- 200 个候选名额、到期卡一张进不来 ⇒ 队列只发新卡。见本方法 JSDoc。
       -- 通道隔离后此排序仍保留：review 通道内按到期时间先后出卡，语义不变。
       ORDER BY uwp.due_at ASC NULLS LAST, uwp.last_reviewed_at ASC NULLS FIRST
@@ -295,10 +302,11 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
          AND uwp.state != 'suspended'
+         AND w.is_published = true AND w.is_deleted = false
          ${predicate ? `AND (${predicate})` : ""}
          ${predicate ? "" : "AND (uwp.due_at IS NULL OR uwp.due_at <= now())"}
-       ORDER BY uwp.due_at ASC NULLS LAST, uwp.last_reviewed_at ASC NULLS FIRST
-       LIMIT $3`,
+      ORDER BY uwp.due_at ASC NULLS LAST, uwp.last_reviewed_at ASC NULLS FIRST
+      LIMIT $3`,
       [userId, wordbookId, limit],
     );
   }
@@ -327,7 +335,10 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
          AND uwp.word_id = ANY($3::uuid[])
-       LIMIT $4`,
+         -- 可见性口径与取数阶段一一致（R2）：水合阶段也要挡住下架/软删除词，
+         -- 否则两阶段之间词被下架时，卡会以"无详情"的形式漏进队列。
+         AND w.is_published = true AND w.is_deleted = false
+      LIMIT $4`,
       [userId, wordbookId, wordIds, wordIds.length],
     );
     return this.mapReviewCardRows(rows);
@@ -863,7 +874,12 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
          COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
                             AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due_now
        FROM user_word_progress uwp
-       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid`,
+       JOIN words w ON w.id = uwp.word_id
+       -- 可见性口径与队列取数一致（收尾轮 R2 闭环）：全景计数就是「队列的展示面」，
+       -- 若不计下架/软删除词，会出现「仪表盘说到期 N 张、实际队列 N-1 张」的分裂
+       -- ——用户以为有卡可刷却刷不到。
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         AND w.is_published = true AND w.is_deleted = false`,
       [userId, wordbookId],
     );
     const count = (key: string): number => {
@@ -910,6 +926,9 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         -- 可见性口径与队列取数一致（收尾轮 R2 闭环）：全景清单列出的一张张卡
+         -- 必须与队列实际会发出的卡同口径，下架/软删除词不再出现。
+         AND w.is_published = true AND w.is_deleted = false
          ${predicate ? `AND (${predicate})` : ""}
          AND ($3::text IS NULL
               OR w.lemma ILIKE '%' || $3 || '%' ESCAPE '\'

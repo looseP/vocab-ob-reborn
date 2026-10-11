@@ -217,7 +217,7 @@ function HintLadderPanel({
       ) : (
         <Button variant="secondary" size="sm" className="mt-2" onClick={onFlipH4}>
           <Eye className="h-3 w-3" />
-          H4 · 翻卡（上限：重来）
+          {steps.length === 0 ? "看释义（H4）" : "H4 · 翻卡（上限：重来）"}
           <Kbd>Space</Kbd>
         </Button>
       )}
@@ -742,15 +742,20 @@ export function ReviewCardView({
    * 由用户在卡背评分——与 `flipCard` 的 viaH4 语义一致。
    *
    * `card-no-hints` 阶段（`hintSteps.length === 0`，阶梯会话 rung=2 的第一轮
-   * **按设计不给提示**，见 sessionScheduler `stageForRung`）：此前 H4 仍只翻面，
-   * 于是「H4」成了该阶段唯一出口却表现为"点了没反应"——翻到卡背后仍需再找评分区，
-   * 实测极易被读成死锁（用户 2026-09-29 报「打字流没了」的根因之一）。
-   * 该阶段没有提示可耗，`viaH4`（= 强制 again 封顶）也无从谈起，故**直接按上限
-   * 结算并推进**，不制造中间态。
+   * **按设计不给提示**，见 sessionScheduler `stageForRung`；经典流里"没有任何提示
+   * 素材"的词同样落此分支）：没有提示可耗，`viaH4`（= 强制 again 封顶）也无从谈起。
+   *
+   * 2026-10-11 审查（S4）修正：此处此前**直接按上限结算并推进**（`onAnswer(easy)`），
+   * 用户从头到尾没看到释义就完成了评分 —— 等于向 FSRS 注入一条虚假的高强度记忆证据，
+   * 下次间隔被显著拉长，该词很可能在真正记住之前就不再出现；而按钮上还写着
+   * 「上限：重来」，行为与文案互相矛盾。现改为**真翻卡**：看到释义后自行评分，
+   * 上限仍是「轻松」（本档不因翻卡降级，那是 viaH4 的语义，而此处没有 viaH4）。
+   * 2026-09-29 报过的"只翻面不推进"死锁由翻卡后聚焦评分区兜住，不靠跳过释义。
    */
   const flipViaH4 = () => {
     if (hintSteps.length === 0) {
-      onAnswer(hintCapNow(0, false), { hintLevel: 0, viaH4: false });
+      setRevealed(true);
+      refocusActions();
       return;
     }
     setViaH4(true);

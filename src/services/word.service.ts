@@ -28,6 +28,7 @@ export interface GetWordsParams {
   q?: string;
   review?: string;
   cefr?: string;
+  scope?: "content" | "stub" | "all";
   wordbookId?: string;
   limit: number;
   offset: number;
@@ -48,6 +49,7 @@ export class WordService {
           q: params.q,
           review: params.review,
           cefr: params.cefr,
+          scope: params.scope,
         },
         pagination: { limit: params.limit, offset: params.offset },
         userId: params.userId,
@@ -78,9 +80,18 @@ export class WordService {
     return { word: new Word(row), l2Promoted };
   }
 
-  /** 输入联想（L1-2）：读侧接口，直接走注入仓库，无需事务。 */
-  async suggestWords(q: string, limit = 8): Promise<WordSummary[]> {
-    return this.words.suggest(q, limit);
+  /**
+   * 输入联想（L1-2）：读侧接口，直接走注入仓库，无需事务。
+   *
+   * `scope` 默认 `content`（排除 stub，保持"词库里有没有这个词"的判定语义）；
+   * `all` 把用户自建的生词条目一并纳入（生词本页 / MCP agent 用）。
+   */
+  async suggestWords(
+    q: string,
+    limit = 8,
+    scope: "content" | "all" = "content",
+  ): Promise<WordSummary[]> {
+    return this.words.suggest(q, limit, scope);
   }
 
   async getWordCount(): Promise<number> {

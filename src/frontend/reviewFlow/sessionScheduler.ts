@@ -37,26 +37,56 @@ export function weave<T>(revs: T[], news: T[]): T[] {
 
 /**
  * no-back-to-back-same-word（拍板⑥规则）：同 progressId 的节点不得相邻。
- * 交换修复式：从左向右扫描，遇相邻同词即与后方最近的异词节点交换（保多词交替）。
- * 退化场景（单词会话，同词各 pass 必然相邻、无其他词可穿插）保持原序。
+ * 交换修复式：从左向右扫描，遇相邻同词即与后方**最近的可行异词节点**交换。
+ *
+ * 2026-10-11 审查（S3）修正：旧实现的可行条件只检查了交换位置的**后侧**
+ * （`out[j+1] !== out[i].progressId`），漏检**前侧**（`out[j] !== out[i-1]`），
+ * 于是「明明存在合法解」也判成退化放弃。现改为检查换后**左右两侧**。
+ *
+ * @param groupKey 分组键（阶梯传 `pass`）：**交换候选严格限制在同一轮内**。
+ *   这是硬约束，不是优化 —— 跨轮交换会把产出轮的词换到巩固轮之前，等于让词
+ *   "先默写再跟写"，直接破坏三轮的语义递进（演示实测：两词会话被换成一
+ *   card → card → dictation → dictation → follow → follow）。
+ *   跨轮背靠背（pass1 尾与 pass2 头同词）因此**保持原序**：段内没有可换的异词时，
+ *   任何修复都要靠改变轮次顺序，代价大于收益。
  */
-export function enforceNoBackToBack<T extends { progressId: string }>(items: T[]): T[] {
+export function enforceNoBackToBack<T extends { progressId: string }>(
+  items: T[],
+  groupKey?: (item: T) => string,
+): T[] {
   const out = [...items];
-  let guard = out.length * out.length + 8;
+  const conflictsAt = (idx: number) => idx > 0 && out[idx].progressId === out[idx - 1].progressId;
+  /** 同组区间的右开端点（无分组时即数组末尾）。 */
+  const groupEnd = (idx: number): number => {
+    if (!groupKey) return out.length;
+    const g = groupKey(out[idx]);
+    let end = idx + 1;
+    while (end < out.length && groupKey(out[end]) === g) end++;
+    return end;
+  };
+  let guard = out.length * out.length * 2 + 8;
   let i = 1;
   while (i < out.length && guard-- > 0) {
-    if (out[i].progressId === out[i - 1].progressId) {
-      let j = i + 1;
-      while (j < out.length && out[j].progressId === out[i].progressId) j++;
-      if (j < out.length && (j + 1 >= out.length || out[j + 1].progressId !== out[i].progressId)) {
+    if (!conflictsAt(i)) {
+      i++;
+      continue;
+    }
+    const bad = out[i].progressId;
+    const end = groupEnd(i);
+    let swapped = false;
+    for (let j = i + 1; j < end && !swapped; j++) {
+      if (out[j].progressId === bad) continue;
+      const leftOk = out[j].progressId !== out[i - 1].progressId;
+      const rightOk = j + 1 >= out.length || out[j + 1].progressId !== bad;
+      if (leftOk && rightOk) {
         const tmp = out[i];
         out[i] = out[j];
         out[j] = tmp;
-        continue; // 交换后原位重查（可能引入新冲突）
+        swapped = true;
       }
-      // 后方无可用异词节点：保持原位（退化场景）
     }
-    i++;
+    // 交换后原位重查（可能引入新冲突）；无可行解则前进一格（退化场景，保持原序）
+    if (!swapped) i++;
   }
   return out;
 }
@@ -111,7 +141,8 @@ export function buildLadderSession(queue: ReviewCard[]): LadderVisit[] {
   const pass2 = weave([...r1r2].reverse(), news).map((v) => visit(v, 2));
   const pass3 = weave([...r3s, ...[...r1r2].reverse()], news).map((v) => visit(v, 3));
 
-  return enforceNoBackToBack([...pass1, ...pass2, ...pass3]);
+  // 分组键 = 轮次：交换只在同一轮内进行（跨轮交换会破坏「再认→巩固→产出」的递进顺序）
+  return enforceNoBackToBack([...pass1, ...pass2, ...pass3], (v) => String(v.pass));
 }
 
 /** 结算页逐词行（演示页结算表：词/卡面/默写/最终/S→/起步档/门 由 ReviewPage 组装渲染）。 */

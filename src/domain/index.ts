@@ -231,6 +231,16 @@ export interface WordFilters {
   q?: string;
   review?: string;
   cefr?: string;
+  /**
+   * 词条内容维度（2026-10-11 生词本）。
+   * - `content`（默认）：只正式词条 —— L1-4 以来的既有行为（排除 stub）；
+   * - `stub`：只生词条目（`definition_md = ''`，仅 lemma 无内容）；
+   * - `all`：两者都含。
+   *
+   * 判定依据必须是 `definition_md`（NOT NULL，stub 写入空串），**不能看
+   * short_definition** —— 真实词条可能无短释义但有完整释义。
+   */
+  scope?: "content" | "stub" | "all";
 }
 
 export interface GetPublicWordsOptions {

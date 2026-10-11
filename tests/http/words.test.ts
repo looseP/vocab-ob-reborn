@@ -51,6 +51,7 @@ function makeMockServices(): Services {
           hasMore: false,
         }),
       getWordBySlug: vi.fn(),
+      suggestWords: vi.fn().mockResolvedValue([]),
       getWordCount: vi.fn().mockResolvedValue(1),
       getAllSlugs: vi.fn().mockResolvedValue(["abound"]),
       batchCreate: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, unchanged: 0 }),
@@ -168,6 +169,58 @@ describe("GET /api/words", () => {
     const res = await app.request("/api/words?limit=999", { headers: AUTH_HEADERS });
     expect(res.status).toBe(400);
     expect(services.words.getPublicWords).not.toHaveBeenCalled();
+  });
+
+  it("passes scope=stub through so 生词本 can list stub-only entries (2026-10-11)", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/words?scope=stub", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    const callArg = (services.words.getPublicWords as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArg.scope).toBe("stub");
+  });
+
+  it("defaults scope to content（既有调用方口径不变）", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    await app.request("/api/words?limit=5", { headers: AUTH_HEADERS });
+    const callArg = (services.words.getPublicWords as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArg.scope).toBe("content");
+  });
+
+  it("rejects an unknown scope value with 400 before reaching the service", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/words?scope=everything", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(400);
+    expect(services.words.getPublicWords).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/words/suggest", () => {
+  it("delegates positionally with the default content scope（捕获页判定依据）", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/words/suggest?q=cour&limit=3", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ items: [] });
+    expect(services.words.suggestWords).toHaveBeenCalledWith("cour", 3, "content");
+  });
+
+  it("forwards scope=all so 生词本页 / agent 能联想出自建条目", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/words/suggest?q=cour&scope=all", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(200);
+    expect(services.words.suggestWords).toHaveBeenCalledWith("cour", 8, "all");
+  });
+
+  it("rejects an unknown scope value with 400 before reaching the service", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const res = await app.request("/api/words/suggest?q=cour&scope=stub", { headers: AUTH_HEADERS });
+    expect(res.status).toBe(400);
+    expect(services.words.suggestWords).not.toHaveBeenCalled();
   });
 });
 

@@ -309,6 +309,66 @@ describe("WordRepository L1 search logic", () => {
     expect(mock.lastQuery!.text).toContain("w.definition_md <> ''");
   });
 
+  it("scope=stub 只列生词条目，且 count 与列表同口径（2026-10-11 生词本）", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 0 }],
+      "ORDER BY w.lemma": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: { scope: "stub" },
+      pagination: { limit: 50, offset: 0 },
+      userId: "u-1",
+    });
+
+    // count 查询与列表查询共用 where：两者都必须带 stub 谓词，
+    // 否则「共 N 条」与实际返回条数对不上。
+    expect(mock.calls[0]!.text).toContain("w.definition_md = ''");
+    expect(mock.lastQuery!.text).toContain("w.definition_md = ''");
+    expect(mock.lastQuery!.text).not.toContain("w.definition_md <> ''");
+  });
+
+  it("scope=all 不加内容维度谓词，正式词条与生词条目同列", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 0 }],
+      "ORDER BY w.lemma": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: { scope: "all" },
+      pagination: { limit: 50, offset: 0 },
+      userId: "u-1",
+    });
+
+    expect(mock.calls[0]!.text).not.toContain("w.definition_md");
+    expect(mock.lastQuery!.text).not.toContain("w.definition_md");
+  });
+
+  it("显式 scope=content 与省略 scope 完全同构（默认口径不被改写）", async () => {
+    mock.setRowMap({
+      "count(*)": [{ total: 0 }],
+      "ORDER BY w.lemma": [],
+    });
+    const repository = new WordRepository();
+
+    await repository.findPublic({
+      filters: {},
+      pagination: { limit: 50, offset: 0 },
+      userId: "u-1",
+    });
+    const withoutScope = mock.lastQuery!.text;
+
+    await repository.findPublic({
+      filters: { scope: "content" },
+      pagination: { limit: 50, offset: 0 },
+      userId: "u-1",
+    });
+
+    expect(mock.lastQuery!.text).toBe(withoutScope);
+  });
+
   it("adds a multi-token lemma predicate and ranking tier for multi-word queries (L1-1)", async () => {
     mock.setRowMap({
       "count(*)": [{ total: 3 }],
@@ -414,6 +474,19 @@ describe("WordRepository.suggest", () => {
     expect(query.text).toContain("w.pinyin ILIKE $2");
     expect(query.text).toContain("w.definition_md <> ''");
     expect(query.text).toContain("WHEN w.lemma ILIKE $4 THEN 0");
+    expect(query.text).toContain("LIMIT $7");
+    expect(query.params).toEqual(["%cour%", "%cour%", "%cour%", "cour%", "%cour%", "%cour%", 8]);
+  });
+
+  it("scope=all 放开 stub 过滤（生词本页 / MCP agent 候选），参数位次不变", async () => {
+    mock.setRows([]);
+    const repository = new WordRepository();
+
+    await repository.suggest("cour", 8, "all");
+
+    const query = mock.lastQuery!;
+    // 只摘掉 stub 谓词，占位符编号与参数顺序必须保持不变，否则 LIMIT 会串位
+    expect(query.text).not.toContain("w.definition_md");
     expect(query.text).toContain("LIMIT $7");
     expect(query.params).toEqual(["%cour%", "%cour%", "%cour%", "cour%", "%cour%", "%cour%", 8]);
   });

@@ -423,7 +423,12 @@ const l2FieldRequestSchema = z.object({
 }).passthrough();
 const reviewQueueQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
-  mode: z.enum(["review", "cram", "preview"]).optional(),
+  // mode：契约如实声明前端会发的全部值（收尾轮修正）——`learn`（学新词通道，
+  // useReview.startReview 原样透传）与 `zen`（禅模式）此前不在枚举里，契约与
+  // 真实流量长期不符；路由层 parseReviewQueueQuery 会把两者折叠为 "review"
+  // session（fail-open），运行时不 400。若未来收紧校验，缺这两个值会让
+  // learn/zen 链路全链 400 —— 即 answer 端 P0 的镜像缺口。
+  mode: z.enum(["review", "cram", "preview", "learn", "zen"]).optional(),
   offset: z.coerce.number().int().min(0).optional(),
   // 复习通道（2026-10-10 新学/复习隔离）：review = 只出到期复习卡（永不含新卡），
   // new = 只出从未作答的新卡。缺省 = 混流（保持旧行为，向后兼容）。

@@ -373,8 +373,28 @@ export class ReviewService {
     const candidates = this.deps.findDueCandidates
       ? await this.deps.findDueCandidates(userId, wordbookId, REVIEW_QUEUE_CANDIDATE_LIMIT, channel)
       : null;
-    if (!candidates || candidates.length === 0) {
-      // 依赖缺失或无到期候选时退回 findDueCards 直出，保持向后兼容
+    // 通道隔离纪律（2026-10-11 审查 R1）：`candidates.length === 0`（依赖存在、但**这个
+    // 通道**真的没卡）必须返回空队列，**不得**退回 findDueCards —— 那条路径不带 channel
+    // 谓词，会把另一通道的卡发出去（learn 会话拿到到期复习卡，前端按 state==="new"
+    // 判"首学"并计入"今日新学"，语义直接串台）。
+    // 只有 `candidates === null`（deps 缺失，精简测试夹具）才走兼容直出。
+    if (candidates && candidates.length === 0) {
+      return {
+        items: [],
+        session: {
+          id: session.id,
+          mode: session.mode,
+          cardsSeen: session.cards_seen,
+        },
+        stats: {
+          total: 0,
+          remaining: 0,
+        },
+        hasMore: false,
+      };
+    }
+    if (!candidates) {
+      // 依赖缺失：无条件直出，保持向后兼容
       const fetched = await this.deps.findDueCards(userId, wordbookId, limit + offset + 1);
       const page = fetched.slice(offset, offset + limit);
       return {
