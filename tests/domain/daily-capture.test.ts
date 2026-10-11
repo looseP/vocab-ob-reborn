@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_DAILY_CAPTURE_TYPES,
+  canTransitionEntryStatus,
   renderDailyCaptureFile,
   type DailyCaptureEntryRow,
   type DailyCaptureTypeRow,
@@ -124,6 +125,24 @@ describe("renderDailyCaptureFile（日文件投影）", () => {
     expect(markdown).toContain("共 1 条 · 已回顾 1 · 已吸收 0");
   });
 
+  it("置要加 ★ 前缀；类型行缺 label 时标题回退 type_key", () => {
+    const marked = renderDailyCaptureFile({
+      date: "2026-10-10",
+      types: TYPES,
+      entries: [makeEntry({ meta: { important: true } })],
+      formatClock: CLOCK,
+    });
+    expect(marked).toContain("- [#1] 01:02 ★ harness the power");
+
+    const noLabel = renderDailyCaptureFile({
+      date: "2026-10-10",
+      types: [{ ...makeType("custom", "", 9), label: undefined as unknown as string }],
+      entries: [makeEntry({ entry_type: "custom", content: "自定义类型条目" })],
+      formatClock: CLOCK,
+    });
+    expect(noLabel).toContain("## custom (1)");
+  });
+
   it("seed 默认六类：sort 升序、note 兜底收尾", () => {
     expect(DEFAULT_DAILY_CAPTURE_TYPES.map((type) => type.typeKey)).toEqual([
       "phrase",
@@ -133,5 +152,26 @@ describe("renderDailyCaptureFile（日文件投影）", () => {
       "idea",
       "note",
     ]);
+  });
+});
+
+describe("canTransitionEntryStatus（M2 状态机）", () => {
+  it("前向流转合法：raw→reviewed/archived，reviewed→absorbed/archived；同状态 = 幂等 no-op", () => {
+    expect(canTransitionEntryStatus("raw", "reviewed")).toBe(true);
+    expect(canTransitionEntryStatus("raw", "archived")).toBe(true);
+    expect(canTransitionEntryStatus("reviewed", "absorbed")).toBe(true);
+    expect(canTransitionEntryStatus("reviewed", "archived")).toBe(true);
+    expect(canTransitionEntryStatus("raw", "raw")).toBe(true);
+    expect(canTransitionEntryStatus("absorbed", "absorbed")).toBe(true);
+    expect(canTransitionEntryStatus("archived", "archived")).toBe(true);
+  });
+
+  it("跳级与回退拒绝：raw→absorbed；终态 absorbed/archived 无出口", () => {
+    expect(canTransitionEntryStatus("raw", "absorbed")).toBe(false);
+    expect(canTransitionEntryStatus("reviewed", "raw")).toBe(false);
+    expect(canTransitionEntryStatus("absorbed", "reviewed")).toBe(false);
+    expect(canTransitionEntryStatus("absorbed", "archived")).toBe(false);
+    expect(canTransitionEntryStatus("archived", "raw")).toBe(false);
+    expect(canTransitionEntryStatus("archived", "absorbed")).toBe(false);
   });
 });

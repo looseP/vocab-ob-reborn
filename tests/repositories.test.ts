@@ -411,6 +411,29 @@ describe("NoteEntryRepository", () => {
     ]);
   });
 
+  it("countCustomKinds 空表回落 n=0 / has=false（row 兜底分支）", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    expect(await repos.noteEntries.countCustomKinds("u1", [], "易错点")).toEqual({ n: 0, has: false });
+  });
+
+  it("restore 走 UPDATE ... RETURNING kind（0055 契约：取消隐藏后 kind 不丢）", async () => {
+    mock.setRows([{
+      id: "e1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+      content_md: "x", kind: "错题", hidden_at: null,
+      created_at: "2026-09-06T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
+    } as NoteEntryRow]);
+    const repos = createRepositories();
+
+    const row = await repos.noteEntries.restore("u1", "e1");
+
+    expect(row?.kind).toBe("错题");
+    expect(mock.calls[0].text).toContain("SET hidden_at = NULL");
+    expect(mock.calls[0].text).toContain("RETURNING id, user_id, word_id, wordbook_id, content_md, kind");
+    expect(mock.calls[0].params).toEqual(["u1", "e1"]);
+  });
+
   it("hide moves an entry out of display non-destructively", async () => {
     mock.setRows([{
       id: "e1", hidden_at: "2026-09-06T00:00:00Z",

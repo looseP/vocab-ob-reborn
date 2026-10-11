@@ -17,6 +17,7 @@ import {
   dailyCaptureDaysResponseSchema,
   dailyCaptureEntryResponseSchema,
   dailyCaptureEvidencePackResponseSchema,
+  dailyCaptureTypeResponseSchema,
   dailyCaptureTypesResponseSchema,
 } from "@/http/daily-capture-response-contract";
 
@@ -105,6 +106,9 @@ function makeMockServices(overrides: Record<string, unknown> = {}): Services {
       getDayFile: vi.fn(async () => ({ date: TODAY, markdown: "# 每日捕获 · " + TODAY + "\n" })),
       getEvidencePack: vi.fn(async () => EVIDENCE_PACK),
       absorbEntry: vi.fn(async () => ABSORB_RESULT),
+      patchEntry: vi.fn(async () => ENTRY_ROW),
+      createType: vi.fn(async () => TYPE_ROW),
+      patchType: vi.fn(async () => TYPE_ROW),
       ...overrides,
     },
   } as unknown as Services;
@@ -208,18 +212,98 @@ describe("GET /api/daily-capture/types|days|days/:date|days/:date/file", () => {
     expect(body.entries).toHaveLength(1);
   });
 
-  it("days/:date/file 返回 text/markdown + no-store（捕获窗复制按钮数据源）", async () => {
+  it("days/:date/file 返回 text/markdown + no-store（捕获窗复制按钮数据源）；非法日期 400", async () => {
     const services = makeMockServices();
-    const res = await createApp(services).request(`/api/daily-capture/days/${TODAY}/file`, { headers: AUTH_HEADERS });
+    const app = createApp(services);
+    const res = await app.request(`/api/daily-capture/days/${TODAY}/file`, { headers: AUTH_HEADERS });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/markdown");
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.text()).toContain("# 每日捕获");
+
+    const badDate = await app.request("/api/daily-capture/days/2026-13-99/file", { headers: AUTH_HEADERS });
+    expect(badDate.status).toBe(400);
+    expect(services.dailyCapture.getDayFile).toHaveBeenCalledTimes(1); // 坏日期不进服务层
   });
 
   it("未认证 401（owner-only 读面，agent 无权限）", async () => {
     const res = await createApp(makeMockServices()).request("/api/daily-capture/days");
     expect(res.status).toBe(401);
+  });
+});
+
+describe("M2 回顾面：PATCH /entries/:id + POST /types + PATCH /types/:key", () => {
+  it("PATCH /entries/:id：流转 + 置要透传，200 契约；空 body 400 不进服务层", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const ok = await app.request(`/api/daily-capture/entries/${ENTRY_ROW.id}`, {
+      method: "PATCH",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ status: "reviewed", important: true }),
+    });
+    expect(ok.status).toBe(200);
+    expect(services.dailyCapture.patchEntry).toHaveBeenCalledWith(USER, ENTRY_ROW.id, {
+      status: "reviewed",
+      important: true,
+    });
+    dailyCaptureEntryResponseSchema.parse(await ok.json());
+
+    const empty = await app.request(`/api/daily-capture/entries/${ENTRY_ROW.id}`, {
+      method: "PATCH",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({}),
+    });
+    expect(empty.status).toBe(400);
+    expect(services.dailyCapture.patchEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("POST /types：201 契约；typeKey 形状非法 400 不进服务层", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const created = await app.request("/api/daily-capture/types", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ typeKey: "slang", label: "俚语" }),
+    });
+    expect(created.status).toBe(201);
+    expect(services.dailyCapture.createType).toHaveBeenCalledWith(USER, { typeKey: "slang", label: "俚语" });
+    dailyCaptureTypeResponseSchema.parse(await created.json());
+
+    const bad = await app.request("/api/daily-capture/types", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ typeKey: "Slang Key", label: "俚语" }),
+    });
+    expect(bad.status).toBe(400);
+    expect(services.dailyCapture.createType).toHaveBeenCalledTimes(1);
+  });
+
+  it("PATCH /types/:key：改名/隐藏透传，200 契约；空 body 400 不进服务层", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+    const patched = await app.request("/api/daily-capture/types/slang", {
+      method: "PATCH",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({ label: "俚语", hidden: true }),
+    });
+    expect(patched.status).toBe(200);
+    expect(services.dailyCapture.patchType).toHaveBeenCalledWith(USER, "slang", { label: "俚语", hidden: true });
+    dailyCaptureTypeResponseSchema.parse(await patched.json());
+
+    const empty = await app.request("/api/daily-capture/types/slang", {
+      method: "PATCH",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({}),
+    });
+    expect(empty.status).toBe(400);
+    expect(services.dailyCapture.patchType).toHaveBeenCalledTimes(1);
+  });
+
+  it("M2 写面同样 owner-only：未认证 401", async () => {
+    const app = createApp(makeMockServices());
+    expect((await app.request(`/api/daily-capture/entries/${ENTRY_ROW.id}`, { method: "PATCH", body: "{}" })).status).toBe(401);
+    expect((await app.request("/api/daily-capture/types", { method: "POST", body: "{}" })).status).toBe(401);
+    expect((await app.request("/api/daily-capture/types/slang", { method: "PATCH", body: "{}" })).status).toBe(401);
   });
 });
 
