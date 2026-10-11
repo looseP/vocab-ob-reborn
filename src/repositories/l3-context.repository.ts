@@ -622,6 +622,29 @@ export class L3ContextRepository extends BaseRepository implements IL3ContextRep
     );
   }
 
+  async findWordContextIdByText(
+    userId: string,
+    wordId: string,
+    text: string,
+  ): Promise<{ id: string; source_id: string } | null> {
+    return this.queryOne<{ id: string; source_id: string }>(
+      `SELECT c.id, c.source_id
+         FROM l3_contexts c
+         JOIN l3_occurrences o ON o.context_id = c.id
+        WHERE c.user_id = $1::uuid AND o.word_id = $2::uuid AND c.text = $3
+        LIMIT 1`,
+      [userId, wordId, text],
+    );
+  }
+
+  async countWordOccurrences(userId: string, wordId: string): Promise<number> {
+    const row = await this.queryOne<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM l3_occurrences WHERE user_id = $1::uuid AND word_id = $2::uuid`,
+      [userId, wordId],
+    );
+    return row?.n ?? 0;
+  }
+
   async createContextLink(input: NewL3ContextLink): Promise<L3ContextLinkRow> {
     const row = await this.queryOne<L3ContextLinkRow>(
       `INSERT INTO l3_context_links

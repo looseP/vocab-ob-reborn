@@ -55,6 +55,7 @@ function makeMockNoteEntryRepo(overrides: Partial<INoteEntryRepository> = {}): I
     listVisibleByWordIds: vi.fn(async () => []),
     insert: vi.fn(async () => ({ hidden_at: null } as NoteEntryRow)),
     updateContent: vi.fn(async () => null),
+    countCustomKinds: vi.fn(async () => ({ n: 0, has: false })),
     hide: vi.fn(async () => null),
     restore: vi.fn(async () => null),
     remove: vi.fn(async () => false),
@@ -311,7 +312,47 @@ describe("NoteEntryService", () => {
     await service.addEntry("u1", "w1", "test");
 
     expect(wbRepo.getOrCreateDefault).toHaveBeenCalledWith("u1");
-    expect(entryRepo.insert).toHaveBeenCalledWith("u1", "wb-default", "w1", "test");
+    expect(entryRepo.insert).toHaveBeenCalledWith("u1", "wb-default", "w1", "test", "general");
+  });
+
+  it("passes kind through on add and edit (0055)", async () => {
+    const entries = makeMockNoteEntryRepo({
+      insert: vi.fn(async () => ({ hidden_at: null, kind: "story" } as NoteEntryRow)),
+      updateContent: vi.fn(async () => ({ hidden_at: null, kind: "story" } as NoteEntryRow)),
+    });
+    const service = makeNoteEntryService(entries, makeMockWordbookRepo(), txRunner);
+
+    await service.addEntry("u1", "w1", "parade 游行", "wb1", "story");
+    expect(entries.insert).toHaveBeenCalledWith("u1", "wb1", "w1", "parade 游行", "story");
+
+    await service.editEntry("u1", "e1", "edited", "story");
+    expect(entries.updateContent).toHaveBeenCalledWith("u1", "e1", "edited", "story");
+  });
+
+  it("blocks a brand-new custom kind beyond the ≤12 limit (422); 已在用/内置不受限", async () => {
+    // 新类型 + 额度已满 → 422（不触插入）
+    const full = makeMockNoteEntryRepo({
+      countCustomKinds: vi.fn(async () => ({ n: 12, has: false })),
+    });
+    const service = makeNoteEntryService(full, makeMockWordbookRepo(), txRunner);
+    await expect(service.addEntry("u1", "w1", "note", "wb1", "第十三种")).rejects.toMatchObject({
+      code: "BUSINESS_RULE",
+    });
+    expect(full.insert).not.toHaveBeenCalled();
+
+    // 已在使用中的自定义类型（has=true）永远放行（历史数据/编辑幂等）
+    const used = makeMockNoteEntryRepo({
+      countCustomKinds: vi.fn(async () => ({ n: 13, has: true })),
+      insert: vi.fn(async () => ({ hidden_at: null } as NoteEntryRow)),
+    });
+    const service2 = makeNoteEntryService(used, makeMockWordbookRepo(), txRunner);
+    await expect(service2.addEntry("u1", "w1", "note", "wb1", "已用类型")).resolves.toBeTruthy();
+
+    // 内置 kind 不占额度、不打计数查询
+    const builtin = makeMockNoteEntryRepo();
+    const service3 = makeNoteEntryService(builtin, makeMockWordbookRepo(), txRunner);
+    await service3.addEntry("u1", "w1", "note", "wb1", "story");
+    expect(builtin.countCustomKinds).not.toHaveBeenCalled();
   });
 
   it("editEntry throws NotFoundError when the entry is missing or not owned", async () => {
@@ -356,7 +397,7 @@ describe("NoteEntryService", () => {
     const entries = makeMockNoteEntryRepo({
       listByUser: vi.fn(async () => [{
         id: "e1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
-        content_md: "note", hidden_at: null,
+        content_md: "note", kind: "story", hidden_at: null,
         created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-02T00:00:00Z",
         word_slug: "abound", word_lemma: "abound", word_title: "Abound",
       }]),
@@ -365,7 +406,7 @@ describe("NoteEntryService", () => {
 
     await expect(service.listEntries("u1", 20, 10)).resolves.toEqual([{
       id: "e1", wordSlug: "abound", wordLemma: "abound", wordTitle: "Abound",
-      contentMd: "note", createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z",
+      contentMd: "note", kind: "story", createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-02T00:00:00Z",
     }]);
     expect(entries.listByUser).toHaveBeenCalledWith("u1", 20, 10);
   });

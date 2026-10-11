@@ -31,6 +31,8 @@ import type { StudyNoteLeaveBarrier } from "@/frontend/components/studyNotes/Stu
 import { isWritingSection, WRITING_SECTION } from "@/frontend/viewModels/writingNavigation";
 import { buildL3SectionUrl, parseL3SectionParam } from "@/frontend/viewModels/l3SectionNavigation";
 import { buildStudyNoteUrl, isStudyNotesSection } from "@/frontend/viewModels/studyNoteNavigation";
+import { isDailyCaptureSection } from "@/frontend/viewModels/dailyCaptureNavigation";
+import { DailyCapturePage } from "@/frontend/pages/DailyCapturePage";
 import {
   markActiveReadStaleAfterManualCommand,
   markActiveReadStaleAfterProposalConfirm,
@@ -142,6 +144,8 @@ export function L3Page() {
   const deepLinkResumeSheet = searchParams.get("resumeSheet");
   const writingSectionPreferred = isWritingSection(searchParams);
   const studyNotesPreferred = isStudyNotesSection(searchParams);
+  // M2：section=daily-capture 深链/刷新恢复（与 studyNotes 同款优先级，无附加参数）。
+  const dailyCapturePreferred = isDailyCaptureSection(searchParams);
   const writingTaskIdParam = searchParams.get("writingTaskId");
   // 做题子空间 URL 契约（2026-09-26）：试卷台/练习/错题库/会话四面的 `?section=`
   // 深链与刷新恢复。优先级低于作文与学习笔记（它们参数更多、契约更窄），
@@ -174,9 +178,9 @@ export function L3Page() {
 
   useEffect(() => {
     if (sectionParam === null) return;
-    if (writingSectionPreferred || writingTaskIdParam || studyNotesPreferred) return;
+    if (writingSectionPreferred || writingTaskIdParam || studyNotesPreferred || dailyCapturePreferred) return;
     setSection(sectionParam);
-  }, [sectionParam, writingSectionPreferred, writingTaskIdParam, studyNotesPreferred]);
+  }, [sectionParam, writingSectionPreferred, writingTaskIdParam, studyNotesPreferred, dailyCapturePreferred]);
 
   useEffect(() => {
     if (writingSectionPreferred || writingTaskIdParam) setSection(WRITING_SECTION as L3ShellSection);
@@ -187,11 +191,16 @@ export function L3Page() {
     if (studyNotesPreferred) setSection("studyNotes");
   }, [studyNotesPreferred]);
 
+  // M2：section=daily-capture 深链/刷新恢复（与 studyNotes 同款，单一 effect）。
+  useEffect(() => {
+    if (dailyCapturePreferred) setSection("dailyCapture");
+  }, [dailyCapturePreferred]);
+
   // 纯 ?sheet=<id> 分流（只读）：先 GET 判 scope——file/paper 沿用 F-1 落试卷台；
   // writing 记录只读解析 taskId 并 replace 为作文规范 URL，**不调用 openSheet、不建纸**。
   useEffect(() => {
     if (!deepLinkSheet || writingSectionPreferred || deepLinkVenue || deepLinkPaper) return;
-    if (studyNotesPreferred) return; // 学习笔记优先（不抢导航）
+    if (studyNotesPreferred || dailyCapturePreferred) return; // 学习笔记/每日捕获优先（不抢导航）
     let cancelled = false;
     apiFetch<{ sheet?: { scope?: string; writing_task_id?: string | null } }>(
       `/l3/sheets/${encodeURIComponent(deepLinkSheet)}`,
@@ -213,15 +222,15 @@ export function L3Page() {
         if (!cancelled) setSection("papers"); // 判读失败交回 F-1 原路（其自带 404 空态）
       });
     return () => { cancelled = true; };
-  }, [deepLinkSheet, writingSectionPreferred, deepLinkVenue, deepLinkPaper, studyNotesPreferred, navigate]);
+  }, [deepLinkSheet, writingSectionPreferred, deepLinkVenue, deepLinkPaper, studyNotesPreferred, dailyCapturePreferred, navigate]);
 
   useEffect(() => {
     if (!deepLinkVenue && !deepLinkSheet && !deepLinkPaper) return;
     if (writingSectionPreferred) return; // 作文宿主优先
-    if (studyNotesPreferred) return; // 学习笔记优先（venue 深链由学习笔记页消费）
+    if (studyNotesPreferred || dailyCapturePreferred) return; // 学习笔记/每日捕获优先
     if (deepLinkSheet && !deepLinkVenue && !deepLinkPaper) return; // 分流 effect 处理
     setSection("papers");
-  }, [deepLinkVenue, deepLinkSheet, deepLinkPaper, writingSectionPreferred, studyNotesPreferred]);
+  }, [deepLinkVenue, deepLinkSheet, deepLinkPaper, writingSectionPreferred, studyNotesPreferred, dailyCapturePreferred]);
 
   const openProposal = (proposalId: string) => {
     setSelectedProposalId(proposalId);
@@ -345,6 +354,9 @@ export function L3Page() {
     // 学习笔记子空间（Task 08）：/l3?section=study-notes 宿主（列表/专题/深链/离页屏障；
     // 浏览零创建、显式「新建笔记」才 POST；离开屏障注册给 shell 导航复用）。
     studyNotes: <L3StudyNotesPage onRegisterLeaveBarrier={registerStudyNotesBarrier} />,
+    // 每日捕获子空间（M2）：/l3?section=daily-capture 宿主（日期流 + 当日文件 +
+    // 回顾✓/置要/归档 + 类型管理）。动作点击即 PATCH 保存，无草稿 → 无离页屏障。
+    dailyCapture: <DailyCapturePage />,
     practice: <L3PracticePage client={l3Client} onNavigate={navigateL3} focusContextId={practiceFocusContextId} />,
     errorBook: <L3ErrorBookPage client={l3Client} onNavigate={navigateL3} />,
     session: <L3SessionPage client={l3Client} onNavigate={navigateL3} />,

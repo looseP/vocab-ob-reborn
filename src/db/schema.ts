@@ -382,12 +382,15 @@ export const noteRevisions = pgTable("note_revisions", {
 
 // 笔记条目(2026-09-06 条目化):1 行/条,追加式写入;hidden_at 非空 = 已隐藏(非破坏)。
 // notes/note_revisions 为文档模型遗留,只读保留至 P4 清理,不再有代码写入路径。
+// kind（0055，2026-10-10 笔记 UX 修复）：条目分类；内置 6 类 + 用户自定义，
+// **不加 CHECK 枚举**（扩展不锁死，服务层做保留字/数量校验），存量行由 DEFAULT 回填。
 export const noteEntries = pgTable("note_entries", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	userId: uuid("user_id").notNull(),
 	wordId: uuid("word_id").notNull(),
 	wordbookId: uuid("wordbook_id").notNull(),
 	contentMd: text("content_md").notNull(),
+	kind: text().default('general').notNull(),
 	hiddenAt: timestamp("hidden_at", { withTimezone: true, mode: 'string' }),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
@@ -1951,4 +1954,63 @@ export const rootLexicon = pgTable("root_lexicon", {
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, () => [
 	pgPolicy("root_lexicon_public_read", { as: "permissive", for: "select", to: ["public"], using: sql`true` }),
+]);
+
+// ── 每日捕获（2026-10-10，设计定稿《每日捕获-设计分析》）─────────────────────
+// 轻阻力流水：学到用到先记录 → 回顾复盘 → agent 提案吸收（proposal-only）。
+// **两张新表、不改任何已有表**；条目是唯一真相（追加式 + hidden_at 软删），
+// 「一天一文件」是 (entry_date, seq) 确定性投影，不是存储形态。
+//
+// 零调度写入是结构性的：两表无 stability / difficulty / due 列，服务层不引用
+// review.service、不写 user_word_progress / review_logs。流水期**不写 L3**——
+// 吸收（用户采纳，M3）才把例句/词组经 buildL3TrioInputs 单向晋升进 l3_* 表，
+// l3_sources「可复用语料」的纯度由这条分层红线保证。
+//
+// entry_type 是对 daily_capture_types 的**软引用**（无 FK）：追加必须零阻力，
+// 类型完整性由服务层校验（未知类型 422）；类型删除走 hidden 标记而非删行，
+// 因此不存在悬空引用的路径。
+export const dailyCaptureTypes = pgTable("daily_capture_types", {
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	// 稳定 key（条目表引用）；phrase/sentence/method/question/idea/note 为 seed 五类，
+	// 自定义类型（错因/搭配/文化点…）走 INSERT，不发版。
+	typeKey: text("type_key").notNull(),
+	label: text("label").notNull(),
+	// 吸收去向提示（agent 证据包与提案规范共用一段话）。
+	absorptionHint: text("absorption_hint"),
+	sort: integer("sort").default(0).notNull(),
+	hidden: boolean("hidden").default(false).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	primaryKey({ columns: [table.userId, table.typeKey] }),
+	index("idx_daily_capture_types_user").using("btree", table.userId.asc().nullsLast(), table.sort.asc().nullsLast()),
+	pgPolicy("daily_capture_types_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("daily_capture_types_sort_check", sql`sort >= 0`),
+]);
+
+export const dailyCaptureEntries = pgTable("daily_capture_entries", {
+	id: uuid("id").defaultRandom().primaryKey().notNull(),
+	userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+	// 显示时区（Asia/Shanghai）日历日——与复习日历/连胜同口径（src/db/timezone.ts）。
+	entryDate: date("entry_date").notNull(),
+	// 当日自增序号：INSERT..SELECT coalesce(max(seq),0)+1 单语句原子分配，
+	// (user_id, entry_date, seq) 唯一索引兜底；投影的稳定排序与 [#seq] 引用都靠它。
+	seq: integer("seq").notNull(),
+	entryType: text("entry_type").notNull(),
+	// 主文本；上限对齐 capture sentence 的 ≤4000（schema 检查在 zod 层）。
+	content: text("content").notNull(),
+	// 类型轻字段：meaning/translation/sourceUrl/obsidianRef/wordSlugs（词软引用，
+	// 流水期词可能尚不存在，吸收时才解析）。
+	meta: jsonb("meta"),
+	status: text("status").default('raw').notNull(),
+	// M3 吸收回执（§9 proposal-only）：采纳动作的留痕数组，未吸收为 NULL；
+	// 仓储层用 `COALESCE(absorption, '[]'::jsonb) || $n::jsonb` 追加，永不覆盖。
+	absorption: jsonb("absorption"),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	hiddenAt: timestamp("hidden_at", { withTimezone: true, mode: 'string' }),
+}, (table) => [
+	unique("daily_capture_entries_day_seq_unique").on(table.userId, table.entryDate, table.seq),
+	index("idx_daily_capture_entries_user_date").using("btree", table.userId.asc().nullsLast(), table.entryDate.desc().nullsFirst(), table.seq.asc().nullsLast()),
+	pgPolicy("daily_capture_entries_own_all", { as: "permissive", for: "all", to: ["public"], using: sql`(auth.uid() = user_id)`, withCheck: sql`(auth.uid() = user_id)` }),
+	check("daily_capture_entries_status_check", sql`status = ANY (ARRAY['raw'::text, 'reviewed'::text, 'absorbed'::text, 'archived'::text])`),
+	check("daily_capture_entries_seq_check", sql`seq >= 1`),
 ]);

@@ -453,6 +453,7 @@ function noteEntryRow(overrides: Partial<NoteEntryRow> = {}): NoteEntryRow {
     word_id: "word-1",
     wordbook_id: "wordbook-1",
     content_md: "first note",
+    kind: "general",
     hidden_at: null,
     created_at: ISO_CREATED,
     updated_at: ISO_UPDATED,
@@ -485,6 +486,7 @@ describe("GET /api/words/:slug/notes", () => {
       {
         id: "entry-visible",
         content_md: "first note",
+        kind: "general",
         hidden_at: null,
         created_at: ISO_CREATED,
         updated_at: ISO_UPDATED,
@@ -492,6 +494,7 @@ describe("GET /api/words/:slug/notes", () => {
       {
         id: "entry-hidden",
         content_md: "hidden note",
+        kind: "general",
         hidden_at: ISO_HIDDEN,
         created_at: ISO_CREATED,
         updated_at: ISO_UPDATED,
@@ -527,16 +530,55 @@ describe("POST /api/words/:slug/notes/entries", () => {
     });
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(services.noteEntries.addEntry).toHaveBeenCalledWith("user-123", "word-1", "brand new");
+    // kind 缺省 = general（0055）；第 4 参 wordbookId undefined = 服务层走默认词书
+    expect(services.noteEntries.addEntry).toHaveBeenCalledWith(
+      "user-123", "word-1", "brand new", undefined, "general",
+    );
     expect(body).toEqual({
       entry: {
         id: "entry-new",
         content_md: "brand new",
+        kind: "general",
         hidden_at: null,
         created_at: ISO_CREATED,
         updated_at: ISO_UPDATED,
       },
     });
+  });
+
+  it("passes an explicit kind through to the service (0055)", async () => {
+    const services = makeMockServices();
+    services.words.getWordBySlug = vi.fn().mockResolvedValue({ word: NOTE_WORD, l2Promoted: false });
+    services.noteEntries.addEntry = vi.fn().mockResolvedValue(
+      noteEntryRow({ id: "entry-story", content_md: "parade 游行", kind: "story" }),
+    );
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({ content_md: "parade 游行", kind: "story" }),
+    });
+    expect(res.status).toBe(201);
+    expect(services.noteEntries.addEntry).toHaveBeenCalledWith(
+      "user-123", "word-1", "parade 游行", undefined, "story",
+    );
+    const body = await res.json();
+    expect(body.entry.kind).toBe("story");
+  });
+
+  it("rejects a reserved built-in label used as kind value (400)", async () => {
+    const services = makeMockServices();
+    services.words.getWordBySlug = vi.fn().mockResolvedValue({ word: NOTE_WORD, l2Promoted: false });
+    const app = createApp(services);
+
+    const res = await app.request("/api/words/abound/notes/entries", {
+      method: "POST",
+      headers: { ...AUTH_HEADERS, "Content-Type": "application/json" },
+      body: JSON.stringify({ content_md: "x", kind: "故事会" }),
+    });
+    expect(res.status).toBe(400);
+    expect(services.noteEntries.addEntry).not.toHaveBeenCalled();
   });
 
   it("rejects an empty content body with 400 VALIDATION_ERROR", async () => {
@@ -569,10 +611,12 @@ describe("PUT /api/words/:slug/notes/entries/:entryId", () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(services.noteEntries.editEntry).toHaveBeenCalledWith("user-123", "entry-1", "edited");
+    // kind 缺省 undefined = 保持原值（0055；编辑不改分类）
+    expect(services.noteEntries.editEntry).toHaveBeenCalledWith("user-123", "entry-1", "edited", undefined);
     expect(body.entry).toEqual({
       id: "entry-1",
       content_md: "edited",
+      kind: "general",
       hidden_at: null,
       created_at: ISO_CREATED,
       updated_at: ISO_UPDATED,

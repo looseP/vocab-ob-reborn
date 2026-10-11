@@ -166,6 +166,8 @@ describe("Phase 4B L3 frontend shell", () => {
       { id: "writing", label: "作文" },
       // Task 08：学习笔记子空间（/l3?section=study-notes）为显式新增的一级入口。
       { id: "studyNotes", label: "学习笔记" },
+      // M2：每日捕获子空间（/l3?section=daily-capture）为显式新增的一级入口。
+      { id: "dailyCapture", label: "每日捕获" },
       { id: "word", label: "词空间" },
       { id: "context", label: "语境条目" },
       { id: "graph", label: "关联图" },

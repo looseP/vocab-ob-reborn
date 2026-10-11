@@ -909,3 +909,40 @@ describe("L3ContextRepository", () => {
     expect(mock.lastQuery?.params).toEqual(["u1", 30]);
   });
 });
+
+describe("L3ContextRepository 判重与计数（每日捕获吸收三件套用）", () => {
+  beforeEach(() => mock.reset());
+
+  it("findWordContextIdByText：JOIN 词条出现表按 (user, word, 原文) 取 1 条", async () => {
+    mock.setRows([{ id: "ctx-1", source_id: "src-1" }]);
+    const repos = createRepositories();
+
+    const row = await repos.l3Context.findWordContextIdByText("u1", "w1", "She harnessed her frustration.");
+
+    expect(row).toEqual({ id: "ctx-1", source_id: "src-1" });
+    const query = mock.lastQuery!;
+    expect(query.text).toContain("JOIN l3_occurrences o ON o.context_id = c.id");
+    expect(query.text).toContain("WHERE c.user_id = $1::uuid AND o.word_id = $2::uuid AND c.text = $3");
+    expect(query.text).toContain("LIMIT 1");
+    expect(query.params).toEqual(["u1", "w1", "She harnessed her frustration."]);
+  });
+
+  it("findWordContextIdByText：无匹配返回 null（吸收会退回 add_word 路径）", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    expect(await repos.l3Context.findWordContextIdByText("u1", "w1", "没记过这句")).toBeNull();
+  });
+
+  it("countWordOccurrences：COUNT(*)::int；无行回落 0", async () => {
+    const repos = createRepositories();
+
+    mock.setRows([{ n: 4 }]);
+    expect(await repos.l3Context.countWordOccurrences("u1", "w1")).toBe(4);
+    expect(mock.lastQuery!.text).toContain("COUNT(*)::int AS n FROM l3_occurrences");
+    expect(mock.lastQuery!.params).toEqual(["u1", "w1"]);
+
+    mock.setRows([]);
+    expect(await repos.l3Context.countWordOccurrences("u1", "w1")).toBe(0);
+  });
+});

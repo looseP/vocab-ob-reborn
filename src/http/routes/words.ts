@@ -15,6 +15,7 @@ import type { Services } from "@/services";
 import type { AuthRole, Principal } from "@/http/middleware/auth";
 import { noteEntryUpsertRequestSchema, wordsQuerySchema, wordSuggestQuerySchema } from "@/schemas/http";
 import { validationError } from "../error-response";
+import { toNoteEntryDto } from "../note-entry-response";
 import {
   resolveBatchImportMode,
   sanitizeBatchImportWords,
@@ -83,26 +84,19 @@ export function wordRoutes(services: Services) {
 
   // GET /:slug/notes — 词的笔记条目(含已隐藏,详情页条目管理用)。
   // 条目制(2026-09-06):追加式写入,无版本链;hidden_at 非空 = 已隐藏。
+  // 响应映射(含 kind,0055)外迁 note-entry-response —— 本文件受棘轮冻结不许净增。
   app.get("/:slug/notes", async (c) => {
     const userId = c.get("userId");
     const { word } = await services.words.getWordBySlug(c.req.param("slug"));
     const wordbook = await services.wordbooks.getOrCreateDefault(userId);
     const entries = await services.noteEntries.getEntries(userId, word.id, wordbook.id);
-    // pg 驱动对 timestamptz 返回 Date 对象(类型标注为 string),new Date 两者兼容
-    const toIso = (value: string | null) => (value ? new Date(value).toISOString() : null);
     return c.json({
-      entries: entries.map((e) => ({
-        id: e.id,
-        content_md: e.content_md,
-        hidden_at: toIso(e.hidden_at),
-        created_at: toIso(e.created_at),
-        updated_at: toIso(e.updated_at),
-      })),
+      entries: entries.map(toNoteEntryDto),
       hidden_count: entries.filter((e) => e.hidden_at !== null).length,
     });
   });
 
-  // POST /:slug/notes/entries — 快记/添加一条笔记条目(追加式,无覆盖冲突)
+  // POST /:slug/notes/entries — 快记/添加一条笔记条目(追加式,无覆盖冲突;kind 可选)
   app.post("/:slug/notes/entries", async (c) => {
     const userId = c.get("userId");
     const parsed = noteEntryUpsertRequestSchema.safeParse(await c.req.json());
@@ -110,35 +104,23 @@ export function wordRoutes(services: Services) {
       return validationError(c, parsed.error.flatten());
     }
     const { word } = await services.words.getWordBySlug(c.req.param("slug"));
-    const entry = await services.noteEntries.addEntry(userId, word.id, parsed.data.content_md);
-    return c.json({
-      entry: {
-        id: entry.id,
-        content_md: entry.content_md,
-        hidden_at: null,
-        created_at: new Date(entry.created_at).toISOString(),
-        updated_at: new Date(entry.updated_at).toISOString(),
-      },
-    }, 201);
+    const entry = await services.noteEntries.addEntry(
+      userId, word.id, parsed.data.content_md, undefined, parsed.data.kind ?? "general",
+    );
+    return c.json({ entry: toNoteEntryDto(entry) }, 201);
   });
 
-  // PUT /:slug/notes/entries/:entryId — 编辑单条内容(详情页)
+  // PUT /:slug/notes/entries/:entryId — 编辑单条内容(详情页;kind 可选,缺省保持原值)
   app.put("/:slug/notes/entries/:entryId", async (c) => {
     const userId = c.get("userId");
     const parsed = noteEntryUpsertRequestSchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return validationError(c, parsed.error.flatten());
     }
-    const entry = await services.noteEntries.editEntry(userId, c.req.param("entryId"), parsed.data.content_md);
-    return c.json({
-      entry: {
-        id: entry.id,
-        content_md: entry.content_md,
-        hidden_at: entry.hidden_at ? new Date(entry.hidden_at).toISOString() : null,
-        created_at: new Date(entry.created_at).toISOString(),
-        updated_at: new Date(entry.updated_at).toISOString(),
-      },
-    });
+    const entry = await services.noteEntries.editEntry(
+      userId, c.req.param("entryId"), parsed.data.content_md, parsed.data.kind,
+    );
+    return c.json({ entry: toNoteEntryDto(entry) });
   });
 
   // DELETE /:slug/notes/entries/:entryId — 硬删除(破坏性,详情页专属,前端确认保护)
@@ -152,30 +134,14 @@ export function wordRoutes(services: Services) {
   app.post("/:slug/notes/entries/:entryId/hide", async (c) => {
     const userId = c.get("userId");
     const entry = await services.noteEntries.hideEntry(userId, c.req.param("entryId"));
-    return c.json({
-      entry: {
-        id: entry.id,
-        content_md: entry.content_md,
-        hidden_at: entry.hidden_at ? new Date(entry.hidden_at).toISOString() : null,
-        created_at: new Date(entry.created_at).toISOString(),
-        updated_at: new Date(entry.updated_at).toISOString(),
-      },
-    });
+    return c.json({ entry: toNoteEntryDto(entry) });
   });
 
   // POST /:slug/notes/entries/:entryId/restore — 恢复已隐藏条目
   app.post("/:slug/notes/entries/:entryId/restore", async (c) => {
     const userId = c.get("userId");
     const entry = await services.noteEntries.restoreEntry(userId, c.req.param("entryId"));
-    return c.json({
-      entry: {
-        id: entry.id,
-        content_md: entry.content_md,
-        hidden_at: entry.hidden_at ? new Date(entry.hidden_at).toISOString() : null,
-        created_at: new Date(entry.created_at).toISOString(),
-        updated_at: new Date(entry.updated_at).toISOString(),
-      },
-    });
+    return c.json({ entry: toNoteEntryDto(entry) });
   });
 
   // DELETE /:slug — 详情页硬删 stub 词条（0023，stub 生命周期）。

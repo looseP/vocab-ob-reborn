@@ -14,6 +14,8 @@ import type { DailyCountBucket } from "@/frontend/utils/dailyReviewLimit";
 export interface ReviewNoteEntry {
   id: string;
   content_md: string;
+  /** kind(0055, 2026-10-10 笔记 UX 修复):内置 6 类 id 或用户自定义；general = 默认不显示 chip。 */
+  kind: string;
   created_at: string;
 }
 

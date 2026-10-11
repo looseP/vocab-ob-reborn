@@ -256,6 +256,27 @@ describe("GET /api/review/queue l3 injection", () => {
     expect(body.items[1].l3_contexts).toEqual([]);
   });
 
+  it("attaches visible note entries with kind (0055)", async () => {
+    const reviews = { getQueue: vi.fn().mockResolvedValue({ items: [{ word: { id: "w-1", slug: "ephemeral" } }] }) };
+    const noteEntries = {
+      getVisibleByWordIds: vi.fn().mockResolvedValue(new Map([["w-1", [
+        {
+          id: "e1", user_id: "user-123", word_id: "w-1", wordbook_id: "wb-1",
+          content_md: "parade 游行 → ap-para-tus", kind: "story", hidden_at: null,
+          created_at: "2026-10-10T01:00:00Z", updated_at: "2026-10-10T01:00:00Z",
+        },
+      ]]])),
+    };
+    const services = { ...makeMockServices(), reviews, noteEntries } as unknown as Services;
+    const app = createApp(services);
+    const res = await app.request("/api/review/queue", { headers: AUTH_HEADERS });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.items[0].note_entries).toEqual([
+      { id: "e1", content_md: "parade 游行 → ap-para-tus", kind: "story", created_at: "2026-10-10T01:00:00.000Z" },
+    ]);
+  });
+
   it("degrades to empty arrays when l3 service throws (best-effort)", async () => {
     const reviews = { getQueue: vi.fn().mockResolvedValue({ items: [{ word: { id: "w-1", slug: "ephemeral" }, note_entries: [] }] }) };
     const l3Context = { listContextsForWord: vi.fn().mockRejectedValue(new Error("l3 down")) };

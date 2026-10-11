@@ -61,10 +61,12 @@ export const reviewQueueResponseSchema = z.object({
     /**
      * P3-① 复习卡附带「我的笔记」(条目制 2026-09-06):可见笔记条目列表
      * (hidden_at IS NULL),创建时间正序;无笔记为空数组。
+     * kind(0055, 2026-10-10 笔记 UX 修复):内置 6 类 id 或用户自定义。
      */
     note_entries: z.array(z.object({
       id: z.string(),
       content_md: z.string(),
+      kind: z.string(),
       created_at: z.string(),
     }).strict()),
     /**

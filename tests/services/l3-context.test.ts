@@ -95,6 +95,8 @@ function makeRepo(overrides: Partial<IL3ContextRepository> = {}): IL3ContextRepo
     })),
     replaceSourceSpaces: vi.fn(async () => undefined),
     ensureSourceSpaces: vi.fn(async () => undefined),
+    findWordContextIdByText: vi.fn(async () => null),
+    countWordOccurrences: vi.fn(async () => 0),
     createContext: vi.fn(async (input) => ({
       id: "ctx-1",
       source_id: input.source_id,

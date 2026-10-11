@@ -33,6 +33,7 @@ import {
 } from "@/schemas/http";
 import { validationError } from "../error-response";
 import { loadL3ContextsByWord } from "./review-l3-contexts";
+import { toReviewNoteEntries } from "../note-entry-response";
 import { parseReviewQueueQuery } from "./review-channel-params";
 
 export function reviewRoutes(services: Services) {
@@ -63,12 +64,8 @@ export function reviewRoutes(services: Services) {
       ...queue,
       items: queue.items.map((item) => ({
         ...item,
-        note_entries: (entriesMap.get(item.word.id) ?? []).map((entry) => ({
-          id: entry.id,
-          content_md: entry.content_md,
-          // pg 驱动对 timestamptz 返回 Date 对象(类型标注为 string),new Date 两者兼容
-          created_at: new Date(entry.created_at).toISOString(),
-        })),
+        // 条目映射(含 kind,0055)外迁 note-entry-response —— 棘轮冻结不许净增。
+        note_entries: toReviewNoteEntries(entriesMap.get(item.word.id) ?? []),
         l3_contexts: l3Map.get(item.word.id) ?? [],
       })),
     });

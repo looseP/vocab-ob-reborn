@@ -400,6 +400,8 @@ class L3CrossContractHarness {
         this.occurrences.set(occurrence.id, occurrence);
         return occurrence;
       }),
+      findWordContextIdByText: vi.fn(async () => null),
+      countWordOccurrences: vi.fn(async () => 0),
       createContextLink: vi.fn(async (input: NewL3ContextLink) => {
         this.record("l3_context_links", "insert");
         const link: L3ContextLinkRow = {

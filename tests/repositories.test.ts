@@ -379,17 +379,59 @@ describe("NoteEntryRepository", () => {
   it("insert appends one entry with no version/upsert machinery", async () => {
     mock.setRows([{
       id: "e1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
-      content_md: "新条目", hidden_at: null,
+      content_md: "新条目", kind: "general", hidden_at: null,
       created_at: "2026-09-06T00:00:00Z", updated_at: "2026-09-06T00:00:00Z",
     } as NoteEntryRow]);
     const repos = createRepositories();
-    const entry = await repos.noteEntries.insert("u1", "wb1", "w1", "新条目");
+    const entry = await repos.noteEntries.insert("u1", "wb1", "w1", "新条目", "general");
 
     expect(entry.content_md).toBe("新条目");
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0].text).toContain("INSERT INTO note_entries");
     expect(mock.calls[0].text).not.toContain("ON CONFLICT");
-    expect(mock.calls[0].params).toEqual(["u1", "w1", "wb1", "新条目"]);
+    expect(mock.calls[0].params).toEqual(["u1", "w1", "wb1", "新条目", "general"]);
+  });
+
+  it("countCustomKinds scopes by user and excludes builtin kinds (0055)", async () => {
+    mock.setRows([{ n: 3, has: 1 }]);
+    const repos = createRepositories();
+    const result = await repos.noteEntries.countCustomKinds(
+      "u1",
+      ["general", "story", "synonym", "mnemonic", "usage", "issue"],
+      "易错点",
+    );
+
+    expect(result).toEqual({ n: 3, has: true });
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0].text).toContain("kind <> ALL($2::text[])");
+    expect(mock.calls[0].params).toEqual([
+      "u1",
+      ["general", "story", "synonym", "mnemonic", "usage", "issue"],
+      "易错点",
+    ]);
+  });
+
+  it("countCustomKinds 空表回落 n=0 / has=false（row 兜底分支）", async () => {
+    mock.setRows([]);
+    const repos = createRepositories();
+
+    expect(await repos.noteEntries.countCustomKinds("u1", [], "易错点")).toEqual({ n: 0, has: false });
+  });
+
+  it("restore 走 UPDATE ... RETURNING kind（0055 契约：取消隐藏后 kind 不丢）", async () => {
+    mock.setRows([{
+      id: "e1", user_id: "u1", word_id: "w1", wordbook_id: "wb1",
+      content_md: "x", kind: "错题", hidden_at: null,
+      created_at: "2026-09-06T00:00:00Z", updated_at: "2026-09-07T00:00:00Z",
+    } as NoteEntryRow]);
+    const repos = createRepositories();
+
+    const row = await repos.noteEntries.restore("u1", "e1");
+
+    expect(row?.kind).toBe("错题");
+    expect(mock.calls[0].text).toContain("SET hidden_at = NULL");
+    expect(mock.calls[0].text).toContain("RETURNING id, user_id, word_id, wordbook_id, content_md, kind");
+    expect(mock.calls[0].params).toEqual(["u1", "e1"]);
   });
 
   it("hide moves an entry out of display non-destructively", async () => {

@@ -3,8 +3,10 @@ import {
   BookOpen,
   Check,
   ClipboardType,
+  Copy,
   Globe,
   Minus,
+  PenLine,
   Plus,
   Quote,
   Search,
@@ -84,6 +86,48 @@ interface SourceDraft {
   obsidianRef?: string;
 }
 
+// ── 条目模式（每日捕获 M1，2026-10-10）────────────────────────────────────
+// 轻阻力流水：学到用到先记录，不做任何查询与整理；回顾复盘放晚上，吸收交给 agent。
+interface DailyCaptureTypeOption {
+  type_key: string;
+  label: string;
+}
+
+interface DailyCaptureEntryResponse {
+  id: string;
+  entry_date: string;
+  seq: number;
+  entry_type: string;
+  content: string;
+}
+
+const CAPTURE_MODE_KEY = "capture-mode-v1";
+
+/** 类型注册表为空（尚未追加过首条）时的内置兜底——与服务端 seed 六类同序同 key。 */
+const DAILY_CAPTURE_TYPES_FALLBACK: DailyCaptureTypeOption[] = [
+  { type_key: "phrase", label: "词组" },
+  { type_key: "sentence", label: "例句" },
+  { type_key: "method", label: "学习方法" },
+  { type_key: "question", label: "疑问" },
+  { type_key: "idea", label: "想法" },
+  { type_key: "note", label: "杂记" },
+];
+
+/** 与服务端显示时区（Asia/Shanghai，src/db/timezone.ts）同口径的今日键——
+ * 日文件按服务端日历日投影，复制按钮取的是「同一个今天」。 */
+function todayCaptureKey(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const year = parts.find((p) => p.type === "year")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : new Date().toISOString().slice(0, 10);
+}
+
 function loadSourceDraft(): SourceDraft {
   try {
     const raw = sessionStorage.getItem(DRAFT_KEY);
@@ -114,6 +158,9 @@ interface CapturePageProps {
   onCollapse?: () => void;
 }
 
+/** 捕获模式：词语（生词入本/熟词入队）· 条目（每日捕获流水）。 */
+type CaptureMode = "word" | "entry";
+
 export function CapturePage({ onCollapse }: CapturePageProps = {}) {
   const [inputValue, setInputValue] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -126,6 +173,48 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
   const [obsidianRef, setObsidianRef] = useState(draft.obsidianRef ?? "");
   const lookupSeqRef = useRef(0);
   const { addToast } = useToast();
+
+  // 条目模式状态（每日捕获 M1）：模式持久化、类型注册表懒加载、追加与复制。
+  const [mode, setMode] = useState<CaptureMode>(() => {
+    try {
+      return sessionStorage.getItem(CAPTURE_MODE_KEY) === "entry" ? "entry" : "word";
+    } catch {
+      return "word";
+    }
+  });
+  const [entryTypes, setEntryTypes] = useState<DailyCaptureTypeOption[]>(DAILY_CAPTURE_TYPES_FALLBACK);
+  const [entryType, setEntryType] = useState("phrase");
+  const [entryText, setEntryText] = useState("");
+  const [entryBusy, setEntryBusy] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [lastEntrySeq, setLastEntrySeq] = useState<number | null>(null);
+  const entryTextRef = useRef<HTMLTextAreaElement | null>(null);
+  const typesLoadedRef = useRef(false);
+
+  const switchMode = (next: CaptureMode) => {
+    setMode(next);
+    try {
+      sessionStorage.setItem(CAPTURE_MODE_KEY, next);
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  // 类型注册表懒加载（首次进条目模式）：空注册表（尚未追加过首条）时保留内置兜底。
+  useEffect(() => {
+    if (mode !== "entry" || typesLoadedRef.current) return;
+    typesLoadedRef.current = true;
+    apiFetch<{ types: Array<DailyCaptureTypeOption & { hidden: boolean }> }>("/daily-capture/types")
+      .then((body) => {
+        const visible = body.types.filter((type) => !type.hidden);
+        if (visible.length > 0) {
+          setEntryTypes(visible.map(({ type_key, label }) => ({ type_key, label })));
+        }
+      })
+      .catch(() => {
+        // 注册表读失败不阻塞记录——内置兜底已在位
+      });
+  }, [mode]);
 
   useEffect(() => {
     try {
@@ -258,11 +347,65 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
   const sourceFilled = sentence.trim() !== "" || sourceUrl.trim() !== "" || obsidianRef.trim() !== "";
   const slug = phase.kind === "found" ? phase.word.slug : null;
 
+  // ── 条目模式动作（每日捕获 M1）：追加即清空，连续记录；来源字段与词语模式共享草稿。
+  const appendEntry = async () => {
+    const content = entryText.trim();
+    if (!content) {
+      addToast("warning", "先写点内容再记");
+      return;
+    }
+    setEntryBusy(true);
+    try {
+      const meta: { sourceUrl?: string; obsidianRef?: string } = {};
+      if (sourceUrl.trim()) meta.sourceUrl = sourceUrl.trim();
+      if (obsidianRef.trim()) meta.obsidianRef = obsidianRef.trim();
+      const entry = await apiFetch<DailyCaptureEntryResponse>("/daily-capture/entries", {
+        method: "POST",
+        body: JSON.stringify({ entryType, content, ...(Object.keys(meta).length > 0 ? { meta } : {}) }),
+      });
+      setLastEntrySeq(entry.seq);
+      setEntryText("");
+      addToast("success", `已记入今日文件 · 第 ${entry.seq} 条`);
+      entryTextRef.current?.focus();
+    } catch (error) {
+      addToast(
+        error instanceof BrowserApiError && error.status === 401 ? "warning" : "error",
+        apiErrorMessage(error, "记录失败"),
+      );
+    } finally {
+      setEntryBusy(false);
+    }
+  };
+
+  // 复制今日文件：日文件是 (entry_date, seq) 确定性投影，随时可重生成；
+  // 复制即拿到纯文本，可粘贴进 Obsidian/任意笔记。
+  const copyDayFile = async () => {
+    setCopyBusy(true);
+    try {
+      const markdown = await apiFetch<string>(`/daily-capture/days/${todayCaptureKey()}/file`, {
+        parseJson: false,
+      });
+      await navigator.clipboard.writeText(markdown);
+      addToast("success", "今日文件已复制（纯文本，可直接粘贴进笔记）");
+    } catch (error) {
+      addToast(
+        error instanceof BrowserApiError && error.status === 401 ? "warning" : "error",
+        apiErrorMessage(error, "复制失败"),
+      );
+    } finally {
+      setCopyBusy(false);
+    }
+  };
+
   return (
     <div
       className="min-h-screen bg-[var(--color-canvas)] bg-gradient-to-b from-[var(--color-canvas)] to-[var(--color-canvas-deep)] p-4"
       onKeyDown={(event) => {
-        if (event.key === "Escape") reset();
+        if (event.key === "Escape") {
+          // Esc 语义按模式分流：条目模式清空草稿，词语模式清空查询态。
+          if (mode === "entry") setEntryText("");
+          else reset();
+        }
       }}
     >
       <div className="mx-auto flex w-full max-w-[380px] flex-col gap-3">
@@ -272,7 +415,7 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
           </div>
           <div>
             <h1 className="text-base font-bold leading-tight text-[var(--color-ink)]">快速捕获</h1>
-            <p className="text-[11px] leading-tight text-[var(--color-ink-soft)]">生词入本 · 熟词入队 · 两步完成</p>
+            <p className="text-[11px] leading-tight text-[var(--color-ink-soft)]">生词入本 · 熟词入队 · 流水随手记</p>
           </div>
           {onCollapse && (
             <button
@@ -287,6 +430,36 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
           )}
         </header>
 
+        {/* 模式切换：词语（查词入本）· 条目（每日捕获流水）——记住上次模式。 */}
+        <div
+          className="flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-glass)] p-1"
+          role="tablist"
+          aria-label="捕获模式"
+        >
+          {(
+            [
+              { key: "word", label: "词语" },
+              { key: "entry", label: "条目" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={mode === tab.key}
+              onClick={() => switchMode(tab.key)}
+              className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                mode === tab.key
+                  ? "bg-[var(--color-accent)] text-[var(--color-canvas)]"
+                  : "text-[var(--color-ink-soft)] hover:text-[var(--color-ink)]"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {mode === "word" && (
         <div className="animate-rise space-y-1.5">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-[var(--color-ink-soft)]" />
@@ -329,14 +502,15 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
             <Kbd>Esc</Kbd> 清空
           </p>
         </div>
+        )}
 
-        {phase.kind === "looking" && (
+        {mode === "word" && phase.kind === "looking" && (
           <Card className={`animate-rise ${cardShadow}`}>
             <SkeletonCard />
           </Card>
         )}
 
-        {phase.kind === "idle" && (
+        {mode === "word" && phase.kind === "idle" && (
           <div className={`animate-rise ${cardShadow}`}>
             <Card>
               <EmptyState
@@ -348,7 +522,7 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
           </div>
         )}
 
-        {(phase.kind === "found" || phase.kind === "captured") && (
+        {mode === "word" && (phase.kind === "found" || phase.kind === "captured") && (
           <div key={phase.kind} className={`animate-rise ${cardShadow}`}>
             <Card className="space-y-3">
               <div className="flex items-start justify-between gap-2">
@@ -442,7 +616,7 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
           </div>
         )}
 
-        {phase.kind === "missing" && (
+        {mode === "word" && phase.kind === "missing" && (
           <div className={`animate-rise space-y-3 ${cardShadow}`}>
             <Card>
               <EmptyState
@@ -524,6 +698,131 @@ export function CapturePage({ onCollapse }: CapturePageProps = {}) {
                 </div>
               </div>
             </Card>
+          </div>
+        )}
+        {mode === "entry" && (
+          <div className="animate-rise space-y-2">
+            <div className={cardShadow}>
+              <Card className="space-y-3">
+                <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="条目类型">
+                  {entryTypes.map((type) => (
+                    <button
+                      key={type.type_key}
+                      type="button"
+                      onClick={() => setEntryType(type.type_key)}
+                      aria-pressed={entryType === type.type_key}
+                      className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                        entryType === type.type_key
+                          ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-canvas)]"
+                          : "border-[var(--color-border)] bg-[var(--color-surface-glass)] text-[var(--color-ink-soft)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-ink)]"
+                      }`}
+                    >
+                      {type.label}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  ref={entryTextRef}
+                  value={entryText}
+                  onChange={(event) => setEntryText(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                      event.preventDefault();
+                      void appendEntry();
+                    }
+                  }}
+                  placeholder="词组 / 例句 / 方法，一句话即可——先记下来，整理交给晚上的回顾"
+                  rows={3}
+                  autoFocus
+                  spellCheck={false}
+                  aria-label="条目内容"
+                  className="w-full resize-y rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-input)] px-3 py-2.5 text-sm leading-relaxed text-[var(--color-ink)] placeholder:text-[var(--color-ink-soft)] focus:border-[var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+                />
+
+                {/* 来源（可选）：与词语模式共享 sourceUrl / obsidianRef 草稿。 */}
+                <div className="border-t border-[var(--color-border)] pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSourceOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-xs font-semibold text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-glass-hover)] hover:text-[var(--color-ink)]"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      {sourceUrl.trim() !== "" || obsidianRef.trim() !== "" ? (
+                        <Check className="h-3.5 w-3.5 text-[var(--color-accent)]" />
+                      ) : null}
+                      {sourceUrl.trim() !== "" || obsidianRef.trim() !== "" ? "已填来源" : "来源（可选）"}
+                    </span>
+                  </button>
+                  <div
+                    className={`grid transition-all duration-200 ease-out ${
+                      sourceOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                    }`}
+                  >
+                    <div className="overflow-hidden">
+                      <div className="space-y-2 p-2 pt-1">
+                        <div className="relative">
+                          <Globe className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-ink-soft)]" />
+                          <Input
+                            value={sourceUrl}
+                            onChange={(event) => setSourceUrl(event.target.value)}
+                            placeholder="来源网页链接 https://…"
+                            type="url"
+                            className="pl-9"
+                            aria-label="来源网页链接"
+                          />
+                        </div>
+                        <div className="relative">
+                          <BookOpen className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-ink-soft)]" />
+                          <Input
+                            value={obsidianRef}
+                            onChange={(event) => setObsidianRef(event.target.value)}
+                            placeholder="obsidian://open?vault=…&file=…"
+                            className="pl-9"
+                            aria-label="Obsidian 链接"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 border-t border-[var(--color-border)] pt-3">
+                  <Button size="sm" disabled={entryBusy || entryText.trim() === ""} onClick={() => void appendEntry()}>
+                    {entryBusy ? (
+                      <>
+                        <Spinner className="h-4 w-4" />
+                        记录中…
+                      </>
+                    ) : (
+                      <>
+                        <PenLine className="h-4 w-4" />
+                        记一条
+                      </>
+                    )}
+                  </Button>
+                  <span className="ml-auto text-[11px] text-[var(--color-ink-soft)]">
+                    <Kbd>Ctrl</Kbd>+<Kbd>Enter</Kbd> 记一条
+                    <span className="mx-0.5 opacity-50">·</span>
+                    <Kbd>Esc</Kbd> 清空
+                  </span>
+                </div>
+              </Card>
+            </div>
+
+            <div className="flex items-center justify-between px-1">
+              <p className="text-[11px] text-[var(--color-ink-soft)]">
+                {lastEntrySeq != null ? `今日已记 ${lastEntrySeq} 条` : "学到用到先记；回顾复盘放晚上"}
+              </p>
+              <button
+                type="button"
+                onClick={() => void copyDayFile()}
+                disabled={copyBusy}
+                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-[var(--color-ink-soft)] transition-colors hover:bg-[var(--color-surface-glass-hover)] hover:text-[var(--color-ink)] disabled:opacity-60"
+              >
+                {copyBusy ? <Spinner className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                复制今日文件
+              </button>
+            </div>
           </div>
         )}
       </div>
