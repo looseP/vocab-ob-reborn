@@ -387,6 +387,13 @@ async function convergePrivileges(client: Client, databaseName: string, batchImp
     -- （广场家族页展示增强）；写入走 seed 脚本，以 owner（vocab_migration）执行，
     -- owner 天然绕过 RLS，无需为写入角色另建 policy。
     GRANT SELECT ON TABLE public.root_lexicon TO vocab_app;
+    -- 0054（ADR-0042 每日捕获）：类型注册表（首条追加时同事务懒 seed 走 INSERT ...
+    -- ON CONFLICT DO NOTHING；PATCH 走动态 SET UPDATE——只写非空字段）与流水条目
+    -- （seq 由 INSERT..SELECT coalesce(max,0)+1 单语句原子分配、唯一索引兜底并发；
+    -- 状态流转 / 回执 jsonb 追加 / 软隐均走 UPDATE，读路径纯 SELECT）。
+    -- 无物理删路径（条目软隐走 hidden_at、类型软隐走 hidden 列），不授 DELETE。
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.daily_capture_entries TO vocab_app;
+    GRANT SELECT, INSERT, UPDATE ON TABLE public.daily_capture_types TO vocab_app;
 
     GRANT SELECT, UPDATE ON TABLE public.outbox_events TO vocab_worker;
     GRANT SELECT, INSERT ON TABLE public.outbox_effect_receipts TO vocab_worker;

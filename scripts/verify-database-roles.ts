@@ -469,6 +469,11 @@ async function verifyPrivilegeCatalog(admin: Client, databaseName: string): Prom
       // 级联与计划行删除路径授予。零 FSRS：两表无 FSRS 列。
       "public.hulu_plans": ["SELECT", "INSERT", "UPDATE", "DELETE"],
       "public.hulu_rounds": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+      // 0054（ADR-0042 每日捕获）：类型注册表与流水条目。建（懒 seed 走 INSERT ...
+      // ON CONFLICT DO NOTHING）/读（SELECT）/改（状态流转、回执追加、软隐均走
+      // UPDATE）。无物理删路径（软隐走 hidden_at / hidden 列），不授 DELETE。
+      "public.daily_capture_entries": ["SELECT", "INSERT", "UPDATE"],
+      "public.daily_capture_types": ["SELECT", "INSERT", "UPDATE"],
     }).map(([relation, privileges]) => [relation, new Set(privileges)]))],
     ["vocab_worker", new Map(Object.entries({
       "public.outbox_events": ["SELECT", "UPDATE"],
