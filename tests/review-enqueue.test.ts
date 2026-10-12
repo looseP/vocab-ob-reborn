@@ -52,7 +52,11 @@ describe("ReviewService.enqueueCard", () => {
     withTransactionMock.mockClear();
   });
 
-  it("creates the card, records one outbox event, and returns the progress id", async () => {
+  it("creates the card and returns the progress id — 不发 outbox 事件", async () => {
+    // 2026-10-12：原先这里断言「记一条 review.card.enqueued.v1」。该事件自引入起
+    // worker 就没有消费者 ⇒ 每建一张卡白烧 8 次重试后进死信，并把 critical 告警
+    // VocabOutboxDeadLetter 永久点亮（线上实测 522 条死信全是这个类型）。
+    // 建卡本身就是同一事务里的权威写入，没有需要传播的副作用，故事件已删除。
     const insertNewCard = vi.fn(async () => inserted("p-new-1"));
     const { reviews, outbox } = makeRepos(insertNewCard);
     mockRepos.reviews = reviews;
@@ -69,20 +73,8 @@ describe("ReviewService.enqueueCard", () => {
       desiredRetention: L1_DEFAULT_DESIRED_RETENTION,
     });
     expect(L1_DEFAULT_DESIRED_RETENTION).toBe("0.850");
-    expect(outbox.enqueue).toHaveBeenCalledTimes(1);
-    expect(outbox.enqueue).toHaveBeenCalledWith(expect.objectContaining({
-      aggregateType: "user_word_progress",
-      aggregateId: "p-new-1",
-      eventType: "review.card.enqueued.v1",
-      dedupeKey: "review.card.enqueued.v1:p-new-1",
-      payload: expect.objectContaining({
-        version: 1,
-        progressId: "p-new-1",
-        userId: "u1",
-        wordbookId: "wb1",
-        wordId: "w1",
-      }),
-    }));
+    // 纪律：无消费者的事件不许再进 outbox（否则就是死信生产线）
+    expect(outbox.enqueue).not.toHaveBeenCalled();
     expect(withTransactionMock).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
   });
 
@@ -132,7 +124,7 @@ describe("ReviewService.enqueueCards", () => {
     withTransactionMock.mockClear();
   });
 
-  it("counts duplicates as skipped and emits events only for inserted cards", async () => {
+  it("counts duplicates as skipped and emits no outbox events for inserted cards", async () => {
     let call = 0;
     const statuses: InsertNewCardStatus[] = [
       inserted("p-1"),
@@ -151,9 +143,9 @@ describe("ReviewService.enqueueCards", () => {
     );
 
     expect(result).toEqual({ ok: true, added: 2, skipped: 1, progressIds: ["p-1", "p-2"] });
-    expect(outbox.enqueue).toHaveBeenCalledTimes(2);
-    expect(outbox.enqueue.mock.calls[0]![0]).toMatchObject({ aggregateId: "p-1" });
-    expect(outbox.enqueue.mock.calls[1]![0]).toMatchObject({ aggregateId: "p-2" });
+    // 2026-10-12：review.card.enqueued.v1 已删除（无消费者 ⇒ 死信 + critical 告警常亮），
+    // 批量建卡同样不再产出任何 outbox 事件。
+    expect(outbox.enqueue).not.toHaveBeenCalled();
   });
 
   it("rejects empty input with BusinessRuleError without opening a transaction", async () => {

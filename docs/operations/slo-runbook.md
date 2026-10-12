@@ -32,6 +32,13 @@
 2. Review the event payload and error in structured logs (`scope: "review-outbox"`).
 3. Fix the root cause, then replay: `npm run outbox:replay <event-uuid>`.
 
+> **触发口径（2026-10-12 改）**：本告警看 `outbox_recent_dead_letters`（5 分钟滚动窗口内的
+> **增量**），不再看 `outbox_dead_letter`（历史库存）。库存只增不减，拿它做 `> 0`
+> 会让这条 critical 永久亮着 —— 线上实测 522 条历史死信（源自已删除的
+> `review.card.enqueued.v1` 无消费者事件）从上线起点亮至今。所以：
+> **告警亮 = 最近 5 分钟真的有新死信**，恢复 = 窗口内没有新的了。
+> 库存数字仍然在 `/api/runtime/metrics` 的 `outbox.deadLetter` 里，只用于盘点。
+
 ### VocabOutboxStuck (critical)
 1. Check if the worker process is running: `docker compose ps review-outbox-worker`.
 2. Review worker logs for batch failures (`scope: "review-outbox"`, `level: "error"`).

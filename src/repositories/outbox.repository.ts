@@ -7,6 +7,20 @@ import type {
 } from "./interfaces";
 import { BaseRepository } from "./base";
 
+/**
+ * 「近期死信」的滚动窗口（SQL interval 字面量）。
+ *
+ * 死信是**需要人介入**的信号，不是库存：一次事故产生的死信不该让 critical 告警永久亮着。
+ * 2026-10-12 线上实测 522 条历史死信（源自已删除的 `review.card.enqueued.v1` 无消费者
+ * 事件），把 `VocabOutboxDeadLetter` 从上线起点亮至今 —— critical 通道被噪音化，
+ * 等同于没有告警。故告警改看本窗口内的增量（见 `OutboxMetrics.recentDeadLetters`）。
+ *
+ * 取 5 分钟：大于告警规则的 `for: 2m`，保证刚发生的死信一定被观察到；又不至于让一次
+ * 事故的余震拖几十分钟不恢复。改这个值要同步 `docs/operations/alerting-rules.yaml`
+ * 里 `VocabOutboxDeadLetter` 的 `for`（窗口必须 ≥ for，否则可能整个窗口内都采不到样）。
+ */
+const RECENT_DEAD_LETTER_WINDOW = "interval '5 minutes'";
+
 export class OutboxRepository extends BaseRepository implements IOutboxRepository {
   async enqueue(input: EnqueueOutboxEventInput): Promise<{ id: string; inserted: boolean }> {
     this.requireTx();
@@ -178,12 +192,15 @@ export class OutboxRepository extends BaseRepository implements IOutboxRepositor
       pending: number;
       processing: number;
       dead_letter: number;
+      recent_dead_letters: number;
       oldest_pending_age_seconds: number | null;
     }>(
       `SELECT
          count(*) FILTER (WHERE status IN ('pending', 'retry'))::int AS pending,
          count(*) FILTER (WHERE status = 'processing')::int AS processing,
          count(*) FILTER (WHERE status = 'dead_letter')::int AS dead_letter,
+         count(*) FILTER (WHERE status = 'dead_letter'
+                            AND updated_at >= now() - ${RECENT_DEAD_LETTER_WINDOW})::int AS recent_dead_letters,
          extract(epoch FROM (now() - min(created_at) FILTER (WHERE status IN ('pending', 'retry'))))::int
            AS oldest_pending_age_seconds
        FROM outbox_events`,
@@ -192,6 +209,7 @@ export class OutboxRepository extends BaseRepository implements IOutboxRepositor
       pending: row?.pending ?? 0,
       processing: row?.processing ?? 0,
       deadLetter: row?.dead_letter ?? 0,
+      recentDeadLetters: row?.recent_dead_letters ?? 0,
       oldestPendingAgeSeconds: row?.oldest_pending_age_seconds ?? null,
     };
   }

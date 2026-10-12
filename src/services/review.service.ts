@@ -33,12 +33,6 @@ import {
   reviewOutboxDedupeKey,
 } from "../outbox/review-answer.event";
 import {
-  REVIEW_CARD_ENQUEUED,
-  buildReviewCardEnqueuedPayload,
-  enqueuePayloadAsJson,
-  reviewCardEnqueuedDedupeKey,
-} from "../outbox/review-card-enqueued.event";
-import {
   REVIEW_QUEUE_CANDIDATE_LIMIT,
   REVIEW_QUEUE_SNAPSHOT_MARGIN,
   buildReviewQueueBatch,
@@ -778,21 +772,11 @@ export class ReviewService {
       if (outcome.status === "duplicate" || !outcome.progressId) {
         throw new ConflictError("Word is already in the review queue for this wordbook");
       }
-      await repos.outbox.enqueue({
-        aggregateType: "user_word_progress",
-        aggregateId: outcome.progressId,
-        eventType: REVIEW_CARD_ENQUEUED,
-        payload: enqueuePayloadAsJson(
-          buildReviewCardEnqueuedPayload({
-            version: 1,
-            progressId: outcome.progressId,
-            userId,
-            wordbookId: input.wordbookId,
-            wordId: input.wordId,
-          }),
-        ),
-        dedupeKey: reviewCardEnqueuedDedupeKey(outcome.progressId),
-      });
+      // 2026-10-12：此处原有一条 `review.card.enqueued.v1` outbox 事件，worker 从未
+      // 实现它的消费者 ⇒ 每建一张卡白烧 8 次重试后进死信，并把 critical 告警
+      // VocabOutboxDeadLetter 永久点亮（线上实测 522 条死信全是这个类型）。
+      // 卡片的创建本身就是同一事务里的权威写入，没有需要传播的副作用，故事件删除。
+      // 若将来真要「建卡通知」，重加生产者即可（outbox 模式是现成的）。
       return {
         result: { ok: true, progressId: outcome.progressId } as EnqueueCardResult,
       };
@@ -827,21 +811,8 @@ export class ReviewService {
         });
         if (outcome.status === "inserted" && outcome.progressId) {
           progressIds.push(outcome.progressId);
-          await repos.outbox.enqueue({
-            aggregateType: "user_word_progress",
-            aggregateId: outcome.progressId,
-            eventType: REVIEW_CARD_ENQUEUED,
-            payload: enqueuePayloadAsJson(
-              buildReviewCardEnqueuedPayload({
-                version: 1,
-                progressId: outcome.progressId,
-                userId,
-                wordbookId: input.wordbookId,
-                wordId,
-              }),
-            ),
-            dedupeKey: reviewCardEnqueuedDedupeKey(outcome.progressId),
-          });
+          // 2026-10-12：同 enqueueCard —— 删掉无消费者的 review.card.enqueued.v1
+          // （死信生产线 + critical 告警常亮的根源，见该处注释）。
         } else if (outcome.status === "duplicate") {
           skipped += 1;
         } else if (outcome.status === "word_not_found") {

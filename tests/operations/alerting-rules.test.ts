@@ -51,8 +51,20 @@ describe("Prometheus alerting rule contract", () => {
     expect(readFileSync(operationPath("alerting-rules.yaml"), "utf8")).not.toContain("vocab_platform_");
   });
 
-  it("keeps exporter-dependent alerts isolated and documents their contracts", () => {
-    const optional = load("optional-platform-alerting-rules.yaml");
+  it("死信告警看**增量**口径，不看历史库存（否则 critical 永久亮着）", () => {
+    // 2026-10-12：原表达式是 metric="outbox_dead_letter" > 0，而死信库存只增不减
+    // ⇒ 线上 522 条历史死信（源自已删除的 review.card.enqueued.v1 无消费者事件）
+    // 把这条 critical 从上线起点亮至今。critical 通道被噪音化 = 没有告警。
+    // 现在必须看 5 分钟滚动窗口内的增量 outbox_recent_dead_letters。
+    const rule = rules(load("alerting-rules.yaml")).find((r) => r.alert === "VocabOutboxDeadLetter");
+    expect(rule).toBeDefined();
+    expect(rule!.expr).toContain('metric="outbox_recent_dead_letters"');
+    expect(rule!.expr).not.toContain('metric="outbox_dead_letter"');
+    // 窗口(5m) 必须 ≥ for(2m)，否则整个窗口内可能一次都采不到样
+    expect(rule!.for).toBe("2m");
+  });
+
+  it("keeps exporter-dependent alerts isolated and documents their contracts", () => {    const optional = load("optional-platform-alerting-rules.yaml");
     const referenced = new Set(rules(optional).flatMap((rule) => promqlMetricNames(rule.expr)));
     expect([...referenced].sort()).toEqual([
       "vocab_platform_backup_last_attempt_success",

@@ -13,6 +13,7 @@ const validSnapshot = {
     pending: 1,
     processing: 2,
     deadLetter: 0,
+    recentDeadLetters: 0,
     oldestPendingAgeSeconds: null,
   },
   llmReservations: {

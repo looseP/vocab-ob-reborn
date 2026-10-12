@@ -22,12 +22,6 @@ import type { IRepositories } from "../repositories/interfaces";
 import { formatEntryClock, todayEntryDateKey } from "../repositories/daily-capture.repository";
 import { buildL3TrioInputs } from "./l3-trio";
 import { L1_DEFAULT_DESIRED_RETENTION } from "./review.service";
-import {
-  REVIEW_CARD_ENQUEUED,
-  buildReviewCardEnqueuedPayload,
-  enqueuePayloadAsJson,
-  reviewCardEnqueuedDedupeKey,
-} from "../outbox/review-card-enqueued.event";
 import type { WordRow } from "../domain";
 import type { Json } from "../domain";
 import {
@@ -454,21 +448,10 @@ export class DailyCaptureService {
               desiredRetention: L1_DEFAULT_DESIRED_RETENTION,
             });
             if (outcome.status === "inserted" && outcome.progressId) {
-              await repos.outbox.enqueue({
-                aggregateType: "user_word_progress",
-                aggregateId: outcome.progressId,
-                eventType: REVIEW_CARD_ENQUEUED,
-                payload: enqueuePayloadAsJson(
-                  buildReviewCardEnqueuedPayload({
-                    version: 1,
-                    progressId: outcome.progressId,
-                    userId: input.userId,
-                    wordbookId: input.wordbookId!,
-                    wordId: word!.id,
-                  }),
-                ),
-                dedupeKey: reviewCardEnqueuedDedupeKey(outcome.progressId),
-              });
+              // 2026-10-12：此处原有一条 review.card.enqueued.v1 outbox 事件，
+              // worker 无消费者 ⇒ 每建一张卡进死信并把 critical 告警永久点亮。
+              // 建卡本身就是同事务权威写入，无副作用要传播，故事件删除（详见
+              // review.service.enqueueCard 同处注释）。
               receipt.target = "review_card";
               receipt.id = outcome.progressId;
             } else {

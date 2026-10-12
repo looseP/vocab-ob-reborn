@@ -650,7 +650,11 @@ describe("DailyCaptureService.absorbEntry（proposal-only 的执行半边）", (
     expect(receipt.id).toBe("ctx-9");
   });
 
-  it("enqueue_review：inserted → 补 outbox；duplicate → deduped 且不补 outbox", async () => {
+  it("enqueue_review：inserted → 建卡回执；duplicate → deduped（都不再补 outbox）", async () => {
+    // 2026-10-12：原断言「inserted → 补一条 outbox」。那条 review.card.enqueued.v1
+    // 事件没有消费者（worker 只处理 review.answer.recorded.v1）⇒ 每建一张卡进死信
+    // 并把 critical 告警 VocabOutboxDeadLetter 永久点亮（线上实测 522 条）。
+    // 建卡本身就是同事务权威写入，故事件已删；回执仍照常产出。
     const inserted = makeAbsorbService({
       insertNewCard: vi.fn(async () => ({ status: "inserted", progressId: "p-1" })),
     });
@@ -660,7 +664,7 @@ describe("DailyCaptureService.absorbEntry（proposal-only 的执行半边）", (
     expect(inserted.reviews.insertNewCard).toHaveBeenCalledWith({
       userId: USER, wordId: "w-1", wordbookId: "wb-1", desiredRetention: "0.850",
     });
-    expect(inserted.outbox.enqueue).toHaveBeenCalledTimes(1);
+    expect(inserted.outbox.enqueue).not.toHaveBeenCalled();
     expect(r1.receipt.target).toBe("review_card");
     expect(r1.receipt.id).toBe("p-1");
 
