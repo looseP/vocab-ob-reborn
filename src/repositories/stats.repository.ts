@@ -23,7 +23,8 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     userId: string,
     wordbookId: string,
   ): Promise<DashboardSummary> {
-    // M5 fix: use display timezone for "today" boundary
+    // M5 fix: use display timezone for "today" boundary（仍供 reviewedToday 的日界；
+    // 「今日到期」已移交 getTodayWorkload，勿在此再写一遍）
     const todayIso = startOfTodayIsoInDisplayTz();
 
     const [totalRow, trackedRow, progressRow, todayRow, weekRow, monthRow, notesRow, l2Row] =
@@ -36,29 +37,22 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
            WHERE user_id = $1 AND wordbook_id = $2::uuid`,
           [userId, wordbookId],
         ),
-        // 一次往返出两个指标（保持「8 并行查询 + 1 streak」的调用数不变）：
-        //  - `due_count`「今天待复习」：**今天（显示时区日历日）内到期**且未挂起的卡片。
-        //    批次 3（2026-10-09）收口：此前是 `due_at <= now()`（时刻口径），而日历
-        //    「今天待做」/ forecast.dueNow 是日历日口径 —— 「今天晚些时候到期」的词
-        //    日历含、顶卡不含，同一件事两个数。现改为 `due_at < 今天零点 + 1 天`
-        //    （等价于 `due 日 <= 今天`），与日历今天桶**逐字等价**。
-        //    注意：复习**队列**仍是时刻口径（`due_at <= now()`，只能复习已到点的卡），
-        //    队列总数与口径差异由 `queueHeadline` 的文案负责讲清（"会被你看见的那个数"）。
-        //    挂起词不计待复习 —— 复习队列本来就排除它们（D4）。
-        //  - `mastered_count`「已掌握」：`state = 'review'` 的词数。**不是**
-        //    `totalWords - dueToday`（那会把「今天没到期」当「已掌握」，见接口注释）。
-        this.queryOne<{ due_count: string; mastered_count: string }>(
-          `SELECT count(*) FILTER (WHERE uwp.due_at IS NOT NULL
-                                     AND uwp.due_at < $3::timestamptz + interval '1 day'
-                                     AND uwp.state <> 'suspended') AS due_count,
-                  count(*) FILTER (WHERE uwp.state = 'review') AS mastered_count
+        // L3（2026-10-12）：这里原本还有一条 `due_count`（今日到期，日历日口径）——
+        // 与 `ReviewRepository.getTodayWorkload()` 的 `due_today` 语义相同、各写一遍，
+        // 正是「仪表盘 1 / 队列 0」数字打脸的根源。已移除：`dueToday` 改由
+        // `StatsService.getDashboardSummary` 从唯一真源组装（见 `DashboardSummaryWithDue`）。
+        // **不要在这里把它加回来。**
+        // `mastered_count`「已掌握」= `state = 'review'` 的词数。**不是**
+        // `totalWords - dueToday`（那会把「今天没到期」当「已掌握」，见接口注释）。
+        this.queryOne<{ mastered_count: string }>(
+          `SELECT count(*) FILTER (WHERE uwp.state = 'review') AS mastered_count
              FROM user_word_progress uwp
              JOIN words w ON w.id = uwp.word_id
-            -- 可见性口径与复习队列一致（收尾轮 R2 闭环）：仪表盘「今天待复习」
+            -- 可见性口径与复习队列一致（收尾轮 R2 闭环）：仪表盘数字
             -- 必须与实际会发出的队列同口径，下架/软删除词不计入。
             WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
               AND w.is_published = true AND w.is_deleted = false`,
-          [userId, wordbookId, todayIso],
+          [userId, wordbookId],
         ),
         // 作答口径（CONTEXT.md「Event log semantics」）：reviewedToday/7d/30d 只计
         // 作答事件，rating IS NULL 的非作答事件（L2 seed 审计行）不计入。
@@ -114,7 +108,7 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
     return {
       totalWords: totalRow ? parseInt(totalRow.count, 10) : 0,
       trackedWords: trackedRow ? parseInt(trackedRow.count, 10) : 0,
-      dueToday: progressRow ? parseInt(progressRow.due_count, 10) : 0,
+      // L3：dueToday 不在这里出（服务层从 getTodayWorkload 组装，见 DashboardSummaryWithDue）
       masteredWords: progressRow ? parseInt(progressRow.mastered_count, 10) : 0,
       reviewedToday: todayRow ? parseInt(todayRow.count, 10) : 0,
       reviewed7d: weekRow ? parseInt(weekRow.count, 10) : 0,
@@ -139,16 +133,19 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
    *
    * ① **日历日**边界：窗口上沿 = 显示时区（Asia/Shanghai）今日零点 + horizon 天，
    *    复用 `startOfTodayIsoInDisplayTz()` —— 与 dueToday / reviewedToday 同一个日界
-   *    （不是从 now() 起滚动的 N×24 小时）。
+   *    （不是从 now() 起滚动的 N×24 小时）；状态口径与 `TodayWorkload`（唯一真源）
+   *    一致：`NOT IN ('suspended','new')`。
    * ② **累计、不设下沿**：`due_at <= 今日零点 + horizon`。**实测结论**（2026-10-07 自用栈）：
    *    14 个待复习词的 `due_at` 全部 ≤ 今日零点（积压），若照设计稿加
    *    `due_at > 今日零点` 的下沿，due7d 会算成 **0** 而 dueNow 是 14 ——
    *    「未来 7 天预计复习」比「今天待复习」还少。累计口径同时给出
    *    dueNow ≤ due7d ≤ due14d 的单调性。
-   * ③ **排除 `suspended`**：挂起词不会被复习队列取出（`review.repository` 的队列 SQL
-   *    一律 `state != 'suspended'`），预测里算上它们是虚报。`dueToday` 自 D4 修复起
-   *    同样排除挂起，且自批次 3（2026-10-09）起与 `dueNow` 同为**日历日**口径
-   *    （`due_at < 今天零点 + 1 天`）——「今天待做」≤「7 天」≤「14 天」可直接读增量。
+   * ③ **排除 `suspended` 与 `new`**：挂起词不会被复习队列取出（`review.repository` 的
+   *    队列 SQL 一律排除挂起），预测里算上它们是虚报；新卡不是「到期」（它还没开始学），
+   *    与 `TodayWorkload` 同口径。
+   *    本方法**不查 horizon=0**：`computeForecast` 的 `dueNow` 直接用
+   *    `getTodayWorkload().dueToday`（L3 起，经 `StatsService` 组装），
+   *    所以「今天」这个数在此处没有第二份实现。
    *
    * 单条往返：一次 `unnest` 出所有 horizon，每个 horizon 一个标量子查询。
    */
@@ -163,7 +160,7 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
               (SELECT count(*) FROM user_word_progress uwp
                  JOIN words w ON w.id = uwp.word_id
                 WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
-                  AND uwp.state <> 'suspended'
+                  AND uwp.state NOT IN ('suspended', 'new')
                   AND uwp.due_at IS NOT NULL
                   AND uwp.due_at <= $3::timestamptz + make_interval(days => h.horizon_days)
                   -- 可见性口径与复习队列一致（收尾轮 R2 闭环）：日历预测的到期数
@@ -183,12 +180,23 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
   /**
    * M2（2026-10-08）· 日历**未来侧**：`due_at` 按显示时区日历日分桶。
    *
-   * 两条口径与 `getDueForecast` / `dueToday` 保持一致，否则日历与卡片会对不上：
-   * ① 日历日边界 = Asia/Shanghai（`AT TIME ZONE` 切日，非 UTC）；
-   * ② `state <> 'suspended'` 不计（挂起词不会被队列取出）。
+   * 两条口径与 `getDueForecast` / 「今天的工作量」保持一致，否则日历与卡片会对不上：
+   * ① 日历日边界 = Asia/Shanghai（`AT TIME ZONE` 切日，非 UTC）—— 与
+   *    `ReviewRepository.getTodayWorkload()` 同一个 `startOfTodayIsoInDisplayTz()`；
+   * ② 状态口径 `NOT IN ('suspended','new')` —— 与 `TodayWorkload` 逐字相同
+   *    （挂起词不进队列；新卡不是「到期」，它还没开始学）。
    *
-   * 批次 3（2026-10-09）起「今天」桶与 `dueToday` **完全等价**（`due 日 <= 今天`
-   * ⟺ `due_at < 明天零点`）。
+   * 「今天」桶与 `getTodayWorkload().dueToday` **完全等价**（`due 日 <= 今天`
+   * ⟺ `due_at < 明天零点`）—— 前者是 L3 的唯一真源，本方法只是把同一批卡按天摊开，
+   * 边界与状态口径必须与它一致（`tests/repositories/today-workload.test.ts` 锁着）。
+   *
+   * 2026-10-12 起「今天待做」徽标的同数对象换了位置：仪表盘行动区的大数字改成
+   * 「此刻就会发出的卡数」（`/review/queue` 的 `stats.total`，与「开始复习」、队列
+   * 「到期」桶同口径 —— 卡上的数必须是你点进去看到的那个数），日历日口径的 `dueToday`
+   * 退为副标题「今日共 N 张到期」，且只在大数字与它不一致时出现。两个口径的差 =
+   * **今天稍后到点的卡**（`due_at` 在 now 与明天零点之间）：它们此刻不该出现在「到期」
+   * 桶里，按状态落在「学习中 / 已掌握」，因清单按 `due_at` 排序而各自排在最前。
+   * 别再把这两个数之一「修正」成另一个 —— 要动就动副标题的出现条件。
    *
    * 2026-10-12 起「今天待做」徽标的同数对象换了位置：仪表盘行动区的大数字改成
    * 「此刻就会发出的卡数」（`/review/queue` 的 `stats.total`，与「开始复习」、队列
@@ -215,7 +223,7 @@ export class StatsRepository extends BaseRepository implements IStatsRepository 
          FROM user_word_progress uwp
          JOIN words w ON w.id = uwp.word_id
         WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
-          AND uwp.state <> 'suspended'
+          AND uwp.state NOT IN ('suspended', 'new')
           AND uwp.due_at IS NOT NULL
           AND uwp.due_at <= $3::timestamptz + make_interval(days => $4::int)
           -- 可见性口径与复习队列一致（收尾轮 R2 闭环）

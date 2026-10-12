@@ -36,10 +36,16 @@ function countRow(overrides: Record<string, string> = {}) {
     learning: "0",
     due: "1",
     review: "1",
-    due_now: "1",
-    due_today: "1",
     ...overrides,
   };
+}
+
+/**
+ * L3 起三个「今天」的数由 `getTodayWorkload`（另一条 SQL）出，按 SQL 文本区分返回行：
+ * countQueueBuckets 的查询含 `new_count`，workload 的查询含 `later_today`。
+ */
+function workloadRow(overrides: Record<string, string> = {}) {
+  return { due_now: "1", later_today: "0", due_today: "1", ...overrides };
 }
 
 function listRow(overrides: Record<string, unknown> = {}) {
@@ -75,7 +81,10 @@ function repo() {
 
 describe("countQueueBuckets — 队列桶计数", () => {
   it("把 SQL 的 snake_case 列名映射成前端要的 camelCase", async () => {
-    mock.setRows([countRow()]);
+    mock.setRowMap({
+      new_count: [countRow()],
+      later_today: [workloadRow()],
+    });
 
     const counts = await repo().countQueueBuckets("u1", "wb1");
 
@@ -85,10 +94,28 @@ describe("countQueueBuckets — 队列桶计数", () => {
       review: 1,
       new: 3,       // 来自 new_count
       suspended: 1,
-      dueNow: 1,   // 来自 due_now = 「现在就该复习」的张数
-      dueToday: 1, // 来自 due_today = 日历日口径的今日到期数（2026-10-12）
+      dueNow: 1,   // L3 起取自 getTodayWorkload（唯一真源），不再本地数
+      dueToday: 1, // 同上
+      laterToday: 0,
       total: 5,
     });
+  });
+
+  it("三个「今天」的数委托 getTodayWorkload（不再本地写 due_now / due_today 的 FILTER）", async () => {
+    mock.setRowMap({
+      new_count: [countRow()],
+      later_today: [workloadRow({ due_now: "7", later_today: "5", due_today: "12" })],
+    });
+
+    const counts = await repo().countQueueBuckets("u1", "wb1");
+
+    expect(counts.dueNow).toBe(7);
+    expect(counts.dueToday).toBe(12);
+    expect(counts.laterToday).toBe(5);
+    // 桶计数自身的 SQL 里不该再出现这两个 FILTER（否则又成了两份实现）
+    const bucketSql = mock.calls.map((c) => c.text).find((t) => t.includes("new_count")) ?? "";
+    expect(bucketSql).not.toContain("due_now");
+    expect(bucketSql).not.toContain("due_today");
   });
 
   it("无行时全部归零（不返回 NaN）", async () => {
@@ -99,7 +126,7 @@ describe("countQueueBuckets — 队列桶计数", () => {
     const counts = await repo().countQueueBuckets("u1", "wb1");
 
     expect(counts).toEqual({
-      due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, dueToday: 0, total: 0,
+      due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, dueToday: 0, laterToday: 0, total: 0,
     });
     for (const value of Object.values(counts)) {
       expect(Number.isFinite(value)).toBe(true);

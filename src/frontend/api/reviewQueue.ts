@@ -33,6 +33,11 @@ export interface ReviewQueueCounts {
   dueNow: number;
   /** 日历日口径的今日到期数（含今天稍后到点的）：「今日到期」视图的计数来源。 */
   dueToday: number;
+  /**
+   * 今天稍后到点的张数（`= dueToday − dueNow`）。服务端恒等式保证，前端可以直接相减，
+   * 但既然给了就直接用 —— 少一处本地算术就少一处对不上的机会。
+   */
+  laterToday: number;
   total: number;
 }
 

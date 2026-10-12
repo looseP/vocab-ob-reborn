@@ -436,6 +436,32 @@ export type QueueListBucket = "all" | "due" | "learning" | "review" | "new" | "s
  */
 export type QueueListDueWindow = "today";
 
+/**
+ * 「今天的工作量」**唯一真源**（L3，2026-10-12）—— 三个数从**同一条 SQL 的同一批行**
+ * 里数出来，所以恒等式是结构性的，不靠「两处各写一遍然后祈祷」。
+ *
+ * 2026-10-12 一天内连修三轮才收敛到这一处：
+ *   ① 仪表盘大数字用日历日口径、队列用此刻口径 ⇒ 两个数在同一块屏幕上打脸（PR #234）；
+ *   ② 「今日共 N 张到期」没有清单 ⇒ 加 `dueWindow=today` facet（PR #236）；
+ *   ③ 口径散在 4 条 SQL 里、其中两条语义相同各写一份 ⇒ 本读模型。
+ *
+ * **所有面都从这里取数**：仪表盘「今日待复习」副标题、队列页汇总磁贴与「今日到期」tab、
+ * 复习日历「今天待做」徽标。要改口径，改这一处（并同步 `getDailyDueCounts` 的边界注释）。
+ *
+ * 恒等式：`dueToday === dueNow + laterToday`。
+ * 唯一例外是 `state='review' AND due_at IS NULL` 的卡（算 dueNow 不算 dueToday ——
+ * 队列 `due` 桶历来把无到期时间的成熟卡当到期）。真库实测 0 张；若哪天出现，先问
+ * 「这种卡为什么没有到期时间」，别急着改谓词。
+ */
+export interface TodayWorkload {
+  /** 此刻已到期：非挂起、非新卡，`due_at IS NULL OR due_at <= now()`（= learning + due）。 */
+  dueNow: number;
+  /** 今天稍后到点：非挂起、非新卡，`now() < due_at < 明天零点(Asia/Shanghai)`。 */
+  laterToday: number;
+  /** 日历日口径的今日到期数（Asia/Shanghai）：非挂起、非新卡且 `due_at < 明天零点`。 */
+  dueToday: number;
+}
+
 /** 队列清单行（仓储 → service → HTTP 响应共用形态）。 */
 export interface QueueListRow {
   wordId: string;
@@ -488,7 +514,10 @@ export interface IReviewRepository {
     Array<{ progress: UserWordProgressRow; word: { id: string; slug: string; title: string; lemma: string; short_definition: string | null; ipa: string | null; pos: string | null; cefr: string | null; examples: unknown[]; prototype_text: string | null; mnemonic_text: string | null; mnemonic_type: string | null; semantic_chain: string | null } }>
   >;
 
-  /** 队列总览：按互斥桶计数（due/learning/review/new/suspended + dueNow 合计）。 */
+  /**
+   * 队列总览：按互斥桶计数（due/learning/review/new/suspended + dueNow 合计）。
+   * `dueNow` / `dueToday` / `laterToday` 全部委托 `getTodayWorkload`（单一真源，L3）。
+   */
   countQueueBuckets(userId: string, wordbookId: string): Promise<{
     due: number;
     learning: number;
@@ -497,13 +526,23 @@ export interface IReviewRepository {
     suspended: number;
     dueNow: number;
     /**
-     * 日历日口径的今日到期数（Asia/Shanghai，含更早的积压与今天稍后到点的）——
-     * 与 `getDashboardSummary.dueToday` 逐字同口径，是「今日到期」facet 视图的
-     * 计数来源。注意它与 `dueNow`（此刻口径）不是同一个数。
+     * 日历日口径的今日到期数（Asia/Shanghai，含今天稍后到点的与更早的积压）——
+     * 与 `getTodayWorkload().dueToday` 同源，是「今日到期」facet 视图的计数来源。
      */
     dueToday: number;
+    /** 今天稍后到点的张数（`dueToday - dueNow` 的差集，真源见 `TodayWorkload`）。 */
+    laterToday: number;
     total: number;
   }>;
+
+  /**
+   * 「今天的工作量」唯一真源（L3，2026-10-12）—— 一条 SQL 数出三个数，
+   * 恒等式 `dueToday === dueNow + laterToday` 因此是结构性的。见 `TodayWorkload`。
+   *
+   * 仪表盘（经 StatsService 组装）、队列页计数、复习日历「今天待做」都读它；
+   * **不要在别处再写一遍「今日到期」的谓词** —— 2026-10-12 的数字打脸就是这么来的。
+   */
+  getTodayWorkload(userId: string, wordbookId: string): Promise<TodayWorkload>;
 
   /** 队列清单：按桶 + 搜索词分页（排序带 lemma tiebreak，翻页不重不漏）。 */
   listQueueCards(input: {
@@ -1892,7 +1931,12 @@ export interface DashboardSummary {
    * `review` 才算掌握；分母用 `trackedWords`（已开始的词）才是有意义的进度。
    */
   masteredWords: number;
-  dueToday: number;
+  /**
+   * **仓储层不提供 `dueToday`**（L3，2026-10-12 移除）：它由 `StatsService.getDashboardSummary`
+   * 从 `IReviewRepository.getTodayWorkload()`（唯一真源）组装进来。此前这里自己写了一条
+   * 与队列侧语义相同的 FILTER —— 两条各写一遍，正是 2026-10-12「仪表盘 1 / 队列 0」
+   * 数字打脸的根源。服务层输出类型见 `DashboardSummaryWithDue`。
+   */
   reviewedToday: number;
   reviewed7d: number;
   reviewed30d: number;
@@ -1900,6 +1944,14 @@ export interface DashboardSummary {
   notesCount: number;
   /** Phase E：双轨可视化统计。 */
   l2: DashboardL2Stats;
+}
+
+/**
+ * 服务层输出的仪表盘汇总 = 仓储汇总 + 单一真源的 `dueToday`（L3）。
+ * HTTP 响应形状与此一致（`reviewDashboardStatsResponseSchema` 未变）。
+ */
+export interface DashboardSummaryWithDue extends DashboardSummary {
+  dueToday: number;
 }
 
 export interface RatingDistribution {

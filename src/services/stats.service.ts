@@ -9,6 +9,7 @@ import type { PoolClient } from "pg";
 import type { IRepositories, IStatsRepository } from "../repositories/interfaces";
 import type {
   DashboardSummary,
+  DashboardSummaryWithDue,
   RatingDistribution,
   DueForecastBucket,
   DailyCount,
@@ -44,11 +45,33 @@ export class StatsService {
     );
   }
 
-  async getDashboardSummary(userId: string, wordbookId: string): Promise<DashboardSummary> {
-    return this.withActorStats(
-      userId,
-      (stats) => stats.getDashboardSummary(userId, wordbookId),
-    );
+  /**
+   * 全量仓储的事务读（L3 新增）：`getDashboardSummary` 要同时读 stats 与 reviews
+   * 两个仓储才能把「今天的工作量」组装进去，故不能只用 withActorStats。
+   */
+  private withActorAll<T>(
+    userId: string,
+    callback: (repos: IRepositories) => Promise<T>,
+  ): Promise<T> {
+    return this.txRunner(async (tx) => callback(this.repositoryFactory(tx)), { actorId: userId });
+  }
+
+  /**
+   * L3（2026-10-12）：`dueToday` 由**唯一真源** `reviews.getTodayWorkload()` 组装。
+   *
+   * 此前 `stats.repository` 自己写了一条与队列侧语义相同的「今日到期」FILTER，
+   * 两条各写一遍 ⇒ 2026-10-12 用户看到「仪表盘 1 / 队列 0」还以为调度坏了。现已删除
+   * 仓储层那条（见 `DashboardSummary` 的注释），改在这里组装。两个读在**同一事务**里，
+   * 所以「仪表盘的数」与「队列的数」不可能再各说各话。
+   */
+  async getDashboardSummary(userId: string, wordbookId: string): Promise<DashboardSummaryWithDue> {
+    return this.withActorAll(userId, async (repos) => {
+      const [summary, workload] = await Promise.all([
+        repos.stats.getDashboardSummary(userId, wordbookId),
+        repos.reviews.getTodayWorkload(userId, wordbookId),
+      ]);
+      return { ...summary, dueToday: workload.dueToday };
+    });
   }
 
   async getRatingDistribution(
@@ -116,7 +139,7 @@ export class StatsService {
    * 另：前端目前**没有任何渲染处**读 `forecast`（仪表盘只声明未用）—— 别照着它加新 UI。
    */
   async getForecast(
-    summary: DashboardSummary,
+    summary: DashboardSummaryWithDue,
     userId: string,
     wordbookId: string,
   ): Promise<ReviewForecast> {
@@ -130,12 +153,16 @@ export class StatsService {
   /**
    * 由**真实**到期桶组装预测（纯函数，不打开事务 —— 取数在 `getForecast`）。
    *
-   * `dueNow` = `summary.dueToday`；`due7d` / `due14d` = 对应 horizon 的桶计数。
+   * `dueNow` = `summary.dueToday`（L3 起它来自唯一真源 `getTodayWorkload`，见
+   * `getDashboardSummary` 的组装）；`due7d` / `due14d` = 对应 horizon 的桶计数。
    * 桶缺失按 0 计（查不到行 = 该窗口确实没有到期词）。`buckets` **必填**：
    * 让它有默认值会在调用方漏传时静默给出 0，那正是本轮要消灭的假数字。
+   *
+   * 签名只要 `dueToday`，但用 `DashboardSummaryWithDue` 而不是临时 Pick 类型：
+   * 调用方（`getForecast`）本来就持有整个汇总，少一层结构对齐的噪音。
    */
   computeForecast(
-    summary: DashboardSummary,
+    summary: DashboardSummaryWithDue,
     buckets: readonly DueForecastBucket[],
   ): ReviewForecast {
     const atHorizon = (days: number): number =>

@@ -15635,6 +15635,11 @@
                           "minimum": 0,
                           "maximum": 9007199254740991
                         },
+                        "laterToday": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
                         "total": {
                           "type": "integer",
                           "minimum": 0,
@@ -15649,6 +15654,7 @@
                         "suspended",
                         "dueNow",
                         "dueToday",
+                        "laterToday",
                         "total"
                       ],
                       "additionalProperties": false

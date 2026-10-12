@@ -30,8 +30,11 @@ export const reviewQueueListResponseSchema = z
         /**
          * 日历日口径的今日到期数（Asia/Shanghai，含今天稍后到点的）——「今日到期」
          * facet 视图的计数来源。与 `dueNow`（此刻口径）不是同一个数，勿混用。
+         * 恒等式：`dueToday === dueNow + laterToday`（唯一真源 `getTodayWorkload`）。
          */
         dueToday: z.number().int().nonnegative(),
+        /** 今天稍后到点的张数（= dueToday − dueNow）。 */
+        laterToday: z.number().int().nonnegative(),
         total: z.number().int().nonnegative(),
       })
       .strict(),

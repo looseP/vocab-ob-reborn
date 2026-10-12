@@ -94,8 +94,10 @@ function makeNoteEntryService(
 
 function makeMockStatsRepo(overrides: Partial<IStatsRepository> = {}): IStatsRepository {
   return {
+    // L3：仓储层不再提供 dueToday（服务层从 reviews.getTodayWorkload 组装，
+    // 见 DashboardSummaryWithDue）—— 别在这里把它加回来。
     getDashboardSummary: vi.fn(async () => ({
-      totalWords: 100, trackedWords: 50, masteredWords: 12, dueToday: 5,
+      totalWords: 100, trackedWords: 50, masteredWords: 12,
       reviewedToday: 10, reviewed7d: 70, reviewed30d: 300,
       streakDays: 3, notesCount: 20,
       l2: { promoted: 8, dueNow: 2, weakSignal: 1, reviewedToday: 4 },
@@ -548,13 +550,17 @@ describe("StatsService", () => {
     const txRepo = makeMockStatsRepo();
     const fakeTx = {} as never;
     const txRunner = vi.fn(async <T>(callback: (tx: never) => Promise<T>): Promise<T> => callback(fakeTx)) as unknown as typeof import("@/db/transaction").withTransaction;
-    const repositoryFactory = vi.fn(() => ({ stats: txRepo } as unknown as IRepositories));
+    // L3：dueToday 由唯一真源 reviews.getTodayWorkload 组装 ⇒ 工厂必须给出两个仓储
+    const getTodayWorkload = vi.fn(async () => ({ dueNow: 3, laterToday: 2, dueToday: 5 }));
+    const repositoryFactory = vi.fn(() => ({ stats: txRepo, reviews: { getTodayWorkload } } as unknown as IRepositories));
     const service = new StatsService(constructorRepo, txRunner, repositoryFactory);
 
     const result = await service.getDashboardSummary("u1", "wb1");
 
     expect(result.totalWords).toBe(100);
     expect(result.streakDays).toBe(3);
+    // 恒等式在真源里成立；服务层只负责把它带到响应上
+    expect(result.dueToday).toBe(5);
     expect(txRunner).toHaveBeenCalledTimes(1);
     expect(txRunner).toHaveBeenCalledWith(expect.any(Function), { actorId: "u1" });
     expect(repositoryFactory).toHaveBeenCalledWith(fakeTx);

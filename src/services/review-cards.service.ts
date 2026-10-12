@@ -65,6 +65,8 @@ export interface ReviewQueueListResult {
     dueNow: number;
     /** 日历日口径的今日到期数（「今日到期」facet 视图的计数来源）。 */
     dueToday: number;
+    /** 今天稍后到点的张数（= dueToday − dueNow；真源见 `TodayWorkload`）。 */
+    laterToday: number;
     total: number;
   };
   items: QueueListRow[];
