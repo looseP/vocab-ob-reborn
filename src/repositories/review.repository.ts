@@ -33,6 +33,7 @@ import type {
   RestoreSuspendSnapshotInput,
   SaveAnswerInput,
   SuspendedWordSnapshot,
+  TodayWorkload,
   UndoRpcResult,
 } from "./interfaces";
 import { BaseRepository } from "./base";
@@ -119,10 +120,14 @@ const QUEUE_BUCKET_PREDICATE: Record<Exclude<QueueListBucket, "all">, string> = 
  * 到期窗口 → SQL 谓词白名单（2026-10-12 加，与分桶**正交**的 facet）。
  *
  * 与 `QUEUE_BUCKET_PREDICATE` 同一纪律：用户输入永不进 SQL，facet 只决定挑哪个常量。
- * `today` 与仪表盘 `dueToday`（`stats.repository.getDashboardSummary`）逐字同口径：
+ * `today` 与 `getTodayWorkload().dueToday`（L3 起的唯一真源）**同一条谓词**：
  * Asia/Shanghai 日历日内到期（`$6` = 今日零点 ⇒ `< 今日零点 + 1 天`），含更早的积压与
- * 今天稍后到点的，排除挂起（挂起词不会被队列取出）。**不设下沿** —— 与 stats 侧一致，
- * 否则积压（due_at < 今日零点）会被漏掉，两个数又会对不上。
+ * 今天稍后到点的，排除挂起（挂起词不会被队列取出）。**不设下沿** —— 否则积压
+ * （due_at < 今日零点）会被漏掉，facet 清单与它自己的计数又会差一张。
+ *
+ * 状态口径此处是 `<> 'suspended'`（不含新卡判定），与真源的
+ * `NOT IN ('suspended','new')` 在**新卡带到期时间**时才会分叉；真库实测新卡
+ * due_at 全为 NULL，故两者恒等。真要统一，改这里 + 同步 today-workload 测试。
  */
 const QUEUE_DUE_WINDOW_PREDICATE: Record<QueueListDueWindow, string> = {
   today: `uwp.due_at IS NOT NULL AND uwp.due_at < $6::timestamptz + interval '1 day' AND uwp.state <> 'suspended'`,
@@ -861,13 +866,9 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
    *  4. due       —— state='review' 且 (due_at IS NULL OR due_at <= now())
    *  5. review    —— state='review' 且 due_at > now()（成熟、未到期）
    *
-   * `dueNow` 单列：非挂起、非新卡、已到期（= learning + due）—— 即「现在就该复习
-   * 的张数」。与仪表盘 due_count 的日历日口径不同，勿混用。
-   *
-   * `dueToday`（2026-10-12 加）单列：**日历日**口径的今日到期数（Asia/Shanghai，
-   * 含更早的积压与今天稍后到点的，排除挂起）—— 与 `stats.repository.getDashboardSummary`
-   * 的 `due_count` 逐字同口径，是「今日到期」facet 视图的计数来源。
-   * `dueToday = dueNow + 今天稍后到点的张数`（差集就是那张「还没到点」的卡），
+   * `dueNow` / `dueToday` / `laterToday`（L3，2026-10-12）**不再由本方法自己数**：
+   * 全部委托 `getTodayWorkload()`（唯一真源）。本方法只数按 state 切的桶。
+   * `dueToday = dueNow + laterToday`，差集就是「今天稍后到点」的那张卡 ——
    * 2026-10-12 用户报「仪表盘 1 / 队列 0 像调度坏了」看到的正是这个差。
    */
   async countQueueBuckets(
@@ -881,31 +882,34 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
     suspended: number;
     dueNow: number;
     dueToday: number;
+    laterToday: number;
     total: number;
   }> {
-    const row = await this.queryOne<Record<string, string>>(
-      `SELECT
-         COUNT(*)::text AS total,
-         COUNT(*) FILTER (WHERE uwp.state = 'suspended')::text AS suspended,
-         COUNT(*) FILTER (WHERE uwp.state = 'new')::text AS new_count,
-         COUNT(*) FILTER (WHERE uwp.state IN ('learning', 'relearning'))::text AS learning,
-         COUNT(*) FILTER (WHERE uwp.state = 'review'
-                            AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due,
-         COUNT(*) FILTER (WHERE uwp.state = 'review' AND uwp.due_at > now())::text AS review,
-         COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
-                            AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due_now,
-         COUNT(*) FILTER (WHERE uwp.due_at IS NOT NULL
-                            AND uwp.due_at < $3::timestamptz + interval '1 day'
-                            AND uwp.state <> 'suspended')::text AS due_today
-       FROM user_word_progress uwp
-       JOIN words w ON w.id = uwp.word_id
-       -- 可见性口径与队列取数一致（收尾轮 R2 闭环）：全景计数就是「队列的展示面」，
-       -- 若不计下架/软删除词，会出现「仪表盘说到期 N 张、实际队列 N-1 张」的分裂
-       -- ——用户以为有卡可刷却刷不到。
-       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
-         AND w.is_published = true AND w.is_deleted = false`,
-      [userId, wordbookId, startOfTodayIsoInDisplayTz()],
-    );
+    // L3：三个「今天」的数（dueNow / dueToday / laterToday）全部取自唯一真源
+    // `getTodayWorkload`（同一事务内第二次聚合扫描；用户维度百行级，代价可忽略）。
+    // **不要在这里再写一遍 due_now / due_today 的 FILTER** —— 2026-10-12 的
+    // 「仪表盘 1 / 队列 0」数字打脸，根源就是两处各写一遍。
+    const [row, workload] = await Promise.all([
+      this.queryOne<Record<string, string>>(
+        `SELECT
+           COUNT(*)::text AS total,
+           COUNT(*) FILTER (WHERE uwp.state = 'suspended')::text AS suspended,
+           COUNT(*) FILTER (WHERE uwp.state = 'new')::text AS new_count,
+           COUNT(*) FILTER (WHERE uwp.state IN ('learning', 'relearning'))::text AS learning,
+           COUNT(*) FILTER (WHERE uwp.state = 'review'
+                              AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due,
+           COUNT(*) FILTER (WHERE uwp.state = 'review' AND uwp.due_at > now())::text AS review
+         FROM user_word_progress uwp
+         JOIN words w ON w.id = uwp.word_id
+         -- 可见性口径与队列取数一致（收尾轮 R2 闭环）：全景计数就是「队列的展示面」，
+         -- 若不计下架/软删除词，会出现「仪表盘说到期 N 张、实际队列 N-1 张」的分裂
+         -- ——用户以为有卡可刷却刷不到。
+         WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+           AND w.is_published = true AND w.is_deleted = false`,
+        [userId, wordbookId],
+      ),
+      this.getTodayWorkload(userId, wordbookId),
+    ]);
     const count = (key: string): number => {
       const raw = row?.[key];
       const parsed = raw == null ? Number.NaN : Number.parseInt(raw, 10);
@@ -917,9 +921,58 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
       review: count("review"),
       new: count("new_count"),
       suspended: count("suspended"),
-      dueNow: count("due_now"),
-      dueToday: count("due_today"),
+      dueNow: workload.dueNow,
+      dueToday: workload.dueToday,
+      laterToday: workload.laterToday,
       total: count("total"),
+    };
+  }
+
+  /**
+   * 「今天的工作量」**唯一真源**（L3，2026-10-12）—— 一条 SQL 数出三个数。
+   *
+   * 恒等式 `dueToday === dueNow + laterToday` 因此是**结构性**的（同一批行、同一可见性
+   * 口径、同一时区边界），不靠「两处各写一遍然后祈祷」。消费方：
+   * `countQueueBuckets`（队列页计数）、`StatsService.getDashboardSummary`（仪表盘，
+   * 经 `DashboardSummaryWithDue` 组装）、复习日历「今天待做」徽标（边界同 helper）。
+   *
+   * 状态口径统一 `NOT IN ('suspended', 'new')`：新卡不是「到期」（它还没开始学），
+   * 挂起词不进队列。真库实测只有 review 态，故这是恒等变更；但它让三个数站在同一条
+   * 口径上，`dueToday` 不会比 `dueNow + laterToday` 多算一张新卡。
+   *
+   * 边角（有意为之，勿「修」）：`state='review' AND due_at IS NULL` 的成熟卡算进 dueNow
+   * （队列 `due` 桶历来把它当到期）但不算 dueToday / laterToday（要求 due_at 非空），
+   * 此时恒等式是 `dueToday < dueNow + laterToday`。真库实测 0 张。
+   *
+   * `$3` = `startOfTodayIsoInDisplayTz()`（Asia/Shanghai 今日零点）。
+   */
+  async getTodayWorkload(userId: string, wordbookId: string): Promise<TodayWorkload> {
+    const row = await this.queryOne<Record<string, string>>(
+      `SELECT
+         COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
+                            AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due_now,
+         COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
+                            AND uwp.due_at IS NOT NULL
+                            AND uwp.due_at > now()
+                            AND uwp.due_at < $3::timestamptz + interval '1 day')::text AS later_today,
+         COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
+                            AND uwp.due_at IS NOT NULL
+                            AND uwp.due_at < $3::timestamptz + interval '1 day')::text AS due_today
+       FROM user_word_progress uwp
+       JOIN words w ON w.id = uwp.word_id
+       WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
+         AND w.is_published = true AND w.is_deleted = false`,
+      [userId, wordbookId, startOfTodayIsoInDisplayTz()],
+    );
+    const count = (key: string): number => {
+      const raw = row?.[key];
+      const parsed = raw == null ? Number.NaN : Number.parseInt(raw, 10);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return {
+      dueNow: count("due_now"),
+      laterToday: count("later_today"),
+      dueToday: count("due_today"),
     };
   }
 

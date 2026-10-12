@@ -12,6 +12,24 @@ import type { Pool } from "pg";
 
 const TEST_DB_URL = process.env.TEST_DATABASE_URL;
 
+// ── L3（2026-10-12）跨查询交叉校验用的时区助手 ────────────────────────────
+// 与仓储里的 `startOfTodayIsoInDisplayTz()` 同义（Asia/Shanghai，固定 +08:00 无 DST）。
+function shanghaiDateKey(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+/** 明天零点（Asia/Shanghai）—— 仓储里 `< 今日零点 + interval '1 day'` 的那个上沿。 */
+function tomorrowMidnightShanghai(): Date {
+  const [y, m, d] = shanghaiDateKey(new Date()).split("-").map(Number);
+  const todayMidnightShanghai = new Date(Date.UTC(y, m - 1, d) - 8 * 3600_000);
+  return new Date(todayMidnightShanghai.getTime() + 24 * 3600_000);
+}
+
 describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
   let seededWordCount = 0;
 
@@ -370,7 +388,7 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       const repos = createRepositories();
       const counts = await repos.reviews.countQueueBuckets(data.userId, data.wordbookId);
       // 该书只有这一张卡：落 due 桶，其余桶为 0；非新卡且已到期 ⇒ dueNow 同计
-      expect(counts).toEqual({ due: 1, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 1, dueToday: 1, total: 1 });
+      expect(counts).toEqual({ due: 1, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 1, dueToday: 1, laterToday: 0, total: 1 });
 
       const duePage = await repos.reviews.listQueueCards({
         userId: data.userId,
@@ -418,6 +436,61 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
         offset: 0,
       });
       expect(miss.total).toBe(0);
+    } finally {
+      await data.cleanup();
+    }
+  });
+
+  // L3（2026-10-12）：「今天的工作量」唯一真源 + 恒等式 + 与日历今天桶同数。
+  // 前两轮修复（仪表盘 1 / 队列 0 的数字打脸、dueWindow facet）都是因为口径散在
+  // 多条 SQL 里各写一遍；这一条是**真库**上的交叉校验 —— 单元测试只能断言 SQL 文本，
+  // 跨查询的数值对不上只有真库能抓。
+  it("L3 getTodayWorkload：dueToday === dueNow + laterToday，且队列计数与日历今天桶都同数", async () => {
+    const data = await createTestReviewData();
+    try {
+      const pool = (await import("@/db/connection")).getPool();
+      // 目标时刻取 max(现在+5分钟, 今天12:00上海)：多数情况落在「今天稍后到点」，
+      // 若已过 23:30 上海则自然落到「已到期」—— 两种分支都断言同一条恒等式，
+      // 不依赖用例运行的钟点。
+      // pg 驱动把 timestamptz 统一解析成字符串（见 src/db/connection.ts 的
+      // setTypeParser(TIMESTAMPTZ, val => val)），这里要自己转回 Date。
+      const { rows: [after] } = await pool.query<{ due_at: string }>(
+        `UPDATE user_word_progress
+            SET state = 'review', review_count = 3,
+                due_at = GREATEST(
+                  now() + interval '5 minutes',
+                  ((now() AT TIME ZONE 'Asia/Shanghai')::date + interval '12 hours')
+                    AT TIME ZONE 'Asia/Shanghai'
+                )
+          WHERE id = $1
+          RETURNING due_at`,
+        [data.progressId],
+      );
+      const dueAt = new Date(after.due_at);
+
+      const repos = createRepositories();
+      const workload = await repos.reviews.getTodayWorkload(data.userId, data.wordbookId);
+
+      // ① 恒等式：同一条 SQL 的三个 FILTER，结构性保证
+      expect(workload.dueToday).toBe(workload.dueNow + workload.laterToday);
+      // ② laterToday 与「此刻 < due_at < 明天零点(上海)」逐字对应
+      const expectedLater =
+        dueAt.getTime() > Date.now() && dueAt.getTime() < tomorrowMidnightShanghai().getTime() ? 1 : 0;
+      expect(workload.laterToday).toBe(expectedLater);
+      // 该书只有这一张卡 ⇒ 三个数各自只能是 0 或 1
+      expect(workload.dueNow).toBeLessThanOrEqual(1);
+      expect(workload.dueToday).toBeLessThanOrEqual(1);
+
+      // ③ 队列计数委托真源，不再自己数一遍
+      const counts = await repos.reviews.countQueueBuckets(data.userId, data.wordbookId);
+      expect(counts.dueNow).toBe(workload.dueNow);
+      expect(counts.dueToday).toBe(workload.dueToday);
+      expect(counts.laterToday).toBe(workload.laterToday);
+
+      // ④ 复习日历「今天」桶与真源同数（跨仓储交叉校验）
+      const calendar = await repos.stats.getDailyDueCounts(data.userId, data.wordbookId, 30);
+      const todayBucket = calendar.buckets.find((b) => b.date === calendar.todayDate);
+      expect(todayBucket?.count ?? 0).toBe(workload.dueToday);
     } finally {
       await data.cleanup();
     }

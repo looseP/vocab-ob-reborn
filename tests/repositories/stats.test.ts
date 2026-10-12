@@ -23,8 +23,8 @@ function mapStandardQueries(l2Row: unknown[] | null) {
   mock.setRowMap({
     ...(l2Row ? { "FROM user_word_l2_progress": l2Row } : {}),
     "l1_weak_signal": [{ count: "3" }],
-    // 批次 3：due 计数改为日历日口径（due_at < 今天零点 + 1 天 ⟺ due 日 <= 今天）
-    "due_at < $3::timestamptz + interval '1 day'": [{ due_count: "2", mastered_count: "5" }],
+    // L3：进度查询只剩「已掌握」一个 FILTER（due_count 已移交 getTodayWorkload）
+    "mastered_count": [{ mastered_count: "5" }],
     "interval '7 days'": [{ count: "10" }],
     "interval '30 days'": [{ count: "40" }],
     "FROM user_word_progress": [{ count: "25" }],
@@ -87,7 +87,8 @@ describe("StatsRepository.getDashboardSummary", () => {
       totalWords: 0,
       trackedWords: 0,
       masteredWords: 0,
-      dueToday: 0,
+      // L3：dueToday 不在这里出（服务层从 reviews.getTodayWorkload 组装）——
+      // 仓储层再也没有第二条「今日到期」的实现。
       reviewedToday: 0,
       reviewed7d: 0,
       reviewed30d: 0,
@@ -97,32 +98,29 @@ describe("StatsRepository.getDashboardSummary", () => {
     });
   });
 
-  it("进度查询同时出「今天待复习」与「已掌握」，排除挂起且为日历日口径（D4 + 批次 3）", async () => {
-    // 2026-10-07 仪表盘深度优化：此前 dueToday 不过滤 suspended（队列却排除 ⇒ 同一件事
-    // 两个数），而「已掌握」由前端用 totalWords - dueToday 硬算（实测 6754 vs 真值 14）。
-    // 批次 3（2026-10-09）收口：dueToday 从 `due_at <= now()`（时刻）改为
-    // `due_at < 今天零点 + 1 天`（日历日）——与日历「今天待做」逐字等价，
-    // 「今天晚些时候到期」的词不再出现「日历含、顶卡不含」的差数。
+  it("进度查询只出「已掌握」；「今日到期」已移交唯一真源（L3）", async () => {
+    // L3（2026-10-12）：这里原本还数一个 `due_count`（今日到期，日历日口径），
+    // 与 `ReviewRepository.getTodayWorkload()` 的 `due_today` 语义相同、各写一遍 ——
+    // 2026-10-12 用户报「仪表盘 1 / 队列 0 像调度坏了」的根源。已删除：
+    // 仓储层不再有第二条「今日到期」的实现（服务层组装，见 DashboardSummaryWithDue）。
     mapStandardQueries([{ promoted: "12", due_now: "3", weak_signal: "4", l2_reviewed_today: "6" }]);
     const repos = createRepositories();
 
     const summary = await repos.stats.getDashboardSummary("u1", "wb1");
 
-    // 两个指标由**同一条**查询出（并行调用数不变：8 + streak）
     const progressQueries = mock.calls.filter((c) => c.text.includes("user_word_progress") && c.text.includes("FILTER"));
     expect(progressQueries).toHaveLength(1);
     const sql = progressQueries[0].text;
-    expect(sql).toContain("state <> 'suspended'");
+    // 只剩「已掌握」一个 FILTER：state='review'，且**没有**任何到期时间谓词
     expect(sql).toContain("state = 'review'");
-    // 日历日口径：上沿 = 今天零点 + 1 天（= 明天零点），且日界参数来自显示时区
-    expect(sql).toContain("due_at < $3::timestamptz + interval '1 day'");
-    expect(sql).not.toContain("due_at <= now()");
-    expect(progressQueries[0].params[2]).toMatch(/^\d{4}-\d{2}-\d{2}T16:00:00\.000Z$/);
+    expect(sql).not.toContain("due_at");
+    expect(progressQueries[0].params).toEqual(["u1", "wb1"]);
 
-    expect(summary.dueToday).toBe(2);
     expect(summary.masteredWords).toBe(5);
+    // 仓储层不再提供 dueToday —— 别在这里把它加回来
+    expect(summary).not.toHaveProperty("dueToday");
     // 「已掌握」绝不能等于「总数 − 今天到期」那种假口径
-    expect(summary.masteredWords).not.toBe(summary.totalWords - summary.dueToday);
+    expect(summary.masteredWords).not.toBe(summary.totalWords);
   });
 
   describe("日历两查询（M2）", () => {
@@ -144,7 +142,8 @@ describe("StatsRepository.getDashboardSummary", () => {
       { date: "2026-10-09", count: 3 },
     ]);
     const sql = mock.lastQuery!.text;
-    expect(sql).toContain("state <> 'suspended'");       // 与队列同口径
+    // L3：与 `TodayWorkload` 逐字相同的状态口径（挂起不进队列；新卡不是「到期」）
+    expect(sql).toContain("state NOT IN ('suspended', 'new')");
     expect(sql).toContain("greatest(");                    // 积压并入「今天」
     expect(sql).toContain("make_interval");                // 日历日窗口（非滚动 N×24h）
     // 桶锚点必须先把 $3（= 今天零点的 ISO 串，形如 2026-10-07T16:00:00.000Z）按**显示时区**
@@ -281,8 +280,9 @@ describe("StatsRepository.getDueForecast（M1 真实到期预测）", () => {
     // ② **不设下沿**：加 `due_at > 今天零点` 会把积压排除 —— 实测自用栈会得出
     //    due7d=0 而 dueNow=14（「未来 7 天」比「今天」还少）。这条断言锁住该决定。
     expect(q.text).not.toMatch(/due_at\s*>/);
-    // ③ 排除挂起词（复习队列一律 state != 'suspended'，预测算上它们是虚报）
-    expect(q.text).toContain("state <> 'suspended'");
+    // ③ 排除挂起与新卡（与 `TodayWorkload` 同口径：复习队列一律排除挂起，
+    //    新卡还没开始学，不算「到期」—— 预测算上它们是虚报）
+    expect(q.text).toContain("state NOT IN ('suspended', 'new')");
     expect(q.text).toContain("due_at IS NOT NULL");
 
     // 日界复用显示时区今日零点（与 dueToday / reviewedToday 同源）

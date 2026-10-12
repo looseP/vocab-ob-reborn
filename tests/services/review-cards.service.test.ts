@@ -13,7 +13,7 @@ function makeService(overrides: {
     expireCardsByWordIds: overrides.expireCardsByWordIds ?? vi.fn(async () => []),
     countQueueBuckets:
       overrides.countQueueBuckets ??
-      vi.fn(async () => ({ due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, dueToday: 0, total: 0 })),
+      vi.fn(async () => ({ due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, dueToday: 0, laterToday: 0, total: 0 })),
     listQueueCards: overrides.listQueueCards ?? vi.fn(async () => ({ items: [], total: 0 })),
   };
   const repoFactory = () => ({ reviews }) as unknown as IRepositories;
@@ -95,6 +95,7 @@ describe("ReviewCardsService.listQueue（P1 队列全景）", () => {
         suspended: 2,
         dueNow: 15,
         dueToday: 18,
+        laterToday: 3,
         total: 157,
       })),
       listQueueCards: vi.fn(async () => ({ items, total: 157 })),

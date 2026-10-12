@@ -9798,6 +9798,7 @@ export interface operations {
                             suspended: number;
                             dueNow: number;
                             dueToday: number;
+                            laterToday: number;
                             total: number;
                         };
                         items: {

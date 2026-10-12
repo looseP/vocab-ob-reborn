@@ -19,7 +19,7 @@ afterAll(() => {
 const QUEUE_PAYLOAD = {
   // dueToday(18) > dueNow(15)：差的 3 张是「今天稍后到点」的卡 —— 2026-10-12 用户报
   // 「仪表盘 1 / 队列 0 像调度坏了」的那个差，也是 dueWindow facet 存在的原因。
-  counts: { due: 12, learning: 3, review: 40, new: 100, suspended: 2, dueNow: 15, dueToday: 18, total: 157 },
+  counts: { due: 12, learning: 3, review: 40, new: 100, suspended: 2, dueNow: 15, dueToday: 18, laterToday: 3, total: 157 },
   items: [
     {
       wordId: "w-1",

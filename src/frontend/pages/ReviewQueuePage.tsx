@@ -212,7 +212,7 @@ export function ReviewQueuePage() {
             onClick={() => queue.setDueWindow(queue.dueWindow === "today" ? null : "today")}
             aria-pressed={queue.dueWindow === "today"}
             className={tabClass(queue.dueWindow === "today")}
-            title="今天（上海日历日）内到期的全部卡：含此刻已到期的，也含今天稍后到点的；不管它处于哪个状态桶。"
+            title={`今天（上海日历日）内到期的全部卡：此刻已到期 ${queue.counts?.dueNow ?? 0} 张 + 今天稍后到点 ${queue.counts?.laterToday ?? 0} 张；不管它处于哪个状态桶。`}
           >
             今日到期
             <span className="ml-1.5 text-xs opacity-70">{queue.counts?.dueToday ?? 0}</span>

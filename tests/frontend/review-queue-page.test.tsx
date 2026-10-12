@@ -27,7 +27,8 @@ const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
 
 // dueToday(4) > dueNow(3)：差的 1 张是「今天稍后到点」的卡 —— 2026-10-12 用户报的
 // 「仪表盘 1 / 队列 0」那个差，也是「今日到期」facet 存在的原因。
-const COUNTS = { due: 2, learning: 1, review: 5, new: 8, suspended: 3, dueNow: 3, dueToday: 4, total: 16 };
+// laterToday 就是那个差（服务端恒等式 dueToday === dueNow + laterToday）。
+const COUNTS = { due: 2, learning: 1, review: 5, new: 8, suspended: 3, dueNow: 3, dueToday: 4, laterToday: 1, total: 16 };
 
 function makeItem(overrides: Partial<Record<string, unknown>> = {}) {
   return {
