@@ -114,14 +114,14 @@ function makeCard(word: Partial<ReviewCard["word"]> = {}): ReviewCard {
 // ── A. 配置模块 ────────────────────────────────────────────────────────────
 
 describe("autoAudioSettings：配置解析与存储纪律", () => {
-  it("默认编排：①词→例句 ②释义→例句 ③a 词 ③b 关，总闸开", () => {
+  it("默认编排：①词→例句 ②释义→例句 ③a 词 ③b 释义，总闸开", () => {
     const config = readAutoAudioConfig();
     expect(config).toEqual(DEFAULT_AUTO_AUDIO_CONFIG);
     expect(config.master).toBe(true);
     expect(config.faces["en-word"]).toEqual(["word", "sentence"]);
     expect(config.faces["zh-meaning"]).toEqual(["definition", "sentence"]);
     expect(config.faces["typing-en"]).toEqual(["word"]);
-    expect(config.faces["typing-zh"]).toBe("off");
+    expect(config.faces["typing-zh"]).toEqual(["definition"]);
     expect(config.onReveal).toBe("off");
     expect(config.gapMs).toBe(350);
   });
@@ -239,10 +239,14 @@ describe("useFaceAutoAudio：触发与编排选择", () => {
     );
   });
 
-  it("③b 纯中文面默认关：不播（防泄题）", () => {
+  it("③b 纯中文面默认只读释义：题面即音频，词形绝不入编排（防泄题）", () => {
     const controller = fakeController();
     renderProbe({ ...baseProbe, face: "typing-zh", controller });
-    expect(controller.playSequence).not.toHaveBeenCalled();
+    expect(controller.playSequence).toHaveBeenCalledWith([{ kind: "definition", text: "在...之上" }], 350);
+    const playedKinds = controller.playSequence.mock.calls.flatMap((call) =>
+      (call[0] as Array<{ kind: string }>).map((unit) => unit.kind),
+    );
+    expect(playedKinds, "念英文等于把答案说出口").toEqual(["definition"]);
   });
 
   it("总闸关闭时一律不播", () => {
