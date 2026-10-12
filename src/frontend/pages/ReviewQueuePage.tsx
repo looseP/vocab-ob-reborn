@@ -15,6 +15,10 @@
  *  - 「现在就该复习」= 非挂起、非新卡、且已到期；**不含新卡**（新卡按每日配额引入）。
  *  - 与仪表盘「今日待复习」（上海日历日到期口径）**不是同一个量**：那里含今天稍后
  *    到点的卡，这里是「此刻已经到期」。
+ *
+ * 清单默认**只出词形、不出中文释义**（2026-10-12）：进这一页多半是「复习前先看一眼
+ * 攒了哪些词」，此时把释义摆在眼前等于提前把答案看了。要看释义得显式按「显示释义」
+ * —— 与自动伴读 ③b 同一口径：**防线是默认值，不是硬过滤**。
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -111,6 +115,8 @@ export function emptyHint(bucket: ReviewQueueBucket, searching: boolean): string
 export function ReviewQueuePage() {
   const queue = useReviewQueue();
   const [pendingRemoval, setPendingRemoval] = useState<ReviewQueueListItem | null>(null);
+  /** 中文释义默认收起（见文件头：复习前先看一眼，别提前把答案摆出来）。 */
+  const [showDefinition, setShowDefinition] = useState(false);
 
   const searching = queue.searchInput.trim().length > 0;
 
@@ -195,6 +201,15 @@ export function ReviewQueuePage() {
               ? `匹配 ${queue.total} 张`
               : `共 ${queue.total} 张${queue.items.length < queue.total ? `（已加载 ${queue.items.length}）` : ""}`}
           </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-pressed={showDefinition}
+            onClick={() => setShowDefinition((prev) => !prev)}
+            title="默认只出词形：这里多半是「复习前先看一眼」，先看见中文释义等于提前把答案看了。"
+          >
+            {showDefinition ? "隐藏释义" : "显示释义"}
+          </Button>
         </div>
       </Card>
 
@@ -235,6 +250,7 @@ export function ReviewQueuePage() {
               key={item.wordId}
               item={item}
               busy={queue.pendingWordId === item.wordId}
+              showDefinition={showDefinition}
               onExpire={() => void queue.expireOne(item.wordId)}
               onRemove={() => setPendingRemoval(item)}
             />
@@ -316,11 +332,14 @@ function SummaryTile({
 function QueueRow({
   item,
   busy,
+  showDefinition,
   onExpire,
   onRemove,
 }: {
   item: ReviewQueueListItem;
   busy: boolean;
+  /** 中文释义是否上屏（默认 false，见页面文件头）。 */
+  showDefinition: boolean;
   onExpire: () => void;
   onRemove: () => void;
 }) {
@@ -344,7 +363,7 @@ function QueueRow({
           </Badge>
           {item.needsRecheck && <Badge tone="accent">内容已更新</Badge>}
         </div>
-        {item.shortDefinition && (
+        {showDefinition && item.shortDefinition && (
           <p className="mt-1 truncate text-sm text-[var(--color-ink-soft)]">{item.shortDefinition}</p>
         )}
         <p className="mt-1 text-xs text-[var(--color-ink-soft)]">

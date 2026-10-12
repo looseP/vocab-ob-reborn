@@ -2,7 +2,8 @@
  * 仪表盘（批次 2，2026-10-09 四段式重排）。
  *
  * 结构规矩：**行动 → 洞察 → 进度 → 档案**，首屏只说「今天该做什么」。
- *  - 行动区：今日待复习 / 今日已复习 两卡 + 开始复习（队列文案）+ 复习活动卡；
+ *  - 行动区：今日待复习（**整卡可点 → 复习队列**，数字回答「多少」、队列回答「是哪些」）
+ *    / 今日已复习 两卡 + 开始复习（队列文案）+ 复习活动卡；
  *  - 洞察区：L1 速刷统计（含 L2 条件块）+ 漏词管理；
  *  - 进度区：掌握进度条 + 一行 badges（已掌握/在学/总数/近 7·30 天；连续打卡在头部）；
  *  - 档案区：最近笔记 + 一键遗忘（低显著入口置底）。
@@ -70,7 +71,7 @@ interface DashboardStats {
   l2?: { promoted: number; dueNow: number; weakSignal: number; reviewedToday: number };
 }
 
-function StatCard({ icon: Icon, label, value, color, loading, suffix, hint }: {
+function StatCard({ icon: Icon, label, value, color, loading, suffix, hint, to }: {
   icon: typeof Repeat;
   label: string;
   value: number | string;
@@ -79,9 +80,14 @@ function StatCard({ icon: Icon, label, value, color, loading, suffix, hint }: {
   suffix?: string;
   /** 口径说明（悬停提示）—— 数字的口径差异靠它讲清，不占版面。 */
   hint?: string;
+  /**
+   * 有去处时整卡可点（2026-10-12）：数字回答「多少」，去处回答「是哪些」。
+   * 用 `Link` 而非 `Card onClick` —— 键盘可达、可中键新开、读屏会念出「链接」。
+   */
+  to?: string;
 }) {
-  return (
-    <Card className="flex items-center gap-4" title={hint}>
+  const body = (
+    <>
       <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--color-surface-muted)]">
         <Icon className="h-6 w-6" style={{ color }} />
       </div>
@@ -95,7 +101,27 @@ function StatCard({ icon: Icon, label, value, color, loading, suffix, hint }: {
           </p>
         )}
       </div>
-    </Card>
+    </>
+  );
+
+  if (!to) {
+    return (
+      <Card className="flex items-center gap-4" title={hint}>
+        {body}
+      </Card>
+    );
+  }
+
+  return (
+    <Link
+      to={to}
+      title={hint}
+      className="block rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+    >
+      <Card className="flex items-center gap-4 transition-colors hover:border-[var(--color-border-strong)]">
+        {body}
+      </Card>
+    </Link>
   );
 }
 
@@ -211,7 +237,8 @@ export function DashboardPage() {
           value={dueToday}
           color="var(--color-accent)"
           loading={loading}
-          hint="今天（上海日历日）内到期且未挂起的卡片：含更早的积压与今天稍后到点的。与「复习活动」的「今天待做」同口径；「现在能复习的」以复习队列为准。"
+          to="/review-queue"
+          hint="今天（上海日历日）内到期且未挂起的卡片：含更早的积压与今天稍后到点的。与「复习活动」的「今天待做」同口径。点开看**具体是哪些词**（队列取「此刻已到期」口径，数字可能少于这里）。"
         />
         <StatCard
           icon={CheckCircle2}
