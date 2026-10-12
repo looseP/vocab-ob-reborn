@@ -455,9 +455,11 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       const { rows: [after] } = await pool.query<{ due_at: Date }>(
         `UPDATE user_word_progress
             SET state = 'review', review_count = 3,
-                due_at = GREATEST(now() + interval '5 minutes',
-                                  (now() AT TIME ZONE 'Asia/Shanghai')::date + interval '12 hours'
-                                    AT TIME ZONE 'Asia/Shanghai')
+                due_at = GREATEST(
+                  now() + interval '5 minutes',
+                  ((now() AT TIME ZONE 'Asia/Shanghai')::date + interval '12 hours')
+                    AT TIME ZONE 'Asia/Shanghai'
+                )
           WHERE id = $1
           RETURNING due_at`,
         [data.progressId],
