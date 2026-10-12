@@ -17,6 +17,8 @@ import { useTypingFlow } from "@/frontend/hooks/useTypingFlow";
 import { Badge } from "@/frontend/components/ui/Badge";
 import type { DictationTier } from "@/frontend/reviewFlow/stageMap";
 import { TIER_CAP, TIER_LABEL } from "@/frontend/reviewFlow/stageMap";
+import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
+import { useFaceAutoAudio } from "@/frontend/reviewFlow/useFaceAutoAudio";
 
 const TIER_ICON: Record<DictationTier, typeof Keyboard> = {
   dictation: Keyboard,
@@ -49,6 +51,18 @@ export function TypingDictationView({ lemma, definition, ipa, disabled, onDone }
     setFinishedResult(r);
     setFinished(true);
     onDone({ tier, wrongTimes: r.wrongTimes, hintChars, abandonedChars: abandonedRef.current });
+  });
+
+  // 切卡自动伴读：卡面类别**随档位变** —— copy 档词形可见 = ③a（播词形）；
+  // dictation / listen 档只见中文 = ③b（默认关：念英文等于把答案说出口）。
+  // triggerKey 用 tier：切档即换面，上一档在途的伴读随 effect 清理被掐断。
+  const audio = useAudioController();
+  useFaceAutoAudio({
+    face: tier === "copy" ? "typing-en" : "typing-zh",
+    triggerKey: tier,
+    lemma,
+    definition,
+    controller: audio,
   });
 
   const chars = Array.from(lemma);

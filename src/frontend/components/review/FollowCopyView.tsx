@@ -10,6 +10,8 @@ import { Keyboard, Volume2, Eye } from "lucide-react";
 import { useTypingFlow } from "@/frontend/hooks/useTypingFlow";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { isSpeechSynthesisAvailable, speak } from "@/frontend/reviewFlow/speech";
+import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
+import { useFaceAutoAudio } from "@/frontend/reviewFlow/useFaceAutoAudio";
 
 interface FollowCopyViewProps {
   lemma: string;
@@ -31,12 +33,26 @@ export function FollowCopyView({ lemma, definition, ipa, disabled, onDone }: Fol
   const chars = Array.from(lemma);
   const hideLemma = listenMode && !speechUnsupported;
 
+  // 切卡自动伴读：巩固轮到达时词形可见 = ③a 卡面，默认先播一次词形再开打
+  // （形·听 + 形·视 + 动·手三重编码）。进入听写强化形态后词形隐藏，
+  // 由用户手动触发的那一次发音接管（startListen 里会掐断在途伴读）。
+  const audio = useAudioController();
+  useFaceAutoAudio({
+    face: "typing-en",
+    triggerKey: lemma,
+    lemma,
+    definition,
+    controller: audio,
+  });
+
   const startListen = () => {
     if (!isSpeechSynthesisAvailable()) {
       setSpeechUnsupported(true); // 无 TTS 环境 → 降级跟写
       return;
     }
     setListenMode(true);
+    // 用户手动触发优先：掐断在途自动伴读，避免自动编排的下一段接着念
+    audio.stop();
     if (!speak(lemma)) {
       setSpeechUnsupported(true); // 合成失败 → 降级跟写
       setListenMode(false);

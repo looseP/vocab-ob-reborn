@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Settings, Sun, Moon, Monitor, Target, Save, Sparkles } from "lucide-react";
+import { Settings, Sun, Moon, Monitor, Target, Save, Sparkles, Volume2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -16,6 +16,73 @@ interface LlmStatus {
   budget: { dailyLimitTokens: number; usedTodayTokens: number; resetsAt: string } | null;
 }
 
+/**
+ * 一类卡面的编排行（2026-10-12 自动伴读）。
+ *
+ * 三个单元 chip 的多选即编排：全不选 = 该类关闭。空数组在配置层归一为
+ * `"off"`，所以 UI 只需表达「选哪几个、按什么顺序」——顺序固定为
+ * 词 → 例句 → 释义（与 audioEngine 的段间衔接同序，不在 UI 里开放排序，
+ * 避免用户配出「先例句后词」这种打断记忆锚定的序列）。
+ */
+function AutoAudioPlaylistRow({
+  label,
+  hint,
+  testKey,
+  playlist,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  testKey: string;
+  playlist: Playlist;
+  onChange: (next: Playlist) => void;
+}) {
+  const active = new Set<AudioUnit>(playlist === "off" ? [] : playlist);
+  const toggle = (unit: AudioUnit) => {
+    const current: AudioUnit[] = playlist === "off" ? [] : [...playlist];
+    const next = current.includes(unit) ? current.filter((u) => u !== unit) : [...current, unit];
+    onChange(next.length > 0 ? next : "off");
+  };
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-[var(--color-ink)]">{label}</span>
+        {AUDIO_UNITS.map((unit) => {
+          const on = active.has(unit);
+          return (
+            <button
+              key={unit}
+              type="button"
+              aria-pressed={on}
+              aria-label={`${label} 朗读${AUDIO_UNIT_LABELS[unit]}`}
+              data-testid={`auto-audio-${testKey}-${unit}`}
+              onClick={() => toggle(unit)}
+              className={
+                "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-colors " +
+                (on
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+                  : "border-[var(--color-border)] text-[var(--color-ink-soft)] hover:border-[var(--color-accent)]")
+              }
+            >
+              {AUDIO_UNIT_LABELS[unit]}
+            </button>
+          );
+        })}
+        {active.size === 0 && <span className="text-xs text-[var(--color-ink-soft)]">（关）</span>}
+      </div>
+      <p className="mt-1 text-xs text-[var(--color-ink-soft)]">{hint}</p>
+    </div>
+  );
+}
+
+/** 四类卡面的说明文案（与 autoAudioSettings 文件头的认知依据同源）。 */
+const AUTO_AUDIO_FACE_HINTS: Record<FaceClass, string> = {
+  "en-word": "词形面：词 → 例句，听读一致，看到什么听到什么",
+  "zh-meaning": "释义面：释义 → 例句，先听中文做一次「义 → 形」预热",
+  "typing-en": "打字 · 词形可见：先听形再开打（形·听 + 形·视 + 动·手）",
+  "typing-zh": "打字 · 纯中文：默认关 —— 念英文等于把答案说出口",
+};
+
 import {
   DEFAULT_DAILY_NEW_WORD_LIMIT,
   DEFAULT_DAILY_REVIEW_LIMIT,
@@ -27,6 +94,17 @@ import {
   writeDailyNewWordLimit,
   writeDailyReviewLimit,
 } from "@/frontend/utils/dailyReviewLimit";
+import {
+  AUDIO_UNITS,
+  AUDIO_UNIT_LABELS,
+  FACE_CLASS_LABELS,
+  readAutoAudioConfig,
+  writeAutoAudioConfig,
+  type AudioUnit,
+  type AutoAudioConfig,
+  type FaceClass,
+  type Playlist,
+} from "@/frontend/utils/autoAudioSettings";
 
 export function SettingsPage() {
   const [theme, setTheme] = useState<Theme>("system");
@@ -38,6 +116,14 @@ export function SettingsPage() {
   const [dailyNewWordLimit, setDailyNewWordLimit] = useState(() => readDailyNewWordLimit());
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const { addToast } = useToast();
+  // 自动伴读配置（2026-10-12）：纯本地偏好，改动**即时生效**并落盘 ——
+  // 不走「保存设置」按钮（卡面每卡现读配置，攒着不存反而让人以为没生效）。
+  const [autoAudio, setAutoAudio] = useState<AutoAudioConfig>(() => readAutoAudioConfig());
+  const updateAutoAudio = (patch: Partial<AutoAudioConfig>) => {
+    const next = { ...autoAudio, ...patch };
+    setAutoAudio(next);
+    writeAutoAudioConfig(next);
+  };
 
   useEffect(() => {
     const saved = localStorage.getItem("vocab-theme") as Theme;
@@ -210,6 +296,48 @@ export function SettingsPage() {
             <Save className="h-4 w-4" />
             保存设置
           </Button>
+        </div>
+      </Card>
+
+      {/* 自动伴读（2026-10-12）：切卡自动播音频。本地偏好即时生效，
+          与上方「保存设置」按钮无关；会话中另有顶栏开关可一键静音。 */}
+      <Card>
+        <div className="mb-4 flex items-center gap-2">
+          <Volume2 className="h-5 w-5 text-[var(--color-accent)]" />
+          <h2 className="section-title text-lg font-semibold text-[var(--color-ink)]">自动伴读</h2>
+        </div>
+        <div className="space-y-4">
+          <label className="flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
+            <input
+              type="checkbox"
+              checked={autoAudio.master}
+              onChange={(e) => updateAutoAudio({ master: e.target.checked })}
+              className="accent-[var(--color-accent)]"
+            />
+            切卡时自动播放音频（视觉 + 听觉双编码）
+          </label>
+          <p className="text-xs text-[var(--color-ink-soft)]">
+            每类卡面到达时按编排朗读一次，段间停顿 {autoAudio.gapMs}ms。
+            英文词形默认只在<strong>词形可见</strong>的卡面出现 —— 默写 / 完形这类
+            「答案在音频里」的卡面默认关闭，防止泄题。改动即时生效（下一张卡）。
+          </p>
+          {(Object.keys(FACE_CLASS_LABELS) as FaceClass[]).map((face) => (
+            <AutoAudioPlaylistRow
+              key={face}
+              testKey={face}
+              label={FACE_CLASS_LABELS[face]}
+              hint={AUTO_AUDIO_FACE_HINTS[face]}
+              playlist={autoAudio.faces[face]}
+              onChange={(next) => updateAutoAudio({ faces: { ...autoAudio.faces, [face]: next } })}
+            />
+          ))}
+          <AutoAudioPlaylistRow
+            testKey="on-reveal"
+            label="翻卡时（正 → 反）"
+            hint="默认关：切卡播一次是主语义，翻卡不重播"
+            playlist={autoAudio.onReveal}
+            onChange={(next) => updateAutoAudio({ onReveal: next })}
+          />
         </div>
       </Card>
 

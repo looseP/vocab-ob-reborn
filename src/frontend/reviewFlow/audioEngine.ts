@@ -27,6 +27,7 @@ import {
   speakSentence,
   type Accent,
 } from "@/frontend/reviewFlow/speech";
+import { readAudioAccent, writeAudioAccent } from "@/frontend/utils/autoAudioSettings";
 
 export type { Accent };
 
@@ -48,6 +49,27 @@ export const WORD_AUDIO_TIMEOUT_MS = 1500;
  * 这个定时器只在"既没 ended 也没 error 也没首帧超时"的极端漏网场景兜底。
  */
 export const WORD_REAL_AUDIO_SAFETY_MS = 4000;
+
+/**
+ * 自动伴读的朗读单元类型：词形（双轨）/ 英文例句（TTS 优选音色）/ 中文释义（TTS）。
+ */
+export type AudioUnitKind = "word" | "sentence" | "definition";
+
+export interface AudioSequenceUnit {
+  kind: AudioUnitKind;
+  text: string;
+}
+
+/**
+ * 编排段间默认停顿（毫秒）。
+ *
+ * TTS 没有可靠 onend，段间必须留估算余量；留得太短两段听感粘连，太长则
+ * 用户以为卡住了。350ms 是「上一段刚收尾、下一段即起」的经验值。
+ */
+export const DEFAULT_SEQUENCE_GAP_MS = 350;
+
+/** 中文释义朗读的语言标签（口音 uk/us 只作用于英文轨）。 */
+const DEFINITION_LANG = "zh-CN";
 
 /**
  * 词典真人发音 CDN：type=1 英音 / type=2 美音。
@@ -232,6 +254,13 @@ export interface AudioController {
   toggleAccent: () => void;
   playWord: (lemma: string) => void;
   playSentence: (text: string) => void;
+  /**
+   * 自动伴读：按编排顺序朗读一串单元（词 → 停顿 → 例句 → 停顿 → 释义）。
+   *
+   * 与 playWord / playSentence 同一套互斥与收尾机制：起播即打断在途音频
+   * （含上一套未播完的编排），用户随后任何手动播放也会连带取消本编排。
+   */
+  playSequence: (units: readonly AudioSequenceUnit[], gapMs?: number) => void;
   stop: () => void;
 }
 
@@ -242,7 +271,9 @@ export interface AudioController {
  * 回传精确的结束时刻；乐观置位换来的是 UI（声波动画、按钮高亮）永不卡死。
  */
 export function useAudioController(): AudioController {
-  const [accent, setAccent] = useState<Accent>(DEFAULT_ACCENT);
+  // 口音从本地偏好恢复：自动伴读每次挂载都新建控制器，不持久化就意味着
+  // 用户切一次英音、换一张卡就被打回美音 —— 伴读场景下这个缺口会被放大。
+  const [accent, setAccent] = useState<Accent>(() => readAudioAccent() ?? DEFAULT_ACCENT);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSource, setCurrentSource] = useState<AudioSource | null>(null);
 
@@ -253,6 +284,22 @@ export function useAudioController(): AudioController {
   const handleRef = useRef<AudioHandle | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aliveRef = useRef(true);
+  /**
+   * 在途自动编排的取消句柄。
+   *
+   * 编排是「定时器链」，取消必须**同时**做两件事：清掉挂起的下一段定时器 +
+   * 置位 cancelled（否则链上后续 step 会把已停的声音重新唤起）。
+   */
+  const sequenceRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; cancelled: boolean } | null>(null);
+
+  const cancelSequence = useCallback(() => {
+    const seq = sequenceRef.current;
+    sequenceRef.current = null;
+    if (!seq) return;
+    seq.cancelled = true;
+    if (seq.timer !== null) clearTimeout(seq.timer);
+    seq.timer = null;
+  }, []);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -273,6 +320,7 @@ export function useAudioController(): AudioController {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
+      cancelSequence();
       clearTimer();
       handleRef.current?.cancel();
       handleRef.current = null;
@@ -280,7 +328,7 @@ export function useAudioController(): AudioController {
       // 直接对 speechSynthesis 发一次物理 cancel，避免离开页面后耳机还在念。
       cancelSpeech();
     };
-  }, [clearTimer]);
+  }, [cancelSequence, clearTimer]);
 
   /**
    * 中断在途音频并清定时器，但**不改**播放态（由随后的 begin 接管）。
@@ -288,13 +336,17 @@ export function useAudioController(): AudioController {
    * `cancelSpeech()` 不可省略：`handleRef.current?.cancel()` 只停我们自己创建的对象，
    * Web Speech 已排队的整句必须靠 `speechSynthesis.cancel()` 才能真停 ——
    * 否则 UI 复位了、耳机里仍在念，随后按 R 会与单词发音双轨混音。
+   *
+   * `cancelSequence()` 同样不可省：用户手动播放 = 用户要听别的，在途自动编排
+   * 必须整条作废（只清当前段的话，下一段定时器会把声音重新唤起）。
    */
   const interruptCurrent = useCallback(() => {
+    cancelSequence();
     handleRef.current?.cancel();
     handleRef.current = null;
     cancelSpeech();
     clearTimer();
-  }, [clearTimer]);
+  }, [cancelSequence, clearTimer]);
 
   const begin = useCallback(
     (source: AudioSource, estimatedMs: number) => {
@@ -358,8 +410,85 @@ export function useAudioController(): AudioController {
     finishPlayback();
   }, [interruptCurrent, finishPlayback]);
 
+  /**
+   * 自动编排播放器（切卡伴读的核心）。
+   *
+   * 逐段推进：`词（双轨）→ 停顿 → 例句（TTS）→ 停顿 → 释义（TTS zh-CN）`。
+   * 段间用估算时长兜底（TTS 无可靠 onend），词形真人轨则按 `onended` 精确
+   * 衔接、降级时才退回估算。每段起播前 `begin()` 乐观置位播放态，让卡面
+   * 声学胶囊的动画与自动播报同步。
+   *
+   * 空文本单元在入口即被剔除 —— stub 词（无例句/无释义）自动降级成短编排，
+   * 不需要调用方逐个判空。
+   */
+  const playSequence = useCallback(
+    (units: readonly AudioSequenceUnit[], gapMs: number = DEFAULT_SEQUENCE_GAP_MS) => {
+      const items = units
+        .map((unit) => ({ kind: unit.kind, text: (unit.text ?? "").trim() }))
+        .filter((unit) => unit.text.length > 0);
+      if (items.length === 0) return;
+
+      cancelSequence();
+      interruptCurrent();
+
+      const seq: { timer: ReturnType<typeof setTimeout> | null; cancelled: boolean } = {
+        timer: null,
+        cancelled: false,
+      };
+      sequenceRef.current = seq;
+
+      const step = (index: number) => {
+        if (seq.cancelled) return;
+        if (index >= items.length) {
+          sequenceRef.current = null;
+          finishPlayback();
+          return;
+        }
+        const unit = items[index];
+        const advance = (delayMs: number) => {
+          if (seq.cancelled) return;
+          seq.timer = setTimeout(() => {
+            seq.timer = null;
+            step(index + 1);
+          }, delayMs);
+        };
+        // 播放态乐观置位：definition 归入 sentence 类（声学胶囊只区分词/句两种动画）
+        begin(unit.kind === "word" ? "word" : "sentence", estimateSpeechMs(unit.text));
+        if (unit.kind === "word") {
+          if (canPlayRealAudio()) {
+            handleRef.current = playWordAudio(unit.text, accentRef.current, {
+              onEnd: () => advance(gapMs),
+              onFallback: () => advance(estimateSpeechMs(unit.text) + gapMs),
+            });
+          } else {
+            // 无真人轨能力（离线 / 无 mp3 解码）：直接 TTS，按估算衔接下一段
+            speakFallback(unit.text, accentRef.current);
+            advance(estimateSpeechMs(unit.text) + gapMs);
+          }
+          return;
+        }
+        if (unit.kind === "sentence") {
+          const started = speakSentence(unit.text, { accent: accentRef.current, rate: SENTENCE_RATE });
+          handleRef.current = { cancel: cancelSpeech };
+          advance((started ? estimateSpeechMs(unit.text) : 0) + gapMs);
+          return;
+        }
+        const started = speak(unit.text, DEFINITION_LANG);
+        handleRef.current = { cancel: cancelSpeech };
+        advance((started ? estimateSpeechMs(unit.text) : 0) + gapMs);
+      };
+
+      step(0);
+    },
+    [begin, cancelSequence, finishPlayback, interruptCurrent],
+  );
+
   const toggleAccent = useCallback(() => {
-    setAccent((prev) => (prev === "uk" ? "us" : "uk"));
+    setAccent((prev) => {
+      const next = prev === "uk" ? "us" : "uk";
+      writeAudioAccent(next);
+      return next;
+    });
   }, []);
 
   // 能力探测结果在本挂载周期内不变，不必每次渲染重算
@@ -373,6 +502,7 @@ export function useAudioController(): AudioController {
     toggleAccent,
     playWord,
     playSentence,
+    playSequence,
     stop,
   };
 }

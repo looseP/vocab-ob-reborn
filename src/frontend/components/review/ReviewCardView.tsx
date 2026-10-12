@@ -40,6 +40,7 @@ import { L3ContextText } from "@/frontend/components/review/L3ContextText";
 import { ClueZone, TrainingFold, ExampleLayerBlock, parseWordExam, parseVerifiedCount } from "@/frontend/components/review/WordCardExamLayers";
 import { parseRealUsageFromExample } from "@/domain/word-exam";
 import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
+import { useFaceAutoAudio } from "@/frontend/reviewFlow/useFaceAutoAudio";
 
 const ratings = [
   { value: "again", label: "重来", variant: "danger" as const, key: "1" },
@@ -843,6 +844,20 @@ export function ReviewCardView({
     if (audioPlaying && audioSource === "sentence") stopAudio();
     else playSentenceAudio(sentence);
   }, [exampleItem, audioPlaying, audioSource, playSentenceAudio, stopAudio]);
+
+  // 切卡自动伴读（2026-10-12）：卡变为可见即按卡面类别编排播一次。
+  // 类别按**到达时可见的内容**判定：preview / 词义复核形态释义直展 → ②中文卡面；
+  // 其余到达时是词形面 → ①英文卡面。翻卡瞬间不重播（onReveal 默认关）。
+  // triggerKey 用 progressId：经典流靠上层 key 重挂载，阶梯流复用实例，
+  // 两种情况换卡都会让 effect 重跑（与 EncodeCardView 的旧实现同口径）。
+  useFaceAutoAudio({
+    face: preview ? "zh-meaning" : "en-word",
+    triggerKey: card?.progressId ?? "no-card",
+    lemma: card?.word.lemma ?? null,
+    sentence: exampleItem?.text ?? null,
+    definition: card?.word.short_definition ?? null,
+    controller: audio,
+  });
 
   // 键盘快捷键（P0，对齐 v1）：
   //   评分模式：空格/Enter 翻转、1-4 评分、S 跳过、P 挂起、U 或 Ctrl/Cmd+Z 撤销；
