@@ -846,16 +846,19 @@ export function ReviewCardView({
   }, [exampleItem, audioPlaying, audioSource, playSentenceAudio, stopAudio]);
 
   // 切卡自动伴读（2026-10-12）：卡变为可见即按卡面类别编排播一次。
-  // 类别按**到达时可见的内容**判定：preview / 词义复核形态释义直展 → ②中文卡面；
-  // 其余到达时是词形面 → ①英文卡面。翻卡瞬间不重播（onReveal 默认关）。
+  // 类别按**到达时可见的内容**判定：preview 直展释义 → ②中文卡面；
+  // 其余到达时是词形面 → ①英文卡面。
   // triggerKey 用 progressId：经典流靠上层 key 重挂载，阶梯流复用实例，
   // 两种情况换卡都会让 effect 重跑（与 EncodeCardView 的旧实现同口径）。
+  // revealed 单独喂给钩子：翻卡（正 → 反）只驱动 `onReveal` 编排（默认关），
+  // 不会连带重播上面那套切卡编排。preview 下没有翻卡动作（revealed 恒 false）。
   useFaceAutoAudio({
     face: preview ? "zh-meaning" : "en-word",
     triggerKey: card?.progressId ?? "no-card",
     lemma: card?.word.lemma ?? null,
     sentence: exampleItem?.text ?? null,
     definition: card?.word.short_definition ?? null,
+    revealed,
     controller: audio,
   });
 

@@ -16,8 +16,10 @@
 
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { fireEvent, screen } from "@testing-library/dom";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EncodeCardView } from "@/frontend/components/review/EncodeCardView";
 import { FollowCopyView } from "@/frontend/components/review/FollowCopyView";
 import { ReviewCardView } from "@/frontend/components/review/ReviewCardView";
 import { useAudioController, type AudioController } from "@/frontend/reviewFlow/audioEngine";
@@ -285,6 +287,147 @@ describe("useFaceAutoAudio：触发与编排选择", () => {
   });
 });
 
+// ── B2. 翻卡编排（onReveal）与长例句保护 ──────────────────────────────────
+
+/** 同一 root 反复 render：翻卡是「同 props 变化」，必须复用实例才验得准。 */
+function renderProbeInRoot(input: FaceAutoAudioInput): Root {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  rerenderProbe(root, input);
+  return root;
+}
+
+function rerenderProbe(root: Root, input: FaceAutoAudioInput): void {
+  act(() => {
+    root.render(createElement(MemoryRouter, null, createElement(Probe, { input })));
+  });
+}
+
+/**
+ * 只数「整条都是释义单元」的播放：那是 onReveal 编排（本组固定配 `["definition"]`）
+ * 的特征，与切卡编排（词 / 词＋例句）区分得开。
+ */
+function revealPlayCount(controller: ReturnType<typeof fakeController>): number {
+  return controller.playSequence.mock.calls.filter((call) =>
+    (call[0] as { kind: string }[]).every((unit) => unit.kind === "definition"),
+  ).length;
+}
+
+describe("useFaceAutoAudio：翻卡编排（onReveal）", () => {
+  it("默认关：翻卡（revealed false → true）不额外播 —— 切卡播一次是主语义", () => {
+    const controller = fakeController();
+    const root = renderProbeInRoot({ ...baseProbe, controller, revealed: false });
+    expect(controller.playSequence).toHaveBeenCalledTimes(1);
+
+    rerenderProbe(root, { ...baseProbe, controller, revealed: true });
+    expect(controller.playSequence).toHaveBeenCalledTimes(1);
+  });
+
+  it("开了 onReveal：翻卡那一刻播该编排；同态重渲染不重播", () => {
+    writeAutoAudioConfig({ ...DEFAULT_AUTO_AUDIO_CONFIG, onReveal: ["definition"] });
+    const controller = fakeController();
+    const root = renderProbeInRoot({ ...baseProbe, controller, revealed: false });
+    expect(revealPlayCount(controller)).toBe(0);
+
+    rerenderProbe(root, { ...baseProbe, controller, revealed: true });
+    expect(revealPlayCount(controller)).toBe(1);
+    expect(controller.playSequence).toHaveBeenLastCalledWith(
+      [{ kind: "definition", text: "在...之上" }],
+      350,
+    );
+
+    // 揭示态内内容变化（例如释义详情异步回来）：切卡编排按既有语义重播，
+    // 但 onReveal 不得再响 —— 揭示是「一次性动作」，不是内容变化的结果。
+    rerenderProbe(root, { ...baseProbe, controller, revealed: true, sentence: "换了例句" });
+    expect(revealPlayCount(controller)).toBe(1);
+  });
+
+  it("回看再翻（true → false → true）可以再播一次", () => {
+    writeAutoAudioConfig({ ...DEFAULT_AUTO_AUDIO_CONFIG, onReveal: ["word"] });
+    const controller = fakeController();
+    const root = renderProbeInRoot({ ...baseProbe, controller, revealed: false });
+    rerenderProbe(root, { ...baseProbe, controller, revealed: true });
+    expect(controller.playSequence).toHaveBeenCalledTimes(2);
+
+    rerenderProbe(root, { ...baseProbe, controller, revealed: false });
+    rerenderProbe(root, { ...baseProbe, controller, revealed: true });
+    expect(controller.playSequence).toHaveBeenCalledTimes(3);
+    expect(controller.playSequence).toHaveBeenLastCalledWith([{ kind: "word", text: "above" }], 350);
+  });
+
+  it("到达即揭示（首帧 revealed=true，如 preview 直展）不触发 onReveal", () => {
+    writeAutoAudioConfig({ ...DEFAULT_AUTO_AUDIO_CONFIG, onReveal: ["definition"] });
+    const controller = fakeController();
+    renderProbe({ ...baseProbe, controller, revealed: true });
+    // 只有切卡编排那一次，翻卡编排不该冒出来
+    expect(controller.playSequence).toHaveBeenCalledTimes(1);
+  });
+
+  it("总闸关闭时翻卡不播（即使 onReveal 配了值）", () => {
+    writeAutoAudioConfig({ ...DEFAULT_AUTO_AUDIO_CONFIG, master: false, onReveal: ["definition"] });
+    const controller = fakeController();
+    const root = renderProbeInRoot({ ...baseProbe, controller, revealed: false });
+    rerenderProbe(root, { ...baseProbe, controller, revealed: true });
+    expect(controller.playSequence).not.toHaveBeenCalled();
+  });
+
+  it("onReveal 编排为空（off）时翻卡静默", () => {
+    writeAutoAudioConfig({
+      ...DEFAULT_AUTO_AUDIO_CONFIG,
+      onReveal: "off",
+      faces: { ...DEFAULT_AUTO_AUDIO_CONFIG.faces, "en-word": "off" },
+    });
+    const controller = fakeController();
+    const root = renderProbeInRoot({ ...baseProbe, controller, revealed: false });
+    rerenderProbe(root, { ...baseProbe, controller, revealed: true });
+    expect(controller.playSequence).not.toHaveBeenCalled();
+  });
+});
+
+describe("useFaceAutoAudio：长例句保护（自动播报不可随时按停）", () => {
+  /** estimateSpeechMs 按 70ms/字符、下限 600ms 估算 —— 10s 阈值恰好卡在 143 字符。 */
+  it("例句估算超 10 秒（144 字符）整条跳过：①编排降级为只播词", () => {
+    const controller = fakeController();
+    const longSentence = "x".repeat(144);
+    renderProbe({ ...baseProbe, sentence: longSentence, controller });
+    expect(controller.playSequence).toHaveBeenCalledWith([{ kind: "word", text: "above" }], 350);
+  });
+
+  it("边界：142 字符（估算 9940ms）保留，143 字符（10010ms）跳过", () => {
+    const kept = fakeController();
+    renderProbe({ ...baseProbe, sentence: "y".repeat(142), controller: kept });
+    expect(kept.playSequence).toHaveBeenCalledWith(
+      [
+        { kind: "word", text: "above" },
+        { kind: "sentence", text: "y".repeat(142) },
+      ],
+      350,
+    );
+
+    const skipped = fakeController();
+    renderProbe({ ...baseProbe, sentence: "y".repeat(143), controller: skipped });
+    expect(skipped.playSequence).toHaveBeenCalledWith([{ kind: "word", text: "above" }], 350);
+  });
+
+  it("长例句在 onReveal 编排里同样跳过（只剩释义）", () => {
+    writeAutoAudioConfig({ ...DEFAULT_AUTO_AUDIO_CONFIG, onReveal: ["sentence", "definition"] });
+    const controller = fakeController();
+    const root = renderProbeInRoot({
+      ...baseProbe,
+      sentence: "z".repeat(200),
+      controller,
+      revealed: false,
+    });
+    rerenderProbe(root, { ...baseProbe, sentence: "z".repeat(200), controller, revealed: true });
+    expect(controller.playSequence).toHaveBeenLastCalledWith(
+      [{ kind: "definition", text: "在...之上" }],
+      350,
+    );
+  });
+});
+
 // ── C. playSequence 引擎（真实控制器 + fake speech） ───────────────────────
 
 describe("useAudioController.playSequence：逐段衔接与打断", () => {
@@ -410,5 +553,58 @@ describe("组件接线：卡面类别按到达时可见内容判定", () => {
     localStorage.setItem(AUTO_AUDIO_STORAGE_KEY, JSON.stringify({ master: false }));
     mount(createElement(ReviewCardView, { card: makeCard(), onAnswer: vi.fn() }));
     expect(speakMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("组件接线：翻卡（正 → 反）驱动 onReveal", () => {
+  /** 只看「谁被念了」：翻卡编排的语料与切卡编排不同，便于分辨。 */
+  function spokenTexts(): string[] {
+    return speakMock.mock.calls.map((call) => call[0] as string);
+  }
+
+  it("经典速刷：空格翻到背面 → 播 onReveal 编排（配了才播）", () => {
+    writeAutoAudioConfig({
+      ...DEFAULT_AUTO_AUDIO_CONFIG,
+      faces: { ...DEFAULT_AUTO_AUDIO_CONFIG.faces, "en-word": ["word"] },
+      onReveal: ["definition"],
+    });
+    mount(createElement(ReviewCardView, { card: makeCard(), onAnswer: vi.fn() }));
+    expect(spokenTexts()).toEqual(["above"]);
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
+    });
+    expect(spokenTexts()).toEqual(["above", "在...之上"]);
+  });
+
+  it("经典速刷默认（onReveal off）：翻卡保持沉默 —— 切卡播一次是主语义", () => {
+    mount(createElement(ReviewCardView, { card: makeCard(), onAnswer: vi.fn() }));
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: " " }));
+    });
+    expect(spokenTexts()).toEqual(["above"]);
+  });
+
+  it("编码卡：点「看释义（H4）」→ 播 onReveal 编排", () => {
+    writeAutoAudioConfig({
+      ...DEFAULT_AUTO_AUDIO_CONFIG,
+      faces: { ...DEFAULT_AUTO_AUDIO_CONFIG.faces, "en-word": ["word"] },
+      onReveal: ["definition"],
+    });
+    mount(createElement(EncodeCardView, { card: makeCard(), onRate: vi.fn() }));
+    expect(spokenTexts()).toEqual(["above"]);
+
+    act(() => {
+      fireEvent.click(screen.getByText("看释义（H4）"));
+    });
+    expect(spokenTexts()).toEqual(["above", "在...之上"]);
+  });
+
+  it("编码卡默认（onReveal off）：看释义不发声", () => {
+    mount(createElement(EncodeCardView, { card: makeCard(), onRate: vi.fn() }));
+    act(() => {
+      fireEvent.click(screen.getByText("看释义（H4）"));
+    });
+    expect(spokenTexts()).toEqual(["above"]);
   });
 });

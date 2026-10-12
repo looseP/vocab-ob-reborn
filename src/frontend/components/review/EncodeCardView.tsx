@@ -215,12 +215,15 @@ export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) 
   // 换卡/卸载掐断上一张卡的音轨（不留幽灵发音）。
   // progressId 作 triggerKey：阶梯会话复用同一组件实例，换卡即换 progressId，
   // 必须重新植入发音印象（即使前后两张卡的词形巧合相同）。
+  // revealed = 「看释义（H4）」已展开：翻到释义面只驱动 `onReveal` 编排（默认关），
+  // 不会重播「词 → 例句」那套切卡编排。
   useFaceAutoAudio({
     face: "en-word",
     triggerKey: card.progressId,
     lemma,
     sentence: exampleText,
     definition: card.word.short_definition,
+    revealed,
     controller: { available, playSequence, stop },
   });
 

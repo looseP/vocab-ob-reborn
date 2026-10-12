@@ -317,7 +317,8 @@ export function SettingsPage() {
             切卡时自动播放音频（视觉 + 听觉双编码）
           </label>
           <p className="text-xs text-[var(--color-ink-soft)]">
-            每类卡面到达时按编排朗读一次，段间停顿 {autoAudio.gapMs}ms。
+            每类卡面到达时按编排朗读一次，段间停顿 {autoAudio.gapMs}ms；超长例句
+            （估算 &gt; 10 秒）自动跳过，避免念到下一张卡 —— 手动点读不受此限。
             英文词形默认只在<strong>词形可见</strong>的卡面出现 —— 默写 / 完形这类
             「答案在音频里」的卡面默认关闭，防止泄题。改动即时生效（下一张卡）。
           </p>
@@ -334,7 +335,7 @@ export function SettingsPage() {
           <AutoAudioPlaylistRow
             testKey="on-reveal"
             label="翻卡时（正 → 反）"
-            hint="默认关：切卡播一次是主语义，翻卡不重播"
+            hint="默认关：切卡播一次是主语义；开了就在翻到释义面时再播一次（回看再翻会再播）"
             playlist={autoAudio.onReveal}
             onChange={(next) => updateAutoAudio({ onReveal: next })}
           />

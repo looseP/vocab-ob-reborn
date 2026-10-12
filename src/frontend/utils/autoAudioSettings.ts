@@ -42,7 +42,12 @@ export interface AutoAudioConfig {
   master: boolean;
   /** 逐卡面编排。 */
   faces: Record<FaceClass, Playlist>;
-  /** 翻卡（正→反）瞬间的编排，默认关 —— 切卡播一次是主语义，翻卡不重播。 */
+  /**
+   * 翻卡（正→反）瞬间的编排；**默认关** —— 切卡播一次是主语义。
+   *
+   * 开了就在「揭示面第一次出现」那一刻再播一次：经典速刷空格翻面、编码卡展开
+   * 「看释义」都算。回看再翻会再播，但同一揭示态内的重渲染不会重播。
+   */
   onReveal: Playlist;
   /** 段间停顿（毫秒）：上一段收尾与下一段起播之间的呼吸。 */
   gapMs: number;
