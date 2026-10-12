@@ -4,7 +4,8 @@
  * 结构规矩：**行动 → 洞察 → 进度 → 档案**，首屏只说「今天该做什么」。
  *  - 行动区：现在待复习（**整卡可点 → 复习队列**，数字回答「多少」、队列回答「是哪些」；
  *    大数字 = 此刻就会发出的卡数，与「开始复习」「队列到期」同口径，日历日到期数只在
- *    两者不一致时以副标题并列）/ 今日已复习 两卡 + 开始复习（队列文案）+ 复习活动卡；
+ *    两者不一致时以副标题并列；今天有到期卡时落到「今日到期」facet 视图 —— 副标题那个数
+ *    的清单）/ 今日已复习 两卡 + 开始复习（队列文案）+ 复习活动卡；
  *  - 洞察区：L1 速刷统计（含 L2 条件块）+ 漏词管理；
  *  - 进度区：掌握进度条 + 一行 badges（已掌握/在学/总数/近 7·30 天；连续打卡在头部）；
  *  - 档案区：最近笔记 + 一键遗忘（低显著入口置底）。
@@ -244,6 +245,13 @@ export function DashboardPage() {
    * （stats.repository 的日历日口径未动）。
    */
   const dueCaption = dueToday !== dueNow ? `今日共 ${dueToday} 张到期` : undefined;
+  /**
+   * 卡片的去处（2026-10-12 L2）：今天有到期卡 ⇒ 落到「今日到期」facet 视图
+   * （`/review-queue?dueWindow=today`）—— 那正是副标题那个数的**清单**，此前这个数
+   * 点进去只能看到「到期 0」，用户以为调度坏了。今天一张都没有 ⇒ 落默认队列视图，
+   * 否则点进去是一片空（今天没到期卡时 facet 视图必然是空的）。
+   */
+  const dueEntryHref = dueToday > 0 ? "/review-queue?dueWindow=today" : "/review-queue";
 
   return (
     <div className="space-y-6">
@@ -275,12 +283,12 @@ export function DashboardPage() {
           value={dueNow}
           color="var(--color-accent)"
           loading={loading}
-          to="/review-queue"
+          to={dueEntryHref}
           caption={dueCaption}
           hint={[
-            "「现在待复习」= 此刻已到期 + 配额内的新卡 —— 与「开始复习」、复习队列的「到期」同口径，点进去看到的数就是这个数。",
+            "「现在待复习」= 此刻已到期 + 配额内的新卡 —— 与「开始复习」、复习队列的「到期」同口径。",
             dueCaption
-              ? `「${dueCaption}」是另一个口径（Asia/Shanghai 日历日）：含今天稍后到点的卡，它们在队列的「学习中」「已掌握」桶里、按到期时间排在最前。`
+              ? `「${dueCaption}」是另一个口径（Asia/Shanghai 日历日）：含今天稍后到点的卡。点开落到「今日到期」视图，就是这张清单；此刻还没到点的那些也在里面（按到期时间排最前）。`
               : "",
             "点开看具体是哪些词。",
           ].join("")}

@@ -370,7 +370,7 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       const repos = createRepositories();
       const counts = await repos.reviews.countQueueBuckets(data.userId, data.wordbookId);
       // 该书只有这一张卡：落 due 桶，其余桶为 0；非新卡且已到期 ⇒ dueNow 同计
-      expect(counts).toEqual({ due: 1, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 1, total: 1 });
+      expect(counts).toEqual({ due: 1, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 1, dueToday: 1, total: 1 });
 
       const duePage = await repos.reviews.listQueueCards({
         userId: data.userId,

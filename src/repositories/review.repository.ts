@@ -27,6 +27,7 @@ import type {
   ProgressForAction,
   ProgressWithContentHash,
   QueueListBucket,
+  QueueListDueWindow,
   QueueListRow,
   RemoveCardsByWordIdsInput,
   RestoreSuspendSnapshotInput,
@@ -112,6 +113,19 @@ const QUEUE_BUCKET_PREDICATE: Record<Exclude<QueueListBucket, "all">, string> = 
   learning: `uwp.state IN ('learning', 'relearning')`,
   due: `uwp.state = 'review' AND (uwp.due_at IS NULL OR uwp.due_at <= now())`,
   review: `uwp.state = 'review' AND uwp.due_at > now()`,
+};
+
+/**
+ * 到期窗口 → SQL 谓词白名单（2026-10-12 加，与分桶**正交**的 facet）。
+ *
+ * 与 `QUEUE_BUCKET_PREDICATE` 同一纪律：用户输入永不进 SQL，facet 只决定挑哪个常量。
+ * `today` 与仪表盘 `dueToday`（`stats.repository.getDashboardSummary`）逐字同口径：
+ * Asia/Shanghai 日历日内到期（`$6` = 今日零点 ⇒ `< 今日零点 + 1 天`），含更早的积压与
+ * 今天稍后到点的，排除挂起（挂起词不会被队列取出）。**不设下沿** —— 与 stats 侧一致，
+ * 否则积压（due_at < 今日零点）会被漏掉，两个数又会对不上。
+ */
+const QUEUE_DUE_WINDOW_PREDICATE: Record<QueueListDueWindow, string> = {
+  today: `uwp.due_at IS NOT NULL AND uwp.due_at < $6::timestamptz + interval '1 day' AND uwp.state <> 'suspended'`,
 };
 
 /** listQueueCards 的 SQL 行形态（snake_case + count 窗口列）。 */
@@ -849,6 +863,12 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
    *
    * `dueNow` 单列：非挂起、非新卡、已到期（= learning + due）—— 即「现在就该复习
    * 的张数」。与仪表盘 due_count 的日历日口径不同，勿混用。
+   *
+   * `dueToday`（2026-10-12 加）单列：**日历日**口径的今日到期数（Asia/Shanghai，
+   * 含更早的积压与今天稍后到点的，排除挂起）—— 与 `stats.repository.getDashboardSummary`
+   * 的 `due_count` 逐字同口径，是「今日到期」facet 视图的计数来源。
+   * `dueToday = dueNow + 今天稍后到点的张数`（差集就是那张「还没到点」的卡），
+   * 2026-10-12 用户报「仪表盘 1 / 队列 0 像调度坏了」看到的正是这个差。
    */
   async countQueueBuckets(
     userId: string,
@@ -860,6 +880,7 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
     new: number;
     suspended: number;
     dueNow: number;
+    dueToday: number;
     total: number;
   }> {
     const row = await this.queryOne<Record<string, string>>(
@@ -872,7 +893,10 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
                             AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due,
          COUNT(*) FILTER (WHERE uwp.state = 'review' AND uwp.due_at > now())::text AS review,
          COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
-                            AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due_now
+                            AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due_now,
+         COUNT(*) FILTER (WHERE uwp.due_at IS NOT NULL
+                            AND uwp.due_at < $3::timestamptz + interval '1 day'
+                            AND uwp.state <> 'suspended')::text AS due_today
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        -- 可见性口径与队列取数一致（收尾轮 R2 闭环）：全景计数就是「队列的展示面」，
@@ -880,7 +904,7 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
        -- ——用户以为有卡可刷却刷不到。
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
          AND w.is_published = true AND w.is_deleted = false`,
-      [userId, wordbookId],
+      [userId, wordbookId, startOfTodayIsoInDisplayTz()],
     );
     const count = (key: string): number => {
       const raw = row?.[key];
@@ -894,14 +918,19 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
       new: count("new_count"),
       suspended: count("suspended"),
       dueNow: count("due_now"),
+      dueToday: count("due_today"),
       total: count("total"),
     };
   }
 
   /**
-   * 队列清单（队列全景页）：按桶 / 搜索词分页列出卡。
+   * 队列清单（队列全景页）：按桶 / 搜索词 / **到期窗口 facet** 分页列出卡。
    *
    * - 桶条件来自**模块级常量白名单**（QUEUE_BUCKET_PREDICATE），绝不拼接用户输入。
+   * - `dueWindow`（2026-10-12）是与分桶**正交**的 facet：两个谓词都在时 AND 组合
+   *   （例：bucket=review + dueWindow=today = 已掌握里今天到点的那些）。它需要
+   *   「今日零点」参数，故参数数组**按需追加**（$6）—— 声明了却没用到的占位符会让
+   *   PostgreSQL 报 could not determine data type of parameter。
    * - 排序末尾追加 `w.lemma ASC`：due_at / review_count 大量并列，缺稳定 tiebreak 时
    *   翻页会重复或漏行（同一批卡在两页里各出现一次）。
    * - `count(*) OVER()` 顺带取回过滤后总数，避免再跑一次 COUNT。
@@ -913,8 +942,18 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
     search: string | null;
     limit: number;
     offset: number;
+    dueWindow?: QueueListDueWindow | null;
   }): Promise<{ items: QueueListRow[]; total: number }> {
     const predicate = input.bucket === "all" ? null : QUEUE_BUCKET_PREDICATE[input.bucket];
+    const duePredicate = input.dueWindow ? QUEUE_DUE_WINDOW_PREDICATE[input.dueWindow] : null;
+    const params: Array<string | number | null> = [
+      input.userId,
+      input.wordbookId,
+      input.search,
+      input.limit,
+      input.offset,
+    ];
+    if (duePredicate) params.push(startOfTodayIsoInDisplayTz());
     const rows = await this.query<(QueueListQueryRow & { total_count: string })>(
       `SELECT uwp.state, uwp.due_at, uwp.review_count, uwp.lapse_count,
               uwp.stability, uwp.interval_days, uwp.last_reviewed_at,
@@ -930,6 +969,7 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
          -- 必须与队列实际会发出的卡同口径，下架/软删除词不再出现。
          AND w.is_published = true AND w.is_deleted = false
          ${predicate ? `AND (${predicate})` : ""}
+         ${duePredicate ? `AND (${duePredicate})` : ""}
          AND ($3::text IS NULL
               OR w.lemma ILIKE '%' || $3 || '%' ESCAPE '\'
               OR w.title ILIKE '%' || $3 || '%' ESCAPE '\')
@@ -940,7 +980,7 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
          uwp.review_count ASC,
          w.lemma ASC
        LIMIT $4 OFFSET $5`,
-      [input.userId, input.wordbookId, input.search, input.limit, input.offset],
+      params,
     );
     const total = rows.length > 0 ? Number.parseInt(rows[0].total_count, 10) : 0;
     return {

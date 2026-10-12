@@ -212,6 +212,14 @@ export const reviewQueueListQuerySchema = z.object({
     .enum(["all", "due", "learning", "review", "new", "suspended"])
     .optional()
     .default("all"),
+  /*
+    到期窗口 facet（2026-10-12，与 bucket **正交**、不参与互斥）：「今日到期」视图 =
+    bucket=all + dueWindow=today。它给仪表盘「今日共 N 张到期」那个数提供了**清单** ——
+    分桶按 state 切，看不见「今天稍后到点」的卡（2026-10-12 实测：用户点进去只看到
+    「到期 0」，以为调度坏了）。谓词白名单在 review.repository 的
+    QUEUE_DUE_WINDOW_PREDICATE，用户输入永不进 SQL。
+  */
+  dueWindow: z.enum(["today"]).optional(),
   q: z.string().trim().min(1).max(80).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   offset: z.coerce.number().int().min(0).max(100_000).optional().default(0),

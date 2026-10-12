@@ -12,6 +12,17 @@ import { apiFetch } from "./client";
 /** 与后端 `reviewQueueListQuerySchema` 的 bucket 枚举一一对应（互斥桶，见仓储 JSDoc）。 */
 export type ReviewQueueBucket = "all" | "due" | "learning" | "review" | "new" | "suspended";
 
+/**
+ * 到期窗口 facet（2026-10-12，与 `bucket` **正交**）——「今日到期」视图用
+ * `bucket=all + dueWindow=today`。
+ *
+ * 为什么需要它：分桶按 `state` 切，回答不了「今天到期的有哪些词」—— 一张 review 态、
+ * 今天 15:43 才到点的卡在 `due` 桶里看不到（due_at > now），在 `review` 桶里又和
+ * 「11-29 才到期」的卡混在一起。于是仪表盘「今日共 N 张到期」那个数一直没有清单
+ * （2026-10-12 实测：用户点进去只看到「到期 0」，以为调度坏了）。
+ */
+export type ReviewQueueDueWindow = "today";
+
 export interface ReviewQueueCounts {
   due: number;
   learning: number;
@@ -20,6 +31,8 @@ export interface ReviewQueueCounts {
   suspended: number;
   /** 非挂起、非新卡、已到期（= learning + due）：「现在就该复习」的张数。 */
   dueNow: number;
+  /** 日历日口径的今日到期数（含今天稍后到点的）：「今日到期」视图的计数来源。 */
+  dueToday: number;
   total: number;
 }
 
@@ -55,6 +68,8 @@ export interface ReviewQueueListResponse {
 
 export interface ReviewQueueListParams {
   bucket?: ReviewQueueBucket;
+  /** 到期窗口 facet（与 bucket 正交）。 */
+  dueWindow?: ReviewQueueDueWindow | null;
   /** lemma / title 子串搜索；空白视作无搜索。 */
   q?: string | null;
   limit?: number;
@@ -66,6 +81,7 @@ export async function fetchReviewQueue(
 ): Promise<ReviewQueueListResponse> {
   const query = new URLSearchParams();
   if (params.bucket) query.set("bucket", params.bucket);
+  if (params.dueWindow) query.set("dueWindow", params.dueWindow);
   if (params.q?.trim()) query.set("q", params.q.trim());
   query.set("limit", String(params.limit ?? 50));
   query.set("offset", String(params.offset ?? 0));

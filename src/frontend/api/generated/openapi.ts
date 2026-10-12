@@ -9771,6 +9771,7 @@ export interface operations {
         parameters: {
             query?: {
                 bucket?: "all" | "due" | "learning" | "review" | "new" | "suspended";
+                dueWindow?: "today";
                 limit?: number;
                 offset?: number;
                 q?: string;
@@ -9796,6 +9797,7 @@ export interface operations {
                             new: number;
                             suspended: number;
                             dueNow: number;
+                            dueToday: number;
                             total: number;
                         };
                         items: {

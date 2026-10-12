@@ -13,7 +13,7 @@ function makeService(overrides: {
     expireCardsByWordIds: overrides.expireCardsByWordIds ?? vi.fn(async () => []),
     countQueueBuckets:
       overrides.countQueueBuckets ??
-      vi.fn(async () => ({ due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, total: 0 })),
+      vi.fn(async () => ({ due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, dueToday: 0, total: 0 })),
     listQueueCards: overrides.listQueueCards ?? vi.fn(async () => ({ items: [], total: 0 })),
   };
   const repoFactory = () => ({ reviews }) as unknown as IRepositories;
@@ -94,6 +94,7 @@ describe("ReviewCardsService.listQueue（P1 队列全景）", () => {
         new: 100,
         suspended: 2,
         dueNow: 15,
+        dueToday: 18,
         total: 157,
       })),
       listQueueCards: vi.fn(async () => ({ items, total: 157 })),
@@ -152,6 +153,35 @@ describe("ReviewCardsService.listQueue（P1 队列全景）", () => {
     });
 
     expect(reviews.listQueueCards).toHaveBeenCalledWith(expect.objectContaining({ search: null }));
+  });
+
+  it("dueWindow facet 透传到仓储（与 bucket 正交，不参与互斥）", async () => {
+    const { service, reviews } = makeService();
+    await service.listQueue({
+      userId: "u1",
+      wordbookId: "wb-1",
+      bucket: "all",
+      dueWindow: "today",
+      limit: 50,
+      offset: 0,
+    });
+
+    expect(reviews.listQueueCards).toHaveBeenCalledWith(
+      expect.objectContaining({ bucket: "all", dueWindow: "today" }),
+    );
+  });
+
+  it("未传 dueWindow 时透传 null（仓储据此不追加 $6 参数）", async () => {
+    const { service, reviews } = makeService();
+    await service.listQueue({
+      userId: "u1",
+      wordbookId: "wb-1",
+      bucket: "all",
+      limit: 50,
+      offset: 0,
+    });
+
+    expect(reviews.listQueueCards).toHaveBeenCalledWith(expect.objectContaining({ dueWindow: null }));
   });
 });
 
