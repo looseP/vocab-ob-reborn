@@ -121,6 +121,11 @@ describe("bucketTabCount / emptyHint", () => {
     expect(emptyHint("due", false)).toContain("没有已到期");
     expect(emptyHint("new", false)).toContain("新卡");
   });
+
+  it("到期桶空态不说「今天到此为止」（今天稍后到点的卡不在此桶）", () => {
+    // 那句话会当着用户的面撒谎：仪表盘副标题写着「今日共 1 张到期」，点进来却是 0
+    expect(emptyHint("due", false)).not.toContain("今天到此为止");
+  });
 });
 
 describe("ReviewQueuePage（组件）", () => {

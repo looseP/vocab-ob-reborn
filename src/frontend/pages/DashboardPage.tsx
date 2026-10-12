@@ -2,8 +2,9 @@
  * 仪表盘（批次 2，2026-10-09 四段式重排）。
  *
  * 结构规矩：**行动 → 洞察 → 进度 → 档案**，首屏只说「今天该做什么」。
- *  - 行动区：今日待复习（**整卡可点 → 复习队列**，数字回答「多少」、队列回答「是哪些」）
- *    / 今日已复习 两卡 + 开始复习（队列文案）+ 复习活动卡；
+ *  - 行动区：现在待复习（**整卡可点 → 复习队列**，数字回答「多少」、队列回答「是哪些」；
+ *    大数字 = 此刻就会发出的卡数，与「开始复习」「队列到期」同口径，日历日到期数只在
+ *    两者不一致时以副标题并列）/ 今日已复习 两卡 + 开始复习（队列文案）+ 复习活动卡；
  *  - 洞察区：L1 速刷统计（含 L2 条件块）+ 漏词管理；
  *  - 进度区：掌握进度条 + 一行 badges（已掌握/在学/总数/近 7·30 天；连续打卡在头部）；
  *  - 档案区：最近笔记 + 一键遗忘（低显著入口置底）。
@@ -60,6 +61,11 @@ interface DashboardStats {
    * （2026-10-07 实测：本地推出来的 6754 vs 真值 14）。
    */
   masteredWords: number;
+  /**
+   * 日历日口径的今日到期数（Asia/Shanghai，含今天稍后到点的与更早的积压）。
+   * **不是**行动区大数字 —— 那里用队列的 `stats.total`（此刻就会发出的卡数），
+   * 这个数只在与大数字不一致时以副标题出现（见 `dueCaption` 的理由）。
+   */
   dueToday: number;
   reviewedToday: number;
   reviewed7d: number;
@@ -71,7 +77,7 @@ interface DashboardStats {
   l2?: { promoted: number; dueNow: number; weakSignal: number; reviewedToday: number };
 }
 
-function StatCard({ icon: Icon, label, value, color, loading, suffix, hint, to }: {
+function StatCard({ icon: Icon, label, value, color, loading, suffix, hint, to, caption }: {
   icon: typeof Repeat;
   label: string;
   value: number | string;
@@ -85,6 +91,12 @@ function StatCard({ icon: Icon, label, value, color, loading, suffix, hint, to }
    * 用 `Link` 而非 `Card onClick` —— 键盘可达、可中键新开、读屏会念出「链接」。
    */
   to?: string;
+  /**
+   * 副标题：**另一个口径**的同一个概念（2026-10-12 加）。
+   * 只在两个口径不一致时出现 —— 一致时再写一行是噪音。存在意义是把「大数字」与
+   * 「日历日口径」的差说在明处，免得用户以为调度坏了（见页面内 dueCaption）。
+   */
+  caption?: string;
 }) {
   const body = (
     <>
@@ -96,9 +108,12 @@ function StatCard({ icon: Icon, label, value, color, loading, suffix, hint, to }
         {loading ? (
           <Skeleton className="mt-1 h-7 w-12" />
         ) : (
-          <p className="text-2xl font-bold" style={{ color }}>
-            {value}{suffix && <span className="ml-1 text-sm font-normal text-[var(--color-ink-soft)]">{suffix}</span>}
-          </p>
+          <>
+            <p className="text-2xl font-bold" style={{ color }}>
+              {value}{suffix && <span className="ml-1 text-sm font-normal text-[var(--color-ink-soft)]">{suffix}</span>}
+            </p>
+            {caption && <p className="mt-0.5 text-xs text-[var(--color-ink-soft)]">{caption}</p>}
+          </>
         )}
       </div>
     </>
@@ -207,6 +222,24 @@ export function DashboardPage() {
   const reviewedToday = dashboard?.reviewedToday ?? 0;
   const masteredPct = trackedWords > 0 ? Math.round((mastered / trackedWords) * 100) : 0;
 
+  /**
+   * 此刻就会发出的卡数（到期 + 配额内的新卡）—— 与「开始复习」的队列文案、复习队列
+   * 的「到期」桶同一个源（`/review/queue` 的 `stats.total`）。
+   *
+   * 2026-10-12：大数字从 `dueToday`（Asia/Shanghai 日历日到期，含今天稍后到点的）
+   * 换到这个数。理由是 `dashboard-queue-headline.test.tsx` 早就锁死的规矩 ——
+   * **卡上的数必须是点进去看到的那个数**：此前顶卡写「今日待复习 1」而队列「到期 0」
+   * 「开始复习 暂无」，同一块屏幕上两个数互相打脸，用户只会怀疑调度坏了（实测不是
+   * 调度问题：那张卡就是今天 15:43 到点，调度是对的）。
+   */
+  const dueNow = queue?.stats.total ?? 0;
+  /**
+   * 日历日口径退为副标题，且**只在与大数字不一致时出现**：一致时并列是噪音，不一致
+   * 时不解释就是「显示异常」。副标题同时保持与复习活动卡「今天待做」徽标同数
+   * （stats.repository 的日历日口径未动）。
+   */
+  const dueCaption = dueToday !== dueNow ? `今日共 ${dueToday} 张到期` : undefined;
+
   return (
     <div className="space-y-6">
       <div>
@@ -233,12 +266,19 @@ export function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <StatCard
           icon={Repeat}
-          label="今日待复习（到期）"
-          value={dueToday}
+          label="现在待复习"
+          value={dueNow}
           color="var(--color-accent)"
           loading={loading}
           to="/review-queue"
-          hint="今天（上海日历日）内到期且未挂起的卡片：含更早的积压与今天稍后到点的。与「复习活动」的「今天待做」同口径。点开看**具体是哪些词**（队列取「此刻已到期」口径，数字可能少于这里）。"
+          caption={dueCaption}
+          hint={[
+            "「现在待复习」= 此刻已到期 + 配额内的新卡 —— 与「开始复习」、复习队列的「到期」同口径，点进去看到的数就是这个数。",
+            dueCaption
+              ? `「${dueCaption}」是另一个口径（Asia/Shanghai 日历日）：含今天稍后到点的卡，它们在队列的「学习中」「已掌握」桶里、按到期时间排在最前。`
+              : "",
+            "点开看具体是哪些词。",
+          ].join("")}
         />
         <StatCard
           icon={CheckCircle2}
