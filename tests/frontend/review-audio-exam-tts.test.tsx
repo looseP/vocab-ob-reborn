@@ -105,6 +105,7 @@ function utterances(): FakeUtterance[] {
 class FakeAudio implements WordAudioElement {
   onended: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onplaying: (() => void) | null = null;
   paused = false;
   playCalls = 0;
   play = () => {
@@ -230,6 +231,33 @@ describe("playWordAudio：真人音频主轨 + 本地 TTS 备用轨", () => {
     expect(onFallback).toHaveBeenCalledTimes(1);
     expect(utterances()).toHaveLength(1);
     expect(utterances()[0].text).toBe("above");
+  });
+
+  it("主轨已出声但没念完：超时不换轨、不用 TTS 重念（一个词只响一种发音）", () => {
+    vi.useFakeTimers();
+    const created: FakeAudio[] = [];
+    const factory: AudioElementFactory = (url) => {
+      const el = new FakeAudio(url);
+      created.push(el);
+      return el;
+    };
+    const onEnd = vi.fn();
+    const onFallback = vi.fn();
+
+    playWordAudio("above", "us", { onEnd, onFallback }, factory);
+    // 真人轨已经出声（模拟音频比 1.5s 长的慢启动：此刻正念到一半）
+    act(() => created[0].onplaying?.());
+    vi.advanceTimersByTime(WORD_AUDIO_TIMEOUT_MS + 500);
+
+    // 关键：绝不能在此时切 TTS —— 否则用户会把同一个词听两遍
+    // （真人念一半被掐 + 机器音从头再念一遍）。
+    expect(onFallback).not.toHaveBeenCalled();
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(created[0].paused).toBe(false);
+
+    // 真人轨自己念完后照常收尾
+    act(() => created[0].onended?.());
+    expect(onEnd).toHaveBeenCalledTimes(1);
   });
 
   it("环境不具备 mp3 解码能力（jsdom）：直接走 TTS，不发真人音频请求", () => {

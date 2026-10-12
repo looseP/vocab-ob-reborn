@@ -130,7 +130,7 @@ function Probe({ input }: { input: FaceAutoAudioInput }): ReactElement | null {
 }
 
 function fakeController() {
-  return { available: true, playSequence: vi.fn(), stop: vi.fn() };
+  return { available: true, isPlaying: false, playSequence: vi.fn(), stop: vi.fn() };
 }
 
 const probeSource = {

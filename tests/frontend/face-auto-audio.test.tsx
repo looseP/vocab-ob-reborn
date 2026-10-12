@@ -178,9 +178,13 @@ describe("autoAudioSettings：配置解析与存储纪律", () => {
 
 // ── B. useFaceAutoAudio（假控制器） ────────────────────────────────────────
 
-function fakeController(): Pick<AudioController, "available" | "playSequence" | "stop"> {
+function fakeController(
+  overrides: Partial<Pick<AudioController, "available" | "isPlaying">> = {},
+): Pick<AudioController, "available" | "isPlaying" | "playSequence" | "stop"> {
   return {
     available: true,
+    isPlaying: false,
+    ...overrides,
     playSequence: vi.fn(),
     stop: vi.fn(),
   };
@@ -280,6 +284,71 @@ describe("useFaceAutoAudio：触发与编排选择", () => {
     expect(controller.playSequence).not.toHaveBeenCalled();
   });
 
+  it("例句异步到齐：只补播例句，同一个词不重播（不掐断重来）", () => {
+    const controller = fakeController();
+    // 首帧只有词形 —— 例句要等详情异步回来
+    const root = renderProbeInRoot({ ...baseProbe, sentence: null, definition: null, controller });
+    expect(controller.playSequence).toHaveBeenCalledTimes(1);
+    expect(controller.playSequence).toHaveBeenLastCalledWith([{ kind: "word", text: "above" }], 350);
+
+    // 例句到齐：补上这句，**词不再念第二遍**
+    rerenderProbe(root, { ...baseProbe, sentence: baseProbe.sentence, definition: null, controller });
+    expect(controller.playSequence).toHaveBeenCalledTimes(2);
+    expect(controller.playSequence).toHaveBeenLastCalledWith(
+      [{ kind: "sentence", text: baseProbe.sentence }],
+      350,
+    );
+    // 补播是新内容接上，不是掐断重来
+    expect(controller.stop).not.toHaveBeenCalled();
+
+    // 内容不再变的重渲染：一次都不该多播
+    rerenderProbe(root, { ...baseProbe, sentence: baseProbe.sentence, definition: null, controller });
+    expect(controller.playSequence).toHaveBeenCalledTimes(2);
+  });
+
+  it("中文卡面释义未到：先不播，到齐才播一次", () => {
+    const controller = fakeController();
+    const input: FaceAutoAudioInput = { ...baseProbe, face: "zh-meaning", controller };
+    const root = renderProbeInRoot({ ...input, sentence: null, definition: null });
+    // 首帧没有可读内容（③ 类卡面的编排只有释义 / 例句）——不抢跑
+    expect(controller.playSequence).not.toHaveBeenCalled();
+
+    rerenderProbe(root, { ...input, sentence: null, definition: "在...之上" });
+    expect(controller.playSequence).toHaveBeenCalledTimes(1);
+    expect(controller.playSequence).toHaveBeenLastCalledWith(
+      [{ kind: "definition", text: "在...之上" }],
+      350,
+    );
+  });
+
+  it("首帧还在念时，晚到的例句攒着等念完再接（不打断在途、也不重念词）", () => {
+    const controller = fakeController({ isPlaying: true });
+    const root = renderProbeInRoot({ ...baseProbe, sentence: null, definition: null, controller });
+    // 有词可播，但控制器此刻在播别的东西：不硬切，先攒着
+    expect(controller.playSequence).not.toHaveBeenCalled();
+
+    // 例句随后到齐：仍然在播 → 继续攒（词已在队列里，不会重复）
+    rerenderProbe(root, { ...baseProbe, sentence: baseProbe.sentence, definition: null, controller });
+    expect(controller.playSequence).not.toHaveBeenCalled();
+
+    // 在途那段念完：把攒下的接上，一次播完（词 + 例句，各一次）
+    rerenderProbe(root, {
+      ...baseProbe,
+      sentence: baseProbe.sentence,
+      definition: null,
+      controller: { ...controller, isPlaying: false },
+    });
+    expect(controller.playSequence).toHaveBeenCalledTimes(1);
+    expect(controller.playSequence).toHaveBeenLastCalledWith(
+      [
+        { kind: "word", text: "above" },
+        { kind: "sentence", text: baseProbe.sentence },
+      ],
+      350,
+    );
+    expect(controller.stop).not.toHaveBeenCalled();
+  });
+
   it("环境无发声能力时不播", () => {
     const controller = { ...fakeController(), available: false };
     renderProbe({ ...baseProbe, controller });
@@ -338,10 +407,15 @@ describe("useFaceAutoAudio：翻卡编排（onReveal）", () => {
       350,
     );
 
-    // 揭示态内内容变化（例如释义详情异步回来）：切卡编排按既有语义重播，
-    // 但 onReveal 不得再响 —— 揭示是「一次性动作」，不是内容变化的结果。
+    // 揭示态内内容变化（例如释义详情异步回来）：切卡编排**只补播新到的单元**
+    // （这里就是新例句），念过的词不重复；onReveal 也不再响 —— 揭示是
+    // 「一次性动作」，不是内容变化的结果。
     rerenderProbe(root, { ...baseProbe, controller, revealed: true, sentence: "换了例句" });
     expect(revealPlayCount(controller)).toBe(1);
+    expect(controller.playSequence).toHaveBeenLastCalledWith(
+      [{ kind: "sentence", text: "换了例句" }],
+      350,
+    );
   });
 
   it("回看再翻（true → false → true）可以再播一次", () => {
