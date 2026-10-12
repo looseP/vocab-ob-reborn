@@ -37,11 +37,18 @@ const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENV
 reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
 
 const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
+beforeEach(() => {
+  // 本套件锁定的是「手动 R / 点按钮」路径。自动伴读（2026-10-12）默认开，
+  // 挂载即播音会污染这里的「未调用」断言 —— 先把总闸关上，
+  // 自动播报的行为由 face-auto-audio 套件专门覆盖。
+  localStorage.setItem("vocab-auto-audio", JSON.stringify({ master: false }));
+});
 afterEach(() => {
   act(() => {
     for (const m of mounted.splice(0)) m.root.unmount();
   });
   document.body.innerHTML = "";
+  localStorage.clear();
   vi.clearAllMocks();
 });
 

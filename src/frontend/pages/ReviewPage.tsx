@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
-import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Layers, Undo2, History, Sprout } from "lucide-react";
+import { Repeat, Zap, BookOpen, Sparkles, RotateCcw, Infinity as InfinityIcon, Layers, Undo2, History, Sprout, Volume2 } from "lucide-react";
 import { Card } from "@/frontend/components/ui/Card";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -19,6 +19,7 @@ import {
   setLadderEnabledFor,
   type LadderChannel,
 } from "@/frontend/utils/ladderSettings";
+import { readAutoAudioConfig, writeAutoAudioConfig } from "@/frontend/utils/autoAudioSettings";
 import { isReviewReturnNavigation, shouldAutoRestoreSession } from "@/frontend/viewModels/reviewReturnNavigation";
 import { fetchReviewQueue } from "@/frontend/api/reviewQueue";
 
@@ -124,6 +125,36 @@ function LadderSwitch({ channel, enabled, onToggle }: {
     >
       <Layers className="h-3.5 w-3.5" />
       阶梯·{enabled ? "开" : "关"}
+    </button>
+  );
+}
+
+/**
+ * 会话内自动伴读总开关（2026-10-12）。
+ *
+ * 与阶梯开关同哲学（ADR-0036 §4「状态就地可见」）：伴读是**每卡都会响**的
+ * 行为，不能只藏在设置页 —— 会话进行中觉得吵，要能一按就静音。
+ * 编排（每类卡面读什么）在设置页逐类配置；卡面每卡现读配置，所以这里
+ * 只管总闸，不需要把状态往下传。
+ */
+function AutoAudioSwitch({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label="切卡自动播放音频"
+      data-testid="auto-audio-switch"
+      onClick={onToggle}
+      title={enabled ? "自动伴读：开（切卡按编排朗读）· 点击静音" : "自动伴读：关 · 点击开启"}
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+        enabled
+          ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-white"
+          : "border-[var(--color-border)] text-[var(--color-ink-soft)] hover:border-[var(--color-border-strong)]"
+      }`}
+    >
+      <Volume2 className="h-3.5 w-3.5" />
+      伴读·{enabled ? "开" : "关"}
     </button>
   );
 }
@@ -314,6 +345,16 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // 自动伴读总闸（2026-10-12）：就地可见、就地可关。卡面每卡现读配置，
+  // 所以这里只维护开关态；改「每类卡面读什么」去设置页。
+  const [autoAudioOn, setAutoAudioOn] = useState(() => readAutoAudioConfig().master);
+  const toggleAutoAudio = useCallback(() => {
+    const current = readAutoAudioConfig();
+    const next = !current.master;
+    writeAutoAudioConfig({ ...current, master: next });
+    setAutoAudioOn(next);
+  }, []);
+
   useEffect(() => {
     void startReview(apiMode, wordIds, force ? { force: true } : undefined);
     // 仅在进入会话时跑一次；重复依赖会导致缓存恢复后立刻被 force 清掉
@@ -352,6 +393,7 @@ function ReviewSession({ reviewMode, wordIds, onBack, force }: { reviewMode: str
           )}
         </div>
         <div className="flex items-center gap-2">
+          <AutoAudioSwitch enabled={autoAudioOn} onToggle={toggleAutoAudio} />
           <Button variant="ghost" size="sm" onClick={() => setDrawerOpen(true)} title="复习历史记录（H）">
             <History className="h-4 w-4" />
             历史

@@ -1,0 +1,414 @@
+/// <reference lib="dom" />
+// @vitest-environment jsdom
+
+/**
+ * 切卡自动伴读（2026-10-12）测试套件。
+ *
+ * 四层锁定，从纯函数到组件接线：
+ *  A. autoAudioSettings —— 配置默认值与脏值回落（存储纪律）；
+ *  B. useFaceAutoAudio —— 每卡一次 / 总闸 / 泄题面默认关 / 换卡重触发；
+ *  C. useAudioController.playSequence —— 逐段衔接 / 用户手动优先 / stop 取消；
+ *  D. 组件接线 —— 卡面类别按到达时可见内容判定（①词形面播词、②释义面播中文）。
+ *
+ * speech 模块整体 mock（与 review-card-audio 同款口径）：jsdom 无真人音频解码，
+ * 词形轨必然走 TTS 备用轨，用 speak/speakSentence 的调用序列断言编排顺序。
+ */
+
+import { act, createElement, type ReactElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FollowCopyView } from "@/frontend/components/review/FollowCopyView";
+import { ReviewCardView } from "@/frontend/components/review/ReviewCardView";
+import { useAudioController, type AudioController } from "@/frontend/reviewFlow/audioEngine";
+import { useFaceAutoAudio, type FaceAutoAudioInput } from "@/frontend/reviewFlow/useFaceAutoAudio";
+import {
+  AUDIO_ACCENT_STORAGE_KEY,
+  AUTO_AUDIO_STORAGE_KEY,
+  DEFAULT_AUTO_AUDIO_CONFIG,
+  readAudioAccent,
+  readAutoAudioConfig,
+  writeAudioAccent,
+  writeAutoAudioConfig,
+} from "@/frontend/utils/autoAudioSettings";
+import type { ReviewCard } from "@/frontend/hooks/useReview";
+
+const { speakMock, speakSentenceMock } = vi.hoisted(() => ({
+  speakMock: vi.fn(() => true),
+  speakSentenceMock: vi.fn(() => true),
+}));
+
+vi.mock("@/frontend/reviewFlow/speech", () => ({
+  isSpeechSynthesisAvailable: () => true,
+  speak: speakMock,
+  speakSentence: speakSentenceMock,
+  cancelSpeech: vi.fn(),
+  SENTENCE_RATE: 0.9,
+}));
+
+vi.mock("@/frontend/api/client", () => ({
+  apiFetch: vi.fn(() => Promise.resolve({ examples: [] })),
+}));
+vi.mock("@/frontend/components/ui/Toast", () => ({
+  useToast: () => ({ addToast: vi.fn() }),
+}));
+vi.mock("@/frontend/components/ui/Markdown", () => ({
+  Markdown: (props: { content: string }) => createElement("div", null, props.content),
+}));
+
+const reactActEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+
+const mounted: Array<{ root: Root; container: HTMLDivElement }> = [];
+
+beforeEach(() => {
+  localStorage.clear();
+  speakMock.mockClear();
+  speakSentenceMock.mockClear();
+});
+
+afterEach(() => {
+  act(() => {
+    for (const m of mounted.splice(0)) m.root.unmount();
+  });
+  document.body.innerHTML = "";
+  vi.useRealTimers();
+  vi.clearAllMocks();
+});
+
+function mount(ui: ReactElement): HTMLDivElement {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  act(() => {
+    root.render(createElement(MemoryRouter, null, ui));
+  });
+  mounted.push({ root, container });
+  return container;
+}
+
+function makeCard(word: Partial<ReviewCard["word"]> = {}): ReviewCard {
+  return {
+    progressId: "p1",
+    word: {
+      id: "w1",
+      slug: "above",
+      title: "above",
+      lemma: "above",
+      short_definition: "在...之上",
+      ipa: "/əˈbʌv/",
+      pos: "prep",
+      cefr: "A1",
+      ...word,
+    },
+    state: "review",
+    dueAt: new Date().toISOString(),
+    lastRating: null,
+    reviewCount: 1,
+    note_entries: [],
+  };
+}
+
+// ── A. 配置模块 ────────────────────────────────────────────────────────────
+
+describe("autoAudioSettings：配置解析与存储纪律", () => {
+  it("默认编排：①词→例句 ②释义→例句 ③a 词 ③b 关，总闸开", () => {
+    const config = readAutoAudioConfig();
+    expect(config).toEqual(DEFAULT_AUTO_AUDIO_CONFIG);
+    expect(config.master).toBe(true);
+    expect(config.faces["en-word"]).toEqual(["word", "sentence"]);
+    expect(config.faces["zh-meaning"]).toEqual(["definition", "sentence"]);
+    expect(config.faces["typing-en"]).toEqual(["word"]);
+    expect(config.faces["typing-zh"]).toBe("off");
+    expect(config.onReveal).toBe("off");
+    expect(config.gapMs).toBe(350);
+  });
+
+  it("脏值逐个回落：未知单元剔除、重复去重、越界 gapMs 回落、master 非 true 即关", () => {
+    localStorage.setItem(
+      AUTO_AUDIO_STORAGE_KEY,
+      JSON.stringify({
+        master: "yes",
+        faces: { "en-word": ["word", "bogus", "word"], "typing-zh": ["sentence"] },
+        onReveal: "garbage",
+        gapMs: 99999,
+      }),
+    );
+    const config = readAutoAudioConfig();
+    expect(config.master).toBe(false); // 字符串 "yes" 不是 true
+    expect(config.faces["en-word"]).toEqual(["word"]); // bogus 剔除 + word 去重
+    expect(config.faces["typing-zh"]).toEqual(["sentence"]); // 该字段合法，照单全收
+    expect(config.faces["zh-meaning"]).toEqual(DEFAULT_AUTO_AUDIO_CONFIG.faces["zh-meaning"]); // 缺字段回落
+    expect(config.onReveal).toBe("off"); // 非法值回落
+    expect(config.gapMs).toBe(350); // 越界回落
+  });
+
+  it("空数组归一为 off；坏 JSON 整体回落默认", () => {
+    localStorage.setItem(AUTO_AUDIO_STORAGE_KEY, JSON.stringify({ faces: { "en-word": [] } }));
+    expect(readAutoAudioConfig().faces["en-word"]).toBe("off");
+
+    localStorage.setItem(AUTO_AUDIO_STORAGE_KEY, "{ 不是 json");
+    expect(readAutoAudioConfig()).toEqual(DEFAULT_AUTO_AUDIO_CONFIG);
+  });
+
+  it("口音偏好：读写往返；脏值按未设置处理", () => {
+    expect(readAudioAccent()).toBeNull();
+    writeAudioAccent("uk");
+    expect(readAudioAccent()).toBe("uk");
+    localStorage.setItem(AUDIO_ACCENT_STORAGE_KEY, "fr");
+    expect(readAudioAccent()).toBeNull();
+  });
+
+  it("配置写入后可被读回（设置页即时生效的存储契约）", () => {
+    writeAutoAudioConfig({
+      master: false,
+      faces: { ...DEFAULT_AUTO_AUDIO_CONFIG.faces, "zh-meaning": ["sentence"] },
+      onReveal: ["word"],
+      gapMs: 500,
+    });
+    const config = readAutoAudioConfig();
+    expect(config.master).toBe(false);
+    expect(config.faces["zh-meaning"]).toEqual(["sentence"]);
+    expect(config.onReveal).toEqual(["word"]);
+    expect(config.gapMs).toBe(500);
+  });
+});
+
+// ── B. useFaceAutoAudio（假控制器） ────────────────────────────────────────
+
+function fakeController(): Pick<AudioController, "available" | "playSequence" | "stop"> {
+  return {
+    available: true,
+    playSequence: vi.fn(),
+    stop: vi.fn(),
+  };
+}
+
+function Probe({ input }: { input: FaceAutoAudioInput }) {
+  useFaceAutoAudio(input);
+  return null;
+}
+
+function renderProbe(input: FaceAutoAudioInput): void {
+  mount(createElement(Probe, { input }));
+}
+
+const baseProbe = {
+  face: "en-word" as const,
+  triggerKey: "p1",
+  lemma: "above",
+  sentence: "The book is on the shelf above.",
+  definition: "在...之上",
+};
+
+describe("useFaceAutoAudio：触发与编排选择", () => {
+  it("挂载即按卡面类别播一次（①词→例句），卸载即停", () => {
+    const controller = fakeController();
+    renderProbe({ ...baseProbe, controller });
+    expect(controller.playSequence).toHaveBeenCalledTimes(1);
+    expect(controller.playSequence).toHaveBeenCalledWith(
+      [
+        { kind: "word", text: "above" },
+        { kind: "sentence", text: "The book is on the shelf above." },
+      ],
+      350,
+    );
+    expect(controller.stop).not.toHaveBeenCalled();
+
+    act(() => {
+      mounted.splice(0).forEach((m) => m.root.unmount());
+    });
+    expect(controller.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("②中文卡面读「释义→例句」编排", () => {
+    const controller = fakeController();
+    renderProbe({ ...baseProbe, face: "zh-meaning", controller });
+    expect(controller.playSequence).toHaveBeenCalledWith(
+      [
+        { kind: "definition", text: "在...之上" },
+        { kind: "sentence", text: "The book is on the shelf above." },
+      ],
+      350,
+    );
+  });
+
+  it("③b 纯中文面默认关：不播（防泄题）", () => {
+    const controller = fakeController();
+    renderProbe({ ...baseProbe, face: "typing-zh", controller });
+    expect(controller.playSequence).not.toHaveBeenCalled();
+  });
+
+  it("总闸关闭时一律不播", () => {
+    localStorage.setItem(AUTO_AUDIO_STORAGE_KEY, JSON.stringify({ master: false }));
+    const controller = fakeController();
+    renderProbe({ ...baseProbe, controller });
+    expect(controller.playSequence).not.toHaveBeenCalled();
+  });
+
+  it("换卡（triggerKey 变）重新播一次，且先停上一段", () => {
+    const controller = fakeController();
+    const input: FaceAutoAudioInput = { ...baseProbe, controller };
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    mounted.push({ root, container });
+    // 同一个 root 换 props：effect 依赖变 → 先跑清理（stop）再重跑（playSequence）
+    act(() => {
+      root.render(createElement(MemoryRouter, null, createElement(Probe, { input })));
+    });
+    expect(controller.playSequence).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root.render(createElement(MemoryRouter, null, createElement(Probe, { input: { ...input, triggerKey: "p2" } })));
+    });
+    expect(controller.playSequence).toHaveBeenCalledTimes(2);
+    expect(controller.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("空文本单元被剔除：stub 词（无例句）降级为只播词", () => {
+    const controller = fakeController();
+    renderProbe({ ...baseProbe, sentence: null, definition: null, controller });
+    expect(controller.playSequence).toHaveBeenCalledWith([{ kind: "word", text: "above" }], 350);
+  });
+
+  it("全空（无词无形无释义）不播", () => {
+    const controller = fakeController();
+    renderProbe({ ...baseProbe, lemma: null, sentence: null, definition: null, controller });
+    expect(controller.playSequence).not.toHaveBeenCalled();
+  });
+
+  it("环境无发声能力时不播", () => {
+    const controller = { ...fakeController(), available: false };
+    renderProbe({ ...baseProbe, controller });
+    expect(controller.playSequence).not.toHaveBeenCalled();
+  });
+});
+
+// ── C. playSequence 引擎（真实控制器 + fake speech） ───────────────────────
+
+describe("useAudioController.playSequence：逐段衔接与打断", () => {
+  let controller: AudioController | null = null;
+
+  function ControllerProbe() {
+    controller = useAudioController();
+    return null;
+  }
+
+  function mountController(): void {
+    controller = null;
+    mount(createElement(ControllerProbe));
+    if (!controller) throw new Error("controller not mounted");
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it("按编排顺序逐段朗读：词 → 停顿 → 例句 → 停顿 → 中文释义", () => {
+    mountController();
+    act(() => {
+      controller!.playSequence([
+        { kind: "word", text: "above" },
+        { kind: "sentence", text: "The book is on the shelf above." },
+        { kind: "definition", text: "在...之上" },
+      ]);
+    });
+    // 第一段（词）立即发声
+    expect(speakMock).toHaveBeenCalledWith("above");
+    expect(speakSentenceMock).not.toHaveBeenCalled();
+
+    // 估算 600ms + 停顿 350ms 后进第二段（例句）
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(speakSentenceMock).toHaveBeenCalledWith("The book is on the shelf above.", {
+      accent: "us",
+      rate: 0.9,
+    });
+
+    // 例句估算（30 字 × 70ms）+ 停顿后进第三段（中文释义，zh-CN）
+    act(() => {
+      vi.advanceTimersByTime(60000);
+    });
+    expect(speakMock).toHaveBeenCalledWith("在...之上", "zh-CN");
+    expect(speakMock.mock.calls.map((c) => c[0])).toEqual(["above", "在...之上"]);
+  });
+
+  it("用户手动播放优先：序列被整条作废，后续段不复活", () => {
+    mountController();
+    act(() => {
+      controller!.playSequence([
+        { kind: "word", text: "above" },
+        { kind: "sentence", text: "The book is on the shelf above." },
+      ]);
+    });
+    expect(speakMock).toHaveBeenCalledWith("above");
+
+    // 用户按 R 听别的词：打断 + 取消序列
+    act(() => {
+      controller!.playWord("other");
+    });
+    act(() => {
+      vi.advanceTimersByTime(60000);
+    });
+    expect(speakSentenceMock).not.toHaveBeenCalled();
+    expect(speakMock).toHaveBeenCalledWith("other");
+  });
+
+  it("stop() 取消在途编排", () => {
+    mountController();
+    act(() => {
+      controller!.playSequence([
+        { kind: "word", text: "above" },
+        { kind: "sentence", text: "The book is on the shelf above." },
+      ]);
+    });
+    act(() => {
+      controller!.stop();
+    });
+    act(() => {
+      vi.advanceTimersByTime(60000);
+    });
+    expect(speakSentenceMock).not.toHaveBeenCalled();
+  });
+
+  it("空单元序列不发声", () => {
+    mountController();
+    act(() => {
+      controller!.playSequence([{ kind: "word", text: "   " }]);
+    });
+    expect(speakMock).not.toHaveBeenCalled();
+  });
+});
+
+// ── D. 组件接线 ────────────────────────────────────────────────────────────
+
+describe("组件接线：卡面类别按到达时可见内容判定", () => {
+  it("经典速刷正面 = ①英文卡面：挂载播词", () => {
+    mount(createElement(ReviewCardView, { card: makeCard(), onAnswer: vi.fn() }));
+    expect(speakMock).toHaveBeenCalledWith("above");
+  });
+
+  it("preview 释义直展 = ②中文卡面：挂载播中文释义（无例句时降级）", () => {
+    mount(createElement(ReviewCardView, { card: makeCard(), preview: true, onAnswer: vi.fn() }));
+    expect(speakMock).toHaveBeenCalledWith("在...之上", "zh-CN");
+  });
+
+  it("巩固轮照着打 = ③a：挂载播词", () => {
+    mount(
+      createElement(FollowCopyView, {
+        lemma: "above",
+        definition: "在...之上",
+        onDone: vi.fn(),
+      }),
+    );
+    expect(speakMock).toHaveBeenCalledWith("above");
+  });
+
+  it("总闸关闭时组件不自动播（手动按钮仍可用，由既有套件覆盖）", () => {
+    localStorage.setItem(AUTO_AUDIO_STORAGE_KEY, JSON.stringify({ master: false }));
+    mount(createElement(ReviewCardView, { card: makeCard(), onAnswer: vi.fn() }));
+    expect(speakMock).not.toHaveBeenCalled();
+  });
+});

@@ -23,6 +23,7 @@ import { Card } from "@/frontend/components/ui/Card";
 import { AcousticStickyAnchor } from "@/frontend/components/review/AcousticAnchor";
 import { L3ContextText } from "@/frontend/components/review/L3ContextText";
 import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
+import { useFaceAutoAudio } from "@/frontend/reviewFlow/useFaceAutoAudio";
 import type { Rating, ReviewCard } from "@/frontend/hooks/useReview";
 import { buildHintSteps, HINT_STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
 import { useWordDetail } from "@/frontend/hooks/useWordDetail";
@@ -174,6 +175,7 @@ export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) 
     toggleAccent,
     playWord,
     playSentence,
+    playSequence,
     stop,
   } = useAudioController();
 
@@ -207,15 +209,20 @@ export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) 
     else playSentence(exampleText);
   }, [exampleText, isPlaying, currentSource, playSentence, stop]);
 
-  // 首学初见自动发音：挂载（含换卡）即念一次，给大脑植入第一发音印象。
-  // 无任何发声能力时静默跳过；换卡/卸载时掐断上一张卡的音轨（不留幽灵发音）。
-  // progressId 参与依赖与守卫：阶梯会话复用同一组件实例，换卡即换 progressId，
+  // 首学初见自动发音 → 升级为切卡自动伴读（2026-10-12）。
+  // 编码卡属①英文卡面，编排「词 → 例句」由配置决定（默认即此）；例句取 H1
+  // 提示步（该步缺失时自动降级为只播词）。无发声能力 / 空文本静默跳过；
+  // 换卡/卸载掐断上一张卡的音轨（不留幽灵发音）。
+  // progressId 作 triggerKey：阶梯会话复用同一组件实例，换卡即换 progressId，
   // 必须重新植入发音印象（即使前后两张卡的词形巧合相同）。
-  useEffect(() => {
-    if (!available || !lemma || !card.progressId) return;
-    playWord(lemma);
-    return () => stop();
-  }, [available, lemma, card.progressId, playWord, stop]);
+  useFaceAutoAudio({
+    face: "en-word",
+    triggerKey: card.progressId,
+    lemma,
+    sentence: exampleText,
+    definition: card.word.short_definition,
+    controller: { available, playSequence, stop },
+  });
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {

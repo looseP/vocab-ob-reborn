@@ -67,6 +67,9 @@ reactActEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 beforeEach(() => {
+  // 口音偏好已持久化到 localStorage（2026-10-12 自动伴读接线）：不隔离的话，
+  // 前一个用例切到英音会被下一个用例的控制器读到，lang 断言串味。
+  localStorage.clear();
   synth = { speak: vi.fn(), cancel: vi.fn(), getVoices: vi.fn(() => []) };
   Reflect.set(window, "speechSynthesis", synth);
   Reflect.set(window, "SpeechSynthesisUtterance", FakeUtterance);

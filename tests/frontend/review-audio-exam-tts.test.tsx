@@ -140,6 +140,9 @@ function pressKey(key: string, init: KeyboardEventInit = {}): void {
 }
 
 beforeEach(() => {
+  // 自动伴读（2026-10-12）默认开，挂载即播音会污染本套件的手动快捷键/打断断言；
+  // 关总闸后这里锁的仍是纯手动路径（自动播报由 face-auto-audio 套件专门覆盖）。
+  localStorage.setItem("vocab-auto-audio", JSON.stringify({ master: false }));
   synth = { speak: vi.fn(), cancel: vi.fn(), getVoices: vi.fn(() => []) };
   Reflect.set(window, "speechSynthesis", synth);
   Reflect.set(window, "SpeechSynthesisUtterance", FakeUtterance);
@@ -150,6 +153,7 @@ afterEach(() => {
     for (const m of mounted.splice(0)) m.root.unmount();
   });
   document.body.innerHTML = "";
+  localStorage.clear();
   vi.restoreAllMocks();
   vi.useRealTimers();
   vi.clearAllMocks();
