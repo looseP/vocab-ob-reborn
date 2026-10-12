@@ -13,6 +13,10 @@
  * 2. 顶部声学胶囊：发音按钮 + UK/US 口音开关（与 ReviewCardView 共用同一组件）；
  * 3. H1 例句可朗读 + 全局快捷键 R / Shift+R / E（与按钮同一入口，播放中可打断）。
  *    （文案是「听例句」不是「真题例句」—— 例句来自报刊/词典，非历年真题，见 ClueZone 注释。）
+ *
+ * 笔记（2026-10-12 新增）：初识即记 —— 释义与首评三键之间挂 `NoteEntriesFold`
+ * （与复习卡背同一组件、同一 `note_entries` 数据源，后端零改动），并保证首评前
+ * 兜底提交未落盘的草稿（`commitQuickNote`）：评分永远在笔记写入之后上报。
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -20,11 +24,15 @@ import { Eye, Volume2 } from "lucide-react";
 import { Button } from "@/frontend/components/ui/Button";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Card } from "@/frontend/components/ui/Card";
+import { useToast } from "@/frontend/components/ui/Toast";
 import { AcousticStickyAnchor } from "@/frontend/components/review/AcousticAnchor";
 import { L3ContextText } from "@/frontend/components/review/L3ContextText";
+import { NoteEntriesFold } from "@/frontend/components/notes/NoteEntriesFold";
 import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
 import { useFaceAutoAudio } from "@/frontend/reviewFlow/useFaceAutoAudio";
-import type { Rating, ReviewCard } from "@/frontend/hooks/useReview";
+import { apiFetch } from "@/frontend/api/client";
+import { BrowserApiError } from "@/frontend/api/browserRequest";
+import type { Rating, ReviewCard, ReviewNoteEntry } from "@/frontend/hooks/useReview";
 import { buildHintSteps, HINT_STEP_LABEL, type HintStep } from "@/frontend/reviewFlow/hintSteps";
 import { useWordDetail } from "@/frontend/hooks/useWordDetail";
 import {
@@ -162,6 +170,14 @@ interface EncodeCardViewProps {
 
 export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) {
   const [revealed, setRevealed] = useState(false);
+  // 背记笔记（条目制，2026-10-12 新增）：与复习卡背共用同一个 NoteEntriesFold。
+  // 初识是「第一次认真看这个词」的时刻，入口落在这里最不容易漏；写下的条目立即
+  // 进 `note_entries`，与词详情「我的批注」、复习卡背是同一份数据（后端零改动）。
+  // 换卡重置沿用本文件的既有口径 —— 上层 key（LadderReviewSession 的
+  // `progressId:stage:retryNonce`）强制重挂载，实例不复用，故不需要重置 effect。
+  const [noteEntries, setNoteEntries] = useState<ReviewNoteEntry[]>(card.note_entries ?? []);
+  const [quickDraft, setQuickDraft] = useState("");
+  const { addToast } = useToast();
   // 编码模式：自动逐级展开全部可用提示（缺失级已被 buildHintSteps 跳过）
   const steps = useMemo(() => buildHintSteps(card.word), [card.word]);
 
@@ -208,6 +224,43 @@ export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) 
     if (isPlaying && currentSource === "sentence") stop();
     else playSentence(exampleText);
   }, [exampleText, isPlaying, currentSource, playSentence, stop]);
+
+  /**
+   * 评分前兜底提交笔记草稿：在输入区打了字没点「添加条目」就直接首评，内容不该丢。
+   * 与复习卡背 `commitQuickNote` 同一口径（失败不阻塞学习流，提示后继续）。
+   */
+  const commitQuickNote = useCallback(async () => {
+    const content = quickDraft.trim();
+    if (!content) return;
+    try {
+      const res = await apiFetch<{ entry: ReviewNoteEntry }>(
+        `/words/${encodeURIComponent(card.word.slug)}/notes/entries`,
+        { method: "POST", body: JSON.stringify({ content_md: content }), timeoutMs: 20_000 },
+      );
+      setNoteEntries((prev) => [...prev, res.entry]);
+    } catch (err) {
+      addToast("error", err instanceof BrowserApiError ? err.message : "快记未能保存");
+    } finally {
+      setQuickDraft("");
+    }
+  }, [quickDraft, card.word.slug, addToast]);
+
+  /**
+   * 唯一评分入口：三键按钮与 1/2/3 快捷键共用。
+   * 有未落盘草稿 → 先兜底提交再上报（首评必须排在笔记之后，内容不丢）；
+   * 无草稿 → **同步**上报：首评本身不发网络请求（会话产出轮末才提交调度），
+   * 不该为了一个空草稿把切卡拖到一次网络往返之后。
+   */
+  const rate = useCallback(
+    (rating: Rating) => {
+      if (!quickDraft.trim()) {
+        onRate(rating);
+        return;
+      }
+      void commitQuickNote().finally(() => onRate(rating));
+    },
+    [quickDraft, commitQuickNote, onRate],
+  );
 
   // 首学初见自动发音 → 升级为切卡自动伴读（2026-10-12）。
   // 编码卡属①英文卡面，编排「词 → 例句」由配置决定（默认即此）；例句取 H1
@@ -275,12 +328,12 @@ export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) 
         if (disabled) return;
         if (key === "3" && !revealed) return;
         event.preventDefault();
-        onRate(key === "1" ? "easy" : key === "2" ? "good" : "hard");
+        rate(key === "1" ? "easy" : key === "2" ? "good" : "hard");
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [disabled, exampleText, lemma, playWord, revealed, toggleAccent, toggleOrPlaySentence, onRate]);
+  }, [disabled, exampleText, lemma, playWord, revealed, toggleAccent, toggleOrPlaySentence, rate]);
 
   return (
     <Card className="space-y-4" data-testid="encode-card-view">
@@ -348,14 +401,28 @@ export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) 
         </div>
       )}
 
+      {/* ── 我的笔记（条目制）：折叠 + 快记 + 就地编辑/隐藏，与复习卡背同一组件 ──
+          放在释义与三键之间：初识读完提示、看过释义，顺手记一条再首评。 */}
+      <NoteEntriesFold
+        slug={card.word.slug}
+        entries={noteEntries}
+        draft={quickDraft}
+        onDraftChange={setQuickDraft}
+        onInsert={(entry) => setNoteEntries((prev) => [...prev, entry])}
+        onUpdate={(entry) =>
+          setNoteEntries((prev) => prev.map((item) => (item.id === entry.id ? entry : item)))
+        }
+        onHide={(entryId) => setNoteEntries((prev) => prev.filter((item) => item.id !== entryId))}
+      />
+
       <div className="flex justify-center gap-2 pt-1" data-testid="encode-rating">
-        <Button variant="secondary" size="lg" disabled={disabled} onClick={() => onRate("easy")}>
+        <Button variant="secondary" size="lg" disabled={disabled} onClick={() => rate("easy")}>
           我认识
         </Button>
-        <Button variant="secondary" size="lg" disabled={disabled} onClick={() => onRate("good")}>
+        <Button variant="secondary" size="lg" disabled={disabled} onClick={() => rate("good")}>
           有印象
         </Button>
-        <Button variant="primary" size="lg" disabled={disabled || !revealed} onClick={() => onRate("hard")}>
+        <Button variant="primary" size="lg" disabled={disabled || !revealed} onClick={() => rate("hard")}>
           初见（难）
         </Button>
       </div>
