@@ -80,7 +80,7 @@ const AUTO_AUDIO_FACE_HINTS: Record<FaceClass, string> = {
   "en-word": "词形面：词 → 例句，听读一致，看到什么听到什么",
   "zh-meaning": "释义面：释义 → 例句，先听中文做一次「义 → 形」预热",
   "typing-en": "打字 · 词形可见：先听形再开打（形·听 + 形·视 + 动·手）",
-  "typing-zh": "打字 · 纯中文：默认关 —— 念英文等于把答案说出口",
+  "typing-zh": "打字 / 填空 · 词形不可见（默写、完形填空、词汇填空）：默认关 —— 念英文等于把答案说出口",
 };
 
 import {
@@ -321,6 +321,11 @@ export function SettingsPage() {
             （估算 &gt; 10 秒）自动跳过，避免念到下一张卡 —— 手动点读不受此限。
             英文词形默认只在<strong>词形可见</strong>的卡面出现 —— 默写 / 完形这类
             「答案在音频里」的卡面默认关闭，防止泄题。改动即时生效（下一张卡）。
+          </p>
+          <p className="text-xs text-[var(--color-ink-soft)]">
+            葫芦冲刺一屏多卡（整页同时出现），没有「到达」可播 —— 它只认<strong>翻开核对</strong>
+            那一刻，走上面同一条「翻卡时」编排。听写档的读音<strong>就是题面</strong>，
+            不受总闸影响：那是题目本身，不是伴读。
           </p>
           {(Object.keys(FACE_CLASS_LABELS) as FaceClass[]).map((face) => (
             <AutoAudioPlaylistRow
