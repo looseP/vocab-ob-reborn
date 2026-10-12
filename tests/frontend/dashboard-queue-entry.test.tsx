@@ -2,16 +2,24 @@
 // @vitest-environment jsdom
 
 /**
- * 仪表盘「今日待复习（到期）」统计卡的**入口**回归锁（2026-10-12）。
+ * 仪表盘行动区「现在待复习」卡的**入口 + 口径**回归锁（2026-10-12）。
  *
- * 修的是「只有数字、没有去处」：卡上写着 2，但没人告诉你这 2 张是哪两个词
- * —— 队列全景页（/review-queue）早就有了，缺的是一条从数字到清单的路。
+ * 修的两件事：
+ *   ① 只有数字、没有去处 —— 卡上写着 1，但没人告诉你这 1 张是哪个词；
+ *   ② 大数字用错了口径 —— 实测：卡上「今日待复习 1」而队列「到期 0」、「开始复习
+ *      暂无待复习卡片」，同一块屏幕上两个数互相打脸，用户第一反应是「调度坏了」。
+ *      查库确认调度没问题：那张卡 `state='review'`、`due_at` 就是今天 15:43（上海），
+ *      是**此刻还没到点**，不是排错了。
+ *      `dashboard-queue-headline.test.tsx` 早就锁死同一条规矩：**卡上的数必须是
+ *      点进去看到的那个数**。故大数字改为队列 `stats.total`（此刻就会发出的卡数），
+ *      日历日口径退为副标题，且只在与大数字不一致时出现。
+ *
  * 锁住的规矩：
- *   1. 有去处的卡整卡可点，且用真链接（键盘可达 / 可中键新开 / 读屏能念）；
- *   2. 去处就是复习队列；
- *   3. **没有去处的卡不许变成链接**（今日已复习没有对应清单，别给假入口）；
- *   4. 两个数字口径不同（上海日历日 vs 此刻已到期），差异写在悬停提示里，
- *      点进去之前就知道数字可能变。
+ *   1. 整卡可点，且用真链接（键盘可达 / 可中键新开 / 读屏能念）；
+ *   2. 去处就是复习队列，大数字 = 队列口径（此刻到期 + 配额内新卡）；
+ *   3. 两个口径不一致时，副标题把日历日那个数说在明处（不藏着）；
+ *   4. 两个口径一致时不出副标题（一致还并列是噪音）；
+ *   5. 没有对应清单的卡不许变成链接（今日已复习）。
  */
 import { act } from "react";
 import { createElement, type ReactElement } from "react";
@@ -36,7 +44,7 @@ const DASHBOARD_STATS = {
   totalWords: 10,
   trackedWords: 8,
   masteredWords: 3,
-  dueToday: 2,
+  dueToday: 1,
   reviewedToday: 1,
   reviewed7d: 5,
   reviewed30d: 9,
@@ -48,14 +56,21 @@ const DASHBOARD_STATS = {
 
 const BOOK = { id: "11111111-1111-4111-8111-111111111111", name: "默认词书", description: null, isDefault: true };
 
-/** 仪表盘自身三个数据源 + 各子面板的最小成对载荷（只关心卡片，不关心面板细节）。 */
-function wireDashboardApi(): void {
+/** 仪表盘自身数据源 + 各子面板的最小成对载荷（只关心行动区那张卡）。 */
+function wireDashboardApi(options: { queueTotal: number; dueToday: number }): void {
   apiFetchMock.mockImplementation((url: unknown) => {
     const u = String(url);
     if (u.startsWith("/review/queue")) {
-      return Promise.resolve({ stats: { total: 2, remaining: 2 }, session: { cardsSeen: 0 }, items: [] });
+      // 会话队列口径：此刻就会发出的卡数（到期 + 配额内的新卡）
+      return Promise.resolve({
+        stats: { total: options.queueTotal, remaining: options.queueTotal },
+        session: { cardsSeen: 0 },
+        items: [],
+      });
     }
-    if (u.startsWith("/review/stats/dashboard")) return Promise.resolve(DASHBOARD_STATS);
+    if (u.startsWith("/review/stats/dashboard")) {
+      return Promise.resolve({ ...DASHBOARD_STATS, dueToday: options.dueToday });
+    }
     if (u.startsWith("/notes?limit=")) return Promise.resolve({ items: [], total: 0 });
     if (u.startsWith("/review/stats")) {
       return Promise.resolve({ todayCount: 0, totalCount: 0, ratingDist: { again: 0, hard: 0, good: 0, easy: 0 } });
@@ -82,9 +97,10 @@ async function mount(element: ReactElement): Promise<void> {
   });
 }
 
-async function mountDashboard(): Promise<void> {
+async function mountDashboard(options: { queueTotal: number; dueToday: number }): Promise<void> {
+  wireDashboardApi(options);
   await mount(createElement(MemoryRouter, null, createElement(DashboardPage)));
-  await waitFor(() => expect(screen.getByRole("link", { name: /今日待复习/ })).toBeTruthy());
+  await waitFor(() => expect(screen.getByRole("link", { name: /现在待复习/ })).toBeTruthy());
 }
 
 beforeEach(() => {
@@ -101,29 +117,55 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("仪表盘「今日待复习」卡：数字 → 清单的入口", () => {
+describe("仪表盘「现在待复习」卡：数字 → 清单的入口", () => {
   it("整卡是链接，指向复习队列（键盘可达、可中键新开）", async () => {
-    wireDashboardApi();
-    await mountDashboard();
+    await mountDashboard({ queueTotal: 0, dueToday: 1 });
 
-    const entry = screen.getByRole("link", { name: /今日待复习/ });
+    const entry = screen.getByRole("link", { name: /现在待复习/ });
     expect(entry.getAttribute("href")).toBe("/review-queue");
     // 数字仍要在卡上（入口是加成，不是替换）
-    expect(screen.getByText("今日待复习（到期）")).toBeTruthy();
+    expect(screen.getByText("现在待复习")).toBeTruthy();
   });
 
-  it("口径差异写在悬停提示里：点进去之前就知道数字可能变", async () => {
-    wireDashboardApi();
-    await mountDashboard();
+  it("大数字是「点进去看到的那个数」：队列口径，不是日历日口径", async () => {
+    // 复现实测场景：日历日到期 1 张（今天 15:43 才到点），此刻可复习 0 张
+    await mountDashboard({ queueTotal: 0, dueToday: 1 });
 
-    const hint = screen.getByRole("link", { name: /今日待复习/ }).getAttribute("title") ?? "";
+    const entry = screen.getByRole("link", { name: /现在待复习/ });
+    expect(entry.querySelector("p.text-2xl")?.textContent).toBe("0");
+    // 日历日那个数以副标题存在，不抢大数字的位置
+    expect(screen.getByText("今日共 1 张到期")).toBeTruthy();
+    // 「开始复习」卡与它同数（队列文案走同一个 stats.total）
+    expect(screen.getByText("暂无待复习卡片")).toBeTruthy();
+  });
+
+  it("口径不一致时副标题把日历日那个数说在明处", async () => {
+    await mountDashboard({ queueTotal: 0, dueToday: 1 });
+
+    expect(screen.getByText("今日共 1 张到期")).toBeTruthy();
+  });
+
+  it("口径一致时不出副标题（一致还并列是噪音）", async () => {
+    await mountDashboard({ queueTotal: 1, dueToday: 1 });
+
+    expect(screen.queryByText(/今日共/)).toBeNull();
+  });
+
+  it("口径差异写在悬停提示里：两个口径是什么、差的那批卡在哪", async () => {
+    await mountDashboard({ queueTotal: 0, dueToday: 1 });
+
+    const hint = screen.getByRole("link", { name: /现在待复习/ }).getAttribute("title") ?? "";
     expect(hint).toContain("此刻已到期");
-    expect(hint).toContain("具体是哪些词");
+    expect(hint).toContain("日历日");
+    // 差的那批卡（今天稍后到点）落在哪个桶、怎么找 —— 说清楚，别让用户以为丢了
+    expect(hint).toContain("学习中");
+    expect(hint).toContain("已掌握");
+    expect(hint).toContain("排在最前");
+    expect(hint).toContain("点开看具体是哪些词");
   });
 
   it("没有对应清单的卡不变成链接（今日已复习给假入口会骗人）", async () => {
-    wireDashboardApi();
-    await mountDashboard();
+    await mountDashboard({ queueTotal: 0, dueToday: 1 });
 
     expect(screen.getByText("今日已复习")).toBeTruthy();
     expect(screen.queryByRole("link", { name: /今日已复习/ })).toBeNull();
