@@ -140,9 +140,15 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       DATAMUSE_ENABLED: ${DATAMUSE_ENABLED:-false}
+      # 备份新鲜度：只读挂调度器的状态文件目录（一个 JSON 时间戳），供 runtime 指标
+      # 与默认告警集里的 VocabBackupStaleLocal 使用。**不挂 /backups** —— 整库 dump
+      # 进 API 进程会绕过全部审计，那是另一回事（见 backup-scheduler 的注释）。
+      BACKUP_STATE_DIR: ${BACKUP_STATE_DIR:-/backup-state}
     command: ["./node_modules/.bin/tsx", "src/server.ts"]
     ports:
       - "127.0.0.1:${APP_PORT:-3001}:3001"
+    volumes:
+      - backup-state:/backup-state:ro
     stop_grace_period: 35s
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
@@ -195,14 +201,32 @@ services:
       BACKUP_SIGNING_KEY: ${BACKUP_SIGNING_KEY:-local-backup-signing-key-only-0001}
       BACKUP_REQUIRE_SIGNING_KEY: ${BACKUP_REQUIRE_SIGNING_KEY:-true}
       BACKUP_OBJECT_LOCK: ${BACKUP_OBJECT_LOCK:-true}
+      # 单轮失败的重试与退避（2026-10-13）：瞬故障自愈，不再一失败就退出容器去撞
+      # restart: unless-stopped 的无退避崩溃重启。
+      BACKUP_CYCLE_RETRIES: ${BACKUP_CYCLE_RETRIES:-3}
+      BACKUP_RETRY_BACKOFF_MS: ${BACKUP_RETRY_BACKOFF_MS:-60000}
+      # 健康检查允许的「距上次成功备份」最大年龄（秒）。必须 > BACKUP_INTERVAL_MS/1000，
+      # 否则健康检查会在两轮备份之间误报 unhealthy；调度器启动时会校验这一点。
+      BACKUP_HEALTH_MAX_AGE_SECONDS: ${BACKUP_HEALTH_MAX_AGE_SECONDS:-90000}
+      # 状态文件目录：独立小卷，只放一个时间戳。web 容器只读挂它去暴露备份新鲜度指标
+      # （进而进默认告警集）；**不挂** /backups —— 整库 dump 进 API 进程会绕过审计。
+      BACKUP_STATE_DIR: ${BACKUP_STATE_DIR:-/backup-state}
     volumes:
       - ${BACKUP_HOST_DIR:-./backups}:/backups
+      - backup-state:/backup-state
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD-SHELL", "pg_dump --version >/dev/null && pg_restore --version >/dev/null"]
+      # 2026-10-13：原探针只查 pg_dump/pg_restore 二进制在不在 —— 备份失败千百回也
+      # 照样 healthy，「备份好久没成功」在单机栈里没人知道。现在 = 二进制可用 **且**
+      # 最近一次成功备份够新鲜（last-success.json 由调度器每轮成功时原子写入，
+      # 见 scripts/backup-scheduler-support.ts）。超龄 ⇒ unhealthy ⇒ docker compose ps
+      # 一眼可见。注意 `$$` 是 compose 的转义：把 shell 的 $(...) 原样传下去。
+      test: ["CMD-SHELL", "pg_dump --version >/dev/null && pg_restore --version >/dev/null && test -f /backup-state/last-success.json && [ $$(( $$(date +%s) - $$(stat -c %Y /backup-state/last-success.json) )) -lt ${BACKUP_HEALTH_MAX_AGE_SECONDS:-90000} ]"]
       interval: 30s
       timeout: 5s
       retries: 3
+      # 首轮备份可能需要一两分钟（建库 + dump + 签名），期间不算失败
+      start_period: 300s
     logging: *default-logging
 
   data-lifecycle:
@@ -248,3 +272,7 @@ services:
 volumes:
   postgres-data:
   backups:
+  # 备份调度器写的「最近一次成功」状态文件（一个 JSON 时间戳）。web 只读挂它去暴露
+  # 备份新鲜度指标 —— 之所以单独一个卷而不是复用 backups：后者是整库 dump，
+  # 不该进 API 进程（会绕过全部审计）。
+  backup-state:

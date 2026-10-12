@@ -68,6 +68,23 @@ if (/\bargs:\s*\n\s*POSTGRES_CLIENT_MAJOR:/.test(backupService)) {
 }
 requirePattern(backupService, /BACKUP_REQUIRE_SIGNING_KEY: \$\{BACKUP_REQUIRE_SIGNING_KEY:-true\}/, "Production backup signing requirement");
 requirePattern(backupService, /pg_dump --version[^\n]*pg_restore --version/, "Backup client binary healthcheck");
+// 2026-10-13：健康检查还必须验「最近一次成功备份够新鲜」。只探二进制的探针在备份失败
+// 千百回时也返回 healthy —— 「备份好久没成功没人知道」就是这么来的（深度审查 P1）。
+requirePattern(
+  backupService,
+  /pg_dump --version[^\n]*pg_restore --version[^\n]*last-success\.json/,
+  "Backup freshness healthcheck (binary probe alone lies when backups stop succeeding)",
+);
+requirePattern(
+  backupService,
+  /BACKUP_HEALTH_MAX_AGE_SECONDS: \$\{BACKUP_HEALTH_MAX_AGE_SECONDS:-/,
+  "Backup health freshness bound",
+);
+requirePattern(
+  backupService,
+  /BACKUP_CYCLE_RETRIES: \$\{BACKUP_CYCLE_RETRIES:-/,
+  "Backup cycle retry budget",
+);
 requirePattern(envExample, /^BACKUP_IMAGE=vocab-observatory-v2-backup:local$/m, "Backup image example");
 requirePattern(envExample, /^BACKUP_REQUIRE_SIGNING_KEY=true$/m, "Backup signing requirement example");
 if (/^POSTGRES_CLIENT_MAJOR=/m.test(envExample)) {

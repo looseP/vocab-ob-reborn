@@ -204,6 +204,20 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
     return {
       wordId, wordbookId, progressId, sessionId, userId, contentHash,
       cleanup: async () => {
+        // outbox 残留（2026-10-13 补，污染源治理）：`submitAnswer` 在同一事务里 enqueue
+        // 一条 `review.answer.recorded.v1`，`aggregate_id = reviewLogId`。而
+        // `outbox_events.aggregate_id` 是**无外键**的裸 uuid —— 删 progress / review_logs
+        // 都不会级联到它，事件于是成为孤儿 pending：worker 取到后报
+        // "Authoritative review progress not found" 转 retry，最终把依赖
+        // `processBatch()` 计数的用例（l2-drill-fr12 的 `expect(processed).toBe(1)`）
+        // 打成 flaky —— 2026-10-12 CI 连挂两次，下游加隔离只是治标，这里才治本。
+        // 必须**先于** review_logs 删除（下面用 session 的日志反查 aggregate_id）。
+        await pool.query(
+          `DELETE FROM outbox_events
+            WHERE aggregate_id IN (SELECT id FROM review_logs WHERE session_id = $1)
+               OR aggregate_id = $2`,
+          [sessionId, progressId],
+        );
         // Reverse FK order
         await pool.query("DELETE FROM review_logs WHERE session_id = $1", [sessionId]);
         await pool.query("DELETE FROM sessions WHERE id = $1", [sessionId]);

@@ -1416,13 +1416,34 @@
                         "oldestPendingAgeSeconds"
                       ],
                       "additionalProperties": false
+                    },
+                    "backup": {
+                      "type": "object",
+                      "properties": {
+                        "lastSuccessAgeSeconds": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "lastSuccessAgeSeconds"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
                     "process",
                     "database",
                     "outbox",
-                    "llmReservations"
+                    "llmReservations",
+                    "backup"
                   ],
                   "additionalProperties": false
                 }

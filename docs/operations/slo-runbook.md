@@ -45,6 +45,18 @@
 3. If the worker crashed, restart it: `docker compose restart review-outbox-worker`.
 4. If leases are stuck, wait for `OUTBOX_LEASE_SECONDS` to expire then verify the worker picks them up.
 
+### VocabBackupStaleLocal (critical)
+1. Check the scheduler container first: `docker compose ps backup-scheduler` — since 2026-10-13 its
+   healthcheck also verifies backup freshness (`last-success.json` age), so `unhealthy` means backups
+   have stopped succeeding, not just that the process died.
+2. Read the scheduler logs: `docker compose logs --tail=200 backup-scheduler` (`scope: "backup-scheduler"`).
+   Look for `Backup cycle failed after all retries` — the message includes the attempt count and root cause.
+3. Common causes: database unreachable from the `vocab_backup` role, disk full on the backup volume,
+   or `BACKUP_SIGNING_KEY` rotation mismatch.
+4. After fixing, the next interval retries automatically (the scheduler no longer exits on failure).
+   The alert clears once `backup_last_success_age_seconds` drops back under the threshold.
+5. Note the metric is absent until the first successful backup, so a fresh deployment does not alert.
+
 ### VocabHighLatencyP95 (warning)
 1. Identify the affected route from the `route` label.
 2. Check if database queries are slow — review `scope: "db"` logs for `slow query` entries.

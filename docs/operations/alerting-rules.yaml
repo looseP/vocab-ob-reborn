@@ -196,6 +196,27 @@ groups:
           description: "Dead-letter events require investigation and controlled replay; current count is {{ $value }}."
           runbook_url: "docs/operations/slo-runbook.md#vocaboutboxdeadletter-critical"
 
+      - alert: VocabBackupStaleLocal
+        # 2026-10-13（深度审查 P1）：此前「备份好久没成功」在单机栈里没有任何自动
+        # 信号 —— backup-scheduler 的健康检查只探 pg_dump --version（失败千百回也
+        # healthy），默认规则集里也只有 optional 平台层才有备份告警。
+        # 现在调度器每轮成功写一个状态文件（独立小卷，只读挂给 web），web 把它暴露成
+        # backup_last_success_age_seconds，这条 critical 就能叫醒人。
+        # 指标在「还没有成功备份」时**不产出**（null），所以首部署不会被误告警；
+        # 一旦有了第一次成功，年龄只增不减，停了就会被抓到。
+        expr: vocab_observatory_runtime{job="vocab-observatory",metric="backup_last_success_age_seconds"} > 90000
+        for: 10m
+        labels:
+          severity: critical
+          service: vocab_observatory
+          component: backup-scheduler
+          team: vocab-observatory
+          alert_family: backup-health
+        annotations:
+          summary: "Vocab Observatory backup has not succeeded recently"
+          description: "No successful backup for {{ $value }} seconds (freshness window 25h). Inspect the backup-scheduler container health and logs (scope \"backup-scheduler\"); the container healthcheck now also reflects backup freshness."
+          runbook_url: "docs/operations/slo-runbook.md#vocabbackupstalelocal-critical"
+
       - alert: VocabLlmReservationAgeHigh
         expr: vocab_observatory_runtime{job="vocab-observatory",metric="llm_reservations_oldest_pending_age_seconds"} > 600
         for: 5m

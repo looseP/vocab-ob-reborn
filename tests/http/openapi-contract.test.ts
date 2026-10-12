@@ -105,11 +105,13 @@ describe("API contract", () => {
     expect(schema).toMatchObject({
       type: "object",
       additionalProperties: false,
-      required: ["process", "database", "outbox", "llmReservations"],
+      required: ["process", "database", "outbox", "llmReservations", "backup"],
     });
     expect(schema?.properties).toHaveProperty("database");
     expect(schema?.properties).toHaveProperty("outbox");
     expect(schema?.properties).toHaveProperty("llmReservations");
+    // 2026-10-13：备份新鲜度（P1）。null = 还没有成功备份 ⇒ 不产出指标、不告警
+    expect(schema?.properties).toHaveProperty("backup");
   });
 
   it("publishes precise L3 proposal and recommendation read responses", () => {

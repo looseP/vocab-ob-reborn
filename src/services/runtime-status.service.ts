@@ -1,4 +1,5 @@
 import type { ILlmUsageRepository, IOutboxRepository } from "../repositories/interfaces";
+import { readBackupFreshnessSeconds } from "./backup-freshness";
 
 export interface RuntimeDatabaseStatus {
   ok: boolean;
@@ -45,6 +46,15 @@ export interface RuntimeMetricsSnapshot {
     expiredPending: number;
     oldestPendingAgeSeconds: number;
   };
+  /**
+   * 备份新鲜度（2026-10-13）。`null` = 还没有成功备份（首次部署 / 状态卷未挂），
+   * 此时**不产出指标**，告警规则自然不触发；一旦有了第一次成功，年龄只增不减，
+   * 备份停了就会被 `VocabBackupStaleLocal` 抓到。默认告警阈值见
+   * `docs/operations/alerting-rules.yaml`。
+   */
+  backup: {
+    lastSuccessAgeSeconds: number | null;
+  };
 }
 
 export class RuntimeStatusService {
@@ -59,6 +69,8 @@ export class RuntimeStatusService {
     private readonly readinessTimeoutMs = 1_000,
     private readonly startedAtMs = Date.now(),
     private readonly now: () => number = Date.now,
+    /** 备份状态文件目录（compose 只读挂载）；空 = 不产出备份新鲜度指标。 */
+    private readonly backupStateDir: string | null = null,
     private readonly successCacheMs = 1_000,
     private readonly failureCacheMs = 500,
   ) {
@@ -157,7 +169,19 @@ export class RuntimeStatusService {
         expiredPending: reservations.expiredPendingCount,
         oldestPendingAgeSeconds: reservations.oldestPendingAgeSeconds,
       },
+      backup: {
+        lastSuccessAgeSeconds: this.readBackupFreshnessSeconds(),
+      },
     };
+  }
+
+  /**
+   * 备份新鲜度：读调度器写的状态文件（compose 只读挂进来的独立小卷）。
+   * 读不到 ⇒ null（首部署/未挂卷/还没成功过）⇒ 不产出指标，告警不触发。
+   */
+  private readBackupFreshnessSeconds(): number | null {
+    if (!this.backupStateDir) return null;
+    return readBackupFreshnessSeconds(this.backupStateDir, new Date());
   }
 
   private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

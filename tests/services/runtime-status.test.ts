@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeStatusService } from "@/services/runtime-status.service";
 import type { ILlmUsageRepository, IOutboxRepository } from "@/repositories/interfaces";
@@ -5,6 +8,7 @@ import type { ILlmUsageRepository, IOutboxRepository } from "@/repositories/inte
 function makeService(options: {
   checkDatabase?: () => Promise<{ ok: boolean; totalCount: number; idleCount: number; waitingCount: number }>;
   now?: () => number;
+  backupStateDir?: string | null;
 } = {}) {
   const outbox = {
     getMetrics: vi.fn(async () => ({
@@ -30,8 +34,15 @@ function makeService(options: {
   }));
 
   return {
-    service: new RuntimeStatusService(checkDatabase, outbox, llmUsage, 100, 1_000, options.now ?? (() => 2_000)),
-    checkDatabase,
+    service: new RuntimeStatusService(
+      checkDatabase,
+      outbox,
+      llmUsage,
+      100,
+      1_000,
+      options.now ?? (() => 2_000),
+      options.backupStateDir ?? null,
+    ),    checkDatabase,
     outbox,
     llmUsage,
   };
@@ -100,13 +111,31 @@ describe("RuntimeStatusService", () => {
     expect(results.every((result) => result.status === "not_ready")).toBe(true);
   });
 
-  it("aggregates pool, outbox, and reservation metrics", async () => {
+  it("aggregates pool, outbox, reservation, and backup-freshness metrics", async () => {
     const { service } = makeService();
     await expect(service.getMetrics()).resolves.toEqual({
       process: { uptimeSeconds: 1, draining: false },
       database: { healthy: true, totalConnections: 4, idleConnections: 2, waitingRequests: 0 },
       outbox: { pending: 2, processing: 1, deadLetter: 0, recentDeadLetters: 0, oldestPendingAgeSeconds: 12 },
       llmReservations: { pending: 3, expiredPending: 1, oldestPendingAgeSeconds: 25 },
+      // 未传 backupStateDir（本地不带 compose 跑）⇒ 不产出备份新鲜度
+      backup: { lastSuccessAgeSeconds: null },
     });
+  });
+
+  it("备份新鲜度来自状态文件；读不到时为 null（不产出指标，避免首部署误告警）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-backup-"));
+    try {
+      writeFileSync(
+        join(dir, "last-success.json"),
+        JSON.stringify({ at: new Date(Date.now() - 90_000).toISOString(), outcome: "success" }),
+      );
+      const { service } = makeService({ backupStateDir: dir });
+      const metrics = await service.getMetrics();
+      expect(metrics.backup.lastSuccessAgeSeconds).toBeGreaterThanOrEqual(89);
+      expect(metrics.backup.lastSuccessAgeSeconds).toBeLessThanOrEqual(91);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

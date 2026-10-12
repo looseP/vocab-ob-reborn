@@ -3461,6 +3461,9 @@ export interface operations {
                             expiredPending: number;
                             oldestPendingAgeSeconds: number;
                         };
+                        backup: {
+                            lastSuccessAgeSeconds: number | null;
+                        };
                     };
                 };
             };
