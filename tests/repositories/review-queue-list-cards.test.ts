@@ -37,6 +37,7 @@ function countRow(overrides: Record<string, string> = {}) {
     due: "1",
     review: "1",
     due_now: "1",
+    due_today: "1",
     ...overrides,
   };
 }
@@ -85,6 +86,7 @@ describe("countQueueBuckets — 队列桶计数", () => {
       new: 3,       // 来自 new_count
       suspended: 1,
       dueNow: 1,   // 来自 due_now = 「现在就该复习」的张数
+      dueToday: 1, // 来自 due_today = 日历日口径的今日到期数（2026-10-12）
       total: 5,
     });
   });
@@ -97,7 +99,7 @@ describe("countQueueBuckets — 队列桶计数", () => {
     const counts = await repo().countQueueBuckets("u1", "wb1");
 
     expect(counts).toEqual({
-      due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, total: 0,
+      due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, dueToday: 0, total: 0,
     });
     for (const value of Object.values(counts)) {
       expect(Number.isFinite(value)).toBe(true);
@@ -256,5 +258,40 @@ describe("listQueueCards — 队列清单分页", () => {
     await repo().listQueueCards({ ...base, limit: 25, offset: 50 });
 
     expect(mock.lastQuery?.params?.slice(0, 5)).toEqual(["u1", "wb1", null, 25, 50]);
+  });
+
+  it("dueWindow=today ⇒ 日历日谓词下推，今日零点走第 6 个参数位", async () => {
+    mock.setRows([listRow()]);
+
+    await repo().listQueueCards({ ...base, dueWindow: "today" });
+
+    const sql = mock.lastQuery?.text ?? "";
+    // 白名单谓词（用户输入永不进 SQL，只有这一个常量串）
+    expect(sql).toContain("uwp.due_at IS NOT NULL");
+    expect(sql).toContain("interval '1 day'");
+    expect(sql).toContain("uwp.state <> 'suspended'");
+    // 「今日零点」走参数位，不内联；与仪表盘 dueToday 同一个 helper（Asia/Shanghai）
+    expect(mock.lastQuery?.params).toHaveLength(6);
+    expect(typeof mock.lastQuery?.params?.[5]).toBe("string");
+  });
+
+  it("无 dueWindow ⇒ 不追加 $6 参数（声明了却没用的占位符会让 PG 报类型错）", async () => {
+    mock.setRows([listRow()]);
+
+    await repo().listQueueCards(base);
+
+    expect(mock.lastQuery?.params).toHaveLength(5);
+    expect(mock.lastQuery?.text).not.toContain("$6");
+  });
+
+  it("dueWindow 与 bucket 正交：两个谓词 AND 组合（今日到期里只看已掌握）", async () => {
+    mock.setRows([listRow()]);
+
+    await repo().listQueueCards({ ...base, bucket: "review", dueWindow: "today" });
+
+    const sql = mock.lastQuery?.text ?? "";
+    expect(sql).toContain("uwp.state = 'review' AND uwp.due_at > now()");
+    expect(sql).toContain("uwp.due_at IS NOT NULL");
+    expect(mock.lastQuery?.params).toHaveLength(6);
   });
 });

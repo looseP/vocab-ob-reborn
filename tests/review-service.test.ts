@@ -101,7 +101,7 @@ function makeMockReviewRepo(overrides: Partial<IReviewRepository> = {}): IReview
     findDueCandidateSnapshots: vi.fn(async () => []),
     loadReviewCardsByWordIds: vi.fn(async () => []),
     // 队列全景页读路径（这些用例不触达，stub 空结果）
-    countQueueBuckets: vi.fn(async () => ({ due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, total: 0 })),
+    countQueueBuckets: vi.fn(async () => ({ due: 0, learning: 0, review: 0, new: 0, suspended: 0, dueNow: 0, dueToday: 0, total: 0 })),
     listQueueCards: vi.fn(async () => ({ items: [], total: 0 })),
     findPracticeCards: vi.fn(async () => []),
     findWordsByIds: vi.fn(async () => []),

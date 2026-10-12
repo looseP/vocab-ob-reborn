@@ -17,7 +17,9 @@ afterAll(() => {
 });
 
 const QUEUE_PAYLOAD = {
-  counts: { due: 12, learning: 3, review: 40, new: 100, suspended: 2, dueNow: 15, total: 157 },
+  // dueToday(18) > dueNow(15)：差的 3 张是「今天稍后到点」的卡 —— 2026-10-12 用户报
+  // 「仪表盘 1 / 队列 0 像调度坏了」的那个差，也是 dueWindow facet 存在的原因。
+  counts: { due: 12, learning: 3, review: 40, new: 100, suspended: 2, dueNow: 15, dueToday: 18, total: 157 },
   items: [
     {
       wordId: "w-1",
@@ -74,6 +76,7 @@ describe("GET /api/review/queue/list（P1 队列全景）", () => {
       userId: "user-123",
       wordbookId: "wb-default",
       bucket: "all",
+      dueWindow: null,
       search: null,
       limit: 50,
       offset: 0,
@@ -94,10 +97,47 @@ describe("GET /api/review/queue/list（P1 队列全景）", () => {
       userId: "user-123",
       wordbookId: WB,
       bucket: "due",
+      dueWindow: null,
       search: "abandon",
       limit: 20,
       offset: 40,
     });
+  });
+
+  it("dueWindow=today 透传（「今日到期」facet：仪表盘那个数的清单）", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/review/queue/list?dueWindow=today&limit=20", {
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(200);
+    expect(services.reviewCards.listQueue).toHaveBeenCalledWith({
+      userId: "user-123",
+      wordbookId: "wb-default",
+      bucket: "all",
+      dueWindow: "today",
+      search: null,
+      limit: 20,
+      offset: 0,
+    });
+    // 契约里 dueToday 与 dueNow 并列，前端 tab 徽标直接用
+    const body = reviewQueueListResponseSchema.parse(await res.json());
+    expect(body.counts.dueToday).toBe(18);
+    expect(body.counts.dueNow).toBe(15);
+  });
+
+  it("未知 dueWindow 返回 400（zod enum 拒绝，绝不把非法值带进仓储）", async () => {
+    const services = makeMockServices();
+    const app = createApp(services);
+
+    const res = await app.request("/api/review/queue/list?dueWindow=this-week", {
+      headers: AUTH_HEADERS,
+    });
+
+    expect(res.status).toBe(400);
+    expect(services.reviewCards.listQueue).not.toHaveBeenCalled();
   });
 
   it("未知 bucket 返回 400（zod enum 拒绝，绝不把非法值带进仓储）", async () => {

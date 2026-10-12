@@ -19,7 +19,9 @@
  *   2. 去处就是复习队列，大数字 = 队列口径（此刻到期 + 配额内新卡）；
  *   3. 两个口径不一致时，副标题把日历日那个数说在明处（不藏着）；
  *   4. 两个口径一致时不出副标题（一致还并列是噪音）；
- *   5. 没有对应清单的卡不许变成链接（今日已复习）。
+ *   5. 没有对应清单的卡不许变成链接（今日已复习）；
+ *   6. 今天有到期卡 ⇒ 落到「今日到期」facet 视图（副标题那个数的**清单**，L2 补）；
+ *      今天一张都没有 ⇒ 落默认队列视图，否则点进去是一片空。
  */
 import { act } from "react";
 import { createElement, type ReactElement } from "react";
@@ -118,13 +120,23 @@ afterEach(() => {
 });
 
 describe("仪表盘「现在待复习」卡：数字 → 清单的入口", () => {
-  it("整卡是链接，指向复习队列（键盘可达、可中键新开）", async () => {
+  it("整卡是链接，今天有到期卡时落到「今日到期」视图（副标题那个数的清单）", async () => {
     await mountDashboard({ queueTotal: 0, dueToday: 1 });
 
     const entry = screen.getByRole("link", { name: /现在待复习/ });
-    expect(entry.getAttribute("href")).toBe("/review-queue");
+    // L2（2026-10-12）：副标题「今日共 N 张到期」从此有清单 —— 深链到 facet 视图。
+    // 此前那个数点进去只能看到「到期 0」，用户以为调度坏了。
+    expect(entry.getAttribute("href")).toBe("/review-queue?dueWindow=today");
     // 数字仍要在卡上（入口是加成，不是替换）
     expect(screen.getByText("现在待复习")).toBeTruthy();
+  });
+
+  it("今天一张到期卡都没有时落默认队列视图（否则点进去是一片空）", async () => {
+    await mountDashboard({ queueTotal: 0, dueToday: 0 });
+
+    expect(screen.getByRole("link", { name: /现在待复习/ }).getAttribute("href")).toBe("/review-queue");
+    // 没有到期卡 ⇒ 不出副标题（一致还并列是噪音）
+    expect(screen.queryByText(/今日共/)).toBeNull();
   });
 
   it("大数字是「点进去看到的那个数」：队列口径，不是日历日口径", async () => {
@@ -151,16 +163,15 @@ describe("仪表盘「现在待复习」卡：数字 → 清单的入口", () =>
     expect(screen.queryByText(/今日共/)).toBeNull();
   });
 
-  it("口径差异写在悬停提示里：两个口径是什么、差的那批卡在哪", async () => {
+  it("口径差异写在悬停提示里：两个口径是什么、点开落在哪", async () => {
     await mountDashboard({ queueTotal: 0, dueToday: 1 });
 
     const hint = screen.getByRole("link", { name: /现在待复习/ }).getAttribute("title") ?? "";
     expect(hint).toContain("此刻已到期");
     expect(hint).toContain("日历日");
-    // 差的那批卡（今天稍后到点）落在哪个桶、怎么找 —— 说清楚，别让用户以为丢了
-    expect(hint).toContain("学习中");
-    expect(hint).toContain("已掌握");
-    expect(hint).toContain("排在最前");
+    // 落点说清楚：副标题那个数的清单 = 「今日到期」视图，且含此刻还没到点的卡
+    expect(hint).toContain("今日到期");
+    expect(hint).toContain("此刻还没到点");
     expect(hint).toContain("点开看具体是哪些词");
   });
 

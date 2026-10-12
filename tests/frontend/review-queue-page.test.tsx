@@ -25,7 +25,9 @@ import {
 
 const apiFetchMock = apiFetch as ReturnType<typeof vi.fn>;
 
-const COUNTS = { due: 2, learning: 1, review: 5, new: 8, suspended: 3, dueNow: 3, total: 16 };
+// dueToday(4) > dueNow(3)：差的 1 张是「今天稍后到点」的卡 —— 2026-10-12 用户报的
+// 「仪表盘 1 / 队列 0」那个差，也是「今日到期」facet 存在的原因。
+const COUNTS = { due: 2, learning: 1, review: 5, new: 8, suspended: 3, dueNow: 3, dueToday: 4, total: 16 };
 
 function makeItem(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -72,8 +74,10 @@ async function mount(element: ReactElement): Promise<void> {
   });
 }
 
-function renderPage(): Promise<void> {
-  return mount(createElement(MemoryRouter, null, createElement(ReviewQueuePage)));
+function renderPage(initialEntry = "/review-queue"): Promise<void> {
+  return mount(
+    createElement(MemoryRouter, { initialEntries: [initialEntry] }, createElement(ReviewQueuePage)),
+  );
 }
 
 beforeEach(() => {
@@ -125,6 +129,11 @@ describe("bucketTabCount / emptyHint", () => {
   it("到期桶空态不说「今天到此为止」（今天稍后到点的卡不在此桶）", () => {
     // 那句话会当着用户的面撒谎：仪表盘副标题写着「今日共 1 张到期」，点进来却是 0
     expect(emptyHint("due", false)).not.toContain("今天到此为止");
+  });
+
+  it("facet 空态有自己的文案（不与桶空态混）", () => {
+    expect(emptyHint("all", false, "today")).toBe("今天没有到期的卡。");
+    expect(emptyHint("all", false, null)).toBe("复习队列是空的。");
   });
 });
 
@@ -185,6 +194,65 @@ describe("ReviewQueuePage（组件）", () => {
     await waitFor(() => {
       expect(apiFetchMock.mock.calls.some(([url]) => String(url).includes("bucket=suspended"))).toBe(true);
     });
+  });
+
+  it("「今日到期」tab 显示日历日计数，点它带 dueWindow=today 拉取", async () => {
+    apiFetchMock.mockImplementation(() => Promise.resolve(LIST));
+    await renderPage();
+
+    // tab 上的数是日历日口径（4），与「到期」桶（2）、「现在就该复习」（3）都不同
+    const tab = screen.getByRole("button", { name: /^今日到期/ });
+    expect(tab.textContent).toContain("4");
+    expect(tab.getAttribute("aria-pressed")).toBe("false");
+
+    await act(async () => {
+      fireEvent.click(tab);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(
+        apiFetchMock.mock.calls.some(([url]) => String(url).includes("dueWindow=today")),
+      ).toBe(true);
+    });
+    expect(screen.getByRole("button", { name: /^今日到期/ }).getAttribute("aria-pressed")).toBe("true");
+    // facet 视图下没有任何状态桶是激活的（二者互斥）
+    expect(screen.getByRole("button", { name: /^到期/ }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("深链 /review-queue?dueWindow=today：落地即「今日到期」视图", async () => {
+    apiFetchMock.mockImplementation(() => Promise.resolve(LIST));
+    // 仪表盘副标题（今日共 N 张到期）点进来的落点
+    await renderPage("/review-queue?dueWindow=today");
+
+    // 首个请求就带 facet
+    expect(String(apiFetchMock.mock.calls[0][0])).toContain("dueWindow=today");
+    expect(screen.getByRole("button", { name: /^今日到期/ }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("facet 视图下点任一状态桶 ⇒ 清掉 facet（互斥，不出数字与清单不一致的混合态）", async () => {
+    apiFetchMock.mockImplementation(() => Promise.resolve(LIST));
+    await renderPage("/review-queue?dueWindow=today");
+    const callsBefore = apiFetchMock.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^已掌握/ }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(
+        apiFetchMock.mock.calls
+          .slice(callsBefore)
+          .some(([url]) => String(url).includes("bucket=review")),
+      ).toBe(true);
+    });
+    // 新请求不再带 facet，tab 回到未激活
+    const lastUrl = String(apiFetchMock.mock.calls[apiFetchMock.mock.calls.length - 1][0]);
+    expect(lastUrl).not.toContain("dueWindow");
+    expect(screen.getByRole("button", { name: /^今日到期/ }).getAttribute("aria-pressed")).toBe("false");
   });
 
   it("搜索输入防抖后才带 q 请求（输入过程不打后端）", async () => {

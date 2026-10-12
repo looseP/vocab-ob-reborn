@@ -10,6 +10,8 @@ import { z } from "zod";
  * 桶互斥且完备（suspended → new → learning → due → review），见
  * `ReviewRepository.countQueueBuckets` 的 JSDoc。
  * - `counts.dueNow`：非挂起、非新卡、已到期的张数（= learning + due），即「现在就该复习」。
+ * - `counts.dueToday`（2026-10-12）：**日历日**口径的今日到期数（含今天稍后到点的），
+ *   与仪表盘 `dueToday` 同口径，是「今日到期」facet 视图（`dueWindow=today`）的计数来源。
  * - `counts.total`：词书内全部进度行（含挂起）。
  * - `total`/`limit`/`offset`/`hasMore`：清单自身的分页信息（`total` 是**过滤后**的行数）。
  */
@@ -25,6 +27,11 @@ export const reviewQueueListResponseSchema = z
         new: z.number().int().nonnegative(),
         suspended: z.number().int().nonnegative(),
         dueNow: z.number().int().nonnegative(),
+        /**
+         * 日历日口径的今日到期数（Asia/Shanghai，含今天稍后到点的）——「今日到期」
+         * facet 视图的计数来源。与 `dueNow`（此刻口径）不是同一个数，勿混用。
+         */
+        dueToday: z.number().int().nonnegative(),
         total: z.number().int().nonnegative(),
       })
       .strict(),

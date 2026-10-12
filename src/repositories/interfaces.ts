@@ -424,6 +424,18 @@ export interface UndoRpcResult {
  */
 export type QueueListBucket = "all" | "due" | "learning" | "review" | "new" | "suspended";
 
+/**
+ * 到期窗口 facet（2026-10-12 加）—— 与分桶**正交**，回答「今天到期的有哪些词」。
+ *
+ * 为什么需要它：分桶按 `state` 切，而「今天稍后到点」是**时间**概念，在 state 维度上
+ * 没有表示 —— 一张 review 态、今天 15:43 到点的卡既不在 due 桶（due_at > now）也不在
+ * 别的桶里能一眼找到。于是仪表盘副标题「今日共 N 张到期」那个数一直没有清单：
+ * 2026-10-12 实测用户点进去只看到「到期 0」，以为调度坏了（查库确认调度没问题）。
+ *
+ * 与 `bucket` AND 组合，**不参与互斥性**（同一张卡可同时在 due 桶和本 facet 里）。
+ */
+export type QueueListDueWindow = "today";
+
 /** 队列清单行（仓储 → service → HTTP 响应共用形态）。 */
 export interface QueueListRow {
   wordId: string;
@@ -484,6 +496,12 @@ export interface IReviewRepository {
     new: number;
     suspended: number;
     dueNow: number;
+    /**
+     * 日历日口径的今日到期数（Asia/Shanghai，含更早的积压与今天稍后到点的）——
+     * 与 `getDashboardSummary.dueToday` 逐字同口径，是「今日到期」facet 视图的
+     * 计数来源。注意它与 `dueNow`（此刻口径）不是同一个数。
+     */
+    dueToday: number;
     total: number;
   }>;
 
@@ -495,6 +513,8 @@ export interface IReviewRepository {
     search: string | null;
     limit: number;
     offset: number;
+    /** 到期窗口 facet（与 bucket AND；见 `QueueListDueWindow`）。 */
+    dueWindow?: QueueListDueWindow | null;
   }): Promise<{ items: QueueListRow[]; total: number }>;
 
   /** All active (non-suspended) cards regardless of due_at — used by cram/preview practice modes. */

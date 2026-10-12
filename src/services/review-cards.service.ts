@@ -20,7 +20,7 @@ import type { PoolClient } from "pg";
 import { BusinessRuleError } from "../errors";
 import { withTransaction } from "../db/transaction";
 import { createRepositories } from "../repositories/factory";
-import type { IRepositories, QueueListBucket, QueueListRow } from "../repositories/interfaces";
+import type { IRepositories, QueueListBucket, QueueListDueWindow, QueueListRow } from "../repositories/interfaces";
 
 type TxRunner = typeof withTransaction;
 type RepositoryFactory = (tx?: PoolClient) => IRepositories;
@@ -45,6 +45,12 @@ export interface ReviewQueueListInput {
   bucket: QueueListBucket;
   /** lemma / title 子串搜索；空白视作无搜索。 */
   search?: string | null;
+  /**
+   * 到期窗口 facet（2026-10-12，与 `bucket` 正交）。「今日到期」视图用
+   * `bucket=all + dueWindow=today` —— 它回答的是「今天到期的有哪些词」，
+   * 分桶按 state 切，回答不了这个问题（详见 `QueueListDueWindow`）。
+   */
+  dueWindow?: QueueListDueWindow | null;
   limit: number;
   offset: number;
 }
@@ -57,6 +63,8 @@ export interface ReviewQueueListResult {
     new: number;
     suspended: number;
     dueNow: number;
+    /** 日历日口径的今日到期数（「今日到期」facet 视图的计数来源）。 */
+    dueToday: number;
     total: number;
   };
   items: QueueListRow[];
@@ -139,6 +147,7 @@ export class ReviewCardsService {
           search,
           limit: input.limit,
           offset: input.offset,
+          dueWindow: input.dueWindow ?? null,
         });
         return {
           counts,

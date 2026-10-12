@@ -15536,6 +15536,17 @@
           },
           {
             "in": "query",
+            "name": "dueWindow",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "today"
+              ]
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -15619,6 +15630,11 @@
                           "minimum": 0,
                           "maximum": 9007199254740991
                         },
+                        "dueToday": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
                         "total": {
                           "type": "integer",
                           "minimum": 0,
@@ -15632,6 +15648,7 @@
                         "new",
                         "suspended",
                         "dueNow",
+                        "dueToday",
                         "total"
                       ],
                       "additionalProperties": false

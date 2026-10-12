@@ -5,11 +5,15 @@
  * 之前只能看到数字（仪表盘今日待复习、集合页已追踪数），或按天点开复习日历的
  * 未来侧某一格 —— 想确认「我到底在背哪些词、哪些积压了、哪些被我挂起了」无从下手。
  *
- * 本页给出三件事：
+ * 本页给出四件事：
  *  1. **总量**：现在就该复习（= 学习中 + 到期）、新卡、已挂起，各多少张；
  *  2. **清单**：按互斥桶（到期/学习中/已掌握/新卡/已挂起）分页浏览 + 搜索；
  *  3. **处置**：行内「提前到期」（插队进池）与「移出队列」（删进度行），
- *     复用 P1 队列编辑端点 —— 于是「看得见」与「管得了」在同一屏闭环。
+ *     复用 P1 队列编辑端点 —— 于是「看得见」与「管得了」在同一屏闭环；
+ *  4. **今日到期**（2026-10-12，时间 facet）：仪表盘「今日共 N 张到期」那个数的
+ *     **清单**。分桶按 state 切，看不见「今天稍后到点」的卡（一张 review 态、今天
+ *     15:43 到点的卡在 due 桶里看不到，在已掌握桶里又和 11-29 的混在一起）——
+ *     本视图 = bucket=all + dueWindow=today，深链 `/review-queue?dueWindow=today`。
  *
  * 口径说明（别与其他数字混用）：
  *  - 「现在就该复习」= 非挂起、非新卡、且已到期；**不含新卡**（新卡按每日配额引入）。
@@ -36,6 +40,7 @@ import { useReviewQueue } from "@/frontend/hooks/useReviewQueue";
 import type {
   ReviewQueueBucket,
   ReviewQueueCounts,
+  ReviewQueueDueWindow,
   ReviewQueueListItem,
 } from "@/frontend/api/reviewQueue";
 
@@ -95,9 +100,21 @@ export function bucketTabCount(bucket: ReviewQueueBucket, counts: ReviewQueueCou
   }
 }
 
-/** 空态文案：区分「桶本身空」与「搜索后空」—— 后者要给回到全部的出路。 */
-export function emptyHint(bucket: ReviewQueueBucket, searching: boolean): string {
+/** tab 按钮样式：激活态用强调色边框（与页面其他 chip 一致）。 */
+function tabClass(active: boolean): string {
+  return active
+    ? "rounded-full border border-[var(--color-accent)] bg-[var(--color-surface-muted)] px-3 py-1.5 text-sm font-medium text-[var(--color-accent)]"
+    : "rounded-full border border-[var(--color-border)] px-3 py-1.5 text-sm text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-ink)]";
+}
+
+/** 空态文案：区分「桶本身空」「facet 空」与「搜索后空」—— 后者要给回到全部的出路。 */
+export function emptyHint(
+  bucket: ReviewQueueBucket,
+  searching: boolean,
+  dueWindow: ReviewQueueDueWindow | null = null,
+): string {
   if (searching) return "没有匹配的词，换个关键词或清空搜索试试。";
+  if (dueWindow === "today") return "今天没有到期的卡。";
   switch (bucket) {
     case "due":
       // 不说「今天到此为止」：今天稍后到点的卡不在此桶（按状态落在「学习中」「已掌握」，
@@ -168,7 +185,8 @@ export function ReviewQueuePage() {
       <Card className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           {BUCKET_TABS.map((tab) => {
-            const active = queue.bucket === tab.id;
+            // facet 视图下没有任何状态桶是激活的（二者互斥，见 hook）
+            const active = queue.bucket === tab.id && queue.dueWindow === null;
             const count = bucketTabCount(tab.id, queue.counts);
             return (
               <button
@@ -176,17 +194,29 @@ export function ReviewQueuePage() {
                 type="button"
                 onClick={() => queue.setBucket(tab.id)}
                 aria-pressed={active}
-                className={
-                  active
-                    ? "rounded-full border border-[var(--color-accent)] bg-[var(--color-surface-muted)] px-3 py-1.5 text-sm font-medium text-[var(--color-accent)]"
-                    : "rounded-full border border-[var(--color-border)] px-3 py-1.5 text-sm text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-ink)]"
-                }
+                className={tabClass(active)}
               >
                 {tab.label}
                 <span className="ml-1.5 text-xs opacity-70">{count}</span>
               </button>
             );
           })}
+          {/*
+            「今日到期」是**时间 facet**（与状态桶正交、刻意重叠），故不塞进 BUCKET_TABS：
+            点它 ⇒ bucket=all + dueWindow=today；点任一状态桶 ⇒ 自动清掉它（hook 里做）。
+            它补的正是仪表盘「今日共 N 张到期」的**清单**缺口 —— 那个数此前点进去只能
+            看到「到期 0」，用户以为调度坏了（2026-10-12 实测）。
+          */}
+          <button
+            type="button"
+            onClick={() => queue.setDueWindow(queue.dueWindow === "today" ? null : "today")}
+            aria-pressed={queue.dueWindow === "today"}
+            className={tabClass(queue.dueWindow === "today")}
+            title="今天（上海日历日）内到期的全部卡：含此刻已到期的，也含今天稍后到点的；不管它处于哪个状态桶。"
+          >
+            今日到期
+            <span className="ml-1.5 text-xs opacity-70">{queue.counts?.dueToday ?? 0}</span>
+          </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -235,7 +265,7 @@ export function ReviewQueuePage() {
         <Card>
           <EmptyState
             title="这里是空的"
-            description={emptyHint(queue.bucket, searching)}
+            description={emptyHint(queue.bucket, searching, queue.dueWindow)}
             action={
               searching ? (
                 <Button variant="secondary" onClick={() => queue.setSearchInput("")}>
