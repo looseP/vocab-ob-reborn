@@ -3,9 +3,12 @@
  *
  * 双轨发音：
  * - **主轨 / 真人高保真**：HTML5 `Audio` 播标准词典音频 CDN（详见 `wordAudioUrl`），
- *   监听 `ended` / `error`，并挂 1.5s 首帧超时。
- * - **备用轨 / 本地 TTS**：主轨创建失败、加载报错、超时或**处于离线环境**时，
+ *   监听 `ended` / `error`，并挂 1.5s **首帧**超时（判「有没有出声」，不判总时长）。
+ * - **备用轨 / 本地 TTS**：主轨创建失败、加载报错、**首帧超时**或**处于离线环境**时，
  *   自动降级到 `speechSynthesis`（见 `speakFallback`）。
+ *
+ * **一个词只响一种发音**：换轨的唯一前提是主轨「没出声」。已经在念的真人轨绝不
+ * 会被超时打断再交给 TTS 重念 —— 那会让同一个词读两次（还是两种音色）。
  *
  * 三处工程约束（都是踩过的坑，不是风格偏好）：
  * 1. **能力探测前置**：离线或环境无 mp3 解码能力（含 jsdom）时**直接**走 TTS，
@@ -37,7 +40,13 @@ export type AudioSource = "word" | "sentence";
 /** 默认口音：美音 —— 与既有 `speak()` 的 en-US 默认保持一致。 */
 export const DEFAULT_ACCENT: Accent = "us";
 
-/** 真人音频首帧超时：超过它即降级本地 TTS（用户不该为一次加载干等）。 */
+/**
+ * 真人音频**首帧**超时：到点仍未出声（`playing` 未触发）才降级本地 TTS ——
+ * 用户不该为一次加载干等。
+ *
+ * 关键是「首帧」而非「总时长」：**已经出声就不再降级**。否则正在念的真人轨会被
+ * `pause` 掉、紧接着 TTS 从头念一遍，用户听到同一个词读两次（还是两种音色）。
+ */
 export const WORD_AUDIO_TIMEOUT_MS = 1500;
 
 /**
@@ -88,6 +97,13 @@ export function wordAudioUrl(lemma: string, accent: Accent): string {
 export interface WordAudioElement {
   onended: (() => void) | null;
   onerror: (() => void) | null;
+  /**
+   * 首次真正出声时触发（可选：fake 不实现即视为「从未出声」，超时照常降级）。
+   *
+   * 用来区分两种「1.5 秒还没结束」：**没声音**（该降级 TTS）与**已在念但没念完**
+   * （必须让它念完 —— 换轨会把同一个词读第二遍）。
+   */
+  onplaying?: (() => void) | null;
   play: () => Promise<void> | void;
   pause: () => void;
 }
@@ -150,7 +166,13 @@ function speakFallback(text: string, accent: Accent): void {
   else speak(text);
 }
 
-/** 主轨驱动：`ended` 正常收尾，`error` / 超时 / play() reject 降级。 */
+/**
+ * 主轨驱动：`ended` 正常收尾；`error` / play() reject 立即降级；
+ * **首帧**超时（1.5s 仍未出声）降级。
+ *
+ * 「已出声但没播完」不算失败 —— 见 `WORD_AUDIO_TIMEOUT_MS` 的注释：换轨重读
+ * 会让同一个词响两遍。
+ */
 function playRealAudioTrack(
   text: string,
   accent: Accent,
@@ -167,6 +189,8 @@ function playRealAudioTrack(
   }
 
   let settled = false;
+  /** 是否已经出声：一旦为真，超时就不再当作「加载失败」处理。 */
+  let started = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const cleanup = () => {
@@ -176,6 +200,7 @@ function playRealAudioTrack(
     }
     element.onended = null;
     element.onerror = null;
+    element.onplaying = null;
   };
   const stopElement = () => {
     try {
@@ -200,7 +225,15 @@ function playRealAudioTrack(
 
   element.onended = () => finish(false);
   element.onerror = () => finish(true);
-  timer = setTimeout(() => finish(true), WORD_AUDIO_TIMEOUT_MS);
+  element.onplaying = () => {
+    started = true;
+  };
+  timer = setTimeout(() => {
+    timer = null;
+    // 已经出声 = 真人轨正常在念，只是比 1.5s 长 —— 让它念完（收尾靠 onended，
+    // UI 靠调用方的 4s 安全上限兜底），绝不能在这里切成 TTS 重念一遍。
+    if (!started) finish(true);
+  }, WORD_AUDIO_TIMEOUT_MS);
 
   try {
     const playing = element.play();
