@@ -123,6 +123,9 @@ export class Telemetry {
       outbox_pending: snapshot.outbox.pending,
       outbox_processing: snapshot.outbox.processing,
       outbox_dead_letter: snapshot.outbox.deadLetter,
+      // 告警用增量口径：历史死信库存不该让 critical 告警永久亮着
+      // （2026-10-12：522 条存量把 VocabOutboxDeadLetter 从上线亮至今）。
+      outbox_recent_dead_letters: snapshot.outbox.recentDeadLetters,
       outbox_oldest_pending_age_seconds: snapshot.outbox.oldestPendingAgeSeconds ?? 0,
       llm_reservations_pending: snapshot.llmReservations.pending,
       llm_reservations_expired_pending: snapshot.llmReservations.expiredPending,

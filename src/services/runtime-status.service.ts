@@ -34,7 +34,10 @@ export interface RuntimeMetricsSnapshot {
   outbox: {
     pending: number;
     processing: number;
+    /** 死信库存（历史累计）—— 只用于盘点，不可用于告警。 */
     deadLetter: number;
+    /** 滚动窗口内新变成死信的数量 —— 告警看这个（见 OutboxMetrics.recentDeadLetters）。 */
+    recentDeadLetters: number;
     oldestPendingAgeSeconds: number | null;
   };
   llmReservations: {
@@ -146,6 +149,7 @@ export class RuntimeStatusService {
         pending: outbox.pending,
         processing: outbox.processing,
         deadLetter: outbox.deadLetter,
+        recentDeadLetters: outbox.recentDeadLetters,
         oldestPendingAgeSeconds: outbox.oldestPendingAgeSeconds,
       },
       llmReservations: {

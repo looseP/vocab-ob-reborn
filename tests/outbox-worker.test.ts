@@ -56,7 +56,7 @@ function makeOutbox(overrides: Partial<IOutboxRepository> = {}): IOutboxReposito
     markProcessed: vi.fn(async () => undefined),
     markFailed: vi.fn(async () => "retry" as const),
     replayDeadLetter: vi.fn(async () => false),
-    getMetrics: vi.fn(async () => ({ pending: 0, processing: 0, deadLetter: 0, oldestPendingAgeSeconds: null })),
+    getMetrics: vi.fn(async () => ({ pending: 0, processing: 0, deadLetter: 0, recentDeadLetters: 0, oldestPendingAgeSeconds: null })),
     ...overrides,
   };
 }

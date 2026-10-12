@@ -771,7 +771,17 @@ export interface EnqueueOutboxEventInput {
 export interface OutboxMetrics {
   pending: number;
   processing: number;
+  /** 死信**库存**（历史累计，含早已 replay/清理的）。只用于盘点，不可用于告警。 */
   deadLetter: number;
+  /**
+   * 滚动窗口内**新变成**死信的数量（`updated_at` 落在窗口内）—— 告警应该看这个。
+   *
+   * 2026-10-12 修：`VocabOutboxDeadLetter`（critical）原先的表达式是
+   * `outbox_dead_letter > 0`，而死信是历史累计量 ⇒ 一次事故的死信会让 critical
+   * 告警**永久亮着**（线上实测 522 条，从上线起点亮至今）。Critical 通道被噪音化
+   * 等同于没有告警，故拆出增量口径。
+   */
+  recentDeadLetters: number;
   oldestPendingAgeSeconds: number | null;
 }
 

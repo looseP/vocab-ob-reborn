@@ -16,7 +16,7 @@ function makeServices(): Services {
       getMetrics: vi.fn(async () => ({
         process: { uptimeSeconds: 10, draining: false },
         database: { healthy: true, totalConnections: 2, idleConnections: 1, waitingRequests: 0 },
-        outbox: { pending: 1, processing: 0, deadLetter: 0, oldestPendingAgeSeconds: 3 },
+        outbox: { pending: 1, processing: 0, deadLetter: 0, recentDeadLetters: 0, oldestPendingAgeSeconds: 3 },
         llmReservations: { pending: 0, expiredPending: 0, oldestPendingAgeSeconds: 0 },
       })),
     },

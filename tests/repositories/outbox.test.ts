@@ -95,16 +95,32 @@ describe("OutboxRepository operations", () => {
   });
 
   it("maps operational metrics to the public shape", async () => {
-    const script = scriptedExecutor([{ rows: [{ pending: 7, processing: 2, dead_letter: 3, oldest_pending_age_seconds: 91 }] }]);
+    const script = scriptedExecutor([{ rows: [{ pending: 7, processing: 2, dead_letter: 3, recent_dead_letters: 1, oldest_pending_age_seconds: 91 }] }]);
     await expect(new OutboxRepository(script.client).getMetrics()).resolves.toEqual({
-      pending: 7, processing: 2, deadLetter: 3, oldestPendingAgeSeconds: 91,
+      pending: 7, processing: 2, deadLetter: 3, recentDeadLetters: 1, oldestPendingAgeSeconds: 91,
     });
+  });
+
+  it("死信库存与近期增量分成两个口径：告警看增量，库存只盘点", async () => {
+    // 2026-10-12：原实现只有库存一个数，告警表达式 `dead_letter > 0` 于是永久亮着
+    // （线上 522 条历史死信从上线亮至今）。这里锁住 SQL 里两个口径同时存在，
+    // 且增量带 5 分钟滚动窗口（≥ 告警的 for: 2m）。
+    const script = scriptedExecutor([{ rows: [{ pending: 0, processing: 0, dead_letter: 522, recent_dead_letters: 0, oldest_pending_age_seconds: null }] }]);
+    const metrics = await new OutboxRepository(script.client).getMetrics();
+
+    expect(metrics.deadLetter).toBe(522);      // 库存：盘点用
+    expect(metrics.recentDeadLetters).toBe(0); // 增量：告警用 ⇒ 此刻不该报警
+
+    const sql = script.calls[0].text;
+    expect(sql).toContain("AS dead_letter");
+    expect(sql).toContain("AS recent_dead_letters");
+    expect(sql).toContain("updated_at >= now() - interval '5 minutes'");
   });
 
   it("returns safe zero metrics when aggregation yields no row", async () => {
     const script = scriptedExecutor([{ rows: [] }]);
     await expect(new OutboxRepository(script.client).getMetrics()).resolves.toEqual({
-      pending: 0, processing: 0, deadLetter: 0, oldestPendingAgeSeconds: null,
+      pending: 0, processing: 0, deadLetter: 0, recentDeadLetters: 0, oldestPendingAgeSeconds: null,
     });
   });
 

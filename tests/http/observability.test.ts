@@ -29,7 +29,7 @@ function makeServices(status: "ready" | "not_ready" = "ready"): Services {
       getMetrics: vi.fn(async () => ({
         process: { uptimeSeconds: 10, draining: false },
         database: { healthy: true, totalConnections: 2, idleConnections: 1, waitingRequests: 0 },
-        outbox: { pending: 0, processing: 0, deadLetter: 0, oldestPendingAgeSeconds: null },
+        outbox: { pending: 0, processing: 0, deadLetter: 0, recentDeadLetters: 0, oldestPendingAgeSeconds: null },
         llmReservations: { pending: 0, expiredPending: 0, oldestPendingAgeSeconds: 0 },
       })),
     },

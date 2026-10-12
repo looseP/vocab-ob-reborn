@@ -11,6 +11,7 @@ function makeService(options: {
       pending: 2,
       processing: 1,
       deadLetter: 0,
+      recentDeadLetters: 0,
       oldestPendingAgeSeconds: 12,
     })),
   } as unknown as IOutboxRepository;
@@ -104,7 +105,7 @@ describe("RuntimeStatusService", () => {
     await expect(service.getMetrics()).resolves.toEqual({
       process: { uptimeSeconds: 1, draining: false },
       database: { healthy: true, totalConnections: 4, idleConnections: 2, waitingRequests: 0 },
-      outbox: { pending: 2, processing: 1, deadLetter: 0, oldestPendingAgeSeconds: 12 },
+      outbox: { pending: 2, processing: 1, deadLetter: 0, recentDeadLetters: 0, oldestPendingAgeSeconds: 12 },
       llmReservations: { pending: 3, expiredPending: 1, oldestPendingAgeSeconds: 25 },
     });
   });

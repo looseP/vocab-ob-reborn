@@ -179,7 +179,11 @@ groups:
           runbook_url: "docs/operations/slo-runbook.md#vocaboutboxstuck-critical"
 
       - alert: VocabOutboxDeadLetter
-        expr: vocab_observatory_runtime{job="vocab-observatory",metric="outbox_dead_letter"} > 0
+        # 2026-10-12：改用**增量**口径。原表达式看死信库存（outbox_dead_letter > 0），
+        # 而库存只增不减 ⇒ 一次事故的死信会让这条 critical 永久亮着（线上实测 522 条
+        # 历史死信，从上线起点亮至今），critical 通道被噪音化等同于没有告警。
+        # 现在看 5 分钟滚动窗口内的增量；窗口(5m) ≥ for(2m)，保证刚发生的死信一定被采到。
+        expr: vocab_observatory_runtime{job="vocab-observatory",metric="outbox_recent_dead_letters"} > 0
         for: 2m
         labels:
           severity: critical

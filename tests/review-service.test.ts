@@ -153,7 +153,7 @@ function makeMockOutboxRepo(overrides: Partial<IOutboxRepository> = {}): IOutbox
     markProcessed: vi.fn(async () => undefined),
     markFailed: vi.fn(async () => "retry" as const),
     replayDeadLetter: vi.fn(async () => false),
-    getMetrics: vi.fn(async () => ({ pending: 0, processing: 0, deadLetter: 0, oldestPendingAgeSeconds: null })),
+    getMetrics: vi.fn(async () => ({ pending: 0, processing: 0, deadLetter: 0, recentDeadLetters: 0, oldestPendingAgeSeconds: null })),
     ...overrides,
   };
 }
@@ -1424,7 +1424,12 @@ describe("ReviewService.enqueueCard / enqueueCards", () => {
   }
 
   describe("enqueueCard — 仓储 status 到 HTTP 语义的映射", () => {
-    it("inserted ⇒ ok + progressId，并写 outbox 事件", async () => {
+    it("inserted ⇒ ok + progressId，且**不**写 outbox 事件", async () => {
+      // 2026-10-12：原先这里断言「写一条 review.card.enqueued.v1」。该事件自引入起
+      // worker 就没有消费者（全仓唯一的语义消费者 review-outbox.worker 只处理
+      // review.answer.recorded.v1）⇒ 每建一张卡白烧 8 次重试后进死信，并把 critical
+      // 告警 VocabOutboxDeadLetter 永久点亮（线上实测 522 条死信全是这个类型）。
+      // 原注释称「下游据此派生 L1 首学工单」——查无此下游，属臆想。
       const service = serviceWith(async () => ({ status: "inserted", progressId: "p-new" }));
 
       const result = await service.enqueueCard(
@@ -1432,17 +1437,18 @@ describe("ReviewService.enqueueCard / enqueueCards", () => {
       );
 
       expect(result).toEqual({ ok: true, progressId: "p-new" });
-      // 入队必须发事件：下游据此派生 L1 首学工单
-      expect(outbox.enqueue).toHaveBeenCalledTimes(1);
+      // 纪律：无消费者的事件不许再进 outbox（否则就是死信生产线）
+      expect(outbox.enqueue).not.toHaveBeenCalled();
     });
 
-    it("outbox 事件带 dedupeKey（重复投递时幂等去重）", async () => {
+    it("建卡不产生任何 outbox 事件（批量同理，dedupe 无需再去重）", async () => {
+      // 原用例「outbox 事件带 dedupeKey」随事件一起删除。这里保留一条反向回归：
+      // 将来若有人重新引入建卡事件，必须先有消费者，否则这条会红。
       const service = serviceWith(async () => ({ status: "inserted", progressId: "p-new" }));
 
       await service.enqueueCard({ wordId: "w1", wordbookId: "wb1" }, "u1");
 
-      const arg = vi.mocked(outbox.enqueue).mock.calls[0][0];
-      expect(arg.dedupeKey).toContain("p-new");
+      expect(vi.mocked(outbox.enqueue).mock.calls).toHaveLength(0);
     });
 
     it("word_not_found ⇒ NotFoundError(Word)（404 而非 500）", async () => {

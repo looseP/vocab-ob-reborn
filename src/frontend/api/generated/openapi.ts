@@ -3453,6 +3453,7 @@ export interface operations {
                             pending: number;
                             processing: number;
                             deadLetter: number;
+                            recentDeadLetters: number;
                             oldestPendingAgeSeconds: number | null;
                         };
                         llmReservations: {
