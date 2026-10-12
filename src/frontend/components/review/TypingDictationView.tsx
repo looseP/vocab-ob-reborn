@@ -7,11 +7,12 @@
  *   并累计 abandonedChars（放弃的已键入字符数）；
  * - 档内完成 → onDone({ tier, wrongTimes, hintChars, abandonedChars })，
  *   dictMap 由 stageMap.dictMapOf 在会话层结算。
- * - 听写档（listen）LW-2 接 TTS 强化：TTS 先行、失败降跟写（本卡先按跟写语义处理，
- *   词形隐藏 = 听写形态，无 TTS 时按钮降级隐藏）。
+ * - 听写档（listen）LW-2 已接 TTS 强化：进入本档（或换卡）即朗读**题面** —— 音频
+ *   就是题目，配「重播读音」按钮。题面朗读**不经「自动伴读」配置**（它不是伴读，
+ *   是题面本身）；环境没有发声能力时**降级跟写**（词形转可见），不留按不响的按钮。
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Keyboard, Volume2, ClipboardList } from "lucide-react";
 import { useTypingFlow } from "@/frontend/hooks/useTypingFlow";
 import { Badge } from "@/frontend/components/ui/Badge";
@@ -46,6 +47,8 @@ export function TypingDictationView({ lemma, definition, ipa, disabled, onDone }
   const [hintChars, setHintChars] = useState(0);
   const abandonedRef = useRef(0);
   const [finishedResult, setFinishedResult] = useState<{ wrongTimes: number } | null>(null);
+  /** 听写档题面朗读降级标记：环境无发声能力时置位（词形转可见 = 跟写语义）。 */
+  const [promptFailed, setPromptFailed] = useState(false);
 
   const flow = useTypingFlow(lemma, disabled ? undefined : (r) => {
     setFinishedResult(r);
@@ -54,20 +57,38 @@ export function TypingDictationView({ lemma, definition, ipa, disabled, onDone }
   });
 
   // 切卡自动伴读：卡面类别**随档位变** —— copy 档词形可见 = ③a（播词形）；
-  // dictation / listen 档只见中文 = ③b（默认关：念英文等于把答案说出口）。
+  // dictation 档只见中文 = ③b（默认关：念英文等于把答案说出口）。
+  // **听写档不接伴读**：它的读音就是题面，由下面那条 effect 独占播放（接了就双重）。
   // triggerKey 用 tier：切档即换面，上一档在途的伴读随 effect 清理被掐断。
   const audio = useAudioController();
   useFaceAutoAudio({
-    face: tier === "copy" ? "typing-en" : "typing-zh",
+    face: tier === "copy" ? "typing-en" : tier === "dictation" ? "typing-zh" : undefined,
     triggerKey: tier,
     lemma,
     definition,
     controller: audio,
   });
 
+  /**
+   * 听写档题面朗读（LW-2）：进入本档 / 换卡即放一遍词音 —— 音频本身就是题目。
+   *
+   * 刻意**不读自动伴读配置**：用户点「听写」就是在要这段读音，总闸管的是伴读，
+   * 不该把题面也掐掉。环境两条发声路径都没有（真人音频 + TTS）→ 降级跟写：
+   * `promptFailed` 让词形转可见（与照着打同语义），而不是留个按不响的按钮。
+   */
+  useEffect(() => {
+    if (tier !== "listen" || disabled || finished) return;
+    if (!audio.available) {
+      setPromptFailed(true);
+      return;
+    }
+    audio.playWord(lemma);
+  }, [tier, disabled, finished, lemma, audio.available, audio.playWord]);
+
   const chars = Array.from(lemma);
-  // 听写/照着打档下词形可见性：听写 = 无字形（纯听觉，TTS 接入前以释义占位）；照着打 = 词形可见。
-  const showLemma = tier === "copy";
+  // 词形可见性：照着打 = 可见；听写降级跟写时也可见；默写与正常听写 = 隐藏
+  // （听写档的「无字形」正是它的题面形态：只给读音与释义）。
+  const showLemma = tier === "copy" || (tier === "listen" && promptFailed);
 
   const switchTier = (next: DictationTier) => {
     if (disabled || finished || next === tier) return;
@@ -75,6 +96,8 @@ export function TypingDictationView({ lemma, definition, ipa, disabled, onDone }
     flow.reset();
     setHintChars(0);
     setTier(next);
+    // 切档掐断在途题面读音：它是自动播放的，不会自己让位给新档位。
+    audio.stop();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -108,7 +131,26 @@ export function TypingDictationView({ lemma, definition, ipa, disabled, onDone }
         <h2 className="section-title text-2xl font-bold text-[var(--color-ink)]">{lemma}</h2>
       )}
       {tier === "listen" && !finished && (
-        <p className="text-xs text-[var(--color-ink-soft)] opacity-70">听写档：词形隐藏，凭读音与释义键入（TTS 强化接入后自动朗读）</p>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <p className="text-xs text-[var(--color-ink-soft)] opacity-70">
+            {promptFailed
+              ? "听写档：本环境没有可用的语音朗读，降级为跟写（词形已显示）"
+              : "听写档：音频即题面，词形隐藏 —— 听读音键入"}
+          </p>
+          {!promptFailed && (
+            <button
+              type="button"
+              data-testid="listen-replay"
+              // 键盘焦点必须留在键入区：点按钮若抢走焦点，之后的按键就没人接了。
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => audio.playWord(lemma)}
+              className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-ink-soft)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            >
+              <Volume2 className="h-3.5 w-3.5" />
+              重播读音
+            </button>
+          )}
+        </div>
       )}
 
       <div className="mt-2 flex flex-wrap items-center justify-center gap-1 font-mono text-2xl" aria-label="默写键入区">

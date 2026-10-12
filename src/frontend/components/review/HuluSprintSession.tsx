@@ -40,6 +40,8 @@ import { useOptionalToast } from "@/frontend/components/ui/Toast";
 import { HuluSpeedCurve } from "@/frontend/components/review/HuluSpeedCurve";
 import { apiFetch } from "@/frontend/api/client";
 import { getDefaultWordbook } from "@/frontend/api/wordbooks";
+import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
+import { useFaceAutoAudio } from "@/frontend/reviewFlow/useFaceAutoAudio";
 import {
   huluGateDecision,
   huluPageCount,
@@ -197,6 +199,38 @@ function examDatePassed(examDate: string): boolean {
 type Phase = "setup" | "loading" | "sprint" | "finished" | "plan" | "error";
 
 /**
+ * 葫芦冲刺的伴读接线（**只接翻卡，不接到达**）。
+ *
+ * 一屏多卡（整页同时挂出）没有「当前卡」：到达时逐卡朗读会变成齐声混响，
+ * 所以**不传 `face`** —— 只有用户点「翻开核对」把某张卡翻到答案面那一刻
+ * （`revealed` false → true）才按配置播一次 `onReveal`（默认 off）。
+ * 曝光轮 / 学习态 / 回看页是**直展**（到达即 revealed），靠 hook 里 ref 的
+ * 初值兜底不会误触发。
+ *
+ * 控制器由会话壳层创建一次、全体卡共用（`useAudioController` 带卸载取消
+ * 效果，每卡一个实例会变成 20 份）。本组件不渲染任何东西，只承载钩子。
+ */
+function HuluCardRevealAudio({
+  word,
+  revealed,
+  controller,
+}: {
+  word: HuluPageWordItem;
+  revealed: boolean;
+  controller: ReturnType<typeof useAudioController>;
+}) {
+  useFaceAutoAudio({
+    triggerKey: String(word.id),
+    lemma: word.lemma || word.title,
+    sentence: pickExamples(word.examples ?? [], 1)[0]?.text ?? null,
+    definition: word.short_definition,
+    revealed,
+    controller,
+  });
+  return null;
+}
+
+/**
  * 卡背五层披露（R10 / D-B）——**纯展示**，一切数据来自页载荷（单卡路径零请求）。
  *
  *   Tier0  短释主行（大字）
@@ -312,6 +346,8 @@ function HuluCardFace({ word, index }: { word: HuluPageWordItem; index: number }
 }
 
 export function HuluSprintSession({ onBack }: { onBack: () => void }) {
+  // 伴读控制器：整页多卡共用一份（每卡一个实例会变成 20 份，见 HuluCardRevealAudio）。
+  const audio = useAudioController();
   const [phase, setPhase] = useState<Phase>("setup");
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<HuluPlanSummary | null>(null);
@@ -1163,6 +1199,8 @@ export function HuluSprintSession({ onBack }: { onBack: () => void }) {
           const current = settled ? undefined : verdict[index];
           return (
             <div key={word.id} data-testid={`hulu-card-${index}`}>
+              {/* 伴读接线：一屏多卡没有「到达」语义，只认「翻开核对」那一刻。 */}
+              <HuluCardRevealAudio word={word} revealed={revealed} controller={audio} />
               <Card className="space-y-2">
                 <div className="flex flex-wrap items-baseline gap-2">
                   <span className="text-base font-semibold text-[var(--color-ink)]">{word.lemma || word.title}</span>

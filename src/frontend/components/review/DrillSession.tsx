@@ -10,6 +10,8 @@ import { EmptyState } from "@/frontend/components/ui/EmptyState";
 import { useDrill } from "@/frontend/hooks/useDrill";
 import { maskLemma } from "@/services/drill-engine";
 import type { DrillMode } from "@/services/drill-engine";
+import { useAudioController } from "@/frontend/reviewFlow/audioEngine";
+import { useFaceAutoAudio } from "@/frontend/reviewFlow/useFaceAutoAudio";
 
 const DRILL_MODES: Array<{ id: DrillMode; label: string; desc: string }> = [
   { id: "cloze", label: "完形填空", desc: "根据上下文例句，填入缺失的单词" },
@@ -45,6 +47,22 @@ export function DrillSession({ onBack }: { onBack: () => void }) {
   const drill = useDrill();
   const [input, setInput] = useState("");
   const [pickedVariant, setPickedVariant] = useState(false);
+
+  // 切题自动伴读（2026-10-12）：两个题面都归「③b 仅中文可见」那一类 ——
+  // 答案（词形）就在音频里，默认**关**（防泄题），想开的人自己开。
+  // 开了也只读**题面上看得到的**内容：cloze 题面只有被挖空的英文句（喂给 TTS
+  // 只会念出一串占位符），故只给中文释义，且仅 definition 变体有；词形始终
+  // 交给编排里的 word 单元（默认关 = 不会念）。
+  // 钩子必须早于下面的 loading / 空队列早退调用（hook 规则）。
+  const audio = useAudioController();
+  const drillCard = drill.currentCard;
+  useFaceAutoAudio({
+    face: "typing-zh",
+    triggerKey: drillCard?.progressId ?? "no-card",
+    lemma: drillCard?.lemma ?? null,
+    definition: drill.variant === "definition" ? drillCard?.shortDefinition ?? null : null,
+    controller: audio,
+  });
 
   const handleStart = (v: DrillMode) => {
     setPickedVariant(true);

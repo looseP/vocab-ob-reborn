@@ -16,6 +16,9 @@
  * 4. **超长例句整条跳过**：自动播报是**不可随时按停的等待**，法规条文式长句
  *    念完要十几秒、追着上一张卡念，故 `buildUnits` 直接在组队阶段剔除
  *    （手动「听例句」不受此限，时长由用户自己掌握）。
+ * 5. **一屏多卡的卡面不接「到达」**：葫芦冲刺一次把整页 20 张卡同时挂出来，
+ *    没有「当前卡」——到达时逐卡朗读会变成齐声混响。这类卡面**不传 `face`**，
+ *    只保留用户主动翻开某一张时的 `onReveal`（默认 off）。
  *
  * 依赖数组只收**稳定引用**（控制器的方法是 useCallback，available 是
  * useMemo）与原始值 —— 控制器对象本身每次渲染都是新身份，不能进依赖。
@@ -39,8 +42,13 @@ import { readAutoAudioConfig, type FaceClass, type Playlist } from "@/frontend/u
 export const AUTO_SENTENCE_MAX_MS = 10_000;
 
 export interface FaceAutoAudioInput {
-  /** 卡面类别（决定读哪套编排）。 */
-  face: FaceClass;
+  /**
+   * 卡面类别（决定**到达时**读哪套编排）。
+   *
+   * 不传 = 该卡面没有「到达」语义，只接翻卡（见文件头第 5 条）——一屏多卡的
+   * 葫芦冲刺是唯一这类卡面。`revealed` 不受影响，照常驱动 `onReveal`。
+   */
+  face?: FaceClass;
   /** 重触发键：换卡/换档即变（progressId、tier…）。 */
   triggerKey: string;
   lemma?: string | null;
@@ -88,9 +96,10 @@ export function useFaceAutoAudio({
 }: FaceAutoAudioInput): void {
   const { available, playSequence, stop } = controller;
 
-  // 切卡 / 换档：按该卡面类别的编排播一次。
+  // 切卡 / 换档：按该卡面类别的编排播一次。没有 `face` 的卡面（一屏多卡）
+  // 整段跳过 —— 它只在翻卡那一刻发声。
   useEffect(() => {
-    if (!available) return;
+    if (!face || !available) return;
     const config = readAutoAudioConfig();
     if (!config.master) return;
     const units = buildUnits(config.faces[face], { lemma, sentence, definition });
