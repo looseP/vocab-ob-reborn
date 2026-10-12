@@ -452,7 +452,9 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
       // 目标时刻取 max(现在+5分钟, 今天12:00上海)：多数情况落在「今天稍后到点」，
       // 若已过 23:30 上海则自然落到「已到期」—— 两种分支都断言同一条恒等式，
       // 不依赖用例运行的钟点。
-      const { rows: [after] } = await pool.query<{ due_at: Date }>(
+      // pg 驱动把 timestamptz 统一解析成字符串（见 src/db/connection.ts 的
+      // setTypeParser(TIMESTAMPTZ, val => val)），这里要自己转回 Date。
+      const { rows: [after] } = await pool.query<{ due_at: string }>(
         `UPDATE user_word_progress
             SET state = 'review', review_count = 3,
                 due_at = GREATEST(
@@ -464,7 +466,7 @@ describe.skipIf(!TEST_DB_URL)("ReviewRepository (integration)", () => {
           RETURNING due_at`,
         [data.progressId],
       );
-      const dueAt = after.due_at;
+      const dueAt = new Date(after.due_at);
 
       const repos = createRepositories();
       const workload = await repos.reviews.getTodayWorkload(data.userId, data.wordbookId);
