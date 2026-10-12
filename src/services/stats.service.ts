@@ -103,8 +103,17 @@ export class StatsService {
    * 为什么签名里带 `summary`：`dueNow` 沿用调用方已取的 `summary.dueToday`，
    * 这样路由只需把同一份 summary 传进来，**不必改结构、也不必多取一次 summary**
    * （`src/http/routes/review.ts` 受路由棘轮按基线冻结，不能增行）。
-   * 批次 3（2026-10-09）起 `dueToday` 是日历日口径（`due_at < 明天零点`）——
-   * `dueNow` 与日历「今天待做」逐字一致，两者不再存在「今天晚些时候到期」的差数。
+   *
+   * **字段名是历史包袱，别被它骗了**（2026-10-12 正名）：这里返回的 `dueNow` 装的
+   * 是 `summary.dueToday`，即 **Asia/Shanghai 日历日**口径（`due_at < 明天零点`，
+   * 含今天稍后到点的与更早的积压），**不是**「此刻已到期」。队列全景页那个同名字段
+   * （`countQueueBuckets.dueNow`）才是此刻口径 —— **两个 `dueNow` 不是一个数**，
+   * 2026-10-12 用户报「仪表盘 1 / 队列 0，像调度坏了」就是这么来的（查库确认调度
+   * 没问题：那张卡 due_at 就是今天 15:43，稍后到点）。
+   * 改名是契约破坏（openapi breaking 检查会拦），故只在此正名；`computeForecast`
+   * 的用例锁着「dueNow === summary.dueToday」这个别名关系，别偷偷把它改成此刻口径
+   * —— 那会让它和复习日历「今天待做」徽标对不上。
+   * 另：前端目前**没有任何渲染处**读 `forecast`（仪表盘只声明未用）—— 别照着它加新 UI。
    */
   async getForecast(
     summary: DashboardSummary,

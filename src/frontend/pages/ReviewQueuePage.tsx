@@ -148,7 +148,7 @@ export function ReviewQueuePage() {
           icon={<CalendarClock className="h-5 w-5" />}
           label="现在就该复习"
           value={queue.counts?.dueNow ?? null}
-          hint="已到期且未挂起、非新卡（= 学习中 + 到期）。与仪表盘「今日待复习」（含今天稍后到点）口径不同。"
+          hint="已到期且未挂起、非新卡（= 学习中 + 到期）。与仪表盘行动区的大数字同口径（2026-10-12 起那边也用这个数）；「今天稍后到点」的卡不在此列 —— 它们在「学习中」「已掌握」桶里，按到期时间排最前。"
         />
         <SummaryTile
           icon={<Layers className="h-5 w-5" />}

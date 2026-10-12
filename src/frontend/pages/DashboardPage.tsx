@@ -72,6 +72,11 @@ interface DashboardStats {
   reviewed30d: number;
   streakDays: number;
   notesCount: number;
+  /**
+   * 到期预测。**前端没有任何渲染处用它**（只声明未读）；且它的 `dueNow` 装的是
+   * **日历日**口径（Asia/Shanghai，含今天稍后到点的），与队列 `counts.dueNow`
+   * （此刻口径）同名不同数 —— 别照着它加新 UI。正名见 `stats.service.getForecast`。
+   */
   forecast: { dueNow: number; due7d: number; due14d: number };
   /** Phase E：L2 轨统计（已晋升 / 到期待练 / 弱信号 / 今日 L2 作答）。 */
   l2?: { promoted: number; dueNow: number; weakSignal: number; reviewedToday: number };
