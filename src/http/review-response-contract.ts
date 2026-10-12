@@ -145,6 +145,11 @@ export const reviewDashboardStatsResponseSchema = z.object({
     good: z.number().int().nonnegative(),
     easy: z.number().int().nonnegative(),
   }).strict(),
+  /**
+   * 到期预测。`dueNow` 是**日历日**口径（Asia/Shanghai，含今天稍后到点的与更早的
+   * 积压）—— 与队列全景页 `counts.dueNow`（此刻口径）同名不同数，见
+   * `stats.service.getForecast` 的正名注释。前端当前无渲染处。
+   */
   forecast: z.object({
     dueNow: z.number().int().nonnegative(),
     due7d: z.number().int().nonnegative(),

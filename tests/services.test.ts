@@ -606,6 +606,13 @@ describe("StatsService", () => {
     expect(repositoryFactory).not.toHaveBeenCalled();
   });
 
+  /**
+   * `dueNow === summary.dueToday` 这个别名关系是**刻意**锁死的：字段名叫 dueNow，
+   * 装的却是 Asia/Shanghai **日历日**口径（含今天稍后到点的与更早的积压）。
+   * 改名属契约破坏（openapi breaking 检查会拦），故只正名不改名 —— 详见
+   * `stats.service.getForecast` 的注释。别把这个断言「修正」成此刻口径：那会让它
+   * 和复习日历「今天待做」徽标对不上（2026-10-12 用户报的口径打脸就是这类事）。
+   */
   it("computeForecast 桶缺失按 0 计（该窗口确实没有到期词），不回落成推算值", () => {
     const service = new StatsService(makeMockStatsRepo());
     const summary = {
