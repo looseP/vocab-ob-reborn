@@ -57,7 +57,8 @@ export function TypingDictationView({ lemma, definition, ipa, disabled, onDone }
   });
 
   // 切卡自动伴读：卡面类别**随档位变** —— copy 档词形可见 = ③a（播词形）；
-  // dictation 档只见中文 = ③b（默认关：念英文等于把答案说出口）。
+  // dictation 档只见中文 = ③b（默认只读那行中文释义：题面本来就是它，卡一出现
+  // 就听见题面，不用手点；词形绝不进默认编排 —— 念英文等于把答案说出口）。
   // **听写档不接伴读**：它的读音就是题面，由下面那条 effect 独占播放（接了就双重）。
   // triggerKey 用 tier：切档即换面，上一档在途的伴读随 effect 清理被掐断。
   const audio = useAudioController();

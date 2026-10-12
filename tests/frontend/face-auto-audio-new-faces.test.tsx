@@ -7,7 +7,7 @@
  * 每处接线只锁一件事：**它凭什么响、凭什么不响**。
  *  A. 钩子契约：不传 `face` 的卡面（一屏多卡）到达不播，只认翻卡；
  *  B. 葫芦冲刺：整页同挂时不许齐声朗读，翻开核对才播 `onReveal`（默认关）；
- *  C. 冲刷训练：两个题面都归「词形不可见」（③b），默认静默 —— 防泄题；
+ *  C. 冲刷训练：③b 只读**题面上看得见的中文**，词形永不入默认编排 —— 防泄题；
  *  D. 听写档：读音**就是题面** —— 进入即播、可重播、环境无发声能力时降级跟写。
  *
  * 形状照 `hulu-session.test.tsx` / `face-auto-audio.test.tsx`：jsdom + `createRoot`
@@ -301,34 +301,28 @@ describe("葫芦冲刺：一屏多卡不齐声朗读", () => {
   });
 });
 
-// ── C. 冲刷训练：两个题面都防泄题 ─────────────────────────────────────────
+// ── C. 冲刷训练：③b 只读题面上看得见的中文，词形不入音频 ──────────────────
 
-/** 开了 ③b 才谈得上出声，本组用它验证「开了也只读题面上看得到的」。 */
-function enableTypingZh(): void {
-  writeAutoAudioConfig({
-    ...DEFAULT_AUTO_AUDIO_CONFIG,
-    faces: { ...DEFAULT_AUTO_AUDIO_CONFIG.faces, "typing-zh": ["definition"] },
-  });
-}
-
-describe("冲刷训练：题面默认静默（答案在音频里）", () => {
-  it("默认档：题面到达不发声", () => {
-    mountInto(createElement(DrillSession, { onBack: vi.fn() }));
-    expect(spokenTexts()).toEqual([]);
-  });
-
-  it("开了 ③b：definition 变体只读题面上的中文释义", () => {
-    enableTypingZh();
+describe("冲刷训练：③b 默认只读题面上看得见的中文", () => {
+  it("默认档：definition 变体读题面上的中文释义，不念词形", () => {
     drillState.variant = "definition";
     mountInto(createElement(DrillSession, { onBack: vi.fn() }));
     expect(spokenTexts()).toEqual(["在...之上"]);
   });
 
-  it("开了 ③b：cloze 变体不给释义（题面上没有中文，挖空句也不喂给 TTS）", () => {
-    enableTypingZh();
+  it("默认档：cloze 变体静默（题面上没有中文，挖空句也不喂给 TTS）", () => {
     drillState.variant = "cloze";
     mountInto(createElement(DrillSession, { onBack: vi.fn() }));
     expect(spokenTexts()).toEqual([]);
+  });
+
+  it("防泄题靠默认编排而非硬过滤：用户自己把词形加回 ③b 才会念答案", () => {
+    writeAutoAudioConfig({
+      ...DEFAULT_AUTO_AUDIO_CONFIG,
+      faces: { ...DEFAULT_AUTO_AUDIO_CONFIG.faces, "typing-zh": ["word"] },
+    });
+    mountInto(createElement(DrillSession, { onBack: vi.fn() }));
+    expect(spokenTexts()).toEqual(["above"]);
   });
 });
 
@@ -347,10 +341,10 @@ function mountDictation(): HTMLDivElement {
 describe("听写档（LW-2）：音频即题面", () => {
   it("进入听写档即朗读题面，词形不露", () => {
     const container = mountDictation();
-    expect(spokenTexts(), "默写档默认静默（③b 默认关）").toEqual([]);
+    expect(spokenTexts(), "默写档默认只读题面上的中文释义（词形不入编排）").toEqual(["在...之上"]);
 
     clickTestId(container, "tier-listen");
-    expect(spokenTexts()).toEqual(["above"]);
+    expect(spokenTexts()).toEqual(["在...之上", "above"]);
     expect(bodyText(container), "听写形态 = 无字形").not.toContain("above");
   });
 

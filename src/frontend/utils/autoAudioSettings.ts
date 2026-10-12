@@ -12,11 +12,12 @@
  * - `zh-meaning`（② 中文主卡面：中文释义 + 例句英中）：`释义 → 例句`。
  *   先听中文做一次「义 → 形」的内部检索预热，再听英文例句固化发音。
  * - `typing-en`（③a 打字·英文+中文可见）：`词`。打字前先听形。
- * - `typing-zh`（③b 打字·仅中文）：默认**关** —— 英文音频会直接把答案
- *   （词形）念出来，默写的产出练习就被泄题了；中文刚看过，再听冗余。
+ * - `typing-zh`（③b 打字·仅中文）：`释义`。默写/填空的**题面就是那行中文**，
+ *   卡一出现就把它念出来 —— 不用手点（低摩擦），听觉题面与视觉题面同源。
  *
- * 防泄题是这套默认值的硬约束，不是风格偏好：凡「答案在音频里」的卡面
- * （默写 / 完形挖空）默认不给英文轨。
+ * 防泄题是这套默认值的硬约束，不是风格偏好：凡「答案（词形）在音频里」的卡面
+ * （默写 / 完形挖空），默认编排里**绝不出现 `word`**。释义不在此列 —— 它本来
+ * 就明摆在题面上，读它不泄题，只是把同一道题面再过一遍耳朵。
  *
  * ## 存储纪律（照 ladderSettings / dailyReviewLimit 的既有约定）
  *
@@ -71,7 +72,7 @@ export const DEFAULT_AUTO_AUDIO_CONFIG: AutoAudioConfig = {
     "en-word": ["word", "sentence"],
     "zh-meaning": ["definition", "sentence"],
     "typing-en": ["word"],
-    "typing-zh": "off",
+    "typing-zh": ["definition"],
   },
   onReveal: "off",
   gapMs: DEFAULT_SEQUENCE_GAP_MS,
