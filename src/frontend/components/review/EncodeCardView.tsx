@@ -224,7 +224,7 @@ export function EncodeCardView({ card, disabled, onRate }: EncodeCardViewProps) 
     sentence: exampleText,
     definition: card.word.short_definition,
     revealed,
-    controller: { available, playSequence, stop },
+    controller: { available, isPlaying, playSequence, stop },
   });
 
   useEffect(() => {
