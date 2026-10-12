@@ -135,10 +135,35 @@ describe("ReviewQueuePage（组件）", () => {
     // 清单：两个词条都在
     expect(screen.getByText("abandon")).toBeTruthy();
     expect(screen.getByText("suspend-me")).toBeTruthy();
+    // 默认只出词形：中文释义不上屏（进来多半是复习前先看一眼，别提前把答案摆出来）
+    expect(screen.queryByText("放弃")).toBeNull();
     // 「提前到期」只给非挂起行 ⇒ 全页仅 1 个
     expect(screen.getAllByText("提前到期")).toHaveLength(1);
     // 排队请求落在 due 桶默认页
     expect(String(apiFetchMock.mock.calls[0][0])).toContain("/api/review/queue/list?bucket=due");
+  });
+
+  it("中文释义默认收起，显式按「显示释义」才展开（可再收起）", async () => {
+    apiFetchMock.mockImplementation(() => Promise.resolve(LIST));
+    await renderPage();
+
+    expect(screen.queryByText("放弃")).toBeNull();
+    expect(screen.getByRole("button", { name: "显示释义" }).getAttribute("aria-pressed")).toBe("false");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "显示释义" }));
+      await Promise.resolve();
+    });
+    // 两行各自带上自己的释义
+    expect(screen.getAllByText("放弃")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "隐藏释义" }).getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "隐藏释义" }));
+      await Promise.resolve();
+    });
+    // 收起后中文从 DOM 里消失，不是靠 CSS 藏着
+    expect(screen.queryByText("放弃")).toBeNull();
   });
 
   it("切桶后用新 bucket 重新拉取", async () => {
