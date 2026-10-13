@@ -130,11 +130,6 @@ export class Telemetry {
       llm_reservations_pending: snapshot.llmReservations.pending,
       llm_reservations_expired_pending: snapshot.llmReservations.expiredPending,
       llm_reservations_oldest_pending_age_seconds: snapshot.llmReservations.oldestPendingAgeSeconds,
-      // 备份新鲜度（P1：备份停了要有人知道）。null（还没有成功备份）时**不产出**指标，
-      // 免得首部署就被告警吵一遍。
-      ...(snapshot.backup.lastSuccessAgeSeconds === null
-        ? {}
-        : { backup_last_success_age_seconds: snapshot.backup.lastSuccessAgeSeconds }),
     };
     for (const [metric, value] of Object.entries(values)) this.runtimeGauge.set({ metric }, value);
   }

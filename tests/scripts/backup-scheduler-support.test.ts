@@ -18,8 +18,8 @@ import {
   runBackupCycle,
   seedStateFromLatestManifest,
   writeBackupStateFile,
+  type BackupState,
 } from "../../scripts/backup-scheduler-support";
-import type { BackupState } from "../../src/services/backup-freshness";
 
 let dir: string;
 

@@ -12,11 +12,22 @@
  *
  * 本模块只放纯逻辑（依赖全部可注入），IO 与进程生命周期仍留在脚本里。
  */
-import { mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { BACKUP_STATE_FILE_NAME, type BackupState } from "../src/services/backup-freshness";
 
-export { BACKUP_STATE_FILE_NAME };
+/** 状态文件名：compose 的健康检查读它（与 dump 同目录）。 */
+export const BACKUP_STATE_FILE_NAME = "backup-state.json";
+
+export interface BackupState {
+  /** 本轮（最近一次尝试）的完成时间。 */
+  at: string;
+  /** 本轮结果。失败也写文件 —— 否则「从没成功过」与「还没跑过第一轮」无法区分。 */
+  outcome: "success" | "failed";
+  /** 最近一次**成功**的时间；从未成功过则为 null。 */
+  lastSuccessAt: string | null;
+  /** 本轮失败原因（成功时为 null）。 */
+  lastError: string | null;
+}
 
 /** 写状态文件（原子：先 .tmp 再 rename，读者永远看不到半截 JSON）。 */
 export function writeBackupStateFile(stateDir: string, state: BackupState): void {
@@ -27,14 +38,31 @@ export function writeBackupStateFile(stateDir: string, state: BackupState): void
   renameSync(temp, target);
 }
 
+/** 读状态文件；读不到 / 内容坏 ⇒ null（绝不抛）。 */
+export function readBackupStateFile(stateDir: string): BackupState | null {
+  try {
+    const parsed = JSON.parse(readFileSync(join(stateDir, BACKUP_STATE_FILE_NAME), "utf8")) as Partial<BackupState>;
+    if (typeof parsed.at !== "string" || Number.isNaN(new Date(parsed.at).getTime())) return null;
+    if (parsed.outcome !== "success" && parsed.outcome !== "failed") return null;
+    const lastSuccessAt = parsed.lastSuccessAt ?? null;
+    if (lastSuccessAt !== null && Number.isNaN(new Date(lastSuccessAt).getTime())) return null;
+    return {
+      at: parsed.at,
+      outcome: parsed.outcome,
+      lastSuccessAt,
+      lastError: typeof parsed.lastError === "string" ? parsed.lastError : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * 从既有的 `.manifest.json` 里挑最新一个，把状态文件 seeding 成"成功"。
+ * 从既有的 `.manifest.json` 里挑最新一个，把状态文件 seeding 成「成功」。
  *
- * 升级路径用：老版本不写状态文件，直接上新鲜度健康检查会让容器在等到下一轮成功之前
- * 一直显示 unhealthy（最坏一个 interval，默认 24h）。这里让已有的成功证据说话。
- * manifestDir（dump 所在）与 stateDir（状态文件所在）是**两个目录**：后者是独立小卷、
- * 只放一个小 JSON，可以安全地只读挂给 web 容器去暴露指标；把前者挂过去等于把整库
- * dump 送进 API 进程、绕过全部审计，那是另一回事。
+ * 升级路径用：老版本不写状态文件，直接上「新鲜度 + outcome」健康检查会让容器在等到
+ * 下一轮成功之前一直显示 unhealthy（最坏一个 interval，默认 24h）。这里让已有的成功
+ * 证据说话。
  */
 export function seedStateFromLatestManifest(manifestDir: string, stateDir: string): boolean {
   try {

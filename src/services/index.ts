@@ -147,10 +147,6 @@ export function createServices(deps: ServiceDeps) {
       repos.outbox,
       repos.llmUsage,
       deps.readinessTimeoutMs,
-      undefined,
-      undefined,
-      // 备份新鲜度：状态卷未挂（本地不带 compose 跑）时传 null ⇒ 不产出该指标
-      process.env.BACKUP_STATE_DIR?.trim() || null,
     ),
     authSessions: new AuthSessionService(new AuthSessionRepository()),
     loginRateLimit: new LoginRateLimitService(

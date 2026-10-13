@@ -29,12 +29,4 @@ export const operationMetricsResponseSchema: z.ZodType<RuntimeMetricsSnapshot> =
     expiredPending: z.number().int().nonnegative(),
     oldestPendingAgeSeconds: z.number().nonnegative(),
   }).strict(),
-  /**
-   * 备份新鲜度。`null` = 还没有成功备份（首部署 / 状态卷未挂）—— 此时不产出指标，
-   * 告警规则自然不触发。默认告警阈值见 `docs/operations/alerting-rules.yaml`
-   * 的 `VocabBackupStaleLocal`。
-   */
-  backup: z.object({
-    lastSuccessAgeSeconds: z.number().nonnegative().nullable(),
-  }).strict(),
 }).strict();

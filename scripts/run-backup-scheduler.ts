@@ -1,8 +1,8 @@
 import { createBackup } from "../scripts/postgres-backup";
 import { logger } from "../src/observability/logger";
-import { readBackupState } from "../src/services/backup-freshness";
 import { join } from "node:path";
 import {
+  readBackupStateFile,
   runBackupCycle,
   seedStateFromLatestManifest,
   writeBackupStateFile,
@@ -12,11 +12,15 @@ const intervalMs = parsePositiveInt("BACKUP_INTERVAL_MS", 86_400_000, 3_600_000,
 const maxBackups = parsePositiveInt("BACKUP_RETENTION_COUNT", 14, 1, 365);
 const backupDir = process.env.BACKUP_DIR ?? "backups";
 /**
- * 状态文件目录（独立小卷，只放一个时间戳）。与 backupDir 分开：web 容器只读挂这个
- * 目录去暴露「距上次成功备份多久了」指标，**不挂** dump 目录 —— 把整库 dump 送进
- * API 进程会绕过全部审计，那是另一回事。
+ * 状态文件目录：默认与 dump 同目录（`/backups`，绑定挂载，本地与 CI 上都可写）。
+ *
+ * 2026-10-13 曾改用独立命名卷（想让 web 只读挂它做 app 指标 + 默认告警），但命名卷
+ * 属主在不同 Docker 环境行为不一致：本地 Docker Desktop 上正常，GitHub runner 上卷被
+ * 建成 root:root ⇒ 容器里的 node 用户 EACCES，健康检查永远转不了绿。告警不建在这种
+ * 地基上，故回到确定可写的位置；备份新鲜度的信号以**容器健康检查**为准。
+ * 想换目录可设 BACKUP_STATE_DIR（但必须确认该目录对 node 用户可写）。
  */
-const stateDir = process.env.BACKUP_STATE_DIR ?? join(backupDir, ".state");
+const stateDir = process.env.BACKUP_STATE_DIR ?? backupDir;
 /**
  * 单轮失败后的重试次数（不含首次）与退避基数。默认 3 次 × 线性退避 ⇒ 瞬故障自愈，
  * 不再一失败就退出容器去撞 `restart: unless-stopped` 的无退避崩溃重启。
@@ -122,14 +126,9 @@ async function main(): Promise<void> {
   }
 }
 
-/** 读当前状态里的 lastSuccessAt（本轮失败时要把"上次成功"带下去）。 */
+/** 读当前状态里的 lastSuccessAt（本轮失败时要把「上次成功」带下去）。 */
 function readLastSuccessAt(stateDir: string): string | null {
-  try {
-    const state = readBackupState(stateDir);
-    return state?.lastSuccessAt ?? null;
-  } catch {
-    return null;
-  }
+  return readBackupStateFile(stateDir)?.lastSuccessAt ?? null;
 }
 
 /** 落状态文件；写失败只告警（备份本身已成功/已失败，不该被附属品搞崩）。 */
