@@ -1,5 +1,6 @@
 import { createBackup } from "../scripts/postgres-backup";
 import { logger } from "../src/observability/logger";
+import { readBackupState } from "../src/services/backup-freshness";
 import { join } from "node:path";
 import {
   runBackupCycle,
@@ -87,26 +88,25 @@ async function main(): Promise<void> {
   }
 
   while (!stopping) {
+    let lastSuccessAt: string | null = readLastSuccessAt(stateDir);
     const ok = await runBackupCycle(
       {
         createBackup,
         pruneOldBackups,
         onSuccess: (at) => {
-          try {
-            writeBackupStateFile(stateDir, at);
-          } catch (error) {
-            // 备份已成功：状态文件只是可观测性载体，写不进去不能把一轮成功判成失败
-            logger.warn("backup-scheduler", "Backup succeeded but state file write failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
+          lastSuccessAt = at.toISOString();
+          writeState(at, "success", null, lastSuccessAt);
         },
         onRetry: ({ attempt, delayMs, error }) =>
           logger.warn("backup-scheduler", "Backup attempt failed; retrying", { attempt, delayMs, error }),
-        onExhausted: ({ attempts, error }) =>
+        onExhausted: ({ attempts, error }) => {
           logger.error("backup-scheduler", "Backup cycle failed after all retries; will retry next interval", {
             attempts, error,
-          }),
+          });
+          // 失败也落状态：健康检查据此转 unhealthy（而不是永远 healthy），
+          // 且"从没成功过"与"还没跑过第一轮"因此可以区分。
+          writeState(new Date(), "failed", error, lastSuccessAt);
+        },
       },
       { retries: cycleRetries, backoffMs: retryBackoffMs },
     );
@@ -114,11 +114,38 @@ async function main(): Promise<void> {
     if (ok) {
       logger.info("backup-scheduler", "Backup cycle completed", { nextInMs: intervalMs });
     } else {
-      // 不退出：健康检查会因状态文件过期转 unhealthy（`docker compose ps` 一眼可见），
+      // 不退出：健康检查会因状态文件过期/失败转 unhealthy（docker compose ps 一眼可见），
       // 下一个 interval 继续尝试。退出只会得到无退避的崩溃重启，反而更难诊断。
       logger.warn("backup-scheduler", "Backup cycle did not succeed this interval", { nextInMs: intervalMs });
     }
     await sleep(intervalMs);
+  }
+}
+
+/** 读当前状态里的 lastSuccessAt（本轮失败时要把"上次成功"带下去）。 */
+function readLastSuccessAt(stateDir: string): string | null {
+  try {
+    const state = readBackupState(stateDir);
+    return state?.lastSuccessAt ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** 落状态文件；写失败只告警（备份本身已成功/已失败，不该被附属品搞崩）。 */
+function writeState(at: Date, outcome: "success" | "failed", error: string | null, lastSuccessAt: string | null): void {
+  try {
+    writeBackupStateFile(stateDir, {
+      at: at.toISOString(),
+      outcome,
+      lastSuccessAt,
+      lastError: error,
+    });
+  } catch (writeError) {
+    logger.warn("backup-scheduler", "Backup state file write failed", {
+      outcome,
+      error: writeError instanceof Error ? writeError.message : String(writeError),
+    });
   }
 }
 

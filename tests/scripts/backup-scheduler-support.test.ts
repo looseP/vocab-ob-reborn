@@ -4,10 +4,11 @@
  * 锁的是深度审查 P1 的两条行为：
  *   ① 单轮失败**绝不**把进程搞死（否则 restart: unless-stopped 无退避崩溃重启，
  *      瞬故障也打死备份）；失败按线性退避重试，重试耗尽也只回报 false；
- *   ② 每轮成功落「最近一次成功」状态文件 —— 健康检查靠它的新鲜度判断备份是否还活着
- *      （原先只探 pg_dump --version，备份失败千百回也 healthy）。
+ *   ② 每轮都落状态文件（成功与失败都写）—— 健康检查靠「新鲜度 + outcome」判断备份
+ *      是否还活着（原先只探 pg_dump --version，失败千百回也 healthy），且"从没成功过"
+ *      因此能与"还没跑过第一轮"区分开。
  */
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +19,7 @@ import {
   seedStateFromLatestManifest,
   writeBackupStateFile,
 } from "../../scripts/backup-scheduler-support";
+import type { BackupState } from "../../src/services/backup-freshness";
 
 let dir: string;
 
@@ -76,7 +78,7 @@ describe("runBackupCycle", () => {
     expect(d.onRetry).toHaveBeenCalledWith({
       attempt: 1, retries: 3, delayMs: 1000, error: "db briefly unavailable",
     });
-    expect(d.onSuccess).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(d.onSuccess)).toHaveBeenCalledTimes(1);
   });
 
   it("连续失败：线性退避 1×/2×/3×，耗尽后回报 false 且**不抛错**", async () => {
@@ -117,36 +119,59 @@ describe("runBackupCycle", () => {
   });
 });
 
-describe("writeBackupStateFile", () => {
-  it("写合法 JSON，且不留 .tmp 残留（原子 rename）", () => {
-    const at = new Date("2026-10-13T01:02:03.000Z");
+function state(overrides: Partial<BackupState> = {}): BackupState {
+  return {
+    at: "2026-10-13T01:02:03.000Z",
+    outcome: "success",
+    lastSuccessAt: "2026-10-13T01:02:03.000Z",
+    lastError: null,
+    ...overrides,
+  };
+}
 
-    writeBackupStateFile(dir, at);
+describe("writeBackupStateFile", () => {
+  it("写紧凑 JSON（健康检查要 grep \"outcome\":\"success\"），不留 .tmp 残留", () => {
+    writeBackupStateFile(dir, state());
 
     const raw = readFileSync(join(dir, BACKUP_STATE_FILE_NAME), "utf8");
-    expect(JSON.parse(raw)).toEqual({ at: at.toISOString(), outcome: "success" });
+    expect(JSON.parse(raw)).toEqual(state());
+    // 紧凑序列化：shell 里的 grep 才能匹配上
+    expect(raw).toContain('"outcome":"success"');
+    expect(raw).not.toContain('"outcome": "success"');
     expect(() => statSync(join(dir, `${BACKUP_STATE_FILE_NAME}.tmp`))).toThrow();
   });
 
-  it("目录不存在时先建（首次运行 / 挂载点刚就位）", () => {
-    const nested = join(dir, "a", "b");
+  it("失败状态也写（outcome=failed + lastError），保留上次成功时间", () => {
+    writeBackupStateFile(dir, state({
+      at: "2026-10-13T02:00:00.000Z",
+      outcome: "failed",
+      lastSuccessAt: "2026-10-13T01:02:03.000Z",
+      lastError: "disk full",
+    }));
 
-    writeBackupStateFile(nested, new Date("2026-10-13T00:00:00.000Z"));
-
-    expect(JSON.parse(readFileSync(join(nested, BACKUP_STATE_FILE_NAME), "utf8")).outcome).toBe("success");
+    const raw = readFileSync(join(dir, BACKUP_STATE_FILE_NAME), "utf8");
+    expect(JSON.parse(raw)).toMatchObject({
+      outcome: "failed",
+      lastError: "disk full",
+      lastSuccessAt: "2026-10-13T01:02:03.000Z",
+    });
+    expect(raw).not.toContain('"outcome":"success"');
   });
 
-  it("覆盖写：后一次成功替换前一次（mtime 向前走，健康检查才准）", () => {
-    writeBackupStateFile(dir, new Date("2026-10-12T00:00:00.000Z"));
+  it("目录不存在时先建（首次运行 / 挂载点刚就位）", () => {
+    writeBackupStateFile(join(dir, "a", "b"), state());
+
+    expect(JSON.parse(readFileSync(join(join(dir, "a", "b"), BACKUP_STATE_FILE_NAME), "utf8")).outcome).toBe("success");
+  });
+
+  it("覆盖写：后一轮替换前一轮（mtime 向前走，健康检查才准）", () => {
+    writeBackupStateFile(dir, state({ at: "2026-10-12T00:00:00.000Z" }));
     const first = statSync(join(dir, BACKUP_STATE_FILE_NAME)).mtimeMs;
 
-    writeBackupStateFile(dir, new Date("2026-10-13T00:00:00.000Z"));
+    writeBackupStateFile(dir, state({ at: "2026-10-13T00:00:00.000Z" }));
     const second = statSync(join(dir, BACKUP_STATE_FILE_NAME)).mtimeMs;
 
     expect(second).toBeGreaterThanOrEqual(first);
-    expect(JSON.parse(readFileSync(join(dir, BACKUP_STATE_FILE_NAME), "utf8")).at).toBe(
-      "2026-10-13T00:00:00.000Z",
-    );
   });
 });
 
@@ -167,7 +192,7 @@ describe("seedStateFromLatestManifest", () => {
     expect(() => statSync(join(manifestDir, BACKUP_STATE_FILE_NAME))).toThrow();
   });
 
-  it("没有任何 manifest 时返回 false（等首轮成功再写）", () => {
+  it("没有任何 manifest 时返回 false（等首轮结果再写）", () => {
     expect(seedStateFromLatestManifest(dir, join(dir, "state"))).toBe(false);
   });
 

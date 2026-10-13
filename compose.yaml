@@ -218,15 +218,14 @@ services:
     healthcheck:
       # 2026-10-13：原探针只查 pg_dump/pg_restore 二进制在不在 —— 备份失败千百回也
       # 照样 healthy，「备份好久没成功」在单机栈里没人知道。现在 = 二进制可用 **且**
-      # 最近一次成功备份够新鲜（last-success.json 由调度器每轮成功时原子写入，
-      # 见 scripts/backup-scheduler-support.ts）。超龄 ⇒ unhealthy ⇒ docker compose ps
-      # 一眼可见。注意 `$$` 是 compose 的转义：把 shell 的 $(...) 原样传下去。
-      test: ["CMD-SHELL", "pg_dump --version >/dev/null && pg_restore --version >/dev/null && test -f /backup-state/last-success.json && [ $$(( $$(date +%s) - $$(stat -c %Y /backup-state/last-success.json) )) -lt ${BACKUP_HEALTH_MAX_AGE_SECONDS:-90000} ]"]
+      # 最近一轮备份跑过且**成功**（backup-state.json 由调度器每轮落一次，原子写）。
+      # 失败也写状态（outcome=failed）⇒ 健康检查能抓住"从没成功过"，不只是"变陈旧"。
+      # 新栈上首轮备份几秒内完成，第一次检查（30s）即可转 healthy，满足干净卷冒烟。
+      # 注意 `$$` 是 compose 的转义：把 shell 的 $(...) 原样传下去。
+      test: ["CMD-SHELL", "pg_dump --version >/dev/null && pg_restore --version >/dev/null && test -f /backup-state/backup-state.json && [ $$(( $$(date +%s) - $$(stat -c %Y /backup-state/backup-state.json) )) -lt ${BACKUP_HEALTH_MAX_AGE_SECONDS:-90000} ] && grep -q '\"outcome\":\"success\"' /backup-state/backup-state.json"]
       interval: 30s
       timeout: 5s
       retries: 3
-      # 首轮备份可能需要一两分钟（建库 + dump + 签名），期间不算失败
-      start_period: 300s
     logging: *default-logging
 
   data-lifecycle:

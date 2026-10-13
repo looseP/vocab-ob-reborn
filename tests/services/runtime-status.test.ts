@@ -126,9 +126,10 @@ describe("RuntimeStatusService", () => {
   it("备份新鲜度来自状态文件；读不到时为 null（不产出指标，避免首部署误告警）", async () => {
     const dir = mkdtempSync(join(tmpdir(), "runtime-backup-"));
     try {
+      const at = new Date(Date.now() - 90_000).toISOString();
       writeFileSync(
-        join(dir, "last-success.json"),
-        JSON.stringify({ at: new Date(Date.now() - 90_000).toISOString(), outcome: "success" }),
+        join(dir, "backup-state.json"),
+        JSON.stringify({ at, outcome: "success", lastSuccessAt: at, lastError: null }),
       );
       const { service } = makeService({ backupStateDir: dir });
       const metrics = await service.getMetrics();
