@@ -23,6 +23,9 @@ COPY --from=build --chown=node:node /app/src ./src
 COPY --from=build --chown=node:node /app/scripts/run-review-outbox-worker.ts ./scripts/run-review-outbox-worker.ts
 COPY --from=build --chown=node:node /app/scripts/run-llm-reservation-reaper.ts ./scripts/run-llm-reservation-reaper.ts
 COPY --from=build --chown=node:node /app/scripts/run-backup-scheduler.ts ./scripts/run-backup-scheduler.ts
+# backup-scheduler 的可测内核（run-backup-scheduler.ts import 它）。漏了它镜像能构建成功、
+# 但容器一启动就 ERR_MODULE_NOT_FOUND —— tests/dockerfile-scripts-copy.test.ts 盯着这条。
+COPY --from=build --chown=node:node /app/scripts/backup-scheduler-support.ts ./scripts/backup-scheduler-support.ts
 COPY --from=build --chown=node:node /app/scripts/run-data-lifecycle.ts ./scripts/run-data-lifecycle.ts
 COPY --from=build --chown=node:node /app/scripts/postgres-backup.ts ./scripts/postgres-backup.ts
 # 一次性试卷 seed（2025 考研英语二）。脚本进镜像、data/ 走挂载 —— 与
