@@ -68,6 +68,25 @@ if (/\bargs:\s*\n\s*POSTGRES_CLIENT_MAJOR:/.test(backupService)) {
 }
 requirePattern(backupService, /BACKUP_REQUIRE_SIGNING_KEY: \$\{BACKUP_REQUIRE_SIGNING_KEY:-true\}/, "Production backup signing requirement");
 requirePattern(backupService, /pg_dump --version[^\n]*pg_restore --version/, "Backup client binary healthcheck");
+// 2026-10-13：健康检查还必须验「最近一轮备份跑过且成功」。只探二进制的探针在备份失败
+// 千百回时也返回 healthy —— 「备份好久没成功没人知道」就是这么来的（深度审查 P1）。
+// 注意匹配的是 YAML **源文本**：双引号标量里的 `"` 是 `\"` 转义形式，故这里故意不依赖
+// 引号的具体写法，只钉三个关键 token（二进制探针 / 状态文件名 / outcome=success）。
+requirePattern(
+  backupService,
+  /pg_dump --version[^\n]*pg_restore --version[^\n]*backup-state\.json[^\n]*outcome[^\n]*success/,
+  "Backup freshness healthcheck (binary probe alone lies when backups stop succeeding)",
+);
+requirePattern(
+  backupService,
+  /BACKUP_HEALTH_MAX_AGE_SECONDS: \$\{BACKUP_HEALTH_MAX_AGE_SECONDS:-/,
+  "Backup health freshness bound",
+);
+requirePattern(
+  backupService,
+  /BACKUP_CYCLE_RETRIES: \$\{BACKUP_CYCLE_RETRIES:-/,
+  "Backup cycle retry budget",
+);
 requirePattern(envExample, /^BACKUP_IMAGE=vocab-observatory-v2-backup:local$/m, "Backup image example");
 requirePattern(envExample, /^BACKUP_REQUIRE_SIGNING_KEY=true$/m, "Backup signing requirement example");
 if (/^POSTGRES_CLIENT_MAJOR=/m.test(envExample)) {

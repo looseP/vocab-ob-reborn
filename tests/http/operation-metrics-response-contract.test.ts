@@ -15,7 +15,7 @@ const validSnapshot = {
     deadLetter: 0,
     recentDeadLetters: 0,
     oldestPendingAgeSeconds: null,
-  },
+    },
   llmReservations: {
     pending: 3,
     expiredPending: 1,

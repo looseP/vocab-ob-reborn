@@ -30,7 +30,14 @@ function makeService(options: {
   }));
 
   return {
-    service: new RuntimeStatusService(checkDatabase, outbox, llmUsage, 100, 1_000, options.now ?? (() => 2_000)),
+    service: new RuntimeStatusService(
+      checkDatabase,
+      outbox,
+      llmUsage,
+      100,
+      1_000,
+      options.now ?? (() => 2_000),
+    ),
     checkDatabase,
     outbox,
     llmUsage,
@@ -109,4 +116,5 @@ describe("RuntimeStatusService", () => {
       llmReservations: { pending: 3, expiredPending: 1, oldestPendingAgeSeconds: 25 },
     });
   });
+
 });

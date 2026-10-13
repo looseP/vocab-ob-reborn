@@ -171,11 +171,11 @@ describe.skipIf(!TEST_DB_URL)("FR-12 E2E: L2 review loop + L3 context consumptio
       const { L2ReviewService } = await import("@/services/l2-review.service");
       const { ReviewOutboxWorker } = await import("@/outbox/review-outbox.worker");
 
-      // 隔离：集成库是**共享**的，此前用例可能留下 pending/retry 事件（它们的进度行
-      // 已被各自的 cleanup 删掉 ⇒ worker 处理时报 "Authoritative review progress
-      // not found" 转 retry）。`processBatch()` 处理的是**全库**待处理事件，不清掉
-      // 残留，下面的 `expect(processed).toBe(1)` 就会时而 0 时而 3（2026-10-12 CI
-      // 连续两次这么挂）。本用例只关心自己这一条，先把别人的残留清出去。
+      // 隔离：集成库是**共享**的，`processBatch()` 处理的是**全库**待处理事件。
+      // 上游污染源（review-service.integration.test.ts 的 cleanup 漏删 outbox_events）
+      // 已于 2026-10-13 修掉，这里保留清理作为**纵深防御**：将来任何一个新用例再漏，
+      // 挂的也是它自己的断言，不会连带把本用例的 `expect(processed).toBe(1)` 打成
+      // 时而 0 时而 3（2026-10-12 CI 连续两次这么挂）。
       await pool.query("DELETE FROM outbox_events WHERE status IN ('pending', 'retry')");
 
       // seed: L2 recent_ratings 已有 2 个 again，再答 again → 3 个连续 again 触发弱信号

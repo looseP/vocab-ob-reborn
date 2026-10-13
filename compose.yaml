@@ -195,11 +195,29 @@ services:
       BACKUP_SIGNING_KEY: ${BACKUP_SIGNING_KEY:-local-backup-signing-key-only-0001}
       BACKUP_REQUIRE_SIGNING_KEY: ${BACKUP_REQUIRE_SIGNING_KEY:-true}
       BACKUP_OBJECT_LOCK: ${BACKUP_OBJECT_LOCK:-true}
+      # 单轮失败的重试与退避（2026-10-13）：瞬故障自愈，不再一失败就退出容器去撞
+      # restart: unless-stopped 的无退避崩溃重启。
+      BACKUP_CYCLE_RETRIES: ${BACKUP_CYCLE_RETRIES:-3}
+      BACKUP_RETRY_BACKOFF_MS: ${BACKUP_RETRY_BACKOFF_MS:-60000}
+      # 健康检查允许的「距上次成功备份」最大年龄（秒）。必须 > BACKUP_INTERVAL_MS/1000，
+      # 否则健康检查会在两轮备份之间误报 unhealthy；调度器启动时会校验这一点。
+      BACKUP_HEALTH_MAX_AGE_SECONDS: ${BACKUP_HEALTH_MAX_AGE_SECONDS:-90000}
+      # 状态文件目录：与 dump 同目录（绑定挂载，实践上两个环境都可写）。
+      # 2026-10-13 曾尝试用独立命名卷 + web 只读挂载做 app 指标，但命名卷属主在不同
+      # Docker 环境行为不一致（本地 Desktop 正常、GitHub runner 上 root:root ⇒ EACCES），
+      # 告警不建在这种地基上。备份新鲜度的信号以**容器健康检查**为准，见 healthcheck。
+      BACKUP_STATE_DIR: ${BACKUP_STATE_DIR:-/backups}
     volumes:
       - ${BACKUP_HOST_DIR:-./backups}:/backups
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD-SHELL", "pg_dump --version >/dev/null && pg_restore --version >/dev/null"]
+      # 2026-10-13：原探针只查 pg_dump/pg_restore 二进制在不在 —— 备份失败千百回也
+      # 照样 healthy，「备份好久没成功」在单机栈里没人知道。现在 = 二进制可用 **且**
+      # 最近一轮备份跑过且**成功**（backup-state.json 由调度器每轮落一次，原子写）。
+      # 失败也写状态（outcome=failed）⇒ 能抓住"从没成功过"，不只是"变陈旧"。
+      # 新栈上首轮备份几秒内完成，第一次检查（30s）即可转 healthy，满足干净卷冒烟。
+      # 注意 `$$` 是 compose 的转义：把 shell 的 $(...) 原样传下去。
+      test: ["CMD-SHELL", "pg_dump --version >/dev/null && pg_restore --version >/dev/null && test -f /backups/backup-state.json && [ $$(( $$(date +%s) - $$(stat -c %Y /backups/backup-state.json) )) -lt ${BACKUP_HEALTH_MAX_AGE_SECONDS:-90000} ] && grep -q '\"outcome\":\"success\"' /backups/backup-state.json"]
       interval: 30s
       timeout: 5s
       retries: 3
