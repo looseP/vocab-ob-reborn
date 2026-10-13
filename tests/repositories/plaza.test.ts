@@ -150,7 +150,10 @@ describe("WordRepository.countReviewStatsByWordIds", () => {
     expect(query.text).toContain("FROM unnest($1::uuid[]) AS wid(word_id)");
     expect(query.text).toContain("LEFT JOIN user_word_progress p");
     expect(query.text).toContain("p.word_id = wid.word_id AND p.user_id = $2");
-    expect(query.text).toContain("p.state <> 'suspended'");
+    // 2026-10-13：due 口径改为与复习队列 dueNow 同一条谓词（sql/duePredicates）——
+    // 此前是 state <> 'suspended' AND due_at IS NOT NULL AND due_at <= now()，把学习中
+    // 的卡算成到期、又漏掉无到期时间的成熟卡，与队列「现在就该复习」对不上。
+    expect(query.text).toContain("p.state NOT IN ('suspended', 'new')");
     expect(query.text).toContain("p.due_at <= now()");
     expect(query.text).toContain("p.state = 'review'");
     expect(query.text).toContain("p.state IN ('learning', 'relearning')");

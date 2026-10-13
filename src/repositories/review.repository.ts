@@ -15,6 +15,13 @@ import type {
   ReviewState,
   UserWordProgressRow,
 } from "../domain";
+import {
+  dueNowSql,
+  dueTodaySql,
+  learningSql,
+  matureDueSql,
+  matureNotDueSql,
+} from "./sql/duePredicates";
 import type {
   BulkForgetBatchInput,
   BulkSuspendByWordIdsInput,
@@ -108,29 +115,34 @@ type ReviewCardQueryRow = UserWordProgressRow & {
  * 未知桶值在到达仓储前已被 zod 拒绝（schema 用 z.enum）。与 interfaces.ts 的
  * QueueListBucket 一一对应。
  */
+/**
+ * 分桶 → SQL 谓词白名单（互斥且完备，覆盖 state 全取值）。
+ *
+ * 谓词本身定义在 `./sql/duePredicates`（唯一定义处）——2026-10-12 的数字打脸就是
+ * 「同一概念多处各写一遍」造成的，别再在调用点改写口径。
+ */
 const QUEUE_BUCKET_PREDICATE: Record<Exclude<QueueListBucket, "all">, string> = {
   suspended: `uwp.state = 'suspended'`,
   new: `uwp.state = 'new'`,
-  learning: `uwp.state IN ('learning', 'relearning')`,
-  due: `uwp.state = 'review' AND (uwp.due_at IS NULL OR uwp.due_at <= now())`,
-  review: `uwp.state = 'review' AND uwp.due_at > now()`,
+  learning: learningSql("uwp"),
+  due: matureDueSql("uwp"),
+  review: matureNotDueSql("uwp"),
 };
 
 /**
  * 到期窗口 → SQL 谓词白名单（2026-10-12 加，与分桶**正交**的 facet）。
  *
  * 与 `QUEUE_BUCKET_PREDICATE` 同一纪律：用户输入永不进 SQL，facet 只决定挑哪个常量。
- * `today` 与 `getTodayWorkload().dueToday`（L3 起的唯一真源）**同一条谓词**：
- * Asia/Shanghai 日历日内到期（`$6` = 今日零点 ⇒ `< 今日零点 + 1 天`），含更早的积压与
- * 今天稍后到点的，排除挂起（挂起词不会被队列取出）。**不设下沿** —— 否则积压
- * （due_at < 今日零点）会被漏掉，facet 清单与它自己的计数又会差一张。
+ * `today` 与 `getTodayWorkload().dueToday`（L3 起的唯一真源）**共用同一个函数**
+ * （`dueTodaySql`）⇒ 状态口径不可能再漂（2026-10-12 用户报「仪表盘 1 / 队列 0」的
+ * 直接原因就是两处口径不同：这里写 `<> 'suspended'`、真源写 `NOT IN ('suspended','new')`）。
+ * **不设下沿** —— 否则积压（due_at < 今日零点）会被漏掉，facet 清单与它自己的计数
+ * 又会差一张。
  *
- * 状态口径此处是 `<> 'suspended'`（不含新卡判定），与真源的
- * `NOT IN ('suspended','new')` 在**新卡带到期时间**时才会分叉；真库实测新卡
- * due_at 全为 NULL，故两者恒等。真要统一，改这里 + 同步 today-workload 测试。
+ * `$6` 由调用方传入 `startOfTodayIsoInDisplayTz()`（Asia/Shanghai 今日零点）。
  */
 const QUEUE_DUE_WINDOW_PREDICATE: Record<QueueListDueWindow, string> = {
-  today: `uwp.due_at IS NOT NULL AND uwp.due_at < $6::timestamptz + interval '1 day' AND uwp.state <> 'suspended'`,
+  today: dueTodaySql("uwp", "$6"),
 };
 
 /** listQueueCards 的 SQL 行形态（snake_case + count 窗口列）。 */
@@ -167,6 +179,11 @@ type QueueListQueryRow = {
  * （到期才转出 new），写成 `due_at <= now()` 与原查询同义。
  * `new` 通道只认 `state='new'`（needs_recheck 的行不在此过滤——它们是「内容已变
  * 需重看」的已作答卡，属于复习通道，由 review 通道的 needs_recheck 提权处理）。
+ *
+ * 与 `sql/duePredicates` 的关系：`review` 通道是**另一种**口径，刻意不同 ——
+ * 它含 learning/relearning 的全部卡（不论是否到点，会话内学习步进不需要等 due_at），
+ * 成熟卡则仍要求已到期。`dueNowSql` 要求 learning 也到期。两者服务不同场景
+ * （会话通道 vs 统计口径），不要互相「对齐」。
  */
 const CHANNEL_PREDICATE: Record<"review" | "new", string> = {
   review: `uwp.state IN ('learning', 'relearning', 'review')
@@ -177,6 +194,11 @@ const CHANNEL_PREDICATE: Record<"review" | "new", string> = {
 export class ReviewRepository extends BaseRepository implements IReviewRepository {
   /**
    * Find due review cards for a user/wordbook.
+   *
+   * 注意这里的口径是**遗留混流池**（`state != 'suspended'` 且已到期，新卡因 `due_at`
+   * 为 NULL 也会进来），**不是** `sql/duePredicates.dueNowSql`（那排除新卡）。生产路径
+   * 走两阶段 + 通道隔离（`CHANNEL_PREDICATE`），本方法仅供练习模式与旧调用方；
+   * 别把它「修正」成 dueNow 口径 —— 那会改变练习模式的出卡集合。
    */
   async findDueCards(
     userId: string,
@@ -895,10 +917,9 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
            COUNT(*)::text AS total,
            COUNT(*) FILTER (WHERE uwp.state = 'suspended')::text AS suspended,
            COUNT(*) FILTER (WHERE uwp.state = 'new')::text AS new_count,
-           COUNT(*) FILTER (WHERE uwp.state IN ('learning', 'relearning'))::text AS learning,
-           COUNT(*) FILTER (WHERE uwp.state = 'review'
-                              AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due,
-           COUNT(*) FILTER (WHERE uwp.state = 'review' AND uwp.due_at > now())::text AS review
+           COUNT(*) FILTER (WHERE ${learningSql("uwp")})::text AS learning,
+           COUNT(*) FILTER (WHERE ${matureDueSql("uwp")})::text AS due,
+           COUNT(*) FILTER (WHERE ${matureNotDueSql("uwp")})::text AS review
          FROM user_word_progress uwp
          JOIN words w ON w.id = uwp.word_id
          -- 可见性口径与队列取数一致（收尾轮 R2 闭环）：全景计数就是「队列的展示面」，
@@ -947,17 +968,14 @@ WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid
    * `$3` = `startOfTodayIsoInDisplayTz()`（Asia/Shanghai 今日零点）。
    */
   async getTodayWorkload(userId: string, wordbookId: string): Promise<TodayWorkload> {
+    // 三个 FILTER 全部走 ./sql/duePredicates 的唯一定义（见该文件的两条不变量）。
+    // `later_today` = due_today 减去 due_now 的差集：此刻 < due_at < 明天零点。
     const row = await this.queryOne<Record<string, string>>(
       `SELECT
-         COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
-                            AND (uwp.due_at IS NULL OR uwp.due_at <= now()))::text AS due_now,
-         COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
-                            AND uwp.due_at IS NOT NULL
-                            AND uwp.due_at > now()
-                            AND uwp.due_at < $3::timestamptz + interval '1 day')::text AS later_today,
-         COUNT(*) FILTER (WHERE uwp.state NOT IN ('suspended', 'new')
-                            AND uwp.due_at IS NOT NULL
-                            AND uwp.due_at < $3::timestamptz + interval '1 day')::text AS due_today
+         COUNT(*) FILTER (WHERE ${dueNowSql("uwp")})::text AS due_now,
+         COUNT(*) FILTER (WHERE ${dueTodaySql("uwp", "$3")}
+                            AND uwp.due_at > now())::text AS later_today,
+         COUNT(*) FILTER (WHERE ${dueTodaySql("uwp", "$3")})::text AS due_today
        FROM user_word_progress uwp
        JOIN words w ON w.id = uwp.word_id
        WHERE uwp.user_id = $1 AND uwp.wordbook_id = $2::uuid

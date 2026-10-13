@@ -35,6 +35,7 @@ import type {
   WordDeleteBlockers,
 } from "./interfaces";
 import { BaseRepository } from "./base";
+import { dueNowSql } from "./sql/duePredicates";
 
 const SUMMARY_COLUMNS = `w.id, w.slug, w.title, w.lemma, w.pos, w.cefr, w.ipa, w.short_definition, w.metadata`;
 
@@ -196,11 +197,14 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     }
 
     if (filters.review && filters.review !== "all") {
+      // 「到期」用复习队列 dueNow 的同一条谓词（sql/duePredicates）——2026-10-13 收敛：
+      // 此前这里是 state <> 'suspended' AND due_at IS NOT NULL AND due_at <= now()，
+      // 把学习中的卡算成到期、又漏掉无到期时间的成熟卡，与队列「现在就该复习」对不上。
       const progressExists = `EXISTS (
         SELECT 1 FROM user_word_progress uwp
         WHERE uwp.word_id = w.id AND uwp.user_id = $${paramIdx}
         ${wordbookId ? `AND uwp.wordbook_id = $${paramIdx + 1}::uuid` : ""}
-        ${filters.review === "due" ? "AND uwp.state <> 'suspended' AND uwp.due_at IS NOT NULL AND uwp.due_at <= now()" : ""}
+        ${filters.review === "due" ? `AND ${dueNowSql("uwp")}` : ""}
       )`;
       params.push(userId);
       if (wordbookId) {
@@ -549,7 +553,10 @@ export class WordRepository extends BaseRepository implements IWordRepository {
 
   /**
    * 词汇广场（P4 E1）：按 wordIds 聚合集合内复习统计。
-   * tracked = 有 user_word_progress 行；due = 非 suspended 且 due_at <= now()；
+   * tracked = 有 user_word_progress 行；
+   * due = **现在就该复习**（非挂起、非新卡、已到期）—— 与复习队列的 `dueNow` 同口径
+   *   （2026-10-13 收敛，见 `sql/duePredicates`；此前是「非 suspended 且 due_at <= now」，
+   *   把学习中的卡算成到期又漏掉无到期时间的成熟卡，与队列对不上）；
    * mastered = FSRS review 态（已毕业）；learning = learning + relearning（学习中）。
    * user_word_progress 是 owner-scoped RLS 表，本方法必须在携带 actorId=userId
    * 的事务内执行（PlazaService 的 withActorWords 已保证）。
@@ -562,8 +569,7 @@ export class WordRepository extends BaseRepository implements IWordRepository {
     const row = await this.queryOne<{ tracked: string; due: string; mastered: string; learning: string }>(
       `SELECT
          count(*) FILTER (WHERE p.id IS NOT NULL)::int AS tracked,
-         count(*) FILTER (WHERE p.id IS NOT NULL AND p.state <> 'suspended'
-             AND p.due_at IS NOT NULL AND p.due_at <= now())::int AS due,
+         count(*) FILTER (WHERE p.id IS NOT NULL AND ${dueNowSql("p")})::int AS due,
          count(*) FILTER (WHERE p.state = 'review')::int AS mastered,
          count(*) FILTER (WHERE p.state IN ('learning', 'relearning'))::int AS learning
        FROM unnest($1::uuid[]) AS wid(word_id)
