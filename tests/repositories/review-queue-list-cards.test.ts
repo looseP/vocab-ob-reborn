@@ -296,7 +296,10 @@ describe("listQueueCards — 队列清单分页", () => {
     // 白名单谓词（用户输入永不进 SQL，只有这一个常量串）
     expect(sql).toContain("uwp.due_at IS NOT NULL");
     expect(sql).toContain("interval '1 day'");
-    expect(sql).toContain("uwp.state <> 'suspended'");
+    // 2026-10-13：状态口径与 getTodayWorkload 的 due_today **逐字相同**。
+    // 此前这里是 state <> 'suspended'（不含新卡判定），与真源 NOT IN ('suspended','new')
+    // 分叉 —— 那正是 2026-10-12「仪表盘 1 / 队列 0」数字打脸的直接原因。
+    expect(sql).toContain("uwp.state NOT IN ('suspended', 'new')");
     // 「今日零点」走参数位，不内联；与仪表盘 dueToday 同一个 helper（Asia/Shanghai）
     expect(mock.lastQuery?.params).toHaveLength(6);
     expect(typeof mock.lastQuery?.params?.[5]).toBe("string");
