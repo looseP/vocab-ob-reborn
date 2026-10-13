@@ -16,7 +16,7 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 FROM node:22.22.2-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
-RUN mkdir -p /app /backups /tmp/vocab-observatory && chown -R node:node /app /backups /tmp/vocab-observatory
+RUN mkdir -p /app /backups /backup-state /tmp/vocab-observatory && chown -R node:node /app /backups /backup-state /tmp/vocab-observatory
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json /app/tsconfig.json ./
 COPY --from=build --chown=node:node /app/src ./src
